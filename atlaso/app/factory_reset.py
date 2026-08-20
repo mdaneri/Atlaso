@@ -1069,12 +1069,19 @@ def _candidate_database(
                 _remove_retired_ca_private_keys(retired_ca_private_key_paths)
 
             final_units = appliance_apply_units(db, reconcile=False)
+            final_unit_ids = {unit["id"] for unit in final_units}
+            save_appliance_apply_baselines(db, {})
             update_appliance_apply_baselines(
                 db,
                 final_units,
-                {unit["id"] for unit in final_units},
+                final_unit_ids,
             )
             db.commit()
+            verified_baselines = load_appliance_apply_baselines(db)
+            if set(verified_baselines) != final_unit_ids:
+                raise FactoryResetError(
+                    "Factory reset could not replace the applied baseline inventory."
+                )
             verified_units = appliance_apply_units(db, reconcile=False)
             pending = [unit["label"] for unit in verified_units if unit["changed"]]
             if pending:

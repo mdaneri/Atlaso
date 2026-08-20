@@ -91,6 +91,10 @@ quiescence and immediately before staging cleanup, preserving the durable finali
 in either race window. Recover the signed release transaction through the normal service-start recovery path, then
 retry reset after its finalizer is definitive.
 
+The candidate temporarily imports compatible applied baselines so removed resources can be reconciled against their
+last known state. After activation, Atlaso replaces that mapping with fingerprints for exactly the current factory apply
+units; retired or unknown baseline keys cannot survive in the replacement database.
+
 Earlier sessions, bearer tokens, service credentials, and removed-account credentials stop working. The reset preserves
 the current bootstrap administrator web/Photon password and root password for each **Keep current password** choice. A
 **Change password** choice applies the submitted value during the protected reset transaction; the administrator value

@@ -876,6 +876,12 @@ def test_complete_factory_reset_replaces_database_and_establishes_baselines(
     session_factory = sessionmaker(bind=engine, autoflush=False, autocommit=False, expire_on_commit=False)
     with session_factory() as db:
         seed_initial_data(db, include_examples=False)
+        from atlaso.app.ui import save_appliance_apply_baselines
+
+        save_appliance_apply_baselines(
+            db,
+            {"retired-legacy-unit": {"fingerprint": "pre-reset-state"}},
+        )
         admin = db.execute(select(User).where(User.username == "admin")).scalar_one()
         db.add(User(username="remove-me", role="admin"))
         db.add(
@@ -958,9 +964,13 @@ def test_complete_factory_reset_replaces_database_and_establishes_baselines(
         assert management_interface.ipv6_cidr is None
         dns_settings = db.execute(select(DnsSettings)).scalar_one()
         assert dns_settings.upstream_servers == "1.1.1.1\n9.9.9.9"
-        from atlaso.app.ui import appliance_apply_units
+        from atlaso.app.ui import appliance_apply_units, load_appliance_apply_baselines
 
-        assert [unit["label"] for unit in appliance_apply_units(db, reconcile=False) if unit["changed"]] == []
+        verified_units = appliance_apply_units(db, reconcile=False)
+        assert [unit["label"] for unit in verified_units if unit["changed"]] == []
+        assert set(load_appliance_apply_baselines(db)) == {
+            unit["id"] for unit in verified_units
+        }
     replacement_engine.dispose()
 
 
