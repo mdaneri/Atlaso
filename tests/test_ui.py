@@ -989,7 +989,7 @@ def test_pwa_manifest_service_worker_and_offline_shell(client):
     assert service_worker.headers["cache-control"] == "no-cache"
     assert service_worker.headers["service-worker-allowed"] == "/ui/management/"
     assert "ATLASO_CACHE" in service_worker.text
-    assert "atlaso-management-pwa-v257" in service_worker.text
+    assert "atlaso-management-pwa-v258" in service_worker.text
     assert 'fetch(asset, { cache: "reload" })' in service_worker.text
     assert ".catch(() => undefined)" in service_worker.text
     assert 'request.mode === "navigate"' in service_worker.text
@@ -1003,11 +1003,11 @@ def test_pwa_manifest_service_worker_and_offline_shell(client):
     assert 'accept.includes("text/html")' in service_worker.text
     assert '!hasDownloadLikePath(url)' in service_worker.text
     assert "/static/vendor/monaco/atlaso-monaco.min.js?v=atlaso-monaco-20260806-7" in service_worker.text
-    assert "/static/app.css?v=issue-338-1" in service_worker.text
+    assert "/static/app.css?v=network-boot-lifecycle-430-432-20260820-1" in service_worker.text
     assert "/static/ui-patterns.js?v=atlaso-ui-foundation-20260726-8" in service_worker.text
     assert "/static/appliance-apply-polling.js?v=issue-294-2" in service_worker.text
     assert "/static/ui-routes.js?v=issue-287-1" in service_worker.text
-    assert "/static/app.js?v=dashboard-setup-415-ldap-navigation-409-20260815-1" in service_worker.text
+    assert "/static/app.js?v=network-boot-lifecycle-430-432-20260820-1" in service_worker.text
     assert "/static/terminal.js?v=issue-287-2" in service_worker.text
     assert "/static/pwa.js?v=issue-287-2" in service_worker.text
     assert "vcfdt-configuration-248-20260807-14" not in service_worker.text
@@ -1039,8 +1039,8 @@ def test_shared_ui_pattern_shell_and_wizard_contracts(client):
     base = (templates / "base.html").read_text(encoding="utf-8")
     public_base = (templates / "public_portal_base.html").read_text(encoding="utf-8")
     for shell, app_asset in (
-        (base, "/static/app.js?v=dashboard-setup-415-ldap-navigation-409-20260815-1"),
-        (public_base, "/static/app.js?v=dashboard-setup-415-ldap-navigation-409-20260815-1"),
+        (base, "/static/app.js?v=network-boot-lifecycle-430-432-20260820-1"),
+        (public_base, "/static/app.js?v=network-boot-lifecycle-430-432-20260820-1"),
         (base, "/static/appliance-apply-polling.js?v=issue-294-2"),
     ):
         assert shell.index("/static/vendor/tabulator/tabulator.min.js") < shell.index(
@@ -1684,9 +1684,9 @@ def test_monitor_page_renders_template_and_browser_assets(client):
     assert "Loading devices" not in page.text
     assert "<th>Device</th><th>Read/s</th><th>Write/s</th>" in page.text
     assert "swagger-link-icon" in page.text
-    assert "/static/app.css?v=issue-338-1" in page.text
+    assert "/static/app.css?v=network-boot-lifecycle-430-432-20260820-1" in page.text
     assert "/static/ui-patterns.js?v=atlaso-ui-foundation-20260726-8" in page.text
-    assert "/static/app.js?v=dashboard-setup-415-ldap-navigation-409-20260815-1" in page.text
+    assert "/static/app.js?v=network-boot-lifecycle-430-432-20260820-1" in page.text
     app_css = client.get("/static/app.css")
     assert app_css.status_code == 200
     assert ".split-workspace > .wide-panel" in app_css.text
@@ -7223,11 +7223,88 @@ def test_esxi_pxe_multi_zone_host_reservations_and_grid_menu(client):
     assert "Edit host reference" in host_grid_js
     assert 'target.closest(\'[tabulator-field="enabled"]\')' in host_grid_js
     assert "Delete host reference" in host_grid_js
+    delete_host_js = app_js.split("async function deleteEsxiHost(", 1)[1].split(
+        "function initializeEsxiPxeHostsTable()", 1
+    )[0]
+    assert "Also remove" in delete_host_js
+    assert "remove_discovered_host" in delete_host_js
     assert 'field: "ip_address"' in host_grid_js
     assert 'field: "variables_json"' in host_grid_js
     assert "data-esxi-host-wizard-add" in host_grid_js
     assert 'editable: (cell) => canWrite && cell.getRow().getData().is_default' in host_grid_js
     assert 'editable: (cell) => canWrite && !cell.getRow().getData().is_new' in host_grid_js
+
+
+def test_esxi_host_delete_can_retain_or_remove_associated_discovery(client):
+    """Verify that Host Reference deletion owns the optional discovery cleanup.
+
+    Args:
+        client: HTTP test client used to exercise the Atlaso application.
+    """
+    from tests.test_network_boot import inventory_report
+
+    login(client)
+    inventory_session = client.post("/pxe/inventory/sessions").json()
+    submitted = client.post(
+        "/pxe/inventory/report",
+        json=inventory_report(),
+        headers={"Authorization": f"Bearer {inventory_session['access_token']}"},
+    )
+    discovered_host_id = submitted.json()["host_id"]
+
+    from atlaso.app.database import SessionLocal
+    from atlaso.app.models import (
+        EsxiPxeHost,
+        NetworkBootDiscoveredHost,
+        NetworkBootInventoryReport,
+        NetworkBootInventorySession,
+    )
+
+    with SessionLocal() as db:
+        reference = EsxiPxeHost(
+            hostname="discovered-esxi",
+            mac_address="52:54:00:12:34:56",
+            enabled=False,
+        )
+        db.add(reference)
+        db.commit()
+        reference_id = reference.id
+
+    page = client.get("/network-boot")
+    csrf = page.text.split('name="csrf" value="', 1)[1].split('"', 1)[0]
+    assert "Also remove discovered host" in page.text
+    assert f'"discovered_host_ids": [{discovered_host_id}]' in page.text
+
+    retained = client.post(
+        f"/esxi-pxe/hosts/{reference_id}/delete",
+        data={"csrf": csrf},
+        follow_redirects=False,
+    )
+    assert retained.status_code == 303, retained.text
+    with SessionLocal() as db:
+        assert db.get(EsxiPxeHost, reference_id) is None
+        assert db.get(NetworkBootDiscoveredHost, discovered_host_id) is not None
+
+        replacement = EsxiPxeHost(
+            hostname="discovered-esxi-again",
+            mac_address="52:54:00:12:34:56",
+            enabled=False,
+        )
+        db.add(replacement)
+        db.commit()
+        replacement_id = replacement.id
+
+    removed = client.post(
+        f"/esxi-pxe/hosts/{replacement_id}/delete",
+        data={"csrf": csrf, "remove_discovered_host": "on"},
+        follow_redirects=False,
+    )
+    assert removed.status_code == 303, removed.text
+    with SessionLocal() as db:
+        assert db.get(EsxiPxeHost, replacement_id) is None
+        assert db.get(NetworkBootDiscoveredHost, discovered_host_id) is None
+        assert db.get(NetworkBootInventorySession, inventory_session["session_id"]) is None
+        assert db.get(NetworkBootInventoryReport, submitted.json()["report_id"]) is None
 
 
 def test_esxi_pxe_boot_settings_migrate_legacy_first_stage_defaults(client):

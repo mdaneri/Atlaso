@@ -47,6 +47,10 @@ from atlaso.app.services.esxi_pxe import (
     validate_kickstart_custom_references,
     validate_kickstart_vault_references,
 )
+from atlaso.app.services.network_boot import (
+    discovered_hosts_for_esxi_host,
+    remove_discovered_host_state,
+)
 from atlaso.app.ui_routes import MANAGEMENT_UI_ROOT
 
 Endpoint = Callable[..., Any]
@@ -1325,6 +1329,7 @@ def build_router(dependencies: NetworkBootUiDependencies) -> NetworkBootUiRouter
     def delete_esxi_pxe_host_from_ui(
         host_id: int,
         request: Request,
+        remove_discovered_host: bool = Form(False),
         csrf: str = Form(...),
         identity: Identity = Depends(require_session_identity),
         db: Session = Depends(get_db),
@@ -1334,6 +1339,7 @@ def build_router(dependencies: NetworkBootUiDependencies) -> NetworkBootUiRouter
         Args:
             host_id: Identifier of the host.
             request: Incoming HTTP request.
+            remove_discovered_host: Also remove matching discovered-host inventory state.
             csrf: Validated CSRF token authorizing the request.
             identity: Authenticated identity authorizing the request.
             db: Active database session.
@@ -1350,17 +1356,29 @@ def build_router(dependencies: NetworkBootUiDependencies) -> NetworkBootUiRouter
         if not host:
             raise HTTPException(status_code=404, detail="ESXi PXE host not found")
         hostname = host.hostname
+        discovered_hosts = discovered_hosts_for_esxi_host(db, host)
+        removal_counts = {"commands": 0, "sessions": 0, "reports": 0}
+        removed_discovered_hosts = 0
+        if remove_discovered_host:
+            for discovered_host in discovered_hosts:
+                counts = remove_discovered_host_state(db, discovered_host)
+                for key in removal_counts:
+                    removal_counts[key] += counts[key]
+                removed_discovered_hosts += 1
         host.ip_address = ""
         sync_esxi_pxe_host_network_records(db, host, esxi_pxe_boot_settings(db))
         db.delete(host)
-        db.commit()
         record_audit(
             db,
             actor=identity.username,
             action="delete_esxi_pxe_host",
             resource_type="esxi_pxe_host",
             resource_id=str(host_id),
-            detail=f"hostname={hostname}",
+            detail=(
+                f"hostname={hostname}; discovered_hosts_removed={removed_discovered_hosts}; "
+                f"reports={removal_counts['reports']}; sessions={removal_counts['sessions']}; "
+                f"commands={removal_counts['commands']}"
+            ),
             request_id=request.state.request_id,
         )
         return RedirectResponse("/esxi-pxe#esxi-pxe-hosts", status_code=303)

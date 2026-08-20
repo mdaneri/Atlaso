@@ -2583,6 +2583,15 @@ function esxiSuggestedHostname(host) {
     .replace(/^-|-$/g, "");
 }
 
+function selectEsxiDiscoveredHostOption(select, hostId) {
+  const selectedId = String(hostId ?? "");
+  const optionExists = Array.from(select?.options || [])
+    .some((option) => String(option.value) === selectedId);
+  if (!optionExists) return false;
+  select.value = selectedId;
+  return select.value === selectedId;
+}
+
 function esxiHostVariableRows(value) {
   let variables = value;
   if (typeof variables === "string") {
@@ -2724,6 +2733,14 @@ function initializeEsxiHostReferenceWizard() {
       .filter((mac) => isValidEsxiHostMac(mac));
   };
   const eligibleDiscoveredHosts = () => discoveredRows().filter((host) => availableMacs(host).length > 0);
+  const discoveredHostIdsForMac = (macAddress) => {
+    const macKey = esxiHostMacKey(macAddress);
+    if (!macKey) return [];
+    return discoveredRows()
+      .filter((host) => [host?.boot_mac, ...(host?.macs || [])]
+        .some((reportedMac) => esxiHostMacKey(reportedMac) === macKey))
+      .map((host) => host.id);
+  };
   const setSourceMode = (source, { showSource = true, showDiscoveredHost = true } = {}) => {
     const discovered = source === "discovered";
     sourceSelect.value = discovered ? "discovered" : "manual";
@@ -2956,6 +2973,9 @@ function initializeEsxiHostReferenceWizard() {
 
       if (mode === "promote") {
         setSourceMode("discovered", { showSource: false, showDiscoveredHost: false });
+        if (!selectEsxiDiscoveredHostOption(discoveredHostSelect, activeContext.discoveredHost?.id)) {
+          throw new Error("The selected discovered host is no longer available for promotion.");
+        }
         activeContext.discoveredHost = applyDiscoveredIdentity(await loadDiscoveredIdentity(activeContext.discoveredHost));
         form.elements.enabled.checked = Boolean(form.elements.installer_iso_path.value);
         if (wizardTitle) wizardTitle.textContent = "Promote discovered host";
@@ -3051,6 +3071,10 @@ function initializeEsxiHostReferenceWizard() {
         );
         resource = result.host;
       }
+      resource = {
+        ...resource,
+        discovered_host_ids: discoveredHostIdsForMac(payload.mac_address),
+      };
       if (activeContext.onSaved) await Promise.resolve(activeContext.onSaved(resource));
       else {
         const table = hostTableElement?.atlasoTabulator;
@@ -3207,16 +3231,27 @@ async function deleteEsxiHost(row, csrf) {
   if (data.is_new || data.is_default) {
     return;
   }
-  const confirmed = await requestConfirmation({
+  const discoveredHostIds = Array.isArray(data.discovered_host_ids)
+    ? data.discovered_host_ids.filter((value) => Number.isInteger(Number(value)))
+    : [];
+  const confirmation = await requestConfirmation({
     title: `Delete ${data.hostname} host reference?`,
     message: `This removes the ESXi PXE host reference for ${data.mac_address} from desired state. It will not touch generated PXE files until global appliance apply runs.`,
     label: "Delete host reference",
+    checkboxLabel: discoveredHostIds.length
+      ? `Also remove ${discoveredHostIds.length === 1 ? "the associated discovered host" : `${discoveredHostIds.length} associated discovered hosts`} and retained inventory state`
+      : "",
   });
+  const confirmed = typeof confirmation === "object" ? confirmation.confirmed : confirmation;
   if (!confirmed) {
     return;
   }
   try {
-    await postEsxiHostAction(managementUiPath(`/esxi-pxe/hosts/${data.id}/delete`), {}, csrf);
+    await postEsxiHostAction(
+      managementUiPath(`/esxi-pxe/hosts/${data.id}/delete`),
+      { remove_discovered_host: Boolean(confirmation?.checkboxChecked) },
+      csrf,
+    );
   } catch (error) {
     showEsxiHostError(error instanceof Error ? error.message : "The ESXi PXE host reference could not be deleted.");
   }
@@ -10427,6 +10462,9 @@ function requestConfirmation(options = {}) {
   const detailGroup = document.getElementById("confirm-modal-detail-group");
   const detailLabel = document.getElementById("confirm-modal-detail-label");
   const detail = document.getElementById("confirm-modal-detail");
+  const checkboxGroup = document.getElementById("confirm-modal-checkbox-group");
+  const checkbox = document.getElementById("confirm-modal-checkbox");
+  const checkboxLabel = document.getElementById("confirm-modal-checkbox-label");
   const confirmButton = document.getElementById("confirm-modal-confirm");
   if (!(modal instanceof HTMLDialogElement) || !(title instanceof HTMLElement) || !(message instanceof HTMLElement) || !(confirmButton instanceof HTMLButtonElement)) {
     return Promise.resolve(false);
@@ -10443,6 +10481,13 @@ function requestConfirmation(options = {}) {
   if (detailGroup instanceof HTMLElement) detailGroup.classList.toggle("hidden", !hasDetail);
   if (detailLabel instanceof HTMLElement) detailLabel.textContent = options.detailLabel || "Details";
   if (detail instanceof HTMLElement) detail.textContent = hasDetail ? String(options.detail) : "";
+  const hasCheckbox = Boolean(options.checkboxLabel)
+    && checkboxGroup instanceof HTMLElement
+    && checkbox instanceof HTMLInputElement
+    && checkboxLabel instanceof HTMLElement;
+  if (checkboxGroup instanceof HTMLElement) checkboxGroup.classList.toggle("hidden", !hasCheckbox);
+  if (checkbox instanceof HTMLInputElement) checkbox.checked = false;
+  if (checkboxLabel instanceof HTMLElement) checkboxLabel.textContent = hasCheckbox ? String(options.checkboxLabel) : "";
 
   return new Promise((resolve) => {
     const handleClose = () => {
@@ -10450,10 +10495,15 @@ function requestConfirmation(options = {}) {
       modal.classList.remove("has-confirm-detail");
       if (detailGroup instanceof HTMLElement) detailGroup.classList.add("hidden");
       if (detail instanceof HTMLElement) detail.textContent = "";
+      const confirmed = modal.returnValue === "confirm";
+      const checkboxChecked = confirmed && hasCheckbox && checkbox instanceof HTMLInputElement && checkbox.checked;
+      if (checkboxGroup instanceof HTMLElement) checkboxGroup.classList.add("hidden");
+      if (checkbox instanceof HTMLInputElement) checkbox.checked = false;
+      if (checkboxLabel instanceof HTMLElement) checkboxLabel.textContent = "";
       if (launcher?.isConnected) {
         requestAnimationFrame(() => launcher.focus({ preventScroll: true }));
       }
-      resolve(modal.returnValue === "confirm");
+      resolve(hasCheckbox ? { confirmed, checkboxChecked } : confirmed);
     };
     modal.addEventListener("close", handleClose);
     modal.showModal();
@@ -20942,10 +20992,10 @@ function initializeNetworkBootPage() {
   };
   const removeHost = async (row) => {
     const data = row?.getData ? row.getData() : row;
-    if (!data?.id) return;
+    if (!data?.id || data.assigned_to_esxi) return;
     const confirmed = await requestConfirmation({
       title: `Remove ${data.product_name || data.dmi_uuid || "discovered host"}?`,
-      message: "This removes the discovered host and its inventory reports, sessions, and commands. Any separately promoted ESXi desired-state host reference is retained.",
+      message: "This removes the unassigned discovered host and its inventory reports, sessions, and commands.",
       label: "Remove discovered host",
     });
     if (!confirmed) return;
@@ -20990,7 +21040,13 @@ function initializeNetworkBootPage() {
         },
         { label: "Reboot", disabled: (component) => component.getData().session_state !== "online", action: (_event, row) => rebootHost(row) },
         { label: "Wake host", disabled: (component) => !component.getData().boot_mac, action: (_event, row) => wakeHost(row) },
-        { label: "Remove discovered host", action: (_event, row) => removeHost(row) },
+        {
+          label: (component) => component.getData().assigned_to_esxi
+            ? `Remove discovered host (assigned to ${component.getData().esxi_hostname || "ESXi"})`
+            : "Remove discovered host",
+          disabled: (component) => Boolean(component.getData().assigned_to_esxi),
+          action: (_event, row) => removeHost(row),
+        },
         ] : []),
       ],
       columns: [

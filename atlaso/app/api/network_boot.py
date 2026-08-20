@@ -79,6 +79,7 @@ from atlaso.app.services.network_boot import (
     render_network_boot_menu,
     report_history,
     report_identity,
+    remove_discovered_host_state,
     request_host_boot_override,
     send_wake_on_lan,
     set_environment_desired_state,
@@ -575,7 +576,8 @@ def remove_network_boot_media(
 
     Uses the authentication posture documented for this endpoint. Removal or revocation takes effect
     in Atlaso application state; appliance host changes remain subject to the documented apply
-    boundary for the resource.
+    boundary for the resource. An assigned host returns 409 and names the ESXi Host Reference that
+    must be removed first; deleting that Host Reference may optionally remove the discovery state.
 
     Args:
         environment_key: Filesystem path associated with environment key.
@@ -810,48 +812,21 @@ def remove_discovered_host(
     host = db.get(NetworkBootDiscoveredHost, host_id)
     if host is None:
         raise HTTPException(status_code=404, detail="Discovered host not found.")
-    counts = {
-        "commands": int(
-            db.scalar(
-                select(func.count(NetworkBootInventoryCommand.id)).where(
-                    NetworkBootInventoryCommand.host_id == host.id
-                )
-            )
-            or 0
-        ),
-        "sessions": int(
-            db.scalar(
-                select(func.count(NetworkBootInventorySession.id)).where(
-                    NetworkBootInventorySession.host_id == host.id
-                )
-            )
-            or 0
-        ),
-        "reports": int(
-            db.scalar(
-                select(func.count(NetworkBootInventoryReport.id)).where(
-                    NetworkBootInventoryReport.host_id == host.id
-                )
-            )
-            or 0
-        ),
-    }
-    db.execute(
-        delete(NetworkBootInventoryCommand).where(
-            NetworkBootInventoryCommand.host_id == host.id
+    assignments = host_to_dict(
+        db,
+        host,
+        assignments_by_mac=esxi_host_assignments_by_mac(db),
+    )["esxi_assignments"]
+    if assignments:
+        assigned_hostname = assignments[0]["hostname"]
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail=(
+                f"This discovered host is assigned to ESXi host `{assigned_hostname}`. "
+                "Remove the ESXi host from ESXi Kickstarts before deleting its discovery record."
+            ),
         )
-    )
-    db.execute(
-        delete(NetworkBootInventorySession).where(
-            NetworkBootInventorySession.host_id == host.id
-        )
-    )
-    db.execute(
-        delete(NetworkBootInventoryReport).where(
-            NetworkBootInventoryReport.host_id == host.id
-        )
-    )
-    db.delete(host)
+    counts = remove_discovered_host_state(db, host)
     record_audit(
         db,
         actor=identity.username,

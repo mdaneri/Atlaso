@@ -18025,6 +18025,24 @@ def esxi_pxe_page_context(
         )
     ).scalars().all()
     inventory_assignments_by_mac = esxi_host_assignments_by_mac(db)
+    discovered_host_rows = [
+        inventory_host_to_dict(db, row, assignments_by_mac=inventory_assignments_by_mac)
+        for row in discovered_hosts
+    ]
+    discovered_host_ids_by_esxi_host_id: dict[int, list[int]] = {}
+    for discovered_host_row in discovered_host_rows:
+        for assignment in discovered_host_row["esxi_assignments"]:
+            discovered_host_ids_by_esxi_host_id.setdefault(assignment["id"], []).append(
+                discovered_host_row["id"]
+            )
+    context["esxi_pxe_host_rows"] = [
+        {
+            **row,
+            "discovered_host_ids": discovered_host_ids_by_esxi_host_id.get(row.get("id"), []),
+        }
+        for row in context["esxi_pxe_host_rows"]
+    ]
+    context["esxi_pxe_discovered_host_ids_by_host_id"] = discovered_host_ids_by_esxi_host_id
     media_jobs = db.execute(
         select(Job)
         .options(selectinload(Job.steps))
@@ -18040,10 +18058,7 @@ def esxi_pxe_page_context(
         "esxi_can_write": identity.can("write:esxi-pxe"),
         "network_boot_can_write": identity.can("write:pxe"),
         "network_boot_environments": catalog_rows(db),
-        "network_boot_discovered_hosts": [
-            inventory_host_to_dict(db, row, assignments_by_mac=inventory_assignments_by_mac)
-            for row in discovered_hosts
-        ],
+        "network_boot_discovered_hosts": discovered_host_rows,
         "network_boot_media_tasks": [_task_row(job, identity) for job in media_jobs],
         "task_component_filter_options": _task_component_filter_options(db),
         "esxi_kickstart_grid_rows": grid_rows,

@@ -1788,6 +1788,96 @@ def esxi_host_assignments_by_mac(db: Session) -> dict[str, dict[str, Any]]:
     return assignments
 
 
+def discovered_hosts_for_esxi_host(
+    db: Session,
+    esxi_host: EsxiPxeHost,
+) -> list[NetworkBootDiscoveredHost]:
+    """Return discovered hosts assigned to one ESXi Host Reference.
+
+    Args:
+        db: Active database session.
+        esxi_host: ESXi Host Reference whose normalized MAC identifies assignments.
+    """
+    try:
+        assigned_mac = normalize_mac(esxi_host.mac_address)
+    except ValueError:
+        return []
+    discovered_hosts = db.execute(
+        select(NetworkBootDiscoveredHost).order_by(NetworkBootDiscoveredHost.id)
+    ).scalars().all()
+    matches: list[NetworkBootDiscoveredHost] = []
+    for discovered_host in discovered_hosts:
+        reported_macs: set[str] = set()
+        for mac_address in {*_macs(discovered_host), discovered_host.boot_mac} - {""}:
+            try:
+                reported_macs.add(normalize_mac(mac_address))
+            except ValueError:
+                continue
+        if assigned_mac in reported_macs:
+            matches.append(discovered_host)
+    return matches
+
+
+def remove_discovered_host_state(
+    db: Session,
+    host: NetworkBootDiscoveredHost,
+) -> dict[str, int]:
+    """Remove one discovered host and its retained inventory state.
+
+    The caller owns assignment checks, audit attribution, and the transaction commit.
+
+    Args:
+        db: Active database session.
+        host: Discovered host whose commands, sessions, reports, and row are removed.
+
+    Returns:
+        Counts of the removed retained inventory resources.
+    """
+    counts = {
+        "commands": int(
+            db.scalar(
+                select(func.count(NetworkBootInventoryCommand.id)).where(
+                    NetworkBootInventoryCommand.host_id == host.id
+                )
+            )
+            or 0
+        ),
+        "sessions": int(
+            db.scalar(
+                select(func.count(NetworkBootInventorySession.id)).where(
+                    NetworkBootInventorySession.host_id == host.id
+                )
+            )
+            or 0
+        ),
+        "reports": int(
+            db.scalar(
+                select(func.count(NetworkBootInventoryReport.id)).where(
+                    NetworkBootInventoryReport.host_id == host.id
+                )
+            )
+            or 0
+        ),
+    }
+    db.execute(
+        delete(NetworkBootInventoryCommand).where(
+            NetworkBootInventoryCommand.host_id == host.id
+        )
+    )
+    db.execute(
+        delete(NetworkBootInventorySession).where(
+            NetworkBootInventorySession.host_id == host.id
+        )
+    )
+    db.execute(
+        delete(NetworkBootInventoryReport).where(
+            NetworkBootInventoryReport.host_id == host.id
+        )
+    )
+    db.delete(host)
+    return counts
+
+
 def report_history(
     db: Session,
     host_id: int,

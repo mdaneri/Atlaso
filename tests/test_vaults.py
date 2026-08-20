@@ -771,7 +771,7 @@ def test_remote_vault_uri_launch_uses_one_use_server_side_ticket(client, monkeyp
     assert "sidebar" not in remote_page.text
     assert "Primary" not in remote_page.text
     assert "/static/terminal.js?v=issue-287-2" in remote_page.text
-    assert "/static/app.css?v=issue-338-1" in remote_page.text
+    assert "/static/app.css?v=network-boot-lifecycle-430-432-20260820-1" in remote_page.text
 
     ticket_response = client.post(
         "/terminal/tickets",

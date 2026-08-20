@@ -59,6 +59,11 @@ const esxiDiscoveredHostIsRegistered = loadFunction(
   "esxiSuggestedHostname",
   { Boolean, esxiHostMacKey },
 );
+const selectEsxiDiscoveredHostOption = loadFunction(
+  "selectEsxiDiscoveredHostOption",
+  "esxiHostVariableRows",
+  { Array, String },
+);
 const networkBootChangedRowValues = loadFunction(
   "networkBootChangedRowValues",
   "reconcileNetworkBootDiscoveredHosts",
@@ -149,6 +154,17 @@ test("ESXi discovered host selection skips registered hosts", () => {
   assert.equal(esxiDiscoveredHostIsRegistered({ boot_mac: "00:50:56:aa:bb:dd", esxi_host_id: 9 }, usedMacs), true);
   assert.equal(esxiDiscoveredHostIsRegistered({ boot_mac: "00:50:56:aa:bb:dd", esxi_assignments: [{ id: 9 }] }, usedMacs), true);
   assert.equal(esxiDiscoveredHostIsRegistered({ boot_mac: "00:50:56:aa:bb:dd" }, usedMacs), false);
+});
+
+test("ESXi promotion selects the clicked discovered host instead of the first candidate", () => {
+  const select = {
+    options: [{ value: "12" }, { value: "47" }],
+    value: "12",
+  };
+  assert.equal(selectEsxiDiscoveredHostOption(select, 47), true);
+  assert.equal(select.value, "47");
+  assert.equal(selectEsxiDiscoveredHostOption(select, 99), false);
+  assert.equal(select.value, "47");
 });
 
 test("Network Boot discovered hosts refresh while visible and immediately on visibility return", async () => {

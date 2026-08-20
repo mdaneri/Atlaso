@@ -517,6 +517,9 @@
                     <td>
                       <button class="button tiny secondary" type="submit" {{ "disabled" if not esxi_can_write else "" }}>Update</button>
                       {% if esxi_can_write %}
+                        {% if esxi_pxe_discovered_host_ids_by_host_id.get(host.id) %}
+                          <label><input type="checkbox" name="remove_discovered_host"> Also remove discovered host</label>
+                        {% endif %}
                         <button class="button tiny danger" type="submit" formaction="{{ management_ui_root }}/esxi-pxe/hosts/{{ host.id }}/delete" data-confirm-modal data-confirm-title="Delete {{ host.hostname }} host reference?" data-confirm-message="This removes the ESXi PXE host reference for {{ host.mac_address }} from desired state. It will not touch generated PXE files until global appliance apply runs." data-confirm-label="Delete host reference">Delete</button>
                       {% endif %}
                     </td>

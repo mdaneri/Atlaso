@@ -1576,8 +1576,8 @@ def test_report_download_is_exact_self_contained_and_rejects_cross_host(client):
     assert cross_host.status_code == 404
 
 
-def test_remove_discovered_host_cleans_inventory_and_preserves_esxi_state(client):
-    """Verify that remove discovered host cleans inventory and preserves esxi state.
+def test_remove_unassigned_discovered_host_cleans_inventory_state(client):
+    """Verify that removing an unassigned discovered host cleans inventory state.
 
     Args:
         client: HTTP test client used to exercise the Atlaso application.
@@ -1599,16 +1599,6 @@ def test_remove_discovered_host_cleans_inventory_and_preserves_esxi_state(client
 
     from atlaso.app.database import SessionLocal
 
-    with SessionLocal() as db:
-        reference = EsxiPxeHost(
-            hostname="promoted-state-remains",
-            mac_address="52:54:00:12:34:56",
-            enabled=False,
-        )
-        db.add(reference)
-        db.commit()
-        reference_id = reference.id
-
     response = client.delete(
         f"/api/v1/network-boot/hosts/{host_id}",
         headers=headers,
@@ -1627,7 +1617,6 @@ def test_remove_discovered_host_cleans_inventory_and_preserves_esxi_state(client
         assert db.get(NetworkBootInventorySession, inventory_session["session_id"]) is None
         assert db.get(NetworkBootInventoryCommand, reboot.json()["id"]) is None
         assert db.get(NetworkBootInventoryReport, submitted.json()["report_id"]) is None
-        assert db.get(EsxiPxeHost, reference_id) is not None
         event = db.execute(
             select(AuditEvent).where(
                 AuditEvent.action == "remove_discovered_host",
@@ -1635,6 +1624,48 @@ def test_remove_discovered_host_cleans_inventory_and_preserves_esxi_state(client
             )
         ).scalar_one()
         assert event.detail == "reports=1; sessions=1; commands=1"
+
+
+def test_remove_assigned_discovered_host_names_blocking_esxi_reference(client):
+    """Verify that an assigned discovered host cannot bypass ESXi lifecycle ownership.
+
+    Args:
+        client: HTTP test client used to exercise the Atlaso application.
+    """
+    raw_token = create_api_token(client, ["write:pxe"])
+    inventory_session = client.post("/pxe/inventory/sessions").json()
+    submitted = client.post(
+        "/pxe/inventory/report",
+        json=inventory_report(),
+        headers={"Authorization": f"Bearer {inventory_session['access_token']}"},
+    )
+    host_id = submitted.json()["host_id"]
+
+    from atlaso.app.database import SessionLocal
+
+    with SessionLocal() as db:
+        reference = EsxiPxeHost(
+            hostname="vmware20-1",
+            mac_address="52:54:00:12:34:56",
+            enabled=False,
+        )
+        db.add(reference)
+        db.commit()
+
+    response = client.delete(
+        f"/api/v1/network-boot/hosts/{host_id}",
+        headers={"Authorization": f"Bearer {raw_token}"},
+    )
+
+    assert response.status_code == 409, response.text
+    assert response.json()["detail"] == (
+        "This discovered host is assigned to ESXi host `vmware20-1`. "
+        "Remove the ESXi host from ESXi Kickstarts before deleting its discovery record."
+    )
+    with SessionLocal() as db:
+        assert db.get(NetworkBootDiscoveredHost, host_id) is not None
+        assert db.get(NetworkBootInventorySession, inventory_session["session_id"]) is not None
+        assert db.get(NetworkBootInventoryReport, submitted.json()["report_id"]) is not None
 
 
 def test_host_management_requires_scopes_and_returns_missing_resources(client):

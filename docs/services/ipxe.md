@@ -158,12 +158,14 @@ report navigation and export controls only. Operators with Network Boot write
 access can use the same row menu to **Promote to ESXi**, **Reboot**, **Wake
 host**, or **Remove discovered host**. Wake, reboot, and removal share Atlaso's
 confirmation flow. Reboot is available only for an online Inventory Linux
-session. Removal transactionally deletes that discovered host's commands,
-sessions, and reports, but retains any separately promoted ESXi desired-state
-reference. The grid marks a discovered host as **Assigned** when one of its
-reported MACs matches an ESXi Host Reference and shows the assigned ESXi
-hostname and IP address. **Promote to ESXi** is disabled for an assigned host,
-preventing a duplicate Host Reference workflow. Promotion requires explicit hostname, a discovered MAC, address,
+session. Removal transactionally deletes an unassigned discovered host's
+commands, sessions, and reports. The grid marks a discovered host as
+**Assigned** when one of its reported MACs matches an ESXi Host Reference and
+shows the assigned ESXi hostname and IP address. Both **Promote to ESXi** and
+**Remove discovered host** are disabled for an assigned host. A direct API
+deletion attempt is rejected with the blocking ESXi hostname so automation must
+remove the Host Reference first. Promotion loads the selected row's identity
+before step validation and requires explicit hostname, discovered MAC, address,
 Kickstart, installer ISO, variables, and enabled-state review. It creates
 desired state only.
 
@@ -401,9 +403,14 @@ Double-click an existing reference or choose **Edit host reference** from its
 row menu to reopen the same workflow. The Enabled value remains directly
 toggleable in the collection. The row menu also retains **Boot Inventory Linux
 once**, **Authorize ESXi boot once**, **Wake host**, and **Delete host
-reference** where applicable. Start the assigned host first and choose its ESXi
-entry. The host console displays a one-time code while its unpredictable boot
-claim waits. Then choose **Authorize ESXi boot once**, enter that console code
+reference** where applicable. Deleting a Host Reference retains its associated
+discovered host by default so it can be rediscovered or promoted again. When an
+association exists, the confirmation offers **Also remove the associated
+discovered host and retained inventory state**; selecting it removes the Host
+Reference and matching discovery commands, sessions, reports, and host row in
+the same transaction. Start the assigned host first and choose its ESXi entry.
+The host console displays a one-time code while its unpredictable boot claim
+waits. Then choose **Authorize ESXi boot once**, enter that console code
 in the shared two-step wizard, and review the host before submitting. Atlaso
 creates a ten-minute, single-use authorization bound to that exact claim,
 applied Host Reference, applied Kickstart revision, HTTP listener, and boot
