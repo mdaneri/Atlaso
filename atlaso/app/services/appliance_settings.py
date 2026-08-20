@@ -500,7 +500,7 @@ def management_ui_context(
         ),
         key=lambda interface: (interface.name != "eth0", interface.name),
     )
-    candidates: list[tuple[str, str | None, str | None]] = [
+    candidates: list[tuple[str, str | None, str | None, str]] = [
         (
             interface.name,
             interface.host_ip_cidr
@@ -509,17 +509,18 @@ def management_ui_context(
             (interface.ipv6_cidr or interface.host_ipv6_cidr)
             if interface.ipv6_enabled
             else None,
+            normalize_ipv4_method(interface.ipv4_method),
         )
         for interface in physical_candidates
     ]
     candidates.extend(
-        (vlan.name, vlan.ip_cidr, vlan.ipv6_cidr)
+        (vlan.name, vlan.ip_cidr, vlan.ipv6_cidr, "static")
         for vlan in sorted(vlans, key=lambda item: (item.parent_interface, item.vlan_id))
         if vlan.enabled
         and normalize_interface_role(vlan.role) == "access"
         and vlan.access_management_ui_enabled
     )
-    for name, ipv4_cidr, ipv6_cidr in candidates:
+    for name, ipv4_cidr, ipv6_cidr, ipv4_method in candidates:
         addresses: list[str] = []
         for candidate_cidr in (ipv4_cidr, ipv6_cidr):
             if not candidate_cidr:
@@ -541,7 +542,7 @@ def management_ui_context(
                 "ipv4_cidr": ipv4_cidr or "",
                 "ipv6_cidr": ipv6_cidr or "",
                 "addresses": addresses,
-                "ipv4_method": "static",
+                "ipv4_method": ipv4_method,
             }
     return dedicated
 

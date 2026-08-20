@@ -241,6 +241,7 @@ Name=eth0
 
 [Network]
 Address=192.0.2.10/24
+IPv6AcceptRA=yes
 
 [Route]
 Gateway=192.0.2.1
@@ -250,6 +251,7 @@ Name=eth0
 
 [Network]
 Address=198.51.100.10/24
+IPv6AcceptRA=no
 
 [Route]
 Gateway=198.51.100.1
@@ -261,6 +263,91 @@ Gateway=198.51.100.1
     assert "Address=198.51.100.10/24" in transitional
     assert "Gateway=192.0.2.1" in transitional
     assert "Gateway=198.51.100.1" in transitional
+    assert transitional.rfind("IPv6AcceptRA=yes") > transitional.rfind("IPv6AcceptRA=no")
+
+
+def test_management_handoff_rollback_continues_after_missing_snapshot(monkeypatch, tmp_path):
+    """Restore later layers and report incomplete rollback when one backup is missing.
+
+    Args:
+        monkeypatch: Pytest fixture used to isolate host rollback dependencies.
+        tmp_path: Temporary directory containing runtime and backup files.
+    """
+    helper = load_helper_module()
+    network_dir = tmp_path / "networkd"
+    network_dir.mkdir()
+    missing_target = network_dir / "00-atlaso-mgmt.network"
+    missing_target.write_text("candidate network\n", encoding="utf-8")
+    restored_target = tmp_path / "nginx.conf"
+    restored_target.write_text("candidate nginx\n", encoding="utf-8")
+    good_backup = tmp_path / "nginx.backup"
+    good_backup.write_text("previous nginx\n", encoding="utf-8")
+    stages: list[str] = []
+    commands: list[list[str]] = []
+    monkeypatch.setattr(helper, "NETWORKD_CONFIG_DIR", network_dir)
+    monkeypatch.setattr(helper, "NETWORKD_MGMT_CONFIG_PATH", missing_target)
+    monkeypatch.setattr(helper.os, "chown", lambda *_args: None, raising=False)
+    monkeypatch.setattr(
+        helper,
+        "_quiesce_management_handoff_firewall",
+        lambda _state, _commands: stages.append("quiesce"),
+    )
+    monkeypatch.setattr(
+        helper,
+        "_restore_management_handoff_resolver",
+        lambda _state, _commands: stages.append("resolver"),
+    )
+    monkeypatch.setattr(
+        helper,
+        "_restore_management_handoff_links",
+        lambda _state, _commands: stages.append("links"),
+    )
+    monkeypatch.setattr(
+        helper,
+        "_restore_management_handoff_firewall",
+        lambda _state, _commands: stages.append("firewall"),
+    )
+    monkeypatch.setattr(helper, "_nginx_binary", lambda: "/usr/sbin/nginx")
+    monkeypatch.setattr(
+        helper,
+        "_nginx_test_command",
+        lambda: subprocess.CompletedProcess(["nginx", "-t"], 0, "", ""),
+    )
+    monkeypatch.setattr(
+        helper,
+        "_run",
+        lambda command: commands.append(command) or subprocess.CompletedProcess(command, 0, "", ""),
+    )
+    monkeypatch.setattr(
+        helper,
+        "_management_handoff_readiness",
+        lambda *_args: stages.append("readiness") or {"stable_samples": 3},
+    )
+    state = {
+        "snapshots": [
+            {
+                "path": str(missing_target),
+                "backup": str(tmp_path / "missing.backup"),
+                "existed": True,
+            },
+            {
+                "path": str(restored_target),
+                "backup": str(good_backup),
+                "existed": True,
+            },
+        ],
+        "previous_management_addresses": ["192.0.2.10"],
+        "previous_https_enabled": True,
+        "previous_management_public_port": 443,
+    }
+
+    with pytest.raises(ValueError, match=r"rollback incomplete: snapshot 0 restore: FileNotFoundError"):
+        helper._restore_management_handoff(state)
+
+    assert restored_target.read_text(encoding="utf-8") == "previous nginx\n"
+    assert stages == ["quiesce", "resolver", "links", "firewall", "readiness"]
+    assert ["systemctl", "start", "atlaso.service"] in commands
+    assert ["systemctl", "reload-or-restart", "nginx.service"] in commands
 
 
 def test_management_candidate_network_defers_old_link_retirement(monkeypatch, tmp_path):

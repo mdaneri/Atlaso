@@ -15382,7 +15382,7 @@ def _networkd_handoff_text(previous: str, candidate: str) -> str:
     network_values = [
         line
         for line in previous_lines
-        if re.match(r"^(Address|DHCP|DNS|Domains)=", line) and line not in candidate_lines
+        if re.match(r"^(Address|DHCP|DNS|Domains|IPv6AcceptRA)=", line) and line not in candidate_lines
     ]
     next_section = next(
         (
@@ -16096,46 +16096,106 @@ def _restore_management_handoff(state: dict) -> dict:
         Bounded rollback evidence.
     """
     commands: list[dict[str, object]] = []
-    _quiesce_management_handoff_firewall(state, commands)
+    errors: list[str] = []
+
+    def attempt(stage: str, operation: Callable[[], None]) -> None:
+        """Run one rollback stage without preventing later restoration work.
+
+        Args:
+            stage: Bounded rollback layer name used in failure evidence.
+            operation: Restore operation to attempt.
+        """
+        try:
+            operation()
+        except (KeyError, OSError, TypeError, ValueError, json.JSONDecodeError, shutil.Error) as exc:
+            errors.append(f"{stage}: {type(exc).__name__}")
+
+    attempt(
+        "firewall service quiesce",
+        lambda: _quiesce_management_handoff_firewall(state, commands),
+    )
     for path in NETWORKD_CONFIG_DIR.glob(f"{MANAGEMENT_HANDOFF_HOLDOVER_PREFIX}*.network"):
-        path.unlink(missing_ok=True)
+        attempt("network holdover removal", lambda path=path: path.unlink(missing_ok=True))
     current_managed = [NETWORKD_MGMT_CONFIG_PATH, *NETWORKD_CONFIG_DIR.glob(f"{NETWORKD_MANAGED_PREFIX}*")]
     for path in current_managed:
         if path.is_file():
-            path.unlink()
-    for item in state.get("snapshots", []):
-        path = Path(str(item["path"]))
-        if bool(item.get("existed")):
+            attempt("candidate network removal", lambda path=path: path.unlink())
+    for index, item in enumerate(state.get("snapshots", [])):
+        def restore_snapshot(item: dict = item) -> None:
+            """Restore one snapshot atomically so a bad backup cannot corrupt its target.
+
+            Args:
+                item: Captured runtime artifact metadata.
+            """
+            path = Path(str(item["path"]))
+            if not bool(item.get("existed")):
+                path.unlink(missing_ok=True)
+                return
             path.parent.mkdir(parents=True, exist_ok=True)
-            shutil.copy2(Path(str(item["backup"])), path)
-            os.chmod(path, int(item.get("mode", 0o600)))
-            os.chown(path, int(item.get("uid", 0)), int(item.get("gid", 0)))
-        else:
-            path.unlink(missing_ok=True)
+            temporary = path.with_name(f".{path.name}.atlaso-rollback")
+            try:
+                shutil.copy2(Path(str(item["backup"])), temporary)
+                os.chmod(temporary, int(item.get("mode", 0o600)))
+                os.chown(temporary, int(item.get("uid", 0)), int(item.get("gid", 0)))
+                temporary.replace(path)
+            finally:
+                temporary.unlink(missing_ok=True)
+
+        attempt(f"snapshot {index} restore", restore_snapshot)
     for command in (["networkctl", "reload"], ["systemctl", "daemon-reload"]):
-        result = _run(command)
-        commands.append({"stage": "rollback", "command": command, "returncode": result.returncode})
-        if result.returncode != 0:
-            raise ValueError(f"rollback command failed: {' '.join(command)}")
-    _restore_management_handoff_resolver(state, commands)
-    _restore_management_handoff_links(state, commands)
-    _restore_management_handoff_firewall(state, commands)
-    nginx = _nginx_binary()
-    if nginx is None or _nginx_test_command().returncode != 0:
-        raise ValueError("nginx rollback validation failed")
+        def run_reload(command: list[str] = command) -> None:
+            """Run one required rollback reload command.
+
+            Args:
+                command: Reload command and arguments.
+            """
+            result = _run(command)
+            commands.append({"stage": "rollback", "command": command, "returncode": result.returncode})
+            if result.returncode != 0:
+                raise ValueError(f"rollback command failed: {' '.join(command)}")
+
+        attempt(f"{' '.join(command)}", run_reload)
+    attempt("resolver restore", lambda: _restore_management_handoff_resolver(state, commands))
+    attempt("network link restore", lambda: _restore_management_handoff_links(state, commands))
+    attempt("firewall restore", lambda: _restore_management_handoff_firewall(state, commands))
+
+    def validate_nginx() -> None:
+        if _nginx_binary() is None or _nginx_test_command().returncode != 0:
+            raise ValueError("nginx rollback validation failed")
+
+    attempt("nginx validation", validate_nginx)
     for command in (["systemctl", "start", "atlaso.service"], ["systemctl", "reload-or-restart", "nginx.service"]):
-        result = _run(command)
-        commands.append({"stage": "service rollback", "command": command, "returncode": result.returncode})
-        if result.returncode != 0:
-            raise ValueError(f"service rollback failed: {' '.join(command)}")
-    readiness = _management_handoff_readiness(
-        list(state.get("previous_management_addresses") or []),
-        bool(state.get("previous_https_enabled", True)),
-        int(
-            state.get("previous_management_public_port")
-            or (443 if state.get("previous_https_enabled", True) else 80)
-        ),
-    )
+        def run_service(command: list[str] = command) -> None:
+            """Run one required rollback service command.
+
+            Args:
+                command: Service command and arguments.
+            """
+            result = _run(command)
+            commands.append({"stage": "service rollback", "command": command, "returncode": result.returncode})
+            if result.returncode != 0:
+                raise ValueError(f"service rollback failed: {' '.join(command)}")
+
+        attempt(f"{' '.join(command)}", run_service)
+    readiness: dict[str, object] = {}
+
+    def check_readiness() -> None:
+        nonlocal readiness
+        readiness = _management_handoff_readiness(
+            list(state.get("previous_management_addresses") or []),
+            bool(state.get("previous_https_enabled", True)),
+            int(
+                state.get("previous_management_public_port")
+                or (443 if state.get("previous_https_enabled", True) else 80)
+            ),
+        )
+
+    attempt("old-path readiness", check_readiness)
+    if errors:
+        bounded = errors[:8]
+        if len(errors) > len(bounded):
+            bounded.append(f"{len(errors) - len(bounded)} additional rollback errors")
+        raise ValueError("rollback incomplete: " + "; ".join(bounded))
     return {"commands": commands, "readiness": readiness}
 
 
