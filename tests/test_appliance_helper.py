@@ -8553,7 +8553,7 @@ def test_appliance_settings_handoff_accepts_staged_https_cert_files(monkeypatch,
         "_validate_firewall_config",
         lambda _path: subprocess.CompletedProcess(["nft", "--check"], 0, "", ""),
     )
-    monkeypatch.setattr(helper, "_public_services_config_errors", lambda _path: [])
+    monkeypatch.setattr(helper, "_public_services_config_errors", lambda _path, **_kwargs: [])
     monkeypatch.setattr(helper, "_ca_payload_errors", lambda _path: [])
     assert helper._management_handoff_validation_errors(
         {
@@ -8567,6 +8567,66 @@ def test_appliance_settings_handoff_accepts_staged_https_cert_files(monkeypatch,
     deployed_errors = helper._appliance_settings_config_errors(settings_path)
     assert any("management HTTPS certificate does not exist" in error for error in deployed_errors)
     assert any("management HTTPS private key does not exist" in error for error in deployed_errors)
+
+
+def test_public_services_handoff_accepts_staged_https_cert_files(monkeypatch, tmp_path):
+    """Validate bundled Public Services TLS material before CA apply installs it.
+
+    Args:
+        monkeypatch: Pytest fixture used to isolate helper validation boundaries.
+        tmp_path: Temporary directory containing staged handoff inputs.
+    """
+    helper = load_helper_module()
+    managed_root = tmp_path / "managed"
+    cert_path = managed_root / "oidc" / "oidc.crt"
+    key_path = managed_root / "oidc" / "oidc.key"
+    public_services_path = tmp_path / "public-services.conf"
+    public_services_path.write_text(
+        public_services_ip_https_depot_config_text(cert_path, key_path),
+        encoding="utf-8",
+    )
+    ca_path = tmp_path / "atlaso-ca.json"
+    ca_path.write_text(
+        json.dumps(
+            {
+                "certificates": [
+                    {
+                        "cert_path": str(cert_path),
+                        "key_path": str(key_path),
+                        "certificate_pem": "-----BEGIN CERTIFICATE-----\nleaf\n-----END CERTIFICATE-----\n",
+                        "private_key_pem": "-----BEGIN PRIVATE KEY-----\nkey\n-----END PRIVATE KEY-----\n",
+                    }
+                ]
+            }
+        ),
+        encoding="utf-8",
+    )
+    settings_path = tmp_path / "atlaso-settings.json"
+    settings_path.write_text(appliance_settings_json(), encoding="utf-8")
+    monkeypatch.setattr(helper, "CA_MANAGED_PATH_BASE", managed_root)
+    monkeypatch.setattr(helper, "VCF_DEPOT_PROD_PATH", Path("/mnt/atlaso-vcf-offline-depot/PROD"))
+    monkeypatch.setattr(helper, "_network_config_errors", lambda _path: [])
+    monkeypatch.setattr(
+        helper,
+        "_validate_firewall_config",
+        lambda _path: subprocess.CompletedProcess(["nft", "--check"], 0, "", ""),
+    )
+    monkeypatch.setattr(helper, "_ca_payload_errors", lambda _path: [])
+
+    assert not cert_path.exists()
+    assert not key_path.exists()
+    assert helper._management_handoff_validation_errors(
+        {
+            "network_config_path": str(tmp_path / "network.conf"),
+            "firewall_config_path": str(tmp_path / "firewall.nft"),
+            "appliance_settings_config_path": str(settings_path),
+            "public_services_config_path": str(public_services_path),
+            "ca_config_path": str(ca_path),
+        }
+    ) == []
+    deployed_errors = helper._public_services_config_errors(public_services_path)
+    assert any("Public services certificate does not exist" in error for error in deployed_errors)
+    assert any("Public services private key does not exist" in error for error in deployed_errors)
 
 
 def test_appliance_settings_helper_requires_https_and_management_for_web_terminal(tmp_path):

@@ -101,6 +101,8 @@ selects all five together and runs them as one recoverable handoff. The task
 keeps every previous configured or runtime global address, public port, HTTP/HTTPS listener, and snapshotted TLS
 certificate active until consecutive bounded checks on the applicable old and candidate public ports prove the Atlaso
 loopback upstream, candidate nginx listener, and host-facing `/openapi.json` are ready.
+When the same handoff first deploys or rotates TLS-backed Public Services, preflight validates every referenced
+certificate and key from the bundled Certificate Authority payload before those files are installed.
 The same transaction moves the management resolver to the candidate interface and persists its directives in the
 effective dedicated or flagged-access physical/VLAN networkd file. Atlaso writes those directives again after the final
 Network install so a later networkd restart or appliance reboot retains them. If either resolver apply fails, rollback

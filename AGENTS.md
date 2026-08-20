@@ -279,9 +279,10 @@ The following cross-cutting boundaries always apply:
   known-good configured and observed global addresses, public port, protocol, and snapshotted TLS identity active until
   consecutive bounded Atlaso loopback,
   candidate nginx, and host-facing `/openapi.json` checks pass. Never expose a candidate nginx front door before its
-  Atlaso upstream is healthy. Move the persistent and runtime management resolver to the candidate interface inside
-  the transaction, persist its directives in the effective dedicated or flagged-access networkd file both before
-  readiness and after the final Network regeneration, and restore the
+  Atlaso upstream is healthy. Validate management and Public Services TLS references against the bundled Certificate
+  Authority payload before relying on deployed files. Move the persistent and runtime management resolver to the
+  candidate interface inside the transaction, persist its directives in the effective dedicated or flagged-access
+  networkd file both before readiness and after the final Network regeneration, and restore the
   previous resolver state with the network snapshot on rollback. Derive loopback/local-DNS resolver mode only from the
   last-applied DNS/DHCP baseline; leave an unapplied DNS enablement pending instead of activating loopback early. Retire
   the old path only

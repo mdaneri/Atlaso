@@ -218,7 +218,8 @@ closure prevents a partial Firewall, certificate, listener, or resolver apply fr
 before candidate networking exists. The helper validates all staged inputs before mutation, snapshots
 the Atlaso-owned networkd, nftables, nginx, certificate, and related runtime files under a root-only state directory,
 uses the bundled CA payload to validate a first-time or rotated management HTTPS certificate before those files are
-installed, while retaining deployed-file validation when no CA payload is bundled,
+installed and to resolve every Certificate Authority-managed Public Services TLS directive before those files are
+installed, while retaining deployed-file validation for referenced paths absent from the bundle,
 syncs every backup file and the backup directory before publishing the rollback marker,
 and merges global runtime addresses from every previous management interface with the configured addresses before it
 installs temporary higher-priority networkd holdovers for the previous management links. Those holdovers retain DHCP,

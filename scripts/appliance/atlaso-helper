@@ -4905,6 +4905,47 @@ def _staged_management_https_material(
     raise ValueError("staged CA payload does not contain the configured management HTTPS certificate and key")
 
 
+def _staged_ca_path_material(
+    ca_path: Path,
+    destination_path: Path,
+    *,
+    private_key: bool,
+) -> str | None:
+    """Return staged CA material for one managed certificate destination.
+
+    Args:
+        ca_path: Staged Certificate Authority payload.
+        destination_path: CA-managed path referenced by the candidate configuration.
+        private_key: Whether the requested destination is a private key.
+
+    Returns:
+        The staged PEM value when the payload owns the destination, otherwise ``None``.
+
+    Raises:
+        ValueError: If the staged certificate collection is malformed.
+    """
+    payload = _load_ca_payload(ca_path)
+    certificates = payload.get("certificates")
+    if not isinstance(certificates, list):
+        raise ValueError("staged CA payload certificates must be a list")
+    path_fields = (("key_path", "private_key_pem"),) if private_key else (
+        ("cert_path", "certificate_pem"),
+        ("chain_path", "chain_pem"),
+    )
+    for certificate in certificates:
+        if not isinstance(certificate, dict):
+            continue
+        for path_field, pem_field in path_fields:
+            path_value = str(certificate.get(path_field) or "")
+            if not path_value:
+                continue
+            staged_path = _ca_managed_path(path_value, f"staged public services {path_field}")
+            if staged_path == destination_path:
+                fallback_pem = certificate.get("certificate_pem") if path_field == "chain_path" else ""
+                return str(certificate.get(pem_field) or fallback_pem or "")
+    return None
+
+
 def _appliance_settings_config_errors(
     path: Path,
     *,
@@ -5327,11 +5368,16 @@ def _validate_public_services_config_path(path_value: str) -> Path:
     return path
 
 
-def _public_services_config_errors(path: Path) -> list[str]:
+def _public_services_config_errors(
+    path: Path,
+    *,
+    staged_ca_path: Path | None = None,
+) -> list[str]:
     """Perform public services config errors.
 
     Args:
         path: Filesystem path read, validated, or updated by the operation.
+        staged_ca_path: Bundled CA payload that will install referenced TLS material.
     """
     try:
         text = path.read_text(encoding="utf-8")
@@ -5450,7 +5496,16 @@ def _public_services_config_errors(path: Path) -> list[str]:
         for value in _nginx_directive(text, directive):
             try:
                 cert_path = _ca_managed_path(value, directive)
-                if not cert_path.is_file():
+                staged_pem = None
+                if staged_ca_path is not None:
+                    staged_pem = _staged_ca_path_material(
+                        staged_ca_path,
+                        cert_path,
+                        private_key=private,
+                    )
+                if staged_pem is not None:
+                    errors.extend(_pem_errors(staged_pem, label, private_key=private))
+                elif not cert_path.is_file():
                     errors.append(f"{label} does not exist: {cert_path}")
                 else:
                     errors.extend(_pem_errors(cert_path.read_text(encoding="utf-8"), label, private_key=private))
@@ -15208,7 +15263,10 @@ def _management_handoff_validation_errors(payload: dict) -> list[str]:
     )
     errors.extend(
         f"public services: {error}"
-        for error in _public_services_config_errors(Path(payload["public_services_config_path"]))
+        for error in _public_services_config_errors(
+            Path(payload["public_services_config_path"]),
+            staged_ca_path=staged_ca_path,
+        )
     )
     if staged_ca_path is not None:
         errors.extend(f"certificate: {error}" for error in _ca_payload_errors(staged_ca_path))
