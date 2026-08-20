@@ -48,6 +48,38 @@ def load_helper_module():
     return module
 
 
+def test_no_change_release_does_not_schedule_an_unverified_restart():
+    """Verify an already-active release completes without a delayed service restart."""
+    from atlaso.app.ui import aggregate_appliance_update_results
+
+    result = aggregate_appliance_update_results(
+        selected_stream_ids=["atlaso_release"],
+        settings={},
+        actor="admin",
+        mode="run",
+        stream_results=[
+            {
+                "unit_id": "atlaso_release",
+                "status": "succeeded",
+                "success": True,
+                "dry_run": False,
+                "commands": [],
+                "release_transaction": {
+                    "status": "succeeded",
+                    "no_change": True,
+                    "active_release_verification": {"success": True},
+                },
+            }
+        ],
+        job_id="job-no-change-release",
+    )
+
+    assert result["success"] is True
+    assert result["release_no_change"] is True
+    assert result["release_worker_restarted"] is False
+    assert result["restart_after_commit"] is False
+
+
 def test_appliance_update_page_and_dry_run_job(client):
     """Verify that appliance update page and dry run job.
 
