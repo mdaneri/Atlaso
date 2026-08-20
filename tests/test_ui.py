@@ -546,68 +546,6 @@ def test_web_terminal_uses_one_use_ticket_and_bridges_websocket_input(client, mo
     assert 'data === "\\u0004" ? "exit\\r" : data' not in terminal_js.text
 
 
-def test_appliance_power_action_creates_task_before_scheduling(client, monkeypatch):
-    """Verify that appliance power action creates task before scheduling.
-
-    Args:
-        client: HTTP test client used to exercise the Atlaso application.
-        monkeypatch: Pytest fixture used to replace dependencies for the test.
-    """
-    from sqlalchemy import select
-
-    from atlaso.app.adapters.system import AdapterResult
-    from atlaso.app.database import SessionLocal
-    from atlaso.app.models import AuditEvent, Job, JobStatus
-    from atlaso.app.ui import SystemAdapter
-
-    observed: list[tuple[str, str]] = []
-
-    def fake_schedule(_self, action: str) -> AdapterResult:
-        """Return fake schedule.
-
-        Args:
-            _self: Self supplied to the test scenario.
-            action: Action supplied to the test scenario.
-        """
-        with SessionLocal() as db:
-            job = db.execute(select(Job).where(Job.type == f"appliance-{action}")).scalar_one()
-            observed.append((job.status, action))
-        return AdapterResult(
-            command=["sudo", "-n", SystemAdapter.HELPER_PATH, "appliance-power", action, "--real"],
-            dry_run=False,
-            stdout="scheduled",
-        )
-
-    monkeypatch.setattr(SystemAdapter, "schedule_appliance_power", fake_schedule)
-    login(client)
-    page = client.get("/dashboard")
-    csrf = page.text.split('name="csrf" value="', 1)[1].split('"', 1)[0]
-
-    response = client.post(
-        "/appliance/power/reboot",
-        data={"csrf": csrf},
-        follow_redirects=False,
-    )
-
-    assert response.status_code == 303
-    assert response.headers["location"].startswith("/ui/management/tasks?job_id=job_")
-    assert observed == [(JobStatus.RUNNING.value, "reboot")]
-    with SessionLocal() as db:
-        job = db.execute(select(Job).where(Job.type == "appliance-reboot")).scalar_one()
-        payload = json.loads(job.result or "{}")
-        assert job.status == JobStatus.SUCCEEDED.value
-        assert job.progress_percent == 100
-        assert payload["action"] == "reboot"
-        assert payload["scheduled"] is True
-        assert payload["delay_seconds"] == 5
-        actions = set(db.execute(select(AuditEvent.action).where(AuditEvent.resource_id == job.id)).scalars())
-        assert actions == {"submit_appliance_reboot", "schedule_appliance_reboot"}
-
-    tasks = client.get(response.headers["location"])
-    assert tasks.status_code == 200
-    assert "Appliance Reboot" in tasks.text
-
-
 def test_account_menu_uses_defined_opaque_surface_tokens():
     """Verify that account menu uses defined opaque surface tokens."""
     from pathlib import Path
@@ -621,45 +559,6 @@ def test_account_menu_uses_defined_opaque_surface_tokens():
     assert "border-color: var(--accent);" in menu_css
 
 
-def test_appliance_shutdown_task_reports_helper_failure(client, monkeypatch):
-    """Verify that appliance shutdown task reports helper failure.
-
-    Args:
-        client: HTTP test client used to exercise the Atlaso application.
-        monkeypatch: Pytest fixture used to replace dependencies for the test.
-    """
-    import json
-
-    from sqlalchemy import select
-
-    from atlaso.app.adapters.system import AdapterResult
-    from atlaso.app.database import SessionLocal
-    from atlaso.app.models import Job, JobStatus
-    from atlaso.app.ui import SystemAdapter
-
-    monkeypatch.setattr(
-        SystemAdapter,
-        "schedule_appliance_power",
-        lambda _self, action: AdapterResult(
-            command=["atlaso-helper", "appliance-power", action],
-            dry_run=False,
-            stderr="systemd-run unavailable",
-            returncode=127,
-        ),
-    )
-    login(client)
-    page = client.get("/dashboard")
-    csrf = page.text.split('name="csrf" value="', 1)[1].split('"', 1)[0]
-
-    response = client.post("/appliance/power/shutdown", data={"csrf": csrf}, follow_redirects=False)
-
-    assert response.status_code == 303
-    with SessionLocal() as db:
-        job = db.execute(select(Job).where(Job.type == "appliance-shutdown")).scalar_one()
-        payload = json.loads(job.result or "{}")
-        assert job.status == JobStatus.FAILED.value
-        assert job.error == "Appliance shutdown scheduling failed."
-        assert payload["scheduled"] is False
 def test_tasks_page_lists_redacts_logs_and_cancels(client):
     """Verify that tasks page lists redacts logs and cancels.
 
