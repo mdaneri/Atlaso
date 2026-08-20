@@ -330,6 +330,224 @@ def test_factory_reset_helper_rejects_busy_admission_without_touching_other_requ
     assert not (state_directory / "request.json").exists()
 
 
+def test_factory_reset_helper_replaces_failed_schedule_credentials_on_retry(
+    monkeypatch,
+    tmp_path,
+):
+    """A pre-run scheduling retry atomically replaces the rejected credential plan.
+
+    Args:
+        monkeypatch: Pytest fixture used to replace dependencies for the test.
+        tmp_path: Temporary directory provided by pytest for isolated filesystem state.
+    """
+    helper = load_helper_module()
+    state_directory = tmp_path / "factory-reset"
+    staged_template = tmp_path / "apply" / "factory-reset" / "credentials.json"
+    staged_template.parent.mkdir(parents=True)
+    first_request = staged_template.with_name(
+        "credentials-33333333333333333333333333333333.json"
+    )
+    retry_request = staged_template.with_name(
+        "credentials-44444444444444444444444444444444.json"
+    )
+    first_request.write_text(
+        json.dumps(
+            {
+                "schema_version": 1,
+                "admin_action": "change",
+                "admin_password": "First-Choice1!",
+                "root_action": "keep",
+            }
+        ),
+        encoding="utf-8",
+    )
+    retry_request.write_text(
+        json.dumps(
+            {
+                "schema_version": 1,
+                "admin_action": "keep",
+                "root_action": "change",
+                "root_password": "Retry-Choice2!",
+            }
+        ),
+        encoding="utf-8",
+    )
+    for path in (first_request, retry_request):
+        path.chmod(0o600)
+
+    class Account:
+        """Represent the service account owning both protected staging files."""
+
+        pw_uid = first_request.stat().st_uid
+
+    schedule_attempts = 0
+
+    def fake_run(command: list[str], **_kwargs) -> subprocess.CompletedProcess[str]:
+        """Fail the first detached schedule and accept the retry.
+
+        Args:
+            command: Exact helper command being modeled.
+            **_kwargs: Subprocess options ignored by the test double.
+        """
+        nonlocal schedule_attempts
+        if command[:3] == ["systemctl", "is-active", "--quiet"]:
+            return subprocess.CompletedProcess(command, 3, "", "")
+        if command and command[0] == "/usr/bin/systemd-run":
+            schedule_attempts += 1
+            return subprocess.CompletedProcess(
+                command,
+                1 if schedule_attempts == 1 else 0,
+                "",
+                "injected scheduling failure" if schedule_attempts == 1 else "",
+            )
+        return subprocess.CompletedProcess(command, 0, "", "")
+
+    monkeypatch.setattr(helper, "ATLASO_FACTORY_RESET_DIR", state_directory)
+    monkeypatch.setattr(
+        helper,
+        "ATLASO_FACTORY_RESET_REQUEST_PATH",
+        state_directory / "request.json",
+    )
+    monkeypatch.setattr(
+        helper,
+        "ATLASO_FACTORY_RESET_RESULT_PATH",
+        state_directory / "last-result.json",
+    )
+    monkeypatch.setattr(
+        helper,
+        "ATLASO_FACTORY_RESET_CREDENTIALS_PATH",
+        state_directory / "credentials.json",
+    )
+    monkeypatch.setattr(
+        helper,
+        "ATLASO_FACTORY_RESET_STAGED_CREDENTIALS_PATH",
+        staged_template,
+    )
+    monkeypatch.setattr(helper.pwd, "getpwnam", lambda _username: Account())
+    monkeypatch.setattr(
+        helper.shutil,
+        "which",
+        lambda command: f"/usr/bin/{command}" if command in {"systemd-run", "logger"} else None,
+    )
+    monkeypatch.setattr(helper.shutil, "chown", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr(helper, "_run", fake_run)
+
+    assert helper._handle_factory_reset("schedule", [str(first_request)]) == 1
+    failed_marker = json.loads(
+        (state_directory / "request.json").read_text(encoding="utf-8")
+    )
+    assert failed_marker["state"] == "failed"
+    assert failed_marker["failure_phase"] == "scheduling"
+
+    assert helper._handle_factory_reset("schedule", [str(retry_request)]) == 0
+    accepted_marker = json.loads(
+        (state_directory / "request.json").read_text(encoding="utf-8")
+    )
+    durable_credentials = json.loads(
+        (state_directory / "credentials.json").read_text(encoding="utf-8")
+    )
+    assert accepted_marker["state"] == "scheduled"
+    assert "failure_phase" not in accepted_marker
+    assert accepted_marker["admin_password_action"] == "keep"
+    assert accepted_marker["root_password_action"] == "change"
+    assert durable_credentials == {
+        "schema_version": 1,
+        "admin_action": "keep",
+        "root_action": "change",
+        "root_password": "Retry-Choice2!",
+    }
+    assert schedule_attempts == 2
+    assert not first_request.exists()
+    assert not retry_request.exists()
+
+
+def test_factory_reset_helper_rejects_retry_after_execution_failure(
+    monkeypatch,
+    tmp_path,
+    capsys,
+):
+    """A browser retry cannot overwrite credentials after execution started.
+
+    Args:
+        monkeypatch: Pytest fixture used to replace dependencies for the test.
+        tmp_path: Temporary directory provided by pytest for isolated filesystem state.
+        capsys: Pytest fixture used to capture standard output and standard error.
+    """
+    helper = load_helper_module()
+    state_directory = tmp_path / "factory-reset"
+    state_directory.mkdir()
+    marker_path = state_directory / "request.json"
+    marker_path.write_text(
+        json.dumps(
+            {
+                "schema_version": 1,
+                "state": "failed",
+                "message": "execution failed",
+            }
+        ),
+        encoding="utf-8",
+    )
+    durable_path = state_directory / "credentials.json"
+    durable_path.write_text('{"original":"plan"}', encoding="utf-8")
+    staged_template = tmp_path / "apply" / "factory-reset" / "credentials.json"
+    retry_request = staged_template.with_name(
+        "credentials-55555555555555555555555555555555.json"
+    )
+    retry_request.parent.mkdir(parents=True)
+    retry_request.write_text(
+        json.dumps(
+            {
+                "schema_version": 1,
+                "admin_action": "keep",
+                "root_action": "keep",
+            }
+        ),
+        encoding="utf-8",
+    )
+    retry_request.chmod(0o600)
+
+    class Account:
+        """Represent the service account owning the protected staging file."""
+
+        pw_uid = retry_request.stat().st_uid
+
+    def fake_run(command: list[str], **_kwargs) -> subprocess.CompletedProcess[str]:
+        """Report no active timer or service.
+
+        Args:
+            command: Exact helper command being modeled.
+            **_kwargs: Subprocess options ignored by the test double.
+        """
+        assert command[:3] == ["systemctl", "is-active", "--quiet"]
+        return subprocess.CompletedProcess(command, 3, "", "")
+
+    monkeypatch.setattr(helper, "ATLASO_FACTORY_RESET_DIR", state_directory)
+    monkeypatch.setattr(helper, "ATLASO_FACTORY_RESET_REQUEST_PATH", marker_path)
+    monkeypatch.setattr(
+        helper,
+        "ATLASO_FACTORY_RESET_RESULT_PATH",
+        state_directory / "last-result.json",
+    )
+    monkeypatch.setattr(helper, "ATLASO_FACTORY_RESET_CREDENTIALS_PATH", durable_path)
+    monkeypatch.setattr(
+        helper,
+        "ATLASO_FACTORY_RESET_STAGED_CREDENTIALS_PATH",
+        staged_template,
+    )
+    monkeypatch.setattr(helper.pwd, "getpwnam", lambda _username: Account())
+    monkeypatch.setattr(
+        helper.shutil,
+        "which",
+        lambda command: "/usr/bin/systemd-run" if command == "systemd-run" else None,
+    )
+    monkeypatch.setattr(helper, "_run", fake_run)
+
+    assert helper._handle_factory_reset("schedule", [str(retry_request)]) == 2
+    assert "requires console recovery" in capsys.readouterr().err
+    assert durable_path.read_text(encoding="utf-8") == '{"original":"plan"}'
+    assert not retry_request.exists()
+
+
 def test_factory_reset_marker_fsyncs_replaced_directory(monkeypatch, tmp_path):
     """The accepted marker survives a crash after its atomic rename.
 

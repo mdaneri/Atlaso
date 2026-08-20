@@ -582,6 +582,9 @@ accepts at most one plan, reports contention as a retryable scheduling failure, 
 file. Changed values are prevalidated against the packaged factory Local Users policy rather than mutable current
 desired state. Retained credential cleanup fsyncs the managed Photon repository directory before the reset transaction
 may advance to management-readiness verification.
+An inactive marker tagged with `failure_phase: scheduling` is the only failed request that web admission may replace;
+the replacement credential plan and fresh scheduled marker are both persisted before dispatch. Any failure after the
+runner starts remains a console/boot recovery concern and rejects a new browser schedule.
 
 ### Operational logs and appliance power
 

@@ -13521,20 +13521,6 @@ def _schedule_factory_reset_locked(
     Args:
         credentials: Validated protected password choices for the admitted reset.
     """
-    if not ATLASO_FACTORY_RESET_REQUEST_PATH.is_file():
-        now = datetime.now(timezone.utc).isoformat()
-        _persist_factory_reset_credentials(credentials)
-        _write_factory_reset_marker(
-            {
-                "schema_version": 1,
-                "state": "scheduled",
-                "requested_at": now,
-                "updated_at": now,
-                "message": "Factory reset is scheduled.",
-                "admin_password_action": credentials["admin_action"],
-                "root_password_action": credentials["root_action"],
-            }
-        )
     systemd_run = shutil.which("systemd-run")
     if systemd_run is None:
         print("systemd-run is required to schedule factory reset", file=sys.stderr)
@@ -13544,6 +13530,48 @@ def _schedule_factory_reset_locked(
         if active.returncode == 0:
             print(json.dumps(_factory_reset_state_payload(), sort_keys=True))
             return 0
+    request_payload: dict = {}
+    request_path = ATLASO_FACTORY_RESET_REQUEST_PATH
+    if request_path.is_symlink():
+        raise ValueError("factory-reset request marker is unsafe")
+    if request_path.exists():
+        if (
+            not request_path.is_file()
+            or request_path.resolve() != request_path
+            or request_path.stat().st_size > 64 * 1024
+        ):
+            raise ValueError("factory-reset request marker is unsafe")
+        try:
+            parsed_request = json.loads(request_path.read_text(encoding="utf-8"))
+        except (OSError, UnicodeError, json.JSONDecodeError) as exc:
+            raise ValueError("factory-reset request marker is invalid") from exc
+        if not isinstance(parsed_request, dict):
+            raise ValueError("factory-reset request marker is invalid")
+        request_payload = parsed_request
+        scheduling_retry = (
+            request_payload.get("schema_version") == 1
+            and request_payload.get("state") == "failed"
+            and request_payload.get("failure_phase") == "scheduling"
+            and "applied_unit_count" not in request_payload
+        )
+        if not scheduling_retry:
+            raise ValueError(
+                "factory-reset request requires console recovery before another reset can be scheduled"
+            )
+    now = datetime.now(timezone.utc).isoformat()
+    requested_at = str(request_payload.get("requested_at") or now)
+    _persist_factory_reset_credentials(credentials)
+    _write_factory_reset_marker(
+        {
+            "schema_version": 1,
+            "state": "scheduled",
+            "requested_at": requested_at,
+            "updated_at": now,
+            "message": "Factory reset is scheduled.",
+            "admin_password_action": credentials["admin_action"],
+            "root_password_action": credentials["root_action"],
+        }
+    )
     _run(
         [
             "systemctl",
@@ -13572,6 +13600,7 @@ def _schedule_factory_reset_locked(
         failed.update(
             {
                 "state": "failed",
+                "failure_phase": "scheduling",
                 "updated_at": datetime.now(timezone.utc).isoformat(),
                 "message": "Factory reset could not be scheduled. Use the console recovery path.",
             }

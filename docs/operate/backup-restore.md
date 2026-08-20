@@ -94,6 +94,10 @@ selected for the reset. Factory state disables Management HTTPS and restores the
 (`192.168.49.1/24` on `eth0`), so the browser may lose the old address or HTTPS endpoint. Use the VMware or
 Hyper-V console to find or correct management networking when the login page does not return at the former URL.
 
+If detached scheduling fails before reset execution begins, a later confirmed submission replaces both the rejected
+password plan and its scheduling marker before retrying. Once execution has started, a failed marker remains
+recovery-only; another browser submission cannot replace its credentials or progress.
+
 Reset progress and only the non-secret `keep`/`change` choices are recorded outside the database in
 `/var/lib/atlaso/factory-reset/request.json`; the last successful result is recorded in `last-result.json`. Atlaso
 resumes an incomplete marker before the web control plane starts after
