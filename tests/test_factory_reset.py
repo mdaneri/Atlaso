@@ -95,8 +95,8 @@ def test_factory_reset_transaction_lock_rejects_overlapping_posix_runner(
             pytest.fail("contending runner must not enter the transaction")
 
 
-def test_factory_reset_stops_timestamped_transient_automation_units(monkeypatch):
-    """Reset quiesces independent automation services after stopping the worker.
+def test_factory_reset_stops_transient_restart_and_automation_units(monkeypatch):
+    """Reset quiesces delayed restarts and automation after stopping writers.
 
     Args:
         monkeypatch: Pytest fixture used to replace dependencies for the test.
@@ -104,10 +104,12 @@ def test_factory_reset_stops_timestamped_transient_automation_units(monkeypatch)
     import atlaso.app.factory_reset as factory_reset
 
     commands: list[list[str]] = []
-    units = [
+    automation_units = [
         "atlaso-automation-20260815230000123456.service",
         "atlaso-automation-20260815230100654321.service",
     ]
+    restart_timer = "atlaso-update-restart-20260820152500123456.timer"
+    restart_service = "atlaso-update-restart-20260820152500123456.service"
 
     def fake_run(command, **_kwargs):
         """Return a bounded systemd inventory and stopped-state verification.
@@ -118,7 +120,15 @@ def test_factory_reset_stops_timestamped_transient_automation_units(monkeypatch)
         """
         commands.append(command)
         if command[1] == "list-units":
-            stdout = "\n".join(f"{unit} loaded active running Atlaso automation" for unit in units)
+            if command[-1] == "atlaso-update-restart-*.timer":
+                stdout = f"{restart_timer} loaded active waiting Atlaso update restart"
+            elif command[-1] == "atlaso-update-restart-*.service":
+                stdout = f"{restart_service} loaded active running Atlaso update restart"
+            else:
+                stdout = "\n".join(
+                    f"{unit} loaded active running Atlaso automation"
+                    for unit in automation_units
+                )
             return subprocess.CompletedProcess(command, 0, stdout, "")
         if command[1] == "is-active":
             return subprocess.CompletedProcess(command, 3, "", "")
@@ -129,12 +139,71 @@ def test_factory_reset_stops_timestamped_transient_automation_units(monkeypatch)
     factory_reset._stop_application_services(boot_resume=False)
 
     assert commands[0] == ["systemctl", "stop", "atlaso-worker.service", "atlaso.service"]
-    assert commands[1][-1] == "atlaso-automation-*.service"
-    assert commands[2] == ["systemctl", "stop", *units]
-    assert commands[3:] == [
-        ["systemctl", "is-active", "--quiet", units[0]],
-        ["systemctl", "is-active", "--quiet", units[1]],
+    assert commands[1][-1] == "atlaso-update-restart-*.timer"
+    assert commands[2] == ["systemctl", "stop", restart_timer]
+    assert commands[3] == ["systemctl", "is-active", "--quiet", restart_timer]
+    assert commands[4][-1] == "atlaso-update-restart-*.service"
+    assert commands[5] == ["systemctl", "stop", restart_service]
+    assert commands[6] == ["systemctl", "is-active", "--quiet", restart_service]
+    assert commands[7][-1] == "atlaso-automation-*.service"
+    assert commands[8] == ["systemctl", "stop", *automation_units]
+    assert commands[9:] == [
+        ["systemctl", "is-active", "--quiet", automation_units[0]],
+        ["systemctl", "is-active", "--quiet", automation_units[1]],
     ]
+
+
+def test_fallback_sqlite_replacement_serializes_an_earlier_writer(tmp_path):
+    """The fallback waits for an earlier writer and then removes its pre-reset row.
+
+    Args:
+        tmp_path: Temporary directory provided by pytest for isolated SQLite files.
+    """
+    import sqlite3
+    import threading
+
+    from atlaso.app.factory_reset import _replace_sqlite_database_contents
+
+    live_path = tmp_path / "live.db"
+    candidate_path = tmp_path / "candidate.db"
+    for path, value in ((live_path, "old"), (candidate_path, "factory")):
+        with sqlite3.connect(path) as connection:
+            connection.execute(
+                "CREATE TABLE records (id INTEGER PRIMARY KEY AUTOINCREMENT, value TEXT NOT NULL)"
+            )
+            connection.execute("INSERT INTO records (value) VALUES (?)", (value,))
+            connection.commit()
+
+    writer = sqlite3.connect(live_path, check_same_thread=False, timeout=5)
+    writer.execute("INSERT INTO records (value) VALUES ('pre-reset-late-commit')")
+    completed = threading.Event()
+    failures: list[BaseException] = []
+
+    def replace() -> None:
+        """Run the transactional replacement in a competing thread."""
+        try:
+            _replace_sqlite_database_contents(live_path, candidate_path)
+        except BaseException as exc:  # noqa: BLE001 - preserve thread failure for the assertion.
+            failures.append(exc)
+        finally:
+            completed.set()
+
+    thread = threading.Thread(target=replace)
+    thread.start()
+    assert not completed.wait(0.1)
+    writer.commit()
+    writer.close()
+    assert completed.wait(5)
+    thread.join()
+
+    assert failures == []
+    with sqlite3.connect(live_path) as connection:
+        assert connection.execute("SELECT id, value FROM records").fetchall() == [
+            (1, "factory")
+        ]
+        assert connection.execute(
+            "SELECT seq FROM sqlite_sequence WHERE name = 'records'"
+        ).fetchone() == (1,)
 
 
 def test_factory_reset_scrubs_credentials_outside_apply_staging(tmp_path, monkeypatch):

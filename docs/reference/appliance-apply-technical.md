@@ -575,8 +575,11 @@ marker remains `awaiting_readiness` until an independent finalizer observes Atla
 management OpenAPI successes. A restart/readiness failure retains the marker for boot-time resume before
 `atlaso.service` starts. Preflight renders prospective management and public nginx sites, root and VCF Backup sshd
 drop-ins, the management resolver file, and the Atlaso service loopback drop-in into isolated temporary trees and runs
-the native validators there without changing the active host configuration. The non-appliance fallback likewise
-builds and validates an isolated SQLite candidate before replacing the request connection through SQLite backup.
+the native validators there without changing the active host configuration. Before candidate activation, reset cancels
+and verifies the exact timestamp-shaped `atlaso-update-restart-*` timers and services created by update Apply so a
+three-second delayed restart cannot revive the worker during database replacement. The non-appliance fallback likewise
+builds and validates an isolated SQLite candidate, then copies its data under one `BEGIN IMMEDIATE` transaction that
+waits for earlier writers and blocks later writers until replacement commits.
 Each web request stages its keep-or-change password plan in a distinct mode-`0600` file. Nonblocking helper admission
 accepts at most one plan, reports contention as a retryable scheduling failure, and deletes only the calling request's
 file. Changed values are prevalidated against the packaged factory Local Users policy rather than mutable current

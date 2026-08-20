@@ -52,8 +52,9 @@ The reset:
 - removes all control-plane records, including local and external users, password hashes, API tokens, sessions,
   schedules, queued and completed jobs, automation history, audit events, vault entries, certificates, VLANs, routes,
   service configuration, and settings-archive metadata;
-- stops Atlaso and its worker, then stops and verifies every timestamped `atlaso-automation-*` transient service before
-  runtime activation so a pre-reset script or its loaded vault credential cannot outlive the reset transaction;
+- stops Atlaso and its worker, cancels and verifies every bounded `atlaso-update-restart-*` timer and service, then stops
+  and verifies every timestamped `atlaso-automation-*` transient service before runtime activation so neither a delayed
+  update restart nor a pre-reset script with a loaded vault credential can outlive the reset transaction;
 - recreates only factory/bootstrap records, including the bootstrap accounts, management `eth0`, the appliance DNS
   record, and built-in CA profiles; VCF Offline Depot download profiles are not recreated;
 - enables the minimum routing, firewall, authentication, and management-plane defaults while leaving optional services
@@ -110,9 +111,10 @@ nonblocking transaction lock rejects overlapping scheduled, boot-resume, or cons
 modify the active reset transaction; the pending systemd delay timer is part of that active transaction.
 
 Development and non-appliance fallback reset supports only keeping both passwords and follows the same replacement
-boundary without host mutation: Atlaso builds and validates a private SQLite candidate first, then uses SQLite's backup
-operation to replace the request connection only after that candidate is complete. A candidate-rendering or validation
-failure leaves the source database unchanged.
+boundary without host mutation: Atlaso builds and validates a private SQLite candidate first, then copies its complete
+table contents under one `BEGIN IMMEDIATE` writer transaction. Earlier writers must finish before replacement and later
+writers cannot commit until the factory contents are durable, so a pre-reset transaction cannot reintroduce removed
+records afterward. A candidate-rendering, schema-contract, or validation failure leaves the source database unchanged.
 
 ## Restore safely
 

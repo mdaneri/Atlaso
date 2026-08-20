@@ -75,6 +75,8 @@ LOCAL_USERS_HOME_DIRECTORY = Path("/var/lib/atlaso/users")
 LOCAL_USER_NAME_PATTERN = re.compile(r"^[a-z_][a-z0-9_-]{0,31}$")
 BOOTSTRAP_AUTHORIZED_KEY_NAMES = ("authorized_keys", "authorized_keys2")
 AUTOMATION_TRANSIENT_UNIT_PATTERN = re.compile(r"^atlaso-automation-\d{20}\.service$")
+UPDATE_RESTART_TIMER_PATTERN = re.compile(r"^atlaso-update-restart-\d{20}\.timer$")
+UPDATE_RESTART_SERVICE_PATTERN = re.compile(r"^atlaso-update-restart-\d{20}\.service$")
 WEB_TERMINAL_CREDENTIAL_PATHS = (
     Path("/etc/atlaso/ssh/web-terminal-ca"),
     Path("/etc/atlaso/ssh/web-terminal-ca.pub"),
@@ -417,32 +419,54 @@ def _run_systemctl(*arguments: str) -> None:
         raise FactoryResetError(detail)
 
 
-def _stop_transient_automation_units() -> None:
-    """Stop every bounded Atlaso automation transient unit after worker quiescence."""
+def _inventory_transient_units(
+    *,
+    unit_type: str,
+    unit_glob: str,
+    unit_pattern: re.Pattern[str],
+    label: str,
+) -> list[str]:
+    """Return an exact bounded systemd transient-unit inventory.
+
+    Args:
+        unit_type: Exact systemd unit type to inventory.
+        unit_glob: Exact Atlaso-owned unit glob passed to systemctl.
+        unit_pattern: Full-match validator for every returned unit name.
+        label: Public-safe unit family used in failures.
+    """
     completed = subprocess.run(
         [
             "systemctl",
             "list-units",
             "--all",
-            "--type=service",
+            f"--type={unit_type}",
             "--no-legend",
             "--no-pager",
             "--plain",
-            "atlaso-automation-*.service",
+            unit_glob,
         ],
         check=False,
         capture_output=True,
         text=True,
     )
     if completed.returncode != 0:
-        raise FactoryResetError("Factory reset could not inventory running automation units.")
+        raise FactoryResetError(f"Factory reset could not inventory {label} units.")
     units: list[str] = []
     for line in completed.stdout.splitlines():
-        matches = [token for token in line.split() if AUTOMATION_TRANSIENT_UNIT_PATTERN.fullmatch(token)]
+        matches = [token for token in line.split() if unit_pattern.fullmatch(token)]
         if len(matches) != 1:
-            raise FactoryResetError("Factory reset encountered an unsafe automation unit inventory.")
+            raise FactoryResetError(f"Factory reset encountered an unsafe {label} unit inventory.")
         units.append(matches[0])
-    units = sorted(set(units))
+    return sorted(set(units))
+
+
+def _stop_and_verify_transient_units(units: list[str], *, label: str) -> None:
+    """Stop and verify one already validated transient-unit set.
+
+    Args:
+        units: Exact validated systemd unit names.
+        label: Public-safe unit family used in failures.
+    """
     if not units:
         return
     _run_systemctl("stop", *units)
@@ -454,9 +478,38 @@ def _stop_transient_automation_units() -> None:
             text=True,
         )
         if active.returncode == 0:
-            raise FactoryResetError("Factory reset could not stop an Atlaso automation unit.")
+            raise FactoryResetError(f"Factory reset could not stop an Atlaso {label} unit.")
         if active.returncode not in {3, 4}:
-            raise FactoryResetError("Factory reset could not verify an Atlaso automation unit stopped.")
+            raise FactoryResetError(f"Factory reset could not verify an Atlaso {label} unit stopped.")
+
+
+def _stop_transient_update_restart_units() -> None:
+    """Cancel delayed update restarts before they can revive a database writer."""
+    timers = _inventory_transient_units(
+        unit_type="timer",
+        unit_glob="atlaso-update-restart-*.timer",
+        unit_pattern=UPDATE_RESTART_TIMER_PATTERN,
+        label="update-restart timer",
+    )
+    _stop_and_verify_transient_units(timers, label="update-restart timer")
+    services = _inventory_transient_units(
+        unit_type="service",
+        unit_glob="atlaso-update-restart-*.service",
+        unit_pattern=UPDATE_RESTART_SERVICE_PATTERN,
+        label="update-restart service",
+    )
+    _stop_and_verify_transient_units(services, label="update-restart service")
+
+
+def _stop_transient_automation_units() -> None:
+    """Stop every bounded Atlaso automation transient unit after worker quiescence."""
+    units = _inventory_transient_units(
+        unit_type="service",
+        unit_glob="atlaso-automation-*.service",
+        unit_pattern=AUTOMATION_TRANSIENT_UNIT_PATTERN,
+        label="automation",
+    )
+    _stop_and_verify_transient_units(units, label="automation")
 
 
 def _stop_application_services(*, boot_resume: bool) -> None:
@@ -469,6 +522,7 @@ def _stop_application_services(*, boot_resume: bool) -> None:
         _run_systemctl("stop", "atlaso-worker.service")
     else:
         _run_systemctl("stop", "atlaso-worker.service", "atlaso.service")
+    _stop_transient_update_restart_units()
     _stop_transient_automation_units()
 
 
@@ -952,7 +1006,7 @@ def replace_database_with_factory_candidate(
     adapter: SystemAdapter,
     credential_plan: dict[str, str] | None = None,
 ) -> int:
-    """Validate an isolated candidate before atomically backing it into a local database.
+    """Validate an isolated candidate before transactionally replacing local data.
 
     Args:
         db: Active request database session to replace.
@@ -984,13 +1038,7 @@ def replace_database_with_factory_candidate(
             report_progress=False,
         )
         db.rollback()
-        destination_connection = cast(
-            sqlite3.Connection,
-            db.connection().connection.driver_connection,
-        )
-        with closing(sqlite3.connect(candidate_path)) as candidate_connection:
-            candidate_connection.backup(destination_connection)
-        destination_connection.commit()
+        _replace_sqlite_database_contents(source_path, candidate_path)
         db.expire_all()
         return unit_count
     except Exception:
@@ -1005,6 +1053,105 @@ def replace_database_with_factory_candidate(
         candidate_path.unlink(missing_ok=True)
         for suffix in ("-wal", "-shm", "-journal"):
             Path(f"{candidate_path}{suffix}").unlink(missing_ok=True)
+
+
+def _sqlite_table_inventory(
+    connection: sqlite3.Connection,
+    schema: str,
+) -> dict[str, tuple[str, ...]]:
+    """Return user-table columns from one attached SQLite schema.
+
+    Args:
+        connection: SQLite connection with the requested schema attached.
+        schema: Fixed schema name, either ``main`` or ``candidate``.
+    """
+    if schema not in {"main", "candidate"}:
+        raise FactoryResetError("Factory reset encountered an unsafe SQLite schema name.")
+    rows = connection.execute(
+        f"SELECT name FROM {schema}.sqlite_schema "
+        "WHERE type = 'table' AND name NOT LIKE 'sqlite_%' ORDER BY name"
+    ).fetchall()
+    inventory: dict[str, tuple[str, ...]] = {}
+    for row in rows:
+        table_name = str(row[0])
+        quoted_table = '"' + table_name.replace('"', '""') + '"'
+        columns = tuple(
+            str(column[1])
+            for column in connection.execute(
+                f"PRAGMA {schema}.table_xinfo({quoted_table})"
+            ).fetchall()
+            if int(column[6]) == 0
+        )
+        if not columns:
+            raise FactoryResetError("Factory reset encountered a SQLite table without writable columns.")
+        inventory[table_name] = columns
+    return inventory
+
+
+def _replace_sqlite_database_contents(source_path: Path, candidate_path: Path) -> None:
+    """Copy factory data under one SQLite writer transaction.
+
+    ``BEGIN IMMEDIATE`` waits for any earlier writer to finish, blocks later writers until the
+    replacement commits, and makes a pre-reset transaction unable to commit after the factory
+    contents. The candidate and installed schemas must expose the same writable table columns.
+
+    Args:
+        source_path: Installed SQLite database whose data must be replaced.
+        candidate_path: Fully validated factory candidate database.
+    """
+    with closing(sqlite3.connect(source_path, timeout=30)) as destination_connection:
+        destination_connection.execute("PRAGMA foreign_keys=OFF")
+        destination_connection.execute(
+            "ATTACH DATABASE ? AS candidate",
+            (str(candidate_path),),
+        )
+        try:
+            destination_connection.execute("BEGIN IMMEDIATE")
+            installed = _sqlite_table_inventory(destination_connection, "main")
+            candidate = _sqlite_table_inventory(destination_connection, "candidate")
+            if installed != candidate:
+                raise FactoryResetError(
+                    "Factory reset cannot replace a development database with a different schema."
+                )
+            for table_name, columns in installed.items():
+                quoted_table = '"' + table_name.replace('"', '""') + '"'
+                quoted_columns = ", ".join(
+                    '"' + column.replace('"', '""') + '"' for column in columns
+                )
+                destination_connection.execute(f"DELETE FROM main.{quoted_table}")
+                destination_connection.execute(
+                    f"INSERT INTO main.{quoted_table} ({quoted_columns}) "
+                    f"SELECT {quoted_columns} FROM candidate.{quoted_table}"
+                )
+            installed_sequence = destination_connection.execute(
+                "SELECT 1 FROM main.sqlite_schema WHERE type = 'table' AND name = 'sqlite_sequence'"
+            ).fetchone()
+            candidate_sequence = destination_connection.execute(
+                "SELECT 1 FROM candidate.sqlite_schema WHERE type = 'table' AND name = 'sqlite_sequence'"
+            ).fetchone()
+            if bool(installed_sequence) != bool(candidate_sequence):
+                raise FactoryResetError(
+                    "Factory reset cannot replace a development database with a different sequence contract."
+                )
+            if installed_sequence:
+                destination_connection.execute("DELETE FROM main.sqlite_sequence")
+                destination_connection.execute(
+                    "INSERT INTO main.sqlite_sequence (name, seq) "
+                    "SELECT name, seq FROM candidate.sqlite_sequence"
+                )
+            foreign_key_failure = destination_connection.execute(
+                "PRAGMA main.foreign_key_check"
+            ).fetchone()
+            if foreign_key_failure is not None:
+                raise FactoryResetError(
+                    "Factory reset candidate violates the installed SQLite foreign-key contract."
+                )
+            destination_connection.commit()
+        except Exception:
+            destination_connection.rollback()
+            raise
+        finally:
+            destination_connection.execute("DETACH DATABASE candidate")
 
 
 def _run_factory_reset_locked(
