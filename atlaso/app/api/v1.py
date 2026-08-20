@@ -1801,7 +1801,11 @@ export_ldap_recovery = _managed_ldap_api.endpoints["export_ldap_recovery"]
 stage_ldap_recovery_import = _managed_ldap_api.endpoints["stage_ldap_recovery_import"]
 
 def _certificate_trust_service_bind_options(db: Session) -> list[dict[str, object]]:
-    """Resolve current service bind options through the stable UI facade seam."""
+    """Resolve current service bind options through the stable UI facade seam.
+
+    Args:
+        db: Active database session.
+    """
     from atlaso.app import ui as ui_module
 
     return ui_module.service_bind_options(db)

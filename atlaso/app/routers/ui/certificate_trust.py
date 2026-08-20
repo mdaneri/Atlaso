@@ -134,7 +134,11 @@ class CertificateTrustUiRouters:
 def build_routers(
     dependencies: CertificateTrustUiDependencies,
 ) -> CertificateTrustUiRouters:
-    """Build Certificate Authority and vSphere Key Provider UI transports."""
+    """Build Certificate Authority and vSphere Key Provider UI transports.
+
+    Args:
+        dependencies: Facade-provided transport dependencies.
+    """
     appliance_apply_status = dependencies.appliance_apply_status
     ca_context = dependencies.ca_context
     ca_request_context = dependencies.ca_request_context

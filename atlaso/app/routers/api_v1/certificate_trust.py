@@ -102,7 +102,11 @@ class CertificateTrustApiRouter:
 def build_router(
     dependencies: CertificateTrustApiDependencies,
 ) -> CertificateTrustApiRouter:
-    """Build Certificate Authority and vSphere Key Provider API transports."""
+    """Build Certificate Authority and vSphere Key Provider API transports.
+
+    Args:
+        dependencies: Facade-provided transport dependencies.
+    """
     router = APIRouter(prefix="/api/v1", route_class=DocumentedAPIRoute)
     get_kms_settings_row = dependencies.get_kms_settings_row
     service_bind_options = dependencies.service_bind_options
