@@ -137,7 +137,9 @@ the command intent; it does not prove that Photon services changed.
 If Atlaso restarts during an ordinary apply, startup marks the running child failed, marks pending children skipped,
 fails the master task, and releases the global lock. For an interrupted management handoff, startup first asks the
 privileged helper to restore the captured previous runtime state, then records the recovery result on the failed task.
-Review the task before resubmitting.
+The helper retains that rollback state until Atlaso durably commits the bundled component results and baselines. If a
+restart occurs after that database commit, startup idempotently acknowledges the committed candidate instead of falsely
+claiming a rollback. Review the task before resubmitting.
 
 If a selected unit changed after submission but before execution, Atlaso fails closed and asks for a new review. This
 prevents a queued task from applying state that the administrator did not inspect.

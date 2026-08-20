@@ -149,6 +149,46 @@ def test_management_candidate_network_defers_old_link_retirement(monkeypatch, tm
     assert ["networkctl", "reconfigure", "eth1"] in commands
 
 
+def test_management_handoff_rollback_restores_candidate_links(monkeypatch, tmp_path):
+    """Reconfigure candidate physical links and delete candidate-only VLANs.
+
+    Args:
+        monkeypatch: Pytest fixture used to isolate link operations.
+        tmp_path: Temporary networkd directory used by the rollback.
+    """
+    helper = load_helper_module()
+    networkd = tmp_path / "networkd"
+    networkd.mkdir()
+    commands: list[list[str]] = []
+    monkeypatch.setattr(helper, "NETWORKD_CONFIG_DIR", networkd)
+    monkeypatch.setattr(helper, "_link_exists", lambda _interface: True)
+    monkeypatch.setattr(
+        helper,
+        "_run",
+        lambda command: commands.append(command) or subprocess.CompletedProcess(command, 0, "", ""),
+    )
+
+    evidence: list[dict[str, object]] = []
+    helper._restore_management_handoff_links(
+        {
+            "previous_management_interfaces": ["eth0"],
+            "candidate_physical_interfaces": ["eth1"],
+            "candidate_vlan_interfaces": ["eth1.200"],
+            "candidate_link_states": {
+                "eth1": {"existed": True, "admin_up": False},
+                "eth1.200": {"existed": False, "admin_up": False},
+            },
+        },
+        evidence,
+    )
+
+    assert ["networkctl", "reconfigure", "eth1"] in commands
+    assert ["ip", "link", "delete", "dev", "eth1.200"] in commands
+    assert ["ip", "link", "set", "dev", "eth0", "up"] in commands
+    assert ["networkctl", "reconfigure", "eth0"] in commands
+    assert ["ip", "link", "set", "dev", "eth1", "down"] in commands
+
+
 def test_management_handoff_readiness_requires_consecutive_samples(monkeypatch):
     """Reset the readiness streak after any upstream or candidate failure.
 
@@ -165,6 +205,68 @@ def test_management_handoff_readiness_requires_consecutive_samples(monkeypatch):
 
     assert evidence["stable_samples"] == 2
     assert evidence["statuses"]["management 198.51.100.10"] == "200"
+
+
+def test_successful_management_handoff_retains_rollback_state_until_ack(monkeypatch, tmp_path, capsys):
+    """Do not clear the durable transaction in the privileged apply process.
+
+    Args:
+        monkeypatch: Pytest fixture used to replace host mutation dependencies.
+        tmp_path: Temporary directory provided for staged firewall state.
+        capsys: Pytest fixture used to inspect bounded helper output.
+    """
+    helper = load_helper_module()
+    state = {
+        "job_id": "job-435",
+        "previous_management_interfaces": ["eth0"],
+        "previous_management_addresses": ["192.0.2.10"],
+        "previous_https_enabled": True,
+    }
+    phases: list[str] = []
+    cleared: list[bool] = []
+    monkeypatch.setattr(helper, "_snapshot_management_handoff", lambda _payload: state)
+    monkeypatch.setattr(
+        helper,
+        "_management_handoff_readiness",
+        lambda *_args, **_kwargs: {"stable_samples": 3},
+    )
+    monkeypatch.setattr(helper, "_management_handoff_upstream_readiness", lambda: {"stable_samples": 3})
+    monkeypatch.setattr(helper, "_install_management_holdovers", lambda _state, _payload: [])
+    monkeypatch.setattr(helper, "_write_management_handoff_state", lambda _state, phase: phases.append(phase))
+    monkeypatch.setattr(helper, "_apply_management_candidate_network", lambda *_args: None)
+    monkeypatch.setattr(helper, "_handle_network", lambda *_args: 0)
+    monkeypatch.setattr(helper, "_handle_firewall", lambda *_args: 0)
+    monkeypatch.setattr(helper, "_load_appliance_settings_config", lambda _path: {"management_https_enabled": True})
+    monkeypatch.setattr(helper, "_configure_atlaso_management_https", lambda _payload: 0)
+    monkeypatch.setattr(helper, "_handle_public_services", lambda *_args: 0)
+    monkeypatch.setattr(
+        helper,
+        "_nginx_test_command",
+        lambda: subprocess.CompletedProcess(["nginx", "-t"], 0, "", ""),
+    )
+    monkeypatch.setattr(helper, "_management_handoff_addresses", lambda *_args, **_kwargs: ["198.51.100.10"])
+    monkeypatch.setattr(helper, "_parse_network_config", lambda _path: ([], [], []))
+    monkeypatch.setattr(helper, "_link_exists", lambda _interface: False)
+    monkeypatch.setattr(helper, "_clear_management_handoff_state", lambda **_kwargs: cleared.append(True))
+    monkeypatch.setattr(helper, "FIREWALL_CONFIG_PATH", tmp_path / "missing-previous-firewall")
+    monkeypatch.setattr(helper, "FIREWALL_APPLY_DIR", tmp_path)
+    candidate = tmp_path / "candidate-firewall.nft"
+    candidate.write_text("table inet atlaso {\n  chain input {\n  }\n}\n", encoding="utf-8")
+
+    result = helper._apply_management_handoff(
+        {
+            "network_config_path": "candidate-network",
+            "firewall_config_path": str(candidate),
+            "appliance_settings_config_path": "candidate-settings",
+            "public_services_config_path": "candidate-public",
+        }
+    )
+
+    assert result == 0
+    assert phases[-1] == "awaiting-application-commit"
+    assert cleared == []
+    payload = json.loads(capsys.readouterr().out.splitlines()[-1])
+    assert payload["management_handoff"] == "awaiting application commit"
 
 
 def test_management_handoff_failure_rolls_back_with_truthful_layer(monkeypatch, tmp_path, capsys):
@@ -291,6 +393,51 @@ def test_interrupted_management_handoff_recovers_old_path(monkeypatch, tmp_path,
     payload = json.loads(capsys.readouterr().out.splitlines()[-1])
     assert payload["management_handoff"] == "rolled back after interruption"
     assert payload["readiness"] == "old-ready"
+
+
+def test_management_handoff_acknowledgement_is_durable_and_idempotent(monkeypatch, tmp_path, capsys):
+    """Retain rollback state until Atlaso acknowledges its database commit.
+
+    Args:
+        monkeypatch: Pytest fixture used to isolate durable helper state.
+        tmp_path: Temporary root used for state, backup, and networkd files.
+        capsys: Pytest fixture used to inspect bounded helper evidence.
+    """
+    helper = load_helper_module()
+    state_dir = tmp_path / "state"
+    backup_dir = state_dir / "backup"
+    networkd_dir = tmp_path / "networkd"
+    state_dir.mkdir()
+    backup_dir.mkdir()
+    networkd_dir.mkdir()
+    state_path = state_dir / "state.json"
+    receipt_path = state_dir / "last-commit.json"
+    state_path.write_text(
+        json.dumps(
+            {
+                "schema_version": 1,
+                "job_id": "job-435",
+                "phase": "awaiting-application-commit",
+                "candidate_addresses": ["198.51.100.10"],
+            }
+        ),
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(helper, "MANAGEMENT_HANDOFF_STATE_DIR", state_dir)
+    monkeypatch.setattr(helper, "MANAGEMENT_HANDOFF_STATE_PATH", state_path)
+    monkeypatch.setattr(helper, "MANAGEMENT_HANDOFF_BACKUP_DIR", backup_dir)
+    monkeypatch.setattr(helper, "MANAGEMENT_HANDOFF_COMMIT_PATH", receipt_path)
+    monkeypatch.setattr(helper, "NETWORKD_CONFIG_DIR", networkd_dir)
+
+    assert helper._acknowledge_management_handoff("job-435") == 0
+    assert not state_path.exists()
+    assert json.loads(receipt_path.read_text(encoding="utf-8"))["phase"] == "committed"
+    first = json.loads(capsys.readouterr().out.splitlines()[-1])
+    assert first["management_handoff"] == "committed"
+
+    assert helper._acknowledge_management_handoff("job-435") == 0
+    second = json.loads(capsys.readouterr().out.splitlines()[-1])
+    assert second["management_handoff"] == "already committed"
 
 
 def test_appliance_power_helper_schedules_reboot(monkeypatch):

@@ -155,7 +155,8 @@ remains a confirmed row-context action.
 
 Confirm the management URL, expected routes, and interface state after apply. A failed management handoff reports its
 non-secret failing layer and rolls back the captured network, firewall, nginx, certificate, and service state before
-the task becomes failed. If automatic rollback cannot restore access, use the local console network recovery action to
+the task becomes failed. Rollback also reconfigures interfaces introduced to the candidate and deletes candidate-only
+VLAN devices. If automatic rollback cannot restore access, use the local console network recovery action to
 restore a known-good management configuration, then review desired state before retrying.
 
 ## Transport ownership

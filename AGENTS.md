@@ -276,7 +276,9 @@ The following cross-cutting boundaries always apply:
   handoff across Certificate Authority, Network, Firewall, Appliance Settings, and Public Services. Keep the previous
   known-good path active until consecutive bounded Atlaso loopback, candidate nginx, and host-facing `/openapi.json`
   checks pass. Never expose a candidate nginx front door before its Atlaso upstream is healthy. Retire the old path only
-  after readiness succeeds; on failure, interruption, or startup recovery restore every captured runtime file and link,
+  after readiness succeeds; retain the durable rollback marker until Atlaso commits the bundled task state and baselines
+  and explicitly acknowledges that commit. On failure, interruption, or startup recovery restore every captured runtime
+  file and link, reconfigure pre-existing candidate links, remove candidate-only VLANs,
   keep the old path reachable, and record a truthful non-secret failing layer. A flagged-access candidate must remove a
   stale dedicated `00-atlaso-mgmt.network` file when that file is not part of the candidate configuration.
 - Physical-interface desired-state updates from the API and UI use one atomic domain service. Capture the previous

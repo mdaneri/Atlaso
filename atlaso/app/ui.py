@@ -3196,21 +3196,39 @@ def recover_interrupted_appliance_apply_jobs(db: Session) -> int:
     Args:
         db: Active database session.
     """
-    jobs = db.scalars(
+    candidate_jobs = db.scalars(
         select(Job)
         .options(selectinload(Job.steps))
-        .where(
-            Job.type == "appliance-apply",
-            Job.status.in_([JobStatus.PENDING.value, JobStatus.RUNNING.value]),
-        )
+        .where(Job.type == "appliance-apply")
     ).all()
+    jobs = [
+        job
+        for job in candidate_jobs
+        if job.status in {JobStatus.PENDING.value, JobStatus.RUNNING.value}
+        or _job_payload(job).get("management_handoff_runtime_commit_pending")
+    ]
     if not jobs:
         return 0
     finished = utcnow()
-    handoff_jobs = [job for job in jobs if _job_payload(job).get("management_handoff")]
-    handoff_recovery: AdapterResult | None = None
+    handoff_jobs = [
+        job
+        for job in jobs
+        if _job_payload(job).get("management_handoff")
+        or _job_payload(job).get("management_handoff_runtime_commit_pending")
+    ]
+    handoff_recoveries: dict[str, tuple[AdapterResult, dict[str, Any]]] = {}
     if handoff_jobs:
-        handoff_recovery = SystemAdapter(dry_run=False).recover_management_handoff()
+        adapter = SystemAdapter(dry_run=False)
+        for handoff_job in handoff_jobs:
+            handoff_payload = _job_payload(handoff_job)
+            if handoff_payload.get("management_handoff_runtime_commit_pending"):
+                recovery = adapter.acknowledge_management_handoff(handoff_job.id)
+            else:
+                recovery = adapter.recover_management_handoff()
+            handoff_recoveries[handoff_job.id] = (
+                recovery,
+                management_handoff_result_evidence(recovery),
+            )
     for job in jobs:
         for step in job.steps:
             if step.status == JobStatus.RUNNING.value:
@@ -3226,16 +3244,25 @@ def recover_interrupted_appliance_apply_jobs(db: Session) -> int:
         job.status = JobStatus.FAILED.value
         job.finished_at = finished
         job.progress_percent = 100
-        if job in handoff_jobs and handoff_recovery is not None:
-            if handoff_recovery.returncode == 0:
+        handoff_recovery = handoff_recoveries.get(job.id)
+        if handoff_recovery is not None:
+            recovery_result, recovery_evidence = handoff_recovery
+            recovery_state = str(recovery_evidence.get("management_handoff") or "")
+            if recovery_result.returncode == 0 and recovery_state in {"committed", "already committed"}:
+                job.error = (
+                    "Interrupted after the management handoff baselines were committed. The candidate management "
+                    "path remains active; review the task evidence before applying any remaining components."
+                )
+            elif recovery_result.returncode == 0 and recovery_evidence.get("rolled_back") is True:
                 job.error = (
                     "Interrupted during the management handoff. Atlaso rolled back to the previous management path; "
                     "review the task evidence and submit the desired change again."
                 )
             else:
                 job.error = (
-                    "Interrupted during the management handoff, and automatic rollback could not prove the previous "
-                    "management path ready. Use the local appliance console and inspect the recovery task evidence."
+                    "Interrupted during the management handoff, and automatic recovery could not prove either a "
+                    "committed candidate path or a ready previous path. Use the local appliance console and inspect "
+                    "the recovery task evidence."
                 )
         else:
             job.error = (
@@ -3246,10 +3273,15 @@ def recover_interrupted_appliance_apply_jobs(db: Session) -> int:
         payload["state"] = "failed"
         payload["interrupted"] = True
         payload["interrupted_at"] = finished.isoformat()
-        if job in handoff_jobs and handoff_recovery is not None:
+        if handoff_recovery is not None:
+            recovery_result, recovery_evidence = handoff_recovery
             payload["management_handoff_recovery"] = adapter_result_to_payload(
-                handoff_recovery
+                recovery_result
             )
+            payload["management_handoff_recovery"]["evidence"] = recovery_evidence
+            if recovery_evidence.get("management_handoff") in {"committed", "already committed"}:
+                payload["management_handoff_runtime_commit_pending"] = False
+                payload["management_handoff_runtime_committed"] = True
         job.result = json.dumps(payload, indent=2, sort_keys=True)
     db.commit()
     return len(jobs)
@@ -11976,6 +12008,26 @@ def adapter_result_to_payload(result: Any) -> dict[str, Any]:
     }
 
 
+def management_handoff_result_evidence(result: Any) -> dict[str, Any]:
+    """Return the last bounded management-handoff object from helper output.
+
+    Args:
+        result: Management handoff adapter result.
+
+    Returns:
+        Parsed non-secret helper evidence, or an empty object.
+    """
+    for stream in (result.stdout, result.stderr):
+        for line in reversed((stream or "").splitlines()):
+            try:
+                candidate = json.loads(line)
+            except json.JSONDecodeError:
+                continue
+            if isinstance(candidate, dict) and "management_handoff" in candidate:
+                return candidate
+    return {}
+
+
 def apply_output_excerpt(value: str, *, limit: int = 2400) -> str:
     """Update output excerpt.
 
@@ -12830,21 +12882,14 @@ def execute_management_handoff(
         if not adapter.dry_run:
             Path(ca_path).unlink(missing_ok=True)
     succeeded = bool(results) and all(result.returncode == 0 for result in results)
-    evidence: dict[str, Any] = {}
-    for result in reversed(results):
-        for stream in (result.stdout, result.stderr):
-            for line in reversed((stream or "").splitlines()):
-                try:
-                    candidate = json.loads(line)
-                except json.JSONDecodeError:
-                    continue
-                if isinstance(candidate, dict) and "management_handoff" in candidate:
-                    evidence = candidate
-                    break
-            if evidence:
-                break
-        if evidence:
-            break
+    evidence = next(
+        (
+            parsed
+            for result in reversed(results)
+            if (parsed := management_handoff_result_evidence(result))
+        ),
+        {},
+    )
     group_result = {
         "success": succeeded,
         "dry_run": any(result.dry_run for result in results),
@@ -14739,10 +14784,11 @@ def run_appliance_apply_job(job_id: str, *, force_real: bool = False) -> None:
                         bundled_step.progress_percent = 5
                     job.progress_percent = min(95, int(((index - 1) / total_steps) * 100))
                     db.commit()
+                    handoff_adapter = SystemAdapter(dry_run=False) if force_real else SystemAdapter()
                     group_result, bundled_results = execute_management_handoff(
                         current_by_id,
                         job_id=job.id,
-                        adapter=SystemAdapter(dry_run=False) if force_real else None,
+                        adapter=handoff_adapter,
                         db=db,
                     )
                     bundled_results = [_redact_task_value(result) for result in bundled_results]
@@ -14806,6 +14852,82 @@ def run_appliance_apply_job(job_id: str, *, force_real: bool = False) -> None:
                             applied,
                             applied_ids,
                         )
+                        pending_payload = _job_payload(job)
+                        job.result = json.dumps(
+                            {
+                                **pending_payload,
+                                "units": unit_results,
+                                "management_handoff_runtime_commit_pending": True,
+                            },
+                            indent=2,
+                        )
+                        # This commit is the application-side transaction boundary:
+                        # startup recovery rolls back before it and idempotently
+                        # acknowledges the candidate after it.
+                        db.commit()
+                        acknowledgement = handoff_adapter.acknowledge_management_handoff(job.id)
+                        acknowledgement_evidence = management_handoff_result_evidence(acknowledgement)
+                        group_result["commands"].append(adapter_result_to_payload(acknowledgement))
+                        if acknowledgement.returncode != 0:
+                            failed = True
+                            acknowledgement_error = str(
+                                acknowledgement_evidence.get("error")
+                                or "management handoff commit acknowledgement failed"
+                            )
+                            job.error = (
+                                "The candidate management path and baselines were committed, but the durable helper "
+                                "acknowledgement was not proven. Startup recovery will retry the acknowledgement; "
+                                "inspect the bounded component evidence."
+                            )
+                            for result in bundled_results:
+                                result["success"] = False
+                                result["status"] = JobStatus.FAILED.value
+                                result["failing_layer"] = "application commit acknowledgement"
+                                result["error"] = acknowledgement_error
+                                result["management_handoff"] = acknowledgement_evidence
+                                bundled_step = steps_by_key[result["unit_id"]]
+                                bundled_step.status = JobStatus.FAILED.value
+                                bundled_step.error = acknowledgement_error
+                                bundled_step.result = json.dumps(result, indent=2, sort_keys=True)
+                            for remaining_unit in selected_units[index:]:
+                                if remaining_unit["id"] in handoff_unit_ids:
+                                    continue
+                                remaining = steps_by_key.get(remaining_unit["id"])
+                                if remaining is None or remaining.status != JobStatus.PENDING.value:
+                                    continue
+                                remaining.status = "skipped"
+                                remaining.progress_percent = 100
+                                remaining.finished_at = utcnow()
+                                remaining.error = "Skipped because management handoff acknowledgement was not proven."
+                                remaining.result = json.dumps(
+                                    {
+                                        "summary": remaining_unit["summary"],
+                                        "reason": "management_handoff_acknowledgement_failed",
+                                    },
+                                    indent=2,
+                                )
+                        else:
+                            committed_evidence = {
+                                **group_result.get("management_handoff", {}),
+                                "management_handoff": "committed",
+                                "acknowledgement": acknowledgement_evidence,
+                            }
+                            group_result["management_handoff"] = committed_evidence
+                            group_result["success"] = True
+                            for result in bundled_results:
+                                result["management_handoff"] = committed_evidence
+                                bundled_step = steps_by_key[result["unit_id"]]
+                                bundled_step.result = json.dumps(result, indent=2, sort_keys=True)
+                            committed_payload = _job_payload(job)
+                            committed_payload.pop("management_handoff_runtime_commit_pending", None)
+                            job.result = json.dumps(
+                                {
+                                    **committed_payload,
+                                    "units": unit_results,
+                                    "management_handoff_runtime_committed": True,
+                                },
+                                indent=2,
+                            )
                     else:
                         failed = True
                         handoff_evidence = group_result.get("management_handoff", {})

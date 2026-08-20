@@ -213,8 +213,11 @@ only then may it validate and reload nginx. It requires consecutive successful d
 host-facing probes for every candidate address before deleting the holdovers and applying the final firewall. A second
 readiness pass protects retirement. Any validation, mutation, service, probe, or retirement failure restores every
 captured file, reloads networkd and nftables, reconfigures previous links, reloads nginx, and restarts Atlaso when the
-captured state requires it. The helper leaves a durable transaction marker until commit, so startup can perform the
-same rollback after process interruption or reboot. Results expose only a bounded failing-layer identifier and
+captured state requires it. Rollback explicitly reconfigures every pre-existing candidate link and removes a
+candidate-only VLAN after restoring its files. The helper leaves a durable transaction marker until Atlaso commits the
+bundled task state and baselines and sends an idempotent acknowledgement. Startup rolls back when interruption precedes
+that database boundary and completes the acknowledgement when the database already records the candidate. Results
+expose only a bounded failing-layer identifier and
 non-secret error text; Appliance Apply writes that evidence to every bundled component and updates none of their
 baselines unless the transaction commits.
 

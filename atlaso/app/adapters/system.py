@@ -610,6 +610,23 @@ class SystemAdapter:
             timeout_seconds=420,
         )
 
+    def acknowledge_management_handoff(self, job_id: str) -> AdapterResult:
+        """Acknowledge the handoff after Atlaso commits task and baseline state.
+
+        Args:
+            job_id: Appliance Apply task that owns the durable handoff.
+
+        Returns:
+            The idempotent handoff acknowledgement result.
+        """
+        return self._helper_result(
+            "management-handoff",
+            "acknowledge",
+            job_id,
+            dry_run_message="dry-run: management handoff commit acknowledgement recorded",
+            timeout_seconds=30,
+        )
+
     def recover_management_handoff(self) -> AdapterResult:
         """Roll back any interrupted management-plane handoff.
 

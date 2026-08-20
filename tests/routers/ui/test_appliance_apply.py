@@ -272,6 +272,84 @@ def test_management_move_submits_all_handoff_units_atomically(client):
         )
 
 
+def test_interrupted_handoff_reconciles_application_commit_without_false_rollback(client, monkeypatch):
+    """Acknowledge a committed baseline and distinguish a missing rollback marker.
+
+    Args:
+        client: HTTP test client providing an isolated database.
+        monkeypatch: Pytest fixture used to replace privileged helper calls.
+    """
+    import atlaso.app.ui as ui
+    from atlaso.app.adapters.system import AdapterResult
+    from atlaso.app.database import SessionLocal
+    from atlaso.app.models import Job, JobStatus
+
+    class RecoveryAdapter:
+        """Return deterministic commit and no-marker recovery evidence."""
+
+        def __init__(self, **_kwargs):
+            """Accept the production adapter construction contract."""
+
+        def acknowledge_management_handoff(self, job_id):
+            """Return an idempotent acknowledgement for the committed task."""
+            return AdapterResult(
+                command=["atlaso-helper", "management-handoff", "acknowledge", job_id],
+                dry_run=False,
+                stdout=json.dumps({"management_handoff": "already committed", "job_id": job_id}),
+                returncode=0,
+            )
+
+        def recover_management_handoff(self):
+            """Return a successful command that explicitly performed no rollback."""
+            return AdapterResult(
+                command=["atlaso-helper", "management-handoff", "recover"],
+                dry_run=False,
+                stdout=json.dumps({"management_handoff": "no interrupted transaction", "rolled_back": False}),
+                returncode=0,
+            )
+
+    monkeypatch.setattr(ui, "SystemAdapter", RecoveryAdapter)
+    with SessionLocal() as db:
+        db.add_all(
+            [
+                Job(
+                    id="handoff-committed",
+                    type="appliance-apply",
+                    status=JobStatus.RUNNING.value,
+                    created_by="admin",
+                    progress_percent=80,
+                    result=json.dumps(
+                        {
+                            "management_handoff": True,
+                            "management_handoff_runtime_commit_pending": True,
+                        }
+                    ),
+                ),
+                Job(
+                    id="handoff-no-marker",
+                    type="appliance-apply",
+                    status=JobStatus.RUNNING.value,
+                    created_by="admin",
+                    progress_percent=20,
+                    result=json.dumps({"management_handoff": True}),
+                ),
+            ]
+        )
+        db.commit()
+
+        assert ui.recover_interrupted_appliance_apply_jobs(db) == 2
+
+        committed = db.get(Job, "handoff-committed")
+        missing = db.get(Job, "handoff-no-marker")
+        assert committed is not None and missing is not None
+        committed_payload = json.loads(committed.result or "{}")
+        assert committed_payload["management_handoff_runtime_committed"] is True
+        assert committed_payload["management_handoff_runtime_commit_pending"] is False
+        assert "candidate management path remains active" in (committed.error or "")
+        assert "could not prove either" in (missing.error or "")
+        assert "rolled back" not in (missing.error or "").lower()
+
+
 def test_appliance_apply_json_submission_returns_master_with_live_child_status(client):
     """Verify JSON submission returns the master and live child status.
 

@@ -68,7 +68,7 @@ COMMANDS: dict[str, set[str]] = {
     "appliance-settings": {"validate", "apply"},
     "web-terminal": {"status", "sign"},
     "network": {"validate", "apply", "dhcp-dns"},
-    "management-handoff": {"validate", "apply", "recover"},
+    "management-handoff": {"validate", "apply", "acknowledge", "recover"},
     "firewall": {"validate", "apply"},
     "dnsmasq": {"validate", "apply", "reload", "leases", "logs"},
     "ca": {"validate", "apply"},
@@ -115,6 +115,7 @@ SYSTEMD_RUN_REAL_ACTIONS = {
     "restart-service",
     "recover-management-plane",
     "recover",
+    "acknowledge",
     "sync-sources",
 }
 SYSTEMD_RUN_CHILD_ENV = "ATLASO_HELPER_SYSTEMD_RUN_CHILD"
@@ -152,6 +153,7 @@ NON_PATH_ARGUMENT_ACTIONS = {
     ("automation", "run"),
     ("vcf-offline-depot", "apply-ceip"),
     ("network", "dhcp-dns"),
+    ("management-handoff", "acknowledge"),
 }
 ATLASO_SERVICE_USER = "atlaso"
 ATLASO_STATE_DIR = Path("/var/lib/atlaso")
@@ -300,6 +302,7 @@ MANAGEMENT_HANDOFF_APPLY_DIR = Path("/var/lib/atlaso/apply/management-handoff")
 MANAGEMENT_HANDOFF_STATE_DIR = ATLASO_STATE_DIR / "management-handoff"
 MANAGEMENT_HANDOFF_STATE_PATH = MANAGEMENT_HANDOFF_STATE_DIR / "state.json"
 MANAGEMENT_HANDOFF_BACKUP_DIR = MANAGEMENT_HANDOFF_STATE_DIR / "backup"
+MANAGEMENT_HANDOFF_COMMIT_PATH = MANAGEMENT_HANDOFF_STATE_DIR / "last-commit.json"
 MANAGEMENT_HANDOFF_HOLDOVER_PREFIX = "00-0-atlaso-management-handoff-"
 WAN_APPLY_DIR = Path("/var/lib/atlaso/apply/wan")
 APPLIANCE_UPDATE_APPLY_DIR = Path("/var/lib/atlaso/apply/appliance-update")
@@ -13138,6 +13141,36 @@ def _management_handoff_runtime_paths(payload: dict) -> list[Path]:
     return list(unique.values())
 
 
+def _management_handoff_candidate_links(payload: dict) -> tuple[list[str], list[str], dict[str, dict[str, bool]]]:
+    """Capture candidate link identity and pre-mutation administrative state.
+
+    Args:
+        payload: Validated handoff payload.
+
+    Returns:
+        Candidate physical links, VLAN links, and their pre-mutation state.
+    """
+    physical, vlans, _removed = _parse_network_config(Path(str(payload["network_config_path"])))
+    physical_names = list(dict.fromkeys(str(row.get("name") or "") for row in physical if row.get("name")))
+    vlan_names = list(dict.fromkeys(str(row.get("name") or "") for row in vlans if row.get("name")))
+    link_states: dict[str, dict[str, bool]] = {}
+    for interface in [*physical_names, *vlan_names]:
+        existed = _link_exists(interface)
+        admin_up = False
+        if existed:
+            result = _run(["ip", "-j", "link", "show", "dev", interface])
+            if result.returncode != 0:
+                raise ValueError(f"candidate link state could not be captured for {interface}")
+            try:
+                rows = json.loads(result.stdout)
+            except json.JSONDecodeError as exc:
+                raise ValueError(f"candidate link state was malformed for {interface}") from exc
+            flags = rows[0].get("flags", []) if rows else []
+            admin_up = "UP" in flags
+        link_states[interface] = {"existed": existed, "admin_up": admin_up}
+    return physical_names, vlan_names, link_states
+
+
 def _snapshot_management_handoff(payload: dict) -> dict:
     """Create the durable pre-mutation snapshot and interruption marker.
 
@@ -13184,6 +13217,7 @@ def _snapshot_management_handoff(payload: dict) -> dict:
                         previous_addresses.append(local)
     if not previous_addresses:
         raise ValueError("previous management listener addresses could not be captured")
+    candidate_physical, candidate_vlans, candidate_link_states = _management_handoff_candidate_links(payload)
     state = {
         "schema_version": 1,
         "job_id": payload["job_id"],
@@ -13192,8 +13226,12 @@ def _snapshot_management_handoff(payload: dict) -> dict:
         "previous_management_interfaces": payload["previous_management_interfaces"],
         "previous_management_addresses": list(dict.fromkeys(previous_addresses)),
         "previous_https_enabled": bool(payload.get("previous_https_enabled", True)),
+        "candidate_physical_interfaces": candidate_physical,
+        "candidate_vlan_interfaces": candidate_vlans,
+        "candidate_link_states": candidate_link_states,
     }
     _durable_management_handoff_state_write(state, MANAGEMENT_HANDOFF_STATE_PATH)
+    MANAGEMENT_HANDOFF_COMMIT_PATH.unlink(missing_ok=True)
     return state
 
 
@@ -13212,7 +13250,12 @@ def _durable_management_handoff_state_write(state: dict, target: Path) -> None:
         os.fsync(stream.fileno())
     os.chmod(temporary, 0o600)
     temporary.replace(target)
-    directory_fd = os.open(target.parent, os.O_RDONLY)
+    try:
+        directory_fd = os.open(target.parent, os.O_RDONLY)
+    except OSError:
+        if os.name == "nt":
+            return
+        raise
     try:
         os.fsync(directory_fd)
     finally:
@@ -13505,6 +13548,101 @@ def _management_handoff_upstream_readiness(*, samples: int = 3) -> dict:
     raise ValueError(f"Atlaso loopback upstream did not stabilize (status={status})")
 
 
+def _management_handoff_vlan_parents(vlan_interfaces: set[str]) -> set[str]:
+    """Return restored physical parents that declare the supplied VLAN links.
+
+    Args:
+        vlan_interfaces: VLAN interface names requiring recreation or reconfiguration.
+
+    Returns:
+        Physical parent interface names found in restored networkd configuration.
+    """
+    parents: set[str] = set()
+    for path in NETWORKD_CONFIG_DIR.glob("*.network"):
+        try:
+            text = path.read_text(encoding="utf-8")
+        except OSError:
+            continue
+        match = re.search(r"(?m)^Name=(\S+)\s*$", text)
+        if match is None:
+            continue
+        declared_vlans = set(re.findall(r"(?m)^VLAN=(\S+)\s*$", text))
+        if declared_vlans.intersection(vlan_interfaces):
+            parents.add(match.group(1))
+    return parents
+
+
+def _restore_management_handoff_links(state: dict, commands: list[dict[str, object]]) -> None:
+    """Reconfigure restored links and remove candidate-only VLAN devices.
+
+    Args:
+        state: Durable transaction state.
+        commands: Bounded rollback command evidence to extend.
+    """
+    previous_interfaces = set(str(value) for value in state.get("previous_management_interfaces", []))
+    candidate_physical = set(str(value) for value in state.get("candidate_physical_interfaces", []))
+    candidate_vlans = set(str(value) for value in state.get("candidate_vlan_interfaces", []))
+    raw_link_states = state.get("candidate_link_states") or {}
+    link_states = raw_link_states if isinstance(raw_link_states, dict) else {}
+    vlan_parents = _management_handoff_vlan_parents(candidate_vlans | previous_interfaces)
+
+    # Reconfiguring restored physical parents first recreates any previous VLAN
+    # that the final candidate apply may already have retired.
+    for interface in sorted(candidate_physical | vlan_parents):
+        if not interface or not _link_exists(interface):
+            continue
+        result = _run(["networkctl", "reconfigure", interface])
+        commands.append({"stage": "network rollback", "interface": interface, "returncode": result.returncode})
+        if result.returncode != 0:
+            raise ValueError(f"network rollback failed for candidate parent {interface}")
+
+    for interface in sorted(candidate_vlans):
+        saved = link_states.get(interface) if isinstance(link_states.get(interface), dict) else {}
+        if bool(saved.get("existed")) or not _link_exists(interface):
+            continue
+        result = _run(["ip", "link", "delete", "dev", interface])
+        commands.append({"stage": "network rollback", "interface": interface, "delete": result.returncode})
+        if result.returncode != 0:
+            raise ValueError(f"network rollback could not remove candidate VLAN {interface}")
+
+    restored_interfaces = previous_interfaces | {
+        interface
+        for interface in candidate_vlans
+        if bool((link_states.get(interface) or {}).get("existed"))
+    }
+    for interface in sorted(restored_interfaces):
+        for _attempt in range(10):
+            if _link_exists(interface):
+                break
+            time.sleep(0.5)
+        if not _link_exists(interface):
+            raise ValueError(f"network rollback could not recreate {interface}")
+        if interface in previous_interfaces:
+            link_up = _run(["ip", "link", "set", "dev", interface, "up"])
+            commands.append({"stage": "network rollback", "interface": interface, "link_up": link_up.returncode})
+            if link_up.returncode != 0:
+                raise ValueError(f"network rollback could not bring {interface} up")
+        result = _run(["networkctl", "reconfigure", interface])
+        commands.append({"stage": "network rollback", "interface": interface, "returncode": result.returncode})
+        if result.returncode != 0:
+            raise ValueError(f"network rollback failed for {interface}")
+
+    # A candidate physical or pre-existing VLAN may have been administratively
+    # raised only for the handoff. Restore its pre-mutation state last so parent
+    # reconfiguration can first recreate the old management topology.
+    for interface in sorted(candidate_physical | candidate_vlans):
+        if interface in previous_interfaces or not _link_exists(interface):
+            continue
+        saved = link_states.get(interface) if isinstance(link_states.get(interface), dict) else {}
+        if not bool(saved.get("existed")):
+            continue
+        desired = "up" if bool(saved.get("admin_up")) else "down"
+        result = _run(["ip", "link", "set", "dev", interface, desired])
+        commands.append({"stage": "network rollback", "interface": interface, "admin_state": desired, "returncode": result.returncode})
+        if result.returncode != 0:
+            raise ValueError(f"network rollback could not restore {interface} administrative state")
+
+
 def _restore_management_handoff(state: dict) -> dict:
     """Restore every snapshotted management runtime artifact.
 
@@ -13535,21 +13673,7 @@ def _restore_management_handoff(state: dict) -> dict:
         commands.append({"stage": "rollback", "command": command, "returncode": result.returncode})
         if result.returncode != 0:
             raise ValueError(f"rollback command failed: {' '.join(command)}")
-    for interface in state.get("previous_management_interfaces", []):
-        for _attempt in range(10):
-            if _link_exists(str(interface)):
-                break
-            time.sleep(0.5)
-        if not _link_exists(str(interface)):
-            raise ValueError(f"network rollback could not recreate {interface}")
-        link_up = _run(["ip", "link", "set", "dev", str(interface), "up"])
-        commands.append({"stage": "network rollback", "interface": interface, "link_up": link_up.returncode})
-        if link_up.returncode != 0:
-            raise ValueError(f"network rollback could not bring {interface} up")
-        result = _run(["networkctl", "reconfigure", str(interface)])
-        commands.append({"stage": "network rollback", "interface": interface, "returncode": result.returncode})
-        if result.returncode != 0:
-            raise ValueError(f"network rollback failed for {interface}")
+    _restore_management_handoff_links(state, commands)
     if FIREWALL_CONFIG_PATH.is_file():
         result = _run(["nft", "-f", str(FIREWALL_CONFIG_PATH)])
         commands.append({"stage": "firewall rollback", "returncode": result.returncode})
@@ -13570,17 +13694,89 @@ def _restore_management_handoff(state: dict) -> dict:
     return {"commands": commands, "readiness": readiness}
 
 
-def _clear_management_handoff_state() -> None:
-    """Remove the durable handoff marker and root-only backup tree."""
-    shutil.rmtree(MANAGEMENT_HANDOFF_STATE_DIR, ignore_errors=True)
+def _clear_management_handoff_state(*, keep_commit_receipt: bool = False) -> None:
+    """Remove rollback state while optionally retaining an idempotent commit receipt.
+
+    Args:
+        keep_commit_receipt: Whether the last acknowledged job receipt remains durable.
+    """
+    MANAGEMENT_HANDOFF_STATE_PATH.unlink(missing_ok=True)
+    shutil.rmtree(MANAGEMENT_HANDOFF_BACKUP_DIR, ignore_errors=True)
+    if not keep_commit_receipt:
+        MANAGEMENT_HANDOFF_COMMIT_PATH.unlink(missing_ok=True)
     for path in NETWORKD_CONFIG_DIR.glob(f"{MANAGEMENT_HANDOFF_HOLDOVER_PREFIX}*.network"):
         path.unlink(missing_ok=True)
+    try:
+        MANAGEMENT_HANDOFF_STATE_DIR.rmdir()
+    except OSError:
+        pass
+
+
+def _acknowledge_management_handoff(job_id: str) -> int:
+    """Commit a candidate only after Atlaso durably records its baselines.
+
+    Args:
+        job_id: Appliance Apply task that owns the durable transaction.
+    """
+    if re.fullmatch(r"[A-Za-z0-9._:-]{1,128}", job_id) is None:
+        print("management handoff job id is invalid", file=sys.stderr)
+        return 2
+    if not MANAGEMENT_HANDOFF_STATE_PATH.is_file():
+        try:
+            receipt = json.loads(MANAGEMENT_HANDOFF_COMMIT_PATH.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError):
+            receipt = {}
+        if receipt.get("job_id") == job_id and receipt.get("phase") == "committed":
+            print(json.dumps({"management_handoff": "already committed", "job_id": job_id}, sort_keys=True))
+            return 0
+        print(
+            json.dumps(
+                {
+                    "management_handoff": "acknowledgement failed",
+                    "failing_layer": "application commit acknowledgement",
+                    "error": "no matching durable handoff transaction or commit receipt",
+                    "job_id": job_id,
+                },
+                sort_keys=True,
+            ),
+            file=sys.stderr,
+        )
+        return 1
+    try:
+        state = json.loads(MANAGEMENT_HANDOFF_STATE_PATH.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError) as exc:
+        print(f"management handoff state is unreadable: {exc}", file=sys.stderr)
+        return 1
+    if state.get("job_id") != job_id or state.get("phase") != "awaiting-application-commit":
+        print(
+            json.dumps(
+                {
+                    "management_handoff": "acknowledgement failed",
+                    "failing_layer": "application commit acknowledgement",
+                    "error": "durable handoff owner or phase does not match",
+                    "job_id": job_id,
+                },
+                sort_keys=True,
+            ),
+            file=sys.stderr,
+        )
+        return 1
+    receipt = {
+        "schema_version": 1,
+        "job_id": job_id,
+        "phase": "committed",
+        "candidate_addresses": list(state.get("candidate_addresses") or []),
+    }
+    _durable_management_handoff_state_write(receipt, MANAGEMENT_HANDOFF_COMMIT_PATH)
+    _clear_management_handoff_state(keep_commit_receipt=True)
+    print(json.dumps({"management_handoff": "committed", "job_id": job_id}, sort_keys=True))
+    return 0
 
 
 def _recover_management_handoff() -> int:
     """Roll back an interrupted management handoff before Atlaso task recovery."""
     if not MANAGEMENT_HANDOFF_STATE_PATH.is_file():
-        print(json.dumps({"management_handoff": "no interrupted transaction"}, sort_keys=True))
+        print(json.dumps({"management_handoff": "no interrupted transaction", "rolled_back": False}, sort_keys=True))
         return 0
     try:
         state = json.loads(MANAGEMENT_HANDOFF_STATE_PATH.read_text(encoding="utf-8"))
@@ -13599,7 +13795,7 @@ def _recover_management_handoff() -> int:
         )
         return 1
     _clear_management_handoff_state()
-    print(json.dumps({"management_handoff": "rolled back after interruption", **evidence}, sort_keys=True))
+    print(json.dumps({"management_handoff": "rolled back after interruption", "rolled_back": True, **evidence}, sort_keys=True))
     return 0
 
 
@@ -13724,11 +13920,13 @@ def _apply_management_handoff(payload: dict) -> int:
             file=sys.stderr,
         )
         return 1
-    _clear_management_handoff_state()
+    state["candidate_addresses"] = candidate_addresses
+    _write_management_handoff_state(state, "awaiting-application-commit")
     print(
         json.dumps(
             {
-                "management_handoff": "committed",
+                "management_handoff": "awaiting application commit",
+                "job_id": state["job_id"],
                 "candidate_addresses": candidate_addresses,
                 "previous_preflight": previous_preflight,
                 "upstream_readiness": upstream_readiness,
@@ -13755,6 +13953,11 @@ def _handle_management_handoff(action: str, args: list[str]) -> int:
             print("management-handoff recover does not accept a path", file=sys.stderr)
             return 2
         return _recover_management_handoff()
+    if action == "acknowledge":
+        if len(args) != 1:
+            print("management-handoff acknowledge requires exactly one task id", file=sys.stderr)
+            return 2
+        return _acknowledge_management_handoff(args[0])
     if len(args) != 1:
         print(f"management-handoff {action} requires exactly one staged manifest", file=sys.stderr)
         return 2
