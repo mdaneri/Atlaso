@@ -7261,7 +7261,11 @@ def test_esxi_pxe_boot_settings_migrate_legacy_first_stage_defaults(client):
 
 
 def test_esxi_pxe_native_http_fresh_default_and_disabled_compatibility(client):
-    """Keep fresh and legacy disabled-PXE Native UEFI HTTP state safe."""
+    """Keep fresh and legacy disabled-PXE Native UEFI HTTP state safe.
+
+    Args:
+        client: Authenticated test client backed by the isolated test database.
+    """
     import json
 
     from sqlalchemy import select
