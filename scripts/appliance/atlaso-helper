@@ -13177,29 +13177,6 @@ def _apply_atlaso_release(
             and rollback_services.get("success", False)
             and rollback_worker_active
         )
-        if rollback_pre_cleanup_ready:
-            _maintenance_ok, rollback_maintenance_result = rollback_action(
-                "maintenance_cleanup",
-                lambda: _set_release_maintenance(False),
-            )
-            rollback_maintenance = (
-                rollback_maintenance_result
-                if isinstance(rollback_maintenance_result, dict)
-                else _release_check(
-                    "rollback_maintenance_cleanup",
-                    False,
-                    "Rollback maintenance cleanup was unavailable.",
-                )
-            )
-        else:
-            rollback_action("maintenance_hold", lambda: _set_release_maintenance(True))
-            rollback_maintenance = _release_check(
-                "rollback_maintenance_cleanup",
-                False,
-                "Maintenance remains enabled because rollback readiness is incomplete.",
-            )
-            commands.append(rollback_maintenance)
-            rollback_failures.append(rollback_maintenance)
         _durable_ok, rollback_durable_result = rollback_action(
             "durable_activation",
             _sync_release_activation,
@@ -13220,6 +13197,8 @@ def _apply_atlaso_release(
                 rollback_release,
                 require_receipt=False,
                 include_worker=False,
+                maintenance_expected=True,
+                include_front_door=False,
             )
             commands.extend(rollback_activation_commands)
         except Exception as rollback_exc:  # noqa: BLE001 - retain definitive failed rollback evidence.
@@ -13243,56 +13222,37 @@ def _apply_atlaso_release(
             )
             rollback_failures.append(evidence)
             commands.append(evidence)
-        rollback_base_ready = bool(
+        rollback_internal_ready = bool(
             rollback_pre_cleanup_ready
-            and rollback_maintenance.get("success", False)
             and rollback_durable.get("success", False)
             and rollback_activation.get("success", False)
         )
-        rollback_ready = rollback_base_ready
-        if not rollback_ready:
+        rollback_committed = False
+        rollback_ready = False
+        rollback_maintenance = _release_check(
+            "rollback_maintenance_hold",
+            rollback_internal_ready,
+            "Maintenance remains enabled until definitive rollback evidence is durable."
+            if rollback_internal_ready
+            else "Maintenance remains enabled because rollback readiness is incomplete.",
+        )
+        commands.append(rollback_maintenance)
+        if not rollback_internal_ready:
             rollback_action("maintenance_fail_closed", lambda: _set_release_maintenance(True))
-            rollback_maintenance = _release_check(
-                "rollback_maintenance_cleanup",
-                False,
-                "Maintenance is required because rollback verification is incomplete.",
-            )
-            commands.append(rollback_maintenance)
             if not any(item.get("layer") == rollback_maintenance["layer"] for item in rollback_failures):
                 rollback_failures.append(rollback_maintenance)
             if rollback_gate_ready:
                 rollback_action("worker_fail_closed_stop", stop_worker_fail_closed)
-        rollback_payload = {
-            "status": "failed",
-            "success": False,
-            "release": version,
-            "rolled_back": rollback_ready,
-            "failure_layer": failure_layer,
-            "rollback_health": {
-                "openapi": rollback_health,
-                "services": {
-                    "base": rollback_services,
-                    "worker": rollback_worker,
-                },
-                "maintenance": rollback_maintenance,
-                "active_release_verification": rollback_activation,
-            },
-            "rollback_failures": [
-                str(item.get("layer") or "rollback_unknown") for item in rollback_failures
-            ],
-            "error": transaction_error,
-            "finished_at": datetime.now(timezone.utc).isoformat(),
-        }
-        rollback_action("status_evidence", lambda: _write_update_info(rollback_payload))
         finalizer_restored, _finalizer_result = rollback_action(
             "finalizer_persistence",
             lambda: _write_release_finalizer(
                 {
                     **finalizer_evidence,
-                    "status": "failed" if rollback_ready else "rollback_pending",
-                    "rolled_back": rollback_ready,
+                    "status": "failed" if rollback_internal_ready else "rollback_pending",
+                    "rolled_back": rollback_internal_ready,
                     "failure_layer": failure_layer,
-                    "rollback_health": rollback_ready,
+                    "rollback_health": rollback_internal_ready,
+                    "host_facing_ready": False,
                     "rollback_service_checks": {
                         "base": rollback_services,
                         "worker": rollback_worker,
@@ -13309,30 +13269,129 @@ def _apply_atlaso_release(
                 }
             ),
         )
-        if not finalizer_restored:
-            rollback_ready = False
+        rollback_committed = bool(finalizer_restored and rollback_internal_ready)
+        if rollback_committed:
+            _maintenance_ok, rollback_maintenance_result = rollback_action(
+                "maintenance_cleanup",
+                lambda: _set_release_maintenance(False),
+            )
+            rollback_maintenance = (
+                rollback_maintenance_result
+                if isinstance(rollback_maintenance_result, dict)
+                else _release_check(
+                    "rollback_maintenance_cleanup",
+                    False,
+                    "Rollback maintenance cleanup was unavailable.",
+                )
+            )
+            rollback_front_activation = {
+                **rollback_activation,
+                "success": False,
+                "failure_layer": "maintenance_cleanup",
+            }
+            if rollback_maintenance.get("success", False):
+                try:
+                    rollback_front_activation, rollback_front_commands = _release_activation_verification(
+                        previous,
+                        rollback_release,
+                        require_receipt=False,
+                        include_worker=False,
+                    )
+                    commands.extend(rollback_front_commands)
+                except Exception as rollback_exc:  # noqa: BLE001 - retain committed rollback evidence.
+                    evidence = _release_check(
+                        "rollback_front_door_verification",
+                        False,
+                        f"Rollback front-door verification raised {type(rollback_exc).__name__}.",
+                    )
+                    rollback_failures.append(evidence)
+                    commands.append(evidence)
+                    rollback_front_activation = {
+                        "success": False,
+                        "candidate_version": previous_version,
+                        "failure_layer": "rollback_front_door_verification",
+                    }
+            rollback_ready = bool(
+                rollback_maintenance.get("success", False)
+                and rollback_front_activation.get("success", False)
+            )
+            if not rollback_ready:
+                rollback_action("maintenance_fail_closed", lambda: _set_release_maintenance(True))
+                evidence = _release_check(
+                    "rollback_host_facing_readiness",
+                    False,
+                    "Maintenance remains enabled because rollback host-facing readiness is incomplete.",
+                )
+                commands.append(evidence)
+                rollback_failures.append(evidence)
+            else:
+                rollback_activation = rollback_front_activation
+                finalizer_restored, _finalizer_result = rollback_action(
+                    "finalizer_host_facing_persistence",
+                    lambda: _write_release_finalizer(
+                        {
+                            **finalizer_evidence,
+                            "status": "failed",
+                            "rolled_back": True,
+                            "failure_layer": failure_layer,
+                            "rollback_health": True,
+                            "host_facing_ready": True,
+                            "rollback_service_checks": {
+                                "base": rollback_services,
+                                "worker": rollback_worker,
+                            },
+                            "commands": commands,
+                            "transaction_recovery": transaction_recovery,
+                            "active_release_verification": rollback_activation,
+                            "rollback_failures": [
+                                str(item.get("layer") or "rollback_unknown")
+                                for item in rollback_failures
+                            ],
+                            "error": transaction_error,
+                            "finished_at": datetime.now(timezone.utc).isoformat(),
+                        }
+                    ),
+                )
+                if not finalizer_restored:
+                    rollback_ready = False
+                    rollback_action("maintenance_fail_closed", lambda: _set_release_maintenance(True))
+        elif not finalizer_restored:
             rollback_action("maintenance_fail_closed", lambda: _set_release_maintenance(True))
             rollback_action("worker_fail_closed_stop", stop_worker_fail_closed)
-            rollback_payload.update(
-                {
-                    "rolled_back": False,
-                    "rollback_failures": [
-                        str(item.get("layer") or "rollback_unknown")
-                        for item in rollback_failures
-                    ],
-                    "error": (
-                        f"{transaction_error} Definitive rollback evidence could not be persisted; "
-                        "rollback remains incomplete."
-                    ),
-                }
+        rollback_payload = {
+            "status": "failed",
+            "success": False,
+            "release": version,
+            "rolled_back": rollback_committed,
+            "host_facing_ready": rollback_ready,
+            "failure_layer": failure_layer,
+            "rollback_health": {
+                "openapi": rollback_health,
+                "services": {
+                    "base": rollback_services,
+                    "worker": rollback_worker,
+                },
+                "maintenance": rollback_maintenance,
+                "active_release_verification": rollback_activation,
+            },
+            "rollback_failures": [
+                str(item.get("layer") or "rollback_unknown") for item in rollback_failures
+            ],
+            "error": transaction_error,
+            "finished_at": datetime.now(timezone.utc).isoformat(),
+        }
+        if not rollback_committed:
+            rollback_payload["error"] = (
+                f"{transaction_error} Definitive rollback evidence could not be persisted; "
+                "rollback remains incomplete."
             )
-            rollback_action("status_evidence_fail_closed", lambda: _write_update_info(rollback_payload))
-        if finalizer_restored and rollback_ready:
+        rollback_action("status_evidence", lambda: _write_update_info(rollback_payload))
+        if rollback_committed:
             rollback_action(
                 "worker_restart_gate",
                 lambda: _set_release_restart_gate(False),
             )
-        rollback_outcome = "was rolled back" if rollback_ready else "rollback was incomplete"
+        rollback_outcome = "was rolled back" if rollback_committed else "rollback was incomplete"
         raise ValueError(
             f"Atlaso release {version} failed and {rollback_outcome}: {transaction_error}"
         ) from exc

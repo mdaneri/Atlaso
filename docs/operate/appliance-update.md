@@ -265,7 +265,9 @@ either service starts, so a reboot cannot expose the control plane while rollbac
 distinguishes the live helper by boot, PID, and process-start identity. If a reboot removes the gate and the recorded
 helper no longer owns the transaction, privileged recovery restores and internally verifies the previous release, then
 runs the restored task's normal child, parent, log, and audit bookkeeping once through the retained candidate environment
-while both maintenance and provisional rollback evidence remain held. Only afterward does recovery remove maintenance,
+while both maintenance and provisional rollback evidence remain held. That bounded one-shot opens the existing restored
+schema directly; it does not run candidate schema creation or candidate startup reconciliation. Only afterward does
+recovery remove maintenance,
 prove the previous version at the host front door, write definitive healthy-rollback evidence, delete the candidate, and
 admit the previous worker. This bounded handoff runs as the Atlaso
 service account but leaves untouched children pending for the restored worker; a failure retains the candidate,
@@ -308,8 +310,12 @@ an administrator repairs the recorded failing layer.
 A failure in systemd asset activation, the atomic switch, candidate startup, internal readiness, or worker handoff before
 `activation_committed` enters the rollback boundary. Before rollback can restart a worker,
 the helper closes the same runtime gate; rollback then restores the previous release, assets, and database and proves
-internal readiness while maintenance remains held. Candidate-version task bookkeeping completes before nginx reloads,
-the management-front-door OpenAPI proves the previous version, and `rolled_back=true` becomes durable. A missing
+internal readiness while maintenance remains held. Runtime rollback flushes that restored activation and durably writes
+`rolled_back=true` before removing maintenance, so a crash can never make the snapshot replayable after an operator write
+is admitted. It then reloads nginx, proves the management-front-door OpenAPI reports the previous version, and durably
+adds that host-facing evidence; a failed probe or final evidence write restores maintenance without reverting the
+definitive no-replay checkpoint. Reboot recovery completes candidate-version task bookkeeping before opening nginx and
+publishing its definitive rollback. A missing
 database backup leaves rollback incomplete,
 and each installed asset is restored independently so one failed destination cannot block later attempts. While the
 recorded helper remains live, the candidate worker extends its gate wait instead of timing out and restarting through a

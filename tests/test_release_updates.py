@@ -589,7 +589,11 @@ def test_candidate_recovery_one_shot_completes_bookkeeping(monkeypatch):
     import atlaso.app.worker as worker
 
     events: list[str] = []
-    monkeypatch.setattr(worker, "init_db", lambda: events.append("database"))
+    monkeypatch.setattr(
+        worker,
+        "init_db",
+        lambda: pytest.fail("candidate rollback bookkeeping must not initialize the restored schema"),
+    )
     monkeypatch.setattr(worker, "SessionLocal", lambda: nullcontext(object()))
     monkeypatch.setattr(
         worker,
@@ -603,7 +607,7 @@ def test_candidate_recovery_one_shot_completes_bookkeeping(monkeypatch):
     )
 
     assert worker.recover_release_rollback_handoff() == 0
-    assert events == ["database", "bookkeeping", "completion"]
+    assert events == ["bookkeeping", "completion"]
 
 
 @pytest.mark.parametrize(
@@ -3557,6 +3561,8 @@ def test_no_change_release_failure_finalizer_retains_readiness_commands(monkeypa
         ("rollback_database_missing", "candidate_startup", False),
         ("rollback_link_restore", "candidate_startup", False),
         ("rollback_activation", "candidate_startup", False),
+        ("rollback_front_activation", "candidate_startup", True),
+        ("rollback_host_finalizer_persistence", "candidate_startup", True),
         ("rollback_worker_state", "candidate_startup", False),
         ("rollback_worker_status_query", "candidate_startup", False),
         ("rollback_finalizer_persistence", "candidate_startup", False),
@@ -3837,6 +3843,8 @@ def test_failed_candidate_restores_previous_release_and_database(
                         "rollback_database_missing",
                         "rollback_link_restore",
                         "rollback_activation",
+                        "rollback_front_activation",
+                        "rollback_host_finalizer_persistence",
                         "rollback_worker_state",
                         "rollback_worker_status_query",
                         "rollback_finalizer_persistence",
@@ -3902,6 +3910,7 @@ def test_failed_candidate_restores_previous_release_and_database(
     monkeypatch.setattr(helper, "_wait_for_worker_activation", worker_activation)
     maintenance_disables = 0
     maintenance_states: list[bool] = []
+    rollback_sequence: list[str] = []
 
     def maintenance(enabled):
         """Inject one failure while removing candidate maintenance mode.
@@ -3913,6 +3922,7 @@ def test_failed_candidate_restores_previous_release_and_database(
         maintenance_states.append(enabled)
         success = True
         if not enabled:
+            rollback_sequence.append("maintenance_cleanup")
             maintenance_disables += 1
             success = failure_stage != "maintenance_cleanup" or maintenance_disables > 1
         return {
@@ -3963,6 +3973,12 @@ def test_failed_candidate_restores_previous_release_and_database(
             if is_candidate and failure_stage in {"nginx_configuration", "management_front_door"}
             else "management_front_door"
             if not is_candidate and failure_stage == "rollback_activation"
+            else "management_front_door"
+            if (
+                not is_candidate
+                and failure_stage == "rollback_front_activation"
+                and _kwargs.get("include_front_door", True)
+            )
             else ""
         )
         success = not layer
@@ -4022,8 +4038,15 @@ def test_failed_candidate_restores_previous_release_and_database(
             handoff_events.append("restart_pending")
         if payload.get("status") == "failed" and failure_stage != "rollback_gate":
             assert (tmp_path / "restart-gate").exists()
+            rollback_sequence.append("definitive_finalizer")
         if failure_stage == "rollback_finalizer_persistence" and payload.get("status") == "failed":
             raise OSError("injected definitive rollback finalizer failure")
+        if (
+            failure_stage == "rollback_host_finalizer_persistence"
+            and payload.get("status") == "failed"
+            and payload.get("host_facing_ready") is True
+        ):
+            raise OSError("injected host-facing rollback finalizer failure")
         if failure_stage == "finalizer_persistence" and payload.get("status") == "succeeded":
             raise OSError("injected finalizer directory sync failure")
         write_finalizer(payload)
@@ -4055,6 +4078,10 @@ def test_failed_candidate_restores_previous_release_and_database(
     assert finalizer["commands"]
     assert not credential_path.exists()
     assert rollback_worker_starts == 0
+    if expected_rolled_back:
+        assert rollback_sequence.index("definitive_finalizer") < rollback_sequence.index(
+            "maintenance_cleanup"
+        )
     expected_stop_attempts = (
         0
         if expected_rolled_back
@@ -4097,7 +4124,12 @@ def test_failed_candidate_restores_previous_release_and_database(
         assert maintenance_states[-1] is True
     if failure_stage == "rollback_activation":
         assert "rollback_activation_verification" in finalizer["rollback_failures"]
-        assert False in maintenance_states
+        assert False not in maintenance_states
+        assert maintenance_states[-1] is True
+    if failure_stage in {"rollback_front_activation", "rollback_host_finalizer_persistence"}:
+        assert finalizer["status"] == "failed"
+        assert finalizer["rolled_back"] is True
+        assert finalizer["host_facing_ready"] is False
         assert maintenance_states[-1] is True
     if failure_stage in {"rollback_link_restore", "rollback_activation", "rollback_worker_state"}:
         assert (tmp_path / "restart-gate").exists()

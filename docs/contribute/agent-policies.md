@@ -502,7 +502,8 @@ Terminal order:
   or database, so both rollback together. Reboot recovery must retain the candidate environment after restoring the
   previous runtime, execute the exact release task's child, parent, terminal-log, and audit bookkeeping through that
   candidate as the
-  Atlaso service account while maintenance and provisional rollback evidence remain held. Only after that bookkeeping
+  Atlaso service account while maintenance and provisional rollback evidence remain held, using the restored database
+  schema directly without candidate schema creation or startup reconciliation. Only after that bookkeeping
   may recovery remove maintenance, prove the host-facing previous version, publish definitive healthy-rollback evidence,
   remove the candidate, and admit the restored worker. A failed candidate bookkeeping handoff
   must retain the candidate, maintenance response, and runtime gate for retry.
@@ -522,9 +523,11 @@ Terminal order:
   Definitive finalizers must retain sanitized helper command evidence; startup recovery must pass that evidence through
   the ordinary child completion, parent completion, terminal task-log, and audit bookkeeping. Any
   failure after the switch but before `activation_committed` must restore the previous release, helper/systemd assets,
-  SQLite snapshot, and working nginx
-  front door, write
-  `rolled_back=true` with a sanitized failing layer, and fail both release child and parent. After a verified healthy
+  SQLite snapshot, and working nginx front door. Runtime rollback must verify and flush the restored release internally
+  while maintenance remains held, durably write `rolled_back=true` with a sanitized failing layer so the snapshot cannot
+  be replayed, and only then remove maintenance, prove the host-facing previous version, and persist that host-facing
+  evidence. A failed final front-door probe or evidence write must restore maintenance without making the snapshot
+  eligible for replay. Fail both release child and parent. After a verified healthy
   rollback, preserve the terminal failed release child and requeue untouched children without rerunning it. Requeue a
   mixed terminal/pending set after another worker restart while preserving every terminal result; retain the
   normal rule that independently runnable PowerShell Modules proceeds while Photon OS skips after an earlier failure.

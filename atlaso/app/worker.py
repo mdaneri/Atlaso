@@ -346,7 +346,6 @@ def recover_release_rollback_handoff() -> int:
     Returns:
         Process status for the privileged pre-start recovery handoff.
     """
-    init_db()
     with SessionLocal() as db:
         recovered = recover_interrupted_worker_jobs(db, release_finalizer_ready=True)
         if recovered:
