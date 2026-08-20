@@ -99,6 +99,48 @@ def test_appliance_settings_stages_flagged_access_resolver_interface(client):
     assert preview["management_ip"] == "198.51.100.10"
 
 
+def test_appliance_settings_uses_last_applied_dns_state_for_resolver(client):
+    """Keep loopback DNS pending until the DNS/DHCP unit is applied.
+
+    Args:
+        client: HTTP test client used to initialize an isolated database.
+    """
+    from atlaso.app import ui
+    from atlaso.app.database import SessionLocal
+    from atlaso.app.models import DnsSettings
+
+    assert ui.applied_local_dns_enabled({"summary": ["DNS enabled"]}) is True
+    assert ui.applied_local_dns_enabled({"summary": ["DNS disabled"]}) is False
+
+    with SessionLocal() as db:
+        dns_settings = db.query(DnsSettings).one()
+        dns_settings.enabled = True
+        db.commit()
+        ui.save_appliance_apply_baselines(
+            db,
+            {"dnsmasq": {"summary": ["DNS disabled"], "dns_enabled": False}},
+        )
+        db.commit()
+
+        pending_context = ui.appliance_settings_context(db, reconcile_dns=False)
+        pending_preview = json.loads(pending_context["appliance_settings_config_preview"])
+        assert pending_context["local_dns_enabled"] is False
+        assert pending_preview["resolver_mode"] != "local_dns"
+        assert pending_preview["resolver_servers"] != ["127.0.0.1"]
+
+        ui.save_appliance_apply_baselines(
+            db,
+            {"dnsmasq": {"summary": ["DNS enabled"], "dns_enabled": True}},
+        )
+        db.commit()
+        applied_context = ui.appliance_settings_context(db, reconcile_dns=False)
+        applied_preview = json.loads(applied_context["appliance_settings_config_preview"])
+
+    assert applied_context["local_dns_enabled"] is True
+    assert applied_preview["resolver_mode"] == "local_dns"
+    assert applied_preview["resolver_servers"] == ["127.0.0.1"]
+
+
 def test_management_handoff_fails_closed_without_network_baseline():
     """Require the handoff path when no known-good baseline can identify the old listener."""
     from atlaso.app.ui import management_handoff_required

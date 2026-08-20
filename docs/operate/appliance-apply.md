@@ -153,6 +153,10 @@ Do not treat a submitted task as proof that the appliance changed successfully.
 3. Return to the affected service page and confirm its pending indicator cleared.
 4. Verify the resulting runtime behavior from the relevant service guide.
 
+When enabling local DNS, apply **DNS/DHCP (dnsmasq)** before the subsequent Appliance Settings resolver change. Atlaso
+keeps the last-applied external or DHCP resolver active until the DNS/DHCP unit is applied, so an unapplied local-DNS
+selection cannot redirect the appliance to loopback prematurely.
+
 Examples include checking service health, resolving a managed DNS name, reaching the intended listener, or confirming
 the installed configuration from the appliance console. Use the service-specific verification procedure rather than
 relying only on a green UI status.

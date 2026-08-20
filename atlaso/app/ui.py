@@ -2479,7 +2479,9 @@ def appliance_settings_context(db: Session, *, reconcile_dns: bool = True) -> di
         db.commit()
         db.refresh(settings)
         db.refresh(dns_settings)
-    local_dns_enabled = bool(dns_settings.enabled)
+    local_dns_enabled = applied_local_dns_enabled(
+        load_appliance_apply_baselines(db).get("dnsmasq")
+    )
     interfaces = db.execute(select(PhysicalInterface).order_by(PhysicalInterface.name)).scalars().all()
     vlans = db.execute(select(VlanInterface).order_by(VlanInterface.parent_interface, VlanInterface.vlan_id)).scalars().all()
     management, observed_dhcp_dns_servers = management_dhcp_dns_context(interfaces, vlans)
@@ -9189,6 +9191,24 @@ def load_appliance_apply_baselines(db: Session) -> dict[str, dict[str, Any]]:
     return baselines
 
 
+def applied_local_dns_enabled(baseline: dict[str, Any] | None) -> bool:
+    """Return whether the last-applied DNS unit enabled local DNS.
+
+    Args:
+        baseline: Last-applied DNS/DHCP unit baseline.
+
+    Returns:
+        Whether local DNS is proven active by the baseline.
+    """
+    if not baseline:
+        return False
+    enabled = baseline.get("dns_enabled")
+    if isinstance(enabled, bool):
+        return enabled
+    summary = baseline.get("summary")
+    return bool(isinstance(summary, list) and summary and summary[0] == "DNS enabled")
+
+
 def save_appliance_apply_baselines(db: Session, baselines: dict[str, dict[str, Any]]) -> None:
     """Persist appliance apply baselines.
 
@@ -12814,6 +12834,8 @@ def update_appliance_apply_baselines(db: Session, units: list[dict[str, Any]], s
         runtime_config_preview = unit.get("runtime_config_preview")
         if isinstance(runtime_config_preview, str):
             baseline["runtime_config_preview"] = runtime_config_preview
+        if unit["id"] == "dnsmasq":
+            baseline["dns_enabled"] = bool(unit["context"]["dns_settings"].enabled)
         baselines[unit["id"]] = baseline
     save_appliance_apply_baselines(db, baselines)
 

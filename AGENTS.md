@@ -282,7 +282,9 @@ The following cross-cutting boundaries always apply:
   Atlaso upstream is healthy. Move the persistent and runtime management resolver to the candidate interface inside
   the transaction, persist its directives in the effective dedicated or flagged-access networkd file both before
   readiness and after the final Network regeneration, and restore the
-  previous resolver state with the network snapshot on rollback. Retire the old path only
+  previous resolver state with the network snapshot on rollback. Derive loopback/local-DNS resolver mode only from the
+  last-applied DNS/DHCP baseline; leave an unapplied DNS enablement pending instead of activating loopback early. Retire
+  the old path only
   after readiness succeeds; retain the durable rollback marker until Atlaso commits the bundled task state and baselines
   and explicitly acknowledges that commit. Record separate durable application-commit proof before selecting
   acknowledgement during startup; an incomplete pre-commit rollback must retry recovery instead. Sync every backup file

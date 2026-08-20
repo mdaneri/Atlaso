@@ -240,6 +240,9 @@ generated effective-listener networkd file or reverts that link to DHCP-provided
 runtime state. After final Network retirement regenerates the managed networkd files, the helper repeats that persistent
 and runtime resolver apply before reconfiguring the links. This persistence applies equally to
 `00-atlaso-mgmt.network` and flagged-access physical/VLAN files.
+The staged resolver mode derives local-DNS availability from the last-applied DNS/DHCP baseline, not unapplied desired
+state. Enabling DNS without applying its unit therefore leaves the resolver change pending and cannot point the
+management link at loopback before dnsmasq is active.
 The resolver interface follows the effective listener precedence: dedicated management first, then a flagged access
 physical interface, then a flagged access VLAN.
 If another Appliance Settings field differs from its baseline, that unit remains pending after a successful handoff so
