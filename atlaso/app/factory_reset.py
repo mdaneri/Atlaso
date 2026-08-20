@@ -67,6 +67,7 @@ FACTORY_RESET_MANAGEMENT_PATH = "/openapi.json"
 FACTORY_RESET_REQUIRED_SERVICES = (
     "atlaso.service",
     "atlaso-worker.service",
+    "atlaso-console.service",
     "nginx.service",
 )
 VCF_BACKUPS_AUTHORIZED_KEYS_DIRECTORY = Path("/etc/atlaso/ssh/authorized_keys")
@@ -519,9 +520,14 @@ def _stop_application_services(*, boot_resume: bool) -> None:
         boot_resume: Whether Atlaso is already stopped by service startup ordering.
     """
     if boot_resume:
-        _run_systemctl("stop", "atlaso-worker.service")
+        _run_systemctl("stop", "atlaso-worker.service", "atlaso-console.service")
     else:
-        _run_systemctl("stop", "atlaso-worker.service", "atlaso.service")
+        _run_systemctl(
+            "stop",
+            "atlaso-worker.service",
+            "atlaso.service",
+            "atlaso-console.service",
+        )
     _stop_transient_update_restart_units()
     _stop_transient_automation_units()
 
@@ -704,6 +710,18 @@ def _scrub_retained_credentials() -> None:
     _scrub_bootstrap_authorized_keys()
 
 
+def _remove_factory_reset_credentials() -> None:
+    """Durably remove the reset password plan after post-activation state is durable."""
+    credential_path = factory_reset_credentials_path()
+    if credential_path.is_symlink():
+        raise FactoryResetError("Factory reset credential state is unsafe.")
+    if credential_path.is_file():
+        credential_path.unlink()
+        _fsync_directory(credential_path.parent)
+    elif credential_path.exists():
+        raise FactoryResetError("Factory reset credential state is unsafe.")
+
+
 def _management_ready() -> bool:
     """Return whether required services and the management OpenAPI front door are ready."""
     for service in FACTORY_RESET_REQUIRED_SERVICES:
@@ -793,6 +811,7 @@ def finalize_factory_reset(
         ):
             raise FactoryResetError("Factory reset is not awaiting management readiness verification.")
         unit_count = applied_unit_count
+        _remove_factory_reset_credentials()
         try:
             _start_required_services()
         except FactoryResetError as exc:
@@ -1193,15 +1212,6 @@ def _run_factory_reset_locked(
         if not (adapter and adapter.dry_run):
             _clear_apply_staging()
             _scrub_retained_credentials()
-            credential_path = factory_reset_credentials_path()
-            if credential_path.is_file():
-                credential_path.unlink()
-                if os.name == "posix":
-                    directory_descriptor = os.open(state_directory, os.O_RDONLY)
-                    try:
-                        os.fsync(directory_descriptor)
-                    finally:
-                        os.close(directory_descriptor)
         if not manage_services:
             return _mark_factory_reset_succeeded(request_payload, unit_count)
         awaiting_readiness = _update_request(
@@ -1209,6 +1219,7 @@ def _run_factory_reset_locked(
             "Factory defaults applied; waiting for required services and management OpenAPI readiness.",
             applied_unit_count=unit_count,
         )
+        _remove_factory_reset_credentials()
         if manage_services:
             _schedule_readiness_finalizer()
         return awaiting_readiness

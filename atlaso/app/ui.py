@@ -18001,7 +18001,7 @@ def backup_restore_context(db: Session, result: dict[str, Any] | None = None, er
         "backup_restore_result": result,
         "backup_restore_error": error,
         "factory_reset_password_policy_summary": password_policy_summary(
-            local_users_password_policy(db)
+            DEFAULT_PASSWORD_POLICY
         ),
         "ldap_recovery_archive": ldap_recovery_archive,
         "ldap_recovery_ready": bool(

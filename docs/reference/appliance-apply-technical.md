@@ -571,23 +571,29 @@ validation, execution ordering, and baseline code for all 16 units inside a root
 not create an Apply job or modal: success means the replacement database and runtime are already at the same clean
 baseline. The transaction scrubs retained VCF Backup authorized keys, the Web Terminal CA key pair, and pending terminal
 signing requests in addition to Apply staging. Its delay timer and runner share the transaction lock, and the durable
-marker remains `awaiting_readiness` until an independent finalizer observes Atlaso, worker, nginx, and two consecutive
-management OpenAPI successes. A restart/readiness failure retains the marker for boot-time resume before
+marker remains `awaiting_readiness` until an independent finalizer observes Atlaso, worker, tty1 console, nginx, and two
+consecutive management OpenAPI successes. A restart/readiness failure retains the marker for boot-time resume before
 `atlaso.service` starts. Preflight renders prospective management and public nginx sites, root and VCF Backup sshd
 drop-ins, the management resolver file, and the Atlaso service loopback drop-in into isolated temporary trees and runs
-the native validators there without changing the active host configuration. Before candidate activation, reset cancels
-and verifies the exact timestamp-shaped `atlaso-update-restart-*` timers and services created by update Apply so a
-three-second delayed restart cannot revive the worker during database replacement. The non-appliance fallback likewise
+the native validators there without changing the active host configuration. Before candidate activation, reset stops
+the tty1 console with Atlaso and its worker, then cancels and verifies the exact timestamp-shaped
+`atlaso-update-restart-*` timers and services created by update Apply so neither a console action nor a three-second
+delayed restart can mutate runtime or revive a database writer during replacement. Readiness starts and verifies the
+console with the other required services. The non-appliance fallback likewise
 builds and validates an isolated SQLite candidate, then copies its data under one `BEGIN IMMEDIATE` transaction that
 waits for earlier writers and blocks later writers until replacement commits.
 Each web request stages its keep-or-change password plan in a distinct mode-`0600` file. Nonblocking helper admission
-accepts at most one plan, reports contention as a retryable scheduling failure, and deletes only the calling request's
-file. Changed values are prevalidated against the packaged factory Local Users policy rather than mutable current
+accepts at most one plan, reports lock contention or an active reset timer/service as a retryable scheduling failure,
+and deletes only the calling request's file. Changed values and the form's displayed policy summary use the packaged
+factory Local Users policy rather than mutable current
 desired state. Retained credential cleanup fsyncs the managed Photon repository directory before the reset transaction
 may advance to management-readiness verification.
 An inactive marker tagged with `failure_phase: scheduling` is the only failed request that web admission may replace;
 the replacement credential plan and fresh scheduled marker are both persisted before dispatch. Any failure after the
 runner starts remains a console/boot recovery concern and rejects a new browser schedule.
+The runner retains the protected credential plan through candidate activation and first writes the durable
+`awaiting_readiness` marker with `applied_unit_count`; runner and finalizer then repeat idempotent credential removal. A
+crash therefore cannot leave a `committing` marker without the password plan required to rebuild the candidate.
 
 ### Operational logs and appliance power
 

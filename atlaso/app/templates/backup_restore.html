@@ -115,7 +115,7 @@
         data-confirm-label="Factory reset appliance"
       >
         <input type="hidden" name="csrf" value="{{ csrf_token }}">
-        <p id="factory-reset-password-policy" class="muted">New passwords must satisfy the current Local Users policy: {{ factory_reset_password_policy_summary }}. Password values are used only by the protected reset transaction and are never stored in the Atlaso database, task, audit, or reset marker.</p>
+        <p id="factory-reset-password-policy" class="muted">New passwords must satisfy the packaged factory Local Users policy: {{ factory_reset_password_policy_summary }}. Password values are used only by the protected reset transaction and are never stored in the Atlaso database, task, audit, or reset marker.</p>
         <fieldset>
           <legend><span class="field-label"><span>Bootstrap administrator password</span><button class="help-icon" type="button" data-help="Keep the current admin web and Photon OS password, or replace both during factory reset. The bootstrap administrator account is recreated either way.">i</button></span></legend>
           <div class="choice-list compact">

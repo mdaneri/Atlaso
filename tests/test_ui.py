@@ -7645,6 +7645,9 @@ def test_backup_restore_factory_reset_uses_factory_password_policy(client):
         db.commit()
 
     page = client.get("/backup-restore")
+    assert "packaged factory Local Users policy" in page.text
+    assert "minimum 12 characters, uppercase, lowercase, number, special, no username" in page.text
+    assert "current Local Users policy" not in page.text
     csrf = page.text.split('name="csrf" value="', 1)[1].split('"', 1)[0]
     response = client.post(
         "/backup-restore/factory-reset",

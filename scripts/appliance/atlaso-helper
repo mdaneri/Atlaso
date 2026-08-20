@@ -13529,7 +13529,11 @@ def _schedule_factory_reset_locked(
         active = _run(["systemctl", "is-active", "--quiet", unit])
         if active.returncode == 0:
             print(json.dumps(_factory_reset_state_payload(), sort_keys=True))
-            return 0
+            print(
+                "Factory reset admission is busy; retry after the active reset reaches a terminal state.",
+                file=sys.stderr,
+            )
+            return ATLASO_FACTORY_RESET_ADMISSION_BUSY_EXIT_CODE
     request_payload: dict = {}
     request_path = ATLASO_FACTORY_RESET_REQUEST_PATH
     if request_path.is_symlink():

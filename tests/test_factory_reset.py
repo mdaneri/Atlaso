@@ -138,7 +138,13 @@ def test_factory_reset_stops_transient_restart_and_automation_units(monkeypatch)
 
     factory_reset._stop_application_services(boot_resume=False)
 
-    assert commands[0] == ["systemctl", "stop", "atlaso-worker.service", "atlaso.service"]
+    assert commands[0] == [
+        "systemctl",
+        "stop",
+        "atlaso-worker.service",
+        "atlaso.service",
+        "atlaso-console.service",
+    ]
     assert commands[1][-1] == "atlaso-update-restart-*.timer"
     assert commands[2] == ["systemctl", "stop", restart_timer]
     assert commands[3] == ["systemctl", "is-active", "--quiet", restart_timer]
@@ -358,13 +364,39 @@ def test_managed_factory_reset_retains_marker_until_readiness(tmp_path, monkeypa
     database_path = tmp_path / "atlaso.db"
     state_directory = tmp_path / "factory-reset"
     database_path.write_bytes(b"database")
+    credentials_path = state_directory / "credentials.json"
+    state_directory.mkdir()
+    credentials_path.write_text(
+        json.dumps(
+            {
+                "schema_version": 1,
+                "admin_action": "keep",
+                "root_action": "keep",
+            }
+        ),
+        encoding="utf-8",
+    )
     scheduled: list[tuple[str, ...]] = []
+    credential_removal_states: list[str] = []
     monkeypatch.setenv("ATLASO_FACTORY_RESET_STATE_DIRECTORY", str(state_directory))
     monkeypatch.setattr(factory_reset, "_stop_application_services", lambda **_kwargs: None)
     monkeypatch.setattr(factory_reset, "_candidate_database", lambda *_args, **_kwargs: 16)
     monkeypatch.setattr(factory_reset, "_replace_database", lambda *_args: None)
     monkeypatch.setattr(factory_reset, "_clear_apply_staging", lambda: None)
     monkeypatch.setattr(factory_reset, "_scrub_retained_credentials", lambda: None)
+    real_remove_credentials = factory_reset._remove_factory_reset_credentials
+
+    def remove_credentials_after_marker() -> None:
+        """Record the durable phase visible when credentials are removed."""
+        marker = json.loads((state_directory / "request.json").read_text(encoding="utf-8"))
+        credential_removal_states.append(marker["state"])
+        real_remove_credentials()
+
+    monkeypatch.setattr(
+        factory_reset,
+        "_remove_factory_reset_credentials",
+        remove_credentials_after_marker,
+    )
     monkeypatch.setattr(
         factory_reset,
         "_schedule_readiness_finalizer",
@@ -381,6 +413,8 @@ def test_managed_factory_reset_retains_marker_until_readiness(tmp_path, monkeypa
     assert result["applied_unit_count"] == 16
     assert (state_directory / "request.json").is_file()
     assert not (state_directory / "last-result.json").exists()
+    assert credential_removal_states == ["awaiting_readiness"]
+    assert not credentials_path.exists()
     assert scheduled == [("readiness",)]
 
 
@@ -483,6 +517,8 @@ def test_factory_reset_finalizer_requires_stable_management_readiness(tmp_path, 
         ),
         encoding="utf-8",
     )
+    credentials_path = state_directory / "credentials.json"
+    credentials_path.write_text("lingering secret plan", encoding="utf-8")
     samples = iter([False, True, True])
     monkeypatch.setattr(factory_reset, "factory_reset_state_directory", lambda: state_directory)
     monkeypatch.setattr(factory_reset, "_running_as_posix_root", lambda: False)
@@ -494,6 +530,7 @@ def test_factory_reset_finalizer_requires_stable_management_readiness(tmp_path, 
     assert result["state"] == "succeeded"
     assert result["applied_unit_count"] == 16
     assert not request_path.exists()
+    assert not credentials_path.exists()
     assert json.loads((state_directory / "last-result.json").read_text(encoding="utf-8"))["state"] == "succeeded"
 
 

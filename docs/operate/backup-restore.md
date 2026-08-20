@@ -52,9 +52,10 @@ The reset:
 - removes all control-plane records, including local and external users, password hashes, API tokens, sessions,
   schedules, queued and completed jobs, automation history, audit events, vault entries, certificates, VLANs, routes,
   service configuration, and settings-archive metadata;
-- stops Atlaso and its worker, cancels and verifies every bounded `atlaso-update-restart-*` timer and service, then stops
-  and verifies every timestamped `atlaso-automation-*` transient service before runtime activation so neither a delayed
-  update restart nor a pre-reset script with a loaded vault credential can outlive the reset transaction;
+- stops Atlaso, its worker, and the tty1 console, cancels and verifies every bounded `atlaso-update-restart-*` timer and
+  service, then stops and verifies every timestamped `atlaso-automation-*` transient service before runtime activation
+  so neither a delayed update restart, console mutation, nor pre-reset script with a loaded vault credential can outlive
+  the reset transaction; readiness restarts and verifies the console with the other required services;
 - recreates only factory/bootstrap records, including the bootstrap accounts, management `eth0`, the appliance DNS
   record, and built-in CA profiles; VCF Offline Depot download profiles are not recreated;
 - enables the minimum routing, firewall, authentication, and management-plane defaults while leaving optional services
@@ -89,7 +90,8 @@ account and does not enable root SSH. New values must satisfy the packaged facto
 when the appliance currently permits a weaker policy. Atlaso gives each reset request its own mode-`0600` staging file;
 the helper admits only one request at a time and a busy request removes only its own file. An admitted request copies
 the values into root-only durable reset recovery state, passes OS values through the constrained helper and stdin, and
-removes the credential file after successful database replacement. Password values never enter
+retains the credential file until a durable post-activation marker proves only readiness remains. Runner and finalizer
+then remove it idempotently. Password values never enter
 the database, recovery marker, tasks, audits, logs, or UI responses. Sign in using the bootstrap administrator password
 selected for the reset. Factory state disables Management HTTPS and restores the packaged management network
 (`192.168.49.1/24` on `eth0`), so the browser may lose the old address or HTTPS endpoint. Use the VMware or
@@ -99,11 +101,17 @@ If detached scheduling fails before reset execution begins, a later confirmed su
 password plan and its scheduling marker before retrying. Once execution has started, a failed marker remains
 recovery-only; another browser submission cannot replace its credentials or progress.
 
+A second browser submission while the admitted reset timer or service is active returns a retryable busy response. It
+does not clear the later administrator's session or imply that their password choices replaced the admitted plan. The
+password summary beside the reset form always describes the packaged factory Local Users policy that validates changed
+administrator and root values, even when current desired state contains a different policy.
+
 Reset progress and only the non-secret `keep`/`change` choices are recorded outside the database in
 `/var/lib/atlaso/factory-reset/request.json`; the last successful result is recorded in `last-result.json`. Atlaso
 resumes an incomplete marker before the web control plane starts after
 a reboot. The marker remains `awaiting_readiness` after runtime activation and is removed only after Atlaso, worker,
-nginx, and two consecutive management `/openapi.json` checks are ready. If reset reports failure, preserve the VM,
+tty1 console, nginx, and two consecutive management `/openapi.json` checks are ready. If reset reports failure,
+preserve the VM,
 inspect `journalctl -u atlaso-factory-reset`, correct the reported
 runtime prerequisite, and reboot or run `sudo /opt/atlaso/bin/atlaso-helper factory-reset resume --real` from the local
 console. Resume is idempotent and retains the old database until a validated candidate is ready for replacement. A

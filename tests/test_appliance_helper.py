@@ -190,12 +190,17 @@ def test_factory_reset_helper_persists_marker_before_detached_schedule(
     assert scheduled[-3:] == [str(runner), "-m", "atlaso.app.factory_reset"]
 
 
-def test_factory_reset_helper_treats_pending_timer_as_active(monkeypatch, tmp_path):
-    """A duplicate request cannot replace a valid marker while its delay timer is active.
+def test_factory_reset_helper_rejects_request_while_delay_timer_is_active(
+    monkeypatch,
+    tmp_path,
+    capsys,
+):
+    """A later request reports busy while the admitted delay timer is active.
 
     Args:
         monkeypatch: Pytest fixture used to replace dependencies for the test.
         tmp_path: Temporary directory provided by pytest for isolated filesystem state.
+        capsys: Pytest fixture used to capture the retryable admission result.
     """
     helper = load_helper_module()
     state_directory = tmp_path / "factory-reset"
@@ -249,7 +254,13 @@ def test_factory_reset_helper_treats_pending_timer_as_active(monkeypatch, tmp_pa
     monkeypatch.setattr(helper.shutil, "which", lambda command: f"/usr/bin/{command}")
     monkeypatch.setattr(helper, "_run", fake_run)
 
-    assert helper._handle_factory_reset("schedule", [str(staged_credentials)]) == 0
+    assert (
+        helper._handle_factory_reset("schedule", [str(staged_credentials)])
+        == helper.ATLASO_FACTORY_RESET_ADMISSION_BUSY_EXIT_CODE
+    )
+    captured = capsys.readouterr()
+    assert json.loads(captured.out)["state"] == "scheduled"
+    assert "admission is busy" in captured.err
     assert json.loads(request_path.read_text(encoding="utf-8"))["state"] == "scheduled"
     assert not staged_credentials.exists()
     assert not any(command and command[0] == "/usr/bin/systemd-run" for command in commands)
