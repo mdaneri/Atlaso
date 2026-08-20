@@ -15580,22 +15580,30 @@ def _apply_management_candidate_network(path: Path, state: dict) -> None:
             raise ValueError(f"candidate networkd reconfigure failed for {interface}")
 
 
-def _management_handoff_candidate_firewall_rules(network_path: Path) -> list[str]:
+def _management_handoff_candidate_firewall_rules(
+    network_path: Path,
+    public_port: int,
+) -> list[str]:
     """Return minimal candidate-listener admission rules for a transition.
 
     Args:
         network_path: Candidate staged network configuration.
+        public_port: Candidate management HTTP or HTTPS front-door port.
 
     Returns:
         Nftables input rules for effective candidate management listeners.
     """
+    if public_port < 1 or public_port > 65535:
+        raise ValueError("candidate management firewall port must be between 1 and 65535")
     physical, vlans, _removed = _parse_network_config(network_path)
+    web_ports = ", ".join(str(port) for port in sorted({80, 443, public_port}))
+    dedicated_ports = ", ".join(str(port) for port in sorted({22, 80, 443, public_port}))
     rules: list[str] = []
     for row in physical:
         name = str(row.get("name") or "")
         if row.get("role") == "management":
             rules.append(
-                f'    iifname "{name}" tcp dport {{ 22, 80, 443 }} accept comment "mgmt-console"'
+                f'    iifname "{name}" tcp dport {{ {dedicated_ports} }} accept comment "mgmt-console"'
             )
         elif (
             row.get("role") == "access"
@@ -15604,7 +15612,7 @@ def _management_handoff_candidate_firewall_rules(network_path: Path) -> list[str
             and row.get("access_management_ui_enabled", "false").lower() == "true"
         ):
             rules.append(
-                f'    iifname "{name}" tcp dport {{ 80, 443 }} accept comment "management-ui-{name}"'
+                f'    iifname "{name}" tcp dport {{ {web_ports} }} accept comment "management-ui-{name}"'
             )
     for row in vlans:
         name = str(row.get("name") or "")
@@ -15613,7 +15621,7 @@ def _management_handoff_candidate_firewall_rules(network_path: Path) -> list[str
             and row.get("access_management_ui_enabled", "false").lower() == "true"
         ):
             rules.append(
-                f'    iifname "{name}" tcp dport {{ 80, 443 }} accept comment "management-ui-{name}"'
+                f'    iifname "{name}" tcp dport {{ {web_ports} }} accept comment "management-ui-{name}"'
             )
     return rules
 
@@ -16524,6 +16532,16 @@ def _apply_management_handoff(payload: dict) -> int:
         ca_path = str(payload.get("ca_config_path") or "")
         if ca_path and _handle_ca("apply", [ca_path]) != 0:
             raise ValueError("candidate management certificate apply failed")
+        settings_payload = _load_appliance_settings_config(
+            Path(str(payload["appliance_settings_config_path"]))
+        )
+        candidate_https = bool(settings_payload.get("management_https_enabled"))
+        candidate_public_port = int(
+            settings_payload.get(
+                "management_public_https_port" if candidate_https else "management_public_http_port"
+            )
+            or (443 if candidate_https else 80)
+        )
         failing_layer = "network"
         _apply_management_candidate_network(Path(str(payload["network_config_path"])), state)
         previous_firewall = FIREWALL_CONFIG_PATH.read_text(encoding="utf-8") if FIREWALL_CONFIG_PATH.is_file() else ""
@@ -16534,7 +16552,8 @@ def _apply_management_handoff(payload: dict) -> int:
                 candidate_firewall_path.read_text(encoding="utf-8"),
                 previous_firewall,
                 candidate_management_rules=_management_handoff_candidate_firewall_rules(
-                    Path(str(payload["network_config_path"]))
+                    Path(str(payload["network_config_path"])),
+                    candidate_public_port,
                 ),
             ),
             encoding="utf-8",
@@ -16545,7 +16564,6 @@ def _apply_management_handoff(payload: dict) -> int:
             raise ValueError("transitional nftables apply failed")
         failing_layer = "Atlaso upstream"
         upstream_readiness = _management_handoff_upstream_readiness()
-        settings_payload = _load_appliance_settings_config(Path(str(payload["appliance_settings_config_path"])))
         resolver_interface = str(settings_payload.get("management_interface") or "")
         if resolver_interface != str(state.get("candidate_management_interface") or ""):
             raise ValueError("candidate management resolver interface changed after snapshot")
@@ -16574,13 +16592,6 @@ def _apply_management_handoff(payload: dict) -> int:
             int(state["previous_management_public_port"]),
         )
         failing_layer = "candidate readiness"
-        candidate_https = bool(settings_payload.get("management_https_enabled"))
-        candidate_public_port = int(
-            settings_payload.get(
-                "management_public_https_port" if candidate_https else "management_public_http_port"
-            )
-            or (443 if candidate_https else 80)
-        )
         candidate_readiness = _management_handoff_readiness(
             candidate_addresses,
             candidate_https,

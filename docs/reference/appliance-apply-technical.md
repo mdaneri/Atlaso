@@ -243,7 +243,8 @@ host-facing probes for every configured candidate address. Each dynamic listener
 requested DHCP or SLAAC family within the shared bounded discovery window; readiness cannot succeed on another row or
 family when one is missing, and a retained old-path address cannot satisfy dynamic candidate acquisition. When the
 candidate disables nftables, the transitional ruleset keeps the previous filtering
-policy and adds only the candidate management admission rules. When enabling filtering from an open state, the
+policy and adds only the candidate management admission rules, including the staged nondefault HTTP or HTTPS public
+port. When enabling filtering from an open state, the
 transitional ruleset remains open. The enabled or disabled candidate ruleset applies only after readiness while the old
 path retires. A second
 readiness pass protects retirement. Any validation, mutation, service, probe, or retirement failure restores every

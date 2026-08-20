@@ -71,7 +71,7 @@ table inet atlaso {
 flush ruleset
 # Atlaso firewall desired state is disabled.
 '''
-    candidate_rule = '    iifname "eth1" tcp dport { 80, 443 } accept comment "management-ui-eth1"'
+    candidate_rule = '    iifname "eth1" tcp dport { 80, 443, 8443 } accept comment "management-ui-eth1"'
 
     transitional = helper._management_handoff_firewall_text(
         candidate,
@@ -150,11 +150,11 @@ def test_management_handoff_builds_candidate_listener_firewall_rules(monkeypatch
         ),
     )
 
-    rules = helper._management_handoff_candidate_firewall_rules(Path("candidate"))
+    rules = helper._management_handoff_candidate_firewall_rules(Path("candidate"), 8443)
 
-    assert any('iifname "eth1"' in rule and "22, 80, 443" in rule for rule in rules)
-    assert any('iifname "eth2"' in rule and "80, 443" in rule for rule in rules)
-    assert any('iifname "eth3.20"' in rule and "80, 443" in rule for rule in rules)
+    assert any('iifname "eth1"' in rule and "22, 80, 443, 8443" in rule for rule in rules)
+    assert any('iifname "eth2"' in rule and "80, 443, 8443" in rule for rule in rules)
+    assert any('iifname "eth3.20"' in rule and "80, 443, 8443" in rule for rule in rules)
 
 
 def test_management_handoff_snapshot_covers_every_nginx_side_effect():
@@ -1167,7 +1167,7 @@ def test_successful_management_handoff_retains_rollback_state_until_ack(monkeypa
     monkeypatch.setattr(helper, "_install_management_holdovers", lambda _state, _payload: [])
     monkeypatch.setattr(helper, "_write_management_handoff_state", lambda _state, phase: phases.append(phase))
     monkeypatch.setattr(helper, "_apply_management_candidate_network", lambda *_args: None)
-    monkeypatch.setattr(helper, "_management_handoff_candidate_firewall_rules", lambda _path: [])
+    monkeypatch.setattr(helper, "_management_handoff_candidate_firewall_rules", lambda _path, _port: [])
     monkeypatch.setattr(
         helper,
         "_handle_network",
@@ -1254,7 +1254,15 @@ def test_management_handoff_failure_rolls_back_with_truthful_layer(monkeypatch, 
     monkeypatch.setattr(helper, "_install_management_holdovers", lambda _state, _payload: [])
     monkeypatch.setattr(helper, "_write_management_handoff_state", lambda *_args: None)
     monkeypatch.setattr(helper, "_apply_management_candidate_network", lambda *_args: None)
-    monkeypatch.setattr(helper, "_management_handoff_candidate_firewall_rules", lambda _path: [])
+    monkeypatch.setattr(helper, "_management_handoff_candidate_firewall_rules", lambda _path, _port: [])
+    monkeypatch.setattr(
+        helper,
+        "_load_appliance_settings_config",
+        lambda _path: {
+            "management_https_enabled": False,
+            "management_public_http_port": 80,
+        },
+    )
     monkeypatch.setattr(helper, "_handle_network", lambda *_args: 0)
     monkeypatch.setattr(helper, "_handle_firewall", lambda *_args: 1)
     monkeypatch.setattr(helper, "_restore_management_handoff", lambda value: restored.append(value) or {"readiness": "old-ready"})
@@ -1313,7 +1321,7 @@ def test_management_handoff_resolver_failure_rolls_back_before_nginx(
     monkeypatch.setattr(helper, "_install_management_holdovers", lambda _state, _payload: [])
     monkeypatch.setattr(helper, "_write_management_handoff_state", lambda *_args: None)
     monkeypatch.setattr(helper, "_apply_management_candidate_network", lambda *_args: None)
-    monkeypatch.setattr(helper, "_management_handoff_candidate_firewall_rules", lambda _path: [])
+    monkeypatch.setattr(helper, "_management_handoff_candidate_firewall_rules", lambda _path, _port: [])
     monkeypatch.setattr(helper, "_handle_firewall", lambda *_args: 0)
     monkeypatch.setattr(
         helper,
@@ -1383,7 +1391,15 @@ def test_management_handoff_never_activates_nginx_with_unhealthy_upstream(monkey
     monkeypatch.setattr(helper, "_install_management_holdovers", lambda _state, _payload: [])
     monkeypatch.setattr(helper, "_write_management_handoff_state", lambda *_args: None)
     monkeypatch.setattr(helper, "_apply_management_candidate_network", lambda *_args: None)
-    monkeypatch.setattr(helper, "_management_handoff_candidate_firewall_rules", lambda _path: [])
+    monkeypatch.setattr(helper, "_management_handoff_candidate_firewall_rules", lambda _path, _port: [])
+    monkeypatch.setattr(
+        helper,
+        "_load_appliance_settings_config",
+        lambda _path: {
+            "management_https_enabled": False,
+            "management_public_http_port": 80,
+        },
+    )
     monkeypatch.setattr(helper, "_handle_firewall", lambda *_args: 0)
     monkeypatch.setattr(
         helper,
