@@ -97,7 +97,8 @@ inspection, authentication actions, and safe cancellation remain available.
 
 A management-path change is the exception to independent component execution: if any of Certificate Authority,
 Network, Firewall, Appliance Settings, or Public Services is submitted while such a Network change is pending, Atlaso
-selects all five together and runs them as one recoverable handoff. The task
+selects all five together and runs them as one recoverable handoff. Atlaso evaluates this after other subsystem
+dependencies, so an indirectly selected protected component cannot bypass the handoff. The task
 keeps every previous configured or runtime global address, public port, HTTP/HTTPS listener, and snapshotted TLS
 certificate active until consecutive bounded checks on the applicable old and candidate public ports prove the Atlaso
 loopback upstream, candidate nginx listener, and host-facing `/openapi.json` are ready.

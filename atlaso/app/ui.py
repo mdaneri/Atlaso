@@ -14843,14 +14843,6 @@ def _submit_appliance_apply(
     )
     if ca_required_for_nts:
         selected_ids.add("ca")
-    management_handoff = bool(
-        selected_ids.intersection(MANAGEMENT_HANDOFF_UNIT_IDS)
-        and unit_map.get("network", {}).get("management_handoff_required")
-    )
-    if management_handoff:
-        selected_ids.update(
-            unit_id for unit_id in MANAGEMENT_HANDOFF_UNIT_IDS if unit_id in unit_map
-        )
     dns_settings_for_apply = unit_map.get("dnsmasq", {}).get("context", {}).get("dns_settings")
     local_dns_disable_requires_resolver = bool(
         "dnsmasq" in selected_ids
@@ -14901,6 +14893,14 @@ def _submit_appliance_apply(
         and unit_map["local_users"]["changed"]
     ):
         selected_ids.add("local_users")
+    management_handoff = bool(
+        selected_ids.intersection(MANAGEMENT_HANDOFF_UNIT_IDS)
+        and unit_map.get("network", {}).get("management_handoff_required")
+    )
+    if management_handoff:
+        selected_ids.update(
+            unit_id for unit_id in MANAGEMENT_HANDOFF_UNIT_IDS if unit_id in unit_map
+        )
     if not selected_ids:
         detail = "Select at least one appliance change to submit."
         return JSONResponse({"detail": detail}, status_code=422) if wants_json else Response(detail, status_code=422, media_type="text/plain")

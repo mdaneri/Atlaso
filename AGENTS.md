@@ -275,7 +275,8 @@ The following cross-cutting boundaries always apply:
 - A management address, gateway, role, interface, VLAN, management VLAN MTU, or flagged-access listener change must
   use one recoverable
   handoff across Certificate Authority, Network, Firewall, Appliance Settings, and Public Services. Submitting any one
-  of those dependent units while such a Network change is pending must force all five into the handoff. Keep the previous
+  of those dependent units while such a Network change is pending must force all five into the handoff. Evaluate this
+  after every cross-unit dependency expands so an indirectly selected protected unit cannot bypass it. Keep the previous
   known-good configured and observed global addresses, public port, protocol, and snapshotted TLS identity active until
   consecutive bounded Atlaso loopback,
   candidate nginx, and host-facing `/openapi.json` checks pass. Never expose a candidate nginx front door before its

@@ -997,6 +997,74 @@ def test_management_move_forces_partial_dependency_selection_into_handoff(client
         )
 
 
+def test_management_move_rechecks_handoff_after_ldap_dependency_expansion(client, monkeypatch):
+    """Protect a Firewall unit added indirectly by the LDAP dependency closure.
+
+    Args:
+        client: HTTP test client used to exercise the Atlaso application.
+        monkeypatch: Pytest fixture used to isolate background execution.
+    """
+    from sqlalchemy import select
+
+    from atlaso.app import ui
+    from atlaso.app.database import SessionLocal
+    from atlaso.app.models import Job, PhysicalInterface
+
+    login(client)
+    with SessionLocal() as db:
+        units = ui.appliance_apply_units(db)
+        ui.update_appliance_apply_baselines(db, units, {unit["id"] for unit in units})
+        management = db.scalar(select(PhysicalInterface).where(PhysicalInterface.name == "eth0"))
+        assert management is not None
+        management.ip_cidr = "192.168.49.22/24"
+        db.commit()
+
+    real_units = ui.appliance_apply_units
+
+    def units_with_ldap_firewall_dependency(db, *, reconcile=True):
+        """Mark LDAP active and its generated Firewall dependency changed.
+
+        Args:
+            db: Active database session.
+            reconcile: Whether desired-state dependencies should be reconciled.
+
+        Returns:
+            Appliance Apply units with the indirect LDAP dependency active.
+        """
+        units = real_units(db, reconcile=reconcile)
+        unit_map = {unit["id"]: unit for unit in units}
+        unit_map["ldap"]["context"]["ldap_organizations"] = [object()]
+        unit_map["ldap"]["changed"] = True
+        unit_map["firewall"]["changed"] = True
+        return units
+
+    monkeypatch.setattr(ui, "appliance_apply_units", units_with_ldap_firewall_dependency)
+    monkeypatch.setattr(ui, "run_appliance_apply_job", lambda _job_id: None)
+    page = client.get("/dashboard")
+    csrf = page.text.split('name="csrf" value="', 1)[1].split('"', 1)[0]
+
+    response = client.post(
+        "/appliance-apply",
+        data={"csrf": csrf, "selected_units": "ldap"},
+        headers={"Accept": "application/json"},
+    )
+
+    assert response.status_code == 202
+    with SessionLocal() as db:
+        job = db.get(Job, response.json()["job_id"])
+        assert job is not None
+        payload = json.loads(job.result or "{}")
+    assert payload["management_handoff"] is True
+    assert set(payload["management_handoff_units"]) == {
+        "ca",
+        "network",
+        "firewall",
+        "appliance_settings",
+        "public_services",
+    }
+    assert "ldap" in payload["selected_units"]
+
+
 def test_management_handoff_baselines_exact_applied_snapshot(client, monkeypatch):
     """Leave a desired-state edit saved during readiness pending.
 

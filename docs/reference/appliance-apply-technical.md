@@ -213,7 +213,8 @@ config includes an explicit removal target and the helper deletes that VLAN link
 Any change to the effective management address, gateway, dedicated-management role, flagged access-management
 listener, or management-listener VLAN MTU converts five apply units into one `management-handoff` helper transaction
 whenever an operator submits any one of them: Certificate Authority, Network, Firewall, Appliance Settings, and Public
-Services. This forced dependency
+Services. Submission evaluates this closure after every other cross-unit dependency has expanded, so an indirectly
+selected protected unit still selects the handoff. This forced dependency
 closure prevents a partial Firewall, certificate, listener, or resolver apply from publishing candidate-derived state
 before candidate networking exists. The helper validates all staged inputs before mutation, snapshots
 the Atlaso-owned networkd, nftables, nginx, certificate, and related runtime files under a root-only state directory,
