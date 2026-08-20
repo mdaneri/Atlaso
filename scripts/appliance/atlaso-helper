@@ -15871,15 +15871,43 @@ def _quiesce_management_handoff_apply() -> dict[str, object]:
     """
     if shutil.which("systemctl") is None:
         raise ValueError("systemctl is unavailable; surviving management handoff state cannot be serialized")
+
+    def verified_state(result: subprocess.CompletedProcess[str], stage: str) -> str:
+        """Return one explicit, recognized systemd unit state.
+
+        Args:
+            result: Completed systemctl status probe.
+            stage: Probe stage included in bounded failure text.
+
+        Returns:
+            The recognized unit state.
+
+        Raises:
+            ValueError: If the probe did not return an explicit known state.
+        """
+        state = result.stdout.strip()
+        known_states = {
+            "active",
+            "activating",
+            "deactivating",
+            "reloading",
+            "inactive",
+            "failed",
+            "unknown",
+        }
+        if state not in known_states:
+            raise ValueError(f"{stage} handoff helper state could not be verified")
+        return state
+
     status = _run(["systemctl", "is-active", MANAGEMENT_HANDOFF_APPLY_UNIT])
-    state = status.stdout.strip() or "inactive"
+    state = verified_state(status, "initial")
     if state not in {"active", "activating", "deactivating", "reloading"}:
         return {"apply_unit": MANAGEMENT_HANDOFF_APPLY_UNIT, "state": state}
     stop = _run(["systemctl", "stop", MANAGEMENT_HANDOFF_APPLY_UNIT])
     if stop.returncode != 0:
         raise ValueError("surviving management handoff helper could not be stopped")
     final = _run(["systemctl", "is-active", MANAGEMENT_HANDOFF_APPLY_UNIT])
-    final_state = final.stdout.strip() or "inactive"
+    final_state = verified_state(final, "post-stop")
     if final_state in {"active", "activating", "deactivating", "reloading"}:
         raise ValueError("surviving management handoff helper did not stop")
     return {

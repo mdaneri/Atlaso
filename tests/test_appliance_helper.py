@@ -603,6 +603,51 @@ def test_management_handoff_recovery_stops_surviving_apply_unit(monkeypatch):
     assert evidence["state"] == "inactive"
 
 
+@pytest.mark.parametrize("failed_probe", ["initial", "post-stop"])
+def test_management_handoff_recovery_rejects_unverified_helper_state(monkeypatch, failed_probe):
+    """Fail closed when systemd cannot prove the helper inactive.
+
+    Args:
+        monkeypatch: Pytest fixture used to replace systemd command execution.
+        failed_probe: Status probe that returns no verifiable unit state.
+    """
+    helper = load_helper_module()
+    commands: list[list[str]] = []
+    probes = iter(
+        [subprocess.CompletedProcess(["systemctl"], 1, "", "manager unavailable")]
+        if failed_probe == "initial"
+        else [
+            subprocess.CompletedProcess(["systemctl"], 0, "active\n", ""),
+            subprocess.CompletedProcess(["systemctl"], 1, "", "manager unavailable"),
+        ]
+    )
+    monkeypatch.setattr(
+        helper.shutil,
+        "which",
+        lambda command: "/usr/bin/systemctl" if command == "systemctl" else None,
+    )
+
+    def run(command):
+        """Return explicit stop success and configured status evidence.
+
+        Args:
+            command: Systemd command being simulated.
+        """
+        commands.append(command)
+        if command[1] == "stop":
+            return subprocess.CompletedProcess(command, 0, "", "")
+        return next(probes)
+
+    monkeypatch.setattr(helper, "_run", run)
+
+    with pytest.raises(ValueError, match=f"{failed_probe} handoff helper state could not be verified"):
+        helper._quiesce_management_handoff_apply()
+
+    assert (["systemctl", "stop", helper.MANAGEMENT_HANDOFF_APPLY_UNIT] in commands) is (
+        failed_probe == "post-stop"
+    )
+
+
 def test_management_handoff_acknowledgement_is_durable_and_idempotent(monkeypatch, tmp_path, capsys):
     """Retain rollback state until Atlaso acknowledges its database commit.
 

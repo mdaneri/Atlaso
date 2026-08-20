@@ -223,8 +223,8 @@ bundled task state and baselines and sends an idempotent acknowledgement. A fixe
 apply with startup recovery, which stops and verifies any surviving helper before rollback. Startup rolls back when
 interruption precedes that database boundary and completes the acknowledgement when the database already records the
 candidate. Adapter timeouts and other indeterminate apply returns invoke that same fixed-unit stop and rollback before
-the task becomes terminal. Exceptions reconcile the same boundary immediately, and an unproven acknowledgement keeps
-the global Apply lock held. Results
+the task becomes terminal. Empty or malformed systemd unit-state evidence fails closed before rollback. Exceptions
+reconcile the same boundary immediately, and an unproven acknowledgement keeps the global Apply lock held. Results
 expose only a bounded failing-layer identifier and
 non-secret error text; Appliance Apply writes that evidence to every bundled component and updates none of their
 baselines unless the transaction commits. The committed baselines come from the exact snapshots hash-checked and staged
