@@ -291,7 +291,8 @@ The following cross-cutting boundaries always apply:
   timeout, indeterminate helper return, interruption, or startup recovery, first stop and verify any surviving
   fixed-identity apply helper; serialize every retry under a separate fixed-identity recovery unit and stop and verify
   any surviving recovery unit before starting another. Then restore every captured runtime
-  file and link, reconfigure pre-existing candidate links, remove candidate-only VLANs, fail closed without host
+  file and link, durably sync every restored file and affected parent directory before clearing rollback state,
+  reconfigure pre-existing candidate links, remove candidate-only VLANs, fail closed without host
   mutation when an active appliance has no known-good Network baseline, restore a previously absent firewall by
   disabling its candidate service and flushing the candidate ruleset, keep the old path reachable, and record a
   truthful non-secret failing layer. Probe old and candidate listeners on their configured public ports. Require every

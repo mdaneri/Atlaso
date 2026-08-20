@@ -16227,6 +16227,50 @@ def _management_handoff_previous_firewall_config_existed(state: dict) -> bool:
     raise ValueError("previous firewall snapshot state is missing")
 
 
+def _durable_management_handoff_unlink(path: Path) -> None:
+    """Remove one rollback-owned path and persist its directory entry.
+
+    Args:
+        path: Runtime path that must remain absent after a power loss.
+    """
+    existed = path.exists() or path.is_symlink()
+    path.unlink(missing_ok=True)
+    if existed:
+        _fsync_directory(path.parent)
+
+
+def _restore_management_handoff_snapshot(item: dict) -> None:
+    """Restore one snapshot and persist its bytes and directory entry.
+
+    Args:
+        item: Captured runtime artifact metadata.
+    """
+    path = Path(str(item["path"]))
+    if not bool(item.get("existed")):
+        _durable_management_handoff_unlink(path)
+        return
+    missing_parents: list[Path] = []
+    parent = path.parent
+    while not parent.exists():
+        missing_parents.append(parent)
+        if parent.parent == parent:
+            break
+        parent = parent.parent
+    path.parent.mkdir(parents=True, exist_ok=True)
+    for created_parent in reversed(missing_parents):
+        _fsync_directory(created_parent.parent)
+    temporary = path.with_name(f".{path.name}.atlaso-rollback")
+    try:
+        shutil.copy2(Path(str(item["backup"])), temporary)
+        os.chmod(temporary, int(item.get("mode", 0o600)))
+        os.chown(temporary, int(item.get("uid", 0)), int(item.get("gid", 0)))
+        _fsync_file(temporary)
+        temporary.replace(path)
+        _fsync_directory(path.parent)
+    finally:
+        temporary.unlink(missing_ok=True)
+
+
 def _restore_management_handoff(state: dict) -> dict:
     """Restore every snapshotted management runtime artifact.
 
@@ -16256,33 +16300,22 @@ def _restore_management_handoff(state: dict) -> dict:
         lambda: _quiesce_management_handoff_firewall(state, commands),
     )
     for path in NETWORKD_CONFIG_DIR.glob(f"{MANAGEMENT_HANDOFF_HOLDOVER_PREFIX}*.network"):
-        attempt("network holdover removal", lambda path=path: path.unlink(missing_ok=True))
+        attempt(
+            "network holdover removal",
+            lambda path=path: _durable_management_handoff_unlink(path),
+        )
     current_managed = [NETWORKD_MGMT_CONFIG_PATH, *NETWORKD_CONFIG_DIR.glob(f"{NETWORKD_MANAGED_PREFIX}*")]
     for path in current_managed:
         if path.is_file():
-            attempt("candidate network removal", lambda path=path: path.unlink())
+            attempt(
+                "candidate network removal",
+                lambda path=path: _durable_management_handoff_unlink(path),
+            )
     for index, item in enumerate(state.get("snapshots", [])):
-        def restore_snapshot(item: dict = item) -> None:
-            """Restore one snapshot atomically so a bad backup cannot corrupt its target.
-
-            Args:
-                item: Captured runtime artifact metadata.
-            """
-            path = Path(str(item["path"]))
-            if not bool(item.get("existed")):
-                path.unlink(missing_ok=True)
-                return
-            path.parent.mkdir(parents=True, exist_ok=True)
-            temporary = path.with_name(f".{path.name}.atlaso-rollback")
-            try:
-                shutil.copy2(Path(str(item["backup"])), temporary)
-                os.chmod(temporary, int(item.get("mode", 0o600)))
-                os.chown(temporary, int(item.get("uid", 0)), int(item.get("gid", 0)))
-                temporary.replace(path)
-            finally:
-                temporary.unlink(missing_ok=True)
-
-        attempt(f"snapshot {index} restore", restore_snapshot)
+        attempt(
+            f"snapshot {index} restore",
+            lambda item=item: _restore_management_handoff_snapshot(item),
+        )
     for command in (["networkctl", "reload"], ["systemctl", "daemon-reload"]):
         def run_reload(command: list[str] = command) -> None:
             """Run one required rollback reload command.

@@ -265,7 +265,9 @@ captured file, reloads networkd and nftables, restores the captured live MTU on 
 reconfigures previous links, reloads nginx, and restarts Atlaso when the
 captured state requires it. Each captured artifact, link, and later runtime layer is restored independently; one unreadable
 backup is reported as an incomplete rollback but does not prevent restoration attempts for the remaining network,
-firewall, nginx, Atlaso, and readiness layers. Rollback explicitly reconfigures every pre-existing candidate link and
+firewall, nginx, Atlaso, and readiness layers. Restored file bytes and every affected parent-directory entry are synced
+before the durable transaction marker can be cleared; a sync failure keeps rollback incomplete for startup retry.
+Rollback explicitly reconfigures every pre-existing candidate link and
 removes a
 candidate-only VLAN after restoring its files. A previously absent firewall state is restored by disabling/stopping the
 candidate `atlaso-firewall.service`, deleting its snapshotted-as-absent unit and config, reloading systemd, and running

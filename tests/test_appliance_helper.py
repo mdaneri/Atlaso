@@ -358,6 +358,89 @@ def test_management_handoff_rollback_continues_after_missing_snapshot(monkeypatc
     assert ["systemctl", "reload-or-restart", "nginx.service"] in commands
 
 
+def test_management_handoff_snapshot_restore_is_durable(monkeypatch, tmp_path):
+    """Sync restored bytes and both replacement and removal directory entries.
+
+    Args:
+        monkeypatch: Pytest fixture used to observe durability operations.
+        tmp_path: Temporary root containing snapshot targets and backups.
+    """
+    helper = load_helper_module()
+    target = tmp_path / "runtime" / "management.conf"
+    target.parent.mkdir()
+    target.write_text("candidate\n", encoding="utf-8")
+    backup = tmp_path / "management.backup"
+    backup.write_text("previous\n", encoding="utf-8")
+    events: list[tuple[str, Path]] = []
+    monkeypatch.setattr(helper.os, "chown", lambda *_args: None, raising=False)
+    monkeypatch.setattr(
+        helper,
+        "_fsync_file",
+        lambda path: events.append(("file", path)),
+    )
+    monkeypatch.setattr(
+        helper,
+        "_fsync_directory",
+        lambda path: events.append(("directory", path)),
+    )
+
+    helper._restore_management_handoff_snapshot(
+        {
+            "path": str(target),
+            "backup": str(backup),
+            "existed": True,
+            "mode": 0o640,
+            "uid": 0,
+            "gid": 0,
+        }
+    )
+
+    assert target.read_text(encoding="utf-8") == "previous\n"
+    assert events == [
+        ("file", target.with_name(f".{target.name}.atlaso-rollback")),
+        ("directory", target.parent),
+    ]
+
+    events.clear()
+    helper._restore_management_handoff_snapshot(
+        {"path": str(target), "existed": False}
+    )
+    assert not target.exists()
+    assert events == [("directory", target.parent)]
+
+
+def test_management_handoff_snapshot_sync_failure_preserves_candidate(monkeypatch, tmp_path):
+    """Keep the marker-retry boundary when restored bytes cannot be synced.
+
+    Args:
+        monkeypatch: Pytest fixture used to inject file-sync failure.
+        tmp_path: Temporary root containing snapshot targets and backups.
+    """
+    helper = load_helper_module()
+    target = tmp_path / "management.conf"
+    target.write_text("candidate\n", encoding="utf-8")
+    backup = tmp_path / "management.backup"
+    backup.write_text("previous\n", encoding="utf-8")
+    monkeypatch.setattr(helper.os, "chown", lambda *_args: None, raising=False)
+    monkeypatch.setattr(
+        helper,
+        "_fsync_file",
+        lambda _path: (_ for _ in ()).throw(OSError("file sync failed")),
+    )
+
+    with pytest.raises(OSError, match="file sync failed"):
+        helper._restore_management_handoff_snapshot(
+            {
+                "path": str(target),
+                "backup": str(backup),
+                "existed": True,
+            }
+        )
+
+    assert target.read_text(encoding="utf-8") == "candidate\n"
+    assert not target.with_name(f".{target.name}.atlaso-rollback").exists()
+
+
 def test_management_candidate_network_defers_old_link_retirement(monkeypatch, tmp_path):
     """Keep old links up and old VLAN addresses intact during candidate activation.
 
@@ -1557,6 +1640,44 @@ def test_interrupted_management_handoff_reports_cleanup_failure(monkeypatch, tmp
     assert payload["management_handoff"] == "rollback incomplete"
     assert payload["failing_layer"] == "interruption recovery"
     assert "rollback state cleanup failed" in payload["error"]
+
+
+def test_interrupted_management_handoff_keeps_marker_on_restore_sync_failure(
+    monkeypatch,
+    tmp_path,
+    capsys,
+):
+    """Never clear the retry marker after a restore durability failure.
+
+    Args:
+        monkeypatch: Pytest fixture used to inject rollback-sync failure.
+        tmp_path: Temporary root containing the interruption marker.
+        capsys: Pytest fixture used to inspect bounded helper evidence.
+    """
+    helper = load_helper_module()
+    state_path = tmp_path / "state.json"
+    state_path.write_text('{"phase":"candidate-ready"}', encoding="utf-8")
+    cleared: list[bool] = []
+    monkeypatch.setattr(helper, "MANAGEMENT_HANDOFF_STATE_PATH", state_path)
+    monkeypatch.setattr(helper, "_quiesce_management_handoff_apply", lambda: {"state": "inactive"})
+    monkeypatch.setattr(
+        helper,
+        "_restore_management_handoff",
+        lambda _state: (_ for _ in ()).throw(ValueError("snapshot file sync failed")),
+    )
+    monkeypatch.setattr(
+        helper,
+        "_clear_management_handoff_state",
+        lambda: cleared.append(True),
+    )
+
+    assert helper._recover_management_handoff() == 1
+    assert state_path.is_file()
+    assert cleared == []
+    payload = json.loads(capsys.readouterr().err.splitlines()[-1])
+    assert payload["management_handoff"] == "rollback incomplete"
+    assert payload["failing_layer"] == "interruption recovery"
+    assert "snapshot file sync failed" in payload["error"]
 
 
 def test_management_handoff_state_cleanup_is_durable(monkeypatch, tmp_path):
