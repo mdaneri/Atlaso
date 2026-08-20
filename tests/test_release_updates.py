@@ -2781,6 +2781,7 @@ def test_worker_restart_resumes_untouched_children_after_healthy_release_rollbac
                 "job_id": "job_release_rollback_handoff",
                 "status": "failed",
                 "release": "0.9.0",
+                "previous_version": "0.9.163",
                 "rolled_back": True,
                 "rollback_health": True,
                 "failure_layer": "management_front_door",
@@ -2882,6 +2883,85 @@ def test_worker_restart_resumes_untouched_children_after_healthy_release_rollbac
             ("photon_os", "skipped"),
         ]
         assert "earlier selected update stream failed" in (completed_steps[-1].error or "")
+
+
+def test_worker_restart_fails_parent_without_requeueing_terminal_children_to_legacy_worker(
+    client,
+    monkeypatch,
+    tmp_path,
+):
+    """Verify rollback to a legacy worker cannot rerun a terminal release child.
+
+    Args:
+        client: HTTP test client providing isolated application state.
+        monkeypatch: Pytest fixture used to replace completion side effects.
+        tmp_path: Temporary directory provided for finalizer evidence.
+    """
+    from sqlalchemy import select
+
+    from atlaso.app import worker
+    from atlaso.app.database import SessionLocal
+    from atlaso.app.models import Job, JobStep
+    from atlaso.app.services.appliance_update import ensure_appliance_update_job_steps
+
+    finalizer = tmp_path / "legacy-rollback-finalizer.json"
+    finalizer.write_text(
+        json.dumps(
+            {
+                "job_id": "job_legacy_rollback_handoff",
+                "status": "failed",
+                "release": "0.9.163",
+                "previous_version": "0.9.162",
+                "rolled_back": True,
+                "rollback_health": True,
+                "failure_layer": "management_front_door",
+                "commands": [],
+                "error": "candidate readiness failed",
+            }
+        ),
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(worker, "APPLIANCE_UPDATE_FINALIZER_PATH", str(finalizer))
+    with SessionLocal() as db:
+        job = Job(
+            id="job_legacy_rollback_handoff",
+            type="appliance-update",
+            status="running",
+            created_by="admin",
+            task_config_json=json.dumps(
+                {
+                    "selected_streams": ["atlaso_release", "powershell_modules", "photon_os"],
+                    "settings": {},
+                    "mode": "run",
+                }
+            ),
+            result='{"status":"running","success":false}',
+        )
+        db.add(job)
+        db.flush()
+        steps = ensure_appliance_update_job_steps(
+            db,
+            job=job,
+            selected_streams=["atlaso_release", "powershell_modules", "photon_os"],
+        )
+        steps[0].status = "running"
+        db.commit()
+
+        assert worker.recover_interrupted_worker_jobs(db) == 1
+        recovered = db.get(Job, job.id)
+        recovered_steps = db.execute(
+            select(JobStep).where(JobStep.job_id == job.id).order_by(JobStep.position)
+        ).scalars().all()
+        assert recovered.status == "failed"
+        assert [(step.component_key, step.status) for step in recovered_steps] == [
+            ("atlaso_release", "failed"),
+            ("powershell_modules", "skipped"),
+            ("photon_os", "skipped"),
+        ]
+        assert "cannot preserve terminal release results" in (
+            recovered_steps[1].error or ""
+        )
+        assert json.loads(recovered.result)["release_transaction"]["rolled_back"] is True
 
 
 @pytest.mark.parametrize("finalizer_status", ["succeeded", "failed"])

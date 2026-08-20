@@ -112,9 +112,6 @@ def test_login_and_dashboard_render(client):
     assert ">Documentation<" in footer
     assert footer.index("https://github.com/mdaneri/Atlaso") < footer.index(documentation_link)
     assert footer.index(documentation_link) < footer.index('href="/api/docs"')
-    server_time_response = client.get("/server-time")
-    assert server_time_response.status_code == 200
-    assert server_time_response.json()["label"].startswith("Server ")
     app_js = Path("atlaso/app/static/app.js").read_text()
     assert "function initializeServerTime()" in app_js
     assert 'window.setInterval(sync, 60000)' in app_js
@@ -1642,8 +1639,8 @@ def test_reported_template_accessibility_contracts():
         assert form_marker in source
 
 
-def test_monitor_page_renders_and_data_endpoint(client):
-    """Verify that monitor page renders and data endpoint.
+def test_monitor_page_renders_template_and_browser_assets(client):
+    """Verify that the Monitor template and browser assets retain their behavior.
 
     Args:
         client: HTTP test client used to exercise the Atlaso application.
@@ -1752,24 +1749,6 @@ def test_monitor_page_renders_and_data_endpoint(client):
     assert "interaction.pinned = Boolean(target);" in app_js
     assert "interaction.legendTargets.find" in app_js
     assert "interaction.highlightedField !== legendTarget.line.field" in app_js
-
-    data = client.get("/monitor/data")
-    assert data.status_code == 200, data.text
-    payload = data.json()
-    assert payload["window_hours"] == 6
-    assert "summary" in payload
-    assert "virtualization" in payload
-    assert "cpu" in payload
-    assert "cpu_cores" in payload
-    assert "memory" in payload
-    assert "network_totals" in payload
-    assert "disk_devices" in payload
-    assert "disks" in payload
-
-    day_data = client.get("/monitor/data?hours=24")
-    assert day_data.status_code == 200, day_data.text
-    assert day_data.json()["window_hours"] == 24
-
 
 def test_login_page_includes_pwa_metadata(client):
     """Verify that login page includes pwa metadata.

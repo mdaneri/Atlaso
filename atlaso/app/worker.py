@@ -58,6 +58,7 @@ from atlaso.app.services.vaults import (
 
 LOGGER = logging.getLogger("atlaso.worker")
 POLL_SECONDS = 5
+TERMINAL_CHILD_HANDOFF_MINIMUM_VERSION = (0, 9, 163)
 AUTOMATION_STAGE_DIR = Path("/var/lib/atlaso/automation/scripts")
 AUTOMATION_VAULT_STAGE_DIR = Path("/run/atlaso-automation-vaults")
 WORKER_STARTUP_STATUS_PATH = Path("/var/lib/atlaso/worker-startup.json")
@@ -293,6 +294,19 @@ def _rollback_requires_worker_restart() -> bool:
     )
 
 
+def _restored_worker_supports_terminal_child_handoff(version: object) -> bool:
+    """Return whether a restored release preserves terminal update children.
+
+    Args:
+        version: Previous Atlaso version recorded by the release finalizer.
+    """
+    normalized = str(version or "").split("+", 1)[0]
+    parts = normalized.split(".")
+    if len(parts) != 3 or any(not part.isdigit() for part in parts):
+        return False
+    return tuple(int(part) for part in parts) >= TERMINAL_CHILD_HANDOFF_MINIMUM_VERSION
+
+
 def _complete_recovered_rollback_job() -> bool:
     """Complete the exact recovered release handoff before restoring the old worker.
 
@@ -488,6 +502,16 @@ def recover_interrupted_worker_jobs(
                 and any(step.status == JobStatus.PENDING.value for step in remaining_steps)
                 and all(step.status != JobStatus.RUNNING.value for step in remaining_steps)
             )
+            legacy_rollback_handoff = bool(
+                resume_pending_children
+                and finalizer_status == JobStatus.FAILED.value
+                and definitive.get("rolled_back") is True
+                and not _restored_worker_supports_terminal_child_handoff(
+                    definitive.get("previous_version")
+                )
+            )
+            if legacy_rollback_handoff:
+                resume_pending_children = False
             if resume_pending_children:
                 job.status = JobStatus.PENDING.value
                 job.finished_at = None
@@ -526,7 +550,13 @@ def recover_interrupted_worker_jobs(
                     step.error = "The Atlaso worker restarted while this update stream was running."
                 elif step.status == JobStatus.PENDING.value:
                     step.status = JobStatus.SKIPPED.value
-                    step.error = "The update stream was not started because the Atlaso worker restarted."
+                    step.error = (
+                        "The update stream was not resumed because the restored Atlaso worker "
+                        "cannot preserve terminal release results. Submit this stream separately "
+                        "after reviewing the rollback."
+                        if legacy_rollback_handoff
+                        else "The update stream was not started because the Atlaso worker restarted."
+                    )
                 else:
                     continue
                 step.finished_at = now

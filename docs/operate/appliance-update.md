@@ -52,7 +52,10 @@ Application dependencies and bootstrap tools are exact, hash-locked wheels insid
 Checks execute every selected child even when another check fails, which keeps diagnostics independent. Installations
 preserve the safety order Atlaso Release, PowerShell Modules, then Photon OS. After a successful transactional release
 handoff, the restarted candidate worker resumes only the untouched pending module and OS children; it never reruns a
-child that had already started. PowerShell remains independently observable after a release failure, while Photon is
+child that had already started. If rollback restores an older worker that cannot preserve terminal child results,
+Atlaso leaves untouched children explicitly skipped and the parent failed instead of allowing that worker to rerun the
+rejected release; submit those independent streams separately after reviewing the rollback. PowerShell remains
+independently observable after a release failure when the restored worker supports the handoff, while Photon is
 marked **skipped** with an explicit reason if either earlier selected stream failed. The parent succeeds only when every
 selected child succeeds.
 

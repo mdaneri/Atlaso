@@ -448,7 +448,9 @@ Terminal order:
   for the selected Atlaso Release, PowerShell Modules, and Photon OS streams. Checks run every selected child for
   complete diagnostics. Installs preserve release, PowerShell, then Photon ordering; Photon is explicitly skipped when
   an earlier selected stream fails. After a definitive release worker handoff, resume only untouched pending children
-  and never rerun a child that had started. Keep child output, compatibility evidence, and errors independent, and
+  when the restored worker can preserve terminal child results, and never rerun a child that had started. If rollback
+  restores an older worker without that capability, explicitly skip untouched children and fail the parent rather than
+  requeueing terminal work. Keep child output, compatibility evidence, and errors independent, and
   derive the parent outcome from all selected children. Give privileged PowerShell update work the root-owned
   persistent home `/var/lib/atlaso/powershell`; do not point it at the service's read-only `/root` view.
 - Submit manual Appliance Update checks and installations asynchronously from Update Streams. Refresh only the embedded

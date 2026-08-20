@@ -418,9 +418,11 @@ The following cross-cutting boundaries always apply:
   until the definitive rollback write; never start a restored legacy worker inside the transaction. After recovery
   bookkeeping, a candidate worker must exit for systemd to start the restored release. Before publishing any incomplete
   rollback, retain provisional owner evidence and stop and verify the caller inactive, including when the gate exists.
-  Then resume only untouched
-  pending update children, including a mixed terminal/pending set after a second worker restart, without rerunning terminal
-  children. Gate timeout exits worker startup for systemd retry, and the surviving helper removes staged source
+  Then resume only untouched pending update children when the restored worker can preserve terminal child results,
+  including a mixed terminal/pending set after a second worker restart, without rerunning terminal children. When a
+  rollback restores an older worker without that capability, leave untouched children explicitly skipped and the
+  parent failed so the restored worker cannot rerun the rejected release. Gate timeout exits worker startup for systemd
+  retry, and the surviving helper removes staged source
   credentials before restarting the caller. Definitive finalizers retain sanitized helper commands, and recovery uses
   the ordinary child, parent, terminal task-log, and audit completion path. Any post-switch failure before the durable
   activation commit restores the previous release, assets, database, and nginx-ready front door with
