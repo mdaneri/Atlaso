@@ -5580,6 +5580,7 @@ def _management_nginx_config(payload: dict, cert_path: Path | None = None, key_p
             [
                 "server {",
                 f"  listen {public_http_port} default_server;",
+                f"  listen [::]:{public_http_port} default_server;",
                 f"  server_name {fqdn} _;",
                 *_management_proxy_location(upstream_host, upstream_port, "http"),
                 "}",
@@ -5591,6 +5592,7 @@ def _management_nginx_config(payload: dict, cert_path: Path | None = None, key_p
         [
             "server {",
             f"  listen {public_http_port} default_server;",
+            f"  listen [::]:{public_http_port} default_server;",
             "  server_name _;",
             *_management_ca_download_locations(upstream_host, upstream_port),
             "  location / {",
@@ -5600,6 +5602,7 @@ def _management_nginx_config(payload: dict, cert_path: Path | None = None, key_p
             "",
             "server {",
             f"  listen {public_https_port} ssl default_server;",
+            f"  listen [::]:{public_https_port} ssl default_server;",
             f"  server_name {fqdn};",
             f"  ssl_certificate {cert_path};",
             f"  ssl_certificate_key {key_path};",
@@ -5611,7 +5614,11 @@ def _management_nginx_config(payload: dict, cert_path: Path | None = None, key_p
     return "\n".join(lines)
 
 
-def _configure_atlaso_management_https(payload: dict, *, site_suffix: str = "") -> int:
+def _configure_atlaso_management_https(
+    payload: dict,
+    *,
+    site_suffix: str = "",
+) -> tuple[int, int | None]:
     """Perform configure atlaso management HTTPS.
 
     Args:
@@ -5633,7 +5640,7 @@ def _configure_atlaso_management_https(payload: dict, *, site_suffix: str = "") 
         site_text += "\n" + site_suffix.strip() + "\n"
     site_apply = _install_nginx_site(NGINX_MANAGEMENT_SITE_PATH, site_text)
     if site_apply != 0:
-        return site_apply
+        return site_apply, None
     next_text = _atlaso_service_loopback_dropin(upstream_host, port)
     ATLASO_SERVICE_DROPIN_DIR.mkdir(parents=True, exist_ok=True)
     current_text = ATLASO_SERVICE_HTTPS_DROPIN_PATH.read_text(encoding="utf-8") if ATLASO_SERVICE_HTTPS_DROPIN_PATH.exists() else ""
@@ -5644,13 +5651,13 @@ def _configure_atlaso_management_https(payload: dict, *, site_suffix: str = "") 
         tmp_target.replace(ATLASO_SERVICE_HTTPS_DROPIN_PATH)
         changed = True
     if not changed:
-        return 0
+        return 0, None
 
     daemon_reload = _run(["systemctl", "daemon-reload"])
     print(daemon_reload.stdout, end="")
     print(daemon_reload.stderr, end="", file=sys.stderr)
     if daemon_reload.returncode != 0:
-        return daemon_reload.returncode
+        return daemon_reload.returncode, None
 
     restart_command = ["systemctl", "restart", "atlaso.service"]
     systemd_run = shutil.which("systemd-run")
@@ -5668,7 +5675,8 @@ def _configure_atlaso_management_https(payload: dict, *, site_suffix: str = "") 
     result = _run(command)
     print(result.stdout, end="")
     print(result.stderr, end="", file=sys.stderr)
-    return result.returncode
+    restart_delay_seconds = 3 if systemd_run is not None and result.returncode == 0 else None
+    return result.returncode, restart_delay_seconds
 
 
 def _root_ssh_config(enabled: bool) -> str:
@@ -6065,28 +6073,31 @@ def _handle_appliance_settings(action: str, args: list[str]) -> int:
     vcfdt_ceip, vcfdt_ceip_status = _apply_vcf_download_tool_ceip(vmware_ceip_enabled)
     if vcfdt_ceip != 0:
         return vcfdt_ceip
-    management_https = _configure_atlaso_management_https(payload)
+    management_https, management_restart_delay_seconds = _configure_atlaso_management_https(payload)
     if management_https != 0:
         return management_https
+    result_payload = {
+        "appliance_settings": "apply complete",
+        "fqdn": fqdn,
+        "management_https_enabled": bool(payload.get("management_https_enabled")),
+        "root_ssh_enabled": bool(payload.get("root_ssh_enabled")),
+        "web_terminal_enabled": bool(payload.get("web_terminal_enabled")),
+        "web_terminal_interfaces": payload.get("web_terminal_interfaces") or [],
+        "vmware_ceip_enabled": vmware_ceip_enabled,
+        "vmware_ceip_products": {
+            "vcf_powercli": powercli_ceip_status,
+            "vcf_download_tool": vcfdt_ceip_status,
+        },
+        "resolver_mode": resolver_mode,
+        "resolver_servers": resolver_servers,
+    }
+    if management_restart_delay_seconds is not None:
+        result_payload["management_status_transition"] = {
+            "kind": "planned_service_restart",
+            "restart_delay_seconds": management_restart_delay_seconds,
+        }
     print(
-        json.dumps(
-            {
-                "appliance_settings": "apply complete",
-                "fqdn": fqdn,
-                "management_https_enabled": bool(payload.get("management_https_enabled")),
-                "root_ssh_enabled": bool(payload.get("root_ssh_enabled")),
-                "web_terminal_enabled": bool(payload.get("web_terminal_enabled")),
-                "web_terminal_interfaces": payload.get("web_terminal_interfaces") or [],
-                "vmware_ceip_enabled": vmware_ceip_enabled,
-                "vmware_ceip_products": {
-                    "vcf_powercli": powercli_ceip_status,
-                    "vcf_download_tool": vcfdt_ceip_status,
-                },
-                "resolver_mode": resolver_mode,
-                "resolver_servers": resolver_servers,
-            },
-            sort_keys=True,
-        )
+        json.dumps(result_payload, sort_keys=True)
     )
     return 0
 
@@ -16659,7 +16670,11 @@ def _apply_management_handoff(payload: dict) -> int:
             raise ValueError("candidate management resolver apply failed")
         protocol_holdover = _management_handoff_protocol_holdover(state, settings_payload)
         failing_layer = "nginx management front door"
-        if _configure_atlaso_management_https(settings_payload, site_suffix=protocol_holdover) != 0:
+        management_https_result, _restart_delay_seconds = _configure_atlaso_management_https(
+            settings_payload,
+            site_suffix=protocol_holdover,
+        )
+        if management_https_result != 0:
             raise ValueError("candidate management nginx apply failed")
         if _handle_public_services("apply", [str(payload["public_services_config_path"])]) != 0:
             raise ValueError("candidate public-services nginx apply failed")
@@ -16719,7 +16734,10 @@ def _apply_management_handoff(payload: dict) -> int:
             raise ValueError("final nftables apply failed while retiring the previous path")
         if protocol_holdover:
             failing_layer = "previous-protocol retirement"
-            if _configure_atlaso_management_https(settings_payload) != 0:
+            management_https_result, _restart_delay_seconds = _configure_atlaso_management_https(
+                settings_payload
+            )
+            if management_https_result != 0:
                 raise ValueError("candidate nginx could not retire the previous protocol listener")
         failing_layer = "post-retirement readiness"
         final_readiness = _management_handoff_readiness(

@@ -10,7 +10,9 @@ MATRIX = ROOT / "docs" / "project" / "ui-compliance-matrix.md"
 ROUTER_PREFIXES = {
     "router": "/ui/management",
     "management_router": "/ui/management",
+    "power_router": "/ui/management",
     "public_router": "/ui/public",
+    "update_router": "/ui/management",
 }
 
 

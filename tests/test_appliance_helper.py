@@ -1266,7 +1266,10 @@ def test_successful_management_handoff_retains_rollback_state_until_ack(monkeypa
     monkeypatch.setattr(
         helper,
         "_configure_atlaso_management_https",
-        lambda _payload, *, site_suffix="": nginx_suffixes.append(site_suffix) or 0,
+        lambda _payload, *, site_suffix="": (
+            nginx_suffixes.append(site_suffix) or 0,
+            None,
+        ),
     )
     monkeypatch.setattr(helper, "_management_handoff_protocol_holdover", lambda *_args: "old protocol listener")
     monkeypatch.setattr(helper, "_handle_public_services", lambda *_args: 0)
@@ -1411,7 +1414,7 @@ def test_management_handoff_resolver_failure_rolls_back_before_nginx(
     monkeypatch.setattr(
         helper,
         "_configure_atlaso_management_https",
-        lambda *_args, **_kwargs: nginx_calls.append(True) or 0,
+        lambda *_args, **_kwargs: (nginx_calls.append(True) or 0, None),
     )
     monkeypatch.setattr(
         helper,
@@ -1480,7 +1483,7 @@ def test_management_handoff_never_activates_nginx_with_unhealthy_upstream(monkey
     monkeypatch.setattr(
         helper,
         "_configure_atlaso_management_https",
-        lambda *_args: settings_calls.append("activated") or 0,
+        lambda *_args: (settings_calls.append("activated") or 0, None),
     )
     monkeypatch.setattr(helper, "_restore_management_handoff", lambda _state: {"readiness": "old-ready"})
     monkeypatch.setattr(helper, "_clear_management_handoff_state", lambda: None)
@@ -8611,12 +8614,13 @@ def test_appliance_settings_helper_accepts_dhcp_resolver_mode(tmp_path):
     assert errors == []
 
 
-def test_appliance_settings_helper_writes_management_nginx_proxy(monkeypatch, tmp_path):
+def test_appliance_settings_helper_writes_management_nginx_proxy(monkeypatch, tmp_path, capsys):
     """Verify that appliance settings helper writes management nginx proxy.
 
     Args:
         monkeypatch: Pytest fixture used to replace dependencies for the test.
         tmp_path: Temporary directory provided by pytest for isolated filesystem state.
+        capsys: Pytest fixture used to capture helper output.
     """
     helper = load_helper_module()
     apply_dir = tmp_path / "apply" / "appliance-settings"
@@ -8709,10 +8713,12 @@ def test_appliance_settings_helper_writes_management_nginx_proxy(monkeypatch, tm
     assert f"include {nginx_include};" in nginx_main.read_text(encoding="utf-8")
     management_site = nginx_management_site.read_text(encoding="utf-8")
     assert "listen 80 default_server;" in management_site
+    assert "listen [::]:80 default_server;" in management_site
     assert "location = /ca/downloads/root-ca.pem {" in management_site
     assert "location = /ca/downloads/ca-bundle.pem {" in management_site
     assert "location / {\n    return 308 https://$host$request_uri;" in management_site
     assert "listen 443 ssl default_server;" in management_site
+    assert "listen [::]:443 ssl default_server;" in management_site
     assert "client_max_body_size 1g;" in management_site
     assert "client_max_body_size 512m;" not in management_site
     assert f"ssl_certificate {cert_path};" in management_site
@@ -8734,6 +8740,25 @@ def test_appliance_settings_helper_writes_management_nginx_proxy(monkeypatch, tm
     assert ["/usr/sbin/sshd", "-t"] in commands
     assert ["systemctl", "restart", "sshd"] in commands
     assert any(command[:5] == ["/usr/bin/systemd-run", "--quiet", "--collect", "--on-active=3", "--unit=atlaso-management-ui-restart"] for command in commands)
+    apply_payload = next(
+        json.loads(line)
+        for line in reversed(capsys.readouterr().out.splitlines())
+        if line.startswith("{") and "apply complete" in line
+    )
+    assert apply_payload["management_status_transition"] == {
+        "kind": "planned_service_restart",
+        "restart_delay_seconds": 3,
+    }
+
+    commands.clear()
+    assert helper._handle_appliance_settings("apply", [str(config_path)]) == 0
+    repeat_payload = next(
+        json.loads(line)
+        for line in reversed(capsys.readouterr().out.splitlines())
+        if line.startswith("{") and "apply complete" in line
+    )
+    assert "management_status_transition" not in repeat_payload
+    assert not any("atlaso-management-ui-restart" in command for command in commands)
 
 
 def test_appliance_settings_helper_writes_http_management_proxy_without_https(monkeypatch, tmp_path):
@@ -8782,6 +8807,7 @@ def test_appliance_settings_helper_writes_http_management_proxy_without_https(mo
     assert "--host 127.0.0.1 --port 8000" in dropin
     management_site = nginx_paths["management_site"].read_text(encoding="utf-8")
     assert "listen 80 default_server;" in management_site
+    assert "listen [::]:80 default_server;" in management_site
     assert "return 308 https://$host$request_uri;" not in management_site
     assert "listen 443" not in management_site
     assert "ssl_certificate" not in management_site

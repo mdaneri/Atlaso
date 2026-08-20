@@ -68,9 +68,10 @@ def test_facades_register_extracted_domains_in_exact_order():
     assert ui.UI_ROUTER_REGISTRY.domains == (
         "facade_before_vaults",
         "vaults",
-        "facade_between_vaults_dashboard_monitor",
+        "facade_between_vaults_appliance_maintenance",
+        "appliance_maintenance_power",
         "dashboard_monitor",
-        "facade_between_dashboard_monitor_automation",
+        "appliance_maintenance_update",
         "automation",
         "facade_between_automation_routes_wan",
         "appliance_apply",
@@ -94,9 +95,10 @@ def test_facades_register_extracted_domains_in_exact_order():
     assert ui.UI_ROUTER_REGISTRY.routers_for_plane("management") == (
         ui._management_before_vaults_router,
         ui.vaults_router,
-        ui._management_between_vaults_dashboard_monitor_router,
+        ui._management_between_vaults_appliance_maintenance_router,
+        ui.appliance_maintenance_power_router,
         ui.dashboard_monitor_router,
-        ui._management_before_automation_router,
+        ui.appliance_maintenance_update_router,
         ui.automation_router,
         ui._management_before_routes_wan_router,
         ui.appliance_apply_router,
@@ -169,6 +171,14 @@ def test_facades_register_extracted_domains_in_exact_order():
     assert {
         route.endpoint.__module__ for route in ui.appliance_apply_router.routes
     } == {"atlaso.app.routers.ui.appliance_apply"}
+    assert {
+        route.endpoint.__module__
+        for route in ui.appliance_maintenance_power_router.routes
+    } == {"atlaso.app.routers.ui.appliance_maintenance"}
+    assert {
+        route.endpoint.__module__
+        for route in ui.appliance_maintenance_update_router.routes
+    } == {"atlaso.app.routers.ui.appliance_maintenance"}
     assert {
         route.endpoint.__module__ for route in ui.dashboard_monitor_router.routes
     } == {"atlaso.app.routers.ui.dashboard_monitor"}

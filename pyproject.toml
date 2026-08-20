@@ -1,6 +1,6 @@
 [project]
 name = "atlaso"
-version = "0.9.167"
+version = "0.9.169"
 description = "Atlaso supports POC, lab, and test environments by simplifying deployment, maintenance, and validation."
 readme = "README.md"
 license = "MIT"

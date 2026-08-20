@@ -47,12 +47,24 @@ The browser permits only one status request at a time, polls active work every t
 polling from ten to sixty seconds, suspends polling while hidden, and refreshes immediately after successful desired-
 state mutations, visibility return, and Apply completion. Once a master task is observed, the browser retains its ID
 until `/ui/management/tasks/<id>/status` returns a valid terminal task. A transient status or terminal-follow-up failure
-keeps the global lock visible, shows a retry warning in the open monitor, and retries at the two-second active cadence.
-Successful reconciliation clears that warning and converges the modal, sidebar badge, pending count, and lock from the
+keeps the global lock visible and retries at the two-second active cadence. A real Appliance Settings helper result adds
+`management_status_transition` only after `systemd-run` accepts the delayed restart; an idempotent apply that does not
+schedule a restart carries no transition. Once that child is `succeeded` with the confirmed context, the monitor permits
+at most 15 seconds of neutral **reconnecting to task status** presentation around the helper's three-second delayed
+restart. A successful status response at or after the scheduled restart instant, or recovery after an observed outage,
+consumes that one-time window so a later unrelated failure returns to the actionable warning. Every task response derives
+the delay and total time remaining from the server's persisted settings-step completion time. The browser anchors only
+that bounded remainder to its local elapsed timer, so clock differences cannot change the duration and a late observer
+cannot create a fresh window. The same result-driven contract applies to forced-real tasks created by the local appliance
+console. It does not apply while that child is pending or running, to dry-run tasks, or to tasks without complete
+transition metadata.
+Continued failure after the grace window and every unexpected failure use the actionable availability warning.
+Successful reconciliation clears either notice and converges the modal, sidebar badge, pending count, and lock from the
 authoritative status and task responses. Terminal task state is sticky so an older in-flight `pending` or `running`
 response cannot replace a newer `succeeded`, `failed`, or `cancelled` result. If another session starts a new Apply
 between polls, the browser reconciles the retained task and runs its terminal completion refresh before accepting the
-new active task. Directly observed terminal responses, including cancellation races, run the same completion refresh.
+new active task.
+Directly observed terminal responses, including cancellation races, run the same completion refresh.
 
 Submitting transforms the review modal into a live master/child task grid. One `appliance-apply` master owns one child
 execution record per selected component. Every signed-in session sees the blocking grid while the master is pending or
@@ -238,8 +250,9 @@ resolver override, and reconfigures the restored links before checking the previ
 
 Readiness is fail-closed and bounded. Every host-facing probe includes the previous or candidate configured public port.
 The helper first requires Atlaso's loopback `/openapi.json` upstream to succeed;
-only then may it validate and reload nginx. It requires consecutive successful direct candidate-listener probes and
-host-facing probes for every configured candidate address. Each dynamic listener row must acquire an address for every
+only then may it install the candidate nginx site with matching IPv4 and IPv6 public-port listeners, validate it, and
+reload nginx. It requires consecutive successful direct candidate-listener probes and host-facing probes for every
+configured candidate address. Each dynamic listener row must acquire an address for every
 requested DHCP or SLAAC family within the shared bounded discovery window; readiness cannot succeed on another row or
 family when one is missing, and a retained old-path address cannot satisfy dynamic candidate acquisition. When the
 candidate disables nftables, the transitional ruleset keeps the previous filtering

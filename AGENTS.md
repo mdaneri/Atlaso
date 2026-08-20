@@ -320,10 +320,11 @@ The following cross-cutting boundaries always apply:
 - Keep ordinary `/ui/management/appliance-apply/status` polling on the non-reconciling desired-state projection.
   Prevent overlapping browser polls, suspend them while hidden, back off when idle, and refresh promptly after successful
   mutations and Apply completion. Retain the tracked master task until a valid terminal task response is rendered, retry
-  transient status and terminal-reconciliation failures at the active cadence with an observable warning, and never let
-  an older active response replace a terminal result. Reconcile a retained task and run its completion refresh before
-  accepting a different session's newer active task. Full review, validation, and submission must still reconcile current
-  host observations.
+  transient status and terminal-reconciliation failures at the active cadence, and never let an older active response
+  replace a terminal result. During a server-marked real Appliance Settings restart, retain progress and the lock while
+  showing a neutral reconnecting state for one bounded grace window; unexpected or out-of-window failures must show the
+  observable availability warning. Reconcile a retained task and run its completion refresh before accepting a different
+  session's newer active task. Full review, validation, and submission must still reconcile current host observations.
 - Privileged appliance operations go through `atlaso-helper` and constrained sudoers rules.
 - VCF Offline Depot settings and download-profile applies preserve the registered VCFDT software depot ID. Generate an
   ID only when none exists or an administrator explicitly confirms **Refresh software depot ID** through global apply;
