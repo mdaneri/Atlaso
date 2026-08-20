@@ -85,6 +85,44 @@ flush ruleset
     assert "firewall desired state is disabled" not in transitional
 
 
+def test_management_handoff_firewall_custom_port_survives_filtered_transition_and_retirement():
+    """Admit a custom candidate port in transitional and final filtered rulesets."""
+    helper = load_helper_module()
+    previous = '''flush ruleset
+table inet atlaso {
+  chain input {
+    type filter hook input priority filter; policy drop;
+    iifname "eth0" tcp dport { 22,80,443 } accept comment "mgmt-console"
+  }
+}
+'''
+    candidate = '''flush ruleset
+table inet atlaso {
+  chain input {
+    type filter hook input priority filter; policy drop;
+    iifname "eth1" tcp dport { 22,80,443 } accept comment "mgmt-console"
+  }
+}
+'''
+    candidate_rule = '    iifname "eth1" tcp dport { 22, 80, 443, 8443 } accept comment "mgmt-console"'
+
+    final = helper._management_handoff_firewall_text(
+        candidate,
+        candidate,
+        candidate_management_rules=[candidate_rule],
+    )
+    transitional = helper._management_handoff_firewall_text(
+        final,
+        previous,
+        candidate_management_rules=[candidate_rule],
+    )
+
+    assert candidate_rule in transitional
+    assert 'iifname "eth0"' in transitional
+    assert candidate_rule in final
+    assert 'iifname "eth0"' not in final
+
+
 def test_management_handoff_firewall_stays_disabled_when_already_disabled():
     """Avoid inventing a filter table when both firewall states are open."""
     helper = load_helper_module()
@@ -1321,18 +1359,29 @@ def test_successful_management_handoff_retains_rollback_state_until_ack(monkeypa
     monkeypatch.setattr(helper, "_install_management_holdovers", lambda _state, _payload: [])
     monkeypatch.setattr(helper, "_write_management_handoff_state", lambda _state, phase: phases.append(phase))
     monkeypatch.setattr(helper, "_apply_management_candidate_network", lambda *_args: None)
-    monkeypatch.setattr(helper, "_management_handoff_candidate_firewall_rules", lambda _path, _port: [])
+    candidate_rule = '    iifname "eth1" tcp dport { 22, 80, 443, 8443 } accept comment "mgmt-console"'
+    monkeypatch.setattr(
+        helper,
+        "_management_handoff_candidate_firewall_rules",
+        lambda _path, _port: [candidate_rule],
+    )
     monkeypatch.setattr(
         helper,
         "_handle_network",
         lambda *_args: retirement_operations.append("final-network") or 0,
     )
-    monkeypatch.setattr(helper, "_handle_firewall", lambda *_args: 0)
+    applied_firewalls: list[str] = []
+    monkeypatch.setattr(
+        helper,
+        "_handle_firewall",
+        lambda _action, args: applied_firewalls.append(Path(args[0]).read_text(encoding="utf-8")) or 0,
+    )
     monkeypatch.setattr(
         helper,
         "_load_appliance_settings_config",
         lambda _path: {
             "management_https_enabled": True,
+            "management_public_https_port": 8443,
             "management_interface": "eth1",
             "resolver_mode": "external",
             "resolver_servers": ["192.0.2.53"],
@@ -1365,7 +1414,13 @@ def test_successful_management_handoff_retains_rollback_state_until_ack(monkeypa
     monkeypatch.setattr(helper, "_parse_network_config", lambda _path: ([], [], []))
     monkeypatch.setattr(helper, "_link_exists", lambda _interface: False)
     monkeypatch.setattr(helper, "_clear_management_handoff_state", lambda **_kwargs: cleared.append(True))
-    monkeypatch.setattr(helper, "FIREWALL_CONFIG_PATH", tmp_path / "missing-previous-firewall")
+    previous_firewall = tmp_path / "previous-firewall.nft"
+    previous_firewall.write_text(
+        'flush ruleset\ntable inet atlaso {\n  chain input {\n    type filter hook input priority filter; policy drop;\n'
+        '    iifname "eth0" tcp dport { 22,80,443 } accept comment "mgmt-console"\n  }\n}\n',
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(helper, "FIREWALL_CONFIG_PATH", previous_firewall)
     monkeypatch.setattr(helper, "FIREWALL_APPLY_DIR", tmp_path)
     candidate = tmp_path / "candidate-firewall.nft"
     candidate.write_text("table inet atlaso {\n  chain input {\n  }\n}\n", encoding="utf-8")
@@ -1384,6 +1439,11 @@ def test_successful_management_handoff_retains_rollback_state_until_ack(monkeypa
     assert cleared == []
     assert resolver_calls == ["eth1", "eth1"]
     assert retirement_operations == ["resolver", "final-network", "resolver"]
+    assert len(applied_firewalls) == 2
+    assert candidate_rule in applied_firewalls[0]
+    assert 'iifname "eth0"' in applied_firewalls[0]
+    assert candidate_rule in applied_firewalls[1]
+    assert 'iifname "eth0"' not in applied_firewalls[1]
     assert "resolver-applying" in phases
     assert nginx_suffixes == ["old protocol listener", ""]
     payload = json.loads(capsys.readouterr().out.splitlines()[-1])

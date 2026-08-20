@@ -257,7 +257,8 @@ requested DHCP or SLAAC family within the shared bounded discovery window; readi
 family when one is missing, and a retained old-path address cannot satisfy dynamic candidate acquisition. When the
 candidate disables nftables, the transitional ruleset keeps the previous filtering
 policy and adds only the candidate management admission rules, including the staged nondefault HTTP or HTTPS public
-port. When enabling filtering from an open state, the
+port. A filtered-to-filtered handoff adds that port to both the transitional ruleset and the final candidate ruleset so
+readiness and post-retirement access use the same admission contract. When enabling filtering from an open state, the
 transitional ruleset remains open. The enabled or disabled candidate ruleset applies only after readiness while the old
 path retires. A second
 readiness pass protects retirement. Any validation, mutation, service, probe, or retirement failure restores every

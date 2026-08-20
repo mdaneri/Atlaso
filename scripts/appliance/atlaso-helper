@@ -15709,11 +15709,7 @@ def _management_handoff_firewall_text(
             "# Atlaso management handoff preserves the previous open firewall policy.\n"
         )
     base = previous if candidate_disabled else candidate
-    desired_rules = (
-        list(candidate_management_rules or [])
-        if candidate_disabled
-        else previous_rules
-    )
+    desired_rules = previous_rules + list(candidate_management_rules or [])
     additions = [line for line in desired_rules if line not in base]
     if not additions:
         return base
@@ -16674,15 +16670,22 @@ def _apply_management_handoff(payload: dict) -> int:
         _apply_management_candidate_network(Path(str(payload["network_config_path"])), state)
         previous_firewall = FIREWALL_CONFIG_PATH.read_text(encoding="utf-8") if FIREWALL_CONFIG_PATH.is_file() else ""
         candidate_firewall_path = Path(str(payload["firewall_config_path"]))
+        candidate_firewall = candidate_firewall_path.read_text(encoding="utf-8")
+        candidate_management_rules = _management_handoff_candidate_firewall_rules(
+            Path(str(payload["network_config_path"])),
+            candidate_public_port,
+        )
+        final_firewall = _management_handoff_firewall_text(
+            candidate_firewall,
+            candidate_firewall,
+            candidate_management_rules=candidate_management_rules,
+        )
         transition_path = FIREWALL_APPLY_DIR / "atlaso-management-handoff.nft"
         transition_path.write_text(
             _management_handoff_firewall_text(
-                candidate_firewall_path.read_text(encoding="utf-8"),
+                final_firewall,
                 previous_firewall,
-                candidate_management_rules=_management_handoff_candidate_firewall_rules(
-                    Path(str(payload["network_config_path"])),
-                    candidate_public_port,
-                ),
+                candidate_management_rules=candidate_management_rules,
             ),
             encoding="utf-8",
         )
@@ -16763,7 +16766,9 @@ def _apply_management_handoff(payload: dict) -> int:
             reconfigure = _run(["networkctl", "reconfigure", str(interface)])
             if reconfigure.returncode != 0:
                 raise ValueError(f"networkd could not retire the previous path on {interface}")
-        if _handle_firewall("apply", [str(candidate_firewall_path)]) != 0:
+        transition_path.write_text(final_firewall, encoding="utf-8")
+        os.chmod(transition_path, 0o600)
+        if _handle_firewall("apply", [str(transition_path)]) != 0:
             raise ValueError("final nftables apply failed while retiring the previous path")
         if protocol_holdover:
             failing_layer = "previous-protocol retirement"
