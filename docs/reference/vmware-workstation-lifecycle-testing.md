@@ -163,9 +163,16 @@ target still listed after an apparently successful transition, or missing VMX pr
 makes the command fail. Registration inventory reads are terminating, so access denial or an incomplete I/O read cannot
 be interpreted as an empty or partial registered-VM set. VMX identity reads use the same terminating contract, preventing
 a partial file from validating one displayed name while unread content remains unresolved. Cleanup also requires the
-checked `vmrun listRegisteredVM` inventory and `inventory.vmls` snapshot to contain the same VMX filesystem identities,
-so a truncated but readable file cannot masquerade as an empty registration set. After the final recursive VMX-set scan,
-cleanup refreshes running and both corroborated registration inventories as its last safety gate before deletion. When lifecycle
+Workstation `inventory.vmls` snapshot to contain only well-formed `vmlistN.config` entries whose VMX filesystem
+identities can be resolved. The independent `index.count` and `indexN.id` search index must describe the same complete
+VMX identity set. Cleanup also requires the file identity, size, last-write timestamp, and byte content to remain
+unchanged across two reads 250 milliseconds apart, so a header-only, partially rewritten, or momentary self-consistent
+empty snapshot fails closed. VMware Workstation does not expose a registered-VM listing through `vmrun`, so cleanup does
+not invoke the unsupported `listRegisteredVM` command. The final gate captures two complete running-and-registration
+rounds 250 milliseconds apart, repeats the recursive VMX-set scan, and captures a third round. Each round reads checked
+`vmrun list` state followed by the registration file, and all state sets must remain identical, so a VM restarted or
+registered during the stability window or final filesystem verification preserves its artifacts.
+When lifecycle
 execution and cleanup both fail, the final error reports the original scenario failure together with the cleanup failure
 and preserved path.
 

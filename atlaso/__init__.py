@@ -6,7 +6,7 @@ try:
     from atlaso._build import BUILD_TIME_UTC, BUILD_VERSION, GIT_COMMIT
 except ImportError:
     BUILD_TIME_UTC = ""
-    BUILD_VERSION = "0.9.179"
+    BUILD_VERSION = "0.9.180"
     GIT_COMMIT = ""
 
 __version__ = BUILD_VERSION
