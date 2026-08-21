@@ -168,8 +168,9 @@ identities can be resolved. The independent `index.count` and `indexN.id` search
 VMX identity set. Cleanup also requires the file identity, size, last-write timestamp, and byte content to remain
 unchanged across two reads 250 milliseconds apart, so a header-only, partially rewritten, or momentary self-consistent
 empty snapshot fails closed. VMware Workstation does not expose a registered-VM listing through `vmrun`, so cleanup does
-not invoke the unsupported `listRegisteredVM` command. After the final recursive VMX-set scan, cleanup refreshes the
-checked `vmrun list` running inventory and the Workstation registration file as its last safety gate before deletion.
+not invoke the unsupported `listRegisteredVM` command. The final gate brackets the recursive VMX-set scan and stable
+Workstation registration read with checked `vmrun list` calls. The post-delay running inventory is the last external
+state read before deletion, so a VM restarted while registration stability is being established preserves its artifacts.
 When lifecycle
 execution and cleanup both fail, the final error reports the original scenario failure together with the cleanup failure
 and preserved path.

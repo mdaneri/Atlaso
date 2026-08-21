@@ -612,7 +612,9 @@ function Remove-AtlasoWorkstationVmArtifacts {
         -RemovalRoot $resolvedRemovalRoot `
         -ValidatedVmxPaths $resolvedVmxPaths
 
-    $finalRunningPaths = @(Get-AtlasoWorkstationVmPaths -VmrunPath $VmrunPath -State running)
+    $runningPathsBeforeRegistrationStability = @(
+        Get-AtlasoWorkstationVmPaths -VmrunPath $VmrunPath -State running
+    )
     $finalRegisteredPaths = @(Get-AtlasoWorkstationRegisteredVmPaths -InventoryPath $inventoryPath)
     $finalRootVmxPaths = @(
         Get-ChildItem `
@@ -624,14 +626,19 @@ function Remove-AtlasoWorkstationVmArtifacts {
             -ErrorAction Stop |
             ForEach-Object { (Resolve-Path -LiteralPath $_.FullName -ErrorAction Stop).Path }
     )
-    foreach ($finalInventoryPath in @($finalRunningPaths) + @($finalRegisteredPaths)) {
+    Assert-AtlasoWorkstationRemovalVmxSet `
+        -RemovalRoot $resolvedRemovalRoot `
+        -ValidatedVmxPaths $resolvedVmxPaths
+    $finalRunningPaths = @(Get-AtlasoWorkstationVmPaths -VmrunPath $VmrunPath -State running)
+    foreach (
+        $finalInventoryPath in @($runningPathsBeforeRegistrationStability) +
+            @($finalRegisteredPaths) +
+            @($finalRunningPaths)
+    ) {
         if (Test-AtlasoWorkstationVmListed -Paths $finalRootVmxPaths -VmxPath $finalInventoryPath) {
             throw "A new running or registered VMware VMX appeared before filesystem cleanup; artifacts were preserved: $finalInventoryPath"
         }
     }
-    Assert-AtlasoWorkstationRemovalVmxSet `
-        -RemovalRoot $resolvedRemovalRoot `
-        -ValidatedVmxPaths $resolvedVmxPaths
     foreach ($resolvedVmxPath in $resolvedVmxPaths) {
         if (
             (Test-AtlasoWorkstationVmListed -Paths $finalRunningPaths -VmxPath $resolvedVmxPath) -or
