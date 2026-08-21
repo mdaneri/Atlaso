@@ -668,8 +668,14 @@ Terminal order:
   definitions must explicitly stage `image/common/update-trust`, and provisioning must fail rather
   than build an appliance with no valid public release key. Use `-IpAddress <appliance-ip>` when the VM IP is known, or
   `-VmxPath "<path-to-vmx>"` for VMware discovery; do not pipe the VMX path or put the `.vmx` path on a separate line
-  because PowerShell will try to execute it. If uvicorn needs longer after reinstall, pass
-  `-ReadinessTimeoutSeconds 120`. Use `-SkipHelperSync` only when the appliance helper is intentionally unchanged.
+  because PowerShell will try to execute it. For password-backed Windows deployment, authenticate the local 1Password
+  integration, verify exactly one `Atlaso` Environment and the concealed `DEFAULT_ADMIN_PASSWORD` variable by name,
+  then pass only its opaque ID with `-OnePasswordEnvironmentId`; the script must use `op run --environment` and fail
+  closed when its CLI capability, authorization, Environment, or variable is unavailable. Never pass a password
+  argument, create a local `.env`, set `DEFAULT_ADMIN_PASSWORD` in the caller, or use the retired
+  `ATLASO_DEPLOY_SSH_PASSWORD` fallback. Password-backed Paramiko must load system known hosts and reject unknown keys.
+  If uvicorn needs longer after reinstall, pass `-ReadinessTimeoutSeconds 120`. Use `-SkipHelperSync` only when the
+  appliance helper is intentionally unchanged.
 - The wheel helper's `RemoteDirectory` is one shared pre-upload contract for key/agent and password-backed SSH. Accept
   only absolute POSIX paths composed of ASCII letters, digits, `/`, `.`, `_`, and `-`, reject `.` and `..` components,
   whitespace, shell metacharacters, and control characters before local build work, and serialize every key-backed

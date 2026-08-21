@@ -15,12 +15,107 @@ param(
     [switch]$SkipBootBrandingSync,
     [switch]$SkipInventoryLinuxSync,
     [string]$WheelPath = '',
-    [string]$SshPassword = $env:ATLASO_DEPLOY_SSH_PASSWORD,
+    [string]$OnePasswordEnvironmentId = '',
+    [switch]$OnePasswordEnvironmentChild,
     [switch]$ResetVaultEntries,
     [switch]$SkipHostCheck
 )
 
 $ErrorActionPreference = 'Stop'
+
+$script:OnePasswordPasswordVariable = 'DEFAULT_ADMIN_PASSWORD'
+$script:OnePasswordRuntimePasswordVariable = 'ATLASO_DEPLOY_RUNTIME_PASSWORD'
+
+function Resolve-OnePasswordCliPath {
+    $command = Get-Command op.exe -ErrorAction SilentlyContinue
+    if (-not $command) {
+        $command = Get-Command op -ErrorAction SilentlyContinue
+    }
+    if (-not $command) {
+        throw 'The 1Password CLI (op.exe) is required for the 1Password Environment credential bridge.'
+    }
+    return $command.Source
+}
+
+function Assert-OnePasswordEnvironmentId {
+    param([Parameter(Mandatory = $true)][string]$EnvironmentId)
+
+    if ($EnvironmentId -notmatch '^[A-Za-z0-9_-]{8,128}$') {
+        throw 'The 1Password Environment ID is invalid. Copy the opaque ID from the exact Atlaso Environment.'
+    }
+}
+
+function Assert-OnePasswordEnvironmentSupport {
+    param([Parameter(Mandatory = $true)][string]$RunHelp)
+
+    if ($RunHelp -notmatch '(?m)--environment(?:s)?(?:\s|-)') {
+        throw 'The installed 1Password CLI does not support Environment subprocess loading. Install the supported beta CLI and retry.'
+    }
+}
+
+function Get-OnePasswordChildArguments {
+    param(
+        [Parameter(Mandatory = $true)][hashtable]$BoundParameters,
+        [Parameter(Mandatory = $true)][string]$ScriptPath
+    )
+
+    $childArguments = @('-NoLogo', '-NoProfile', '-NonInteractive', '-File', $ScriptPath, '-OnePasswordEnvironmentChild')
+    foreach ($entry in $BoundParameters.GetEnumerator()) {
+        if ($entry.Key -in @('OnePasswordEnvironmentId', 'OnePasswordEnvironmentChild')) {
+            continue
+        }
+        if ($entry.Value -is [System.Management.Automation.SwitchParameter]) {
+            if ($entry.Value.IsPresent) {
+                $childArguments += "-$($entry.Key)"
+            }
+            continue
+        }
+        if ($null -eq $entry.Value) {
+            continue
+        }
+        $childArguments += "-$($entry.Key)"
+        $childArguments += [string]$entry.Value
+    }
+    return $childArguments
+}
+
+function Invoke-OnePasswordEnvironmentBridge {
+    param(
+        [Parameter(Mandatory = $true)][string]$EnvironmentId,
+        [Parameter(Mandatory = $true)][hashtable]$BoundParameters,
+        [Parameter(Mandatory = $true)][string]$ScriptPath
+    )
+
+    Assert-OnePasswordEnvironmentId -EnvironmentId $EnvironmentId
+    if ($env:DEFAULT_ADMIN_PASSWORD) {
+        throw 'DEFAULT_ADMIN_PASSWORD must not be supplied by the caller; use the exact Atlaso 1Password Environment bridge.'
+    }
+
+    $opPath = Resolve-OnePasswordCliPath
+    $runHelp = (& $opPath run --help 2>&1 | Out-String)
+    Assert-OnePasswordEnvironmentSupport -RunHelp $runHelp
+    $pwsh = Get-Command pwsh -ErrorAction SilentlyContinue
+    if (-not $pwsh) {
+        throw 'PowerShell 7 (pwsh) is required for the 1Password Environment credential bridge.'
+    }
+
+    $childArguments = Get-OnePasswordChildArguments -BoundParameters $BoundParameters -ScriptPath $ScriptPath
+    & $opPath run --environment $EnvironmentId -- $pwsh.Source @childArguments
+    if ($LASTEXITCODE -ne 0) {
+        throw "The 1Password Environment credential bridge failed with exit code $LASTEXITCODE. Verify authorization, the exact Atlaso Environment, and DEFAULT_ADMIN_PASSWORD availability."
+    }
+}
+
+function Resolve-OnePasswordChildPassword {
+    if (-not $OnePasswordEnvironmentChild) {
+        return ''
+    }
+    $password = [string]$env:DEFAULT_ADMIN_PASSWORD
+    if ([string]::IsNullOrEmpty($password)) {
+        throw 'The exact 1Password Environment did not provide DEFAULT_ADMIN_PASSWORD; deployment stopped before authentication.'
+    }
+    return $password
+}
 
 function Resolve-VmrunPath {
     param([string]$Path)
@@ -311,7 +406,9 @@ function Invoke-PasswordBackedDeploy {
         [Parameter(Mandatory = $true)][string]$WorkingDirectory
     )
 
-    $pythonDeploy = Join-Path (Split-Path -Parent $LocalScriptPath) 'atlaso-paramiko-deploy.py'
+    $passwordDeployDirectory = Join-Path ([System.IO.Path]::GetTempPath()) "atlaso-password-deploy-$([guid]::NewGuid().ToString('N'))"
+    New-Item -ItemType Directory -Force -Path $passwordDeployDirectory | Out-Null
+    $pythonDeploy = Join-Path $passwordDeployDirectory 'atlaso-paramiko-deploy.py'
     $pythonDeploySource = @'
 import argparse
 import os
@@ -338,7 +435,10 @@ def shell_quote(value):
 
 
 def sanitized(value, password):
-    return value.replace(password, "[redacted]") if password else value
+    redacted = value.replace(password, "[redacted]")
+    if password in redacted:
+        raise SystemExit("Secret redaction failed; refusing to emit deployment output.")
+    return redacted
 
 
 parser = argparse.ArgumentParser()
@@ -383,9 +483,9 @@ if not args.local_trust_key or len(args.local_trust_key) != len(args.remote_trus
 if not args.local_runtime_dependency or len(args.local_runtime_dependency) != len(args.remote_runtime_dependency):
     raise SystemExit("Matched local and remote runtime dependency wheels are required.")
 
-password = os.environ.get("ATLASO_DEPLOY_SSH_PASSWORD", "")
+password = os.environ.get("ATLASO_DEPLOY_RUNTIME_PASSWORD", "")
 if not password:
-    raise SystemExit("ATLASO_DEPLOY_SSH_PASSWORD is required for password-backed deployment.")
+    raise SystemExit("The concealed deployment password runtime is unavailable.")
 
 uploads = [
     (pathlib.Path(args.local_wheel), args.remote_wheel),
@@ -421,7 +521,8 @@ if args.local_inventory_linux_package:
     )
 
 client = paramiko.SSHClient()
-client.set_missing_host_key_policy(paramiko.AutoAddPolicy())
+client.load_system_host_keys()
+client.set_missing_host_key_policy(paramiko.RejectPolicy())
 client.connect(
     hostname=args.host,
     username=args.user,
@@ -492,14 +593,14 @@ finally:
 '@
     [System.IO.File]::WriteAllText($pythonDeploy, ($pythonDeploySource -replace "`r?`n", "`n"), [System.Text.UTF8Encoding]::new($false))
 
-    $temporaryPythonPath = Initialize-PasswordDeployPythonPath `
-        -PythonCommand $PythonCommand `
-        -WorkingDirectory $WorkingDirectory `
-        -TemporaryDirectory (Split-Path -Parent $LocalScriptPath)
-    $previousPassword = $env:ATLASO_DEPLOY_SSH_PASSWORD
+    $previousPassword = $env:ATLASO_DEPLOY_RUNTIME_PASSWORD
     $previousPythonPath = $env:PYTHONPATH
     try {
-        $env:ATLASO_DEPLOY_SSH_PASSWORD = $Password
+        $temporaryPythonPath = Initialize-PasswordDeployPythonPath `
+            -PythonCommand $PythonCommand `
+            -WorkingDirectory $WorkingDirectory `
+            -TemporaryDirectory $passwordDeployDirectory
+        $env:ATLASO_DEPLOY_RUNTIME_PASSWORD = $Password
         if ($temporaryPythonPath) {
             $env:PYTHONPATH = if ($previousPythonPath) {
                 "$temporaryPythonPath$([System.IO.Path]::PathSeparator)$previousPythonPath"
@@ -570,16 +671,29 @@ finally:
         Invoke-CheckedCommand -FilePath $PythonCommand -WorkingDirectory $WorkingDirectory -Arguments $deployArguments
     } finally {
         if ($null -eq $previousPassword) {
-            Remove-Item Env:\ATLASO_DEPLOY_SSH_PASSWORD -ErrorAction SilentlyContinue
+            Remove-Item Env:\ATLASO_DEPLOY_RUNTIME_PASSWORD -ErrorAction SilentlyContinue
         } else {
-            $env:ATLASO_DEPLOY_SSH_PASSWORD = $previousPassword
+            $env:ATLASO_DEPLOY_RUNTIME_PASSWORD = $previousPassword
         }
         if ($null -eq $previousPythonPath) {
             Remove-Item Env:\PYTHONPATH -ErrorAction SilentlyContinue
         } else {
             $env:PYTHONPATH = $previousPythonPath
         }
+        Remove-Item -LiteralPath $passwordDeployDirectory -Recurse -Force -ErrorAction SilentlyContinue
     }
+}
+
+$SshPassword = Resolve-OnePasswordChildPassword
+if ($OnePasswordEnvironmentId -and $OnePasswordEnvironmentChild) {
+    throw 'The 1Password Environment ID cannot be used by the bridge child process.'
+}
+if ($OnePasswordEnvironmentId) {
+    Invoke-OnePasswordEnvironmentBridge `
+        -EnvironmentId $OnePasswordEnvironmentId `
+        -BoundParameters $PSBoundParameters `
+        -ScriptPath $PSCommandPath
+    exit 0
 }
 
 $resolvedRepoRoot = Resolve-RepoRoot -Path $RepoRoot

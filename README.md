@@ -134,6 +134,10 @@ the exact corrupt expected cache entries and do not require manual cleanup.
 The VMware wheel-deployment helper accepts only absolute POSIX remote staging directories composed of ASCII letters,
 digits, `/`, `.`, `_`, and `-`, with no `.` or `..` components. It rejects whitespace, shell metacharacters, and control
 characters before building or uploading through either SSH authentication mode.
+Password-backed Windows deployment binds the concealed `DEFAULT_ADMIN_PASSWORD` variable from the verified `Atlaso`
+1Password Environment through `op run --environment`; it rejects unknown SSH host keys and never accepts a password
+argument, local `.env`, or the retired `ATLASO_DEPLOY_SSH_PASSWORD` fallback. See the
+[VMware Workstation deployment reference](docs/reference/full-technical-reference.md#vmware-workstation-workflow).
 
 The VMware release appliance uses separate compacted Photon OS and Atlaso/tools payload VMDKs, followed by empty
 500 GiB VCF Offline Depot and VCF Backups disks. The OVF package is the canonical GitHub-distributable form; its assets

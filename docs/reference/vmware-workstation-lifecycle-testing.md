@@ -13,6 +13,14 @@ The shared lifecycle host-state checks verify that first-boot appliances retain 
 `VCF.PowerCLI==9.1.0.25380678`, and `Connect-VIServer` after the wheel-only test deployment. The PowerCLI import and
 command check run directly as the unprivileged appliance SSH user rather than through sudo.
 
+For a wheel-only deployment to the canonical test VM, use `scripts/windows/vmware/deploy-wheel.ps1` with the secure
+Windows 1Password bridge documented in the [full technical reference](full-technical-reference.md). Authenticate the
+local integration, verify the unique `Atlaso` Environment and concealed `DEFAULT_ADMIN_PASSWORD` variable by name,
+then pass only its opaque Environment ID through `-OnePasswordEnvironmentId`. The bridge requires the supported
+`op run --environment` capability, keeps the value inside the bounded child process, preserves SSH known-host
+verification, and fails closed when authorization or any required Environment input is unavailable. Do not pass a
+password argument, create a local `.env` file, or use the retired `ATLASO_DEPLOY_SSH_PASSWORD` fallback.
+
 Atlaso can run a VMware Workstation lifecycle lab alongside the Hyper-V lab. The Workstation path uses VMX/VMDK
 artifacts and `vmrun.exe`, then delegates appliance behavior checks to the shared Python lifecycle runner.
 

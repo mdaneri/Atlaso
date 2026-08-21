@@ -1573,12 +1573,18 @@ def test_create_atlaso_vmware_test_vm_root_ca_retry_cleanup_is_idempotent():
     assert "Remove-Item -LiteralPath $rootPemPath" not in install_root_ca
 
 
-def test_vmware_deploy_wheel_supports_password_backed_noninteractive_deploy():
-    """Verify that vmware deploy wheel supports password backed noninteractive deploy."""
+def test_vmware_deploy_wheel_supports_secure_onepassword_password_deploy():
+    """Verify that VMware deploy wheel uses a concealed 1Password Environment handoff."""
     script = Path("scripts/windows/vmware/deploy-wheel.ps1").read_text(encoding="utf-8")
     readme = Path("docs/reference/full-technical-reference.md").read_text(encoding="utf-8")
 
-    assert "[string]$SshPassword = $env:ATLASO_DEPLOY_SSH_PASSWORD" in script
+    assert "[string]$OnePasswordEnvironmentId = ''" in script
+    assert "[switch]$OnePasswordEnvironmentChild" in script
+    assert "function Invoke-OnePasswordEnvironmentBridge" in script
+    assert "--environment $EnvironmentId" in script
+    assert "DEFAULT_ADMIN_PASSWORD" in script
+    assert "The exact 1Password Environment did not provide DEFAULT_ADMIN_PASSWORD" in script
+    assert "ATLASO_DEPLOY_SSH_PASSWORD" not in script
     assert "function Initialize-PasswordDeployPythonPath" in script
     assert "Preparing temporary Paramiko runtime from local deployment wheels" in script
     assert "'--no-index'" in script
@@ -1612,8 +1618,9 @@ def test_vmware_deploy_wheel_supports_password_backed_noninteractive_deploy():
     assert "systemctl enable atlaso-worker.service" in script
     assert "systemctl restart atlaso-worker.service" in script
     assert "systemctl is-active atlaso-worker.service" in script
-    assert "ATLASO_DEPLOY_SSH_PASSWORD" in script
-    assert "client.set_missing_host_key_policy(paramiko.AutoAddPolicy())" in script
+    assert "ATLASO_DEPLOY_RUNTIME_PASSWORD" in script
+    assert "client.set_missing_host_key_policy(paramiko.RejectPolicy())" in script
+    assert "client.load_system_host_keys()" in script
     assert "allow_agent=False" in script
     assert "look_for_keys=False" in script
     assert "sudo -S -p '' sh" in script
@@ -1621,11 +1628,11 @@ def test_vmware_deploy_wheel_supports_password_backed_noninteractive_deploy():
     assert "if (-not $SshPassword) {" in script
     assert "Test-RequiredCommand -Name 'scp'" in script
     assert "Invoke-PasswordBackedDeploy `" in script
-    assert "-SshPassword '<admin-password>'" in readme
+    assert "-OnePasswordEnvironmentId '<atlaso-environment-id>'" in readme
     assert "temporary deployment directory" in readme
     assert "global Python" in readme
-    assert "When using `-SkipBuild`, keep" in readme
-    assert "Without a" in readme
+    assert "If the selected Python cannot already import Paramiko" in readme
+    assert "Without `-OnePasswordEnvironmentId`, the helper preserves" in readme
     assert "`scp`/`ssh` key or agent workflow" in readme
 
 
@@ -1652,12 +1659,35 @@ def test_vmware_deploy_wheel_remote_path_contract():
     )
 
     assert result.returncode == 0, result.stdout + result.stderr
-    assert "Deploy wheel remote path contract tests passed." in result.stdout
-
     docs = Path("docs/reference/full-technical-reference.md").read_text(encoding="utf-8")
     assert "`-RemoteDirectory` defaults to `/tmp`" in docs
     assert "password-backed and key/agent-backed SSH" in docs
     assert "apostrophes, dollar signs, backticks, semicolons" in docs
+
+
+def test_vmware_deploy_wheel_onepassword_bridge_contract():
+    """Verify the Windows 1Password bridge fails closed at its runtime boundaries."""
+    pwsh = shutil.which("pwsh")
+    if pwsh is None:
+        pytest.skip("PowerShell 7 is not available")
+
+    result = subprocess.run(
+        [
+            pwsh,
+            "-NoLogo",
+            "-NoProfile",
+            "-NonInteractive",
+            "-File",
+            "tests/powershell/Test-DeployWheelOnePassword.ps1",
+            "-RepositoryRoot",
+            str(Path.cwd()),
+        ],
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+
+    assert result.returncode == 0, result.stdout + result.stderr
 
 
 def test_vmware_password_deploy_omits_absent_optional_native_arguments():

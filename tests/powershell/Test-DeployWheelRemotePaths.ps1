@@ -66,7 +66,7 @@ $invalidPaths = @(
 $secretSentinel = 'deploy-password-must-not-appear'
 
 foreach ($invalidPath in $invalidPaths) {
-    foreach ($password in @('', $secretSentinel)) {
+    foreach ($password in @('')) {
         $arguments = @{
             RepoRoot = $RepositoryRoot
             RemoteDirectory = $invalidPath
@@ -76,7 +76,6 @@ foreach ($invalidPath in $invalidPaths) {
             SkipBootBrandingSync = $true
             SkipInventoryLinuxSync = $true
             SkipHostCheck = $true
-            SshPassword = $password
         }
         try {
             & $deployPath @arguments 2>&1 | Out-String | Out-Null
@@ -148,7 +147,6 @@ $SkipConsoleAssetSync = $true
 $SkipBootBrandingSync = $true
 $SkipInventoryLinuxSync = $true
 $WheelPath = $wheelPath.FullName
-$SshPassword = ''
 $ResetVaultEntries = $false
 $SkipHostCheck = $true
 try {
