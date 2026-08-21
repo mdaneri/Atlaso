@@ -272,6 +272,50 @@ The following cross-cutting boundaries always apply:
   card outside the disclosures and preserve coherent groups at desktop, two-column narrow, and single-column mobile
   widths.
 - `/ui/management/appliance-apply` is the only desired-state host-mutation workflow.
+- A management address, gateway, role, interface, VLAN, management VLAN MTU, or flagged-access listener change must
+  use one recoverable
+  handoff across Certificate Authority, Network, Firewall, Appliance Settings, and Public Services. Submitting any one
+  of those dependent units while such a Network change is pending must force all five into the handoff. Evaluate this
+  after every cross-unit dependency expands so an indirectly selected protected unit cannot bypass it. Keep the previous
+  known-good configured and observed global addresses, public port, protocol, and snapshotted TLS identity active until
+  consecutive bounded Atlaso loopback,
+  candidate nginx, and host-facing `/openapi.json` checks pass. Never expose a candidate nginx front door before its
+  Atlaso upstream is healthy. Validate management and Public Services TLS references against the bundled Certificate
+  Authority payload before relying on deployed files. Move the persistent and runtime management resolver to the
+  candidate interface inside the transaction, persist its directives in the effective dedicated or flagged-access
+  networkd file both before readiness and after the final Network regeneration, and restore the
+  previous resolver state with the network snapshot on rollback. On success, include the applied resolver mode,
+  servers, and local-DNS state in the Appliance Settings baseline completion so those executed changes do not remain
+  falsely pending. Derive loopback/local-DNS resolver mode only from the
+  last-applied DNS/DHCP baseline; leave an unapplied DNS enablement pending instead of activating loopback early. When
+  disabling applied local DNS, force Appliance Settings ahead of DNS/DHCP so the resolver leaves loopback before the
+  listener stops. Retire the old path only
+  after readiness succeeds; retain the durable rollback marker until Atlaso commits the bundled task state and baselines
+  and explicitly acknowledges that commit. Record separate durable application-commit proof before selecting
+  acknowledgement during startup; an incomplete pre-commit rollback must retry recovery instead. A matching durable
+  commit receipt must retry rollback-marker and backup cleanup before acknowledgement succeeds. Sync every backup file
+  and its backup directory before publishing the marker. Sync every final candidate runtime file and affected directory
+  before entering the application-commit phase. Retain the global apply lock while recovery or acknowledgement
+  is pending, including when startup cannot prove either outcome from a legacy or incomplete task payload. A pending
+  task plus explicit successful no-transaction recovery proves the privileged handoff never began and releases the
+  lock. On failure,
+  timeout, indeterminate helper return, interruption, or startup recovery, first stop and verify any surviving
+  fixed-identity apply helper; serialize every retry under a separate fixed-identity recovery unit and stop and verify
+  any surviving recovery unit before starting another. Then restore every captured runtime
+  file and link, durably sync every restored file and affected parent directory before clearing rollback state,
+  reconfigure pre-existing candidate links, remove candidate-only VLANs, fail closed without host
+  mutation when an active appliance has no known-good Network baseline, restore a previously absent firewall by
+  disabling its candidate service and flushing the candidate ruleset, keep the old path reachable, and record a
+  truthful non-secret failing layer. Probe old and candidate listeners on their configured public ports. Require every
+  dynamic candidate listener to acquire and probe each requested DHCP
+  or SLAAC address family before retirement. Preserve the previous firewall policy plus minimal candidate admission when
+  firewall state changes in either direction; include the configured management public port in both transitional and
+  final filtered rulesets without dropping the candidate rule's source predicates, and apply the enabled or disabled
+  candidate ruleset only after readiness. Commit
+  baselines only from the exact staged snapshots, and leave desired-state edits made during readiness pending. A
+  flagged-access candidate must remove a stale dedicated `00-atlaso-mgmt.network` file when that file is not part of the
+  candidate configuration. Retain a flagged-management VLAN's trunk parent for link rollback without treating the
+  parent's addresses as management listeners or readiness targets.
 - Physical-interface desired-state updates from the API and UI use one atomic domain service. Capture the previous
   IPv4 and IPv6 CIDRs before mutation, refresh dependent service, ESX Storage, Web Terminal, DHCP, and Network Boot
   bindings before one commit, include child VLAN dependencies when their parent becomes unavailable, roll back every

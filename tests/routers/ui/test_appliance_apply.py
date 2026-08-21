@@ -8,6 +8,525 @@ import pytest
 from tests.routers.ui.helpers import login
 
 
+def test_management_path_signature_covers_dedicated_and_flagged_access_transitions():
+    """Detect every supported management-listener topology change."""
+    from atlaso.app.ui import network_management_paths
+
+    dedicated = """[physical_interfaces]
+interface=eth0
+  role=management
+  mode=access
+  admin_state=up
+  ipv4_method=static
+  ip_cidr=192.0.2.10/24
+  gateway=192.0.2.1
+interface=eth1
+  role=access
+  mode=access
+  admin_state=up
+  access_management_ui_enabled=false
+  ip_cidr=198.51.100.10/24
+"""
+    flagged = dedicated.replace("role=management", "role=access", 1).replace(
+        "access_management_ui_enabled=false",
+        "access_management_ui_enabled=true",
+    )
+
+    assert network_management_paths(dedicated) == [
+        {
+            "kind": "physical",
+            "name": "eth0",
+            "parent": "",
+            "parent_admin_state": "",
+            "role": "management",
+            "mtu": "",
+            "ipv4_method": "static",
+            "ip_cidr": "192.0.2.10/24",
+            "gateway": "192.0.2.1",
+            "ipv6_enabled": "",
+            "ipv6_cidr": "",
+            "ipv6_gateway": "",
+        }
+    ]
+    assert network_management_paths(flagged) == [
+        {
+            "kind": "physical",
+            "name": "eth1",
+            "parent": "",
+            "parent_admin_state": "",
+            "role": "access",
+            "mtu": "",
+            "ipv4_method": "",
+            "ip_cidr": "198.51.100.10/24",
+            "gateway": "",
+            "ipv6_enabled": "",
+            "ipv6_cidr": "",
+            "ipv6_gateway": "",
+        }
+    ]
+
+
+def test_appliance_settings_stages_flagged_access_resolver_interface(client):
+    """Bind resolver staging to the effective flagged-access listener.
+
+    Args:
+        client: HTTP test client used to initialize an isolated database.
+    """
+    from sqlalchemy import select
+
+    from atlaso.app import ui
+    from atlaso.app.database import SessionLocal
+    from atlaso.app.models import PhysicalInterface
+
+    with SessionLocal() as db:
+        interface = db.execute(
+            select(PhysicalInterface).where(PhysicalInterface.name == "eth0")
+        ).scalar_one()
+        interface.role = "access"
+        interface.mode = "access"
+        interface.admin_state = "up"
+        interface.oper_state = "up"
+        interface.ipv4_method = "static"
+        interface.ip_cidr = "198.51.100.10/24"
+        interface.access_management_ui_enabled = True
+        db.commit()
+
+        context = ui.appliance_settings_context(db, reconcile_dns=False)
+
+    preview = json.loads(context["appliance_settings_config_preview"])
+    assert context["management_interface"]["name"] == "eth0"
+    assert preview["management_interface"] == "eth0"
+    assert preview["management_ip"] == "198.51.100.10"
+
+
+def test_appliance_settings_uses_last_applied_dns_state_for_resolver(client):
+    """Keep loopback DNS pending until the DNS/DHCP unit is applied.
+
+    Args:
+        client: HTTP test client used to initialize an isolated database.
+    """
+    from atlaso.app import ui
+    from atlaso.app.database import SessionLocal
+    from atlaso.app.models import DnsSettings
+
+    assert ui.applied_local_dns_enabled({"summary": ["DNS enabled"]}) is True
+    assert ui.applied_local_dns_enabled({"summary": ["DNS disabled"]}) is False
+
+    with SessionLocal() as db:
+        dns_settings = db.query(DnsSettings).one()
+        dns_settings.enabled = True
+        db.commit()
+        ui.save_appliance_apply_baselines(
+            db,
+            {"dnsmasq": {"summary": ["DNS disabled"], "dns_enabled": False}},
+        )
+        db.commit()
+
+        pending_context = ui.appliance_settings_context(db, reconcile_dns=False)
+        pending_preview = json.loads(pending_context["appliance_settings_config_preview"])
+        assert pending_context["local_dns_enabled"] is False
+        assert pending_preview["resolver_mode"] != "local_dns"
+        assert pending_preview["resolver_servers"] != ["127.0.0.1"]
+
+        ui.save_appliance_apply_baselines(
+            db,
+            {"dnsmasq": {"summary": ["DNS enabled"], "dns_enabled": True}},
+        )
+        db.commit()
+        applied_context = ui.appliance_settings_context(db, reconcile_dns=False)
+        applied_preview = json.loads(applied_context["appliance_settings_config_preview"])
+        assert applied_context["local_dns_enabled"] is True
+        assert applied_preview["resolver_mode"] == "local_dns"
+        assert applied_preview["resolver_servers"] == ["127.0.0.1"]
+
+        dns_settings.enabled = False
+        db.commit()
+        disabling_context = ui.appliance_settings_context(db, reconcile_dns=False)
+        disabling_preview = json.loads(disabling_context["appliance_settings_config_preview"])
+
+    assert disabling_context["local_dns_enabled"] is False
+    assert disabling_preview["resolver_mode"] != "local_dns"
+    assert disabling_preview["resolver_servers"] != ["127.0.0.1"]
+
+
+def test_local_dns_disable_forces_resolver_move_before_dns_stop(client):
+    """Move the resolver before an applied local DNS listener is disabled.
+
+    Args:
+        client: HTTP test client used to exercise the Atlaso application.
+    """
+    from atlaso.app.database import SessionLocal
+    from atlaso.app.models import DnsSettings, Job
+    from atlaso.app.ui import appliance_apply_units, update_appliance_apply_baselines
+
+    login(client)
+    with SessionLocal() as db:
+        dns_settings = db.query(DnsSettings).one()
+        dns_settings.enabled = True
+        db.commit()
+        units = appliance_apply_units(db)
+        update_appliance_apply_baselines(db, units, {unit["id"] for unit in units})
+        units = appliance_apply_units(db)
+        update_appliance_apply_baselines(db, units, {"appliance_settings"})
+        dns_settings.enabled = False
+        db.commit()
+    page = client.get("/dashboard")
+    csrf = page.text.split('name="csrf" value="', 1)[1].split('"', 1)[0]
+
+    response = client.post(
+        "/appliance-apply",
+        data={"csrf": csrf, "selected_units": "dnsmasq"},
+        headers={"Accept": "application/json"},
+    )
+
+    assert response.status_code == 202
+    with SessionLocal() as db:
+        job = db.get(Job, response.json()["job_id"])
+        assert job is not None
+        payload = json.loads(job.result or "{}")
+    assert payload["selected_units"] == ["appliance_settings", "dnsmasq"]
+    assert [unit["unit_id"] for unit in payload["captured_units"]] == [
+        "appliance_settings",
+        "dnsmasq",
+    ]
+
+
+def test_management_handoff_fails_closed_without_network_baseline():
+    """Require the handoff path when no known-good baseline can identify the old listener."""
+    from atlaso.app.ui import management_handoff_required
+
+    network_unit = {
+        "raw_config_preview": """[physical_interfaces]
+interface=eth1
+  role=management
+  mode=access
+  admin_state=up
+  ipv4_method=static
+  ip_cidr=198.51.100.10/24
+"""
+    }
+
+    assert management_handoff_required(network_unit, None)
+
+
+def test_management_handoff_detects_ipv6_router_advertisement_toggle():
+    """Treat SLAAC enablement as a management listener topology change."""
+    from atlaso.app.ui import management_handoff_required
+
+    previous = """[physical_interfaces]
+interface=eth0
+  role=management
+  mode=access
+  admin_state=up
+  ipv4_method=static
+  ip_cidr=192.0.2.10/24
+  ipv6_enabled=false
+"""
+    candidate = previous.replace("ipv6_enabled=false", "ipv6_enabled=true")
+
+    assert management_handoff_required(
+        {"raw_config_preview": candidate},
+        {"config_preview": previous},
+    )
+
+
+def test_management_handoff_detects_flagged_access_vlan_mtu_change():
+    """Treat a management-listener VLAN MTU change as a handoff boundary."""
+    from atlaso.app.ui import management_handoff_required
+
+    previous = """[vlan_interfaces]
+vlan=eth1.20
+  parent=eth1
+  role=access
+  admin_state=up
+  access_management_ui_enabled=true
+  mtu=1500
+  ipv4_method=static
+  ip_cidr=192.0.2.20/24
+"""
+    candidate = previous.replace("mtu=1500", "mtu=9000")
+
+    assert management_handoff_required(
+        {"raw_config_preview": candidate},
+        {"config_preview": previous},
+    )
+
+
+def test_management_handoff_detects_flagged_access_vlan_parent_admin_down():
+    """Protect a management VLAN when its trunk parent is disabled."""
+    from atlaso.app.ui import management_handoff_required, network_management_paths
+
+    previous = """[physical_interfaces]
+interface=eth1
+  role=access
+  mode=trunk
+  admin_state=up
+[vlan_interfaces]
+vlan=eth1.20
+  parent=eth1
+  role=access
+  admin_state=up
+  access_management_ui_enabled=true
+  mtu=1500
+  ipv4_method=static
+  ip_cidr=192.0.2.20/24
+"""
+    candidate = previous.replace("admin_state=up", "admin_state=down", 1)
+
+    previous_paths = network_management_paths(previous)
+    candidate_paths = network_management_paths(candidate)
+    assert previous_paths[0]["parent_admin_state"] == "up"
+    assert candidate_paths[0]["parent_admin_state"] == "down"
+    assert management_handoff_required(
+        {"raw_config_preview": candidate},
+        {"config_preview": previous},
+    )
+
+
+@pytest.mark.parametrize("failure_target", ["ca", "manifest"])
+def test_management_handoff_staging_failure_removes_private_ca_payload(
+    monkeypatch,
+    tmp_path,
+    failure_target,
+):
+    """Remove the transient private-key payload on every staging failure.
+
+    Args:
+        monkeypatch: Pytest fixture used to inject the staging failure.
+        tmp_path: Temporary root containing the secret and manifest payloads.
+        failure_target: Staging operation that fails after the CA file is written.
+    """
+    from atlaso.app import ui
+
+    class UnusedAdapter:
+        """Reject helper calls because staging must fail first."""
+
+        dry_run = False
+
+        def validate_management_handoff(self, _manifest_path):
+            """Fail if staging unexpectedly reaches helper validation.
+
+            Args:
+                _manifest_path: Staged manifest that must not reach validation.
+            """
+            raise AssertionError("helper validation must not run after staging failure")
+
+    unit_defaults = {
+        "label": "Management handoff component",
+        "summary": "Apply the management handoff component.",
+        "validation_errors": [],
+        "validation_warnings": [],
+        "config_path": "",
+        "config_preview": "",
+        "config_diff": "",
+        "raw_config_preview": "",
+    }
+    units = {
+        unit_id: {**unit_defaults, "id": unit_id}
+        for unit_id in ui.MANAGEMENT_HANDOFF_UNIT_IDS
+    }
+    units["network"]["previous_management_paths"] = []
+    units["network"]["removed_vlan_interfaces"] = []
+    units["ca"]["context"] = {"ca_settings": object(), "ca_certificates": []}
+    ca_path = tmp_path / "atlaso-ca.json"
+    manifest_path = tmp_path / "atlaso-management-handoff.json"
+    monkeypatch.setattr(ui, "CA_STAGED_CONFIG_PATH", str(ca_path))
+    monkeypatch.setattr(ui, "MANAGEMENT_HANDOFF_STAGED_MANIFEST_PATH", str(manifest_path))
+    monkeypatch.setattr(ui, "load_appliance_apply_baselines", lambda _db: {"appliance_settings": {}})
+    monkeypatch.setattr(ui, "network_config_with_removed_vlans", lambda preview, _removed: preview)
+    monkeypatch.setattr(ui, "render_ca_apply_payload", lambda *_args, **_kwargs: "private-key-payload")
+
+    def stage_config(target, content):
+        """Write the CA payload, then inject the selected staging failure.
+
+        Args:
+            target: Canonical staged configuration path.
+            content: Rendered staged configuration content.
+        """
+        if str(target) == str(ca_path):
+            ca_path.write_text(content, encoding="utf-8")
+            if failure_target == "ca":
+                raise OSError("CA staging interrupted")
+        if str(target) == str(manifest_path):
+            raise OSError("manifest staging interrupted")
+        return str(target)
+
+    monkeypatch.setattr(ui, "stage_appliance_apply_config", stage_config)
+
+    with pytest.raises(OSError, match="staging interrupted"):
+        ui.execute_management_handoff(
+            units,
+            job_id="job_secret_cleanup_435",
+            adapter=UnusedAdapter(),
+            db=object(),
+        )
+
+    assert not ca_path.exists()
+    assert not manifest_path.exists()
+
+
+def test_management_handoff_timeout_stops_and_recovers_indeterminate_helper(monkeypatch):
+    """Recover the fixed helper unit when the adapter wait times out.
+
+    Args:
+        monkeypatch: Pytest fixture used to isolate staging and helper execution.
+    """
+    from atlaso.app import ui
+    from atlaso.app.adapters.system import AdapterResult
+
+    class TimeoutAdapter:
+        """Return an indeterminate apply result followed by proven rollback."""
+
+        dry_run = False
+
+        def __init__(self):
+            """Initialize the recorded helper actions."""
+            self.actions: list[str] = []
+
+        def validate_management_handoff(self, manifest_path):
+            """Accept the staged manifest.
+
+            Args:
+                manifest_path: Staged handoff manifest path.
+            """
+            self.actions.append("validate")
+            return AdapterResult(
+                command=["atlaso-helper", "management-handoff", "validate", manifest_path],
+                dry_run=False,
+                returncode=0,
+            )
+
+        def apply_management_handoff(self, manifest_path):
+            """Return the adapter timeout used for indeterminate execution.
+
+            Args:
+                manifest_path: Staged handoff manifest path.
+            """
+            self.actions.append("apply")
+            return AdapterResult(
+                command=["atlaso-helper", "management-handoff", "apply", manifest_path],
+                dry_run=False,
+                stderr="management handoff helper wait timed out",
+                returncode=124,
+            )
+
+        def recover_management_handoff(self):
+            """Return bounded proof that the surviving helper was rolled back."""
+            self.actions.append("recover")
+            return AdapterResult(
+                command=["atlaso-helper", "management-handoff", "recover"],
+                dry_run=False,
+                stdout=json.dumps(
+                    {
+                        "management_handoff": "rolled back after interruption",
+                        "rolled_back": True,
+                        "failing_layer": "interruption serialization",
+                    }
+                ),
+                returncode=0,
+            )
+
+    unit_defaults = {
+        "label": "Management handoff component",
+        "summary": "Apply the management handoff component.",
+        "validation_errors": [],
+        "validation_warnings": [],
+        "config_path": "",
+        "config_preview": "",
+        "config_diff": "",
+        "raw_config_preview": "",
+    }
+    units = {
+        unit_id: {**unit_defaults, "id": unit_id}
+        for unit_id in ui.MANAGEMENT_HANDOFF_UNIT_IDS
+    }
+    units["network"]["previous_management_paths"] = [
+        {
+            "name": "eth0.20",
+            "parent": "eth0",
+            "ip_cidr": "192.0.2.10/24",
+            "ipv6_cidr": "",
+        }
+    ]
+    units["network"]["removed_vlan_interfaces"] = []
+    units["ca"]["context"] = {"ca_settings": object(), "ca_certificates": []}
+    monkeypatch.setattr(ui, "load_appliance_apply_baselines", lambda _db: {"appliance_settings": {}})
+    staged: dict[str, str] = {}
+
+    def stage_config(target, content):
+        """Capture staged handoff content by target path.
+
+        Args:
+            target: Canonical staged configuration path.
+            content: Rendered staged configuration content.
+
+        Returns:
+            The unchanged target path.
+        """
+        staged[str(target)] = content
+        return target
+
+    monkeypatch.setattr(ui, "stage_appliance_apply_config", stage_config)
+    monkeypatch.setattr(ui, "render_ca_apply_payload", lambda *_args, **_kwargs: "{}")
+    adapter = TimeoutAdapter()
+
+    group, results = ui.execute_management_handoff(
+        units,
+        job_id="job_timeout435",
+        adapter=adapter,
+        db=object(),
+    )
+
+    assert adapter.actions == ["validate", "apply", "recover"]
+    assert group["success"] is False
+    assert group["rollback_proven"] is True
+    assert group["management_handoff"]["management_handoff"] == "rolled back"
+    assert group["management_handoff"]["failing_layer"] == "handoff helper wait"
+    assert all(result["rolled_back"] is True for result in results)
+    manifest = json.loads(staged[str(ui.MANAGEMENT_HANDOFF_STAGED_MANIFEST_PATH)])
+    assert manifest["previous_management_interfaces"] == ["eth0.20"]
+    assert manifest["previous_management_parent_interfaces"] == ["eth0"]
+    assert manifest["previous_management_paths"] == [
+        {
+            "name": "eth0.20",
+            "ipv4_method": "",
+            "ipv6_enabled": "",
+            "ipv6_cidr": "",
+        }
+    ]
+
+
+def test_management_handoff_settings_baseline_ignores_only_applied_front_door_fields():
+    """Keep unrelated Appliance Settings pending after the management transaction."""
+    from atlaso.app.ui import management_handoff_completes_appliance_settings
+
+    previous = {
+        "fqdn": "atlaso.example",
+        "resolver_mode": "dhcp",
+        "resolver_servers": [],
+        "local_dns_enabled": False,
+        "management_interface": "eth0",
+        "management_ip": "192.0.2.10",
+        "management_https_enabled": True,
+        "root_ssh_enabled": False,
+    }
+    baseline = {"config_preview": json.dumps(previous)}
+    management_only = {
+        **previous,
+        "resolver_mode": "local_dns",
+        "resolver_servers": ["127.0.0.1"],
+        "local_dns_enabled": True,
+        "management_interface": "eth1",
+        "management_ip": "198.51.100.10",
+    }
+
+    assert management_handoff_completes_appliance_settings(json.dumps(management_only), baseline)
+    assert not management_handoff_completes_appliance_settings(
+        json.dumps({**management_only, "root_ssh_enabled": True}),
+        baseline,
+    )
+
+
 def test_appliance_apply_router_owns_exact_transport_set():
     """Keep the extracted route identities and response classes exact."""
     from atlaso.app import ui
@@ -518,6 +1037,452 @@ def test_appliance_apply_review_returns_management_address_connection_warning(cl
     assert "from 192.168.49.1/24 to 192.168.49.20/24" in network["connection_warnings"][0]
 
 
+def test_management_move_forces_partial_dependency_selection_into_handoff(client):
+    """Bundle every runtime layer when Firewall alone is selected for a pending move.
+
+    Args:
+        client: HTTP test client used to exercise the Atlaso application.
+    """
+    from sqlalchemy import select
+
+    from atlaso.app.database import SessionLocal
+    from atlaso.app.models import Job, PhysicalInterface
+    from atlaso.app.ui import appliance_apply_units, update_appliance_apply_baselines
+
+    login(client)
+    with SessionLocal() as db:
+        units = appliance_apply_units(db)
+        update_appliance_apply_baselines(db, units, {unit["id"] for unit in units})
+        management = db.scalar(select(PhysicalInterface).where(PhysicalInterface.name == "eth0"))
+        assert management is not None
+        management.ip_cidr = "192.168.49.21/24"
+        db.commit()
+    page = client.get("/dashboard")
+    csrf = page.text.split('name="csrf" value="', 1)[1].split('"', 1)[0]
+
+    response = client.post(
+        "/appliance-apply",
+        data={"csrf": csrf, "selected_units": "firewall"},
+        headers={"Accept": "application/json"},
+    )
+
+    assert response.status_code == 202
+    with SessionLocal() as db:
+        job = db.get(Job, response.json()["job_id"])
+        assert job is not None
+        payload = json.loads(job.result or "{}")
+        assert payload["management_handoff"] is True
+        assert set(payload["management_handoff_units"]) == {
+            "ca",
+            "network",
+            "firewall",
+            "appliance_settings",
+            "public_services",
+        }
+        assert all(
+            unit["management_handoff"]["management_handoff"] == "committed"
+            for unit in payload["units"]
+        )
+
+
+def test_management_move_rechecks_handoff_after_ldap_dependency_expansion(client, monkeypatch):
+    """Protect a Firewall unit added indirectly by the LDAP dependency closure.
+
+    Args:
+        client: HTTP test client used to exercise the Atlaso application.
+        monkeypatch: Pytest fixture used to isolate background execution.
+    """
+    from sqlalchemy import select
+
+    from atlaso.app import ui
+    from atlaso.app.database import SessionLocal
+    from atlaso.app.models import Job, PhysicalInterface
+
+    login(client)
+    with SessionLocal() as db:
+        units = ui.appliance_apply_units(db)
+        ui.update_appliance_apply_baselines(db, units, {unit["id"] for unit in units})
+        management = db.scalar(select(PhysicalInterface).where(PhysicalInterface.name == "eth0"))
+        assert management is not None
+        management.ip_cidr = "192.168.49.22/24"
+        db.commit()
+
+    real_units = ui.appliance_apply_units
+
+    def units_with_ldap_firewall_dependency(db, *, reconcile=True):
+        """Mark LDAP active and its generated Firewall dependency changed.
+
+        Args:
+            db: Active database session.
+            reconcile: Whether desired-state dependencies should be reconciled.
+
+        Returns:
+            Appliance Apply units with the indirect LDAP dependency active.
+        """
+        units = real_units(db, reconcile=reconcile)
+        unit_map = {unit["id"]: unit for unit in units}
+        unit_map["ldap"]["context"]["ldap_organizations"] = [object()]
+        unit_map["ldap"]["changed"] = True
+        unit_map["firewall"]["changed"] = True
+        return units
+
+    monkeypatch.setattr(ui, "appliance_apply_units", units_with_ldap_firewall_dependency)
+    monkeypatch.setattr(ui, "run_appliance_apply_job", lambda _job_id: None)
+    page = client.get("/dashboard")
+    csrf = page.text.split('name="csrf" value="', 1)[1].split('"', 1)[0]
+
+    response = client.post(
+        "/appliance-apply",
+        data={"csrf": csrf, "selected_units": "ldap"},
+        headers={"Accept": "application/json"},
+    )
+
+    assert response.status_code == 202
+    with SessionLocal() as db:
+        job = db.get(Job, response.json()["job_id"])
+        assert job is not None
+        payload = json.loads(job.result or "{}")
+    assert payload["management_handoff"] is True
+    assert set(payload["management_handoff_units"]) == {
+        "ca",
+        "network",
+        "firewall",
+        "appliance_settings",
+        "public_services",
+    }
+    assert "ldap" in payload["selected_units"]
+
+
+def test_management_handoff_baselines_exact_applied_snapshot(client, monkeypatch):
+    """Leave a desired-state edit saved during readiness pending.
+
+    Args:
+        client: HTTP test client used to exercise the Atlaso application.
+        monkeypatch: Pytest fixture used to inject a concurrent desired-state edit.
+    """
+    from sqlalchemy import select
+
+    import atlaso.app.ui as ui
+    from atlaso.app.database import SessionLocal
+    from atlaso.app.models import Job, JobStatus, PhysicalInterface
+
+    login(client)
+    with SessionLocal() as db:
+        units = ui.appliance_apply_units(db)
+        ui.update_appliance_apply_baselines(db, units, {unit["id"] for unit in units})
+        management = db.scalar(select(PhysicalInterface).where(PhysicalInterface.name == "eth0"))
+        assert management is not None
+        management.ip_cidr = "192.168.49.21/24"
+        db.commit()
+
+    original_execute = ui.execute_management_handoff
+
+    def execute_with_concurrent_edit(*args, **kwargs):
+        """Apply the captured candidate, then save a newer desired address.
+
+        Args:
+            *args: Positional arguments forwarded to the production executor.
+            **kwargs: Keyword arguments forwarded to the production executor.
+
+        Returns:
+            The production management-handoff result.
+        """
+        result = original_execute(*args, **kwargs)
+        with SessionLocal() as edit_db:
+            management = edit_db.scalar(
+                select(PhysicalInterface).where(PhysicalInterface.name == "eth0")
+            )
+            assert management is not None
+            management.ip_cidr = "192.168.49.22/24"
+            edit_db.commit()
+        return result
+
+    monkeypatch.setattr(ui, "execute_management_handoff", execute_with_concurrent_edit)
+    page = client.get("/dashboard")
+    csrf = page.text.split('name="csrf" value="', 1)[1].split('"', 1)[0]
+
+    response = client.post(
+        "/appliance-apply",
+        data={"csrf": csrf, "selected_units": "network"},
+        headers={"Accept": "application/json"},
+    )
+
+    assert response.status_code == 202
+    with SessionLocal() as db:
+        job = db.get(Job, response.json()["job_id"])
+        assert job is not None
+        assert job.status == JobStatus.SUCCEEDED.value
+        payload = json.loads(job.result or "{}")
+        captured = next(
+            unit for unit in payload["captured_units"] if unit["unit_id"] == "network"
+        )
+        baseline = ui.load_appliance_apply_baselines(db)["network"]
+        current = next(
+            unit
+            for unit in ui.appliance_apply_units(db, reconcile=False)
+            if unit["id"] == "network"
+        )
+        assert baseline["snapshot_hash"] == captured["snapshot_hash"]
+        assert baseline["config_preview"] == captured["config_preview"]
+        assert current["snapshot_hash"] != baseline["snapshot_hash"]
+        assert current["changed"] is True
+
+
+def test_management_handoff_staging_failure_clears_unstarted_runtime_lock(client, monkeypatch):
+    """Do not retain the Apply lock when the helper proves no transaction began.
+
+    Args:
+        client: HTTP test client providing an isolated database.
+        monkeypatch: Pytest fixture used to fail before privileged helper execution.
+    """
+    from sqlalchemy import select
+
+    import atlaso.app.ui as ui
+    from atlaso.app.adapters.system import AdapterResult
+    from atlaso.app.database import SessionLocal
+    from atlaso.app.models import Job, JobStatus, PhysicalInterface
+
+    login(client)
+    with SessionLocal() as db:
+        units = ui.appliance_apply_units(db)
+        ui.update_appliance_apply_baselines(db, units, {unit["id"] for unit in units})
+        management = db.scalar(select(PhysicalInterface).where(PhysicalInterface.name == "eth0"))
+        assert management is not None
+        management.ip_cidr = "192.168.49.21/24"
+        db.commit()
+
+    original_run = ui.run_appliance_apply_job
+    monkeypatch.setattr(ui, "run_appliance_apply_job", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr(
+        ui,
+        "execute_management_handoff",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(OSError("staging failed")),
+    )
+    no_transaction = AdapterResult(
+        command=["atlaso-helper", "management-handoff", "recover"],
+        dry_run=False,
+        stdout=json.dumps(
+            {
+                "management_handoff": "no interrupted transaction",
+                "rolled_back": False,
+            }
+        ),
+        returncode=0,
+    )
+    monkeypatch.setattr(
+        ui,
+        "reconcile_management_handoff_exception",
+        lambda *_args, **_kwargs: (
+            no_transaction,
+            ui.management_handoff_result_evidence(no_transaction),
+        ),
+    )
+    page = client.get("/dashboard")
+    csrf = page.text.split('name="csrf" value="', 1)[1].split('"', 1)[0]
+
+    response = client.post(
+        "/appliance-apply",
+        data={"csrf": csrf, "selected_units": "network"},
+        headers={"Accept": "application/json"},
+    )
+
+    assert response.status_code == 202
+    with SessionLocal() as db:
+        job = db.get(Job, response.json()["job_id"])
+        assert job is not None
+        job.created_by = "console:root"
+        db.commit()
+    original_run(response.json()["job_id"], force_real=True)
+    with SessionLocal() as db:
+        job = db.get(Job, response.json()["job_id"])
+        assert job is not None
+        assert job.status == JobStatus.FAILED.value
+        payload = json.loads(job.result or "{}")
+        assert "management_handoff_runtime_commit_pending" not in payload
+        assert "management_handoff_application_committed" not in payload
+        recovery = payload["management_handoff_exception_recovery"]["evidence"]
+        assert recovery["management_handoff"] == "no interrupted transaction"
+        assert "no runtime rollback was necessary" in (job.error or "")
+        assert ui.active_appliance_apply_job(db) is None
+
+
+def test_interrupted_handoff_reconciles_application_commit_without_false_rollback(client, monkeypatch):
+    """Acknowledge a committed baseline and distinguish a missing rollback marker.
+
+    Args:
+        client: HTTP test client providing an isolated database.
+        monkeypatch: Pytest fixture used to replace privileged helper calls.
+    """
+    import atlaso.app.ui as ui
+    from atlaso.app.adapters.system import AdapterResult
+    from atlaso.app.database import SessionLocal
+    from atlaso.app.models import Job, JobStatus
+
+    recovery_calls: list[str] = []
+
+    class RecoveryAdapter:
+        """Return deterministic commit and no-marker recovery evidence."""
+
+        def __init__(self, **_kwargs):
+            """Accept the production adapter construction contract.
+
+            Args:
+                **_kwargs: Adapter options ignored by this test double.
+            """
+
+        def acknowledge_management_handoff(self, job_id):
+            """Return an idempotent acknowledgement for the committed task.
+
+            Args:
+                job_id: Appliance Apply task being acknowledged.
+            """
+            recovery_calls.append(f"acknowledge:{job_id}")
+            return AdapterResult(
+                command=["atlaso-helper", "management-handoff", "acknowledge", job_id],
+                dry_run=False,
+                stdout=json.dumps({"management_handoff": "already committed", "job_id": job_id}),
+                returncode=0,
+            )
+
+        def recover_management_handoff(self):
+            """Return a successful command that explicitly performed no rollback."""
+            recovery_calls.append("recover")
+            return AdapterResult(
+                command=["atlaso-helper", "management-handoff", "recover"],
+                dry_run=False,
+                stdout=json.dumps({"management_handoff": "no interrupted transaction", "rolled_back": False}),
+                returncode=0,
+            )
+
+    monkeypatch.setattr(ui, "SystemAdapter", RecoveryAdapter)
+    with SessionLocal() as db:
+        db.add(
+            Job(
+                id="handoff-committed",
+                type="appliance-apply",
+                status=JobStatus.FAILED.value,
+                created_by="admin",
+                progress_percent=80,
+                result=json.dumps(
+                    {
+                        "management_handoff": True,
+                        "management_handoff_runtime_commit_pending": True,
+                        "management_handoff_application_committed": True,
+                    }
+                ),
+            )
+        )
+        db.commit()
+
+        active = ui.active_appliance_apply_job(db)
+        assert active is not None and active.id == "handoff-committed"
+        db.add(
+            Job(
+                id="handoff-no-marker",
+                type="appliance-apply",
+                status=JobStatus.PENDING.value,
+                created_by="admin",
+                progress_percent=20,
+                result=json.dumps(
+                    {
+                        "management_handoff": True,
+                        "management_handoff_runtime_commit_pending": True,
+                    }
+                ),
+            )
+        )
+        db.commit()
+        db.add(
+            Job(
+                id="handoff-unproven",
+                type="appliance-apply",
+                status=JobStatus.RUNNING.value,
+                created_by="admin",
+                progress_percent=10,
+                result=json.dumps({"management_handoff": True}),
+            )
+        )
+        db.commit()
+        assert ui.recover_interrupted_appliance_apply_jobs(db) == 3
+
+        committed = db.get(Job, "handoff-committed")
+        missing = db.get(Job, "handoff-no-marker")
+        unproven = db.get(Job, "handoff-unproven")
+        assert committed is not None and missing is not None and unproven is not None
+        committed_payload = json.loads(committed.result or "{}")
+        missing_payload = json.loads(missing.result or "{}")
+        unproven_payload = json.loads(unproven.result or "{}")
+        assert committed_payload["management_handoff_runtime_committed"] is True
+        assert committed_payload["management_handoff_runtime_commit_pending"] is False
+        assert "management_handoff_application_committed" not in committed_payload
+        assert "candidate management path remains active" in (committed.error or "")
+        assert "before the privileged management handoff transaction began" in (missing.error or "")
+        assert "rolled back" not in (missing.error or "").lower()
+        assert "management_handoff_runtime_commit_pending" not in missing_payload
+        assert "management_handoff_application_committed" not in missing_payload
+        assert unproven_payload["management_handoff_runtime_commit_pending"] is True
+        assert "management_handoff_application_committed" not in unproven_payload
+        retained_lock = ui.active_appliance_apply_job(db)
+        assert retained_lock is not None
+        assert retained_lock.id == "handoff-unproven"
+        assert recovery_calls == ["acknowledge:handoff-committed", "recover", "recover"]
+
+
+def test_management_handoff_exception_reconciliation_selects_transaction_boundary():
+    """Roll back before the application commit and acknowledge after it."""
+    from atlaso.app.adapters.system import AdapterResult
+    from atlaso.app.ui import reconcile_management_handoff_exception
+
+    class RecoveryAdapter:
+        """Record which retained helper reconciliation path was selected."""
+
+        def __init__(self):
+            """Initialize the recorded helper calls."""
+            self.calls: list[str] = []
+
+        def recover_management_handoff(self):
+            """Return bounded rollback evidence."""
+            self.calls.append("recover")
+            return AdapterResult(
+                command=["atlaso-helper", "management-handoff", "recover"],
+                dry_run=False,
+                stdout=json.dumps({"management_handoff": "rolled back", "rolled_back": True}),
+                returncode=0,
+            )
+
+        def acknowledge_management_handoff(self, job_id):
+            """Return bounded committed-candidate evidence.
+
+            Args:
+                job_id: Appliance Apply task being acknowledged.
+            """
+            self.calls.append(f"acknowledge:{job_id}")
+            return AdapterResult(
+                command=["atlaso-helper", "management-handoff", "acknowledge", job_id],
+                dry_run=False,
+                stdout=json.dumps({"management_handoff": "committed", "job_id": job_id}),
+                returncode=0,
+            )
+
+    adapter = RecoveryAdapter()
+    rollback, rollback_evidence = reconcile_management_handoff_exception(
+        adapter,
+        "job-before-commit",
+        application_committed=False,
+    )
+    acknowledgement, acknowledgement_evidence = reconcile_management_handoff_exception(
+        adapter,
+        "job-after-commit",
+        application_committed=True,
+    )
+
+    assert rollback.returncode == 0
+    assert rollback_evidence["rolled_back"] is True
+    assert acknowledgement.returncode == 0
+    assert acknowledgement_evidence["management_handoff"] == "committed"
+    assert adapter.calls == ["recover", "acknowledge:job-after-commit"]
+
+
 def test_appliance_apply_json_submission_returns_master_with_live_child_status(client):
     """Verify JSON submission returns the master and live child status.
 
@@ -530,7 +1495,7 @@ def test_appliance_apply_json_submission_returns_master_with_live_child_status(c
 
     response = client.post(
         "/appliance-apply",
-        data={"csrf": csrf, "selected_units": "firewall"},
+        data={"csrf": csrf, "selected_units": "wan"},
         headers={"Accept": "application/json"},
     )
 
@@ -540,7 +1505,7 @@ def test_appliance_apply_json_submission_returns_master_with_live_child_status(c
     assert payload["status_url"] == f"/tasks/{payload['job_id']}/status"
     assert payload["task"]["type"] == "appliance-apply"
     assert [(step["component_key"], step["status"]) for step in payload["task"]["_children"]] == [
-        ("firewall", "pending")
+        ("wan", "pending")
     ]
 
     status_response = client.get(payload["status_url"])
@@ -548,7 +1513,7 @@ def test_appliance_apply_json_submission_returns_master_with_live_child_status(c
     task = status_response.json()["task"]
     assert task["status"] == "succeeded"
     assert [(step["component_key"], step["status"]) for step in task["_children"]] == [
-        ("firewall", "succeeded")
+        ("wan", "succeeded")
     ]
 
 

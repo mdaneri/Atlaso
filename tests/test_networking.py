@@ -21,7 +21,11 @@ from atlaso.app.models import (
     Setting,
     VlanInterface,
 )
-from atlaso.app.services.appliance_settings import management_ui_context
+from atlaso.app.services import appliance_settings as appliance_settings_service
+from atlaso.app.services.appliance_settings import (
+    management_dhcp_dns_context,
+    management_ui_context,
+)
 from atlaso.app.services.networking import (
     NETWORK_INVENTORY_CLEANUP_WARNING_KEY,
     NETWORK_ROLES,
@@ -858,8 +862,12 @@ def test_validate_network_state_rejects_flagged_access_vlan_with_only_link_local
     )
 
 
-def test_management_ui_context_prefers_dedicated_then_flagged_eth0_then_vlan():
-    """Verify deterministic appliance identity selection across management UI listeners."""
+def test_management_ui_context_prefers_dedicated_then_flagged_eth0_then_vlan(monkeypatch):
+    """Verify deterministic appliance identity selection across management UI listeners.
+
+    Args:
+        monkeypatch: Pytest fixture used to replace DHCP DNS observation.
+    """
     dedicated = PhysicalInterface(
         name="eth2",
         ip_cidr="192.168.52.1/24",
@@ -879,7 +887,8 @@ def test_management_ui_context_prefers_dedicated_then_flagged_eth0_then_vlan():
     )
     flagged_eth0 = PhysicalInterface(
         name="eth0",
-        ip_cidr="192.168.50.1/24",
+        host_ip_cidr="192.168.50.25/24",
+        ipv4_method="dhcp",
         role="access",
         mode="access",
         access_management_ui_enabled=True,
@@ -904,7 +913,20 @@ def test_management_ui_context_prefers_dedicated_then_flagged_eth0_then_vlan():
         [flagged_eth1, flagged_eth0],
         [flagged_vlan],
     )["name"] == "eth0"
+    assert management_ui_context([flagged_eth1, flagged_eth0], [flagged_vlan])["ipv4_method"] == "dhcp"
     assert management_ui_context([], [flagged_vlan])["name"] == "eth1.20"
+    monkeypatch.setattr(
+        appliance_settings_service,
+        "observed_management_dhcp_dns_servers",
+        lambda interface_name: ["192.0.2.53"] if interface_name == "eth0" else [],
+    )
+    dhcp_context, dhcp_servers = management_dhcp_dns_context(
+        [flagged_eth1, flagged_eth0],
+        [flagged_vlan],
+    )
+    assert dhcp_context["name"] == "eth0"
+    assert dhcp_servers == ["192.0.2.53"]
+    assert management_dhcp_dns_context([], [flagged_vlan])[0]["name"] == "eth1.20"
 
 
 def test_validate_network_state_rejects_lockout_and_non_access_flag():
