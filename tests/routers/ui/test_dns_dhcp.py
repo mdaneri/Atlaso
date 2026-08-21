@@ -374,9 +374,15 @@ def test_dns_and_dhcp_pages_render(client):
         in app_js.text
     )
     assert (
-        "Live task status is temporarily unavailable. Atlaso will retry automatically."
+        "Live task status is temporarily unavailable. Atlaso will retry automatically; "
+        "if this persists, open Tasks in another tab."
         in app_js.text
     )
+    assert (
+        "Applying management settings; Atlaso is reconnecting to task status."
+        in app_js.text
+    )
+    assert "if this persists, open Tasks in another tab" in app_js.text
     assert "const APPLIANCE_APPLY_SUCCESS_AUTO_CLOSE_MS = 15000;" in app_js.text
     assert "function clearApplianceApplyAutoClose()" in app_js.text
     assert "function scheduleApplianceApplyAutoClose(task)" in app_js.text
@@ -399,6 +405,7 @@ def test_dns_and_dhcp_pages_render(client):
     assert "data-appliance-apply-modal" in app_js.text
     assert "data-appliance-apply-connection-warning" in dns.text
     assert "data-appliance-apply-poll-warning" in dns.text
+    assert ".alert.neutral" in app_css
     assert (
         'class="button primary hidden" type="submit" data-appliance-apply-submit'
         in dns.text
@@ -662,6 +669,7 @@ def test_dhcp_leases_page_reflects_live_adapter_output(client, monkeypatch):
 
     from sqlalchemy import select
 
+    import atlaso.app.routers.ui.dns_dhcp as dns_dhcp_router
     from atlaso.app.adapters.system import AdapterResult
     from atlaso.app.database import SessionLocal
     from atlaso.app.models import DhcpReservation, DnsRecord, EsxiPxeHost
@@ -787,6 +795,12 @@ def test_dhcp_leases_page_reflects_live_adapter_output(client, monkeypatch):
         )
         db.commit()
 
+    lifecycle_events = []
+    monkeypatch.setattr(
+        dns_dhcp_router,
+        "lock_esxi_host_reference_lifecycle",
+        lambda _db: lifecycle_events.append("lock"),
+    )
     pxe_response = client.post(
         "/dhcp/leases/pxe-host",
         data={
@@ -798,6 +812,7 @@ def test_dhcp_leases_page_reflects_live_adapter_output(client, monkeypatch):
         follow_redirects=False,
     )
     assert pxe_response.status_code == 303
+    assert lifecycle_events == ["lock"]
     assert pxe_response.headers["location"] == "/ui/management/esxi-pxe#esxi-pxe-hosts"
     with SessionLocal() as db:
         host = db.execute(

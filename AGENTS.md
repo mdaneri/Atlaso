@@ -292,10 +292,11 @@ The following cross-cutting boundaries always apply:
 - Keep ordinary `/ui/management/appliance-apply/status` polling on the non-reconciling desired-state projection.
   Prevent overlapping browser polls, suspend them while hidden, back off when idle, and refresh promptly after successful
   mutations and Apply completion. Retain the tracked master task until a valid terminal task response is rendered, retry
-  transient status and terminal-reconciliation failures at the active cadence with an observable warning, and never let
-  an older active response replace a terminal result. Reconcile a retained task and run its completion refresh before
-  accepting a different session's newer active task. Full review, validation, and submission must still reconcile current
-  host observations.
+  transient status and terminal-reconciliation failures at the active cadence, and never let an older active response
+  replace a terminal result. During a server-marked real Appliance Settings restart, retain progress and the lock while
+  showing a neutral reconnecting state for one bounded grace window; unexpected or out-of-window failures must show the
+  observable availability warning. Reconcile a retained task and run its completion refresh before accepting a different
+  session's newer active task. Full review, validation, and submission must still reconcile current host observations.
 - Privileged appliance operations go through `atlaso-helper` and constrained sudoers rules.
 - VCF Offline Depot settings and download-profile applies preserve the registered VCFDT software depot ID. Generate an
   ID only when none exists or an administrator explicitly confirms **Refresh software depot ID** through global apply;
@@ -371,7 +372,22 @@ The following cross-cutting boundaries always apply:
   send with no retries, and no claim that the host powered on. Keep discovered
   hosts live-refreshed while visible, expose ESXi assignment details by
   normalized reported MAC, and use the shared grid/wizard foundations for Host
-  Reference variables and ESX installer ISO intake.
+  Reference variables and ESX installer ISO intake. Never delete an assigned
+  discovered host directly: remove its ESXi Host Reference first, retaining the
+  discovery record by default and removing its commands, sessions, reports,
+  and host row only through the explicit associated-discovery option. Keep
+  Host Reference association IDs synchronized during live discovery refresh,
+  and reject associated-discovery cleanup while another Host Reference still
+  owns any reported MAC for that discovery. Serialize every Host Reference
+  write, settings-archive restore, and factory reset with inventory report
+  mutation, direct discovery deletion, associated-discovery cleanup, and
+  automatic capacity pruning so every assignment snapshot remains valid
+  through commit.
+  Protect assigned discoveries and
+  all of their retained reports from automatic capacity pruning; reject new
+  report admission as retryable when live or assigned state alone fills either
+  global storage limit. Expose the same retain-or-clean-up lifecycle through
+  the scoped `/api/v1` Host Reference deletion operation.
 - Windows Inventory Linux and Photon builds select the dedicated `Atlaso-Build` WSL distribution by default. WSL is a
   pre-existing host prerequisite: ordinary builds must never install or configure WSL, create a missing distribution,
   change the default distribution, elevate, reboot, or remove a distribution. Keep the pinned setup contract, explicit

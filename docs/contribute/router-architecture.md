@@ -34,7 +34,9 @@ and Monitor management transports plus their two API v1 operations while retaini
 sampling and service behavior, templates, browser assets, and every operator-visible interaction in their established
 owners. Phase 14 extracts the seven Vault management transports while retaining Vault services, encryption, CLI,
 templates, browser assets, remote-terminal tickets, Kickstart dependencies, and cross-domain integrations in their
-established owners.
+established owners. Phase 15 extracts appliance power and Appliance Update management transports into two ordered
+contributions while retaining updater services, helpers, workers, durable tasks, signed-release activation, rollback,
+recovery, adapters, templates, browser assets, screenshots, and operator guidance in their established owners.
 
 ## Ownership and responsibilities
 
@@ -328,11 +330,10 @@ facade, and monitoring collection, sampling, persistence, and payload constructi
 `atlaso/app/services/monitoring.py`. Templates, authored CSS, browser JavaScript, screenshots, refresh cadence, and
 operator guidance retain their established owners.
 
-The UI registry places `dashboard_monitor` between `facade_between_vaults_dashboard_monitor` and
-`facade_between_dashboard_monitor_automation`, preserving the original effective position after the front-door,
-protocol, public, and earlier management routes and before Appliance Update, Automation, and every later management
-domain. The stable UI facade continues to export all five endpoint callables plus the dashboard, monitoring-access,
-formatting, and projection compatibility helpers.
+The UI registry places `dashboard_monitor` between `appliance_maintenance_power` and
+`appliance_maintenance_update`, preserving the original effective position after appliance power and before Appliance
+Update, Automation, and every later management domain. The stable UI facade continues to export all five endpoint
+callables plus the dashboard, monitoring-access, formatting, and projection compatibility helpers.
 
 The bearer-authenticated Dashboard and Monitor API v1 operations live in
 `atlaso/app/routers/api_v1/dashboard_monitor.py`. The API registry places `dashboard_monitor` immediately after
@@ -360,10 +361,11 @@ URI and one-use Web Terminal ticket behavior, and Network Boot/Kickstart depende
 owners.
 
 The UI registry places `vaults` between `facade_before_vaults` and
-`facade_between_vaults_dashboard_monitor`. The first facade segment retains front-door, protocol, public, and earlier
-management routes through the Web Terminal WebSocket. The following facade segment begins with management home and
-login and continues to Dashboard and Monitor. This preserves Vault's exact original position after Web Terminal and
-before management home without collapsing the later Dashboard and Monitor contribution.
+`facade_between_vaults_appliance_maintenance`. The first facade segment retains front-door, protocol, public, and
+earlier management routes through the Web Terminal WebSocket. The following facade segment begins with management home
+and login and continues through the account actions that precede appliance power. This preserves Vault's exact original
+position after Web Terminal and before management home without collapsing the later appliance-maintenance and
+Dashboard/Monitor contributions.
 
 The stable `atlaso/app/ui.py` facade continues to export `vaults_page`, `create_vault_from_ui`,
 `create_vault_entry_from_ui`, `edit_vault_entry_from_ui`, `reveal_vault_entry_from_ui`,
@@ -378,6 +380,73 @@ extraction changes no template, CSS, JavaScript, visible copy, control, layout, 
 interaction class, route, route name, listener eligibility, authorization scope, session or CSRF behavior, redirect,
 status code, rendering or cache contract, audit action, encryption, masking, timed reveal, delete-dependency behavior,
 route inventory, or normalized OpenAPI output.
+
+## Extracted appliance-maintenance ownership
+
+The authenticated appliance power transport and the eleven Appliance Update transports live in
+`atlaso/app/routers/ui/appliance_maintenance.py`. The module returns two explicit ordered routers:
+`appliance_maintenance_power` remains immediately before Dashboard and Monitor, while
+`appliance_maintenance_update` remains immediately after them and before Automation. The facade contribution preceding
+power is named `facade_between_vaults_appliance_maintenance`, preserving every earlier front-door, protocol, public,
+authentication, account, and management route at its established position.
+
+The stable `atlaso/app/ui.py` facade continues to export `appliance_power_action`, `appliance_update_page`,
+`update_appliance_update_settings`, `update_appliance_update_source`, `create_appliance_update_source`,
+`delete_appliance_update_source`, `create_managed_update_package`, `update_managed_update_package`,
+`delete_managed_update_package`, `sync_appliance_update_sources`, `check_appliance_update`, and
+`run_appliance_update`. It also retains the `_managed_package_from_form` and `submit_appliance_update` helpers and
+supplies late-bound compatibility dependencies so existing facade monkeypatch seams continue to work. The extracted
+domain module does not import the UI facade or another monolithic facade.
+
+Independently runnable transport coverage lives in
+`tests/routers/ui/test_appliance_maintenance.py`. Appliance Update services, helper actions, worker execution, durable
+task behavior, signed-release activation, rollback and recovery, system adapters, lifecycle coverage, templates,
+browser JavaScript, screenshots, and operator guidance retain their established owners. This preservation-only
+extraction changes no template, CSS, JavaScript, visible copy, control, layout, accessibility, responsive behavior,
+interaction class, route, route name, listener, authorization, admin permission, session or CSRF behavior, redirect,
+status code, response, rendering, caching, task, audit, adapter, helper, update-manifest, credential-custody,
+release-signature, activation, rollback, recovery, redaction, route inventory, normalized OpenAPI output, or global
+Appliance Apply boundary.
+
+## Extracted certificate-trust ownership
+
+Certificate Authority and vSphere Key Provider management transports live in
+`atlaso/app/routers/ui/certificate_trust.py`. The module contributes two ordered
+management routers around Managed LDAP: Certificate Authority remains after the
+DNS/DHCP facade segment and before Managed LDAP, while vSphere Key Providers
+remain after Managed LDAP and before the facade segment that owns NTP, ESX
+Storage, and later VCF workflows. The existing public CA and certificate-request
+routes retain the shared public and protocol router positions supplied by the
+stable UI facade.
+
+The vSphere Key Provider API v1 operations and the Certificate Authority status
+compatibility operation live in
+`atlaso/app/routers/api_v1/certificate_trust.py`. The API registry places this
+domain immediately after Managed LDAP and before the remaining Backup Restore
+compatibility operation. The stable `atlaso/app/ui.py` and
+`atlaso/app/api/v1.py` facades continue to export every established endpoint and
+helper name while supplying facade-owned rendering, listener, CSRF, desired-state,
+DNS, certificate, and Appliance Apply helpers as bounded dependencies.
+
+Independently runnable transport coverage lives in
+`tests/routers/ui/test_certificate_trust.py` and
+`tests/routers/api_v1/test_certificate_trust.py`. CA and KMIP service, lifecycle,
+protocol, settings-archive, rendering, credential-custody, worker, and global
+Appliance Apply behavior retain their established test owners. Certificate
+Authority singleton settings remain `non-grid settings` using the DNS settings
+and validation-rail reference. Certificate profiles, request intake, providers,
+trusted vCenters, and certificate lifecycle retain their existing
+`wizard-backed Tabulator` interactions using ESX Storage. Management and public
+request collections and operational inspection retain their existing
+`read-only Tabulator` behavior using Tasks and Audit Events.
+
+This behavior-neutral extraction changes no template, CSS, JavaScript, visible
+copy, control, layout, interaction class, route, route name, operation ID, tag,
+authorization scope, session or CSRF behavior, redirect, status, response schema,
+audit action, public-certificate or redaction contract, certificate/private-key
+custody, managed-certificate ownership, vCenter trust, provider identity, route
+inventory, normalized OpenAPI output, desired state, KMIP protocol, or global
+Appliance Apply boundary.
 
 ## Route and OpenAPI compatibility
 
@@ -445,6 +514,7 @@ python -m pytest -q tests/routers/ui/test_vcf_workflows.py tests/routers/api_v1/
 python -m pytest -q tests/routers/ui/test_automation.py tests/routers/ui/test_operations.py tests/routers/api_v1/test_operations.py
 python -m pytest -q tests/routers/ui/test_dashboard_monitor.py tests/routers/api_v1/test_dashboard_monitor.py
 python -m pytest -q tests/routers/ui/test_vaults.py tests/test_vaults.py
+python -m pytest -q tests/routers/ui/test_appliance_maintenance.py tests/test_appliance_update.py
 python -m pytest -q tests/test_openapi_contract.py tests/test_ui_route_namespaces.py tests/test_ui_compliance.py
 python scripts/generate_router_contract_baselines.py --check
 python scripts/check_python_static_analysis.py

@@ -8,9 +8,13 @@ ROOT = Path(__file__).resolve().parents[1]
 TEMPLATES = ROOT / "atlaso" / "app" / "templates"
 MATRIX = ROOT / "docs" / "project" / "ui-compliance-matrix.md"
 ROUTER_PREFIXES = {
+    "ca_router": "/ui/management",
+    "kms_router": "/ui/management",
     "router": "/ui/management",
     "management_router": "/ui/management",
+    "power_router": "/ui/management",
     "public_router": "/ui/public",
+    "update_router": "/ui/management",
 }
 
 

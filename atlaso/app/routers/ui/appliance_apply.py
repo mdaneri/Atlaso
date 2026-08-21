@@ -108,12 +108,15 @@ def build_router(dependencies: ApplianceApplyUiDependencies) -> ApplianceApplyUi
             for unit in context["review_apply_units"]
         ]
         active_job = dependencies.active_appliance_apply_job(db)
+        active_task = dependencies.task_row(active_job, identity) if active_job is not None else None
+        if active_task is not None:
+            active_task["mutation_locked"] = True
         return JSONResponse(
             {
                 "units": units,
                 "pending_count": len(units),
                 "initial_apply_required": context["initial_apply_required"],
-                "active_task": dependencies.task_row(active_job, identity) if active_job is not None else None,
+                "active_task": active_task,
             }
         )
 
@@ -136,6 +139,9 @@ def build_router(dependencies: ApplianceApplyUiDependencies) -> ApplianceApplyUi
         projection = dependencies.appliance_apply_status_projection(db, refresh=refresh)
         pending_count = projection["pending_count"]
         active_job = dependencies.active_appliance_apply_job(db)
+        active_task = dependencies.task_row(active_job, identity) if active_job is not None else None
+        if active_task is not None:
+            active_task["mutation_locked"] = True
         units = [dependencies.appliance_apply_client_status(unit) for unit in projection["units"]]
         return JSONResponse(
             {
@@ -149,7 +155,7 @@ def build_router(dependencies: ApplianceApplyUiDependencies) -> ApplianceApplyUi
                 ),
                 "badge": "pending" if pending_count else "current",
                 "locked": active_job is not None,
-                "active_task": dependencies.task_row(active_job, identity) if active_job is not None else None,
+                "active_task": active_task,
             }
         )
 

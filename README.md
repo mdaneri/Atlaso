@@ -9,7 +9,12 @@ Authenticated pages share a lightweight, visibility-aware Appliance Apply status
 validation continue to reconcile live host state, while idle sidebar polling never starts privileged helper work. The
 shared task monitor retries transient status failures, follows a completed master to its terminal task record, and keeps
 the modal, sidebar, pending count, and global lock synchronized without requiring a page reload. It completes a retained
-task's terminal refresh before following a newer Apply started by another session.
+task's terminal refresh before following a newer Apply started by another session. When the real Appliance Settings
+helper confirms that it scheduled a management-service restart, the task exposes that event so the monitor can show a
+short neutral reconnecting state before escalating a persisting or unexpected outage to the ordinary availability warning.
+That bounded interval uses browser-local elapsed time from the first observation of the confirmed event, so appliance and
+browser wall-clock skew cannot shorten or extend it. A settings-only task remains visible and keeps the server mutation
+lock through the same restart window even though its component work is already complete.
 
 ![Atlaso — Everything your virtualization lab needs](docs/assets/brand/atlaso-docs-header-dark-1600x400.png)
 
@@ -70,7 +75,10 @@ brings infrastructure, storage, identity, networking, and lifecycle workflows in
   countdown. Retained reports render as printable semantic hardware summaries
   with JSON export; newly reported hosts refresh automatically, assigned ESXi
   hostname and address remain visible, and standard grid-backed wizards manage
-  Host References and installer ISOs. Audited Wake-on-LAN is available for
+  Host References and installer ISOs. Assigned discoveries are removed only
+  through their Host Reference, with an explicit choice to retain or remove the
+  matching discovery history; shared discoveries remain protected while any
+  other Host Reference is assigned. Audited Wake-on-LAN is available for
   discovered hosts and saved ESXi Host References; scripted ESXi boots require
   an administrator to enter the one-time code shown by the exact host-console
   attempt before a short-lived, single-use authorization is bound to applied state.

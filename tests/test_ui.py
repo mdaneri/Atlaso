@@ -546,68 +546,6 @@ def test_web_terminal_uses_one_use_ticket_and_bridges_websocket_input(client, mo
     assert 'data === "\\u0004" ? "exit\\r" : data' not in terminal_js.text
 
 
-def test_appliance_power_action_creates_task_before_scheduling(client, monkeypatch):
-    """Verify that appliance power action creates task before scheduling.
-
-    Args:
-        client: HTTP test client used to exercise the Atlaso application.
-        monkeypatch: Pytest fixture used to replace dependencies for the test.
-    """
-    from sqlalchemy import select
-
-    from atlaso.app.adapters.system import AdapterResult
-    from atlaso.app.database import SessionLocal
-    from atlaso.app.models import AuditEvent, Job, JobStatus
-    from atlaso.app.ui import SystemAdapter
-
-    observed: list[tuple[str, str]] = []
-
-    def fake_schedule(_self, action: str) -> AdapterResult:
-        """Return fake schedule.
-
-        Args:
-            _self: Self supplied to the test scenario.
-            action: Action supplied to the test scenario.
-        """
-        with SessionLocal() as db:
-            job = db.execute(select(Job).where(Job.type == f"appliance-{action}")).scalar_one()
-            observed.append((job.status, action))
-        return AdapterResult(
-            command=["sudo", "-n", SystemAdapter.HELPER_PATH, "appliance-power", action, "--real"],
-            dry_run=False,
-            stdout="scheduled",
-        )
-
-    monkeypatch.setattr(SystemAdapter, "schedule_appliance_power", fake_schedule)
-    login(client)
-    page = client.get("/dashboard")
-    csrf = page.text.split('name="csrf" value="', 1)[1].split('"', 1)[0]
-
-    response = client.post(
-        "/appliance/power/reboot",
-        data={"csrf": csrf},
-        follow_redirects=False,
-    )
-
-    assert response.status_code == 303
-    assert response.headers["location"].startswith("/ui/management/tasks?job_id=job_")
-    assert observed == [(JobStatus.RUNNING.value, "reboot")]
-    with SessionLocal() as db:
-        job = db.execute(select(Job).where(Job.type == "appliance-reboot")).scalar_one()
-        payload = json.loads(job.result or "{}")
-        assert job.status == JobStatus.SUCCEEDED.value
-        assert job.progress_percent == 100
-        assert payload["action"] == "reboot"
-        assert payload["scheduled"] is True
-        assert payload["delay_seconds"] == 5
-        actions = set(db.execute(select(AuditEvent.action).where(AuditEvent.resource_id == job.id)).scalars())
-        assert actions == {"submit_appliance_reboot", "schedule_appliance_reboot"}
-
-    tasks = client.get(response.headers["location"])
-    assert tasks.status_code == 200
-    assert "Appliance Reboot" in tasks.text
-
-
 def test_account_menu_uses_defined_opaque_surface_tokens():
     """Verify that account menu uses defined opaque surface tokens."""
     from pathlib import Path
@@ -621,45 +559,6 @@ def test_account_menu_uses_defined_opaque_surface_tokens():
     assert "border-color: var(--accent);" in menu_css
 
 
-def test_appliance_shutdown_task_reports_helper_failure(client, monkeypatch):
-    """Verify that appliance shutdown task reports helper failure.
-
-    Args:
-        client: HTTP test client used to exercise the Atlaso application.
-        monkeypatch: Pytest fixture used to replace dependencies for the test.
-    """
-    import json
-
-    from sqlalchemy import select
-
-    from atlaso.app.adapters.system import AdapterResult
-    from atlaso.app.database import SessionLocal
-    from atlaso.app.models import Job, JobStatus
-    from atlaso.app.ui import SystemAdapter
-
-    monkeypatch.setattr(
-        SystemAdapter,
-        "schedule_appliance_power",
-        lambda _self, action: AdapterResult(
-            command=["atlaso-helper", "appliance-power", action],
-            dry_run=False,
-            stderr="systemd-run unavailable",
-            returncode=127,
-        ),
-    )
-    login(client)
-    page = client.get("/dashboard")
-    csrf = page.text.split('name="csrf" value="', 1)[1].split('"', 1)[0]
-
-    response = client.post("/appliance/power/shutdown", data={"csrf": csrf}, follow_redirects=False)
-
-    assert response.status_code == 303
-    with SessionLocal() as db:
-        job = db.execute(select(Job).where(Job.type == "appliance-shutdown")).scalar_one()
-        payload = json.loads(job.result or "{}")
-        assert job.status == JobStatus.FAILED.value
-        assert job.error == "Appliance shutdown scheduling failed."
-        assert payload["scheduled"] is False
 def test_tasks_page_lists_redacts_logs_and_cancels(client):
     """Verify that tasks page lists redacts logs and cancels.
 
@@ -989,7 +888,7 @@ def test_pwa_manifest_service_worker_and_offline_shell(client):
     assert service_worker.headers["cache-control"] == "no-cache"
     assert service_worker.headers["service-worker-allowed"] == "/ui/management/"
     assert "ATLASO_CACHE" in service_worker.text
-    assert "atlaso-management-pwa-v257" in service_worker.text
+    assert "atlaso-management-pwa-v267" in service_worker.text
     assert 'fetch(asset, { cache: "reload" })' in service_worker.text
     assert ".catch(() => undefined)" in service_worker.text
     assert 'request.mode === "navigate"' in service_worker.text
@@ -1003,11 +902,11 @@ def test_pwa_manifest_service_worker_and_offline_shell(client):
     assert 'accept.includes("text/html")' in service_worker.text
     assert '!hasDownloadLikePath(url)' in service_worker.text
     assert "/static/vendor/monaco/atlaso-monaco.min.js?v=atlaso-monaco-20260806-7" in service_worker.text
-    assert "/static/app.css?v=issue-338-1" in service_worker.text
+    assert "/static/app.css?v=planned-restart-network-boot-20260820-1" in service_worker.text
     assert "/static/ui-patterns.js?v=atlaso-ui-foundation-20260726-8" in service_worker.text
-    assert "/static/appliance-apply-polling.js?v=issue-294-2" in service_worker.text
+    assert "/static/appliance-apply-polling.js?v=issue-420-6" in service_worker.text
     assert "/static/ui-routes.js?v=issue-287-1" in service_worker.text
-    assert "/static/app.js?v=dashboard-setup-415-ldap-navigation-409-20260815-1" in service_worker.text
+    assert "/static/app.js?v=planned-restart-network-boot-20260820-1" in service_worker.text
     assert "/static/terminal.js?v=issue-287-2" in service_worker.text
     assert "/static/pwa.js?v=issue-287-2" in service_worker.text
     assert "vcfdt-configuration-248-20260807-14" not in service_worker.text
@@ -1023,7 +922,15 @@ def test_pwa_manifest_service_worker_and_offline_shell(client):
     offline = client.get("/static/offline.html")
     assert offline.status_code == 200
     assert "Appliance connection unavailable" in offline.text
-    assert "/static/app.css?v=issue-338-1" in offline.text
+    offline_stylesheet = re.search(
+        r'<link rel="stylesheet" href="([^"]+)">',
+        offline.text,
+    )
+    assert offline_stylesheet is not None
+    assert offline_stylesheet.group(1) == (
+        "/static/app.css?v=planned-restart-network-boot-20260820-1"
+    )
+    assert f'"{offline_stylesheet.group(1)}"' in service_worker.text
 
 
 def test_shared_ui_pattern_shell_and_wizard_contracts(client):
@@ -1039,9 +946,9 @@ def test_shared_ui_pattern_shell_and_wizard_contracts(client):
     base = (templates / "base.html").read_text(encoding="utf-8")
     public_base = (templates / "public_portal_base.html").read_text(encoding="utf-8")
     for shell, app_asset in (
-        (base, "/static/app.js?v=dashboard-setup-415-ldap-navigation-409-20260815-1"),
-        (public_base, "/static/app.js?v=dashboard-setup-415-ldap-navigation-409-20260815-1"),
-        (base, "/static/appliance-apply-polling.js?v=issue-294-2"),
+        (base, "/static/app.js?v=planned-restart-network-boot-20260820-1"),
+        (public_base, "/static/app.js?v=planned-restart-network-boot-20260820-1"),
+        (base, "/static/appliance-apply-polling.js?v=issue-420-6"),
     ):
         assert shell.index("/static/vendor/tabulator/tabulator.min.js") < shell.index(
             "/static/ui-patterns.js?v=atlaso-ui-foundation-20260726-8"
@@ -1684,9 +1591,9 @@ def test_monitor_page_renders_template_and_browser_assets(client):
     assert "Loading devices" not in page.text
     assert "<th>Device</th><th>Read/s</th><th>Write/s</th>" in page.text
     assert "swagger-link-icon" in page.text
-    assert "/static/app.css?v=issue-338-1" in page.text
+    assert "/static/app.css?v=planned-restart-network-boot-20260820-1" in page.text
     assert "/static/ui-patterns.js?v=atlaso-ui-foundation-20260726-8" in page.text
-    assert "/static/app.js?v=dashboard-setup-415-ldap-navigation-409-20260815-1" in page.text
+    assert "/static/app.js?v=planned-restart-network-boot-20260820-1" in page.text
     app_css = client.get("/static/app.css")
     assert app_css.status_code == 200
     assert ".split-workspace > .wide-panel" in app_css.text
@@ -6675,7 +6582,7 @@ def test_network_boot_host_management_report_and_print_contract(client):
 
     app_js = client.get("/static/app.js").text
     renderer = app_js.split("function renderNetworkBootReport", 1)[1].split(
-        "function initializeNetworkBootPage", 1
+        "function reconcileNetworkBootDiscoveredHosts", 1
     )[0]
     assert ".innerHTML" not in renderer
     assert "textContent" in renderer
@@ -6737,7 +6644,10 @@ def test_network_boot_host_management_report_and_print_contract(client):
     assert "Open the row menu" in page.text
     assert "initializeNetworkBootDiscoveredHostRefresh(hostsTable, discoveredStatus);" in page_initializer
     assert 'request("/api/v1/network-boot/hosts")' in host_refresh
-    assert "await reconcileNetworkBootDiscoveredHosts(hostsTable, hosts);" in host_refresh
+    assert (
+        "await reconcileNetworkBootDiscoveredHosts(hostsTable, hosts, hostReferencesTable);"
+        in host_refresh
+    )
     assert "networkBootChangedRowValues(current, updated)" in app_js
     assert "if (Object.keys(changed).length) await row.update(changed);" in app_js
     assert 'document.addEventListener("visibilitychange", handleVisibilityChange);' in host_refresh
@@ -7231,11 +7141,159 @@ def test_esxi_pxe_multi_zone_host_reservations_and_grid_menu(client):
     assert "Edit host reference" in host_grid_js
     assert 'target.closest(\'[tabulator-field="enabled"]\')' in host_grid_js
     assert "Delete host reference" in host_grid_js
+    delete_host_js = app_js.split("async function deleteEsxiHost(", 1)[1].split(
+        "function initializeEsxiPxeHostsTable()", 1
+    )[0]
+    post_host_js = app_js.split("async function postEsxiHostAction(", 1)[1].split(
+        "function newEsxiHostRow", 1
+    )[0]
+    assert "Also remove" in delete_host_js
+    assert "remove_discovered_host" in delete_host_js
+    assert "atlasoGridWizardRequest" in post_host_js
+    assert "expectJson: false" in post_host_js
     assert 'field: "ip_address"' in host_grid_js
     assert 'field: "variables_json"' in host_grid_js
     assert "data-esxi-host-wizard-add" in host_grid_js
     assert 'editable: (cell) => canWrite && cell.getRow().getData().is_default' in host_grid_js
     assert 'editable: (cell) => canWrite && !cell.getRow().getData().is_new' in host_grid_js
+
+
+def test_esxi_host_delete_can_retain_or_remove_associated_discovery(client):
+    """Verify that Host Reference deletion owns the optional discovery cleanup.
+
+    Args:
+        client: HTTP test client used to exercise the Atlaso application.
+    """
+    from tests.test_network_boot import inventory_report
+
+    login(client)
+    inventory_session = client.post("/pxe/inventory/sessions").json()
+    submitted = client.post(
+        "/pxe/inventory/report",
+        json=inventory_report(),
+        headers={"Authorization": f"Bearer {inventory_session['access_token']}"},
+    )
+    discovered_host_id = submitted.json()["host_id"]
+
+    from atlaso.app.database import SessionLocal
+    from atlaso.app.models import (
+        EsxiPxeHost,
+        NetworkBootDiscoveredHost,
+        NetworkBootInventoryReport,
+        NetworkBootInventorySession,
+    )
+
+    with SessionLocal() as db:
+        reference = EsxiPxeHost(
+            hostname="discovered-esxi",
+            mac_address="52:54:00:12:34:56",
+            enabled=False,
+        )
+        db.add(reference)
+        db.commit()
+        reference_id = reference.id
+
+    page = client.get("/network-boot")
+    csrf = page.text.split('name="csrf" value="', 1)[1].split('"', 1)[0]
+    assert "Also remove discovered host" in page.text
+    assert f'"discovered_host_ids": [{discovered_host_id}]' in page.text
+
+    retained = client.post(
+        f"/esxi-pxe/hosts/{reference_id}/delete",
+        data={"csrf": csrf},
+        follow_redirects=False,
+    )
+    assert retained.status_code == 303, retained.text
+    with SessionLocal() as db:
+        assert db.get(EsxiPxeHost, reference_id) is None
+        assert db.get(NetworkBootDiscoveredHost, discovered_host_id) is not None
+
+        replacement = EsxiPxeHost(
+            hostname="discovered-esxi-again",
+            mac_address="52:54:00:12:34:56",
+            enabled=False,
+        )
+        db.add(replacement)
+        db.commit()
+        replacement_id = replacement.id
+
+    removed = client.post(
+        f"/esxi-pxe/hosts/{replacement_id}/delete",
+        data={"csrf": csrf, "remove_discovered_host": "on"},
+        follow_redirects=False,
+    )
+    assert removed.status_code == 303, removed.text
+    with SessionLocal() as db:
+        assert db.get(EsxiPxeHost, replacement_id) is None
+        assert db.get(NetworkBootDiscoveredHost, discovered_host_id) is None
+        assert db.get(NetworkBootInventorySession, inventory_session["session_id"]) is None
+        assert db.get(NetworkBootInventoryReport, submitted.json()["report_id"]) is None
+
+
+def test_esxi_host_delete_rejects_shared_discovery_cleanup(client):
+    """Verify that cascade cleanup preserves discoveries assigned to another reference.
+
+    Args:
+        client: HTTP test client used to exercise the Atlaso application.
+    """
+    from tests.test_network_boot import inventory_report
+
+    login(client)
+    inventory_session = client.post("/pxe/inventory/sessions").json()
+    report = inventory_report()
+    report["interfaces"].append(
+        {
+            "name": "eth1",
+            "permanent_mac": "52:54:00:65:43:21",
+            "current_mac": "52:54:00:65:43:21",
+            "driver": "virtio_net",
+            "link_state": "up",
+            "speed_mbps": 10000,
+            "addresses": [],
+            "boot_interface": False,
+        }
+    )
+    submitted = client.post(
+        "/pxe/inventory/report",
+        json=report,
+        headers={"Authorization": f"Bearer {inventory_session['access_token']}"},
+    )
+    discovered_host_id = submitted.json()["host_id"]
+
+    from atlaso.app.database import SessionLocal
+    from atlaso.app.models import EsxiPxeHost, NetworkBootDiscoveredHost
+
+    with SessionLocal() as db:
+        first = EsxiPxeHost(
+            hostname="shared-discovery-first",
+            mac_address="52:54:00:12:34:56",
+            enabled=False,
+        )
+        second = EsxiPxeHost(
+            hostname="shared-discovery-second",
+            mac_address="52:54:00:65:43:21",
+            enabled=False,
+        )
+        db.add_all([first, second])
+        db.commit()
+        first_id = first.id
+        second_id = second.id
+
+    page = client.get("/network-boot")
+    csrf = page.text.split('name="csrf" value="', 1)[1].split('"', 1)[0]
+    blocked = client.post(
+        f"/esxi-pxe/hosts/{first_id}/delete",
+        data={"csrf": csrf, "remove_discovered_host": "on"},
+        headers={"X-Atlaso-Grid": "1", "Accept": "application/json"},
+        follow_redirects=False,
+    )
+
+    assert blocked.status_code == 409, blocked.text
+    assert "shared-discovery-second" in blocked.json()["detail"]
+    with SessionLocal() as db:
+        assert db.get(EsxiPxeHost, first_id) is not None
+        assert db.get(EsxiPxeHost, second_id) is not None
+        assert db.get(NetworkBootDiscoveredHost, discovered_host_id) is not None
 
 
 def test_esxi_pxe_boot_settings_migrate_legacy_first_stage_defaults(client):

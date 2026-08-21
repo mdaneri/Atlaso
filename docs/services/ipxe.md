@@ -158,12 +158,14 @@ report navigation and export controls only. Operators with Network Boot write
 access can use the same row menu to **Promote to ESXi**, **Reboot**, **Wake
 host**, or **Remove discovered host**. Wake, reboot, and removal share Atlaso's
 confirmation flow. Reboot is available only for an online Inventory Linux
-session. Removal transactionally deletes that discovered host's commands,
-sessions, and reports, but retains any separately promoted ESXi desired-state
-reference. The grid marks a discovered host as **Assigned** when one of its
-reported MACs matches an ESXi Host Reference and shows the assigned ESXi
-hostname and IP address. **Promote to ESXi** is disabled for an assigned host,
-preventing a duplicate Host Reference workflow. Promotion requires explicit hostname, a discovered MAC, address,
+session. Removal transactionally deletes an unassigned discovered host's
+commands, sessions, and reports. The grid marks a discovered host as
+**Assigned** when one of its reported MACs matches an ESXi Host Reference and
+shows the assigned ESXi hostname and IP address. Both **Promote to ESXi** and
+**Remove discovered host** are disabled for an assigned host. A direct API
+deletion attempt is rejected with the blocking ESXi hostname so automation must
+remove the Host Reference first. Promotion loads the selected row's identity
+before step validation and requires explicit hostname, discovered MAC, address,
 Kickstart, installer ISO, variables, and enabled-state review. It creates
 desired state only.
 
@@ -366,7 +368,15 @@ Runtime inventory storage retains at
 most 512 discovered hosts, 2,048 reports across all hosts, 11 reports per host,
 and 4,096 sessions; expired sessions and the oldest inactive inventory are
 pruned as new sessions and reports arrive. Hosts with a recent heartbeat or an
-unacknowledged command are never selected for storage eviction.
+unacknowledged command are never selected for storage eviction. A discovered
+host assigned to an ESXi Host Reference and all of its retained reports are
+also protected until the administrator uses the explicit Host Reference
+deletion lifecycle. When live or assigned state alone occupies either global
+limit, Atlaso rejects a new report as retryable instead of evicting protected
+inventory. On PostgreSQL, report admission serializes its identity and MAC
+mutation, assignment snapshot, and any resulting capacity pruning with every
+Host Reference writer, including promotion, DHCP-lease creation, and settings
+archive restore or factory reset.
 
 ## Manage ESXi Host References
 
@@ -394,16 +404,32 @@ storage as an implementation detail. When an installer ISO is selected, a new re
 or promotion defaults to Enabled. An administrator can still turn Enabled off
 explicitly, and editing preserves the saved state. Saving creates or updates
 the Host References grid immediately without a page reload and refreshes the
-matching discovered-host assignment. Use the global **Review appliance
+matching discovered-host assignment. Automatic discovery refresh also updates
+the Host References grid's association state, so deletion choices reflect hosts
+reported after the page opened. Use the global **Review appliance
 changes** workflow to enforce desired state on the appliance.
 
 Double-click an existing reference or choose **Edit host reference** from its
 row menu to reopen the same workflow. The Enabled value remains directly
 toggleable in the collection. The row menu also retains **Boot Inventory Linux
 once**, **Authorize ESXi boot once**, **Wake host**, and **Delete host
-reference** where applicable. Start the assigned host first and choose its ESXi
-entry. The host console displays a one-time code while its unpredictable boot
-claim waits. Then choose **Authorize ESXi boot once**, enter that console code
+reference** where applicable. Deleting a Host Reference retains its associated
+discovered host by default so it can be rediscovered or promoted again. When an
+association exists, the confirmation offers **Also remove the associated
+discovered host and retained inventory state**; selecting it removes the Host
+Reference and matching discovery commands, sessions, reports, and host row in
+the same transaction. Atlaso rejects that cleanup when the same discovery is
+also assigned to another Host Reference; retry without inventory cleanup or
+remove the other assignment first. Atlaso serializes Host Reference writes
+with both direct discovery deletion and associated-discovery cleanup so a
+concurrent create or MAC update cannot invalidate an ownership check before
+commit. API clients use `DELETE
+/api/v1/esxi-pxe/hosts/{host_id}` with `write:esxi-pxe`; the default retains
+discovery history. The optional `remove_discovered_host=true` query additionally
+requires `write:pxe` and applies the same transactional shared-assignment guard.
+Start the assigned host first and choose its ESXi entry.
+The host console displays a one-time code while its unpredictable boot claim
+waits. Then choose **Authorize ESXi boot once**, enter that console code
 in the shared two-step wizard, and review the host before submitting. Atlaso
 creates a ten-minute, single-use authorization bound to that exact claim,
 applied Host Reference, applied Kickstart revision, HTTP listener, and boot

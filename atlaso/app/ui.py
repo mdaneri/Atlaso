@@ -117,9 +117,6 @@ from atlaso.app.models import (
     VcfRegistryBundle,
     VcfTrustTarget,
     VlanInterface,
-    VsphereKeyProvider,
-    VsphereTrustedVcenter,
-    VsphereTrustedVcenterCertificate,
     WanPolicy,
     utcnow,
 )
@@ -138,8 +135,18 @@ from atlaso.app.routers.ui.appliance_apply import ApplianceApplyUiDependencies
 from atlaso.app.routers.ui.appliance_apply import (
     build_router as build_appliance_apply_ui_router,
 )
+from atlaso.app.routers.ui.appliance_maintenance import (
+    ApplianceMaintenanceUiDependencies,
+)
+from atlaso.app.routers.ui.appliance_maintenance import (
+    build_routers as build_appliance_maintenance_ui_routers,
+)
 from atlaso.app.routers.ui.automation import AutomationUiDependencies
 from atlaso.app.routers.ui.automation import build_router as build_automation_ui_router
+from atlaso.app.routers.ui.certificate_trust import CertificateTrustUiDependencies
+from atlaso.app.routers.ui.certificate_trust import (
+    build_routers as build_certificate_trust_ui_routers,
+)
 from atlaso.app.routers.ui.dashboard_monitor import DashboardMonitorUiDependencies
 from atlaso.app.routers.ui.dashboard_monitor import (
     build_router as build_dashboard_monitor_ui_router,
@@ -244,8 +251,6 @@ from atlaso.app.services.ca import (
     CA_SERVER_PROFILE_NAME,
     CA_STAGED_CONFIG_PATH,
     ManagedCertificateSpec,
-    ca_certificate_can_delete,
-    ca_certificate_can_edit,
     ca_certificate_to_dict,
     ca_profile_to_dict,
     ca_service_state,
@@ -254,13 +259,10 @@ from atlaso.app.services.ca import (
     ensure_default_ca_profiles,
     ensure_managed_certificate_rows,
     ensure_root_ca_material,
-    join_multiline,
     managed_certificate_for_owner,
     render_ca_apply_payload,
     render_ca_config,
     safe_certificate_name,
-    split_multiline,
-    validate_ca_certificate_request,
     validate_ca_state,
 )
 from atlaso.app.services.dnsmasq import (
@@ -393,8 +395,6 @@ from atlaso.app.services.firewall import (
     validate_firewall_state,
 )
 from atlaso.app.services.kms import (
-    KMS_DEFAULT_CONFIG_PATH,
-    KMS_DEFAULT_DATABASE_PATH,
     KMS_DNS_RECORD_DESCRIPTION,
     KMS_STAGED_CLIENT_TRUST_PATH,
     KMS_STAGED_CONFIG_PATH,
@@ -638,25 +638,14 @@ from atlaso.app.services.vcf_trust import (
 )
 from atlaso.app.services.vcf_vault_import import discover_vcf_passwords
 from atlaso.app.services.vsphere_key_providers import (
-    authenticated_provider_counts,
     certificate_to_dict,
-    mark_provider_desired_changed,
-    parse_public_certificate,
-    provider_requires_appliance_apply,
     provider_rows,
     provider_to_dict,
     render_client_trust_bundle,
     render_provider_config,
     runtime_status_snapshot,
     trusted_vcenter_to_dict,
-    usable_certificates,
     validate_provider_state,
-)
-from atlaso.app.services.vsphere_key_providers import (
-    normalize_service_hostname as normalize_vsphere_service_hostname,
-)
-from atlaso.app.services.vsphere_key_providers import (
-    normalize_vcenter_hostname as normalize_vsphere_vcenter_hostname,
 )
 from atlaso.app.ui_routes import (
     MANAGEMENT_UI_ROOT,
@@ -8009,7 +7998,9 @@ def _task_time_label(value: datetime | None) -> str:
     """
     if not value:
         return ""
-    return value.isoformat()
+    if value.tzinfo is None:
+        value = value.replace(tzinfo=timezone.utc)
+    return value.astimezone(timezone.utc).isoformat()
 
 
 def _can_cancel_task(job: Job, identity: Identity | None = None) -> bool:
@@ -8103,6 +8094,10 @@ def _task_row(job: Job, identity: Identity | None = None) -> dict[str, Any]:
     }
     if job.type == "vcf-depot-download":
         row["log_url"] = f"/vcf-offline-depot/tasks/{job.id}/log"
+    if job.type == "appliance-apply":
+        management_restart_window = appliance_apply_management_restart_window(job)
+        if management_restart_window is not None:
+            row["management_restart_window"] = management_restart_window
     if steps:
         row["_children"] = [_job_step_row(step) for step in steps]
     return row
@@ -8963,6 +8958,8 @@ def _normalize_vcf_trust_address(address: str) -> tuple[str, list[str]]:
 
 
 APPLIANCE_APPLY_BASELINES_KEY = "appliance_apply.baselines.v1"
+APPLIANCE_APPLY_MANAGEMENT_RESTART_DELAY_SECONDS = 3
+APPLIANCE_APPLY_MANAGEMENT_RECONNECT_GRACE_SECONDS = 15
 MANAGEMENT_CERTIFICATE_CONNECTION_WARNING = (
     "Applying the selected management HTTPS change will replace or rebind the management certificate. "
     "This browser connection will be interrupted; reconnect and verify or trust the certificate presented by the appliance."
@@ -8985,6 +8982,43 @@ APPLIANCE_APPLY_UNIT_IDS = {
     "vcf_private_registry",
     "public_services",
 }
+
+
+def appliance_settings_management_status_transition(results: list[Any]) -> dict[str, Any] | None:
+    """Return the bounded status transition confirmed by the Appliance Settings helper.
+
+    Args:
+        results: Adapter results returned by Appliance Settings validation and apply.
+
+    Returns:
+        Durable reconnect metadata only when the real helper scheduled the restart.
+    """
+    for result in reversed(results):
+        if result.dry_run or result.returncode != 0:
+            continue
+        for line in reversed(str(result.stdout or "").splitlines()):
+            try:
+                payload = json.loads(line)
+            except json.JSONDecodeError:
+                continue
+            transition = payload.get("management_status_transition") if isinstance(payload, dict) else None
+            if not isinstance(transition, dict) or transition.get("kind") != "planned_service_restart":
+                continue
+            restart_delay_seconds = transition.get("restart_delay_seconds")
+            if (
+                not isinstance(restart_delay_seconds, int)
+                or isinstance(restart_delay_seconds, bool)
+                or restart_delay_seconds != APPLIANCE_APPLY_MANAGEMENT_RESTART_DELAY_SECONDS
+            ):
+                continue
+            return {
+                "kind": "planned_service_restart",
+                "restart_delay_seconds": restart_delay_seconds,
+                "grace_seconds": APPLIANCE_APPLY_MANAGEMENT_RECONNECT_GRACE_SECONDS,
+            }
+    return None
+
+
 SECRET_LINE_PATTERN = re.compile(
     r"(rootpw|password|passwd|token|secret|credential|private[_.-]?key|robot[_.-]?account|ca[_.-]?bundle[_.-]?pem|activation[_.-]?code|license|ipxe[_.-]?script|payload[_.-]?b64)",
     re.IGNORECASE,
@@ -12267,7 +12301,7 @@ def execute_appliance_apply_unit(
             recovery_archive.state = "applied"
             recovery_archive.applied_at = utcnow()
             clear_ldap_recovery_payload(recovery_archive)
-    return {
+    unit_result = {
         "unit_id": unit_id,
         "label": unit["label"],
         "status": JobStatus.SUCCEEDED.value if succeeded else JobStatus.FAILED.value,
@@ -12283,6 +12317,11 @@ def execute_appliance_apply_unit(
         "config_preview": unit["config_preview"],
         "config_diff": unit["config_diff"],
     }
+    if unit_id == "appliance_settings":
+        management_status_transition = appliance_settings_management_status_transition(results)
+        if management_status_transition is not None:
+            unit_result["management_status_transition"] = management_status_transition
+    return unit_result
 
 
 def update_appliance_apply_baselines(db: Session, units: list[dict[str, Any]], selected_ids: set[str]) -> None:
@@ -13041,102 +13080,101 @@ def public_logout(request: Request, csrf: str = Form(...), next: str = Form(""))
     return RedirectResponse(safe_public_return_path(next, default="/terminal"), status_code=303)
 
 
-@router.post("/appliance/power/{action}", response_model=None)
-def appliance_power_action(
-    request: Request,
-    action: str,
-    csrf: str = Form(...),
-    identity: Identity = Depends(require_session_identity),
-    db: Session = Depends(get_db),
-) -> RedirectResponse | JSONResponse:
-    """Handle the appliance power action endpoint.
-
-    Args:
-        request: Incoming HTTP request.
-        action: Operation to perform on the target resource.
-        csrf: Validated CSRF token authorizing the request.
-        identity: Authenticated identity authorizing the request.
-        db: Active database session.
-
-    Returns:
-        The endpoint response.
-
-    Raises:
-        HTTPException: If the request cannot be fulfilled.
-    """
-    verify_csrf(request, csrf)
-    require_admin_identity(identity)
-    if action not in {"reboot", "shutdown"}:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Unknown appliance power action")
-
-    now = utcnow()
-    job = Job(
-        id=f"job_{uuid4().hex[:12]}",
-        type=f"appliance-{action}",
-        status=JobStatus.PENDING.value,
-        created_by=identity.username,
-        progress_percent=0,
+_management_between_vaults_appliance_maintenance_router = router
+_appliance_maintenance_ui = build_appliance_maintenance_ui_routers(
+    ApplianceMaintenanceUiDependencies(
+        require_management_ui_request=require_management_ui_request,
+        require_admin_identity=lambda *args, **kwargs: require_admin_identity(
+            *args, **kwargs
+        ),
+        verify_csrf=lambda *args, **kwargs: verify_csrf(*args, **kwargs),
+        render=lambda *args, **kwargs: render(*args, **kwargs),
+        appliance_update_context=lambda *args, **kwargs: appliance_update_context(
+            *args, **kwargs
+        ),
+        appliance_update_settings=lambda *args, **kwargs: appliance_update_settings(
+            *args, **kwargs
+        ),
+        adapter_result_to_payload=lambda *args, **kwargs: adapter_result_to_payload(
+            *args, **kwargs
+        ),
+        default_source_settings=lambda *args, **kwargs: default_source_settings(
+            *args, **kwargs
+        ),
+        encrypt_secret=lambda *args, **kwargs: encrypt_secret(*args, **kwargs),
+        get_settings=lambda *args, **kwargs: get_settings(*args, **kwargs),
+        managed_package_from_form=lambda *args, **kwargs: _managed_package_from_form(
+            *args, **kwargs
+        ),
+        record_audit=lambda *args, **kwargs: record_audit(*args, **kwargs),
+        render_update_manifest=lambda *args, **kwargs: render_update_manifest(
+            *args, **kwargs
+        ),
+        set_setting_value=lambda *args, **kwargs: set_setting_value(
+            *args, **kwargs
+        ),
+        source_rows=lambda *args, **kwargs: source_rows(*args, **kwargs),
+        submit_appliance_update=lambda *args, **kwargs: submit_appliance_update(
+            *args, **kwargs
+        ),
+        system_adapter=lambda: SystemAdapter(),
+        update_settings_to_json=lambda *args, **kwargs: update_settings_to_json(
+            *args, **kwargs
+        ),
+        update_source_payload=lambda *args, **kwargs: update_source_payload(
+            *args, **kwargs
+        ),
+        update_source_settings=lambda *args, **kwargs: update_source_settings(
+            *args, **kwargs
+        ),
+        utcnow=lambda *args, **kwargs: utcnow(*args, **kwargs),
+        validate_update_settings=lambda *args, **kwargs: validate_update_settings(
+            *args, **kwargs
+        ),
+        validate_update_source=lambda *args, **kwargs: validate_update_source(
+            *args, **kwargs
+        ),
     )
-    db.add(job)
-    db.commit()
-    record_audit(
-        db,
-        actor=identity.username,
-        action=f"submit_appliance_{action}",
-        resource_type="job",
-        resource_id=job.id,
-        detail=f"Confirmed appliance {action} task submitted.",
-    )
+)
+appliance_maintenance_power_router = _appliance_maintenance_ui.power_router
+appliance_maintenance_update_router = _appliance_maintenance_ui.update_router
+appliance_power_action = _appliance_maintenance_ui.endpoints[
+    "appliance_power_action"
+]
+appliance_update_page = _appliance_maintenance_ui.endpoints[
+    "appliance_update_page"
+]
+update_appliance_update_settings = _appliance_maintenance_ui.endpoints[
+    "update_appliance_update_settings"
+]
+update_appliance_update_source = _appliance_maintenance_ui.endpoints[
+    "update_appliance_update_source"
+]
+create_appliance_update_source = _appliance_maintenance_ui.endpoints[
+    "create_appliance_update_source"
+]
+delete_appliance_update_source = _appliance_maintenance_ui.endpoints[
+    "delete_appliance_update_source"
+]
+create_managed_update_package = _appliance_maintenance_ui.endpoints[
+    "create_managed_update_package"
+]
+update_managed_update_package = _appliance_maintenance_ui.endpoints[
+    "update_managed_update_package"
+]
+delete_managed_update_package = _appliance_maintenance_ui.endpoints[
+    "delete_managed_update_package"
+]
+sync_appliance_update_sources = _appliance_maintenance_ui.endpoints[
+    "sync_appliance_update_sources"
+]
+check_appliance_update = _appliance_maintenance_ui.endpoints[
+    "check_appliance_update"
+]
+run_appliance_update = _appliance_maintenance_ui.endpoints[
+    "run_appliance_update"
+]
 
-    job.status = JobStatus.RUNNING.value
-    job.started_at = now
-    db.add(job)
-    db.commit()
-    try:
-        result = SystemAdapter().schedule_appliance_power(action)
-    except Exception as exc:  # noqa: BLE001 - normalize adapter boundary failures into a safe result.
-        result = AdapterResult(
-            command=["atlaso-helper", "appliance-power", action],
-            returncode=1,
-            stdout="",
-            stderr=str(exc),
-            dry_run=get_settings().dry_run_system_adapters,
-        )
-
-    succeeded = result.returncode == 0
-    state = "failed"
-    if succeeded:
-        state = "dry-run recorded" if result.dry_run else "scheduled"
-    payload = {
-        "action": action,
-        "state": state,
-        "status": JobStatus.SUCCEEDED.value if succeeded else JobStatus.FAILED.value,
-        "success": succeeded,
-        "scheduled": succeeded and not result.dry_run,
-        "delay_seconds": 5,
-        "dry_run": result.dry_run,
-        "commands": [adapter_result_to_payload(result)],
-    }
-    job.status = payload["status"]
-    job.finished_at = utcnow()
-    job.progress_percent = 100
-    job.result = json.dumps(payload, indent=2, sort_keys=True)
-    job.error = None if succeeded else f"Appliance {action} scheduling failed."
-    db.add(job)
-    db.commit()
-    record_audit(
-        db,
-        actor=identity.username,
-        action=f"schedule_appliance_{action}",
-        resource_type="job",
-        resource_id=job.id,
-        detail=" ".join(result.command),
-        success=succeeded,
-    )
-    return RedirectResponse(f"/tasks?job_id={job.id}", status_code=303)
-
-
-_management_between_vaults_dashboard_monitor_router = router
 _dashboard_monitor_ui = build_dashboard_monitor_ui_router(
     DashboardMonitorUiDependencies(
         require_management_ui_request=require_management_ui_request,
@@ -13154,331 +13192,6 @@ dashboard_data = _dashboard_monitor_ui.endpoints["dashboard_data"]
 monitor_page = _dashboard_monitor_ui.endpoints["monitor_page"]
 monitor_data = _dashboard_monitor_ui.endpoints["monitor_data"]
 server_time = _dashboard_monitor_ui.endpoints["server_time"]
-
-router = APIRouter(
-    prefix=MANAGEMENT_UI_ROOT,
-    dependencies=[Depends(require_management_ui_request)],
-)
-
-
-@router.get("/appliance-update", response_class=HTMLResponse, response_model=None)
-def appliance_update_page(
-    request: Request,
-    identity: Identity = Depends(require_session_identity),
-    db: Session = Depends(get_db),
-) -> HTMLResponse:
-    """Handle the appliance update page endpoint.
-
-    Args:
-        request: Incoming HTTP request.
-        identity: Authenticated identity authorizing the request.
-        db: Active database session.
-
-    Returns:
-        The endpoint response.
-    """
-    return render(request, "appliance_update.html", {"identity": identity, **appliance_update_context(db)})
-
-
-@router.post("/appliance-update/settings", response_model=None)
-def update_appliance_update_settings(
-    request: Request,
-    photon_source: str = Form("configured Photon repositories"),
-    atlaso_manifest_url: str = Form(DEFAULT_ATLASO_MANIFEST_URL),
-    csrf: str = Form(...),
-    identity: Identity = Depends(require_session_identity),
-    db: Session = Depends(get_db),
-) -> Response:
-    """Handle the update appliance update settings endpoint.
-
-    Args:
-        request: Incoming HTTP request.
-        photon_source: Photon source supplied by the caller.
-        atlaso_manifest_url: URL for the atlaso manifest.
-        csrf: Validated CSRF token authorizing the request.
-        identity: Authenticated identity authorizing the request.
-        db: Active database session.
-
-    Returns:
-        The endpoint response.
-    """
-    verify_csrf(request, csrf)
-    require_admin_identity(identity)
-    settings = {
-        "photon_source": photon_source.strip() or "configured Photon repositories",
-        "atlaso_manifest_url": atlaso_manifest_url.strip() or DEFAULT_ATLASO_MANIFEST_URL,
-    }
-    errors = validate_update_settings(settings)
-    if errors:
-        if request.headers.get("X-Atlaso-Autosave") == "1":
-            return JSONResponse({"status": "error", "errors": errors}, status_code=422)
-        return render(
-            request,
-            "appliance_update.html",
-            {"identity": identity, **appliance_update_context(db), "update_error": " ".join(errors)},
-            status_code=422,
-        )
-    set_setting_value(db, APPLIANCE_UPDATE_SETTINGS_KEY, update_settings_to_json(settings))
-    db.commit()
-    record_audit(db, actor=identity.username, action="update_appliance_update_settings", resource_type="appliance_update")
-    if request.headers.get("X-Atlaso-Autosave") == "1":
-        return JSONResponse(
-            {
-                "status": "saved",
-                "saved_at": utcnow().isoformat(),
-                "manifest_preview": render_update_manifest(selected_streams=list(UPDATE_STREAMS), settings=settings, actor=identity.username),
-            }
-        )
-    return RedirectResponse("/appliance-update", status_code=303)
-
-
-@router.post("/appliance-update/sources/{source_id}", response_model=None)
-def update_appliance_update_source(
-    source_id: int,
-    request: Request,
-    name: str = Form(...),
-    url: str = Form(""),
-    priority: int = Form(50),
-    enabled: str | None = Form(None),
-    enabled_present: str | None = Form(None),
-    trusted: str | None = Form(None),
-    channel: str = Form("stable"),
-    managed: str | None = Form(None),
-    gpgcheck: str | None = Form(None),
-    gpgkey: str = Form(""),
-    tls_verify: str | None = Form(None),
-    credential_username: str = Form(""),
-    credential_secret: str = Form(""),
-    clear_credential: str | None = Form(None),
-    csrf: str = Form(...),
-    identity: Identity = Depends(require_session_identity),
-    db: Session = Depends(get_db),
-) -> Response:
-    """Handle the update appliance update source endpoint.
-
-    Args:
-        source_id: Identifier of the source.
-        request: Incoming HTTP request.
-        name: Name of the target object.
-        url: URL of the target resource or service.
-        priority: Ordering priority assigned to the item.
-        enabled: Whether the requested behavior is enabled.
-        enabled_present: Enabled present supplied by the caller.
-        trusted: Trusted supplied by the caller.
-        channel: Channel supplied by the caller.
-        managed: Managed supplied by the caller.
-        gpgcheck: Gpgcheck supplied by the caller.
-        gpgkey: Gpgkey supplied by the caller.
-        tls_verify: Tls verify supplied by the caller.
-        credential_username: Credential username supplied by the caller.
-        credential_secret: Credential secret supplied by the caller.
-        clear_credential: Clear credential supplied by the caller.
-        csrf: Validated CSRF token authorizing the request.
-        identity: Authenticated identity authorizing the request.
-        db: Active database session.
-
-    Returns:
-        The endpoint response.
-
-    Raises:
-        HTTPException: If the request cannot be fulfilled.
-    """
-    verify_csrf(request, csrf)
-    require_admin_identity(identity)
-    wizard_request = request.headers.get("X-Atlaso-Wizard") == "1"
-    source = db.get(UpdateSource, source_id)
-    if source is None:
-        raise HTTPException(status_code=404, detail="Update source not found.")
-    source.name = name.strip()
-    source.url = url.strip()
-    source.priority = priority
-    if enabled_present is not None:
-        source.enabled = enabled == "on"
-    settings = update_source_settings(source)
-    if source.kind == "powershell":
-        settings["trusted"] = trusted == "on"
-    elif source.kind == "atlaso":
-        settings["channel"] = channel.strip().lower()
-    elif source.kind == "photon":
-        settings.update({"managed": managed == "on", "gpgcheck": gpgcheck == "on", "gpgkey": gpgkey.strip(), "tls_verify": tls_verify == "on"})
-    source.settings_json = json.dumps(settings, sort_keys=True)
-    if clear_credential == "on":
-        source.credential_encrypted = ""
-    elif credential_secret:
-        source.credential_encrypted = encrypt_secret(
-            json.dumps({"username": credential_username.strip(), "secret": credential_secret})
-        )
-    source.validation_status = "not_checked"
-    source.validation_message = ""
-    source.validated_at = None
-    source.updated_at = utcnow()
-    errors = validate_update_source(source)
-    if not source.name:
-        errors.insert(0, "Source name is required.")
-    if errors:
-        db.rollback()
-        if wizard_request:
-            return JSONResponse({"status": "error", "detail": " ".join(errors), "errors": errors}, status_code=422)
-        if request.headers.get("X-Atlaso-Autosave") == "1":
-            return JSONResponse({"status": "error", "errors": errors}, status_code=422)
-        return render(
-            request,
-            "appliance_update.html",
-            {"identity": identity, **appliance_update_context(db), "update_error": " ".join(errors)},
-            status_code=422,
-        )
-    db.add(source)
-    try:
-        db.commit()
-    except IntegrityError:
-        db.rollback()
-        message = "A source with this name and type already exists."
-        if wizard_request:
-            return JSONResponse({"status": "error", "detail": message, "errors": [message]}, status_code=409)
-        if request.headers.get("X-Atlaso-Autosave") == "1":
-            return JSONResponse({"status": "error", "errors": [message]}, status_code=409)
-        return render(request, "appliance_update.html", {"identity": identity, **appliance_update_context(db), "update_error": message}, status_code=409)
-    record_audit(
-        db,
-        actor=identity.username,
-        action="update_software_source",
-        resource_type="update_source",
-        resource_id=str(source.id),
-        detail=f"kind={source.kind}; name={source.name}",
-    )
-    if request.headers.get("X-Atlaso-Autosave") == "1":
-        return JSONResponse({"status": "saved", "saved_at": utcnow().isoformat()})
-    if wizard_request:
-        return JSONResponse({"status": "saved", "source": update_source_payload(source)})
-    return RedirectResponse("/appliance-update", status_code=303)
-
-
-@router.post("/appliance-update/sources", response_model=None)
-def create_appliance_update_source(
-    request: Request,
-    kind: str = Form(...),
-    name: str = Form(...),
-    url: str = Form(""),
-    priority: int = Form(50),
-    enabled: str | None = Form(None),
-    trusted: str | None = Form(None),
-    channel: str = Form("stable"),
-    managed: str | None = Form(None),
-    gpgcheck: str | None = Form(None),
-    gpgkey: str = Form(""),
-    tls_verify: str | None = Form(None),
-    csrf: str = Form(...),
-    identity: Identity = Depends(require_session_identity),
-    db: Session = Depends(get_db),
-) -> Response:
-    """Handle the create appliance update source endpoint.
-
-    Args:
-        request: Incoming HTTP request.
-        kind: Kind supplied by the caller.
-        name: Name of the target object.
-        url: URL of the target resource or service.
-        priority: Ordering priority assigned to the item.
-        enabled: Whether the requested behavior is enabled.
-        trusted: Trusted supplied by the caller.
-        channel: Channel supplied by the caller.
-        managed: Managed supplied by the caller.
-        gpgcheck: Gpgcheck supplied by the caller.
-        gpgkey: Gpgkey supplied by the caller.
-        tls_verify: Tls verify supplied by the caller.
-        csrf: Validated CSRF token authorizing the request.
-        identity: Authenticated identity authorizing the request.
-        db: Active database session.
-
-    Returns:
-        The endpoint response.
-    """
-    verify_csrf(request, csrf)
-    require_admin_identity(identity)
-    wizard_request = request.headers.get("X-Atlaso-Wizard") == "1"
-    normalized_kind = kind.strip().lower()
-    settings = default_source_settings(normalized_kind)
-    if normalized_kind == "powershell" and (wizard_request or trusted is not None):
-        settings["trusted"] = trusted == "on"
-    elif normalized_kind == "atlaso":
-        settings["channel"] = channel.strip().lower()
-    elif normalized_kind == "photon" and wizard_request:
-        settings.update(
-            {
-                "managed": managed == "on",
-                "gpgcheck": gpgcheck == "on",
-                "gpgkey": gpgkey.strip(),
-                "tls_verify": tls_verify == "on",
-            }
-        )
-    source = UpdateSource(
-        kind=normalized_kind,
-        name=name.strip(),
-        url=url.strip(),
-        priority=priority,
-        enabled=enabled == "on",
-        settings_json=json.dumps(settings, sort_keys=True),
-    )
-    errors = validate_update_source(source)
-    if not source.name:
-        errors.insert(0, "Source name is required.")
-    if errors:
-        if wizard_request:
-            return JSONResponse({"status": "error", "detail": " ".join(errors), "errors": errors}, status_code=422)
-        return render(request, "appliance_update.html", {"identity": identity, **appliance_update_context(db), "update_error": " ".join(errors)}, status_code=422)
-    db.add(source)
-    try:
-        db.commit()
-    except IntegrityError:
-        db.rollback()
-        message = "A source with this name and type already exists."
-        if wizard_request:
-            return JSONResponse({"status": "error", "detail": message, "errors": [message]}, status_code=409)
-        return render(request, "appliance_update.html", {"identity": identity, **appliance_update_context(db), "update_error": message}, status_code=409)
-    record_audit(db, actor=identity.username, action="create_software_source", resource_type="update_source", resource_id=str(source.id), detail=f"kind={source.kind}; name={source.name}")
-    if wizard_request:
-        return JSONResponse({"status": "saved", "source": update_source_payload(source)})
-    return RedirectResponse("/appliance-update#update-sources", status_code=303)
-
-
-@router.post("/appliance-update/sources/{source_id}/delete", response_model=None)
-def delete_appliance_update_source(
-    source_id: int,
-    request: Request,
-    csrf: str = Form(...),
-    identity: Identity = Depends(require_session_identity),
-    db: Session = Depends(get_db),
-) -> Response:
-    """Handle the delete appliance update source endpoint.
-
-    Args:
-        source_id: Identifier of the source.
-        request: Incoming HTTP request.
-        csrf: Validated CSRF token authorizing the request.
-        identity: Authenticated identity authorizing the request.
-        db: Active database session.
-
-    Returns:
-        The endpoint response.
-
-    Raises:
-        HTTPException: If the request cannot be fulfilled.
-    """
-    verify_csrf(request, csrf)
-    require_admin_identity(identity)
-    source = db.get(UpdateSource, source_id)
-    if source is None:
-        raise HTTPException(status_code=404, detail="Update source not found.")
-    packages = db.execute(select(ManagedPackage).where(ManagedPackage.source_id == source.id)).scalars().all()
-    if packages:
-        names = ", ".join(package.name for package in packages)
-        return render(request, "appliance_update.html", {"identity": identity, **appliance_update_context(db), "update_error": f"Reassign or delete packages using this source first: {names}."}, status_code=409)
-    name = source.name
-    kind = source.kind
-    db.delete(source)
-    db.commit()
-    record_audit(db, actor=identity.username, action="delete_software_source", resource_type="update_source", resource_id=str(source_id), detail=f"kind={kind}; name={name}")
-    return RedirectResponse("/appliance-update#update-sources", status_code=303)
 
 
 def _managed_package_from_form(
@@ -13511,231 +13224,6 @@ def _managed_package_from_form(
     package.enabled = enabled
     package.updated_at = utcnow()
     return validate_managed_package(package)
-
-
-@router.post("/appliance-update/packages", response_model=None)
-def create_managed_update_package(
-    request: Request,
-    name: str = Form(...),
-    source_id: int = Form(...),
-    policy: str = Form("pinned"),
-    target_version: str = Form(""),
-    enabled: str | None = Form(None),
-    csrf: str = Form(...),
-    identity: Identity = Depends(require_session_identity),
-    db: Session = Depends(get_db),
-) -> Response:
-    """Handle the create managed update package endpoint.
-
-    Args:
-        request: Incoming HTTP request.
-        name: Name of the target object.
-        source_id: Identifier of the source.
-        policy: Policy values to validate or enforce.
-        target_version: Target version supplied by the caller.
-        enabled: Whether the requested behavior is enabled.
-        csrf: Validated CSRF token authorizing the request.
-        identity: Authenticated identity authorizing the request.
-        db: Active database session.
-
-    Returns:
-        The endpoint response.
-    """
-    verify_csrf(request, csrf)
-    require_admin_identity(identity)
-    wizard_request = request.headers.get("X-Atlaso-Wizard") == "1"
-    package = ManagedPackage(ecosystem="powershell", name="", source_id=source_id)
-    errors = _managed_package_from_form(package, name=name, source_id=source_id, policy=policy, target_version=target_version, enabled=enabled == "on", db=db)
-    if errors:
-        if wizard_request:
-            return JSONResponse({"status": "error", "detail": " ".join(errors), "errors": errors}, status_code=422)
-        return render(request, "appliance_update.html", {"identity": identity, **appliance_update_context(db), "update_error": " ".join(errors)}, status_code=422)
-    db.add(package)
-    try:
-        db.commit()
-    except IntegrityError:
-        db.rollback()
-        message = "This PowerShell module is already managed."
-        if wizard_request:
-            return JSONResponse({"status": "error", "detail": message, "errors": [message]}, status_code=409)
-        return render(request, "appliance_update.html", {"identity": identity, **appliance_update_context(db), "update_error": message}, status_code=409)
-    record_audit(db, actor=identity.username, action="create_managed_package", resource_type="managed_package", resource_id=str(package.id), detail=f"ecosystem=powershell; name={package.name}")
-    if wizard_request:
-        return JSONResponse({"status": "saved", "package": {"id": package.id}})
-    return RedirectResponse("/appliance-update#managed-packages", status_code=303)
-
-
-@router.post("/appliance-update/packages/{package_id}", response_model=None)
-def update_managed_update_package(
-    package_id: int,
-    request: Request,
-    name: str = Form(...),
-    source_id: int = Form(...),
-    policy: str = Form("pinned"),
-    target_version: str = Form(""),
-    enabled: str | None = Form(None),
-    enabled_present: str | None = Form(None),
-    csrf: str = Form(...),
-    identity: Identity = Depends(require_session_identity),
-    db: Session = Depends(get_db),
-) -> Response:
-    """Handle the update managed update package endpoint.
-
-    Args:
-        package_id: Identifier of the package.
-        request: Incoming HTTP request.
-        name: Name of the target object.
-        source_id: Identifier of the source.
-        policy: Policy values to validate or enforce.
-        target_version: Target version supplied by the caller.
-        enabled: Whether the requested behavior is enabled.
-        enabled_present: Enabled present supplied by the caller.
-        csrf: Validated CSRF token authorizing the request.
-        identity: Authenticated identity authorizing the request.
-        db: Active database session.
-
-    Returns:
-        The endpoint response.
-
-    Raises:
-        HTTPException: If the request cannot be fulfilled.
-    """
-    verify_csrf(request, csrf)
-    require_admin_identity(identity)
-    wizard_request = request.headers.get("X-Atlaso-Wizard") == "1"
-    package = db.get(ManagedPackage, package_id)
-    if package is None or package.ecosystem != "powershell":
-        raise HTTPException(status_code=404, detail="Managed PowerShell module not found.")
-    errors = _managed_package_from_form(package, name=name, source_id=source_id, policy=policy, target_version=target_version, enabled=(enabled == "on") if enabled_present is not None else package.enabled, db=db)
-    if errors:
-        db.rollback()
-        if wizard_request:
-            return JSONResponse({"status": "error", "detail": " ".join(errors), "errors": errors}, status_code=422)
-        if request.headers.get("X-Atlaso-Autosave") == "1":
-            return JSONResponse({"status": "error", "errors": errors}, status_code=422)
-        return render(request, "appliance_update.html", {"identity": identity, **appliance_update_context(db), "update_error": " ".join(errors)}, status_code=422)
-    db.add(package)
-    try:
-        db.commit()
-    except IntegrityError:
-        db.rollback()
-        message = "This PowerShell module is already managed."
-        if wizard_request:
-            return JSONResponse({"status": "error", "detail": message, "errors": [message]}, status_code=409)
-        if request.headers.get("X-Atlaso-Autosave") == "1":
-            return JSONResponse({"status": "error", "errors": [message]}, status_code=409)
-        return render(request, "appliance_update.html", {"identity": identity, **appliance_update_context(db), "update_error": message}, status_code=409)
-    record_audit(db, actor=identity.username, action="update_managed_package", resource_type="managed_package", resource_id=str(package.id), detail=f"ecosystem=powershell; name={package.name}")
-    if request.headers.get("X-Atlaso-Autosave") == "1":
-        return JSONResponse({"status": "saved", "saved_at": utcnow().isoformat()})
-    if wizard_request:
-        return JSONResponse({"status": "saved", "package": {"id": package.id}})
-    return RedirectResponse("/appliance-update#managed-packages", status_code=303)
-
-
-@router.post("/appliance-update/packages/{package_id}/delete", response_model=None)
-def delete_managed_update_package(
-    package_id: int,
-    request: Request,
-    csrf: str = Form(...),
-    identity: Identity = Depends(require_session_identity),
-    db: Session = Depends(get_db),
-) -> RedirectResponse | Response:
-    """Handle the delete managed update package endpoint.
-
-    Args:
-        package_id: Identifier of the package.
-        request: Incoming HTTP request.
-        csrf: Validated CSRF token authorizing the request.
-        identity: Authenticated identity authorizing the request.
-        db: Active database session.
-
-    Returns:
-        The endpoint response.
-
-    Raises:
-        HTTPException: If the request cannot be fulfilled.
-    """
-    verify_csrf(request, csrf)
-    require_admin_identity(identity)
-    package = db.get(ManagedPackage, package_id)
-    if package is None or package.ecosystem != "powershell":
-        raise HTTPException(status_code=404, detail="Managed PowerShell module not found.")
-    name = package.name
-    db.delete(package)
-    db.commit()
-    record_audit(db, actor=identity.username, action="delete_managed_package", resource_type="managed_package", resource_id=str(package_id), detail=f"ecosystem=powershell; name={name}")
-    return RedirectResponse("/appliance-update#managed-packages", status_code=303)
-
-
-@router.post("/appliance-update/source-sync", response_model=None)
-def sync_appliance_update_sources(
-    request: Request,
-    csrf: str = Form(...),
-    identity: Identity = Depends(require_session_identity),
-    db: Session = Depends(get_db),
-) -> HTMLResponse | JSONResponse:
-    """Handle the sync appliance update sources endpoint.
-
-    Args:
-        request: Incoming HTTP request.
-        csrf: Validated CSRF token authorizing the request.
-        identity: Authenticated identity authorizing the request.
-        db: Active database session.
-
-    Returns:
-        The endpoint response.
-    """
-    verify_csrf(request, csrf)
-    require_admin_identity(identity)
-    wants_json = "application/json" in request.headers.get("accept", "")
-    errors = [error for source in source_rows(db) if source.enabled for error in validate_update_source(source)]
-    if errors:
-        if wants_json:
-            return JSONResponse({"status": "error", "errors": errors, "detail": " ".join(errors)}, status_code=422)
-        return render(
-            request,
-            "appliance_update.html",
-            {"identity": identity, **appliance_update_context(db), "update_error": " ".join(errors)},
-            status_code=422,
-        )
-    settings = appliance_update_settings(db)
-    task_config = {"selected_streams": [], "settings": settings, "mode": "source_sync"}
-    job = Job(
-        id=f"job_{uuid4().hex[:12]}",
-        type="appliance-update",
-        status=JobStatus.PENDING.value,
-        created_by=identity.username,
-        progress_percent=0,
-        trigger="manual",
-        task_config_json=json.dumps(task_config, sort_keys=True),
-        result=json.dumps({"status": "pending", "mode": "source_sync", "selected_streams": []}, indent=2),
-    )
-    db.add(job)
-    db.commit()
-    record_audit(
-        db,
-        actor=identity.username,
-        action="queue_update_source_sync",
-        resource_type="job",
-        resource_id=job.id,
-    )
-    if wants_json:
-        return JSONResponse(
-            {"status": JobStatus.PENDING.value, "job_id": job.id, "mode": "source_sync"},
-            status_code=202,
-        )
-    return render(
-        request,
-        "appliance_update.html",
-        {
-            "identity": identity,
-            **appliance_update_context(db),
-            "appliance_update_task": job,
-            "appliance_update_task_result": {"status": "pending", "dry_run": get_settings().dry_run_system_adapters},
-            "appliance_update_failures": [],
-        },
-    )
 
 
 def submit_appliance_update(
@@ -13872,67 +13360,6 @@ def submit_appliance_update(
     )
 
 
-@router.post("/appliance-update/check", response_class=HTMLResponse, response_model=None)
-def check_appliance_update(
-    request: Request,
-    selected_streams: list[str] = Form(default=[]),
-    csrf: str = Form(...),
-    identity: Identity = Depends(require_session_identity),
-    db: Session = Depends(get_db),
-) -> HTMLResponse | JSONResponse:
-    """Handle the check appliance update endpoint.
-
-    Args:
-        request: Incoming HTTP request.
-        selected_streams: Update streams selected for the job.
-        csrf: Validated CSRF token authorizing the request.
-        identity: Authenticated identity authorizing the request.
-        db: Active database session.
-
-    Returns:
-        The endpoint response.
-    """
-    return submit_appliance_update(
-        request=request,
-        selected_streams=selected_streams,
-        csrf=csrf,
-        identity=identity,
-        db=db,
-        mode="check",
-    )
-
-
-@router.post("/appliance-update/run", response_class=HTMLResponse, response_model=None)
-def run_appliance_update(
-    request: Request,
-    selected_streams: list[str] = Form(default=[]),
-    csrf: str = Form(...),
-    identity: Identity = Depends(require_session_identity),
-    db: Session = Depends(get_db),
-) -> HTMLResponse | JSONResponse:
-    """Handle the run appliance update endpoint.
-
-    Args:
-        request: Incoming HTTP request.
-        selected_streams: Update streams selected for the job.
-        csrf: Validated CSRF token authorizing the request.
-        identity: Authenticated identity authorizing the request.
-        db: Active database session.
-
-    Returns:
-        The endpoint response.
-    """
-    return submit_appliance_update(
-        request=request,
-        selected_streams=selected_streams,
-        csrf=csrf,
-        identity=identity,
-        db=db,
-        mode="run",
-    )
-
-
-_management_before_automation_router = router
 _automation_ui = build_automation_ui_router(
     AutomationUiDependencies(
         require_management_ui_request=require_management_ui_request,
@@ -14006,13 +13433,63 @@ APPLIANCE_APPLY_SUBMIT_LOCK = threading.Lock()
 VCF_DEPOT_SUBMIT_LOCK = threading.Lock()
 
 
+def appliance_apply_management_restart_window(
+    job: Job,
+    *,
+    now: datetime | None = None,
+) -> dict[str, int] | None:
+    """Return server-owned remaining time for a confirmed management restart.
+
+    Args:
+        job: Appliance Apply job carrying helper-confirmed transition metadata.
+        now: Optional current UTC instant used by deterministic callers and tests.
+    """
+    transition = _job_payload(job).get("management_status_transition")
+    if not isinstance(transition, dict) or transition.get("kind") != "planned_service_restart":
+        return None
+    restart_delay_seconds = transition.get("restart_delay_seconds")
+    grace_seconds = transition.get("grace_seconds")
+    if (
+        not isinstance(restart_delay_seconds, int)
+        or isinstance(restart_delay_seconds, bool)
+        or restart_delay_seconds != APPLIANCE_APPLY_MANAGEMENT_RESTART_DELAY_SECONDS
+    ):
+        return None
+    if (
+        not isinstance(grace_seconds, int)
+        or isinstance(grace_seconds, bool)
+        or grace_seconds != APPLIANCE_APPLY_MANAGEMENT_RECONNECT_GRACE_SECONDS
+    ):
+        return None
+    settings_step = next(
+        (
+            step
+            for step in job.steps
+            if step.component_key == "appliance_settings"
+            and step.status == JobStatus.SUCCEEDED.value
+            and step.finished_at is not None
+        ),
+        None,
+    )
+    if settings_step is None:
+        return None
+    observed_at = ensure_aware(now or utcnow())
+    step_finished_at = ensure_aware(settings_step.finished_at)
+    restart_at = step_finished_at + timedelta(seconds=restart_delay_seconds)
+    deadline = restart_at + timedelta(seconds=grace_seconds)
+    return {
+        "restart_delay_remaining_ms": int(max(0.0, (restart_at - observed_at).total_seconds()) * 1000),
+        "remaining_ms": int(max(0.0, (deadline - observed_at).total_seconds()) * 1000),
+    }
+
+
 def active_appliance_apply_job(db: Session) -> Job | None:
-    """Return active appliance apply job.
+    """Return the Appliance Apply job that currently holds the mutation lock.
 
     Args:
         db: Active database session.
     """
-    return db.scalars(
+    active = db.scalars(
         select(Job)
         .options(selectinload(Job.steps))
         .where(
@@ -14022,6 +13499,38 @@ def active_appliance_apply_job(db: Session) -> Job | None:
         .order_by(Job.created_at)
         .limit(1)
     ).first()
+    if active is not None:
+        return active
+
+    now = utcnow()
+    maximum_window = timedelta(
+        seconds=(
+            APPLIANCE_APPLY_MANAGEMENT_RESTART_DELAY_SECONDS
+            + APPLIANCE_APPLY_MANAGEMENT_RECONNECT_GRACE_SECONDS
+        )
+    )
+    recent = db.scalars(
+        select(Job)
+        .options(selectinload(Job.steps))
+        .where(
+            Job.type == "appliance-apply",
+            Job.status.in_(
+                [
+                    JobStatus.SUCCEEDED.value,
+                    JobStatus.FAILED.value,
+                    JobStatus.CANCELLED.value,
+                ]
+            ),
+            Job.finished_at.is_not(None),
+            Job.finished_at >= now - maximum_window,
+        )
+        .order_by(desc(Job.finished_at))
+    ).all()
+    for job in recent:
+        restart_window = appliance_apply_management_restart_window(job, now=now)
+        if restart_window is not None and restart_window["remaining_ms"] > 0:
+            return job
+    return None
 
 
 def active_appliance_apply_submitted_unit_ids(db: Session) -> set[str]:
@@ -14169,6 +13678,9 @@ def run_appliance_apply_job(job_id: str, *, force_real: bool = False) -> None:
                 result = _redact_task_value(result)
                 db.refresh(job)
                 current_payload = _job_payload(job)
+                management_status_transition = result.get("management_status_transition")
+                if unit["id"] == "appliance_settings" and isinstance(management_status_transition, dict):
+                    current_payload["management_status_transition"] = management_status_transition
                 unit_results.append(result)
                 step.result = json.dumps(result, indent=2, sort_keys=True)
                 step.status = JobStatus.SUCCEEDED.value if result["success"] else JobStatus.FAILED.value
@@ -14180,6 +13692,10 @@ def run_appliance_apply_job(job_id: str, *, force_real: bool = False) -> None:
                 )
                 job.progress_percent = min(99, int((index / total_steps) * 100))
                 job.result = json.dumps({**current_payload, "units": unit_results}, indent=2)
+                if unit["id"] == "appliance_settings" and isinstance(management_status_transition, dict):
+                    # The helper's three-second restart timer is already running. Make the
+                    # confirmed transition and completed step durable before reconciliation.
+                    db.commit()
                 prune_network_boot_media = False
                 if result["success"]:
                     if unit["id"] == "esxi_pxe" and not result.get("dry_run"):
@@ -15030,1260 +14546,72 @@ router = APIRouter(
     prefix=MANAGEMENT_UI_ROOT,
     dependencies=[Depends(require_management_ui_request)],
 )
-@router.get("/certificate-authority", response_class=HTMLResponse, response_model=None)
-def certificate_authority_page(
-    request: Request,
-    identity: Identity = Depends(require_session_identity),
-    db: Session = Depends(get_db),
-) -> HTMLResponse:
-    """Handle the certificate authority page endpoint.
-
-    Args:
-        request: Incoming HTTP request.
-        identity: Authenticated identity authorizing the request.
-        db: Active database session.
-
-    Returns:
-        The endpoint response.
-    """
-    return render(request, "certificate_authority.html", {"identity": identity, **ca_context(db), "appliance_apply_status": appliance_apply_status(db, "ca")})
-
-
-@public_router.get("/ca", response_class=HTMLResponse, response_model=None)
-def public_ca_page(
-    request: Request,
-    identity: Identity | None = Depends(get_session_identity),
-    db: Session = Depends(get_db),
-) -> HTMLResponse:
-    """Handle the public ca page endpoint.
-
-    Args:
-        request: Incoming HTTP request.
-        identity: Authenticated identity authorizing the request.
-        db: Active database session.
-
-    Returns:
-        The endpoint response.
-
-    Raises:
-        HTTPException: If the request cannot be fulfilled.
-    """
-    if not public_ui_request_allowed(request, db, "/ca"):
-        raise HTTPException(status_code=404, detail="CA public service is not available on this interface")
-    return render(request, "ca_public.html", {"identity": identity, **public_ca_context(db)})
-
-
-def ca_public_login_response(request: Request, *, error: str | None = None, status_code: int = 200, db: Session | None = None) -> HTMLResponse:
-    """Return ca public login response.
-
-    Args:
-        request: Incoming HTTP request.
-        error: Public-safe error detail to record or return.
-        status_code: HTTP status code for the response.
-        db: Active database session.
-    """
-    return render(
-        request,
-        "ca_request_login.html",
-        {
-            "error": error,
-            "return_to": public_ui_path("/ca"),
-            "login_action": public_ui_path("/ca/login"),
-            "portal_title": "Atlaso CA",
-            "portal_subtitle": "Public trust portal",
-            "back_href": public_ui_path("/ca"),
-            "back_label": "Cancel",
-            **(public_portal_links_context(db) if db else {}),
-        },
-        status_code=status_code,
+_certificate_trust_ui = build_certificate_trust_ui_routers(
+    CertificateTrustUiDependencies(
+        public_router=public_router,
+        protocol_router=protocol_router,
+        appliance_apply_status=appliance_apply_status,
+        ca_context=ca_context,
+        ca_request_context=ca_request_context,
+        ensure_ca_state=ensure_ca_state,
+        ensure_dns_for_ca_portal=ensure_dns_for_ca_portal,
+        ensure_dns_for_kms=ensure_dns_for_kms,
+        get_ca_settings_row=get_ca_settings_row,
+        get_kms_settings_row=get_kms_settings_row,
+        grid_error_response=grid_error_response,
+        grid_request=grid_request,
+        grid_saved_response=grid_saved_response,
+        kms_context=kms_context,
+        normalize_dns_hostname=normalize_dns_hostname,
+        primary_listen_address=primary_listen_address,
+        primary_listen_interface=primary_listen_interface,
+        public_ca_context=public_ca_context,
+        public_portal_links_context=public_portal_links_context,
+        public_ui_request_allowed=public_ui_request_allowed,
+        render=render,
+        request_public_service_route_allowed=request_public_service_route_allowed,
+        require_certificate_workflow_identity=require_certificate_workflow_identity,
+        require_management_ui_request=require_management_ui_request,
+        resolve_service_bind_targets=resolve_service_bind_targets,
+        verify_csrf=verify_csrf,
     )
-
-
-def authenticate_ca_portal_session(
-    request: Request,
-    db: Session,
-    *,
-    username: str,
-    password: str,
-    csrf: str,
-    next_path: str,
-    failure_response,
-) -> RedirectResponse | HTMLResponse:
-    """Return authenticate ca portal session.
-
-    Args:
-        request: Incoming HTTP request.
-        db: Active database session.
-        username: Account name used for authentication or lookup.
-        password: Password supplied for the immediate authenticated operation.
-        csrf: Validated CSRF token authorizing the request.
-        next_path: Filesystem path for the next.
-        failure_response: Failure response supplied by the caller.
-    """
-    verify_csrf(request, csrf)
-    user = authenticate_user(db, username, password)
-    if not user:
-        record_audit(db, actor=username, action="ca_request_portal_login_failed", resource_type="auth", success=False)
-        return failure_response(request, error="Invalid username or password", status_code=401)
-    request.session["user_id"] = user.id
-    request.session[SESSION_APPLIANCE_INSTANCE_SESSION_KEY] = ensure_appliance_instance_id(db)
-    record_audit(db, actor=user.username, action="ca_request_portal_login", resource_type="auth")
-    return RedirectResponse(next_path, status_code=303)
-
-
-@public_router.get("/ca/login", response_class=HTMLResponse, response_model=None)
-def ca_public_login_page(request: Request, db: Session = Depends(get_db)) -> HTMLResponse:
-    """Handle the ca public login page endpoint.
-
-    Args:
-        request: Incoming HTTP request.
-        db: Active database session.
-
-    Returns:
-        The endpoint response.
-
-    Raises:
-        HTTPException: If the request cannot be fulfilled.
-    """
-    if not public_ui_request_allowed(request, db, "/ca"):
-        raise HTTPException(status_code=404, detail="CA public service is not available on this interface")
-    return ca_public_login_response(request, db=db)
-
-
-@public_router.post("/ca/login", response_model=None)
-def ca_public_login(
-    request: Request,
-    username: str = Form(...),
-    password: str = Form(...),
-    csrf: str = Form(...),
-    next: str = Form(PUBLIC_UI_ROOT + "/ca"),
-    db: Session = Depends(get_db),
-) -> RedirectResponse | HTMLResponse:
-    """Handle the ca public login endpoint.
-
-    Args:
-        request: Incoming HTTP request.
-        username: Account name used for authentication or lookup.
-        password: Password supplied for the immediate authenticated operation.
-        csrf: Validated CSRF token authorizing the request.
-        next: Relative destination requested after authentication.
-        db: Active database session.
-
-    Returns:
-        The endpoint response.
-
-    Raises:
-        HTTPException: If the request cannot be fulfilled.
-    """
-    if not public_ui_request_allowed(request, db, "/ca"):
-        raise HTTPException(status_code=404, detail="CA public service is not available on this interface")
-    return_to = safe_public_return_path(next, default="/ca")
-    if return_to != public_ui_path("/ca"):
-        return_to = public_ui_path("/ca")
-    return authenticate_ca_portal_session(
-        request,
-        db,
-        username=username,
-        password=password,
-        csrf=csrf,
-        next_path=return_to,
-        failure_response=lambda failed_request, *, error=None, status_code=200: ca_public_login_response(
-            failed_request,
-            error=error,
-            status_code=status_code,
-            db=db,
-        ),
-    )
-
-
-def public_root_ca_response(db: Session, *, bundle: bool = False) -> Response:
-    """Return public root ca response.
-
-    Args:
-        db: Active database session.
-        bundle: Bundle supplied by the caller.
-
-    Raises:
-        HTTPException: If the request cannot be fulfilled.
-    """
-    settings = get_ca_settings_row(db)
-    if not settings.root_certificate_pem:
-        raise HTTPException(status_code=404, detail="Root CA certificate is not available")
-    filename = "atlaso-ca-bundle.pem" if bundle else "atlaso-root-ca.pem"
-    return Response(
-        settings.root_certificate_pem.encode("utf-8"),
-        media_type="application/x-pem-file",
-        headers={"Content-Disposition": f'attachment; filename="{filename}"'},
-    )
-
-
-@protocol_router.get("/ca/downloads/root-ca.pem", response_model=None)
-def download_public_root_ca(
-    request: Request,
-    db: Session = Depends(get_db),
-) -> Response:
-    """Handle the download public root ca endpoint.
-
-    Args:
-        request: Incoming HTTP request.
-        db: Active database session.
-
-    Returns:
-        The endpoint response.
-
-    Raises:
-        HTTPException: If the request cannot be fulfilled.
-    """
-    if not request_public_service_route_allowed(db, request, "ca"):
-        raise HTTPException(status_code=404, detail="CA public service is not available on this interface")
-    return public_root_ca_response(db)
-
-
-@protocol_router.get("/ca/downloads/ca-bundle.pem", response_model=None)
-def download_public_ca_bundle(
-    request: Request,
-    db: Session = Depends(get_db),
-) -> Response:
-    """Handle the download public ca bundle endpoint.
-
-    Args:
-        request: Incoming HTTP request.
-        db: Active database session.
-
-    Returns:
-        The endpoint response.
-
-    Raises:
-        HTTPException: If the request cannot be fulfilled.
-    """
-    if not request_public_service_route_allowed(db, request, "ca"):
-        raise HTTPException(status_code=404, detail="CA public service is not available on this interface")
-    return public_root_ca_response(db, bundle=True)
-
-
-@router.get("/ca/requests", response_class=HTMLResponse, response_model=None)
-def ca_requests_page(
-    request: Request,
-    identity: Identity = Depends(require_session_identity),
-    db: Session = Depends(get_db),
-) -> HTMLResponse:
-    """Handle the ca requests page endpoint.
-
-    Args:
-        request: Incoming HTTP request.
-        identity: Authenticated identity authorizing the request.
-        db: Active database session.
-
-    Returns:
-        The endpoint response.
-    """
-    require_certificate_workflow_identity(identity)
-    return render(request, "ca_requests.html", {"identity": identity, **ca_request_context(db)})
-
-
-def ca_request_portal_login_response(request: Request, *, error: str | None = None, status_code: int = 200, db: Session | None = None) -> HTMLResponse:
-    """Return ca request portal login response.
-
-    Args:
-        request: Incoming HTTP request.
-        error: Public-safe error detail to record or return.
-        status_code: HTTP status code for the response.
-        db: Active database session.
-    """
-    return render(
-        request,
-        "ca_request_login.html",
-        {
-            "error": error,
-            "return_to": public_ui_path("/ca/requests"),
-            **(public_portal_links_context(db) if db else {}),
-        },
-        status_code=status_code,
-    )
-
-
-@public_router.get("/ca/requests", response_class=HTMLResponse, response_model=None)
-def ca_portal_requests_page(
-    request: Request,
-    identity: Identity | None = Depends(get_session_identity),
-    db: Session = Depends(get_db),
-) -> HTMLResponse:
-    """Handle the ca portal requests page endpoint.
-
-    Args:
-        request: Incoming HTTP request.
-        identity: Authenticated identity authorizing the request.
-        db: Active database session.
-
-    Returns:
-        The endpoint response.
-
-    Raises:
-        HTTPException: If the request cannot be fulfilled.
-    """
-    if not public_ui_request_allowed(request, db, "/ca/requests"):
-        raise HTTPException(status_code=404, detail="CA public service is not available on this interface")
-    if identity is None:
-        return ca_request_portal_login_response(request, db=db)
-    require_certificate_workflow_identity(identity)
-    return render(request, "ca_request_portal.html", {"identity": identity, **ca_request_context(db)})
-
-
-@public_router.post("/ca/requests/login", response_model=None)
-def ca_request_portal_login(
-    request: Request,
-    username: str = Form(...),
-    password: str = Form(...),
-    csrf: str = Form(...),
-    next: str = Form(PUBLIC_UI_ROOT + "/ca/requests"),
-    db: Session = Depends(get_db),
-) -> RedirectResponse | HTMLResponse:
-    """Handle the ca request portal login endpoint.
-
-    Args:
-        request: Incoming HTTP request.
-        username: Account name used for authentication or lookup.
-        password: Password supplied for the immediate authenticated operation.
-        csrf: Validated CSRF token authorizing the request.
-        next: Relative destination requested after authentication.
-        db: Active database session.
-
-    Returns:
-        The endpoint response.
-
-    Raises:
-        HTTPException: If the request cannot be fulfilled.
-    """
-    if not public_ui_request_allowed(request, db, "/ca/requests"):
-        raise HTTPException(status_code=404, detail="CA public service is not available on this interface")
-    return authenticate_ca_portal_session(
-        request,
-        db,
-        username=username,
-        password=password,
-        csrf=csrf,
-        next_path=safe_public_return_path(next, default="/ca/requests"),
-        failure_response=lambda failed_request, *, error=None, status_code=200: ca_request_portal_login_response(
-            failed_request,
-            error=error,
-            status_code=status_code,
-            db=db,
-        ),
-    )
-
-
-@public_router.post("/ca/requests/logout", response_model=None)
-def ca_request_portal_logout(
-    request: Request,
-    csrf: str = Form(...),
-    next: str = Form(PUBLIC_UI_ROOT + "/ca/requests"),
-) -> RedirectResponse:
-    """Handle the ca request portal logout endpoint.
-
-    Args:
-        request: Incoming HTTP request.
-        csrf: Validated CSRF token authorizing the request.
-        next: Relative destination requested after authentication.
-
-    Returns:
-        The endpoint response.
-    """
-    verify_csrf(request, csrf)
-    request.session.clear()
-    return RedirectResponse(safe_public_return_path(next, default="/ca/requests"), status_code=303)
-
-
-def _stage_ca_certificate_request(
-    db: Session,
-    *,
-    common_name: str,
-    profile_id: str,
-    subject_alt_names: str,
-    ip_addresses: str,
-    description: str,
-    csr_text: str,
-) -> CaCertificate:
-    """Return stage ca certificate request.
-
-    Args:
-        db: Active database session.
-        common_name: Certificate subject common name.
-        profile_id: Identifier of the profile.
-        subject_alt_names: Subject alt names supplied by the caller.
-        ip_addresses: Ip addresses supplied by the caller.
-        description: Human-readable description of the resource.
-        csr_text: Csr text supplied by the caller.
-    """
-    certificate = CaCertificate(
-        common_name=common_name.strip(),
-        profile_id=parse_ca_profile_id(profile_id),
-        subject_alt_names=join_multiline(split_multiline(subject_alt_names)),
-        ip_addresses=join_multiline(split_multiline(ip_addresses)),
-        status="csr-staged" if csr_text.strip() else "planned",
-        description=description or None,
-        csr_text=csr_text.strip() or None,
-        enabled=True,
-    )
-    db.add(certificate)
-    db.commit()
-    return certificate
-
-
-def _revoke_ca_certificate(db: Session, *, certificate_id: int, actor: str, reason: str) -> CaCertificate:
-    """Return revoke ca certificate.
-
-    Args:
-        db: Active database session.
-        certificate_id: Identifier of the certificate.
-        actor: Authenticated identity attributed to the audit record.
-        reason: Reason supplied by the caller.
-
-    Raises:
-        HTTPException: If the request cannot be fulfilled.
-    """
-    certificate = db.get(CaCertificate, certificate_id)
-    if not certificate:
-        raise HTTPException(status_code=404, detail="CA certificate not found")
-    if certificate.status != "issued" or not certificate.serial_number:
-        raise HTTPException(status_code=400, detail="Only issued certificates with a serial number can be revoked.")
-    certificate.status = "revoked"
-    certificate.revoked_at = utcnow()
-    certificate.revoked_by = actor
-    certificate.revocation_reason = reason.strip() or "operator requested"
-    db.add(certificate)
-    db.commit()
-    return certificate
-
-
-@router.post("/ca/requests", response_model=None)
-def submit_ca_request_from_portal(
-    request: Request,
-    common_name: str = Form(...),
-    profile_id: str = Form(""),
-    subject_alt_names: str = Form(""),
-    ip_addresses: str = Form(""),
-    description: str = Form(""),
-    csr_text: str = Form(""),
-    csrf: str = Form(...),
-    identity: Identity = Depends(require_session_identity),
-    db: Session = Depends(get_db),
-) -> RedirectResponse | HTMLResponse:
-    """Handle the submit ca request from portal endpoint.
-
-    Args:
-        request: Incoming HTTP request.
-        common_name: Certificate subject common name.
-        profile_id: Identifier of the profile.
-        subject_alt_names: Subject alt names supplied by the caller.
-        ip_addresses: Ip addresses supplied by the caller.
-        description: Human-readable description of the resource.
-        csr_text: Csr text supplied by the caller.
-        csrf: Validated CSRF token authorizing the request.
-        identity: Authenticated identity authorizing the request.
-        db: Active database session.
-
-    Returns:
-        The endpoint response.
-    """
-    require_certificate_workflow_identity(identity)
-    verify_csrf(request, csrf)
-    if not common_name.strip():
-        return render(
-            request,
-            "ca_requests.html",
-            {"identity": identity, **ca_request_context(db), "form_error": "Common name is required."},
-            status_code=422,
-        )
-    certificate = _stage_ca_certificate_request(
-        db,
-        common_name=common_name,
-        profile_id=profile_id,
-        subject_alt_names=subject_alt_names,
-        ip_addresses=ip_addresses,
-        description=description,
-        csr_text=csr_text,
-    )
-    record_audit(db, actor=identity.username, action="submit_ca_certificate_request", resource_type="ca_certificate", resource_id=str(certificate.id))
-    return RedirectResponse("/ca/requests", status_code=303)
-
-
-@public_router.post("/ca/requests", response_model=None)
-def submit_ca_request_from_portal_alias(
-    request: Request,
-    common_name: str = Form(...),
-    profile_id: str = Form(""),
-    subject_alt_names: str = Form(""),
-    ip_addresses: str = Form(""),
-    description: str = Form(""),
-    csr_text: str = Form(""),
-    csrf: str = Form(...),
-    identity: Identity | None = Depends(get_session_identity),
-    db: Session = Depends(get_db),
-) -> RedirectResponse | HTMLResponse:
-    """Handle the submit ca request from portal alias endpoint.
-
-    Args:
-        request: Incoming HTTP request.
-        common_name: Certificate subject common name.
-        profile_id: Identifier of the profile.
-        subject_alt_names: Subject alt names supplied by the caller.
-        ip_addresses: Ip addresses supplied by the caller.
-        description: Human-readable description of the resource.
-        csr_text: Csr text supplied by the caller.
-        csrf: Validated CSRF token authorizing the request.
-        identity: Authenticated identity authorizing the request.
-        db: Active database session.
-
-    Returns:
-        The endpoint response.
-
-    Raises:
-        HTTPException: If the request cannot be fulfilled.
-    """
-    if not public_ui_request_allowed(request, db, "/ca/requests"):
-        raise HTTPException(status_code=404, detail="CA public service is not available on this interface")
-    if identity is None:
-        return ca_request_portal_login_response(request, status_code=401)
-    require_certificate_workflow_identity(identity)
-    verify_csrf(request, csrf)
-    if not common_name.strip():
-        return render(
-            request,
-            "ca_request_portal.html",
-            {"identity": identity, **ca_request_context(db), "form_error": "Common name is required."},
-            status_code=422,
-        )
-    certificate = _stage_ca_certificate_request(
-        db,
-        common_name=common_name,
-        profile_id=profile_id,
-        subject_alt_names=subject_alt_names,
-        ip_addresses=ip_addresses,
-        description=description,
-        csr_text=csr_text,
-    )
-    record_audit(db, actor=identity.username, action="submit_ca_certificate_request", resource_type="ca_certificate", resource_id=str(certificate.id))
-    return RedirectResponse(public_ui_path("/ca/requests"), status_code=303)
-
-
-@router.post("/ca/certificates/{certificate_id}/revoke", response_model=None)
-def revoke_ca_certificate_from_portal(
-    request: Request,
-    certificate_id: int,
-    reason: str = Form("operator requested"),
-    csrf: str = Form(...),
-    identity: Identity = Depends(require_session_identity),
-    db: Session = Depends(get_db),
-) -> RedirectResponse:
-    """Handle the revoke ca certificate from portal endpoint.
-
-    Args:
-        request: Incoming HTTP request.
-        certificate_id: Identifier of the certificate.
-        reason: Reason supplied by the caller.
-        csrf: Validated CSRF token authorizing the request.
-        identity: Authenticated identity authorizing the request.
-        db: Active database session.
-
-    Returns:
-        The endpoint response.
-    """
-    require_certificate_workflow_identity(identity)
-    verify_csrf(request, csrf)
-    certificate = _revoke_ca_certificate(db, certificate_id=certificate_id, actor=identity.username, reason=reason)
-    record_audit(db, actor=identity.username, action="revoke_ca_certificate", resource_type="ca_certificate", resource_id=str(certificate.id))
-    return RedirectResponse("/ca/requests", status_code=303)
-
-
-@public_router.post("/ca/requests/certificates/{certificate_id}/revoke", response_model=None)
-def revoke_ca_certificate_from_portal_alias(
-    request: Request,
-    certificate_id: int,
-    reason: str = Form("operator requested"),
-    csrf: str = Form(...),
-    identity: Identity | None = Depends(get_session_identity),
-    db: Session = Depends(get_db),
-) -> RedirectResponse | HTMLResponse:
-    """Handle the revoke ca certificate from portal alias endpoint.
-
-    Args:
-        request: Incoming HTTP request.
-        certificate_id: Identifier of the certificate.
-        reason: Reason supplied by the caller.
-        csrf: Validated CSRF token authorizing the request.
-        identity: Authenticated identity authorizing the request.
-        db: Active database session.
-
-    Returns:
-        The endpoint response.
-
-    Raises:
-        HTTPException: If the request cannot be fulfilled.
-    """
-    if not public_ui_request_allowed(request, db, "/ca/requests"):
-        raise HTTPException(status_code=404, detail="CA public service is not available on this interface")
-    if identity is None:
-        return ca_request_portal_login_response(request, status_code=401)
-    require_certificate_workflow_identity(identity)
-    verify_csrf(request, csrf)
-    certificate = _revoke_ca_certificate(db, certificate_id=certificate_id, actor=identity.username, reason=reason)
-    record_audit(db, actor=identity.username, action="revoke_ca_certificate", resource_type="ca_certificate", resource_id=str(certificate.id))
-    return RedirectResponse(public_ui_path("/ca/requests"), status_code=303)
-
-
-@protocol_router.get("/certificate-authority/downloads/root-ca.pem", response_model=None)
-def download_root_ca(
-    identity: Identity = Depends(require_session_identity),
-    db: Session = Depends(get_db),
-) -> Response:
-    """Handle the download root ca endpoint.
-
-    Args:
-        identity: Authenticated identity authorizing the request.
-        db: Active database session.
-
-    Returns:
-        The endpoint response.
-    """
-    ensure_ca_state(db)
-    settings = get_ca_settings_row(db)
-    if not settings.root_certificate_pem:
-        changed = ensure_root_ca_material(settings)
-        if changed:
-            db.commit()
-    record_audit(db, actor=identity.username, action="download_ca_root_certificate", resource_type="ca", resource_id=str(settings.id))
-    return Response(
-        settings.root_certificate_pem.encode("utf-8"),
-        media_type="application/x-pem-file",
-        headers={"Content-Disposition": 'attachment; filename="atlaso-root-ca.pem"'},
-    )
-
-
-@protocol_router.get("/certificate-authority/downloads/ca-bundle.pem", response_model=None)
-def download_ca_bundle(
-    identity: Identity = Depends(require_session_identity),
-    db: Session = Depends(get_db),
-) -> Response:
-    """Handle the download ca bundle endpoint.
-
-    Args:
-        identity: Authenticated identity authorizing the request.
-        db: Active database session.
-
-    Returns:
-        The endpoint response.
-    """
-    ensure_ca_state(db)
-    settings = get_ca_settings_row(db)
-    if not settings.root_certificate_pem:
-        changed = ensure_root_ca_material(settings)
-        if changed:
-            db.commit()
-    record_audit(db, actor=identity.username, action="download_ca_bundle", resource_type="ca", resource_id=str(settings.id))
-    return Response(
-        settings.root_certificate_pem.encode("utf-8"),
-        media_type="application/x-pem-file",
-        headers={"Content-Disposition": 'attachment; filename="atlaso-ca-bundle.pem"'},
-    )
-
-
-def get_exportable_ca_certificate(db: Session, certificate_id: int) -> CaCertificate:
-    """Return exportable ca certificate.
-
-    Args:
-        db: Active database session.
-        certificate_id: Identifier of the certificate.
-
-    Raises:
-        HTTPException: If the request cannot be fulfilled.
-    """
-    ensure_ca_state(db)
-    certificate = db.get(CaCertificate, certificate_id)
-    if not certificate:
-        raise HTTPException(status_code=404, detail="CA certificate not found")
-    if certificate.status != "issued" or not certificate.certificate_pem:
-        raise HTTPException(status_code=404, detail="CA certificate has not been issued")
-    return certificate
-
-
-@protocol_router.get("/certificate-authority/certificates/{certificate_id}/downloads/certificate.pem", response_model=None)
-def download_ca_certificate(
-    certificate_id: int,
-    identity: Identity = Depends(require_session_identity),
-    db: Session = Depends(get_db),
-) -> Response:
-    """Handle the download ca certificate endpoint.
-
-    Args:
-        certificate_id: Identifier of the certificate.
-        identity: Authenticated identity authorizing the request.
-        db: Active database session.
-
-    Returns:
-        The endpoint response.
-    """
-    certificate = get_exportable_ca_certificate(db, certificate_id)
-    record_audit(db, actor=identity.username, action="download_ca_certificate", resource_type="ca_certificate", resource_id=str(certificate.id))
-    filename = f"{safe_certificate_name(certificate.common_name)}.crt"
-    return Response(
-        certificate.certificate_pem.encode("utf-8"),
-        media_type="application/x-pem-file",
-        headers={"Content-Disposition": f'attachment; filename="{filename}"'},
-    )
-
-
-@protocol_router.get("/certificate-authority/certificates/{certificate_id}/downloads/chain.pem", response_model=None)
-def download_ca_certificate_chain(
-    certificate_id: int,
-    identity: Identity = Depends(require_session_identity),
-    db: Session = Depends(get_db),
-) -> Response:
-    """Handle the download ca certificate chain endpoint.
-
-    Args:
-        certificate_id: Identifier of the certificate.
-        identity: Authenticated identity authorizing the request.
-        db: Active database session.
-
-    Returns:
-        The endpoint response.
-    """
-    certificate = get_exportable_ca_certificate(db, certificate_id)
-    chain = certificate.chain_pem or certificate.certificate_pem
-    record_audit(db, actor=identity.username, action="download_ca_certificate_chain", resource_type="ca_certificate", resource_id=str(certificate.id))
-    filename = f"{safe_certificate_name(certificate.common_name)}-chain.pem"
-    return Response(
-        chain.encode("utf-8"),
-        media_type="application/x-pem-file",
-        headers={"Content-Disposition": f'attachment; filename="{filename}"'},
-    )
-
-
-@protocol_router.get("/certificate-authority/certificates/{certificate_id}/downloads/private-key.pem", response_model=None)
-def download_ca_certificate_private_key(
-    certificate_id: int,
-    identity: Identity = Depends(require_session_identity),
-    db: Session = Depends(get_db),
-) -> Response:
-    """Handle the download ca certificate private key endpoint.
-
-    Args:
-        certificate_id: Identifier of the certificate.
-        identity: Authenticated identity authorizing the request.
-        db: Active database session.
-
-    Returns:
-        The endpoint response.
-
-    Raises:
-        HTTPException: If the request cannot be fulfilled.
-    """
-    certificate = get_exportable_ca_certificate(db, certificate_id)
-    if not certificate.private_key_encrypted:
-        raise HTTPException(status_code=404, detail="No Atlaso-generated private key is available for this certificate")
-    private_key = decrypt_secret(certificate.private_key_encrypted)
-    record_audit(db, actor=identity.username, action="download_ca_certificate_private_key", resource_type="ca_certificate", resource_id=str(certificate.id))
-    filename = f"{safe_certificate_name(certificate.common_name)}.key"
-    return Response(
-        private_key.encode("utf-8"),
-        media_type="application/x-pem-file",
-        headers={"Content-Disposition": f'attachment; filename="{filename}"'},
-    )
-
-
-@router.post("/certificate-authority/settings", response_model=None)
-def update_ca_settings_from_ui(
-    request: Request,
-    enabled: str | None = Form(None),
-    portal_hostname: str = Form(CA_DEFAULT_PORTAL_HOSTNAME),
-    listen_interfaces: list[str] = Form(default_factory=list),
-    listen_addresses: list[str] = Form(default_factory=list),
-    listen_interfaces_present: str | None = Form(None),
-    listen_addresses_present: str | None = Form(None),
-    root_common_name: str = Form(...),
-    organization: str = Form(...),
-    organizational_unit: str = Form(""),
-    country: str = Form("US"),
-    state: str = Form(""),
-    locality: str = Form(""),
-    key_algorithm: str = Form("RSA"),
-    key_size: int = Form(4096),
-    digest_algorithm: str = Form("sha256"),
-    root_valid_days: int = Form(3650),
-    intermediate_valid_days: int = Form(1825),
-    publish_crl: str | None = Form(None),
-    ocsp_enabled: str | None = Form(None),
-    csrf: str = Form(...),
-    identity: Identity = Depends(require_session_identity),
-    db: Session = Depends(get_db),
-) -> RedirectResponse | JSONResponse:
-    """Handle the update ca settings from ui endpoint.
-
-    Args:
-        request: Incoming HTTP request.
-        enabled: Whether the requested behavior is enabled.
-        portal_hostname: Portal hostname supplied by the caller.
-        listen_interfaces: Interfaces on which the service should listen.
-        listen_addresses: Addresses on which the service should listen.
-        listen_interfaces_present: Whether the caller supplied listen interfaces.
-        listen_addresses_present: Whether the caller supplied listen addresses.
-        root_common_name: Root common name supplied by the caller.
-        organization: Managed identity organization affected by the operation.
-        organizational_unit: Organizational unit supplied by the caller.
-        country: Country supplied by the caller.
-        state: Lifecycle or job state to persist.
-        locality: Locality supplied by the caller.
-        key_algorithm: Key algorithm supplied by the caller.
-        key_size: Key size supplied by the caller.
-        digest_algorithm: Digest algorithm supplied by the caller.
-        root_valid_days: Root valid days supplied by the caller.
-        intermediate_valid_days: Intermediate valid days supplied by the caller.
-        publish_crl: Publish crl supplied by the caller.
-        ocsp_enabled: Ocsp enabled supplied by the caller.
-        csrf: Validated CSRF token authorizing the request.
-        identity: Authenticated identity authorizing the request.
-        db: Active database session.
-
-    Returns:
-        The endpoint response.
-    """
-    verify_csrf(request, csrf)
-    settings = get_ca_settings_row(db)
-    previous_portal_hostname = settings.portal_hostname
-    selected_interfaces, selected_addresses = resolve_service_bind_targets(
-        db,
-        listen_interfaces,
-        listen_addresses,
-        current_interface=settings.listen_interface,
-        current_address=settings.listen_address,
-        listen_interfaces_present=listen_interfaces_present,
-        listen_addresses_present=listen_addresses_present,
-    )
-    settings.enabled = enabled == "on"
-    settings.portal_hostname = normalize_dns_hostname(portal_hostname.strip() or CA_DEFAULT_PORTAL_HOSTNAME)
-    settings.listen_interface = selected_interfaces
-    settings.listen_address = selected_addresses
-    settings.root_common_name = root_common_name.strip()
-    settings.organization = organization.strip()
-    settings.organizational_unit = organizational_unit.strip()
-    settings.country = country.strip().upper()
-    settings.state = state.strip()
-    settings.locality = locality.strip()
-    settings.key_algorithm = key_algorithm.strip().upper()
-    settings.key_size = key_size
-    settings.digest_algorithm = digest_algorithm.strip().lower()
-    settings.root_valid_days = root_valid_days
-    settings.intermediate_valid_days = intermediate_valid_days
-    settings.publish_crl = publish_crl == "on"
-    settings.ocsp_enabled = ocsp_enabled == "on"
-    settings.storage_path = settings.storage_path.strip() or "/etc/atlaso/ca"
-    settings.updated_at = utcnow()
-    ensure_dns_for_ca_portal(db, settings, identity.username, previous_hostname=previous_portal_hostname)
-    db.commit()
-    record_audit(db, actor=identity.username, action="update_ca_settings", resource_type="ca", resource_id=str(settings.id))
-    if request.headers.get("X-Atlaso-Autosave") == "1":
-        db.refresh(settings)
-        context = ca_context(db)
-        return JSONResponse(
-            {
-                "status": "saved",
-                "updated_at": settings.updated_at.isoformat(),
-                "enabled": settings.enabled,
-                "portal_hostname": settings.portal_hostname,
-                "listen_interfaces": split_interfaces(settings.listen_interface),
-                "listen_addresses": split_addresses(settings.listen_address),
-                "validation_errors": context["ca_validation_errors"],
-                "config_preview": context["ca_config_preview"],
-                "apply_payload": context["ca_apply_payload"],
-            }
-        )
-    return RedirectResponse("/certificate-authority", status_code=303)
-
-
-def parse_ca_profile_id(raw_value: str | int | None) -> int | None:
-    """Parse ca profile id.
-
-    Args:
-        raw_value: Candidate raw value to parse.
-
-
-    Returns:
-        The parsed ca profile id.
-    """
-    if raw_value in {None, "", "None", "unassigned"}:
-        return None
-    return int(raw_value)
-
-
-@router.post("/certificate-authority/profiles", response_model=None)
-def create_ca_profile_from_ui(
-    request: Request,
-    name: str = Form(...),
-    certificate_type: str = Form("server"),
-    validity_days: int = Form(825),
-    key_algorithm: str = Form("RSA"),
-    key_size: int = Form(2048),
-    key_usage: str = Form("digitalSignature,keyEncipherment"),
-    extended_key_usage: str = Form("serverAuth"),
-    san_required: str | None = Form(None),
-    description: str = Form(""),
-    enabled: str | None = Form(None),
-    csrf: str = Form(...),
-    identity: Identity = Depends(require_session_identity),
-    db: Session = Depends(get_db),
-) -> RedirectResponse | HTMLResponse | JSONResponse:
-    """Handle the create ca profile from ui endpoint.
-
-    Args:
-        request: Incoming HTTP request.
-        name: Name of the target object.
-        certificate_type: Certificate type supplied by the caller.
-        validity_days: Validity days supplied by the caller.
-        key_algorithm: Key algorithm supplied by the caller.
-        key_size: Key size supplied by the caller.
-        key_usage: Key usage supplied by the caller.
-        extended_key_usage: Extended key usage supplied by the caller.
-        san_required: San required supplied by the caller.
-        description: Human-readable description of the resource.
-        enabled: Whether the requested behavior is enabled.
-        csrf: Validated CSRF token authorizing the request.
-        identity: Authenticated identity authorizing the request.
-        db: Active database session.
-
-    Returns:
-        The endpoint response.
-    """
-    verify_csrf(request, csrf)
-    profile = CaProfile(
-        name=name.strip(),
-        certificate_type=certificate_type.strip(),
-        validity_days=validity_days,
-        key_algorithm=key_algorithm.strip().upper(),
-        key_size=key_size,
-        key_usage=key_usage.strip(),
-        extended_key_usage=extended_key_usage.strip(),
-        san_required=san_required == "on",
-        description=description or None,
-        enabled=enabled == "on",
-    )
-    db.add(profile)
-    try:
-        db.commit()
-    except IntegrityError:
-        db.rollback()
-        detail = f"CA profile {name} already exists."
-        return grid_error_response(
-            request,
-            detail=detail,
-            status_code=409,
-            template_name="certificate_authority.html",
-            context={"identity": identity, **ca_context(db), "form_error": detail},
-        )
-    record_audit(db, actor=identity.username, action="create_ca_profile", resource_type="ca_profile", resource_id=str(profile.id))
-    return grid_saved_response(
-        request,
-        redirect_url="/certificate-authority",
-        resource_name="profile",
-        resource=ca_profile_to_dict(profile),
-    )
-
-
-@router.post("/certificate-authority/profiles/{profile_id}/edit", response_model=None)
-def edit_ca_profile_from_ui(
-    request: Request,
-    profile_id: int,
-    name: str = Form(...),
-    certificate_type: str = Form("server"),
-    validity_days: int = Form(825),
-    key_algorithm: str = Form("RSA"),
-    key_size: int = Form(2048),
-    key_usage: str = Form("digitalSignature,keyEncipherment"),
-    extended_key_usage: str = Form("serverAuth"),
-    san_required: str | None = Form(None),
-    description: str = Form(""),
-    enabled: str | None = Form(None),
-    csrf: str = Form(...),
-    identity: Identity = Depends(require_session_identity),
-    db: Session = Depends(get_db),
-) -> RedirectResponse | HTMLResponse | JSONResponse:
-    """Handle the edit ca profile from ui endpoint.
-
-    Args:
-        request: Incoming HTTP request.
-        profile_id: Identifier of the profile.
-        name: Name of the target object.
-        certificate_type: Certificate type supplied by the caller.
-        validity_days: Validity days supplied by the caller.
-        key_algorithm: Key algorithm supplied by the caller.
-        key_size: Key size supplied by the caller.
-        key_usage: Key usage supplied by the caller.
-        extended_key_usage: Extended key usage supplied by the caller.
-        san_required: San required supplied by the caller.
-        description: Human-readable description of the resource.
-        enabled: Whether the requested behavior is enabled.
-        csrf: Validated CSRF token authorizing the request.
-        identity: Authenticated identity authorizing the request.
-        db: Active database session.
-
-    Returns:
-        The endpoint response.
-
-    Raises:
-        HTTPException: If the request cannot be fulfilled.
-    """
-    verify_csrf(request, csrf)
-    profile = db.get(CaProfile, profile_id)
-    if not profile:
-        raise HTTPException(status_code=404, detail="CA profile not found")
-    profile.name = name.strip()
-    profile.certificate_type = certificate_type.strip()
-    profile.validity_days = validity_days
-    profile.key_algorithm = key_algorithm.strip().upper()
-    profile.key_size = key_size
-    profile.key_usage = key_usage.strip()
-    profile.extended_key_usage = extended_key_usage.strip()
-    profile.san_required = san_required == "on"
-    profile.description = description or None
-    profile.enabled = enabled == "on"
-    profile.updated_at = utcnow()
-    try:
-        db.commit()
-    except IntegrityError:
-        db.rollback()
-        detail = f"CA profile {name} already exists."
-        return grid_error_response(
-            request,
-            detail=detail,
-            status_code=409,
-            template_name="certificate_authority.html",
-            context={"identity": identity, **ca_context(db), "form_error": detail},
-        )
-    record_audit(db, actor=identity.username, action="update_ca_profile", resource_type="ca_profile", resource_id=str(profile.id))
-    return grid_saved_response(
-        request,
-        redirect_url="/certificate-authority",
-        resource_name="profile",
-        resource=ca_profile_to_dict(profile),
-    )
-
-
-@router.post("/certificate-authority/profiles/{profile_id}/delete", response_model=None)
-def delete_ca_profile_from_ui(
-    request: Request,
-    profile_id: int,
-    csrf: str = Form(...),
-    identity: Identity = Depends(require_session_identity),
-    db: Session = Depends(get_db),
-) -> RedirectResponse | Response:
-    """Handle the delete ca profile from ui endpoint.
-
-    Args:
-        request: Incoming HTTP request.
-        profile_id: Identifier of the profile.
-        csrf: Validated CSRF token authorizing the request.
-        identity: Authenticated identity authorizing the request.
-        db: Active database session.
-
-    Returns:
-        The endpoint response.
-
-    Raises:
-        HTTPException: If the request cannot be fulfilled.
-    """
-    verify_csrf(request, csrf)
-    profile = db.get(CaProfile, profile_id)
-    if not profile:
-        raise HTTPException(status_code=404, detail="CA profile not found")
-    for certificate in db.execute(select(CaCertificate).where(CaCertificate.profile_id == profile_id)).scalars().all():
-        certificate.profile_id = None
-    db.delete(profile)
-    db.commit()
-    record_audit(db, actor=identity.username, action="delete_ca_profile", resource_type="ca_profile", resource_id=str(profile_id))
-    if grid_request(request):
-        return Response(status_code=204)
-    return RedirectResponse("/certificate-authority", status_code=303)
-
-
-@router.post("/certificate-authority/certificates", response_model=None)
-def create_ca_certificate_from_ui(
-    request: Request,
-    common_name: str = Form(...),
-    profile_id: str = Form(""),
-    subject_alt_names: str = Form(""),
-    ip_addresses: str = Form(""),
-    description: str = Form(""),
-    csr_text: str = Form(""),
-    enabled: str | None = Form(None),
-    csrf: str = Form(...),
-    identity: Identity = Depends(require_session_identity),
-    db: Session = Depends(get_db),
-) -> RedirectResponse | JSONResponse:
-    """Handle the create ca certificate from ui endpoint.
-
-    Args:
-        request: Incoming HTTP request.
-        common_name: Certificate subject common name.
-        profile_id: Identifier of the profile.
-        subject_alt_names: Subject alt names supplied by the caller.
-        ip_addresses: Ip addresses supplied by the caller.
-        description: Human-readable description of the resource.
-        csr_text: Csr text supplied by the caller.
-        enabled: Whether the requested behavior is enabled.
-        csrf: Validated CSRF token authorizing the request.
-        identity: Authenticated identity authorizing the request.
-        db: Active database session.
-
-    Returns:
-        The endpoint response.
-
-    Raises:
-        HTTPException: If the request cannot be fulfilled.
-    """
-    verify_csrf(request, csrf)
-    try:
-        parsed_profile_id = parse_ca_profile_id(profile_id)
-    except (TypeError, ValueError):
-        raise HTTPException(status_code=422, detail="Select an enabled CA profile.") from None
-    profile = db.get(CaProfile, parsed_profile_id) if parsed_profile_id is not None else None
-    validation_errors = validate_ca_certificate_request(
-        profile=profile,
-        common_name=common_name,
-        subject_alt_names=subject_alt_names,
-        ip_addresses=ip_addresses,
-    )
-    if validation_errors:
-        raise HTTPException(status_code=422, detail=" ".join(validation_errors))
-    normalized_csr = csr_text.strip()
-    certificate = CaCertificate(
-        common_name=common_name.strip(),
-        profile_id=parsed_profile_id,
-        subject_alt_names=join_multiline(split_multiline(subject_alt_names)),
-        ip_addresses=join_multiline(split_multiline(ip_addresses)),
-        status="csr-staged" if normalized_csr else "planned",
-        description=description or None,
-        csr_text=normalized_csr or None,
-        enabled=enabled == "on",
-    )
-    db.add(certificate)
-    db.commit()
-    db.refresh(certificate)
-    record_audit(db, actor=identity.username, action="create_ca_certificate_request", resource_type="ca_certificate", resource_id=str(certificate.id))
-    return grid_saved_response(
-        request,
-        redirect_url="/certificate-authority",
-        resource_name="certificate",
-        resource=ca_certificate_to_dict(certificate),
-    )
-
-
-@router.post("/certificate-authority/certificates/{certificate_id}/edit", response_model=None)
-def edit_ca_certificate_from_ui(
-    request: Request,
-    certificate_id: int,
-    common_name: str = Form(...),
-    profile_id: str = Form(""),
-    subject_alt_names: str = Form(""),
-    ip_addresses: str = Form(""),
-    description: str = Form(""),
-    enabled: str | None = Form(None),
-    csrf: str = Form(...),
-    identity: Identity = Depends(require_session_identity),
-    db: Session = Depends(get_db),
-) -> RedirectResponse | JSONResponse:
-    """Handle the edit ca certificate from ui endpoint.
-
-    Args:
-        request: Incoming HTTP request.
-        certificate_id: Identifier of the certificate.
-        common_name: Certificate subject common name.
-        profile_id: Identifier of the profile.
-        subject_alt_names: Subject alt names supplied by the caller.
-        ip_addresses: Ip addresses supplied by the caller.
-        description: Human-readable description of the resource.
-        enabled: Whether the requested behavior is enabled.
-        csrf: Validated CSRF token authorizing the request.
-        identity: Authenticated identity authorizing the request.
-        db: Active database session.
-
-    Returns:
-        The endpoint response.
-
-    Raises:
-        HTTPException: If the request cannot be fulfilled.
-    """
-    verify_csrf(request, csrf)
-    certificate = db.get(CaCertificate, certificate_id)
-    if not certificate:
-        raise HTTPException(status_code=404, detail="CA certificate request not found")
-    if not ca_certificate_can_edit(certificate):
-        raise HTTPException(status_code=409, detail="Only unissued manual certificate requests can be edited.")
-    try:
-        parsed_profile_id = parse_ca_profile_id(profile_id)
-    except (TypeError, ValueError):
-        raise HTTPException(status_code=422, detail="Select an enabled CA profile.") from None
-    profile = db.get(CaProfile, parsed_profile_id) if parsed_profile_id is not None else None
-    validation_errors = validate_ca_certificate_request(
-        profile=profile,
-        common_name=common_name,
-        subject_alt_names=subject_alt_names,
-        ip_addresses=ip_addresses,
-    )
-    if validation_errors:
-        raise HTTPException(status_code=422, detail=" ".join(validation_errors))
-    certificate.common_name = common_name.strip()
-    certificate.profile_id = parsed_profile_id
-    certificate.subject_alt_names = join_multiline(split_multiline(subject_alt_names))
-    certificate.ip_addresses = join_multiline(split_multiline(ip_addresses))
-    certificate.description = description or None
-    certificate.enabled = enabled == "on"
-    db.commit()
-    db.refresh(certificate)
-    record_audit(db, actor=identity.username, action="update_ca_certificate_request", resource_type="ca_certificate", resource_id=str(certificate.id))
-    return grid_saved_response(
-        request,
-        redirect_url="/certificate-authority",
-        resource_name="certificate",
-        resource=ca_certificate_to_dict(certificate),
-    )
-
-
-@router.post("/certificate-authority/certificates/{certificate_id}/delete", response_model=None)
-def delete_ca_certificate_from_ui(
-    request: Request,
-    certificate_id: int,
-    csrf: str = Form(...),
-    identity: Identity = Depends(require_session_identity),
-    db: Session = Depends(get_db),
-) -> RedirectResponse | Response:
-    """Handle the delete ca certificate from ui endpoint.
-
-    Args:
-        request: Incoming HTTP request.
-        certificate_id: Identifier of the certificate.
-        csrf: Validated CSRF token authorizing the request.
-        identity: Authenticated identity authorizing the request.
-        db: Active database session.
-
-    Returns:
-        The endpoint response.
-
-    Raises:
-        HTTPException: If the request cannot be fulfilled.
-    """
-    verify_csrf(request, csrf)
-    certificate = db.get(CaCertificate, certificate_id)
-    if not certificate:
-        raise HTTPException(status_code=404, detail="CA certificate request not found")
-    if not ca_certificate_can_delete(certificate):
-        raise HTTPException(status_code=409, detail="Service-owned certificates must be managed from their owning service.")
-    db.delete(certificate)
-    db.commit()
-    record_audit(db, actor=identity.username, action="delete_ca_certificate_request", resource_type="ca_certificate", resource_id=str(certificate_id))
-    if grid_request(request):
-        return Response(status_code=204)
-    return RedirectResponse("/certificate-authority", status_code=303)
-
-
+)
+certificate_trust_ca_router = _certificate_trust_ui.ca_router
+certificate_trust_kms_router = _certificate_trust_ui.kms_router
+certificate_authority_page = _certificate_trust_ui.endpoints["certificate_authority_page"]
+public_ca_page = _certificate_trust_ui.endpoints["public_ca_page"]
+ca_public_login_response = _certificate_trust_ui.endpoints["ca_public_login_response"]
+authenticate_ca_portal_session = _certificate_trust_ui.endpoints["authenticate_ca_portal_session"]
+ca_public_login_page = _certificate_trust_ui.endpoints["ca_public_login_page"]
+ca_public_login = _certificate_trust_ui.endpoints["ca_public_login"]
+public_root_ca_response = _certificate_trust_ui.endpoints["public_root_ca_response"]
+download_public_root_ca = _certificate_trust_ui.endpoints["download_public_root_ca"]
+download_public_ca_bundle = _certificate_trust_ui.endpoints["download_public_ca_bundle"]
+ca_requests_page = _certificate_trust_ui.endpoints["ca_requests_page"]
+ca_request_portal_login_response = _certificate_trust_ui.endpoints["ca_request_portal_login_response"]
+ca_portal_requests_page = _certificate_trust_ui.endpoints["ca_portal_requests_page"]
+ca_request_portal_login = _certificate_trust_ui.endpoints["ca_request_portal_login"]
+ca_request_portal_logout = _certificate_trust_ui.endpoints["ca_request_portal_logout"]
+_stage_ca_certificate_request = _certificate_trust_ui.endpoints["_stage_ca_certificate_request"]
+_revoke_ca_certificate = _certificate_trust_ui.endpoints["_revoke_ca_certificate"]
+submit_ca_request_from_portal = _certificate_trust_ui.endpoints["submit_ca_request_from_portal"]
+submit_ca_request_from_portal_alias = _certificate_trust_ui.endpoints["submit_ca_request_from_portal_alias"]
+revoke_ca_certificate_from_portal = _certificate_trust_ui.endpoints["revoke_ca_certificate_from_portal"]
+revoke_ca_certificate_from_portal_alias = _certificate_trust_ui.endpoints["revoke_ca_certificate_from_portal_alias"]
+download_root_ca = _certificate_trust_ui.endpoints["download_root_ca"]
+download_ca_bundle = _certificate_trust_ui.endpoints["download_ca_bundle"]
+get_exportable_ca_certificate = _certificate_trust_ui.endpoints["get_exportable_ca_certificate"]
+download_ca_certificate = _certificate_trust_ui.endpoints["download_ca_certificate"]
+download_ca_certificate_chain = _certificate_trust_ui.endpoints["download_ca_certificate_chain"]
+download_ca_certificate_private_key = _certificate_trust_ui.endpoints["download_ca_certificate_private_key"]
+update_ca_settings_from_ui = _certificate_trust_ui.endpoints["update_ca_settings_from_ui"]
+parse_ca_profile_id = _certificate_trust_ui.endpoints["parse_ca_profile_id"]
+create_ca_profile_from_ui = _certificate_trust_ui.endpoints["create_ca_profile_from_ui"]
+edit_ca_profile_from_ui = _certificate_trust_ui.endpoints["edit_ca_profile_from_ui"]
+delete_ca_profile_from_ui = _certificate_trust_ui.endpoints["delete_ca_profile_from_ui"]
+create_ca_certificate_from_ui = _certificate_trust_ui.endpoints["create_ca_certificate_from_ui"]
+edit_ca_certificate_from_ui = _certificate_trust_ui.endpoints["edit_ca_certificate_from_ui"]
+delete_ca_certificate_from_ui = _certificate_trust_ui.endpoints["delete_ca_certificate_from_ui"]
 _management_between_dns_dhcp_managed_ldap_router = router
 _managed_ldap_ui = build_managed_ldap_ui_router(
     ManagedLdapUiDependencies(
@@ -16331,579 +14659,25 @@ configure_ldap_vcf_from_ui = _managed_ldap_ui.endpoints["configure_ldap_vcf_from
 export_ldap_recovery_from_ui = _managed_ldap_ui.endpoints["export_ldap_recovery_from_ui"]
 import_ldap_recovery_from_ui = _managed_ldap_ui.endpoints["import_ldap_recovery_from_ui"]
 
+kms_page = _certificate_trust_ui.endpoints["kms_page"]
+download_vsphere_key_provider_server_chain = _certificate_trust_ui.endpoints["download_vsphere_key_provider_server_chain"]
+update_kms_settings_from_ui = _certificate_trust_ui.endpoints["update_kms_settings_from_ui"]
+_vsphere_grid_error = _certificate_trust_ui.endpoints["_vsphere_grid_error"]
+create_vsphere_provider_from_ui = _certificate_trust_ui.endpoints["create_vsphere_provider_from_ui"]
+edit_vsphere_provider_from_ui = _certificate_trust_ui.endpoints["edit_vsphere_provider_from_ui"]
+delete_vsphere_provider_from_ui = _certificate_trust_ui.endpoints["delete_vsphere_provider_from_ui"]
+_vsphere_vcenter_row = _certificate_trust_ui.endpoints["_vsphere_vcenter_row"]
+_attach_vsphere_public_certificate = _certificate_trust_ui.endpoints["_attach_vsphere_public_certificate"]
+create_vsphere_vcenter_from_ui = _certificate_trust_ui.endpoints["create_vsphere_vcenter_from_ui"]
+edit_vsphere_vcenter_from_ui = _certificate_trust_ui.endpoints["edit_vsphere_vcenter_from_ui"]
+delete_vsphere_vcenter_from_ui = _certificate_trust_ui.endpoints["delete_vsphere_vcenter_from_ui"]
+add_vsphere_certificate_from_ui = _certificate_trust_ui.endpoints["add_vsphere_certificate_from_ui"]
+retire_vsphere_certificate_from_ui = _certificate_trust_ui.endpoints["retire_vsphere_certificate_from_ui"]
+
 router = APIRouter(
     prefix=MANAGEMENT_UI_ROOT,
     dependencies=[Depends(require_management_ui_request)],
 )
-
-@router.get("/vsphere-key-providers", response_class=HTMLResponse, response_model=None)
-def kms_page(
-    request: Request,
-    identity: Identity = Depends(require_session_identity),
-    db: Session = Depends(get_db),
-) -> HTMLResponse:
-    """Handle the kms page endpoint.
-
-    Args:
-        request: Incoming HTTP request.
-        identity: Authenticated identity authorizing the request.
-        db: Active database session.
-
-    Returns:
-        The endpoint response.
-    """
-    return render(request, "kms.html", {"identity": identity, **kms_context(db), "appliance_apply_status": appliance_apply_status(db, "kms")})
-
-
-@router.get("/vsphere-key-providers/server-certificate.pem", response_model=None)
-def download_vsphere_key_provider_server_chain(
-    identity: Identity = Depends(require_session_identity),
-    db: Session = Depends(get_db),
-) -> Response:
-    """Download the public appliance-wide KMIP server certificate chain.
-
-    Args:
-        identity: Authenticated identity authorizing the request.
-        db: Active database session.
-
-    Returns:
-        Public PEM certificate-chain attachment.
-    """
-    certificate = db.execute(
-        select(CaCertificate)
-        .where(CaCertificate.managed_owner == "kms:server")
-        .order_by(CaCertificate.id.desc())
-    ).scalars().first()
-    if certificate is None or not certificate.certificate_pem:
-        raise HTTPException(status_code=404, detail="The public server certificate chain is not available.")
-    chain = certificate.chain_pem or certificate.certificate_pem
-    record_audit(
-        db,
-        actor=identity.username,
-        action="download_vsphere_key_provider_server_chain",
-        resource_type="vsphere_key_provider_settings",
-        resource_id="server-certificate",
-        detail="public_chain=true",
-    )
-    return Response(
-        chain.encode("utf-8"),
-        media_type="application/x-pem-file",
-        headers={
-            "Cache-Control": "no-store",
-            "Content-Disposition": 'attachment; filename="atlaso-kmip-server-chain.pem"',
-        },
-    )
-
-
-@router.post("/vsphere-key-providers/settings", response_model=None)
-def update_kms_settings_from_ui(
-    request: Request,
-    enabled: str | None = Form(None),
-    listen_interfaces: list[str] = Form(default_factory=list),
-    listen_addresses: list[str] = Form(default_factory=list),
-    listen_interfaces_present: str | None = Form(None),
-    listen_addresses_present: str | None = Form(None),
-    port: int = Form(5696),
-    hostname: str = Form("kms.atlaso.internal"),
-    csrf: str = Form(...),
-    identity: Identity = Depends(require_session_identity),
-    db: Session = Depends(get_db),
-) -> RedirectResponse | JSONResponse:
-    """Handle the update kms settings from ui endpoint.
-
-    Args:
-        request: Incoming HTTP request.
-        enabled: Whether the requested behavior is enabled.
-        listen_interfaces: Interfaces on which the service should listen.
-        listen_addresses: Addresses on which the service should listen.
-        listen_interfaces_present: Whether the caller supplied listen interfaces.
-        listen_addresses_present: Whether the caller supplied listen addresses.
-        port: TCP or UDP port of the target service.
-        hostname: DNS hostname of the target resource.
-        csrf: Validated CSRF token authorizing the request.
-        identity: Authenticated identity authorizing the request.
-        db: Active database session.
-
-    Returns:
-        The endpoint response.
-    """
-    verify_csrf(request, csrf)
-    settings = get_kms_settings_row(db)
-    previous_hostname = settings.hostname
-    selected_interfaces, selected_addresses = resolve_service_bind_targets(
-        db,
-        listen_interfaces,
-        listen_addresses,
-        current_interface=settings.listen_interface,
-        current_address=settings.listen_address,
-        listen_interfaces_present=listen_interfaces_present,
-        listen_addresses_present=listen_addresses_present,
-    )
-    settings.enabled = enabled == "on"
-    settings.backend = "atlaso-kmip"
-    settings.listen_interface = selected_interfaces
-    settings.listen_address = selected_addresses
-    settings.port = port
-    try:
-        settings.hostname = normalize_vsphere_service_hostname(hostname.strip() or "kms.atlaso.internal")
-    except ValueError:
-        raise HTTPException(
-            status_code=422,
-            detail="vSphere Key Provider hostname must be a valid fully qualified DNS name.",
-        ) from None
-    settings.server_certificate = settings.hostname
-    settings.ca_certificate_path = settings.ca_certificate_path.strip() or "/etc/atlaso/ca/root.crt"
-    settings.database_path = KMS_DEFAULT_DATABASE_PATH
-    settings.config_path = KMS_DEFAULT_CONFIG_PATH
-    settings.require_client_cert = True
-    settings.allow_register = False
-    settings.allow_destroy = False
-    settings.updated_at = utcnow()
-    if settings.enabled:
-        ensure_dns_for_kms(db, settings, identity.username, previous_hostname=previous_hostname)
-        ensure_ca_state(db)
-    db.commit()
-    record_audit(db, actor=identity.username, action="update_kms_settings", resource_type="kms", resource_id=str(settings.id))
-    if request.headers.get("X-Atlaso-Autosave") == "1":
-        context = kms_context(db)
-        saved_settings = context["kms_settings"]
-        return JSONResponse(
-            {
-                "status": "saved",
-                "updated_at": saved_settings.updated_at.isoformat(),
-                "enabled": saved_settings.enabled,
-                "listen_interface": primary_listen_interface(saved_settings.listen_interface),
-                "listen_address": primary_listen_address(saved_settings.listen_address),
-                "listen_interfaces": split_interfaces(saved_settings.listen_interface),
-                "listen_addresses": split_addresses(saved_settings.listen_address),
-                "port": saved_settings.port,
-                "hostname": saved_settings.hostname,
-                "server_certificate": saved_settings.server_certificate,
-                "valid": not context["kms_validation_errors"],
-                "validation_errors": context["kms_validation_errors"],
-                "config_path": KMS_DEFAULT_CONFIG_PATH,
-                "config_preview": context["kms_config_preview"],
-            }
-        )
-    return RedirectResponse(management_ui_path("/vsphere-key-providers"), status_code=303)
-
-
-def _vsphere_grid_error(
-    request: Request,
-    identity: Identity,
-    db: Session,
-    detail: str,
-    status_code: int = 409,
-) -> HTMLResponse | JSONResponse:
-    """Return a consistent provider-management browser error.
-
-    Args:
-        request: Incoming HTTP request.
-        identity: Authenticated identity authorizing the request.
-        db: Active database session.
-        detail: Public error detail.
-        status_code: HTTP status code returned to the browser.
-    """
-    return grid_error_response(
-        request,
-        detail=detail,
-        status_code=status_code,
-        template_name="kms.html",
-        context={
-            "identity": identity,
-            **kms_context(db),
-            "appliance_apply_status": appliance_apply_status(db, "kms"),
-            "form_error": detail,
-        },
-    )
-
-
-@router.post("/vsphere-key-providers/providers", response_model=None)
-def create_vsphere_provider_from_ui(
-    request: Request,
-    name: str = Form(...),
-    description: str = Form(""),
-    enabled: str | None = Form(None),
-    csrf: str = Form(...),
-    identity: Identity = Depends(require_session_identity),
-    db: Session = Depends(get_db),
-) -> RedirectResponse | HTMLResponse | JSONResponse:
-    """Create a provider namespace from the shared browser wizard.
-
-    Args:
-        request: Incoming HTTP request.
-        name: Unique provider name.
-        description: Operator-facing provider purpose.
-        enabled: Submitted desired-state enablement.
-        csrf: Validated CSRF token.
-        identity: Authenticated identity authorizing the request.
-        db: Active database session.
-    """
-    verify_csrf(request, csrf)
-    provider = VsphereKeyProvider(
-        id=str(uuid4()),
-        name=name.strip(),
-        description=description.strip(),
-        enabled=enabled == "on",
-    )
-    db.add(provider)
-    try:
-        db.commit()
-    except IntegrityError:
-        db.rollback()
-        return _vsphere_grid_error(request, identity, db, "Provider name already exists.")
-    record_audit(db, actor=identity.username, action="create_vsphere_key_provider", resource_type="vsphere_key_provider", resource_id=provider.id, detail=f"name={provider.name}; enabled={provider.enabled}")
-    refreshed = next(item for item in provider_rows(db) if item.id == provider.id)
-    return grid_saved_response(request, redirect_url=management_ui_path("/vsphere-key-providers"), resource_name="provider", resource=provider_to_dict(refreshed))
-
-
-@router.post("/vsphere-key-providers/providers/{provider_id}/edit", response_model=None)
-def edit_vsphere_provider_from_ui(
-    request: Request,
-    provider_id: str,
-    name: str = Form(...),
-    description: str = Form(""),
-    enabled: str | None = Form(None),
-    csrf: str = Form(...),
-    identity: Identity = Depends(require_session_identity),
-    db: Session = Depends(get_db),
-) -> RedirectResponse | HTMLResponse | JSONResponse:
-    """Update a provider namespace from the shared browser wizard.
-
-    Args:
-        request: Incoming HTTP request.
-        provider_id: Immutable provider UUID.
-        name: Unique provider name.
-        description: Operator-facing provider purpose.
-        enabled: Submitted desired-state enablement.
-        csrf: Validated CSRF token.
-        identity: Authenticated identity authorizing the request.
-        db: Active database session.
-    """
-    verify_csrf(request, csrf)
-    provider = db.get(VsphereKeyProvider, provider_id)
-    if provider is None:
-        raise HTTPException(status_code=404, detail="vSphere Key Provider not found.")
-    provider.name = name.strip()
-    provider.description = description.strip()
-    provider.enabled = enabled == "on"
-    provider.updated_at = utcnow()
-    try:
-        db.commit()
-    except IntegrityError:
-        db.rollback()
-        return _vsphere_grid_error(request, identity, db, "Provider name already exists.")
-    record_audit(db, actor=identity.username, action="update_vsphere_key_provider", resource_type="vsphere_key_provider", resource_id=provider.id, detail=f"name={provider.name}; enabled={provider.enabled}")
-    refreshed = next(item for item in provider_rows(db) if item.id == provider.id)
-    return grid_saved_response(request, redirect_url=management_ui_path("/vsphere-key-providers"), resource_name="provider", resource=provider_to_dict(refreshed))
-
-
-@router.post("/vsphere-key-providers/providers/{provider_id}/delete", response_model=None)
-def delete_vsphere_provider_from_ui(
-    request: Request,
-    provider_id: str,
-    csrf: str = Form(...),
-    identity: Identity = Depends(require_session_identity),
-    db: Session = Depends(get_db),
-) -> RedirectResponse | HTMLResponse | JSONResponse | Response:
-    """Delete an applied-disabled, detached, verified-empty provider namespace.
-
-    Args:
-        request: Incoming HTTP request.
-        provider_id: Immutable provider UUID.
-        csrf: Validated CSRF token.
-        identity: Authenticated identity authorizing the request.
-        db: Active database session.
-    """
-    verify_csrf(request, csrf)
-    provider = next((item for item in provider_rows(db) if item.id == provider_id), None)
-    if provider is None:
-        raise HTTPException(status_code=404, detail="vSphere Key Provider not found.")
-    if provider.enabled or provider.trusted_vcenters:
-        return _vsphere_grid_error(request, identity, db, "Disable the provider and detach every trusted vCenter before deletion.")
-    if provider_requires_appliance_apply(provider):
-        return _vsphere_grid_error(
-            request,
-            identity,
-            db,
-            "Apply the disabled and detached provider state before deletion.",
-        )
-    snapshot = runtime_status_snapshot()
-    counts = authenticated_provider_counts(snapshot, provider.id)
-    if counts is None or counts.get("total") != 0:
-        return _vsphere_grid_error(request, identity, db, "Authenticated zero-key runtime evidence is required before deletion.")
-    name = provider.name
-    db.delete(provider)
-    db.commit()
-    record_audit(db, actor=identity.username, action="delete_vsphere_key_provider", resource_type="vsphere_key_provider", resource_id=provider_id, detail=f"name={name}; verified_empty=true")
-    if grid_request(request):
-        return Response(status_code=204)
-    return RedirectResponse(management_ui_path("/vsphere-key-providers"), status_code=303)
-
-
-def _vsphere_vcenter_row(db: Session, provider_id: str, vcenter_id: str) -> VsphereTrustedVcenter:
-    """Return a browser provider-scoped vCenter record.
-
-    Args:
-        db: Active database session.
-        provider_id: Immutable provider UUID.
-        vcenter_id: Immutable trusted-vCenter UUID.
-    """
-    provider = next((item for item in provider_rows(db) if item.id == provider_id), None)
-    if provider is None:
-        raise HTTPException(status_code=404, detail="vSphere Key Provider not found.")
-    vcenter = next((item for item in provider.trusted_vcenters if item.id == vcenter_id), None)
-    if vcenter is None:
-        raise HTTPException(status_code=404, detail="Trusted vCenter not found.")
-    return vcenter
-
-
-def _attach_vsphere_public_certificate(
-    db: Session,
-    vcenter: VsphereTrustedVcenter,
-    certificate_pem: str,
-) -> VsphereTrustedVcenterCertificate | None:
-    """Attach optional public PEM input to a trusted vCenter.
-
-    Args:
-        db: Active database session.
-        vcenter: Provider-scoped trusted-vCenter record.
-        certificate_pem: Optional public X.509 PEM certificate.
-    """
-    if not certificate_pem.strip():
-        return None
-    parsed = parse_public_certificate(certificate_pem)
-    certificate = VsphereTrustedVcenterCertificate(
-        id=str(uuid4()),
-        trusted_vcenter_id=vcenter.id,
-        source="uploaded_public",
-        **parsed,
-    )
-    db.add(certificate)
-    return certificate
-
-
-@router.post("/vsphere-key-providers/trusted-vcenters", response_model=None)
-def create_vsphere_vcenter_from_ui(
-    request: Request,
-    provider_id: str = Form(...),
-    name: str = Form(...),
-    hostname: str = Form(""),
-    description: str = Form(""),
-    certificate_pem: str = Form(""),
-    enabled: str | None = Form(None),
-    csrf: str = Form(...),
-    identity: Identity = Depends(require_session_identity),
-    db: Session = Depends(get_db),
-) -> RedirectResponse | HTMLResponse | JSONResponse:
-    """Create a trusted vCenter and its initial public certificate.
-
-    Args:
-        request: Incoming HTTP request.
-        provider_id: Immutable provider UUID.
-        name: Unique trusted-vCenter name within the provider.
-        hostname: Operational vCenter hostname label.
-        description: Operator-facing trusted-vCenter purpose.
-        certificate_pem: Initial public X.509 PEM certificate.
-        enabled: Submitted desired-state enablement.
-        csrf: Validated CSRF token.
-        identity: Authenticated identity authorizing the request.
-        db: Active database session.
-    """
-    verify_csrf(request, csrf)
-    provider = db.get(VsphereKeyProvider, provider_id)
-    if provider is None:
-        raise HTTPException(status_code=404, detail="vSphere Key Provider not found.")
-    try:
-        vcenter = VsphereTrustedVcenter(id=str(uuid4()), provider_id=provider.id, name=name.strip(), hostname=normalize_vsphere_vcenter_hostname(hostname), description=description.strip(), enabled=enabled == "on")
-        db.add(vcenter)
-        db.flush()
-        certificate = _attach_vsphere_public_certificate(db, vcenter, certificate_pem)
-        if vcenter.enabled and certificate is None:
-            raise ValueError("An enabled trusted vCenter requires a current public client certificate.")
-        mark_provider_desired_changed(provider)
-        db.commit()
-    except ValueError:
-        db.rollback()
-        return _vsphere_grid_error(request, identity, db, "The trusted vCenter details or public certificate are invalid.", 400)
-    except IntegrityError:
-        db.rollback()
-        return _vsphere_grid_error(request, identity, db, "Trusted vCenter name or certificate fingerprint is already assigned.")
-    record_audit(db, actor=identity.username, action="create_vsphere_trusted_vcenter", resource_type="vsphere_trusted_vcenter", resource_id=vcenter.id, detail=f"provider_id={provider.id}; name={vcenter.name}; enabled={vcenter.enabled}; public_certificate={bool(certificate)}")
-    refreshed = _vsphere_vcenter_row(db, provider.id, vcenter.id)
-    return grid_saved_response(request, redirect_url=management_ui_path("/vsphere-key-providers"), resource_name="trusted_vcenter", resource=trusted_vcenter_to_dict(refreshed), extra={"certificates": [certificate_to_dict(item) for item in refreshed.certificates]})
-
-
-@router.post("/vsphere-key-providers/trusted-vcenters/{vcenter_id}/edit", response_model=None)
-def edit_vsphere_vcenter_from_ui(
-    request: Request,
-    vcenter_id: str,
-    provider_id: str = Form(...),
-    name: str = Form(...),
-    hostname: str = Form(""),
-    description: str = Form(""),
-    certificate_pem: str = Form(""),
-    enabled: str | None = Form(None),
-    csrf: str = Form(...),
-    identity: Identity = Depends(require_session_identity),
-    db: Session = Depends(get_db),
-) -> RedirectResponse | HTMLResponse | JSONResponse:
-    """Update a trusted vCenter and optionally add one public certificate.
-
-    Args:
-        request: Incoming HTTP request.
-        vcenter_id: Immutable trusted-vCenter UUID.
-        provider_id: Immutable owning provider UUID.
-        name: Unique trusted-vCenter name within the provider.
-        hostname: Operational vCenter hostname label.
-        description: Operator-facing trusted-vCenter purpose.
-        certificate_pem: Optional replacement public X.509 PEM certificate.
-        enabled: Submitted desired-state enablement.
-        csrf: Validated CSRF token.
-        identity: Authenticated identity authorizing the request.
-        db: Active database session.
-    """
-    verify_csrf(request, csrf)
-    vcenter = db.get(VsphereTrustedVcenter, vcenter_id)
-    if vcenter is None:
-        raise HTTPException(status_code=404, detail="Trusted vCenter not found.")
-    if vcenter.provider_id != provider_id:
-        return _vsphere_grid_error(request, identity, db, "A trusted vCenter cannot move between provider namespaces.")
-    try:
-        vcenter.name = name.strip()
-        vcenter.hostname = normalize_vsphere_vcenter_hostname(hostname)
-        vcenter.description = description.strip()
-        vcenter.enabled = enabled == "on"
-        vcenter.updated_at = utcnow()
-        certificate = _attach_vsphere_public_certificate(db, vcenter, certificate_pem)
-        if vcenter.enabled and not vcenter.certificates and certificate is None:
-            raise ValueError("An enabled trusted vCenter requires a current public client certificate.")
-        mark_provider_desired_changed(vcenter.provider)
-        db.commit()
-    except ValueError:
-        db.rollback()
-        return _vsphere_grid_error(request, identity, db, "The trusted vCenter details or public certificate are invalid.", 400)
-    except IntegrityError:
-        db.rollback()
-        return _vsphere_grid_error(request, identity, db, "Trusted vCenter name or certificate fingerprint is already assigned.")
-    record_audit(db, actor=identity.username, action="update_vsphere_trusted_vcenter", resource_type="vsphere_trusted_vcenter", resource_id=vcenter.id, detail=f"provider_id={provider_id}; name={vcenter.name}; enabled={vcenter.enabled}; public_certificate_added={bool(certificate)}")
-    refreshed = _vsphere_vcenter_row(db, provider_id, vcenter.id)
-    return grid_saved_response(request, redirect_url=management_ui_path("/vsphere-key-providers"), resource_name="trusted_vcenter", resource=trusted_vcenter_to_dict(refreshed), extra={"certificates": [certificate_to_dict(item) for item in refreshed.certificates]})
-
-
-@router.post("/vsphere-key-providers/trusted-vcenters/{vcenter_id}/delete", response_model=None)
-def delete_vsphere_vcenter_from_ui(
-    request: Request,
-    vcenter_id: str,
-    csrf: str = Form(...),
-    identity: Identity = Depends(require_session_identity),
-    db: Session = Depends(get_db),
-) -> RedirectResponse | HTMLResponse | JSONResponse | Response:
-    """Delete a disabled trusted vCenter after certificate retirement.
-
-    Args:
-        request: Incoming HTTP request.
-        vcenter_id: Immutable trusted-vCenter UUID.
-        csrf: Validated CSRF token.
-        identity: Authenticated identity authorizing the request.
-        db: Active database session.
-    """
-    verify_csrf(request, csrf)
-    vcenter = db.get(VsphereTrustedVcenter, vcenter_id)
-    if vcenter is None:
-        raise HTTPException(status_code=404, detail="Trusted vCenter not found.")
-    provider_id = vcenter.provider_id
-    if vcenter.enabled or vcenter.certificates:
-        return _vsphere_grid_error(request, identity, db, "Disable the trusted vCenter and retire every certificate before deletion.")
-    name = vcenter.name
-    mark_provider_desired_changed(vcenter.provider)
-    db.delete(vcenter)
-    db.commit()
-    record_audit(db, actor=identity.username, action="delete_vsphere_trusted_vcenter", resource_type="vsphere_trusted_vcenter", resource_id=vcenter_id, detail=f"provider_id={provider_id}; name={name}")
-    if grid_request(request):
-        return Response(status_code=204)
-    return RedirectResponse(management_ui_path("/vsphere-key-providers"), status_code=303)
-
-
-@router.post("/vsphere-key-providers/trusted-vcenters/{vcenter_id}/certificates", response_model=None)
-def add_vsphere_certificate_from_ui(
-    request: Request,
-    vcenter_id: str,
-    provider_id: str = Form(...),
-    certificate_pem: str = Form(...),
-    csrf: str = Form(...),
-    identity: Identity = Depends(require_session_identity),
-    db: Session = Depends(get_db),
-) -> RedirectResponse | HTMLResponse | JSONResponse:
-    """Add one public certificate to an existing trusted vCenter.
-
-    Args:
-        request: Incoming HTTP request.
-        vcenter_id: Immutable trusted-vCenter UUID.
-        provider_id: Immutable owning provider UUID.
-        certificate_pem: Current public X.509 PEM certificate.
-        csrf: Validated CSRF token.
-        identity: Authenticated identity authorizing the request.
-        db: Active database session.
-    """
-    verify_csrf(request, csrf)
-    vcenter = _vsphere_vcenter_row(db, provider_id, vcenter_id)
-    try:
-        certificate = _attach_vsphere_public_certificate(db, vcenter, certificate_pem)
-        if certificate is None:
-            raise ValueError("A public certificate is required.")
-        mark_provider_desired_changed(vcenter.provider)
-        db.commit()
-    except ValueError:
-        db.rollback()
-        return _vsphere_grid_error(request, identity, db, "The public certificate is invalid.", 400)
-    except IntegrityError:
-        db.rollback()
-        return _vsphere_grid_error(request, identity, db, "Certificate fingerprint is already assigned.")
-    record_audit(db, actor=identity.username, action="add_vsphere_trusted_certificate", resource_type="vsphere_trusted_certificate", resource_id=certificate.id, detail=f"provider_id={provider_id}; trusted_vcenter_id={vcenter_id}; public_certificate=true")
-    refreshed = _vsphere_vcenter_row(db, provider_id, vcenter_id)
-    stored = next(item for item in refreshed.certificates if item.id == certificate.id)
-    return grid_saved_response(request, redirect_url=management_ui_path("/vsphere-key-providers"), resource_name="certificate", resource=certificate_to_dict(stored))
-
-
-@router.post("/vsphere-key-providers/trusted-vcenters/{vcenter_id}/certificates/{certificate_id}/delete", response_model=None)
-def retire_vsphere_certificate_from_ui(
-    request: Request,
-    vcenter_id: str,
-    certificate_id: str,
-    csrf: str = Form(...),
-    identity: Identity = Depends(require_session_identity),
-    db: Session = Depends(get_db),
-) -> RedirectResponse | HTMLResponse | JSONResponse | Response:
-    """Retire one exact public certificate trust assignment.
-
-    Args:
-        request: Incoming HTTP request.
-        vcenter_id: Immutable trusted-vCenter UUID.
-        certificate_id: Immutable public-certificate UUID.
-        csrf: Validated CSRF token.
-        identity: Authenticated identity authorizing the request.
-        db: Active database session.
-    """
-    verify_csrf(request, csrf)
-    vcenter = db.get(VsphereTrustedVcenter, vcenter_id)
-    if vcenter is None:
-        raise HTTPException(status_code=404, detail="Trusted vCenter not found.")
-    provider_id = vcenter.provider_id
-    certificate = next((item for item in vcenter.certificates if item.id == certificate_id), None)
-    if certificate is None:
-        raise HTTPException(status_code=404, detail="Certificate not found.")
-    usable = usable_certificates(vcenter)
-    if vcenter.enabled and certificate in usable and len(usable) <= 1:
-        return _vsphere_grid_error(request, identity, db, "Disable the trusted vCenter before retiring its last usable certificate.")
-    mark_provider_desired_changed(vcenter.provider)
-    db.delete(certificate)
-    db.commit()
-    record_audit(db, actor=identity.username, action="retire_vsphere_trusted_certificate", resource_type="vsphere_trusted_certificate", resource_id=certificate_id, detail=f"provider_id={provider_id}; trusted_vcenter_id={vcenter_id}")
-    if grid_request(request):
-        return Response(status_code=204)
-    return RedirectResponse(management_ui_path("/vsphere-key-providers"), status_code=303)
-
 
 @router.get("/ntp", response_class=HTMLResponse, response_model=None)
 def ntp_page(
@@ -17769,6 +15543,24 @@ def esxi_pxe_page_context(
         )
     ).scalars().all()
     inventory_assignments_by_mac = esxi_host_assignments_by_mac(db)
+    discovered_host_rows = [
+        inventory_host_to_dict(db, row, assignments_by_mac=inventory_assignments_by_mac)
+        for row in discovered_hosts
+    ]
+    discovered_host_ids_by_esxi_host_id: dict[int, list[int]] = {}
+    for discovered_host_row in discovered_host_rows:
+        for assignment in discovered_host_row["esxi_assignments"]:
+            discovered_host_ids_by_esxi_host_id.setdefault(assignment["id"], []).append(
+                discovered_host_row["id"]
+            )
+    context["esxi_pxe_host_rows"] = [
+        {
+            **row,
+            "discovered_host_ids": discovered_host_ids_by_esxi_host_id.get(row.get("id"), []),
+        }
+        for row in context["esxi_pxe_host_rows"]
+    ]
+    context["esxi_pxe_discovered_host_ids_by_host_id"] = discovered_host_ids_by_esxi_host_id
     media_jobs = db.execute(
         select(Job)
         .options(selectinload(Job.steps))
@@ -17784,10 +15576,7 @@ def esxi_pxe_page_context(
         "esxi_can_write": identity.can("write:esxi-pxe"),
         "network_boot_can_write": identity.can("write:pxe"),
         "network_boot_environments": catalog_rows(db),
-        "network_boot_discovered_hosts": [
-            inventory_host_to_dict(db, row, assignments_by_mac=inventory_assignments_by_mac)
-            for row in discovered_hosts
-        ],
+        "network_boot_discovered_hosts": discovered_host_rows,
         "network_boot_media_tasks": [_task_row(job, identity) for job in media_jobs],
         "task_component_filter_options": _task_component_filter_options(db),
         "esxi_kickstart_grid_rows": grid_rows,
@@ -18160,11 +15949,19 @@ UI_ROUTER_REGISTRY.register(
     (RouterContribution(plane="management", router=vaults_router),),
 )
 UI_ROUTER_REGISTRY.register(
-    "facade_between_vaults_dashboard_monitor",
+    "facade_between_vaults_appliance_maintenance",
     (
         RouterContribution(
             plane="management",
-            router=_management_between_vaults_dashboard_monitor_router,
+            router=_management_between_vaults_appliance_maintenance_router,
+        ),
+    ),
+)
+UI_ROUTER_REGISTRY.register(
+    "appliance_maintenance_power",
+    (
+        RouterContribution(
+            plane="management", router=appliance_maintenance_power_router
         ),
     ),
 )
@@ -18173,10 +15970,10 @@ UI_ROUTER_REGISTRY.register(
     (RouterContribution(plane="management", router=dashboard_monitor_router),),
 )
 UI_ROUTER_REGISTRY.register(
-    "facade_between_dashboard_monitor_automation",
+    "appliance_maintenance_update",
     (
         RouterContribution(
-            plane="management", router=_management_before_automation_router
+            plane="management", router=appliance_maintenance_update_router
         ),
     ),
 )
@@ -18213,7 +16010,7 @@ UI_ROUTER_REGISTRY.register(
     (RouterContribution(plane="management", router=dns_dhcp_router),),
 )
 UI_ROUTER_REGISTRY.register(
-    "facade_between_dns_dhcp_managed_ldap",
+    "facade_between_dns_dhcp_certificate_trust",
     (
         RouterContribution(
             plane="management", router=_management_between_dns_dhcp_managed_ldap_router
@@ -18221,11 +16018,19 @@ UI_ROUTER_REGISTRY.register(
     ),
 )
 UI_ROUTER_REGISTRY.register(
+    "certificate_trust_ca",
+    (RouterContribution(plane="management", router=certificate_trust_ca_router),),
+)
+UI_ROUTER_REGISTRY.register(
     "managed_ldap",
     (RouterContribution(plane="management", router=managed_ldap_router),),
 )
 UI_ROUTER_REGISTRY.register(
-    "facade_between_managed_ldap_vcf_workflows",
+    "certificate_trust_kms",
+    (RouterContribution(plane="management", router=certificate_trust_kms_router),),
+)
+UI_ROUTER_REGISTRY.register(
+    "facade_between_certificate_trust_vcf_workflows",
     (
         RouterContribution(
             plane="management",
@@ -18290,9 +16095,10 @@ UI_ROUTER_REGISTRY.validate_domains(
     (
         "facade_before_vaults",
         "vaults",
-        "facade_between_vaults_dashboard_monitor",
+        "facade_between_vaults_appliance_maintenance",
+        "appliance_maintenance_power",
         "dashboard_monitor",
-        "facade_between_dashboard_monitor_automation",
+        "appliance_maintenance_update",
         "automation",
         "facade_between_automation_routes_wan",
         "appliance_apply",
@@ -18300,9 +16106,11 @@ UI_ROUTER_REGISTRY.validate_domains(
         "firewall",
         "physical_vlans",
         "dns_dhcp",
-        "facade_between_dns_dhcp_managed_ldap",
+        "facade_between_dns_dhcp_certificate_trust",
+        "certificate_trust_ca",
         "managed_ldap",
-        "facade_between_managed_ldap_vcf_workflows",
+        "certificate_trust_kms",
+        "facade_between_certificate_trust_vcf_workflows",
         "vcf_workflows",
         "facade_between_vcf_workflows_identity",
         "identity",

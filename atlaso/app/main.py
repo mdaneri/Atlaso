@@ -204,7 +204,7 @@ def create_app() -> FastAPI:
                         {
                             "detail": (
                                 f"Appliance apply task {active_job.id} is {active_job.status}. "
-                                "Changes are locked until the master task reaches a terminal state."
+                                "Changes are locked until the task and any planned management restart window complete."
                             ),
                             "job_id": active_job.id,
                             "status": active_job.status,

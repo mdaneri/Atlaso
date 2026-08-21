@@ -1396,6 +1396,9 @@ def restore_settings_archive(db: Session, archive: dict[str, Any]) -> dict[str, 
                 prepared_data[key] = _canonical_network_role_rows(rows)
     _validate_archive(prepared_archive)
     _validate_archive_database_relationships(db, prepared_archive["data"])
+    from atlaso.app.services.network_boot import lock_esxi_host_reference_lifecycle
+
+    lock_esxi_host_reference_lifecycle(db)
     recovery_archives = db.execute(select(LdapRecoveryArchive)).scalars().all()
     try:
         counts = _restore_settings_archive_data(db, prepared_archive["data"])
@@ -1558,8 +1561,12 @@ def factory_reset_desired_state(db: Session) -> dict[str, int]:
     Args:
         db: Active database session.
     """
-    from atlaso.app.services.network_boot import ensure_environment_rows
+    from atlaso.app.services.network_boot import (
+        ensure_environment_rows,
+        lock_esxi_host_reference_lifecycle,
+    )
 
+    lock_esxi_host_reference_lifecycle(db)
     recovery_archive_ids = [
         archive_id
         for archive_id in db.execute(select(LdapRecoveryArchive.id)).scalars().all()

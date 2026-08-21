@@ -681,6 +681,11 @@ def test_managed_factory_reset_retains_marker_until_readiness(tmp_path, monkeypa
     scheduled: list[tuple[str, ...]] = []
     credential_removal_states: list[str] = []
     monkeypatch.setenv("ATLASO_FACTORY_RESET_STATE_DIRECTORY", str(state_directory))
+    monkeypatch.setattr(
+        factory_reset,
+        "_factory_reset_credential_plan",
+        lambda: {"admin_action": "keep", "root_action": "keep"},
+    )
     monkeypatch.setattr(factory_reset, "_stop_application_services", lambda **_kwargs: None)
     monkeypatch.setattr(factory_reset, "_candidate_database", lambda *_args, **_kwargs: 16)
     monkeypatch.setattr(factory_reset, "_replace_database", lambda *_args: None)
