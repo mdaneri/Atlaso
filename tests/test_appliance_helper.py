@@ -2923,12 +2923,46 @@ def test_factory_reset_network_runtime_cleanup_uses_live_owned_state(monkeypatch
             )
         return subprocess.CompletedProcess(command, 0, "", "")
 
+    monkeypatch.setattr(helper, "ATLASO_FACTORY_RESET_DIR", state_directory)
     monkeypatch.setattr(helper, "ATLASO_FACTORY_RESET_REQUEST_PATH", request_path)
     monkeypatch.setattr(helper, "NETWORKD_CONFIG_DIR", networkd_directory)
     monkeypatch.setattr(helper.shutil, "which", lambda command: f"/usr/sbin/{command}")
     monkeypatch.setattr(helper, "_run", fake_run)
 
-    assert helper._handle_factory_reset("reset-network-runtime", []) == 0
+    admitted_descriptor: int | None = None
+    if os.name == "posix":
+        admitted_descriptor = os.open(
+            state_directory,
+            os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW,
+        )
+        original_fstat = helper.os.fstat
+
+        def root_owned_marker_fstat(descriptor):
+            """Model the admitted request marker as root-owned.
+
+            Args:
+                descriptor: Open file descriptor to inspect.
+            """
+            result = original_fstat(descriptor)
+            if stat.S_ISREG(result.st_mode):
+                return SimpleNamespace(
+                    st_mode=result.st_mode,
+                    st_uid=0,
+                    st_size=result.st_size,
+                )
+            return result
+
+        monkeypatch.setattr(
+            helper,
+            "_open_factory_reset_directory",
+            lambda: os.dup(admitted_descriptor),
+        )
+        monkeypatch.setattr(helper.os, "fstat", root_owned_marker_fstat)
+    try:
+        assert helper._handle_factory_reset("reset-network-runtime", []) == 0
+    finally:
+        if admitted_descriptor is not None:
+            os.close(admitted_descriptor)
     payload = json.loads(capsys.readouterr().out.splitlines()[-1])
     assert payload["qdisc_interfaces"] == ["eth1", "eth1.120"]
     assert payload["removed_vlans"] == ["eth1.120"]
@@ -10508,12 +10542,17 @@ def test_management_https_change_suppresses_restart_during_factory_reset(
     monkeypatch.setattr(helper, "ATLASO_FACTORY_RESET_REQUEST_PATH", marker)
     monkeypatch.setattr(helper, "ATLASO_SERVICE_DROPIN_DIR", dropin.parent)
     monkeypatch.setattr(helper, "ATLASO_SERVICE_HTTPS_DROPIN_PATH", dropin)
+    monkeypatch.setattr(
+        helper,
+        "_factory_reset_runtime_cleanup_is_admitted",
+        lambda: True,
+    )
     monkeypatch.setattr(helper, "_install_nginx_site", lambda *_args: 0)
     monkeypatch.setattr(helper, "_run", fake_run)
     monkeypatch.setattr(helper.shutil, "which", lambda _command: "/usr/bin/systemd-run")
 
     payload = json.loads(appliance_settings_json(management_https_enabled=False))
-    assert helper._configure_atlaso_management_https(payload) == 0
+    assert helper._configure_atlaso_management_https(payload) == (0, None)
 
     assert commands == [["systemctl", "daemon-reload"]]
     assert dropin.is_file()

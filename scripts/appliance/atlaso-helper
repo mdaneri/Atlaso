@@ -5899,7 +5899,7 @@ def _configure_atlaso_management_https(
     # A delayed restart here could launch a second reset resume runner while
     # the first transaction still owns its durable credential plan.
     if _factory_reset_runtime_cleanup_is_admitted():
-        return 0
+        return 0, None
 
     restart_command = ["systemctl", "restart", "atlaso.service"]
     systemd_run = shutil.which("systemd-run")
