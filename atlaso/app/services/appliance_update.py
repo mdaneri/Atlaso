@@ -263,11 +263,49 @@ def update_availability_summary(
             row["confirmed"] = normalized
         rows.append(row)
     available = [row for row in rows if row["confirmed"] and row["confirmed"]["update_available"]]
+    failed = [row for row in rows if row["last_attempt"]["state"] == "failed"]
+    confirmed = [row for row in rows if row["confirmed"] and not row["stale"]]
+    result_summary = {
+        "pill": "Not checked",
+        "pill_class": "muted",
+        "title": "Check the selected streams for current update information",
+        "description": "Each stream keeps its latest result independently.",
+    }
+    if failed:
+        count = len(failed)
+        result_summary = {
+            "pill": "Check failed",
+            "pill_class": "error",
+            "title": (
+                f"{count} selected update "
+                f"{'stream needs' if count == 1 else 'streams need'} attention"
+            ),
+            "description": "Successful and failed stream results remain independently visible below.",
+        }
+    elif available:
+        count = len(available)
+        result_summary = {
+            "pill": "Updates available",
+            "pill_class": "warn",
+            "title": (
+                f"{count} selected update "
+                f"{'stream has' if count == 1 else 'streams have'} changes"
+            ),
+            "description": "Review each stream’s current, target, and What’s new details before installation.",
+        }
+    elif len(confirmed) == len(rows):
+        result_summary = {
+            "pill": "Up to date",
+            "pill_class": "good",
+            "title": "The selected streams are current",
+            "description": "No installation is needed for the latest confirmed checks.",
+        }
     return {
         "schema_version": 1,
         "available": bool(available),
         "affected_stream_count": len(available),
         "streams": rows,
+        "result_summary": result_summary,
         "url": "/ui/management/appliance-update#appliance-update-streams",
     }
 

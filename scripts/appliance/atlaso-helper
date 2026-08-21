@@ -10957,7 +10957,12 @@ def _failed_update_check(remediation: str, *, current: str = "", target: str = "
     }
 
 
-def _unsynchronized_update_sources(payload: dict, kind: str) -> list[str]:
+def _unsynchronized_update_sources(
+    payload: dict,
+    kind: str,
+    *,
+    repository_names: set[str] | None = None,
+) -> list[str]:
     """Return enabled managed repositories that are not synchronized."""
     definitions = payload.get("source_definitions")
     if not isinstance(definitions, list):
@@ -10969,6 +10974,10 @@ def _unsynchronized_update_sources(payload: dict, kind: str) -> list[str]:
         and source.get("kind") == kind
         and source.get("enabled") is True
         and (kind != "photon" or bool((source.get("settings") or {}).get("managed")))
+        and (
+            repository_names is None
+            or str(source.get("name") or "").strip() in repository_names
+        )
         and source.get("validation_status") != "valid"
     )
 
@@ -11101,15 +11110,31 @@ def _check_appliance_update(payload: dict, credentials: dict[str, dict[str, str]
     if "powershell_modules" in selected:
         pwsh = _command_path("pwsh") or "pwsh"
         default_repository = str(sources.get("powershell_repository_name") or "").strip()
-        unsynchronized = _unsynchronized_update_sources(payload, "powershell")
-        modules = payload.get("powershell_modules") or []
+        modules = [
+            module
+            for module in payload.get("powershell_modules") or []
+            if isinstance(module, dict)
+        ]
+        module_repositories = [
+            str(module.get("repository_name") or default_repository).strip()
+            for module in modules
+        ]
+        referenced_repositories = {
+            repository for repository in module_repositories if repository
+        }
+        unsynchronized = _unsynchronized_update_sources(
+            payload,
+            "powershell",
+            repository_names=referenced_repositories,
+        )
+        repository_missing = any(not repository for repository in module_repositories)
         module_checks: list[dict] = []
-        if not default_repository or unsynchronized:
-            names = ", ".join(unsynchronized) or default_repository or "the configured PowerShell repository"
+        if repository_missing or unsynchronized:
+            names = ", ".join(unsynchronized) or "the configured PowerShell repository"
             checks["powershell_modules"] = _failed_update_check(
                 f"Synchronize repositories for {names} and check PowerShell Modules again."
             )
-        for module in modules if not unsynchronized and default_repository else []:
+        for module in modules if not unsynchronized and not repository_missing else []:
             name = str(module.get("name") or "").strip()
             target = str(module.get("target_version") or "").strip()
             repository = str(module.get("repository_name") or default_repository).strip()

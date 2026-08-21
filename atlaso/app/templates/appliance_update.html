@@ -177,10 +177,10 @@
       </div>
       <section class="appliance-update-result-summary" aria-live="polite" data-appliance-update-result-summary>
         <div>
-          <span class="status-pill muted" data-appliance-update-result-pill>Not checked</span>
-          <strong data-appliance-update-result-title>Check the selected streams for current update information</strong>
+          <span class="status-pill {{ appliance_update_availability.result_summary.pill_class }}" data-appliance-update-result-pill>{{ appliance_update_availability.result_summary.pill }}</span>
+          <strong data-appliance-update-result-title>{{ appliance_update_availability.result_summary.title }}</strong>
         </div>
-        <p class="muted" data-appliance-update-result-description>Each stream keeps its latest result independently.</p>
+        <p class="muted" data-appliance-update-result-description>{{ appliance_update_availability.result_summary.description }}</p>
       </section>
       <div class="apply-unit-list compact-list">
         {% for stream in update_streams %}

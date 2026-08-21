@@ -218,6 +218,12 @@ def test_availability_mixed_stream_results_and_manual_install_gate():
         "powershell_modules": "up_to_date",
         "atlaso_release": "failed",
     }
+    assert summary["result_summary"] == {
+        "pill": "Check failed",
+        "pill_class": "error",
+        "title": "1 selected update stream needs attention",
+        "description": "Successful and failed stream results remain independently visible below.",
+    }
     assert manual_install_gate(summary, ["photon_os", "powershell_modules"]) == (
         True,
         "",
@@ -364,6 +370,8 @@ def test_appliance_update_page_and_dry_run_job(client):
     assert 'data-tab-target="appliance-update-sources" aria-controls="appliance-update-sources" aria-selected="false"' in page.text
     assert "streams_tab_active" not in page.text
     assert "atlaso-helper appliance-update check" not in page.text
+    assert '<span class="status-pill warn" data-appliance-update-result-pill>Updates available</span>' in page.text
+    assert "2 selected update streams have changes" in page.text
 
     csrf = csrf_from_page(page.text)
     response = client.post(
@@ -1803,6 +1811,65 @@ def test_helper_powershell_check_reports_truthful_version_actions(monkeypatch, t
     }
     assert "Current.Tools" not in {row["name"] for row in check["changes"]}
     assert all("remove" not in row["action"] for row in check["changes"])
+
+
+def test_helper_powershell_check_ignores_unreferenced_unsynchronized_repository(
+    monkeypatch, tmp_path
+):
+    """Validate only repositories referenced by managed PowerShell modules."""
+    helper = load_helper_module()
+    powershell_home = tmp_path / "powershell"
+    monkeypatch.setattr(helper, "ATLASO_POWERSHELL_HOME", powershell_home)
+    monkeypatch.setattr(helper, "_command_path", lambda _name: "/usr/bin/pwsh")
+
+    def fake_command(command, *, success_codes=None, env=None, stdout_limit=4000):
+        return {
+            "command": command,
+            "returncode": 0,
+            "success": True,
+            "stdout": json.dumps(
+                {
+                    "Name": "Current.Tools",
+                    "AvailableVersion": "2.0.0",
+                    "InstalledVersions": ["2.0.0"],
+                }
+            ),
+            "stderr": "",
+        }
+
+    monkeypatch.setattr(helper, "_command_payload", fake_command)
+    payload = {
+        "selected_streams": ["powershell_modules"],
+        "sources": {
+            "powershell_repository_name": "PSGallery",
+            "powershell_repository_url": "https://www.powershellgallery.com/api/v2",
+        },
+        "source_definitions": [
+            {
+                "kind": "powershell",
+                "name": "PSGallery",
+                "enabled": True,
+                "validation_status": "valid",
+            },
+            {
+                "kind": "powershell",
+                "name": "UnusedGallery",
+                "enabled": True,
+                "validation_status": "pending",
+            },
+        ],
+        "powershell_modules": [
+            {"name": "Current.Tools", "repository_name": "PSGallery"}
+        ],
+    }
+
+    current = helper._check_appliance_update(payload)["checks"]["powershell_modules"]
+    assert current["state"] == "up_to_date"
+
+    payload["powershell_modules"][0]["repository_name"] = "UnusedGallery"
+    blocked = helper._check_appliance_update(payload)["checks"]["powershell_modules"]
+    assert blocked["state"] == "failed"
+    assert "UnusedGallery" in blocked["remediation"]
 
 
 def test_helper_atlaso_check_uses_signed_summary_and_legacy_fallback(monkeypatch):
