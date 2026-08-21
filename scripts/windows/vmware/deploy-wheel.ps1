@@ -172,6 +172,31 @@ function Test-OnePasswordBridgeServerAncestor {
     return $false
 }
 
+function Get-OnePasswordBridgeServerEnvironmentId {
+    param([Parameter(Mandatory = $true)][int]$ServerProcessId)
+
+    try {
+        $serverProcess = Get-CimInstance -ClassName Win32_Process -Filter "ProcessId = $ServerProcessId" -ErrorAction Stop
+    } catch {
+        throw 'Unable to authenticate the 1Password Environment bridge process ancestry; deployment stopped before authentication.'
+    }
+    if (-not $serverProcess) {
+        return ''
+    }
+    $serverCommandLine = [string]$serverProcess.CommandLine
+    if ($serverCommandLine -notmatch '(?i)deploy-wheel\.ps1') {
+        return ''
+    }
+    $environment = [regex]::Match(
+        $serverCommandLine,
+        '(?i)(?:^|\s)-OnePasswordEnvironmentId(?:=|\s+)"?(?<id>[A-Za-z0-9_-]{8,128})"?(?=\s|$)'
+    )
+    if (-not $environment.Success) {
+        return ''
+    }
+    return $environment.Groups['id'].Value
+}
+
 function Test-OnePasswordBridgeProcess {
     $processId = [int]$PID
     $visited = @{}
@@ -225,7 +250,20 @@ function Test-OnePasswordBridgeProcess {
                 )
                 try {
                     $serverProcessId = Get-OnePasswordBridgePipeServerProcessId -PipeClient $bridgeClient
-                    if ($serverProcessId -gt 0 -and (Test-OnePasswordBridgeServerAncestor -ServerProcessId $serverProcessId)) {
+                    $trustedEnvironmentId = if ($serverProcessId -gt 0) {
+                        Get-OnePasswordBridgeServerEnvironmentId -ServerProcessId $serverProcessId
+                    } else {
+                        ''
+                    }
+                    $isTrustedEnvironment = $trustedEnvironmentId -and
+                        [string]::Equals(
+                            $trustedEnvironmentId,
+                            $opEnvironment.Groups['id'].Value,
+                            [System.StringComparison]::Ordinal
+                        )
+                    $isDirectOpChild = $serverProcessId -gt 0 -and [int]$parent.ParentProcessId -eq $serverProcessId
+                    if ($isTrustedEnvironment -and $isDirectOpChild -and
+                        (Test-OnePasswordBridgeServerAncestor -ServerProcessId $serverProcessId)) {
                         $bridgeClient.WriteByte(165)
                         $bridgeClient.Flush()
                         return $true

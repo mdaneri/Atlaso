@@ -49,6 +49,26 @@ Assert-Throws {
     Assert-OnePasswordEnvironmentSupport -RunHelp 'Flags:`n  --env-file string'
 } 'A CLI without Environment loading must fail closed.'
 
+$script:bridgeServerProcessFixture = [pscustomobject]@{
+    CommandLine = 'pwsh.exe -File C:\repo\deploy-wheel.ps1 -OnePasswordEnvironmentId blgexucrwfr2dtsxe2q4uu7dp4'
+}
+function Get-CimInstance {
+    param([Parameter(ValueFromRemainingArguments = $true)]$Arguments)
+    return $script:bridgeServerProcessFixture
+}
+try {
+    if ((Get-OnePasswordBridgeServerEnvironmentId -ServerProcessId 1234) -ne 'blgexucrwfr2dtsxe2q4uu7dp4') {
+        throw 'The bridge must recover the Environment ID from the deploy-script parent.'
+    }
+    $script:bridgeServerProcessFixture.CommandLine = 'pwsh.exe -File C:\repo\deploy-wheel.ps1 -OnePasswordBridgeHandle 1234'
+    if (Get-OnePasswordBridgeServerEnvironmentId -ServerProcessId 1234) {
+        throw 'A direct op run without the parent-selected Environment ID must fail closed.'
+    }
+} finally {
+    Remove-Item Function:\Get-CimInstance -ErrorAction SilentlyContinue
+    Remove-Variable bridgeServerProcessFixture -Scope Script -ErrorAction SilentlyContinue
+}
+
 $boundParameters = @{
     OnePasswordEnvironmentId = 'blgexucrwfr2dtsxe2q4uu7dp4'
     OnePasswordBridgeHandle = 'caller-controlled-value-must-not-forward'
@@ -128,6 +148,11 @@ if ($scriptText.Contains('[switch]$OnePasswordEnvironmentChild', [System.StringC
 }
 if (-not $scriptText.Contains('Get-CimInstance -ClassName Win32_Process', [System.StringComparison]::Ordinal)) {
     throw 'The bridge child must authenticate its op.exe process ancestry.'
+}
+if (-not $scriptText.Contains('Get-OnePasswordBridgeServerEnvironmentId', [System.StringComparison]::Ordinal) -or
+    -not $scriptText.Contains('$trustedEnvironmentId', [System.StringComparison]::Ordinal) -or
+    -not $scriptText.Contains('$isDirectOpChild', [System.StringComparison]::Ordinal)) {
+    throw 'The bridge child must bind the inherited handle to the trusted parent-selected Environment.'
 }
 if (-not $scriptText.Contains('Test-OnePasswordBridgeProcess', [System.StringComparison]::Ordinal)) {
     throw 'The bridge child must fail closed when the authenticated Environment omits DEFAULT_ADMIN_PASSWORD.'

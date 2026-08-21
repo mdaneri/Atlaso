@@ -25,8 +25,9 @@ base64 `sh -lc` wrapper. Password-backed SSH supports one password-only keyboard
 `ATLASO_DEPLOY_SSH_PASSWORD` fallback.
 The bounded child also authenticates that `op run --environment` carries the exact Environment selected by the trusted
 parent. The bridge creates an inheritable anonymous Windows pipe handle, passes only that OS handle to the bounded
-child, and requires the child to verify the handle's server process is in its process ancestry and acknowledge it before
-consuming the password. This supports starting the documented command from an existing PowerShell prompt while
+child, and requires the handle's server to be the direct deploy-script parent, compares that parent's selected
+Environment ID with `op --environment`, verifies the server process is in its process ancestry, and acknowledges it
+before consuming the password. This supports starting the documented command from an existing PowerShell prompt while
 rejecting an interactive `op run` shell that did not launch the bridge.
 
 Atlaso can run a VMware Workstation lifecycle lab alongside the Hyper-V lab. The Workstation path uses VMX/VMDK
