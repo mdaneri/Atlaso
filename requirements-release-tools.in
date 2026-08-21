@@ -1,4 +1,4 @@
 # Tooling used only by the protected GitHub release and promotion jobs.
 cryptography==50.0.0
-hatchling==1.31.0
-packaging==26.2
+hatchling==1.32.0
+packaging==26.3
