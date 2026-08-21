@@ -16,7 +16,7 @@ param(
     [switch]$SkipInventoryLinuxSync,
     [string]$WheelPath = '',
     [string]$OnePasswordEnvironmentId = '',
-    [Parameter(DontShow = $true)][string]$OnePasswordBridgePipeName = '',
+    [Parameter(DontShow = $true)][string]$OnePasswordBridgeHandle = '',
     [switch]$ResetVaultEntries,
     [switch]$SkipHostCheck
 )
@@ -61,7 +61,7 @@ function Get-OnePasswordChildArguments {
 
     $childArguments = @('-NoLogo', '-NoProfile', '-NonInteractive', '-File', $ScriptPath)
     foreach ($entry in $BoundParameters.GetEnumerator()) {
-        if ($entry.Key -in @('OnePasswordEnvironmentId', 'OnePasswordBridgePipeName')) {
+        if ($entry.Key -in @('OnePasswordEnvironmentId', 'OnePasswordBridgeHandle')) {
             continue
         }
         if ($entry.Value -is [System.Management.Automation.SwitchParameter]) {
@@ -99,41 +99,33 @@ function Invoke-OnePasswordEnvironmentBridge {
     }
 
     $childArguments = Get-OnePasswordChildArguments -BoundParameters $BoundParameters -ScriptPath $ScriptPath
-    $pipeName = "Atlaso-OnePasswordBridge-$([guid]::NewGuid().ToString('N'))"
-    $bridgeServer = [System.IO.Pipes.NamedPipeServerStream]::new(
-        $pipeName,
-        [System.IO.Pipes.PipeDirection]::InOut,
-        1,
-        [System.IO.Pipes.PipeTransmissionMode]::Byte,
-        [System.IO.Pipes.PipeOptions]::Asynchronous
+    $bridgeServer = [System.IO.Pipes.AnonymousPipeServerStream]::new(
+        [System.IO.Pipes.PipeDirection]::In,
+        [System.IO.HandleInheritability]::Inheritable
     )
-    $bridgeWait = $null
-    $bridgeEnded = $false
+    $bridgeHandle = $bridgeServer.GetClientHandleAsString()
+    $bridgeReadBuffer = [byte[]]::new(1)
+    $bridgeReadTask = $bridgeServer.ReadAsync($bridgeReadBuffer, 0, 1)
     try {
-        $bridgeWait = $bridgeServer.BeginWaitForConnection($null, $null)
-        $childArguments += @('-OnePasswordBridgePipeName', $pipeName)
+        $childArguments += @('-OnePasswordBridgeHandle', $bridgeHandle)
         & $opPath run --environment $EnvironmentId -- $pwsh.Source @childArguments
         $bridgeExitCode = $LASTEXITCODE
-        if (-not $bridgeWait.AsyncWaitHandle.WaitOne(5000)) {
-            throw 'The 1Password Environment bridge child did not authenticate through its private Windows pipe; deployment stopped before authentication.'
+        if (-not $bridgeReadTask.Wait(5000) -or $bridgeReadTask.Result -ne 1 -or $bridgeReadBuffer[0] -ne 165) {
+            throw 'The 1Password Environment bridge child did not authenticate through its inherited Windows handle; deployment stopped before authentication.'
         }
-        $bridgeServer.EndWaitForConnection($bridgeWait)
-        $bridgeEnded = $true
         if ($bridgeExitCode -ne 0) {
             throw "The 1Password Environment credential bridge failed with exit code $bridgeExitCode. Verify authorization, the exact Atlaso Environment, and DEFAULT_ADMIN_PASSWORD availability."
         }
     } finally {
-        if ($bridgeWait -and $bridgeWait.IsCompleted -and -not $bridgeEnded) {
-            try { $bridgeServer.EndWaitForConnection($bridgeWait) } catch { }
-        }
         if ($bridgeServer) {
+            try { $bridgeServer.DisposeLocalCopyOfClientHandle() } catch { }
             $bridgeServer.Dispose()
         }
     }
 }
 
 function Get-OnePasswordBridgePipeServerProcessId {
-    param([Parameter(Mandatory = $true)][System.IO.Pipes.NamedPipeClientStream]$PipeClient)
+    param([Parameter(Mandatory = $true)][System.IO.Pipes.AnonymousPipeClientStream]$PipeClient)
 
     if (-not ([System.Management.Automation.PSTypeName]'AtlasoOnePasswordPipeInterop').Type) {
         Add-Type @'
@@ -195,15 +187,15 @@ function Test-OnePasswordBridgeProcess {
         }
         $childCommandLine = [string]$process.CommandLine
         if ($childCommandLine -notmatch '(?i)deploy-wheel\.ps1' -or
-            $childCommandLine -notmatch '(?i)(^|\s)-OnePasswordBridgePipeName(?:=|\s)') {
+            $childCommandLine -notmatch '(?i)(^|\s)-OnePasswordBridgeHandle(?:=|\s)') {
             $processId = [int]$process.ParentProcessId
             continue
         }
-        $childPipe = [regex]::Match(
+        $childHandle = [regex]::Match(
             $childCommandLine,
-            '(?i)(?:^|\s)-OnePasswordBridgePipeName(?:=|\s+)"?(?<name>Atlaso-OnePasswordBridge-[a-f0-9]{32})"?(?=\s|$)'
+            '(?i)(?:^|\s)-OnePasswordBridgeHandle(?:=|\s+)"?(?<handle>[0-9A-Fa-fx]+)"?(?=\s|$)'
         )
-        if (-not $childPipe.Success) {
+        if (-not $childHandle.Success) {
             $processId = [int]$process.ParentProcessId
             continue
         }
@@ -227,16 +219,15 @@ function Test-OnePasswordBridgeProcess {
                 '(?i)(?:^|\s)--environment(?:=|\s+)"?(?<id>[A-Za-z0-9_-]{8,128})"?(?=\s|$)'
             )
             if ($opEnvironment.Success) {
-                $pipeClient = [System.IO.Pipes.NamedPipeClientStream]::new(
-                    '.',
-                    $childPipe.Groups['name'].Value,
-                    [System.IO.Pipes.PipeDirection]::InOut,
-                    [System.IO.Pipes.PipeOptions]::None
+                $bridgeClient = [System.IO.Pipes.AnonymousPipeClientStream]::new(
+                    [System.IO.Pipes.PipeDirection]::Out,
+                    $childHandle.Groups['handle'].Value
                 )
                 try {
-                    $pipeClient.Connect(5000)
-                    $serverProcessId = Get-OnePasswordBridgePipeServerProcessId -PipeClient $pipeClient
+                    $serverProcessId = Get-OnePasswordBridgePipeServerProcessId -PipeClient $bridgeClient
                     if ($serverProcessId -gt 0 -and (Test-OnePasswordBridgeServerAncestor -ServerProcessId $serverProcessId)) {
+                        $bridgeClient.WriteByte(165)
+                        $bridgeClient.Flush()
                         return $true
                     }
                 } catch [System.TimeoutException] {
@@ -244,7 +235,7 @@ function Test-OnePasswordBridgeProcess {
                 } catch {
                     # Any pipe or ancestry failure is an authentication failure.
                 } finally {
-                    $pipeClient.Dispose()
+                    $bridgeClient.Dispose()
                 }
             }
             $processId = $parentId

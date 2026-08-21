@@ -51,7 +51,7 @@ Assert-Throws {
 
 $boundParameters = @{
     OnePasswordEnvironmentId = 'blgexucrwfr2dtsxe2q4uu7dp4'
-    OnePasswordBridgePipeName = 'caller-controlled-value-must-not-forward'
+    OnePasswordBridgeHandle = 'caller-controlled-value-must-not-forward'
     IpAddress = '192.0.2.10'
     SkipBuild = [System.Management.Automation.SwitchParameter]::new($true)
 }
@@ -139,16 +139,18 @@ if (-not $scriptText.Contains('deploy-wheel\.ps1', [System.StringComparison]::Or
 if (-not $scriptText.Contains('$opEnvironment.Success', [System.StringComparison]::Ordinal)) {
     throw 'The bridge child must bind op --environment to the requested Environment ID.'
 }
-if (-not $scriptText.Contains('NamedPipeServerStream', [System.StringComparison]::Ordinal) -or
-    -not $scriptText.Contains('NamedPipeClientStream', [System.StringComparison]::Ordinal) -or
-    -not $scriptText.Contains('BeginWaitForConnection', [System.StringComparison]::Ordinal) -or
+if (-not $scriptText.Contains('AnonymousPipeServerStream', [System.StringComparison]::Ordinal) -or
+    -not $scriptText.Contains('AnonymousPipeClientStream', [System.StringComparison]::Ordinal) -or
+    -not $scriptText.Contains('GetClientHandleAsString', [System.StringComparison]::Ordinal) -or
+    -not $scriptText.Contains('HandleInheritability]::Inheritable', [System.StringComparison]::Ordinal) -or
     -not $scriptText.Contains('GetNamedPipeServerProcessId', [System.StringComparison]::Ordinal) -or
     -not $scriptText.Contains('Test-OnePasswordBridgeServerAncestor', [System.StringComparison]::Ordinal)) {
-    throw 'The bridge must bind the child to a private named-pipe server owned by its process ancestry.'
+    throw 'The bridge must bind the child to an inherited anonymous-pipe handle owned by its process ancestry.'
 }
 if ($scriptText.Contains('OnePasswordBridgeNonce', [System.StringComparison]::Ordinal) -or
-    $scriptText.Contains('OnePasswordBridgeEnvironmentId', [System.StringComparison]::Ordinal)) {
-    throw 'Bridge authorization must not use caller-controlled Environment or nonce parameters.'
+    $scriptText.Contains('OnePasswordBridgeEnvironmentId', [System.StringComparison]::Ordinal) -or
+    $scriptText.Contains('OnePasswordBridgePipeName', [System.StringComparison]::Ordinal)) {
+    throw 'Bridge authorization must not use caller-controlled Environment, nonce, or pipe-name parameters.'
 }
 if (-not $scriptText.Contains('read_paramiko_command_output', [System.StringComparison]::Ordinal) -or
     -not $scriptText.Contains('recv_stderr_ready', [System.StringComparison]::Ordinal) -or

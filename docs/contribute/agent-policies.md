@@ -674,10 +674,11 @@ Terminal order:
   closed when its CLI capability, authorization, Environment, or variable is unavailable. Never pass a password
   argument, create a local `.env`, set `DEFAULT_ADMIN_PASSWORD` in the caller, or use the retired
   `ATLASO_DEPLOY_SSH_PASSWORD` fallback. The bridge must bind the child to the exact Environment ID selected by the
-  trusted parent and a fresh private Windows named-pipe server whose owning process is in the child process ancestry;
-  caller-controlled child command-line values must not authorize password consumption. This permits a documented launch
-  from an existing PowerShell prompt while an unrelated interactive `op run` shell fails closed. Password-backed
-  Paramiko must load system known hosts and reject unknown keys.
+  trusted parent and an inheritable anonymous Windows pipe handle created by that parent; the child must verify the
+  handle's server process is in its process ancestry and acknowledge the handle before consuming any password. Caller-
+  controlled child command-line values must not authorize password consumption. This permits a documented launch from
+  an existing PowerShell prompt while an unrelated interactive `op run` shell fails closed. Password-backed Paramiko
+  must load system known hosts and reject unknown keys.
   If uvicorn needs longer after reinstall, pass `-ReadinessTimeoutSeconds 120`. Use `-SkipHelperSync` only when the
   appliance helper is intentionally unchanged.
 - The wheel helper's `RemoteDirectory` is one shared pre-upload contract for key/agent and password-backed SSH. Accept

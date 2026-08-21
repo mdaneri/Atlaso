@@ -1623,15 +1623,18 @@ def test_vmware_deploy_wheel_supports_secure_onepassword_password_deploy():
     assert "Remove-Item Env:\\DEFAULT_ADMIN_PASSWORD" in script
     assert "The deployment password was not supplied by an authenticated 1Password Environment subprocess" in script
     assert "deploy-wheel\\.ps1" in script
-    assert "NamedPipeServerStream" in script
-    assert "NamedPipeClientStream" in script
+    assert "AnonymousPipeServerStream" in script
+    assert "AnonymousPipeClientStream" in script
+    assert "GetClientHandleAsString" in script
+    assert "HandleInheritability]::Inheritable" in script
     assert "GetNamedPipeServerProcessId" in script
     assert "Test-OnePasswordBridgeServerAncestor" in script
     assert "read_paramiko_command_output" in script
     assert "recv_stderr_ready" in script
-    assert "[System.IO.Pipes.PipeDirection]::InOut" in script
-    assert "[System.IO.Pipes.PipeOptions]::Asynchronous" in script
-    assert "pipe server process is in the child process ancestry" in readme
+    assert "[System.IO.Pipes.PipeDirection]::In" in script
+    assert "[System.IO.Pipes.PipeDirection]::Out" in script
+    assert "[System.IO.HandleInheritability]::Inheritable" in script
+    assert "handle's server process is in its process ancestry" in readme
     assert "$invokingProcess.CommandLine" not in script
     assert "client.set_missing_host_key_policy(paramiko.RejectPolicy())" in script
     assert "client.load_system_host_keys()" in script

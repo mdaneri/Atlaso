@@ -1396,10 +1396,11 @@ opaque Environment ID from that exact Environment and pass only the ID above. Th
 deployment process. The helper fails closed when the CLI capability, authorization, Environment, or variable is missing;
 it never accepts a password argument, local `.env` file, or the retired `ATLASO_DEPLOY_SSH_PASSWORD` fallback.
 The bounded child authenticates the `op.exe` ancestry and requires the exact Environment selected by that trusted
-parent. It also requires a fresh private Windows named-pipe server created by the bridge parent, and verifies that the
-pipe server process is in the child process ancestry. This permits the documented command to start from an existing
-PowerShell prompt while an interactive `op run` shell that did not launch this bridge still fails closed; caller-
-controlled child command-line values cannot authorize password consumption.
+parent. It also requires an inheritable anonymous Windows pipe handle created by the bridge parent. The child verifies
+the handle's server process is in its process ancestry and acknowledges the handle before consuming the password;
+the handle is not a nameable pipe credential that a direct command can supply. This permits the documented command to
+start from an existing PowerShell prompt while an interactive `op run` shell that did not launch this bridge still fails
+closed.
 
 The child uses the local Python runtime and Paramiko so SSH and sudo do not prompt interactively. Paramiko loads the
 user's SSH known-hosts database and rejects unknown host keys; approve the verified appliance host key before running
