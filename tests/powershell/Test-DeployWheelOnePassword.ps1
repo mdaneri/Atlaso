@@ -139,7 +139,8 @@ if (-not $scriptText.Contains('Get-CimInstance -ClassName Win32_Process', [Syste
 }
 if (-not $scriptText.Contains('Test-OnePasswordEnvironmentPasswordProof', [System.StringComparison]::Ordinal) -or
     -not $scriptText.Contains('HMACSHA256', [System.StringComparison]::Ordinal) -or
-    -not $scriptText.Contains('OnePasswordBridgeChallenge', [System.StringComparison]::Ordinal)) {
+    -not $scriptText.Contains('OnePasswordBridgeChallenge', [System.StringComparison]::Ordinal) -or
+    -not $scriptText.Contains('-CommandWithArgs', [System.StringComparison]::Ordinal)) {
     throw 'The bridge child must bind the inherited handle to an exact Environment password proof.'
 }
 if (-not $scriptText.Contains('Test-OnePasswordBridgeProcess', [System.StringComparison]::Ordinal)) {

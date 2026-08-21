@@ -1583,6 +1583,7 @@ def test_vmware_deploy_wheel_supports_secure_onepassword_password_deploy():
     assert "Test-OnePasswordEnvironmentPasswordProof" in script
     assert "HMACSHA256" in script
     assert "OnePasswordBridgeChallenge" in script
+    assert "-CommandWithArgs" in script
     assert "[switch]$OnePasswordEnvironmentChild" not in script
     assert "function Invoke-OnePasswordEnvironmentBridge" in script
     assert "--environment $EnvironmentId" in script

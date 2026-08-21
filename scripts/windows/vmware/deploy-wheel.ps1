@@ -206,7 +206,7 @@ function Test-OnePasswordEnvironmentPasswordProof {
         return $false
     }
     $verificationScript = '$password = [Environment]::GetEnvironmentVariable("DEFAULT_ADMIN_PASSWORD"); if ([string]::IsNullOrEmpty($password)) { exit 41 }; $hmac = [System.Security.Cryptography.HMACSHA256]::new([System.Text.Encoding]::UTF8.GetBytes($password)); try { [Convert]::ToHexString($hmac.ComputeHash([Convert]::FromHexString($args[0]))) } finally { $hmac.Dispose() }'
-    $verificationOutput = (& $opPath run --environment $EnvironmentId -- $pwsh.Source -NoLogo -NoProfile -NonInteractive -Command $verificationScript $Challenge 2>$null | Out-String).Trim()
+    $verificationOutput = (& $opPath run --environment $EnvironmentId -- $pwsh.Source -NoLogo -NoProfile -NonInteractive -CommandWithArgs $verificationScript $Challenge 2>$null | Out-String).Trim()
     return $LASTEXITCODE -eq 0 -and [string]::Equals($verificationOutput, $expectedProof, [System.StringComparison]::OrdinalIgnoreCase)
 }
 
