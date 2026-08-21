@@ -1407,7 +1407,8 @@ The child uses the local Python runtime and Paramiko so SSH and sudo do not prom
 user's SSH known-hosts database and rejects unknown host keys; approve the verified appliance host key before running
 the deployment. It drains non-PTY stdout and stderr concurrently so a verbose remote failure cannot block on one
 channel and enforces the separate `-DeploymentTimeoutSeconds` remote-command deadline; the remote readiness retry keeps
-its independent `-ReadinessTimeoutSeconds` allowance. If the selected Python cannot already import Paramiko, the helper installs it and its dependencies into
+its independent `-ReadinessTimeoutSeconds` allowance. If the selected Python cannot already import Paramiko, the
+helper installs it and its dependencies into
 a temporary deployment directory from the wheels downloaded under `dist`; it does not modify the global Python
 environment. Without `-OnePasswordEnvironmentId`, the helper preserves the original `scp`/`ssh` key or agent workflow.
 Helper sync matters because the privileged helper is installed outside the Python virtualenv and is not replaced by
@@ -1424,8 +1425,8 @@ apostrophes, dollar signs, backticks, semicolons, other shell metacharacters, or
 than reinterpreted. The key/agent branch also serializes each argument at the remote shell boundary. On Windows, it
 keeps each `scp` source and destination as separate native arguments and sends the remote POSIX command through a
 single-argument `sh -lc` wrapper containing only a base64-encoded, secret-free command. Password-backed SSH accepts
-either password or one password-only keyboard-interactive challenge, rejects unexpected and OTP/MFA prompts, and sends the sudo
-password over a non-PTY stdin handoff with `sudo -S -p ''`.
+either password or one password-only keyboard-interactive challenge, rejects unexpected and OTP/MFA prompts, and sends
+the sudo password over a non-PTY stdin handoff with `sudo -S -p ''`.
 
 Pass `-IncludeLabNetworkAdapters` only after `VMnet2`, `VMnet3`, and `VMnet4` exist for the SiteA, WAN/SiteB, and
 trunk-like validation networks.
