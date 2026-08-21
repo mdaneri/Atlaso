@@ -1633,6 +1633,8 @@ def test_vmware_deploy_wheel_supports_secure_onepassword_password_deploy():
     assert "$invokingProcess.CommandLine" not in script
     assert "client.set_missing_host_key_policy(paramiko.RejectPolicy())" in script
     assert "client.load_system_host_keys()" in script
+    assert "transport.get_security_options()" in script
+    assert "security_options.key_types" in script
     assert "auth_interactive" in script
     assert "connect_password_or_keyboard_interactive" in script
     assert "one[- ]?time" in script

@@ -112,6 +112,10 @@ if (-not $scriptText.Contains('Invoke-OnePasswordBoundedCommand', [System.String
 if (-not $scriptText.Contains('paramiko.RejectPolicy()', [System.StringComparison]::Ordinal)) {
     throw 'Password-backed deployment must reject unknown SSH host keys.'
 }
+if (-not $scriptText.Contains('transport.get_security_options()', [System.StringComparison]::Ordinal) -or
+    -not $scriptText.Contains('security_options.key_types', [System.StringComparison]::Ordinal)) {
+    throw 'Password-backed deployment must prefer the recorded SSH host-key type before negotiation.'
+}
 if (-not $scriptText.Contains('auth_interactive', [System.StringComparison]::Ordinal) -or
     -not $scriptText.Contains('connect_password_or_keyboard_interactive', [System.StringComparison]::Ordinal)) {
     throw 'Password-backed deployment must support keyboard-interactive SSH authentication.'

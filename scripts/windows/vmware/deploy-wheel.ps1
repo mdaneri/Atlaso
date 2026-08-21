@@ -528,19 +528,36 @@ def connect_password_or_keyboard_interactive(client, host, username, password):
     sock = socket.create_connection((host, 22), timeout=15)
     transport = paramiko.Transport(sock)
     try:
-        transport.start_client(timeout=15)
-        server_key = transport.get_remote_server_key()
         known_key_entry = None
         for host_keys in (client._system_host_keys, client._host_keys):
             host_key_entry = host_keys.lookup(host)
             if host_key_entry:
                 known_key_entry = host_key_entry
-                if any(server_key == expected_key for expected_key in host_key_entry.values()):
-                    break
-                expected_key = next(iter(host_key_entry.values()))
-                raise paramiko.BadHostKeyException(host, server_key, expected_key)
+                break
+        if known_key_entry is not None:
+            # Match SSHClient.connect: negotiate the recorded host-key type first so a
+            # different server key type cannot win before strict known-host checking.
+            key_type = next(iter(known_key_entry.keys()))
+            security_options = transport.get_security_options()
+            if key_type == "ssh-rsa":
+                if "rsa-sha2-512" in security_options.key_types:
+                    key_type = "rsa-sha2-512"
+                elif "rsa-sha2-256" in security_options.key_types:
+                    key_type = "rsa-sha2-256"
+                elif "ssh-rsa" not in security_options.key_types:
+                    raise paramiko.SSHException("Recorded SSH host-key type is unavailable.")
+            if key_type not in security_options.key_types:
+                raise paramiko.SSHException("Recorded SSH host-key type is unavailable.")
+            other_key_types = [item for item in security_options.key_types if item != key_type]
+            security_options.key_types = [key_type] + other_key_types
+
+        transport.start_client(timeout=15)
+        server_key = transport.get_remote_server_key()
         if known_key_entry is None:
             client._policy.missing_host_key(client, host, server_key)
+        elif not any(server_key == expected_key for expected_key in known_key_entry.values()):
+            expected_key = next(iter(known_key_entry.values()))
+            raise paramiko.BadHostKeyException(host, server_key, expected_key)
 
         try:
             transport.auth_password(username, password, fallback=False)
