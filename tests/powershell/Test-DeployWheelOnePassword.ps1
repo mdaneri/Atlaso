@@ -101,6 +101,11 @@ if (-not $scriptText.Contains('DEFAULT_ADMIN_PASSWORD', [System.StringComparison
     -not $scriptText.Contains('os.environ.pop("DEFAULT_ADMIN_PASSWORD", "")', [System.StringComparison]::Ordinal)) {
     throw 'The bounded deployment child must consume and immediately clear the exact Environment variable.'
 }
+if (-not $scriptText.Contains("'-I', '-S', $pythonDeploy", [System.StringComparison]::Ordinal) -or
+    -not $scriptText.Contains("'--dependency-path', $pythonDependencyPath", [System.StringComparison]::Ordinal) -or
+    $scriptText.Contains('$env:PYTHONPATH', [System.StringComparison]::Ordinal)) {
+    throw 'The bounded Python child must disable startup hooks and load only its explicit dependency path.'
+}
 if (-not $scriptText.Contains('Invoke-OnePasswordBoundedCommand', [System.StringComparison]::Ordinal)) {
     throw 'Password deployment must use the supported direct op run child handoff.'
 }

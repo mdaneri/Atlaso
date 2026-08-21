@@ -1394,10 +1394,12 @@ using the password-backed path, authenticate the local 1Password integration, ve
 opaque Environment ID from that exact Environment and pass only the ID above. The parent performs local build and input
 preparation without the credential, then invokes the bounded Paramiko helper directly as
 `op run --environment <id> -- <python> ...`; 1Password provisions `DEFAULT_ADMIN_PASSWORD` only into that child
-deployment process. The child removes the variable from its process environment immediately after capture, and the
-helper fails closed when the CLI capability, authorization, Environment, or variable is missing. It never accepts a
-password argument, local `.env` file, or the retired `ATLASO_DEPLOY_SSH_PASSWORD` fallback. An interactive `op run`
-shell is not a supported substitute for the exact Environment handoff.
+deployment process. The child removes the variable from its process environment immediately after capture, then starts
+Python with `-I -S` and prepends only its explicit dependency directory, so `sitecustomize`, `usercustomize`, executable
+`.pth` hooks, and inherited `PYTHONPATH` cannot observe the variable. The helper fails closed when the CLI capability,
+authorization, Environment, or variable is missing. It never accepts a password argument, local `.env` file, or the
+retired `ATLASO_DEPLOY_SSH_PASSWORD` fallback. An interactive `op run` shell is not a supported substitute for the
+exact Environment handoff.
 
 The child uses the local Python runtime and Paramiko so SSH and sudo do not prompt interactively. Paramiko loads the
 user's SSH known-hosts database and rejects unknown host keys; approve the verified appliance host key before running

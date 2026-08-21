@@ -27,7 +27,9 @@ prompts, and uses a separate deployment timeout from the readiness allowance wit
 `ATLASO_DEPLOY_SSH_PASSWORD` fallback. The PowerShell parent performs local build and input preparation without the
 credential, then invokes the Paramiko helper directly as `op run --environment <id> -- <python> ...`; `op` supplies
 `DEFAULT_ADMIN_PASSWORD` only to that bounded child, which removes it from its process environment immediately after
-capture. An interactive `op run` shell is not a supported substitute for the exact Environment handoff.
+capture. The child starts Python with `-I -S` and an explicit dependency path so startup hooks and inherited
+`PYTHONPATH` cannot observe the variable. An interactive `op run` shell is not a supported substitute for the exact
+Environment handoff.
 
 Atlaso can run a VMware Workstation lifecycle lab alongside the Hyper-V lab. The Workstation path uses VMX/VMDK
 artifacts and `vmrun.exe`, then delegates appliance behavior checks to the shared Python lifecycle runner.

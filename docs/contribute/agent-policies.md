@@ -676,8 +676,9 @@ Terminal order:
   `ATLASO_DEPLOY_SSH_PASSWORD` fallback. The parent must perform local build and input preparation without the
   credential, then invoke the bounded Paramiko helper directly as `op run --environment <id> -- <python> ...` so the
   exact Environment supplies `DEFAULT_ADMIN_PASSWORD` only to that subprocess. The child must remove the variable
-  immediately after capture; caller-controlled child command-line values or an interactive `op run` shell must not
-  authorize password consumption. Password-backed Paramiko
+  immediately after capture, start Python with `-I -S`, and prepend only its explicit dependency path; caller-controlled
+  child command-line values, startup hooks, inherited `PYTHONPATH`, or an interactive `op run` shell must not observe
+  or authorize password consumption. Password-backed Paramiko
   must load system known hosts and reject unknown keys; accept only one non-echoing account-password prompt and reject
   OTP/MFA or verification-code wording. Keep the password-backed remote-command timeout separate from the readiness
   timeout so a long but progressing deployment is not cut off by the post-restart readiness allowance.

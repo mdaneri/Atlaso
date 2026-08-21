@@ -1590,7 +1590,9 @@ def test_vmware_deploy_wheel_supports_secure_onepassword_password_deploy():
     assert "'--no-index'" in script
     assert "'--find-links', $wheelDirectory" in script
     assert "'--target', $dependencyDirectory" in script
-    assert "$env:PYTHONPATH" in script
+    assert "'-I', '-S', $pythonDeploy" in script
+    assert "'--dependency-path', $pythonDependencyPath" in script
+    assert "$env:PYTHONPATH" not in script
     assert "function Invoke-PasswordBackedDeploy" in script
     assert "import paramiko" in script
     assert 'sys.stdout.reconfigure(errors="replace")' in script
@@ -1619,6 +1621,8 @@ def test_vmware_deploy_wheel_supports_secure_onepassword_password_deploy():
     assert "systemctl restart atlaso-worker.service" in script
     assert "systemctl is-active atlaso-worker.service" in script
     assert 'os.environ.pop("DEFAULT_ADMIN_PASSWORD", "")' in script
+    assert 'parser.add_argument("--dependency-path", required=True)' in script
+    assert "sys.path.insert(0, args.dependency_path)" in script
     assert "op run --environment <id> -- <python> ..." in readme
     assert "An interactive `op run`" in readme
     assert "read_paramiko_command_output" in script

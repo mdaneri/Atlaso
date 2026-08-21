@@ -296,15 +296,21 @@ function Initialize-PasswordDeployPythonPath {
         [Parameter(Mandatory = $true)][string]$TemporaryDirectory
     )
 
-    $paramikoAvailable = $false
+    $pythonLibraryPath = ''
     try {
-        & $PythonCommand -c 'import paramiko' 2>$null
-        $paramikoAvailable = $LASTEXITCODE -eq 0
+        $pythonLibraryPath = (& $PythonCommand -I -S -c 'import sysconfig; print(sysconfig.get_paths()["purelib"])' 2>$null | Out-String).Trim()
     } catch {
-        $paramikoAvailable = $false
+        $pythonLibraryPath = ''
     }
-    if ($paramikoAvailable) {
-        return ''
+    if ($LASTEXITCODE -eq 0 -and $pythonLibraryPath -and (Test-Path -LiteralPath $pythonLibraryPath -PathType Container)) {
+        try {
+            & $PythonCommand -I -S -c 'import sys, sysconfig; sys.path.insert(0, sysconfig.get_paths()["purelib"]); import paramiko' 2>$null
+            if ($LASTEXITCODE -eq 0) {
+                return $pythonLibraryPath
+            }
+        } catch {
+            # Fall through to the isolated temporary dependency path.
+        }
     }
 
     $wheelDirectory = Join-Path $WorkingDirectory 'dist'
@@ -390,14 +396,6 @@ if hasattr(sys.stdout, "reconfigure"):
 if hasattr(sys.stderr, "reconfigure"):
     sys.stderr.reconfigure(errors="replace")
 
-try:
-    import paramiko
-except ImportError as exc:
-    raise SystemExit(
-        "Paramiko could not be loaded for password-backed deployment after dependency preparation. "
-        "Rerun without -SkipBuild or install the Atlaso Python dependencies."
-    ) from exc
-
 
 def shell_quote(value):
     return shlex.quote(str(value))
@@ -468,6 +466,7 @@ parser.add_argument("--remote-worker-service", required=True)
 parser.add_argument("--remote-atlaso-service-drop-in", required=True)
 parser.add_argument("--remote-nginx-service-drop-in", required=True)
 parser.add_argument("--remote-script", required=True)
+parser.add_argument("--dependency-path", required=True)
 parser.add_argument("--reset-vault-entries", action="store_true")
 parser.add_argument("--timeout", type=int, required=True)
 parser.add_argument("--readiness-timeout", type=int, required=True)
@@ -482,6 +481,15 @@ if not args.local_runtime_dependency or len(args.local_runtime_dependency) != le
 password = os.environ.pop("DEFAULT_ADMIN_PASSWORD", "")
 if not password:
     raise SystemExit("The exact 1Password Environment did not provide DEFAULT_ADMIN_PASSWORD.")
+
+sys.path.insert(0, args.dependency_path)
+try:
+    import paramiko
+except ImportError as exc:
+    raise SystemExit(
+        "Paramiko could not be loaded for password-backed deployment after isolated dependency preparation. "
+        "Rerun without -SkipBuild or install the Atlaso Python dependencies."
+    ) from exc
 
 uploads = [
     (pathlib.Path(args.local_wheel), args.remote_wheel),
@@ -626,21 +634,14 @@ finally:
 '@
     [System.IO.File]::WriteAllText($pythonDeploy, ($pythonDeploySource -replace "`r?`n", "`n"), [System.Text.UTF8Encoding]::new($false))
 
-    $previousPythonPath = $env:PYTHONPATH
     try {
-        $temporaryPythonPath = Initialize-PasswordDeployPythonPath `
+        $pythonDependencyPath = Initialize-PasswordDeployPythonPath `
             -PythonCommand $PythonCommand `
             -WorkingDirectory $WorkingDirectory `
             -TemporaryDirectory $passwordDeployDirectory
-        if ($temporaryPythonPath) {
-            $env:PYTHONPATH = if ($previousPythonPath) {
-                "$temporaryPythonPath$([System.IO.Path]::PathSeparator)$previousPythonPath"
-            } else {
-                $temporaryPythonPath
-            }
-        }
         $deployArguments = @(
-            $pythonDeploy,
+            '-I', '-S', $pythonDeploy,
+            '--dependency-path', $pythonDependencyPath,
             '--host', $HostAddress,
             '--user', $UserName,
             '--local-wheel', $LocalWheelPath,
@@ -706,11 +707,6 @@ finally:
             -Arguments $deployArguments `
             -WorkingDirectory $WorkingDirectory
     } finally {
-        if ($null -eq $previousPythonPath) {
-            Remove-Item Env:\PYTHONPATH -ErrorAction SilentlyContinue
-        } else {
-            $env:PYTHONPATH = $previousPythonPath
-        }
         Remove-Item -LiteralPath $passwordDeployDirectory -Recurse -Force -ErrorAction SilentlyContinue
     }
 }
