@@ -533,7 +533,10 @@ The following cross-cutting boundaries always apply:
   and give each request its own protected staging file so failed admission removes only that request's secret. Keep
   submitted values out of the database, marker, jobs, audits, logs, and UI responses. Keep the recovery marker pending
   until Atlaso, worker, nginx, and stable management OpenAPI readiness are verified after restart. Run every real
-  mutating helper and nested account mutation in an exact UUID-named `atlaso-helper-action-*` transient service. After
+  Bind the privileged runner and finalizer to the admitted root-owned state directory through a pinned, no-follow
+  descriptor so replacement beneath the service-owned parent cannot redirect recovery state or credential access. Run
+  every real mutating helper and nested account mutation in an exact UUID-named `atlaso-helper-action-*` transient
+  service. After
   stopping Atlaso callers, reset must stop and verify those services, cancel and verify any pre-existing fixed-name
   management restart timer and service, and reverify the callers are inactive before inventorying delayed
   update-restart units. After transient automation units are quiescent, durably clear their bounded managed-script and

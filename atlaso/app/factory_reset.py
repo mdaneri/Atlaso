@@ -14,6 +14,7 @@ import tempfile
 import time
 from collections.abc import Iterator
 from contextlib import closing, contextmanager
+from contextvars import ContextVar, Token
 from datetime import datetime, timezone
 from http.client import HTTPConnection
 from pathlib import Path
@@ -99,6 +100,10 @@ WEB_TERMINAL_CREDENTIAL_PATHS = (
 WEB_TERMINAL_REQUEST_DIRECTORY = Path("/var/lib/atlaso/web-terminal/requests")
 FACTORY_RESET_PASSWORD_ACTIONS = frozenset({"keep", "change"})
 FACTORY_RESET_CREDENTIALS_MAX_BYTES = 16 * 1024
+_PINNED_FACTORY_RESET_DIRECTORY_FD: ContextVar[int | None] = ContextVar(
+    "pinned_factory_reset_directory_fd",
+    default=None,
+)
 
 
 class FactoryResetError(RuntimeError):
@@ -230,6 +235,9 @@ def _running_as_posix_root() -> bool:
 
 def factory_reset_state_directory() -> Path:
     """Return the configured factory-reset state directory."""
+    pinned_descriptor = _PINNED_FACTORY_RESET_DIRECTORY_FD.get()
+    if pinned_descriptor is not None:
+        return Path(f"/proc/self/fd/{pinned_descriptor}")
     override = os.environ.get("ATLASO_FACTORY_RESET_STATE_DIRECTORY", "").strip()
     return Path(override) if override else FACTORY_RESET_STATE_DIRECTORY
 
@@ -252,19 +260,43 @@ def factory_reset_credentials_path() -> Path:
 def _factory_reset_credential_plan() -> dict[str, str]:
     """Read and validate the durable factory-reset password choices."""
     path = factory_reset_credentials_path()
-    if path.is_symlink():
-        raise FactoryResetError("Factory reset credential state is unsafe.")
-    if not path.exists():
-        return {"admin_action": "keep", "root_action": "keep"}
-    if not path.is_file() or path.resolve() != path:
-        raise FactoryResetError("Factory reset credential state is unsafe.")
     try:
-        file_stat = path.stat()
+        pinned_descriptor = _PINNED_FACTORY_RESET_DIRECTORY_FD.get()
+        if pinned_descriptor is not None:
+            credential_descriptor = os.open(
+                FACTORY_RESET_CREDENTIALS_NAME,
+                os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0),
+                dir_fd=pinned_descriptor,
+            )
+            try:
+                file_stat = os.fstat(credential_descriptor)
+                if not stat.S_ISREG(file_stat.st_mode):
+                    raise FactoryResetError("Factory reset credential state is unsafe.")
+                if file_stat.st_size > FACTORY_RESET_CREDENTIALS_MAX_BYTES:
+                    raise FactoryResetError("Factory reset credential state is too large.")
+                if file_stat.st_mode & 0o077 or file_stat.st_uid != 0:
+                    raise FactoryResetError("Factory reset credential state is unsafe.")
+                with os.fdopen(credential_descriptor, encoding="utf-8") as handle:
+                    credential_descriptor = -1
+                    payload = json.load(handle)
+            finally:
+                if credential_descriptor >= 0:
+                    os.close(credential_descriptor)
+        else:
+            if path.is_symlink():
+                raise FactoryResetError("Factory reset credential state is unsafe.")
+            if not path.exists():
+                return {"admin_action": "keep", "root_action": "keep"}
+            if not path.is_file() or path.resolve() != path:
+                raise FactoryResetError("Factory reset credential state is unsafe.")
+            file_stat = path.stat()
+            payload = json.loads(path.read_text(encoding="utf-8"))
         if file_stat.st_size > FACTORY_RESET_CREDENTIALS_MAX_BYTES:
             raise FactoryResetError("Factory reset credential state is too large.")
         if os.name == "posix" and (file_stat.st_mode & 0o077 or file_stat.st_uid != 0):
             raise FactoryResetError("Factory reset credential state is unsafe.")
-        payload = json.loads(path.read_text(encoding="utf-8"))
+    except FileNotFoundError:
+        return {"admin_action": "keep", "root_action": "keep"}
     except (OSError, UnicodeError, json.JSONDecodeError) as exc:
         raise FactoryResetError("Factory reset credential state is invalid.") from exc
     if not isinstance(payload, dict) or payload.get("schema_version") != 1:
@@ -297,6 +329,35 @@ def _factory_reset_credential_plan() -> dict[str, str]:
     return plan
 
 
+def _open_factory_reset_state_directory(path: Path) -> int:
+    """Open the root-owned state directory without following any path component.
+
+    Args:
+        path: Exact absolute factory-reset state directory admitted by the helper.
+    """
+    if not path.is_absolute():
+        raise FactoryResetError("Factory reset state directory is not absolute.")
+    directory_flags = os.O_RDONLY | getattr(os, "O_DIRECTORY", 0)
+    nofollow = getattr(os, "O_NOFOLLOW", 0)
+    descriptor = os.open(path.anchor, directory_flags)
+    try:
+        for component in path.parts[1:]:
+            next_descriptor = os.open(
+                component,
+                directory_flags | nofollow,
+                dir_fd=descriptor,
+            )
+            os.close(descriptor)
+            descriptor = next_descriptor
+        directory_stat = os.fstat(descriptor)
+        if directory_stat.st_uid != 0 or directory_stat.st_mode & 0o022:
+            raise FactoryResetError("Factory reset state directory is unsafe.")
+        return descriptor
+    except Exception:
+        os.close(descriptor)
+        raise
+
+
 @contextmanager
 def _factory_reset_transaction_lock(*, wait_seconds: float = 0) -> Iterator[None]:
     """Admit exactly one reset runner on the POSIX appliance.
@@ -304,32 +365,66 @@ def _factory_reset_transaction_lock(*, wait_seconds: float = 0) -> Iterator[None
     Args:
         wait_seconds: Maximum time to wait for the reset lock.
     """
-    state_directory = factory_reset_state_directory()
-    state_directory.mkdir(parents=True, exist_ok=True)
-    state_directory.chmod(0o750)
+    raw_state_directory = factory_reset_state_directory()
+    pinned_descriptor: int | None = None
+    pinned_token: Token[int | None] | None = None
     if _running_as_posix_root():
-        shutil.chown(state_directory, user="root", group=ATLASO_SERVICE_USER)
-    lock_path = state_directory / FACTORY_RESET_LOCK_NAME
-    with lock_path.open("a+b") as lock_handle:
-        lock_path.chmod(0o600)
-        if _running_as_posix_root():
-            shutil.chown(lock_path, user="root", group=ATLASO_SERVICE_USER)
-        if os.name == "posix":
-            fcntl = cast(Any, __import__("fcntl"))
-            deadline = time.monotonic() + wait_seconds
-            while True:
-                try:
-                    fcntl.flock(lock_handle.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
-                    break
-                except BlockingIOError as exc:
-                    if time.monotonic() >= deadline:
-                        raise FactoryResetError("A factory reset transaction is already running.") from exc
-                    time.sleep(min(0.25, max(0, deadline - time.monotonic())))
         try:
-            yield
-        finally:
+            pinned_descriptor = _open_factory_reset_state_directory(raw_state_directory)
+        except OSError as exc:
+            raise FactoryResetError("Factory reset state directory is unsafe.") from exc
+        pinned_token = _PINNED_FACTORY_RESET_DIRECTORY_FD.set(pinned_descriptor)
+        lock_descriptor: int | None = None
+        try:
+            lock_descriptor = os.open(
+                FACTORY_RESET_LOCK_NAME,
+                os.O_RDWR | os.O_CREAT | getattr(os, "O_NOFOLLOW", 0),
+                0o600,
+                dir_fd=pinned_descriptor,
+            )
+            lock_handle_context = os.fdopen(lock_descriptor, "a+b")
+            lock_descriptor = None
+        except Exception:
+            if lock_descriptor is not None:
+                os.close(lock_descriptor)
+            _PINNED_FACTORY_RESET_DIRECTORY_FD.reset(pinned_token)
+            os.close(pinned_descriptor)
+            raise
+    else:
+        raw_state_directory.mkdir(parents=True, exist_ok=True)
+        raw_state_directory.chmod(0o750)
+        lock_path = raw_state_directory / FACTORY_RESET_LOCK_NAME
+        lock_handle_context = lock_path.open("a+b")
+    try:
+        with lock_handle_context as lock_handle:
+            os.fchmod(lock_handle.fileno(), 0o600)
+            if _running_as_posix_root():
+                shutil.chown(
+                    factory_reset_state_directory() / FACTORY_RESET_LOCK_NAME,
+                    user="root",
+                    group=ATLASO_SERVICE_USER,
+                )
             if os.name == "posix":
-                fcntl.flock(lock_handle.fileno(), fcntl.LOCK_UN)
+                fcntl = cast(Any, __import__("fcntl"))
+                deadline = time.monotonic() + wait_seconds
+                while True:
+                    try:
+                        fcntl.flock(lock_handle.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+                        break
+                    except BlockingIOError as exc:
+                        if time.monotonic() >= deadline:
+                            raise FactoryResetError("A factory reset transaction is already running.") from exc
+                        time.sleep(min(0.25, max(0, deadline - time.monotonic())))
+            try:
+                yield
+            finally:
+                if os.name == "posix":
+                    fcntl.flock(lock_handle.fileno(), fcntl.LOCK_UN)
+    finally:
+        if pinned_token is not None:
+            _PINNED_FACTORY_RESET_DIRECTORY_FD.reset(pinned_token)
+        if pinned_descriptor is not None:
+            os.close(pinned_descriptor)
 
 
 def _write_json_atomic(path: Path, payload: dict[str, Any]) -> None:

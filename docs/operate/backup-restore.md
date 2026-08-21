@@ -42,10 +42,11 @@ upload the CA bundle again and review the registry settings before re-enabling i
 
 **Factory reset appliance** is not a settings-only restore and does not require a later Appliance Apply. After the
 administrator explicitly chooses whether to keep or change both the bootstrap administrator and root passwords and
-confirms the destructive action, Atlaso creates a durable non-secret recovery marker, stops database
-writers, builds a private replacement database, validates all generated runtime configuration, and activates the clean
-state for all 16 apply units. Only after the candidate passes validation does Atlaso atomically replace the active
-database. The management plane restarts and the initiating browser is handed back to sign-in.
+confirms the destructive action, Atlaso creates a durable non-secret recovery marker, and the privileged runner pins
+that admitted root-owned state directory without following links before it stops database writers, builds a private
+replacement database, validates all generated runtime configuration, and activates the clean state for all 16 apply
+units. Only after the candidate passes validation does Atlaso atomically replace the active database. The management
+plane restarts and the initiating browser is handed back to sign-in.
 
 The reset:
 

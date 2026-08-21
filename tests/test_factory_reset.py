@@ -2,6 +2,7 @@
 
 import builtins
 import json
+import os
 import subprocess
 import sys
 from contextlib import contextmanager
@@ -128,6 +129,45 @@ def test_factory_reset_runner_waits_for_admission_lock(monkeypatch):
 
     assert result == {"state": "succeeded"}
     assert observed_waits == [factory_reset.FACTORY_RESET_RUNNER_LOCK_WAIT_SECONDS]
+
+
+@pytest.mark.skipif(os.name != "posix", reason="requires POSIX descriptor paths")
+def test_factory_reset_runner_pins_admitted_state_directory(tmp_path):
+    """Runner state remains bound to the admitted directory after replacement.
+
+    Args:
+        tmp_path: Temporary directory provided by pytest for isolated filesystem state.
+    """
+    import atlaso.app.factory_reset as factory_reset
+
+    state_directory = tmp_path / "factory-reset"
+    state_directory.mkdir()
+    (state_directory / "request.json").write_text(
+        json.dumps({"schema_version": 1, "state": "scheduled"}),
+        encoding="utf-8",
+    )
+    descriptor = os.open(
+        state_directory,
+        os.O_RDONLY | getattr(os, "O_DIRECTORY", 0) | getattr(os, "O_NOFOLLOW", 0),
+    )
+    token = factory_reset._PINNED_FACTORY_RESET_DIRECTORY_FD.set(descriptor)
+    admitted_directory = tmp_path / "admitted-factory-reset"
+    outside_directory = tmp_path / "outside"
+    try:
+        state_directory.rename(admitted_directory)
+        outside_directory.mkdir()
+        state_directory.symlink_to(outside_directory, target_is_directory=True)
+
+        factory_reset._update_request("building", "Building factory state.")
+
+        admitted = json.loads(
+            (admitted_directory / "request.json").read_text(encoding="utf-8")
+        )
+        assert admitted["state"] == "building"
+        assert list(outside_directory.iterdir()) == []
+    finally:
+        factory_reset._PINNED_FACTORY_RESET_DIRECTORY_FD.reset(token)
+        os.close(descriptor)
 
 
 def test_factory_reset_stops_transient_helper_restart_and_automation_units(monkeypatch):
