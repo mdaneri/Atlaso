@@ -559,10 +559,12 @@ def test_factory_reset_scrubs_credentials_outside_apply_staging(tmp_path, monkey
     local_users_home = tmp_path / "users"
     bootstrap_ssh = local_users_home / "admin" / ".ssh"
     root_ssh = tmp_path / "root" / ".ssh"
+    ldap_recovery = tmp_path / "ldap" / "recovery"
     authorized_keys.mkdir()
     terminal_requests.mkdir(parents=True)
     bootstrap_ssh.mkdir(parents=True)
     root_ssh.mkdir(parents=True)
+    ldap_recovery.mkdir(parents=True)
     for path in (
         authorized_keys / "vcf-backup",
         terminal_requests / "request.json",
@@ -572,6 +574,7 @@ def test_factory_reset_scrubs_credentials_outside_apply_staging(tmp_path, monkey
         bootstrap_ssh / "authorized_keys2",
         root_ssh / "authorized_keys",
         root_ssh / "authorized_keys2",
+        ldap_recovery / "ldap-recovery-20260821040800.tar.gz",
     ):
         path.write_text("credential", encoding="utf-8")
     retained_home_file = local_users_home / "admin" / "profile.ps1"
@@ -589,6 +592,7 @@ def test_factory_reset_scrubs_credentials_outside_apply_staging(tmp_path, monkey
     )
     monkeypatch.setattr(factory_reset, "LOCAL_USERS_HOME_DIRECTORY", local_users_home)
     monkeypatch.setattr(factory_reset, "ROOT_SSH_DIRECTORY", root_ssh)
+    monkeypatch.setattr(factory_reset, "LDAP_RECOVERY_DIRECTORY", ldap_recovery)
     monkeypatch.setattr(
         factory_reset,
         "get_settings",
@@ -609,6 +613,7 @@ def test_factory_reset_scrubs_credentials_outside_apply_staging(tmp_path, monkey
     assert not (bootstrap_ssh / "authorized_keys2").exists()
     assert not (root_ssh / "authorized_keys").exists()
     assert not (root_ssh / "authorized_keys2").exists()
+    assert list(ldap_recovery.iterdir()) == []
     assert retained_home_file.read_text(encoding="utf-8") == "retained payload"
     assert retained_root_ssh_config.read_text(encoding="utf-8") == "retained root SSH config"
     assert set(synced_directories) == {
@@ -617,7 +622,33 @@ def test_factory_reset_scrubs_credentials_outside_apply_staging(tmp_path, monkey
         terminal_private_key.parent,
         bootstrap_ssh,
         root_ssh,
+        ldap_recovery,
     }
+
+
+def test_factory_reset_rejects_symlinked_ldap_recovery_staging(tmp_path, monkeypatch):
+    """Reset never follows a replacement LDAP recovery directory.
+
+    Args:
+        tmp_path: Temporary directory provided by pytest for isolated filesystem state.
+        monkeypatch: Pytest fixture used to replace fixed appliance paths.
+    """
+    import atlaso.app.factory_reset as factory_reset
+
+    outside = tmp_path / "outside"
+    outside.mkdir()
+    archive = outside / "ldap-recovery.tar.gz"
+    archive.write_text("password hashes", encoding="utf-8")
+    linked_recovery = tmp_path / "recovery"
+    linked_recovery.symlink_to(outside, target_is_directory=True)
+
+    with pytest.raises(FactoryResetError, match="directory is unsafe"):
+        factory_reset._clear_symlink_resistant_directory(
+            linked_recovery,
+            label="LDAP recovery staging",
+        )
+
+    assert archive.read_text(encoding="utf-8") == "password hashes"
 
 
 def test_factory_reset_rejects_unsafe_root_authorization_entry(tmp_path, monkeypatch):

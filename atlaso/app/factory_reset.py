@@ -84,6 +84,7 @@ SSH_AUTHORIZED_KEY_NAMES = ("authorized_keys", "authorized_keys2")
 AUTOMATION_TRANSIENT_UNIT_PATTERN = re.compile(r"^atlaso-automation-\d{20}\.service$")
 AUTOMATION_SCRIPT_DIRECTORY = Path("/var/lib/atlaso/automation/scripts")
 AUTOMATION_RUN_DIRECTORY = Path("/var/lib/atlaso/automation/runs")
+LDAP_RECOVERY_DIRECTORY = Path("/var/lib/atlaso/ldap/recovery")
 HELPER_ACTION_TRANSIENT_UNIT_PATTERN = re.compile(
     r"^atlaso-helper-action-[0-9a-f]{32}\.service$"
 )
@@ -738,15 +739,33 @@ def _clear_portable_directory(path: Path, *, label: str) -> None:
         return
     if path.is_symlink() or not path.is_dir() or path.resolve() != path:
         raise FactoryResetError(f"Factory reset {label} directory is unsafe: {path}")
+    removed = False
     for child in path.iterdir():
         if child.is_symlink() or child.is_file():
             child.unlink(missing_ok=True)
+            removed = True
         elif child.is_dir():
             shutil.rmtree(child)
+            removed = True
         else:
             raise FactoryResetError(
                 f"Factory reset {label} entry is unsafe: {child.name}"
             )
+    if removed:
+        _fsync_directory(path)
+
+
+def _clear_symlink_resistant_directory(path: Path, *, label: str) -> None:
+    """Durably clear one bounded directory without following its path.
+
+    Args:
+        path: Fixed directory whose transient contents must be removed.
+        label: Public-safe name used in validation failures.
+    """
+    if os.name == "posix":
+        _clear_posix_directory(path, label=label)
+    else:
+        _clear_portable_directory(path, label=label)
 
 
 def _clear_automation_transient_staging() -> None:
@@ -755,10 +774,7 @@ def _clear_automation_transient_staging() -> None:
         (AUTOMATION_SCRIPT_DIRECTORY, "automation script staging"),
         (AUTOMATION_RUN_DIRECTORY, "automation run staging"),
     ):
-        if os.name == "posix":
-            _clear_posix_directory(path, label=label)
-        else:
-            _clear_portable_directory(path, label=label)
+        _clear_symlink_resistant_directory(path, label=label)
 
 
 def _require_terminal_release_update() -> None:
@@ -1048,6 +1064,10 @@ def _scrub_retained_credentials() -> None:
     _clear_fixed_directory_contents(
         VCF_BACKUPS_AUTHORIZED_KEYS_DIRECTORY,
         label="VCF Backup authorized-key",
+    )
+    _clear_symlink_resistant_directory(
+        LDAP_RECOVERY_DIRECTORY,
+        label="LDAP recovery staging",
     )
     _scrub_bootstrap_authorized_keys()
     _scrub_root_authorized_keys()

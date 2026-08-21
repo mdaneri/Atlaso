@@ -61,6 +61,8 @@ The reset:
   managed-script and run staging directories before runtime activation so no in-flight helper, delayed update restart,
   console mutation, or pre-reset script with a loaded vault credential can outlive the reset transaction; readiness
   restarts and verifies the console with the other required services;
+- removes interrupted plaintext Managed LDAP recovery exports through a symlink-resistant bounded directory and
+  durably synchronizes that cleanup before the recovery marker advances;
 - recreates only factory/bootstrap records, including the bootstrap accounts, management `eth0`, the appliance DNS
   record, and built-in CA profiles; VCF Offline Depot download profiles are not recreated;
 - enables the minimum routing, firewall, authentication, and management-plane defaults while leaving optional services
