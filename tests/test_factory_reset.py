@@ -543,6 +543,71 @@ def test_fallback_sqlite_replacement_serializes_an_earlier_writer(tmp_path):
         ).fetchone() == (1,)
 
 
+def test_fallback_replacement_clears_credentials_staged_during_candidate(
+    tmp_path,
+    monkeypatch,
+):
+    """A successful fallback discards process-local staging added during reset.
+
+    Args:
+        tmp_path: Temporary directory provided by pytest for isolated SQLite files.
+        monkeypatch: Pytest fixture used to replace candidate construction.
+    """
+    from datetime import UTC, datetime
+
+    import atlaso.app.factory_reset as factory_reset
+    from atlaso.app.services.ldap import (
+        LDAP_PENDING_PASSWORDS,
+        LDAP_PENDING_RECOVERY_PAYLOADS,
+    )
+    from atlaso.app.services.local_users import (
+        pending_os_password_snapshot,
+        restore_pending_os_password_snapshot,
+    )
+
+    database_path = tmp_path / "atlaso.db"
+    engine = create_engine(f"sqlite:///{database_path}")
+    Base.metadata.create_all(engine)
+    session_factory = sessionmaker(bind=engine)
+
+    def build_candidate(*_args, **_kwargs):
+        """Model credentials staged by overlapping requests during candidate work.
+
+        Args:
+            *_args: Positional candidate arguments ignored by the test double.
+            **_kwargs: Keyword candidate arguments ignored by the test double.
+        """
+        restore_pending_os_password_snapshot(
+            {"late-user": ("late-password", datetime.now(UTC))}
+        )
+        LDAP_PENDING_PASSWORDS[41] = "late-ldap-password"
+        LDAP_PENDING_RECOVERY_PAYLOADS[42] = b"late-recovery-payload"
+        return 16
+
+    monkeypatch.setattr(factory_reset, "_candidate_database", build_candidate)
+    monkeypatch.setattr(
+        factory_reset,
+        "_replace_sqlite_database_contents",
+        lambda *_args, **_kwargs: None,
+    )
+    try:
+        with session_factory() as db:
+            assert factory_reset.replace_database_with_factory_candidate(
+                db,
+                database_url=f"sqlite:///{database_path}",
+                adapter=SystemAdapter(dry_run=True),
+            ) == 16
+
+        assert pending_os_password_snapshot() == {}
+        assert LDAP_PENDING_PASSWORDS == {}
+        assert LDAP_PENDING_RECOVERY_PAYLOADS == {}
+    finally:
+        restore_pending_os_password_snapshot({})
+        LDAP_PENDING_PASSWORDS.clear()
+        LDAP_PENDING_RECOVERY_PAYLOADS.clear()
+        engine.dispose()
+
+
 def test_factory_reset_scrubs_credentials_outside_apply_staging(tmp_path, monkeypatch):
     """Reset removes retained SSH and Web Terminal credentials without touching payloads.
 

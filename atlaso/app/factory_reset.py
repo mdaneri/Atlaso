@@ -1438,6 +1438,9 @@ def replace_database_with_factory_candidate(
         )
         db.rollback()
         _replace_sqlite_database_contents(source_path, candidate_path)
+        clear_all_pending_os_passwords()
+        LDAP_PENDING_PASSWORDS.clear()
+        LDAP_PENDING_RECOVERY_PAYLOADS.clear()
         db.expire_all()
         return unit_count
     except Exception:
