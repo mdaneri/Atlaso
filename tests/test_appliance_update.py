@@ -510,12 +510,64 @@ def test_appliance_update_page_and_dry_run_job(client):
 
 
 def test_install_action_has_server_rendered_fresh_check_reason(client):
-    """Keep the exact manual-install blocker available without JavaScript."""
+    """Show the blocker while retaining server-validated no-JavaScript submission."""
     login(client)
     page = client.get("/ui/management/appliance-update")
     assert page.status_code == 200
     assert "Check Photon OS successfully before installing it." in page.text
-    assert "data-appliance-update-install-action disabled" in page.text
+    assert "data-appliance-update-install-action disabled" not in page.text
+
+
+def test_no_javascript_install_can_submit_valid_subset_from_mixed_results(client):
+    """Let the server validate a selected subset when another stream failed."""
+    from atlaso.app import ui
+    from atlaso.app.database import SessionLocal
+    from atlaso.app.services.appliance_update import (
+        APPLIANCE_UPDATE_AVAILABILITY_KEY,
+        record_update_availability_attempt,
+        update_availability_to_json,
+        update_stream_configuration_fingerprints,
+    )
+
+    login(client)
+    seed_available_confirmations(["photon_os"])
+    with SessionLocal() as db:
+        settings = ui.appliance_update_settings(db)
+        fingerprints = update_stream_configuration_fingerprints(settings)
+        state = ui.appliance_update_availability_state(db)
+        state = record_update_availability_attempt(
+            state,
+            stream="powershell_modules",
+            job_id="job-failed-powershell-check",
+            checked_at=datetime.now(timezone.utc),
+            fingerprint=fingerprints["powershell_modules"],
+            result={
+                "state": "failed",
+                "remediation": "Synchronize the managed PowerShell repository.",
+            },
+        )
+        ui.set_setting_value(
+            db,
+            APPLIANCE_UPDATE_AVAILABILITY_KEY,
+            update_availability_to_json(state),
+        )
+        db.commit()
+
+    page = client.get("/ui/management/appliance-update")
+    assert page.status_code == 200
+    assert "Synchronize the managed PowerShell repository." in page.text
+    assert "data-appliance-update-install-action disabled" not in page.text
+
+    response = client.post(
+        "/ui/management/appliance-update/run",
+        headers={"Accept": "application/json"},
+        data={
+            "csrf": csrf_from_page(page.text),
+            "selected_streams": ["photon_os"],
+        },
+    )
+    assert response.status_code == 202
+    assert response.json()["selected_streams"] == ["photon_os"]
 
 
 def test_global_update_indicator_renders_and_has_visibility_aware_refresh(client):
