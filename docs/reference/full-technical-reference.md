@@ -1299,10 +1299,11 @@ pwsh -ExecutionPolicy Bypass `
   -IsoChecksum "<packer-checksum>"
 ```
 
-Before a forced Workstation rebuild deletes the output directory, the wrapper finds any existing output VMX and
-unregisters it with `vmrun -T ws unregister` through the same VMware Workstation discovery path used by the rest of the
-VMware scripts. The cleanup is scoped to the configured image output directory so stale template registrations do not
-survive a rebuild. The remastered kickstart disables Photon's socket-activated SSH unit and enables the normal
+Before a forced Workstation rebuild deletes the output directory, the wrapper routes the complete output root through
+the checked VMware cleanup module. It inventories every VMX, verifies the checked running and registered inventories,
+and confirms each required stop and unregister transition before removing the exact non-reparse-point output root.
+Any inventory, transition, or removal failure preserves the remaining artifacts and prevents Packer from starting.
+The remastered kickstart disables Photon's socket-activated SSH unit and enables the normal
 `sshd.service`, ensuring Packer receives a deterministic SSH daemon after the first installed-system boot. The temporary
 Photon root/build password remains separate from the Atlaso web bootstrap administrator password.
 
@@ -1343,6 +1344,12 @@ output, and cleanup verifies checked running and registered inventories plus suc
 before deleting an artifact root. Inventory entries must be canonical absolute VMX paths whose Windows volume and file
 identities can be resolved, so 8.3, mapped-drive, and other filesystem aliases cannot bypass state detection. Any
 malformed inventory or unresolved `vmrun` state preserves the files and returns failure.
+
+The standalone VMware and Hyper-V `clean-artifacts.ps1` helpers apply the same fail-closed rule to their canonical
+`output`, `test-vms`, and provider-specific export roots. VMware cleanup reconciles `vmrun` and Workstation registration
+state. Hyper-V cleanup identifies VMs from their configuration and attached-disk paths, verifies that each is off and
+removed, then rechecks the inventory before filesystem deletion. Both helpers reject reparse points and out-of-root
+targets, make recursive deletion errors terminating, and print their success message only after every target is absent.
 
 For a normal Workstation test appliance on the management vmnet:
 

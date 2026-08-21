@@ -31,6 +31,8 @@ def _write_fake_vmrun(
     stop_exit: int = 0,
     unregister_exit: int = 0,
     running_path_format: str = "{}",
+    stop_sticky: bool = False,
+    unregister_sticky: bool = False,
 ) -> tuple[Path, dict[str, str], Path]:
     """Create a stateful fake ``vmrun`` command and Workstation inventory.
 
@@ -42,6 +44,8 @@ def _write_fake_vmrun(
         stop_exit: Exit code returned by a requested stop operation.
         unregister_exit: Exit code returned by a requested unregister operation.
         running_path_format: Format applied to each path printed by ``vmrun list``.
+        stop_sticky: Whether a successful stop leaves the VM in running inventory.
+        unregister_sticky: Whether a successful unregister leaves the VM registered.
 
     Returns:
         The fake command path, its environment, and the command-log path.
@@ -120,14 +124,17 @@ if command == "stop":
     if exit_code:
         print("simulated stop failure", file=sys.stderr)
         raise SystemExit(exit_code)
-    write_paths("running", [path for path in read_paths("running") if not same_file(path, target)])
+    if os.environ.get("ATLASO_FAKE_VMRUN_STOP_STICKY") != "1":
+        write_paths("running", [path for path in read_paths("running") if not same_file(path, target)])
     raise SystemExit(0)
 if command == "unregister":
     exit_code = int(os.environ.get("ATLASO_FAKE_VMRUN_UNREGISTER_EXIT", "0"))
     if exit_code:
         print("simulated unregister failure", file=sys.stderr)
         raise SystemExit(exit_code)
-    registered_paths = [path for path in read_paths("registered") if not same_file(path, target)]
+    registered_paths = read_paths("registered")
+    if os.environ.get("ATLASO_FAKE_VMRUN_UNREGISTER_STICKY") != "1":
+        registered_paths = [path for path in registered_paths if not same_file(path, target)]
     write_paths("registered", registered_paths)
     inventory.write_text(
         '.encoding = "UTF-8"\\n'
@@ -167,6 +174,8 @@ raise SystemExit(64)
             "ATLASO_FAKE_VMRUN_STOP_EXIT": str(stop_exit),
             "ATLASO_FAKE_VMRUN_UNREGISTER_EXIT": str(unregister_exit),
             "ATLASO_FAKE_VMRUN_RUNNING_PATH_FORMAT": running_path_format,
+            "ATLASO_FAKE_VMRUN_STOP_STICKY": "1" if stop_sticky else "0",
+            "ATLASO_FAKE_VMRUN_UNREGISTER_STICKY": "1" if unregister_sticky else "0",
             "APPDATA": str(appdata_directory),
         }
     )
@@ -213,6 +222,200 @@ def _write_vmx(path: Path, display_name: str) -> None:
     """
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(f'displayName = "{display_name}"\n', encoding="utf-8")
+
+
+def _run_artifact_root_cleanup(
+    tmp_path: Path,
+    *,
+    artifact_parent: Path,
+    removal_root: Path,
+    vmrun_path: Path,
+    environment: dict[str, str],
+) -> subprocess.CompletedProcess[str]:
+    """Invoke the shared whole-root cleanup entry point from an isolated wrapper."""
+    wrapper = tmp_path / "remove-artifact-root.ps1"
+    module_path = VMWARE_SCRIPT_ROOT / "Atlaso.WorkstationCleanup.psm1"
+    wrapper.write_text(
+        f"""$ErrorActionPreference = 'Stop'
+Import-Module '{module_path}' -Force
+Remove-AtlasoWorkstationArtifactRoot `
+    -VmrunPath '{vmrun_path}' `
+    -ArtifactParentRoot '{artifact_parent}' `
+    -RemovalRoot '{removal_root}' `
+    -Confirm:$false
+Write-Host 'ROOT CLEANUP SUCCEEDED'
+""",
+        encoding="utf-8",
+    )
+    return _run_script(wrapper, environment=environment)
+
+
+@pytest.mark.parametrize(
+    ("stop_exit", "unregister_exit", "expected_error"),
+    [
+        (9, 0, "Stop VMware Workstation VM"),
+        (0, 9, "Unregister VMware Workstation VM"),
+    ],
+)
+def test_whole_artifact_root_cleanup_preserves_files_after_vmrun_failure(
+    tmp_path: Path,
+    stop_exit: int,
+    unregister_exit: int,
+    expected_error: str,
+) -> None:
+    """Forced rebuild cleanup must stop before deletion when vmrun cannot transition a VM."""
+    artifact_parent = tmp_path / "image-root"
+    removal_root = artifact_parent / "output"
+    vmx_path = removal_root / "Atlaso-Builder.vmx"
+    sentinel = removal_root / "sentinel.txt"
+    _write_vmx(vmx_path, "Atlaso-Builder")
+    sentinel.write_text("preserve", encoding="utf-8")
+    vmrun_path, environment, _ = _write_fake_vmrun(
+        tmp_path / "fake",
+        [vmx_path],
+        running=True,
+        registered=True,
+        stop_exit=stop_exit,
+        unregister_exit=unregister_exit,
+    )
+
+    result = _run_artifact_root_cleanup(
+        tmp_path,
+        artifact_parent=artifact_parent,
+        removal_root=removal_root,
+        vmrun_path=vmrun_path,
+        environment=environment,
+    )
+
+    assert result.returncode != 0
+    assert expected_error in result.stderr
+    assert "ROOT CLEANUP SUCCEEDED" not in result.stdout
+    assert sentinel.read_text(encoding="utf-8") == "preserve"
+
+
+def test_whole_artifact_root_cleanup_removes_all_verified_vms(tmp_path: Path) -> None:
+    """The whole-root helper must reconcile every discovered VMX before deletion."""
+    artifact_parent = tmp_path / "image-root"
+    removal_root = artifact_parent / "test-vms"
+    vmx_paths = [
+        removal_root / "one" / "One.vmx",
+        removal_root / "two" / "Two.vmx",
+    ]
+    for vmx_path in vmx_paths:
+        _write_vmx(vmx_path, vmx_path.stem)
+    vmrun_path, environment, log_path = _write_fake_vmrun(
+        tmp_path / "fake",
+        vmx_paths,
+        running=True,
+        registered=True,
+    )
+
+    result = _run_artifact_root_cleanup(
+        tmp_path,
+        artifact_parent=artifact_parent,
+        removal_root=removal_root,
+        vmrun_path=vmrun_path,
+        environment=environment,
+    )
+
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert not removal_root.exists()
+    commands = [json.loads(line) for line in log_path.read_text(encoding="utf-8").splitlines()]
+    assert [command[2] for command in commands].count("stop") == 2
+    assert [command[2] for command in commands].count("unregister") == 2
+
+
+@pytest.mark.parametrize(
+    ("stop_sticky", "unregister_sticky", "expected_error"),
+    [
+        (True, False, "remains running after stop succeeded"),
+        (False, True, "remains registered after unregister succeeded"),
+    ],
+)
+def test_whole_artifact_root_cleanup_rejects_incomplete_vmrun_transition(
+    tmp_path: Path,
+    stop_sticky: bool,
+    unregister_sticky: bool,
+    expected_error: str,
+) -> None:
+    """A zero exit is insufficient when the follow-up inventory still contains the VM."""
+    artifact_parent = tmp_path / "image-root"
+    removal_root = artifact_parent / "output"
+    vmx_path = removal_root / "Atlaso-Builder.vmx"
+    _write_vmx(vmx_path, "Atlaso-Builder")
+    vmrun_path, environment, _ = _write_fake_vmrun(
+        tmp_path / "fake",
+        [vmx_path],
+        running=True,
+        registered=True,
+        stop_sticky=stop_sticky,
+        unregister_sticky=unregister_sticky,
+    )
+
+    result = _run_artifact_root_cleanup(
+        tmp_path,
+        artifact_parent=artifact_parent,
+        removal_root=removal_root,
+        vmrun_path=vmrun_path,
+        environment=environment,
+    )
+
+    assert result.returncode != 0
+    assert expected_error in result.stderr
+    assert vmx_path.exists()
+
+
+def test_whole_artifact_root_cleanup_rejects_an_out_of_root_target(tmp_path: Path) -> None:
+    """A caller cannot widen recursive deletion beyond its canonical image root."""
+    artifact_parent = tmp_path / "image-root"
+    artifact_parent.mkdir()
+    removal_root = tmp_path / "outside"
+    removal_root.mkdir()
+    sentinel = removal_root / "sentinel.txt"
+    sentinel.write_text("preserve", encoding="utf-8")
+    vmrun_path, environment, _ = _write_fake_vmrun(
+        tmp_path / "fake", [], running=False, registered=False
+    )
+
+    result = _run_artifact_root_cleanup(
+        tmp_path,
+        artifact_parent=artifact_parent,
+        removal_root=removal_root,
+        vmrun_path=vmrun_path,
+        environment=environment,
+    )
+
+    assert result.returncode != 0
+    assert "outside the canonical parent root" in result.stderr
+    assert sentinel.exists()
+
+
+@pytest.mark.skipif(os.name != "nt", reason="Windows file-sharing semantics are required")
+def test_whole_artifact_root_cleanup_does_not_claim_success_after_locked_file(
+    tmp_path: Path,
+) -> None:
+    """A terminating recursive-delete failure must preserve the root and suppress success."""
+    artifact_parent = tmp_path / "image-root"
+    removal_root = artifact_parent / "ovf"
+    removal_root.mkdir(parents=True)
+    locked_path = removal_root / "locked.ova"
+    locked_path.write_text("locked", encoding="utf-8")
+    vmrun_path, environment, _ = _write_fake_vmrun(
+        tmp_path / "fake", [], running=False, registered=False
+    )
+
+    with locked_path.open("rb"):
+        result = _run_artifact_root_cleanup(
+            tmp_path,
+            artifact_parent=artifact_parent,
+            removal_root=removal_root,
+            vmrun_path=vmrun_path,
+            environment=environment,
+        )
+
+    assert result.returncode != 0
+    assert "ROOT CLEANUP SUCCEEDED" not in result.stdout
+    assert locked_path.exists()
 
 
 @pytest.mark.parametrize(

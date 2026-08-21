@@ -44,6 +44,7 @@ Set-StrictMode -Version Latest
 $ErrorActionPreference = 'Stop'
 
 Import-Module (Join-Path $PSScriptRoot '..\common\Atlaso.PhotonImage.psm1') -Force
+Import-Module (Join-Path $PSScriptRoot 'Atlaso.WorkstationCleanup.psm1') -Force
 
 function ConvertTo-WorkstationVmnetName {
     param(
@@ -218,51 +219,6 @@ function Write-AtlasoVmwareBuildProvenance {
     Write-Host "VMware build provenance: $provenancePath ($($provenance.source_commit))"
 }
 
-function Invoke-WorkstationVmrunBestEffort {
-    param(
-        [Parameter(Mandatory = $true)][string]$ResolvedVmrunPath,
-        [Parameter(Mandatory = $true)][string[]]$Arguments,
-        [Parameter(Mandatory = $true)][string]$FailureMessage
-    )
-
-    & $ResolvedVmrunPath @Arguments | Out-Host
-    if ($LASTEXITCODE -ne 0) {
-        Write-Warning "$FailureMessage vmrun $($Arguments -join ' ') exited with code $LASTEXITCODE."
-    }
-}
-
-function Unregister-ExistingWorkstationTemplate {
-    param(
-        [Parameter(Mandatory = $true)][string]$ResolvedVmrunPath,
-        [Parameter(Mandatory = $true)][string]$OutputDirectory,
-        [Parameter(Mandatory = $true)][string]$VmName
-    )
-
-    if (-not (Test-Path -LiteralPath $OutputDirectory -PathType Container)) {
-        return
-    }
-
-    $preferredVmx = Join-Path $OutputDirectory "$VmName.vmx"
-    $vmx = if (Test-Path -LiteralPath $preferredVmx -PathType Leaf) {
-        Get-Item -LiteralPath $preferredVmx
-    } else {
-        Get-ChildItem -LiteralPath $OutputDirectory -Filter '*.vmx' -File -ErrorAction SilentlyContinue | Sort-Object LastWriteTime -Descending | Select-Object -First 1
-    }
-    if (-not $vmx) {
-        return
-    }
-
-    $resolvedOutput = (Resolve-Path -LiteralPath $OutputDirectory).Path.TrimEnd('\')
-    $resolvedVmx = (Resolve-Path -LiteralPath $vmx.FullName).Path
-    if (-not ($resolvedVmx.StartsWith($resolvedOutput + '\', [System.StringComparison]::OrdinalIgnoreCase))) {
-        throw "Refusing to unregister VMware template outside the configured image output directory: $resolvedVmx"
-    }
-
-    Write-Host "Unregistering existing VMware Workstation template before replacing output: $resolvedVmx"
-    Invoke-WorkstationVmrunBestEffort -ResolvedVmrunPath $ResolvedVmrunPath -Arguments @('-T', 'ws', 'stop', $resolvedVmx, 'hard') -FailureMessage 'Existing template was not running or could not be stopped; continuing to unregister.'
-    Invoke-WorkstationVmrunBestEffort -ResolvedVmrunPath $ResolvedVmrunPath -Arguments @('-T', 'ws', 'unregister', $resolvedVmx) -FailureMessage 'Existing template could not be unregistered before rebuild.'
-}
-
 function Get-WorkstationManagementNetwork {
     param(
         [string]$NetworkName,
@@ -393,7 +349,11 @@ $packerVariables = @{
 
 if (-not $ValidateOnly -and -not $PrepareIsoOnly -and -not $KeepExistingOutput) {
     $resolvedVmrunPath = Resolve-WorkstationVmrunPath -Path $VmrunPath
-    Unregister-ExistingWorkstationTemplate -ResolvedVmrunPath $resolvedVmrunPath -OutputDirectory $workstationOutputDirectory -VmName $VmName
+    Remove-AtlasoWorkstationArtifactRoot `
+        -VmrunPath $resolvedVmrunPath `
+        -ArtifactParentRoot $PackerDirectory `
+        -RemovalRoot $workstationOutputDirectory `
+        -Confirm:$false
 }
 
 Invoke-AtlasoPhotonImageBuild `

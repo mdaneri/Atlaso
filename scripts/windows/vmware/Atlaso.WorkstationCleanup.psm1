@@ -537,6 +537,7 @@ function Remove-AtlasoWorkstationVmArtifacts {
         [Parameter(Mandatory = $true)]
         [string]$VmrunPath,
         [Parameter(Mandatory = $true)]
+        [AllowEmptyCollection()]
         [string[]]$VmxPaths,
         [Parameter(Mandatory = $true)]
         [string]$RemovalRoot
@@ -559,10 +560,6 @@ function Remove-AtlasoWorkstationVmArtifacts {
             -FailureMessage 'Refusing to remove a VMware VMX outside the exact artifact directory'
         $resolvedVmxPaths += $resolvedVmxPath
     }
-    if ($resolvedVmxPaths.Count -eq 0) {
-        throw "Refusing to remove VMware artifacts without at least one validated VMX: $resolvedRemovalRoot"
-    }
-
     Assert-AtlasoWorkstationRemovalVmxSet `
         -RemovalRoot $resolvedRemovalRoot `
         -ValidatedVmxPaths $resolvedVmxPaths
@@ -601,9 +598,51 @@ function Remove-AtlasoWorkstationVmArtifacts {
     }
 }
 
+function Remove-AtlasoWorkstationArtifactRoot {
+    [CmdletBinding(SupportsShouldProcess = $true)]
+    param(
+        [Parameter(Mandatory = $true)]
+        [string]$VmrunPath,
+        [Parameter(Mandatory = $true)]
+        [string]$ArtifactParentRoot,
+        [Parameter(Mandatory = $true)]
+        [string]$RemovalRoot
+    )
+
+    if (-not (Test-Path -LiteralPath $RemovalRoot -PathType Container)) {
+        return
+    }
+
+    $resolvedParentRoot = (Resolve-Path -LiteralPath $ArtifactParentRoot -ErrorAction Stop).Path
+    $resolvedRemovalRoot = (Resolve-Path -LiteralPath $RemovalRoot -ErrorAction Stop).Path
+    Assert-AtlasoStrictDescendantPath `
+        -ParentPath $resolvedParentRoot `
+        -ChildPath $resolvedRemovalRoot `
+        -FailureMessage 'Refusing to remove a VMware artifact directory outside the canonical parent root'
+    $vmxPaths = @(
+        Get-ChildItem `
+            -LiteralPath $resolvedRemovalRoot `
+            -Filter '*.vmx' `
+            -File `
+            -Recurse `
+            -Force `
+            -ErrorAction Stop |
+            ForEach-Object { $_.FullName }
+    )
+
+    if ($PSCmdlet.ShouldProcess($resolvedRemovalRoot, 'Verify VMware VM state and remove artifact root')) {
+        Remove-AtlasoWorkstationVmArtifacts `
+            -VmrunPath $VmrunPath `
+            -VmxPaths $vmxPaths `
+            -RemovalRoot $resolvedRemovalRoot `
+            -Confirm:$false
+    }
+}
+
 Export-ModuleMember -Function @(
     'Assert-AtlasoStrictDescendantPath',
     'Get-AtlasoVmxDisplayName',
+    'Remove-AtlasoWorkstationArtifactRoot',
     'Remove-AtlasoWorkstationVmArtifacts',
     'Test-AtlasoStrictDescendantPath'
 )
