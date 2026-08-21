@@ -366,6 +366,55 @@ def test_scheduled_check_persists_the_configuration_it_actually_used(client):
     assert photon["confirmed"]["update_available"] is True
 
 
+def test_dry_run_install_retains_confirmed_availability(client):
+    """Keep the update indicator when a dry run records install intent only."""
+    from atlaso.app import ui
+    from atlaso.app.database import SessionLocal
+    from atlaso.app.models import Job, JobStatus
+
+    client.get("/ui/management/login")
+    seed_available_confirmations(["photon_os"])
+    with SessionLocal() as db:
+        settings = ui.appliance_update_settings(db)
+        job = Job(
+            id="job-dry-run-install",
+            type="appliance-update",
+            status=JobStatus.RUNNING.value,
+            created_by="admin",
+            trigger="manual",
+            task_config_json=json.dumps(
+                {
+                    "mode": "run",
+                    "selected_streams": ["photon_os"],
+                    "settings": settings,
+                }
+            ),
+        )
+        db.add(job)
+        db.commit()
+        result = ui.aggregate_appliance_update_results(
+            selected_stream_ids=["photon_os"],
+            settings=settings,
+            actor="admin",
+            mode="run",
+            stream_results=[
+                {
+                    "unit_id": "photon_os",
+                    "status": JobStatus.SUCCEEDED.value,
+                    "success": True,
+                    "dry_run": True,
+                    "commands": [],
+                }
+            ],
+            job_id=job.id,
+        )
+        ui.complete_appliance_update_task(db, job=job, update_result=result)
+        summary = ui.appliance_update_availability_summary(db)
+
+    photon = next(row for row in summary["streams"] if row["id"] == "photon_os")
+    assert photon["confirmed"]["update_available"] is True
+
+
 def test_no_change_release_does_not_schedule_an_unverified_restart():
     """Verify an already-active release completes without a delayed service restart."""
     from atlaso.app.ui import aggregate_appliance_update_results

@@ -11797,6 +11797,7 @@ def complete_appliance_update_task(db: Session, *, job: Job, update_result: dict
             for stream in selected_update_streams(update_result.get("selected_streams") or [])
             if isinstance(stream_results.get(stream), dict)
             and stream_results[stream].get("success") is True
+            and not bool(stream_results[stream].get("dry_run"))
         ]
         if successful_streams:
             availability_state = clear_installed_update_availability(
