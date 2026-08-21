@@ -10199,6 +10199,7 @@ def _appliance_update_config_errors(
     Args:
         payload: Validated request or task payload consumed by the operation.
         require_streams: Whether require streams applies to the operation.
+        require_synchronized: Whether repositories must already be synchronized.
     """
     errors: list[str] = []
     selected = payload.get("selected_streams")
@@ -10944,7 +10945,13 @@ def _sync_appliance_update_sources(payload: dict, credentials: dict[str, dict[st
 
 
 def _failed_update_check(remediation: str, *, current: str = "", target: str = "") -> dict:
-    """Return one normalized failed update check."""
+    """Return one normalized failed update check.
+
+    Args:
+        remediation: Sanitized operator action that can resolve the failure.
+        current: Current stream state when known.
+        target: Target stream state when known.
+    """
     return {
         "state": "failed",
         "current": current,
@@ -10963,7 +10970,13 @@ def _unsynchronized_update_sources(
     *,
     repository_names: set[str] | None = None,
 ) -> list[str]:
-    """Return enabled managed repositories that are not synchronized."""
+    """Return enabled managed repositories that are not synchronized.
+
+    Args:
+        payload: Validated Appliance Update task payload.
+        kind: Source kind to inspect.
+        repository_names: Optional referenced repository-name filter.
+    """
     definitions = payload.get("source_definitions")
     if not isinstance(definitions, list):
         return []
@@ -10983,7 +10996,11 @@ def _unsynchronized_update_sources(
 
 
 def _parse_tdnf_update_rows(stdout: str) -> list[dict[str, str]]:
-    """Parse the stable package rows emitted by ``tdnf check-update``."""
+    """Parse the stable package rows emitted by ``tdnf check-update``.
+
+    Args:
+        stdout: Standard output emitted by ``tdnf check-update``.
+    """
     rows: list[dict[str, str]] = []
     arch_suffix = re.compile(r"\.(?:x86_64|noarch|aarch64|i[3-6]86|src)$")
     for raw_line in stdout.splitlines():
@@ -11001,7 +11018,11 @@ def _parse_tdnf_update_rows(stdout: str) -> list[dict[str, str]]:
 
 
 def _json_command_stdout(command: dict) -> dict:
-    """Return a command's compact JSON stdout object."""
+    """Return a command's compact JSON stdout object.
+
+    Args:
+        command: Captured helper command result.
+    """
     try:
         payload = json.loads(str(command.get("stdout") or "{}"))
     except json.JSONDecodeError:
@@ -11010,7 +11031,11 @@ def _json_command_stdout(command: dict) -> dict:
 
 
 def _update_version_key(value: str) -> tuple:
-    """Return a deterministic comparison key for package and module versions."""
+    """Return a deterministic comparison key for package and module versions.
+
+    Args:
+        value: Package or module version text.
+    """
     return tuple(
         (0, int(part)) if part.isdigit() else (1, part.casefold())
         for part in re.split(r"[.+_-]", value or "")

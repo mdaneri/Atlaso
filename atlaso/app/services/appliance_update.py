@@ -46,7 +46,12 @@ AVAILABILITY_TEXT_LIMIT = 500
 
 
 def _bounded_availability_text(value: Any, *, limit: int = AVAILABILITY_TEXT_LIMIT) -> str:
-    """Return one bounded line of public-safe availability text."""
+    """Return one bounded line of public-safe availability text.
+
+    Args:
+        value: Candidate value to normalize into one line.
+        limit: Maximum number of returned characters.
+    """
     text = " ".join(str(value or "").split())
     return text if len(text) <= limit else f"{text[: limit - 1]}…"
 
@@ -57,7 +62,11 @@ def empty_update_availability() -> dict[str, Any]:
 
 
 def update_availability_from_json(raw_value: str) -> dict[str, Any]:
-    """Parse persisted availability while rejecting unknown envelope shapes."""
+    """Parse persisted availability while rejecting unknown envelope shapes.
+
+    Args:
+        raw_value: Serialized operational availability state.
+    """
     try:
         payload = json.loads(raw_value or "{}")
     except json.JSONDecodeError:
@@ -78,12 +87,21 @@ def update_availability_from_json(raw_value: str) -> dict[str, Any]:
 
 
 def update_availability_to_json(value: dict[str, Any]) -> str:
-    """Serialize the bounded availability envelope."""
+    """Serialize the bounded availability envelope.
+
+    Args:
+        value: Operational availability envelope to serialize.
+    """
     return json.dumps(value, indent=2, sort_keys=True)
 
 
 def update_stream_configuration_fingerprint(stream: str, settings: dict[str, Any]) -> str:
-    """Bind a confirmation to the source and module configuration used to produce it."""
+    """Bind a confirmation to the configuration used to produce it.
+
+    Args:
+        stream: Update stream identifier to fingerprint.
+        settings: Effective Appliance Update settings.
+    """
     definitions = settings.get("source_definitions")
     modules = (
         settings.get("powershell_modules")
@@ -137,7 +155,11 @@ def update_stream_configuration_fingerprint(stream: str, settings: dict[str, Any
 
 
 def update_stream_configuration_fingerprints(settings: dict[str, Any]) -> dict[str, str]:
-    """Return current fingerprints for every update stream."""
+    """Return current fingerprints for every update stream.
+
+    Args:
+        settings: Effective Appliance Update settings.
+    """
     return {
         stream: update_stream_configuration_fingerprint(stream, settings)
         for stream in UPDATE_STREAMS
@@ -145,7 +167,11 @@ def update_stream_configuration_fingerprints(settings: dict[str, Any]) -> dict[s
 
 
 def normalized_availability_result(value: Any) -> dict[str, Any]:
-    """Normalize one helper result before it enters durable browser-visible state."""
+    """Normalize one helper result before it enters durable browser-visible state.
+
+    Args:
+        value: Raw helper result to sanitize and bound.
+    """
     source = value if isinstance(value, dict) else {}
     state = str(source.get("state") or "failed")
     if state not in {"available", "up_to_date", "failed"}:
@@ -203,7 +229,16 @@ def record_update_availability_attempt(
     fingerprint: str,
     result: dict[str, Any],
 ) -> dict[str, Any]:
-    """Record a check without erasing an earlier confirmation when the check fails."""
+    """Record a check without erasing an earlier confirmation when it fails.
+
+    Args:
+        state: Existing operational availability envelope.
+        stream: Checked update stream identifier.
+        job_id: Appliance Update job identifier.
+        checked_at: Timestamp associated with the completed check.
+        fingerprint: Configuration fingerprint used by the check.
+        result: Raw normalized-stream helper result.
+    """
     envelope = update_availability_from_json(update_availability_to_json(state))
     normalized = normalized_availability_result(result)
     stream_state = dict(envelope["streams"].get(stream) or {})
@@ -232,7 +267,12 @@ def record_update_availability_attempt(
 def clear_installed_update_availability(
     state: dict[str, Any], *, successful_streams: list[str] | tuple[str, ...]
 ) -> dict[str, Any]:
-    """Clear only confirmations for streams whose installation succeeded."""
+    """Clear only confirmations for streams whose installation succeeded.
+
+    Args:
+        state: Existing operational availability envelope.
+        successful_streams: Streams whose real installation succeeded.
+    """
     envelope = update_availability_from_json(update_availability_to_json(state))
     for stream in successful_streams:
         stream_state = envelope["streams"].get(stream)
@@ -247,7 +287,13 @@ def update_availability_summary(
     *,
     result_streams: list[str] | tuple[str, ...] | None = None,
 ) -> dict[str, Any]:
-    """Project sanitized current availability for the UI and manual-install gate."""
+    """Project sanitized current availability for the UI and install gate.
+
+    Args:
+        state: Persisted operational availability envelope.
+        settings: Effective Appliance Update settings.
+        result_streams: Optional stream subset for the composite result summary.
+    """
     envelope = update_availability_from_json(update_availability_to_json(state))
     fingerprints = update_stream_configuration_fingerprints(settings)
     rows: list[dict[str, Any]] = []
@@ -354,7 +400,12 @@ def update_availability_summary(
 def manual_install_gate(
     summary: dict[str, Any], selected_streams: list[str] | tuple[str, ...]
 ) -> tuple[bool, str]:
-    """Require a successful current check for every selected manual-install stream."""
+    """Require a successful current check for every selected install stream.
+
+    Args:
+        summary: Sanitized availability projection for the current configuration.
+        selected_streams: Requested manual-install stream identifiers.
+    """
     selected = selected_update_streams(selected_streams)
     if not selected:
         return False, "Select at least one update stream."

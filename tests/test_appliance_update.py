@@ -50,7 +50,11 @@ def load_helper_module():
 
 
 def seed_available_confirmations(streams: list[str]) -> None:
-    """Persist fresh available confirmations for manual-install tests."""
+    """Persist fresh available confirmations for manual-install tests.
+
+    Args:
+        streams: Stream identifiers to confirm as available.
+    """
     from atlaso.app import ui
     from atlaso.app.database import SessionLocal
     from atlaso.app.services.appliance_update import (
@@ -383,7 +387,11 @@ def test_availability_mixed_stream_results_and_manual_install_gate():
 
 
 def test_scheduled_check_persists_the_configuration_it_actually_used(client):
-    """Keep scheduled confirmations current even when their task config has no browser snapshot."""
+    """Keep scheduled confirmations current without a browser snapshot.
+
+    Args:
+        client: Test application HTTP client.
+    """
     from atlaso.app import ui
     from atlaso.app.database import SessionLocal
     from atlaso.app.models import Job, JobStatus
@@ -434,7 +442,11 @@ def test_scheduled_check_persists_the_configuration_it_actually_used(client):
 
 
 def test_dry_run_install_retains_confirmed_availability(client):
-    """Keep the update indicator when a dry run records install intent only."""
+    """Keep the update indicator when a dry run records install intent only.
+
+    Args:
+        client: Test application HTTP client.
+    """
     from atlaso.app import ui
     from atlaso.app.database import SessionLocal
     from atlaso.app.models import Job, JobStatus
@@ -626,7 +638,11 @@ def test_appliance_update_page_and_dry_run_job(client):
 
 
 def test_install_action_has_server_rendered_fresh_check_reason(client):
-    """Show the blocker while retaining server-validated no-JavaScript submission."""
+    """Show the blocker while retaining server-validated fallback submission.
+
+    Args:
+        client: Test application HTTP client.
+    """
     login(client)
     page = client.get("/ui/management/appliance-update")
     assert page.status_code == 200
@@ -635,7 +651,11 @@ def test_install_action_has_server_rendered_fresh_check_reason(client):
 
 
 def test_no_javascript_install_can_submit_valid_subset_from_mixed_results(client):
-    """Let the server validate a selected subset when another stream failed."""
+    """Let the server validate a selected subset when another stream failed.
+
+    Args:
+        client: Test application HTTP client.
+    """
     from atlaso.app import ui
     from atlaso.app.database import SessionLocal
     from atlaso.app.services.appliance_update import (
@@ -687,7 +707,11 @@ def test_no_javascript_install_can_submit_valid_subset_from_mixed_results(client
 
 
 def test_global_update_indicator_renders_and_has_visibility_aware_refresh(client):
-    """Render the affected-stream count and retain the polling accessibility contract."""
+    """Render the count and retain the polling accessibility contract.
+
+    Args:
+        client: Test application HTTP client.
+    """
     login(client)
     seed_available_confirmations(["photon_os", "atlaso_release"])
 
@@ -1795,7 +1819,6 @@ def test_helper_retries_failed_powershell_repository_removal(monkeypatch, tmp_pa
             command: Command and arguments to execute.
             success_codes: Success codes supplied to the test scenario.
             env: Environment variables supplied to the child process.
-            stdout_limit: Maximum retained standard output supplied to the helper.
         """
         nonlocal attempts
         attempts += 1
@@ -1931,7 +1954,11 @@ def test_helper_promotes_source_sync_failure_to_stderr(monkeypatch, tmp_path, ca
 
 
 def test_helper_photon_check_parses_and_truncates_candidate_rows(monkeypatch):
-    """Use the tdnf return-code contract and retain bounded package details."""
+    """Use the tdnf return-code contract and retain bounded package details.
+
+    Args:
+        monkeypatch: Pytest monkeypatch fixture.
+    """
     helper = load_helper_module()
     rows = [
         f"package-{index}.x86_64 2.{index}-1 photon-updates"
@@ -1952,7 +1979,14 @@ def test_helper_photon_check_parses_and_truncates_candidate_rows(monkeypatch):
     )
 
     def fake_command(command, *, success_codes=None, env=None, stdout_limit=4000):
-        """Return stable tdnf and rpm evidence for the check."""
+        """Return stable tdnf and rpm evidence for the check.
+
+        Args:
+            command: Command and arguments to execute.
+            success_codes: Success codes supplied to the test scenario.
+            env: Environment variables supplied to the child process.
+            stdout_limit: Maximum retained standard output.
+        """
         if command[1:] == ["check-update"]:
             return {
                 "command": command,
@@ -2000,7 +2034,12 @@ def test_helper_photon_check_parses_and_truncates_candidate_rows(monkeypatch):
 
 
 def test_helper_powershell_check_reports_truthful_version_actions(monkeypatch, tmp_path):
-    """Distinguish add, upgrade, side-by-side, and current module states."""
+    """Distinguish add, upgrade, side-by-side, and current module states.
+
+    Args:
+        monkeypatch: Pytest monkeypatch fixture.
+        tmp_path: Temporary filesystem path fixture.
+    """
     import base64
 
     helper = load_helper_module()
@@ -2015,6 +2054,14 @@ def test_helper_powershell_check_reports_truthful_version_actions(monkeypatch, t
     }
 
     def fake_command(command, *, success_codes=None, env=None, stdout_limit=4000):
+        """Return PowerShell module version evidence.
+
+        Args:
+            command: Command and arguments to execute.
+            success_codes: Success codes supplied to the test scenario.
+            env: Environment variables supplied to the child process.
+            stdout_limit: Maximum retained standard output.
+        """
         script = base64.b64decode(command[-1]).decode("utf-16-le")
         name = next(candidate for candidate in evidence if candidate in script)
         available, installed = evidence[name]
@@ -2061,13 +2108,26 @@ def test_helper_powershell_check_reports_truthful_version_actions(monkeypatch, t
 def test_helper_powershell_check_ignores_unreferenced_unsynchronized_repository(
     monkeypatch, tmp_path
 ):
-    """Validate only repositories referenced by managed PowerShell modules."""
+    """Validate only repositories referenced by managed PowerShell modules.
+
+    Args:
+        monkeypatch: Pytest monkeypatch fixture.
+        tmp_path: Temporary filesystem path fixture.
+    """
     helper = load_helper_module()
     powershell_home = tmp_path / "powershell"
     monkeypatch.setattr(helper, "ATLASO_POWERSHELL_HOME", powershell_home)
     monkeypatch.setattr(helper, "_command_path", lambda _name: "/usr/bin/pwsh")
 
     def fake_command(command, *, success_codes=None, env=None, stdout_limit=4000):
+        """Return one current managed-module result.
+
+        Args:
+            command: Command and arguments to execute.
+            success_codes: Success codes supplied to the test scenario.
+            env: Environment variables supplied to the child process.
+            stdout_limit: Maximum retained standard output.
+        """
         return {
             "command": command,
             "returncode": 0,
@@ -2118,7 +2178,11 @@ def test_helper_powershell_check_ignores_unreferenced_unsynchronized_repository(
 
 
 def test_helper_atlaso_check_uses_signed_summary_and_legacy_fallback(monkeypatch):
-    """Expose optional signed release metadata without fabricating legacy notes."""
+    """Expose optional signed release metadata without fabricating legacy notes.
+
+    Args:
+        monkeypatch: Pytest monkeypatch fixture.
+    """
     helper = load_helper_module()
     release = {
         "version": "0.9.999",
@@ -2219,6 +2283,7 @@ def test_helper_uses_each_modules_bound_powershell_repository(monkeypatch, tmp_p
             command: Command and arguments to execute.
             success_codes: Success codes supplied to the test scenario.
             env: Environment variables supplied to the child process.
+            stdout_limit: Maximum retained standard output.
         """
         scripts.append(base64.b64decode(command[-1]).decode("utf-16-le"))
         environments.append(env)

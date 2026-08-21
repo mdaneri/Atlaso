@@ -121,7 +121,11 @@ def test_appliance_maintenance_routers_own_exact_transport_sets():
 
 
 def test_appliance_update_availability_is_authenticated_no_store_and_not_openapi(client):
-    """Keep the sanitized indicator projection browser-only and uncached."""
+    """Keep the sanitized indicator projection browser-only and uncached.
+
+    Args:
+        client: Test application HTTP client.
+    """
     anonymous = client.get(
         "/ui/management/appliance-update/availability",
         follow_redirects=False,

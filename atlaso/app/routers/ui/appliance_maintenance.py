@@ -219,7 +219,12 @@ def build_routers(
         identity: Identity = Depends(require_session_identity),
         db: Session = Depends(get_db),
     ) -> JSONResponse:
-        """Return sanitized browser-only update availability."""
+        """Return sanitized browser-only update availability.
+
+        Args:
+            identity: Authenticated browser session identity.
+            db: Active database session.
+        """
         del identity
         return JSONResponse(
             appliance_update_availability_summary(db),

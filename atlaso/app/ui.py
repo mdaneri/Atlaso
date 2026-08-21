@@ -11142,7 +11142,11 @@ def appliance_update_settings(db: Session) -> dict[str, Any]:
 
 
 def appliance_update_availability_state(db: Session) -> dict[str, Any]:
-    """Return the durable operational availability state."""
+    """Return the durable operational availability state.
+
+    Args:
+        db: Active database session.
+    """
     return update_availability_from_json(
         setting_value(db, APPLIANCE_UPDATE_AVAILABILITY_KEY)
     )
@@ -11153,7 +11157,12 @@ def appliance_update_availability_summary(
     *,
     result_streams: list[str] | tuple[str, ...] | None = None,
 ) -> dict[str, Any]:
-    """Return the sanitized availability projection for the current configuration."""
+    """Return the sanitized availability projection for the current configuration.
+
+    Args:
+        db: Active database session.
+        result_streams: Optional stream subset for the composite result summary.
+    """
     return update_availability_summary(
         appliance_update_availability_state(db),
         appliance_update_settings(db),
@@ -11170,6 +11179,7 @@ def appliance_update_context(
 
     Args:
         db: Active database session.
+        selected_stream_ids: Optional submitted stream selection to preserve.
     """
     settings = appliance_update_settings(db)
     recent_jobs = db.execute(
@@ -11504,7 +11514,11 @@ def automation_context(db: Session) -> dict[str, Any]:
 
 
 def _last_helper_json(value: str) -> dict[str, Any]:
-    """Return the last complete JSON object embedded in helper stdout."""
+    """Return the last complete JSON object embedded in helper stdout.
+
+    Args:
+        value: Helper standard output to scan.
+    """
     decoder = json.JSONDecoder()
     last: dict[str, Any] = {}
     for index, character in enumerate(value or ""):
