@@ -242,7 +242,10 @@ def clear_installed_update_availability(
 
 
 def update_availability_summary(
-    state: dict[str, Any], settings: dict[str, Any]
+    state: dict[str, Any],
+    settings: dict[str, Any],
+    *,
+    result_streams: list[str] | tuple[str, ...] | None = None,
 ) -> dict[str, Any]:
     """Project sanitized current availability for the UI and manual-install gate."""
     envelope = update_availability_from_json(update_availability_to_json(state))
@@ -286,16 +289,31 @@ def update_availability_summary(
             row["confirmed"] = normalized
         rows.append(row)
     available = [row for row in rows if row["confirmed"] and row["confirmed"]["update_available"]]
-    failed = [row for row in rows if row["last_attempt"]["state"] == "failed"]
-    confirmed = [row for row in rows if row["confirmed"] and not row["stale"]]
+    selected_result_streams = set(
+        UPDATE_STREAMS
+        if result_streams is None
+        else selected_update_streams(result_streams)
+    )
+    result_rows = [row for row in rows if row["id"] in selected_result_streams]
+    result_available = [
+        row
+        for row in result_rows
+        if row["confirmed"] and row["confirmed"]["update_available"]
+    ]
+    result_failed = [
+        row for row in result_rows if row["last_attempt"]["state"] == "failed"
+    ]
+    result_confirmed = [
+        row for row in result_rows if row["confirmed"] and not row["stale"]
+    ]
     result_summary = {
         "pill": "Not checked",
         "pill_class": "muted",
         "title": "Check the selected streams for current update information",
         "description": "Each stream keeps its latest result independently.",
     }
-    if failed:
-        count = len(failed)
+    if result_failed:
+        count = len(result_failed)
         result_summary = {
             "pill": "Check failed",
             "pill_class": "error",
@@ -305,8 +323,8 @@ def update_availability_summary(
             ),
             "description": "Successful and failed stream results remain independently visible below.",
         }
-    elif available:
-        count = len(available)
+    elif result_available:
+        count = len(result_available)
         result_summary = {
             "pill": "Updates available",
             "pill_class": "warn",
@@ -316,7 +334,7 @@ def update_availability_summary(
             ),
             "description": "Review each stream’s current, target, and What’s new details before installation.",
         }
-    elif len(confirmed) == len(rows):
+    elif result_rows and len(result_confirmed) == len(result_rows):
         result_summary = {
             "pill": "Up to date",
             "pill_class": "good",

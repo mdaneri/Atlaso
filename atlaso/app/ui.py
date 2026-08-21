@@ -11148,14 +11148,24 @@ def appliance_update_availability_state(db: Session) -> dict[str, Any]:
     )
 
 
-def appliance_update_availability_summary(db: Session) -> dict[str, Any]:
+def appliance_update_availability_summary(
+    db: Session,
+    *,
+    result_streams: list[str] | tuple[str, ...] | None = None,
+) -> dict[str, Any]:
     """Return the sanitized availability projection for the current configuration."""
     return update_availability_summary(
-        appliance_update_availability_state(db), appliance_update_settings(db)
+        appliance_update_availability_state(db),
+        appliance_update_settings(db),
+        result_streams=result_streams,
     )
 
 
-def appliance_update_context(db: Session) -> dict[str, Any]:
+def appliance_update_context(
+    db: Session,
+    *,
+    selected_stream_ids: list[str] | tuple[str, ...] | None = None,
+) -> dict[str, Any]:
     """Return appliance update context.
 
     Args:
@@ -11189,7 +11199,9 @@ def appliance_update_context(db: Session) -> dict[str, Any]:
     selected = list(UPDATE_STREAMS)
     manifest_preview = render_update_manifest(selected_streams=selected, settings=settings, actor="preview")
     photon_repositories = photon_repository_details()
-    availability = appliance_update_availability_summary(db)
+    availability = appliance_update_availability_summary(
+        db, result_streams=selected_stream_ids
+    )
     availability_by_stream = {
         str(row.get("id")): row
         for row in availability["streams"]
@@ -13954,7 +13966,7 @@ def submit_appliance_update(
             "appliance_update.html",
             {
                 "identity": identity,
-                **appliance_update_context(db),
+                **appliance_update_context(db, selected_stream_ids=selected),
                 "selected_update_stream_ids": selected,
                 "update_error": " ".join(errors),
             },
@@ -13975,7 +13987,7 @@ def submit_appliance_update(
             "appliance_update.html",
             {
                 "identity": identity,
-                **appliance_update_context(db),
+                **appliance_update_context(db, selected_stream_ids=selected),
                 "selected_update_stream_ids": selected,
                 "update_error": detail,
             },
@@ -14030,7 +14042,7 @@ def submit_appliance_update(
         "appliance_update.html",
         {
             "identity": identity,
-            **appliance_update_context(db),
+            **appliance_update_context(db, selected_stream_ids=selected),
             "selected_update_stream_ids": selected,
             "appliance_update_task": job,
             "appliance_update_task_result": update_result,

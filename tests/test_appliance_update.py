@@ -357,6 +357,17 @@ def test_availability_mixed_stream_results_and_manual_install_gate():
         "title": "1 selected update stream needs attention",
         "description": "Successful and failed stream results remain independently visible below.",
     }
+    selected_summary = update_availability_summary(
+        state, settings, result_streams=["powershell_modules"]
+    )
+    assert selected_summary["available"] is True
+    assert selected_summary["affected_stream_count"] == 1
+    assert selected_summary["result_summary"] == {
+        "pill": "Up to date",
+        "pill_class": "good",
+        "title": "The selected streams are current",
+        "description": "No installation is needed for the latest confirmed checks.",
+    }
     assert manual_install_gate(summary, ["photon_os", "powershell_modules"]) == (
         True,
         "",
