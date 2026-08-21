@@ -1356,7 +1356,8 @@ removed, revalidates refreshed configuration and disk paths before and after sto
 inventory before filesystem deletion. Hyper-V resolves every existing inventory path to its final filesystem location
 before excluding it, so junction, symbolic-link, and short-path aliases cannot conceal an in-root dependency; lexical
 in-root paths that resolve outward fail closed. Both helpers reject reparse points and out-of-root
-targets, make recursive deletion errors terminating, and print their success message only after every target is absent.
+targets, including dangling canonical directory links whose targets no longer exist; they make recursive deletion errors
+terminating and print their success message only after every target is absent.
 An existing canonical target that is not a directory is an error and blocks that success message instead of being
 silently skipped.
 

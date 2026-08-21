@@ -249,7 +249,7 @@ function Remove-AtlasoHypervArtifactRoot {
         [Parameter(Mandatory = $true)][string]$RemovalRoot
     )
 
-    if (-not (Test-Path -LiteralPath $RemovalRoot)) {
+    if ($null -eq (Get-Item -LiteralPath $RemovalRoot -Force -ErrorAction SilentlyContinue)) {
         return
     }
     if (-not (Test-Path -LiteralPath $RemovalRoot -PathType Container)) {

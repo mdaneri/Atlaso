@@ -531,6 +531,81 @@ def test_standalone_cleanup_rejects_file_shaped_canonical_target(
     assert canonical_target.is_file()
 
 
+@pytest.mark.parametrize(
+    ("provider", "module_name", "success_text", "expected_error"),
+    [
+        (
+            "vmware",
+            "Atlaso.WorkstationCleanup.psm1",
+            "Cleaned up VMware Workstation build artifacts.",
+            "Refusing recursive VMware cleanup through reparse point",
+        ),
+        (
+            "hyperv",
+            "Atlaso.HypervCleanup.psm1",
+            "Cleaned up Hyper-V build artifacts.",
+            "Refusing recursive Hyper-V cleanup through reparse point",
+        ),
+    ],
+)
+def test_standalone_cleanup_rejects_dangling_canonical_directory_link(
+    tmp_path: Path,
+    provider: str,
+    module_name: str,
+    success_text: str,
+    expected_error: str,
+) -> None:
+    """A dangling canonical directory link must block the wrapper's success claim.
+
+    Args:
+        tmp_path: Isolated test directory.
+        provider: Provider fixture name.
+        module_name: Cleanup module copied into the fixture.
+        success_text: Wrapper success text that must be absent.
+        expected_error: Expected cleanup failure text.
+    """
+    fixture_root = tmp_path / provider
+    script_directory = fixture_root / "scripts" / "windows" / provider
+    image_name = "vmware-workstation" if provider == "vmware" else provider
+    image_directory = fixture_root / "image" / image_name
+    script_directory.mkdir(parents=True)
+    image_directory.mkdir(parents=True)
+    source_directory = REPOSITORY_ROOT / "scripts" / "windows" / provider
+    shutil.copy2(source_directory / "clean-artifacts.ps1", script_directory)
+    shutil.copy2(source_directory / module_name, script_directory)
+    canonical_target = image_directory / "output"
+    try:
+        canonical_target.symlink_to(image_directory / "missing", target_is_directory=True)
+    except OSError as error:
+        pytest.skip(f"Directory links are unavailable: {error}")
+    arguments: list[str] = []
+    if provider == "vmware":
+        vmrun_path = fixture_root / "vmrun.exe"
+        vmrun_path.write_text("not executed", encoding="utf-8")
+        arguments = ["-VmrunPath", str(vmrun_path)]
+
+    result = subprocess.run(
+        [
+            _pwsh_path(),
+            "-NoLogo",
+            "-NoProfile",
+            "-NonInteractive",
+            "-File",
+            str(script_directory / "clean-artifacts.ps1"),
+            *arguments,
+        ],
+        cwd=fixture_root,
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+
+    assert result.returncode != 0
+    assert expected_error in result.stderr
+    assert success_text not in result.stdout
+    assert canonical_target.is_symlink()
+
+
 @pytest.mark.skipif(os.name != "nt", reason="Windows file-sharing semantics are required")
 def test_hyperv_cleanup_does_not_claim_success_after_locked_file(tmp_path: Path) -> None:
     """A locked artifact makes recursive cleanup fail without a success claim.

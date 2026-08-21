@@ -630,7 +630,7 @@ function Remove-AtlasoWorkstationArtifactRoot {
         [string]$RemovalRoot
     )
 
-    if (-not (Test-Path -LiteralPath $RemovalRoot)) {
+    if ($null -eq (Get-Item -LiteralPath $RemovalRoot -Force -ErrorAction SilentlyContinue)) {
         return
     }
     if (-not (Test-Path -LiteralPath $RemovalRoot -PathType Container)) {

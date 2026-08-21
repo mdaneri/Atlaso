@@ -22,7 +22,7 @@ $vmwarePath = Join-Path $PSScriptRoot '..\..\..\image\vmware-workstation'
 if (Test-Path -LiteralPath $vmwarePath) {
     $artifactRoots = @('output', 'test-vms', 'ovf') |
         ForEach-Object { Join-Path $vmwarePath $_ } |
-        Where-Object { Test-Path -LiteralPath $_ }
+        Where-Object { $null -ne (Get-Item -LiteralPath $_ -Force -ErrorAction SilentlyContinue) }
     if ($artifactRoots.Count -gt 0) {
         $resolvedVmrun = Resolve-VmrunPath -Path $VmrunPath
         foreach ($artifactRoot in $artifactRoots) {
