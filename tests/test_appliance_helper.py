@@ -2296,6 +2296,11 @@ def test_factory_reset_helper_persists_marker_before_detached_schedule(
     """
     helper = load_helper_module()
     state_directory = tmp_path / "factory-reset"
+    monkeypatch.setattr(
+        helper,
+        "_open_factory_reset_directory",
+        lambda: state_directory.mkdir(parents=True, exist_ok=True) or None,
+    )
     staged_template = tmp_path / "apply" / "factory-reset" / "credentials.json"
     staged_credentials = staged_template.with_name(
         "credentials-0123456789abcdef0123456789abcdef.json"
@@ -2386,6 +2391,7 @@ def test_factory_reset_helper_rejects_request_while_delay_timer_is_active(
     helper = load_helper_module()
     state_directory = tmp_path / "factory-reset"
     state_directory.mkdir()
+    monkeypatch.setattr(helper, "_open_factory_reset_directory", lambda: None)
     staged_template = tmp_path / "apply" / "factory-reset" / "credentials.json"
     staged_credentials = staged_template.with_name(
         "credentials-fedcba9876543210fedcba9876543210.json"
@@ -2474,6 +2480,11 @@ def test_factory_reset_helper_rejects_busy_admission_without_touching_other_requ
     """
     helper = load_helper_module()
     state_directory = tmp_path / "factory-reset"
+    monkeypatch.setattr(
+        helper,
+        "_open_factory_reset_directory",
+        lambda: state_directory.mkdir(parents=True, exist_ok=True) or None,
+    )
     staged_template = tmp_path / "apply" / "factory-reset" / "credentials.json"
     losing_request = staged_template.with_name(
         "credentials-11111111111111111111111111111111.json"
@@ -2547,6 +2558,11 @@ def test_factory_reset_helper_replaces_failed_schedule_credentials_on_retry(
     """
     helper = load_helper_module()
     state_directory = tmp_path / "factory-reset"
+    monkeypatch.setattr(
+        helper,
+        "_open_factory_reset_directory",
+        lambda: state_directory.mkdir(parents=True, exist_ok=True) or None,
+    )
     staged_template = tmp_path / "apply" / "factory-reset" / "credentials.json"
     staged_template.parent.mkdir(parents=True)
     first_request = staged_template.with_name(
@@ -2681,6 +2697,7 @@ def test_factory_reset_helper_rejects_retry_after_execution_failure(
     helper = load_helper_module()
     state_directory = tmp_path / "factory-reset"
     state_directory.mkdir()
+    monkeypatch.setattr(helper, "_open_factory_reset_directory", lambda: None)
     marker_path = state_directory / "request.json"
     marker_path.write_text(
         json.dumps(
@@ -2797,7 +2814,14 @@ def test_factory_reset_directory_open_rejects_symlink(monkeypatch, tmp_path):
     monkeypatch.setattr(helper.os, "O_NOFOLLOW", 0x20000, raising=False)
 
     def fake_open(path, _flags, *args, **kwargs):
-        """Open the parent, then model ELOOP for the linked child."""
+        """Open the parent, then model ELOOP for the linked child.
+
+        Args:
+            path: Candidate parent or child directory path.
+            _flags: No-follow open flags under test.
+            *args: Positional open arguments ignored by the test double.
+            **kwargs: Directory-relative open arguments under test.
+        """
         del args
         if not kwargs:
             assert path == state_directory.parent
