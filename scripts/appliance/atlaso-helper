@@ -5674,12 +5674,14 @@ def _configure_atlaso_management_https(
     payload: dict,
     *,
     site_suffix: str = "",
+    restart_service: bool = True,
 ) -> tuple[int, int | None]:
     """Perform configure atlaso management HTTPS.
 
     Args:
         payload: Validated request or task payload consumed by the operation.
         site_suffix: Additional transitional server blocks installed in the same site.
+        restart_service: Whether a changed loopback drop-in schedules an Atlaso restart.
     """
     enabled = bool(payload.get("management_https_enabled"))
     changed = False
@@ -5714,6 +5716,8 @@ def _configure_atlaso_management_https(
     print(daemon_reload.stderr, end="", file=sys.stderr)
     if daemon_reload.returncode != 0:
         return daemon_reload.returncode, None
+    if not restart_service:
+        return 0, None
 
     restart_command = ["systemctl", "restart", "atlaso.service"]
     systemd_run = shutil.which("systemd-run")
@@ -16846,6 +16850,7 @@ def _apply_management_handoff(payload: dict) -> int:
         management_https_result, _restart_delay_seconds = _configure_atlaso_management_https(
             settings_payload,
             site_suffix=protocol_holdover,
+            restart_service=False,
         )
         if management_https_result != 0:
             raise ValueError("candidate management nginx apply failed")
@@ -16910,7 +16915,8 @@ def _apply_management_handoff(payload: dict) -> int:
         if protocol_holdover:
             failing_layer = "previous-protocol retirement"
             management_https_result, _restart_delay_seconds = _configure_atlaso_management_https(
-                settings_payload
+                settings_payload,
+                restart_service=False,
             )
             if management_https_result != 0:
                 raise ValueError("candidate nginx could not retire the previous protocol listener")

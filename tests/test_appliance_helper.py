@@ -1521,6 +1521,7 @@ def test_management_handoff_candidate_durability_gates_ack(
     restored: list[bool] = []
     durability_calls: list[bool] = []
     nginx_suffixes: list[str] = []
+    nginx_restart_options: list[bool] = []
     retirement_operations: list[str] = []
     monkeypatch.setattr(helper, "_snapshot_management_handoff", lambda _payload: state)
     monkeypatch.setattr(
@@ -1571,8 +1572,10 @@ def test_management_handoff_candidate_durability_gates_ack(
     monkeypatch.setattr(
         helper,
         "_configure_atlaso_management_https",
-        lambda _payload, *, site_suffix="": (
-            nginx_suffixes.append(site_suffix) or 0,
+        lambda _payload, *, site_suffix="", restart_service=True: (
+            nginx_suffixes.append(site_suffix)
+            or nginx_restart_options.append(restart_service)
+            or 0,
             None,
         ),
     )
@@ -1650,8 +1653,50 @@ def test_management_handoff_candidate_durability_gates_ack(
     assert 'iifname "eth0"' not in applied_firewalls[1]
     assert "resolver-applying" in phases
     assert nginx_suffixes == ["old protocol listener", ""]
+    assert nginx_restart_options == [False, False]
     payload = json.loads(capsys.readouterr().out.splitlines()[-1])
     assert payload["management_handoff"] == "awaiting application commit"
+
+
+def test_management_handoff_does_not_schedule_precommit_atlaso_restart(monkeypatch, tmp_path):
+    """Persist the proven loopback command without restarting Atlaso pre-commit.
+
+    Args:
+        monkeypatch: Pytest fixture used to isolate nginx and systemd operations.
+        tmp_path: Temporary root containing the Atlaso systemd drop-in.
+    """
+    helper = load_helper_module()
+    dropin_dir = tmp_path / "atlaso.service.d"
+    commands: list[list[str]] = []
+    monkeypatch.setattr(helper, "ATLASO_SERVICE_DROPIN_DIR", dropin_dir)
+    monkeypatch.setattr(
+        helper,
+        "ATLASO_SERVICE_HTTPS_DROPIN_PATH",
+        dropin_dir / "management-https.conf",
+    )
+    monkeypatch.setattr(helper, "_install_nginx_site", lambda *_args: 0)
+    monkeypatch.setattr(
+        helper,
+        "_run",
+        lambda command: commands.append(command)
+        or subprocess.CompletedProcess(command, 0, "", ""),
+    )
+
+    result = helper._configure_atlaso_management_https(
+        {
+            "fqdn": "atlaso.example.test",
+            "management_https_enabled": False,
+            "management_upstream_host": "127.0.0.1",
+            "management_upstream_port": 8000,
+        },
+        restart_service=False,
+    )
+
+    assert result == (0, None)
+    assert commands == [["systemctl", "daemon-reload"]]
+    assert "--host 127.0.0.1 --port 8000" in (
+        helper.ATLASO_SERVICE_HTTPS_DROPIN_PATH.read_text(encoding="utf-8")
+    )
 
 
 def test_management_handoff_failure_rolls_back_with_truthful_layer(monkeypatch, tmp_path, capsys):
