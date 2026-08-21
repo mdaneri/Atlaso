@@ -310,13 +310,62 @@ def test_update_source_payload_exposes_only_non_secret_revision():
         name="PrivateGallery",
         url="https://packages.example.test/powershell",
         credential_encrypted="encrypted-credential-material",
+        validated_at=datetime(2026, 8, 21, 12, 30, tzinfo=timezone.utc),
         updated_at=datetime(2026, 8, 21, 13, tzinfo=timezone.utc),
     )
     payload = update_source_payload(source)
 
     assert payload["credential_present"] is True
+    assert payload["validated_at"] == "2026-08-21T12:30:00+00:00"
     assert payload["updated_at"] == "2026-08-21T13:00:00+00:00"
     assert "credential_encrypted" not in payload
+
+
+def test_availability_fingerprint_stales_after_repository_synchronization():
+    """Require a fresh check after a repository synchronization succeeds."""
+    from atlaso.app.services.appliance_update import (
+        empty_update_availability,
+        record_update_availability_attempt,
+        update_availability_summary,
+        update_stream_configuration_fingerprint,
+    )
+
+    settings = {
+        "source_definitions": [
+            {
+                "id": 9,
+                "kind": "photon",
+                "name": "Photon",
+                "url": "https://packages.example.test/photon",
+                "enabled": True,
+                "priority": 10,
+                "settings": {"managed": True},
+                "credential_present": False,
+                "validation_status": "valid",
+                "validated_at": "2026-08-21T12:00:00+00:00",
+                "updated_at": "2026-08-21T11:00:00+00:00",
+            }
+        ]
+    }
+    fingerprint = update_stream_configuration_fingerprint("photon_os", settings)
+    state = record_update_availability_attempt(
+        empty_update_availability(),
+        stream="photon_os",
+        job_id="job-before-resynchronization",
+        checked_at=datetime(2026, 8, 21, 12, 5, tzinfo=timezone.utc),
+        fingerprint=fingerprint,
+        result={"state": "available", "change_count": 1},
+    )
+
+    settings["source_definitions"][0]["validated_at"] = (
+        "2026-08-21T13:00:00+00:00"
+    )
+    summary = update_availability_summary(state, settings)
+    photon = next(row for row in summary["streams"] if row["id"] == "photon_os")
+
+    assert photon["stale"] is True
+    assert photon["confirmed"] is None
+    assert summary["available"] is False
 
 
 def test_availability_mixed_stream_results_and_manual_install_gate():

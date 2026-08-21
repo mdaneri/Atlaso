@@ -133,6 +133,7 @@ def update_stream_configuration_fingerprint(stream: str, settings: dict[str, Any
             "settings": source.get("settings") if isinstance(source.get("settings"), dict) else {},
             "credential_present": bool(source.get("credential_present")),
             "updated_at": source.get("updated_at"),
+            "validated_at": source.get("validated_at"),
             "validation_status": source.get("validation_status"),
         }
         for source in definitions or []
