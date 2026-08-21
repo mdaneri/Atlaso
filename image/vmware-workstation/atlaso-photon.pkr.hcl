@@ -3,7 +3,7 @@ packer {
 
   required_plugins {
     vmware = {
-      version = ">= 2.1.3"
+      version = "= 2.1.5"
       source  = "github.com/vmware/vmware"
     }
   }

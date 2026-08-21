@@ -33,13 +33,18 @@ The template uses the Packer VMware Desktop plugin:
 
 ```hcl
 source = "github.com/vmware/vmware"
+version = "= 2.1.5"
 ```
 
-Run `packer init` from this directory before validating or building.
+The supported wrapper runs `packer init` and `scripts/check_packer_plugins.py` before validation or build. The exact
+`2.1.5` pin therefore resolves the same reviewed binary from an empty plugin directory or a warm cache. For a manual
+template check from this directory, run `packer init .` and then
+`python ../../scripts/check_packer_plugins.py .`. Update the HCL pin, tests, and this documentation together when
+reviewing a plugin update.
 
 From the repository root, `python scripts/check_deployment_assets.py --mode packer` performs that initialization plus
-formatting and full wrapper-equivalent validation for both the VMware Workstation and Hyper-V templates. Canonical CI
-runs the same protected inventory on its Windows Packer runner.
+exact selected-binary verification, formatting, and full wrapper-equivalent validation for both the VMware Workstation
+and Hyper-V templates. Canonical CI runs the same protected inventory on its Windows Packer runner.
 
 ## Build
 

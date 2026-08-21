@@ -19,6 +19,7 @@ from scripts.check_deployment_assets import (
     validate_sudoers,
     validate_systemd,
 )
+from scripts.check_packer_plugins import validate_packer_plugins
 
 SYSTEMD_ANALYZE = shutil.which("systemd-analyze")
 VISUDO = shutil.which("visudo")
@@ -362,15 +363,33 @@ def test_packer_validation_uses_wrapper_guard_and_template_directory(tmp_path: P
     template = tmp_path / "image/hyperv/atlaso-photon.pkr.hcl"
     template.parent.mkdir(parents=True)
     template.write_text("packer {}\n", encoding="utf-8")
-    completed = Mock(returncode=0, stdout="", stderr="")
+    plugin = tmp_path / "packer-plugin-hyperv_v1.1.5_x5.0_windows_amd64.exe"
+    plugin.touch()
+    completed = [
+        Mock(returncode=0, stdout="", stderr=""),
+        Mock(
+            returncode=0,
+            stdout=f'hyperv github.com/hashicorp/hyperv "= 1.1.5" {plugin}\n',
+            stderr="",
+        ),
+        Mock(returncode=0, stdout="", stderr=""),
+        Mock(returncode=0, stdout="", stderr=""),
+    ]
 
-    with patch("scripts.check_deployment_assets.subprocess.run", return_value=completed) as run:
+    with patch("scripts.check_deployment_assets.subprocess.run", side_effect=completed) as run:
         findings = validate_packer((template,), "packer")
 
     assert findings == []
     assert run.call_args_list == [
         call(
             ["packer", "init", "."],
+            cwd=template.parent,
+            capture_output=True,
+            text=True,
+            check=False,
+        ),
+        call(
+            ["packer", "plugins", "required", "."],
             cwd=template.parent,
             capture_output=True,
             text=True,
@@ -401,6 +420,74 @@ def test_packer_validation_uses_wrapper_guard_and_template_directory(tmp_path: P
             check=False,
         ),
     ]
+
+
+@pytest.mark.parametrize(
+    ("constraint", "selected_version", "expected"),
+    (
+        (">= 1.1.3", "1.1.5", "must use one exact X.Y.Z version"),
+        ("= 1.1.5", "1.1.3", "requires 1.1.5 but Packer selected"),
+    ),
+)
+def test_packer_plugin_resolution_rejects_ranges_and_mismatched_binaries(
+    tmp_path: Path,
+    constraint: str,
+    selected_version: str,
+    expected: str,
+) -> None:
+    """Verify that validation binds the declared version to the selected executable.
+
+    Args:
+        tmp_path: Temporary directory supplied by pytest.
+        constraint: Required-plugin constraint reported by Packer.
+        selected_version: Version encoded in the selected plugin filename.
+        expected: Expected validation finding fragment.
+    """
+    plugin = tmp_path / f"packer-plugin-hyperv_v{selected_version}_x5.0_windows_amd64.exe"
+    plugin.touch()
+    completed = Mock(
+        returncode=0,
+        stdout=f'hyperv github.com/hashicorp/hyperv "{constraint}" {plugin}\n',
+        stderr="",
+    )
+
+    with patch("scripts.check_packer_plugins.subprocess.run", return_value=completed):
+        findings = validate_packer_plugins(tmp_path, "packer")
+
+    assert len(findings) == 1
+    assert expected in findings[0]
+
+
+def test_supported_packer_templates_pin_reviewed_exact_plugins() -> None:
+    """Verify that both supported image targets retain their reviewed exact versions."""
+    repository = Path(__file__).resolve().parents[1]
+    expected = {
+        "image/hyperv/atlaso-photon.pkr.hcl": (
+            'version = "= 1.1.5"',
+            'source  = "github.com/hashicorp/hyperv"',
+        ),
+        "image/vmware-workstation/atlaso-photon.pkr.hcl": (
+            'version = "= 2.1.5"',
+            'source  = "github.com/vmware/vmware"',
+        ),
+    }
+
+    for relative, markers in expected.items():
+        template = (repository / relative).read_text(encoding="utf-8")
+        for marker in markers:
+            assert marker in template
+
+    wrapper = (repository / "scripts/windows/common/Atlaso.PhotonImage.psm1").read_text(
+        encoding="utf-8"
+    )
+    init = "& packer init ."
+    verify = (
+        "& python $pluginCheckScript --packer "
+        "(Get-Command packer -ErrorAction Stop).Source $packerDir"
+    )
+    execute = "& packer @packerArgs"
+    assert "..\\..\\check_packer_plugins.py" in wrapper
+    assert wrapper.index(init) < wrapper.index(verify) < wrapper.index(execute)
 
 
 def write_systemd_fixture(root: Path, service_text: str) -> None:

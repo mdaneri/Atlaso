@@ -353,15 +353,19 @@ python scripts/check_deployment_assets.py --mode auto
 
 Auto mode validates selected assets with locally available tools and is used by pre-commit. Canonical CI is stricter:
 Ubuntu requires `systemd-analyze` and `visudo` for both platform unit sets and every sudoers fragment, while the Windows
-Packer runner performs `packer init`, formatting checks, and full `packer validate` for both Photon templates. The
-Packer validation supplies the same required ISO variables and `iso_contains_kickstart=true` guard as the supported
-build wrappers. Protected events and same-repository pull requests pass the job's read-only GitHub Actions token to
-Packer only as `PACKER_GITHUB_API_TOKEN` on that validation step, preventing plugin discovery from consuming GitHub's
-shared unauthenticated API quota. Cross-repository pull requests use a separate tokenless validation step so untrusted
-fork code never receives repository credentials. Checkout credentials remain unpersisted, and the token must never be
-echoed, written to files, cached, or uploaded as an artifact. Any missing canonical template, empty asset class, or
-unsupported file type in a managed deployment directory fails inventory validation until a validator or reviewed
-exclusion is added.
+Packer runner performs `packer init`, exact selected-plugin verification, formatting checks, and full `packer validate`
+for both Photon templates. Hyper-V pins `github.com/hashicorp/hyperv` to `1.1.5`; VMware Workstation pins
+`github.com/vmware/vmware` to `2.1.5`. `scripts/check_packer_plugins.py` rejects a range constraint, missing selected
+binary, or selected filename that does not encode the exact required version. The supported Windows wrappers perform
+the same initialization and resolution check before validation or build, so warm and empty plugin caches select the
+same code for one Atlaso commit. Packer validation supplies the same required ISO variables and
+`iso_contains_kickstart=true` guard as the wrappers. Protected events and same-repository pull requests pass the job's
+read-only GitHub Actions token to Packer only as `PACKER_GITHUB_API_TOKEN` on that validation step, preventing plugin
+discovery from consuming GitHub's shared unauthenticated API quota. Cross-repository pull requests use a separate
+tokenless validation step so untrusted fork code never receives repository credentials. Checkout credentials remain
+unpersisted, and the token must never be echoed, written to files, cached, or uploaded as an artifact. Any missing
+canonical template, empty asset class, or unsupported file type in a managed deployment directory fails inventory
+validation until a validator or reviewed exclusion is added.
 
 ### Pull requests and versions
 
