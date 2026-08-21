@@ -2904,6 +2904,17 @@
 </li>
       
         <li class="md-nav__item">
+  <a href="#extracted-esx-storage-ownership" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Extracted ESX Storage ownership
+      </span>
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
   <a href="#route-and-openapi-compatibility" class="md-nav__link">
     <span class="md-ellipsis">
       <span class="md-typeset">
@@ -3719,6 +3730,17 @@
 </li>
       
         <li class="md-nav__item">
+  <a href="#extracted-esx-storage-ownership" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Extracted ESX Storage ownership
+      </span>
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
   <a href="#route-and-openapi-compatibility" class="md-nav__link">
     <span class="md-ellipsis">
       <span class="md-typeset">
@@ -4264,6 +4286,36 @@ session or CSRF behavior, redirect, status, source-health response, form parsing
 validation, audit, route inventory, normalized OpenAPI output, NTP/NTS protocol,
 certificate policy or custody, desired state, service behavior, or global
 Appliance Apply boundary.</p>
+<h2 id="extracted-esx-storage-ownership">Extracted ESX Storage ownership<a class="headerlink" href="#extracted-esx-storage-ownership" title="Permanent link">&para;</a></h2>
+<p>The ESX Storage management transports live in
+<code>atlaso/app/routers/ui/esx_storage.py</code>, and the ESX Storage API v1 transports
+live in <code>atlaso/app/routers/api_v1/esx_storage.py</code>. The UI registry keeps ESX
+Storage immediately after VCF workflows and before Identity. The API registry
+keeps ESX Storage immediately after the VCF Backups status contribution and
+before VCF Offline Depot, preserving the established effective route
+and normalized OpenAPI order.</p>
+<p>The stable <code>atlaso/app/ui.py</code> and <code>atlaso/app/api/v1.py</code> facades continue to
+export every established ESX Storage endpoint and helper name. They provide
+late-bound context, DNS reconciliation, rendering, CSRF, system-adapter, and
+Appliance Apply dependencies so existing facade monkeypatch seams remain
+compatible. ESX Storage domain services, disk lifecycle and inventory helpers,
+DNS and firewall reconciliation, desired-state rendering, and global Appliance
+Apply execution retain their established owners.</p>
+<p>Focused transport coverage lives in
+<code>tests/routers/ui/test_esx_storage.py</code> and
+<code>tests/routers/api_v1/test_esx_storage.py</code>. Service, lifecycle, Appliance Apply,
+deployment, release, and integration coverage remains with its established
+tests. Volumes and NFS datastores retain the existing <code>wizard-backed Tabulator</code>
+interaction using the ESX Storage grid and wizard itself as the reference and
+the shared <code>createGrid</code> and <code>createWizard</code> foundations. Disk inventory and
+status presentation retain the established read-only ESX Storage and Tasks
+patterns.</p>
+<p>This behavior-neutral extraction changes no template, CSS, JavaScript, visible
+copy, control, layout, interaction class, route, route name, operation ID, tag,
+authorization scope, session or CSRF behavior, redirect, status, response
+schema, validation, audit, DNS reconciliation, disk-inventory contract, route
+inventory, normalized OpenAPI output, desired state, or global Appliance Apply
+boundary.</p>
 <h2 id="route-and-openapi-compatibility">Route and OpenAPI compatibility<a class="headerlink" href="#route-and-openapi-compatibility" title="Permanent link">&para;</a></h2>
 <p><code>tests/contracts/route_inventory.json</code> records every effective application route in order, including browser,
 protocol, WebSocket, mount, and API routes. Its stable fields are plane, path, methods, route name, explicit operation
@@ -4317,9 +4369,10 @@ complete the <a href="../ui-design-guide/">UI Design Guide</a> gate.</p>
 </span><span id="__span-1-11"><a id="__codelineno-1-11" name="__codelineno-1-11" href="#__codelineno-1-11"></a><span class="n">python</span> <span class="n">-m</span> <span class="n">pytest</span> <span class="n">-q</span> <span class="n">tests</span><span class="p">/</span><span class="n">routers</span><span class="p">/</span><span class="n">ui</span><span class="p">/</span><span class="n">test_dashboard_monitor</span><span class="p">.</span><span class="n">py</span> <span class="n">tests</span><span class="p">/</span><span class="n">routers</span><span class="p">/</span><span class="n">api_v1</span><span class="p">/</span><span class="n">test_dashboard_monitor</span><span class="p">.</span><span class="n">py</span>
 </span><span id="__span-1-12"><a id="__codelineno-1-12" name="__codelineno-1-12" href="#__codelineno-1-12"></a><span class="n">python</span> <span class="n">-m</span> <span class="n">pytest</span> <span class="n">-q</span> <span class="n">tests</span><span class="p">/</span><span class="n">routers</span><span class="p">/</span><span class="n">ui</span><span class="p">/</span><span class="n">test_vaults</span><span class="p">.</span><span class="n">py</span> <span class="n">tests</span><span class="p">/</span><span class="n">test_vaults</span><span class="p">.</span><span class="n">py</span>
 </span><span id="__span-1-13"><a id="__codelineno-1-13" name="__codelineno-1-13" href="#__codelineno-1-13"></a><span class="n">python</span> <span class="n">-m</span> <span class="n">pytest</span> <span class="n">-q</span> <span class="n">tests</span><span class="p">/</span><span class="n">routers</span><span class="p">/</span><span class="n">ui</span><span class="p">/</span><span class="n">test_appliance_maintenance</span><span class="p">.</span><span class="n">py</span> <span class="n">tests</span><span class="p">/</span><span class="n">test_appliance_update</span><span class="p">.</span><span class="n">py</span>
-</span><span id="__span-1-14"><a id="__codelineno-1-14" name="__codelineno-1-14" href="#__codelineno-1-14"></a><span class="n">python</span> <span class="n">-m</span> <span class="n">pytest</span> <span class="n">-q</span> <span class="n">tests</span><span class="p">/</span><span class="n">test_openapi_contract</span><span class="p">.</span><span class="n">py</span> <span class="n">tests</span><span class="p">/</span><span class="n">test_ui_route_namespaces</span><span class="p">.</span><span class="n">py</span> <span class="n">tests</span><span class="p">/</span><span class="n">test_ui_compliance</span><span class="p">.</span><span class="n">py</span>
-</span><span id="__span-1-15"><a id="__codelineno-1-15" name="__codelineno-1-15" href="#__codelineno-1-15"></a><span class="n">python</span> <span class="n">scripts</span><span class="p">/</span><span class="n">generate_router_contract_baselines</span><span class="p">.</span><span class="n">py</span> <span class="p">-</span><span class="n">-check</span>
-</span><span id="__span-1-16"><a id="__codelineno-1-16" name="__codelineno-1-16" href="#__codelineno-1-16"></a><span class="n">python</span> <span class="n">scripts</span><span class="p">/</span><span class="n">check_python_static_analysis</span><span class="p">.</span><span class="n">py</span>
+</span><span id="__span-1-14"><a id="__codelineno-1-14" name="__codelineno-1-14" href="#__codelineno-1-14"></a><span class="n">python</span> <span class="n">-m</span> <span class="n">pytest</span> <span class="n">-q</span> <span class="n">tests</span><span class="p">/</span><span class="n">routers</span><span class="p">/</span><span class="n">ui</span><span class="p">/</span><span class="n">test_esx_storage</span><span class="p">.</span><span class="n">py</span> <span class="n">tests</span><span class="p">/</span><span class="n">routers</span><span class="p">/</span><span class="n">api_v1</span><span class="p">/</span><span class="n">test_esx_storage</span><span class="p">.</span><span class="n">py</span> <span class="n">tests</span><span class="p">/</span><span class="n">test_esx_storage</span><span class="p">.</span><span class="n">py</span>
+</span><span id="__span-1-15"><a id="__codelineno-1-15" name="__codelineno-1-15" href="#__codelineno-1-15"></a><span class="n">python</span> <span class="n">-m</span> <span class="n">pytest</span> <span class="n">-q</span> <span class="n">tests</span><span class="p">/</span><span class="n">test_openapi_contract</span><span class="p">.</span><span class="n">py</span> <span class="n">tests</span><span class="p">/</span><span class="n">test_ui_route_namespaces</span><span class="p">.</span><span class="n">py</span> <span class="n">tests</span><span class="p">/</span><span class="n">test_ui_compliance</span><span class="p">.</span><span class="n">py</span>
+</span><span id="__span-1-16"><a id="__codelineno-1-16" name="__codelineno-1-16" href="#__codelineno-1-16"></a><span class="n">python</span> <span class="n">scripts</span><span class="p">/</span><span class="n">generate_router_contract_baselines</span><span class="p">.</span><span class="n">py</span> <span class="p">-</span><span class="n">-check</span>
+</span><span id="__span-1-17"><a id="__codelineno-1-17" name="__codelineno-1-17" href="#__codelineno-1-17"></a><span class="n">python</span> <span class="n">scripts</span><span class="p">/</span><span class="n">check_python_static_analysis</span><span class="p">.</span><span class="n">py</span>
 </span></code></pre></div>
 <p>Then run the repository's required documentation, version, and diff checks; canonical CI owns the complete Python
 suite. Later phases remain incomplete until their own linked issue, documentation, validation, review, and merge gates
