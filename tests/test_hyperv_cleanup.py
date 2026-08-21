@@ -35,6 +35,7 @@ def _run_hyperv_cleanup(
     inventory_move_timing: str | None = None,
     inventory_path: Path | None = None,
     inventory_disk_path: Path | None = None,
+    inventory_disk_parent_path: Path | None = None,
 ) -> subprocess.CompletedProcess[str]:
     """Run the cleanup module against deterministic in-process Hyper-V cmdlet fakes.
 
@@ -51,6 +52,7 @@ def _run_hyperv_cleanup(
         inventory_move_timing: Whether fake storage moves before or during the stop refresh.
         inventory_path: Optional fake VM configuration and disk parent path.
         inventory_disk_path: Optional fake attached-disk path.
+        inventory_disk_parent_path: Optional parent of the fake attached disk.
 
     Returns:
         Completed PowerShell process.
@@ -78,6 +80,7 @@ def _run_hyperv_cleanup(
                 "move_before_stop": inventory_move_timing == "before-stop",
                 "move_after_stop": inventory_move_timing == "after-stop",
                 "outside_path": str(hyperv_root.parent / "moved" / "Atlaso-Test"),
+                "disk_parent": str(inventory_disk_parent_path or ""),
                 "get_calls": 0,
             }
         ),
@@ -114,6 +117,15 @@ function Get-VM {{
 function Get-VMHardDiskDrive {{
     param([object]$VM, [object]$ErrorAction)
     [pscustomobject]@{{ Path = $VM.DiskPath }}
+}}
+function Get-VHD {{
+    param([string]$Path, [object]$ErrorAction)
+    $state = Read-FakeState
+    $parentPath = ''
+    if ($state.disk_parent -and $Path -eq $state.vms[0].disk) {{
+        $parentPath = [string]$state.disk_parent
+    }}
+    [pscustomobject]@{{ Path = $Path; ParentPath = $parentPath }}
 }}
 function Stop-VM {{
     param([object]$VM, [switch]$TurnOff, [switch]$Force, [object]$ErrorAction)
@@ -170,7 +182,14 @@ def test_hyperv_cleanup_preserves_artifacts_after_platform_failure(
     remove_fails: bool,
     expected_error: str,
 ) -> None:
-    """A failed stop or unregister-equivalent removal must preserve the artifact tree."""
+    """A failed platform transition must preserve the artifact tree.
+
+    Args:
+        tmp_path: Isolated test directory.
+        stop_fails: Whether the fake stop operation fails.
+        remove_fails: Whether the fake removal operation fails.
+        expected_error: Expected cleanup failure text.
+    """
     hyperv_root = tmp_path / "hyperv"
     removal_root = hyperv_root / "test-vms"
     disk_path = removal_root / "Atlaso-Test" / "disk.vhdx"
@@ -192,7 +211,11 @@ def test_hyperv_cleanup_preserves_artifacts_after_platform_failure(
 
 
 def test_hyperv_cleanup_verifies_transitions_then_removes_artifacts(tmp_path: Path) -> None:
-    """The successful path stops, removes, rechecks, and deletes the exact artifact root."""
+    """The successful path stops, removes, rechecks, and deletes the exact root.
+
+    Args:
+        tmp_path: Isolated test directory.
+    """
     hyperv_root = tmp_path / "hyperv"
     removal_root = hyperv_root / "output"
     disk_path = removal_root / "Atlaso-Test" / "disk.vhdx"
@@ -223,7 +246,14 @@ def test_hyperv_cleanup_rejects_incomplete_platform_transition(
     remove_sticky: bool,
     expected_error: str,
 ) -> None:
-    """Hyper-V success returns must be confirmed through a fresh inventory read."""
+    """Hyper-V success returns must be confirmed through a fresh inventory read.
+
+    Args:
+        tmp_path: Isolated test directory.
+        stop_sticky: Whether the fake VM remains active after stop.
+        remove_sticky: Whether the fake VM remains registered after removal.
+        expected_error: Expected cleanup failure text.
+    """
     hyperv_root = tmp_path / "hyperv"
     removal_root = hyperv_root / "test-vms"
     disk_path = removal_root / "Atlaso-Test" / "disk.vhdx"
@@ -247,7 +277,12 @@ def test_hyperv_cleanup_rejects_incomplete_platform_transition(
 def test_hyperv_cleanup_revalidates_vm_artifact_paths_before_removal(
     tmp_path: Path, inventory_move_timing: str
 ) -> None:
-    """A VM whose storage moves after admission must remain registered with artifacts preserved."""
+    """A VM whose storage moves after admission remains registered with artifacts preserved.
+
+    Args:
+        tmp_path: Isolated test directory.
+        inventory_move_timing: Point at which the fake VM storage moves.
+    """
     hyperv_root = tmp_path / "hyperv"
     removal_root = hyperv_root / "test-vms"
     disk_path = removal_root / "Atlaso-Test" / "disk.vhdx"
@@ -269,7 +304,11 @@ def test_hyperv_cleanup_revalidates_vm_artifact_paths_before_removal(
 
 
 def test_hyperv_cleanup_rejects_reparse_component_in_vm_inventory_path(tmp_path: Path) -> None:
-    """A lexical child that resolves through a link cannot establish VM ownership."""
+    """A lexical child resolving through a link cannot establish VM ownership.
+
+    Args:
+        tmp_path: Isolated test directory.
+    """
     hyperv_root = tmp_path / "hyperv"
     removal_root = hyperv_root / "test-vms"
     outside_root = tmp_path / "outside" / "Atlaso-Test"
@@ -299,7 +338,11 @@ def test_hyperv_cleanup_rejects_reparse_component_in_vm_inventory_path(tmp_path:
 
 
 def test_hyperv_cleanup_validates_every_matching_vm_inventory_path(tmp_path: Path) -> None:
-    """One safe configuration path cannot hide a later disk path through a directory link."""
+    """One safe path cannot hide a later disk path through a directory link.
+
+    Args:
+        tmp_path: Isolated test directory.
+    """
     hyperv_root = tmp_path / "hyperv"
     removal_root = hyperv_root / "test-vms"
     safe_inventory_path = removal_root / "Atlaso-Test"
@@ -328,6 +371,40 @@ def test_hyperv_cleanup_validates_every_matching_vm_inventory_path(tmp_path: Pat
     assert len(state["vms"]) == 1
     assert outside_disk.read_text(encoding="utf-8") == "external"
     assert removal_root.exists()
+
+
+def test_hyperv_cleanup_detects_parent_vhd_dependency_outside_vm_root(tmp_path: Path) -> None:
+    """An external differencing child keeps its parent protected during VM cleanup.
+
+    Args:
+        tmp_path: Isolated test directory.
+    """
+    hyperv_root = tmp_path / "hyperv"
+    removal_root = hyperv_root / "output"
+    parent_disk = removal_root / "Atlaso.vhdx"
+    parent_disk.parent.mkdir(parents=True)
+    parent_disk.write_text("parent", encoding="utf-8")
+    lifecycle_root = tmp_path / "test-results" / "Atlaso-Test"
+    lifecycle_root.mkdir(parents=True)
+    child_disk = lifecycle_root / "Atlaso-child.vhdx"
+    child_disk.write_text("child", encoding="utf-8")
+
+    result = _run_hyperv_cleanup(
+        tmp_path,
+        hyperv_root=hyperv_root,
+        removal_root=removal_root,
+        inventory_path=lifecycle_root,
+        inventory_disk_path=child_disk,
+        inventory_disk_parent_path=parent_disk,
+        stop_fails=True,
+    )
+
+    state = json.loads((tmp_path / "hyperv-state.json").read_text(encoding="utf-8"))
+    assert result.returncode != 0
+    assert "simulated Hyper-V stop failure" in result.stderr
+    assert len(state["vms"]) == 1
+    assert parent_disk.read_text(encoding="utf-8") == "parent"
+    assert child_disk.read_text(encoding="utf-8") == "child"
 
 
 def test_standalone_cleanup_scripts_report_success_only_after_checked_removal() -> None:
@@ -371,7 +448,15 @@ def test_standalone_cleanup_rejects_file_shaped_canonical_target(
     success_text: str,
     expected_error: str,
 ) -> None:
-    """A canonical artifact target that is a file must block the wrapper's success claim."""
+    """A file-shaped canonical target must block the wrapper's success claim.
+
+    Args:
+        tmp_path: Isolated test directory.
+        provider: Provider fixture name.
+        module_name: Cleanup module copied into the fixture.
+        success_text: Wrapper success text that must be absent.
+        expected_error: Expected cleanup failure text.
+    """
     fixture_root = tmp_path / provider
     script_directory = fixture_root / "scripts" / "windows" / provider
     image_name = "vmware-workstation" if provider == "vmware" else provider
@@ -413,7 +498,11 @@ def test_standalone_cleanup_rejects_file_shaped_canonical_target(
 
 @pytest.mark.skipif(os.name != "nt", reason="Windows file-sharing semantics are required")
 def test_hyperv_cleanup_does_not_claim_success_after_locked_file(tmp_path: Path) -> None:
-    """A locked artifact must make recursive cleanup fail without a success claim."""
+    """A locked artifact makes recursive cleanup fail without a success claim.
+
+    Args:
+        tmp_path: Isolated test directory.
+    """
     hyperv_root = tmp_path / "hyperv"
     removal_root = hyperv_root / "output"
     removal_root.mkdir(parents=True)

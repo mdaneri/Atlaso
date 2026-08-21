@@ -74,11 +74,24 @@ function Get-AtlasoHypervVmArtifactPaths {
             $paths += [string]$property.Value
         }
     }
-    $paths += @(
-        Get-VMHardDiskDrive -VM $Vm -ErrorAction Stop |
-            ForEach-Object { [string]$_.Path } |
-            Where-Object { -not [string]::IsNullOrWhiteSpace($_) }
-    )
+    foreach ($disk in @(Get-VMHardDiskDrive -VM $Vm -ErrorAction Stop)) {
+        $diskPath = [string]$disk.Path
+        $visitedDiskPaths = [System.Collections.Generic.HashSet[string]]::new(
+            [System.StringComparer]::OrdinalIgnoreCase
+        )
+        while (-not [string]::IsNullOrWhiteSpace($diskPath)) {
+            if (-not [System.IO.Path]::IsPathFullyQualified($diskPath)) {
+                throw "Hyper-V disk chain contains a non-absolute path for VM '$($Vm.Name)': $diskPath"
+            }
+            $canonicalDiskPath = Get-AtlasoHypervCanonicalPath -Path $diskPath
+            if (-not $visitedDiskPaths.Add($canonicalDiskPath)) {
+                throw "Hyper-V disk chain contains a cycle for VM '$($Vm.Name)': $diskPath"
+            }
+            $paths += $diskPath
+            $diskMetadata = Get-VHD -Path $diskPath -ErrorAction Stop
+            $diskPath = [string]$diskMetadata.ParentPath
+        }
+    }
     foreach ($path in $paths) {
         if (-not [System.IO.Path]::IsPathFullyQualified($path)) {
             throw "Hyper-V inventory contains a non-absolute artifact path for VM '$($Vm.Name)': $path"

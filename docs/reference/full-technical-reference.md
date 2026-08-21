@@ -1350,7 +1350,8 @@ snapshot preserve the entire artifact tree.
 
 The standalone VMware and Hyper-V `clean-artifacts.ps1` helpers apply the same fail-closed rule to their canonical
 `output`, `test-vms`, and provider-specific export roots. VMware cleanup reconciles `vmrun` and Workstation registration
-state. Hyper-V cleanup identifies VMs from their configuration and attached-disk paths, verifies that each is off and
+state. Hyper-V cleanup identifies VMs from their configuration, attached-disk paths, and each attached differencing
+disk's complete parent chain; it verifies that each matching VM is off and
 removed, revalidates refreshed configuration and disk paths before and after stopping each VM, then rechecks the
 inventory before filesystem deletion. Every matched Hyper-V inventory path must exist, contain no reparse component,
 and remain inside the artifact root after resolution. Both helpers reject reparse points and out-of-root

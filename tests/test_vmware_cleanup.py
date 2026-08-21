@@ -265,7 +265,19 @@ def _run_artifact_root_cleanup(
     vmrun_path: Path,
     environment: dict[str, str],
 ) -> subprocess.CompletedProcess[str]:
-    """Invoke the shared whole-root cleanup entry point from an isolated wrapper."""
+    """Invoke the shared whole-root cleanup entry point from an isolated wrapper.
+
+    Args:
+        tmp_path: Isolated test directory.
+        artifact_parent: Optional canonical parent containing the removal root.
+        expected_removal_root: Optional exact configured removal root.
+        removal_root: Artifact directory requested for cleanup.
+        vmrun_path: Fake vmrun executable path.
+        environment: Environment for the PowerShell wrapper.
+
+    Returns:
+        Completed PowerShell process.
+    """
     wrapper = tmp_path / "remove-artifact-root.ps1"
     module_path = VMWARE_SCRIPT_ROOT / "Atlaso.WorkstationCleanup.psm1"
     if (artifact_parent is None) == (expected_removal_root is None):
@@ -293,7 +305,11 @@ Write-Host 'ROOT CLEANUP SUCCEEDED'
 def test_whole_artifact_root_cleanup_accepts_exact_absolute_configured_root(
     tmp_path: Path,
 ) -> None:
-    """A supported absolute build output remains cleanable outside the Packer tree."""
+    """A supported absolute build output remains cleanable outside the Packer tree.
+
+    Args:
+        tmp_path: Isolated test directory.
+    """
     removal_root = tmp_path / "custom-output" / "atlaso-photon"
     sentinel = removal_root / "sentinel.txt"
     removal_root.mkdir(parents=True)
@@ -315,7 +331,11 @@ def test_whole_artifact_root_cleanup_accepts_exact_absolute_configured_root(
 
 
 def test_whole_artifact_root_cleanup_rejects_configured_root_mismatch(tmp_path: Path) -> None:
-    """Exact-root mode cannot be redirected to a sibling of the configured output."""
+    """Exact-root mode cannot be redirected to a sibling of the configured output.
+
+    Args:
+        tmp_path: Isolated test directory.
+    """
     expected_root = tmp_path / "configured-output"
     removal_root = tmp_path / "other-output"
     expected_root.mkdir()
@@ -352,7 +372,14 @@ def test_whole_artifact_root_cleanup_preserves_files_after_vmrun_failure(
     unregister_exit: int,
     expected_error: str,
 ) -> None:
-    """Forced rebuild cleanup must stop before deletion when vmrun cannot transition a VM."""
+    """Forced rebuild cleanup must stop before deletion when vmrun cannot transition a VM.
+
+    Args:
+        tmp_path: Isolated test directory.
+        stop_exit: Fake vmrun stop exit code.
+        unregister_exit: Fake vmrun unregister exit code.
+        expected_error: Expected cleanup failure text.
+    """
     artifact_parent = tmp_path / "image-root"
     removal_root = artifact_parent / "output"
     vmx_path = removal_root / "Atlaso-Builder.vmx"
@@ -383,7 +410,11 @@ def test_whole_artifact_root_cleanup_preserves_files_after_vmrun_failure(
 
 
 def test_whole_artifact_root_cleanup_removes_all_verified_vms(tmp_path: Path) -> None:
-    """The whole-root helper must reconcile every discovered VMX before deletion."""
+    """The whole-root helper must reconcile every discovered VMX before deletion.
+
+    Args:
+        tmp_path: Isolated test directory.
+    """
     artifact_parent = tmp_path / "image-root"
     removal_root = artifact_parent / "test-vms"
     vmx_paths = [
@@ -427,7 +458,14 @@ def test_whole_artifact_root_cleanup_rejects_incomplete_vmrun_transition(
     unregister_sticky: bool,
     expected_error: str,
 ) -> None:
-    """A zero exit is insufficient when the follow-up inventory still contains the VM."""
+    """A zero exit is insufficient when the follow-up inventory still contains the VM.
+
+    Args:
+        tmp_path: Isolated test directory.
+        stop_sticky: Whether the fake running inventory remains unchanged after stop.
+        unregister_sticky: Whether registration remains after unregister.
+        expected_error: Expected cleanup failure text.
+    """
     artifact_parent = tmp_path / "image-root"
     removal_root = artifact_parent / "output"
     vmx_path = removal_root / "Atlaso-Builder.vmx"
@@ -455,7 +493,11 @@ def test_whole_artifact_root_cleanup_rejects_incomplete_vmrun_transition(
 
 
 def test_whole_artifact_root_cleanup_rejects_late_registered_vmx(tmp_path: Path) -> None:
-    """The final full inventory gate must preserve a VMX registered after the initial snapshot."""
+    """The final full inventory gate must preserve a late-registered VMX.
+
+    Args:
+        tmp_path: Isolated test directory.
+    """
     artifact_parent = tmp_path / "image-root"
     removal_root = artifact_parent / "output"
     initial_vmx = removal_root / "initial" / "Initial.vmx"
@@ -486,7 +528,11 @@ def test_whole_artifact_root_cleanup_rejects_late_registered_vmx(tmp_path: Path)
 def test_whole_artifact_root_cleanup_matches_late_inventory_alias_by_file_identity(
     tmp_path: Path,
 ) -> None:
-    """A late VMX registered through an out-of-root hard-link alias must preserve the root."""
+    """A late VMX registered through an out-of-root alias must preserve the root.
+
+    Args:
+        tmp_path: Isolated test directory.
+    """
     artifact_parent = tmp_path / "image-root"
     removal_root = artifact_parent / "output"
     initial_vmx = removal_root / "initial" / "Initial.vmx"
@@ -518,7 +564,11 @@ def test_whole_artifact_root_cleanup_matches_late_inventory_alias_by_file_identi
 
 
 def test_whole_artifact_root_cleanup_rejects_an_out_of_root_target(tmp_path: Path) -> None:
-    """A caller cannot widen recursive deletion beyond its canonical image root."""
+    """A caller cannot widen recursive deletion beyond its canonical image root.
+
+    Args:
+        tmp_path: Isolated test directory.
+    """
     artifact_parent = tmp_path / "image-root"
     artifact_parent.mkdir()
     removal_root = tmp_path / "outside"
@@ -546,7 +596,11 @@ def test_whole_artifact_root_cleanup_rejects_an_out_of_root_target(tmp_path: Pat
 def test_whole_artifact_root_cleanup_does_not_claim_success_after_locked_file(
     tmp_path: Path,
 ) -> None:
-    """A terminating recursive-delete failure must preserve the root and suppress success."""
+    """A terminating recursive-delete failure preserves the root and suppresses success.
+
+    Args:
+        tmp_path: Isolated test directory.
+    """
     artifact_parent = tmp_path / "image-root"
     removal_root = artifact_parent / "ovf"
     removal_root.mkdir(parents=True)
