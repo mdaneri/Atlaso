@@ -543,7 +543,8 @@ The following cross-cutting boundaries always apply:
   run staging directories through symlink-resistant paths before reset activation continues. Also durably clear the
   bounded Managed LDAP recovery-export directory so interrupted plaintext account archives cannot survive reset.
   Before runtime activation, stop SSH admission and terminate and verify every root or Atlaso-managed operating-system
-  login session; restore factory SSH policy only after Local Users credential reconciliation.
+  login session. Repeat that bounded termination after retained authorization keys are scrubbed, then restore and
+  verify factory SSH policy through the readiness handoff.
 - Keep internal CA custody and managed service-certificate deployment available without a public CA listen interface.
   Interface selection owns portal publication only. Every selected NTS server apply includes the CA unit and executes
   it before NTP/NTS validation so runtime certificate material is present even when the CA baseline is current. Turning

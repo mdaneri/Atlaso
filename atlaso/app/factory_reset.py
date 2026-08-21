@@ -74,6 +74,7 @@ FACTORY_RESET_REQUIRED_SERVICES = (
     "atlaso-worker.service",
     "atlaso-console.service",
     "nginx.service",
+    "sshd.service",
 )
 VCF_BACKUPS_AUTHORIZED_KEYS_DIRECTORY = Path("/etc/atlaso/ssh/authorized_keys")
 CA_MANAGED_PATH_BASE = Path("/etc/atlaso")
@@ -1578,10 +1579,11 @@ def _run_factory_reset_locked(
             _require_terminal_release_update()
             _stop_application_services(boot_resume=boot_resume)
         _update_request("building", "Building a clean factory database and validating packaged defaults.")
+        runtime_adapter = adapter or SystemAdapter(dry_run=False)
         unit_count = _candidate_database(
             source_path,
             candidate_path,
-            adapter=adapter or SystemAdapter(dry_run=False),
+            adapter=runtime_adapter,
             credential_plan=credential_plan,
         )
         _update_request("committing", "Replacing the Atlaso database with the validated factory database.")
@@ -1589,6 +1591,12 @@ def _run_factory_reset_locked(
         if not (adapter and adapter.dry_run):
             _clear_apply_staging()
             _scrub_retained_credentials()
+            if manage_services:
+                final_login_cleanup = runtime_adapter.terminate_factory_reset_login_sessions()
+                if final_login_cleanup.returncode != 0:
+                    raise FactoryResetError(
+                        "Factory reset could not terminate post-activation operating-system login sessions."
+                    )
         if not manage_services:
             return _mark_factory_reset_succeeded(request_payload, unit_count)
         awaiting_readiness = _update_request(

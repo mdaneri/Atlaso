@@ -845,6 +845,7 @@ def test_managed_factory_reset_retains_marker_until_readiness(tmp_path, monkeypa
     )
     scheduled: list[tuple[str, ...]] = []
     credential_removal_states: list[str] = []
+    login_cleanup_events: list[str] = []
     monkeypatch.setenv("ATLASO_FACTORY_RESET_STATE_DIRECTORY", str(state_directory))
     monkeypatch.setattr(
         factory_reset,
@@ -855,7 +856,20 @@ def test_managed_factory_reset_retains_marker_until_readiness(tmp_path, monkeypa
     monkeypatch.setattr(factory_reset, "_candidate_database", lambda *_args, **_kwargs: 16)
     monkeypatch.setattr(factory_reset, "_replace_database", lambda *_args: None)
     monkeypatch.setattr(factory_reset, "_clear_apply_staging", lambda: None)
-    monkeypatch.setattr(factory_reset, "_scrub_retained_credentials", lambda: None)
+    monkeypatch.setattr(
+        factory_reset,
+        "_scrub_retained_credentials",
+        lambda: login_cleanup_events.append("credentials scrubbed"),
+    )
+    monkeypatch.setattr(
+        SystemAdapter,
+        "terminate_factory_reset_login_sessions",
+        lambda _adapter: login_cleanup_events.append("sessions terminated")
+        or AdapterResult(
+            command=["factory-reset", "terminate-login-sessions"],
+            dry_run=False,
+        ),
+    )
     real_remove_credentials = factory_reset._remove_factory_reset_credentials
 
     def remove_credentials_after_marker() -> None:
@@ -888,6 +902,14 @@ def test_managed_factory_reset_retains_marker_until_readiness(tmp_path, monkeypa
     assert credential_removal_states == ["awaiting_readiness"]
     assert not credentials_path.exists()
     assert scheduled == [("readiness",)]
+    assert login_cleanup_events == ["credentials scrubbed", "sessions terminated"]
+
+
+def test_factory_reset_readiness_requires_ssh_service():
+    """Post-scrub readiness restores and verifies factory SSH admission."""
+    import atlaso.app.factory_reset as factory_reset
+
+    assert "sshd.service" in factory_reset.FACTORY_RESET_REQUIRED_SERVICES
 
 
 def test_factory_reset_preflight_uses_generated_config_validators(monkeypatch):
