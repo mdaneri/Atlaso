@@ -17,8 +17,6 @@ param(
     [switch]$SkipInventoryLinuxSync,
     [string]$WheelPath = '',
     [string]$OnePasswordEnvironmentId = '',
-    [Parameter(DontShow = $true)][string]$OnePasswordBridgeHandle = '',
-    [Parameter(DontShow = $true)][string]$OnePasswordBridgeChallenge = '',
     [switch]$ResetVaultEntries,
     [switch]$SkipHostCheck
 )
@@ -26,7 +24,6 @@ param(
 $ErrorActionPreference = 'Stop'
 
 $script:OnePasswordPasswordVariable = 'DEFAULT_ADMIN_PASSWORD'
-$script:OnePasswordRuntimePasswordVariable = 'ATLASO_DEPLOY_RUNTIME_PASSWORD'
 
 function Resolve-OnePasswordCliPath {
     $command = Get-Command op.exe -ErrorAction SilentlyContinue
@@ -50,42 +47,17 @@ function Assert-OnePasswordEnvironmentId {
 function Assert-OnePasswordEnvironmentSupport {
     param([Parameter(Mandatory = $true)][string]$RunHelp)
 
-    if ($RunHelp -notmatch '(?m)--environment(?:s)?(?:\s|-)') {
+    if ([string]::IsNullOrWhiteSpace($RunHelp) -or $RunHelp -notlike '*--environment*') {
         throw 'The installed 1Password CLI does not support Environment subprocess loading. Install the supported beta CLI and retry.'
     }
 }
 
-function Get-OnePasswordChildArguments {
-    param(
-        [Parameter(Mandatory = $true)][hashtable]$BoundParameters,
-        [Parameter(Mandatory = $true)][string]$ScriptPath
-    )
-
-    $childArguments = @('-NoLogo', '-NoProfile', '-NonInteractive', '-File', $ScriptPath)
-    foreach ($entry in $BoundParameters.GetEnumerator()) {
-        if ($entry.Key -in @('OnePasswordEnvironmentId', 'OnePasswordBridgeHandle', 'OnePasswordBridgeChallenge')) {
-            continue
-        }
-        if ($entry.Value -is [System.Management.Automation.SwitchParameter]) {
-            if ($entry.Value.IsPresent) {
-                $childArguments += "-$($entry.Key)"
-            }
-            continue
-        }
-        if ($null -eq $entry.Value) {
-            continue
-        }
-        $childArguments += "-$($entry.Key)"
-        $childArguments += [string]$entry.Value
-    }
-    return $childArguments
-}
-
-function Invoke-OnePasswordEnvironmentBridge {
+function Invoke-OnePasswordBoundedCommand {
     param(
         [Parameter(Mandatory = $true)][string]$EnvironmentId,
-        [Parameter(Mandatory = $true)][hashtable]$BoundParameters,
-        [Parameter(Mandatory = $true)][string]$ScriptPath
+        [Parameter(Mandatory = $true)][string]$CommandPath,
+        [Parameter(Mandatory = $true)][AllowEmptyString()][string[]]$Arguments,
+        [string]$WorkingDirectory = ''
     )
 
     Assert-OnePasswordEnvironmentId -EnvironmentId $EnvironmentId
@@ -95,236 +67,8 @@ function Invoke-OnePasswordEnvironmentBridge {
     $opPath = Resolve-OnePasswordCliPath
     $runHelp = (& $opPath run --help 2>&1 | Out-String)
     Assert-OnePasswordEnvironmentSupport -RunHelp $runHelp
-    $pwsh = Get-Command pwsh -ErrorAction SilentlyContinue
-    if (-not $pwsh) {
-        throw 'PowerShell 7 (pwsh) is required for the 1Password Environment credential bridge.'
-    }
-
-    $childArguments = Get-OnePasswordChildArguments -BoundParameters $BoundParameters -ScriptPath $ScriptPath
-    $challengeBytes = [byte[]]::new(32)
-    [System.Security.Cryptography.RandomNumberGenerator]::Fill($challengeBytes)
-    $bridgeChallenge = [Convert]::ToHexString($challengeBytes)
-    $bridgeServer = [System.IO.Pipes.AnonymousPipeServerStream]::new(
-        [System.IO.Pipes.PipeDirection]::In,
-        [System.IO.HandleInheritability]::Inheritable
-    )
-    $bridgeHandle = $bridgeServer.GetClientHandleAsString()
-    $bridgeReadBuffer = [byte[]]::new(1)
-    $bridgeReadTask = $bridgeServer.ReadAsync($bridgeReadBuffer, 0, 1)
-    try {
-        $childArguments += @(
-            '-OnePasswordBridgeHandle', $bridgeHandle,
-            '-OnePasswordBridgeChallenge', $bridgeChallenge
-        )
-        & $opPath run --environment $EnvironmentId -- $pwsh.Source @childArguments
-        $bridgeExitCode = $LASTEXITCODE
-        if (-not $bridgeReadTask.Wait(5000) -or $bridgeReadTask.Result -ne 1 -or $bridgeReadBuffer[0] -ne 165) {
-            throw 'The 1Password Environment bridge child did not authenticate through its inherited Windows handle; deployment stopped before authentication.'
-        }
-        if ($bridgeExitCode -ne 0) {
-            throw "The 1Password Environment credential bridge failed with exit code $bridgeExitCode. Verify authorization, the exact Atlaso Environment, and DEFAULT_ADMIN_PASSWORD availability."
-        }
-    } finally {
-        if ($bridgeServer) {
-            try { $bridgeServer.DisposeLocalCopyOfClientHandle() } catch { }
-            $bridgeServer.Dispose()
-        }
-    }
-}
-
-function Get-OnePasswordBridgePipeServerProcessId {
-    param([Parameter(Mandatory = $true)][System.IO.Pipes.AnonymousPipeClientStream]$PipeClient)
-
-    if (-not ([System.Management.Automation.PSTypeName]'AtlasoOnePasswordPipeInterop').Type) {
-        Add-Type @'
-using System;
-using System.Runtime.InteropServices;
-
-public static class AtlasoOnePasswordPipeInterop
-{
-    [DllImport("kernel32.dll", SetLastError = true)]
-    public static extern bool GetNamedPipeServerProcessId(IntPtr pipe, out uint processId);
-}
-'@
-    }
-    [uint32]$serverProcessId = 0
-    if (-not [AtlasoOnePasswordPipeInterop]::GetNamedPipeServerProcessId(
-            $PipeClient.SafePipeHandle.DangerousGetHandle(),
-            [ref]$serverProcessId
-        )) {
-        return 0
-    }
-    return [int]$serverProcessId
-}
-
-function Test-OnePasswordBridgeServerAncestor {
-    param([Parameter(Mandatory = $true)][int]$ServerProcessId)
-
-    $processId = [int]$PID
-    $visited = @{}
-    while ($processId -gt 0 -and -not $visited.ContainsKey($processId)) {
-        if ($processId -eq $ServerProcessId) {
-            return $true
-        }
-        $visited[$processId] = $true
-        try {
-            $process = Get-CimInstance -ClassName Win32_Process -Filter "ProcessId = $processId" -ErrorAction Stop
-        } catch {
-            throw 'Unable to authenticate the 1Password Environment bridge process ancestry; deployment stopped before authentication.'
-        }
-        if (-not $process) {
-            break
-        }
-        $processId = [int]$process.ParentProcessId
-    }
-    return $false
-}
-
-function Test-OnePasswordEnvironmentPasswordProof {
-    param(
-        [Parameter(Mandatory = $true)][string]$EnvironmentId,
-        [Parameter(Mandatory = $true)][string]$Challenge,
-        [Parameter(Mandatory = $true)][string]$Password
-    )
-
-    if ($Challenge -notmatch '^[0-9A-Fa-f]{64}$') {
-        return $false
-    }
-    $challengeBytes = [Convert]::FromHexString($Challenge)
-    $hmac = [System.Security.Cryptography.HMACSHA256]::new(
-        [System.Text.Encoding]::UTF8.GetBytes($Password)
-    )
-    try {
-        $expectedProof = [Convert]::ToHexString($hmac.ComputeHash($challengeBytes))
-    } finally {
-        $hmac.Dispose()
-    }
-
-    $opPath = Resolve-OnePasswordCliPath
-    $pwsh = Get-Command pwsh -ErrorAction SilentlyContinue
-    if (-not $pwsh) {
-        return $false
-    }
-    $verificationScript = '$password = [Environment]::GetEnvironmentVariable("DEFAULT_ADMIN_PASSWORD"); if ([string]::IsNullOrEmpty($password)) { exit 41 }; $hmac = [System.Security.Cryptography.HMACSHA256]::new([System.Text.Encoding]::UTF8.GetBytes($password)); try { [Convert]::ToHexString($hmac.ComputeHash([Convert]::FromHexString($args[0]))) } finally { $hmac.Dispose() }'
-    $verificationOutput = (& $opPath run --environment $EnvironmentId -- $pwsh.Source -NoLogo -NoProfile -NonInteractive -CommandWithArgs $verificationScript $Challenge 2>$null | Out-String).Trim()
-    return $LASTEXITCODE -eq 0 -and [string]::Equals($verificationOutput, $expectedProof, [System.StringComparison]::OrdinalIgnoreCase)
-}
-
-function Test-OnePasswordBridgeProcess {
-    param([string]$Password = '')
-
-    $processId = [int]$PID
-    $visited = @{}
-    while ($processId -gt 0 -and -not $visited.ContainsKey($processId)) {
-        $visited[$processId] = $true
-        try {
-            $process = Get-CimInstance -ClassName Win32_Process -Filter "ProcessId = $processId" -ErrorAction Stop
-        } catch {
-            throw 'Unable to authenticate the 1Password Environment bridge process ancestry; deployment stopped before authentication.'
-        }
-        if (-not $process) {
-            break
-        }
-        $childCommandLine = [string]$process.CommandLine
-        if ($childCommandLine -notmatch '(?i)deploy-wheel\.ps1' -or
-            $childCommandLine -notmatch '(?i)(^|\s)-OnePasswordBridgeHandle(?:=|\s)' -or
-            $childCommandLine -notmatch '(?i)(^|\s)-OnePasswordBridgeChallenge(?:=|\s)') {
-            $processId = [int]$process.ParentProcessId
-            continue
-        }
-        $childHandle = [regex]::Match(
-            $childCommandLine,
-            '(?i)(?:^|\s)-OnePasswordBridgeHandle(?:=|\s+)"?(?<handle>[0-9A-Fa-fx]+)"?(?=\s|$)'
-        )
-        if (-not $childHandle.Success) {
-            $processId = [int]$process.ParentProcessId
-            continue
-        }
-        $childChallenge = [regex]::Match(
-            $childCommandLine,
-            '(?i)(?:^|\s)-OnePasswordBridgeChallenge(?:=|\s+)"?(?<challenge>[0-9A-Fa-f]{64})"?(?=\s|$)'
-        )
-        if (-not $childChallenge.Success) {
-            $processId = [int]$process.ParentProcessId
-            continue
-        }
-        $parentId = [int]$process.ParentProcessId
-        if ($parentId -le 0 -or $visited.ContainsKey($parentId)) {
-            break
-        }
-        try {
-            $parent = Get-CimInstance -ClassName Win32_Process -Filter "ProcessId = $parentId" -ErrorAction Stop
-        } catch {
-            throw 'Unable to authenticate the 1Password Environment bridge process ancestry; deployment stopped before authentication.'
-        }
-        if ($parent -and $parent.Name -in @('op.exe', 'op')) {
-            if ($parent.CommandLine -notmatch '(?i)(^|\s)run(\s|$)' -or
-                $parent.CommandLine -notmatch '(?i)(^|\s)--environment(?:=|\s)') {
-                $processId = $parentId
-                continue
-            }
-            $opEnvironment = [regex]::Match(
-                $parent.CommandLine,
-                '(?i)(?:^|\s)--environment(?:=|\s+)"?(?<id>[A-Za-z0-9_-]{8,128})"?(?=\s|$)'
-            )
-            if ($opEnvironment.Success) {
-                $bridgeClient = [System.IO.Pipes.AnonymousPipeClientStream]::new(
-                    [System.IO.Pipes.PipeDirection]::Out,
-                    $childHandle.Groups['handle'].Value
-                )
-                try {
-                    $serverProcessId = Get-OnePasswordBridgePipeServerProcessId -PipeClient $bridgeClient
-                    $isAuthenticatedPipe = $serverProcessId -gt 0 -and
-                        (Test-OnePasswordBridgeServerAncestor -ServerProcessId $serverProcessId)
-                    $isAuthenticatedPassword = [string]::IsNullOrEmpty($Password) -or
-                        (Test-OnePasswordEnvironmentPasswordProof `
-                            -EnvironmentId $opEnvironment.Groups['id'].Value `
-                            -Challenge $childChallenge.Groups['challenge'].Value `
-                            -Password $Password)
-                    if ($isAuthenticatedPipe -and $isAuthenticatedPassword) {
-                        $bridgeClient.WriteByte(165)
-                        $bridgeClient.Flush()
-                        return $true
-                    }
-                } catch [System.TimeoutException] {
-                    # A missing or unavailable bridge server is an authentication failure.
-                } catch {
-                    # Any pipe or ancestry failure is an authentication failure.
-                } finally {
-                    $bridgeClient.Dispose()
-                }
-            }
-            $processId = $parentId
-            continue
-        }
-        $processId = $parentId
-    }
-    return $false
-}
-
-function Assert-OnePasswordBridgeProcess {
-    param([Parameter(Mandatory = $true)][string]$Password)
-
-    if (Test-OnePasswordBridgeProcess -Password $Password) {
-        return
-    }
-    throw 'The deployment password was not supplied by an authenticated 1Password Environment subprocess; deployment stopped before authentication.'
-}
-
-function Resolve-OnePasswordChildPassword {
-    if (-not $env:DEFAULT_ADMIN_PASSWORD) {
-        if (Test-OnePasswordBridgeProcess) {
-            throw 'The exact 1Password Environment did not provide DEFAULT_ADMIN_PASSWORD; deployment stopped before authentication.'
-        }
-        return ''
-    }
-    $password = [string]$env:DEFAULT_ADMIN_PASSWORD
-    Remove-Item Env:\DEFAULT_ADMIN_PASSWORD -ErrorAction SilentlyContinue
-    if ([string]::IsNullOrEmpty($password)) {
-        throw 'The exact 1Password Environment did not provide DEFAULT_ADMIN_PASSWORD; deployment stopped before authentication.'
-    }
-    Assert-OnePasswordBridgeProcess -Password $password
-    return $password
+    $opArguments = @('run', '--environment', $EnvironmentId, '--', $CommandPath) + $Arguments
+    Invoke-CheckedCommand -FilePath $opPath -WorkingDirectory $WorkingDirectory -Arguments $opArguments
 }
 
 function Resolve-VmrunPath {
@@ -591,7 +335,6 @@ function Invoke-PasswordBackedDeploy {
         [Parameter(Mandatory = $true)][string]$PythonCommand,
         [Parameter(Mandatory = $true)][string]$HostAddress,
         [Parameter(Mandatory = $true)][string]$UserName,
-        [Parameter(Mandatory = $true)][string]$Password,
         [Parameter(Mandatory = $true)][string]$LocalWheelPath,
         [Parameter(Mandatory = $true)][string[]]$LocalRuntimeDependencyPaths,
         [string]$LocalHelperPath = '',
@@ -625,7 +368,8 @@ function Invoke-PasswordBackedDeploy {
         [Parameter(Mandatory = $true)][int]$ReadinessTimeoutSeconds,
         [Parameter(Mandatory = $true)][int]$DeploymentTimeoutSeconds,
         [Parameter(Mandatory = $true)][int]$PollSeconds,
-        [Parameter(Mandatory = $true)][string]$WorkingDirectory
+        [Parameter(Mandatory = $true)][string]$WorkingDirectory,
+        [Parameter(Mandatory = $true)][string]$OnePasswordEnvironmentId
     )
 
     $passwordDeployDirectory = Join-Path ([System.IO.Path]::GetTempPath()) "atlaso-password-deploy-$([guid]::NewGuid().ToString('N'))"
@@ -735,9 +479,9 @@ if not args.local_trust_key or len(args.local_trust_key) != len(args.remote_trus
 if not args.local_runtime_dependency or len(args.local_runtime_dependency) != len(args.remote_runtime_dependency):
     raise SystemExit("Matched local and remote runtime dependency wheels are required.")
 
-password = os.environ.get("ATLASO_DEPLOY_RUNTIME_PASSWORD", "")
+password = os.environ.pop("DEFAULT_ADMIN_PASSWORD", "")
 if not password:
-    raise SystemExit("The concealed deployment password runtime is unavailable.")
+    raise SystemExit("The exact 1Password Environment did not provide DEFAULT_ADMIN_PASSWORD.")
 
 uploads = [
     (pathlib.Path(args.local_wheel), args.remote_wheel),
@@ -882,7 +626,6 @@ finally:
 '@
     [System.IO.File]::WriteAllText($pythonDeploy, ($pythonDeploySource -replace "`r?`n", "`n"), [System.Text.UTF8Encoding]::new($false))
 
-    $previousPassword = $env:ATLASO_DEPLOY_RUNTIME_PASSWORD
     $previousPythonPath = $env:PYTHONPATH
     try {
         $temporaryPythonPath = Initialize-PasswordDeployPythonPath `
@@ -957,14 +700,12 @@ finally:
             '--local-nginx-service-drop-in', $LocalNginxServiceDropInPath,
             '--remote-nginx-service-drop-in', $RemoteNginxServiceDropIn
         )
-        $env:ATLASO_DEPLOY_RUNTIME_PASSWORD = $Password
-        Invoke-CheckedCommand -FilePath $PythonCommand -WorkingDirectory $WorkingDirectory -Arguments $deployArguments
+        Invoke-OnePasswordBoundedCommand `
+            -EnvironmentId $OnePasswordEnvironmentId `
+            -CommandPath $PythonCommand `
+            -Arguments $deployArguments `
+            -WorkingDirectory $WorkingDirectory
     } finally {
-        if ($null -eq $previousPassword) {
-            Remove-Item Env:\ATLASO_DEPLOY_RUNTIME_PASSWORD -ErrorAction SilentlyContinue
-        } else {
-            $env:ATLASO_DEPLOY_RUNTIME_PASSWORD = $previousPassword
-        }
         if ($null -eq $previousPythonPath) {
             Remove-Item Env:\PYTHONPATH -ErrorAction SilentlyContinue
         } else {
@@ -974,14 +715,11 @@ finally:
     }
 }
 
-$SshPassword = Resolve-OnePasswordChildPassword
-if ($OnePasswordEnvironmentId) {
-    Invoke-OnePasswordEnvironmentBridge `
-        -EnvironmentId $OnePasswordEnvironmentId `
-        -BoundParameters $PSBoundParameters `
-        -ScriptPath $PSCommandPath
-    exit 0
+if ($env:DEFAULT_ADMIN_PASSWORD) {
+    throw 'DEFAULT_ADMIN_PASSWORD must not be supplied by the caller; use the exact Atlaso 1Password Environment bridge.'
 }
+
+$UsePasswordDeploy = -not [string]::IsNullOrEmpty($OnePasswordEnvironmentId)
 
 $resolvedRepoRoot = Resolve-RepoRoot -Path $RepoRoot
 $RemoteDirectory = Resolve-RemoteDirectoryPath -Path $RemoteDirectory
@@ -1108,7 +846,7 @@ if (-not $IpAddress) {
     $IpAddress = Get-GuestIpAddress -ResolvedVmrun $resolvedVmrun -ResolvedVmxPath $resolvedVmxPath
 }
 
-if (-not $SshPassword) {
+if (-not $UsePasswordDeploy) {
     Test-RequiredCommand -Name 'scp' | Out-Null
     Test-RequiredCommand -Name 'ssh' | Out-Null
 }
@@ -1466,13 +1204,12 @@ try {
     $localBootThemeArgument = if ($SkipBootBrandingSync) { '' } else { $bootThemePath }
     $localBootBackgroundArgument = if ($SkipBootBrandingSync) { '' } else { $bootBackgroundPath }
     $remoteTrustKeysArgument = $remoteTrustKeyPaths -join ':'
-    if ($SshPassword) {
+    if ($UsePasswordDeploy) {
         Write-Host "Uploading deployment files to $SshUser@$IpAddress`:$RemoteDirectory with password-backed SSH"
         Invoke-PasswordBackedDeploy `
             -PythonCommand $Python `
             -HostAddress $IpAddress `
             -UserName $SshUser `
-            -Password $SshPassword `
             -LocalWheelPath $resolvedWheelPath `
             -LocalRuntimeDependencyPaths $runtimeDependencyPaths `
             -LocalHelperPath $localHelperArgument `
@@ -1506,7 +1243,8 @@ try {
             -ReadinessTimeoutSeconds $ReadinessTimeoutSeconds `
             -DeploymentTimeoutSeconds $DeploymentTimeoutSeconds `
             -PollSeconds $ReadinessPollSeconds `
-            -WorkingDirectory $resolvedRepoRoot
+            -WorkingDirectory $resolvedRepoRoot `
+            -OnePasswordEnvironmentId $OnePasswordEnvironmentId
     } else {
         Write-Host "Uploading deployment files to $SshUser@$IpAddress`:$RemoteDirectory"
         Invoke-CheckedCommand -FilePath 'scp' -Arguments @($sshConnectionArguments + $uploadPaths + "${SshUser}@${IpAddress}:$RemoteDirectory/")

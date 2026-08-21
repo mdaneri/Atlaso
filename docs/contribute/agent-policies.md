@@ -673,13 +673,11 @@ Terminal order:
   then pass only its opaque ID with `-OnePasswordEnvironmentId`; the script must use `op run --environment` and fail
   closed when its CLI capability, authorization, Environment, or variable is unavailable. Never pass a password
   argument, create a local `.env`, set `DEFAULT_ADMIN_PASSWORD` in the caller, or use the retired
-  `ATLASO_DEPLOY_SSH_PASSWORD` fallback. The bridge must bind the child to the exact Environment ID selected by the
-  trusted parent and an inheritable anonymous Windows pipe handle created by that parent; the child must verify the
-  handle's server process is in its process ancestry, challenge the exact parsed `op --environment` subprocess with
-  a fresh HMAC proof while the captured password is already removed from the process environment, and acknowledge
-  the handle before consuming any password. Caller-controlled child command-line values or a caller-created pipe
-  must not authorize password consumption. This permits a documented launch from
-  an existing PowerShell prompt while an unrelated interactive `op run` shell fails closed. Password-backed Paramiko
+  `ATLASO_DEPLOY_SSH_PASSWORD` fallback. The parent must perform local build and input preparation without the
+  credential, then invoke the bounded Paramiko helper directly as `op run --environment <id> -- <python> ...` so the
+  exact Environment supplies `DEFAULT_ADMIN_PASSWORD` only to that subprocess. The child must remove the variable
+  immediately after capture; caller-controlled child command-line values or an interactive `op run` shell must not
+  authorize password consumption. Password-backed Paramiko
   must load system known hosts and reject unknown keys; accept only one non-echoing account-password prompt and reject
   OTP/MFA or verification-code wording. Keep the password-backed remote-command timeout separate from the readiness
   timeout so a long but progressing deployment is not cut off by the post-restart readiness allowance.

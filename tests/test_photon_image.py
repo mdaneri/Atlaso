@@ -1579,17 +1579,12 @@ def test_vmware_deploy_wheel_supports_secure_onepassword_password_deploy():
     readme = Path("docs/reference/full-technical-reference.md").read_text(encoding="utf-8")
 
     assert "[string]$OnePasswordEnvironmentId = ''" in script
-    assert "Get-CimInstance -ClassName Win32_Process" in script
-    assert "Test-OnePasswordEnvironmentPasswordProof" in script
-    assert "HMACSHA256" in script
-    assert "OnePasswordBridgeChallenge" in script
-    assert "-CommandWithArgs" in script
-    assert "[switch]$OnePasswordEnvironmentChild" not in script
-    assert "function Invoke-OnePasswordEnvironmentBridge" in script
-    assert "--environment $EnvironmentId" in script
+    assert "function Invoke-OnePasswordBoundedCommand" in script
+    assert "'run', '--environment', $EnvironmentId, '--', $CommandPath" in script
     assert "DEFAULT_ADMIN_PASSWORD" in script
     assert "The exact 1Password Environment did not provide DEFAULT_ADMIN_PASSWORD" in script
     assert "ATLASO_DEPLOY_SSH_PASSWORD" not in script
+    assert "ATLASO_DEPLOY_RUNTIME_PASSWORD" not in script
     assert "function Initialize-PasswordDeployPythonPath" in script
     assert "Preparing temporary Paramiko runtime from local deployment wheels" in script
     assert "'--no-index'" in script
@@ -1623,25 +1618,14 @@ def test_vmware_deploy_wheel_supports_secure_onepassword_password_deploy():
     assert "systemctl enable atlaso-worker.service" in script
     assert "systemctl restart atlaso-worker.service" in script
     assert "systemctl is-active atlaso-worker.service" in script
-    assert "ATLASO_DEPLOY_RUNTIME_PASSWORD" in script
-    assert "Remove-Item Env:\\DEFAULT_ADMIN_PASSWORD" in script
-    assert "The deployment password was not supplied by an authenticated 1Password Environment subprocess" in script
-    assert "deploy-wheel\\.ps1" in script
-    assert "AnonymousPipeServerStream" in script
-    assert "AnonymousPipeClientStream" in script
-    assert "GetClientHandleAsString" in script
-    assert "HandleInheritability]::Inheritable" in script
-    assert "GetNamedPipeServerProcessId" in script
-    assert "Test-OnePasswordBridgeServerAncestor" in script
+    assert 'os.environ.pop("DEFAULT_ADMIN_PASSWORD", "")' in script
+    assert "op run --environment <id> -- <python> ..." in readme
+    assert "An interactive `op run`" in readme
     assert "read_paramiko_command_output" in script
     assert "recv_stderr_ready" in script
     assert "time.monotonic" in script
     assert "args.readiness_timeout" in script
     assert "DeploymentTimeoutSeconds" in script
-    assert "[System.IO.Pipes.PipeDirection]::In" in script
-    assert "[System.IO.Pipes.PipeDirection]::Out" in script
-    assert "[System.IO.HandleInheritability]::Inheritable" in script
-    assert "fresh HMAC proof while the captured password is already removed" in readme
     assert "$invokingProcess.CommandLine" not in script
     assert "client.set_missing_host_key_policy(paramiko.RejectPolicy())" in script
     assert "client.load_system_host_keys()" in script
@@ -1656,7 +1640,7 @@ def test_vmware_deploy_wheel_supports_secure_onepassword_password_deploy():
     assert "base64 -d | sh" in script
     assert "sudo -S -p '' sh" in script
     assert "sanitized(stdout_text, password)" in script
-    assert "if (-not $SshPassword) {" in script
+    assert "if (-not $UsePasswordDeploy) {" in script
     assert "Test-RequiredCommand -Name 'scp'" in script
     assert "Invoke-PasswordBackedDeploy `" in script
     assert "-OnePasswordEnvironmentId '<atlaso-environment-id>'" in readme

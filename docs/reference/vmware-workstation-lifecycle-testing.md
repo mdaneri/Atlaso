@@ -14,22 +14,19 @@ The shared lifecycle host-state checks verify that first-boot appliances retain 
 command check run directly as the unprivileged appliance SSH user rather than through sudo.
 
 For a wheel-only deployment to the canonical test VM, use `scripts/windows/vmware/deploy-wheel.ps1` with the secure
-Windows 1Password bridge documented in the [full technical reference](full-technical-reference.md). Authenticate the
+Windows 1Password handoff documented in the [full technical reference](full-technical-reference.md). Authenticate the
 local integration, verify the unique `Atlaso` Environment and concealed `DEFAULT_ADMIN_PASSWORD` variable by name,
-then pass only its opaque Environment ID through `-OnePasswordEnvironmentId`. The bridge requires the supported
-`op run --environment` capability, keeps the value inside the bounded child process, preserves SSH known-host
-verification, and fails closed when authorization or any required Environment input is unavailable. Key-backed Windows
+then pass only its opaque Environment ID through `-OnePasswordEnvironmentId`. The handoff requires the supported
+`op run --environment` capability and provisions the value only into the bounded Paramiko deployment child, preserves
+SSH known-host verification, and fails closed when authorization or any required Environment input is unavailable. Key-backed Windows
 transfers keep `scp` sources and destinations separate and cross the PowerShell login shell through a secret-free
 base64 `sh -lc` wrapper. Password-backed SSH supports one password-only keyboard-interactive challenge, rejects OTP/MFA
 prompts, and uses a separate deployment timeout from the readiness allowance with a non-PTY
 `sudo -S` handoff. Do not pass a password argument, create a local `.env` file, or use the retired
-`ATLASO_DEPLOY_SSH_PASSWORD` fallback.
-The bounded child also authenticates that `op run --environment` carries the exact Environment selected by the trusted
-parent. The bridge creates an inheritable anonymous Windows pipe handle, passes only that OS handle to the bounded
-child, verifies the handle's server process is in its process ancestry, challenges the exact `op --environment`
-subprocess with a fresh HMAC proof while the captured password is already removed from the process environment, and
-acknowledges it before consuming the password. This supports starting the documented command from an existing
-PowerShell prompt while rejecting an interactive `op run` shell that did not launch the bridge.
+`ATLASO_DEPLOY_SSH_PASSWORD` fallback. The PowerShell parent performs local build and input preparation without the
+credential, then invokes the Paramiko helper directly as `op run --environment <id> -- <python> ...`; `op` supplies
+`DEFAULT_ADMIN_PASSWORD` only to that bounded child, which removes it from its process environment immediately after
+capture. An interactive `op run` shell is not a supported substitute for the exact Environment handoff.
 
 Atlaso can run a VMware Workstation lifecycle lab alongside the Hyper-V lab. The Workstation path uses VMX/VMDK
 artifacts and `vmrun.exe`, then delegates appliance behavior checks to the shared Python lifecycle runner.

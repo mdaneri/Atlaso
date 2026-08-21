@@ -1391,17 +1391,13 @@ If you want the helper to resolve the guest IP from VMware Tools, pass the VMX p
 Do not pipe the VMX path or put it on a separate line by itself; PowerShell will try to execute the `.vmx` file. Before
 using the password-backed path, authenticate the local 1Password integration, verify that exactly one Environment named
 `Atlaso` exists, and confirm that `DEFAULT_ADMIN_PASSWORD` is present and concealed without reading its value. Copy the
-opaque Environment ID from that exact Environment and pass only the ID above. The helper invokes
-`op run --environment <id> --` with PowerShell 7, so 1Password provisions the named variable only into the bounded child
-deployment process. The helper fails closed when the CLI capability, authorization, Environment, or variable is missing;
-it never accepts a password argument, local `.env` file, or the retired `ATLASO_DEPLOY_SSH_PASSWORD` fallback.
-The bounded child authenticates the `op.exe` ancestry and requires the exact Environment selected by that trusted
-parent. It also requires an inheritable anonymous Windows pipe handle created by the bridge parent. The child verifies
-the handle's server process is in its process ancestry, challenges the exact `op --environment` subprocess with a
-fresh HMAC proof while the captured password is already removed from the process environment, and acknowledges the
-handle before consuming the password. A caller-created handle with an Environment that lacks the variable therefore
-fails closed. This permits the documented command to start from an existing PowerShell prompt while an interactive
-`op run` shell that did not launch this bridge still fails closed.
+opaque Environment ID from that exact Environment and pass only the ID above. The parent performs local build and input
+preparation without the credential, then invokes the bounded Paramiko helper directly as
+`op run --environment <id> -- <python> ...`; 1Password provisions `DEFAULT_ADMIN_PASSWORD` only into that child
+deployment process. The child removes the variable from its process environment immediately after capture, and the
+helper fails closed when the CLI capability, authorization, Environment, or variable is missing. It never accepts a
+password argument, local `.env` file, or the retired `ATLASO_DEPLOY_SSH_PASSWORD` fallback. An interactive `op run`
+shell is not a supported substitute for the exact Environment handoff.
 
 The child uses the local Python runtime and Paramiko so SSH and sudo do not prompt interactively. Paramiko loads the
 user's SSH known-hosts database and rejects unknown host keys; approve the verified appliance host key before running

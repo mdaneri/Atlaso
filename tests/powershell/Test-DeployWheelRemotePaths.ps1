@@ -38,7 +38,7 @@ Assert-Equal (ConvertTo-PosixShellArgument -Value "/tmp/atlaso'build") "'/tmp/at
 $validationCall = '$RemoteDirectory = Resolve-RemoteDirectoryPath -Path $RemoteDirectory'
 $validationIndex = $deploySource.IndexOf($validationCall, [System.StringComparison]::Ordinal)
 $buildIndex = $deploySource.IndexOf('if (-not $SkipBuild) {', [System.StringComparison]::Ordinal)
-$authenticationIndex = $deploySource.IndexOf('if ($SshPassword) {', [System.StringComparison]::Ordinal)
+$authenticationIndex = $deploySource.IndexOf('if ($UsePasswordDeploy) {', [System.StringComparison]::Ordinal)
 if ($validationIndex -lt 0 -or $validationIndex -gt $buildIndex -or $validationIndex -gt $authenticationIndex) {
     throw 'RemoteDirectory validation must run before build work and authentication-specific deployment.'
 }
