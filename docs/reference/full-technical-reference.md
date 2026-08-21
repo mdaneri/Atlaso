@@ -1395,15 +1395,16 @@ opaque Environment ID from that exact Environment and pass only the ID above. Th
 `op run --environment <id> --` with PowerShell 7, so 1Password provisions the named variable only into the bounded child
 deployment process. The helper fails closed when the CLI capability, authorization, Environment, or variable is missing;
 it never accepts a password argument, local `.env` file, or the retired `ATLASO_DEPLOY_SSH_PASSWORD` fallback.
-The bounded child authenticates the `op.exe` ancestry and requires the `op run --environment` command to carry the
-same opaque ID as the concealed child-only handoff. It also requires a fresh, non-secret per-invocation nonce generated
-by the bridge to appear in both the `op.exe` and child command lines; this permits the documented command to
-start from an existing PowerShell prompt while an interactive `op run` shell that did not launch this bridge still fails
-closed.
+The bounded child authenticates the `op.exe` ancestry and requires the exact Environment selected by that trusted
+parent. It also requires a fresh private Windows named-pipe server created by the bridge parent, and verifies that the
+pipe server process is in the child process ancestry. This permits the documented command to start from an existing
+PowerShell prompt while an interactive `op run` shell that did not launch this bridge still fails closed; caller-
+controlled child command-line values cannot authorize password consumption.
 
 The child uses the local Python runtime and Paramiko so SSH and sudo do not prompt interactively. Paramiko loads the
 user's SSH known-hosts database and rejects unknown host keys; approve the verified appliance host key before running
-the deployment. If the selected Python cannot already import Paramiko, the helper installs it and its dependencies into
+the deployment. It drains non-PTY stdout and stderr concurrently so a verbose remote failure cannot block on one
+channel. If the selected Python cannot already import Paramiko, the helper installs it and its dependencies into
 a temporary deployment directory from the wheels downloaded under `dist`; it does not modify the global Python
 environment. Without `-OnePasswordEnvironmentId`, the helper preserves the original `scp`/`ssh` key or agent workflow.
 Helper sync matters because the privileged helper is installed outside the Python virtualenv and is not replaced by

@@ -16,8 +16,7 @@ param(
     [switch]$SkipInventoryLinuxSync,
     [string]$WheelPath = '',
     [string]$OnePasswordEnvironmentId = '',
-    [Parameter(DontShow = $true)][string]$OnePasswordBridgeEnvironmentId = '',
-    [Parameter(DontShow = $true)][string]$OnePasswordBridgeNonce = '',
+    [Parameter(DontShow = $true)][string]$OnePasswordBridgePipeName = '',
     [switch]$ResetVaultEntries,
     [switch]$SkipHostCheck
 )
@@ -62,7 +61,7 @@ function Get-OnePasswordChildArguments {
 
     $childArguments = @('-NoLogo', '-NoProfile', '-NonInteractive', '-File', $ScriptPath)
     foreach ($entry in $BoundParameters.GetEnumerator()) {
-        if ($entry.Key -in @('OnePasswordEnvironmentId', 'OnePasswordBridgeEnvironmentId', 'OnePasswordBridgeNonce')) {
+        if ($entry.Key -in @('OnePasswordEnvironmentId', 'OnePasswordBridgePipeName')) {
             continue
         }
         if ($entry.Value -is [System.Management.Automation.SwitchParameter]) {
@@ -100,15 +99,85 @@ function Invoke-OnePasswordEnvironmentBridge {
     }
 
     $childArguments = Get-OnePasswordChildArguments -BoundParameters $BoundParameters -ScriptPath $ScriptPath
-    $bridgeNonce = [guid]::NewGuid().ToString('N')
-    $childArguments += @(
-        '-OnePasswordBridgeEnvironmentId', $EnvironmentId,
-        '-OnePasswordBridgeNonce', $bridgeNonce
+    $pipeName = "Atlaso-OnePasswordBridge-$([guid]::NewGuid().ToString('N'))"
+    $bridgeServer = [System.IO.Pipes.NamedPipeServerStream]::new(
+        $pipeName,
+        [System.IO.Pipes.PipeDirection]::InOut,
+        1,
+        [System.IO.Pipes.PipeTransmissionMode]::Byte,
+        [System.IO.Pipes.PipeOptions]::Asynchronous
     )
-    & $opPath run --environment $EnvironmentId -- $pwsh.Source @childArguments
-    if ($LASTEXITCODE -ne 0) {
-        throw "The 1Password Environment credential bridge failed with exit code $LASTEXITCODE. Verify authorization, the exact Atlaso Environment, and DEFAULT_ADMIN_PASSWORD availability."
+    $bridgeWait = $null
+    $bridgeEnded = $false
+    try {
+        $bridgeWait = $bridgeServer.BeginWaitForConnection($null, $null)
+        $childArguments += @('-OnePasswordBridgePipeName', $pipeName)
+        & $opPath run --environment $EnvironmentId -- $pwsh.Source @childArguments
+        $bridgeExitCode = $LASTEXITCODE
+        if (-not $bridgeWait.AsyncWaitHandle.WaitOne(5000)) {
+            throw 'The 1Password Environment bridge child did not authenticate through its private Windows pipe; deployment stopped before authentication.'
+        }
+        $bridgeServer.EndWaitForConnection($bridgeWait)
+        $bridgeEnded = $true
+        if ($bridgeExitCode -ne 0) {
+            throw "The 1Password Environment credential bridge failed with exit code $bridgeExitCode. Verify authorization, the exact Atlaso Environment, and DEFAULT_ADMIN_PASSWORD availability."
+        }
+    } finally {
+        if ($bridgeWait -and $bridgeWait.IsCompleted -and -not $bridgeEnded) {
+            try { $bridgeServer.EndWaitForConnection($bridgeWait) } catch { }
+        }
+        if ($bridgeServer) {
+            $bridgeServer.Dispose()
+        }
     }
+}
+
+function Get-OnePasswordBridgePipeServerProcessId {
+    param([Parameter(Mandatory = $true)][System.IO.Pipes.NamedPipeClientStream]$PipeClient)
+
+    if (-not ([System.Management.Automation.PSTypeName]'AtlasoOnePasswordPipeInterop').Type) {
+        Add-Type @'
+using System;
+using System.Runtime.InteropServices;
+
+public static class AtlasoOnePasswordPipeInterop
+{
+    [DllImport("kernel32.dll", SetLastError = true)]
+    public static extern bool GetNamedPipeServerProcessId(IntPtr pipe, out uint processId);
+}
+'@
+    }
+    [uint32]$serverProcessId = 0
+    if (-not [AtlasoOnePasswordPipeInterop]::GetNamedPipeServerProcessId(
+            $PipeClient.SafePipeHandle.DangerousGetHandle(),
+            [ref]$serverProcessId
+        )) {
+        return 0
+    }
+    return [int]$serverProcessId
+}
+
+function Test-OnePasswordBridgeServerAncestor {
+    param([Parameter(Mandatory = $true)][int]$ServerProcessId)
+
+    $processId = [int]$PID
+    $visited = @{}
+    while ($processId -gt 0 -and -not $visited.ContainsKey($processId)) {
+        if ($processId -eq $ServerProcessId) {
+            return $true
+        }
+        $visited[$processId] = $true
+        try {
+            $process = Get-CimInstance -ClassName Win32_Process -Filter "ProcessId = $processId" -ErrorAction Stop
+        } catch {
+            throw 'Unable to authenticate the 1Password Environment bridge process ancestry; deployment stopped before authentication.'
+        }
+        if (-not $process) {
+            break
+        }
+        $processId = [int]$process.ParentProcessId
+    }
+    return $false
 }
 
 function Test-OnePasswordBridgeProcess {
@@ -126,24 +195,15 @@ function Test-OnePasswordBridgeProcess {
         }
         $childCommandLine = [string]$process.CommandLine
         if ($childCommandLine -notmatch '(?i)deploy-wheel\.ps1' -or
-            $childCommandLine -notmatch '(?i)(^|\s)-OnePasswordBridgeEnvironmentId(?:=|\s)' -or
-            $childCommandLine -notmatch '(?i)(^|\s)-OnePasswordBridgeNonce(?:=|\s)') {
+            $childCommandLine -notmatch '(?i)(^|\s)-OnePasswordBridgePipeName(?:=|\s)') {
             $processId = [int]$process.ParentProcessId
             continue
         }
-        $childNonce = [regex]::Match(
+        $childPipe = [regex]::Match(
             $childCommandLine,
-            '(?i)(?:^|\s)-OnePasswordBridgeNonce(?:=|\s+)"?(?<nonce>[a-f0-9]{32})"?(?=\s|$)'
+            '(?i)(?:^|\s)-OnePasswordBridgePipeName(?:=|\s+)"?(?<name>Atlaso-OnePasswordBridge-[a-f0-9]{32})"?(?=\s|$)'
         )
-        if (-not $childNonce.Success) {
-            $processId = [int]$process.ParentProcessId
-            continue
-        }
-        $childEnvironment = [regex]::Match(
-            $childCommandLine,
-            '(?i)(?:^|\s)-OnePasswordBridgeEnvironmentId(?:=|\s+)"?(?<id>[A-Za-z0-9_-]{8,128})"?(?=\s|$)'
-        )
-        if (-not $childEnvironment.Success) {
+        if (-not $childPipe.Success) {
             $processId = [int]$process.ParentProcessId
             continue
         }
@@ -166,15 +226,26 @@ function Test-OnePasswordBridgeProcess {
                 $parent.CommandLine,
                 '(?i)(?:^|\s)--environment(?:=|\s+)"?(?<id>[A-Za-z0-9_-]{8,128})"?(?=\s|$)'
             )
-            $opNonce = [regex]::Match(
-                $parent.CommandLine,
-                '(?i)(?:^|\s)-OnePasswordBridgeNonce(?:=|\s+)"?(?<nonce>[a-f0-9]{32})"?(?=\s|$)'
-            )
-            if ($opEnvironment.Success -and $opNonce.Success -and
-                $opEnvironment.Groups['id'].Value -ceq $childEnvironment.Groups['id'].Value -and
-                $childNonce.Groups['nonce'].Value -ceq $opNonce.Groups['nonce'].Value -and
-                $childNonce.Groups['nonce'].Value -ceq $OnePasswordBridgeNonce) {
-                return $true
+            if ($opEnvironment.Success) {
+                $pipeClient = [System.IO.Pipes.NamedPipeClientStream]::new(
+                    '.',
+                    $childPipe.Groups['name'].Value,
+                    [System.IO.Pipes.PipeDirection]::InOut,
+                    [System.IO.Pipes.PipeOptions]::None
+                )
+                try {
+                    $pipeClient.Connect(5000)
+                    $serverProcessId = Get-OnePasswordBridgePipeServerProcessId -PipeClient $pipeClient
+                    if ($serverProcessId -gt 0 -and (Test-OnePasswordBridgeServerAncestor -ServerProcessId $serverProcessId)) {
+                        return $true
+                    }
+                } catch [System.TimeoutException] {
+                    # A missing or unavailable bridge server is an authentication failure.
+                } catch {
+                    # Any pipe or ancestry failure is an authentication failure.
+                } finally {
+                    $pipeClient.Dispose()
+                }
             }
             $processId = $parentId
             continue
@@ -517,6 +588,7 @@ import pathlib
 import shlex
 import socket
 import sys
+import time
 
 if hasattr(sys.stdout, "reconfigure"):
     sys.stdout.reconfigure(errors="replace")
@@ -541,6 +613,28 @@ def sanitized(value, password):
     if password in redacted:
         raise SystemExit("Secret redaction failed; refusing to emit deployment output.")
     return redacted
+
+
+def read_paramiko_command_output(channel):
+    stdout_chunks = []
+    stderr_chunks = []
+    while True:
+        drained = False
+        while channel.recv_ready():
+            stdout_chunks.append(channel.recv(65536))
+            drained = True
+        while channel.recv_stderr_ready():
+            stderr_chunks.append(channel.recv_stderr(65536))
+            drained = True
+        if channel.exit_status_ready() and not channel.recv_ready() and not channel.recv_stderr_ready():
+            break
+        if not drained:
+            time.sleep(0.01)
+    return (
+        b"".join(stdout_chunks).decode("utf-8", "replace"),
+        b"".join(stderr_chunks).decode("utf-8", "replace"),
+        channel.recv_exit_status(),
+    )
 
 
 parser = argparse.ArgumentParser()
@@ -715,9 +809,7 @@ try:
     stdin.write(password + "\n")
     stdin.flush()
     stdin.channel.shutdown_write()
-    stdout_text = stdout.read().decode("utf-8", "replace")
-    stderr_text = stderr.read().decode("utf-8", "replace")
-    exit_code = stdout.channel.recv_exit_status()
+    stdout_text, stderr_text, exit_code = read_paramiko_command_output(stdout.channel)
     if stdout_text.strip():
         print(sanitized(stdout_text, password).strip())
     if stderr_text.strip():

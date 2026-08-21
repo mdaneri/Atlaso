@@ -51,8 +51,7 @@ Assert-Throws {
 
 $boundParameters = @{
     OnePasswordEnvironmentId = 'blgexucrwfr2dtsxe2q4uu7dp4'
-    OnePasswordBridgeEnvironmentId = 'caller-controlled-value-must-not-forward'
-    OnePasswordBridgeNonce = 'caller-controlled-value-must-not-forward'
+    OnePasswordBridgePipeName = 'caller-controlled-value-must-not-forward'
     IpAddress = '192.0.2.10'
     SkipBuild = [System.Management.Automation.SwitchParameter]::new($true)
 }
@@ -137,13 +136,24 @@ if (-not $scriptText.Contains('deploy-wheel\.ps1', [System.StringComparison]::Or
     -not $scriptText.Contains('-OnePasswordEnvironmentId', [System.StringComparison]::Ordinal)) {
     throw 'The bridge child must authenticate the parent deploy-wheel invocation.'
 }
-if (-not $scriptText.Contains('$opEnvironment.Success -and $opNonce.Success', [System.StringComparison]::Ordinal)) {
+if (-not $scriptText.Contains('$opEnvironment.Success', [System.StringComparison]::Ordinal)) {
     throw 'The bridge child must bind op --environment to the requested Environment ID.'
 }
-if (-not $scriptText.Contains('$opEnvironment.Groups[''id''].Value -ceq $childEnvironment.Groups[''id''].Value', [System.StringComparison]::Ordinal) -or
-    -not $scriptText.Contains('[guid]::NewGuid().ToString(''N'')', [System.StringComparison]::Ordinal) -or
-    -not $scriptText.Contains('$childNonce.Groups[''nonce''].Value -ceq $opNonce.Groups[''nonce''].Value', [System.StringComparison]::Ordinal)) {
-    throw 'The bridge must bind the child to a fresh per-invocation authorization nonce.'
+if (-not $scriptText.Contains('NamedPipeServerStream', [System.StringComparison]::Ordinal) -or
+    -not $scriptText.Contains('NamedPipeClientStream', [System.StringComparison]::Ordinal) -or
+    -not $scriptText.Contains('BeginWaitForConnection', [System.StringComparison]::Ordinal) -or
+    -not $scriptText.Contains('GetNamedPipeServerProcessId', [System.StringComparison]::Ordinal) -or
+    -not $scriptText.Contains('Test-OnePasswordBridgeServerAncestor', [System.StringComparison]::Ordinal)) {
+    throw 'The bridge must bind the child to a private named-pipe server owned by its process ancestry.'
+}
+if ($scriptText.Contains('OnePasswordBridgeNonce', [System.StringComparison]::Ordinal) -or
+    $scriptText.Contains('OnePasswordBridgeEnvironmentId', [System.StringComparison]::Ordinal)) {
+    throw 'Bridge authorization must not use caller-controlled Environment or nonce parameters.'
+}
+if (-not $scriptText.Contains('read_paramiko_command_output', [System.StringComparison]::Ordinal) -or
+    -not $scriptText.Contains('recv_stderr_ready', [System.StringComparison]::Ordinal) -or
+    -not $scriptText.Contains('recv_ready', [System.StringComparison]::Ordinal)) {
+    throw 'Password-backed deployment must drain Paramiko stdout and stderr without channel deadlock.'
 }
 if ($scriptText.Contains('$invokingProcess.CommandLine', [System.StringComparison]::Ordinal)) {
     throw 'Bridge authorization must not depend on the interactive PowerShell startup command line.'
