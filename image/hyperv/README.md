@@ -280,7 +280,8 @@ helper reloads nginx/systemd and schedules a short delayed `atlaso.service` rest
 before uvicorn moves behind nginx.
 
 Before uvicorn starts, `atlaso.service` asks the constrained helper to resume a durable
-`/var/lib/atlaso/factory-reset/request.json` marker. An interrupted complete reset therefore finishes before the
+`/var/lib/atlaso-privileged/factory-reset/request.json` marker. An interrupted complete reset therefore finishes before
+the
 management plane becomes available; an appliance without a marker takes the no-op path.
 
 Appliance Settings also owns the root SSH login switch. The image provisions

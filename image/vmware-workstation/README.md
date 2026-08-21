@@ -180,7 +180,8 @@ visible. The Packer build explicitly stages `image/common/update-trust` and fail
 available.
 
 The `atlaso.service` pre-start hook asks the constrained helper to resume a durable
-`/var/lib/atlaso/factory-reset/request.json` marker before uvicorn starts. A reset interrupted by power loss therefore
+`/var/lib/atlaso-privileged/factory-reset/request.json` marker before uvicorn starts. A reset interrupted by power loss
+therefore
 returns to the validated factory transaction before exposing the management control plane; an appliance without a
 marker takes the no-op path.
 

@@ -140,7 +140,7 @@ Settings apply scheduled before reset began, then stops and verifies the applica
 pre-existing delayed restart from reviving a database writer during factory replacement.
 
 Reset progress and only the non-secret `keep`/`change` choices are recorded outside the database in
-`/var/lib/atlaso/factory-reset/request.json`; the last successful result is recorded in `last-result.json`. Atlaso
+`/var/lib/atlaso-privileged/factory-reset/request.json`; the last successful result is recorded in `last-result.json`. Atlaso
 resumes an incomplete marker before the web control plane starts after
 a reboot. The marker remains `awaiting_readiness` after runtime activation and is removed only after Atlaso, worker,
 tty1 console, nginx, and two consecutive management `/openapi.json` checks are ready. If reset reports failure,

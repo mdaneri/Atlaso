@@ -217,7 +217,7 @@ ATLASO_NOTICE_PATH = Path("/usr/share/doc/atlaso/THIRD_PARTY_NOTICES.md")
 ATLASO_UPDATE_TRUST_DIR = Path("/etc/atlaso/update-trust.d")
 ATLASO_UPDATE_BACKUP_DIR = ATLASO_STATE_DIR / "update-backups"
 ATLASO_DATABASE_PATH = ATLASO_STATE_DIR / "atlaso.db"
-ATLASO_FACTORY_RESET_DIR = ATLASO_STATE_DIR / "factory-reset"
+ATLASO_FACTORY_RESET_DIR = Path("/var/lib/atlaso-privileged/factory-reset")
 ATLASO_FACTORY_RESET_REQUEST_PATH = ATLASO_FACTORY_RESET_DIR / "request.json"
 ATLASO_FACTORY_RESET_RESULT_PATH = ATLASO_FACTORY_RESET_DIR / "last-result.json"
 ATLASO_FACTORY_RESET_CREDENTIALS_PATH = ATLASO_FACTORY_RESET_DIR / "credentials.json"
@@ -15590,6 +15590,13 @@ def _open_factory_reset_directory() -> int | None:
     parent_flags = os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW
     parent_descriptor = os.open(parent, parent_flags)
     try:
+        parent_stat = os.fstat(parent_descriptor)
+        if (
+            not stat.S_ISDIR(parent_stat.st_mode)
+            or parent_stat.st_uid != 0
+            or parent_stat.st_mode & 0o022
+        ):
+            raise ValueError("factory-reset state parent directory is unsafe")
         try:
             os.mkdir(
                 ATLASO_FACTORY_RESET_DIR.name,

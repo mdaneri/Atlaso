@@ -946,7 +946,8 @@ are desired admin down. Disabled service settings have blank listen interfaces a
 management to the image-configured CIDR and HTTP preference, with the local console as the bounded handoff if the prior
 address becomes unavailable.
 
-Before database replacement, the root helper persists `/var/lib/atlaso/factory-reset/request.json`, quiesces Atlaso
+Before database replacement, the root helper persists
+`/var/lib/atlaso-privileged/factory-reset/request.json`, quiesces Atlaso
 writers, repeatedly inventories, stops, and verifies UUID-named `atlaso-helper-action-*` services until none remain,
 and only then inventories delayed update restarts so an in-flight update or nested account mutation cannot escape the
 reset checks. Reset runtime cleanup and root-password mutations use the same bounded family. It validates generated

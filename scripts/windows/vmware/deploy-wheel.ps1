@@ -990,6 +990,7 @@ if ! id atlaso-automation >/dev/null 2>&1; then
     useradd --system --gid atlaso-automation --home-dir /var/lib/atlaso/automation --shell /sbin/nologin atlaso-automation
 fi
 usermod -a -G atlaso-automation atlaso
+install -d -o root -g atlaso -m 0750 /var/lib/atlaso-privileged /var/lib/atlaso-privileged/factory-reset
 install -d -o atlaso -g atlaso-automation -m 0750 /var/lib/atlaso/automation /var/lib/atlaso/automation/scripts
 install -d -o atlaso-automation -g atlaso-automation -m 0750 /var/lib/atlaso/automation/runs
 install -o root -g root -m 0644 "$atlaso_service_path" /etc/systemd/system/atlaso.service

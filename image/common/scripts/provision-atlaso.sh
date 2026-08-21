@@ -287,6 +287,8 @@ usermod -a -G atlaso-automation atlaso
 
 install -d -o root -g root -m 0755 "$ATLASO_HOME"
 install -d -o atlaso -g atlaso -m 0750 "$ATLASO_STATE"
+install -d -o root -g atlaso -m 0750 /var/lib/atlaso-privileged
+install -d -o root -g atlaso -m 0750 /var/lib/atlaso-privileged/factory-reset
 install -d -o atlaso -g atlaso -m 0750 "$ATLASO_STATE/apply/firewall"
 install -d -o atlaso -g atlaso -m 0750 "$ATLASO_STATE/apply/dnsmasq"
 install -d -o atlaso -g atlaso -m 0750 "$ATLASO_STATE/apply/kms"

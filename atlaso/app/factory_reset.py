@@ -53,7 +53,7 @@ from atlaso.app.services.networking import (
 )
 
 FACTORY_RESET_SCHEMA_VERSION = 1
-FACTORY_RESET_STATE_DIRECTORY = Path("/var/lib/atlaso/factory-reset")
+FACTORY_RESET_STATE_DIRECTORY = Path("/var/lib/atlaso-privileged/factory-reset")
 FACTORY_RESET_REQUEST_NAME = "request.json"
 FACTORY_RESET_RESULT_NAME = "last-result.json"
 FACTORY_RESET_CANDIDATE_NAME = "factory-candidate.db"
@@ -351,6 +351,9 @@ def _open_factory_reset_state_directory(path: Path) -> int:
             )
             os.close(descriptor)
             descriptor = next_descriptor
+            component_stat = os.fstat(descriptor)
+            if component_stat.st_uid != 0 or component_stat.st_mode & 0o022:
+                raise FactoryResetError("Factory reset state path is unsafe.")
         directory_stat = os.fstat(descriptor)
         if directory_stat.st_uid != 0 or directory_stat.st_mode & 0o022:
             raise FactoryResetError("Factory reset state directory is unsafe.")

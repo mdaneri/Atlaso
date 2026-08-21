@@ -2831,10 +2831,55 @@ def test_factory_reset_directory_open_rejects_symlink(monkeypatch, tmp_path):
         raise OSError("symlink refused")
 
     monkeypatch.setattr(helper.os, "open", fake_open)
+    monkeypatch.setattr(
+        helper.os,
+        "fstat",
+        lambda descriptor: SimpleNamespace(
+            st_mode=stat.S_IFDIR | 0o750,
+            st_uid=0,
+        )
+        if descriptor == parent_descriptor
+        else pytest.fail("unexpected directory descriptor"),
+    )
     monkeypatch.setattr(helper.os, "mkdir", lambda *_args, **_kwargs: None)
     monkeypatch.setattr(helper.os, "close", closed.append)
 
     with pytest.raises(OSError, match="symlink refused"):
+        helper._open_factory_reset_directory()
+
+    assert closed == [parent_descriptor]
+
+
+def test_factory_reset_directory_open_rejects_unsafe_parent(monkeypatch, tmp_path):
+    """The helper rejects a parent that the service account could rename within."""
+    helper = load_helper_module()
+    state_directory = tmp_path / "factory-reset"
+    parent_descriptor = 92
+    closed: list[int] = []
+
+    monkeypatch.setattr(helper, "ATLASO_FACTORY_RESET_DIR", state_directory)
+    monkeypatch.setattr(helper.os, "name", "posix")
+    monkeypatch.setattr(helper.os, "O_DIRECTORY", 0x10000, raising=False)
+    monkeypatch.setattr(helper.os, "O_NOFOLLOW", 0x20000, raising=False)
+    monkeypatch.setattr(helper.os, "open", lambda *_args, **_kwargs: parent_descriptor)
+    monkeypatch.setattr(
+        helper.os,
+        "fstat",
+        lambda descriptor: SimpleNamespace(
+            st_mode=stat.S_IFDIR | 0o770,
+            st_uid=0,
+        )
+        if descriptor == parent_descriptor
+        else pytest.fail("unexpected directory descriptor"),
+    )
+    monkeypatch.setattr(
+        helper.os,
+        "mkdir",
+        lambda *_args, **_kwargs: pytest.fail("unsafe parent must be rejected before mkdir"),
+    )
+    monkeypatch.setattr(helper.os, "close", closed.append)
+
+    with pytest.raises(ValueError, match="parent directory is unsafe"):
         helper._open_factory_reset_directory()
 
     assert closed == [parent_descriptor]
