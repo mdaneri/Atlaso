@@ -51,8 +51,13 @@ pwsh -ExecutionPolicy Bypass `
 The preparation script downloads Alpine's official UEFI cloud-init QCOW2 image, verifies the `.sha512` checksum, and
 converts it to a dynamic Hyper-V VHDX with `qemu-img`. A failed conversion or image inspection exits nonzero without
 emitting the prepared-image JSON. When the current run created an incomplete or unverified VHDX, the wrapper removes
-that exact output so a later lifecycle run cannot accept it as prepared. The lifecycle script uses `pycdlib` to build
-the NoCloud seed ISOs; if it is missing, the script installs it with `python -m pip install pycdlib`.
+that exact output so a later lifecycle run cannot accept it as prepared. Cached Alpine payload and checksum files are
+accepted only as a verified pair. Both the cached payload and downloaded checksum metadata must match the repository-
+pinned SHA-512 digest for the exact default Alpine image. A corrupt or incomplete pair is removed and reacquired into
+unique partial files, validated before atomic promotion, and never requires `-Force` for ordinary recovery. Custom
+images must supply their own `-ExpectedSha512` pin. The lifecycle script uses
+`pycdlib` to build the NoCloud seed ISOs; if it is missing, the script installs it with
+`python -m pip install pycdlib`.
 
 ## Single-Command Run
 

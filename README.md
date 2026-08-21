@@ -126,6 +126,8 @@ Photon OS 5.0 is the appliance operating system. VMware Workstation is the defau
 verify stop and unregister state before removing exact VM artifact directories. Standalone VMware and Hyper-V image
 cleanup also reconciles provider inventory and fails closed before deleting canonical artifact roots. Hyper-V remains
 the authoritative lifecycle interoperability environment for exact access and trunk VLAN behavior.
+Image-build download caches verify pinned checksums before reuse or durable promotion; ordinary retries replace only
+the exact corrupt expected cache entries and do not require manual cleanup.
 The VMware wheel-deployment helper accepts only absolute POSIX remote staging directories composed of ASCII letters,
 digits, `/`, `.`, `_`, and `-`, with no `.` or `..` components. It rejects whitespace, shell metacharacters, and control
 characters before building or uploading through either SSH authentication mode.

@@ -437,6 +437,10 @@ The following cross-cutting boundaries always apply:
   change the default distribution, elevate, reboot, or remove a distribution. Keep the pinned setup contract, explicit
   distribution selection, native-Linux cache, Linux-only child `PATH`, per-repository `flock`, and checkout-wide output
   serialization described in the canonical contributor guide.
+- Image download caches accept only checksum-verified payloads. Validate existing entries before reuse, remove only the
+  exact expected corrupt payload and checksum metadata, download into unique same-directory partial files, and promote
+  them only after pinned verification. Failed or interrupted downloads must not become accepted durable cache entries,
+  and an ordinary rerun must recover without a force flag or manual cache surgery.
 - Treat Packer HCL, systemd units/manager drop-ins, and sudoers fragments as protected deployment assets. Keep them in
   the checked-in inventory, run `scripts/check_deployment_assets.py` through pre-commit where native tools are
   available, and require full Packer validation plus native Linux systemd/sudoers validation in canonical CI. Pass the

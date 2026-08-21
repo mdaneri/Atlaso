@@ -86,6 +86,11 @@ builds for the same repository and distribution. A checkout-keyed Windows mutex 
 final-output verification across different selected distributions that target the same checkout. The Linux-only child
 `PATH` excludes imported Windows paths.
 
+The Buildroot archive enters the persistent cache only after its pinned SHA-256 digest passes. Downloads use unique
+same-directory partial files and atomic promotion. An ordinary rerun detects and removes only the exact corrupt cached
+archive, reacquires it, and leaves unrelated cache entries untouched; failed or interrupted transfers remove their
+partial file instead of becoming the durable cache entry.
+
 Final verified `bzImage`, `rootfs.cpio.gz`, `manifest.json`, and `legal-info` output still lands under
 `image/inventory-linux/output` in the selected repository checkout. The Inventory Linux build probes that final output
 filesystem before copying artifacts. Native Linux filesystems retain normalized artifact modes and source legal-info

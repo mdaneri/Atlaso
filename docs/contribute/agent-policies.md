@@ -772,6 +772,10 @@ Terminal order:
   path conversion, readiness checks, native-Linux cache discovery, per-repository `flock`, and build execution. Hold a
   checkout-wide host lock through final artifact verification so different distributions cannot write the shared output
   concurrently. See [Windows image-build WSL environment](windows-image-build-wsl.md).
+- Treat image download cache existence as insufficient proof of validity. Verify cached payloads against pinned metadata
+  before reuse; invalidate only the exact expected corrupt payload and checksum files; use unique same-directory partial
+  files; and promote only verified content. A failed or interrupted transfer must not become an accepted durable cache
+  entry, and ordinary retry must reacquire corrupt content without requiring a force flag or manual deletion.
 - `pxe-media-sync` may populate immutable verified cache versions, but must not
   alter active menu state. Fixed upstreams, HTTPS limits, pinned verification,
   allowlisted extraction, and atomic installation are mandatory.

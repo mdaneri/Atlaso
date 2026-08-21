@@ -1955,8 +1955,9 @@ def test_prepare_tiny_linux_client_downloads_verifies_and_converts_alpine():
     """Verify that prepare tiny linux client downloads verifies and converts alpine."""
     script = Path("scripts/windows/hyperv/prepare-tiny-linux-client.ps1").read_text(encoding="utf-8")
 
-    assert "dl-cdn.alpinelinux.org/alpine/latest-stable/releases/cloud" in script
+    assert "dl-cdn.alpinelinux.org/alpine/v3.24/releases/cloud" in script
     assert "generic_alpine-3.24.1-x86_64-uefi-cloudinit-r0.qcow2" in script
+    assert "-ExpectedDigest $ExpectedSha512" in script
     assert "Get-FileHash -Algorithm SHA512" in script
     assert "qemu-img convert -p -f qcow2 -O vhdx -o subformat=dynamic" in script
     assert "atlaso-tiny-linux-client.vhdx" in script
