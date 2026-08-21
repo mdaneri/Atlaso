@@ -83,7 +83,8 @@ def test_facades_register_extracted_domains_in_exact_order():
         "certificate_trust_ca",
         "managed_ldap",
         "certificate_trust_kms",
-        "facade_between_certificate_trust_vcf_workflows",
+        "ntp",
+        "facade_between_ntp_vcf_workflows",
         "vcf_workflows",
         "facade_between_vcf_workflows_identity",
         "identity",
@@ -112,7 +113,8 @@ def test_facades_register_extracted_domains_in_exact_order():
         ui.certificate_trust_ca_router,
         ui.managed_ldap_router,
         ui.certificate_trust_kms_router,
-        ui._management_between_managed_ldap_vcf_workflows_router,
+        ui.ntp_router,
+        ui._management_between_ntp_vcf_workflows_router,
         ui.vcf_workflows_router,
         ui._management_between_vcf_workflows_identity_router,
         ui.identity_router,
@@ -215,6 +217,9 @@ def test_facades_register_extracted_domains_in_exact_order():
     assert {
         route.endpoint.__module__ for route in ui.certificate_trust_kms_router.routes
     } == {"atlaso.app.routers.ui.certificate_trust"}
+    assert {route.endpoint.__module__ for route in ui.ntp_router.routes} == {
+        "atlaso.app.routers.ui.ntp"
+    }
     assert {route.endpoint.__module__ for route in ui.network_boot_router.routes} == {
         "atlaso.app.routers.ui.network_boot"
     }
