@@ -1,6 +1,10 @@
 """Test ESX Storage management UI transports."""
 
+from types import SimpleNamespace
+
 from atlaso.app import ui
+from atlaso.app.adapters.system import AdapterResult
+from tests.routers.ui.helpers import login
 
 
 def api_token(client, scopes: list[str]) -> str:
@@ -51,6 +55,58 @@ def test_esx_storage_ui_router_owns_exact_transport_set() -> None:
             "delete_esx_nfs_share_from_ui",
         ),
     ]
+
+
+def test_esx_storage_ui_keeps_late_bound_facade_adapter_seam(
+    client, monkeypatch
+) -> None:
+    """Resolve the facade adapter when an inventory-backed request executes.
+
+    Args:
+        client: HTTP test client used to exercise the Atlaso application.
+        monkeypatch: Pytest fixture used to replace dependencies for the test.
+    """
+
+    class FacadeAdapter:
+        """Return a distinctive bounded inventory failure."""
+
+        def __init__(self, **_kwargs) -> None:
+            """Accept the established adapter constructor contract.
+
+            Args:
+                **_kwargs: Adapter constructor options supplied by the facade.
+            """
+
+        def esx_storage_inventory(self) -> AdapterResult:
+            """Return the facade-owned inventory result."""
+            return AdapterResult(
+                command=["atlaso-helper", "esx-storage", "inventory"],
+                dry_run=False,
+                returncode=1,
+                stderr="late-bound UI facade adapter",
+            )
+
+    login(client)
+    page = client.get("/ui/management/esx-storage")
+    csrf = page.text.split('name="csrf" value="', 1)[1].split('"', 1)[0]
+    monkeypatch.setattr(ui, "SystemAdapter", FacadeAdapter)
+    monkeypatch.setattr(
+        "atlaso.app.routers.ui.esx_storage.get_settings",
+        lambda: SimpleNamespace(dry_run_system_adapters=False),
+    )
+
+    response = client.post(
+        "/ui/management/esx-storage/volumes",
+        data={
+            "name": "late-bound-ui",
+            "source_type": "mounted_ext4",
+            "mount_path": "/mnt/late-bound-ui",
+            "csrf": csrf,
+        },
+    )
+
+    assert response.status_code == 503
+    assert response.json()["detail"] == "late-bound UI facade adapter"
 
 
 def test_esx_storage_page_and_dual_stack_api_contract(client):

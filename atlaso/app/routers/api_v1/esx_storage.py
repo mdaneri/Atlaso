@@ -11,7 +11,6 @@ from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
-from atlaso.app.adapters.system import SystemAdapter
 from atlaso.app.audit import record_audit
 from atlaso.app.config import get_settings
 from atlaso.app.database import get_db
@@ -53,6 +52,7 @@ class EsxStorageApiDependencies:
     esx_storage_state: Endpoint
     get_esx_storage_settings: Endpoint
     reconcile_esx_storage_dns: Endpoint
+    system_adapter_factory: Endpoint
 
 
 @dataclass(frozen=True)
@@ -169,7 +169,7 @@ def build_router(dependencies: EsxStorageApiDependencies) -> EsxStorageApiRouter
             identity: Authenticated identity authorizing the operation.
             db: Active database session used by the operation.
         """
-        result = SystemAdapter().esx_storage_inventory()
+        result = dependencies.system_adapter_factory().esx_storage_inventory()
         if result.returncode:
             raise HTTPException(
                 status_code=503,
@@ -254,7 +254,9 @@ def build_router(dependencies: EsxStorageApiDependencies) -> EsxStorageApiRouter
                 raise HTTPException(status_code=422, detail=str(exc)) from exc
         candidate: dict[str, Any] = {}
         if not get_settings().dry_run_system_adapters:
-            result = SystemAdapter(dry_run=False).esx_storage_inventory()
+            result = dependencies.system_adapter_factory(
+                dry_run=False
+            ).esx_storage_inventory()
             if result.returncode:
                 raise HTTPException(
                     status_code=503,

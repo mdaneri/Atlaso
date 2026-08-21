@@ -1,5 +1,8 @@
 """Test ESX Storage API v1 transports."""
 
+from types import SimpleNamespace
+
+from atlaso.app.adapters.system import AdapterResult
 from atlaso.app.api import v1
 
 
@@ -39,6 +42,56 @@ def test_esx_storage_api_router_owns_exact_transport_set() -> None:
         ("/api/v1/esx-storage/shares/{share_id}", ("PATCH",), "update_esx_nfs_share"),
         ("/api/v1/esx-storage/shares/{share_id}", ("DELETE",), "delete_esx_nfs_share"),
     ]
+
+
+def test_esx_storage_api_keeps_late_bound_facade_adapter_seam(
+    client, monkeypatch
+) -> None:
+    """Resolve the API facade adapter when an inventory-backed request executes.
+
+    Args:
+        client: HTTP test client used to exercise the Atlaso application.
+        monkeypatch: Pytest fixture used to replace dependencies for the test.
+    """
+
+    class FacadeAdapter:
+        """Return a distinctive bounded inventory failure."""
+
+        def __init__(self, **_kwargs) -> None:
+            """Accept the established adapter constructor contract.
+
+            Args:
+                **_kwargs: Adapter constructor options supplied by the facade.
+            """
+
+        def esx_storage_inventory(self) -> AdapterResult:
+            """Return the facade-owned inventory result."""
+            return AdapterResult(
+                command=["atlaso-helper", "esx-storage", "inventory"],
+                dry_run=False,
+                returncode=1,
+                stderr="late-bound API facade adapter",
+            )
+
+    monkeypatch.setattr(v1, "SystemAdapter", FacadeAdapter)
+    monkeypatch.setattr(
+        "atlaso.app.routers.api_v1.esx_storage.get_settings",
+        lambda: SimpleNamespace(dry_run_system_adapters=False),
+    )
+    token = api_token(client, ["write:esx-storage"])
+
+    response = client.post(
+        "/api/v1/esx-storage/volumes",
+        headers={"Authorization": f"Bearer {token}"},
+        json={
+            "name": "late-bound-api",
+            "source_type": "mounted_ext4",
+            "mount_path": "/mnt/late-bound-api",
+        },
+    )
+
+    assert response.status_code == 503
+    assert response.json()["detail"] == "late-bound API facade adapter"
 
 
 def test_esx_storage_write_scope_is_enforced(client):

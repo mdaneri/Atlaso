@@ -1287,6 +1287,7 @@ _esx_storage_api = build_esx_storage_api_router(
         esx_storage_state=lambda *args, **kwargs: esx_storage_state(*args, **kwargs),
         get_esx_storage_settings=lambda *args, **kwargs: get_esx_storage_settings(*args, **kwargs),
         reconcile_esx_storage_dns=lambda *args, **kwargs: reconcile_esx_storage_dns(*args, **kwargs),
+        system_adapter_factory=lambda *args, **kwargs: SystemAdapter(*args, **kwargs),
     )
 )
 esx_storage_router = _esx_storage_api.router

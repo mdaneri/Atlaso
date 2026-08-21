@@ -15611,7 +15611,7 @@ _esx_storage_ui = build_esx_storage_ui_router(
         normalize_dns_hostname=normalize_dns_hostname,
         render=render,
         require_management_ui_request=require_management_ui_request,
-        system_adapter_factory=SystemAdapter,
+        system_adapter_factory=lambda *args, **kwargs: SystemAdapter(*args, **kwargs),
         verify_csrf=verify_csrf,
     )
 )
