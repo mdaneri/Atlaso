@@ -182,6 +182,83 @@ def test_availability_preserves_confirmed_update_across_failed_recheck_and_stale
     assert "confirmed" not in cleared["streams"]["photon_os"]
 
 
+def test_availability_fingerprint_stales_after_source_credential_revision():
+    """Require a fresh check after a source edit such as credential rotation."""
+    from atlaso.app.services.appliance_update import (
+        empty_update_availability,
+        record_update_availability_attempt,
+        update_availability_summary,
+        update_stream_configuration_fingerprint,
+    )
+
+    settings = {
+        "source_definitions": [
+            {
+                "id": 7,
+                "kind": "powershell",
+                "name": "PrivateGallery",
+                "url": "https://packages.example.test/powershell",
+                "enabled": True,
+                "priority": 20,
+                "settings": {"trusted": True},
+                "credential_present": True,
+                "validation_status": "valid",
+                "updated_at": "2026-08-21T12:00:00+00:00",
+            }
+        ],
+        "powershell_modules": [
+            {
+                "name": "Private.Tools",
+                "policy": "latest",
+                "target_version": "",
+                "repository_name": "PrivateGallery",
+            }
+        ],
+    }
+    fingerprint = update_stream_configuration_fingerprint(
+        "powershell_modules", settings
+    )
+    state = record_update_availability_attempt(
+        empty_update_availability(),
+        stream="powershell_modules",
+        job_id="job-before-credential-rotation",
+        checked_at=datetime(2026, 8, 21, 12, 5, tzinfo=timezone.utc),
+        fingerprint=fingerprint,
+        result={"state": "available", "change_count": 1},
+    )
+
+    settings["source_definitions"][0]["updated_at"] = (
+        "2026-08-21T13:00:00+00:00"
+    )
+    summary = update_availability_summary(state, settings)
+    powershell = next(
+        row for row in summary["streams"] if row["id"] == "powershell_modules"
+    )
+    assert powershell["stale"] is True
+    assert powershell["confirmed"] is None
+    assert summary["available"] is False
+
+
+def test_update_source_payload_exposes_only_non_secret_revision():
+    """Project the source edit revision without exposing encrypted credentials."""
+    from atlaso.app.models import UpdateSource
+    from atlaso.app.services.update_sources import update_source_payload
+
+    source = UpdateSource(
+        id=7,
+        kind="powershell",
+        name="PrivateGallery",
+        url="https://packages.example.test/powershell",
+        credential_encrypted="encrypted-credential-material",
+        updated_at=datetime(2026, 8, 21, 13, tzinfo=timezone.utc),
+    )
+    payload = update_source_payload(source)
+
+    assert payload["credential_present"] is True
+    assert payload["updated_at"] == "2026-08-21T13:00:00+00:00"
+    assert "credential_encrypted" not in payload
+
+
 def test_availability_mixed_stream_results_and_manual_install_gate():
     """Expose mixed results independently and gate all selected streams."""
     from atlaso.app.services.appliance_update import (

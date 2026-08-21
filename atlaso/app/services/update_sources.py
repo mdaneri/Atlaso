@@ -289,4 +289,5 @@ def update_source_payload(source: UpdateSource) -> dict[str, Any]:
         "validation_status": source.validation_status,
         "validation_message": source.validation_message,
         "validated_at": source.validated_at.isoformat() if source.validated_at else "",
+        "updated_at": source.updated_at.isoformat() if source.updated_at else "",
     }
