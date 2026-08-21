@@ -2851,7 +2851,12 @@ def test_factory_reset_directory_open_rejects_symlink(monkeypatch, tmp_path):
 
 
 def test_factory_reset_directory_open_rejects_unsafe_parent(monkeypatch, tmp_path):
-    """The helper rejects a parent that the service account could rename within."""
+    """The helper rejects a parent that the service account could rename within.
+
+    Args:
+        monkeypatch: Pytest fixture used to replace low-level directory operations.
+        tmp_path: Temporary directory used as the modeled privileged state root.
+    """
     helper = load_helper_module()
     state_directory = tmp_path / "factory-reset"
     parent_descriptor = 92
