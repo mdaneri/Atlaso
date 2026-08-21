@@ -1163,6 +1163,36 @@ def test_release_manifest_rejects_non_appliance_python_abi():
         validate_release_manifest(payload)
 
 
+def test_release_manifest_validates_optional_summary_and_release_notes():
+    """Keep optional v2 publication metadata backward compatible and credential free."""
+    legacy = release_payload()
+    assert validate_release_manifest(legacy) is legacy
+
+    enriched = release_payload()
+    enriched["summary"] = "Improve durable update visibility"
+    enriched["release_notes_url"] = "https://github.com/mdaneri/Atlaso/releases/tag/v0.9.0"
+    assert validate_release_manifest(enriched) is enriched
+
+    for value, message in (
+        ({"summary": "first\nsecond"}, "summary"),
+        ({"summary": "x" * 241}, "summary"),
+        ({"release_notes_url": "http://example.test/release"}, "HTTPS URL"),
+        ({"release_notes_url": "https://user:secret@example.test/release"}, "HTTPS URL"),
+    ):
+        payload = release_payload()
+        payload.update(value)
+        with pytest.raises(ReleaseManifestError, match=message):
+            validate_release_manifest(payload)
+
+
+def test_release_bundle_publishes_commit_subject_summary_and_release_link():
+    """Keep manifest generation deterministic and tied to the immutable release tag."""
+    source = (ROOT / "scripts/build_release_bundle.py").read_text(encoding="utf-8")
+    assert 'git_value(["show", "-s", "--format=%s", commit])' in source
+    assert '"summary": release_summary' in source
+    assert '"release_notes_url": f"https://github.com/mdaneri/Atlaso/releases/tag/v{version}"' in source
+
+
 def test_release_workflows_use_successful_main_sha_and_promote_without_rebuilding():
     """Verify that release workflows use successful main sha and promote without rebuilding."""
     publication = (ROOT / ".github/workflows/release.yml").read_text(encoding="utf-8")
@@ -3344,6 +3374,180 @@ def test_worker_restart_fails_update_parent_after_children_commit(client, monkey
         assert result["success"] is False
         assert result["worker_recovery"] == "interrupted"
         assert [step.status for step in recovered.steps] == ["succeeded", "succeeded"]
+
+
+def test_worker_restart_records_interrupted_check_as_latest_failed_attempt(
+    client,
+    monkeypatch,
+    tmp_path,
+):
+    """Keep an older confirmation while blocking installs after interrupted checks.
+
+    Args:
+        client: HTTP test client providing isolated application state.
+        monkeypatch: Pytest fixture used to replace worker dependencies.
+        tmp_path: Temporary directory provided for finalizer state.
+    """
+    from datetime import datetime, timezone
+
+    from atlaso.app import ui, worker
+    from atlaso.app.database import SessionLocal
+    from atlaso.app.models import Job
+    from atlaso.app.services.appliance_update import (
+        APPLIANCE_UPDATE_AVAILABILITY_KEY,
+        empty_update_availability,
+        ensure_appliance_update_job_steps,
+        manual_install_gate,
+        record_update_availability_attempt,
+        update_availability_to_json,
+        update_stream_configuration_fingerprints,
+    )
+
+    monkeypatch.setattr(
+        worker,
+        "APPLIANCE_UPDATE_FINALIZER_PATH",
+        str(tmp_path / "missing-finalizer-status.json"),
+    )
+    with SessionLocal() as db:
+        settings = ui.appliance_update_settings(db)
+        fingerprint = update_stream_configuration_fingerprints(settings)["photon_os"]
+        availability = record_update_availability_attempt(
+            empty_update_availability(),
+            stream="photon_os",
+            job_id="job-earlier-check",
+            checked_at=datetime.now(timezone.utc),
+            fingerprint=fingerprint,
+            result={
+                "state": "available",
+                "current": "1.0",
+                "target": "2.0",
+                "change_count": 1,
+                "changes": [{"name": "photon", "action": "upgrade"}],
+            },
+        )
+        ui.set_setting_value(
+            db,
+            APPLIANCE_UPDATE_AVAILABILITY_KEY,
+            update_availability_to_json(availability),
+        )
+        job = Job(
+            id="job-interrupted-check",
+            type="appliance-update",
+            status="running",
+            created_by="admin",
+            task_config_json=json.dumps(
+                {
+                    "selected_streams": ["photon_os"],
+                    "settings": settings,
+                    "mode": "check",
+                }
+            ),
+            result='{"status":"running","success":false}',
+        )
+        db.add(job)
+        db.flush()
+        step = ensure_appliance_update_job_steps(
+            db,
+            job=job,
+            selected_streams=["photon_os"],
+        )[0]
+        step.status = "running"
+        db.commit()
+
+        assert worker.recover_interrupted_worker_jobs(db) == 1
+        recovered = db.get(Job, job.id)
+        assert recovered.status == "failed"
+        assert json.loads(recovered.result)["worker_recovery"] == "interrupted"
+
+        summary = ui.appliance_update_availability_summary(db)
+        photon = next(row for row in summary["streams"] if row["id"] == "photon_os")
+        assert photon["last_attempt"]["success"] is False
+        assert photon["last_attempt"]["state"] == "failed"
+        assert photon["confirmed"]["update_available"] is True
+        allowed, reason = manual_install_gate(summary, ["photon_os"])
+        assert allowed is False
+        assert "interrupted check" in reason
+
+
+def test_worker_restart_preserves_completed_child_check_availability(
+    client,
+    monkeypatch,
+    tmp_path,
+):
+    """Retain a completed child result while failing the interrupted child.
+
+    Args:
+        client: HTTP test client providing isolated application state.
+        monkeypatch: Pytest fixture used to replace worker dependencies.
+        tmp_path: Temporary directory provided for finalizer state.
+    """
+    from atlaso.app import ui, worker
+    from atlaso.app.database import SessionLocal
+    from atlaso.app.models import Job
+    from atlaso.app.services.appliance_update import ensure_appliance_update_job_steps
+
+    monkeypatch.setattr(
+        worker,
+        "APPLIANCE_UPDATE_FINALIZER_PATH",
+        str(tmp_path / "missing-finalizer-status.json"),
+    )
+    with SessionLocal() as db:
+        settings = ui.appliance_update_settings(db)
+        job = Job(
+            id="job-partially-completed-check",
+            type="appliance-update",
+            status="running",
+            created_by="admin",
+            task_config_json=json.dumps(
+                {
+                    "selected_streams": ["powershell_modules", "photon_os"],
+                    "settings": settings,
+                    "mode": "check",
+                }
+            ),
+            result='{"status":"running","success":false}',
+        )
+        db.add(job)
+        db.flush()
+        steps = ensure_appliance_update_job_steps(
+            db,
+            job=job,
+            selected_streams=["powershell_modules", "photon_os"],
+        )
+        powershell = next(
+            step for step in steps if step.component_key == "powershell_modules"
+        )
+        powershell.status = "succeeded"
+        powershell.progress_percent = 100
+        powershell.result = json.dumps(
+            {
+                "unit_id": "powershell_modules",
+                "status": "succeeded",
+                "success": True,
+                "commands": [],
+                "availability": {
+                    "state": "up_to_date",
+                    "current": "2.0.0",
+                    "target": "2.0.0",
+                    "change_count": 0,
+                    "changes": [],
+                },
+            }
+        )
+        photon = next(step for step in steps if step.component_key == "photon_os")
+        photon.status = "running"
+        db.commit()
+
+        assert worker.recover_interrupted_worker_jobs(db) == 1
+        recovered = db.get(Job, job.id)
+        assert recovered.status == "failed"
+
+        summary = ui.appliance_update_availability_summary(db)
+        rows = {row["id"]: row for row in summary["streams"]}
+        assert rows["powershell_modules"]["last_attempt"]["success"] is True
+        assert rows["powershell_modules"]["confirmed"]["state"] == "up_to_date"
+        assert rows["photon_os"]["last_attempt"]["success"] is False
+        assert rows["photon_os"]["last_attempt"]["state"] == "failed"
 
 
 def test_worker_restart_removes_interrupted_network_boot_upload(client, monkeypatch):

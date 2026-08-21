@@ -51,6 +51,11 @@ def test_appliance_maintenance_routers_own_exact_transport_sets():
     ]
     assert identities(ui.appliance_maintenance_update_router) == [
         (
+            "/ui/management/appliance-update/availability",
+            ("GET",),
+            "appliance_update_availability",
+        ),
+        (
             "/ui/management/appliance-update",
             ("GET",),
             "appliance_update_page",
@@ -113,6 +118,33 @@ def test_appliance_maintenance_routers_own_exact_transport_sets():
         assert getattr(ui, route.name) is route.endpoint
     assert callable(ui._managed_package_from_form)
     assert callable(ui.submit_appliance_update)
+
+
+def test_appliance_update_availability_is_authenticated_no_store_and_not_openapi(client):
+    """Keep the sanitized indicator projection browser-only and uncached.
+
+    Args:
+        client: Test application HTTP client.
+    """
+    anonymous = client.get(
+        "/ui/management/appliance-update/availability",
+        follow_redirects=False,
+    )
+    assert anonymous.status_code in {302, 303, 307, 401}
+
+    login(client)
+    response = client.get("/ui/management/appliance-update/availability")
+    assert response.status_code == 200
+    assert response.headers["cache-control"] == "no-store"
+    assert response.json()["schema_version"] == 1
+    serialized = json.dumps(response.json())
+    assert "commands" not in serialized
+    assert "credentials" not in serialized
+    assert "helper" not in serialized
+
+    openapi = client.get("/openapi.json")
+    assert openapi.status_code == 200
+    assert "/ui/management/appliance-update/availability" not in openapi.json()["paths"]
 
 
 def test_appliance_power_action_creates_task_before_scheduling(client, monkeypatch):
@@ -293,8 +325,8 @@ def test_update_submission_keeps_facade_monkeypatch_seam(client, monkeypatch):
     assert observed["selected_streams"] == ["photon_os"]
 
 
-def test_powershell_update_requires_synchronized_referenced_repository(client):
-    """Preserve PowerShell repository synchronization admission.
+def test_powershell_check_queues_and_records_synchronization_remediation(client):
+    """Let the child record PowerShell repository synchronization remediation.
 
     Args:
         client: HTTP test client used to exercise the Atlaso application.
@@ -309,15 +341,27 @@ def test_powershell_update_requires_synchronized_referenced_repository(client):
         data={"csrf": csrf, "selected_streams": ["powershell_modules"]},
     )
 
-    assert response.status_code == 422
-    assert response.json()["errors"] == [
-        "Synchronize PowerShell repository PSGallery before checking or "
-        "installing its managed modules."
-    ]
+    assert response.status_code == 202
+
+    from atlaso.app.worker import run_worker_once
+
+    assert run_worker_once()
+    availability = client.get(
+        "/ui/management/appliance-update/availability"
+    )
+    assert availability.status_code == 200
+    assert availability.headers["cache-control"] == "no-store"
+    stream = next(
+        row for row in availability.json()["streams"]
+        if row["id"] == "powershell_modules"
+    )
+    assert stream["last_attempt"]["success"] is False
+    assert stream["last_attempt"]["state"] == "failed"
+    assert "Synchronize repositories" in stream["last_attempt"]["remediation"]
 
 
-def test_photon_update_requires_synchronized_managed_repository(client):
-    """Preserve managed Photon repository synchronization admission.
+def test_photon_check_queues_and_records_synchronization_remediation(client):
+    """Let the child record managed Photon repository synchronization remediation.
 
     Args:
         client: HTTP test client used to exercise the Atlaso application.
@@ -350,11 +394,22 @@ def test_photon_update_requires_synchronized_managed_repository(client):
         data={"csrf": csrf, "selected_streams": ["photon_os"]},
     )
 
-    assert response.status_code == 422
-    assert response.json()["errors"] == [
-        f"Synchronize Photon repository {source_name} before checking or "
-        "installing Photon OS updates."
-    ]
+    assert response.status_code == 202
+
+    from atlaso.app.worker import run_worker_once
+
+    assert run_worker_once()
+    availability = client.get(
+        "/ui/management/appliance-update/availability"
+    )
+    assert availability.status_code == 200
+    stream = next(
+        row for row in availability.json()["streams"]
+        if row["id"] == "photon_os"
+    )
+    assert stream["last_attempt"]["success"] is False
+    assert stream["last_attempt"]["state"] == "failed"
+    assert source_name in stream["last_attempt"]["remediation"]
 
 
 def test_appliance_update_settings_validate_urls(client):

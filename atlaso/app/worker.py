@@ -604,36 +604,62 @@ def recover_interrupted_worker_jobs(
                 if recovered and all_steps_succeeded
                 else JobStatus.FAILED.value
             )
-            if recovered:
-                from atlaso.app.ui import (
-                    aggregate_appliance_update_results,
-                    complete_appliance_update_task,
-                )
+            from atlaso.app.ui import (
+                aggregate_appliance_update_results,
+                complete_appliance_update_task,
+            )
 
-                config = _job_config(job)
-                selected = [str(value) for value in config.get("selected_streams", [])]
-                stream_results = []
-                for step in update_steps:
-                    try:
-                        step_result = json.loads(step.result or "{}")
-                    except json.JSONDecodeError:
-                        step_result = {}
-                    if isinstance(step_result, dict):
-                        stream_results.append(step_result)
-                update_result = aggregate_appliance_update_results(
-                    selected_stream_ids=selected,
-                    settings=config.get("settings") if isinstance(config.get("settings"), dict) else {},
-                    actor=job.created_by,
-                    mode=str(config.get("mode") or "run"),
-                    stream_results=stream_results,
-                    job_id=job.id,
-                )
+            config = _job_config(job)
+            selected = [str(value) for value in config.get("selected_streams", [])]
+            stream_results = []
+            for step in update_steps:
+                try:
+                    step_result = json.loads(step.result or "{}")
+                except json.JSONDecodeError:
+                    step_result = {}
+                if isinstance(step_result, dict):
+                    stream_results.append(step_result)
+            mode = str(config.get("mode") or "run")
+            update_result = aggregate_appliance_update_results(
+                selected_stream_ids=selected,
+                settings=config.get("settings") if isinstance(config.get("settings"), dict) else {},
+                actor=job.created_by,
+                mode=mode,
+                stream_results=stream_results,
+                job_id=job.id,
+            )
+            if recovered:
+                update_result["worker_recovery"] = "root_finalizer"
                 if finalizer_status == JobStatus.FAILED.value:
                     update_result["error"] = str(
                         definitive.get("error") or "The Atlaso release transaction failed."
                     )
-                complete_appliance_update_task(db, job=job, update_result=update_result)
-                continue
+            else:
+                interrupted_error = (
+                    "The Atlaso worker restarted while this task was running. "
+                    "The task was not rerun automatically."
+                )
+                update_result.update(
+                    {
+                        "status": JobStatus.FAILED.value,
+                        "success": False,
+                        "restart_after_commit": False,
+                        "worker_recovery": "interrupted",
+                        "error": interrupted_error,
+                    }
+                )
+                if mode == "check":
+                    interrupted_availability = {
+                        "state": "failed",
+                        "remediation": (
+                            "Review the interrupted check task and check the selected stream again."
+                        ),
+                    }
+                    for stream_result in update_result["stream_results"].values():
+                        if stream_result.get("worker_recovery") == "interrupted":
+                            stream_result["availability"] = dict(interrupted_availability)
+            complete_appliance_update_task(db, job=job, update_result=update_result)
+            continue
         else:
             job.status = finalizer_status if recovered else JobStatus.FAILED.value
         job.finished_at = now

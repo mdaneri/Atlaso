@@ -70,7 +70,13 @@ def _https_url(payload: dict[str, Any], key: str) -> str:
     """
     value = _required_text(payload, key)
     parsed = urlparse(value)
-    if parsed.scheme != "https" or not parsed.netloc or parsed.username or parsed.password:
+    if (
+        parsed.scheme != "https"
+        or not parsed.netloc
+        or parsed.username
+        or parsed.password
+        or any(character.isspace() or ord(character) < 32 for character in value)
+    ):
         raise ReleaseManifestError(f"Manifest field {key} must be an HTTPS URL without embedded credentials.")
     return value
 
@@ -207,6 +213,19 @@ def validate_release_manifest(payload: dict[str, Any]) -> dict[str, Any]:
             raise ReleaseManifestError(f"Release content hash for {path} is invalid.")
     if VERSION_RE.fullmatch(_required_text(payload, "version")) is None:
         raise ReleaseManifestError("Release version must use X.Y.Z semantic versioning.")
+    summary = payload.get("summary")
+    if summary is not None and (
+        not isinstance(summary, str)
+        or not summary.strip()
+        or len(summary) > 240
+        or "\n" in summary
+        or "\r" in summary
+    ):
+        raise ReleaseManifestError(
+            "Release summary must be one non-empty line of at most 240 characters."
+        )
+    if payload.get("release_notes_url") is not None:
+        _https_url(payload, "release_notes_url")
     _timestamp(payload, "built_at")
     return payload
 

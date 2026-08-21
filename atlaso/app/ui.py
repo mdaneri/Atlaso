@@ -226,6 +226,7 @@ from atlaso.app.services.appliance_settings import (
     web_terminal_listener_interfaces,
 )
 from atlaso.app.services.appliance_update import (
+    APPLIANCE_UPDATE_AVAILABILITY_KEY,
     APPLIANCE_UPDATE_EXECUTION_ORDER,
     APPLIANCE_UPDATE_FINALIZER_PATH,
     APPLIANCE_UPDATE_INFO_PATH,
@@ -235,15 +236,24 @@ from atlaso.app.services.appliance_update import (
     DEFAULT_ATLASO_MANIFEST_URL,
     UPDATE_STREAM_LABELS,
     UPDATE_STREAMS,
+    clear_installed_update_availability,
     current_version_info,
     ensure_appliance_update_job_steps,
+    manual_install_gate,
+    normalized_availability_result,
     photon_repository_details,
     photon_repository_summary,
     read_appliance_file,
+    record_update_availability_attempt,
     render_update_manifest,
     selected_update_streams,
+    update_availability_from_json,
+    update_availability_summary,
+    update_availability_to_json,
     update_settings_from_json,
     update_settings_to_json,
+    update_stream_configuration_fingerprint,
+    update_stream_configuration_fingerprints,
     validate_update_settings,
 )
 from atlaso.app.services.automation import (
@@ -796,6 +806,17 @@ def render(request: Request, template: str, context: dict, status_code: int = 20
             context["sidebar_pending_apply_count"] = context["appliance_apply_status"].get("sidebar_pending_apply_count", 0)
         else:
             context["sidebar_pending_apply_count"] = 0
+    if identity and "global_update_availability" not in context:
+        try:
+            with SessionLocal() as db:
+                context["global_update_availability"] = appliance_update_availability_summary(db)
+        except Exception:  # noqa: BLE001 - page rendering must survive unavailable optional indicator state.
+            context["global_update_availability"] = {
+                "available": False,
+                "affected_stream_count": 0,
+                "streams": [],
+                "url": f"{MANAGEMENT_UI_ROOT}/appliance-update#appliance-update-streams",
+            }
     return templates.TemplateResponse(
         request,
         template,
@@ -11120,11 +11141,45 @@ def appliance_update_settings(db: Session) -> dict[str, Any]:
     return settings
 
 
-def appliance_update_context(db: Session) -> dict[str, Any]:
+def appliance_update_availability_state(db: Session) -> dict[str, Any]:
+    """Return the durable operational availability state.
+
+    Args:
+        db: Active database session.
+    """
+    return update_availability_from_json(
+        setting_value(db, APPLIANCE_UPDATE_AVAILABILITY_KEY)
+    )
+
+
+def appliance_update_availability_summary(
+    db: Session,
+    *,
+    result_streams: list[str] | tuple[str, ...] | None = None,
+) -> dict[str, Any]:
+    """Return the sanitized availability projection for the current configuration.
+
+    Args:
+        db: Active database session.
+        result_streams: Optional stream subset for the composite result summary.
+    """
+    return update_availability_summary(
+        appliance_update_availability_state(db),
+        appliance_update_settings(db),
+        result_streams=result_streams,
+    )
+
+
+def appliance_update_context(
+    db: Session,
+    *,
+    selected_stream_ids: list[str] | tuple[str, ...] | None = None,
+) -> dict[str, Any]:
     """Return appliance update context.
 
     Args:
         db: Active database session.
+        selected_stream_ids: Optional submitted stream selection to preserve.
     """
     settings = appliance_update_settings(db)
     recent_jobs = db.execute(
@@ -11154,6 +11209,23 @@ def appliance_update_context(db: Session) -> dict[str, Any]:
     selected = list(UPDATE_STREAMS)
     manifest_preview = render_update_manifest(selected_streams=selected, settings=settings, actor="preview")
     photon_repositories = photon_repository_details()
+    availability = appliance_update_availability_summary(
+        db, result_streams=selected_stream_ids
+    )
+    availability_by_stream = {
+        str(row.get("id")): row
+        for row in availability["streams"]
+        if isinstance(row, dict)
+    }
+    active_update_task = db.execute(
+        select(Job).where(
+            Job.type == "appliance-update",
+            Job.status.in_([JobStatus.PENDING.value, JobStatus.RUNNING.value]),
+        )
+    ).scalars().first()
+    _install_allowed, install_reason = manual_install_gate(availability, selected)
+    if active_update_task is not None:
+        install_reason = "Wait for the active Appliance Update task to finish."
     return {
         "update_settings": settings,
         "update_sources": source_payloads,
@@ -11181,9 +11253,13 @@ def appliance_update_context(db: Session) -> dict[str, Any]:
                     if stream == "powershell_modules"
                     else []
                 ),
+                "availability": availability_by_stream.get(stream),
             }
             for stream in UPDATE_STREAMS
         ],
+        "appliance_update_availability": availability,
+        "appliance_update_active": active_update_task is not None,
+        "appliance_update_install_reason": install_reason,
         "default_atlaso_manifest_url": DEFAULT_ATLASO_MANIFEST_URL,
         "current_version_info": current_version_info(),
         "appliance_update_manifest_preview": manifest_preview,
@@ -11437,6 +11513,26 @@ def automation_context(db: Session) -> dict[str, Any]:
     }
 
 
+def _last_helper_json(value: str) -> dict[str, Any]:
+    """Return the last complete JSON object embedded in helper stdout.
+
+    Args:
+        value: Helper standard output to scan.
+    """
+    decoder = json.JSONDecoder()
+    last: dict[str, Any] = {}
+    for index, character in enumerate(value or ""):
+        if character != "{":
+            continue
+        try:
+            payload, end = decoder.raw_decode(value[index:])
+        except json.JSONDecodeError:
+            continue
+        if isinstance(payload, dict) and not value[index + end :].strip():
+            last = payload
+    return last
+
+
 def execute_appliance_update_job(
     *,
     selected_stream_ids: list[str],
@@ -11500,23 +11596,23 @@ def execute_appliance_update_job(
             Path(credentials_path).unlink(missing_ok=True)
 
     succeeded = all(result.returncode == 0 for result in results)
+    helper_payloads = [
+        payload
+        for result in results
+        if (payload := _last_helper_json(result.stdout))
+    ]
     source_results: list[dict[str, Any]] = []
     if mode == "source_sync":
         for result in results:
             if result.dry_run:
                 continue
-            for line in reversed(result.stdout.splitlines()):
-                try:
-                    helper_payload = json.loads(line)
-                except json.JSONDecodeError:
-                    continue
-                if isinstance(helper_payload, dict) and isinstance(helper_payload.get("source_results"), list):
-                    source_results.extend(
-                        source_result
-                        for source_result in helper_payload["source_results"]
-                        if isinstance(source_result, dict)
-                    )
-                break
+            helper_payload = _last_helper_json(result.stdout)
+            if isinstance(helper_payload.get("source_results"), list):
+                source_results.extend(
+                    source_result
+                    for source_result in helper_payload["source_results"]
+                    if isinstance(source_result, dict)
+                )
     finalizer = read_appliance_file(APPLIANCE_UPDATE_FINALIZER_PATH)
     release_transaction: dict[str, Any] = {}
     if finalizer.get("available"):
@@ -11528,6 +11624,46 @@ def execute_appliance_update_job(
             release_transaction = parsed_finalizer
     unit_id = selected_stream_ids[0] if len(selected_stream_ids) == 1 else "appliance_update"
     label = UPDATE_STREAM_LABELS[unit_id] if unit_id in UPDATE_STREAM_LABELS else "Appliance Update"
+    availability: dict[str, Any] = {}
+    if unit_id in UPDATE_STREAM_LABELS and mode in {"check", "run"}:
+        check_payload = helper_payloads[0] if helper_payloads else {}
+        checks = check_payload.get("checks") if isinstance(check_payload.get("checks"), dict) else {}
+        availability = normalized_availability_result(checks.get(unit_id))
+        if not helper_payloads and any(result.dry_run for result in results):
+            availability = normalized_availability_result(
+                {
+                    "state": "up_to_date",
+                    "current": "Dry-run check",
+                    "target": "No host query executed",
+                    "summary": "Dry-run recorded command intent without changing or querying the appliance.",
+                }
+            )
+        elif not helper_payloads and not succeeded:
+            availability = normalized_availability_result(
+                {
+                    "state": "failed",
+                    "remediation": "Review the failed check task, correct the reported prerequisite, and check again.",
+                }
+            )
+        if mode == "check":
+            unsynchronized = (
+                unsynchronized_photon_repositories(settings)
+                if unit_id == "photon_os"
+                else unsynchronized_powershell_repositories(settings)
+                if unit_id == "powershell_modules"
+                else []
+            )
+            if unsynchronized:
+                availability = normalized_availability_result(
+                    {
+                        "state": "failed",
+                        "remediation": (
+                            f"Synchronize repositories for {', '.join(unsynchronized)} "
+                            f"and check {label} again."
+                        ),
+                    }
+                )
+                succeeded = False
     return {
         "unit_id": unit_id,
         "label": label,
@@ -11545,6 +11681,7 @@ def execute_appliance_update_job(
         "config_preview": manifest_preview,
         "release_transaction": release_transaction,
         "source_results": source_results,
+        "availability": availability,
     }
 
 
@@ -11631,6 +11768,7 @@ def aggregate_appliance_update_results(
         ),
         "release_transaction": release_transaction,
         "stream_results": {stream: results_by_stream[stream] for stream in results_by_stream},
+        "configuration_fingerprints": update_stream_configuration_fingerprints(settings),
     }
 
 
@@ -11643,6 +11781,59 @@ def complete_appliance_update_task(db: Session, *, job: Job, update_result: dict
         update_result: Update result supplied by the caller.
     """
     now = utcnow()
+    try:
+        task_config = json.loads(job.task_config_json or "{}")
+    except json.JSONDecodeError:
+        task_config = {}
+    task_settings = task_config.get("settings") if isinstance(task_config, dict) else {}
+    task_settings = task_settings if isinstance(task_settings, dict) else {}
+    availability_state = appliance_update_availability_state(db)
+    stream_results = update_result.get("stream_results")
+    stream_results = stream_results if isinstance(stream_results, dict) else {}
+    result_fingerprints = update_result.get("configuration_fingerprints")
+    result_fingerprints = result_fingerprints if isinstance(result_fingerprints, dict) else {}
+    if update_result.get("mode") == "check":
+        for stream in selected_update_streams(update_result.get("selected_streams") or []):
+            stream_result = stream_results.get(stream)
+            if not isinstance(stream_result, dict):
+                stream_result = update_result if update_result.get("unit_id") == stream else {}
+            availability = stream_result.get("availability")
+            if not isinstance(availability, dict):
+                availability = {
+                    "state": "failed",
+                    "remediation": "Review the failed check task, correct the reported prerequisite, and check again.",
+                }
+            availability_state = record_update_availability_attempt(
+                availability_state,
+                stream=stream,
+                job_id=job.id,
+                checked_at=now,
+                fingerprint=str(result_fingerprints.get(stream) or "")
+                or update_stream_configuration_fingerprint(stream, task_settings),
+                result=availability,
+            )
+        set_setting_value(
+            db,
+            APPLIANCE_UPDATE_AVAILABILITY_KEY,
+            update_availability_to_json(availability_state),
+        )
+    elif update_result.get("mode") == "run":
+        successful_streams = [
+            stream
+            for stream in selected_update_streams(update_result.get("selected_streams") or [])
+            if isinstance(stream_results.get(stream), dict)
+            and stream_results[stream].get("success") is True
+            and not bool(stream_results[stream].get("dry_run"))
+        ]
+        if successful_streams:
+            availability_state = clear_installed_update_availability(
+                availability_state, successful_streams=successful_streams
+            )
+            set_setting_value(
+                db,
+                APPLIANCE_UPDATE_AVAILABILITY_KEY,
+                update_availability_to_json(availability_state),
+            )
     if update_result.get("mode") == "source_sync":
         reported_results = {
             str(result.get("id")): result
@@ -13594,6 +13785,9 @@ _appliance_maintenance_ui = build_appliance_maintenance_ui_routers(
         appliance_update_context=lambda *args, **kwargs: appliance_update_context(
             *args, **kwargs
         ),
+        appliance_update_availability_summary=lambda *args, **kwargs: appliance_update_availability_summary(
+            *args, **kwargs
+        ),
         appliance_update_settings=lambda *args, **kwargs: appliance_update_settings(
             *args, **kwargs
         ),
@@ -13645,6 +13839,9 @@ appliance_power_action = _appliance_maintenance_ui.endpoints[
 ]
 appliance_update_page = _appliance_maintenance_ui.endpoints[
     "appliance_update_page"
+]
+appliance_update_availability = _appliance_maintenance_ui.endpoints[
+    "appliance_update_availability"
 ]
 update_appliance_update_settings = _appliance_maintenance_ui.endpoints[
     "update_appliance_update_settings"
@@ -13757,18 +13954,24 @@ def submit_appliance_update(
         errors.append("Select at least one update stream.")
     if "atlaso_release" in selected and not str(settings.get("atlaso_manifest_url") or "").strip():
         errors.append("Configure a signed Atlaso release repository before selecting Atlaso Release.")
-    if "powershell_modules" in selected and not str(settings.get("powershell_repository_url") or "").strip():
+    if mode == "run" and "powershell_modules" in selected and not str(settings.get("powershell_repository_url") or "").strip():
         errors.append("Configure an enabled PowerShell repository before selecting PowerShell Modules.")
-    if "powershell_modules" in selected:
+    if mode == "run" and "powershell_modules" in selected:
         for repository in unsynchronized_powershell_repositories(settings):
             errors.append(
                 f"Synchronize PowerShell repository {repository} before checking or installing its managed modules."
             )
-    if "photon_os" in selected:
+    if mode == "run" and "photon_os" in selected:
         for repository in unsynchronized_photon_repositories(settings):
             errors.append(
                 f"Synchronize Photon repository {repository} before checking or installing Photon OS updates."
             )
+    if mode == "run" and selected:
+        install_allowed, install_reason = manual_install_gate(
+            appliance_update_availability_summary(db), selected
+        )
+        if not install_allowed and install_reason:
+            errors.append(install_reason)
     if errors:
         if wants_json:
             return JSONResponse({"status": "error", "errors": errors, "detail": " ".join(errors)}, status_code=422)
@@ -13777,7 +13980,7 @@ def submit_appliance_update(
             "appliance_update.html",
             {
                 "identity": identity,
-                **appliance_update_context(db),
+                **appliance_update_context(db, selected_stream_ids=selected),
                 "selected_update_stream_ids": selected,
                 "update_error": " ".join(errors),
             },
@@ -13798,7 +14001,7 @@ def submit_appliance_update(
             "appliance_update.html",
             {
                 "identity": identity,
-                **appliance_update_context(db),
+                **appliance_update_context(db, selected_stream_ids=selected),
                 "selected_update_stream_ids": selected,
                 "update_error": detail,
             },
@@ -13853,7 +14056,7 @@ def submit_appliance_update(
         "appliance_update.html",
         {
             "identity": identity,
-            **appliance_update_context(db),
+            **appliance_update_context(db, selected_stream_ids=selected),
             "selected_update_stream_ids": selected,
             "appliance_update_task": job,
             "appliance_update_task_result": update_result,

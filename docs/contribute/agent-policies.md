@@ -469,6 +469,17 @@ Terminal order:
 - Submit manual Appliance Update checks and installations asynchronously from Update Streams. Refresh only the embedded
   shared Tasks grid, highlight the newly created task, and keep both task actions disabled until the active Appliance
   Update task reaches a terminal state; do not restore a separate submission-result card.
+- Persist bounded per-stream check state under `appliance_update.availability.v1`, separating the latest attempt from
+  the latest successful confirmation. Retain a prior confirmed update after a failed recheck, but make configuration
+  fingerprint mismatches stale and exclude them from global indication and manual installation. Admit a manual check
+  whenever at least one stream is selected and no Appliance Update task is active; unsynchronized Photon or PowerShell
+  repositories fail inside their read-only child with **Synchronize repositories** remediation. Require every selected
+  manual-install stream to have a successful, current latest attempt, require at least one confirmed update, enforce
+  package-client prerequisites, and apply the same gate server-side. Scheduled installs retain check-before-apply.
+- Render the authenticated topbar **Update available** link from server state and refresh its sanitized, browser-only,
+  no-store projection every 60 seconds only while visible, after visibility returns, and after terminal update tasks.
+  Exclude that route from OpenAPI and never expose commands, credentials, or raw helper output. Clear confirmations only
+  for successfully installed streams.
 - Appliance Update sources are repository-style desired runtime-maintenance configuration. Support multiple named
   Photon, PowerShell, and HTTPS Atlaso release sources, using secondary signed Atlaso channels as failover sources. Keep
   repository tabs inside collapsible ecosystem sections and managed PowerShell modules in their own one-tab-per-module
@@ -484,7 +495,9 @@ Terminal order:
 - Keep the staged Appliance Update manifest in a compact Validation card at the bottom of the detail rail and open its
   full JSON through the shared preview modal; do not render the full manifest inline in Update Streams.
 - Atlaso releases must come from signed v2 channel pointers and immutable signed release manifests verified by named
-  Ed25519 public keys under `/etc/atlaso/update-trust.d`. Install the exact ABI wheelhouse offline with
+  Ed25519 public keys under `/etc/atlaso/update-trust.d`. Optional release `summary` and `release_notes_url` fields
+  remain backward compatible; bound the summary to one line derived from the release commit subject and accept only
+  credential-free HTTPS notes URLs. Install the exact ABI wheelhouse offline with
   `PIP_CONFIG_FILE=/dev/null`, `--no-index`, and hash verification under `/opt/atlaso/releases/<version>`, switch
   `/opt/atlaso/current` atomically, and preserve `/opt/atlaso/.venv` as a compatibility symlink. Restore the previous
   release, helper/systemd files, and SQLite snapshot on failure. Inspect Photon transactions before mutation, use the

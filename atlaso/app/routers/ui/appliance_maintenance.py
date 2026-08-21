@@ -37,6 +37,7 @@ class ApplianceMaintenanceUiDependencies:
     verify_csrf: Endpoint
     render: Endpoint
     appliance_update_context: Endpoint
+    appliance_update_availability_summary: Endpoint
     appliance_update_settings: Endpoint
     adapter_result_to_payload: Endpoint
     default_source_settings: Endpoint
@@ -89,6 +90,7 @@ def build_routers(
     verify_csrf = dependencies.verify_csrf
     render = dependencies.render
     appliance_update_context = dependencies.appliance_update_context
+    appliance_update_availability_summary = dependencies.appliance_update_availability_summary
     appliance_update_settings = dependencies.appliance_update_settings
     adapter_result_to_payload = dependencies.adapter_result_to_payload
     default_source_settings = dependencies.default_source_settings
@@ -206,6 +208,28 @@ def build_routers(
             success=succeeded,
         )
         return RedirectResponse(f"/tasks?job_id={job.id}", status_code=303)
+
+    @update_router.get(
+        "/appliance-update/availability",
+        response_class=JSONResponse,
+        response_model=None,
+        include_in_schema=False,
+    )
+    def appliance_update_availability(
+        identity: Identity = Depends(require_session_identity),
+        db: Session = Depends(get_db),
+    ) -> JSONResponse:
+        """Return sanitized browser-only update availability.
+
+        Args:
+            identity: Authenticated browser session identity.
+            db: Active database session.
+        """
+        del identity
+        return JSONResponse(
+            appliance_update_availability_summary(db),
+            headers={"Cache-Control": "no-store"},
+        )
 
     @update_router.get(
         "/appliance-update", response_class=HTMLResponse, response_model=None
@@ -1112,6 +1136,7 @@ def build_routers(
         endpoint.__name__: endpoint
         for endpoint in (
             appliance_power_action,
+            appliance_update_availability,
             appliance_update_page,
             update_appliance_update_settings,
             update_appliance_update_source,
