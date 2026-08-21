@@ -16271,13 +16271,13 @@ def _reset_factory_retained_runtime() -> int:
         repositories = _factory_reset_retained_runtime_paths_are_safe()
         managed_photon_repo_existed = MANAGED_PHOTON_REPO_PATH.is_file()
         result = _sync_appliance_update_sources({"source_definitions": []})
+        if managed_photon_repo_existed and not MANAGED_PHOTON_REPO_PATH.exists():
+            _fsync_factory_reset_directory(MANAGED_PHOTON_REPO_PATH.parent)
         if result.get("status") != "succeeded":
             print("factory-reset could not remove synchronized package-source runtime state", file=sys.stderr)
             return 1
         if MANAGED_PHOTON_REPO_PATH.exists():
             raise ValueError("factory-reset managed Photon repository cleanup did not complete")
-        if managed_photon_repo_existed:
-            _fsync_factory_reset_directory(MANAGED_PHOTON_REPO_PATH.parent)
         removed_kmip_entries = 0
         if KMS_STATE_DIR.is_dir():
             for child in KMS_STATE_DIR.iterdir():

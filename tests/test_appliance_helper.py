@@ -3026,6 +3026,62 @@ def test_factory_reset_retained_runtime_cleanup_removes_bounded_state(
     assert output["powershell_repositories_removed"] == 1
 
 
+def test_factory_reset_fsyncs_photon_removal_before_partial_failure_retry(
+    monkeypatch,
+    tmp_path,
+    capsys,
+):
+    """A later PowerShell failure cannot strand an unsynced Photon unlink.
+
+    Args:
+        monkeypatch: Pytest fixture used to replace dependencies for the test.
+        tmp_path: Temporary directory provided by pytest for isolated filesystem state.
+        capsys: Pytest fixture used to capture standard output and standard error.
+    """
+    helper = load_helper_module()
+    kmip_state = tmp_path / "kmip"
+    kmip_state.mkdir()
+    managed_repo = tmp_path / "repos" / "atlaso-managed.repo"
+    managed_repo.parent.mkdir()
+    managed_repo.write_text("credential-bearing fixture", encoding="utf-8")
+    update_state = tmp_path / "update-sources.json"
+    update_state.write_text("{}", encoding="utf-8")
+    attempts = 0
+    synced_directories: list[Path] = []
+
+    def sync_sources(payload):
+        """Remove Photon state, then model one PowerShell unregister failure.
+
+        Args:
+            payload: Factory source definition payload supplied to the helper.
+        """
+        nonlocal attempts
+        assert payload == {"source_definitions": []}
+        attempts += 1
+        managed_repo.unlink(missing_ok=True)
+        return {"status": "failed" if attempts == 1 else "succeeded"}
+
+    monkeypatch.setattr(helper, "_factory_reset_runtime_cleanup_is_admitted", lambda: True)
+    monkeypatch.setattr(helper, "_factory_reset_retained_runtime_paths_are_safe", lambda: {"PrivateGallery"})
+    monkeypatch.setattr(helper, "KMS_STATE_DIR", kmip_state)
+    monkeypatch.setattr(helper, "MANAGED_PHOTON_REPO_PATH", managed_repo)
+    monkeypatch.setattr(helper, "UPDATE_SOURCE_STATE_PATH", update_state)
+    monkeypatch.setattr(helper, "_sync_appliance_update_sources", sync_sources)
+    monkeypatch.setattr(
+        helper,
+        "_fsync_factory_reset_directory",
+        synced_directories.append,
+    )
+
+    assert helper._handle_factory_reset("reset-retained-runtime", []) == 1
+    assert synced_directories == [managed_repo.parent]
+    assert helper._handle_factory_reset("reset-retained-runtime", []) == 0
+
+    assert synced_directories == [managed_repo.parent, update_state.parent]
+    assert not managed_repo.exists()
+    assert "could not remove synchronized package-source" in capsys.readouterr().err
+
+
 def test_factory_reset_root_password_action_uses_protected_input(
     monkeypatch,
     capsys,
