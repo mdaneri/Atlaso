@@ -35,7 +35,9 @@ test-results/vmware-workstation-lifecycle/<timestamp>/vms
 The appliance VMX is copied from the selected Workstation image output. Client VMs use an Alpine cloud VMDK prepared
 from the same upstream QCOW2 source as the Hyper-V lifecycle client. The payload and SHA-512 metadata are cached only as
 a verified pair: corrupt entries are removed on an ordinary rerun, downloads stay in unique partial files until
-validation succeeds, and promotion is scoped to the exact expected cache files.
+validation succeeds, and promotion is scoped to the exact expected cache files. The default Alpine artifact uses the
+versioned `v3.24` release URL and a repository-pinned SHA-512 digest; custom images must pass their own
+`-ExpectedSha512` pin.
 
 Default vmnets:
 

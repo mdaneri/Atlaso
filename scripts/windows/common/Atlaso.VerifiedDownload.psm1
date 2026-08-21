@@ -22,6 +22,7 @@ function Save-AtlasoVerifiedDownloadPair {
         [Parameter(Mandatory = $true)][string]$PayloadPath,
         [Parameter(Mandatory = $true)][string]$ChecksumPath,
         [Parameter(Mandatory = $true)][ValidateSet('SHA512')][string]$Algorithm,
+        [Parameter(Mandatory = $true)][string]$ExpectedDigest,
         [Parameter(Mandatory = $true)][scriptblock]$GetFileHash,
         [switch]$Force
     )
@@ -38,12 +39,16 @@ function Save-AtlasoVerifiedDownloadPair {
     $hexLength = switch ($Algorithm) {
         'SHA512' { 128 }
     }
+    if ($ExpectedDigest -notmatch "^[0-9A-Fa-f]{$hexLength}$") {
+        throw "Pinned $Algorithm digest must contain exactly $hexLength hexadecimal characters."
+    }
+    $pinnedDigest = $ExpectedDigest.ToUpperInvariant()
     $cacheIsValid = $false
     if (-not $Force -and (Test-Path -LiteralPath $PayloadPath -PathType Leaf) -and (Test-Path -LiteralPath $ChecksumPath -PathType Leaf)) {
         try {
-            $expected = Get-AtlasoExpectedChecksum -Path $ChecksumPath -HexLength $hexLength
+            $metadataDigest = Get-AtlasoExpectedChecksum -Path $ChecksumPath -HexLength $hexLength
             $actual = (& $GetFileHash $PayloadPath).ToUpperInvariant()
-            $cacheIsValid = $expected -eq $actual
+            $cacheIsValid = $metadataDigest -eq $pinnedDigest -and $actual -eq $pinnedDigest
         } catch {
             $cacheIsValid = $false
         }
@@ -69,10 +74,13 @@ function Save-AtlasoVerifiedDownloadPair {
     try {
         Invoke-WebRequest -Uri $ChecksumUri -OutFile $checksumPartial -ErrorAction Stop
         Invoke-WebRequest -Uri $PayloadUri -OutFile $payloadPartial -ErrorAction Stop
-        $expected = Get-AtlasoExpectedChecksum -Path $checksumPartial -HexLength $hexLength
+        $metadataDigest = Get-AtlasoExpectedChecksum -Path $checksumPartial -HexLength $hexLength
+        if ($metadataDigest -ne $pinnedDigest) {
+            throw "Downloaded checksum metadata does not match the repository-pinned $Algorithm digest."
+        }
         $actual = (& $GetFileHash $payloadPartial).ToUpperInvariant()
-        if ($expected -ne $actual) {
-            throw "Checksum mismatch for downloaded payload. Expected $expected, got $actual."
+        if ($pinnedDigest -ne $actual) {
+            throw "Checksum mismatch for downloaded payload. Expected pinned digest $pinnedDigest, got $actual."
         }
 
         Move-Item -LiteralPath $payloadPartial -Destination $PayloadPath -Force -ErrorAction Stop
@@ -80,7 +88,7 @@ function Save-AtlasoVerifiedDownloadPair {
 
         $persistedExpected = Get-AtlasoExpectedChecksum -Path $ChecksumPath -HexLength $hexLength
         $persistedActual = (& $GetFileHash $PayloadPath).ToUpperInvariant()
-        if ($persistedExpected -ne $persistedActual) {
+        if ($persistedExpected -ne $pinnedDigest -or $persistedActual -ne $pinnedDigest) {
             throw "Promoted cache pair failed checksum verification: $PayloadPath"
         }
         Write-Host "$Algorithm verified: $([System.IO.Path]::GetFileName($PayloadPath))"

@@ -2,7 +2,9 @@
 param(
     [string]$Version = '3.24.1',
     [string]$ImageName = 'generic_alpine-3.24.1-x86_64-uefi-cloudinit-r0.qcow2',
-    [string]$BaseUrl = 'https://dl-cdn.alpinelinux.org/alpine/latest-stable/releases/cloud',
+    [string]$BaseUrl = 'https://dl-cdn.alpinelinux.org/alpine/v3.24/releases/cloud',
+    [ValidatePattern('^[0-9A-Fa-f]{128}$')]
+    [string]$ExpectedSha512 = 'ed976ef40de1f73adcb0a3b253ec9e73e43c408208fcc3c30dcdf7a69b91a387a4777f88c6b72345123edf3832d7cb49403ecce28ec84d496d4b3bad6fbd0923',
     [string]$OutputDirectory = '',
     [string]$OutputVmdkName = 'atlaso-tiny-linux-client.vmdk',
     [switch]$Force
@@ -55,6 +57,7 @@ $actual = Save-AtlasoVerifiedDownloadPair `
     -PayloadPath $qcowPath `
     -ChecksumPath $checksumPath `
     -Algorithm SHA512 `
+    -ExpectedDigest $ExpectedSha512 `
     -GetFileHash { param($Path) Get-Sha512FileHash -Path $Path } `
     -Force:$Force `
     -WhatIf:$WhatIfPreference

@@ -180,6 +180,8 @@ def _run_preparation(
             str(output_directory),
             "-ImageName",
             image_name,
+            "-ExpectedSha512",
+            hashlib.sha512(image_bytes).hexdigest(),
             output_name_argument,
             output_name,
         ],
@@ -200,6 +202,7 @@ def _run_download_recovery(
     upstream_checksum_payload: bytes,
     cached_payload: bytes | None,
     cached_checksum: str | None = None,
+    pinned_payload: bytes | None = None,
 ) -> tuple[subprocess.CompletedProcess[str], Path, Path, Path]:
     """Run a preparation wrapper against a loopback download source.
 
@@ -210,6 +213,7 @@ def _run_download_recovery(
         upstream_checksum_payload: Bytes whose digest is published by the checksum fixture.
         cached_payload: Optional bytes used to seed the durable payload cache.
         cached_checksum: Optional checksum text used instead of the valid fixture metadata.
+        pinned_payload: Optional trusted bytes used to derive the repository-style digest pin.
 
     Returns:
         Completed process plus the durable payload, checksum, and unrelated-cache paths.
@@ -222,6 +226,7 @@ def _run_download_recovery(
     source_directory.mkdir()
     image_name = "fixture.qcow2"
     digest = hashlib.sha512(upstream_checksum_payload).hexdigest()
+    pinned_digest = hashlib.sha512(pinned_payload or upstream_checksum_payload).hexdigest()
     checksum_text = f"{digest}  {image_name}\n"
     (source_directory / image_name).write_bytes(upstream_payload)
     (source_directory / f"{image_name}.sha512").write_text(checksum_text, encoding="utf-8")
@@ -258,6 +263,8 @@ def _run_download_recovery(
                 image_name,
                 "-BaseUrl",
                 base_url,
+                "-ExpectedSha512",
+                pinned_digest,
                 output_name_argument,
                 output_name,
             ],
@@ -400,6 +407,29 @@ def test_invalid_download_is_never_promoted_to_durable_cache(
 
     assert result.returncode != 0
     assert "Checksum mismatch for downloaded payload" in result.stderr
+    assert not payload_path.exists()
+    assert not checksum_path.exists()
+    assert unrelated_path.read_bytes() == b"preserve"
+    assert not list(payload_path.parent.glob("*.part.*"))
+
+
+@pytest.mark.parametrize("platform", PREPARATION_SCRIPTS)
+def test_self_consistent_substituted_pair_is_rejected_by_pinned_digest(
+    tmp_path: Path, platform: str
+) -> None:
+    """Matching untrusted payload and metadata cannot override the repository digest pin."""
+    substituted_payload = b"self-consistent but untrusted Alpine image"
+    result, payload_path, checksum_path, unrelated_path = _run_download_recovery(
+        tmp_path,
+        platform,
+        upstream_payload=substituted_payload,
+        upstream_checksum_payload=substituted_payload,
+        pinned_payload=b"trusted repository-pinned Alpine image",
+        cached_payload=None,
+    )
+
+    assert result.returncode != 0
+    assert "does not match the repository-pinned SHA512 digest" in result.stderr
     assert not payload_path.exists()
     assert not checksum_path.exists()
     assert unrelated_path.read_bytes() == b"preserve"
