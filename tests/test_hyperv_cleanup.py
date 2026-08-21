@@ -32,6 +32,7 @@ def _run_hyperv_cleanup(
     include_vm: bool = True,
     stop_sticky: bool = False,
     remove_sticky: bool = False,
+    inventory_move_timing: str | None = None,
 ) -> subprocess.CompletedProcess[str]:
     """Run the cleanup module against deterministic in-process Hyper-V cmdlet fakes.
 
@@ -45,6 +46,7 @@ def _run_hyperv_cleanup(
         include_vm: Whether the fake inventory contains a VM using the artifact root.
         stop_sticky: Whether a successful stop leaves the VM active.
         remove_sticky: Whether a successful removal leaves the VM registered.
+        inventory_move_timing: Whether fake storage moves before or during the stop refresh.
 
     Returns:
         Completed PowerShell process.
@@ -68,6 +70,10 @@ def _run_hyperv_cleanup(
                 "remove_fails": remove_fails,
                 "stop_sticky": stop_sticky,
                 "remove_sticky": remove_sticky,
+                "move_before_stop": inventory_move_timing == "before-stop",
+                "move_after_stop": inventory_move_timing == "after-stop",
+                "outside_path": str(hyperv_root.parent / "moved" / "Atlaso-Test"),
+                "get_calls": 0,
             }
         ),
         encoding="utf-8",
@@ -83,6 +89,14 @@ function Write-FakeState([object]$State) {{
 function Get-VM {{
     param([object]$ErrorAction)
     $state = Read-FakeState
+    $state.get_calls = [int]$state.get_calls + 1
+    if ($state.move_before_stop -and $state.get_calls -eq 2) {{
+        foreach ($entry in $state.vms) {{
+            $entry.path = $state.outside_path
+            $entry.disk = Join-Path $state.outside_path 'disk.vhdx'
+        }}
+    }}
+    Write-FakeState $state
     @($state.vms | ForEach-Object {{
         [pscustomobject]@{{
             Id = [guid]$_.id; Name = $_.name; State = $_.state; Path = $_.path
@@ -102,6 +116,12 @@ function Stop-VM {{
     if ($state.stop_fails) {{ throw 'simulated Hyper-V stop failure' }}
     if (-not $state.stop_sticky) {{
         foreach ($entry in $state.vms) {{ if ($entry.id -eq $VM.Id) {{ $entry.state = 'Off' }} }}
+    }}
+    if ($state.move_after_stop) {{
+        foreach ($entry in $state.vms) {{
+            $entry.path = $state.outside_path
+            $entry.disk = Join-Path $state.outside_path 'disk.vhdx'
+        }}
     }}
     Write-FakeState $state
 }}
@@ -216,6 +236,31 @@ def test_hyperv_cleanup_rejects_incomplete_platform_transition(
     assert result.returncode != 0
     assert expected_error in result.stderr
     assert disk_path.exists()
+
+
+@pytest.mark.parametrize("inventory_move_timing", ("before-stop", "after-stop"))
+def test_hyperv_cleanup_revalidates_vm_artifact_paths_before_removal(
+    tmp_path: Path, inventory_move_timing: str
+) -> None:
+    """A VM whose storage moves after admission must remain registered with artifacts preserved."""
+    hyperv_root = tmp_path / "hyperv"
+    removal_root = hyperv_root / "test-vms"
+    disk_path = removal_root / "Atlaso-Test" / "disk.vhdx"
+    disk_path.parent.mkdir(parents=True)
+    disk_path.write_text("preserve", encoding="utf-8")
+
+    result = _run_hyperv_cleanup(
+        tmp_path,
+        hyperv_root=hyperv_root,
+        removal_root=removal_root,
+        inventory_move_timing=inventory_move_timing,
+    )
+
+    state = json.loads((tmp_path / "hyperv-state.json").read_text(encoding="utf-8"))
+    assert result.returncode != 0
+    assert "no longer references the requested artifact root" in result.stderr
+    assert len(state["vms"]) == 1
+    assert disk_path.read_text(encoding="utf-8") == "preserve"
 
 
 def test_standalone_cleanup_scripts_report_success_only_after_checked_removal() -> None:

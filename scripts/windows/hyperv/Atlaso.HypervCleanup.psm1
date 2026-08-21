@@ -145,11 +145,17 @@ function Remove-AtlasoHypervArtifactRoot {
         if ($currentVm.Count -ne 1) {
             throw "Hyper-V VM inventory changed before cleanup; artifacts were preserved: $($vm.Name)"
         }
+        if (-not (Test-AtlasoHypervVmUsesArtifactRoot -Vm $currentVm[0] -RemovalRoot $resolvedRemovalRoot)) {
+            throw "Hyper-V VM no longer references the requested artifact root; artifacts were preserved: $($vm.Name)"
+        }
         if ([string]$currentVm[0].State -ne 'Off') {
             Stop-VM -VM $currentVm[0] -TurnOff -Force -ErrorAction Stop
             $currentVm = @(Get-VM -ErrorAction Stop | Where-Object { $_.Id -eq $vm.Id })
             if ($currentVm.Count -ne 1 -or [string]$currentVm[0].State -ne 'Off') {
                 throw "Hyper-V VM remains active after stop succeeded; artifacts were preserved: $($vm.Name)"
+            }
+            if (-not (Test-AtlasoHypervVmUsesArtifactRoot -Vm $currentVm[0] -RemovalRoot $resolvedRemovalRoot)) {
+                throw "Hyper-V VM no longer references the requested artifact root after stop; artifacts were preserved: $($vm.Name)"
             }
         }
         Remove-VM -VM $currentVm[0] -Force -ErrorAction Stop

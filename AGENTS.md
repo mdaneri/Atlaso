@@ -511,6 +511,8 @@ The following cross-cutting boundaries always apply:
   named Environment before access, and store secret values there as concealed variables. Never fall back to chat,
   repository files, local `.env` files, shell arguments, jobs, audits, logs, screenshots, or documentation; if the
   1Password MCP or the `Atlaso` Environment is unavailable, stop and request maintainer direction.
+  DEFAULT_ROOT_PASSWORD contains the default root password for any new deployed environment.
+  DEFAULT_ADMIN_PASSWORD contains the default admin password for any new deployed environment.
 - Never expose credentials, authenticated URLs, private keys, raw secrets, or secret-bearing commands in UI, jobs,
   audits, logs, documentation, screenshots, or video.
 - The appliance-native vSphere Key Provider targets only VCF 9.1 and implements the checked-in bounded KMIP contract.
