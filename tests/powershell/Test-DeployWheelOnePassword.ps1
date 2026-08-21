@@ -67,15 +67,14 @@ if ($childArguments -contains 'blgexucrwfr2dtsxe2q4uu7dp4') {
 }
 
 Remove-Item Env:\DEFAULT_ADMIN_PASSWORD -ErrorAction SilentlyContinue
-Remove-Item Env:\ATLASO_ONEPASSWORD_BRIDGE_NONCE -ErrorAction SilentlyContinue
 if ((Resolve-OnePasswordChildPassword) -ne '') {
     throw 'The ordinary key/agent path must not consume DEFAULT_ADMIN_PASSWORD.'
 }
 $env:DEFAULT_ADMIN_PASSWORD = 'fixture-secret-is-not-output'
 Assert-Throws {
     Resolve-OnePasswordChildPassword
-} 'A caller-provided DEFAULT_ADMIN_PASSWORD without bridge authorization must fail closed.'
-$env:ATLASO_ONEPASSWORD_BRIDGE_NONCE = 'fixture-bridge-marker'
+} 'A caller-provided DEFAULT_ADMIN_PASSWORD without an authenticated op process must fail closed.'
+function Assert-OnePasswordBridgeProcess {}
 try {
     if ((Resolve-OnePasswordChildPassword) -ne 'fixture-secret-is-not-output') {
         throw 'The bridge child did not consume the named Environment variable.'
@@ -85,7 +84,6 @@ try {
     }
 } finally {
     Remove-Item Env:\DEFAULT_ADMIN_PASSWORD -ErrorAction SilentlyContinue
-    Remove-Item Env:\ATLASO_ONEPASSWORD_BRIDGE_NONCE -ErrorAction SilentlyContinue
 }
 
 $scriptText = $deploySource
@@ -103,6 +101,12 @@ if (-not $scriptText.Contains('Remove-Item Env:\DEFAULT_ADMIN_PASSWORD', [System
 }
 if ($scriptText.Contains('[switch]$OnePasswordEnvironmentChild', [System.StringComparison]::Ordinal)) {
     throw 'The bridge child must not expose a caller-selectable authorization switch.'
+}
+if (-not $scriptText.Contains('Get-CimInstance -ClassName Win32_Process', [System.StringComparison]::Ordinal)) {
+    throw 'The bridge child must authenticate its op.exe process ancestry.'
+}
+if (-not $scriptText.Contains('--environment(\s|$)', [System.StringComparison]::Ordinal)) {
+    throw 'The bridge child must authenticate the op run --environment command line.'
 }
 
 Write-Output 'Deploy wheel 1Password bridge tests passed.'
