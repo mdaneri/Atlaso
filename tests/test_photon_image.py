@@ -1839,7 +1839,7 @@ def test_vmware_lifecycle_cleanup_only_removes_existing_lifecycle_vms():
     assert "Remove-Item -LiteralPath $candidate.Directory -Recurse -Force" not in cleanup_script
     assert "VMware\\inventory.vmls" in cleanup_module
     inventory_resolver = cleanup_module.split("function Resolve-AtlasoWorkstationInventoryPath", 1)[1].split(
-        "function Get-AtlasoWorkstationVmrunRegisteredVmPaths", 1
+        "function Get-AtlasoWorkstationRegisteredVmPaths", 1
     )[0]
     assert "Assert-AtlasoPathHasNoReparsePoint" not in inventory_resolver
     assert "Assert-AtlasoPathHasNoReparsePoint -Path $resolvedRemovalRoot" in cleanup_module

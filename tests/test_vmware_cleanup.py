@@ -140,11 +140,6 @@ if command == "list":
     output_format = os.environ.get("ATLASO_FAKE_VMRUN_RUNNING_PATH_FORMAT", "{}")
     print("\\n".join(output_format.format(path) for path in paths))
     raise SystemExit(0)
-if command == "listRegisteredVM":
-    paths = read_paths("registered")
-    print(f"Total registered VMs: {len(paths)}")
-    print("\\n".join(paths))
-    raise SystemExit(0)
 if len(arguments) < 4:
     print("missing VMX path", file=sys.stderr)
     raise SystemExit(64)
@@ -960,23 +955,21 @@ def test_cleanup_safety_content_read_errors_are_terminating() -> None:
     assert module.count("Get-Content") == module.count("Get-Content -LiteralPath") == 2
 
 
-def test_general_removal_rejects_a_truncated_registration_inventory(tmp_path: Path) -> None:
-    """A truncated inventory file must not hide vmrun's registered target.
+def test_general_removal_uses_inventory_file_for_registered_state(tmp_path: Path) -> None:
+    """Registered state must not depend on an unsupported vmrun command.
 
     Args:
         tmp_path: Isolated test directory.
     """
-    vm_directory = tmp_path / "Atlaso-Truncated-Registration"
-    vmx_path = vm_directory / "Atlaso-Truncated-Registration.vmx"
-    _write_vmx(vmx_path, "Atlaso-Truncated-Registration")
-    vmrun_path, environment, _ = _write_fake_vmrun(
+    vm_directory = tmp_path / "Atlaso-Registered-Inventory"
+    vmx_path = vm_directory / "Atlaso-Registered-Inventory.vmx"
+    _write_vmx(vmx_path, "Atlaso-Registered-Inventory")
+    vmrun_path, environment, log_path = _write_fake_vmrun(
         tmp_path / "fake",
         [vmx_path],
         running=False,
         registered=True,
     )
-    inventory_path = Path(environment["ATLASO_FAKE_VMRUN_INVENTORY"])
-    inventory_path.write_text('.encoding = "UTF-8"\n', encoding="utf-8")
 
     result = _run_script(
         VMWARE_SCRIPT_ROOT / "remove-atlaso-vm.ps1",
@@ -985,13 +978,16 @@ def test_general_removal_rejects_a_truncated_registration_inventory(tmp_path: Pa
         "-VmrunPath",
         str(vmrun_path),
         "-ExpectedName",
-        "Atlaso-Truncated-Registration",
+        "Atlaso-Registered-Inventory",
         environment=environment,
     )
 
-    assert result.returncode != 0
-    assert "registration inventories disagree" in result.stderr
-    assert vmx_path.exists()
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert not vm_directory.exists()
+    commands = [json.loads(line) for line in log_path.read_text(encoding="utf-8").splitlines()]
+    command_names = [command[2] for command in commands]
+    assert "unregister" in command_names
+    assert "listRegisteredVM" not in command_names
 
 
 def test_general_removal_matches_a_running_vmx_by_filesystem_identity(
