@@ -109,6 +109,11 @@ if (-not $scriptText.Contains('auth_interactive', [System.StringComparison]::Ord
     -not $scriptText.Contains('connect_password_or_keyboard_interactive', [System.StringComparison]::Ordinal)) {
     throw 'Password-backed deployment must support keyboard-interactive SSH authentication.'
 }
+if (-not $scriptText.Contains('one[- ]?time', [System.StringComparison]::Ordinal) -or
+    -not $scriptText.Contains('multi[- ]?factor', [System.StringComparison]::Ordinal) -or
+    -not $scriptText.Contains('verification', [System.StringComparison]::Ordinal)) {
+    throw 'Password-backed deployment must reject OTP and MFA keyboard-interactive prompts.'
+}
 if (-not $scriptText.Contains('auth_password(username, password, fallback=False)', [System.StringComparison]::Ordinal)) {
     throw 'Password-backed deployment must disable Paramiko interactive fallback before validating prompts.'
 }
@@ -164,7 +169,8 @@ if (-not $scriptText.Contains('read_paramiko_command_output', [System.StringComp
     -not $scriptText.Contains('recv_stderr_ready', [System.StringComparison]::Ordinal) -or
     -not $scriptText.Contains('recv_ready', [System.StringComparison]::Ordinal) -or
     -not $scriptText.Contains('time.monotonic', [System.StringComparison]::Ordinal) -or
-    -not $scriptText.Contains('args.timeout + 60', [System.StringComparison]::Ordinal)) {
+    -not $scriptText.Contains('args.readiness_timeout', [System.StringComparison]::Ordinal) -or
+    -not $scriptText.Contains('DeploymentTimeoutSeconds', [System.StringComparison]::Ordinal)) {
     throw 'Password-backed deployment must drain Paramiko stdout and stderr without channel deadlock.'
 }
 if ($scriptText.Contains('$invokingProcess.CommandLine', [System.StringComparison]::Ordinal) -or

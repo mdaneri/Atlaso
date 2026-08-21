@@ -1635,7 +1635,8 @@ def test_vmware_deploy_wheel_supports_secure_onepassword_password_deploy():
     assert "read_paramiko_command_output" in script
     assert "recv_stderr_ready" in script
     assert "time.monotonic" in script
-    assert "args.timeout + 60" in script
+    assert "args.readiness_timeout" in script
+    assert "DeploymentTimeoutSeconds" in script
     assert "[System.IO.Pipes.PipeDirection]::In" in script
     assert "[System.IO.Pipes.PipeDirection]::Out" in script
     assert "[System.IO.HandleInheritability]::Inheritable" in script
@@ -1645,6 +1646,9 @@ def test_vmware_deploy_wheel_supports_secure_onepassword_password_deploy():
     assert "client.load_system_host_keys()" in script
     assert "auth_interactive" in script
     assert "connect_password_or_keyboard_interactive" in script
+    assert "one[- ]?time" in script
+    assert "multi[- ]?factor" in script
+    assert "verification" in script
     assert "get_pty=False" in script
     assert "shutdown_write()" in script
     assert "ConvertTo-WindowsSshRemoteCommand" in script

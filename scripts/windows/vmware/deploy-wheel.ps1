@@ -8,6 +8,7 @@ param(
     [string]$RemoteDirectory = '/tmp',
     [string]$Python = 'python',
     [int]$ReadinessTimeoutSeconds = 60,
+    [int]$DeploymentTimeoutSeconds = 600,
     [int]$ReadinessPollSeconds = 2,
     [switch]$SkipBuild,
     [switch]$SkipHelperSync,
@@ -621,7 +622,8 @@ function Invoke-PasswordBackedDeploy {
         [Parameter(Mandatory = $true)][string]$RemoteNginxServiceDropIn,
         [Parameter(Mandatory = $true)][string]$RemoteScript,
         [Parameter(Mandatory = $true)][bool]$ResetVaultEntryTable,
-        [Parameter(Mandatory = $true)][int]$TimeoutSeconds,
+        [Parameter(Mandatory = $true)][int]$ReadinessTimeoutSeconds,
+        [Parameter(Mandatory = $true)][int]$DeploymentTimeoutSeconds,
         [Parameter(Mandatory = $true)][int]$PollSeconds,
         [Parameter(Mandatory = $true)][string]$WorkingDirectory
     )
@@ -633,6 +635,7 @@ function Invoke-PasswordBackedDeploy {
 import argparse
 import os
 import pathlib
+import re
 import shlex
 import socket
 import sys
@@ -723,6 +726,7 @@ parser.add_argument("--remote-nginx-service-drop-in", required=True)
 parser.add_argument("--remote-script", required=True)
 parser.add_argument("--reset-vault-entries", action="store_true")
 parser.add_argument("--timeout", type=int, required=True)
+parser.add_argument("--readiness-timeout", type=int, required=True)
 parser.add_argument("--poll", type=int, required=True)
 args = parser.parse_args()
 
@@ -795,7 +799,12 @@ def connect_password_or_keyboard_interactive(client, host, username, password):
                         "Unexpected keyboard-interactive prompt count; refusing non-password input."
                     )
                 prompt, echo = prompts[0]
-                if echo or "password" not in prompt.lower():
+                prompt_text = f"{title} {instructions} {prompt}".lower()
+                if (
+                    echo
+                    or "password" not in prompt_text
+                    or re.search(r"\b(?:otp|one[- ]?time|mfa|multi[- ]?factor|verification|code|token)\b", prompt_text)
+                ):
                     raise paramiko.SSHException(
                         "Unexpected keyboard-interactive prompt; refusing non-password input."
                     )
@@ -841,7 +850,7 @@ try:
         "sudo -S -p '' sh "
         f"{shell_quote(args.remote_script)} "
         f"{shell_quote(args.remote_wheel)} "
-        f"{shell_quote(args.timeout)} "
+        f"{shell_quote(args.readiness_timeout)} "
         f"{shell_quote(args.poll)} "
         f"{shell_quote(remote_helper_argument)} "
         f"{shell_quote(remote_console_manager_argument)} "
@@ -857,11 +866,11 @@ try:
         f"{shell_quote('true' if args.reset_vault_entries else 'false')} "
         f"{shell_quote(remote_inventory_linux_package_argument)}"
     )
-    stdin, stdout, stderr = client.exec_command(command, get_pty=False, timeout=args.timeout + 60)
+    stdin, stdout, stderr = client.exec_command(command, get_pty=False, timeout=args.timeout)
     stdin.write(password + "\n")
     stdin.flush()
     stdin.channel.shutdown_write()
-    stdout_text, stderr_text, exit_code = read_paramiko_command_output(stdout.channel, args.timeout + 60)
+    stdout_text, stderr_text, exit_code = read_paramiko_command_output(stdout.channel, args.timeout)
     if stdout_text.strip():
         print(sanitized(stdout_text, password).strip())
     if stderr_text.strip():
@@ -896,7 +905,8 @@ finally:
             '--remote-dir', $RemoteDirectoryPath,
             '--remote-wheel', $RemoteWheel,
             '--remote-script', $RemoteScript,
-            '--timeout', "$TimeoutSeconds",
+            '--timeout', "$DeploymentTimeoutSeconds",
+            '--readiness-timeout', "$ReadinessTimeoutSeconds",
             '--poll', "$PollSeconds"
         )
         foreach ($optionalPathPair in @(
@@ -1493,7 +1503,8 @@ try {
             -RemoteNginxServiceDropIn $remoteNginxServiceDropInPath `
             -RemoteScript $remoteScriptPath `
             -ResetVaultEntryTable ([bool]$ResetVaultEntries) `
-            -TimeoutSeconds $ReadinessTimeoutSeconds `
+            -ReadinessTimeoutSeconds $ReadinessTimeoutSeconds `
+            -DeploymentTimeoutSeconds $DeploymentTimeoutSeconds `
             -PollSeconds $ReadinessPollSeconds `
             -WorkingDirectory $resolvedRepoRoot
     } else {

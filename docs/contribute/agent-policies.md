@@ -680,7 +680,9 @@ Terminal order:
   the handle before consuming any password. Caller-controlled child command-line values or a caller-created pipe
   must not authorize password consumption. This permits a documented launch from
   an existing PowerShell prompt while an unrelated interactive `op run` shell fails closed. Password-backed Paramiko
-  must load system known hosts and reject unknown keys.
+  must load system known hosts and reject unknown keys; accept only one non-echoing account-password prompt and reject
+  OTP/MFA or verification-code wording. Keep the password-backed remote-command timeout separate from the readiness
+  timeout so a long but progressing deployment is not cut off by the post-restart readiness allowance.
   If uvicorn needs longer after reinstall, pass `-ReadinessTimeoutSeconds 120`. Use `-SkipHelperSync` only when the
   appliance helper is intentionally unchanged.
 - The wheel helper's `RemoteDirectory` is one shared pre-upload contract for key/agent and password-backed SSH. Accept

@@ -20,7 +20,8 @@ then pass only its opaque Environment ID through `-OnePasswordEnvironmentId`. Th
 `op run --environment` capability, keeps the value inside the bounded child process, preserves SSH known-host
 verification, and fails closed when authorization or any required Environment input is unavailable. Key-backed Windows
 transfers keep `scp` sources and destinations separate and cross the PowerShell login shell through a secret-free
-base64 `sh -lc` wrapper. Password-backed SSH supports one password-only keyboard-interactive challenge and a non-PTY
+base64 `sh -lc` wrapper. Password-backed SSH supports one password-only keyboard-interactive challenge, rejects OTP/MFA
+prompts, and uses a separate deployment timeout from the readiness allowance with a non-PTY
 `sudo -S` handoff. Do not pass a password argument, create a local `.env` file, or use the retired
 `ATLASO_DEPLOY_SSH_PASSWORD` fallback.
 The bounded child also authenticates that `op run --environment` carries the exact Environment selected by the trusted
