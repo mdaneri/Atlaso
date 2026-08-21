@@ -85,6 +85,11 @@ try {
 } finally {
     Remove-Item Env:\DEFAULT_ADMIN_PASSWORD -ErrorAction SilentlyContinue
 }
+function Test-OnePasswordBridgeProcess { return $true }
+Assert-Throws {
+    Resolve-OnePasswordChildPassword
+} 'An authenticated bridge child without DEFAULT_ADMIN_PASSWORD must fail closed.'
+Remove-Item Function:\Test-OnePasswordBridgeProcess -ErrorAction SilentlyContinue
 
 $scriptText = $deploySource
 if ($scriptText.Contains('ATLASO_DEPLOY_SSH_PASSWORD', [System.StringComparison]::Ordinal)) {
@@ -96,6 +101,9 @@ if (-not $scriptText.Contains('paramiko.RejectPolicy()', [System.StringCompariso
 if (-not $scriptText.Contains('auth_interactive', [System.StringComparison]::Ordinal) -or
     -not $scriptText.Contains('connect_password_or_keyboard_interactive', [System.StringComparison]::Ordinal)) {
     throw 'Password-backed deployment must support keyboard-interactive SSH authentication.'
+}
+if (-not $scriptText.Contains('auth_password(username, password, fallback=False)', [System.StringComparison]::Ordinal)) {
+    throw 'Password-backed deployment must disable Paramiko interactive fallback before validating prompts.'
 }
 if (-not $scriptText.Contains('get_pty=False', [System.StringComparison]::Ordinal) -or
     -not $scriptText.Contains('shutdown_write()', [System.StringComparison]::Ordinal)) {
@@ -116,6 +124,9 @@ if ($scriptText.Contains('[switch]$OnePasswordEnvironmentChild', [System.StringC
 }
 if (-not $scriptText.Contains('Get-CimInstance -ClassName Win32_Process', [System.StringComparison]::Ordinal)) {
     throw 'The bridge child must authenticate its op.exe process ancestry.'
+}
+if (-not $scriptText.Contains('Test-OnePasswordBridgeProcess', [System.StringComparison]::Ordinal)) {
+    throw 'The bridge child must fail closed when the authenticated Environment omits DEFAULT_ADMIN_PASSWORD.'
 }
 if (-not $scriptText.Contains('deploy-wheel\.ps1', [System.StringComparison]::Ordinal) -or
     -not $scriptText.Contains('-OnePasswordEnvironmentId', [System.StringComparison]::Ordinal)) {

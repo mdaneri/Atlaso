@@ -104,7 +104,7 @@ function Invoke-OnePasswordEnvironmentBridge {
     }
 }
 
-function Assert-OnePasswordBridgeProcess {
+function Test-OnePasswordBridgeProcess {
     $processId = [int]$PID
     $visited = @{}
     while ($processId -gt 0 -and -not $visited.ContainsKey($processId)) {
@@ -129,7 +129,7 @@ function Assert-OnePasswordBridgeProcess {
         if ($parent -and $parent.Name -in @('op.exe', 'op')) {
             if ($parent.CommandLine -notmatch '(?i)(^|\s)run(\s|$)' -or
                 $parent.CommandLine -notmatch '(?i)(^|\s)--environment(?:=|\s)') {
-                break
+                return $false
             }
             try {
                 $invokingProcess = Get-CimInstance -ClassName Win32_Process -Filter "ProcessId = $([int]$parent.ParentProcessId)" -ErrorAction Stop
@@ -138,7 +138,7 @@ function Assert-OnePasswordBridgeProcess {
             }
             if (-not $invokingProcess -or $invokingProcess.CommandLine -notmatch '(?i)deploy-wheel\.ps1' -or
                 $invokingProcess.CommandLine -notmatch '(?i)(^|\s)-OnePasswordEnvironmentId(?:=|\s)') {
-                break
+                return $false
             }
             $opEnvironment = [regex]::Match(
                 $parent.CommandLine,
@@ -150,17 +150,27 @@ function Assert-OnePasswordBridgeProcess {
             )
             if ($opEnvironment.Success -and $scriptEnvironment.Success -and
                 $opEnvironment.Groups['id'].Value -ceq $scriptEnvironment.Groups['id'].Value) {
-                return
+                return $true
             }
-            break
+            return $false
         }
         $processId = $parentId
+    }
+    return $false
+}
+
+function Assert-OnePasswordBridgeProcess {
+    if (Test-OnePasswordBridgeProcess) {
+        return
     }
     throw 'The deployment password was not supplied by an authenticated 1Password Environment subprocess; deployment stopped before authentication.'
 }
 
 function Resolve-OnePasswordChildPassword {
     if (-not $env:DEFAULT_ADMIN_PASSWORD) {
+        if (Test-OnePasswordBridgeProcess) {
+            throw 'The exact 1Password Environment did not provide DEFAULT_ADMIN_PASSWORD; deployment stopped before authentication.'
+        }
         return ''
     }
     Assert-OnePasswordBridgeProcess
@@ -606,7 +616,7 @@ def connect_password_or_keyboard_interactive(client, host, username, password):
             client._policy.missing_host_key(client, host, server_key)
 
         try:
-            transport.auth_password(username, password)
+            transport.auth_password(username, password, fallback=False)
         except (paramiko.AuthenticationException, paramiko.BadAuthenticationType):
             def keyboard_interactive_handler(title, instructions, prompts):
                 if len(prompts) != 1:
