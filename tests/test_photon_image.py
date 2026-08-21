@@ -1624,6 +1624,7 @@ def test_vmware_deploy_wheel_supports_secure_onepassword_password_deploy():
     assert "The deployment password was not supplied by an authenticated 1Password Environment subprocess" in script
     assert "deploy-wheel\\.ps1" in script
     assert "[guid]::NewGuid().ToString('N')" in script
+    assert "$opEnvironment.Groups['id'].Value -ceq $childEnvironment.Groups['id'].Value" in script
     assert "$childNonce.Groups['nonce'].Value -ceq $opNonce.Groups['nonce'].Value" in script
     assert "$invokingProcess.CommandLine" not in script
     assert "client.set_missing_host_key_policy(paramiko.RejectPolicy())" in script

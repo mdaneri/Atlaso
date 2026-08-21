@@ -673,10 +673,10 @@ Terminal order:
   then pass only its opaque ID with `-OnePasswordEnvironmentId`; the script must use `op run --environment` and fail
   closed when its CLI capability, authorization, Environment, or variable is unavailable. Never pass a password
   argument, create a local `.env`, set `DEFAULT_ADMIN_PASSWORD` in the caller, or use the retired
-  `ATLASO_DEPLOY_SSH_PASSWORD` fallback. The bridge must bind the child to the exact Environment ID and a fresh,
-  non-secret per-invocation nonce carried by the `op.exe` and child command lines, so a documented launch from an
-  existing PowerShell prompt works while an unrelated interactive `op run` shell fails closed. Password-backed
-  Paramiko must load system known hosts and reject unknown keys.
+  `ATLASO_DEPLOY_SSH_PASSWORD` fallback. The bridge must bind the child to the exact Environment ID in the concealed
+  child-only handoff and a fresh, non-secret per-invocation nonce carried by the `op.exe` and child command lines, so a
+  documented launch from an existing PowerShell prompt works while an unrelated interactive `op run` shell fails
+  closed. Password-backed Paramiko must load system known hosts and reject unknown keys.
   If uvicorn needs longer after reinstall, pass `-ReadinessTimeoutSeconds 120`. Use `-SkipHelperSync` only when the
   appliance helper is intentionally unchanged.
 - The wheel helper's `RemoteDirectory` is one shared pre-upload contract for key/agent and password-backed SSH. Accept
