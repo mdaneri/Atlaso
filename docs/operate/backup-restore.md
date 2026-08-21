@@ -63,6 +63,8 @@ The reset:
   restarts and verifies the console with the other required services;
 - removes interrupted plaintext Managed LDAP recovery exports through a symlink-resistant bounded directory and
   durably synchronizes that cleanup before the recovery marker advances;
+- stops new SSH admission, terminates and verifies existing root and Atlaso-managed operating-system login sessions,
+  then restores factory SSH policy only after Local Users credentials have been reconciled;
 - recreates only factory/bootstrap records, including the bootstrap accounts, management `eth0`, the appliance DNS
   record, and built-in CA profiles; VCF Offline Depot download profiles are not recreated;
 - enables the minimum routing, firewall, authentication, and management-plane defaults while leaving optional services

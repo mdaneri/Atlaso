@@ -144,6 +144,35 @@ def test_factory_reset_network_runtime_cleanup_uses_constrained_helper(monkeypat
     assert commands == [result.command]
 
 
+def test_factory_reset_login_cleanup_uses_constrained_helper(monkeypatch):
+    """The reset terminates OS sessions only through the constrained helper.
+
+    Args:
+        monkeypatch: Pytest fixture used to replace helper execution.
+    """
+    import atlaso.app.adapters.system as system_adapter
+
+    commands: list[list[str]] = []
+    monkeypatch.setattr(
+        system_adapter.subprocess,
+        "run",
+        lambda command, **_kwargs: commands.append(command)
+        or subprocess.CompletedProcess(command, 0, "", ""),
+    )
+
+    result = SystemAdapter(dry_run=False).terminate_factory_reset_login_sessions()
+
+    assert result.command == [
+        "sudo",
+        "-n",
+        SystemAdapter.HELPER_PATH,
+        "factory-reset",
+        "terminate-login-sessions",
+        "--real",
+    ]
+    assert commands == [result.command]
+
+
 def test_root_helper_call_avoids_sudo_environment_scrub(monkeypatch):
     """A root reset runner invokes the helper without a root-to-root sudo hop.
 

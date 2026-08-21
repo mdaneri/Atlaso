@@ -2994,6 +2994,50 @@ def test_factory_reset_network_runtime_cleanup_requires_applying_marker(monkeypa
     assert "active applying marker" in capsys.readouterr().err
 
 
+def test_factory_reset_terminates_bounded_login_sessions(monkeypatch, capsys):
+    """Reset stops SSH and terminates root and Atlaso-managed login sessions.
+
+    Args:
+        monkeypatch: Pytest fixture used to replace session and service commands.
+        capsys: Pytest fixture used to capture helper output.
+    """
+    helper = load_helper_module()
+    commands: list[list[str]] = []
+    inventories = iter(
+        [
+            "1 0 root - pts/0\n2 1000 admin - pts/1\n3 1001 unrelated - pts/2\n",
+            "3 1001 unrelated - pts/2\n",
+        ]
+    )
+
+    def fake_run(command, **_kwargs):
+        """Return bounded service and login-session state.
+
+        Args:
+            command: Exact command arguments.
+            **_kwargs: Subprocess options ignored by the test double.
+        """
+        commands.append(command)
+        if command[1:2] == ["list-sessions"]:
+            return subprocess.CompletedProcess(command, 0, next(inventories), "")
+        if command[1:3] == ["is-active", "--quiet"]:
+            return subprocess.CompletedProcess(command, 3, "", "")
+        return subprocess.CompletedProcess(command, 0, "", "")
+
+    monkeypatch.setattr(helper, "_factory_reset_runtime_cleanup_is_admitted", lambda: True)
+    monkeypatch.setattr(helper, "_managed_local_usernames", lambda: ["admin"])
+    monkeypatch.setattr(helper.shutil, "which", lambda name: f"/usr/bin/{name}")
+    monkeypatch.setattr(helper, "_run", fake_run)
+
+    assert helper._handle_factory_reset("terminate-login-sessions", []) == 0
+
+    assert ["systemctl", "stop", "sshd.service"] in commands
+    assert ["/usr/bin/loginctl", "terminate-session", "1"] in commands
+    assert ["/usr/bin/loginctl", "terminate-session", "2"] in commands
+    assert ["/usr/bin/loginctl", "terminate-session", "3"] not in commands
+    assert json.loads(capsys.readouterr().out)["session_count"] == 2
+
+
 @pytest.mark.skipif(os.name != "posix", reason="requires POSIX descriptor-relative marker access")
 def test_factory_reset_cleanup_admission_ignores_replaced_state_path(monkeypatch, tmp_path):
     """Cleanup admission remains bound to the securely opened state directory.

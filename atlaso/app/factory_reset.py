@@ -1335,6 +1335,12 @@ def _candidate_database(
             if report_progress:
                 _update_request("applying", "Factory default configuration validated; activating runtime defaults.")
 
+            login_cleanup = adapter.terminate_factory_reset_login_sessions()
+            if login_cleanup.returncode != 0:
+                raise FactoryResetError(
+                    "Factory reset could not terminate pre-reset operating-system login sessions."
+                )
+
             runtime_cleanup = adapter.reset_factory_network_runtime()
             if runtime_cleanup.returncode != 0:
                 raise FactoryResetError("Factory reset could not clear Atlaso-managed network runtime state.")

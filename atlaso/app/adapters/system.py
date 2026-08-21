@@ -1071,6 +1071,15 @@ class SystemAdapter:
             timeout_seconds=30,
         )
 
+    def terminate_factory_reset_login_sessions(self) -> AdapterResult:
+        """Stop SSH admission and terminate bounded pre-reset login sessions."""
+        return self._helper_result(
+            "factory-reset",
+            "terminate-login-sessions",
+            dry_run_message="dry-run: factory-reset login-session cleanup recorded",
+            timeout_seconds=30,
+        )
+
     def reset_factory_retained_runtime(self) -> AdapterResult:
         """Remove fixed credential-bearing runtime state owned by an active factory reset."""
         return self._helper_result(

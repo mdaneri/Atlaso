@@ -111,6 +111,7 @@ COMMANDS: dict[str, set[str]] = {
         "schedule",
         "resume",
         "status",
+        "terminate-login-sessions",
         "reset-network-runtime",
         "reset-retained-runtime",
         "apply-root-password",
@@ -147,6 +148,7 @@ SYSTEMD_RUN_REAL_ACTIONS = {
     "recover",
     "acknowledge",
     "sync-sources",
+    "terminate-login-sessions",
     "reset-network-runtime",
     "reset-retained-runtime",
     "apply-root-password",
@@ -170,6 +172,7 @@ NO_PATH_ACTIONS = {
     ("appliance-power", "shutdown"),
         ("factory-reset", "resume"),
         ("factory-reset", "status"),
+        ("factory-reset", "terminate-login-sessions"),
         ("factory-reset", "reset-network-runtime"),
         ("factory-reset", "reset-retained-runtime"),
         ("factory-reset", "apply-root-password"),
@@ -16109,6 +16112,79 @@ def _factory_reset_managed_vlan_names() -> list[str]:
     return sorted(names)
 
 
+def _factory_reset_login_session_rows(loginctl: str) -> list[tuple[str, str]]:
+    """Return bounded login-session identifiers and usernames.
+
+    Args:
+        loginctl: Absolute loginctl command path.
+    """
+    result = _run([loginctl, "list-sessions", "--no-legend", "--no-pager"])
+    if result.returncode != 0:
+        raise ValueError("factory-reset could not inventory operating-system login sessions")
+    rows: list[tuple[str, str]] = []
+    for raw_line in result.stdout.splitlines():
+        fields = raw_line.split()
+        if not fields:
+            continue
+        if (
+            len(fields) < 3
+            or not re.fullmatch(r"[A-Za-z0-9_.-]{1,128}", fields[0])
+            or not fields[1].isdigit()
+            or not LOCAL_USERS_USERNAME_PATTERN.fullmatch(fields[2])
+        ):
+            raise ValueError("factory-reset received an unsafe login-session inventory")
+        rows.append((fields[0], fields[2]))
+    return rows
+
+
+def _terminate_factory_reset_login_sessions() -> int:
+    """Stop SSH admission, terminate, and verify bounded pre-reset logins."""
+    if not _factory_reset_runtime_cleanup_is_admitted():
+        print("factory-reset login cleanup requires an active applying marker", file=sys.stderr)
+        return 2
+    loginctl = shutil.which("loginctl")
+    if loginctl is None:
+        print("factory-reset could not locate loginctl", file=sys.stderr)
+        return 1
+    try:
+        targets = {"root", *_managed_local_usernames()}
+        ssh_stop = _run(["systemctl", "stop", "sshd.service"])
+        if ssh_stop.returncode != 0:
+            raise ValueError("factory-reset could not stop SSH login admission")
+        ssh_active = _run(["systemctl", "is-active", "--quiet", "sshd.service"])
+        if ssh_active.returncode not in {3, 4}:
+            raise ValueError("factory-reset could not verify SSH login admission stopped")
+        sessions = [
+            session_id
+            for session_id, username in _factory_reset_login_session_rows(loginctl)
+            if username in targets
+        ]
+        for session_id in sessions:
+            terminated = _run([loginctl, "terminate-session", session_id])
+            if terminated.returncode != 0:
+                raise ValueError("factory-reset could not terminate an operating-system login session")
+        remaining = [
+            session_id
+            for session_id, username in _factory_reset_login_session_rows(loginctl)
+            if username in targets
+        ]
+        if remaining:
+            raise ValueError("factory-reset could not verify operating-system login sessions terminated")
+    except (OSError, ValueError) as exc:
+        print(str(exc), file=sys.stderr)
+        return 1
+    print(
+        json.dumps(
+            {
+                "factory_reset_login_sessions": "terminated",
+                "session_count": len(sessions),
+            },
+            sort_keys=True,
+        )
+    )
+    return 0
+
+
 def _factory_reset_wan_route_interfaces() -> list[str]:
     """Inventory interfaces referenced by Atlaso's dedicated live lab route table."""
     interfaces: set[str] = set()
@@ -18008,6 +18084,8 @@ def _handle_factory_reset(action: str, args: list[str]) -> int:
     if action == "status":
         print(json.dumps(_factory_reset_state_payload(), sort_keys=True))
         return 0
+    if action == "terminate-login-sessions":
+        return _terminate_factory_reset_login_sessions()
     if action == "reset-network-runtime":
         return _reset_factory_network_runtime()
     if action == "reset-retained-runtime":
