@@ -2960,6 +2960,65 @@ def test_factory_reset_network_runtime_cleanup_requires_applying_marker(monkeypa
     assert "active applying marker" in capsys.readouterr().err
 
 
+@pytest.mark.skipif(os.name != "posix", reason="requires POSIX descriptor-relative marker access")
+def test_factory_reset_cleanup_admission_ignores_replaced_state_path(monkeypatch, tmp_path):
+    """Cleanup admission remains bound to the securely opened state directory.
+
+    Args:
+        monkeypatch: Pytest fixture used to replace helper directory admission.
+        tmp_path: Temporary directory provided by pytest for isolated filesystem state.
+    """
+    helper = load_helper_module()
+    state_directory = tmp_path / "factory-reset"
+    state_directory.mkdir()
+    (state_directory / "request.json").write_text(
+        json.dumps({"schema_version": 1, "state": "scheduled"}),
+        encoding="utf-8",
+    )
+    admitted_descriptor = os.open(
+        state_directory,
+        os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW,
+    )
+    admitted_directory = tmp_path / "admitted-factory-reset"
+    replacement_directory = tmp_path / "replacement"
+    state_directory.rename(admitted_directory)
+    replacement_directory.mkdir()
+    (replacement_directory / "request.json").write_text(
+        json.dumps({"schema_version": 1, "state": "applying"}),
+        encoding="utf-8",
+    )
+    state_directory.symlink_to(replacement_directory, target_is_directory=True)
+    original_fstat = helper.os.fstat
+
+    def root_owned_fstat(descriptor):
+        """Model the admitted helper-created marker as root-owned.
+
+        Args:
+            descriptor: Open file descriptor to inspect.
+        """
+        result = original_fstat(descriptor)
+        if stat.S_ISREG(result.st_mode):
+            return SimpleNamespace(
+                st_mode=result.st_mode,
+                st_uid=0,
+                st_size=result.st_size,
+            )
+        return result
+
+    monkeypatch.setattr(helper, "ATLASO_FACTORY_RESET_DIR", state_directory)
+    monkeypatch.setattr(helper, "ATLASO_FACTORY_RESET_REQUEST_PATH", state_directory / "request.json")
+    monkeypatch.setattr(
+        helper,
+        "_open_factory_reset_directory",
+        lambda: os.dup(admitted_descriptor),
+    )
+    monkeypatch.setattr(helper.os, "fstat", root_owned_fstat)
+    try:
+        assert helper._factory_reset_runtime_cleanup_is_admitted() is False
+    finally:
+        os.close(admitted_descriptor)
+
+
 def test_factory_reset_retained_runtime_cleanup_removes_bounded_state(
     monkeypatch,
     tmp_path,
