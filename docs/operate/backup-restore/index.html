@@ -1240,6 +1240,17 @@
 </li>
       
         <li class="md-nav__item">
+  <a href="#return-the-complete-appliance-to-factory-state" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Return the complete appliance to factory state
+      </span>
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
   <a href="#restore-safely" class="md-nav__link">
     <span class="md-ellipsis">
       <span class="md-typeset">
@@ -3395,6 +3406,17 @@
 </li>
       
         <li class="md-nav__item">
+  <a href="#return-the-complete-appliance-to-factory-state" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Return the complete appliance to factory state
+      </span>
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
   <a href="#restore-safely" class="md-nav__link">
     <span class="md-ellipsis">
       <span class="md-typeset">
@@ -3577,6 +3599,113 @@ workflows. Non-secret ESXi PXE custom-variable catalog definitions and defaults 
 retain their <code>{{custom.*}}</code> prerequisites. Uploaded VCF Private Registry CA bundle bytes are also excluded. When an
 enabled registry depends on an uploaded bundle instead of the internal CA, the export records the registry as disabled;
 upload the CA bundle again and review the registry settings before re-enabling it.</p>
+<h2 id="return-the-complete-appliance-to-factory-state">Return the complete appliance to factory state<a class="headerlink" href="#return-the-complete-appliance-to-factory-state" title="Permanent link">&para;</a></h2>
+<p><strong>Factory reset appliance</strong> is not a settings-only restore and does not require a later Appliance Apply. After the
+administrator explicitly chooses whether to keep or change both the bootstrap administrator and root passwords and
+confirms the destructive action, Atlaso creates a durable non-secret recovery marker, and the privileged runner pins
+that admitted root-owned state directory without following links before it stops database writers, builds a private
+replacement database, validates all generated runtime configuration, and activates the clean state for all 16 apply
+units. Only after the candidate passes validation does Atlaso atomically replace the active database. The management
+plane restarts and the initiating browser is handed back to sign-in.</p>
+<p>The reset:</p>
+<ul>
+<li>removes all control-plane records, including local and external users, password hashes, API tokens, sessions,
+  schedules, queued and completed jobs, automation history, audit events, vault entries, certificates, VLANs, routes,
+  service configuration, and settings-archive metadata;</li>
+<li>stops Atlaso, its worker, and the tty1 console, then repeatedly inventories, stops, and verifies UUID-named
+  <code>atlaso-helper-action-*</code> transient services until none remain before inventorying and cancelling every bounded
+  <code>atlaso-update-restart-*</code> timer and service; reset cleanup and root-password actions use that bounded family too; it
+  propagates the helper-action mode into the scheduled reset runner so those bounds also apply to web-triggered resets;
+  it then stops and verifies every timestamped <code>atlaso-automation-*</code> transient service and durably clears the bounded
+  managed-script and run staging directories before runtime activation so no in-flight helper, delayed update restart,
+  console mutation, or pre-reset script with a loaded vault credential can outlive the reset transaction; readiness
+  restarts and verifies the console with the other required services;</li>
+<li>removes interrupted plaintext Managed LDAP recovery exports through a symlink-resistant bounded directory and
+  durably synchronizes that cleanup before the recovery marker advances;</li>
+<li>stops new SSH admission, terminates and verifies existing root and Atlaso-managed operating-system login sessions,
+  repeats that bounded termination after retained authorization keys are scrubbed, then restores and verifies factory
+  SSH policy through the readiness handoff;</li>
+<li>recreates only factory/bootstrap records, including the bootstrap accounts, management <code>eth0</code>, the appliance DNS
+  record, and built-in CA profiles; VCF Offline Depot download profiles are not recreated;</li>
+<li>enables the minimum routing, firewall, authentication, and management-plane defaults while leaving optional services
+  disabled, then records identical desired and applied baselines so <strong>Review appliance changes</strong> shows zero pending
+  units;</li>
+<li>inventories live Atlaso-owned VLAN definitions and dedicated route tables after validation, then removes those VLAN
+  links, route-table entries, and route-bound WAN impairment qdiscs before applying factory networking; this bounded
+  cleanup does not depend on a possibly missing or stale database apply baseline; and</li>
+<li>changes the appliance-instance identity, invalidating every earlier browser session and bearer token.</li>
+</ul>
+<p>The operation deliberately preserves payload files on documented storage paths. This includes VCF Offline Depot
+content under <code>/mnt/atlaso-vcf-offline-depot</code>, backup artifacts under <code>/mnt/atlaso-vcf-backups</code>, VCF Private Registry
+payload under <code>/mnt/atlaso-vcf-registry</code>, and managed ESX Storage payloads. Their database references are removed, so
+an administrator must explicitly rediscover, reconfigure, or delete retained payload later. Fixed transient Apply
+staging under <code>/var/lib/atlaso/apply</code> is scrubbed; secret-bearing Local Users, CA, and LDAP staging is also removed on
+failure. Successful reset also removes retained VCF Backup authorized keys, the Web Terminal CA key pair, and pending
+Web Terminal signing requests so re-enabling either feature cannot reuse credentials from before reset. The bootstrap
+and root account homes are retained, but both accounts' <code>authorized_keys</code> and <code>authorized_keys2</code> files are removed; other
+SSH configuration remains untouched. OIDC browser cookies carry the appliance-instance identity and are rejected after
+reset even when a recreated bootstrap user receives the same database identifier. CA
+private-key paths present before reset but omitted from validated factory state are removed after runtime activation;
+paths retained by factory state are rewritten and preserved. The disabled KMIP service's operational store and KEK are
+removed, as are the managed Photon repository file, its embedded credentials, the synchronized update-source state, and
+Atlaso-registered PowerShell repositories. Atlaso synchronizes every affected directory before advancing the durable
+marker to management-readiness verification, so a reboot cannot restore a deleted staging or credential entry. Payload
+storage remains outside this cleanup boundary.</p>
+<p>Factory reset refuses to quiesce services or recursively clear Apply staging while the root-owned Atlaso Release
+finalizer records a pending rollback or forward-completion transaction. It checks again after bounded helper-action
+quiescence and immediately before staging cleanup, preserving the durable finalizer if a release transaction appears
+in either race window. Recover the signed release transaction through the normal service-start recovery path, then
+retry reset after its finalizer is definitive.</p>
+<p>The candidate temporarily imports compatible applied baselines so removed resources can be reconciled against their
+last known state. After activation, Atlaso replaces that mapping with fingerprints for exactly the current factory apply
+units; retired or unknown baseline keys cannot survive in the replacement database.</p>
+<p>Earlier sessions, bearer tokens, service credentials, and removed-account credentials stop working. The reset preserves
+the current bootstrap administrator web/Photon password and root password for each <strong>Keep current password</strong> choice. A
+<strong>Change password</strong> choice applies the submitted value during the protected reset transaction; the administrator value
+becomes both the bootstrap web credential and its Photon OS password, while the root value changes only the Photon root
+account and does not enable root SSH. New values must satisfy the packaged factory Local Users password policy, even
+when the appliance currently permits a weaker policy. Atlaso gives each reset request its own mode-<code>0600</code> staging file;
+the helper admits only one request at a time and a busy request removes only its own file. An admitted request copies
+the values into root-only durable reset recovery state, passes OS values through the constrained helper and stdin, and
+retains the credential file until a durable post-activation marker proves only readiness remains. Runner and finalizer
+then remove it idempotently. Password values never enter
+the database, recovery marker, tasks, audits, logs, or UI responses. Sign in using the bootstrap administrator password
+selected for the reset. Factory state disables Management HTTPS and restores the packaged management network
+(<code>192.168.49.1/24</code> on <code>eth0</code>), so the browser may lose the old address or HTTPS endpoint. Use the VMware or
+Hyper-V console to find or correct management networking when the login page does not return at the former URL.</p>
+<p>If detached scheduling fails before reset execution begins, a later confirmed submission replaces both the rejected
+password plan and its scheduling marker before retrying. Once execution has started, a failed marker remains
+recovery-only; another browser submission cannot replace its credentials or progress.</p>
+<p>A second browser submission while the admitted reset timer or service is active returns a retryable busy response. It
+does not clear the later administrator's session or imply that their password choices replaced the admitted plan. The
+password summary beside the reset form always describes the packaged factory Local Users policy that validates changed
+administrator and root values, even when current desired state contains a different policy.</p>
+<p>The detached runner waits up to 30 seconds for the scheduler's short admission lock handoff, so a submission racing the
+two-second timer cannot strand an accepted request in <code>scheduled</code>. Because the runner is already root, its SystemAdapter
+helper calls also bypass a redundant root-to-root <code>sudo</code> hop; this preserves the helper-action isolation mode supplied
+by the transient unit without broadening the non-root sudoers contract.</p>
+<p>When factory activation changes the Atlaso Management HTTPS service drop-in, the helper reloads systemd but suppresses
+its ordinary delayed management restart. The reset readiness handoff remains the sole owner of starting Atlaso,
+worker, console, and nginx after runtime activation and protected credential cleanup finish.
+Before activation, reset also stops and verifies any management restart timer or service that an ordinary Appliance
+Settings apply scheduled before reset began, then stops and verifies the application services again. This prevents a
+pre-existing delayed restart from reviving a database writer during factory replacement.</p>
+<p>Reset progress and only the non-secret <code>keep</code>/<code>change</code> choices are recorded outside the database in
+<code>/var/lib/atlaso-privileged/factory-reset/request.json</code>; the last successful result is recorded in <code>last-result.json</code>. Atlaso
+resumes an incomplete marker before the web control plane starts after
+a reboot. The marker remains <code>awaiting_readiness</code> after runtime activation and is removed only after Atlaso, worker,
+tty1 console, nginx, and two consecutive management <code>/openapi.json</code> checks are ready. If reset reports failure,
+preserve the VM,
+inspect <code>journalctl -u atlaso-factory-reset</code>, correct the reported
+runtime prerequisite, and reboot or run <code>sudo /opt/atlaso/bin/atlaso-helper factory-reset resume --real</code> from the local
+console. Resume is idempotent and retains the old database until a validated candidate is ready for replacement. A
+nonblocking transaction lock rejects overlapping scheduled, boot-resume, or console runners without allowing them to
+modify the active reset transaction; the pending systemd delay timer is part of that active transaction.</p>
+<p>Development and non-appliance fallback reset supports only keeping both passwords and follows the same replacement
+boundary without host mutation: Atlaso builds and validates a private SQLite candidate first, then copies its complete
+table contents under one <code>BEGIN IMMEDIATE</code> writer transaction. Earlier writers must finish before replacement and later
+writers cannot commit until the factory contents are durable, so a pre-reset transaction cannot reintroduce removed
+records afterward. A candidate-rendering, schema-contract, or validation failure leaves the source database unchanged.</p>
 <h2 id="restore-safely">Restore safely<a class="headerlink" href="#restore-safely" title="Permanent link">&para;</a></h2>
 <ol>
 <li>Take a VM snapshot or equivalent rollback point.</li>

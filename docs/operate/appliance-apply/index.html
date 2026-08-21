@@ -3793,7 +3793,9 @@ pending marker. Review the task before resubmitting.</p>
 prevents a queued task from applying state that the administrator did not inspect.</p>
 <h2 id="safety-boundaries">Safety boundaries<a class="headerlink" href="#safety-boundaries" title="Permanent link">&para;</a></h2>
 <ul>
-<li><code>/ui/management/appliance-apply</code> is the only desired-state host-mutation workflow.</li>
+<li><code>/ui/management/appliance-apply</code> is the only ordinary desired-state host-mutation workflow. The confirmed complete
+  factory reset on <strong>Backup and Restore</strong> is a dedicated recovery exception that validates and applies every clean
+  factory unit itself; it does not create a follow-up Apply submission.</li>
 <li>Only one Appliance Apply master can be pending or running.</li>
 <li>Photon mutations use constrained <code>atlaso-helper</code> actions; the web process does not receive broad root access.</li>
 <li>Previews, diffs, task results, logs, and audit details redact sensitive-looking values.</li>

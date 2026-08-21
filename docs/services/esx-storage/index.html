@@ -3834,9 +3834,9 @@ read-only state, holders, raw-device users, and mounts immediately before format
 validated resolved device rather than dereferencing the topology link again.</p>
 <p>Settings backups include the service, volume fingerprints/UUIDs/mounts, and shares but never a format authorization.
 Restore marks volumes for runtime verification before reapply. Factory reset removes Atlaso desired state, exports, and
-service enablement after apply; it does not erase, reformat, unmount, detach, or delete files on storage disks. UUID
-disk mounts and exact boot claims remain while preserved disks are attached so they cannot block the next boot; stale
-share bind mounts are removed. Reattach preserved ext4 data as an existing mounted volume.</p>
+service enablement in its dedicated transaction; it does not erase, reformat, unmount, detach, or delete files on
+storage disks. UUID disk mounts and exact boot claims remain while preserved disks are attached so they cannot block the
+next boot; stale share bind mounts are removed. Reattach preserved ext4 data as an existing mounted volume.</p>
 <h2 id="troubleshooting">Troubleshooting<a class="headerlink" href="#troubleshooting" title="Permanent link">&para;</a></h2>
 <p>Check both address families independently:</p>
 <div class="language-text highlight"><pre><span></span><code><span id="__span-2-1"><a id="__codelineno-2-1" name="__codelineno-2-1" href="#__codelineno-2-1"></a>dig @&lt;atlaso-dns-ip&gt; nfs-192-168-87-254.&lt;domain&gt; A
