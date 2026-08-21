@@ -204,7 +204,19 @@ def test_availability_fingerprint_stales_after_source_credential_revision():
                 "credential_present": True,
                 "validation_status": "valid",
                 "updated_at": "2026-08-21T12:00:00+00:00",
-            }
+            },
+            {
+                "id": 8,
+                "kind": "powershell",
+                "name": "UnusedGallery",
+                "url": "https://unused.example.test/powershell",
+                "enabled": True,
+                "priority": 30,
+                "settings": {"trusted": True},
+                "credential_present": True,
+                "validation_status": "valid",
+                "updated_at": "2026-08-21T12:00:00+00:00",
+            },
         ],
         "powershell_modules": [
             {
@@ -226,6 +238,16 @@ def test_availability_fingerprint_stales_after_source_credential_revision():
         fingerprint=fingerprint,
         result={"state": "available", "change_count": 1},
     )
+
+    settings["source_definitions"][1]["updated_at"] = (
+        "2026-08-21T12:30:00+00:00"
+    )
+    unchanged = update_availability_summary(state, settings)
+    unchanged_powershell = next(
+        row for row in unchanged["streams"] if row["id"] == "powershell_modules"
+    )
+    assert unchanged_powershell["stale"] is False
+    assert unchanged_powershell["confirmed"]["update_available"] is True
 
     settings["source_definitions"][0]["updated_at"] = (
         "2026-08-21T13:00:00+00:00"

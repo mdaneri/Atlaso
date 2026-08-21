@@ -85,6 +85,20 @@ def update_availability_to_json(value: dict[str, Any]) -> str:
 def update_stream_configuration_fingerprint(stream: str, settings: dict[str, Any]) -> str:
     """Bind a confirmation to the source and module configuration used to produce it."""
     definitions = settings.get("source_definitions")
+    modules = (
+        settings.get("powershell_modules")
+        if isinstance(settings.get("powershell_modules"), list)
+        else []
+    )
+    default_powershell_repository = str(
+        settings.get("powershell_repository_name") or ""
+    ).strip()
+    referenced_powershell_repositories = {
+        str(module.get("repository_name") or default_powershell_repository).strip()
+        for module in modules
+        if isinstance(module, dict)
+        and str(module.get("repository_name") or default_powershell_repository).strip()
+    }
     source_kind = {
         "photon_os": "photon",
         "powershell_modules": "powershell",
@@ -105,10 +119,15 @@ def update_stream_configuration_fingerprint(stream: str, settings: dict[str, Any
         }
         for source in definitions or []
         if isinstance(source, dict) and source.get("kind") == source_kind
+        and (
+            stream != "powershell_modules"
+            or str(source.get("name") or "").strip()
+            in referenced_powershell_repositories
+        )
     ] if isinstance(definitions, list) else []
     payload: dict[str, Any] = {"stream": stream, "sources": sources}
     if stream == "powershell_modules":
-        payload["modules"] = settings.get("powershell_modules") if isinstance(settings.get("powershell_modules"), list) else []
+        payload["modules"] = modules
     elif stream == "atlaso_release" and not sources:
         payload["manifest_urls"] = settings.get("atlaso_manifest_urls") or [settings.get("atlaso_manifest_url")]
     elif stream == "photon_os" and not sources:
