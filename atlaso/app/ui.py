@@ -12645,51 +12645,57 @@ def execute_management_handoff(
             PUBLIC_SERVICES_STAGED_CONFIG_PATH,
             public_services["raw_config_preview"],
         )
-        ca_context_value = ca["context"]
-        ca_path = stage_appliance_apply_config(
-            CA_STAGED_CONFIG_PATH,
-            render_ca_apply_payload(
-                ca_context_value["ca_settings"],
-                ca_context_value["ca_certificates"],
-                include_private_keys=True,
-            ),
-        )
-        manifest = {
-            "schema_version": 1,
-            "job_id": job_id,
-            "network_config_path": network_path,
-            "firewall_config_path": firewall_path,
-            "appliance_settings_config_path": settings_path,
-            "public_services_config_path": public_path,
-            "ca_config_path": ca_path,
-            "previous_management_interfaces": previous_interfaces,
-            "previous_management_parent_interfaces": previous_parent_interfaces,
-            "previous_management_addresses": list(dict.fromkeys(previous_addresses)),
-            "previous_management_paths": [
-                {
-                    "name": str(path.get("name") or ""),
-                    "ipv4_method": str(path.get("ipv4_method") or ""),
-                    "ipv6_enabled": str(path.get("ipv6_enabled") or ""),
-                    "ipv6_cidr": str(path.get("ipv6_cidr") or ""),
-                }
-                for path in previous_paths
-            ],
-            "previous_https_enabled": bool(
-                previous_settings.get("management_https_enabled", True)
-            ),
-            "previous_management_public_port": int(
-                previous_settings.get(
-                    "management_public_https_port"
-                    if previous_settings.get("management_https_enabled", True)
-                    else "management_public_http_port",
-                    443 if previous_settings.get("management_https_enabled", True) else 80,
-                )
-            ),
-        }
-        manifest_path = stage_appliance_apply_config(
-            MANAGEMENT_HANDOFF_STAGED_MANIFEST_PATH,
-            json.dumps(manifest, indent=2, sort_keys=True),
-        )
+        manifest_staged = False
+        try:
+            ca_context_value = ca["context"]
+            ca_path = stage_appliance_apply_config(
+                CA_STAGED_CONFIG_PATH,
+                render_ca_apply_payload(
+                    ca_context_value["ca_settings"],
+                    ca_context_value["ca_certificates"],
+                    include_private_keys=True,
+                ),
+            )
+            manifest = {
+                "schema_version": 1,
+                "job_id": job_id,
+                "network_config_path": network_path,
+                "firewall_config_path": firewall_path,
+                "appliance_settings_config_path": settings_path,
+                "public_services_config_path": public_path,
+                "ca_config_path": ca_path,
+                "previous_management_interfaces": previous_interfaces,
+                "previous_management_parent_interfaces": previous_parent_interfaces,
+                "previous_management_addresses": list(dict.fromkeys(previous_addresses)),
+                "previous_management_paths": [
+                    {
+                        "name": str(path.get("name") or ""),
+                        "ipv4_method": str(path.get("ipv4_method") or ""),
+                        "ipv6_enabled": str(path.get("ipv6_enabled") or ""),
+                        "ipv6_cidr": str(path.get("ipv6_cidr") or ""),
+                    }
+                    for path in previous_paths
+                ],
+                "previous_https_enabled": bool(
+                    previous_settings.get("management_https_enabled", True)
+                ),
+                "previous_management_public_port": int(
+                    previous_settings.get(
+                        "management_public_https_port"
+                        if previous_settings.get("management_https_enabled", True)
+                        else "management_public_http_port",
+                        443 if previous_settings.get("management_https_enabled", True) else 80,
+                    )
+                ),
+            }
+            manifest_path = stage_appliance_apply_config(
+                MANAGEMENT_HANDOFF_STAGED_MANIFEST_PATH,
+                json.dumps(manifest, indent=2, sort_keys=True),
+            )
+            manifest_staged = True
+        finally:
+            if not manifest_staged:
+                Path(ca_path).unlink(missing_ok=True)
     results: list[AdapterResult] = []
     recovery_result: AdapterResult | None = None
     try:

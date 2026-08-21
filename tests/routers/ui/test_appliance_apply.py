@@ -283,6 +283,84 @@ vlan=eth1.20
     )
 
 
+@pytest.mark.parametrize("failure_target", ["ca", "manifest"])
+def test_management_handoff_staging_failure_removes_private_ca_payload(
+    monkeypatch,
+    tmp_path,
+    failure_target,
+):
+    """Remove the transient private-key payload on every staging failure.
+
+    Args:
+        monkeypatch: Pytest fixture used to inject the staging failure.
+        tmp_path: Temporary root containing the secret and manifest payloads.
+        failure_target: Staging operation that fails after the CA file is written.
+    """
+    from atlaso.app import ui
+
+    class UnusedAdapter:
+        """Reject helper calls because staging must fail first."""
+
+        dry_run = False
+
+        def validate_management_handoff(self, _manifest_path):
+            """Fail if staging unexpectedly reaches helper validation."""
+            raise AssertionError("helper validation must not run after staging failure")
+
+    unit_defaults = {
+        "label": "Management handoff component",
+        "summary": "Apply the management handoff component.",
+        "validation_errors": [],
+        "validation_warnings": [],
+        "config_path": "",
+        "config_preview": "",
+        "config_diff": "",
+        "raw_config_preview": "",
+    }
+    units = {
+        unit_id: {**unit_defaults, "id": unit_id}
+        for unit_id in ui.MANAGEMENT_HANDOFF_UNIT_IDS
+    }
+    units["network"]["previous_management_paths"] = []
+    units["network"]["removed_vlan_interfaces"] = []
+    units["ca"]["context"] = {"ca_settings": object(), "ca_certificates": []}
+    ca_path = tmp_path / "atlaso-ca.json"
+    manifest_path = tmp_path / "atlaso-management-handoff.json"
+    monkeypatch.setattr(ui, "CA_STAGED_CONFIG_PATH", str(ca_path))
+    monkeypatch.setattr(ui, "MANAGEMENT_HANDOFF_STAGED_MANIFEST_PATH", str(manifest_path))
+    monkeypatch.setattr(ui, "load_appliance_apply_baselines", lambda _db: {"appliance_settings": {}})
+    monkeypatch.setattr(ui, "network_config_with_removed_vlans", lambda preview, _removed: preview)
+    monkeypatch.setattr(ui, "render_ca_apply_payload", lambda *_args, **_kwargs: "private-key-payload")
+
+    def stage_config(target, content):
+        """Write the CA payload, then inject the selected staging failure.
+
+        Args:
+            target: Canonical staged configuration path.
+            content: Rendered staged configuration content.
+        """
+        if str(target) == str(ca_path):
+            ca_path.write_text(content, encoding="utf-8")
+            if failure_target == "ca":
+                raise OSError("CA staging interrupted")
+        if str(target) == str(manifest_path):
+            raise OSError("manifest staging interrupted")
+        return str(target)
+
+    monkeypatch.setattr(ui, "stage_appliance_apply_config", stage_config)
+
+    with pytest.raises(OSError, match="staging interrupted"):
+        ui.execute_management_handoff(
+            units,
+            job_id="job_secret_cleanup_435",
+            adapter=UnusedAdapter(),
+            db=object(),
+        )
+
+    assert not ca_path.exists()
+    assert not manifest_path.exists()
+
+
 def test_management_handoff_timeout_stops_and_recovers_indeterminate_helper(monkeypatch):
     """Recover the fixed helper unit when the adapter wait times out.
 
