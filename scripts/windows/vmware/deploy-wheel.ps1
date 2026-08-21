@@ -16,6 +16,7 @@ param(
     [switch]$SkipInventoryLinuxSync,
     [string]$WheelPath = '',
     [string]$OnePasswordEnvironmentId = '',
+    [Parameter(DontShow = $true)][string]$OnePasswordBridgeNonce = '',
     [switch]$ResetVaultEntries,
     [switch]$SkipHostCheck
 )
@@ -60,7 +61,7 @@ function Get-OnePasswordChildArguments {
 
     $childArguments = @('-NoLogo', '-NoProfile', '-NonInteractive', '-File', $ScriptPath)
     foreach ($entry in $BoundParameters.GetEnumerator()) {
-        if ($entry.Key -eq 'OnePasswordEnvironmentId') {
+        if ($entry.Key -in @('OnePasswordEnvironmentId', 'OnePasswordBridgeNonce')) {
             continue
         }
         if ($entry.Value -is [System.Management.Automation.SwitchParameter]) {
@@ -98,6 +99,8 @@ function Invoke-OnePasswordEnvironmentBridge {
     }
 
     $childArguments = Get-OnePasswordChildArguments -BoundParameters $BoundParameters -ScriptPath $ScriptPath
+    $bridgeNonce = [guid]::NewGuid().ToString('N')
+    $childArguments += @('-OnePasswordBridgeNonce', $bridgeNonce)
     & $opPath run --environment $EnvironmentId -- $pwsh.Source @childArguments
     if ($LASTEXITCODE -ne 0) {
         throw "The 1Password Environment credential bridge failed with exit code $LASTEXITCODE. Verify authorization, the exact Atlaso Environment, and DEFAULT_ADMIN_PASSWORD availability."
@@ -117,6 +120,20 @@ function Test-OnePasswordBridgeProcess {
         if (-not $process) {
             break
         }
+        $childCommandLine = [string]$process.CommandLine
+        if ($childCommandLine -notmatch '(?i)deploy-wheel\.ps1' -or
+            $childCommandLine -notmatch '(?i)(^|\s)-OnePasswordBridgeNonce(?:=|\s)') {
+            $processId = [int]$process.ParentProcessId
+            continue
+        }
+        $childNonce = [regex]::Match(
+            $childCommandLine,
+            '(?i)(?:^|\s)-OnePasswordBridgeNonce(?:=|\s+)"?(?<nonce>[a-f0-9]{32})"?(?=\s|$)'
+        )
+        if (-not $childNonce.Success) {
+            $processId = [int]$process.ParentProcessId
+            continue
+        }
         $parentId = [int]$process.ParentProcessId
         if ($parentId -le 0 -or $visited.ContainsKey($parentId)) {
             break
@@ -129,30 +146,24 @@ function Test-OnePasswordBridgeProcess {
         if ($parent -and $parent.Name -in @('op.exe', 'op')) {
             if ($parent.CommandLine -notmatch '(?i)(^|\s)run(\s|$)' -or
                 $parent.CommandLine -notmatch '(?i)(^|\s)--environment(?:=|\s)') {
-                return $false
-            }
-            try {
-                $invokingProcess = Get-CimInstance -ClassName Win32_Process -Filter "ProcessId = $([int]$parent.ParentProcessId)" -ErrorAction Stop
-            } catch {
-                throw 'Unable to authenticate the 1Password Environment bridge invocation; deployment stopped before authentication.'
-            }
-            if (-not $invokingProcess -or $invokingProcess.CommandLine -notmatch '(?i)deploy-wheel\.ps1' -or
-                $invokingProcess.CommandLine -notmatch '(?i)(^|\s)-OnePasswordEnvironmentId(?:=|\s)') {
-                return $false
+                $processId = $parentId
+                continue
             }
             $opEnvironment = [regex]::Match(
                 $parent.CommandLine,
                 '(?i)(?:^|\s)--environment(?:=|\s+)"?(?<id>[A-Za-z0-9_-]{8,128})"?(?=\s|$)'
             )
-            $scriptEnvironment = [regex]::Match(
-                $invokingProcess.CommandLine,
-                '(?i)(?:^|\s)-OnePasswordEnvironmentId(?:=|\s+)"?(?<id>[A-Za-z0-9_-]{8,128})"?(?=\s|$)'
+            $opNonce = [regex]::Match(
+                $parent.CommandLine,
+                '(?i)(?:^|\s)-OnePasswordBridgeNonce(?:=|\s+)"?(?<nonce>[a-f0-9]{32})"?(?=\s|$)'
             )
-            if ($opEnvironment.Success -and $scriptEnvironment.Success -and
-                $opEnvironment.Groups['id'].Value -ceq $scriptEnvironment.Groups['id'].Value) {
+            if ($opEnvironment.Success -and $opNonce.Success -and
+                $childNonce.Groups['nonce'].Value -ceq $opNonce.Groups['nonce'].Value -and
+                $childNonce.Groups['nonce'].Value -ceq $OnePasswordBridgeNonce) {
                 return $true
             }
-            return $false
+            $processId = $parentId
+            continue
         }
         $processId = $parentId
     }
