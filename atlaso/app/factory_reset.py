@@ -7,6 +7,7 @@ import os
 import re
 import shutil
 import sqlite3
+import stat
 import subprocess
 import sys
 import tempfile
@@ -80,6 +81,8 @@ LOCAL_USER_NAME_PATTERN = re.compile(r"^[a-z_][a-z0-9_-]{0,31}$")
 ROOT_SSH_DIRECTORY = Path("/root/.ssh")
 SSH_AUTHORIZED_KEY_NAMES = ("authorized_keys", "authorized_keys2")
 AUTOMATION_TRANSIENT_UNIT_PATTERN = re.compile(r"^atlaso-automation-\d{20}\.service$")
+AUTOMATION_SCRIPT_DIRECTORY = Path("/var/lib/atlaso/automation/scripts")
+AUTOMATION_RUN_DIRECTORY = Path("/var/lib/atlaso/automation/runs")
 HELPER_ACTION_TRANSIENT_UNIT_PATTERN = re.compile(
     r"^atlaso-helper-action-[0-9a-f]{32}\.service$"
 )
@@ -560,6 +563,109 @@ def _stop_transient_automation_units() -> None:
     _stop_and_verify_transient_units(units, label="automation")
 
 
+def _clear_directory_descriptor(directory_fd: int) -> None:
+    """Recursively clear one already pinned directory without following links.
+
+    Args:
+        directory_fd: Open descriptor for the directory being cleared.
+    """
+    directory_flags = os.O_RDONLY | getattr(os, "O_DIRECTORY", 0)
+    nofollow = getattr(os, "O_NOFOLLOW", 0)
+    for name in os.listdir(directory_fd):
+        entry_stat = os.stat(
+            name,
+            dir_fd=directory_fd,
+            follow_symlinks=False,
+        )
+        if stat.S_ISDIR(entry_stat.st_mode):
+            child_fd = os.open(
+                name,
+                directory_flags | nofollow,
+                dir_fd=directory_fd,
+            )
+            try:
+                _clear_directory_descriptor(child_fd)
+                os.fsync(child_fd)
+            finally:
+                os.close(child_fd)
+            os.rmdir(name, dir_fd=directory_fd)
+        else:
+            os.unlink(name, dir_fd=directory_fd)
+
+
+def _clear_posix_directory(path: Path, *, label: str) -> None:
+    """Clear a fixed absolute directory through pinned, no-follow descriptors.
+
+    Args:
+        path: Fixed absolute directory to clear.
+        label: Public-safe name used in validation failures.
+    """
+    directory_flags = os.O_RDONLY | getattr(os, "O_DIRECTORY", 0)
+    nofollow = getattr(os, "O_NOFOLLOW", 0)
+    if not path.is_absolute():
+        raise FactoryResetError(f"Factory reset {label} directory is not absolute.")
+    descriptor = os.open(path.anchor, directory_flags)
+    try:
+        try:
+            for component in path.parts[1:]:
+                next_descriptor = os.open(
+                    component,
+                    directory_flags | nofollow,
+                    dir_fd=descriptor,
+                )
+                os.close(descriptor)
+                descriptor = next_descriptor
+        except FileNotFoundError:
+            return
+        except OSError as exc:
+            raise FactoryResetError(
+                f"Factory reset {label} directory is unsafe or cannot be opened."
+            ) from exc
+        try:
+            _clear_directory_descriptor(descriptor)
+            os.fsync(descriptor)
+        except OSError as exc:
+            raise FactoryResetError(
+                f"Factory reset {label} directory cannot be cleared durably."
+            ) from exc
+    finally:
+        os.close(descriptor)
+
+
+def _clear_portable_directory(path: Path, *, label: str) -> None:
+    """Clear a fixed directory on platforms without descriptor-relative removal.
+
+    Args:
+        path: Fixed directory to clear.
+        label: Public-safe name used in validation failures.
+    """
+    if not path.exists():
+        return
+    if path.is_symlink() or not path.is_dir() or path.resolve() != path:
+        raise FactoryResetError(f"Factory reset {label} directory is unsafe: {path}")
+    for child in path.iterdir():
+        if child.is_symlink() or child.is_file():
+            child.unlink(missing_ok=True)
+        elif child.is_dir():
+            shutil.rmtree(child)
+        else:
+            raise FactoryResetError(
+                f"Factory reset {label} entry is unsafe: {child.name}"
+            )
+
+
+def _clear_automation_transient_staging() -> None:
+    """Durably remove interrupted managed-script and run staging."""
+    for path, label in (
+        (AUTOMATION_SCRIPT_DIRECTORY, "automation script staging"),
+        (AUTOMATION_RUN_DIRECTORY, "automation run staging"),
+    ):
+        if os.name == "posix":
+            _clear_posix_directory(path, label=label)
+        else:
+            _clear_portable_directory(path, label=label)
+
+
 def _require_terminal_release_update() -> None:
     """Reject reset while durable signed-release recovery remains pending."""
     try:
@@ -651,6 +757,7 @@ def _stop_application_services(*, boot_resume: bool) -> None:
             )
     _stop_transient_update_restart_units()
     _stop_transient_automation_units()
+    _clear_automation_transient_staging()
 
 
 def _schedule_readiness_finalizer() -> None:

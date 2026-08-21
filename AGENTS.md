@@ -536,7 +536,8 @@ The following cross-cutting boundaries always apply:
   mutating helper and nested account mutation in an exact UUID-named `atlaso-helper-action-*` transient service. After
   stopping Atlaso callers, reset must stop and verify those services, cancel and verify any pre-existing fixed-name
   management restart timer and service, and reverify the callers are inactive before inventorying delayed
-  update-restart units.
+  update-restart units. After transient automation units are quiescent, durably clear their bounded managed-script and
+  run staging directories through symlink-resistant paths before reset activation continues.
 - Keep internal CA custody and managed service-certificate deployment available without a public CA listen interface.
   Interface selection owns portal publication only. Every selected NTS server apply includes the CA unit and executes
   it before NTP/NTS validation so runtime certificate material is present even when the CA baseline is current. Turning

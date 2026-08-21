@@ -192,6 +192,12 @@ def test_factory_reset_stops_transient_helper_restart_and_automation_units(monke
         return subprocess.CompletedProcess(command, 0, "", "")
 
     monkeypatch.setattr(factory_reset.subprocess, "run", fake_run)
+    staging_cleared: list[bool] = []
+    monkeypatch.setattr(
+        factory_reset,
+        "_clear_automation_transient_staging",
+        lambda: staging_cleared.append(True),
+    )
 
     factory_reset._stop_application_services(boot_resume=False)
 
@@ -247,6 +253,59 @@ def test_factory_reset_stops_transient_helper_restart_and_automation_units(monke
         ["systemctl", "is-active", "--quiet", automation_units[0]],
         ["systemctl", "is-active", "--quiet", automation_units[1]],
     ]
+    assert staging_cleared == [True]
+
+
+def test_factory_reset_clears_automation_staging_after_quiescence(tmp_path, monkeypatch):
+    """Reset removes interrupted script and run data from bounded roots.
+
+    Args:
+        tmp_path: Temporary directory provided by pytest for isolated filesystem state.
+        monkeypatch: Pytest fixture used to replace fixed appliance paths.
+    """
+    import atlaso.app.factory_reset as factory_reset
+
+    script_directory = tmp_path / "automation" / "scripts"
+    run_directory = tmp_path / "automation" / "runs"
+    script_directory.mkdir(parents=True)
+    (script_directory / "managed-script.py").write_text("secret", encoding="utf-8")
+    run_home = run_directory / "20260820152500123456"
+    run_home.mkdir(parents=True)
+    (run_home / "output.txt").write_text("secret output", encoding="utf-8")
+    monkeypatch.setattr(factory_reset, "AUTOMATION_SCRIPT_DIRECTORY", script_directory)
+    monkeypatch.setattr(factory_reset, "AUTOMATION_RUN_DIRECTORY", run_directory)
+
+    factory_reset._clear_automation_transient_staging()
+
+    assert list(script_directory.iterdir()) == []
+    assert list(run_directory.iterdir()) == []
+
+
+def test_factory_reset_rejects_symlinked_automation_staging(tmp_path, monkeypatch):
+    """Reset fails closed instead of clearing through a staging-root symlink.
+
+    Args:
+        tmp_path: Temporary directory provided by pytest for isolated filesystem state.
+        monkeypatch: Pytest fixture used to replace fixed appliance paths.
+    """
+    import atlaso.app.factory_reset as factory_reset
+
+    target = tmp_path / "outside"
+    target.mkdir()
+    (target / "preserved.txt").write_text("preserve", encoding="utf-8")
+    linked_scripts = tmp_path / "scripts"
+    linked_scripts.symlink_to(target, target_is_directory=True)
+    monkeypatch.setattr(factory_reset, "AUTOMATION_SCRIPT_DIRECTORY", linked_scripts)
+    monkeypatch.setattr(
+        factory_reset,
+        "AUTOMATION_RUN_DIRECTORY",
+        tmp_path / "missing-runs",
+    )
+
+    with pytest.raises(factory_reset.FactoryResetError, match="directory is unsafe"):
+        factory_reset._clear_automation_transient_staging()
+
+    assert (target / "preserved.txt").read_text(encoding="utf-8") == "preserve"
 
 
 def test_factory_reset_fails_if_management_restart_revives_application(monkeypatch):
