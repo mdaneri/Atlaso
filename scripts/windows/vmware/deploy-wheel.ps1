@@ -8,6 +8,7 @@ param(
     [string]$RemoteDirectory = '/tmp',
     [string]$Python = 'python',
     [int]$ReadinessTimeoutSeconds = 60,
+    [int]$DeploymentTimeoutSeconds = 600,
     [int]$ReadinessPollSeconds = 2,
     [switch]$SkipBuild,
     [switch]$SkipHelperSync,
@@ -15,12 +16,60 @@ param(
     [switch]$SkipBootBrandingSync,
     [switch]$SkipInventoryLinuxSync,
     [string]$WheelPath = '',
-    [string]$SshPassword = $env:ATLASO_DEPLOY_SSH_PASSWORD,
+    [string]$OnePasswordEnvironmentId = '',
     [switch]$ResetVaultEntries,
     [switch]$SkipHostCheck
 )
 
 $ErrorActionPreference = 'Stop'
+
+$script:OnePasswordPasswordVariable = 'DEFAULT_ADMIN_PASSWORD'
+
+function Resolve-OnePasswordCliPath {
+    $command = Get-Command op.exe -ErrorAction SilentlyContinue
+    if (-not $command) {
+        $command = Get-Command op -ErrorAction SilentlyContinue
+    }
+    if (-not $command) {
+        throw 'The 1Password CLI (op.exe) is required for the 1Password Environment credential bridge.'
+    }
+    return $command.Source
+}
+
+function Assert-OnePasswordEnvironmentId {
+    param([Parameter(Mandatory = $true)][string]$EnvironmentId)
+
+    if ($EnvironmentId -notmatch '^[A-Za-z0-9_-]{8,128}$') {
+        throw 'The 1Password Environment ID is invalid. Copy the opaque ID from the exact Atlaso Environment.'
+    }
+}
+
+function Assert-OnePasswordEnvironmentSupport {
+    param([Parameter(Mandatory = $true)][string]$RunHelp)
+
+    if ([string]::IsNullOrWhiteSpace($RunHelp) -or $RunHelp -notlike '*--environment*') {
+        throw 'The installed 1Password CLI does not support Environment subprocess loading. Install the supported beta CLI and retry.'
+    }
+}
+
+function Invoke-OnePasswordBoundedCommand {
+    param(
+        [Parameter(Mandatory = $true)][string]$EnvironmentId,
+        [Parameter(Mandatory = $true)][string]$CommandPath,
+        [Parameter(Mandatory = $true)][AllowEmptyString()][string[]]$Arguments,
+        [string]$WorkingDirectory = ''
+    )
+
+    Assert-OnePasswordEnvironmentId -EnvironmentId $EnvironmentId
+    if ($env:DEFAULT_ADMIN_PASSWORD) {
+        throw 'DEFAULT_ADMIN_PASSWORD must not be supplied by the caller; use the exact Atlaso 1Password Environment bridge.'
+    }
+    $opPath = Resolve-OnePasswordCliPath
+    $runHelp = (& $opPath run --help 2>&1 | Out-String)
+    Assert-OnePasswordEnvironmentSupport -RunHelp $runHelp
+    $opArguments = @('run', '--environment', $EnvironmentId, '--', $CommandPath) + $Arguments
+    Invoke-CheckedCommand -FilePath $opPath -WorkingDirectory $WorkingDirectory -Arguments $opArguments
+}
 
 function Resolve-VmrunPath {
     param([string]$Path)
@@ -229,6 +278,17 @@ function ConvertTo-PosixShellArgument {
     return "$apostrophe$($Value.Replace("$apostrophe", $escapedApostrophe))$apostrophe"
 }
 
+function ConvertTo-WindowsSshRemoteCommand {
+    param([Parameter(Mandatory = $true)][string]$Command)
+
+    if (-not ($IsWindows -or $env:OS -eq 'Windows_NT')) {
+        return $Command
+    }
+
+    $encodedCommand = [Convert]::ToBase64String([System.Text.Encoding]::UTF8.GetBytes($Command))
+    return "sh -lc `"printf '%s' $encodedCommand | base64 -d | sh`""
+}
+
 function Initialize-PasswordDeployPythonPath {
     param(
         [Parameter(Mandatory = $true)][string]$PythonCommand,
@@ -236,15 +296,21 @@ function Initialize-PasswordDeployPythonPath {
         [Parameter(Mandatory = $true)][string]$TemporaryDirectory
     )
 
-    $paramikoAvailable = $false
+    $pythonLibraryPath = ''
     try {
-        & $PythonCommand -c 'import paramiko' 2>$null
-        $paramikoAvailable = $LASTEXITCODE -eq 0
+        $pythonLibraryPath = (& $PythonCommand -I -S -c 'import sysconfig; print(sysconfig.get_paths()["purelib"])' 2>$null | Out-String).Trim()
     } catch {
-        $paramikoAvailable = $false
+        $pythonLibraryPath = ''
     }
-    if ($paramikoAvailable) {
-        return ''
+    if ($LASTEXITCODE -eq 0 -and $pythonLibraryPath -and (Test-Path -LiteralPath $pythonLibraryPath -PathType Container)) {
+        try {
+            & $PythonCommand -I -S -c 'import sys, sysconfig; sys.path.insert(0, sysconfig.get_paths()["purelib"]); import paramiko' 2>$null
+            if ($LASTEXITCODE -eq 0) {
+                return $pythonLibraryPath
+            }
+        } catch {
+            # Fall through to the isolated temporary dependency path.
+        }
     }
 
     $wheelDirectory = Join-Path $WorkingDirectory 'dist'
@@ -275,7 +341,6 @@ function Invoke-PasswordBackedDeploy {
         [Parameter(Mandatory = $true)][string]$PythonCommand,
         [Parameter(Mandatory = $true)][string]$HostAddress,
         [Parameter(Mandatory = $true)][string]$UserName,
-        [Parameter(Mandatory = $true)][string]$Password,
         [Parameter(Mandatory = $true)][string]$LocalWheelPath,
         [Parameter(Mandatory = $true)][string[]]$LocalRuntimeDependencyPaths,
         [string]$LocalHelperPath = '',
@@ -306,31 +371,30 @@ function Invoke-PasswordBackedDeploy {
         [Parameter(Mandatory = $true)][string]$RemoteNginxServiceDropIn,
         [Parameter(Mandatory = $true)][string]$RemoteScript,
         [Parameter(Mandatory = $true)][bool]$ResetVaultEntryTable,
-        [Parameter(Mandatory = $true)][int]$TimeoutSeconds,
+        [Parameter(Mandatory = $true)][int]$ReadinessTimeoutSeconds,
+        [Parameter(Mandatory = $true)][int]$DeploymentTimeoutSeconds,
         [Parameter(Mandatory = $true)][int]$PollSeconds,
-        [Parameter(Mandatory = $true)][string]$WorkingDirectory
+        [Parameter(Mandatory = $true)][string]$WorkingDirectory,
+        [Parameter(Mandatory = $true)][string]$OnePasswordEnvironmentId
     )
 
-    $pythonDeploy = Join-Path (Split-Path -Parent $LocalScriptPath) 'atlaso-paramiko-deploy.py'
+    $passwordDeployDirectory = Join-Path ([System.IO.Path]::GetTempPath()) "atlaso-password-deploy-$([guid]::NewGuid().ToString('N'))"
+    New-Item -ItemType Directory -Force -Path $passwordDeployDirectory | Out-Null
+    $pythonDeploy = Join-Path $passwordDeployDirectory 'atlaso-paramiko-deploy.py'
     $pythonDeploySource = @'
 import argparse
 import os
 import pathlib
+import re
 import shlex
+import socket
 import sys
+import time
 
 if hasattr(sys.stdout, "reconfigure"):
     sys.stdout.reconfigure(errors="replace")
 if hasattr(sys.stderr, "reconfigure"):
     sys.stderr.reconfigure(errors="replace")
-
-try:
-    import paramiko
-except ImportError as exc:
-    raise SystemExit(
-        "Paramiko could not be loaded for password-backed deployment after dependency preparation. "
-        "Rerun without -SkipBuild or install the Atlaso Python dependencies."
-    ) from exc
 
 
 def shell_quote(value):
@@ -338,7 +402,36 @@ def shell_quote(value):
 
 
 def sanitized(value, password):
-    return value.replace(password, "[redacted]") if password else value
+    redacted = value.replace(password, "[redacted]")
+    if password in redacted:
+        raise SystemExit("Secret redaction failed; refusing to emit deployment output.")
+    return redacted
+
+
+def read_paramiko_command_output(channel, timeout_seconds):
+    stdout_chunks = []
+    stderr_chunks = []
+    deadline = time.monotonic() + timeout_seconds
+    while True:
+        if time.monotonic() >= deadline:
+            channel.close()
+            raise SystemExit("Remote deployment output timed out; refusing to wait indefinitely.")
+        drained = False
+        while channel.recv_ready():
+            stdout_chunks.append(channel.recv(65536))
+            drained = True
+        while channel.recv_stderr_ready():
+            stderr_chunks.append(channel.recv_stderr(65536))
+            drained = True
+        if channel.exit_status_ready() and not channel.recv_ready() and not channel.recv_stderr_ready():
+            break
+        if not drained:
+            time.sleep(0.01)
+    return (
+        b"".join(stdout_chunks).decode("utf-8", "replace"),
+        b"".join(stderr_chunks).decode("utf-8", "replace"),
+        channel.recv_exit_status(),
+    )
 
 
 parser = argparse.ArgumentParser()
@@ -373,8 +466,10 @@ parser.add_argument("--remote-worker-service", required=True)
 parser.add_argument("--remote-atlaso-service-drop-in", required=True)
 parser.add_argument("--remote-nginx-service-drop-in", required=True)
 parser.add_argument("--remote-script", required=True)
+parser.add_argument("--dependency-path", required=True)
 parser.add_argument("--reset-vault-entries", action="store_true")
 parser.add_argument("--timeout", type=int, required=True)
+parser.add_argument("--readiness-timeout", type=int, required=True)
 parser.add_argument("--poll", type=int, required=True)
 args = parser.parse_args()
 
@@ -383,9 +478,18 @@ if not args.local_trust_key or len(args.local_trust_key) != len(args.remote_trus
 if not args.local_runtime_dependency or len(args.local_runtime_dependency) != len(args.remote_runtime_dependency):
     raise SystemExit("Matched local and remote runtime dependency wheels are required.")
 
-password = os.environ.get("ATLASO_DEPLOY_SSH_PASSWORD", "")
+password = os.environ.pop("DEFAULT_ADMIN_PASSWORD", "")
 if not password:
-    raise SystemExit("ATLASO_DEPLOY_SSH_PASSWORD is required for password-backed deployment.")
+    raise SystemExit("The exact 1Password Environment did not provide DEFAULT_ADMIN_PASSWORD.")
+
+sys.path.insert(0, args.dependency_path)
+try:
+    import paramiko
+except ImportError as exc:
+    raise SystemExit(
+        "Paramiko could not be loaded for password-backed deployment after isolated dependency preparation. "
+        "Rerun without -SkipBuild or install the Atlaso Python dependencies."
+    ) from exc
 
 uploads = [
     (pathlib.Path(args.local_wheel), args.remote_wheel),
@@ -420,18 +524,74 @@ if args.local_inventory_linux_package:
         (pathlib.Path(args.local_inventory_linux_package), args.remote_inventory_linux_package)
     )
 
+def connect_password_or_keyboard_interactive(client, host, username, password):
+    sock = socket.create_connection((host, 22), timeout=15)
+    transport = paramiko.Transport(sock)
+    try:
+        known_key_entry = None
+        for host_keys in (client._system_host_keys, client._host_keys):
+            host_key_entry = host_keys.lookup(host)
+            if host_key_entry:
+                known_key_entry = host_key_entry
+                break
+        if known_key_entry is not None:
+            # Match SSHClient.connect: negotiate the recorded host-key type first so a
+            # different server key type cannot win before strict known-host checking.
+            key_type = next(iter(known_key_entry.keys()))
+            security_options = transport.get_security_options()
+            if key_type == "ssh-rsa":
+                if "rsa-sha2-512" in security_options.key_types:
+                    key_type = "rsa-sha2-512"
+                elif "rsa-sha2-256" in security_options.key_types:
+                    key_type = "rsa-sha2-256"
+                elif "ssh-rsa" not in security_options.key_types:
+                    raise paramiko.SSHException("Recorded SSH host-key type is unavailable.")
+            if key_type not in security_options.key_types:
+                raise paramiko.SSHException("Recorded SSH host-key type is unavailable.")
+            other_key_types = [item for item in security_options.key_types if item != key_type]
+            security_options.key_types = [key_type] + other_key_types
+
+        transport.start_client(timeout=15)
+        server_key = transport.get_remote_server_key()
+        if known_key_entry is None:
+            client._policy.missing_host_key(client, host, server_key)
+        elif not any(server_key == expected_key for expected_key in known_key_entry.values()):
+            expected_key = next(iter(known_key_entry.values()))
+            raise paramiko.BadHostKeyException(host, server_key, expected_key)
+
+        try:
+            transport.auth_password(username, password, fallback=False)
+        except (paramiko.AuthenticationException, paramiko.BadAuthenticationType):
+            def keyboard_interactive_handler(title, instructions, prompts):
+                if len(prompts) != 1:
+                    raise paramiko.SSHException(
+                        "Unexpected keyboard-interactive prompt count; refusing non-password input."
+                    )
+                prompt, echo = prompts[0]
+                prompt_text = f"{title} {instructions} {prompt}".lower()
+                if (
+                    echo
+                    or "password" not in prompt_text
+                    or re.search(r"\b(?:otp|one[- ]?time|mfa|multi[- ]?factor|verification|code|token)\b", prompt_text)
+                ):
+                    raise paramiko.SSHException(
+                        "Unexpected keyboard-interactive prompt; refusing non-password input."
+                    )
+                return [password]
+
+            transport.auth_interactive(username, keyboard_interactive_handler)
+        if not transport.is_authenticated():
+            raise paramiko.AuthenticationException("Password or keyboard-interactive authentication failed.")
+        client._transport = transport
+    except Exception:
+        transport.close()
+        raise
+
+
 client = paramiko.SSHClient()
-client.set_missing_host_key_policy(paramiko.AutoAddPolicy())
-client.connect(
-    hostname=args.host,
-    username=args.user,
-    password=password,
-    allow_agent=False,
-    look_for_keys=False,
-    timeout=15,
-    banner_timeout=15,
-    auth_timeout=15,
-)
+client.load_system_host_keys()
+client.set_missing_host_key_policy(paramiko.RejectPolicy())
+connect_password_or_keyboard_interactive(client, args.host, args.user, password)
 try:
     sftp = client.open_sftp()
     try:
@@ -459,7 +619,7 @@ try:
         "sudo -S -p '' sh "
         f"{shell_quote(args.remote_script)} "
         f"{shell_quote(args.remote_wheel)} "
-        f"{shell_quote(args.timeout)} "
+        f"{shell_quote(args.readiness_timeout)} "
         f"{shell_quote(args.poll)} "
         f"{shell_quote(remote_helper_argument)} "
         f"{shell_quote(remote_console_manager_argument)} "
@@ -475,12 +635,11 @@ try:
         f"{shell_quote('true' if args.reset_vault_entries else 'false')} "
         f"{shell_quote(remote_inventory_linux_package_argument)}"
     )
-    stdin, stdout, stderr = client.exec_command(command, get_pty=True, timeout=args.timeout + 60)
+    stdin, stdout, stderr = client.exec_command(command, get_pty=False, timeout=args.timeout)
     stdin.write(password + "\n")
     stdin.flush()
-    stdout_text = stdout.read().decode("utf-8", "replace")
-    stderr_text = stderr.read().decode("utf-8", "replace")
-    exit_code = stdout.channel.recv_exit_status()
+    stdin.channel.shutdown_write()
+    stdout_text, stderr_text, exit_code = read_paramiko_command_output(stdout.channel, args.timeout)
     if stdout_text.strip():
         print(sanitized(stdout_text, password).strip())
     if stderr_text.strip():
@@ -492,23 +651,14 @@ finally:
 '@
     [System.IO.File]::WriteAllText($pythonDeploy, ($pythonDeploySource -replace "`r?`n", "`n"), [System.Text.UTF8Encoding]::new($false))
 
-    $temporaryPythonPath = Initialize-PasswordDeployPythonPath `
-        -PythonCommand $PythonCommand `
-        -WorkingDirectory $WorkingDirectory `
-        -TemporaryDirectory (Split-Path -Parent $LocalScriptPath)
-    $previousPassword = $env:ATLASO_DEPLOY_SSH_PASSWORD
-    $previousPythonPath = $env:PYTHONPATH
     try {
-        $env:ATLASO_DEPLOY_SSH_PASSWORD = $Password
-        if ($temporaryPythonPath) {
-            $env:PYTHONPATH = if ($previousPythonPath) {
-                "$temporaryPythonPath$([System.IO.Path]::PathSeparator)$previousPythonPath"
-            } else {
-                $temporaryPythonPath
-            }
-        }
+        $pythonDependencyPath = Initialize-PasswordDeployPythonPath `
+            -PythonCommand $PythonCommand `
+            -WorkingDirectory $WorkingDirectory `
+            -TemporaryDirectory $passwordDeployDirectory
         $deployArguments = @(
-            $pythonDeploy,
+            '-I', '-S', $pythonDeploy,
+            '--dependency-path', $pythonDependencyPath,
             '--host', $HostAddress,
             '--user', $UserName,
             '--local-wheel', $LocalWheelPath,
@@ -516,7 +666,8 @@ finally:
             '--remote-dir', $RemoteDirectoryPath,
             '--remote-wheel', $RemoteWheel,
             '--remote-script', $RemoteScript,
-            '--timeout', "$TimeoutSeconds",
+            '--timeout', "$DeploymentTimeoutSeconds",
+            '--readiness-timeout', "$ReadinessTimeoutSeconds",
             '--poll', "$PollSeconds"
         )
         foreach ($optionalPathPair in @(
@@ -567,20 +718,21 @@ finally:
             '--local-nginx-service-drop-in', $LocalNginxServiceDropInPath,
             '--remote-nginx-service-drop-in', $RemoteNginxServiceDropIn
         )
-        Invoke-CheckedCommand -FilePath $PythonCommand -WorkingDirectory $WorkingDirectory -Arguments $deployArguments
+        Invoke-OnePasswordBoundedCommand `
+            -EnvironmentId $OnePasswordEnvironmentId `
+            -CommandPath $PythonCommand `
+            -Arguments $deployArguments `
+            -WorkingDirectory $WorkingDirectory
     } finally {
-        if ($null -eq $previousPassword) {
-            Remove-Item Env:\ATLASO_DEPLOY_SSH_PASSWORD -ErrorAction SilentlyContinue
-        } else {
-            $env:ATLASO_DEPLOY_SSH_PASSWORD = $previousPassword
-        }
-        if ($null -eq $previousPythonPath) {
-            Remove-Item Env:\PYTHONPATH -ErrorAction SilentlyContinue
-        } else {
-            $env:PYTHONPATH = $previousPythonPath
-        }
+        Remove-Item -LiteralPath $passwordDeployDirectory -Recurse -Force -ErrorAction SilentlyContinue
     }
 }
+
+if ($env:DEFAULT_ADMIN_PASSWORD) {
+    throw 'DEFAULT_ADMIN_PASSWORD must not be supplied by the caller; use the exact Atlaso 1Password Environment bridge.'
+}
+
+$UsePasswordDeploy = -not [string]::IsNullOrEmpty($OnePasswordEnvironmentId)
 
 $resolvedRepoRoot = Resolve-RepoRoot -Path $RepoRoot
 $RemoteDirectory = Resolve-RemoteDirectoryPath -Path $RemoteDirectory
@@ -707,7 +859,7 @@ if (-not $IpAddress) {
     $IpAddress = Get-GuestIpAddress -ResolvedVmrun $resolvedVmrun -ResolvedVmxPath $resolvedVmxPath
 }
 
-if (-not $SshPassword) {
+if (-not $UsePasswordDeploy) {
     Test-RequiredCommand -Name 'scp' | Out-Null
     Test-RequiredCommand -Name 'ssh' | Out-Null
 }
@@ -1032,7 +1184,7 @@ New-Item -ItemType Directory -Path $tempDeployDirectory | Out-Null
 $tempScript = Join-Path $tempDeployDirectory 'atlaso-deploy-wheel.sh'
 [System.IO.File]::WriteAllText($tempScript, ($deployScript -replace "`r?`n", "`n"), [System.Text.UTF8Encoding]::new($false))
 $sshControlPath = Join-Path ([System.IO.Path]::GetTempPath()) "lf-ssh-$([guid]::NewGuid().ToString('N')).sock"
-$sshConnectionArguments = Get-SshConnectionArguments -ControlPath $sshControlPath
+$sshConnectionArguments = @(Get-SshConnectionArguments -ControlPath $sshControlPath)
 
 try {
     $uploadPaths = @($resolvedWheelPath) + $runtimeDependencyPaths + $trustKeyPaths
@@ -1065,13 +1217,12 @@ try {
     $localBootThemeArgument = if ($SkipBootBrandingSync) { '' } else { $bootThemePath }
     $localBootBackgroundArgument = if ($SkipBootBrandingSync) { '' } else { $bootBackgroundPath }
     $remoteTrustKeysArgument = $remoteTrustKeyPaths -join ':'
-    if ($SshPassword) {
+    if ($UsePasswordDeploy) {
         Write-Host "Uploading deployment files to $SshUser@$IpAddress`:$RemoteDirectory with password-backed SSH"
         Invoke-PasswordBackedDeploy `
             -PythonCommand $Python `
             -HostAddress $IpAddress `
             -UserName $SshUser `
-            -Password $SshPassword `
             -LocalWheelPath $resolvedWheelPath `
             -LocalRuntimeDependencyPaths $runtimeDependencyPaths `
             -LocalHelperPath $localHelperArgument `
@@ -1102,9 +1253,11 @@ try {
             -RemoteNginxServiceDropIn $remoteNginxServiceDropInPath `
             -RemoteScript $remoteScriptPath `
             -ResetVaultEntryTable ([bool]$ResetVaultEntries) `
-            -TimeoutSeconds $ReadinessTimeoutSeconds `
+            -ReadinessTimeoutSeconds $ReadinessTimeoutSeconds `
+            -DeploymentTimeoutSeconds $DeploymentTimeoutSeconds `
             -PollSeconds $ReadinessPollSeconds `
-            -WorkingDirectory $resolvedRepoRoot
+            -WorkingDirectory $resolvedRepoRoot `
+            -OnePasswordEnvironmentId $OnePasswordEnvironmentId
     } else {
         Write-Host "Uploading deployment files to $SshUser@$IpAddress`:$RemoteDirectory"
         Invoke-CheckedCommand -FilePath 'scp' -Arguments @($sshConnectionArguments + $uploadPaths + "${SshUser}@${IpAddress}:$RemoteDirectory/")
@@ -1139,6 +1292,7 @@ try {
         $remoteCommand = (
             $remoteCommandArguments | ForEach-Object { ConvertTo-PosixShellArgument -Value $_ }
         ) -join ' '
+        $remoteCommand = ConvertTo-WindowsSshRemoteCommand -Command $remoteCommand
         Invoke-CheckedCommand -FilePath 'ssh' -Arguments @(
             $sshConnectionArguments + '-t', "${SshUser}@${IpAddress}", $remoteCommand
         )

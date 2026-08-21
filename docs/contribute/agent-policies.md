@@ -668,12 +668,30 @@ Terminal order:
   definitions must explicitly stage `image/common/update-trust`, and provisioning must fail rather
   than build an appliance with no valid public release key. Use `-IpAddress <appliance-ip>` when the VM IP is known, or
   `-VmxPath "<path-to-vmx>"` for VMware discovery; do not pipe the VMX path or put the `.vmx` path on a separate line
-  because PowerShell will try to execute it. If uvicorn needs longer after reinstall, pass
-  `-ReadinessTimeoutSeconds 120`. Use `-SkipHelperSync` only when the appliance helper is intentionally unchanged.
+  because PowerShell will try to execute it. For password-backed Windows deployment, authenticate the local 1Password
+  integration, verify exactly one `Atlaso` Environment and the concealed `DEFAULT_ADMIN_PASSWORD` variable by name,
+  then pass only its opaque ID with `-OnePasswordEnvironmentId`; the script must use `op run --environment` and fail
+  closed when its CLI capability, authorization, Environment, or variable is unavailable. Never pass a password
+  argument, create a local `.env`, set `DEFAULT_ADMIN_PASSWORD` in the caller, or use the retired
+  `ATLASO_DEPLOY_SSH_PASSWORD` fallback. The parent must perform local build and input preparation without the
+  credential, then invoke the bounded Paramiko helper directly as `op run --environment <id> -- <python> ...` so the
+  exact Environment supplies `DEFAULT_ADMIN_PASSWORD` only to that subprocess. The child must remove the variable
+  immediately after capture, start Python with `-I -S`, and prepend only its explicit dependency path; caller-controlled
+  child command-line values, startup hooks, inherited `PYTHONPATH`, or an interactive `op run` shell must not observe
+  or authorize password consumption. Password-backed Paramiko
+  must load system known hosts and reject unknown keys; accept only one non-echoing account-password prompt and reject
+  OTP/MFA or verification-code wording. Keep the password-backed remote-command timeout separate from the readiness
+  timeout so a long but progressing deployment is not cut off by the post-restart readiness allowance.
+  If uvicorn needs longer after reinstall, pass `-ReadinessTimeoutSeconds 120`. Use `-SkipHelperSync` only when the
+  appliance helper is intentionally unchanged.
 - The wheel helper's `RemoteDirectory` is one shared pre-upload contract for key/agent and password-backed SSH. Accept
   only absolute POSIX paths composed of ASCII letters, digits, `/`, `.`, `_`, and `-`, reject `.` and `..` components,
   whitespace, shell metacharacters, and control characters before local build work, and serialize every key-backed
-  remote command argument with the shared POSIX quoting helper. Do not depend on `scp` version-specific remote quoting.
+  remote command argument with the shared POSIX quoting helper. On Windows, preserve separate `scp` source/destination
+  arguments and cross a PowerShell login shell with one `sh -lc` argument containing a secret-free base64 command.
+  Password-backed Paramiko must support password-only keyboard-interactive authentication, reject unexpected prompts,
+  verify system known hosts, drain non-PTY stdout and stderr concurrently, and hand `sudo -S -p ''` a non-PTY password
+  line before closing stdin. Do not depend on `scp` version-specific remote quoting.
 - For manual live appliance patching, build a local wheel with `python -m pip wheel . -w dist`, copy only the Atlaso
   wheel to the VM, install it with `/opt/atlaso/.venv/bin/python -m pip install --force-reinstall --no-deps`, then
   restore venv readability for the `atlaso` service user with directory `0755`, file `0644`, and executable bits under

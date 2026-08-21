@@ -1573,18 +1573,26 @@ def test_create_atlaso_vmware_test_vm_root_ca_retry_cleanup_is_idempotent():
     assert "Remove-Item -LiteralPath $rootPemPath" not in install_root_ca
 
 
-def test_vmware_deploy_wheel_supports_password_backed_noninteractive_deploy():
-    """Verify that vmware deploy wheel supports password backed noninteractive deploy."""
+def test_vmware_deploy_wheel_supports_secure_onepassword_password_deploy():
+    """Verify that VMware deploy wheel uses a concealed 1Password Environment handoff."""
     script = Path("scripts/windows/vmware/deploy-wheel.ps1").read_text(encoding="utf-8")
     readme = Path("docs/reference/full-technical-reference.md").read_text(encoding="utf-8")
 
-    assert "[string]$SshPassword = $env:ATLASO_DEPLOY_SSH_PASSWORD" in script
+    assert "[string]$OnePasswordEnvironmentId = ''" in script
+    assert "function Invoke-OnePasswordBoundedCommand" in script
+    assert "'run', '--environment', $EnvironmentId, '--', $CommandPath" in script
+    assert "DEFAULT_ADMIN_PASSWORD" in script
+    assert "The exact 1Password Environment did not provide DEFAULT_ADMIN_PASSWORD" in script
+    assert "ATLASO_DEPLOY_SSH_PASSWORD" not in script
+    assert "ATLASO_DEPLOY_RUNTIME_PASSWORD" not in script
     assert "function Initialize-PasswordDeployPythonPath" in script
     assert "Preparing temporary Paramiko runtime from local deployment wheels" in script
     assert "'--no-index'" in script
     assert "'--find-links', $wheelDirectory" in script
     assert "'--target', $dependencyDirectory" in script
-    assert "$env:PYTHONPATH" in script
+    assert "'-I', '-S', $pythonDeploy" in script
+    assert "'--dependency-path', $pythonDependencyPath" in script
+    assert "$env:PYTHONPATH" not in script
     assert "function Invoke-PasswordBackedDeploy" in script
     assert "import paramiko" in script
     assert 'sys.stdout.reconfigure(errors="replace")' in script
@@ -1612,20 +1620,40 @@ def test_vmware_deploy_wheel_supports_password_backed_noninteractive_deploy():
     assert "systemctl enable atlaso-worker.service" in script
     assert "systemctl restart atlaso-worker.service" in script
     assert "systemctl is-active atlaso-worker.service" in script
-    assert "ATLASO_DEPLOY_SSH_PASSWORD" in script
-    assert "client.set_missing_host_key_policy(paramiko.AutoAddPolicy())" in script
-    assert "allow_agent=False" in script
-    assert "look_for_keys=False" in script
+    assert 'os.environ.pop("DEFAULT_ADMIN_PASSWORD", "")' in script
+    assert 'parser.add_argument("--dependency-path", required=True)' in script
+    assert "sys.path.insert(0, args.dependency_path)" in script
+    assert "op run --environment <id> -- <python> ..." in readme
+    assert "An interactive `op run`" in readme
+    assert "read_paramiko_command_output" in script
+    assert "recv_stderr_ready" in script
+    assert "time.monotonic" in script
+    assert "args.readiness_timeout" in script
+    assert "DeploymentTimeoutSeconds" in script
+    assert "$invokingProcess.CommandLine" not in script
+    assert "client.set_missing_host_key_policy(paramiko.RejectPolicy())" in script
+    assert "client.load_system_host_keys()" in script
+    assert "transport.get_security_options()" in script
+    assert "security_options.key_types" in script
+    assert "auth_interactive" in script
+    assert "connect_password_or_keyboard_interactive" in script
+    assert "one[- ]?time" in script
+    assert "multi[- ]?factor" in script
+    assert "verification" in script
+    assert "get_pty=False" in script
+    assert "shutdown_write()" in script
+    assert "ConvertTo-WindowsSshRemoteCommand" in script
+    assert "base64 -d | sh" in script
     assert "sudo -S -p '' sh" in script
     assert "sanitized(stdout_text, password)" in script
-    assert "if (-not $SshPassword) {" in script
+    assert "if (-not $UsePasswordDeploy) {" in script
     assert "Test-RequiredCommand -Name 'scp'" in script
     assert "Invoke-PasswordBackedDeploy `" in script
-    assert "-SshPassword '<admin-password>'" in readme
+    assert "-OnePasswordEnvironmentId '<atlaso-environment-id>'" in readme
     assert "temporary deployment directory" in readme
     assert "global Python" in readme
-    assert "When using `-SkipBuild`, keep" in readme
-    assert "Without a" in readme
+    assert "If the selected Python cannot already import Paramiko" in readme
+    assert "Without `-OnePasswordEnvironmentId`, the helper preserves" in readme
     assert "`scp`/`ssh` key or agent workflow" in readme
 
 
@@ -1652,12 +1680,35 @@ def test_vmware_deploy_wheel_remote_path_contract():
     )
 
     assert result.returncode == 0, result.stdout + result.stderr
-    assert "Deploy wheel remote path contract tests passed." in result.stdout
-
     docs = Path("docs/reference/full-technical-reference.md").read_text(encoding="utf-8")
     assert "`-RemoteDirectory` defaults to `/tmp`" in docs
     assert "password-backed and key/agent-backed SSH" in docs
     assert "apostrophes, dollar signs, backticks, semicolons" in docs
+
+
+def test_vmware_deploy_wheel_onepassword_bridge_contract():
+    """Verify the Windows 1Password bridge fails closed at its runtime boundaries."""
+    pwsh = shutil.which("pwsh")
+    if pwsh is None:
+        pytest.skip("PowerShell 7 is not available")
+
+    result = subprocess.run(
+        [
+            pwsh,
+            "-NoLogo",
+            "-NoProfile",
+            "-NonInteractive",
+            "-File",
+            "tests/powershell/Test-DeployWheelOnePassword.ps1",
+            "-RepositoryRoot",
+            str(Path.cwd()),
+        ],
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+
+    assert result.returncode == 0, result.stdout + result.stderr
 
 
 def test_vmware_password_deploy_omits_absent_optional_native_arguments():
