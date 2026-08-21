@@ -4597,6 +4597,11 @@
   state, response, audit events, or logs.</li>
 <li>Packer is a Windows-host prerequisite for the Photon image path; Hyper-V and <code>qemu-img</code> may already be available
   locally but should still be checked in handoff notes.</li>
+<li>Pin every Photon image Packer plugin to one reviewed exact <code>X.Y.Z</code> version. Both supported Windows wrappers must run
+  <code>packer init</code> and <code>scripts/check_packer_plugins.py</code> before validation or build, and canonical Packer CI must perform
+  the same resolution check between initialization and validation. A range constraint or a selected binary whose
+  filename does not match the exact required version fails closed. Plugin updates are explicit dependency changes that
+  update the affected template, relevant image documentation, tests, and the normal Atlaso patch version together.</li>
 </ul>
 <h2 id="photon-vm-debugging-notes">Photon VM Debugging Notes<a class="headerlink" href="#photon-vm-debugging-notes" title="Permanent link">&para;</a></h2>
 <ul>
