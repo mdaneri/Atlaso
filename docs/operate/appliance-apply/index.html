@@ -3725,6 +3725,17 @@ task's terminal refresh before following the newer task.</p>
 <p>Components run sequentially. If one component fails, Atlaso stops the sequence and marks the remaining components
 <strong>skipped</strong>. Other write operations are locked while the master task is pending or running; read-only pages, task
 inspection, authentication actions, and safe cancellation remain available.</p>
+<p>A management-path change is the exception to independent component execution. Atlaso selects Certificate Authority,
+Network, Firewall, Appliance Settings, and Public Services together after all other dependencies expand, then runs one
+recoverable handoff. It retains the previous addresses, listener, firewall policy, and TLS identity until bounded Atlaso
+loopback, candidate nginx, dynamic-address, and host-facing <code>/openapi.json</code> checks prove the candidate ready.
+The transaction validates bundled TLS material, persists the candidate resolver and source-restricted firewall rules,
+and retires the old path only after readiness succeeds. On failure it restores the complete previous state and records
+the same actionable failing layer and rollback result on every bundled component.
+Successful baselines use the exact submitted snapshots, including applied resolver values; unrelated or concurrently
+saved Appliance Settings changes remain pending. A missing known-good Network baseline blocks mutation. Durable state
+and backups remain until the database commit is proven and acknowledged, so interruption or cleanup failure can retry
+rollback or acknowledgement safely. See the technical reference for the complete handoff and recovery contract.</p>
 <p>Safe cancellation does not interrupt the component already running. Every helper or adapter command in that component
 continues to completion. After the component returns, Atlaso skips the remaining components and releases the mutation
 lock when the master task becomes terminal.</p>
@@ -3749,6 +3760,11 @@ reload the affected page.</p>
 <li>Return to the affected service page and confirm its pending indicator cleared.</li>
 <li>Verify the resulting runtime behavior from the relevant service guide.</li>
 </ol>
+<p>When enabling local DNS, apply <strong>DNS/DHCP (dnsmasq)</strong> before the subsequent Appliance Settings resolver change. Atlaso
+keeps the last-applied external or DHCP resolver active until the DNS/DHCP unit is applied, so an unapplied local-DNS
+selection cannot redirect the appliance to loopback prematurely.
+When disabling applied local DNS, selecting <strong>DNS/DHCP (dnsmasq)</strong> automatically includes <strong>Appliance Settings</strong> first.
+That ordering moves the management resolver away from <code>127.0.0.1</code> before the local listener stops.</p>
 <p>Examples include checking service health, resolving a managed DNS name, reaching the intended listener, or confirming
 the installed configuration from the appliance console. Use the service-specific verification procedure rather than
 relying only on a green UI status.</p>
@@ -3762,8 +3778,17 @@ the command intent; it does not prove that Photon services changed.</p>
    remain pending when their desired state still differs.</li>
 <li>Submit only the units required for the corrected run.</li>
 </ol>
-<p>If Atlaso restarts during an apply, startup marks the running child failed, marks pending children skipped, fails the
-master task, and releases the global lock. Review the task before resubmitting.</p>
+<p>If Atlaso restarts during an ordinary apply, startup fails the running child and master task, skips pending children,
+and releases the global lock. For an interrupted management handoff, the privileged helper first stops and verifies any
+surviving apply process, restores the captured previous runtime state, and records the recovery result.
+The same path runs immediately after a helper wait timeout because the fixed apply service can outlive its waiting
+process. Recovery uses a separate fixed service identity; before retrying, the helper stops and verifies any surviving
+recovery service so two rollback attempts cannot mutate the same network state concurrently.
+The helper retains that rollback state until Atlaso durably commits the bundled component results and baselines. If a
+restart occurs after that database commit, startup idempotently acknowledges the committed candidate instead of falsely
+claiming a rollback. A failed task whose helper acknowledgement or rollback is not proven retains the global Apply lock
+until startup or immediate exception recovery reconciles that state, even when an older task payload lacks the newer
+pending marker. Review the task before resubmitting.</p>
 <p>If a selected unit changed after submission but before execution, Atlaso fails closed and asks for a new review. This
 prevents a queued task from applying state that the administrator did not inspect.</p>
 <h2 id="safety-boundaries">Safety boundaries<a class="headerlink" href="#safety-boundaries" title="Permanent link">&para;</a></h2>
@@ -3780,38 +3805,9 @@ prevents a queued task from applying state that the administrator did not inspec
 <li>Fresh-appliance baseline initialization records comparison metadata only; it does not run helper commands.</li>
 </ul>
 <h2 id="complete-technical-contents">Complete technical contents<a class="headerlink" href="#complete-technical-contents" title="Permanent link">&para;</a></h2>
-<p>No original section was removed. The <a href="../../reference/appliance-apply-technical/">Appliance Apply technical reference</a>
-is divided into these scannable groups:</p>
-<table>
-<thead>
-<tr>
-<th>Reference group</th>
-<th>Contents</th>
-</tr>
-</thead>
-<tbody>
-<tr>
-<td><a href="../../reference/appliance-apply-technical/#workflow-and-execution-model">Workflow and execution model</a></td>
-<td>Backend routes, global locking, helper boundaries, and apply-unit ownership.</td>
-</tr>
-<tr>
-<td><a href="../../reference/appliance-apply-technical/#appliance-and-network-units">Appliance and network units</a></td>
-<td>Users, inventory, networking, routing, and DNS/DHCP.</td>
-</tr>
-<tr>
-<td><a href="../../reference/appliance-apply-technical/#infrastructure-and-security-units">Infrastructure and security units</a></td>
-<td>PXE, storage, firewall, backups, certificates, and KMS/KMIP.</td>
-</tr>
-<tr>
-<td><a href="../../reference/appliance-apply-technical/#appliance-settings-and-operations">Appliance settings and operations</a></td>
-<td>NTPsec, appliance settings, logs, power, tasks, and VCF Offline Depot.</td>
-</tr>
-<tr>
-<td><a href="../../reference/appliance-apply-technical/#state-results-and-interface-contracts">State, results, and interface contracts</a></td>
-<td>Baselines, diffs, job results, recovery, and UI expectations.</td>
-</tr>
-</tbody>
-</table>
+<p>No original section was removed.
+See the <a href="../../reference/appliance-apply-technical/">Appliance Apply technical reference</a> for backend ownership, unit
+contracts, staging, helper execution, baselines, recovery, and interface expectations.</p>
 
 
 

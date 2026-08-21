@@ -3869,6 +3869,10 @@ access VLAN must have <strong>Management UI</strong> enabled. Multiple flagged a
 address, <code>/</code> prefers the management sign-in, <code>/ui/management</code> requires normal authentication, and <code>/ui/public</code> remains
 available for the same access network. The listener also preserves the complete authenticated management front door,
 including stable API, API documentation, manifest, and service-worker routes required by the management UI and PWA.</p>
+<p>When an Apply changes an effective management interface, address, gateway, or listener role, Atlaso automatically
+bundles Network with Firewall, Certificate Authority, Appliance Settings, and Public Services. The old management path
+stays active while the candidate network, policy routes, firewall, certificate/nginx configuration, Atlaso loopback
+upstream, and host-facing <code>/openapi.json</code> complete bounded readiness checks. Only then does Atlaso retire the old path.</p>
 <p>Only a dedicated management role owns management DHCP, default gateways, DHCP resolver recovery, and isolated
 management policy routing. If that role is absent, flagged access interfaces retain their normal access routes. The
 appliance FQDN and managed HTTPS certificate cover every effective management UI address.</p>
@@ -3913,8 +3917,11 @@ with its entered values. Saving refreshes validation and the configuration previ
 global <strong>Appliance Apply</strong> with the <code>network</code> unit when the reviewed desired state is ready for enforcement. Delete
 remains a confirmed row-context action.</p>
 <h2 id="verify-and-roll-back">Verify and roll back<a class="headerlink" href="#verify-and-roll-back" title="Permanent link">&para;</a></h2>
-<p>Confirm the management URL, expected routes, and interface state after apply. If access is lost, use the local console
-network recovery action to restore a known-good management configuration, then review desired state before retrying.</p>
+<p>Confirm the management URL, expected routes, and interface state after apply. A failed management handoff reports its
+non-secret failing layer and rolls back the captured network, firewall, nginx, certificate, and service state before
+the task becomes failed. Rollback also reconfigures interfaces introduced to the candidate and deletes candidate-only
+VLAN devices. If automatic rollback cannot restore access, use the local console network recovery action to
+restore a known-good management configuration, then review desired state before retrying.</p>
 <h2 id="transport-ownership">Transport ownership<a class="headerlink" href="#transport-ownership" title="Permanent link">&para;</a></h2>
 <p>The management Routes/WAN transports and their API v1 counterparts are owned by the dedicated <code>routes_wan</code> domain
 routers. The stable UI and API facade modules continue to aggregate and export those handlers. This internal ownership
