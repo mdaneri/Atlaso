@@ -182,6 +182,40 @@ def test_availability_preserves_confirmed_update_across_failed_recheck_and_stale
     assert "confirmed" not in cleared["streams"]["photon_os"]
 
 
+def test_availability_summary_marks_visible_change_truncation():
+    """Tell operators when the browser projection omits recorded changes."""
+    from atlaso.app.services.appliance_update import (
+        empty_update_availability,
+        record_update_availability_attempt,
+        update_availability_summary,
+        update_stream_configuration_fingerprint,
+    )
+
+    settings = {"photon_source": "configured Photon repositories"}
+    fingerprint = update_stream_configuration_fingerprint("photon_os", settings)
+    state = record_update_availability_attempt(
+        empty_update_availability(),
+        stream="photon_os",
+        job_id="job-visible-truncation",
+        checked_at=datetime(2026, 8, 21, 10, tzinfo=timezone.utc),
+        fingerprint=fingerprint,
+        result={
+            "state": "available",
+            "change_count": 21,
+            "changes": [
+                {"name": f"package-{index}", "action": "upgrade"}
+                for index in range(21)
+            ],
+        },
+    )
+
+    assert state["streams"]["photon_os"]["confirmed"]["details_incomplete"] is False
+    summary = update_availability_summary(state, settings)
+    photon = next(row for row in summary["streams"] if row["id"] == "photon_os")
+    assert len(photon["confirmed"]["changes"]) == 20
+    assert photon["confirmed"]["details_incomplete"] is True
+
+
 def test_availability_fingerprint_stales_after_source_credential_revision():
     """Require a fresh check after a source edit such as credential rotation."""
     from atlaso.app.services.appliance_update import (

@@ -279,6 +279,9 @@ def update_availability_summary(
             normalized["checked_at"] = _bounded_availability_text(
                 confirmed.get("checked_at"), limit=80
             )
+            normalized["details_incomplete"] = bool(
+                normalized.get("details_incomplete")
+            ) or len(normalized["changes"]) > AVAILABILITY_VISIBLE_CHANGE_LIMIT
             normalized["changes"] = normalized["changes"][:AVAILABILITY_VISIBLE_CHANGE_LIMIT]
             row["confirmed"] = normalized
         rows.append(row)
