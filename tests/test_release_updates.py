@@ -3469,6 +3469,87 @@ def test_worker_restart_records_interrupted_check_as_latest_failed_attempt(
         assert "interrupted check" in reason
 
 
+def test_worker_restart_preserves_completed_child_check_availability(
+    client,
+    monkeypatch,
+    tmp_path,
+):
+    """Retain a completed child result while failing the interrupted child.
+
+    Args:
+        client: HTTP test client providing isolated application state.
+        monkeypatch: Pytest fixture used to replace worker dependencies.
+        tmp_path: Temporary directory provided for finalizer state.
+    """
+    from atlaso.app import ui, worker
+    from atlaso.app.database import SessionLocal
+    from atlaso.app.models import Job
+    from atlaso.app.services.appliance_update import ensure_appliance_update_job_steps
+
+    monkeypatch.setattr(
+        worker,
+        "APPLIANCE_UPDATE_FINALIZER_PATH",
+        str(tmp_path / "missing-finalizer-status.json"),
+    )
+    with SessionLocal() as db:
+        settings = ui.appliance_update_settings(db)
+        job = Job(
+            id="job-partially-completed-check",
+            type="appliance-update",
+            status="running",
+            created_by="admin",
+            task_config_json=json.dumps(
+                {
+                    "selected_streams": ["powershell_modules", "photon_os"],
+                    "settings": settings,
+                    "mode": "check",
+                }
+            ),
+            result='{"status":"running","success":false}',
+        )
+        db.add(job)
+        db.flush()
+        steps = ensure_appliance_update_job_steps(
+            db,
+            job=job,
+            selected_streams=["powershell_modules", "photon_os"],
+        )
+        powershell = next(
+            step for step in steps if step.component_key == "powershell_modules"
+        )
+        powershell.status = "succeeded"
+        powershell.progress_percent = 100
+        powershell.result = json.dumps(
+            {
+                "unit_id": "powershell_modules",
+                "status": "succeeded",
+                "success": True,
+                "commands": [],
+                "availability": {
+                    "state": "up_to_date",
+                    "current": "2.0.0",
+                    "target": "2.0.0",
+                    "change_count": 0,
+                    "changes": [],
+                },
+            }
+        )
+        photon = next(step for step in steps if step.component_key == "photon_os")
+        photon.status = "running"
+        db.commit()
+
+        assert worker.recover_interrupted_worker_jobs(db) == 1
+        recovered = db.get(Job, job.id)
+        assert recovered.status == "failed"
+
+        summary = ui.appliance_update_availability_summary(db)
+        rows = {row["id"]: row for row in summary["streams"]}
+        assert rows["powershell_modules"]["last_attempt"]["success"] is True
+        assert rows["powershell_modules"]["confirmed"]["state"] == "up_to_date"
+        assert rows["photon_os"]["last_attempt"]["success"] is False
+        assert rows["photon_os"]["last_attempt"]["state"] == "failed"
+
+
 def test_worker_restart_removes_interrupted_network_boot_upload(client, monkeypatch):
     """Verify that worker restart removes interrupted network boot upload.
 

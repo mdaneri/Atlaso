@@ -656,7 +656,8 @@ def recover_interrupted_worker_jobs(
                         ),
                     }
                     for stream_result in update_result["stream_results"].values():
-                        stream_result["availability"] = dict(interrupted_availability)
+                        if stream_result.get("worker_recovery") == "interrupted":
+                            stream_result["availability"] = dict(interrupted_availability)
             complete_appliance_update_task(db, job=job, update_result=update_result)
             continue
         else:
