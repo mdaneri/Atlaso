@@ -735,6 +735,33 @@ def test_global_update_indicator_renders_and_has_visibility_aware_refresh(client
     assert "stream.last_attempt?.success !== true || !stream.confirmed" in app_js
 
 
+def test_global_update_indicator_is_hidden_without_appliance_update_permission(client):
+    """Hide update availability from identities that cannot open Appliance Update.
+
+    Args:
+        client: Test application HTTP client.
+    """
+    from sqlalchemy import select
+
+    from atlaso.app.database import SessionLocal
+    from atlaso.app.models import Role, User
+    from atlaso.app.security import roles_to_json
+
+    seed_available_confirmations(["photon_os"])
+    with SessionLocal() as db:
+        admin = db.execute(select(User).where(User.username == "admin")).scalar_one()
+        admin.role = Role.VIEWER.value
+        admin.roles_json = roles_to_json([Role.VIEWER.value])
+        db.commit()
+
+    login(client)
+    page = client.get("/ui/management/dashboard")
+
+    assert page.status_code == 200
+    assert "data-update-availability-indicator" not in page.text
+    assert 'href="/ui/management/appliance-update"' not in page.text
+
+
 def test_appliance_update_real_helper_failure_is_logged(client, monkeypatch, caplog):
     """Verify that appliance update real helper failure is logged.
 
