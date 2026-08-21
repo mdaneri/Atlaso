@@ -4199,13 +4199,13 @@ interaction class, route, route name, listener eligibility, authorization scope,
 status code, rendering or cache contract, audit action, encryption, masking, timed reveal, delete-dependency behavior,
 route inventory, or normalized OpenAPI output.</p>
 <h2 id="extracted-appliance-maintenance-ownership">Extracted appliance-maintenance ownership<a class="headerlink" href="#extracted-appliance-maintenance-ownership" title="Permanent link">&para;</a></h2>
-<p>The authenticated appliance power transport and the eleven Appliance Update transports live in
+<p>The authenticated appliance power transport and the twelve Appliance Update transports live in
 <code>atlaso/app/routers/ui/appliance_maintenance.py</code>. The module returns two explicit ordered routers:
 <code>appliance_maintenance_power</code> remains immediately before Dashboard and Monitor, while
 <code>appliance_maintenance_update</code> remains immediately after them and before Automation. The facade contribution preceding
 power is named <code>facade_between_vaults_appliance_maintenance</code>, preserving every earlier front-door, protocol, public,
 authentication, account, and management route at its established position.</p>
-<p>The stable <code>atlaso/app/ui.py</code> facade continues to export <code>appliance_power_action</code>, <code>appliance_update_page</code>,
+<p>The stable <code>atlaso/app/ui.py</code> facade continues to export <code>appliance_power_action</code>, <code>appliance_update_availability</code>, <code>appliance_update_page</code>,
 <code>update_appliance_update_settings</code>, <code>update_appliance_update_source</code>, <code>create_appliance_update_source</code>,
 <code>delete_appliance_update_source</code>, <code>create_managed_update_package</code>, <code>update_managed_update_package</code>,
 <code>delete_managed_update_package</code>, <code>sync_appliance_update_sources</code>, <code>check_appliance_update</code>, and
