@@ -6517,7 +6517,12 @@ def test_account_commands_use_bounded_helper_action_units(monkeypatch):
 
 @pytest.mark.parametrize(
     "action",
-    ["reset-network-runtime", "reset-retained-runtime", "apply-root-password"],
+    [
+        "terminate-login-sessions",
+        "reset-network-runtime",
+        "reset-retained-runtime",
+        "apply-root-password",
+    ],
 )
 def test_factory_reset_mutations_use_bounded_helper_action_units(
     monkeypatch,
