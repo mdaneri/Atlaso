@@ -23,8 +23,11 @@ The Packer builder uses `Atlaso-Mgmt` by default. The script assigns the host-si
 and creates `Atlaso-Mgmt-NAT`, which gives the temporary builder VM outbound internet access for `tdnf update`.
 
 Before a build, run `python scripts/check_deployment_assets.py --mode packer` from the repository root. The protected
-validator inventories both Packer templates, checks formatting, initializes their plugins, and performs the same full
-validation used by the wrappers with the required remastered-ISO guard enabled.
+validator inventories both Packer templates, checks formatting, initializes their plugins, verifies the exact selected
+binaries, and performs the same full validation used by the wrappers with the required remastered-ISO guard enabled.
+The Hyper-V template pins `github.com/hashicorp/hyperv` to `1.1.5`. The supported wrapper runs `packer init` and
+`scripts/check_packer_plugins.py` before validation or build, so an empty plugin directory and a warm cache must select
+that same reviewed version. Update the HCL pin, tests, and this documentation together when reviewing a plugin update.
 
 ## Build Inputs
 

@@ -12,6 +12,11 @@ import tempfile
 from dataclasses import dataclass
 from pathlib import Path
 
+if __package__:
+    from scripts.check_packer_plugins import validate_packer_plugins
+else:
+    from check_packer_plugins import validate_packer_plugins
+
 ROOT = Path(__file__).resolve().parents[1]
 PACKER_TEMPLATES = (
     Path("image/hyperv/atlaso-photon.pkr.hcl"),
@@ -392,6 +397,7 @@ def validate_packer(assets: tuple[Path, ...], packer: str) -> list[Finding]:
         directory = template.parent
         commands = (
             ("packer init", [packer, "init", "."]),
+            ("exact Packer plugin resolution", None),
             ("packer fmt -check", [packer, "fmt", "-check", "-diff", template.name]),
             (
                 "packer validate",
@@ -404,6 +410,12 @@ def validate_packer(assets: tuple[Path, ...], packer: str) -> list[Finding]:
             ),
         )
         for label, command in commands:
+            if command is None:
+                plugin_findings = validate_packer_plugins(directory, packer)
+                if plugin_findings:
+                    findings.extend(Finding(template, message) for message in plugin_findings)
+                    break
+                continue
             finding = _run(command, directory, template, label)
             if finding is not None:
                 findings.append(finding)

@@ -444,6 +444,15 @@ function Invoke-AtlasoPhotonImageBuild {
 
     Push-Location $packerDir
     try {
+        & packer init .
+        if ($LASTEXITCODE -ne 0) {
+            throw "packer init failed with exit code $LASTEXITCODE."
+        }
+        $pluginCheckScript = Join-Path $PSScriptRoot '..\..\check_packer_plugins.py'
+        & python $pluginCheckScript --packer (Get-Command packer -ErrorAction Stop).Source $packerDir
+        if ($LASTEXITCODE -ne 0) {
+            throw "Exact Packer plugin verification failed with exit code $LASTEXITCODE."
+        }
         & packer @packerArgs
         if ($LASTEXITCODE -ne 0) {
             $operation = if ($ValidateOnly) { 'validate' } else { 'build' }
