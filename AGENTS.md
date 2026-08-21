@@ -510,6 +510,11 @@ The following cross-cutting boundaries always apply:
   other secret-bearing data remain sensitive; content-integrity hashes of non-secret material and one-way
   change-detection hashes of encrypted-at-rest ciphertext do not. Treat an identifier as sensitive when it is embedded
   in or paired with authentication or cryptographic material.
+- Use the 1Password MCP and the exact `Atlaso` Environment for every user password and for every newly created
+  user or key secret, including passwords, tokens, API keys, and private keys. Authenticate through the MCP, verify the
+  named Environment before access, and store secret values there as concealed variables. Never fall back to chat,
+  repository files, local `.env` files, shell arguments, jobs, audits, logs, screenshots, or documentation; if the
+  1Password MCP or the `Atlaso` Environment is unavailable, stop and request maintainer direction.
 - Never expose credentials, authenticated URLs, private keys, raw secrets, or secret-bearing commands in UI, jobs,
   audits, logs, documentation, screenshots, or video.
 - The appliance-native vSphere Key Provider targets only VCF 9.1 and implements the checked-in bounded KMIP contract.
