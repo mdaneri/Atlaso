@@ -304,7 +304,11 @@ def test_management_handoff_staging_failure_removes_private_ca_payload(
         dry_run = False
 
         def validate_management_handoff(self, _manifest_path):
-            """Fail if staging unexpectedly reaches helper validation."""
+            """Fail if staging unexpectedly reaches helper validation.
+
+            Args:
+                _manifest_path: Staged manifest that must not reach validation.
+            """
             raise AssertionError("helper validation must not run after staging failure")
 
     unit_defaults = {
