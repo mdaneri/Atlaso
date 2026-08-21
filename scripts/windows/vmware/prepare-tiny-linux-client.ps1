@@ -10,6 +10,7 @@ param(
 
 $ErrorActionPreference = 'Stop'
 $PSNativeCommandUseErrorActionPreference = $false
+Import-Module (Join-Path $PSScriptRoot '..\common\Atlaso.VerifiedDownload.psm1') -Force
 
 function Get-Sha512FileHash {
     param([string]$Path)
@@ -48,23 +49,18 @@ if (-not (Get-Command qemu-img -ErrorAction SilentlyContinue)) {
     throw "qemu-img is required to convert Alpine QCOW2 to VMware VMDK."
 }
 
-foreach ($file in @($ImageName, "$ImageName.sha512")) {
-    $target = Join-Path $OutputDirectory $file
-    if ((Test-Path -LiteralPath $target) -and -not $Force) {
-        Write-Host "Already downloaded: $target"
-        continue
-    }
-    if ($PSCmdlet.ShouldProcess($target, "Download $file")) {
-        Invoke-WebRequest -Uri "$BaseUrl/$file" -OutFile $target
-    }
+$actual = Save-AtlasoVerifiedDownloadPair `
+    -PayloadUri "$BaseUrl/$ImageName" `
+    -ChecksumUri "$BaseUrl/$ImageName.sha512" `
+    -PayloadPath $qcowPath `
+    -ChecksumPath $checksumPath `
+    -Algorithm SHA512 `
+    -GetFileHash { param($Path) Get-Sha512FileHash -Path $Path } `
+    -Force:$Force `
+    -WhatIf:$WhatIfPreference
+if (-not $actual) {
+    return
 }
-
-$expected = (Get-Content -LiteralPath $checksumPath -Raw).Trim().Split()[0].ToUpperInvariant()
-$actual = Get-Sha512FileHash -Path $qcowPath
-if ($expected -ne $actual) {
-    throw "SHA512 mismatch for $qcowPath. Expected $expected, got $actual."
-}
-Write-Host "SHA512 verified: $ImageName"
 
 if ((Test-Path -LiteralPath $vmdkPath) -and -not $Force) {
     Write-Host "VMDK already exists: $vmdkPath"
