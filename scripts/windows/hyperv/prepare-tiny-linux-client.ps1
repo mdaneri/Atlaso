@@ -2,7 +2,9 @@
 param(
     [string]$Version = '3.24.1',
     [string]$ImageName = 'generic_alpine-3.24.1-x86_64-uefi-cloudinit-r0.qcow2',
-    [string]$BaseUrl = 'https://dl-cdn.alpinelinux.org/alpine/latest-stable/releases/cloud',
+    [string]$BaseUrl = 'https://dl-cdn.alpinelinux.org/alpine/v3.24/releases/cloud',
+    [ValidatePattern('^[0-9A-Fa-f]{128}$')]
+    [string]$ExpectedSha512 = 'ed976ef40de1f73adcb0a3b253ec9e73e43c408208fcc3c30dcdf7a69b91a387a4777f88c6b72345123edf3832d7cb49403ecce28ec84d496d4b3bad6fbd0923',
     [string]$OutputDirectory = '',
     [string]$OutputVhdxName = 'atlaso-tiny-linux-client.vhdx',
     [switch]$Force
@@ -10,6 +12,7 @@ param(
 
 $ErrorActionPreference = 'Stop'
 $PSNativeCommandUseErrorActionPreference = $false
+Import-Module (Join-Path $PSScriptRoot '..\common\Atlaso.VerifiedDownload.psm1') -Force
 
 $repoRoot = Resolve-Path -LiteralPath (Join-Path $PSScriptRoot '..\..\..')
 if (-not $OutputDirectory) {
@@ -27,23 +30,19 @@ if (-not (Get-Command qemu-img -ErrorAction SilentlyContinue)) {
     throw "qemu-img is required to convert Alpine QCOW2 to Hyper-V VHDX."
 }
 
-foreach ($file in @($ImageName, "$ImageName.sha512")) {
-    $target = Join-Path $OutputDirectory $file
-    if ((Test-Path -LiteralPath $target) -and -not $Force) {
-        Write-Host "Already downloaded: $target"
-        continue
-    }
-    if ($PSCmdlet.ShouldProcess($target, "Download $file")) {
-        Invoke-WebRequest -Uri "$BaseUrl/$file" -OutFile $target
-    }
+$actual = Save-AtlasoVerifiedDownloadPair `
+    -PayloadUri "$BaseUrl/$ImageName" `
+    -ChecksumUri "$BaseUrl/$ImageName.sha512" `
+    -PayloadPath $qcowPath `
+    -ChecksumPath $checksumPath `
+    -Algorithm SHA512 `
+    -ExpectedDigest $ExpectedSha512 `
+    -GetFileHash { param($Path) (Get-FileHash -Algorithm SHA512 -LiteralPath $Path).Hash } `
+    -Force:$Force `
+    -WhatIf:$WhatIfPreference
+if (-not $actual) {
+    return
 }
-
-$expected = (Get-Content -LiteralPath $checksumPath -Raw).Trim().Split()[0].ToUpperInvariant()
-$actual = (Get-FileHash -Algorithm SHA512 -LiteralPath $qcowPath).Hash.ToUpperInvariant()
-if ($expected -ne $actual) {
-    throw "SHA512 mismatch for $qcowPath. Expected $expected, got $actual."
-}
-Write-Host "SHA512 verified: $ImageName"
 
 if ((Test-Path -LiteralPath $vhdxPath) -and -not $Force) {
     Write-Host "VHDX already exists: $vhdxPath"

@@ -11,6 +11,7 @@ download_dir="${source_root}/downloads"
 build_dir="${source_root}/buildroot-${buildroot_version}"
 output_dir="${script_dir}/output"
 archive="${download_dir}/buildroot-${buildroot_version}.tar.xz"
+partial_archive=""
 git_dir="${repo_root}/.git"
 if [[ -f "${git_dir}" ]]; then
   git_dir="$(sed -n 's/^gitdir: //p' "${git_dir}")"
@@ -26,13 +27,35 @@ source_date_epoch="$(git --git-dir="${git_dir}" --work-tree="${repo_root}" log -
 export SOURCE_DATE_EPOCH="${SOURCE_DATE_EPOCH:-${source_date_epoch}}"
 
 mkdir -p "${download_dir}" "${output_dir}"
-if [[ ! -f "${archive}" ]]; then
+cleanup_partial_archive() {
+  if [[ -n "${partial_archive}" && -e "${partial_archive}" ]]; then
+    rm -f -- "${partial_archive}"
+  fi
+}
+trap cleanup_partial_archive EXIT HUP INT TERM
+
+verify_buildroot_archive() {
+  local candidate="$1"
+  printf '%s  %s\n' "${buildroot_sha256}" "${candidate}" | sha256sum --check -
+}
+
+download_buildroot_archive() {
+  partial_archive="$(mktemp "${archive}.part.XXXXXXXX")"
   curl --fail --location --proto '=https' --tlsv1.2 \
-    --output "${archive}.part" \
+    --output "${partial_archive}" \
     "https://buildroot.org/downloads/buildroot-${buildroot_version}.tar.xz"
-  mv "${archive}.part" "${archive}"
+  verify_buildroot_archive "${partial_archive}"
+  mv -f -- "${partial_archive}" "${archive}"
+  partial_archive=""
+}
+
+if [[ -f "${archive}" ]] && ! verify_buildroot_archive "${archive}"; then
+  rm -f -- "${archive}"
 fi
-printf '%s  %s\n' "${buildroot_sha256}" "${archive}" | sha256sum --check -
+if [[ ! -f "${archive}" ]]; then
+  download_buildroot_archive
+fi
+verify_buildroot_archive "${archive}"
 
 if [[ ! -d "${build_dir}" ]]; then
   tar --extract --xz --file "${archive}" --directory "${source_root}"
