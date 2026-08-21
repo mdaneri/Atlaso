@@ -962,6 +962,8 @@ def test_cleanup_safety_content_read_errors_are_terminating() -> None:
     assert "Get-Content -LiteralPath $Path -ErrorAction Stop" in module
     assert "Get-Content -LiteralPath $InventoryPath -ErrorAction Stop" in module
     assert module.count("Get-Content") == module.count("Get-Content -LiteralPath") == 2
+    assert "Start-Sleep -Milliseconds 250" in module
+    assert "registration inventory changed during verification" in module
 
 
 def test_general_removal_uses_inventory_file_for_registered_state(tmp_path: Path) -> None:
@@ -1031,6 +1033,49 @@ def test_general_removal_rejects_an_incomplete_registration_inventory(tmp_path: 
     assert result.returncode != 0
     assert "registration inventory is incomplete or changing" in result.stderr
     assert vmx_path.exists()
+
+
+def test_registered_inventory_rejects_a_snapshot_that_changes_during_stability_window(
+    tmp_path: Path,
+) -> None:
+    """Two different complete snapshots must not authorize cleanup state.
+
+    Args:
+        tmp_path: Isolated test directory.
+    """
+    vmx_path = tmp_path / "registered" / "Atlaso-Changing-Registration.vmx"
+    _write_vmx(vmx_path, "Atlaso-Changing-Registration")
+    inventory_path = tmp_path / "inventory.vmls"
+    replacement_path = tmp_path / "inventory-replacement.vmls"
+    inventory_path.write_text('.encoding = "UTF-8"\nindex.count = "0"\n', encoding="utf-8")
+    replacement_path.write_text(
+        '.encoding = "UTF-8"\n'
+        f'vmlist1.config = "{vmx_path.resolve()}"\n'
+        f'index0.id = "{vmx_path.resolve()}"\n'
+        'index.count = "1"\n',
+        encoding="utf-8",
+    )
+    module_path = VMWARE_SCRIPT_ROOT / "Atlaso.WorkstationCleanup.psm1"
+    wrapper = tmp_path / "read-changing-inventory.ps1"
+    wrapper.write_text(
+        f"""$ErrorActionPreference = 'Stop'
+$module = Import-Module '{module_path}' -Force -PassThru
+& $module {{
+    param($inventoryPath, $replacementPath)
+    function Start-Sleep {{
+        param([int]$Milliseconds)
+        Copy-Item -LiteralPath $replacementPath -Destination $inventoryPath -Force
+    }}
+    Get-AtlasoWorkstationRegisteredVmPaths -InventoryPath $inventoryPath
+}} '{inventory_path}' '{replacement_path}'
+""",
+        encoding="utf-8",
+    )
+
+    result = _run_script(wrapper, environment=os.environ.copy())
+
+    assert result.returncode != 0
+    assert "registration inventory changed during verification" in result.stderr
 
 
 def test_general_removal_matches_a_running_vmx_by_filesystem_identity(

@@ -346,13 +346,57 @@ function Resolve-AtlasoWorkstationInventoryPath {
     return (Resolve-Path -LiteralPath $inventoryPath).Path
 }
 
+function Get-AtlasoStableWorkstationInventoryLines {
+    param(
+        [Parameter(Mandatory = $true)]
+        [string]$InventoryPath
+    )
+
+    $snapshots = @()
+    for ($attempt = 0; $attempt -lt 2; $attempt++) {
+        $before = Get-Item -LiteralPath $InventoryPath -Force -ErrorAction Stop
+        $identityBefore = [Atlaso.WorkstationFileIdentity]::Get($InventoryPath)
+        $content = [string](Get-Content -LiteralPath $InventoryPath -ErrorAction Stop -Raw)
+        $identityAfter = [Atlaso.WorkstationFileIdentity]::Get($InventoryPath)
+        $after = Get-Item -LiteralPath $InventoryPath -Force -ErrorAction Stop
+        if (
+            $identityBefore -ne $identityAfter -or
+            $before.Length -ne $after.Length -or
+            $before.LastWriteTimeUtc.Ticks -ne $after.LastWriteTimeUtc.Ticks
+        ) {
+            throw "VMware Workstation registration inventory changed during verification; refusing filesystem cleanup: $InventoryPath"
+        }
+        $snapshots += [pscustomobject]@{
+            Content = $content
+            Identity = $identityAfter
+            Length = $after.Length
+            LastWriteTimeUtcTicks = $after.LastWriteTimeUtc.Ticks
+        }
+        if ($attempt -eq 0) {
+            Start-Sleep -Milliseconds 250
+        }
+    }
+
+    $first = $snapshots[0]
+    $second = $snapshots[1]
+    if (
+        $first.Identity -ne $second.Identity -or
+        $first.Length -ne $second.Length -or
+        $first.LastWriteTimeUtcTicks -ne $second.LastWriteTimeUtcTicks -or
+        -not $first.Content.Equals($second.Content, [System.StringComparison]::Ordinal)
+    ) {
+        throw "VMware Workstation registration inventory changed during verification; refusing filesystem cleanup: $InventoryPath"
+    }
+    return @($second.Content -split '\r?\n')
+}
+
 function Get-AtlasoWorkstationRegisteredVmPaths {
     param(
         [Parameter(Mandatory = $true)]
         [string]$InventoryPath
     )
 
-    $inventoryLines = @(Get-Content -LiteralPath $InventoryPath -ErrorAction Stop)
+    $inventoryLines = @(Get-AtlasoStableWorkstationInventoryLines -InventoryPath $InventoryPath)
     $paths = @()
     $indexPaths = @()
     $indexNumbers = @()

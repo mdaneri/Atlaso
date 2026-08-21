@@ -165,9 +165,10 @@ be interpreted as an empty or partial registered-VM set. VMX identity reads use 
 a partial file from validating one displayed name while unread content remains unresolved. Cleanup also requires the
 Workstation `inventory.vmls` snapshot to contain only well-formed `vmlistN.config` entries whose VMX filesystem
 identities can be resolved. The independent `index.count` and `indexN.id` search index must describe the same complete
-VMX identity set, so a header-only or partially rewritten snapshot fails closed. VMware Workstation does not expose a
-registered-VM listing through `vmrun`, so cleanup does not invoke the unsupported `listRegisteredVM` command. After the
-final recursive VMX-set scan, cleanup refreshes the
+VMX identity set. Cleanup also requires the file identity, size, last-write timestamp, and byte content to remain
+unchanged across two reads 250 milliseconds apart, so a header-only, partially rewritten, or momentary self-consistent
+empty snapshot fails closed. VMware Workstation does not expose a registered-VM listing through `vmrun`, so cleanup does
+not invoke the unsupported `listRegisteredVM` command. After the final recursive VMX-set scan, cleanup refreshes the
 checked `vmrun list` running inventory and the Workstation registration file as its last safety gate before deletion.
 When lifecycle
 execution and cleanup both fail, the final error reports the original scenario failure together with the cleanup failure
