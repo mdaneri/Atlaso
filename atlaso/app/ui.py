@@ -15491,8 +15491,8 @@ _vcf_workflows_ui = build_vcf_workflows_ui_router(
         task_row=_task_row,
         vcf_trust_target=_vcf_trust_target,
         active_vcf_depot_execution_job=active_vcf_depot_execution_job,
-        appliance_apply_client_status=lambda *args, **kwargs: appliance_apply_client_status(*args, **kwargs),
-        appliance_apply_status=lambda *args, **kwargs: appliance_apply_status(*args, **kwargs),
+        appliance_apply_client_status=appliance_apply_client_status,
+        appliance_apply_status=appliance_apply_status,
         confirmed_tls_fingerprint=lambda *args, **kwargs: _confirmed_tls_fingerprint(*args, **kwargs),
         create_vcf_generated_dns_records=create_vcf_generated_dns_records,
         delete_vcf_generated_dns_records=delete_vcf_generated_dns_records,
@@ -15603,8 +15603,8 @@ update_vcf_backup_settings_from_ui = _vcf_workflows_ui.endpoints["update_vcf_bac
 
 _esx_storage_ui = build_esx_storage_ui_router(
     EsxStorageUiDependencies(
-        appliance_apply_client_status=appliance_apply_client_status,
-        appliance_apply_status=appliance_apply_status,
+        appliance_apply_client_status=lambda *args, **kwargs: appliance_apply_client_status(*args, **kwargs),
+        appliance_apply_status=lambda *args, **kwargs: appliance_apply_status(*args, **kwargs),
         ensure_dns_for_esx_storage=lambda *args, **kwargs: ensure_dns_for_esx_storage(*args, **kwargs),
         esx_storage_context=lambda *args, **kwargs: esx_storage_context(*args, **kwargs),
         get_esx_storage_settings_row=lambda *args, **kwargs: get_esx_storage_settings_row(*args, **kwargs),
