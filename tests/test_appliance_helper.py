@@ -847,6 +847,77 @@ def test_management_handoff_persists_flagged_access_resolver(
     assert "Domains=~." not in text
 
 
+@pytest.mark.parametrize(
+    ("resolver_mode", "resolver_servers", "expected_commands"),
+    [
+        (
+            "external",
+            ["192.0.2.53"],
+            [
+                ["resolvectl", "dns", "eth0", "192.0.2.53"],
+                ["resolvectl", "domain", "eth0", ""],
+            ],
+        ),
+        ("dhcp", [], [["resolvectl", "revert", "eth0"]]),
+    ],
+)
+def test_management_handoff_updates_same_interface_resolver_holdover(
+    monkeypatch,
+    tmp_path,
+    resolver_mode,
+    resolver_servers,
+    expected_commands,
+):
+    """Persist candidate DNS in the effective same-interface holdover.
+
+    Args:
+        monkeypatch: Pytest fixture used to isolate networkd and runtime commands.
+        tmp_path: Temporary directory containing candidate and holdover files.
+        resolver_mode: Candidate resolver mode under test.
+        resolver_servers: Candidate static resolver addresses, when applicable.
+        expected_commands: Expected systemd-resolved runtime mutations.
+    """
+    helper = load_helper_module()
+    networkd_dir = tmp_path / "networkd"
+    networkd_dir.mkdir()
+    candidate_path = networkd_dir / "00-atlaso-mgmt.network"
+    candidate_path.write_text(
+        "[Match]\nName=eth0\n\n[Network]\nDNS=198.51.100.53\n",
+        encoding="utf-8",
+    )
+    holdover_path = networkd_dir / f"{helper.MANAGEMENT_HANDOFF_HOLDOVER_PREFIX}00.network"
+    holdover_path.write_text(
+        "[Match]\nName=eth0\n\n[Network]\nDNS=203.0.113.53\n",
+        encoding="utf-8",
+    )
+    commands: list[list[str]] = []
+    monkeypatch.setattr(helper, "NETWORKD_CONFIG_DIR", networkd_dir)
+    monkeypatch.setattr(helper, "NETWORKD_MGMT_CONFIG_PATH", candidate_path)
+    monkeypatch.setattr(
+        helper,
+        "_run",
+        lambda command: commands.append(command)
+        or subprocess.CompletedProcess(command, 0, "", ""),
+    )
+
+    result = helper._configure_management_handoff_resolver(
+        {
+            "management_interface": "eth0",
+            "resolver_mode": resolver_mode,
+            "resolver_servers": resolver_servers,
+        }
+    )
+
+    assert result.returncode == 0
+    holdover_text = holdover_path.read_text(encoding="utf-8")
+    if resolver_servers:
+        assert f"DNS={resolver_servers[0]}" in holdover_text
+    else:
+        assert "DNS=" not in holdover_text
+    assert "DNS=198.51.100.53" in candidate_path.read_text(encoding="utf-8")
+    assert commands == expected_commands
+
+
 def test_management_handoff_rejects_unpersisted_resolver(monkeypatch):
     """Fail before runtime mutation when no candidate networkd file exists.
 

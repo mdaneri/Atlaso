@@ -238,8 +238,9 @@ separate snapshotted certificate and key files, including when the protocol rema
 certificate rotates.
 Within Appliance Settings, this transaction applies the management resolver interface, Atlaso loopback drop-in, and
 management nginx front door. The helper writes the selected static/local resolver directives into the candidate
-generated effective-listener networkd file or reverts that link to DHCP-provided DNS, then applies the matching per-link
-runtime state. After final Network retirement regenerates the managed networkd files, the helper repeats that persistent
+generated effective-listener networkd file, including the active higher-priority same-interface holdover, or reverts
+that link to DHCP-provided DNS, then applies the matching per-link runtime state. After final Network retirement
+regenerates the managed networkd files, the helper repeats that persistent
 and runtime resolver apply before reconfiguring the links. This persistence applies equally to
 `00-atlaso-mgmt.network` and flagged-access physical/VLAN files.
 The staged resolver mode derives local-DNS availability from the last-applied DNS/DHCP baseline, not unapplied desired

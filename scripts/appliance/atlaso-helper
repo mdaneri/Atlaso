@@ -1447,6 +1447,7 @@ def _management_resolver_network_path(interface_name: str) -> Path | None:
         The matching generated networkd path, when it exists.
     """
     candidates = [
+        *sorted(NETWORKD_CONFIG_DIR.glob(f"{MANAGEMENT_HANDOFF_HOLDOVER_PREFIX}*.network")),
         NETWORKD_MGMT_CONFIG_PATH,
         NETWORKD_CONFIG_DIR / _networkd_managed_filename(interface_name, "network"),
     ]
