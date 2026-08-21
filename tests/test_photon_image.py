@@ -1472,9 +1472,13 @@ def test_create_atlaso_vmware_test_vm_wrapper_uses_common_helpers():
     assert "prepare-networks.ps1" in build_script
     assert "Resolve-WorkstationVmrunPath -Path $VmrunPath" in build_script
     assert "Resolve-WorkstationOutputDirectory -PackerDirectory $PackerDirectory -OutputDirectory $OutputDirectory" in build_script
-    assert "Unregister-ExistingWorkstationTemplate" in build_script
-    assert "'unregister', $resolvedVmx" in build_script
-    assert "Refusing to unregister VMware template outside the configured image output directory" in build_script
+    assert "Atlaso.WorkstationCleanup.psm1" in build_script
+    assert "Remove-AtlasoWorkstationArtifactRoot" in build_script
+    assert "-ExpectedRemovalRoot $workstationOutputDirectory" in build_script
+    assert build_script.index("Remove-AtlasoWorkstationArtifactRoot") < build_script.index(
+        "Invoke-AtlasoPhotonImageBuild"
+    )
+    assert "Invoke-WorkstationVmrunBestEffort" not in build_script
     assert 'variable "service_vmnet_name"' in packer_template
     assert '"ethernet1.present"        = "TRUE"' in packer_template
     assert '"ethernet1.vnet"           = var.service_vmnet_name' in packer_template
@@ -1800,7 +1804,7 @@ def test_vmware_lifecycle_cleanup_only_removes_existing_lifecycle_vms():
     recursive_delete = cleanup_module.rindex(
         "Remove-Item -LiteralPath $resolvedRemovalRoot -Recurse -Force -ErrorAction Stop"
     )
-    assert final_scan < final_running_state < final_registered_state < recursive_delete
+    assert final_running_state < final_registered_state < final_scan < recursive_delete
     assert "VMware artifact directory remains after recursive cleanup; refusing to report success" in cleanup_module
     assert "Atlaso.WorkstationCleanup.psm1" in runner
     assert "Remove-AtlasoWorkstationVmArtifacts" in runner

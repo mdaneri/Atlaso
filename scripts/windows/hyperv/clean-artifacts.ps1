@@ -1,13 +1,19 @@
 [CmdletBinding()]
 param()
 
+$ErrorActionPreference = 'Stop'
+Import-Module (Join-Path $PSScriptRoot 'Atlaso.HypervCleanup.psm1') -Force
+
 $hypervPath = Join-Path $PSScriptRoot '..\..\..\image\hyperv'
 if (Test-Path -LiteralPath $hypervPath) {
-    if (Test-Path -LiteralPath (Join-Path $hypervPath 'output')) {
-        Remove-Item -LiteralPath (Join-Path $hypervPath 'output') -Recurse -Force
-    }
-    if (Test-Path -LiteralPath (Join-Path $hypervPath 'test-vms')) {
-        Remove-Item -LiteralPath (Join-Path $hypervPath 'test-vms') -Recurse -Force
+    foreach ($artifactName in @('output', 'test-vms')) {
+        $artifactRoot = Join-Path $hypervPath $artifactName
+        if ($null -ne (Get-Item -LiteralPath $artifactRoot -Force -ErrorAction SilentlyContinue)) {
+            Remove-AtlasoHypervArtifactRoot `
+                -HypervRoot $hypervPath `
+                -RemovalRoot $artifactRoot `
+                -Confirm:$false
+        }
     }
 }
 Write-Host 'Cleaned up Hyper-V build artifacts.'

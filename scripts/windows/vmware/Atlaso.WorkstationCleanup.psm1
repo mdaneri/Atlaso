@@ -463,6 +463,7 @@ function Assert-AtlasoWorkstationRemovalVmxSet {
         [Parameter(Mandatory = $true)]
         [string]$RemovalRoot,
         [Parameter(Mandatory = $true)]
+        [AllowEmptyCollection()]
         [string[]]$ValidatedVmxPaths
     )
 
@@ -537,6 +538,7 @@ function Remove-AtlasoWorkstationVmArtifacts {
         [Parameter(Mandatory = $true)]
         [string]$VmrunPath,
         [Parameter(Mandatory = $true)]
+        [AllowEmptyCollection()]
         [string[]]$VmxPaths,
         [Parameter(Mandatory = $true)]
         [string]$RemovalRoot
@@ -559,10 +561,6 @@ function Remove-AtlasoWorkstationVmArtifacts {
             -FailureMessage 'Refusing to remove a VMware VMX outside the exact artifact directory'
         $resolvedVmxPaths += $resolvedVmxPath
     }
-    if ($resolvedVmxPaths.Count -eq 0) {
-        throw "Refusing to remove VMware artifacts without at least one validated VMX: $resolvedRemovalRoot"
-    }
-
     Assert-AtlasoWorkstationRemovalVmxSet `
         -RemovalRoot $resolvedRemovalRoot `
         -ValidatedVmxPaths $resolvedVmxPaths
@@ -584,6 +582,24 @@ function Remove-AtlasoWorkstationVmArtifacts {
 
     $finalRunningPaths = @(Get-AtlasoWorkstationVmPaths -VmrunPath $VmrunPath -State running)
     $finalRegisteredPaths = @(Get-AtlasoWorkstationRegisteredVmPaths -InventoryPath $inventoryPath -VmrunPath $VmrunPath)
+    $finalRootVmxPaths = @(
+        Get-ChildItem `
+            -LiteralPath $resolvedRemovalRoot `
+            -Filter '*.vmx' `
+            -File `
+            -Recurse `
+            -Force `
+            -ErrorAction Stop |
+            ForEach-Object { (Resolve-Path -LiteralPath $_.FullName -ErrorAction Stop).Path }
+    )
+    foreach ($finalInventoryPath in @($finalRunningPaths) + @($finalRegisteredPaths)) {
+        if (Test-AtlasoWorkstationVmListed -Paths $finalRootVmxPaths -VmxPath $finalInventoryPath) {
+            throw "A new running or registered VMware VMX appeared before filesystem cleanup; artifacts were preserved: $finalInventoryPath"
+        }
+    }
+    Assert-AtlasoWorkstationRemovalVmxSet `
+        -RemovalRoot $resolvedRemovalRoot `
+        -ValidatedVmxPaths $resolvedVmxPaths
     foreach ($resolvedVmxPath in $resolvedVmxPaths) {
         if (
             (Test-AtlasoWorkstationVmListed -Paths $finalRunningPaths -VmxPath $resolvedVmxPath) -or
@@ -601,9 +617,63 @@ function Remove-AtlasoWorkstationVmArtifacts {
     }
 }
 
+function Remove-AtlasoWorkstationArtifactRoot {
+    [CmdletBinding(DefaultParameterSetName = 'CanonicalParent', SupportsShouldProcess = $true)]
+    param(
+        [Parameter(Mandatory = $true)]
+        [string]$VmrunPath,
+        [Parameter(Mandatory = $true, ParameterSetName = 'CanonicalParent')]
+        [string]$ArtifactParentRoot,
+        [Parameter(Mandatory = $true, ParameterSetName = 'ExactConfiguredRoot')]
+        [string]$ExpectedRemovalRoot,
+        [Parameter(Mandatory = $true)]
+        [string]$RemovalRoot
+    )
+
+    if ($null -eq (Get-Item -LiteralPath $RemovalRoot -Force -ErrorAction SilentlyContinue)) {
+        return
+    }
+    if (-not (Test-Path -LiteralPath $RemovalRoot -PathType Container)) {
+        throw "VMware artifact target exists but is not a directory; refusing to report cleanup success: $RemovalRoot"
+    }
+
+    $resolvedRemovalRoot = (Resolve-Path -LiteralPath $RemovalRoot -ErrorAction Stop).Path
+    if ($PSCmdlet.ParameterSetName -eq 'ExactConfiguredRoot') {
+        $resolvedExpectedRoot = (Resolve-Path -LiteralPath $ExpectedRemovalRoot -ErrorAction Stop).Path
+        if (-not (Test-AtlasoSamePath -Left $resolvedExpectedRoot -Right $resolvedRemovalRoot)) {
+            throw 'Refusing to remove a VMware artifact directory other than the exact configured output root'
+        }
+    } else {
+        $resolvedParentRoot = (Resolve-Path -LiteralPath $ArtifactParentRoot -ErrorAction Stop).Path
+        Assert-AtlasoStrictDescendantPath `
+            -ParentPath $resolvedParentRoot `
+            -ChildPath $resolvedRemovalRoot `
+            -FailureMessage 'Refusing to remove a VMware artifact directory outside the canonical parent root'
+    }
+    $vmxPaths = @(
+        Get-ChildItem `
+            -LiteralPath $resolvedRemovalRoot `
+            -Filter '*.vmx' `
+            -File `
+            -Recurse `
+            -Force `
+            -ErrorAction Stop |
+            ForEach-Object { $_.FullName }
+    )
+
+    if ($PSCmdlet.ShouldProcess($resolvedRemovalRoot, 'Verify VMware VM state and remove artifact root')) {
+        Remove-AtlasoWorkstationVmArtifacts `
+            -VmrunPath $VmrunPath `
+            -VmxPaths $vmxPaths `
+            -RemovalRoot $resolvedRemovalRoot `
+            -Confirm:$false
+    }
+}
+
 Export-ModuleMember -Function @(
     'Assert-AtlasoStrictDescendantPath',
     'Get-AtlasoVmxDisplayName',
+    'Remove-AtlasoWorkstationArtifactRoot',
     'Remove-AtlasoWorkstationVmArtifacts',
     'Test-AtlasoStrictDescendantPath'
 )
