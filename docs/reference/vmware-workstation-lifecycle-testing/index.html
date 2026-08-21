@@ -3568,7 +3568,11 @@ blank-disk claims depend on those identities and reject transient <code>/dev/sdX
 <div class="language-text highlight"><pre><span></span><code><span id="__span-0-1"><a id="__codelineno-0-1" name="__codelineno-0-1" href="#__codelineno-0-1"></a>test-results/vmware-workstation-lifecycle/&lt;timestamp&gt;/vms
 </span></code></pre></div>
 <p>The appliance VMX is copied from the selected Workstation image output. Client VMs use an Alpine cloud VMDK prepared
-from the same upstream QCOW2 source as the Hyper-V lifecycle client.</p>
+from the same upstream QCOW2 source as the Hyper-V lifecycle client. The payload and SHA-512 metadata are cached only as
+a verified pair: corrupt entries are removed on an ordinary rerun, downloads stay in unique partial files until
+validation succeeds, and promotion is scoped to the exact expected cache files. The default Alpine artifact uses the
+versioned <code>v3.24</code> release URL and a repository-pinned SHA-512 digest; custom images must pass their own
+<code>-ExpectedSha512</code> pin.</p>
 <p>Default vmnets:</p>
 <ul>
 <li><code>VMnet8</code> for management, with the appliance address assigned by DHCP by default</li>
