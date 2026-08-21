@@ -351,7 +351,7 @@ if (-not $ValidateOnly -and -not $PrepareIsoOnly -and -not $KeepExistingOutput) 
     $resolvedVmrunPath = Resolve-WorkstationVmrunPath -Path $VmrunPath
     Remove-AtlasoWorkstationArtifactRoot `
         -VmrunPath $resolvedVmrunPath `
-        -ArtifactParentRoot $PackerDirectory `
+        -ExpectedRemovalRoot $workstationOutputDirectory `
         -RemovalRoot $workstationOutputDirectory `
         -Confirm:$false
 }

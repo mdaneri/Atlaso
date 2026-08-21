@@ -152,6 +152,10 @@ The non-reparse-point requirement remains enforced on the artifact root that cle
 Recursive deletion errors are terminating, and cleanup reports success only after confirming that the artifact root is
 absent.
 
+The Photon image builder applies the same inventory checks to the exact resolved `-OutputDirectory`. Absolute custom
+output directories remain supported even when they are outside the Packer directory; cleanup binds deletion to that
+exact configured path and will not accept a sibling or parent path instead.
+
 The normal test-VM `-Redeploy` path also requires the exact named VMX and exactly one well-formed, matching
 `displayName`; missing, duplicate, malformed, or conflicting assignments preserve the existing directory.
 `-ResetDataDisks` accepts only strict canonical

@@ -1474,7 +1474,7 @@ def test_create_atlaso_vmware_test_vm_wrapper_uses_common_helpers():
     assert "Resolve-WorkstationOutputDirectory -PackerDirectory $PackerDirectory -OutputDirectory $OutputDirectory" in build_script
     assert "Atlaso.WorkstationCleanup.psm1" in build_script
     assert "Remove-AtlasoWorkstationArtifactRoot" in build_script
-    assert "-ArtifactParentRoot $PackerDirectory" in build_script
+    assert "-ExpectedRemovalRoot $workstationOutputDirectory" in build_script
     assert build_script.index("Remove-AtlasoWorkstationArtifactRoot") < build_script.index(
         "Invoke-AtlasoPhotonImageBuild"
     )

@@ -227,7 +227,8 @@ def _write_vmx(path: Path, display_name: str) -> None:
 def _run_artifact_root_cleanup(
     tmp_path: Path,
     *,
-    artifact_parent: Path,
+    artifact_parent: Path | None = None,
+    expected_removal_root: Path | None = None,
     removal_root: Path,
     vmrun_path: Path,
     environment: dict[str, str],
@@ -235,12 +236,19 @@ def _run_artifact_root_cleanup(
     """Invoke the shared whole-root cleanup entry point from an isolated wrapper."""
     wrapper = tmp_path / "remove-artifact-root.ps1"
     module_path = VMWARE_SCRIPT_ROOT / "Atlaso.WorkstationCleanup.psm1"
+    if (artifact_parent is None) == (expected_removal_root is None):
+        raise ValueError("Select exactly one cleanup root binding")
+    root_binding = (
+        f"-ArtifactParentRoot '{artifact_parent}'"
+        if artifact_parent is not None
+        else f"-ExpectedRemovalRoot '{expected_removal_root}'"
+    )
     wrapper.write_text(
         f"""$ErrorActionPreference = 'Stop'
 Import-Module '{module_path}' -Force
 Remove-AtlasoWorkstationArtifactRoot `
     -VmrunPath '{vmrun_path}' `
-    -ArtifactParentRoot '{artifact_parent}' `
+    {root_binding} `
     -RemovalRoot '{removal_root}' `
     -Confirm:$false
 Write-Host 'ROOT CLEANUP SUCCEEDED'
@@ -248,6 +256,55 @@ Write-Host 'ROOT CLEANUP SUCCEEDED'
         encoding="utf-8",
     )
     return _run_script(wrapper, environment=environment)
+
+
+def test_whole_artifact_root_cleanup_accepts_exact_absolute_configured_root(
+    tmp_path: Path,
+) -> None:
+    """A supported absolute build output remains cleanable outside the Packer tree."""
+    removal_root = tmp_path / "custom-output" / "atlaso-photon"
+    sentinel = removal_root / "sentinel.txt"
+    removal_root.mkdir(parents=True)
+    sentinel.write_text("replace", encoding="utf-8")
+    vmrun_path, environment, _ = _write_fake_vmrun(
+        tmp_path / "fake", [], running=False, registered=False
+    )
+
+    result = _run_artifact_root_cleanup(
+        tmp_path,
+        expected_removal_root=removal_root,
+        removal_root=removal_root,
+        vmrun_path=vmrun_path,
+        environment=environment,
+    )
+
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert not removal_root.exists()
+
+
+def test_whole_artifact_root_cleanup_rejects_configured_root_mismatch(tmp_path: Path) -> None:
+    """Exact-root mode cannot be redirected to a sibling of the configured output."""
+    expected_root = tmp_path / "configured-output"
+    removal_root = tmp_path / "other-output"
+    expected_root.mkdir()
+    removal_root.mkdir()
+    sentinel = removal_root / "sentinel.txt"
+    sentinel.write_text("preserve", encoding="utf-8")
+    vmrun_path, environment, _ = _write_fake_vmrun(
+        tmp_path / "fake", [], running=False, registered=False
+    )
+
+    result = _run_artifact_root_cleanup(
+        tmp_path,
+        expected_removal_root=expected_root,
+        removal_root=removal_root,
+        vmrun_path=vmrun_path,
+        environment=environment,
+    )
+
+    assert result.returncode != 0
+    assert "other than the exact configured output root" in result.stderr
+    assert sentinel.exists()
 
 
 @pytest.mark.parametrize(

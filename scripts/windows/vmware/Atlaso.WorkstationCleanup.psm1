@@ -463,6 +463,7 @@ function Assert-AtlasoWorkstationRemovalVmxSet {
         [Parameter(Mandatory = $true)]
         [string]$RemovalRoot,
         [Parameter(Mandatory = $true)]
+        [AllowEmptyCollection()]
         [string[]]$ValidatedVmxPaths
     )
 
@@ -599,12 +600,14 @@ function Remove-AtlasoWorkstationVmArtifacts {
 }
 
 function Remove-AtlasoWorkstationArtifactRoot {
-    [CmdletBinding(SupportsShouldProcess = $true)]
+    [CmdletBinding(DefaultParameterSetName = 'CanonicalParent', SupportsShouldProcess = $true)]
     param(
         [Parameter(Mandatory = $true)]
         [string]$VmrunPath,
-        [Parameter(Mandatory = $true)]
+        [Parameter(Mandatory = $true, ParameterSetName = 'CanonicalParent')]
         [string]$ArtifactParentRoot,
+        [Parameter(Mandatory = $true, ParameterSetName = 'ExactConfiguredRoot')]
+        [string]$ExpectedRemovalRoot,
         [Parameter(Mandatory = $true)]
         [string]$RemovalRoot
     )
@@ -613,12 +616,19 @@ function Remove-AtlasoWorkstationArtifactRoot {
         return
     }
 
-    $resolvedParentRoot = (Resolve-Path -LiteralPath $ArtifactParentRoot -ErrorAction Stop).Path
     $resolvedRemovalRoot = (Resolve-Path -LiteralPath $RemovalRoot -ErrorAction Stop).Path
-    Assert-AtlasoStrictDescendantPath `
-        -ParentPath $resolvedParentRoot `
-        -ChildPath $resolvedRemovalRoot `
-        -FailureMessage 'Refusing to remove a VMware artifact directory outside the canonical parent root'
+    if ($PSCmdlet.ParameterSetName -eq 'ExactConfiguredRoot') {
+        $resolvedExpectedRoot = (Resolve-Path -LiteralPath $ExpectedRemovalRoot -ErrorAction Stop).Path
+        if (-not (Test-AtlasoSamePath -Left $resolvedExpectedRoot -Right $resolvedRemovalRoot)) {
+            throw 'Refusing to remove a VMware artifact directory other than the exact configured output root'
+        }
+    } else {
+        $resolvedParentRoot = (Resolve-Path -LiteralPath $ArtifactParentRoot -ErrorAction Stop).Path
+        Assert-AtlasoStrictDescendantPath `
+            -ParentPath $resolvedParentRoot `
+            -ChildPath $resolvedRemovalRoot `
+            -FailureMessage 'Refusing to remove a VMware artifact directory outside the canonical parent root'
+    }
     $vmxPaths = @(
         Get-ChildItem `
             -LiteralPath $resolvedRemovalRoot `
