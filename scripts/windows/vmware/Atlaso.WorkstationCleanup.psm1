@@ -352,27 +352,49 @@ function Get-AtlasoWorkstationRegisteredVmPaths {
         [string]$InventoryPath
     )
 
+    $inventoryLines = @(Get-Content -LiteralPath $InventoryPath -ErrorAction Stop)
     $paths = @()
-    foreach ($line in Get-Content -LiteralPath $InventoryPath -ErrorAction Stop) {
+    $indexPaths = @()
+    $indexNumbers = @()
+    $declaredIndexCounts = @()
+    foreach ($line in $inventoryLines) {
         $assignmentSeparator = $line.IndexOf('=')
-        $registrationKey = if ($assignmentSeparator -ge 0) {
+        $inventoryKey = if ($assignmentSeparator -ge 0) {
             $line.Substring(0, $assignmentSeparator)
         } else {
             $line
         }
-        if ($registrationKey -notmatch '^\s*vmlist.*config\b') {
+
+        if ($inventoryKey -match '^\s*vmlist.*config\b') {
+            if ($line -notmatch '^\s*vmlist\d+\.config\s*=\s*"(.*)"\s*$') {
+                throw "VMware Workstation inventory contains an unrecognized registration entry; refusing filesystem cleanup: $InventoryPath"
+            }
+            $registeredPath = $Matches[1]
+            if ($registeredPath) {
+                $paths += Resolve-AtlasoVerifiedVmxInventoryPath `
+                    -Path $registeredPath `
+                    -InventoryDescription 'VMware Workstation registration inventory'
+            }
             continue
         }
-        if ($line -notmatch '^\s*vmlist\d+\.config\s*=\s*"(.*)"\s*$') {
-            throw "VMware Workstation inventory contains an unrecognized registration entry; refusing filesystem cleanup: $InventoryPath"
-        }
-        $registeredPath = $Matches[1]
-        if (-not $registeredPath) {
+
+        if ($inventoryKey -match '^\s*index\s*\.\s*count\s*$') {
+            if ($line -notmatch '^\s*index\.count\s*=\s*"(\d+)"\s*$') {
+                throw "VMware Workstation inventory contains an unrecognized index count; refusing filesystem cleanup: $InventoryPath"
+            }
+            $declaredIndexCounts += [int]$Matches[1]
             continue
         }
-        $paths += Resolve-AtlasoVerifiedVmxInventoryPath `
-            -Path $registeredPath `
-            -InventoryDescription 'VMware Workstation registration inventory'
+
+        if ($inventoryKey -match '^\s*index\s*\d+\s*\.\s*id\s*$') {
+            if ($line -notmatch '^\s*index(\d+)\.id\s*=\s*"(.+)"\s*$') {
+                throw "VMware Workstation inventory contains an unrecognized index entry; refusing filesystem cleanup: $InventoryPath"
+            }
+            $indexNumbers += [int]$Matches[1]
+            $indexPaths += Resolve-AtlasoVerifiedVmxInventoryPath `
+                -Path $Matches[2] `
+                -InventoryDescription 'VMware Workstation registration index'
+        }
     }
     $fileIdentities = @(
         $paths | ForEach-Object {
@@ -382,6 +404,25 @@ function Get-AtlasoWorkstationRegisteredVmPaths {
     $uniqueFileIdentities = @($fileIdentities | Select-Object -Unique)
     if ($uniqueFileIdentities.Count -ne $paths.Count) {
         throw "VMware Workstation registration inventory contains duplicate VMX paths; refusing filesystem cleanup: $InventoryPath"
+    }
+    $indexFileIdentities = @(
+        $indexPaths | ForEach-Object {
+            Get-AtlasoVmxFileIdentity -Path $_ -InventoryDescription 'VMware Workstation registration index'
+        }
+    )
+    if (
+        $declaredIndexCounts.Count -ne 1 -or
+        $declaredIndexCounts[0] -ne $indexPaths.Count -or
+        $paths.Count -ne $indexPaths.Count -or
+        @($indexNumbers | Select-Object -Unique).Count -ne $indexNumbers.Count -or
+        @($indexFileIdentities | Select-Object -Unique).Count -ne $indexPaths.Count
+    ) {
+        throw "VMware Workstation registration inventory is incomplete or changing; refusing filesystem cleanup: $InventoryPath"
+    }
+    foreach ($path in $paths) {
+        if (-not (Test-AtlasoWorkstationVmListed -Paths $indexPaths -VmxPath $path)) {
+            throw "VMware Workstation registration inventory is incomplete or changing; refusing filesystem cleanup: $InventoryPath"
+        }
     }
     return $paths
 }

@@ -73,7 +73,12 @@ def _write_fake_vmrun(
         + "".join(
             f'vmlist{index}.config = "{path}"\n'
             for index, path in enumerate(registered_paths, start=1)
-        ),
+        )
+        + "".join(
+            f'index{index}.id = "{path}"\n'
+            for index, path in enumerate(registered_paths)
+        )
+        + f'index.count = "{len(registered_paths)}"\n',
         encoding="utf-8",
     )
     log_path = directory / "commands.jsonl"
@@ -108,6 +113,21 @@ def same_file(left: str, right: str) -> bool:
     except (FileNotFoundError, OSError):
         return Path(left) == Path(right)
 
+def write_inventory(paths: list[str]) -> None:
+    inventory.write_text(
+        '.encoding = "UTF-8"\\n'
+        + "".join(
+            f'vmlist{index}.config = "{path}"\\n'
+            for index, path in enumerate(paths, start=1)
+        )
+        + "".join(
+            f'index{index}.id = "{path}"\\n'
+            for index, path in enumerate(paths)
+        )
+        + f'index.count = "{len(paths)}"\\n',
+        encoding="utf-8",
+    )
+
 if command == "list":
     count_path = state / "list-count.txt"
     list_count = int(count_path.read_text(encoding="utf-8")) + 1 if count_path.exists() else 1
@@ -127,14 +147,7 @@ if command == "list":
         registered_paths = read_paths("registered")
         registered_paths.append(str(registered_path.resolve()))
         write_paths("registered", registered_paths)
-        inventory.write_text(
-            '.encoding = "UTF-8"\\n'
-            + "".join(
-                f'vmlist{index}.config = "{path}"\\n'
-                for index, path in enumerate(registered_paths, start=1)
-            ),
-            encoding="utf-8",
-        )
+        write_inventory(registered_paths)
     paths = read_paths("running")
     print(f"Total running VMs: {len(paths)}")
     output_format = os.environ.get("ATLASO_FAKE_VMRUN_RUNNING_PATH_FORMAT", "{}")
@@ -161,14 +174,7 @@ if command == "unregister":
     if os.environ.get("ATLASO_FAKE_VMRUN_UNREGISTER_STICKY") != "1":
         registered_paths = [path for path in registered_paths if not same_file(path, target)]
     write_paths("registered", registered_paths)
-    inventory.write_text(
-        '.encoding = "UTF-8"\\n'
-        + "".join(
-            f'vmlist{index}.config = "{path}"\\n'
-            for index, path in enumerate(registered_paths, start=1)
-        ),
-        encoding="utf-8",
-    )
+    write_inventory(registered_paths)
     raise SystemExit(0)
 print(f"unsupported vmrun command: {command}", file=sys.stderr)
 raise SystemExit(64)
@@ -929,7 +935,10 @@ def test_general_removal_ignores_config_text_in_unrelated_registration_values(
         registered=False,
     )
     inventory_path = Path(environment["ATLASO_FAKE_VMRUN_INVENTORY"])
-    inventory_path.write_text('vmlist0.DisplayName = "Atlaso.config"\n', encoding="utf-8")
+    inventory_path.write_text(
+        'vmlist0.DisplayName = "Atlaso.config"\nindex.count = "0"\n',
+        encoding="utf-8",
+    )
 
     result = _run_script(
         VMWARE_SCRIPT_ROOT / "remove-atlaso-vm.ps1",
@@ -990,6 +999,40 @@ def test_general_removal_uses_inventory_file_for_registered_state(tmp_path: Path
     assert "listRegisteredVM" not in command_names
 
 
+def test_general_removal_rejects_an_incomplete_registration_inventory(tmp_path: Path) -> None:
+    """A header-only Workstation inventory must preserve registered artifacts.
+
+    Args:
+        tmp_path: Isolated test directory.
+    """
+    vm_directory = tmp_path / "Atlaso-Incomplete-Registration"
+    vmx_path = vm_directory / "Atlaso-Incomplete-Registration.vmx"
+    _write_vmx(vmx_path, "Atlaso-Incomplete-Registration")
+    vmrun_path, environment, _ = _write_fake_vmrun(
+        tmp_path / "fake",
+        [vmx_path],
+        running=False,
+        registered=True,
+    )
+    inventory_path = Path(environment["ATLASO_FAKE_VMRUN_INVENTORY"])
+    inventory_path.write_text('.encoding = "UTF-8"\n', encoding="utf-8")
+
+    result = _run_script(
+        VMWARE_SCRIPT_ROOT / "remove-atlaso-vm.ps1",
+        "-VmxPath",
+        str(vmx_path),
+        "-VmrunPath",
+        str(vmrun_path),
+        "-ExpectedName",
+        "Atlaso-Incomplete-Registration",
+        environment=environment,
+    )
+
+    assert result.returncode != 0
+    assert "registration inventory is incomplete or changing" in result.stderr
+    assert vmx_path.exists()
+
+
 def test_general_removal_matches_a_running_vmx_by_filesystem_identity(
     tmp_path: Path,
 ) -> None:
@@ -1046,7 +1089,10 @@ def test_general_removal_accepts_an_empty_registration_tombstone(
         registered=False,
     )
     inventory_path = Path(environment["ATLASO_FAKE_VMRUN_INVENTORY"])
-    inventory_path.write_text('vmlist0.config = ""\n', encoding="utf-8")
+    inventory_path.write_text(
+        'vmlist0.config = ""\nindex.count = "0"\n',
+        encoding="utf-8",
+    )
 
     result = _run_script(
         VMWARE_SCRIPT_ROOT / "remove-atlaso-vm.ps1",
