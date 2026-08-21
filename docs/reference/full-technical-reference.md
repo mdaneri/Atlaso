@@ -1344,6 +1344,8 @@ output, and cleanup verifies checked running and registered inventories plus suc
 before deleting an artifact root. Inventory entries must be canonical absolute VMX paths whose Windows volume and file
 identities can be resolved, so 8.3, mapped-drive, and other filesystem aliases cannot bypass state detection. Any
 malformed inventory or unresolved `vmrun` state preserves the files and returns failure.
+Immediately before recursive deletion, cleanup checks every fresh running and registered Workstation inventory entry
+against the removal root so a VMX introduced after the initial directory snapshot preserves the entire artifact tree.
 
 The standalone VMware and Hyper-V `clean-artifacts.ps1` helpers apply the same fail-closed rule to their canonical
 `output`, `test-vms`, and provider-specific export roots. VMware cleanup reconciles `vmrun` and Workstation registration

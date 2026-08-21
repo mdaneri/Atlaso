@@ -33,6 +33,7 @@ def _write_fake_vmrun(
     running_path_format: str = "{}",
     stop_sticky: bool = False,
     unregister_sticky: bool = False,
+    late_registered_vmx: Path | None = None,
 ) -> tuple[Path, dict[str, str], Path]:
     """Create a stateful fake ``vmrun`` command and Workstation inventory.
 
@@ -46,6 +47,7 @@ def _write_fake_vmrun(
         running_path_format: Format applied to each path printed by ``vmrun list``.
         stop_sticky: Whether a successful stop leaves the VM in running inventory.
         unregister_sticky: Whether a successful unregister leaves the VM registered.
+        late_registered_vmx: VMX injected into registration inventory at the final state gate.
 
     Returns:
         The fake command path, its environment, and the command-log path.
@@ -105,6 +107,25 @@ def same_file(left: str, right: str) -> bool:
         return Path(left) == Path(right)
 
 if command == "list":
+    count_path = state / "list-count.txt"
+    list_count = int(count_path.read_text(encoding="utf-8")) + 1 if count_path.exists() else 1
+    count_path.write_text(str(list_count), encoding="utf-8")
+    late_registered = os.environ.get("ATLASO_FAKE_VMRUN_LATE_REGISTERED_VMX", "")
+    if late_registered and list_count == 3:
+        late_path = Path(late_registered)
+        late_path.parent.mkdir(parents=True, exist_ok=True)
+        late_path.write_text(f'displayName = "{late_path.stem}"\\n', encoding="utf-8")
+        registered_paths = read_paths("registered")
+        registered_paths.append(str(late_path.resolve()))
+        write_paths("registered", registered_paths)
+        inventory.write_text(
+            '.encoding = "UTF-8"\\n'
+            + "".join(
+                f'vmlist{index}.config = "{path}"\\n'
+                for index, path in enumerate(registered_paths, start=1)
+            ),
+            encoding="utf-8",
+        )
     paths = read_paths("running")
     print(f"Total running VMs: {len(paths)}")
     output_format = os.environ.get("ATLASO_FAKE_VMRUN_RUNNING_PATH_FORMAT", "{}")
@@ -176,6 +197,7 @@ raise SystemExit(64)
             "ATLASO_FAKE_VMRUN_RUNNING_PATH_FORMAT": running_path_format,
             "ATLASO_FAKE_VMRUN_STOP_STICKY": "1" if stop_sticky else "0",
             "ATLASO_FAKE_VMRUN_UNREGISTER_STICKY": "1" if unregister_sticky else "0",
+            "ATLASO_FAKE_VMRUN_LATE_REGISTERED_VMX": str(late_registered_vmx or ""),
             "APPDATA": str(appdata_directory),
         }
     )
@@ -420,6 +442,35 @@ def test_whole_artifact_root_cleanup_rejects_incomplete_vmrun_transition(
     assert result.returncode != 0
     assert expected_error in result.stderr
     assert vmx_path.exists()
+
+
+def test_whole_artifact_root_cleanup_rejects_late_registered_vmx(tmp_path: Path) -> None:
+    """The final full inventory gate must preserve a VMX registered after the initial snapshot."""
+    artifact_parent = tmp_path / "image-root"
+    removal_root = artifact_parent / "output"
+    initial_vmx = removal_root / "initial" / "Initial.vmx"
+    late_vmx = removal_root / "late" / "Late.vmx"
+    _write_vmx(initial_vmx, "Initial")
+    vmrun_path, environment, _ = _write_fake_vmrun(
+        tmp_path / "fake",
+        [initial_vmx],
+        running=True,
+        registered=True,
+        late_registered_vmx=late_vmx,
+    )
+
+    result = _run_artifact_root_cleanup(
+        tmp_path,
+        artifact_parent=artifact_parent,
+        removal_root=removal_root,
+        vmrun_path=vmrun_path,
+        environment=environment,
+    )
+
+    assert result.returncode != 0
+    assert "new running or registered VMware VMX appeared" in result.stderr
+    assert removal_root.exists()
+    assert late_vmx.exists()
 
 
 def test_whole_artifact_root_cleanup_rejects_an_out_of_root_target(tmp_path: Path) -> None:

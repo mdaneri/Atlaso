@@ -582,6 +582,11 @@ function Remove-AtlasoWorkstationVmArtifacts {
 
     $finalRunningPaths = @(Get-AtlasoWorkstationVmPaths -VmrunPath $VmrunPath -State running)
     $finalRegisteredPaths = @(Get-AtlasoWorkstationRegisteredVmPaths -InventoryPath $inventoryPath -VmrunPath $VmrunPath)
+    foreach ($finalInventoryPath in @($finalRunningPaths) + @($finalRegisteredPaths)) {
+        if (Test-AtlasoStrictDescendantPath -ParentPath $resolvedRemovalRoot -ChildPath $finalInventoryPath) {
+            throw "A new running or registered VMware VMX appeared before filesystem cleanup; artifacts were preserved: $finalInventoryPath"
+        }
+    }
     foreach ($resolvedVmxPath in $resolvedVmxPaths) {
         if (
             (Test-AtlasoWorkstationVmListed -Paths $finalRunningPaths -VmxPath $resolvedVmxPath) -or
