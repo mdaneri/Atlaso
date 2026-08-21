@@ -1012,8 +1012,8 @@ def test_management_handoff_merges_previous_static_and_dynamic_addresses(monkeyp
     assert helper._management_handoff_previous_link_interfaces(payload) == {"eth0", "eth0.20"}
 
 
-def test_management_handoff_syncs_backups_before_publishing_marker(monkeypatch, tmp_path):
-    """Make backup directory entries durable before the rollback marker.
+def test_management_handoff_syncs_transaction_and_backups_before_marker(monkeypatch, tmp_path):
+    """Make the transaction directory and backups durable before the marker.
 
     Args:
         monkeypatch: Pytest fixture used to isolate snapshot dependencies.
@@ -1062,6 +1062,7 @@ def test_management_handoff_syncs_backups_before_publishing_marker(monkeypatch, 
     )
 
     assert operations == [
+        ("sync", state_dir.parent),
         ("sync", backup_dir),
         ("publish", state_dir / "state.json"),
     ]

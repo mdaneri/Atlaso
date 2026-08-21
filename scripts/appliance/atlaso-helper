@@ -15467,7 +15467,10 @@ def _snapshot_management_handoff(payload: dict) -> dict:
     """
     if MANAGEMENT_HANDOFF_STATE_PATH.exists():
         raise ValueError("another management handoff requires recovery")
-    MANAGEMENT_HANDOFF_STATE_DIR.mkdir(parents=True, exist_ok=True)
+    state_dir_existed = MANAGEMENT_HANDOFF_STATE_DIR.is_dir()
+    MANAGEMENT_HANDOFF_STATE_DIR.mkdir(mode=0o700, parents=True, exist_ok=True)
+    if not state_dir_existed:
+        _fsync_directory(MANAGEMENT_HANDOFF_STATE_DIR.parent)
     os.chmod(MANAGEMENT_HANDOFF_STATE_DIR, 0o700)
     shutil.rmtree(MANAGEMENT_HANDOFF_BACKUP_DIR, ignore_errors=True)
     MANAGEMENT_HANDOFF_BACKUP_DIR.mkdir(mode=0o700)
