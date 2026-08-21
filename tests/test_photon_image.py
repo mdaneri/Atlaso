@@ -1804,7 +1804,7 @@ def test_vmware_lifecycle_cleanup_only_removes_existing_lifecycle_vms():
     recursive_delete = cleanup_module.rindex(
         "Remove-Item -LiteralPath $resolvedRemovalRoot -Recurse -Force -ErrorAction Stop"
     )
-    assert final_scan < final_running_state < final_registered_state < recursive_delete
+    assert final_running_state < final_registered_state < final_scan < recursive_delete
     assert "VMware artifact directory remains after recursive cleanup; refusing to report success" in cleanup_module
     assert "Atlaso.WorkstationCleanup.psm1" in runner
     assert "Remove-AtlasoWorkstationVmArtifacts" in runner

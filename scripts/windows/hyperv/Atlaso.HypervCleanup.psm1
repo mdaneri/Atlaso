@@ -93,6 +93,7 @@ function Test-AtlasoHypervVmUsesArtifactRoot {
         [Parameter(Mandatory = $true)][string]$RemovalRoot
     )
 
+    $usesArtifactRoot = $false
     foreach ($path in (Get-AtlasoHypervVmArtifactPaths -Vm $Vm)) {
         if (
             (Test-AtlasoHypervSamePath -Left $RemovalRoot -Right $path) -or
@@ -109,10 +110,10 @@ function Test-AtlasoHypervVmUsesArtifactRoot {
             ) {
                 throw "Hyper-V inventory path resolves outside the requested artifact root: $path"
             }
-            return $true
+            $usesArtifactRoot = $true
         }
     }
-    return $false
+    return $usesArtifactRoot
 }
 
 function Get-AtlasoHypervVmsUsingArtifactRoot {
