@@ -57,29 +57,35 @@ $boundParameters = @{
 $childArguments = Get-OnePasswordChildArguments `
     -BoundParameters $boundParameters `
     -ScriptPath 'C:\repo\deploy-wheel.ps1'
-Assert-Contains -Actual $childArguments -Expected '-OnePasswordEnvironmentChild' -Message 'The child marker must be forwarded.'
+if ($childArguments -contains '-OnePasswordEnvironmentChild') {
+    throw 'The bridge child must not be authorized by a caller-selectable switch.'
+}
 Assert-Contains -Actual $childArguments -Expected '-IpAddress' -Message 'Bound deployment arguments must be forwarded.'
 Assert-Contains -Actual $childArguments -Expected '192.0.2.10' -Message 'Bound deployment values must be forwarded.'
 if ($childArguments -contains 'blgexucrwfr2dtsxe2q4uu7dp4') {
     throw 'The Environment ID must not be forwarded to the bridge child.'
 }
 
-$OnePasswordEnvironmentChild = $false
 Remove-Item Env:\DEFAULT_ADMIN_PASSWORD -ErrorAction SilentlyContinue
+Remove-Item Env:\ATLASO_ONEPASSWORD_BRIDGE_NONCE -ErrorAction SilentlyContinue
 if ((Resolve-OnePasswordChildPassword) -ne '') {
     throw 'The ordinary key/agent path must not consume DEFAULT_ADMIN_PASSWORD.'
 }
-$OnePasswordEnvironmentChild = $true
+$env:DEFAULT_ADMIN_PASSWORD = 'fixture-secret-is-not-output'
 Assert-Throws {
     Resolve-OnePasswordChildPassword
-} 'A missing DEFAULT_ADMIN_PASSWORD must fail closed.'
-$env:DEFAULT_ADMIN_PASSWORD = 'fixture-secret-is-not-output'
+} 'A caller-provided DEFAULT_ADMIN_PASSWORD without bridge authorization must fail closed.'
+$env:ATLASO_ONEPASSWORD_BRIDGE_NONCE = 'fixture-bridge-marker'
 try {
     if ((Resolve-OnePasswordChildPassword) -ne 'fixture-secret-is-not-output') {
         throw 'The bridge child did not consume the named Environment variable.'
     }
+    if (Test-Path Env:\DEFAULT_ADMIN_PASSWORD) {
+        throw 'The bridge child must clear DEFAULT_ADMIN_PASSWORD immediately after capture.'
+    }
 } finally {
     Remove-Item Env:\DEFAULT_ADMIN_PASSWORD -ErrorAction SilentlyContinue
+    Remove-Item Env:\ATLASO_ONEPASSWORD_BRIDGE_NONCE -ErrorAction SilentlyContinue
 }
 
 $scriptText = $deploySource
@@ -91,6 +97,12 @@ if (-not $scriptText.Contains('paramiko.RejectPolicy()', [System.StringCompariso
 }
 if (-not $scriptText.Contains('Secret redaction failed', [System.StringComparison]::Ordinal)) {
     throw 'Password-backed deployment must fail closed when output redaction fails.'
+}
+if (-not $scriptText.Contains('Remove-Item Env:\DEFAULT_ADMIN_PASSWORD', [System.StringComparison]::Ordinal)) {
+    throw 'The bridge child must clear the source Environment variable after capture.'
+}
+if ($scriptText.Contains('[switch]$OnePasswordEnvironmentChild', [System.StringComparison]::Ordinal)) {
+    throw 'The bridge child must not expose a caller-selectable authorization switch.'
 }
 
 Write-Output 'Deploy wheel 1Password bridge tests passed.'

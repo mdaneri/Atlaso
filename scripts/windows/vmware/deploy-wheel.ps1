@@ -16,7 +16,6 @@ param(
     [switch]$SkipInventoryLinuxSync,
     [string]$WheelPath = '',
     [string]$OnePasswordEnvironmentId = '',
-    [switch]$OnePasswordEnvironmentChild,
     [switch]$ResetVaultEntries,
     [switch]$SkipHostCheck
 )
@@ -25,6 +24,7 @@ $ErrorActionPreference = 'Stop'
 
 $script:OnePasswordPasswordVariable = 'DEFAULT_ADMIN_PASSWORD'
 $script:OnePasswordRuntimePasswordVariable = 'ATLASO_DEPLOY_RUNTIME_PASSWORD'
+$script:OnePasswordBridgeNonceVariable = 'ATLASO_ONEPASSWORD_BRIDGE_NONCE'
 
 function Resolve-OnePasswordCliPath {
     $command = Get-Command op.exe -ErrorAction SilentlyContinue
@@ -59,9 +59,9 @@ function Get-OnePasswordChildArguments {
         [Parameter(Mandatory = $true)][string]$ScriptPath
     )
 
-    $childArguments = @('-NoLogo', '-NoProfile', '-NonInteractive', '-File', $ScriptPath, '-OnePasswordEnvironmentChild')
+    $childArguments = @('-NoLogo', '-NoProfile', '-NonInteractive', '-File', $ScriptPath)
     foreach ($entry in $BoundParameters.GetEnumerator()) {
-        if ($entry.Key -in @('OnePasswordEnvironmentId', 'OnePasswordEnvironmentChild')) {
+        if ($entry.Key -eq 'OnePasswordEnvironmentId') {
             continue
         }
         if ($entry.Value -is [System.Management.Automation.SwitchParameter]) {
@@ -90,6 +90,9 @@ function Invoke-OnePasswordEnvironmentBridge {
     if ($env:DEFAULT_ADMIN_PASSWORD) {
         throw 'DEFAULT_ADMIN_PASSWORD must not be supplied by the caller; use the exact Atlaso 1Password Environment bridge.'
     }
+    if ($env:ATLASO_ONEPASSWORD_BRIDGE_NONCE) {
+        throw 'The 1Password Environment bridge is already active in this process; nested credential bridges are not allowed.'
+    }
 
     $opPath = Resolve-OnePasswordCliPath
     $runHelp = (& $opPath run --help 2>&1 | Out-String)
@@ -100,17 +103,28 @@ function Invoke-OnePasswordEnvironmentBridge {
     }
 
     $childArguments = Get-OnePasswordChildArguments -BoundParameters $BoundParameters -ScriptPath $ScriptPath
-    & $opPath run --environment $EnvironmentId -- $pwsh.Source @childArguments
-    if ($LASTEXITCODE -ne 0) {
-        throw "The 1Password Environment credential bridge failed with exit code $LASTEXITCODE. Verify authorization, the exact Atlaso Environment, and DEFAULT_ADMIN_PASSWORD availability."
+    $bridgeNonce = "$([guid]::NewGuid().ToString('N'))$([guid]::NewGuid().ToString('N'))"
+    try {
+        $env:ATLASO_ONEPASSWORD_BRIDGE_NONCE = $bridgeNonce
+        & $opPath run --environment $EnvironmentId -- $pwsh.Source @childArguments
+        if ($LASTEXITCODE -ne 0) {
+            throw "The 1Password Environment credential bridge failed with exit code $LASTEXITCODE. Verify authorization, the exact Atlaso Environment, and DEFAULT_ADMIN_PASSWORD availability."
+        }
+    } finally {
+        Remove-Item Env:\ATLASO_ONEPASSWORD_BRIDGE_NONCE -ErrorAction SilentlyContinue
     }
 }
 
 function Resolve-OnePasswordChildPassword {
-    if (-not $OnePasswordEnvironmentChild) {
+    if (-not $env:ATLASO_ONEPASSWORD_BRIDGE_NONCE) {
+        if ($env:DEFAULT_ADMIN_PASSWORD) {
+            throw 'DEFAULT_ADMIN_PASSWORD must not be supplied outside the exact 1Password Environment bridge.'
+        }
         return ''
     }
     $password = [string]$env:DEFAULT_ADMIN_PASSWORD
+    Remove-Item Env:\DEFAULT_ADMIN_PASSWORD -ErrorAction SilentlyContinue
+    Remove-Item Env:\ATLASO_ONEPASSWORD_BRIDGE_NONCE -ErrorAction SilentlyContinue
     if ([string]::IsNullOrEmpty($password)) {
         throw 'The exact 1Password Environment did not provide DEFAULT_ADMIN_PASSWORD; deployment stopped before authentication.'
     }
@@ -600,7 +614,6 @@ finally:
             -PythonCommand $PythonCommand `
             -WorkingDirectory $WorkingDirectory `
             -TemporaryDirectory $passwordDeployDirectory
-        $env:ATLASO_DEPLOY_RUNTIME_PASSWORD = $Password
         if ($temporaryPythonPath) {
             $env:PYTHONPATH = if ($previousPythonPath) {
                 "$temporaryPythonPath$([System.IO.Path]::PathSeparator)$previousPythonPath"
@@ -668,6 +681,7 @@ finally:
             '--local-nginx-service-drop-in', $LocalNginxServiceDropInPath,
             '--remote-nginx-service-drop-in', $RemoteNginxServiceDropIn
         )
+        $env:ATLASO_DEPLOY_RUNTIME_PASSWORD = $Password
         Invoke-CheckedCommand -FilePath $PythonCommand -WorkingDirectory $WorkingDirectory -Arguments $deployArguments
     } finally {
         if ($null -eq $previousPassword) {
@@ -685,9 +699,6 @@ finally:
 }
 
 $SshPassword = Resolve-OnePasswordChildPassword
-if ($OnePasswordEnvironmentId -and $OnePasswordEnvironmentChild) {
-    throw 'The 1Password Environment ID cannot be used by the bridge child process.'
-}
 if ($OnePasswordEnvironmentId) {
     Invoke-OnePasswordEnvironmentBridge `
         -EnvironmentId $OnePasswordEnvironmentId `

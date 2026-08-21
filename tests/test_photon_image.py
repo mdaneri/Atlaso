@@ -1579,7 +1579,8 @@ def test_vmware_deploy_wheel_supports_secure_onepassword_password_deploy():
     readme = Path("docs/reference/full-technical-reference.md").read_text(encoding="utf-8")
 
     assert "[string]$OnePasswordEnvironmentId = ''" in script
-    assert "[switch]$OnePasswordEnvironmentChild" in script
+    assert "ATLASO_ONEPASSWORD_BRIDGE_NONCE" in script
+    assert "[switch]$OnePasswordEnvironmentChild" not in script
     assert "function Invoke-OnePasswordEnvironmentBridge" in script
     assert "--environment $EnvironmentId" in script
     assert "DEFAULT_ADMIN_PASSWORD" in script
@@ -1619,6 +1620,7 @@ def test_vmware_deploy_wheel_supports_secure_onepassword_password_deploy():
     assert "systemctl restart atlaso-worker.service" in script
     assert "systemctl is-active atlaso-worker.service" in script
     assert "ATLASO_DEPLOY_RUNTIME_PASSWORD" in script
+    assert "Remove-Item Env:\\DEFAULT_ADMIN_PASSWORD" in script
     assert "client.set_missing_host_key_policy(paramiko.RejectPolicy())" in script
     assert "client.load_system_host_keys()" in script
     assert "allow_agent=False" in script
