@@ -157,3 +157,30 @@ test("availability polling is visibility aware and uses a one-minute cadence", (
   assert.match(appSource, /}, 60000\);/);
   assert.match(appSource, /cache: "no-store"/);
 });
+
+test("terminal appliance update tasks refresh availability once per observed parent", () => {
+  const context = vm.createContext({ calls: 0, Set, Promise });
+  vm.runInContext(
+    `const atlasoAvailabilityTerminalTaskIds = new Set();
+     function taskStatusActive(status) { return status === "pending" || status === "running"; }
+     function refreshApplianceUpdateAvailability() { calls += 1; return Promise.resolve(); }
+     ${functionSource("refreshAvailabilityForTerminalUpdateTasks")}
+     globalThis.run = refreshAvailabilityForTerminalUpdateTasks;`,
+    context,
+  );
+  const running = { id: "job-running", type: "appliance-update", status: "running" };
+  const terminal = { id: "job-terminal", type: "appliance-update", status: "succeeded" };
+  const failed = { id: "job-failed", type: "appliance-update", status: "failed" };
+  context.run([
+    running,
+    terminal,
+    failed,
+    { id: "job-step", type: "appliance-update", status: "failed", is_step: true },
+    { id: "job-other", type: "managed-script", status: "succeeded" },
+  ]);
+  assert.equal(context.calls, 1);
+  context.run([terminal, failed]);
+  assert.equal(context.calls, 1);
+  context.run([{ ...running, status: "succeeded" }]);
+  assert.equal(context.calls, 2);
+});

@@ -12796,10 +12796,36 @@ let atlasoTasksReopenSelected = false;
 let atlasoUpdateAvailability = { available: false, affected_stream_count: 0, streams: [] };
 let atlasoUpdateAvailabilityTimer = 0;
 let atlasoUpdateAvailabilityRequest = null;
-let atlasoLastAvailabilityTerminalTask = "";
+const atlasoAvailabilityTerminalTaskIds = new Set();
 
 function taskStatusActive(status) {
   return ["pending", "running"].includes(String(status || ""));
+}
+
+function refreshAvailabilityForTerminalUpdateTasks(tasks) {
+  let newlyObserved = false;
+  (Array.isArray(tasks) ? tasks : []).forEach((task) => {
+    const taskId = String(task?.id || "");
+    if (
+      !taskId
+      || task?.is_step
+      || task?.type !== "appliance-update"
+      || taskStatusActive(task?.status)
+      || atlasoAvailabilityTerminalTaskIds.has(taskId)
+    ) {
+      return;
+    }
+    atlasoAvailabilityTerminalTaskIds.add(taskId);
+    newlyObserved = true;
+  });
+  while (atlasoAvailabilityTerminalTaskIds.size > 200) {
+    atlasoAvailabilityTerminalTaskIds.delete(
+      atlasoAvailabilityTerminalTaskIds.values().next().value,
+    );
+  }
+  if (newlyObserved) {
+    refreshApplianceUpdateAvailability().catch(() => {});
+  }
 }
 
 function setApplianceUpdateActionsDisabled(disabled, { busy = disabled } = {}) {
@@ -13230,26 +13256,17 @@ function applyTasksStatusPayload(payload, { reopen = false } = {}) {
     count.className = `status-pill ${active ? "warn" : "muted"}`;
   }
   const selected = payload.selected_task || taskById(queryId);
+  const actionTasks = selected && !atlasoTasks.some((task) => task.id === selected.id)
+    ? [...atlasoTasks, selected]
+    : atlasoTasks;
   updateApplianceUpdateSourceSyncState(selected);
-  if (
-    selected
-    && !selected.is_step
-    && !taskStatusActive(selected.status)
-    && selected.id === atlasoNewTaskId
-    && selected.id !== atlasoLastAvailabilityTerminalTask
-  ) {
-    atlasoLastAvailabilityTerminalTask = selected.id;
-    refreshApplianceUpdateAvailability().catch(() => {});
-  }
+  refreshAvailabilityForTerminalUpdateTasks(actionTasks);
   if (selected && (reopen || document.getElementById("task-detail-modal")?.open)) {
     renderTaskDetail(selected);
     if (reopen) {
       openTaskDetail(selected);
     }
   }
-  const actionTasks = selected && !atlasoTasks.some((task) => task.id === selected.id)
-    ? [...atlasoTasks, selected]
-    : atlasoTasks;
   updateApplianceUpdateActions(actionTasks);
   window.clearTimeout(atlasoTasksRefreshTimer);
   if (
