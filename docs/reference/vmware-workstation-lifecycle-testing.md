@@ -18,7 +18,8 @@ Windows 1Password handoff documented in the [full technical reference](full-tech
 local integration, verify the unique `Atlaso` Environment and concealed `DEFAULT_ADMIN_PASSWORD` variable by name,
 then pass only its opaque Environment ID through `-OnePasswordEnvironmentId`. The handoff requires the supported
 `op run --environment` capability and provisions the value only into the bounded Paramiko deployment child, preserves
-SSH known-host verification, and fails closed when authorization or any required Environment input is unavailable. Key-backed Windows
+SSH known-host verification, and fails closed when authorization or any required Environment input is unavailable.
+Key-backed Windows
 transfers keep `scp` sources and destinations separate and cross the PowerShell login shell through a secret-free
 base64 `sh -lc` wrapper. Password-backed SSH supports one password-only keyboard-interactive challenge, rejects OTP/MFA
 prompts, and uses a separate deployment timeout from the readiness allowance with a non-PTY
