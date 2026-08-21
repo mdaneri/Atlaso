@@ -1,5 +1,93 @@
 Set-StrictMode -Version Latest
 
+if (-not ('Atlaso.HypervFinalPath' -as [type])) {
+    Add-Type -TypeDefinition @'
+using System;
+using System.ComponentModel;
+using System.Runtime.InteropServices;
+using System.Text;
+using Microsoft.Win32.SafeHandles;
+
+namespace Atlaso
+{
+    public static class HypervFinalPath
+    {
+        private const uint FileReadAttributes = 0x80;
+        private const uint FileShareRead = 0x1;
+        private const uint FileShareWrite = 0x2;
+        private const uint FileShareDelete = 0x4;
+        private const uint OpenExisting = 3;
+        private const uint FileFlagBackupSemantics = 0x02000000;
+
+        [DllImport("kernel32.dll", CharSet = CharSet.Unicode, SetLastError = true)]
+        private static extern SafeFileHandle CreateFileW(
+            string fileName,
+            uint desiredAccess,
+            uint shareMode,
+            IntPtr securityAttributes,
+            uint creationDisposition,
+            uint flagsAndAttributes,
+            IntPtr templateFile
+        );
+
+        [DllImport("kernel32.dll", CharSet = CharSet.Unicode, SetLastError = true)]
+        private static extern uint GetFinalPathNameByHandleW(
+            SafeFileHandle file,
+            StringBuilder path,
+            uint pathLength,
+            uint flags
+        );
+
+        public static string Get(string path)
+        {
+            using (SafeFileHandle handle = CreateFileW(
+                path,
+                FileReadAttributes,
+                FileShareRead | FileShareWrite | FileShareDelete,
+                IntPtr.Zero,
+                OpenExisting,
+                FileFlagBackupSemantics,
+                IntPtr.Zero
+            ))
+            {
+                if (handle.IsInvalid)
+                {
+                    throw new Win32Exception(Marshal.GetLastWin32Error());
+                }
+
+                StringBuilder result = new StringBuilder(512);
+                uint length = GetFinalPathNameByHandleW(handle, result, (uint)result.Capacity, 0);
+                if (length == 0)
+                {
+                    throw new Win32Exception(Marshal.GetLastWin32Error());
+                }
+                if (length >= result.Capacity)
+                {
+                    result = new StringBuilder((int)length + 1);
+                    length = GetFinalPathNameByHandleW(handle, result, (uint)result.Capacity, 0);
+                    if (length == 0 || length >= result.Capacity)
+                    {
+                        throw new Win32Exception(Marshal.GetLastWin32Error());
+                    }
+                }
+
+                string finalPath = result.ToString();
+                if (finalPath.StartsWith(@"\\?\UNC\", StringComparison.OrdinalIgnoreCase))
+                {
+                    return @"\\" + finalPath.Substring(8);
+                }
+                if (finalPath.StartsWith(@"\\?\", StringComparison.OrdinalIgnoreCase))
+                {
+                    return finalPath.Substring(4);
+                }
+                return finalPath;
+            }
+        }
+    }
+}
+'@
+}
+
 function Get-AtlasoHypervCanonicalPath {
     param([Parameter(Mandatory = $true)][string]$Path)
 
@@ -12,6 +100,17 @@ function Get-AtlasoHypervCanonicalPath {
         [System.IO.Path]::DirectorySeparatorChar,
         [System.IO.Path]::AltDirectorySeparatorChar
     )
+}
+
+function Get-AtlasoHypervFinalPath {
+    param([Parameter(Mandatory = $true)][string]$Path)
+
+    try {
+        return Get-AtlasoHypervCanonicalPath -Path ([Atlaso.HypervFinalPath]::Get($Path))
+    }
+    catch {
+        throw "Hyper-V inventory path cannot be resolved for ownership validation: $Path ($($_.Exception.Message))"
+    }
 }
 
 function Test-AtlasoHypervSamePath {
@@ -106,21 +205,26 @@ function Test-AtlasoHypervVmUsesArtifactRoot {
         [Parameter(Mandatory = $true)][string]$RemovalRoot
     )
 
+    $resolvedRemovalRoot = Get-AtlasoHypervFinalPath -Path $RemovalRoot
     $usesArtifactRoot = $false
     foreach ($path in (Get-AtlasoHypervVmArtifactPaths -Vm $Vm)) {
-        if (
+        $lexicallyMatchesRemovalRoot = (
             (Test-AtlasoHypervSamePath -Left $RemovalRoot -Right $path) -or
             (Test-AtlasoHypervStrictDescendantPath -ParentPath $RemovalRoot -ChildPath $path)
-        ) {
-            Assert-AtlasoHypervPathHasNoReparsePoint -Path $path
-            if (-not (Test-Path -LiteralPath $path)) {
+        )
+        if (-not (Test-Path -LiteralPath $path)) {
+            if ($lexicallyMatchesRemovalRoot) {
                 throw "Hyper-V inventory path cannot be resolved for ownership validation: $path"
             }
-            $resolvedInventoryPath = (Resolve-Path -LiteralPath $path -ErrorAction Stop).Path
-            if (
-                -not (Test-AtlasoHypervSamePath -Left $RemovalRoot -Right $resolvedInventoryPath) -and
-                -not (Test-AtlasoHypervStrictDescendantPath -ParentPath $RemovalRoot -ChildPath $resolvedInventoryPath)
-            ) {
+            continue
+        }
+        $resolvedInventoryPath = Get-AtlasoHypervFinalPath -Path $path
+        $resolvedMatchesRemovalRoot = (
+            (Test-AtlasoHypervSamePath -Left $resolvedRemovalRoot -Right $resolvedInventoryPath) -or
+            (Test-AtlasoHypervStrictDescendantPath -ParentPath $resolvedRemovalRoot -ChildPath $resolvedInventoryPath)
+        )
+        if ($lexicallyMatchesRemovalRoot -or $resolvedMatchesRemovalRoot) {
+            if (-not $resolvedMatchesRemovalRoot) {
                 throw "Hyper-V inventory path resolves outside the requested artifact root: $path"
             }
             $usesArtifactRoot = $true

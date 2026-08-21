@@ -331,7 +331,7 @@ def test_hyperv_cleanup_rejects_reparse_component_in_vm_inventory_path(tmp_path:
 
     state = json.loads((tmp_path / "hyperv-state.json").read_text(encoding="utf-8"))
     assert result.returncode != 0
-    assert "reparse point" in result.stderr
+    assert "resolves outside the requested artifact root" in result.stderr
     assert len(state["vms"]) == 1
     assert outside_disk.read_text(encoding="utf-8") == "external"
     assert removal_root.exists()
@@ -367,7 +367,7 @@ def test_hyperv_cleanup_validates_every_matching_vm_inventory_path(tmp_path: Pat
 
     state = json.loads((tmp_path / "hyperv-state.json").read_text(encoding="utf-8"))
     assert result.returncode != 0
-    assert "reparse point" in result.stderr
+    assert "resolves outside the requested artifact root" in result.stderr
     assert len(state["vms"]) == 1
     assert outside_disk.read_text(encoding="utf-8") == "external"
     assert removal_root.exists()
@@ -405,6 +405,41 @@ def test_hyperv_cleanup_detects_parent_vhd_dependency_outside_vm_root(tmp_path: 
     assert len(state["vms"]) == 1
     assert parent_disk.read_text(encoding="utf-8") == "parent"
     assert child_disk.read_text(encoding="utf-8") == "child"
+
+
+def test_hyperv_cleanup_resolves_outside_alias_to_in_root_disk(tmp_path: Path) -> None:
+    """An outside alias to an in-root disk is treated as a VM dependency.
+
+    Args:
+        tmp_path: Isolated test directory.
+    """
+    hyperv_root = tmp_path / "hyperv"
+    removal_root = hyperv_root / "output"
+    disk_path = removal_root / "Atlaso.vhdx"
+    disk_path.parent.mkdir(parents=True)
+    disk_path.write_text("parent", encoding="utf-8")
+    alias_root = tmp_path / "alias"
+    try:
+        alias_root.symlink_to(removal_root, target_is_directory=True)
+    except OSError as error:
+        pytest.skip(f"Directory links are unavailable: {error}")
+    lifecycle_root = tmp_path / "test-results" / "Atlaso-Test"
+    lifecycle_root.mkdir(parents=True)
+
+    result = _run_hyperv_cleanup(
+        tmp_path,
+        hyperv_root=hyperv_root,
+        removal_root=removal_root,
+        inventory_path=lifecycle_root,
+        inventory_disk_path=alias_root / disk_path.name,
+        stop_fails=True,
+    )
+
+    state = json.loads((tmp_path / "hyperv-state.json").read_text(encoding="utf-8"))
+    assert result.returncode != 0
+    assert "simulated Hyper-V stop failure" in result.stderr
+    assert len(state["vms"]) == 1
+    assert disk_path.read_text(encoding="utf-8") == "parent"
 
 
 def test_standalone_cleanup_scripts_report_success_only_after_checked_removal() -> None:
