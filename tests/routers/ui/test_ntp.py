@@ -32,7 +32,11 @@ def test_ntp_router_owns_exact_transport_set() -> None:
 
 
 def test_ntp_page_keeps_legacy_and_session_redirects(client) -> None:
-    """Preserve the legacy facade redirect and canonical session enforcement."""
+    """Preserve the legacy facade redirect and canonical session enforcement.
+
+    Args:
+        client: The application test client.
+    """
     legacy = client.get("/ntp", follow_redirects=False)
     assert legacy.status_code == 307
     assert legacy.headers["location"] == "/ui/management/ntp"
@@ -48,7 +52,12 @@ def test_ntp_page_keeps_legacy_and_session_redirects(client) -> None:
 def test_ntp_source_health_keeps_facade_adapter_monkeypatch_seam(
     client, monkeypatch
 ) -> None:
-    """Resolve the facade adapter late enough for compatibility monkeypatching."""
+    """Resolve the facade adapter late enough for compatibility monkeypatching.
+
+    Args:
+        client: The application test client.
+        monkeypatch: The pytest monkeypatch fixture.
+    """
 
     class FacadeAdapter:
         """Return one bounded NTP status response."""
@@ -79,7 +88,12 @@ def test_ntp_source_health_keeps_facade_adapter_monkeypatch_seam(
 def test_ntp_settings_autosave_preserves_desired_state_and_audit(
     client, monkeypatch
 ) -> None:
-    """Preserve form parsing, desired-state persistence, and audit behavior."""
+    """Preserve form parsing, desired-state persistence, and audit behavior.
+
+    Args:
+        client: The application test client.
+        monkeypatch: The pytest monkeypatch fixture.
+    """
     monkeypatch.setattr(
         "atlaso.app.ui.SystemAdapter.read_ntpd_capabilities",
         lambda _self: AdapterResult(
@@ -135,7 +149,12 @@ def test_ntp_settings_autosave_preserves_desired_state_and_audit(
 def test_ntp_settings_rejects_duplicate_normalized_sources(
     client, monkeypatch
 ) -> None:
-    """Preserve duplicate-source validation and its transport status."""
+    """Preserve duplicate-source validation and its transport status.
+
+    Args:
+        client: The application test client.
+        monkeypatch: The pytest monkeypatch fixture.
+    """
     monkeypatch.setattr(
         "atlaso.app.ui.SystemAdapter.read_ntpd_capabilities",
         lambda _self: AdapterResult(
