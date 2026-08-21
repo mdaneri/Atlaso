@@ -346,57 +346,78 @@ function Resolve-AtlasoWorkstationInventoryPath {
     return (Resolve-Path -LiteralPath $inventoryPath).Path
 }
 
+function Get-AtlasoWorkstationInventorySnapshot {
+    param(
+        [Parameter(Mandatory = $true)]
+        [string]$InventoryPath
+    )
+
+    $before = Get-Item -LiteralPath $InventoryPath -Force -ErrorAction Stop
+    $identityBefore = [Atlaso.WorkstationFileIdentity]::Get($InventoryPath)
+    $content = [string](Get-Content -LiteralPath $InventoryPath -ErrorAction Stop -Raw)
+    $identityAfter = [Atlaso.WorkstationFileIdentity]::Get($InventoryPath)
+    $after = Get-Item -LiteralPath $InventoryPath -Force -ErrorAction Stop
+    if (
+        $identityBefore -ne $identityAfter -or
+        $before.Length -ne $after.Length -or
+        $before.LastWriteTimeUtc.Ticks -ne $after.LastWriteTimeUtc.Ticks
+    ) {
+        throw "VMware Workstation registration inventory changed during verification; refusing filesystem cleanup: $InventoryPath"
+    }
+    return [pscustomobject]@{
+        Content = $content
+        Identity = $identityAfter
+        Length = $after.Length
+        LastWriteTimeUtcTicks = $after.LastWriteTimeUtc.Ticks
+    }
+}
+
+function Assert-AtlasoWorkstationInventorySnapshotsEqual {
+    param(
+        [Parameter(Mandatory = $true)]
+        [pscustomobject]$First,
+        [Parameter(Mandatory = $true)]
+        [pscustomobject]$Second,
+        [Parameter(Mandatory = $true)]
+        [string]$InventoryPath
+    )
+
+    if (
+        $First.Identity -ne $Second.Identity -or
+        $First.Length -ne $Second.Length -or
+        $First.LastWriteTimeUtcTicks -ne $Second.LastWriteTimeUtcTicks -or
+        -not $First.Content.Equals($Second.Content, [System.StringComparison]::Ordinal)
+    ) {
+        throw "VMware Workstation registration inventory changed during verification; refusing filesystem cleanup: $InventoryPath"
+    }
+}
+
 function Get-AtlasoStableWorkstationInventoryLines {
     param(
         [Parameter(Mandatory = $true)]
         [string]$InventoryPath
     )
 
-    $snapshots = @()
-    for ($attempt = 0; $attempt -lt 2; $attempt++) {
-        $before = Get-Item -LiteralPath $InventoryPath -Force -ErrorAction Stop
-        $identityBefore = [Atlaso.WorkstationFileIdentity]::Get($InventoryPath)
-        $content = [string](Get-Content -LiteralPath $InventoryPath -ErrorAction Stop -Raw)
-        $identityAfter = [Atlaso.WorkstationFileIdentity]::Get($InventoryPath)
-        $after = Get-Item -LiteralPath $InventoryPath -Force -ErrorAction Stop
-        if (
-            $identityBefore -ne $identityAfter -or
-            $before.Length -ne $after.Length -or
-            $before.LastWriteTimeUtc.Ticks -ne $after.LastWriteTimeUtc.Ticks
-        ) {
-            throw "VMware Workstation registration inventory changed during verification; refusing filesystem cleanup: $InventoryPath"
-        }
-        $snapshots += [pscustomobject]@{
-            Content = $content
-            Identity = $identityAfter
-            Length = $after.Length
-            LastWriteTimeUtcTicks = $after.LastWriteTimeUtc.Ticks
-        }
-        if ($attempt -eq 0) {
-            Start-Sleep -Milliseconds 250
-        }
-    }
-
-    $first = $snapshots[0]
-    $second = $snapshots[1]
-    if (
-        $first.Identity -ne $second.Identity -or
-        $first.Length -ne $second.Length -or
-        $first.LastWriteTimeUtcTicks -ne $second.LastWriteTimeUtcTicks -or
-        -not $first.Content.Equals($second.Content, [System.StringComparison]::Ordinal)
-    ) {
-        throw "VMware Workstation registration inventory changed during verification; refusing filesystem cleanup: $InventoryPath"
-    }
+    $first = Get-AtlasoWorkstationInventorySnapshot -InventoryPath $InventoryPath
+    Start-Sleep -Milliseconds 250
+    $second = Get-AtlasoWorkstationInventorySnapshot -InventoryPath $InventoryPath
+    Assert-AtlasoWorkstationInventorySnapshotsEqual `
+        -First $first `
+        -Second $second `
+        -InventoryPath $InventoryPath
     return @($second.Content -split '\r?\n')
 }
 
-function Get-AtlasoWorkstationRegisteredVmPaths {
+function ConvertFrom-AtlasoWorkstationRegisteredVmInventoryLines {
     param(
+        [Parameter(Mandatory = $true)]
+        [AllowEmptyCollection()]
+        [AllowEmptyString()]
+        [string[]]$InventoryLines,
         [Parameter(Mandatory = $true)]
         [string]$InventoryPath
     )
 
-    $inventoryLines = @(Get-AtlasoStableWorkstationInventoryLines -InventoryPath $InventoryPath)
     $paths = @()
     $indexPaths = @()
     $indexNumbers = @()
@@ -471,6 +492,20 @@ function Get-AtlasoWorkstationRegisteredVmPaths {
     return $paths
 }
 
+function Get-AtlasoWorkstationRegisteredVmPaths {
+    param(
+        [Parameter(Mandatory = $true)]
+        [string]$InventoryPath
+    )
+
+    $inventoryLines = @(Get-AtlasoStableWorkstationInventoryLines -InventoryPath $InventoryPath)
+    return @(
+        ConvertFrom-AtlasoWorkstationRegisteredVmInventoryLines `
+            -InventoryLines $inventoryLines `
+            -InventoryPath $InventoryPath
+    )
+}
+
 function Test-AtlasoWorkstationVmListed {
     param(
         [Parameter(Mandatory = $true)]
@@ -488,6 +523,27 @@ function Test-AtlasoWorkstationVmListed {
         }
     }
     return $false
+}
+
+function Test-AtlasoWorkstationVmPathSetsEqual {
+    param(
+        [Parameter(Mandatory = $true)]
+        [AllowEmptyCollection()]
+        [string[]]$Left,
+        [Parameter(Mandatory = $true)]
+        [AllowEmptyCollection()]
+        [string[]]$Right
+    )
+
+    if ($Left.Count -ne $Right.Count) {
+        return $false
+    }
+    foreach ($path in $Left) {
+        if (-not (Test-AtlasoWorkstationVmListed -Paths $Right -VmxPath $path)) {
+            return $false
+        }
+    }
+    return $true
 }
 
 function Assert-AtlasoWorkstationRemovalVmxSet {
@@ -612,10 +668,19 @@ function Remove-AtlasoWorkstationVmArtifacts {
         -RemovalRoot $resolvedRemovalRoot `
         -ValidatedVmxPaths $resolvedVmxPaths
 
-    $runningPathsBeforeRegistrationStability = @(
-        Get-AtlasoWorkstationVmPaths -VmrunPath $VmrunPath -State running
-    )
-    $finalRegisteredPaths = @(Get-AtlasoWorkstationRegisteredVmPaths -InventoryPath $inventoryPath)
+    $firstRunningPaths = @(Get-AtlasoWorkstationVmPaths -VmrunPath $VmrunPath -State running)
+    $firstRegistrationSnapshot = Get-AtlasoWorkstationInventorySnapshot -InventoryPath $inventoryPath
+    Start-Sleep -Milliseconds 250
+    $secondRunningPaths = @(Get-AtlasoWorkstationVmPaths -VmrunPath $VmrunPath -State running)
+    $secondRegistrationSnapshot = Get-AtlasoWorkstationInventorySnapshot -InventoryPath $inventoryPath
+    Assert-AtlasoWorkstationInventorySnapshotsEqual `
+        -First $firstRegistrationSnapshot `
+        -Second $secondRegistrationSnapshot `
+        -InventoryPath $inventoryPath
+    if (-not (Test-AtlasoWorkstationVmPathSetsEqual -Left $firstRunningPaths -Right $secondRunningPaths)) {
+        throw 'VMware Workstation running inventory changed during final verification; artifacts were preserved.'
+    }
+
     $finalRootVmxPaths = @(
         Get-ChildItem `
             -LiteralPath $resolvedRemovalRoot `
@@ -629,13 +694,26 @@ function Remove-AtlasoWorkstationVmArtifacts {
     Assert-AtlasoWorkstationRemovalVmxSet `
         -RemovalRoot $resolvedRemovalRoot `
         -ValidatedVmxPaths $resolvedVmxPaths
+
     $finalRunningPaths = @(Get-AtlasoWorkstationVmPaths -VmrunPath $VmrunPath -State running)
-    foreach (
-        $finalInventoryPath in @($runningPathsBeforeRegistrationStability) +
-            @($finalRegisteredPaths) +
-            @($finalRunningPaths)
-    ) {
-        if (Test-AtlasoWorkstationVmListed -Paths $finalRootVmxPaths -VmxPath $finalInventoryPath) {
+    $finalRegistrationSnapshot = Get-AtlasoWorkstationInventorySnapshot -InventoryPath $inventoryPath
+    Assert-AtlasoWorkstationInventorySnapshotsEqual `
+        -First $secondRegistrationSnapshot `
+        -Second $finalRegistrationSnapshot `
+        -InventoryPath $inventoryPath
+    if (-not (Test-AtlasoWorkstationVmPathSetsEqual -Left $secondRunningPaths -Right $finalRunningPaths)) {
+        throw 'VMware Workstation running inventory changed during final verification; artifacts were preserved.'
+    }
+    $finalRegisteredPaths = @(
+        ConvertFrom-AtlasoWorkstationRegisteredVmInventoryLines `
+            -InventoryLines @($finalRegistrationSnapshot.Content -split '\r?\n') `
+            -InventoryPath $inventoryPath
+    )
+    foreach ($finalInventoryPath in @($finalRunningPaths) + @($finalRegisteredPaths)) {
+        if (
+            (Test-AtlasoStrictDescendantPath -ParentPath $resolvedRemovalRoot -ChildPath $finalInventoryPath) -or
+            (Test-AtlasoWorkstationVmListed -Paths $finalRootVmxPaths -VmxPath $finalInventoryPath)
+        ) {
             throw "A new running or registered VMware VMX appeared before filesystem cleanup; artifacts were preserved: $finalInventoryPath"
         }
     }
