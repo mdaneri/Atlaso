@@ -274,10 +274,15 @@ Settings apply writes `/etc/nginx/conf.d/atlaso.conf`, `/etc/atlaso/nginx/sites.
 `atlaso.service` override. Fresh appliances run `atlaso-bootstrap-https.service` on deployed-VM first boot to enable the
 integrated CA, issue the managed `appliance:https` certificate, and start with nginx redirecting public HTTP/80 to
 HTTPS/443 while reverse-proxying HTTPS to uvicorn on `127.0.0.1:8000`. The root CA is not baked into the reusable image.
-When HTTPS is disabled, including after factory reset plus apply, nginx can serve public HTTP/80 as a plain reverse
-proxy to the same loopback upstream, but that is not the first-boot appliance posture. The helper reloads nginx/systemd
-and schedules a short delayed `atlaso.service` restart so the global apply job can finish before uvicorn moves behind
-nginx.
+When HTTPS is disabled, including after the dedicated complete factory-reset transaction, nginx can serve public
+HTTP/80 as a plain reverse proxy to the same loopback upstream, but that is not the first-boot appliance posture. The
+helper reloads nginx/systemd and schedules a short delayed `atlaso.service` restart so the global apply job can finish
+before uvicorn moves behind nginx.
+
+Before uvicorn starts, `atlaso.service` asks the constrained helper to resume a durable
+`/var/lib/atlaso-privileged/factory-reset/request.json` marker. An interrupted complete reset therefore finishes before
+the
+management plane becomes available; an appliance without a marker takes the no-op path.
 
 Appliance Settings also owns the root SSH login switch. The image provisions
 `/etc/ssh/sshd_config.d/atlaso-root-login.conf` with `PermitRootLogin no`; global appliance apply rewrites that

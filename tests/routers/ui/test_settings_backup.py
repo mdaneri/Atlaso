@@ -57,7 +57,7 @@ def test_backup_restore_transport_keeps_page_and_invalid_upload_contract(client)
     assert page.status_code == 200
     assert "Download settings backup" in page.text
     assert "Restore settings backup" in page.text
-    assert "Factory reset settings" in page.text
+    assert "Factory reset appliance" in page.text
     csrf = page.text.split('name="csrf" value="', 1)[1].split('"', 1)[0]
 
     response = client.post(

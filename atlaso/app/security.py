@@ -15,6 +15,7 @@ from sqlalchemy.orm import Session
 from atlaso.app.config import Settings, get_settings
 from atlaso.app.database import get_db
 from atlaso.app.models import ApiToken, Role, Setting, User, utcnow
+from atlaso.app.services.bootstrap_credentials import bootstrap_admin_password_matches
 from atlaso.app.ui_routes import MANAGEMENT_UI_ROOT, PUBLIC_UI_ROOT
 
 ALL_SCOPES = {
@@ -652,7 +653,15 @@ def authenticate_user(db: Session, username: str, password: str) -> User | None:
     """
     user = db.execute(select(User).where(User.username == username)).scalar_one_or_none()
     settings = get_settings()
-    if user and user.enabled and user.username == settings.bootstrap_admin_username and password == settings.bootstrap_admin_password:
+    if (
+        user
+        and user.enabled
+        and user.username == settings.bootstrap_admin_username
+        and bootstrap_admin_password_matches(
+            password,
+            settings.bootstrap_admin_password,
+        )
+    ):
         return user
     return None
 

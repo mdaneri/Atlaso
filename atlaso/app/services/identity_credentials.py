@@ -17,6 +17,7 @@ from atlaso.app.models import (
     OidcSubject,
     User,
 )
+from atlaso.app.services.bootstrap_credentials import bootstrap_admin_password_matches
 from atlaso.app.services.ldap import ldap_user_dn
 
 
@@ -66,7 +67,10 @@ def verify_local_credentials(db: Session, username: str, password: str) -> Verif
     settings = get_settings()
     bootstrap_match = (
         user.username == settings.bootstrap_admin_username
-        and password == settings.bootstrap_admin_password
+        and bootstrap_admin_password_matches(
+            password,
+            settings.bootstrap_admin_password,
+        )
     )
     if not bootstrap_match:
         result = SystemAdapter().authenticate_local_user(user.username, password)

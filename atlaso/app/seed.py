@@ -78,8 +78,12 @@ from atlaso.app.services.vcf_offline_depot import VCF_DEPOT_DEFAULT_USERNAME
 VCF_BACKUP_USERNAME = VCF_BACKUP_DEFAULT_USERNAME
 VCF_DEPOT_USERNAME = VCF_DEPOT_DEFAULT_USERNAME
 SEED_EXAMPLES_SETTING_KEY = "seed.include_examples"
+FACTORY_RESET_SETTING_KEY = "factory.reset_complete_v1"
 NTP_NTS_RESTORATION_SETTING_KEY = "ntp.nts_restoration_v1"
 NETWORK_ROLE_RECONCILIATION_SETTING_KEY = "network.roles_canonical_v1"
+FACTORY_APPLIANCE_FQDN = "core.atlaso.internal"
+FACTORY_MANAGEMENT_CIDR = "192.168.49.1/24"
+FACTORY_EXTERNAL_DNS_SERVERS = "1.1.1.1\n9.9.9.9"
 NTP_NTS_CANONICAL_DEFAULTS = {
     "time.cloudflare.com": {
         "ids": {"cloudflare-ntp", "cloudflare-nts"},
@@ -184,6 +188,7 @@ def seed_initial_data(
     *,
     include_examples: bool = True,
     appliance_mode: bool = False,
+    factory_defaults: bool = False,
     commit: bool = True,
 ) -> None:
     """Handle seed initial data.
@@ -192,6 +197,7 @@ def seed_initial_data(
         db: Active database session.
         include_examples: Include examples supplied by the caller.
         appliance_mode: Appliance mode supplied by the caller.
+        factory_defaults: Ignore mutable deployment overrides and seed packaged defaults.
         commit: Commit seeded rows and emit post-commit restoration audit when true.
     """
     ntp_defaults_restored = False
@@ -202,6 +208,12 @@ def seed_initial_data(
         if seed_examples_setting is not None and seed_examples_setting.value.strip().lower() in {"0", "false", "no"}:
             include_examples = False
     settings = get_settings()
+    factory_reset_marker = db.execute(
+        select(Setting).where(Setting.key == FACTORY_RESET_SETTING_KEY)
+    ).scalar_one_or_none()
+    if factory_defaults and factory_reset_marker is None:
+        factory_reset_marker = Setting(key=FACTORY_RESET_SETTING_KEY, value="complete")
+        db.add(factory_reset_marker)
     native_uefi_http_setting = db.execute(
         select(Setting).where(
             Setting.key == ESXI_PXE_NATIVE_UEFI_HTTP_ENABLED_KEY
@@ -253,8 +265,16 @@ def seed_initial_data(
         db.add(vcf_depot_user)
         db.flush()
 
-    management_cidr = settings.appliance_management_cidr or "192.168.49.1/24"
+    management_cidr = (
+        FACTORY_MANAGEMENT_CIDR
+        if factory_defaults
+        else settings.appliance_management_cidr or FACTORY_MANAGEMENT_CIDR
+    )
     management_uses_dhcp = management_cidr.strip().lower() == "dhcp"
+    management_gateway = "" if factory_defaults else settings.appliance_management_gateway
+    management_ipv6_enabled = False if factory_defaults else settings.appliance_management_ipv6_enabled
+    management_ipv6_cidr = "" if factory_defaults else settings.appliance_management_ipv6_cidr
+    management_ipv6_gateway = "" if factory_defaults else settings.appliance_management_ipv6_gateway
     if db.execute(select(PhysicalInterface)).first() is None:
         physical_interfaces = [
             PhysicalInterface(
@@ -266,11 +286,11 @@ def seed_initial_data(
                 host_mtu=1500,
                 host_admin_state="up",
                 ip_cidr=None if management_uses_dhcp else management_cidr,
-                gateway=None if management_uses_dhcp else settings.appliance_management_gateway or None,
+                gateway=None if management_uses_dhcp else management_gateway or None,
                 ipv4_method="dhcp" if management_uses_dhcp else "static",
-                ipv6_enabled=settings.appliance_management_ipv6_enabled,
-                ipv6_cidr=settings.appliance_management_ipv6_cidr or None,
-                ipv6_gateway=settings.appliance_management_ipv6_gateway or None,
+                ipv6_enabled=management_ipv6_enabled,
+                ipv6_cidr=management_ipv6_cidr or None,
+                ipv6_gateway=management_ipv6_gateway or None,
                 mtu=1500,
                 role="management",
                 mode="access",
@@ -395,11 +415,21 @@ def seed_initial_data(
 
     appliance_settings = db.execute(select(ApplianceSettings)).scalar_one_or_none()
     if appliance_settings is None:
+        appliance_fqdn = (
+            FACTORY_APPLIANCE_FQDN
+            if factory_defaults
+            else normalize_fqdn(settings.appliance_fqdn) or FACTORY_APPLIANCE_FQDN
+        )
+        external_dns_servers = (
+            FACTORY_EXTERNAL_DNS_SERVERS
+            if factory_defaults
+            else _settings_lines(settings.appliance_external_dns_servers)
+        )
         appliance_settings = ApplianceSettings(
-            fqdn=normalize_fqdn(settings.appliance_fqdn) or "core.atlaso.internal",
-            management_https_enabled=appliance_mode,
-            root_ssh_enabled=settings.appliance_root_ssh_enabled,
-            external_dns_servers=_settings_lines(settings.appliance_external_dns_servers),
+            fqdn=appliance_fqdn,
+            management_https_enabled=False if factory_defaults else appliance_mode,
+            root_ssh_enabled=False if factory_defaults else settings.appliance_root_ssh_enabled,
+            external_dns_servers=external_dns_servers,
         )
         db.add(appliance_settings)
         db.flush()
@@ -439,7 +469,11 @@ def seed_initial_data(
             listen_interface="eth2" if include_examples else "",
             listen_address="192.168.50.1" if include_examples else "",
             domain=appliance_dns_domain,
-            upstream_servers=_settings_lines(settings.appliance_external_dns_servers),
+            upstream_servers=(
+                FACTORY_EXTERNAL_DNS_SERVERS
+                if factory_defaults
+                else _settings_lines(settings.appliance_external_dns_servers)
+            ),
         )
         db.add(dns_settings)
     else:
@@ -614,7 +648,11 @@ def seed_initial_data(
         db.add(VcfPrivateRegistrySettings())
     if db.execute(select(VcfOfflineDepotSettings)).first() is None:
         db.add(VcfOfflineDepotSettings())
-    if db.execute(select(VcfDepotDownloadProfile)).first() is None:
+    if (
+        not factory_defaults
+        and factory_reset_marker is None
+        and db.execute(select(VcfDepotDownloadProfile)).first() is None
+    ):
         db.add_all(
             [
                 VcfDepotDownloadProfile(

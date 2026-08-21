@@ -183,9 +183,9 @@ validated resolved device rather than dereferencing the topology link again.
 
 Settings backups include the service, volume fingerprints/UUIDs/mounts, and shares but never a format authorization.
 Restore marks volumes for runtime verification before reapply. Factory reset removes Atlaso desired state, exports, and
-service enablement after apply; it does not erase, reformat, unmount, detach, or delete files on storage disks. UUID
-disk mounts and exact boot claims remain while preserved disks are attached so they cannot block the next boot; stale
-share bind mounts are removed. Reattach preserved ext4 data as an existing mounted volume.
+service enablement in its dedicated transaction; it does not erase, reformat, unmount, detach, or delete files on
+storage disks. UUID disk mounts and exact boot claims remain while preserved disks are attached so they cannot block the
+next boot; stale share bind mounts are removed. Reattach preserved ext4 data as an existing mounted volume.
 
 ## Troubleshooting
 

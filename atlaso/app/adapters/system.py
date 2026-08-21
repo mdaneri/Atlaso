@@ -1,6 +1,7 @@
 """Translate validated operations into dry-run records or helper calls."""
 
 import json
+import os
 import subprocess
 from dataclasses import dataclass
 from pathlib import Path
@@ -664,6 +665,19 @@ class SystemAdapter:
         """
         return self._helper_result("appliance-settings", "validate", config_path, dry_run_message="dry-run: appliance settings validation command recorded")
 
+    def preflight_appliance_settings_config(self, config_path: str) -> AdapterResult:
+        """Validate generated appliance settings artifacts without installing them.
+
+        Args:
+            config_path: Filesystem path containing the operation configuration.
+        """
+        return self._helper_result(
+            "appliance-settings",
+            "preflight",
+            config_path,
+            dry_run_message="dry-run: appliance settings generated-config preflight recorded",
+        )
+
     def web_terminal_status(self) -> AdapterResult:
         """Return web terminal status."""
         return self._helper_result(
@@ -735,6 +749,19 @@ class SystemAdapter:
             The validate vcf backup config result.
         """
         return self._helper_result("vcf-backups", "validate", config_path, dry_run_message="dry-run: VCF backup SFTP validation command recorded")
+
+    def preflight_vcf_backup_config(self, config_path: str) -> AdapterResult:
+        """Validate the generated VCF Backup sshd configuration without installing it.
+
+        Args:
+            config_path: Filesystem path containing the operation configuration.
+        """
+        return self._helper_result(
+            "vcf-backups",
+            "preflight",
+            config_path,
+            dry_run_message="dry-run: VCF backup generated-config preflight recorded",
+        )
 
     def validate_vcf_private_registry_config(self, config_path: str) -> AdapterResult:
         """Validate vcf private registry config.
@@ -885,6 +912,19 @@ class SystemAdapter:
         """
         return self._helper_result("public-services", "validate", config_path, dry_run_message="dry-run: public services nginx validation command recorded")
 
+    def preflight_public_services_config(self, config_path: str) -> AdapterResult:
+        """Validate the generated public-services nginx site without installing it.
+
+        Args:
+            config_path: Filesystem path containing the operation configuration.
+        """
+        return self._helper_result(
+            "public-services",
+            "preflight",
+            config_path,
+            dry_run_message="dry-run: public services generated-config preflight recorded",
+        )
+
     def apply_public_services_config(self, config_path: str) -> AdapterResult:
         """Update public services config.
 
@@ -997,6 +1037,67 @@ class SystemAdapter:
             timeout_seconds=5,
         )
 
+    def schedule_factory_reset(self, credentials_path: str) -> AdapterResult:
+        """Schedule the detached reset with one protected credential-choice file.
+
+        Args:
+            credentials_path: Request-bound transient credential-choice path staged by the web process.
+        """
+        return self._helper_result(
+            "factory-reset",
+            "schedule",
+            credentials_path,
+            dry_run_message="dry-run: complete factory reset scheduling command recorded",
+            timeout_seconds=10,
+        )
+
+    def factory_reset_status(self) -> AdapterResult:
+        """Read the bounded durable factory-reset status marker."""
+        return self._helper_result(
+            "factory-reset",
+            "status",
+            dry_run_message=json.dumps({"state": "idle", "updated_at": "", "message": ""}),
+            use_sudo=False,
+            timeout_seconds=5,
+            execute_in_dry_run=True,
+        )
+
+    def reset_factory_network_runtime(self) -> AdapterResult:
+        """Remove only live network resources owned by an active factory reset."""
+        return self._helper_result(
+            "factory-reset",
+            "reset-network-runtime",
+            dry_run_message="dry-run: factory-reset managed network runtime cleanup recorded",
+            timeout_seconds=30,
+        )
+
+    def terminate_factory_reset_login_sessions(self) -> AdapterResult:
+        """Stop SSH admission and terminate bounded pre-reset login sessions."""
+        return self._helper_result(
+            "factory-reset",
+            "terminate-login-sessions",
+            dry_run_message="dry-run: factory-reset login-session cleanup recorded",
+            timeout_seconds=30,
+        )
+
+    def reset_factory_retained_runtime(self) -> AdapterResult:
+        """Remove fixed credential-bearing runtime state owned by an active factory reset."""
+        return self._helper_result(
+            "factory-reset",
+            "reset-retained-runtime",
+            dry_run_message="dry-run: factory-reset retained runtime cleanup recorded",
+            timeout_seconds=60,
+        )
+
+    def apply_factory_reset_root_password(self) -> AdapterResult:
+        """Apply the selected root password action from durable reset credentials."""
+        return self._helper_result(
+            "factory-reset",
+            "apply-root-password",
+            dry_run_message="dry-run: factory-reset root password action recorded",
+            timeout_seconds=30,
+        )
+
     def _record_only_result(self, command: list[str], stdout: str) -> AdapterResult:
         """Persist only result.
 
@@ -1040,7 +1141,12 @@ class SystemAdapter:
             return AdapterResult(command=display_command, dry_run=True, stdout=dry_run_message, returncode=dry_run_returncode)
 
         command = [self.HELPER_PATH, group, action, "--real", *args]
-        if use_sudo:
+        running_as_root = bool(
+            os.name == "posix"
+            and callable(getattr(os, "geteuid", None))
+            and os.geteuid() == 0
+        )
+        if use_sudo and not running_as_root:
             command = ["sudo", "-n", *command]
         run_kwargs: dict[str, object] = {
             "check": False,

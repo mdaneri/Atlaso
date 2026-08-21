@@ -44,7 +44,12 @@ from atlaso.app.schemas import (
     OidcSigningKeyResponse,
     OidcSubjectResponse,
 )
-from atlaso.app.security import Identity, require_scope
+from atlaso.app.security import (
+    SESSION_APPLIANCE_INSTANCE_SESSION_KEY,
+    Identity,
+    ensure_appliance_instance_id,
+    require_scope,
+)
 from atlaso.app.services.appliance_settings import normalize_fqdn
 from atlaso.app.services.dnsmasq import (
     join_interfaces,
@@ -229,11 +234,12 @@ def _session_serializer() -> URLSafeTimedSerializer:
     return URLSafeTimedSerializer(get_settings().secret_key, salt="atlaso-oidc-browser-v1")
 
 
-def _load_oidc_session(request: Request) -> dict[str, object] | None:
+def _load_oidc_session(request: Request, db: Session) -> dict[str, object] | None:
     """Return oidc session.
 
     Args:
         request: Incoming HTTP request.
+        db: Active database session used to validate the appliance identity.
     """
     value = request.cookies.get(OIDC_SESSION_COOKIE, "")
     if not value:
@@ -242,14 +248,26 @@ def _load_oidc_session(request: Request) -> dict[str, object] | None:
         payload = _session_serializer().loads(value, max_age=OIDC_SESSION_MAX_AGE_SECONDS)
     except (BadSignature, SignatureExpired):
         return None
-    if not isinstance(payload, dict) or not isinstance(payload.get("sid"), str):
+    if (
+        not isinstance(payload, dict)
+        or not isinstance(payload.get("sid"), str)
+        or payload.get(SESSION_APPLIANCE_INSTANCE_SESSION_KEY) != ensure_appliance_instance_id(db)
+    ):
         return None
     return payload
 
 
-def _anonymous_oidc_session() -> dict[str, object]:
-    """Return anonymous oidc session."""
-    return {"sid": token_urlsafe(32), "csrf": token_urlsafe(32)}
+def _anonymous_oidc_session(db: Session) -> dict[str, object]:
+    """Return anonymous oidc session.
+
+    Args:
+        db: Active database session used to bind the appliance instance epoch.
+    """
+    return {
+        "sid": token_urlsafe(32),
+        "csrf": token_urlsafe(32),
+        SESSION_APPLIANCE_INSTANCE_SESSION_KEY: ensure_appliance_instance_id(db),
+    }
 
 
 def _set_oidc_cookie(response: Response, session: dict[str, object]) -> None:
@@ -422,7 +440,7 @@ def _authorize_request(
     prompt = params.get("prompt", "login")
     if prompt not in {"none", "login"}:
         return _oidc_error(redirect_uri, "invalid_request", state_value)
-    session = _load_oidc_session(request) or _anonymous_oidc_session()
+    session = _load_oidc_session(request, db) or _anonymous_oidc_session(db)
     try:
         return begin_authorization(
             db,
@@ -531,12 +549,17 @@ async def authorize_get(request: Request, db: Session = Depends(get_db)) -> Resp
         return outcome
     transaction = outcome
     db.commit()
-    session = _load_oidc_session(request) or {
+    session = _load_oidc_session(request, db) or {
         "sid": transaction.browser_session_id,
         "csrf": token_urlsafe(32),
+        SESSION_APPLIANCE_INSTANCE_SESSION_KEY: ensure_appliance_instance_id(db),
     }
     if session.get("sid") != transaction.browser_session_id:
-        session = {"sid": transaction.browser_session_id, "csrf": token_urlsafe(32)}
+        session = {
+            "sid": transaction.browser_session_id,
+            "csrf": token_urlsafe(32),
+            SESSION_APPLIANCE_INSTANCE_SESSION_KEY: ensure_appliance_instance_id(db),
+        }
     if transaction.prompt == "none":
         identity = _session_identity(db, session)
         auth_time_value = session.get("auth_time")
@@ -592,7 +615,7 @@ async def authorize_post(request: Request, db: Session = Depends(get_db)) -> Res
     ).scalar_one_or_none()
     if transaction is None:
         return _oidc_error(None, "invalid_request")
-    session = _load_oidc_session(request)
+    session = _load_oidc_session(request, db)
     if (
         session is None
         or session.get("sid") != transaction.browser_session_id
@@ -660,6 +683,7 @@ async def authorize_post(request: Request, db: Session = Depends(get_db)) -> Res
     authenticated_session: dict[str, object] = {
         "sid": token_urlsafe(32),
         "csrf": token_urlsafe(32),
+        SESSION_APPLIANCE_INSTANCE_SESSION_KEY: ensure_appliance_instance_id(db),
         "source": identity.source,
         "source_id": identity.source_record_id,
         "organization_id": identity.organization_id,

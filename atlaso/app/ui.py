@@ -58,6 +58,11 @@ from atlaso.app.adapters.system import AdapterResult, SystemAdapter
 from atlaso.app.audit import record_audit
 from atlaso.app.config import get_settings
 from atlaso.app.database import SessionLocal, get_db
+from atlaso.app.factory_reset import (
+    FACTORY_RESET_STAGED_CREDENTIALS_PATH,
+    read_factory_reset_state,
+    replace_database_with_factory_candidate,
+)
 from atlaso.app.models import (
     ApiToken,
     ApplianceSettings,
@@ -411,6 +416,7 @@ from atlaso.app.services.ldap import (
 )
 from atlaso.app.services.local_users import (
     DEFAULT_LOCAL_USER_SHELL,
+    DEFAULT_PASSWORD_POLICY,
     LOCAL_USER_SHELLS,
     LOCAL_USERS_PASSWORD_POLICY_KEY,
     LOCAL_USERS_STAGED_CONFIG_PATH,
@@ -426,6 +432,7 @@ from atlaso.app.services.local_users import (
     render_local_users_apply_config,
     render_local_users_preview,
     validate_local_usernames,
+    validate_password,
 )
 from atlaso.app.services.monitoring import monitor_payload
 from atlaso.app.services.networking import (
@@ -485,7 +492,6 @@ from atlaso.app.services.settings_archive import (
     archive_summary,
     desired_state_counts,
     export_settings_archive,
-    factory_reset_desired_state,
     restore_settings_archive,
 )
 from atlaso.app.services.update_sources import (
@@ -12232,7 +12238,12 @@ def cleanup_transient_secret_staging_files() -> None:
         PermissionError: If the operation lacks the required permission.
     """
     adapter = SystemAdapter()
-    for path_value in (LOCAL_USERS_STAGED_CONFIG_PATH, CA_STAGED_CONFIG_PATH, LDAP_STAGED_CONFIG_PATH):
+    for path_value in (
+        LOCAL_USERS_STAGED_CONFIG_PATH,
+        CA_STAGED_CONFIG_PATH,
+        LDAP_STAGED_CONFIG_PATH,
+        FACTORY_RESET_STAGED_CREDENTIALS_PATH,
+    ):
         staged_path = Path(path_value)
         if not adapter.dry_run:
             repair = adapter.prepare_apply_staging_path(str(staged_path))
@@ -12242,6 +12253,24 @@ def cleanup_transient_secret_staging_files() -> None:
         staged_path.unlink(missing_ok=True)
         for temp_path in staged_path.parent.glob(f".{staged_path.name}.*.tmp"):
             temp_path.unlink(missing_ok=True)
+    factory_reset_template = Path(FACTORY_RESET_STAGED_CREDENTIALS_PATH)
+    request_name_pattern = re.compile(
+        rf"^{re.escape(factory_reset_template.stem)}-[0-9a-f]{{32}}{re.escape(factory_reset_template.suffix)}$"
+    )
+    request_temp_name_pattern = re.compile(
+        rf"^\.{re.escape(factory_reset_template.stem)}-[0-9a-f]{{32}}"
+        rf"{re.escape(factory_reset_template.suffix)}\.[0-9a-f]{{32}}\.tmp$"
+    )
+    for request_path in factory_reset_template.parent.glob(
+        f"{factory_reset_template.stem}-*{factory_reset_template.suffix}"
+    ):
+        if request_name_pattern.fullmatch(request_path.name):
+            request_path.unlink(missing_ok=True)
+    for request_temp_path in factory_reset_template.parent.glob(
+        f".{factory_reset_template.stem}-*{factory_reset_template.suffix}.*.tmp"
+    ):
+        if request_temp_name_pattern.fullmatch(request_temp_path.name):
+            request_temp_path.unlink(missing_ok=True)
     local_users_path = Path(LOCAL_USERS_STAGED_CONFIG_PATH)
     for status_path in local_users_path.parent.glob(
         f".{local_users_path.stem}.status-*{local_users_path.suffix}"
@@ -13378,6 +13407,7 @@ def local_user_has_web_terminal_access(user: User | None) -> bool:
 def login_page(
     request: Request,
     next: str = Query(""),
+    factory_reset: str = Query(""),
     identity: Identity | None = Depends(get_session_identity),
     db: Session = Depends(get_db),
 ) -> HTMLResponse | RedirectResponse:
@@ -13386,6 +13416,7 @@ def login_page(
     Args:
         request: Incoming HTTP request.
         next: Relative destination requested after authentication.
+        factory_reset: Factory-reset handoff state requested by the reset workflow.
         identity: Authenticated identity authorizing the request.
         db: Active database session.
 
@@ -13395,7 +13426,33 @@ def login_page(
     return_to = safe_login_next(next)
     if identity:
         return RedirectResponse(return_to, status_code=303)
-    return render(request, "login.html", {"error": None, "return_to": return_to})
+    reset_notice = None
+    if factory_reset:
+        reset_state = read_factory_reset_state()
+        authenticated_completion = (
+            factory_reset == "complete"
+            and request.session.pop("factory_reset_completed", False) is True
+        )
+        if reset_state["state"] == "succeeded" or authenticated_completion:
+            reset_notice = (
+                "Factory reset completed. Sign in with the bootstrap administrator password "
+                "selected for this reset. Earlier sessions, tokens, and removed account "
+                "credentials are invalid."
+            )
+        elif reset_state["state"] == "failed":
+            reset_notice = (
+                reset_state["message"] or "Factory reset requires console recovery."
+            )
+        else:
+            reset_notice = (
+                "Factory reset is in progress. This page may be temporarily unavailable while "
+                "the management plane restarts."
+            )
+    return render(
+        request,
+        "login.html",
+        {"error": None, "return_to": return_to, "factory_reset_notice": reset_notice},
+    )
 
 
 @router.post("/login", response_model=None)
@@ -15655,6 +15712,9 @@ def backup_restore_context(db: Session, result: dict[str, Any] | None = None, er
         "settings_backup_total_rows": sum(counts.values()),
         "backup_restore_result": result,
         "backup_restore_error": error,
+        "factory_reset_password_policy_summary": password_policy_summary(
+            DEFAULT_PASSWORD_POLICY
+        ),
         "ldap_recovery_archive": ldap_recovery_archive,
         "ldap_recovery_ready": bool(
             ldap_recovery_archive is not None and ldap_recovery_archive.id in LDAP_PENDING_RECOVERY_PAYLOADS
@@ -15986,9 +16046,21 @@ _settings_backup_ui = build_settings_backup_ui_router(
         restore_settings_archive=lambda *args, **kwargs: restore_settings_archive(
             *args, **kwargs
         ),
-        factory_reset_desired_state=lambda *args, **kwargs: factory_reset_desired_state(
+        get_runtime_settings=lambda: get_settings(),
+        factory_password_policy=DEFAULT_PASSWORD_POLICY,
+        validate_password=lambda *args, **kwargs: validate_password(*args, **kwargs),
+        stage_appliance_apply_config=lambda *args, **kwargs: stage_appliance_apply_config(
             *args, **kwargs
         ),
+        system_adapter_factory=lambda *args, **kwargs: SystemAdapter(*args, **kwargs),
+        replace_database_with_factory_candidate=lambda *args, **kwargs: replace_database_with_factory_candidate(
+            *args, **kwargs
+        ),
+        invalidate_appliance_apply_status_projection=lambda: invalidate_appliance_apply_status_projection(),
+        management_ui_path=lambda *args, **kwargs: management_ui_path(
+            *args, **kwargs
+        ),
+        factory_reset_staged_credentials_path=FACTORY_RESET_STAGED_CREDENTIALS_PATH,
         appliance_settings_context=lambda *args, **kwargs: appliance_settings_context(
             *args, **kwargs
         ),

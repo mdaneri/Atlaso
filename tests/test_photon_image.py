@@ -162,6 +162,7 @@ def test_inventory_linux_release_package_is_reproducible_and_deployable(tmp_path
     assert 'if [ "$worker_was_active" = "true" ]; then' in deploy
     assert "systemctl stop atlaso.service" in deploy
     assert "systemctl stop atlaso-worker.service" in deploy
+    assert 'install -o root -g root -m 0644 "$atlaso_service_path" /etc/systemd/system/atlaso.service' in deploy
     assert "target.parent.is_symlink()" in deploy
     assert "target.is_symlink()" in deploy
     assert "installed_artifact.is_symlink()" in deploy
@@ -654,7 +655,7 @@ def test_photon_provisioning_management_network_matches_eth0_only():
     assert "ensure_ca_state(db)" in main
     assert main.index("refresh_startup_host_inventory(db, environment=settings.environment)") < main.index("ensure_ca_state(db)")
     assert "if include_examples:" in seed
-    assert "management_https_enabled=appliance_mode" in seed
+    assert "management_https_enabled=False if factory_defaults else appliance_mode" in seed
     assert 'install -d -o atlaso -g atlaso -m 0700 "$ATLASO_STATE/vcfDownloadTool/active-tool/secrets"' in script
 
 
@@ -907,6 +908,8 @@ def test_photon_provisioning_prepares_attached_data_disks():
     assert "Requires=atlaso-data-disks.service" in atlaso_dropin
     assert "bootstrap-data-disk-safety --real /opt/atlaso/current" in hyperv_unit
     assert "bootstrap-data-disk-safety --real /opt/atlaso/current" in vmware_unit
+    assert "factory-reset resume --real" in hyperv_unit
+    assert "factory-reset resume --real" in vmware_unit
     assert "Wants=network-online.target atlaso.service" in worker_unit
     assert "Requires=atlaso-data-disks.service\n" in worker_unit
     assert "Requires=atlaso-data-disks.service atlaso.service" not in worker_unit

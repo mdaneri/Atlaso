@@ -1,6 +1,6 @@
 [project]
 name = "atlaso"
-version = "0.9.172"
+version = "0.9.173"
 description = "Atlaso supports POC, lab, and test environments by simplifying deployment, maintenance, and validation."
 readme = "README.md"
 license = "MIT"
@@ -84,6 +84,7 @@ show_error_codes = true
 warn_unused_configs = true
 follow_imports = "silent"
 files = [
+  "atlaso/app/factory_reset.py",
   "atlaso/app/routers/api_v1/firewall.py",
   "atlaso/app/routers/api_v1/physical_vlans.py",
   "atlaso/app/routers/api_v1/routes_wan.py",

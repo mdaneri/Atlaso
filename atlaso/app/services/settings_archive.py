@@ -13,12 +13,13 @@ from uuid import UUID
 from cryptography import x509
 from cryptography.hazmat.primitives import hashes, serialization
 from sqlalchemy import DateTime as SqlDateTime
-from sqlalchemy import delete, select
+from sqlalchemy import delete, select, text
 from sqlalchemy.exc import IntegrityError, StatementError
 from sqlalchemy.orm import Session
 
 from atlaso import __version__
 from atlaso.app.config import get_settings
+from atlaso.app.database import Base
 from atlaso.app.models import (
     ApplianceSettings,
     AutomationScript,
@@ -135,12 +136,17 @@ from atlaso.app.services.firewall import (
 )
 from atlaso.app.services.kms import KMS_DEFAULT_CONFIG_PATH, KMS_DEFAULT_DATABASE_PATH
 from atlaso.app.services.ldap import (
+    LDAP_PENDING_PASSWORDS,
+    LDAP_PENDING_RECOVERY_PAYLOADS,
     clear_ldap_recovery_payload,
     ensure_organization_bind_secret,
     validate_ldap_state,
 )
 from atlaso.app.services.local_users import (
     LOCAL_USERS_PASSWORD_POLICY_KEY,
+    clear_all_pending_os_passwords,
+    pending_os_password_snapshot,
+    restore_pending_os_password_snapshot,
     validate_password_policy_json,
 )
 from atlaso.app.services.networking import (
@@ -1550,7 +1556,7 @@ def _restore_settings_archive_data(db: Session, data: dict[str, Any]) -> dict[st
 
 
 def factory_reset_desired_state(db: Session) -> dict[str, int]:
-    """Return factory reset desired state.
+    """Replace database contents with the documented factory records.
 
     Args:
         db: Active database session.
@@ -1561,23 +1567,48 @@ def factory_reset_desired_state(db: Session) -> dict[str, int]:
     )
 
     lock_esxi_host_reference_lifecycle(db)
-    recovery_archives = db.execute(select(LdapRecoveryArchive)).scalars().all()
+    recovery_archive_ids = [
+        archive_id
+        for archive_id in db.execute(select(LdapRecoveryArchive.id)).scalars().all()
+        if archive_id is not None
+    ]
+    ldap_password_snapshot = dict(LDAP_PENDING_PASSWORDS)
+    ldap_recovery_snapshot = dict(LDAP_PENDING_RECOVERY_PAYLOADS)
+    os_password_snapshot = pending_os_password_snapshot()
     try:
-        _clear_desired_state(db)
-        seed_initial_data(db, include_examples=False, commit=False)
+        db.expunge_all()
+        LDAP_PENDING_PASSWORDS.clear()
+        LDAP_PENDING_RECOVERY_PAYLOADS.clear()
+        clear_all_pending_os_passwords()
+        if db.bind is not None and db.bind.dialect.name == "sqlite":
+            db.execute(text("PRAGMA defer_foreign_keys=ON"))
+        for table in reversed(Base.metadata.sorted_tables):
+            db.execute(delete(table))
+        db.flush()
+        seed_initial_data(
+            db,
+            include_examples=False,
+            appliance_mode=get_settings().environment == "appliance",
+            factory_defaults=True,
+            commit=False,
+        )
         for state in ensure_environment_rows(db):
             state.enabled = False
             state.desired_version = ""
             state.active_version = ""
             db.add(state)
         _disable_startup_example_seed(db)
-        _force_services_stopped_unconfigured(db)
         db.commit()
     except Exception:
         db.rollback()
+        LDAP_PENDING_PASSWORDS.clear()
+        LDAP_PENDING_PASSWORDS.update(ldap_password_snapshot)
+        LDAP_PENDING_RECOVERY_PAYLOADS.clear()
+        LDAP_PENDING_RECOVERY_PAYLOADS.update(ldap_recovery_snapshot)
+        restore_pending_os_password_snapshot(os_password_snapshot)
         raise
-    for recovery_archive in recovery_archives:
-        clear_ldap_recovery_payload(recovery_archive)
+    for recovery_archive_id in recovery_archive_ids:
+        LDAP_PENDING_RECOVERY_PAYLOADS.pop(recovery_archive_id, None)
     return desired_state_counts(db)
 
 

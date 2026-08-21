@@ -2987,11 +2987,11 @@ def test_settings_archive_keeps_desired_environment_but_excludes_media_and_histo
     assert "network_boot_inventory_sessions" not in data
 
 
-def test_settings_restore_and_factory_reset_preserve_installed_media_metadata(
+def test_settings_restore_preserves_media_while_factory_reset_clears_metadata(
     db_session,
     monkeypatch,
 ):
-    """Verify that settings restore and factory reset preserve installed media metadata.
+    """Verify restore preserves media metadata while reset clears its logical record.
 
     Args:
         db_session: Active database session used by the operation.
@@ -3034,7 +3034,7 @@ def test_settings_restore_and_factory_reset_preserve_installed_media_metadata(
 
     factory_reset_desired_state(db_session)
     assert lifecycle_events == ["lock", "lock"]
-    assert db_session.get(NetworkBootMedia, media.id) is not None
+    assert db_session.get(NetworkBootMedia, media.id) is None
     reset = db_session.get(type(states["memtest86plus"]), "memtest86plus")
     assert reset.enabled is False
     assert reset.desired_version == ""

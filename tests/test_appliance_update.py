@@ -1239,6 +1239,60 @@ def test_helper_reports_unresolvable_powershell_repository_host(monkeypatch, tmp
     assert result["error"].startswith("PowerShell repository PSGallery host www.powershellgallery.com could not be resolved:")
 
 
+def test_helper_retries_failed_powershell_repository_removal(monkeypatch, tmp_path):
+    """A failed unregister remains recorded until a later synchronization succeeds.
+
+    Args:
+        monkeypatch: Pytest fixture used to replace dependencies for the test.
+        tmp_path: Temporary directory provided by pytest for isolated filesystem state.
+    """
+    helper = load_helper_module()
+    state_path = tmp_path / "update-sources.json"
+    state_path.write_text(
+        json.dumps({"powershell_repositories": ["PrivateGallery"]}),
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(helper, "MANAGED_PHOTON_REPO_PATH", tmp_path / "atlaso-managed.repo")
+    monkeypatch.setattr(helper, "UPDATE_SOURCE_STATE_PATH", state_path)
+    monkeypatch.setattr(helper, "ATLASO_POWERSHELL_HOME", tmp_path / "powershell-home")
+    monkeypatch.setattr(helper, "_command_path", lambda _name: "/usr/bin/pwsh")
+    attempts = 0
+
+    def unregister_repository(command, *, success_codes=None, env=None):
+        """Fail the first unregister attempt and allow its retry.
+
+        Args:
+            command: Command and arguments to execute.
+            success_codes: Success codes supplied to the test scenario.
+            env: Environment variables supplied to the child process.
+        """
+        nonlocal attempts
+        attempts += 1
+        success = attempts > 1
+        return {
+            "command": command,
+            "returncode": 0 if success else 1,
+            "success": success,
+            "stdout": "removed" if success else "",
+            "stderr": "transient unregister failure" if not success else "",
+        }
+
+    monkeypatch.setattr(helper, "_command_payload", unregister_repository)
+
+    first = helper._sync_appliance_update_sources({"source_definitions": []})
+    assert first["status"] == "failed"
+    assert json.loads(state_path.read_text(encoding="utf-8")) == {
+        "powershell_repositories": ["PrivateGallery"]
+    }
+
+    second = helper._sync_appliance_update_sources({"source_definitions": []})
+    assert second["status"] == "succeeded"
+    assert attempts == 2
+    assert json.loads(state_path.read_text(encoding="utf-8")) == {
+        "powershell_repositories": []
+    }
+
+
 def test_helper_source_sync_probes_powershell_repository_endpoint(monkeypatch, tmp_path):
     """Verify that helper source sync probes powershell repository endpoint.
 

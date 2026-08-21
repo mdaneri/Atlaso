@@ -136,6 +136,7 @@ def test_static_analysis_configuration_is_pinned_and_scoped() -> None:
         "warn_unused_configs": True,
         "follow_imports": "silent",
         "files": [
+            "atlaso/app/factory_reset.py",
             "atlaso/app/routers/api_v1/firewall.py",
             "atlaso/app/routers/api_v1/physical_vlans.py",
             "atlaso/app/routers/api_v1/routes_wan.py",

@@ -120,6 +120,7 @@ $fixtureFiles = @(
     'dist\joserfc-9.9.9-py3-none-any.whl',
     'dist\pycdlib-9.9.9-py3-none-any.whl',
     'image\common\update-trust\atlaso-release-test.pem',
+    'image\vmware-workstation\systemd\atlaso.service',
     'image\common\systemd\atlaso-worker.service',
     'image\common\systemd\atlaso-require-data-disks.conf',
     'image\common\systemd\nginx-atlaso-data-disks.conf'

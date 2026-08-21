@@ -271,7 +271,9 @@ The following cross-cutting boundaries always apply:
   current page's group always opens without overwriting its saved choice. Keep the global **Review appliance changes**
   card outside the disclosures and preserve coherent groups at desktop, two-column narrow, and single-column mobile
   widths.
-- `/ui/management/appliance-apply` is the only desired-state host-mutation workflow.
+- `/ui/management/appliance-apply` is the only ordinary desired-state host-mutation workflow. The dedicated confirmed
+  factory-reset transaction is the sole exception: it preflights and activates every factory apply unit, atomically
+  replaces the database, records durable recovery state, invalidates sessions, and must finish with zero pending units.
 - A management address, gateway, role, interface, VLAN, management VLAN MTU, or flagged-access listener change must
   use one recoverable
   handoff across Certificate Authority, Network, Firewall, Appliance Settings, and Public Services. Submitting any one
@@ -519,6 +521,31 @@ The following cross-cutting boundaries always apply:
   before clearing desired state. A failed restore must roll back database changes and preserve separately staged LDAP
   recovery metadata and in-memory bytes. Clear staged recovery material only after a successful restore commit or
   factory reset commit.
+- Complete factory reset must replace every control-plane database record with factory/bootstrap records, invalidate
+  all sessions and credentials, activate coherent core defaults while disabling optional services, and preserve depot,
+  backup, and managed ESX Storage payload paths. Persist a non-secret recovery marker before database replacement,
+  make resume idempotent across interruption or reboot, validate all generated runtime configuration before activation,
+  scrub transient staging plus retained VCF Backup authorized keys and Web Terminal signing material, and leave all 16
+  desired/applied baselines equal with no follow-up Apply workflow. Also remove retained KMIP operational state and
+  Atlaso-synchronized package-source credentials and registrations, fsyncing credential-bearing repository removal
+  before the recovery marker advances. Require explicit keep-or-change choices for both
+  the bootstrap administrator and root passwords, validate changes against the packaged factory Local Users policy,
+  and give each request its own protected staging file so failed admission removes only that request's secret. Keep
+  submitted values out of the database, marker, jobs, audits, logs, and UI responses. Keep the recovery marker pending
+  until Atlaso, worker, nginx, and stable management OpenAPI readiness are verified after restart. Run every real
+  Bind the privileged runner and finalizer to the admitted root-owned state directory through a pinned, no-follow
+  descriptor beneath the root-owned `/var/lib/atlaso-privileged` parent so the service account cannot rename the state
+  during detached dispatch or redirect recovery state and credential access. Run
+  every real mutating helper and nested account mutation in an exact UUID-named `atlaso-helper-action-*` transient
+  service. After
+  stopping Atlaso callers, reset must stop and verify those services, cancel and verify any pre-existing fixed-name
+  management restart timer and service, and reverify the callers are inactive before inventorying delayed
+  update-restart units. After transient automation units are quiescent, durably clear their bounded managed-script and
+  run staging directories through symlink-resistant paths before reset activation continues. Also durably clear the
+  bounded Managed LDAP recovery-export directory so interrupted plaintext account archives cannot survive reset.
+  Before runtime activation, stop SSH admission and terminate and verify every root or Atlaso-managed operating-system
+  login session. Repeat that bounded termination after retained authorization keys are scrubbed, then restore and
+  verify factory SSH policy through the readiness handoff.
 - Keep internal CA custody and managed service-certificate deployment available without a public CA listen interface.
   Interface selection owns portal publication only. Every selected NTS server apply includes the CA unit and executes
   it before NTP/NTS validation so runtime certificate material is present even when the CA baseline is current. Turning

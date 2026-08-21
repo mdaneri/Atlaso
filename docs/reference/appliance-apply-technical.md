@@ -76,8 +76,9 @@ Each selected unit runs its helper steps in order and stops at the first failed 
 `validate` helper fails, Atlaso records that command output in the job and does not run the unit's `apply`, reload,
 sync, or relocation steps.
 
-On Photon appliances, real mutating helper actions run through `atlaso-helper` and then re-enter via a transient
-`systemd-run` service when `ATLASO_HELPER_USE_SYSTEMD_RUN=1` is set. The web control plane remains inside the
+On Photon appliances, real mutating helper actions run through `atlaso-helper` and then re-enter via a UUID-named
+`atlaso-helper-action-*` transient `systemd-run` service when `ATLASO_HELPER_USE_SYSTEMD_RUN=1` is set. The web control
+plane remains inside the
 `atlaso.service` sandbox, while the reviewed root helper writes approved `/etc` files from outside that service's
 read-only mount namespace.
 
@@ -137,8 +138,10 @@ continues to enforce that account's password policy.
 The real Local Users apply path stages JSON at `/var/lib/atlaso/apply/local-users/atlaso-users.json`. The `local_users`
 unit synchronizes Atlaso local users to Photon OS users through `atlaso-helper local-users validate|apply`. Enabled
 Atlaso users are created under `/var/lib/atlaso/users/<username>` with the per-user desired shell, defaulting to
-`/sbin/nologin`; disabled and removed managed users are removed from Photon OS with `userdel -r`. Photon image
-provisioning creates the bootstrap admin OS account before first apply. When VCF Backup desired state is off, Atlaso
+`/sbin/nologin`. The helper unions explicit removals with Atlaso-home entries from the root-owned operating-system
+account inventory, so disabled, removed, or database-baseline-orphaned managed users are removed from Photon OS with
+`userdel -r`. Photon image provisioning creates the bootstrap admin OS account before first apply. When VCF Backup
+desired state is off, Atlaso
 keeps the default `vcf-backup` user disabled so Local Users apply removes that OS account.
 
 Atlaso users can hold multiple UI/API roles. The Users page edits roles through a multi-select grid cell, stores the
@@ -677,9 +680,43 @@ nginx. It also writes `/etc/ssh/sshd_config.d/atlaso-root-login.conf`, validates
 is disabled by default and enabled only when the Appliance Settings switch is applied. When management UI HTTPS is
 enabled, the helper requires the CA-managed `appliance:https` cert/key files, redirects public HTTP/80 to HTTPS/443, and
 reverse-proxies HTTPS traffic to uvicorn on `127.0.0.1:8000`. Appliance FQDN or management IP changes automatically
-refresh the managed appliance leaf certificate before apply. When management UI HTTPS is disabled, including after
-factory reset plus apply, nginx serves public HTTP/80 as a plain reverse proxy to uvicorn on `127.0.0.1:8000` and does
+refresh the managed appliance leaf certificate before apply. When management UI HTTPS is disabled, including after the
+dedicated complete factory-reset transaction, nginx serves public HTTP/80 as a plain reverse proxy to uvicorn on
+`127.0.0.1:8000` and does
 not expose a management HTTPS listener.
+
+Complete factory reset is the sole exception to the ordinary Apply submission boundary. It reuses the same render,
+validation, execution ordering, and baseline code for all 16 units inside a root-owned, resumable transaction. It does
+not create an Apply job or modal: success means the replacement database and runtime are already at the same clean
+baseline. The transaction scrubs retained VCF Backup authorized keys, the Web Terminal CA key pair, and pending terminal
+signing requests in addition to Apply staging. Its delay timer and runner share the transaction lock, and the durable
+marker remains `awaiting_readiness` until an independent finalizer observes Atlaso, worker, tty1 console, nginx, and two
+consecutive management OpenAPI successes. A restart/readiness failure retains the marker for boot-time resume before
+`atlaso.service` starts. Preflight renders prospective management and public nginx sites, root and VCF Backup sshd
+drop-ins, the management resolver file, and the Atlaso service loopback drop-in into isolated temporary trees and runs
+the native validators there without changing the active host configuration. Before candidate activation, reset stops
+the tty1 console with Atlaso and its worker, then repeatedly inventories, stops, and verifies exact UUID-shaped
+`atlaso-helper-action-*` services until none remain. Only then does it inventory and cancel the timestamp-shaped
+`atlaso-update-restart-*` timers and services created by update Apply. Reset runtime cleanup and root-password actions
+also use the bounded helper family, and the scheduled reset runner explicitly enables that helper-action mode rather
+than depending on the web or worker service environment. That ordering prevents an in-flight helper or nested account
+command from mutating runtime or scheduling a three-second restart after the restart inventory. Readiness starts and
+verifies the console with the other required services. The non-appliance
+fallback likewise
+builds and validates an isolated SQLite candidate, then copies its data under one `BEGIN IMMEDIATE` transaction that
+waits for earlier writers and blocks later writers until replacement commits.
+Each web request stages its keep-or-change password plan in a distinct mode-`0600` file. Nonblocking helper admission
+accepts at most one plan, reports lock contention or an active reset timer/service as a retryable scheduling failure,
+and deletes only the calling request's file. Changed values and the form's displayed policy summary use the packaged
+factory Local Users policy rather than mutable current
+desired state. Retained credential cleanup fsyncs the managed Photon repository directory before the reset transaction
+may advance to management-readiness verification.
+An inactive marker tagged with `failure_phase: scheduling` is the only failed request that web admission may replace;
+the replacement credential plan and fresh scheduled marker are both persisted before dispatch. Any failure after the
+runner starts remains a console/boot recovery concern and rejects a new browser schedule.
+The runner retains the protected credential plan through candidate activation and first writes the durable
+`awaiting_readiness` marker with `applied_unit_count`; runner and finalizer then repeat idempotent credential removal. A
+crash therefore cannot leave a `committing` marker without the password plan required to rebuild the candidate.
 
 ### Operational logs and appliance power
 

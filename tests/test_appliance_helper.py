@@ -2284,6 +2284,1109 @@ def test_appliance_power_helper_fails_closed_without_systemd_run(monkeypatch, ca
     assert "refusing an immediate appliance power action" in capsys.readouterr().err
 
 
+def test_factory_reset_helper_persists_marker_before_detached_schedule(
+    monkeypatch,
+    tmp_path,
+):
+    """Factory-reset scheduling is durable before the detached runner starts.
+
+    Args:
+        monkeypatch: Pytest fixture used to replace dependencies for the test.
+        tmp_path: Temporary directory provided by pytest for isolated filesystem state.
+    """
+    helper = load_helper_module()
+    state_directory = tmp_path / "factory-reset"
+    monkeypatch.setattr(
+        helper,
+        "_open_factory_reset_directory",
+        lambda: state_directory.mkdir(parents=True, exist_ok=True) or None,
+    )
+    staged_template = tmp_path / "apply" / "factory-reset" / "credentials.json"
+    staged_credentials = staged_template.with_name(
+        "credentials-0123456789abcdef0123456789abcdef.json"
+    )
+    staged_credentials.parent.mkdir(parents=True)
+    staged_credentials.write_text(
+        json.dumps(
+            {
+                "schema_version": 1,
+                "admin_action": "change",
+                "admin_password": "Protected-Admin1!",
+                "root_action": "keep",
+            }
+        ),
+        encoding="utf-8",
+    )
+    staged_credentials.chmod(0o600)
+
+    class Account:
+        """Represent the service account owning the protected staging file."""
+
+        pw_uid = staged_credentials.stat().st_uid
+    runner = tmp_path / "python"
+    runner.write_text("", encoding="utf-8")
+    commands: list[list[str]] = []
+    synced_directories: list[Path] = []
+
+    def fake_run(command: list[str], **_kwargs) -> subprocess.CompletedProcess[str]:
+        """Record one helper command.
+
+        Args:
+            command: Exact command arguments.
+            **_kwargs: Subprocess options ignored by the test double.
+        """
+        commands.append(command)
+        returncode = 3 if command[:3] == ["systemctl", "is-active", "--quiet"] else 0
+        return subprocess.CompletedProcess(command, returncode, "", "")
+
+    monkeypatch.setattr(helper, "ATLASO_FACTORY_RESET_DIR", state_directory)
+    monkeypatch.setattr(helper, "ATLASO_FACTORY_RESET_REQUEST_PATH", state_directory / "request.json")
+    monkeypatch.setattr(helper, "ATLASO_FACTORY_RESET_RESULT_PATH", state_directory / "last-result.json")
+    monkeypatch.setattr(helper, "ATLASO_FACTORY_RESET_CREDENTIALS_PATH", state_directory / "credentials.json")
+    monkeypatch.setattr(helper, "ATLASO_FACTORY_RESET_STAGED_CREDENTIALS_PATH", staged_template)
+    monkeypatch.setattr(helper, "ATLASO_FACTORY_RESET_PYTHON", runner)
+    monkeypatch.setattr(helper.shutil, "chown", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr(helper.pwd, "getpwnam", lambda _username: Account())
+    monkeypatch.setattr(helper.shutil, "which", lambda command: f"/usr/bin/{command}" if command in {"systemd-run", "logger"} else None)
+    monkeypatch.setattr(helper, "_run", fake_run)
+    monkeypatch.setattr(
+        helper,
+        "_fsync_factory_reset_directory",
+        synced_directories.append,
+    )
+
+    assert helper._handle_factory_reset("schedule", [str(staged_credentials)]) == 0
+    marker = json.loads((state_directory / "request.json").read_text(encoding="utf-8"))
+    assert marker["state"] == "scheduled"
+    assert marker["admin_password_action"] == "change"
+    assert marker["root_password_action"] == "keep"
+    persisted = json.loads((state_directory / "credentials.json").read_text(encoding="utf-8"))
+    assert persisted["admin_action"] == "change"
+    assert persisted["root_action"] == "keep"
+    assert not staged_credentials.exists()
+    assert synced_directories == [staged_credentials.parent]
+    if os.name == "posix":
+        assert not (state_directory / ".request.json.tmp").exists()
+    scheduled = next(command for command in commands if command and command[0] == "/usr/bin/systemd-run")
+    assert "--collect" in scheduled
+    assert "--on-active=2" in scheduled
+    assert f"--property=WorkingDirectory={helper.ATLASO_STATE_DIR}" in scheduled
+    assert f"--property=EnvironmentFile={helper.ATLASO_ENV_PATH}" in scheduled
+    assert "--setenv=ATLASO_HELPER_USE_SYSTEMD_RUN=1" in scheduled
+    assert scheduled[-3:] == [str(runner), "-m", "atlaso.app.factory_reset"]
+
+
+def test_factory_reset_helper_rejects_request_while_delay_timer_is_active(
+    monkeypatch,
+    tmp_path,
+    capsys,
+):
+    """A later request reports busy while the admitted delay timer is active.
+
+    Args:
+        monkeypatch: Pytest fixture used to replace dependencies for the test.
+        tmp_path: Temporary directory provided by pytest for isolated filesystem state.
+        capsys: Pytest fixture used to capture the retryable admission result.
+    """
+    helper = load_helper_module()
+    state_directory = tmp_path / "factory-reset"
+    state_directory.mkdir()
+    monkeypatch.setattr(helper, "_open_factory_reset_directory", lambda: None)
+    staged_template = tmp_path / "apply" / "factory-reset" / "credentials.json"
+    staged_credentials = staged_template.with_name(
+        "credentials-fedcba9876543210fedcba9876543210.json"
+    )
+    staged_credentials.parent.mkdir(parents=True)
+    staged_credentials.write_text(
+        json.dumps(
+            {
+                "schema_version": 1,
+                "admin_action": "keep",
+                "root_action": "keep",
+            }
+        ),
+        encoding="utf-8",
+    )
+    staged_credentials.chmod(0o600)
+
+    class Account:
+        """Represent the service account owning the protected staging file."""
+
+        pw_uid = staged_credentials.stat().st_uid
+    request_path = state_directory / "request.json"
+    request_path.write_text(
+        json.dumps({"schema_version": 1, "state": "scheduled", "message": "scheduled"}),
+        encoding="utf-8",
+    )
+    commands: list[list[str]] = []
+
+    def fake_run(command: list[str], **_kwargs) -> subprocess.CompletedProcess[str]:
+        """Model the active delay timer.
+
+        Args:
+            command: Exact command arguments.
+            **_kwargs: Subprocess options ignored by the test double.
+        """
+        commands.append(command)
+        if command[-1] == "atlaso-factory-reset.timer":
+            return subprocess.CompletedProcess(command, 0, "", "")
+        return subprocess.CompletedProcess(command, 3, "", "")
+
+    monkeypatch.setattr(helper, "ATLASO_FACTORY_RESET_DIR", state_directory)
+    monkeypatch.setattr(helper, "ATLASO_FACTORY_RESET_REQUEST_PATH", request_path)
+    monkeypatch.setattr(helper, "ATLASO_FACTORY_RESET_RESULT_PATH", state_directory / "last-result.json")
+    monkeypatch.setattr(helper, "ATLASO_FACTORY_RESET_CREDENTIALS_PATH", state_directory / "credentials.json")
+    monkeypatch.setattr(helper, "ATLASO_FACTORY_RESET_STAGED_CREDENTIALS_PATH", staged_template)
+    monkeypatch.setattr(helper.pwd, "getpwnam", lambda _username: Account())
+    monkeypatch.setattr(helper.shutil, "which", lambda command: f"/usr/bin/{command}")
+    monkeypatch.setattr(helper, "_run", fake_run)
+
+    assert (
+        helper._handle_factory_reset("schedule", [str(staged_credentials)])
+        == helper.ATLASO_FACTORY_RESET_ADMISSION_BUSY_EXIT_CODE
+    )
+    captured = capsys.readouterr()
+    assert json.loads(captured.out)["state"] == "scheduled"
+    assert "admission is busy" in captured.err
+    assert json.loads(request_path.read_text(encoding="utf-8"))["state"] == "scheduled"
+    assert not staged_credentials.exists()
+    assert not any(command and command[0] == "/usr/bin/systemd-run" for command in commands)
+    assert [
+        command
+        for command in commands
+        if command[:3] == ["systemctl", "is-active", "--quiet"]
+    ] == [
+        [
+            "systemctl",
+            "is-active",
+            "--quiet",
+            "atlaso-factory-reset.service",
+            "atlaso-factory-reset.timer",
+        ]
+    ]
+
+
+def test_factory_reset_helper_rejects_busy_admission_without_touching_other_request(
+    monkeypatch,
+    tmp_path,
+    capsys,
+):
+    """A lock loser removes only its request-bound credential file and reports busy.
+
+    Args:
+        monkeypatch: Pytest fixture used to replace dependencies for the test.
+        tmp_path: Temporary directory provided by pytest for isolated filesystem state.
+        capsys: Pytest fixture used to capture standard output and standard error.
+    """
+    helper = load_helper_module()
+    state_directory = tmp_path / "factory-reset"
+    monkeypatch.setattr(
+        helper,
+        "_open_factory_reset_directory",
+        lambda: state_directory.mkdir(parents=True, exist_ok=True) or None,
+    )
+    staged_template = tmp_path / "apply" / "factory-reset" / "credentials.json"
+    losing_request = staged_template.with_name(
+        "credentials-11111111111111111111111111111111.json"
+    )
+    other_request = staged_template.with_name(
+        "credentials-22222222222222222222222222222222.json"
+    )
+    losing_request.parent.mkdir(parents=True)
+    for path in (losing_request, other_request):
+        path.write_text(
+            json.dumps(
+                {
+                    "schema_version": 1,
+                    "admin_action": "keep",
+                    "root_action": "keep",
+                }
+            ),
+            encoding="utf-8",
+        )
+        path.chmod(0o600)
+
+    def reject_lock(_descriptor: int, operation: int) -> None:
+        """Model a transaction lock already held by another request.
+
+        Args:
+            _descriptor: Open transaction-lock file descriptor.
+            operation: Requested flock operation flags.
+        """
+        assert operation == 3
+        raise BlockingIOError
+
+    monkeypatch.setattr(helper, "ATLASO_FACTORY_RESET_DIR", state_directory)
+    monkeypatch.setattr(
+        helper,
+        "ATLASO_FACTORY_RESET_REQUEST_PATH",
+        state_directory / "request.json",
+    )
+    monkeypatch.setattr(
+        helper,
+        "ATLASO_FACTORY_RESET_STAGED_CREDENTIALS_PATH",
+        staged_template,
+    )
+    monkeypatch.setattr(
+        helper,
+        "fcntl",
+        SimpleNamespace(LOCK_EX=1, LOCK_NB=2, LOCK_UN=8, flock=reject_lock),
+    )
+    monkeypatch.setattr(helper, "_factory_reset_state_payload", lambda: {"state": "running"})
+
+    assert (
+        helper._handle_factory_reset("schedule", [str(losing_request)])
+        == helper.ATLASO_FACTORY_RESET_ADMISSION_BUSY_EXIT_CODE
+    )
+    captured = capsys.readouterr()
+    assert json.loads(captured.out)["state"] == "running"
+    assert "admission is busy" in captured.err
+    assert not losing_request.exists()
+    assert other_request.exists()
+    assert not (state_directory / "request.json").exists()
+
+
+def test_factory_reset_helper_replaces_failed_schedule_credentials_on_retry(
+    monkeypatch,
+    tmp_path,
+):
+    """A pre-run scheduling retry atomically replaces the rejected credential plan.
+
+    Args:
+        monkeypatch: Pytest fixture used to replace dependencies for the test.
+        tmp_path: Temporary directory provided by pytest for isolated filesystem state.
+    """
+    helper = load_helper_module()
+    state_directory = tmp_path / "factory-reset"
+    monkeypatch.setattr(
+        helper,
+        "_open_factory_reset_directory",
+        lambda: state_directory.mkdir(parents=True, exist_ok=True) or None,
+    )
+    staged_template = tmp_path / "apply" / "factory-reset" / "credentials.json"
+    staged_template.parent.mkdir(parents=True)
+    first_request = staged_template.with_name(
+        "credentials-33333333333333333333333333333333.json"
+    )
+    retry_request = staged_template.with_name(
+        "credentials-44444444444444444444444444444444.json"
+    )
+    first_request.write_text(
+        json.dumps(
+            {
+                "schema_version": 1,
+                "admin_action": "change",
+                "admin_password": "First-Choice1!",
+                "root_action": "keep",
+            }
+        ),
+        encoding="utf-8",
+    )
+    retry_request.write_text(
+        json.dumps(
+            {
+                "schema_version": 1,
+                "admin_action": "keep",
+                "root_action": "change",
+                "root_password": "Retry-Choice2!",
+            }
+        ),
+        encoding="utf-8",
+    )
+    for path in (first_request, retry_request):
+        path.chmod(0o600)
+
+    class Account:
+        """Represent the service account owning both protected staging files."""
+
+        pw_uid = first_request.stat().st_uid
+
+    schedule_attempts = 0
+
+    def fake_run(command: list[str], **_kwargs) -> subprocess.CompletedProcess[str]:
+        """Fail the first detached schedule and accept the retry.
+
+        Args:
+            command: Exact helper command being modeled.
+            **_kwargs: Subprocess options ignored by the test double.
+        """
+        nonlocal schedule_attempts
+        if command[:3] == ["systemctl", "is-active", "--quiet"]:
+            return subprocess.CompletedProcess(command, 3, "", "")
+        if command and command[0] == "/usr/bin/systemd-run":
+            schedule_attempts += 1
+            return subprocess.CompletedProcess(
+                command,
+                1 if schedule_attempts == 1 else 0,
+                "",
+                "injected scheduling failure" if schedule_attempts == 1 else "",
+            )
+        return subprocess.CompletedProcess(command, 0, "", "")
+
+    monkeypatch.setattr(helper, "ATLASO_FACTORY_RESET_DIR", state_directory)
+    monkeypatch.setattr(
+        helper,
+        "ATLASO_FACTORY_RESET_REQUEST_PATH",
+        state_directory / "request.json",
+    )
+    monkeypatch.setattr(
+        helper,
+        "ATLASO_FACTORY_RESET_RESULT_PATH",
+        state_directory / "last-result.json",
+    )
+    monkeypatch.setattr(
+        helper,
+        "ATLASO_FACTORY_RESET_CREDENTIALS_PATH",
+        state_directory / "credentials.json",
+    )
+    monkeypatch.setattr(
+        helper,
+        "ATLASO_FACTORY_RESET_STAGED_CREDENTIALS_PATH",
+        staged_template,
+    )
+    monkeypatch.setattr(helper.pwd, "getpwnam", lambda _username: Account())
+    monkeypatch.setattr(
+        helper.shutil,
+        "which",
+        lambda command: f"/usr/bin/{command}" if command in {"systemd-run", "logger"} else None,
+    )
+    monkeypatch.setattr(helper.shutil, "chown", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr(helper, "_run", fake_run)
+
+    assert helper._handle_factory_reset("schedule", [str(first_request)]) == 1
+    failed_marker = json.loads(
+        (state_directory / "request.json").read_text(encoding="utf-8")
+    )
+    assert failed_marker["state"] == "failed"
+    assert failed_marker["failure_phase"] == "scheduling"
+
+    assert helper._handle_factory_reset("schedule", [str(retry_request)]) == 0
+    accepted_marker = json.loads(
+        (state_directory / "request.json").read_text(encoding="utf-8")
+    )
+    durable_credentials = json.loads(
+        (state_directory / "credentials.json").read_text(encoding="utf-8")
+    )
+    assert accepted_marker["state"] == "scheduled"
+    assert "failure_phase" not in accepted_marker
+    assert accepted_marker["admin_password_action"] == "keep"
+    assert accepted_marker["root_password_action"] == "change"
+    assert durable_credentials == {
+        "schema_version": 1,
+        "admin_action": "keep",
+        "root_action": "change",
+        "root_password": "Retry-Choice2!",
+    }
+    assert schedule_attempts == 2
+    assert not first_request.exists()
+    assert not retry_request.exists()
+
+
+def test_factory_reset_helper_rejects_retry_after_execution_failure(
+    monkeypatch,
+    tmp_path,
+    capsys,
+):
+    """A browser retry cannot overwrite credentials after execution started.
+
+    Args:
+        monkeypatch: Pytest fixture used to replace dependencies for the test.
+        tmp_path: Temporary directory provided by pytest for isolated filesystem state.
+        capsys: Pytest fixture used to capture standard output and standard error.
+    """
+    helper = load_helper_module()
+    state_directory = tmp_path / "factory-reset"
+    state_directory.mkdir()
+    monkeypatch.setattr(helper, "_open_factory_reset_directory", lambda: None)
+    marker_path = state_directory / "request.json"
+    marker_path.write_text(
+        json.dumps(
+            {
+                "schema_version": 1,
+                "state": "failed",
+                "message": "execution failed",
+            }
+        ),
+        encoding="utf-8",
+    )
+    durable_path = state_directory / "credentials.json"
+    durable_path.write_text('{"original":"plan"}', encoding="utf-8")
+    staged_template = tmp_path / "apply" / "factory-reset" / "credentials.json"
+    retry_request = staged_template.with_name(
+        "credentials-55555555555555555555555555555555.json"
+    )
+    retry_request.parent.mkdir(parents=True)
+    retry_request.write_text(
+        json.dumps(
+            {
+                "schema_version": 1,
+                "admin_action": "keep",
+                "root_action": "keep",
+            }
+        ),
+        encoding="utf-8",
+    )
+    retry_request.chmod(0o600)
+
+    class Account:
+        """Represent the service account owning the protected staging file."""
+
+        pw_uid = retry_request.stat().st_uid
+
+    def fake_run(command: list[str], **_kwargs) -> subprocess.CompletedProcess[str]:
+        """Report no active timer or service.
+
+        Args:
+            command: Exact helper command being modeled.
+            **_kwargs: Subprocess options ignored by the test double.
+        """
+        assert command[:3] == ["systemctl", "is-active", "--quiet"]
+        return subprocess.CompletedProcess(command, 3, "", "")
+
+    monkeypatch.setattr(helper, "ATLASO_FACTORY_RESET_DIR", state_directory)
+    monkeypatch.setattr(helper, "ATLASO_FACTORY_RESET_REQUEST_PATH", marker_path)
+    monkeypatch.setattr(
+        helper,
+        "ATLASO_FACTORY_RESET_RESULT_PATH",
+        state_directory / "last-result.json",
+    )
+    monkeypatch.setattr(helper, "ATLASO_FACTORY_RESET_CREDENTIALS_PATH", durable_path)
+    monkeypatch.setattr(
+        helper,
+        "ATLASO_FACTORY_RESET_STAGED_CREDENTIALS_PATH",
+        staged_template,
+    )
+    monkeypatch.setattr(helper.pwd, "getpwnam", lambda _username: Account())
+    monkeypatch.setattr(
+        helper.shutil,
+        "which",
+        lambda command: "/usr/bin/systemd-run" if command == "systemd-run" else None,
+    )
+    monkeypatch.setattr(helper, "_run", fake_run)
+
+    assert helper._handle_factory_reset("schedule", [str(retry_request)]) == 2
+    assert "requires console recovery" in capsys.readouterr().err
+    assert durable_path.read_text(encoding="utf-8") == '{"original":"plan"}'
+    assert not retry_request.exists()
+
+
+def test_factory_reset_marker_uses_validated_state_directory(monkeypatch, tmp_path):
+    """The marker writer validates the state root before replacing its file.
+
+    Args:
+        monkeypatch: Pytest fixture used to replace dependencies for the test.
+        tmp_path: Temporary directory provided by pytest for isolated filesystem state.
+    """
+    helper = load_helper_module()
+    state_directory = tmp_path / "factory-reset"
+    state_directory.mkdir()
+    request_path = state_directory / "request.json"
+    monkeypatch.setattr(helper, "ATLASO_FACTORY_RESET_DIR", state_directory)
+    monkeypatch.setattr(helper, "ATLASO_FACTORY_RESET_REQUEST_PATH", request_path)
+    validated: list[bool] = []
+    monkeypatch.setattr(
+        helper,
+        "_open_factory_reset_directory",
+        lambda: validated.append(True) or None,
+    )
+
+    helper._write_factory_reset_marker({"schema_version": 1, "state": "scheduled"})
+
+    assert request_path.is_file()
+    assert validated == [True]
+
+
+def test_factory_reset_directory_open_rejects_symlink(monkeypatch, tmp_path):
+    """The POSIX state-root open fails closed when no-follow detects a link.
+
+    Args:
+        monkeypatch: Pytest fixture used to replace low-level directory operations.
+        tmp_path: Temporary directory used as the modeled Atlaso state root.
+    """
+    helper = load_helper_module()
+    state_directory = tmp_path / "factory-reset"
+    parent_descriptor = 91
+    closed: list[int] = []
+
+    monkeypatch.setattr(helper, "ATLASO_FACTORY_RESET_DIR", state_directory)
+    monkeypatch.setattr(helper.os, "name", "posix")
+    monkeypatch.setattr(helper.os, "O_DIRECTORY", 0x10000, raising=False)
+    monkeypatch.setattr(helper.os, "O_NOFOLLOW", 0x20000, raising=False)
+
+    def fake_open(path, _flags, *args, **kwargs):
+        """Open the parent, then model ELOOP for the linked child.
+
+        Args:
+            path: Candidate parent or child directory path.
+            _flags: No-follow open flags under test.
+            *args: Positional open arguments ignored by the test double.
+            **kwargs: Directory-relative open arguments under test.
+        """
+        del args
+        if not kwargs:
+            assert path == state_directory.parent
+            return parent_descriptor
+        assert path == state_directory.name
+        assert kwargs == {"dir_fd": parent_descriptor}
+        raise OSError("symlink refused")
+
+    monkeypatch.setattr(helper.os, "open", fake_open)
+    monkeypatch.setattr(
+        helper.os,
+        "fstat",
+        lambda descriptor: SimpleNamespace(
+            st_mode=stat.S_IFDIR | 0o750,
+            st_uid=0,
+        )
+        if descriptor == parent_descriptor
+        else pytest.fail("unexpected directory descriptor"),
+    )
+    monkeypatch.setattr(helper.os, "mkdir", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr(helper.os, "close", closed.append)
+
+    with pytest.raises(OSError, match="symlink refused"):
+        helper._open_factory_reset_directory()
+
+    assert closed == [parent_descriptor]
+
+
+def test_factory_reset_directory_open_rejects_unsafe_parent(monkeypatch, tmp_path):
+    """The helper rejects a parent that the service account could rename within.
+
+    Args:
+        monkeypatch: Pytest fixture used to replace low-level directory operations.
+        tmp_path: Temporary directory used as the modeled privileged state root.
+    """
+    helper = load_helper_module()
+    state_directory = tmp_path / "factory-reset"
+    parent_descriptor = 92
+    closed: list[int] = []
+
+    monkeypatch.setattr(helper, "ATLASO_FACTORY_RESET_DIR", state_directory)
+    monkeypatch.setattr(helper.os, "name", "posix")
+    monkeypatch.setattr(helper.os, "O_DIRECTORY", 0x10000, raising=False)
+    monkeypatch.setattr(helper.os, "O_NOFOLLOW", 0x20000, raising=False)
+    monkeypatch.setattr(helper.os, "open", lambda *_args, **_kwargs: parent_descriptor)
+    monkeypatch.setattr(
+        helper.os,
+        "fstat",
+        lambda descriptor: SimpleNamespace(
+            st_mode=stat.S_IFDIR | 0o770,
+            st_uid=0,
+        )
+        if descriptor == parent_descriptor
+        else pytest.fail("unexpected directory descriptor"),
+    )
+    monkeypatch.setattr(
+        helper.os,
+        "mkdir",
+        lambda *_args, **_kwargs: pytest.fail("unsafe parent must be rejected before mkdir"),
+    )
+    monkeypatch.setattr(helper.os, "close", closed.append)
+
+    with pytest.raises(ValueError, match="parent directory is unsafe"):
+        helper._open_factory_reset_directory()
+
+    assert closed == [parent_descriptor]
+
+
+def test_factory_reset_helper_resume_is_idempotent(monkeypatch, tmp_path):
+    """Factory-reset resume is a no-op without an in-progress marker.
+
+    Args:
+        monkeypatch: Pytest fixture used to replace dependencies for the test.
+        tmp_path: Temporary directory provided by pytest for isolated filesystem state.
+    """
+    helper = load_helper_module()
+    state_directory = tmp_path / "factory-reset"
+    monkeypatch.setattr(helper, "ATLASO_FACTORY_RESET_DIR", state_directory)
+    monkeypatch.setattr(helper, "ATLASO_FACTORY_RESET_REQUEST_PATH", state_directory / "request.json")
+    monkeypatch.setattr(helper, "ATLASO_FACTORY_RESET_RESULT_PATH", state_directory / "last-result.json")
+    monkeypatch.setattr(
+        helper,
+        "_factory_reset_runner",
+        lambda **_kwargs: pytest.fail("resume runner should not start without a request marker"),
+    )
+
+    assert helper._handle_factory_reset("resume", []) == 0
+
+
+def test_factory_reset_network_runtime_cleanup_uses_live_owned_state(monkeypatch, tmp_path, capsys):
+    """Reset removes live Atlaso VLANs and WAN state without database baselines.
+
+    Args:
+        monkeypatch: Pytest fixture used to replace dependencies for the test.
+        tmp_path: Temporary directory provided by pytest for isolated filesystem state.
+        capsys: Pytest fixture used to capture standard output and standard error.
+    """
+    helper = load_helper_module()
+    state_directory = tmp_path / "factory-reset"
+    networkd_directory = tmp_path / "networkd"
+    state_directory.mkdir()
+    networkd_directory.mkdir()
+    request_path = state_directory / "request.json"
+    request_path.write_text(json.dumps({"schema_version": 1, "state": "applying"}), encoding="utf-8")
+    (networkd_directory / "10-atlaso-eth1.120.netdev").write_text(
+        "# Managed by Atlaso. Local changes may be overwritten.\n"
+        "[NetDev]\n"
+        "Name=eth1.120\n"
+        "Kind=vlan\n"
+        "\n[VLAN]\nId=120\n",
+        encoding="utf-8",
+    )
+    (networkd_directory / "10-atlaso-unrelated.netdev").write_text(
+        "# Not owned by Atlaso.\n[NetDev]\nName=unrelated\nKind=vlan\n",
+        encoding="utf-8",
+    )
+    commands: list[list[str]] = []
+
+    def fake_run(command: list[str], **_kwargs) -> subprocess.CompletedProcess[str]:
+        """Return bounded live route and VLAN state for cleanup.
+
+        Args:
+            command: Exact command arguments.
+            **_kwargs: Subprocess options ignored by the test double.
+        """
+        commands.append(command)
+        if command == ["ip", "-j", "route", "show", "table", "200"]:
+            return subprocess.CompletedProcess(command, 0, '[{"dev":"eth1"},{"dev":"eth2"},{"dev":"eth1.120"}]', "")
+        if command == ["ip", "-j", "-6", "route", "show", "table", "200"]:
+            return subprocess.CompletedProcess(
+                command,
+                2,
+                "[]\n",
+                "Error: ipv6: FIB table does not exist.\nDump terminated\n",
+            )
+        if command[:5] == ["tc", "-j", "qdisc", "show", "dev"]:
+            kind = "fq_codel" if command[-1] == "eth2" else "netem"
+            return subprocess.CompletedProcess(command, 0, json.dumps([{"kind": kind, "root": True}]), "")
+        if command == ["ip", "-j", "-d", "link", "show", "dev", "eth1.120"]:
+            return subprocess.CompletedProcess(command, 0, '[{"linkinfo":{"info_kind":"vlan"}}]', "")
+        if command[:4] == ["tc", "qdisc", "del", "dev"]:
+            return subprocess.CompletedProcess(command, 2, "", "no qdisc\n")
+        if command[:3] == ["ip", "-6", "route"]:
+            return subprocess.CompletedProcess(
+                command,
+                2,
+                "",
+                "Error: ipv6: FIB table does not exist.\nDump terminated\n",
+            )
+        return subprocess.CompletedProcess(command, 0, "", "")
+
+    monkeypatch.setattr(helper, "ATLASO_FACTORY_RESET_DIR", state_directory)
+    monkeypatch.setattr(helper, "ATLASO_FACTORY_RESET_REQUEST_PATH", request_path)
+    monkeypatch.setattr(helper, "NETWORKD_CONFIG_DIR", networkd_directory)
+    monkeypatch.setattr(helper.shutil, "which", lambda command: f"/usr/sbin/{command}")
+    monkeypatch.setattr(helper, "_run", fake_run)
+
+    admitted_descriptor: int | None = None
+    if os.name == "posix":
+        admitted_descriptor = os.open(
+            state_directory,
+            os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW,
+        )
+        original_fstat = helper.os.fstat
+
+        def root_owned_marker_fstat(descriptor):
+            """Model the admitted request marker as root-owned.
+
+            Args:
+                descriptor: Open file descriptor to inspect.
+            """
+            result = original_fstat(descriptor)
+            if stat.S_ISREG(result.st_mode):
+                return SimpleNamespace(
+                    st_mode=result.st_mode,
+                    st_uid=0,
+                    st_size=result.st_size,
+                )
+            return result
+
+        monkeypatch.setattr(
+            helper,
+            "_open_factory_reset_directory",
+            lambda: os.dup(admitted_descriptor),
+        )
+        monkeypatch.setattr(helper.os, "fstat", root_owned_marker_fstat)
+    try:
+        assert helper._handle_factory_reset("reset-network-runtime", []) == 0
+    finally:
+        if admitted_descriptor is not None:
+            os.close(admitted_descriptor)
+    payload = json.loads(capsys.readouterr().out.splitlines()[-1])
+    assert payload["qdisc_interfaces"] == ["eth1", "eth1.120"]
+    assert payload["removed_vlans"] == ["eth1.120"]
+    assert ["ip", "route", "flush", "table", "100"] in commands
+    assert ["ip", "route", "flush", "table", "200"] in commands
+    assert ["ip", "-6", "route", "flush", "table", "100"] in commands
+    assert ["ip", "-6", "route", "flush", "table", "200"] in commands
+    assert ["ip", "link", "delete", "dev", "eth1.120"] in commands
+    assert ["tc", "qdisc", "del", "dev", "eth2", "root"] not in commands
+    assert not any("unrelated" in command for command in commands)
+
+
+def test_factory_reset_network_runtime_cleanup_requires_applying_marker(monkeypatch, tmp_path, capsys):
+    """The destructive runtime cleanup is unavailable outside reset activation.
+
+    Args:
+        monkeypatch: Pytest fixture used to replace dependencies for the test.
+        tmp_path: Temporary directory provided by pytest for isolated filesystem state.
+        capsys: Pytest fixture used to capture standard output and standard error.
+    """
+    helper = load_helper_module()
+    request_path = tmp_path / "missing-request.json"
+    commands: list[list[str]] = []
+    monkeypatch.setattr(helper, "ATLASO_FACTORY_RESET_REQUEST_PATH", request_path)
+    monkeypatch.setattr(helper, "_run", lambda command: commands.append(command))
+
+    assert helper._handle_factory_reset("reset-network-runtime", []) == 2
+    assert commands == []
+    assert "active applying marker" in capsys.readouterr().err
+
+
+def test_factory_reset_terminates_bounded_login_sessions(monkeypatch, capsys):
+    """Reset stops SSH and terminates root and Atlaso-managed login sessions.
+
+    Args:
+        monkeypatch: Pytest fixture used to replace session and service commands.
+        capsys: Pytest fixture used to capture helper output.
+    """
+    helper = load_helper_module()
+    commands: list[list[str]] = []
+    inventories = iter(
+        [
+            "1 0 root - pts/0\n2 1000 admin - pts/1\n3 1001 unrelated - pts/2\n",
+            "3 1001 unrelated - pts/2\n",
+        ]
+    )
+
+    def fake_run(command, **_kwargs):
+        """Return bounded service and login-session state.
+
+        Args:
+            command: Exact command arguments.
+            **_kwargs: Subprocess options ignored by the test double.
+        """
+        commands.append(command)
+        if command[1:2] == ["list-sessions"]:
+            return subprocess.CompletedProcess(command, 0, next(inventories), "")
+        if command[1:3] == ["is-active", "--quiet"]:
+            return subprocess.CompletedProcess(command, 3, "", "")
+        return subprocess.CompletedProcess(command, 0, "", "")
+
+    monkeypatch.setattr(helper, "_factory_reset_runtime_cleanup_is_admitted", lambda: True)
+    monkeypatch.setattr(helper, "_managed_local_usernames", lambda: ["admin"])
+    monkeypatch.setattr(helper.shutil, "which", lambda name: f"/usr/bin/{name}")
+    monkeypatch.setattr(helper, "_run", fake_run)
+
+    assert helper._handle_factory_reset("terminate-login-sessions", []) == 0
+
+    assert ["systemctl", "stop", "sshd.service"] in commands
+    assert ["/usr/bin/loginctl", "terminate-session", "1"] in commands
+    assert ["/usr/bin/loginctl", "terminate-session", "2"] in commands
+    assert ["/usr/bin/loginctl", "terminate-session", "3"] not in commands
+    assert json.loads(capsys.readouterr().out)["session_count"] == 2
+
+
+@pytest.mark.skipif(os.name != "posix", reason="requires POSIX descriptor-relative marker access")
+def test_factory_reset_cleanup_admission_ignores_replaced_state_path(monkeypatch, tmp_path):
+    """Cleanup admission remains bound to the securely opened state directory.
+
+    Args:
+        monkeypatch: Pytest fixture used to replace helper directory admission.
+        tmp_path: Temporary directory provided by pytest for isolated filesystem state.
+    """
+    helper = load_helper_module()
+    state_directory = tmp_path / "factory-reset"
+    state_directory.mkdir()
+    (state_directory / "request.json").write_text(
+        json.dumps({"schema_version": 1, "state": "scheduled"}),
+        encoding="utf-8",
+    )
+    admitted_descriptor = os.open(
+        state_directory,
+        os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW,
+    )
+    admitted_directory = tmp_path / "admitted-factory-reset"
+    replacement_directory = tmp_path / "replacement"
+    state_directory.rename(admitted_directory)
+    replacement_directory.mkdir()
+    (replacement_directory / "request.json").write_text(
+        json.dumps({"schema_version": 1, "state": "applying"}),
+        encoding="utf-8",
+    )
+    state_directory.symlink_to(replacement_directory, target_is_directory=True)
+    original_fstat = helper.os.fstat
+
+    def root_owned_fstat(descriptor):
+        """Model the admitted helper-created marker as root-owned.
+
+        Args:
+            descriptor: Open file descriptor to inspect.
+        """
+        result = original_fstat(descriptor)
+        if stat.S_ISREG(result.st_mode):
+            return SimpleNamespace(
+                st_mode=result.st_mode,
+                st_uid=0,
+                st_size=result.st_size,
+            )
+        return result
+
+    monkeypatch.setattr(helper, "ATLASO_FACTORY_RESET_DIR", state_directory)
+    monkeypatch.setattr(helper, "ATLASO_FACTORY_RESET_REQUEST_PATH", state_directory / "request.json")
+    monkeypatch.setattr(
+        helper,
+        "_open_factory_reset_directory",
+        lambda: os.dup(admitted_descriptor),
+    )
+    monkeypatch.setattr(helper.os, "fstat", root_owned_fstat)
+    try:
+        assert helper._factory_reset_runtime_cleanup_is_admitted() is False
+    finally:
+        os.close(admitted_descriptor)
+
+
+def test_factory_reset_retained_runtime_cleanup_removes_bounded_state(
+    monkeypatch,
+    tmp_path,
+    capsys,
+):
+    """Reset removes KMIP and synchronized package-source state through the helper.
+
+    Args:
+        monkeypatch: Pytest fixture used to replace dependencies for the test.
+        tmp_path: Temporary directory provided by pytest for isolated filesystem state.
+        capsys: Pytest fixture used to capture standard output and standard error.
+    """
+    helper = load_helper_module()
+    kmip_state = tmp_path / "kmip"
+    kmip_state.mkdir()
+    for name in ("store.db", "store.db-wal", "kek.json"):
+        (kmip_state / name).write_text("fixture", encoding="utf-8")
+    managed_repo = tmp_path / "atlaso-managed.repo"
+    managed_repo.write_text("credential-bearing fixture", encoding="utf-8")
+    update_state = tmp_path / "update-sources.json"
+    update_state.write_text(
+        json.dumps({"powershell_repositories": ["PrivateGallery"]}),
+        encoding="utf-8",
+    )
+    synced_directories: list[Path] = []
+
+    def sync_sources(payload):
+        """Model successful synchronized package-source removal.
+
+        Args:
+            payload: Factory source definition payload supplied to the helper.
+        """
+        assert payload == {"source_definitions": []}
+        managed_repo.unlink()
+        return {"status": "succeeded"}
+
+    monkeypatch.setattr(
+        helper,
+        "_factory_reset_runtime_cleanup_is_admitted",
+        lambda: True,
+    )
+    monkeypatch.setattr(helper, "KMS_STATE_DIR", kmip_state)
+    monkeypatch.setattr(helper, "MANAGED_PHOTON_REPO_PATH", managed_repo)
+    monkeypatch.setattr(helper, "UPDATE_SOURCE_STATE_PATH", update_state)
+    monkeypatch.setattr(
+        helper,
+        "_command_path",
+        lambda name: "/usr/bin/pwsh" if name == "pwsh" else None,
+    )
+    monkeypatch.setattr(helper, "_sync_appliance_update_sources", sync_sources)
+    monkeypatch.setattr(
+        helper,
+        "_fsync_factory_reset_directory",
+        synced_directories.append,
+    )
+
+    assert helper._handle_factory_reset("reset-retained-runtime", []) == 0
+    assert list(kmip_state.iterdir()) == []
+    assert not managed_repo.exists()
+    assert not update_state.exists()
+    assert synced_directories == [managed_repo.parent, kmip_state, update_state.parent]
+    output = json.loads(capsys.readouterr().out)
+    assert output["kmip_entries_removed"] == 3
+    assert output["powershell_repositories_removed"] == 1
+
+
+def test_factory_reset_fsyncs_photon_removal_before_partial_failure_retry(
+    monkeypatch,
+    tmp_path,
+    capsys,
+):
+    """A later PowerShell failure cannot strand an unsynced Photon unlink.
+
+    Args:
+        monkeypatch: Pytest fixture used to replace dependencies for the test.
+        tmp_path: Temporary directory provided by pytest for isolated filesystem state.
+        capsys: Pytest fixture used to capture standard output and standard error.
+    """
+    helper = load_helper_module()
+    kmip_state = tmp_path / "kmip"
+    kmip_state.mkdir()
+    managed_repo = tmp_path / "repos" / "atlaso-managed.repo"
+    managed_repo.parent.mkdir()
+    managed_repo.write_text("credential-bearing fixture", encoding="utf-8")
+    update_state = tmp_path / "update-sources.json"
+    update_state.write_text("{}", encoding="utf-8")
+    attempts = 0
+    synced_directories: list[Path] = []
+
+    def sync_sources(payload):
+        """Remove Photon state, then model one PowerShell unregister failure.
+
+        Args:
+            payload: Factory source definition payload supplied to the helper.
+        """
+        nonlocal attempts
+        assert payload == {"source_definitions": []}
+        attempts += 1
+        managed_repo.unlink(missing_ok=True)
+        return {"status": "failed" if attempts == 1 else "succeeded"}
+
+    monkeypatch.setattr(helper, "_factory_reset_runtime_cleanup_is_admitted", lambda: True)
+    monkeypatch.setattr(helper, "_factory_reset_retained_runtime_paths_are_safe", lambda: {"PrivateGallery"})
+    monkeypatch.setattr(helper, "KMS_STATE_DIR", kmip_state)
+    monkeypatch.setattr(helper, "MANAGED_PHOTON_REPO_PATH", managed_repo)
+    monkeypatch.setattr(helper, "UPDATE_SOURCE_STATE_PATH", update_state)
+    monkeypatch.setattr(helper, "_sync_appliance_update_sources", sync_sources)
+    monkeypatch.setattr(
+        helper,
+        "_fsync_factory_reset_directory",
+        synced_directories.append,
+    )
+
+    assert helper._handle_factory_reset("reset-retained-runtime", []) == 1
+    assert synced_directories == [managed_repo.parent]
+    assert helper._handle_factory_reset("reset-retained-runtime", []) == 0
+
+    assert synced_directories == [managed_repo.parent, update_state.parent]
+    assert not managed_repo.exists()
+    assert "could not remove synchronized package-source" in capsys.readouterr().err
+
+
+def test_factory_reset_root_password_action_uses_protected_input(
+    monkeypatch,
+    capsys,
+):
+    """Root password change uses the protected durable payload without outputting it.
+
+    Args:
+        monkeypatch: Pytest fixture used to replace dependencies for the test.
+        capsys: Pytest fixture used to capture standard output and standard error.
+    """
+    helper = load_helper_module()
+    password = "Protected-Root1!"
+    calls: list[tuple[str, str]] = []
+    monkeypatch.setattr(
+        helper,
+        "_factory_reset_runtime_cleanup_is_admitted",
+        lambda: True,
+    )
+    monkeypatch.setattr(
+        helper,
+        "_read_durable_factory_reset_credentials",
+        lambda: {
+            "schema_version": 1,
+            "admin_action": "keep",
+            "root_action": "change",
+            "root_password": password,
+        },
+    )
+    monkeypatch.setattr(
+        helper,
+        "_set_os_user_password",
+        lambda username, value: calls.append((username, value)) or 0,
+    )
+
+    assert helper._handle_factory_reset("apply-root-password", []) == 0
+    captured = capsys.readouterr()
+    assert calls == [("root", password)]
+    assert password not in captured.out
+    assert json.loads(captured.out)["factory_reset_root_password"] == "change"
+
+
+def test_factory_reset_helper_resume_queues_post_commit_finalizer(monkeypatch, tmp_path):
+    """Service preflight must not rerun a reset whose defaults are already committed.
+
+    Args:
+        monkeypatch: Pytest fixture used to replace dependencies for the test.
+        tmp_path: Temporary directory provided by pytest for isolated filesystem state.
+    """
+    helper = load_helper_module()
+    state_directory = tmp_path / "factory-reset"
+    state_directory.mkdir()
+    request_path = state_directory / "request.json"
+    request_path.write_text(
+        json.dumps(
+            {
+                "schema_version": 1,
+                "state": "awaiting_readiness",
+                "message": "waiting",
+                "applied_unit_count": 16,
+            }
+        ),
+        encoding="utf-8",
+    )
+    scheduled: list[bool] = []
+    monkeypatch.setattr(helper, "ATLASO_FACTORY_RESET_DIR", state_directory)
+    monkeypatch.setattr(helper, "ATLASO_FACTORY_RESET_REQUEST_PATH", request_path)
+    monkeypatch.setattr(helper, "ATLASO_FACTORY_RESET_RESULT_PATH", state_directory / "last-result.json")
+    monkeypatch.setattr(
+        helper,
+        "_factory_reset_runner",
+        lambda **_kwargs: pytest.fail("post-commit resume must not rebuild factory defaults"),
+    )
+    monkeypatch.setattr(
+        helper,
+        "_schedule_factory_reset_finalizer",
+        lambda: scheduled.append(True) or subprocess.CompletedProcess([], 0, "", ""),
+    )
+
+    assert helper._handle_factory_reset("resume", []) == 0
+    assert scheduled == [True]
+
+
+def test_factory_reset_helper_finalizer_does_not_block_service_preflight(monkeypatch):
+    """Boot resume queues readiness work and lets the Atlaso service continue starting.
+
+    Args:
+        monkeypatch: Pytest fixture used to replace dependencies for the test.
+    """
+    helper = load_helper_module()
+    commands: list[list[str]] = []
+
+    def fake_run(command: list[str], **_kwargs) -> subprocess.CompletedProcess[str]:
+        """Record one detached finalizer command.
+
+        Args:
+            command: Exact command arguments.
+            **_kwargs: Subprocess options ignored by the test double.
+        """
+        commands.append(command)
+        return subprocess.CompletedProcess(command, 0, "", "")
+
+    monkeypatch.setattr(helper.shutil, "which", lambda _command: "/usr/bin/systemd-run")
+    monkeypatch.setattr(helper, "_run", fake_run)
+
+    result = helper._schedule_factory_reset_finalizer()
+
+    assert result.returncode == 0
+    assert len(commands) == 1
+    assert "--collect" in commands[0]
+    assert "--no-block" in commands[0]
+    assert commands[0][-4:] == [
+        str(helper.ATLASO_FACTORY_RESET_PYTHON),
+        "-m",
+        "atlaso.app.factory_reset",
+        "finalize",
+    ]
+
+
 def ldap_payload(*, enabled: bool = False) -> dict:
     """Return ldap payload.
 
@@ -4797,6 +5900,19 @@ def test_esxi_pxe_helper_writes_http_ipxe_script_without_profiles(monkeypatch, t
     assert (tftp_root / "ldlinux.c32").read_bytes() == b"ldlinux"
 
 
+def test_esxi_pxe_helper_accepts_dormant_native_http_preference_when_disabled():
+    """Disabled PXE does not require a URL for its dormant native HTTP preference."""
+    helper = load_helper_module()
+
+    assert helper._esxi_pxe_boot_errors(
+        {
+            "enabled": False,
+            "native_uefi_http_enabled": True,
+            "native_uefi_http_url": "",
+        }
+    ) == []
+
+
 def test_esxi_pxe_helper_does_not_copy_host_artifact_to_default_fallback(monkeypatch, tmp_path):
     """Verify that esxi pxe helper does not copy host artifact to default fallback.
 
@@ -5377,6 +6493,11 @@ def test_real_mutating_helper_action_escapes_service_mount_namespace(monkeypatch
 
     monkeypatch.setenv("ATLASO_HELPER_USE_SYSTEMD_RUN", "1")
     monkeypatch.delenv(helper.SYSTEMD_RUN_CHILD_ENV, raising=False)
+    monkeypatch.setattr(
+        helper.shutil,
+        "which",
+        lambda command: "/usr/bin/systemd-run" if command == "systemd-run" else None,
+    )
     monkeypatch.setattr(helper.shutil, "which", fake_which)
     monkeypatch.setattr(helper, "_run", fake_run)
     monkeypatch.setattr(helper, "_handle_dnsmasq", lambda action, args: (_ for _ in ()).throw(AssertionError("handler should run in child")))
@@ -5395,7 +6516,102 @@ def test_real_mutating_helper_action_escapes_service_mount_namespace(monkeypatch
         "--service-type=exec",
         f"--setenv={helper.SYSTEMD_RUN_CHILD_ENV}=1",
     ]
+    assert re.fullmatch(
+        r"--unit=atlaso-helper-action-[0-9a-f]{32}", commands[0][7]
+    )
     assert commands[0][-4:] == ["dnsmasq", "apply", "--real", str(config_path)]
+
+
+def test_account_commands_use_bounded_helper_action_units(monkeypatch):
+    """Account mutations use the same reset-visible transient unit family.
+
+    Args:
+        monkeypatch: Pytest fixture used to replace dependencies for the test.
+    """
+    helper = load_helper_module()
+    commands: list[list[str]] = []
+    stdin_commands: list[tuple[list[str], str]] = []
+
+    monkeypatch.setenv("ATLASO_HELPER_USE_SYSTEMD_RUN", "1")
+    monkeypatch.setattr(
+        helper.shutil,
+        "which",
+        lambda command: "/usr/bin/systemd-run" if command == "systemd-run" else None,
+    )
+    monkeypatch.setattr(
+        helper,
+        "_run",
+        lambda command: commands.append(command)
+        or subprocess.CompletedProcess(command, 0, "", ""),
+    )
+    monkeypatch.setattr(
+        helper,
+        "_run_with_input",
+        lambda command, input_text: stdin_commands.append((command, input_text))
+        or subprocess.CompletedProcess(command, 0, "", ""),
+    )
+
+    helper._run_account_command(["usermod", "--lock", "operator"])
+    helper._run_account_command_with_input(["chpasswd"], "operator:secret\n")
+
+    assert re.fullmatch(
+        r"--unit=atlaso-helper-action-[0-9a-f]{32}", commands[0][6]
+    )
+    assert re.fullmatch(
+        r"--unit=atlaso-helper-action-[0-9a-f]{32}", stdin_commands[0][0][6]
+    )
+    assert commands[0][-3:] == ["usermod", "--lock", "operator"]
+    assert stdin_commands[0][0][-1] == "chpasswd"
+    assert stdin_commands[0][1] == "operator:secret\n"
+
+
+@pytest.mark.parametrize(
+    "action",
+    [
+        "terminate-login-sessions",
+        "reset-network-runtime",
+        "reset-retained-runtime",
+        "apply-root-password",
+    ],
+)
+def test_factory_reset_mutations_use_bounded_helper_action_units(
+    monkeypatch,
+    action,
+):
+    """Reset mutations re-enter through the reset-visible transient family.
+
+    Args:
+        monkeypatch: Pytest fixture used to replace dependencies for the test.
+        action: Factory-reset helper action under test.
+    """
+    helper = load_helper_module()
+    calls: list[tuple[str, str, list[str]]] = []
+
+    monkeypatch.setenv("ATLASO_HELPER_USE_SYSTEMD_RUN", "1")
+    monkeypatch.delenv(helper.SYSTEMD_RUN_CHILD_ENV, raising=False)
+    monkeypatch.setattr(
+        helper.shutil,
+        "which",
+        lambda command: "/usr/bin/systemd-run" if command == "systemd-run" else None,
+    )
+    monkeypatch.setattr(
+        helper,
+        "_run_real_action_with_systemd",
+        lambda group, selected_action, args: calls.append(
+            (group, selected_action, args)
+        )
+        or 0,
+    )
+    monkeypatch.setattr(
+        helper,
+        "_handle_factory_reset",
+        lambda *_args: (_ for _ in ()).throw(
+            AssertionError("handler should run in the transient child")
+        ),
+    )
+
+    assert helper.main(["atlaso-helper", "factory-reset", action, "--real"]) == 0
+    assert calls == [("factory-reset", action, [])]
 
 
 def test_management_handoff_apply_uses_fixed_systemd_unit(monkeypatch, tmp_path):
@@ -6922,6 +8138,58 @@ def test_local_users_helper_creates_deletes_and_sets_password_without_leaking(mo
     assert "pam_pwquality.so" in pam_path.read_text(encoding="utf-8")
     assert "minlen = 12" in pwquality_path.read_text(encoding="utf-8")
     assert not config_path.exists()
+
+
+def test_local_users_helper_deletes_managed_inventory_account_missing_from_baseline(monkeypatch, tmp_path):
+    """The root-owned managed-home inventory closes stale or absent baseline gaps.
+
+    Args:
+        monkeypatch: Pytest fixture used to replace dependencies for the test.
+        tmp_path: Temporary directory provided by pytest for isolated filesystem state.
+    """
+    helper = load_helper_module()
+    apply_dir = tmp_path / "apply" / "local-users"
+    home_base = tmp_path / "users"
+    pwquality_path = tmp_path / "etc" / "security" / "pwquality.conf"
+    pam_path = tmp_path / "etc" / "pam.d" / "system-password"
+    pam_path.parent.mkdir(parents=True)
+    pam_path.write_text("password  required    pam_unix.so\n", encoding="utf-8")
+    apply_dir.mkdir(parents=True)
+    config_path = apply_dir / "atlaso-users.json"
+    payload = json.loads(local_users_json(password=None))
+    payload["users"][0]["home"] = (home_base / "sync-user").as_posix()
+    payload["removed_users"] = []
+    config_path.write_text(json.dumps(payload), encoding="utf-8")
+    commands: list[list[str]] = []
+
+    def fake_run(command: list[str]) -> subprocess.CompletedProcess[str]:
+        """Record one local-user helper command.
+
+        Args:
+            command: Exact command arguments.
+        """
+        commands.append(command)
+        return subprocess.CompletedProcess(command, 0, "", "")
+
+    monkeypatch.setattr(helper, "LOCAL_USERS_APPLY_DIR", apply_dir)
+    monkeypatch.setattr(helper, "LOCAL_USERS_HOME_BASE", home_base)
+    monkeypatch.setattr(helper, "LOCAL_USERS_PWQUALITY_PATH", pwquality_path)
+    monkeypatch.setattr(helper, "LOCAL_USERS_SYSTEM_PASSWORD_PAM_PATH", pam_path)
+    monkeypatch.setattr(helper, "_command_path", lambda command: command)
+    monkeypatch.setattr(helper, "_run", fake_run)
+    monkeypatch.setattr(
+        helper.pwd,
+        "getpwall",
+        lambda: [
+            SimpleNamespace(pw_name="sync-user", pw_dir=(home_base / "sync-user").as_posix()),
+            SimpleNamespace(pw_name="stale-user", pw_dir=(home_base / "stale-user").as_posix()),
+            SimpleNamespace(pw_name="operator", pw_dir="/home/operator"),
+        ],
+    )
+
+    assert helper._handle_local_users("apply", [str(config_path)]) == 0
+    assert ["userdel", "-r", "stale-user"] in commands
+    assert ["userdel", "-r", "sync-user"] not in commands
 
 
 def test_local_users_helper_authenticates_shadow_password_without_leaking(monkeypatch, capsys):
@@ -9339,6 +10607,54 @@ def test_appliance_settings_helper_writes_http_management_proxy_without_https(mo
     assert ["/usr/sbin/sshd", "-t"] in commands
     assert ["systemctl", "restart", "sshd"] in commands
     assert any(command[:5] == ["/usr/bin/systemd-run", "--quiet", "--collect", "--on-active=3", "--unit=atlaso-management-ui-restart"] for command in commands)
+
+
+def test_management_https_change_suppresses_restart_during_factory_reset(
+    monkeypatch,
+    tmp_path,
+):
+    """Factory activation leaves Atlaso stopped until the reset readiness handoff.
+
+    Args:
+        monkeypatch: Pytest fixture used to replace helper paths and execution.
+        tmp_path: Temporary directory provided for the reset marker and drop-in.
+    """
+    helper = load_helper_module()
+    marker = tmp_path / "factory-reset" / "request.json"
+    dropin = tmp_path / "atlaso.service.d" / "management-https.conf"
+    marker.parent.mkdir(parents=True)
+    marker.write_text(
+        json.dumps({"schema_version": 1, "state": "applying"}),
+        encoding="utf-8",
+    )
+    commands: list[list[str]] = []
+
+    def fake_run(command: list[str]) -> subprocess.CompletedProcess[str]:
+        """Record the system command and return success.
+
+        Args:
+            command: Exact command arguments passed by the helper.
+        """
+        commands.append(command)
+        return subprocess.CompletedProcess(command, 0, "", "")
+
+    monkeypatch.setattr(helper, "ATLASO_FACTORY_RESET_REQUEST_PATH", marker)
+    monkeypatch.setattr(helper, "ATLASO_SERVICE_DROPIN_DIR", dropin.parent)
+    monkeypatch.setattr(helper, "ATLASO_SERVICE_HTTPS_DROPIN_PATH", dropin)
+    monkeypatch.setattr(
+        helper,
+        "_factory_reset_runtime_cleanup_is_admitted",
+        lambda: True,
+    )
+    monkeypatch.setattr(helper, "_install_nginx_site", lambda *_args: 0)
+    monkeypatch.setattr(helper, "_run", fake_run)
+    monkeypatch.setattr(helper.shutil, "which", lambda _command: "/usr/bin/systemd-run")
+
+    payload = json.loads(appliance_settings_json(management_https_enabled=False))
+    assert helper._configure_atlaso_management_https(payload) == (0, None)
+
+    assert commands == [["systemctl", "daemon-reload"]]
+    assert dropin.is_file()
 
 
 def test_appliance_settings_helper_applies_local_resolver_without_timesyncd(monkeypatch, tmp_path):

@@ -444,8 +444,12 @@ Terminal order:
 - Real mutating helper actions run through `systemd-run` from inside `atlaso-helper` when
   `ATLASO_HELPER_USE_SYSTEMD_RUN=1` is set. This escapes the `atlaso.service` read-only `/etc` mount namespace without
   giving the web control plane broad shell/root access. Keep that environment variable in `atlaso.service` and preserve
-  it in the Atlaso sudoers rule.
-- The global `/ui/management/appliance-apply` workflow remains the only host-mutation workflow. Do not add
+  it in the Atlaso sudoers rule. Give every real helper action and nested account mutation an exact UUID-named
+  `atlaso-helper-action-*` transient service. Complete factory reset stops and verifies that bounded family after
+  stopping Atlaso callers and before inventorying delayed update restarts.
+- The global `/ui/management/appliance-apply` workflow remains the only ordinary host-mutation workflow. The dedicated
+  complete factory-reset transaction is the sole recovery exception; it validates and activates all factory units and
+  establishes matching baselines without an operator-created Apply task. Do not add
   service-specific apply
   routes, service-specific apply jobs, or direct helper calls from desired-state edit forms.
 - Appliance Update is runtime maintenance, not desired-state drift. Keep it separate from
@@ -797,9 +801,9 @@ Terminal order:
   `appliance:https` certificate; the root CA must not be baked into reusable images. Nginx redirects public HTTP/80 to
   HTTPS/443 and reverse-proxies HTTPS to uvicorn on `127.0.0.1:8000`. Appliance FQDN or management IP changes should
   reissue the managed leaf certificate automatically; root CA replacement remains an explicit rotation workflow. When
-  HTTPS is disabled or factory reset is applied, nginx serves public HTTP/80 as a plain reverse proxy to the same
-  loopback upstream and does not expose a management HTTPS listener. The helper reloads nginx/systemd, then schedules a
-  short delayed `atlaso.service` restart so the apply job can be recorded.
+  HTTPS is disabled or the dedicated complete factory-reset transaction is applied, nginx serves public HTTP/80 as a
+  plain reverse proxy to the same loopback upstream and does not expose a management HTTPS listener. The helper reloads
+  nginx/systemd, then schedules a short delayed `atlaso.service` restart so the apply job can be recorded.
 - The web terminal is off by default, requires management HTTPS, and always includes management when enabled. Configure
   additional addressed interfaces with the shared tag editor; keep the management tag locked and reject missing,
   disabled, trunk-only, unused, or addressless selections. Additional selected addresses receive only login/logout,
@@ -1306,9 +1310,14 @@ Terminal order:
 - Backup / Restore owns desired-state settings archives. Do not include audit events, jobs, API tokens, password hashes,
   uploaded secret bodies, or runtime history in those archives. The separate passphrase-encrypted LDAP directory
   recovery export/import is an explicit special case that also lives on Backup / Restore; it preserves slapcat password
-  hashes, remains outside the settings archive, and stages import for global LDAP apply. Restore and factory reset must
-  leave service status rows stopped, disabled, and `unconfigured`; host mutation still belongs only to the global
-  `/ui/management/appliance-apply` workflow. Factory reset must reseed only core defaults and must not recreate demo
+  hashes, remains outside the settings archive, and stages import for global LDAP apply. Settings restore leaves service
+  status rows stopped, disabled, and `unconfigured`, and its host mutation still belongs to the global
+  `/ui/management/appliance-apply` workflow. Complete factory reset is different: it atomically replaces every database
+  table with factory/bootstrap records, invalidates all previous sessions, credentials, jobs, schedules, tokens, and
+  audit history, then preflights and activates every factory apply unit through the dedicated reset transaction. Core
+  routing, firewall, authentication, and management reachability must finish coherent; optional services must finish
+  disabled; desired/applied baselines must match for all 16 units with no follow-up Apply. Factory reset must reseed only
+  core defaults and must not recreate demo
   VLANs, trunk-only
   parent NIC posture, routes, NAT rules, WAN policies, DHCP scopes/reservations, firewall rules, CA requests, vSphere
   providers/trusted vCenters, depot download profiles, or service listener bindings, including after service restart.
@@ -1316,6 +1325,29 @@ Terminal order:
   After factory reset, only `eth0` should be desired admin up; other physical NICs should be desired admin down until
   an operator enables them. Disabled service settings should have blank listen interfaces and addresses until an
   operator selects a valid bind target.
+- Before replacing the database, complete factory reset must persist a bounded, non-secret journal/marker outside the
+  database, construct and validate a private candidate database, preflight generated nginx, network, firewall, resolver,
+  systemd, and service configuration, and quiesce Atlaso database writers. The same marker drives idempotent boot resume.
+  After helper-action quiescence, stop and verify any pre-existing fixed-name management restart timer and service, then
+  stop and verify the application services again before factory activation.
+  Serialize scheduled, boot-resume, and console runners with a nonblocking appliance transaction lock; a rejected
+  overlapping runner or active delay timer must not overwrite or remove the active runner's marker, candidate, or result.
+  Preserve depot content, backup artifacts, managed ESX Storage payloads, and other documented payload paths by default;
+  clear only logical database references and fixed transient Apply staging. Scrub secret-bearing staging on success and
+  failure, including retained bootstrap and root SSH authorization files, VCF Backup authorized keys, Web Terminal CA
+  material, pending terminal requests, KMIP operational state, managed Photon repository credentials, and
+  Atlaso-synchronized package-source state. Keep
+  credential-bearing repository removal durable by fsyncing its parent directory before advancing the reset marker.
+  Keep
+  explicit keep-or-change choices for both the bootstrap administrator and root passwords. New values must satisfy the
+  packaged factory Local Users policy, remain only in request-bound mode-0600 transient and root-owned durable reset
+  recovery files, reach OS password tools only through the constrained helper and stdin, and never enter the database,
+  marker, jobs, audits, logs, or UI responses. The bootstrap choice covers both web and Photon OS authentication; the
+  root choice must not enable root
+  SSH. Keep the request marker in `awaiting_readiness` until Atlaso, worker, nginx, and the management OpenAPI front
+  door are stable; a restart or readiness failure must retain a resumable failure marker. If management addressing
+  returns to the image
+  default, provide a login and local-console handoff instead of requiring the operator to discover a pending Apply modal.
 - Settings archives must not include vault entries. Restore and factory reset clear vaults and the unused legacy
   Kickstart-binding compatibility table; operators reimport or recreate vault contents afterward.
 - Validate every supplied settings archive collection, row object, nested revision, required field, relationship, and
