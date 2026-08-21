@@ -3376,6 +3376,99 @@ def test_worker_restart_fails_update_parent_after_children_commit(client, monkey
         assert [step.status for step in recovered.steps] == ["succeeded", "succeeded"]
 
 
+def test_worker_restart_records_interrupted_check_as_latest_failed_attempt(
+    client,
+    monkeypatch,
+    tmp_path,
+):
+    """Keep an older confirmation while blocking installs after interrupted checks.
+
+    Args:
+        client: HTTP test client providing isolated application state.
+        monkeypatch: Pytest fixture used to replace worker dependencies.
+        tmp_path: Temporary directory provided for finalizer state.
+    """
+    from datetime import datetime, timezone
+
+    from atlaso.app import ui, worker
+    from atlaso.app.database import SessionLocal
+    from atlaso.app.models import Job
+    from atlaso.app.services.appliance_update import (
+        APPLIANCE_UPDATE_AVAILABILITY_KEY,
+        empty_update_availability,
+        ensure_appliance_update_job_steps,
+        manual_install_gate,
+        record_update_availability_attempt,
+        update_availability_to_json,
+        update_stream_configuration_fingerprints,
+    )
+
+    monkeypatch.setattr(
+        worker,
+        "APPLIANCE_UPDATE_FINALIZER_PATH",
+        str(tmp_path / "missing-finalizer-status.json"),
+    )
+    with SessionLocal() as db:
+        settings = ui.appliance_update_settings(db)
+        fingerprint = update_stream_configuration_fingerprints(settings)["photon_os"]
+        availability = record_update_availability_attempt(
+            empty_update_availability(),
+            stream="photon_os",
+            job_id="job-earlier-check",
+            checked_at=datetime.now(timezone.utc),
+            fingerprint=fingerprint,
+            result={
+                "state": "available",
+                "current": "1.0",
+                "target": "2.0",
+                "change_count": 1,
+                "changes": [{"name": "photon", "action": "upgrade"}],
+            },
+        )
+        ui.set_setting_value(
+            db,
+            APPLIANCE_UPDATE_AVAILABILITY_KEY,
+            update_availability_to_json(availability),
+        )
+        job = Job(
+            id="job-interrupted-check",
+            type="appliance-update",
+            status="running",
+            created_by="admin",
+            task_config_json=json.dumps(
+                {
+                    "selected_streams": ["photon_os"],
+                    "settings": settings,
+                    "mode": "check",
+                }
+            ),
+            result='{"status":"running","success":false}',
+        )
+        db.add(job)
+        db.flush()
+        step = ensure_appliance_update_job_steps(
+            db,
+            job=job,
+            selected_streams=["photon_os"],
+        )[0]
+        step.status = "running"
+        db.commit()
+
+        assert worker.recover_interrupted_worker_jobs(db) == 1
+        recovered = db.get(Job, job.id)
+        assert recovered.status == "failed"
+        assert json.loads(recovered.result)["worker_recovery"] == "interrupted"
+
+        summary = ui.appliance_update_availability_summary(db)
+        photon = next(row for row in summary["streams"] if row["id"] == "photon_os")
+        assert photon["last_attempt"]["success"] is False
+        assert photon["last_attempt"]["state"] == "failed"
+        assert photon["confirmed"]["update_available"] is True
+        allowed, reason = manual_install_gate(summary, ["photon_os"])
+        assert allowed is False
+        assert "interrupted check" in reason
+
+
 def test_worker_restart_removes_interrupted_network_boot_upload(client, monkeypatch):
     """Verify that worker restart removes interrupted network boot upload.
 
