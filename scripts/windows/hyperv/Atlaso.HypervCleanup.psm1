@@ -98,6 +98,17 @@ function Test-AtlasoHypervVmUsesArtifactRoot {
             (Test-AtlasoHypervSamePath -Left $RemovalRoot -Right $path) -or
             (Test-AtlasoHypervStrictDescendantPath -ParentPath $RemovalRoot -ChildPath $path)
         ) {
+            Assert-AtlasoHypervPathHasNoReparsePoint -Path $path
+            if (-not (Test-Path -LiteralPath $path)) {
+                throw "Hyper-V inventory path cannot be resolved for ownership validation: $path"
+            }
+            $resolvedInventoryPath = (Resolve-Path -LiteralPath $path -ErrorAction Stop).Path
+            if (
+                -not (Test-AtlasoHypervSamePath -Left $RemovalRoot -Right $resolvedInventoryPath) -and
+                -not (Test-AtlasoHypervStrictDescendantPath -ParentPath $RemovalRoot -ChildPath $resolvedInventoryPath)
+            ) {
+                throw "Hyper-V inventory path resolves outside the requested artifact root: $path"
+            }
             return $true
         }
     }

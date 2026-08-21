@@ -33,6 +33,7 @@ def _run_hyperv_cleanup(
     stop_sticky: bool = False,
     remove_sticky: bool = False,
     inventory_move_timing: str | None = None,
+    inventory_path: Path | None = None,
 ) -> subprocess.CompletedProcess[str]:
     """Run the cleanup module against deterministic in-process Hyper-V cmdlet fakes.
 
@@ -47,11 +48,13 @@ def _run_hyperv_cleanup(
         stop_sticky: Whether a successful stop leaves the VM active.
         remove_sticky: Whether a successful removal leaves the VM registered.
         inventory_move_timing: Whether fake storage moves before or during the stop refresh.
+        inventory_path: Optional fake VM configuration and disk parent path.
 
     Returns:
         Completed PowerShell process.
     """
     state_path = tmp_path / "hyperv-state.json"
+    effective_inventory_path = inventory_path or removal_root / "Atlaso-Test"
     state_path.write_text(
         json.dumps(
             {
@@ -60,8 +63,8 @@ def _run_hyperv_cleanup(
                         "id": "11111111-1111-1111-1111-111111111111",
                         "name": "Atlaso-Test",
                         "state": state,
-                        "path": str(removal_root / "Atlaso-Test"),
-                        "disk": str(removal_root / "Atlaso-Test" / "disk.vhdx"),
+                        "path": str(effective_inventory_path),
+                        "disk": str(effective_inventory_path / "disk.vhdx"),
                     }
                 ]
                 if include_vm
@@ -261,6 +264,36 @@ def test_hyperv_cleanup_revalidates_vm_artifact_paths_before_removal(
     assert "no longer references the requested artifact root" in result.stderr
     assert len(state["vms"]) == 1
     assert disk_path.read_text(encoding="utf-8") == "preserve"
+
+
+def test_hyperv_cleanup_rejects_reparse_component_in_vm_inventory_path(tmp_path: Path) -> None:
+    """A lexical child that resolves through a link cannot establish VM ownership."""
+    hyperv_root = tmp_path / "hyperv"
+    removal_root = hyperv_root / "test-vms"
+    outside_root = tmp_path / "outside" / "Atlaso-Test"
+    outside_disk = outside_root / "disk.vhdx"
+    removal_root.mkdir(parents=True)
+    outside_root.mkdir(parents=True)
+    outside_disk.write_text("external", encoding="utf-8")
+    linked_path = removal_root / "linked"
+    try:
+        linked_path.symlink_to(outside_root, target_is_directory=True)
+    except OSError as error:
+        pytest.skip(f"Directory links are unavailable: {error}")
+
+    result = _run_hyperv_cleanup(
+        tmp_path,
+        hyperv_root=hyperv_root,
+        removal_root=removal_root,
+        inventory_path=linked_path,
+    )
+
+    state = json.loads((tmp_path / "hyperv-state.json").read_text(encoding="utf-8"))
+    assert result.returncode != 0
+    assert "reparse point" in result.stderr
+    assert len(state["vms"]) == 1
+    assert outside_disk.read_text(encoding="utf-8") == "external"
+    assert removal_root.exists()
 
 
 def test_standalone_cleanup_scripts_report_success_only_after_checked_removal() -> None:
