@@ -86,6 +86,7 @@ def test_facades_register_extracted_domains_in_exact_order():
         "ntp",
         "facade_between_ntp_vcf_workflows",
         "vcf_workflows",
+        "esx_storage",
         "facade_between_vcf_workflows_identity",
         "identity",
         "facade_between_identity_operations",
@@ -116,6 +117,7 @@ def test_facades_register_extracted_domains_in_exact_order():
         ui.ntp_router,
         ui._management_between_ntp_vcf_workflows_router,
         ui.vcf_workflows_router,
+        ui.esx_storage_router,
         ui._management_between_vcf_workflows_identity_router,
         ui.identity_router,
         ui._management_between_identity_operations_router,
@@ -143,6 +145,7 @@ def test_facades_register_extracted_domains_in_exact_order():
         "operations",
         "settings",
         "vcf_workflows_backups",
+        "esx_storage",
         "facade_between_vcf_backups_offline_depot",
         "vcf_workflows_offline_depot",
         "facade_between_offline_depot_private_registry",
@@ -166,6 +169,7 @@ def test_facades_register_extracted_domains_in_exact_order():
         v1.operations_router,
         v1.settings_router,
         v1.vcf_workflows_backups_router,
+        v1.esx_storage_router,
         v1._api_between_vcf_backups_offline_depot_router,
         v1.vcf_workflows_offline_depot_router,
         v1._api_between_offline_depot_private_registry_router,
@@ -219,6 +223,12 @@ def test_facades_register_extracted_domains_in_exact_order():
     } == {"atlaso.app.routers.ui.certificate_trust"}
     assert {route.endpoint.__module__ for route in ui.ntp_router.routes} == {
         "atlaso.app.routers.ui.ntp"
+    }
+    assert {route.endpoint.__module__ for route in ui.esx_storage_router.routes} == {
+        "atlaso.app.routers.ui.esx_storage"
+    }
+    assert {route.endpoint.__module__ for route in v1.esx_storage_router.routes} == {
+        "atlaso.app.routers.api_v1.esx_storage"
     }
     assert {route.endpoint.__module__ for route in ui.network_boot_router.routes} == {
         "atlaso.app.routers.ui.network_boot"

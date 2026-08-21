@@ -487,6 +487,41 @@ validation, audit, route inventory, normalized OpenAPI output, NTP/NTS protocol,
 certificate policy or custody, desired state, service behavior, or global
 Appliance Apply boundary.
 
+## Extracted ESX Storage ownership
+
+The ESX Storage management transports live in
+`atlaso/app/routers/ui/esx_storage.py`, and the ESX Storage API v1 transports
+live in `atlaso/app/routers/api_v1/esx_storage.py`. The UI registry keeps ESX
+Storage immediately after VCF workflows and before Identity. The API registry
+keeps ESX Storage immediately after the VCF Backups status contribution and
+before VCF Offline Depot, preserving the established effective route
+and normalized OpenAPI order.
+
+The stable `atlaso/app/ui.py` and `atlaso/app/api/v1.py` facades continue to
+export every established ESX Storage endpoint and helper name. They provide
+late-bound context, DNS reconciliation, rendering, CSRF, system-adapter, and
+Appliance Apply dependencies so existing facade monkeypatch seams remain
+compatible. ESX Storage domain services, disk lifecycle and inventory helpers,
+DNS and firewall reconciliation, desired-state rendering, and global Appliance
+Apply execution retain their established owners.
+
+Focused transport coverage lives in
+`tests/routers/ui/test_esx_storage.py` and
+`tests/routers/api_v1/test_esx_storage.py`. Service, lifecycle, Appliance Apply,
+deployment, release, and integration coverage remains with its established
+tests. Volumes and NFS datastores retain the existing `wizard-backed Tabulator`
+interaction using the ESX Storage grid and wizard itself as the reference and
+the shared `createGrid` and `createWizard` foundations. Disk inventory and
+status presentation retain the established read-only ESX Storage and Tasks
+patterns.
+
+This behavior-neutral extraction changes no template, CSS, JavaScript, visible
+copy, control, layout, interaction class, route, route name, operation ID, tag,
+authorization scope, session or CSRF behavior, redirect, status, response
+schema, validation, audit, DNS reconciliation, disk-inventory contract, route
+inventory, normalized OpenAPI output, desired state, or global Appliance Apply
+boundary.
+
 ## Route and OpenAPI compatibility
 
 `tests/contracts/route_inventory.json` records every effective application route in order, including browser,
@@ -554,6 +589,7 @@ python -m pytest -q tests/routers/ui/test_automation.py tests/routers/ui/test_op
 python -m pytest -q tests/routers/ui/test_dashboard_monitor.py tests/routers/api_v1/test_dashboard_monitor.py
 python -m pytest -q tests/routers/ui/test_vaults.py tests/test_vaults.py
 python -m pytest -q tests/routers/ui/test_appliance_maintenance.py tests/test_appliance_update.py
+python -m pytest -q tests/routers/ui/test_esx_storage.py tests/routers/api_v1/test_esx_storage.py tests/test_esx_storage.py
 python -m pytest -q tests/test_openapi_contract.py tests/test_ui_route_namespaces.py tests/test_ui_compliance.py
 python scripts/generate_router_contract_baselines.py --check
 python scripts/check_python_static_analysis.py
