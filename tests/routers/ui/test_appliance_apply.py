@@ -420,6 +420,9 @@ def test_management_handoff_settings_baseline_ignores_only_applied_front_door_fi
 
     previous = {
         "fqdn": "atlaso.example",
+        "resolver_mode": "dhcp",
+        "resolver_servers": [],
+        "local_dns_enabled": False,
         "management_interface": "eth0",
         "management_ip": "192.0.2.10",
         "management_https_enabled": True,
@@ -428,6 +431,9 @@ def test_management_handoff_settings_baseline_ignores_only_applied_front_door_fi
     baseline = {"config_preview": json.dumps(previous)}
     management_only = {
         **previous,
+        "resolver_mode": "local_dns",
+        "resolver_servers": ["127.0.0.1"],
+        "local_dns_enabled": True,
         "management_interface": "eth1",
         "management_ip": "198.51.100.10",
     }

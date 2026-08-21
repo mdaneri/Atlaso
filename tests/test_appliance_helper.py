@@ -1522,6 +1522,12 @@ def test_management_handoff_candidate_durability_gates_ack(
     )
 
     def sync_candidate(_state, _payload):
+        """Record or fail candidate durability synchronization.
+
+        Args:
+            _state: Captured management handoff rollback state.
+            _payload: Candidate management handoff payload.
+        """
         durability_calls.append(True)
         if candidate_sync_error:
             raise OSError("candidate sync failed")

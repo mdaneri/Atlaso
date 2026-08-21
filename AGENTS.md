@@ -284,7 +284,9 @@ The following cross-cutting boundaries always apply:
   Authority payload before relying on deployed files. Move the persistent and runtime management resolver to the
   candidate interface inside the transaction, persist its directives in the effective dedicated or flagged-access
   networkd file both before readiness and after the final Network regeneration, and restore the
-  previous resolver state with the network snapshot on rollback. Derive loopback/local-DNS resolver mode only from the
+  previous resolver state with the network snapshot on rollback. On success, include the applied resolver mode,
+  servers, and local-DNS state in the Appliance Settings baseline completion so those executed changes do not remain
+  falsely pending. Derive loopback/local-DNS resolver mode only from the
   last-applied DNS/DHCP baseline; leave an unapplied DNS enablement pending instead of activating loopback early. When
   disabling applied local DNS, force Appliance Settings ahead of DNS/DHCP so the resolver leaves loopback before the
   listener stops. Retire the old path only

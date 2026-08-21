@@ -2552,9 +2552,10 @@ def test_settings_autosave_updates_appliance_identity_dns_without_ntp(client):
     assert "ntp_servers" not in payload
     assert payload["dns_record_action"] in {"created", "updated", "unchanged", "created+removed-old", "updated+removed-old"}
     assert payload["valid"] is True
-    assert '"resolver_mode": "local_dns"' in payload["config_preview"]
-    assert '"resolver_servers": [' in payload["config_preview"]
-    assert '"127.0.0.1"' in payload["config_preview"]
+    config_preview = json.loads(payload["config_preview"])
+    assert config_preview["resolver_mode"] == "external"
+    assert config_preview["resolver_servers"] == ["8.8.8.8", "1.1.1.1"]
+    assert config_preview["local_dns_enabled"] is False
     assert '"root_ssh_enabled": true' in payload["config_preview"]
     assert '"service_dns_target_naming": "interface"' in payload["config_preview"]
     assert "ntp_servers" not in payload["config_preview"]

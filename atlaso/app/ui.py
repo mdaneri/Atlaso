@@ -664,6 +664,9 @@ NETWORK_STAGED_CONFIG_PATH = "/var/lib/atlaso/apply/network/atlaso-network.conf"
 MANAGEMENT_HANDOFF_STAGED_MANIFEST_PATH = "/var/lib/atlaso/apply/management-handoff/atlaso-management-handoff.json"
 MANAGEMENT_HANDOFF_UNIT_IDS = ("ca", "network", "firewall", "appliance_settings", "public_services")
 MANAGEMENT_HANDOFF_APPLIANCE_SETTINGS_KEYS = {
+    "resolver_mode",
+    "resolver_servers",
+    "local_dns_enabled",
     "management_interface",
     "management_ip",
     "management_ip_cidr",

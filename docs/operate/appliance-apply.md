@@ -95,44 +95,17 @@ Components run sequentially. If one component fails, Atlaso stops the sequence a
 **skipped**. Other write operations are locked while the master task is pending or running; read-only pages, task
 inspection, authentication actions, and safe cancellation remain available.
 
-A management-path change is the exception to independent component execution: if any of Certificate Authority,
-Network, Firewall, Appliance Settings, or Public Services is submitted while such a Network change is pending, Atlaso
-selects all five together and runs them as one recoverable handoff. Atlaso evaluates this after other subsystem
-dependencies, so an indirectly selected protected component cannot bypass the handoff. The task
-keeps every previous configured or runtime global address, public port, HTTP/HTTPS listener, and snapshotted TLS
-certificate active until consecutive bounded checks on the applicable old and candidate public ports prove the Atlaso
-loopback upstream, candidate nginx listener, and host-facing `/openapi.json` are ready.
-When the same handoff first deploys or rotates TLS-backed Public Services, preflight validates every referenced
-certificate and key from the bundled Certificate Authority payload before those files are installed.
-The same transaction moves the management resolver to the candidate interface and persists its directives in the
-effective dedicated or flagged-access physical/VLAN networkd file. Atlaso writes those directives again after the final
-Network install so a later networkd restart or appliance reboot retains them. If either resolver apply fails, rollback
-restores the previous networkd resolver directives and per-link runtime state before the old path readiness check.
-Every candidate that requests DHCP or SLAAC must acquire and pass readiness on that address family; another static or
-dynamic listener cannot mask a missing lease or router-advertised address. When the same Apply disables the firewall,
-the transition retains the previous filtering policy with minimal candidate listener admission until readiness. When
-the candidate firewall remains filtered, any added custom management port keeps that listener rule's configured source
-restriction. When the same Apply enables filtering from an open state, the transition remains open until readiness. In
-both directions, the candidate firewall state applies only while retiring the old path.
-If rollback started from a state with no Atlaso firewall config or service, it disables and stops any candidate service,
-removes the candidate unit/config through the snapshot restore, reloads systemd, and explicitly flushes nftables back
-to the previous open policy.
-On failure, each bundled
-component records the same failing layer
-and rollback result. The handoff applies only the management front-door portion of Appliance Settings; unrelated
-Appliance Settings differences remain pending for a later Apply instead of being folded into the network transaction.
-An active appliance without a last-applied Network baseline cannot safely identify its previous management path, so
-Atlaso blocks Network apply without host mutation until a known-good settings archive restores that baseline or a
-maintainer completes local-console recovery.
-Desired-state edits saved from another session while readiness checks run are not folded into the successful task.
-Atlaso commits baselines from the exact submitted snapshots, so those newer edits remain pending for a later review.
-Atlaso records durable application-commit proof separately from the retained helper marker. After a restart it retries
-rollback unless that proof exists; only a proven database commit selects idempotent helper acknowledgement.
-If an acknowledgement wrote its commit receipt but could not durably remove the rollback marker or backups, the next
-acknowledgement retries that cleanup before reporting the candidate already committed.
-Before Atlaso may record that commit, the helper flushes every final candidate networkd, resolver, firewall, nginx, and
-certificate artifact plus affected directory entries to durable storage. A sync failure rolls the handoff back while
-the previous path remains recoverable.
+A management-path change is the exception to independent component execution. Atlaso selects Certificate Authority,
+Network, Firewall, Appliance Settings, and Public Services together after all other dependencies expand, then runs one
+recoverable handoff. It retains the previous addresses, listener, firewall policy, and TLS identity until bounded Atlaso
+loopback, candidate nginx, dynamic-address, and host-facing `/openapi.json` checks prove the candidate ready.
+The transaction validates bundled TLS material, persists the candidate resolver and source-restricted firewall rules,
+and retires the old path only after readiness succeeds. On failure it restores the complete previous state and records
+the same actionable failing layer and rollback result on every bundled component.
+Successful baselines use the exact submitted snapshots, including applied resolver values; unrelated or concurrently
+saved Appliance Settings changes remain pending. A missing known-good Network baseline blocks mutation. Durable state
+and backups remain until the database commit is proven and acknowledged, so interruption or cleanup failure can retry
+rollback or acknowledgement safely. See the technical reference for the complete handoff and recovery contract.
 
 Safe cancellation does not interrupt the component already running. Every helper or adapter command in that component
 continues to completion. After the component returns, Atlaso skips the remaining components and releases the mutation
@@ -213,13 +186,6 @@ prevents a queued task from applying state that the administrator did not inspec
 
 ## Complete technical contents
 
-No original section was removed. The [Appliance Apply technical reference](../reference/appliance-apply-technical.md)
-is divided into these scannable groups:
-
-| Reference group | Contents |
-| --- | --- |
-| [Workflow and execution model](../reference/appliance-apply-technical.md#workflow-and-execution-model) | Backend routes, global locking, helper boundaries, and apply-unit ownership. |
-| [Appliance and network units](../reference/appliance-apply-technical.md#appliance-and-network-units) | Users, inventory, networking, routing, and DNS/DHCP. |
-| [Infrastructure and security units](../reference/appliance-apply-technical.md#infrastructure-and-security-units) | PXE, storage, firewall, backups, certificates, and KMS/KMIP. |
-| [Appliance settings and operations](../reference/appliance-apply-technical.md#appliance-settings-and-operations) | NTPsec, appliance settings, logs, power, tasks, and VCF Offline Depot. |
-| [State, results, and interface contracts](../reference/appliance-apply-technical.md#state-results-and-interface-contracts) | Baselines, diffs, job results, recovery, and UI expectations. |
+No original section was removed.
+See the [Appliance Apply technical reference](../reference/appliance-apply-technical.md) for backend ownership, unit
+contracts, staging, helper execution, baselines, recovery, and interface expectations.
