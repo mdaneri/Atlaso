@@ -1631,6 +1631,8 @@ def test_vmware_deploy_wheel_supports_secure_onepassword_password_deploy():
     assert "Test-OnePasswordBridgeServerAncestor" in script
     assert "read_paramiko_command_output" in script
     assert "recv_stderr_ready" in script
+    assert "time.monotonic" in script
+    assert "args.timeout + 60" in script
     assert "[System.IO.Pipes.PipeDirection]::In" in script
     assert "[System.IO.Pipes.PipeDirection]::Out" in script
     assert "[System.IO.HandleInheritability]::Inheritable" in script

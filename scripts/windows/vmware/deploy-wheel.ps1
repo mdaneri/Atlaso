@@ -606,10 +606,14 @@ def sanitized(value, password):
     return redacted
 
 
-def read_paramiko_command_output(channel):
+def read_paramiko_command_output(channel, timeout_seconds):
     stdout_chunks = []
     stderr_chunks = []
+    deadline = time.monotonic() + timeout_seconds
     while True:
+        if time.monotonic() >= deadline:
+            channel.close()
+            raise SystemExit("Remote deployment output timed out; refusing to wait indefinitely.")
         drained = False
         while channel.recv_ready():
             stdout_chunks.append(channel.recv(65536))
@@ -800,7 +804,7 @@ try:
     stdin.write(password + "\n")
     stdin.flush()
     stdin.channel.shutdown_write()
-    stdout_text, stderr_text, exit_code = read_paramiko_command_output(stdout.channel)
+    stdout_text, stderr_text, exit_code = read_paramiko_command_output(stdout.channel, args.timeout + 60)
     if stdout_text.strip():
         print(sanitized(stdout_text, password).strip())
     if stderr_text.strip():

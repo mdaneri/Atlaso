@@ -154,7 +154,9 @@ if ($scriptText.Contains('OnePasswordBridgeNonce', [System.StringComparison]::Or
 }
 if (-not $scriptText.Contains('read_paramiko_command_output', [System.StringComparison]::Ordinal) -or
     -not $scriptText.Contains('recv_stderr_ready', [System.StringComparison]::Ordinal) -or
-    -not $scriptText.Contains('recv_ready', [System.StringComparison]::Ordinal)) {
+    -not $scriptText.Contains('recv_ready', [System.StringComparison]::Ordinal) -or
+    -not $scriptText.Contains('time.monotonic', [System.StringComparison]::Ordinal) -or
+    -not $scriptText.Contains('args.timeout + 60', [System.StringComparison]::Ordinal)) {
     throw 'Password-backed deployment must drain Paramiko stdout and stderr without channel deadlock.'
 }
 if ($scriptText.Contains('$invokingProcess.CommandLine', [System.StringComparison]::Ordinal)) {
