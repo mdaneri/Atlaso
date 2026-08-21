@@ -235,6 +235,70 @@ def test_standalone_cleanup_scripts_report_success_only_after_checked_removal() 
     assert hyperv.index("Remove-AtlasoHypervArtifactRoot") < hyperv.index("Cleaned up Hyper-V")
 
 
+@pytest.mark.parametrize(
+    ("provider", "module_name", "success_text", "expected_error"),
+    [
+        (
+            "vmware",
+            "Atlaso.WorkstationCleanup.psm1",
+            "Cleaned up VMware Workstation build artifacts.",
+            "VMware artifact target exists but is not a directory",
+        ),
+        (
+            "hyperv",
+            "Atlaso.HypervCleanup.psm1",
+            "Cleaned up Hyper-V build artifacts.",
+            "Hyper-V artifact target exists but is not a directory",
+        ),
+    ],
+)
+def test_standalone_cleanup_rejects_file_shaped_canonical_target(
+    tmp_path: Path,
+    provider: str,
+    module_name: str,
+    success_text: str,
+    expected_error: str,
+) -> None:
+    """A canonical artifact target that is a file must block the wrapper's success claim."""
+    fixture_root = tmp_path / provider
+    script_directory = fixture_root / "scripts" / "windows" / provider
+    image_name = "vmware-workstation" if provider == "vmware" else provider
+    image_directory = fixture_root / "image" / image_name
+    script_directory.mkdir(parents=True)
+    image_directory.mkdir(parents=True)
+    source_directory = REPOSITORY_ROOT / "scripts" / "windows" / provider
+    shutil.copy2(source_directory / "clean-artifacts.ps1", script_directory)
+    shutil.copy2(source_directory / module_name, script_directory)
+    canonical_target = image_directory / "output"
+    canonical_target.write_text("not a directory", encoding="utf-8")
+    arguments: list[str] = []
+    if provider == "vmware":
+        vmrun_path = fixture_root / "vmrun.exe"
+        vmrun_path.write_text("not executed", encoding="utf-8")
+        arguments = ["-VmrunPath", str(vmrun_path)]
+
+    result = subprocess.run(
+        [
+            _pwsh_path(),
+            "-NoLogo",
+            "-NoProfile",
+            "-NonInteractive",
+            "-File",
+            str(script_directory / "clean-artifacts.ps1"),
+            *arguments,
+        ],
+        cwd=fixture_root,
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+
+    assert result.returncode != 0
+    assert expected_error in result.stderr
+    assert success_text not in result.stdout
+    assert canonical_target.is_file()
+
+
 @pytest.mark.skipif(os.name != "nt", reason="Windows file-sharing semantics are required")
 def test_hyperv_cleanup_does_not_claim_success_after_locked_file(tmp_path: Path) -> None:
     """A locked artifact must make recursive cleanup fail without a success claim."""

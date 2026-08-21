@@ -1350,6 +1350,8 @@ The standalone VMware and Hyper-V `clean-artifacts.ps1` helpers apply the same f
 state. Hyper-V cleanup identifies VMs from their configuration and attached-disk paths, verifies that each is off and
 removed, then rechecks the inventory before filesystem deletion. Both helpers reject reparse points and out-of-root
 targets, make recursive deletion errors terminating, and print their success message only after every target is absent.
+An existing canonical target that is not a directory is an error and blocks that success message instead of being
+silently skipped.
 
 For a normal Workstation test appliance on the management vmnet:
 

@@ -612,8 +612,11 @@ function Remove-AtlasoWorkstationArtifactRoot {
         [string]$RemovalRoot
     )
 
-    if (-not (Test-Path -LiteralPath $RemovalRoot -PathType Container)) {
+    if (-not (Test-Path -LiteralPath $RemovalRoot)) {
         return
+    }
+    if (-not (Test-Path -LiteralPath $RemovalRoot -PathType Container)) {
+        throw "VMware artifact target exists but is not a directory; refusing to report cleanup success: $RemovalRoot"
     }
 
     $resolvedRemovalRoot = (Resolve-Path -LiteralPath $RemovalRoot -ErrorAction Stop).Path

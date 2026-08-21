@@ -120,8 +120,11 @@ function Remove-AtlasoHypervArtifactRoot {
         [Parameter(Mandatory = $true)][string]$RemovalRoot
     )
 
-    if (-not (Test-Path -LiteralPath $RemovalRoot -PathType Container)) {
+    if (-not (Test-Path -LiteralPath $RemovalRoot)) {
         return
+    }
+    if (-not (Test-Path -LiteralPath $RemovalRoot -PathType Container)) {
+        throw "Hyper-V artifact target exists but is not a directory; refusing to report cleanup success: $RemovalRoot"
     }
 
     $resolvedHypervRoot = (Resolve-Path -LiteralPath $HypervRoot -ErrorAction Stop).Path
