@@ -46,9 +46,21 @@ def _serve_directory(directory: Path) -> Iterator[str]:
 
     class QuietHandler(http.server.SimpleHTTPRequestHandler):
         def __init__(self, *args: object, **kwargs: object) -> None:
+            """Initialize the quiet handler for the fixture directory.
+
+            Args:
+                *args: Positional arguments forwarded to the base handler.
+                **kwargs: Keyword arguments forwarded to the base handler.
+            """
             super().__init__(*args, directory=str(directory), **kwargs)
 
         def log_message(self, format: str, *args: object) -> None:
+            """Suppress fixture-server request logging.
+
+            Args:
+                format: Base-handler log format string.
+                *args: Values for the base-handler log format.
+            """
             return
 
     server = http.server.ThreadingHTTPServer(("127.0.0.1", 0), QuietHandler)
@@ -417,7 +429,12 @@ def test_invalid_download_is_never_promoted_to_durable_cache(
 def test_self_consistent_substituted_pair_is_rejected_by_pinned_digest(
     tmp_path: Path, platform: str
 ) -> None:
-    """Matching untrusted payload and metadata cannot override the repository digest pin."""
+    """Matching untrusted payload and metadata cannot override the repository digest pin.
+
+    Args:
+        tmp_path: Temporary directory used for the download fixtures and cache.
+        platform: Image preparation script platform under test.
+    """
     substituted_payload = b"self-consistent but untrusted Alpine image"
     result, payload_path, checksum_path, unrelated_path = _run_download_recovery(
         tmp_path,
