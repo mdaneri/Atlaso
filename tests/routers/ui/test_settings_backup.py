@@ -100,8 +100,8 @@ def test_settings_page_renders_autosave_validation_and_preview(client, monkeypat
         'data-autosave-status-id="appliance-settings-autosave-status"' in response.text
     )
     assert response.text.count('class="help-icon"') >= 2
-    assert 'textarea name="external_dns_servers"' not in response.text
-    assert 'input type="hidden" name="external_dns_servers"' in response.text
+    assert 'textarea name="external_dns_servers"' in response.text
+    assert 'input type="hidden" name="external_dns_servers"' not in response.text
     assert "Appliance Settings has pending appliance changes" in response.text
     assert "Validation" in response.text
     assert "runtime.atlaso.internal" in response.text

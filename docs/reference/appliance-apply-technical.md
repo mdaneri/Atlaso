@@ -213,6 +213,107 @@ configured address, IPv6 link-local addressing, and the optional default route i
 lab route table. When a VLAN was present in successful Atlaso network apply history and is no longer desired, the staged
 config includes an explicit removal target and the helper deletes that VLAN link after verifying it is a VLAN device.
 
+Any change to the effective management address, gateway, dedicated-management role, flagged access-management
+listener, or management-listener VLAN MTU converts five apply units into one `management-handoff` helper transaction
+whenever an operator submits any one of them: Certificate Authority, Network, Firewall, Appliance Settings, and Public
+Services. Submission evaluates this closure after every other cross-unit dependency has expanded, so an indirectly
+selected protected unit still selects the handoff. This forced dependency
+closure prevents a partial Firewall, certificate, listener, or resolver apply from publishing candidate-derived state
+before candidate networking exists. The helper validates all staged inputs before mutation, snapshots
+the Atlaso-owned networkd, nftables, nginx, certificate, and related runtime files under a root-only state directory,
+uses the bundled CA payload to validate a first-time or rotated management HTTPS certificate before those files are
+installed and to resolve every Certificate Authority-managed Public Services TLS directive before those files are
+installed, while retaining deployed-file validation for referenced paths absent from the bundle and removing the
+private-key-bearing CA staging payload on validation, manifest-staging, helper, and interruption failures,
+syncs the transaction directory entry, every backup file, and the backup directory before publishing the rollback marker,
+does not schedule an Atlaso self-restart after the required healthy loopback-upstream probe during the pre-commit handoff,
+and merges global runtime addresses from every previous management interface with the configured addresses before it
+installs temporary higher-priority networkd holdovers for the previous management links. Those holdovers retain DHCP,
+IPv6 link-local addressing, and router-advertisement acceptance so dynamic old-path addresses remain owned until
+retirement, without
+letting a previous disabled-RA state override candidate SLAAC acquisition. Flagged
+access physical listeners also preserve their real DHCP/static method when the resolver fallback is selected. It then
+applies the candidate network and a transitional firewall that admits both previous and candidate management
+addresses. If the
+previous listener is a flagged-access VLAN, its trunk parent is retained separately for link restoration; parent
+addresses are never discovered or probed as management listeners. If the
+public protocol or same-protocol HTTP port changes, address-specific nginx blocks retain the old address, port, and
+HTTP/HTTPS behavior beside the candidate listener until candidate readiness succeeds. Previous HTTPS blocks always use
+separate snapshotted certificate and key files, including when the protocol remains HTTPS while the candidate
+certificate rotates.
+Within Appliance Settings, this transaction applies the management resolver interface, Atlaso loopback drop-in, and
+management nginx front door. The helper writes the selected static/local resolver directives into the candidate
+generated effective-listener networkd file, including the active higher-priority same-interface holdover, or reverts
+that link to DHCP-provided DNS, then applies the matching per-link runtime state. After final Network retirement
+regenerates the managed networkd files, the helper repeats that persistent
+and runtime resolver apply before reconfiguring the links. This persistence applies equally to
+`00-atlaso-mgmt.network` and flagged-access physical/VLAN files.
+The staged resolver mode derives local-DNS availability from the last-applied DNS/DHCP baseline, not unapplied desired
+state. Enabling DNS without applying its unit therefore leaves the resolver change pending and cannot point the
+management link at loopback before dnsmasq is active.
+Desired DNS disablement immediately stages the non-loopback resolver projection. If DNS/DHCP is selected while its
+last-applied baseline enabled local DNS, submission also selects Appliance Settings; unit order moves the resolver
+before dnsmasq removes the loopback listener.
+The resolver interface follows the effective listener precedence: dedicated management first, then a flagged access
+physical interface, then a flagged access VLAN.
+If another Appliance Settings field differs from its baseline, that unit remains pending after a successful handoff so
+the full hostname, resolver, SSH, Web Terminal trust, and telemetry apply remains pending. A staged resolver-mode or
+server change is part of the successful handoff's Appliance Settings baseline when all unrelated settings already
+match, but is not baseline-committed when another unrelated setting also differs. Rollback restores the snapshotted
+networkd resolver directives, reverts the candidate link's transient
+resolver override, and reconfigures the restored links before checking the previous listener.
+
+Readiness is fail-closed and bounded. Every host-facing probe includes the previous or candidate configured public port.
+The helper first requires Atlaso's loopback `/openapi.json` upstream to succeed;
+only then may it install the candidate nginx site with matching IPv4 and IPv6 public-port listeners, validate it, and
+reload nginx. It requires consecutive successful direct candidate-listener probes and host-facing probes for every
+configured candidate address. Each dynamic listener row must acquire an address for every
+requested DHCP or SLAAC family within the shared bounded discovery window; readiness cannot succeed on another row or
+family when one is missing, and a retained old-path address cannot satisfy dynamic candidate acquisition. When the
+candidate disables nftables, the transitional ruleset keeps the previous filtering
+policy and adds only the candidate management admission rules, including the staged nondefault HTTP or HTTPS public
+port. A filtered-to-filtered handoff adds that port to both the transitional ruleset and the final candidate ruleset so
+readiness and post-retirement access use the same admission contract. The added rule is derived from each exact
+candidate management rule and retains its interface plus IPv4 or IPv6 source expressions; a filtered candidate never
+receives an unconditional custom-port rule. When enabling filtering from an open state, the
+transitional ruleset remains open. The enabled or disabled candidate ruleset applies only after readiness while the old
+path retires. A second
+readiness pass protects retirement. Before publishing `awaiting-application-commit`, the helper flushes every final
+candidate networkd, resolver, firewall, nginx, and Certificate Authority file and its affected directory-entry chain.
+An artifact or directory sync failure remains inside the rollback boundary. Any validation, mutation, service, probe,
+or retirement failure restores every captured file, reloads networkd and nftables, restores the captured live MTU on
+every pre-existing candidate VLAN,
+reconfigures previous links, reloads nginx, and restarts Atlaso when the
+captured state requires it. Each captured artifact, link, and later runtime layer is restored independently; one unreadable
+backup is reported as an incomplete rollback but does not prevent restoration attempts for the remaining network,
+firewall, nginx, Atlaso, and readiness layers. Restored file bytes and every affected parent-directory entry are synced
+before the durable transaction marker can be cleared; a sync failure keeps rollback incomplete for startup retry.
+Rollback explicitly reconfigures every pre-existing candidate link and
+removes a
+candidate-only VLAN after restoring its files. A previously absent firewall state is restored by disabling/stopping the
+candidate `atlaso-firewall.service`, deleting its snapshotted-as-absent unit and config, reloading systemd, and running
+`nft flush ruleset`. The helper leaves a durable transaction marker until Atlaso commits the
+bundled task state and baselines and sends an idempotent acknowledgement. One fixed transient systemd unit identifies
+apply for startup recovery, which stops and verifies any surviving apply helper before rollback. A separate fixed
+recovery unit serializes rollback attempts; the launcher stops and verifies a surviving recovery unit before retrying.
+Startup rolls back when
+interruption precedes that database boundary and completes the acknowledgement only when a separate durable task field
+proves the database already committed the candidate. A retained helper marker without that proof selects recovery, so
+an incomplete pre-commit rollback is retried. Adapter timeouts and other indeterminate apply returns invoke that same
+fixed-unit stop and rollback before the task becomes terminal. Empty or malformed systemd unit-state evidence fails
+closed before rollback. Exceptions
+reconcile the same boundary immediately. An unproven acknowledgement or rollback keeps the global Apply lock held even
+when a legacy or incomplete task payload did not already carry the pending marker.
+A matching durable commit receipt is not sufficient by itself to return `already committed`: acknowledgement retries
+idempotent marker, backup, and holdover cleanup and reports failure while any cleanup or directory sync remains
+incomplete.
+A task still durably pending when the helper reports a successful `no interrupted transaction` result proves privileged
+mutation never began; startup fails that task truthfully and releases its lock without inventing rollback evidence.
+Results expose only a bounded failing-layer identifier and
+non-secret error text; Appliance Apply writes that evidence to every bundled component and updates none of their
+baselines unless the transaction commits. The committed baselines come from the exact snapshots hash-checked and staged
+at task start; desired-state edits saved during the helper's bounded readiness interval remain pending.
+
 ### Routes and WAN apply
 
 The real Routes & WAN Simulation apply path stages config at `/var/lib/atlaso/apply/wan/atlaso-wan.conf`. The `wan` unit
@@ -766,7 +867,10 @@ its password.
 
 When desired state changes later, the global apply page compares the current rendered config preview to the last-applied
 preview and shows a unified config diff when available. On first apply, no baseline exists yet, so the page shows the
-current preview instead.
+current preview instead. If an appliance already has operator activity but its Network baseline is absent, Network
+apply fails closed before helper execution because Atlaso cannot prove which management path must remain reachable.
+Restore a known-good settings archive containing the apply baselines or complete maintainer-guided local-console
+recovery before retrying Network apply.
 
 Rendered previews and job results must redact sensitive-looking values such as passwords, tokens, credentials, private
 keys, robot accounts, activation codes, encrypted CA private material, and uploaded secret contents.

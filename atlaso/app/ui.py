@@ -165,6 +165,8 @@ from atlaso.app.routers.ui.network_boot import NetworkBootUiDependencies
 from atlaso.app.routers.ui.network_boot import (
     build_router as build_network_boot_ui_router,
 )
+from atlaso.app.routers.ui.ntp import NtpUiDependencies
+from atlaso.app.routers.ui.ntp import build_router as build_ntp_ui_router
 from atlaso.app.routers.ui.operations import OperationsUiDependencies
 from atlaso.app.routers.ui.operations import build_router as build_operations_ui_router
 from atlaso.app.routers.ui.physical_vlans import (
@@ -461,12 +463,9 @@ from atlaso.app.services.ntp import (
     NTP_STAGED_CONFIG_PATH,
     default_ntp_upstream_fields,
     dump_ntp_upstream_sources,
-    duplicate_ntp_upstream_source,
-    join_allow_clients,
     ntp_settings_to_dict,
     ntp_upstream_sources,
     render_ntp_config,
-    split_allow_clients,
     validate_ntp_state,
 )
 from atlaso.app.services.oidc import (
@@ -667,6 +666,26 @@ APPLIANCE_UPDATE_LOGGER = logging.getLogger("atlaso.appliance_update")
 KICKSTART_REFERENCE_VALIDATION_ERROR = "Kickstart source is invalid. Review its variable and vault markers."
 KICKSTART_UPLOAD_ERROR = "Kickstart upload is invalid. Review the file, name, and reference markers."
 NETWORK_STAGED_CONFIG_PATH = "/var/lib/atlaso/apply/network/atlaso-network.conf"
+MANAGEMENT_HANDOFF_STAGED_MANIFEST_PATH = "/var/lib/atlaso/apply/management-handoff/atlaso-management-handoff.json"
+MANAGEMENT_HANDOFF_UNIT_IDS = ("ca", "network", "firewall", "appliance_settings", "public_services")
+MANAGEMENT_HANDOFF_APPLIANCE_SETTINGS_KEYS = {
+    "resolver_mode",
+    "resolver_servers",
+    "local_dns_enabled",
+    "management_interface",
+    "management_ip",
+    "management_ip_cidr",
+    "management_http_port",
+    "management_public_http_port",
+    "management_public_https_port",
+    "management_upstream_host",
+    "management_upstream_port",
+    "management_https_enabled",
+    "management_https_cert_path",
+    "management_https_key_path",
+    "web_terminal_interfaces",
+    "web_terminal_addresses",
+}
 DNSMASQ_STAGED_CONFIG_PATH = "/var/lib/atlaso/apply/dnsmasq/atlaso.conf"
 PUBLIC_DOCUMENTATION_URL = "https://mdaneri.github.io/Atlaso/docs/"
 
@@ -2451,10 +2470,13 @@ def appliance_settings_context(db: Session, *, reconcile_dns: bool = True) -> di
         db.commit()
         db.refresh(settings)
         db.refresh(dns_settings)
-    local_dns_enabled = bool(dns_settings.enabled)
+    local_dns_enabled = bool(
+        dns_settings.enabled
+        and applied_local_dns_enabled(load_appliance_apply_baselines(db).get("dnsmasq"))
+    )
     interfaces = db.execute(select(PhysicalInterface).order_by(PhysicalInterface.name)).scalars().all()
     vlans = db.execute(select(VlanInterface).order_by(VlanInterface.parent_interface, VlanInterface.vlan_id)).scalars().all()
-    management, observed_dhcp_dns_servers = management_dhcp_dns_context(interfaces)
+    management, observed_dhcp_dns_servers = management_dhcp_dns_context(interfaces, vlans)
     terminal_options = web_terminal_interface_options(interfaces, vlans)
     ca_settings = get_ca_settings_row(db)
     management_https_cert_path, management_https_key_path, _management_https_chain_path = ca_managed_certificate_paths(db, "appliance:https")
@@ -3176,18 +3198,44 @@ def recover_interrupted_appliance_apply_jobs(db: Session) -> int:
     Args:
         db: Active database session.
     """
-    jobs = db.scalars(
+    candidate_jobs = db.scalars(
         select(Job)
         .options(selectinload(Job.steps))
-        .where(
-            Job.type == "appliance-apply",
-            Job.status.in_([JobStatus.PENDING.value, JobStatus.RUNNING.value]),
-        )
+        .where(Job.type == "appliance-apply")
     ).all()
+    jobs = [
+        job
+        for job in candidate_jobs
+        if job.status in {JobStatus.PENDING.value, JobStatus.RUNNING.value}
+        or _job_payload(job).get("management_handoff_runtime_commit_pending")
+    ]
     if not jobs:
         return 0
     finished = utcnow()
+    handoff_jobs = [
+        job
+        for job in jobs
+        if _job_payload(job).get("management_handoff")
+        or _job_payload(job).get("management_handoff_runtime_commit_pending")
+    ]
+    handoff_recoveries: dict[str, tuple[AdapterResult, dict[str, Any]]] = {}
+    if handoff_jobs:
+        adapter = SystemAdapter(dry_run=False)
+        for handoff_job in handoff_jobs:
+            handoff_payload = _job_payload(handoff_job)
+            if (
+                handoff_payload.get("management_handoff_runtime_commit_pending")
+                and handoff_payload.get("management_handoff_application_committed") is True
+            ):
+                recovery = adapter.acknowledge_management_handoff(handoff_job.id)
+            else:
+                recovery = adapter.recover_management_handoff()
+            handoff_recoveries[handoff_job.id] = (
+                recovery,
+                management_handoff_result_evidence(recovery),
+            )
     for job in jobs:
+        job_was_pending = job.status == JobStatus.PENDING.value
         for step in job.steps:
             if step.status == JobStatus.RUNNING.value:
                 step.status = JobStatus.FAILED.value
@@ -3202,14 +3250,68 @@ def recover_interrupted_appliance_apply_jobs(db: Session) -> int:
         job.status = JobStatus.FAILED.value
         job.finished_at = finished
         job.progress_percent = 100
-        job.error = (
-            "Interrupted by a Atlaso restart before completion. "
-            "Review current appliance state and submit the selected changes again."
-        )
+        handoff_recovery = handoff_recoveries.get(job.id)
+        if handoff_recovery is not None:
+            recovery_result, recovery_evidence = handoff_recovery
+            recovery_state = str(recovery_evidence.get("management_handoff") or "")
+            if recovery_result.returncode == 0 and recovery_state in {"committed", "already committed"}:
+                job.error = (
+                    "Interrupted after the management handoff baselines were committed. The candidate management "
+                    "path remains active; review the task evidence before applying any remaining components."
+                )
+            elif recovery_result.returncode == 0 and recovery_evidence.get("rolled_back") is True:
+                job.error = (
+                    "Interrupted during the management handoff. Atlaso rolled back to the previous management path; "
+                    "review the task evidence and submit the desired change again."
+                )
+            elif (
+                job_was_pending
+                and recovery_result.returncode == 0
+                and recovery_state == "no interrupted transaction"
+            ):
+                job.error = (
+                    "Interrupted before the privileged management handoff transaction began. No runtime rollback was "
+                    "necessary; review the task evidence and submit the desired change again."
+                )
+            else:
+                job.error = (
+                    "Interrupted during the management handoff, and automatic recovery could not prove either a "
+                    "committed candidate path or a ready previous path. Use the local appliance console and inspect "
+                    "the recovery task evidence."
+                )
+        else:
+            job.error = (
+                "Interrupted by a Atlaso restart before completion. "
+                "Review current appliance state and submit the selected changes again."
+            )
         payload = _job_payload(job)
         payload["state"] = "failed"
         payload["interrupted"] = True
         payload["interrupted_at"] = finished.isoformat()
+        if handoff_recovery is not None:
+            recovery_result, recovery_evidence = handoff_recovery
+            payload["management_handoff_recovery"] = adapter_result_to_payload(
+                recovery_result
+            )
+            payload["management_handoff_recovery"]["evidence"] = recovery_evidence
+            if recovery_evidence.get("management_handoff") in {"committed", "already committed"}:
+                payload["management_handoff_runtime_commit_pending"] = False
+                payload.pop("management_handoff_application_committed", None)
+                payload["management_handoff_runtime_committed"] = True
+            elif recovery_result.returncode == 0 and recovery_evidence.get("rolled_back") is True:
+                payload.pop("management_handoff_runtime_commit_pending", None)
+                payload.pop("management_handoff_application_committed", None)
+            elif (
+                job_was_pending
+                and recovery_result.returncode == 0
+                and recovery_state == "no interrupted transaction"
+            ):
+                payload.pop("management_handoff_runtime_commit_pending", None)
+                payload.pop("management_handoff_application_committed", None)
+            else:
+                payload["management_handoff_runtime_commit_pending"] = True
+                if payload.get("management_handoff_application_committed") is not True:
+                    payload.pop("management_handoff_application_committed", None)
         job.result = json.dumps(payload, indent=2, sort_keys=True)
     db.commit()
     return len(jobs)
@@ -9081,6 +9183,24 @@ def load_appliance_apply_baselines(db: Session) -> dict[str, dict[str, Any]]:
     return baselines
 
 
+def applied_local_dns_enabled(baseline: dict[str, Any] | None) -> bool:
+    """Return whether the last-applied DNS unit enabled local DNS.
+
+    Args:
+        baseline: Last-applied DNS/DHCP unit baseline.
+
+    Returns:
+        Whether local DNS is proven active by the baseline.
+    """
+    if not baseline:
+        return False
+    enabled = baseline.get("dns_enabled")
+    if isinstance(enabled, bool):
+        return enabled
+    summary = baseline.get("summary")
+    return bool(isinstance(summary, list) and summary and summary[0] == "DNS enabled")
+
+
 def save_appliance_apply_baselines(db: Session, baselines: dict[str, dict[str, Any]]) -> None:
     """Persist appliance apply baselines.
 
@@ -9163,6 +9283,134 @@ def network_management_signature(config_preview: str) -> dict[str, str]:
         "ipv6_cidr": management.get("ipv6_cidr", ""),
         "ipv6_gateway": management.get("ipv6_gateway", ""),
     }
+
+
+def network_management_paths(config_preview: str) -> list[dict[str, str]]:
+    """Return every effective management browser path in a network preview.
+
+    Args:
+        config_preview: Rendered network configuration approved for staging.
+
+    Returns:
+        Normalized dedicated and flagged-access management paths.
+    """
+    rows: list[dict[str, str]] = []
+    section = ""
+    current: dict[str, str] | None = None
+    for raw_line in (config_preview or "").splitlines():
+        line = raw_line.strip()
+        if not line or line.startswith("#"):
+            continue
+        if line.startswith("[") and line.endswith("]"):
+            section = line.strip("[]")
+            current = None
+            continue
+        if "=" not in line:
+            continue
+        key, value = [part.strip() for part in line.split("=", 1)]
+        if section == "physical_interfaces" and key == "interface":
+            current = {"kind": "physical", "name": value}
+            rows.append(current)
+        elif section == "vlan_interfaces" and key == "vlan":
+            current = {"kind": "vlan", "name": value}
+            rows.append(current)
+        elif current is not None and section in {"physical_interfaces", "vlan_interfaces"}:
+            current[key] = value
+    paths: list[dict[str, str]] = []
+    physical_admin_states = {
+        row.get("name", ""): row.get("admin_state", "")
+        for row in rows
+        if row.get("kind") == "physical"
+    }
+    for row in rows:
+        dedicated = row.get("kind") == "physical" and row.get("role") == "management"
+        flagged_physical = (
+            row.get("kind") == "physical"
+            and row.get("role") == "access"
+            and row.get("mode") == "access"
+            and row.get("admin_state") == "up"
+            and row.get("access_management_ui_enabled", "false").lower() == "true"
+        )
+        flagged_vlan = (
+            row.get("kind") == "vlan"
+            and row.get("role") == "access"
+            and row.get("access_management_ui_enabled", "false").lower() == "true"
+        )
+        if not (dedicated or flagged_physical or flagged_vlan):
+            continue
+        paths.append(
+            {
+                "kind": row.get("kind", ""),
+                "name": row.get("name", ""),
+                "parent": row.get("parent", ""),
+                "parent_admin_state": physical_admin_states.get(row.get("parent", ""), ""),
+                "role": row.get("role", ""),
+                "mtu": row.get("mtu", ""),
+                "ipv4_method": row.get("ipv4_method", ""),
+                "ip_cidr": row.get("ip_cidr", ""),
+                "gateway": row.get("gateway", ""),
+                "ipv6_enabled": row.get("ipv6_enabled", ""),
+                "ipv6_cidr": row.get("ipv6_cidr", ""),
+                "ipv6_gateway": row.get("ipv6_gateway", ""),
+            }
+        )
+    return sorted(
+        paths,
+        key=lambda item: (
+            item["name"],
+            item["kind"],
+            item["parent"],
+            item["parent_admin_state"],
+            item["mtu"],
+            item["ip_cidr"],
+            item["gateway"],
+            item["ipv6_enabled"],
+            item["ipv6_cidr"],
+            item["ipv6_gateway"],
+        ),
+    )
+
+
+def management_handoff_required(network_unit: dict[str, Any], baseline: dict[str, Any] | None) -> bool:
+    """Return whether Network changes require a two-phase handoff.
+
+    Args:
+        network_unit: Current Network apply unit.
+        baseline: Last successful Network baseline.
+
+    Returns:
+        Whether a previous known-good management path changes.
+    """
+    previous_preview = str((baseline or {}).get("config_preview") or "")
+    current_paths = network_management_paths(
+        str(network_unit.get("raw_config_preview") or network_unit.get("config_preview") or "")
+    )
+    if not previous_preview:
+        return bool(current_paths)
+    return network_management_paths(previous_preview) != current_paths
+
+
+def management_handoff_completes_appliance_settings(
+    current_preview: str,
+    baseline: dict[str, Any] | None,
+) -> bool:
+    """Return whether the handoff covers every Appliance Settings difference.
+
+    Args:
+        current_preview: Current redacted Appliance Settings preview.
+        baseline: Last successful Appliance Settings baseline.
+
+    Returns:
+        Whether non-handoff settings already match the applied baseline.
+    """
+    previous = json_config_object(str((baseline or {}).get("config_preview") or ""))
+    current = json_config_object(current_preview)
+    if not previous or not current:
+        return False
+    for key in MANAGEMENT_HANDOFF_APPLIANCE_SETTINGS_KEYS:
+        if key in previous or key in current:
+            previous[key] = current.get(key)
+    return previous == current
 
 
 def management_address_label(signature: dict[str, str]) -> str:
@@ -9954,18 +10202,36 @@ def appliance_apply_units(db: Session, *, reconcile: bool = True) -> list[dict[s
         network_summary.append(f"management IPv6 gateway {management_interface.ipv6_gateway or 'none'}")
     if network_removed_vlans:
         network_summary.append(f"{len(network_removed_vlans)} VLAN removals")
+    network_validation_errors = list(network["network_validation_errors"])
+    network_baseline_preview = str((network_baseline or {}).get("config_preview") or "")
+    if (
+        get_settings().environment == "appliance"
+        and not network_baseline_preview
+        and _has_operator_appliance_activity(db)
+    ):
+        network_validation_errors.append(
+            "Network apply is blocked because the last-applied Network baseline is unavailable. Restore a known-good "
+            "settings archive containing apply baselines or use the local console for maintainer-guided recovery."
+        )
     network_unit = make_appliance_apply_unit(
         unit_id="network",
         label="Network",
         page_url="/physical-interfaces",
         context=network,
         summary=network_summary,
-        validation_errors=network["network_validation_errors"],
+        validation_errors=network_validation_errors,
         config_path=network["network_config_path"],
         config_preview=network["network_config_preview"],
         baseline=network_baseline,
     )
     network_unit["removed_vlan_interfaces"] = network_removed_vlans
+    network_unit["management_handoff_required"] = management_handoff_required(
+        network_unit,
+        network_baseline,
+    )
+    network_unit["previous_management_paths"] = network_management_paths(
+        network_baseline_preview
+    )
 
     wan_baseline = baselines.get("wan")
     wan_removed_routes = removed_wan_route_entries(wan["wan_config_preview"], wan_baseline)
@@ -11540,6 +11806,26 @@ def adapter_result_to_payload(result: Any) -> dict[str, Any]:
     }
 
 
+def management_handoff_result_evidence(result: Any) -> dict[str, Any]:
+    """Return the last bounded management-handoff object from helper output.
+
+    Args:
+        result: Management handoff adapter result.
+
+    Returns:
+        Parsed non-secret helper evidence, or an empty object.
+    """
+    for stream in (result.stdout, result.stderr):
+        for line in reversed((stream or "").splitlines()):
+            try:
+                candidate = json.loads(line)
+            except json.JSONDecodeError:
+                continue
+            if isinstance(candidate, dict) and "management_handoff" in candidate:
+                return candidate
+    return {}
+
+
 def apply_output_excerpt(value: str, *, limit: int = 2400) -> str:
     """Update output excerpt.
 
@@ -12324,6 +12610,228 @@ def execute_appliance_apply_unit(
     return unit_result
 
 
+def execute_management_handoff(
+    units_by_id: dict[str, dict[str, Any]],
+    *,
+    job_id: str,
+    adapter: SystemAdapter | None = None,
+    db: Session,
+) -> tuple[dict[str, Any], list[dict[str, Any]]]:
+    """Execute management-affecting apply units as one recoverable transaction.
+
+    Args:
+        units_by_id: Current apply units keyed by stable identifier.
+        job_id: Appliance Apply task identifier.
+        adapter: System adapter used for helper execution.
+        db: Active database session.
+
+    Returns:
+        The group result and one truthful result per bundled apply unit.
+    """
+    adapter = adapter or SystemAdapter()
+    network = units_by_id["network"]
+    settings = units_by_id["appliance_settings"]
+    firewall = units_by_id["firewall"]
+    public_services = units_by_id["public_services"]
+    ca = units_by_id["ca"]
+    baselines = load_appliance_apply_baselines(db)
+    previous_paths = list(network.get("previous_management_paths") or [])
+    previous_addresses: list[str] = []
+    previous_interfaces: list[str] = []
+    previous_parent_interfaces: list[str] = []
+    for path in previous_paths:
+        parent = str(path.get("parent") or "")
+        if parent and parent not in previous_parent_interfaces:
+            previous_parent_interfaces.append(parent)
+        name = str(path.get("name") or "")
+        if name and name not in previous_interfaces:
+            previous_interfaces.append(name)
+        for field in ("ip_cidr", "ipv6_cidr"):
+            value = str(path.get(field) or "")
+            if value:
+                previous_addresses.append(str(ip_interface(value).ip))
+    previous_settings = json_config_object(
+        str((baselines.get("appliance_settings") or {}).get("config_preview") or "")
+    )
+    manifest_path = MANAGEMENT_HANDOFF_STAGED_MANIFEST_PATH
+    ca_path = CA_STAGED_CONFIG_PATH
+    if not adapter.dry_run:
+        network_preview = network_config_with_removed_vlans(
+            network["raw_config_preview"],
+            network.get("removed_vlan_interfaces", []),
+        )
+        network_path = stage_appliance_apply_config(NETWORK_STAGED_CONFIG_PATH, network_preview)
+        firewall_path = stage_appliance_apply_config(
+            FIREWALL_STAGED_CONFIG_PATH,
+            firewall["raw_config_preview"],
+        )
+        settings_path = stage_appliance_apply_config(
+            APPLIANCE_SETTINGS_STAGED_CONFIG_PATH,
+            settings["raw_config_preview"],
+        )
+        public_path = stage_appliance_apply_config(
+            PUBLIC_SERVICES_STAGED_CONFIG_PATH,
+            public_services["raw_config_preview"],
+        )
+        manifest_staged = False
+        try:
+            ca_context_value = ca["context"]
+            ca_path = stage_appliance_apply_config(
+                CA_STAGED_CONFIG_PATH,
+                render_ca_apply_payload(
+                    ca_context_value["ca_settings"],
+                    ca_context_value["ca_certificates"],
+                    include_private_keys=True,
+                ),
+            )
+            manifest = {
+                "schema_version": 1,
+                "job_id": job_id,
+                "network_config_path": network_path,
+                "firewall_config_path": firewall_path,
+                "appliance_settings_config_path": settings_path,
+                "public_services_config_path": public_path,
+                "ca_config_path": ca_path,
+                "previous_management_interfaces": previous_interfaces,
+                "previous_management_parent_interfaces": previous_parent_interfaces,
+                "previous_management_addresses": list(dict.fromkeys(previous_addresses)),
+                "previous_management_paths": [
+                    {
+                        "name": str(path.get("name") or ""),
+                        "ipv4_method": str(path.get("ipv4_method") or ""),
+                        "ipv6_enabled": str(path.get("ipv6_enabled") or ""),
+                        "ipv6_cidr": str(path.get("ipv6_cidr") or ""),
+                    }
+                    for path in previous_paths
+                ],
+                "previous_https_enabled": bool(
+                    previous_settings.get("management_https_enabled", True)
+                ),
+                "previous_management_public_port": int(
+                    previous_settings.get(
+                        "management_public_https_port"
+                        if previous_settings.get("management_https_enabled", True)
+                        else "management_public_http_port",
+                        443 if previous_settings.get("management_https_enabled", True) else 80,
+                    )
+                ),
+            }
+            manifest_path = stage_appliance_apply_config(
+                MANAGEMENT_HANDOFF_STAGED_MANIFEST_PATH,
+                json.dumps(manifest, indent=2, sort_keys=True),
+            )
+            manifest_staged = True
+        finally:
+            if not manifest_staged:
+                Path(ca_path).unlink(missing_ok=True)
+    results: list[AdapterResult] = []
+    recovery_result: AdapterResult | None = None
+    try:
+        results = [adapter.validate_management_handoff(manifest_path)]
+        if results[0].returncode == 0:
+            results.append(adapter.apply_management_handoff(manifest_path))
+            if not adapter.dry_run and results[-1].returncode != 0:
+                recovery_result = adapter.recover_management_handoff()
+    finally:
+        if not adapter.dry_run:
+            Path(ca_path).unlink(missing_ok=True)
+    succeeded = bool(results) and all(result.returncode == 0 for result in results)
+    apply_result = results[1] if len(results) > 1 else None
+    evidence = next(
+        (
+            parsed
+            for result in reversed(results)
+            if (parsed := management_handoff_result_evidence(result))
+        ),
+        {},
+    )
+    recovery_evidence = (
+        management_handoff_result_evidence(recovery_result)
+        if recovery_result is not None
+        else {}
+    )
+    if apply_result is not None and apply_result.returncode == 124 and not evidence.get("failing_layer"):
+        evidence = {
+            **evidence,
+            "failing_layer": "handoff helper wait",
+            "error": "Management handoff helper wait timed out; immediate recovery was attempted.",
+        }
+    apply_rolled_back = bool(evidence.get("rolled_back")) or evidence.get("management_handoff") == "rolled back"
+    if recovery_evidence:
+        evidence = {**evidence, "recovery": recovery_evidence}
+        if recovery_result is not None and recovery_result.returncode == 0 and recovery_evidence.get("rolled_back") is True:
+            evidence = {
+                **evidence,
+                "management_handoff": "rolled back",
+                "rolled_back": True,
+            }
+    recovery_rolled_back = bool(
+        recovery_result is not None
+        and recovery_result.returncode == 0
+        and recovery_evidence.get("rolled_back") is True
+    )
+    rolled_back = apply_rolled_back or recovery_rolled_back
+    recovery_state = str(recovery_evidence.get("management_handoff") or "")
+    rollback_proven = (
+        apply_result is None
+        or apply_rolled_back
+        or recovery_rolled_back
+        or bool(
+            recovery_result is not None
+            and recovery_result.returncode == 0
+            and recovery_state == "no interrupted transaction"
+        )
+    )
+    if not succeeded and apply_result is not None and not rollback_proven:
+        evidence = {
+            **evidence,
+            "failing_layer": str(evidence.get("failing_layer") or "interruption recovery"),
+            "error": str(
+                evidence.get("error")
+                or "Management handoff failed and immediate recovery could not be proven."
+            ),
+        }
+    group_result = {
+        "success": succeeded,
+        "dry_run": any(result.dry_run for result in results),
+        "commands": [
+            adapter_result_to_payload(result)
+            for result in [*results, *([recovery_result] if recovery_result is not None else [])]
+        ],
+        "management_handoff": evidence or {
+            "management_handoff": "committed" if succeeded else "failed before bounded helper evidence"
+        },
+        "rollback_proven": rollback_proven,
+    }
+    failure_layer = str(group_result["management_handoff"].get("failing_layer") or "")
+    failure_error = str(group_result["management_handoff"].get("error") or "")
+    unit_results = []
+    for unit_id in MANAGEMENT_HANDOFF_UNIT_IDS:
+        unit = units_by_id[unit_id]
+        unit_results.append(
+            {
+                "unit_id": unit_id,
+                "label": unit["label"],
+                "status": JobStatus.SUCCEEDED.value if succeeded else JobStatus.FAILED.value,
+                "success": succeeded,
+                "dry_run": group_result["dry_run"],
+                "commands": group_result["commands"] if unit_id == "network" else [],
+                "management_handoff": group_result["management_handoff"],
+                "failing_layer": failure_layer,
+                "rolled_back": rolled_back,
+                "rollback_proven": rollback_proven,
+                "error": failure_error if not succeeded else "",
+                "summary": unit["summary"],
+                "validation_errors": unit["validation_errors"],
+                "validation_warnings": unit["validation_warnings"],
+                "config_path": unit["config_path"],
+                "config_preview": unit["config_preview"],
+                "config_diff": unit["config_diff"],
+            }
+        )
+    return group_result, unit_results
+
+
 def update_appliance_apply_baselines(db: Session, units: list[dict[str, Any]], selected_ids: set[str]) -> None:
     """Update appliance apply baselines.
 
@@ -12347,6 +12855,8 @@ def update_appliance_apply_baselines(db: Session, units: list[dict[str, Any]], s
         runtime_config_preview = unit.get("runtime_config_preview")
         if isinstance(runtime_config_preview, str):
             baseline["runtime_config_preview"] = runtime_config_preview
+        if unit["id"] == "dnsmasq":
+            baseline["dns_enabled"] = bool(unit["context"]["dns_settings"].enabled)
         baselines[unit["id"]] = baseline
     save_appliance_apply_baselines(db, baselines)
 
@@ -13494,7 +14004,10 @@ def active_appliance_apply_job(db: Session) -> Job | None:
         .options(selectinload(Job.steps))
         .where(
             Job.type == "appliance-apply",
-            Job.status.in_([JobStatus.PENDING.value, JobStatus.RUNNING.value]),
+            or_(
+                Job.status.in_([JobStatus.PENDING.value, JobStatus.RUNNING.value]),
+                Job.result.like('%"management_handoff_runtime_commit_pending": true%'),
+            ),
         )
         .order_by(Job.created_at)
         .limit(1)
@@ -13574,6 +14087,30 @@ def vcf_depot_execution_conflict_detail(job: Job) -> str:
     )
 
 
+def reconcile_management_handoff_exception(
+    adapter: SystemAdapter,
+    job_id: str,
+    *,
+    application_committed: bool,
+) -> tuple[AdapterResult, dict[str, Any]]:
+    """Reconcile retained helper state before an exception becomes terminal.
+
+    Args:
+        adapter: System adapter that owns the helper transaction.
+        job_id: Appliance Apply task identifier.
+        application_committed: Whether baselines and pending acknowledgement are durable.
+
+    Returns:
+        Adapter result and parsed bounded evidence.
+    """
+    result = (
+        adapter.acknowledge_management_handoff(job_id)
+        if application_committed
+        else adapter.recover_management_handoff()
+    )
+    return result, management_handoff_result_evidence(result)
+
+
 def run_appliance_apply_job(job_id: str, *, force_real: bool = False) -> None:
     """Run appliance apply job.
 
@@ -13598,6 +14135,9 @@ def run_appliance_apply_job(job_id: str, *, force_real: bool = False) -> None:
         db.commit()
 
         unit_results: list[dict[str, Any]] = []
+        handoff_recovery_adapter: SystemAdapter | None = None
+        handoff_runtime_pending = False
+        handoff_application_committed = False
         try:
             job_result = json.loads(job.result or "{}")
             selected_order = [str(unit_id) for unit_id in job_result.get("selected_units", [])]
@@ -13631,6 +14171,12 @@ def run_appliance_apply_job(job_id: str, *, force_real: bool = False) -> None:
             total_steps = max(len(selected_units), 1)
             failed = False
             cancelled = False
+            handoff_completed = False
+            handoff_unit_ids = set(
+                job_result.get("management_handoff_units", [])
+                if job_result.get("management_handoff")
+                else []
+            )
             for index, unit in enumerate(selected_units, start=1):
                 db.refresh(job)
                 current_payload = _job_payload(job)
@@ -13647,6 +14193,225 @@ def run_appliance_apply_job(job_id: str, *, force_real: bool = False) -> None:
                         remaining.result = json.dumps({"summary": remaining_unit["summary"], "reason": "cancelled"}, indent=2)
                     db.commit()
                     break
+
+                if unit["id"] in handoff_unit_ids:
+                    if handoff_completed:
+                        continue
+                    bundled_units = [
+                        current_by_id[unit_id]
+                        for unit_id in MANAGEMENT_HANDOFF_UNIT_IDS
+                        if unit_id in handoff_unit_ids
+                    ]
+                    if {item["id"] for item in bundled_units} != set(MANAGEMENT_HANDOFF_UNIT_IDS):
+                        raise ApplianceApplyJobError(
+                            "Management handoff is missing a required Network, Firewall, Certificate Authority, "
+                            "Appliance Settings, or Public Services component."
+                        )
+                    started = utcnow()
+                    for bundled in bundled_units:
+                        bundled_step = steps_by_key.get(bundled["id"])
+                        if bundled_step is None:
+                            raise ApplianceApplyJobError(
+                                f"Component task record is missing for {bundled['label']}."
+                            )
+                        bundled_step.status = JobStatus.RUNNING.value
+                        bundled_step.started_at = started
+                        bundled_step.progress_percent = 5
+                    job.progress_percent = min(95, int(((index - 1) / total_steps) * 100))
+                    db.commit()
+                    handoff_adapter = SystemAdapter(dry_run=False) if force_real else SystemAdapter()
+                    if not handoff_adapter.dry_run:
+                        handoff_recovery_adapter = handoff_adapter
+                        handoff_runtime_pending = True
+                    group_result, bundled_results = execute_management_handoff(
+                        current_by_id,
+                        job_id=job.id,
+                        adapter=handoff_adapter,
+                        db=db,
+                    )
+                    if not group_result.get("success") and group_result.get("rollback_proven"):
+                        handoff_runtime_pending = False
+                    bundled_results = [_redact_task_value(result) for result in bundled_results]
+                    unit_results.extend(bundled_results)
+                    finished = utcnow()
+                    handoff_succeeded = all(result["success"] for result in bundled_results)
+                    for result in bundled_results:
+                        bundled_step = steps_by_key[result["unit_id"]]
+                        bundled_step.result = json.dumps(result, indent=2, sort_keys=True)
+                        bundled_step.status = (
+                            JobStatus.SUCCEEDED.value if result["success"] else JobStatus.FAILED.value
+                        )
+                        bundled_step.finished_at = finished
+                        bundled_step.progress_percent = 100
+                        messages = _task_failure_messages(result)
+                        bundled_step.error = None if result["success"] else (
+                            messages[0]
+                            if messages
+                            else "Management handoff failed and the previous path was rolled back."
+                        )
+                    current_payload = _job_payload(job)
+                    next_payload = {**current_payload, "units": unit_results}
+                    if handoff_runtime_pending:
+                        next_payload["management_handoff_runtime_commit_pending"] = True
+                    else:
+                        next_payload.pop("management_handoff_runtime_commit_pending", None)
+                    job.result = json.dumps(next_payload, indent=2)
+                    if handoff_succeeded:
+                        # These units were hash-checked against the submitted
+                        # snapshots immediately before execution and are the
+                        # exact configuration staged for the helper. Desired
+                        # state may change in another session while the bounded
+                        # readiness probes run; never promote that newer,
+                        # unexecuted state into the applied baselines.
+                        applied = [
+                            current_by_id[unit_id]
+                            for unit_id in MANAGEMENT_HANDOFF_UNIT_IDS
+                            if unit_id in handoff_unit_ids
+                        ]
+                        applied_ids = set(handoff_unit_ids)
+                        baselines = load_appliance_apply_baselines(db)
+                        settings_unit = next(
+                            (candidate for candidate in applied if candidate["id"] == "appliance_settings"),
+                            None,
+                        )
+                        settings_complete = bool(
+                            settings_unit is not None
+                            and management_handoff_completes_appliance_settings(
+                                str(settings_unit.get("config_preview") or ""),
+                                baselines.get("appliance_settings"),
+                            )
+                        )
+                        if not settings_complete:
+                            applied_ids.discard("appliance_settings")
+                        settings_result = next(
+                            (result for result in unit_results if result["unit_id"] == "appliance_settings"),
+                            None,
+                        )
+                        if settings_result is not None:
+                            settings_result["baseline_updated"] = settings_complete
+                            if not settings_complete:
+                                settings_result["remaining_pending_reason"] = (
+                                    "Non-management Appliance Settings changes remain pending."
+                                )
+                            settings_step = steps_by_key.get("appliance_settings")
+                            if settings_step is not None:
+                                settings_step.result = json.dumps(settings_result, indent=2, sort_keys=True)
+                        update_appliance_apply_baselines(
+                            db,
+                            applied,
+                            applied_ids,
+                        )
+                        pending_payload = _job_payload(job)
+                        job.result = json.dumps(
+                            {
+                                **pending_payload,
+                                "units": unit_results,
+                                "management_handoff_runtime_commit_pending": True,
+                                "management_handoff_application_committed": True,
+                            },
+                            indent=2,
+                        )
+                        # This commit is the application-side transaction boundary:
+                        # startup recovery rolls back before it and idempotently
+                        # acknowledges the candidate after it.
+                        db.commit()
+                        handoff_application_committed = True
+                        acknowledgement = handoff_adapter.acknowledge_management_handoff(job.id)
+                        acknowledgement_evidence = management_handoff_result_evidence(acknowledgement)
+                        group_result["commands"].append(adapter_result_to_payload(acknowledgement))
+                        if acknowledgement.returncode != 0:
+                            failed = True
+                            acknowledgement_error = str(
+                                acknowledgement_evidence.get("error")
+                                or "management handoff commit acknowledgement failed"
+                            )
+                            job.error = (
+                                "The candidate management path and baselines were committed, but the durable helper "
+                                "acknowledgement was not proven. Startup recovery will retry the acknowledgement; "
+                                "inspect the bounded component evidence."
+                            )
+                            for result in bundled_results:
+                                result["success"] = False
+                                result["status"] = JobStatus.FAILED.value
+                                result["failing_layer"] = "application commit acknowledgement"
+                                result["error"] = acknowledgement_error
+                                result["management_handoff"] = acknowledgement_evidence
+                                bundled_step = steps_by_key[result["unit_id"]]
+                                bundled_step.status = JobStatus.FAILED.value
+                                bundled_step.error = acknowledgement_error
+                                bundled_step.result = json.dumps(result, indent=2, sort_keys=True)
+                            for remaining_unit in selected_units[index:]:
+                                if remaining_unit["id"] in handoff_unit_ids:
+                                    continue
+                                remaining = steps_by_key.get(remaining_unit["id"])
+                                if remaining is None or remaining.status != JobStatus.PENDING.value:
+                                    continue
+                                remaining.status = "skipped"
+                                remaining.progress_percent = 100
+                                remaining.finished_at = utcnow()
+                                remaining.error = "Skipped because management handoff acknowledgement was not proven."
+                                remaining.result = json.dumps(
+                                    {
+                                        "summary": remaining_unit["summary"],
+                                        "reason": "management_handoff_acknowledgement_failed",
+                                    },
+                                    indent=2,
+                                )
+                        else:
+                            handoff_runtime_pending = False
+                            committed_evidence = {
+                                **group_result.get("management_handoff", {}),
+                                "management_handoff": "committed",
+                                "acknowledgement": acknowledgement_evidence,
+                            }
+                            group_result["management_handoff"] = committed_evidence
+                            group_result["success"] = True
+                            for result in bundled_results:
+                                result["management_handoff"] = committed_evidence
+                                bundled_step = steps_by_key[result["unit_id"]]
+                                bundled_step.result = json.dumps(result, indent=2, sort_keys=True)
+                            committed_payload = _job_payload(job)
+                            committed_payload.pop("management_handoff_runtime_commit_pending", None)
+                            committed_payload.pop("management_handoff_application_committed", None)
+                            job.result = json.dumps(
+                                {
+                                    **committed_payload,
+                                    "units": unit_results,
+                                    "management_handoff_runtime_committed": True,
+                                },
+                                indent=2,
+                            )
+                    else:
+                        failed = True
+                        handoff_evidence = group_result.get("management_handoff", {})
+                        failing_layer = str(handoff_evidence.get("failing_layer") or "unknown layer")
+                        rollback_state = str(handoff_evidence.get("management_handoff") or "failed")
+                        job.error = (
+                            f"Management handoff failed at {failing_layer}; transaction state: {rollback_state}. "
+                            "The component task result contains the bounded non-secret diagnostic."
+                        )
+                        for remaining_unit in selected_units[index:]:
+                            if remaining_unit["id"] in handoff_unit_ids:
+                                continue
+                            remaining = steps_by_key.get(remaining_unit["id"])
+                            if remaining is None or remaining.status != JobStatus.PENDING.value:
+                                continue
+                            remaining.status = "skipped"
+                            remaining.progress_percent = 100
+                            remaining.finished_at = finished
+                            remaining.error = "Skipped because the management handoff failed and rolled back."
+                            remaining.result = json.dumps(
+                                {
+                                    "summary": remaining_unit["summary"],
+                                    "reason": "management_handoff_failed",
+                                },
+                                indent=2,
+                            )
+                    handoff_completed = True
+                    db.commit()
+                    if failed:
+                        break
+                    continue
 
                 step = steps_by_key.get(unit["id"])
                 if step is None:
@@ -13812,7 +14577,7 @@ def run_appliance_apply_job(job_id: str, *, force_real: bool = False) -> None:
             else:
                 job.status = JobStatus.FAILED.value
                 job_result["state"] = JobStatus.FAILED.value
-                job.error = "One or more appliance apply components reported a failure."
+                job.error = job.error or "One or more appliance apply components reported a failure."
             job.finished_at = utcnow()
             job.progress_percent = 100
             job.result = json.dumps(job_result, indent=2)
@@ -13829,10 +14594,41 @@ def run_appliance_apply_job(job_id: str, *, force_real: bool = False) -> None:
         except Exception as exc:  # noqa: BLE001 - background task must persist a safe terminal state.
             APPLY_LOGGER.exception("Appliance apply task %s failed before completion", job_id)
             db.rollback()
+            exception_recovery: tuple[AdapterResult, dict[str, Any]] | None = None
+            if handoff_runtime_pending and handoff_recovery_adapter is not None:
+                exception_recovery = reconcile_management_handoff_exception(
+                    handoff_recovery_adapter,
+                    job_id,
+                    application_committed=handoff_application_committed,
+                )
             job = db.get(Job, job_id)
             if job is None:
                 return
             safe_error = str(exc) if isinstance(exc, ApplianceApplyJobError) else "Appliance apply task failed unexpectedly."
+            recovery_evidence: dict[str, Any] = {}
+            if exception_recovery is not None:
+                recovery_result, recovery_evidence = exception_recovery
+                recovery_state = str(recovery_evidence.get("management_handoff") or "")
+                if recovery_result.returncode == 0 and recovery_evidence.get("rolled_back") is True:
+                    safe_error = (
+                        "Appliance Apply failed after candidate activation; the previous management path was rolled "
+                        "back before the task became terminal."
+                    )
+                elif recovery_result.returncode == 0 and recovery_state in {"committed", "already committed"}:
+                    safe_error = (
+                        "Appliance Apply failed after the management baselines committed; the candidate management "
+                        "path remains active and its helper acknowledgement is complete."
+                    )
+                elif recovery_result.returncode == 0 and recovery_state == "no interrupted transaction":
+                    safe_error = (
+                        "Appliance Apply failed before the privileged management handoff transaction began; "
+                        "no runtime rollback was necessary."
+                    )
+                else:
+                    safe_error = (
+                        "Appliance Apply failed after candidate activation, and immediate management recovery could "
+                        "not be proven. The global apply lock remains held for recovery."
+                    )
             finished = utcnow()
             for step in job.steps:
                 if step.status == JobStatus.RUNNING.value:
@@ -13846,6 +14642,29 @@ def run_appliance_apply_job(job_id: str, *, force_real: bool = False) -> None:
                     step.finished_at = finished
                     step.progress_percent = 100
             job_result = json.loads(job.result or "{}")
+            if exception_recovery is not None:
+                recovery_result, recovery_evidence = exception_recovery
+                job_result["management_handoff_exception_recovery"] = {
+                    **adapter_result_to_payload(recovery_result),
+                    "evidence": recovery_evidence,
+                }
+                recovery_state = str(recovery_evidence.get("management_handoff") or "")
+                if recovery_result.returncode == 0 and recovery_evidence.get("rolled_back") is True:
+                    job_result.pop("management_handoff_runtime_commit_pending", None)
+                    job_result.pop("management_handoff_application_committed", None)
+                elif recovery_result.returncode == 0 and recovery_state in {"committed", "already committed"}:
+                    job_result.pop("management_handoff_runtime_commit_pending", None)
+                    job_result.pop("management_handoff_application_committed", None)
+                    job_result["management_handoff_runtime_committed"] = True
+                elif recovery_result.returncode == 0 and recovery_state == "no interrupted transaction":
+                    job_result.pop("management_handoff_runtime_commit_pending", None)
+                    job_result.pop("management_handoff_application_committed", None)
+                else:
+                    job_result["management_handoff_runtime_commit_pending"] = True
+                    if handoff_application_committed:
+                        job_result["management_handoff_application_committed"] = True
+                    else:
+                        job_result.pop("management_handoff_application_committed", None)
             job.status = JobStatus.FAILED.value
             job.finished_at = finished
             job.progress_percent = 100
@@ -14089,6 +14908,14 @@ def _submit_appliance_apply(
     )
     if ca_required_for_nts:
         selected_ids.add("ca")
+    dns_settings_for_apply = unit_map.get("dnsmasq", {}).get("context", {}).get("dns_settings")
+    local_dns_disable_requires_resolver = bool(
+        "dnsmasq" in selected_ids
+        and not getattr(dns_settings_for_apply, "enabled", False)
+        and applied_local_dns_enabled(load_appliance_apply_baselines(db).get("dnsmasq"))
+    )
+    if local_dns_disable_requires_resolver and "appliance_settings" in unit_map:
+        selected_ids.add("appliance_settings")
     ldap_related_units = {"ca", "dnsmasq", "firewall", "ldap"}
     ldap_context_for_apply = unit_map.get("ldap", {}).get("context", {})
     ldap_dependency_active = bool(
@@ -14131,6 +14958,14 @@ def _submit_appliance_apply(
         and unit_map["local_users"]["changed"]
     ):
         selected_ids.add("local_users")
+    management_handoff = bool(
+        selected_ids.intersection(MANAGEMENT_HANDOFF_UNIT_IDS)
+        and unit_map.get("network", {}).get("management_handoff_required")
+    )
+    if management_handoff:
+        selected_ids.update(
+            unit_id for unit_id in MANAGEMENT_HANDOFF_UNIT_IDS if unit_id in unit_map
+        )
     if not selected_ids:
         detail = "Select at least one appliance change to submit."
         return JSONResponse({"detail": detail}, status_code=422) if wants_json else Response(detail, status_code=422, media_type="text/plain")
@@ -14188,6 +15023,12 @@ def _submit_appliance_apply(
         "dry_run": bool(get_settings().dry_run_system_adapters),
         "format_authorizations": [],
         "refresh_vcf_depot_software_depot_id": refresh_vcf_depot_software_depot_id,
+        "management_handoff": management_handoff,
+        "management_handoff_units": [
+            unit_id
+            for unit_id in MANAGEMENT_HANDOFF_UNIT_IDS
+            if management_handoff and unit_id in selected_ids
+        ],
     }
     vcf_depot_submit_guard = VCF_DEPOT_SUBMIT_LOCK if "vcf_offline_depot" in selected_ids else nullcontext()
     with vcf_depot_submit_guard, APPLIANCE_APPLY_SUBMIT_LOCK:
@@ -14674,261 +15515,36 @@ delete_vsphere_vcenter_from_ui = _certificate_trust_ui.endpoints["delete_vsphere
 add_vsphere_certificate_from_ui = _certificate_trust_ui.endpoints["add_vsphere_certificate_from_ui"]
 retire_vsphere_certificate_from_ui = _certificate_trust_ui.endpoints["retire_vsphere_certificate_from_ui"]
 
+_ntp_ui = build_ntp_ui_router(
+    NtpUiDependencies(
+        ensure_ca_state=lambda *args, **kwargs: ensure_ca_state(*args, **kwargs),
+        get_ntp_settings_row=lambda *args, **kwargs: get_ntp_settings_row(*args, **kwargs),
+        normalize_dns_hostname=lambda *args, **kwargs: normalize_dns_hostname(*args, **kwargs),
+        ntp_context=lambda *args, **kwargs: ntp_context(*args, **kwargs),
+        ntp_nts_certificate_paths=lambda *args, **kwargs: ntp_nts_certificate_paths(*args, **kwargs),
+        ntpd_apply_status=lambda *args, **kwargs: ntpd_apply_status(*args, **kwargs),
+        ntpd_capabilities_payload=lambda *args, **kwargs: ntpd_capabilities_payload(*args, **kwargs),
+        primary_listen_address=lambda *args, **kwargs: primary_listen_address(*args, **kwargs),
+        primary_listen_interface=lambda *args, **kwargs: primary_listen_interface(*args, **kwargs),
+        remove_ntp_nts_certificate_rows=lambda *args, **kwargs: remove_ntp_nts_certificate_rows(*args, **kwargs),
+        render=lambda *args, **kwargs: render(*args, **kwargs),
+        require_management_ui_request=require_management_ui_request,
+        resolve_service_bind_targets=lambda *args, **kwargs: resolve_service_bind_targets(*args, **kwargs),
+        system_adapter_factory=lambda: SystemAdapter(),
+        verify_csrf=lambda *args, **kwargs: verify_csrf(*args, **kwargs),
+    )
+)
+ntp_router = _ntp_ui.router
+ntp_page = _ntp_ui.endpoints["ntp_page"]
+ntp_source_health = _ntp_ui.endpoints["ntp_source_health"]
+update_ntp_settings_from_ui = _ntp_ui.endpoints["update_ntp_settings_from_ui"]
+
 router = APIRouter(
     prefix=MANAGEMENT_UI_ROOT,
     dependencies=[Depends(require_management_ui_request)],
 )
 
-@router.get("/ntp", response_class=HTMLResponse, response_model=None)
-def ntp_page(
-    request: Request,
-    identity: Identity = Depends(require_session_identity),
-    db: Session = Depends(get_db),
-) -> HTMLResponse:
-    """Handle the ntp page endpoint.
-
-    Args:
-        request: Incoming HTTP request.
-        identity: Authenticated identity authorizing the request.
-        db: Active database session.
-
-    Returns:
-        The endpoint response.
-    """
-    context = ntp_context(db)
-    return render(request, "ntp.html", {"identity": identity, **context, "appliance_apply_status": ntpd_apply_status(db, context)})
-
-
-@router.get("/ntp/source-health", response_class=JSONResponse, response_model=None)
-def ntp_source_health(identity: Identity = Depends(require_session_identity)) -> JSONResponse:
-    """Handle the ntp source health endpoint.
-
-    Args:
-        identity: Authenticated identity authorizing the request.
-
-    Returns:
-        The endpoint response.
-    """
-    result = SystemAdapter().read_ntpd_status()
-    parsed_status: dict[str, Any] = {}
-    if result.stdout:
-        try:
-            raw_status = json.loads(result.stdout)
-        except json.JSONDecodeError:
-            raw_status = {}
-        if isinstance(raw_status, dict):
-            parsed_status = raw_status
-    return JSONResponse(
-        {
-            "ok": result.returncode == 0,
-            "dry_run": result.dry_run,
-            "returncode": result.returncode,
-            "stdout": result.stdout,
-            "stderr": result.stderr,
-            "status": parsed_status,
-        }
-    )
-
-
-@router.post("/ntp/settings", response_model=None)
-def update_ntp_settings_from_ui(
-    request: Request,
-    enabled: str | None = Form(None),
-    hostname: str = Form(NTP_DEFAULT_HOSTNAME),
-    listen_interfaces: list[str] = Form(default_factory=list),
-    listen_addresses: list[str] = Form(default_factory=list),
-    listen_interfaces_present: str | None = Form(None),
-    listen_addresses_present: str | None = Form(None),
-    listen_interface: str = Form(""),
-    listen_address: str = Form(""),
-    port: int = Form(123),
-    upstream_servers: str = Form(""),
-    upstream_source: list[str] = Form(default_factory=list),
-    upstream_sources_json: str = Form(""),
-    upstream_enabled: list[str] = Form(default_factory=list),
-    upstream_use_nts: list[str] = Form(default_factory=list),
-    upstream_description: list[str] = Form(default_factory=list),
-    allow_clients: str = Form("any"),
-    nts_server_enabled: str | None = Form(None),
-    nts_server_cert_path: str = Form(""),
-    nts_server_key_path: str = Form(""),
-    minsources: int | None = Form(None),
-    csrf: str = Form(...),
-    identity: Identity = Depends(require_session_identity),
-    db: Session = Depends(get_db),
-) -> RedirectResponse | JSONResponse:
-    """Handle the update ntp settings from ui endpoint.
-
-    Args:
-        request: Incoming HTTP request.
-        enabled: Whether the requested behavior is enabled.
-        hostname: DNS hostname of the target resource.
-        listen_interfaces: Interfaces on which the service should listen.
-        listen_addresses: Addresses on which the service should listen.
-        listen_interfaces_present: Whether the caller supplied listen interfaces.
-        listen_addresses_present: Whether the caller supplied listen addresses.
-        listen_interface: Interface on which the service should listen.
-        listen_address: Address on which the service should listen.
-        port: TCP or UDP port of the target service.
-        upstream_servers: Upstream servers supplied by the caller.
-        upstream_source: Upstream source supplied by the caller.
-        upstream_sources_json: Upstream sources json supplied by the caller.
-        upstream_enabled: Upstream enabled supplied by the caller.
-        upstream_use_nts: Upstream use nts supplied by the caller.
-        upstream_description: Upstream description supplied by the caller.
-        allow_clients: Allow clients supplied by the caller.
-        nts_server_enabled: Nts server enabled supplied by the caller.
-        nts_server_cert_path: Filesystem path for the nts server cert.
-        nts_server_key_path: Filesystem path for the nts server key.
-        minsources: Minsources supplied by the caller.
-        csrf: Validated CSRF token authorizing the request.
-        identity: Authenticated identity authorizing the request.
-        db: Active database session.
-
-    Returns:
-        The endpoint response.
-
-    Raises:
-        HTTPException: If the request cannot be fulfilled.
-    """
-    verify_csrf(request, csrf)
-    settings = get_ntp_settings_row(db)
-    capability_result = SystemAdapter().read_ntpd_capabilities()
-    ntp_capabilities = ntpd_capabilities_payload(capability_result)
-    ntp_nts_capability_known = "nts" in ntp_capabilities
-    ntp_nts_supported = ntp_capabilities.get("nts") is True
-    selected_interfaces, selected_addresses = resolve_service_bind_targets(
-        db,
-        [*listen_interfaces, listen_interface],
-        [*listen_addresses, listen_address],
-        current_interface=settings.listen_interface,
-        current_address=settings.listen_address,
-        listen_interfaces_present=listen_interfaces_present,
-        listen_addresses_present=listen_addresses_present,
-    )
-    settings.enabled = enabled == "on"
-    settings.hostname = normalize_dns_hostname(hostname.strip() or NTP_DEFAULT_HOSTNAME)
-    settings.listen_interface = selected_interfaces
-    settings.listen_address = selected_addresses
-    settings.port = port
-    source_rows = []
-    if upstream_sources_json.strip():
-        try:
-            parsed_sources = json.loads(upstream_sources_json)
-        except json.JSONDecodeError:
-            parsed_sources = []
-        if isinstance(parsed_sources, list):
-            for index, item in enumerate(parsed_sources, start=1):
-                if not isinstance(item, dict):
-                    continue
-                source = str(item.get("source") or "").strip()
-                if not source:
-                    continue
-                source_rows.append(
-                    {
-                        "id": str(item.get("id") or f"source-{index}"),
-                        "source": source,
-                        "enabled": bool(item.get("enabled", True)),
-                        "use_nts": (
-                            bool(item.get("use_nts", False))
-                            if not ntp_nts_capability_known
-                            else ntp_nts_supported and bool(item.get("use_nts", False))
-                        ),
-                        "description": str(item.get("description") or "").strip(),
-                    }
-                )
-    if not source_rows:
-        max_rows = max(len(upstream_source), len(upstream_description))
-        enabled_indexes = {int(value) for value in upstream_enabled if str(value).isdigit()}
-        nts_indexes = {int(value) for value in upstream_use_nts if str(value).isdigit()}
-        for index in range(max_rows):
-            source = upstream_source[index].strip() if index < len(upstream_source) else ""
-            if not source:
-                continue
-            source_rows.append(
-                {
-                    "id": f"source-{index + 1}",
-                    "source": source,
-                    "enabled": index in enabled_indexes,
-                    "use_nts": (
-                        index in nts_indexes
-                        if not ntp_nts_capability_known
-                        else ntp_nts_supported and index in nts_indexes
-                    ),
-                    "description": upstream_description[index].strip() if index < len(upstream_description) else "",
-                }
-            )
-    if not source_rows:
-        source_rows = [
-            {"id": f"source-{index}", "source": server, "enabled": True, "use_nts": False, "description": ""}
-            for index, server in enumerate(split_servers(upstream_servers), start=1)
-        ]
-    duplicate_source = duplicate_ntp_upstream_source(source_rows)
-    if duplicate_source:
-        raise HTTPException(
-            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
-            detail=f"NTP upstream source {duplicate_source} is duplicated. Source names must be unique.",
-        )
-    settings.upstream_sources_json = dump_ntp_upstream_sources(source_rows)
-    settings.upstream_servers = join_servers([str(row["source"]) for row in source_rows if row.get("enabled")])
-    settings.allow_clients = join_allow_clients(split_allow_clients(allow_clients))
-    settings.nts_server_enabled = (
-        settings.nts_server_enabled
-        if not ntp_nts_capability_known
-        else ntp_nts_supported and nts_server_enabled == "on"
-    )
-    _ntp_nts_cert_path, ntp_nts_key_path, ntp_nts_chain_path = ntp_nts_certificate_paths(settings)
-    if settings.nts_server_enabled:
-        settings.nts_server_cert_path = ntp_nts_chain_path
-        settings.nts_server_key_path = ntp_nts_key_path
-    else:
-        settings.nts_server_cert_path = ""
-        settings.nts_server_key_path = ""
-        remove_ntp_nts_certificate_rows(db)
-    settings.nts_ke_port = 4460
-    settings.minsources = minsources if minsources and minsources > 0 else None
-    settings.config_path = NTP_STAGED_CONFIG_PATH
-    settings.updated_at = utcnow()
-    db.add(settings)
-    db.commit()
-    if settings.nts_server_enabled:
-        ensure_ca_state(db)
-    record_audit(db, actor=identity.username, action="update_ntp_settings", resource_type="ntpd", resource_id=str(settings.id))
-    if request.headers.get("X-Atlaso-Autosave") == "1":
-        context = ntp_context(db)
-        saved_settings = context["ntp_settings"]
-        return JSONResponse(
-            {
-                "status": "saved",
-                "updated_at": saved_settings.updated_at.isoformat(),
-                "enabled": saved_settings.enabled,
-                "hostname": saved_settings.hostname,
-                "listen_interface": primary_listen_interface(saved_settings.listen_interface),
-                "listen_address": primary_listen_address(saved_settings.listen_address),
-                "listen_interfaces": split_interfaces(saved_settings.listen_interface),
-                "listen_addresses": split_addresses(saved_settings.listen_address),
-                "port": saved_settings.port,
-                "upstream_servers": context["ntp_settings_json"]["upstream_servers"],
-                "upstream_sources": context["ntp_settings_json"]["upstream_sources"],
-                "allow_clients": saved_settings.allow_clients,
-                "nts_server_enabled": saved_settings.nts_server_enabled,
-                "nts_server_cert_path": saved_settings.nts_server_cert_path,
-                "nts_server_key_path": saved_settings.nts_server_key_path,
-                "nts_ke_port": saved_settings.nts_ke_port,
-                "nts_supported": context["ntp_nts_supported"],
-                "nts_capability_known": context["ntp_nts_capability_known"],
-                "valid": not context["ntp_validation_errors"],
-                "validation_errors": context["ntp_validation_errors"],
-                "config_path": saved_settings.config_path,
-                "config_preview": context["ntp_config_preview"],
-            }
-        )
-    return RedirectResponse("/ntp", status_code=303)
-
-
-
-
-_management_between_managed_ldap_vcf_workflows_router = router
+_management_between_ntp_vcf_workflows_router = router
 _vcf_workflows_ui = build_vcf_workflows_ui_router(
     VcfWorkflowsUiDependencies(
         require_management_ui_request=require_management_ui_request,
@@ -16030,11 +16646,14 @@ UI_ROUTER_REGISTRY.register(
     (RouterContribution(plane="management", router=certificate_trust_kms_router),),
 )
 UI_ROUTER_REGISTRY.register(
-    "facade_between_certificate_trust_vcf_workflows",
+    "ntp",
+    (RouterContribution(plane="management", router=ntp_router),),
+)
+UI_ROUTER_REGISTRY.register(
+    "facade_between_ntp_vcf_workflows",
     (
         RouterContribution(
-            plane="management",
-            router=_management_between_managed_ldap_vcf_workflows_router,
+            plane="management", router=_management_between_ntp_vcf_workflows_router
         ),
     ),
 )
@@ -16110,7 +16729,8 @@ UI_ROUTER_REGISTRY.validate_domains(
         "certificate_trust_ca",
         "managed_ldap",
         "certificate_trust_kms",
-        "facade_between_certificate_trust_vcf_workflows",
+        "ntp",
+        "facade_between_ntp_vcf_workflows",
         "vcf_workflows",
         "facade_between_vcf_workflows_identity",
         "identity",

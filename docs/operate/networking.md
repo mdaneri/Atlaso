@@ -94,6 +94,11 @@ address, `/` prefers the management sign-in, `/ui/management` requires normal au
 available for the same access network. The listener also preserves the complete authenticated management front door,
 including stable API, API documentation, manifest, and service-worker routes required by the management UI and PWA.
 
+When an Apply changes an effective management interface, address, gateway, or listener role, Atlaso automatically
+bundles Network with Firewall, Certificate Authority, Appliance Settings, and Public Services. The old management path
+stays active while the candidate network, policy routes, firewall, certificate/nginx configuration, Atlaso loopback
+upstream, and host-facing `/openapi.json` complete bounded readiness checks. Only then does Atlaso retire the old path.
+
 Only a dedicated management role owns management DHCP, default gateways, DHCP resolver recovery, and isolated
 management policy routing. If that role is absent, flagged access interfaces retain their normal access routes. The
 appliance FQDN and managed HTTPS certificate cover every effective management UI address.
@@ -148,8 +153,11 @@ remains a confirmed row-context action.
 
 ## Verify and roll back
 
-Confirm the management URL, expected routes, and interface state after apply. If access is lost, use the local console
-network recovery action to restore a known-good management configuration, then review desired state before retrying.
+Confirm the management URL, expected routes, and interface state after apply. A failed management handoff reports its
+non-secret failing layer and rolls back the captured network, firewall, nginx, certificate, and service state before
+the task becomes failed. Rollback also reconfigures interfaces introduced to the candidate and deletes candidate-only
+VLAN devices. If automatic rollback cannot restore access, use the local console network recovery action to
+restore a known-good management configuration, then review desired state before retrying.
 
 ## Transport ownership
 

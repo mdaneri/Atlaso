@@ -95,6 +95,18 @@ Components run sequentially. If one component fails, Atlaso stops the sequence a
 **skipped**. Other write operations are locked while the master task is pending or running; read-only pages, task
 inspection, authentication actions, and safe cancellation remain available.
 
+A management-path change is the exception to independent component execution. Atlaso selects Certificate Authority,
+Network, Firewall, Appliance Settings, and Public Services together after all other dependencies expand, then runs one
+recoverable handoff. It retains the previous addresses, listener, firewall policy, and TLS identity until bounded Atlaso
+loopback, candidate nginx, dynamic-address, and host-facing `/openapi.json` checks prove the candidate ready.
+The transaction validates bundled TLS material, persists the candidate resolver and source-restricted firewall rules,
+and retires the old path only after readiness succeeds. On failure it restores the complete previous state and records
+the same actionable failing layer and rollback result on every bundled component.
+Successful baselines use the exact submitted snapshots, including applied resolver values; unrelated or concurrently
+saved Appliance Settings changes remain pending. A missing known-good Network baseline blocks mutation. Durable state
+and backups remain until the database commit is proven and acknowledged, so interruption or cleanup failure can retry
+rollback or acknowledgement safely. See the technical reference for the complete handoff and recovery contract.
+
 Safe cancellation does not interrupt the component already running. Every helper or adapter command in that component
 continues to completion. After the component returns, Atlaso skips the remaining components and releases the mutation
 lock when the master task becomes terminal.
@@ -123,6 +135,12 @@ Do not treat a submitted task as proof that the appliance changed successfully.
 3. Return to the affected service page and confirm its pending indicator cleared.
 4. Verify the resulting runtime behavior from the relevant service guide.
 
+When enabling local DNS, apply **DNS/DHCP (dnsmasq)** before the subsequent Appliance Settings resolver change. Atlaso
+keeps the last-applied external or DHCP resolver active until the DNS/DHCP unit is applied, so an unapplied local-DNS
+selection cannot redirect the appliance to loopback prematurely.
+When disabling applied local DNS, selecting **DNS/DHCP (dnsmasq)** automatically includes **Appliance Settings** first.
+That ordering moves the management resolver away from `127.0.0.1` before the local listener stops.
+
 Examples include checking service health, resolving a managed DNS name, reaching the intended listener, or confirming
 the installed configuration from the appliance console. Use the service-specific verification procedure rather than
 relying only on a green UI status.
@@ -138,8 +156,17 @@ the command intent; it does not prove that Photon services changed.
    remain pending when their desired state still differs.
 4. Submit only the units required for the corrected run.
 
-If Atlaso restarts during an apply, startup marks the running child failed, marks pending children skipped, fails the
-master task, and releases the global lock. Review the task before resubmitting.
+If Atlaso restarts during an ordinary apply, startup fails the running child and master task, skips pending children,
+and releases the global lock. For an interrupted management handoff, the privileged helper first stops and verifies any
+surviving apply process, restores the captured previous runtime state, and records the recovery result.
+The same path runs immediately after a helper wait timeout because the fixed apply service can outlive its waiting
+process. Recovery uses a separate fixed service identity; before retrying, the helper stops and verifies any surviving
+recovery service so two rollback attempts cannot mutate the same network state concurrently.
+The helper retains that rollback state until Atlaso durably commits the bundled component results and baselines. If a
+restart occurs after that database commit, startup idempotently acknowledges the committed candidate instead of falsely
+claiming a rollback. A failed task whose helper acknowledgement or rollback is not proven retains the global Apply lock
+until startup or immediate exception recovery reconciles that state, even when an older task payload lacks the newer
+pending marker. Review the task before resubmitting.
 
 If a selected unit changed after submission but before execution, Atlaso fails closed and asks for a new review. This
 prevents a queued task from applying state that the administrator did not inspect.
@@ -161,13 +188,6 @@ prevents a queued task from applying state that the administrator did not inspec
 
 ## Complete technical contents
 
-No original section was removed. The [Appliance Apply technical reference](../reference/appliance-apply-technical.md)
-is divided into these scannable groups:
-
-| Reference group | Contents |
-| --- | --- |
-| [Workflow and execution model](../reference/appliance-apply-technical.md#workflow-and-execution-model) | Backend routes, global locking, helper boundaries, and apply-unit ownership. |
-| [Appliance and network units](../reference/appliance-apply-technical.md#appliance-and-network-units) | Users, inventory, networking, routing, and DNS/DHCP. |
-| [Infrastructure and security units](../reference/appliance-apply-technical.md#infrastructure-and-security-units) | PXE, storage, firewall, backups, certificates, and KMS/KMIP. |
-| [Appliance settings and operations](../reference/appliance-apply-technical.md#appliance-settings-and-operations) | NTPsec, appliance settings, logs, power, tasks, and VCF Offline Depot. |
-| [State, results, and interface contracts](../reference/appliance-apply-technical.md#state-results-and-interface-contracts) | Baselines, diffs, job results, recovery, and UI expectations. |
+No original section was removed.
+See the [Appliance Apply technical reference](../reference/appliance-apply-technical.md) for backend ownership, unit
+contracts, staging, helper execution, baselines, recovery, and interface expectations.
