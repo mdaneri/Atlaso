@@ -165,8 +165,14 @@ def test_firewall_page_create_rule_and_apply_task(client):
     """
     from sqlalchemy import select
 
+    import atlaso.app.ui as ui
     from atlaso.app.database import SessionLocal
     from atlaso.app.models import Job
+
+    with SessionLocal() as db:
+        units = ui.appliance_apply_units(db)
+        ui.update_appliance_apply_baselines(db, units, {unit["id"] for unit in units})
+        db.commit()
 
     login(client)
     page = client.get("/firewall")

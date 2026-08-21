@@ -70,6 +70,7 @@ COMMANDS: dict[str, set[str]] = {
     "appliance-settings": {"validate", "apply"},
     "web-terminal": {"status", "sign"},
     "network": {"validate", "apply", "dhcp-dns"},
+    "management-handoff": {"validate", "apply", "acknowledge", "recover"},
     "firewall": {"validate", "apply"},
     "dnsmasq": {"validate", "apply", "reload", "leases", "logs"},
     "ca": {"validate", "apply"},
@@ -124,6 +125,8 @@ SYSTEMD_RUN_REAL_ACTIONS = {
     "export",
     "restart-service",
     "recover-management-plane",
+    "recover",
+    "acknowledge",
     "sync-sources",
 }
 SYSTEMD_RUN_CHILD_ENV = "ATLASO_HELPER_SYSTEMD_RUN_CHILD"
@@ -147,6 +150,7 @@ NO_PATH_ACTIONS = {
     ("console", "recover-management-plane"),
     ("console", "restore-services"),
     ("console", "status"),
+    ("management-handoff", "recover"),
     ("vcf-offline-depot", "generate-software-depot-id"),
     ("vcf-offline-depot", "read-software-depot-id"),
     ("vcf-offline-depot", "reset-tool"),
@@ -163,6 +167,7 @@ NON_PATH_ARGUMENT_ACTIONS = {
     ("automation", "run"),
     ("vcf-offline-depot", "apply-ceip"),
     ("network", "dhcp-dns"),
+    ("management-handoff", "acknowledge"),
 }
 ATLASO_SERVICE_USER = "atlaso"
 ATLASO_STATE_DIR = Path("/var/lib/atlaso")
@@ -309,6 +314,14 @@ NTP_DRIFT_PATH = NTP_STATE_DIR / "ntp.drift"
 NTP_NTS_COOKIE_PATH = NTP_STATE_DIR / "nts-keys"
 NTP_CERT_DIR = Path("/etc/atlaso/ntp/certs")
 NETWORK_APPLY_DIR = Path("/var/lib/atlaso/apply/network")
+MANAGEMENT_HANDOFF_APPLY_DIR = Path("/var/lib/atlaso/apply/management-handoff")
+MANAGEMENT_HANDOFF_STATE_DIR = ATLASO_STATE_DIR / "management-handoff"
+MANAGEMENT_HANDOFF_STATE_PATH = MANAGEMENT_HANDOFF_STATE_DIR / "state.json"
+MANAGEMENT_HANDOFF_BACKUP_DIR = MANAGEMENT_HANDOFF_STATE_DIR / "backup"
+MANAGEMENT_HANDOFF_COMMIT_PATH = MANAGEMENT_HANDOFF_STATE_DIR / "last-commit.json"
+MANAGEMENT_HANDOFF_HOLDOVER_PREFIX = "00-0-atlaso-management-handoff-"
+MANAGEMENT_HANDOFF_APPLY_UNIT = "atlaso-management-handoff-apply.service"
+MANAGEMENT_HANDOFF_RECOVERY_UNIT = "atlaso-management-handoff-recovery.service"
 WAN_APPLY_DIR = Path("/var/lib/atlaso/apply/wan")
 APPLIANCE_UPDATE_APPLY_DIR = Path("/var/lib/atlaso/apply/appliance-update")
 APPLIANCE_UPDATE_INFO_PATH = Path("/etc/atlaso/update-info")
@@ -575,6 +588,26 @@ def _run_real_action_with_systemd(group: str, action: str, args: list[str]) -> i
         "--service-type=exec",
         f"--setenv={SYSTEMD_RUN_CHILD_ENV}=1",
     ]
+    if group == "management-handoff" and action in {"apply", "recover"}:
+        unit = MANAGEMENT_HANDOFF_APPLY_UNIT
+        if action == "recover":
+            unit = MANAGEMENT_HANDOFF_RECOVERY_UNIT
+            try:
+                _quiesce_management_handoff_unit(unit, "recovery")
+            except ValueError as exc:
+                print(
+                    json.dumps(
+                        {
+                            "management_handoff": "rollback incomplete",
+                            "failing_layer": "interruption serialization",
+                            "error": str(exc),
+                        },
+                        sort_keys=True,
+                    ),
+                    file=sys.stderr,
+                )
+                return 1
+        command.append(f"--unit={unit.removesuffix('.service')}")
     if group == "appliance-update":
         powershell_env = _appliance_update_powershell_environment()
         command.extend(
@@ -1404,15 +1437,47 @@ def _systemd_unit_logs(unit: str) -> int:
     return result.returncode
 
 
-def _write_management_resolver(servers: list[str], domains: list[str]) -> None:
+def _management_resolver_network_path(interface_name: str) -> Path | None:
+    """Return the generated networkd file for the effective resolver link.
+
+    Args:
+        interface_name: Host network-interface name affected by the operation.
+
+    Returns:
+        The matching generated networkd path, when it exists.
+    """
+    candidates = [
+        *sorted(NETWORKD_CONFIG_DIR.glob(f"{MANAGEMENT_HANDOFF_HOLDOVER_PREFIX}*.network")),
+        NETWORKD_MGMT_CONFIG_PATH,
+        NETWORKD_CONFIG_DIR / _networkd_managed_filename(interface_name, "network"),
+    ]
+    for path in candidates:
+        if not path.is_file():
+            continue
+        try:
+            text = path.read_text(encoding="utf-8")
+        except OSError:
+            continue
+        if re.search(rf"(?m)^Name={re.escape(interface_name)}\s*$", text):
+            return path
+    return None
+
+
+def _write_management_resolver(
+    interface_name: str,
+    servers: list[str],
+    domains: list[str],
+) -> None:
     """Write management resolver.
 
     Args:
+        interface_name: Host network-interface name affected by the operation.
         servers: Servers consumed by write management resolver.
         domains: Domains consumed by write management resolver.
     """
-    if NETWORKD_MGMT_CONFIG_PATH.is_file():
-        lines = NETWORKD_MGMT_CONFIG_PATH.read_text(encoding="utf-8").splitlines()
+    network_path = _management_resolver_network_path(interface_name)
+    if network_path is not None:
+        lines = network_path.read_text(encoding="utf-8").splitlines()
         updated: list[str] = []
         in_network = False
         inserted = False
@@ -1434,7 +1499,7 @@ def _write_management_resolver(servers: list[str], domains: list[str]) -> None:
         if in_network and not inserted:
             updated.extend([f"DNS={server}" for server in servers])
             updated.extend([f"Domains={domain}" for domain in domains])
-        NETWORKD_MGMT_CONFIG_PATH.write_text("\n".join(updated).rstrip() + "\n", encoding="utf-8")
+        network_path.write_text("\n".join(updated).rstrip() + "\n", encoding="utf-8")
 
 
 def _configure_resolver(interface_name: str, servers: list[str], domains: list[str]) -> subprocess.CompletedProcess[str]:
@@ -1445,7 +1510,7 @@ def _configure_resolver(interface_name: str, servers: list[str], domains: list[s
         servers: Servers consumed by configure resolver.
         domains: Domains consumed by configure resolver.
     """
-    _write_management_resolver(servers, domains)
+    _write_management_resolver(interface_name, servers, domains)
     commands = [
         ["resolvectl", "dns", interface_name, *servers],
         ["resolvectl", "domain", interface_name, *(domains or [""])],
@@ -1465,11 +1530,36 @@ def _configure_dhcp_resolver(interface_name: str) -> subprocess.CompletedProcess
     Args:
         interface_name: Host network-interface name affected by the operation.
     """
-    _write_management_resolver([], [])
+    _write_management_resolver(interface_name, [], [])
     result = _run(["resolvectl", "revert", interface_name])
     print(result.stdout, end="")
     print(result.stderr, end="", file=sys.stderr)
     return result
+
+
+def _configure_management_handoff_resolver(payload: dict) -> subprocess.CompletedProcess[str]:
+    """Move the management resolver to the candidate listener interface.
+
+    Args:
+        payload: Validated Appliance Settings payload for the handoff.
+
+    Returns:
+        The final resolver mutation result.
+    """
+    interface_name = str(payload["management_interface"])
+    resolver_mode = str(payload["resolver_mode"])
+    resolver_servers = [str(server) for server in payload["resolver_servers"]]
+    if _management_resolver_network_path(interface_name) is None:
+        return subprocess.CompletedProcess(
+            ["resolvectl", "dns", interface_name],
+            1,
+            "",
+            "candidate management resolver networkd file was not generated",
+        )
+    if resolver_mode == "dhcp":
+        return _configure_dhcp_resolver(interface_name)
+    domains = ["~."] if resolver_mode == "local_dns" else []
+    return _configure_resolver(interface_name, resolver_servers, domains)
 
 
 def _configure_local_resolver() -> subprocess.CompletedProcess[str]:
@@ -4777,11 +4867,96 @@ def _load_appliance_settings_config(path: Path) -> dict:
     return payload
 
 
-def _appliance_settings_config_errors(path: Path) -> list[str]:
+def _staged_management_https_material(
+    ca_path: Path,
+    certificate_path: Path,
+    private_key_path: Path,
+) -> tuple[str, str]:
+    """Return the staged CA certificate pair for the management listener.
+
+    Args:
+        ca_path: Staged Certificate Authority payload.
+        certificate_path: Configured management certificate destination.
+        private_key_path: Configured management private-key destination.
+
+    Returns:
+        Staged certificate and private-key PEM values.
+
+    Raises:
+        ValueError: If the staged payload does not own the configured pair.
+    """
+    payload = _load_ca_payload(ca_path)
+    certificates = payload.get("certificates")
+    if not isinstance(certificates, list):
+        raise ValueError("staged CA payload certificates must be a list")
+    for certificate in certificates:
+        if not isinstance(certificate, dict):
+            continue
+        cert_value = str(certificate.get("cert_path") or "")
+        key_value = str(certificate.get("key_path") or "")
+        if not cert_value or not key_value:
+            continue
+        staged_cert_path = _ca_managed_path(cert_value, "staged management certificate path")
+        staged_key_path = _ca_managed_path(key_value, "staged management private key path")
+        if staged_cert_path == certificate_path and staged_key_path == private_key_path:
+            return (
+                str(certificate.get("certificate_pem") or ""),
+                str(certificate.get("private_key_pem") or ""),
+            )
+    raise ValueError("staged CA payload does not contain the configured management HTTPS certificate and key")
+
+
+def _staged_ca_path_material(
+    ca_path: Path,
+    destination_path: Path,
+    *,
+    private_key: bool,
+) -> str | None:
+    """Return staged CA material for one managed certificate destination.
+
+    Args:
+        ca_path: Staged Certificate Authority payload.
+        destination_path: CA-managed path referenced by the candidate configuration.
+        private_key: Whether the requested destination is a private key.
+
+    Returns:
+        The staged PEM value when the payload owns the destination, otherwise ``None``.
+
+    Raises:
+        ValueError: If the staged certificate collection is malformed.
+    """
+    payload = _load_ca_payload(ca_path)
+    certificates = payload.get("certificates")
+    if not isinstance(certificates, list):
+        raise ValueError("staged CA payload certificates must be a list")
+    path_fields = (("key_path", "private_key_pem"),) if private_key else (
+        ("cert_path", "certificate_pem"),
+        ("chain_path", "chain_pem"),
+    )
+    for certificate in certificates:
+        if not isinstance(certificate, dict):
+            continue
+        for path_field, pem_field in path_fields:
+            path_value = str(certificate.get(path_field) or "")
+            if not path_value:
+                continue
+            staged_path = _ca_managed_path(path_value, f"staged public services {path_field}")
+            if staged_path == destination_path:
+                fallback_pem = certificate.get("certificate_pem") if path_field == "chain_path" else ""
+                return str(certificate.get(pem_field) or fallback_pem or "")
+    return None
+
+
+def _appliance_settings_config_errors(
+    path: Path,
+    *,
+    staged_ca_path: Path | None = None,
+) -> list[str]:
     """Perform appliance settings config errors.
 
     Args:
         path: Filesystem path read, validated, or updated by the operation.
+        staged_ca_path: Bundled CA payload that will install management TLS material.
     """
     errors: list[str] = []
     try:
@@ -4880,6 +5055,10 @@ def _appliance_settings_config_errors(path: Path) -> list[str]:
     if bool(payload.get("management_https_enabled")):
         cert_path_value = str(payload.get("management_https_cert_path") or "")
         key_path_value = str(payload.get("management_https_key_path") or "")
+        cert_path: Path | None = None
+        key_path: Path | None = None
+        cert_pem: str | None = None
+        key_pem: str | None = None
         if not cert_path_value:
             errors.append("management_https_cert_path is required when management HTTPS is enabled.")
         if not key_path_value:
@@ -4887,31 +5066,48 @@ def _appliance_settings_config_errors(path: Path) -> list[str]:
         if cert_path_value:
             try:
                 cert_path = _ca_managed_path(cert_path_value, "management_https_cert_path")
-                if not cert_path.is_file():
-                    errors.append(f"management HTTPS certificate does not exist: {cert_path}")
-                else:
-                    cert_pem = cert_path.read_text(encoding="utf-8")
-                    errors.extend(_pem_errors(cert_pem, "management HTTPS certificate"))
-            except (OSError, ValueError) as exc:
+            except ValueError as exc:
                 errors.append(str(exc))
         if key_path_value:
             try:
                 key_path = _ca_managed_path(key_path_value, "management_https_key_path")
-                if not key_path.is_file():
-                    errors.append(f"management HTTPS private key does not exist: {key_path}")
-                else:
-                    key_pem = key_path.read_text(encoding="utf-8")
-                    errors.extend(_pem_errors(key_pem, "management HTTPS private key", private_key=True))
+            except ValueError as exc:
+                errors.append(str(exc))
+        if cert_path is not None and key_path is not None and staged_ca_path is not None:
+            try:
+                cert_pem, key_pem = _staged_management_https_material(
+                    staged_ca_path,
+                    cert_path,
+                    key_path,
+                )
             except (OSError, ValueError) as exc:
                 errors.append(str(exc))
-        if cert_path_value and key_path_value:
+        else:
+            if cert_path is not None:
+                try:
+                    if not cert_path.is_file():
+                        errors.append(f"management HTTPS certificate does not exist: {cert_path}")
+                    else:
+                        cert_pem = cert_path.read_text(encoding="utf-8")
+                except OSError as exc:
+                    errors.append(str(exc))
+            if key_path is not None:
+                try:
+                    if not key_path.is_file():
+                        errors.append(f"management HTTPS private key does not exist: {key_path}")
+                    else:
+                        key_pem = key_path.read_text(encoding="utf-8")
+                except OSError as exc:
+                    errors.append(str(exc))
+        if cert_pem is not None:
+            errors.extend(_pem_errors(cert_pem, "management HTTPS certificate"))
+        if key_pem is not None:
+            errors.extend(_pem_errors(key_pem, "management HTTPS private key", private_key=True))
+        if cert_pem is not None and key_pem is not None:
             try:
-                cert_path = _ca_managed_path(cert_path_value, "management_https_cert_path")
-                key_path = _ca_managed_path(key_path_value, "management_https_key_path")
-                if cert_path.is_file() and key_path.is_file():
-                    matches = _ca_key_matches_certificate(cert_path.read_text(encoding="utf-8"), key_path.read_text(encoding="utf-8"))
-                    if matches is False:
-                        errors.append("management HTTPS private key does not match the certificate public key.")
+                matches = _ca_key_matches_certificate(cert_pem, key_pem)
+                if matches is False:
+                    errors.append("management HTTPS private key does not match the certificate public key.")
             except (OSError, ValueError) as exc:
                 errors.append(str(exc))
     return errors
@@ -5173,11 +5369,16 @@ def _validate_public_services_config_path(path_value: str) -> Path:
     return path
 
 
-def _public_services_config_errors(path: Path) -> list[str]:
+def _public_services_config_errors(
+    path: Path,
+    *,
+    staged_ca_path: Path | None = None,
+) -> list[str]:
     """Perform public services config errors.
 
     Args:
         path: Filesystem path read, validated, or updated by the operation.
+        staged_ca_path: Bundled CA payload that will install referenced TLS material.
     """
     try:
         text = path.read_text(encoding="utf-8")
@@ -5296,7 +5497,16 @@ def _public_services_config_errors(path: Path) -> list[str]:
         for value in _nginx_directive(text, directive):
             try:
                 cert_path = _ca_managed_path(value, directive)
-                if not cert_path.is_file():
+                staged_pem = None
+                if staged_ca_path is not None:
+                    staged_pem = _staged_ca_path_material(
+                        staged_ca_path,
+                        cert_path,
+                        private_key=private,
+                    )
+                if staged_pem is not None:
+                    errors.extend(_pem_errors(staged_pem, label, private_key=private))
+                elif not cert_path.is_file():
                     errors.append(f"{label} does not exist: {cert_path}")
                 else:
                     errors.extend(_pem_errors(cert_path.read_text(encoding="utf-8"), label, private_key=private))
@@ -5426,6 +5636,7 @@ def _management_nginx_config(payload: dict, cert_path: Path | None = None, key_p
             [
                 "server {",
                 f"  listen {public_http_port} default_server;",
+                f"  listen [::]:{public_http_port} default_server;",
                 f"  server_name {fqdn} _;",
                 *_management_proxy_location(upstream_host, upstream_port, "http"),
                 "}",
@@ -5437,6 +5648,7 @@ def _management_nginx_config(payload: dict, cert_path: Path | None = None, key_p
         [
             "server {",
             f"  listen {public_http_port} default_server;",
+            f"  listen [::]:{public_http_port} default_server;",
             "  server_name _;",
             *_management_ca_download_locations(upstream_host, upstream_port),
             "  location / {",
@@ -5446,6 +5658,7 @@ def _management_nginx_config(payload: dict, cert_path: Path | None = None, key_p
             "",
             "server {",
             f"  listen {public_https_port} ssl default_server;",
+            f"  listen [::]:{public_https_port} ssl default_server;",
             f"  server_name {fqdn};",
             f"  ssl_certificate {cert_path};",
             f"  ssl_certificate_key {key_path};",
@@ -5457,11 +5670,18 @@ def _management_nginx_config(payload: dict, cert_path: Path | None = None, key_p
     return "\n".join(lines)
 
 
-def _configure_atlaso_management_https(payload: dict) -> tuple[int, int | None]:
+def _configure_atlaso_management_https(
+    payload: dict,
+    *,
+    site_suffix: str = "",
+    restart_service: bool = True,
+) -> tuple[int, int | None]:
     """Perform configure atlaso management HTTPS.
 
     Args:
         payload: Validated request or task payload consumed by the operation.
+        site_suffix: Additional transitional server blocks installed in the same site.
+        restart_service: Whether a changed loopback drop-in schedules an Atlaso restart.
     """
     enabled = bool(payload.get("management_https_enabled"))
     changed = False
@@ -5473,7 +5693,10 @@ def _configure_atlaso_management_https(payload: dict) -> tuple[int, int | None]:
         cert_path = _ca_managed_path(str(payload["management_https_cert_path"]), "management_https_cert_path")
         key_path = _ca_managed_path(str(payload["management_https_key_path"]), "management_https_key_path")
         _grant_atlaso_service_key_read(key_path)
-    site_apply = _install_nginx_site(NGINX_MANAGEMENT_SITE_PATH, _management_nginx_config(payload, cert_path, key_path))
+    site_text = _management_nginx_config(payload, cert_path, key_path).rstrip() + "\n"
+    if site_suffix.strip():
+        site_text += "\n" + site_suffix.strip() + "\n"
+    site_apply = _install_nginx_site(NGINX_MANAGEMENT_SITE_PATH, site_text)
     if site_apply != 0:
         return site_apply, None
     next_text = _atlaso_service_loopback_dropin(upstream_host, port)
@@ -5493,6 +5716,8 @@ def _configure_atlaso_management_https(payload: dict) -> tuple[int, int | None]:
     print(daemon_reload.stderr, end="", file=sys.stderr)
     if daemon_reload.returncode != 0:
         return daemon_reload.returncode, None
+    if not restart_service:
+        return 0, None
 
     restart_command = ["systemctl", "restart", "atlaso.service"]
     systemd_run = shutil.which("systemd-run")
@@ -7083,11 +7308,18 @@ def _is_vlan_link(name: str) -> bool:
     return linkinfo.get("info_kind") == "vlan"
 
 
-def _apply_vlan_interfaces(path: Path) -> int:
+def _apply_vlan_interfaces(
+    path: Path,
+    *,
+    preserve_address_links: set[str] | None = None,
+    defer_removed: bool = False,
+) -> int:
     """Perform apply VLAN interfaces.
 
     Args:
         path: Filesystem path read, validated, or updated by the operation.
+        preserve_address_links: VLAN links whose current global addresses remain during a transition.
+        defer_removed: Whether removed VLAN deletion waits for transaction commit.
     """
     if shutil.which("ip") is None:
         print("ip command not found", file=sys.stderr)
@@ -7098,9 +7330,12 @@ def _apply_vlan_interfaces(path: Path) -> int:
             print(error, file=sys.stderr)
         return 2
     _physical_interfaces, vlan_interfaces, removed_vlan_interfaces = _parse_network_config(path)
+    preserve_address_links = preserve_address_links or set()
     removed_names: list[str] = []
     for vlan in removed_vlan_interfaces:
         name = vlan["name"]
+        if defer_removed:
+            continue
         if not _link_exists(name):
             continue
         if not _is_vlan_link(name):
@@ -7136,11 +7371,12 @@ def _apply_vlan_interfaces(path: Path) -> int:
         print(link_up.stderr, end="", file=sys.stderr)
         if link_up.returncode != 0:
             return link_up.returncode
-        flush = _run(["ip", "address", "flush", "dev", name, "scope", "global"])
-        print(flush.stdout, end="")
-        print(flush.stderr, end="", file=sys.stderr)
-        if flush.returncode != 0:
-            return flush.returncode
+        if name not in preserve_address_links:
+            flush = _run(["ip", "address", "flush", "dev", name, "scope", "global"])
+            print(flush.stdout, end="")
+            print(flush.stderr, end="", file=sys.stderr)
+            if flush.returncode != 0:
+                return flush.returncode
         if vlan.get("ip_cidr"):
             address = _run(["ip", "address", "replace", vlan["ip_cidr"], "dev", name])
             print(address.stdout, end="")
@@ -7162,12 +7398,18 @@ def _apply_vlan_interfaces(path: Path) -> int:
     return 0
 
 
-def _install_systemd_networkd_files(path: Path) -> tuple[int, list[str], list[str], list[str]]:
+def _install_systemd_networkd_files(
+    path: Path,
+    *,
+    defer_down_links: set[str] | None = None,
+) -> tuple[int, list[str], list[str], list[str]]:
     """Perform install systemd networkd files.
 
     Args:
         path: Filesystem path read, validated, or updated by the operation.
+        defer_down_links: Links that must remain up during a management transition.
     """
+    defer_down_links = defer_down_links or set()
     try:
         files, reconfigure_links, admin_down_links = _systemd_networkd_files(path)
     except ValueError as exc:
@@ -7177,6 +7419,8 @@ def _install_systemd_networkd_files(path: Path) -> tuple[int, list[str], list[st
         print("networkctl command not found", file=sys.stderr)
         return 127, [], [], []
     NETWORKD_CONFIG_DIR.mkdir(parents=True, exist_ok=True)
+    if NETWORKD_MGMT_CONFIG_PATH.name not in files:
+        NETWORKD_MGMT_CONFIG_PATH.unlink(missing_ok=True)
     for old_path in NETWORKD_CONFIG_DIR.glob(f"{NETWORKD_MANAGED_PREFIX}*"):
         if old_path.is_file() and old_path.suffix in {".network", ".netdev"}:
             old_path.unlink()
@@ -7211,6 +7455,8 @@ def _install_systemd_networkd_files(path: Path) -> tuple[int, list[str], list[st
         print("ip command not found", file=sys.stderr)
         return 127, installed, reconfigure_links, admin_down_links
     for link in admin_down_links:
+        if link in defer_down_links:
+            continue
         if not _link_exists(link):
             continue
         link_down = _run(["ip", "link", "set", "dev", link, "down"])
@@ -14886,6 +15132,1885 @@ def _handle_appliance_power(action: str, args: list[str]) -> int:
     return _schedule_appliance_power(action)
 
 
+def _validate_management_handoff_manifest_path(path_value: str) -> Path:
+    """Validate a staged management-handoff manifest path.
+
+    Args:
+        path_value: Candidate path value to validate.
+
+    Returns:
+        The validated manifest path.
+    """
+    path = Path(_validate_path(path_value)).resolve()
+    if path.name != "atlaso-management-handoff.json" or not path.is_relative_to(MANAGEMENT_HANDOFF_APPLY_DIR):
+        raise ValueError(f"management handoff manifest must be staged under {MANAGEMENT_HANDOFF_APPLY_DIR}")
+    if not path.is_file():
+        raise ValueError(f"management handoff manifest does not exist: {path}")
+    return path
+
+
+def _load_management_handoff_manifest(path: Path) -> dict:
+    """Load and validate a management-handoff manifest.
+
+    Args:
+        path: Filesystem path read by the operation.
+
+    Returns:
+        The validated manifest payload.
+    """
+    payload = json.loads(path.read_text(encoding="utf-8"))
+    if not isinstance(payload, dict) or int(payload.get("schema_version", 0)) != 1:
+        raise ValueError("management handoff manifest schema_version must be 1")
+    required = {
+        "job_id",
+        "network_config_path",
+        "firewall_config_path",
+        "appliance_settings_config_path",
+        "public_services_config_path",
+        "previous_management_interfaces",
+        "previous_management_addresses",
+    }
+    missing = sorted(required.difference(payload))
+    if missing:
+        raise ValueError(f"management handoff manifest is missing: {', '.join(missing)}")
+    if not re.fullmatch(r"job_[a-z0-9]{8,40}", str(payload["job_id"])):
+        raise ValueError("management handoff job_id is invalid")
+    for field, directory in (
+        ("network_config_path", NETWORK_APPLY_DIR),
+        ("firewall_config_path", FIREWALL_APPLY_DIR),
+        ("appliance_settings_config_path", APPLIANCE_SETTINGS_APPLY_DIR),
+        ("public_services_config_path", PUBLIC_SERVICES_APPLY_DIR),
+    ):
+        candidate = Path(_validate_path(str(payload[field]))).resolve()
+        if not candidate.is_file() or not candidate.is_relative_to(directory):
+            raise ValueError(f"management handoff {field} must name a staged file under {directory}")
+        payload[field] = str(candidate)
+    ca_value = str(payload.get("ca_config_path") or "")
+    if ca_value:
+        ca_path = Path(_validate_path(ca_value)).resolve()
+        if not ca_path.is_file() or not ca_path.is_relative_to(CA_APPLY_DIR):
+            raise ValueError(f"management handoff ca_config_path must name a staged file under {CA_APPLY_DIR}")
+        payload["ca_config_path"] = str(ca_path)
+    payload.setdefault("previous_management_parent_interfaces", [])
+    for field in (
+        "previous_management_interfaces",
+        "previous_management_parent_interfaces",
+        "previous_management_addresses",
+    ):
+        values = payload[field]
+        if not isinstance(values, list) or any(not isinstance(value, str) for value in values):
+            raise ValueError(f"management handoff {field} must be a string list")
+    previous_paths = payload.setdefault("previous_management_paths", [])
+    if not isinstance(previous_paths, list) or len(previous_paths) > 256:
+        raise ValueError("management handoff previous_management_paths must be a bounded list")
+    normalized_previous_paths: list[dict[str, str]] = []
+    for path in previous_paths:
+        if not isinstance(path, dict):
+            raise ValueError("management handoff previous_management_paths entries must be objects")
+        name = str(path.get("name") or "")
+        ipv4_method = str(path.get("ipv4_method") or "")
+        ipv6_enabled = str(path.get("ipv6_enabled") or "").lower()
+        ipv6_cidr = str(path.get("ipv6_cidr") or "")
+        if not _valid_network_interface_name(name):
+            raise ValueError("management handoff previous management interface is invalid")
+        if ipv4_method not in {"", "static", "dhcp"}:
+            raise ValueError("management handoff previous IPv4 method is invalid")
+        if ipv6_enabled not in {"", "true", "false"}:
+            raise ValueError("management handoff previous IPv6 state is invalid")
+        if ipv6_cidr:
+            parsed_ipv6 = ip_interface(ipv6_cidr)
+            if parsed_ipv6.version != 6:
+                raise ValueError("management handoff previous IPv6 CIDR is invalid")
+        normalized_previous_paths.append(
+            {
+                "name": name,
+                "ipv4_method": ipv4_method,
+                "ipv6_enabled": ipv6_enabled,
+                "ipv6_cidr": ipv6_cidr,
+            }
+        )
+    payload["previous_management_paths"] = normalized_previous_paths
+    previous_port = payload.get("previous_management_public_port")
+    if previous_port is not None:
+        try:
+            previous_port = int(previous_port)
+        except (TypeError, ValueError) as exc:
+            raise ValueError("management handoff previous public port must be an integer") from exc
+        if previous_port < 1 or previous_port > 65535:
+            raise ValueError("management handoff previous public port must be between 1 and 65535")
+        payload["previous_management_public_port"] = previous_port
+    return payload
+
+
+def _management_handoff_validation_errors(payload: dict) -> list[str]:
+    """Return bounded validation failures for a handoff manifest.
+
+    Args:
+        payload: Validated handoff payload.
+
+    Returns:
+        The validation failures.
+    """
+    errors: list[str] = []
+    network_path = Path(payload["network_config_path"])
+    ca_path_value = str(payload.get("ca_config_path") or "")
+    staged_ca_path = Path(ca_path_value) if ca_path_value else None
+    errors.extend(f"network: {error}" for error in _network_config_errors(network_path))
+    firewall_result = _validate_firewall_config(Path(payload["firewall_config_path"]))
+    if firewall_result.returncode != 0:
+        errors.append(f"firewall: {(firewall_result.stderr or firewall_result.stdout).strip()}")
+    errors.extend(
+        f"appliance settings: {error}"
+        for error in _appliance_settings_config_errors(
+            Path(payload["appliance_settings_config_path"]),
+            staged_ca_path=staged_ca_path,
+        )
+    )
+    errors.extend(
+        f"public services: {error}"
+        for error in _public_services_config_errors(
+            Path(payload["public_services_config_path"]),
+            staged_ca_path=staged_ca_path,
+        )
+    )
+    if staged_ca_path is not None:
+        errors.extend(f"certificate: {error}" for error in _ca_payload_errors(staged_ca_path))
+    return [error for error in errors if error]
+
+
+def _management_handoff_certificate_paths(payload: dict) -> list[Path]:
+    """Return CA-managed certificate artifacts touched by the handoff.
+
+    Args:
+        payload: Validated handoff payload.
+
+    Returns:
+        The certificate artifact paths.
+    """
+    ca_path = str(payload.get("ca_config_path") or "")
+    if not ca_path:
+        return []
+    try:
+        ca_payload = json.loads(Path(ca_path).read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return []
+    paths: list[Path] = []
+    root = ca_payload.get("root") or {}
+    if isinstance(root, dict):
+        for key in ("root_cert_path", "legacy_root_cert_path", "ca_bundle_path", "crl_path"):
+            value = str(root.get(key) or "")
+            if value:
+                paths.append(_ca_managed_path(value, key))
+    for certificate in ca_payload.get("certificates", []):
+        if not isinstance(certificate, dict):
+            continue
+        for key in ("cert_path", "key_path", "chain_path"):
+            value = str(certificate.get(key) or "")
+            if value:
+                paths.append(_ca_managed_path(value, key))
+    return paths
+
+
+def _management_handoff_previous_certificate_paths() -> list[Path]:
+    """Return certificate files referenced by the applied management site.
+
+    Returns:
+        The validated certificate and key paths used by the previous listener.
+    """
+    if not NGINX_MANAGEMENT_SITE_PATH.is_file():
+        return []
+    try:
+        site_text = NGINX_MANAGEMENT_SITE_PATH.read_text(encoding="utf-8")
+    except OSError:
+        return []
+    paths: list[Path] = []
+    for directive, field in (
+        ("ssl_certificate", "management_https_cert_path"),
+        ("ssl_certificate_key", "management_https_key_path"),
+    ):
+        match = re.search(rf"(?m)^\s*{directive}\s+([^;]+);\s*$", site_text)
+        if match is not None:
+            paths.append(_ca_managed_path(match.group(1).strip(), field))
+    return paths
+
+
+def _management_handoff_runtime_paths(payload: dict) -> list[Path]:
+    """Return runtime files that require exact rollback snapshots.
+
+    Args:
+        payload: Validated handoff payload.
+
+    Returns:
+        The runtime paths.
+    """
+    paths = [
+        NETWORKD_MGMT_CONFIG_PATH,
+        *sorted(NETWORKD_CONFIG_DIR.glob(f"{NETWORKD_MANAGED_PREFIX}*")),
+        *[NETWORKD_CONFIG_DIR / name for name in sorted(NETWORKD_DEFAULT_APPLIANCE_FILES)],
+        FIREWALL_CONFIG_PATH,
+        FIREWALL_SERVICE_PATH,
+        NGINX_MAIN_CONFIG_PATH,
+        NGINX_CONF_INCLUDE_PATH,
+        NGINX_MANAGEMENT_SITE_PATH,
+        NGINX_PUBLIC_SERVICES_SITE_PATH,
+        VCF_DEPOT_HTPASSWD_PATH,
+        ATLASO_SERVICE_HTTPS_DROPIN_PATH,
+        *_management_handoff_certificate_paths(payload),
+        *_management_handoff_previous_certificate_paths(),
+    ]
+    unique: dict[str, Path] = {}
+    for path in paths:
+        unique[str(path)] = path
+    return list(unique.values())
+
+
+def _sync_management_handoff_candidate(state: dict, payload: dict) -> None:
+    """Persist final candidate artifacts before application commit can be acknowledged.
+
+    Args:
+        state: Durable management-handoff transaction state.
+        payload: Validated handoff payload used to derive final networkd files.
+    """
+    paths = {
+        Path(str(item["path"]))
+        for item in state.get("snapshots", [])
+        if isinstance(item, dict) and item.get("path")
+    }
+    network_files, _reconfigure, _admin_down = _systemd_networkd_files(
+        Path(str(payload["network_config_path"]))
+    )
+    paths.update(NETWORKD_CONFIG_DIR / filename for filename in network_files)
+    directories: set[Path] = set()
+    for path in sorted(paths, key=str):
+        if path.is_file():
+            _fsync_file(path)
+        parent = path.parent
+        while parent != parent.parent:
+            if parent.is_dir():
+                directories.add(parent)
+            parent = parent.parent
+    for directory in sorted(directories, key=lambda item: len(item.parts), reverse=True):
+        _fsync_directory(directory)
+
+
+def _management_handoff_candidate_links(payload: dict) -> tuple[list[str], list[str], dict[str, dict[str, object]]]:
+    """Capture candidate link identity and pre-mutation administrative state.
+
+    Args:
+        payload: Validated handoff payload.
+
+    Returns:
+        Candidate physical links, VLAN links, and their pre-mutation state.
+    """
+    physical, vlans, _removed = _parse_network_config(Path(str(payload["network_config_path"])))
+    physical_names = list(dict.fromkeys(str(row.get("name") or "") for row in physical if row.get("name")))
+    vlan_names = list(dict.fromkeys(str(row.get("name") or "") for row in vlans if row.get("name")))
+    link_states: dict[str, dict[str, object]] = {}
+    for interface in [*physical_names, *vlan_names]:
+        existed = _link_exists(interface)
+        admin_up = False
+        mtu: int | None = None
+        if existed:
+            result = _run(["ip", "-j", "link", "show", "dev", interface])
+            if result.returncode != 0:
+                raise ValueError(f"candidate link state could not be captured for {interface}")
+            try:
+                rows = json.loads(result.stdout)
+            except json.JSONDecodeError as exc:
+                raise ValueError(f"candidate link state was malformed for {interface}") from exc
+            flags = rows[0].get("flags", []) if rows else []
+            admin_up = "UP" in flags
+            try:
+                mtu = int(rows[0].get("mtu")) if rows else None
+            except (TypeError, ValueError) as exc:
+                raise ValueError(f"candidate link MTU was malformed for {interface}") from exc
+            if mtu is None or mtu <= 0:
+                raise ValueError(f"candidate link MTU could not be captured for {interface}")
+        link_states[interface] = {"existed": existed, "admin_up": admin_up, "mtu": mtu}
+    return physical_names, vlan_names, link_states
+
+
+def _management_handoff_previous_addresses(payload: dict) -> list[str]:
+    """Merge configured and runtime addresses for every previous listener interface.
+
+    Args:
+        payload: Validated management-handoff manifest.
+
+    Returns:
+        Deduplicated global addresses that comprise the previous management path.
+    """
+    previous_addresses = [str(ip_address(address)) for address in payload["previous_management_addresses"]]
+    for interface in payload["previous_management_interfaces"]:
+        result = _run(["ip", "-j", "address", "show", "dev", str(interface)])
+        if result.returncode != 0:
+            raise ValueError(f"previous management addresses could not be observed on {interface}")
+        try:
+            entries = json.loads(result.stdout)
+        except json.JSONDecodeError as exc:
+            raise ValueError(f"previous management addresses were malformed on {interface}") from exc
+        if not isinstance(entries, list):
+            raise ValueError(f"previous management addresses were malformed on {interface}")
+        for entry in entries:
+            for info in entry.get("addr_info", []):
+                local = str(info.get("local") or "")
+                if info.get("scope") == "global" and local:
+                    previous_addresses.append(str(ip_address(local)))
+    if not previous_addresses:
+        raise ValueError("previous management listener addresses could not be captured")
+    return list(dict.fromkeys(previous_addresses))
+
+
+def _snapshot_management_handoff(payload: dict) -> dict:
+    """Create the durable pre-mutation snapshot and interruption marker.
+
+    Args:
+        payload: Validated handoff payload.
+
+    Returns:
+        The durable transaction state.
+    """
+    if MANAGEMENT_HANDOFF_STATE_PATH.exists():
+        raise ValueError("another management handoff requires recovery")
+    state_dir_existed = MANAGEMENT_HANDOFF_STATE_DIR.is_dir()
+    MANAGEMENT_HANDOFF_STATE_DIR.mkdir(mode=0o700, parents=True, exist_ok=True)
+    if not state_dir_existed:
+        _fsync_directory(MANAGEMENT_HANDOFF_STATE_DIR.parent)
+    os.chmod(MANAGEMENT_HANDOFF_STATE_DIR, 0o700)
+    shutil.rmtree(MANAGEMENT_HANDOFF_BACKUP_DIR, ignore_errors=True)
+    MANAGEMENT_HANDOFF_BACKUP_DIR.mkdir(mode=0o700)
+    snapshots: list[dict[str, object]] = []
+    for index, path in enumerate(_management_handoff_runtime_paths(payload)):
+        item: dict[str, object] = {"path": str(path), "existed": path.is_file()}
+        if path.is_file():
+            backup = MANAGEMENT_HANDOFF_BACKUP_DIR / f"{index:03d}.bin"
+            shutil.copy2(path, backup)
+            with backup.open("rb") as stream:
+                os.fsync(stream.fileno())
+            item["backup"] = str(backup)
+            stat = path.stat()
+            item["mode"] = stat.st_mode & 0o777
+            item["uid"] = stat.st_uid
+            item["gid"] = stat.st_gid
+        snapshots.append(item)
+    _fsync_directory(MANAGEMENT_HANDOFF_BACKUP_DIR)
+    settings_payload = _load_appliance_settings_config(
+        Path(str(payload["appliance_settings_config_path"]))
+    )
+    candidate_management_interface = str(settings_payload.get("management_interface") or "")
+    if not _valid_network_interface_name(candidate_management_interface):
+        raise ValueError("candidate management resolver interface is invalid")
+    previous_addresses = _management_handoff_previous_addresses(payload)
+    candidate_physical, candidate_vlans, candidate_link_states = _management_handoff_candidate_links(payload)
+    previous_firewall_config_existed = FIREWALL_CONFIG_PATH.is_file()
+    previous_firewall_service_existed = FIREWALL_SERVICE_PATH.is_file()
+    if previous_firewall_config_existed != previous_firewall_service_existed:
+        raise ValueError("previous firewall config and service state are incoherent")
+    state = {
+        "schema_version": 1,
+        "job_id": payload["job_id"],
+        "phase": "snapshotted",
+        "snapshots": snapshots,
+        "previous_management_interfaces": payload["previous_management_interfaces"],
+        "previous_management_parent_interfaces": payload.get(
+            "previous_management_parent_interfaces",
+            [],
+        ),
+        "previous_management_addresses": list(dict.fromkeys(previous_addresses)),
+        "previous_management_paths": list(payload.get("previous_management_paths") or []),
+        "previous_https_enabled": bool(payload.get("previous_https_enabled", True)),
+        "previous_management_public_port": int(
+            payload.get("previous_management_public_port")
+            or (443 if payload.get("previous_https_enabled", True) else 80)
+        ),
+        "candidate_physical_interfaces": candidate_physical,
+        "candidate_vlan_interfaces": candidate_vlans,
+        "candidate_link_states": candidate_link_states,
+        "candidate_management_interface": candidate_management_interface,
+        "resolver_apply_started": False,
+        "previous_firewall_config_existed": previous_firewall_config_existed,
+        "previous_firewall_service_existed": previous_firewall_service_existed,
+    }
+    _durable_management_handoff_state_write(state, MANAGEMENT_HANDOFF_STATE_PATH)
+    MANAGEMENT_HANDOFF_COMMIT_PATH.unlink(missing_ok=True)
+    return state
+
+
+def _durable_management_handoff_state_write(state: dict, target: Path) -> None:
+    """Write and sync a root-only transaction marker.
+
+    Args:
+        state: Durable transaction state.
+        target: Final marker path.
+    """
+    temporary = target.with_suffix(f"{target.suffix}.tmp")
+    with temporary.open("w", encoding="utf-8") as stream:
+        json.dump(state, stream, indent=2, sort_keys=True)
+        stream.write("\n")
+        stream.flush()
+        os.fsync(stream.fileno())
+    os.chmod(temporary, 0o600)
+    temporary.replace(target)
+    try:
+        directory_fd = os.open(target.parent, os.O_RDONLY)
+    except OSError:
+        if os.name == "nt":
+            return
+        raise
+    try:
+        os.fsync(directory_fd)
+    finally:
+        os.close(directory_fd)
+
+
+def _write_management_handoff_state(state: dict, phase: str) -> None:
+    """Persist the current handoff phase atomically.
+
+    Args:
+        state: Durable transaction state.
+        phase: New transaction phase.
+    """
+    state["phase"] = phase
+    _durable_management_handoff_state_write(state, MANAGEMENT_HANDOFF_STATE_PATH)
+
+
+def _networkd_handoff_text(previous: str, candidate: str) -> str:
+    """Merge previous reachability values into a candidate networkd file.
+
+    Args:
+        previous: Previous networkd configuration.
+        candidate: Candidate networkd configuration.
+
+    Returns:
+        A transitional configuration that carries old and candidate paths.
+    """
+    candidate_lines = candidate.rstrip().splitlines()
+    previous_lines = previous.rstrip().splitlines()
+    network_values = [
+        line
+        for line in previous_lines
+        if re.match(r"^(Address|DHCP|DNS|Domains|IPv6AcceptRA|LinkLocalAddressing)=", line)
+        and line not in candidate_lines
+        and not (line == "IPv6AcceptRA=no" and "IPv6AcceptRA=yes" in candidate_lines)
+        and not (line == "LinkLocalAddressing=no" and "LinkLocalAddressing=ipv6" in candidate_lines)
+    ]
+    next_section = next(
+        (
+            index
+            for index, line in enumerate(candidate_lines)
+            if index > candidate_lines.index("[Network]") and line.startswith("[")
+        ),
+        len(candidate_lines),
+    )
+    candidate_lines[next_section:next_section] = network_values
+    previous_blocks: list[list[str]] = []
+    index = 0
+    while index < len(previous_lines):
+        if previous_lines[index] not in {"[Route]", "[RoutingPolicyRule]"}:
+            index += 1
+            continue
+        end = index + 1
+        while end < len(previous_lines) and not previous_lines[end].startswith("["):
+            end += 1
+        previous_blocks.append(previous_lines[index:end])
+        index = end
+    candidate_text = "\n".join(candidate_lines)
+    for block in previous_blocks:
+        block_text = "\n".join(block).strip()
+        if block_text and block_text not in candidate_text:
+            candidate_lines.extend(["", *block])
+            candidate_text = "\n".join(candidate_lines)
+    return "\n".join(candidate_lines).rstrip() + "\n"
+
+
+def _management_handoff_previous_link_interfaces(state: dict) -> set[str]:
+    """Return prior listener and VLAN-parent links retained for rollback.
+
+    Args:
+        state: Durable management-handoff transaction state.
+
+    Returns:
+        Interfaces whose network state must survive candidate readiness.
+    """
+    return {
+        str(value)
+        for field in ("previous_management_interfaces", "previous_management_parent_interfaces")
+        for value in state.get(field, [])
+        if value
+    }
+
+
+def _install_management_holdovers(state: dict, payload: dict) -> list[Path]:
+    """Install higher-priority copies of the previous management network files.
+
+    Args:
+        state: Durable transaction state.
+        payload: Validated handoff payload.
+
+    Returns:
+        The installed holdover files.
+    """
+    previous_interfaces = _management_handoff_previous_link_interfaces(state)
+    candidate_files, _reconfigure, _admin_down = _systemd_networkd_files(Path(payload["network_config_path"]))
+    candidate_by_interface: dict[str, str] = {}
+    for content in candidate_files.values():
+        match = re.search(r"(?m)^Name=(\S+)\s*$", content)
+        if match is not None:
+            candidate_by_interface[match.group(1)] = content
+    installed: list[Path] = []
+    for item in state.get("snapshots", []):
+        backup_value = str(item.get("backup") or "")
+        if not backup_value or not str(item.get("path") or "").endswith(".network"):
+            continue
+        previous_text = Path(backup_value).read_text(encoding="utf-8")
+        match = re.search(r"(?m)^Name=(\S+)\s*$", previous_text)
+        if match is None or match.group(1) not in previous_interfaces:
+            continue
+        text = previous_text
+        if match.group(1) in candidate_by_interface:
+            text = _networkd_handoff_text(previous_text, candidate_by_interface[match.group(1)])
+        target = NETWORKD_CONFIG_DIR / f"{MANAGEMENT_HANDOFF_HOLDOVER_PREFIX}{len(installed):02d}.network"
+        target.write_text(text, encoding="utf-8")
+        os.chmod(target, 0o644)
+        installed.append(target)
+    if previous_interfaces and not installed:
+        raise ValueError("previous management networkd configuration could not be preserved")
+    return installed
+
+
+def _apply_management_candidate_network(path: Path, state: dict) -> None:
+    """Activate candidate paths without retiring previous management paths.
+
+    Args:
+        path: Candidate staged network configuration.
+        state: Durable transaction state.
+    """
+    previous_interfaces = _management_handoff_previous_link_interfaces(state)
+    install_result, _installed, _reconfigure, _admin_down = _install_systemd_networkd_files(
+        path,
+        defer_down_links=previous_interfaces,
+    )
+    if install_result != 0:
+        raise ValueError("candidate systemd-networkd file installation failed")
+    if _apply_vlan_interfaces(
+        path,
+        preserve_address_links=previous_interfaces,
+        defer_removed=True,
+    ) != 0:
+        raise ValueError("candidate VLAN activation failed")
+    physical, _vlans, _removed = _parse_network_config(path)
+    candidate_interfaces = {
+        str(row.get("name") or "")
+        for row in physical
+        if row.get("role") == "management"
+        or (
+            row.get("role") == "access"
+            and row.get("mode") == "access"
+            and row.get("admin_state") == "up"
+            and row.get("access_management_ui_enabled", "false").lower() == "true"
+        )
+    }
+    for interface in sorted(candidate_interfaces | previous_interfaces):
+        if not interface or not _link_exists(interface):
+            continue
+        result = _run(["networkctl", "reconfigure", interface])
+        if result.returncode != 0:
+            raise ValueError(f"candidate networkd reconfigure failed for {interface}")
+
+
+def _management_handoff_candidate_firewall_rules(
+    network_path: Path,
+    public_port: int,
+    candidate_firewall: str,
+) -> list[str]:
+    """Return minimal candidate-listener admission rules for a transition.
+
+    Args:
+        network_path: Candidate staged network configuration.
+        public_port: Candidate management HTTP or HTTPS front-door port.
+        candidate_firewall: Candidate nftables configuration.
+
+    Returns:
+        Nftables input rules for effective candidate management listeners.
+    """
+    if public_port < 1 or public_port > 65535:
+        raise ValueError("candidate management firewall port must be between 1 and 65535")
+    physical, vlans, _removed = _parse_network_config(network_path)
+    web_ports = ", ".join(str(port) for port in sorted({80, 443, public_port}))
+    dedicated_ports = ", ".join(str(port) for port in sorted({22, 80, 443, public_port}))
+    candidate_disabled = "Atlaso firewall desired state is disabled" in candidate_firewall
+    target_rules: list[tuple[str, str, str]] = []
+    for row in physical:
+        name = str(row.get("name") or "")
+        if row.get("role") == "management":
+            target_rules.append((name, "mgmt-console", dedicated_ports))
+        elif (
+            row.get("role") == "access"
+            and row.get("mode") == "access"
+            and row.get("admin_state") == "up"
+            and row.get("access_management_ui_enabled", "false").lower() == "true"
+        ):
+            target_rules.append((name, f"management-ui-{name}", web_ports))
+    for row in vlans:
+        name = str(row.get("name") or "")
+        if (
+            row.get("role") == "access"
+            and row.get("access_management_ui_enabled", "false").lower() == "true"
+        ):
+            target_rules.append((name, f"management-ui-{name}", web_ports))
+
+    rules: list[str] = []
+    for name, marker, ports in target_rules:
+        if candidate_disabled:
+            rules.append(
+                f'    iifname "{name}" tcp dport {{ {ports} }} accept comment "{marker}"'
+            )
+            continue
+        candidate_lines = [
+            line
+            for line in candidate_firewall.splitlines()
+            if " accept " in f" {line} "
+            and (
+                f'comment "{marker}"' in line
+                or (marker == "mgmt-console" and 'comment "Atlaso management access"' in line)
+            )
+        ]
+        for line in candidate_lines:
+            match = re.search(r"\btcp dport (?:\{[^}]+\}|\d+(?:-\d+)?)", line)
+            if match is None:
+                continue
+            port_expression = match.group(0).removeprefix("tcp dport ")
+            port_tokens = [token.strip() for token in port_expression.strip("{} ").split(",")]
+            port_is_present = any(
+                token.isdigit() and int(token) == public_port
+                or "-" in token
+                and all(part.strip().isdigit() for part in token.split("-", 1))
+                and int(token.split("-", 1)[0]) <= public_port <= int(token.split("-", 1)[1])
+                for token in port_tokens
+            )
+            if not port_is_present:
+                rules.append(f"{line[:match.start()]}tcp dport {public_port}{line[match.end():]}")
+    return rules
+
+
+def _management_handoff_firewall_text(
+    candidate: str,
+    previous: str,
+    *,
+    candidate_management_rules: list[str] | None = None,
+) -> str:
+    """Add the previous management accept rules to the candidate firewall.
+
+    Args:
+        candidate: Candidate nftables configuration.
+        previous: Previous applied nftables configuration.
+        candidate_management_rules: Minimal candidate admission rules.
+
+    Returns:
+        The transitional nftables configuration.
+    """
+    previous_rules = [
+        line
+        for line in previous.splitlines()
+        if " accept " in f" {line} "
+        and any(
+            marker in line
+            for marker in (
+                'comment "mgmt-console"',
+                'comment "management-ui-',
+                "Management console",
+                "Management UI",
+                "Atlaso management access",
+            )
+        )
+    ]
+    candidate_disabled = "Atlaso firewall desired state is disabled" in candidate
+    previous_filtered = "chain input {" in previous
+    if not previous_filtered:
+        if previous.strip():
+            return previous
+        return (
+            "flush ruleset\n"
+            "# Atlaso management handoff preserves the previous open firewall policy.\n"
+        )
+    base = previous if candidate_disabled else candidate
+    desired_rules = previous_rules + list(candidate_management_rules or [])
+    additions = [line for line in desired_rules if line not in base]
+    if not additions:
+        return base
+    lines = base.splitlines()
+    insert_at = next((index + 1 for index, line in enumerate(lines) if line.strip() == "chain input {"), 0)
+    if not insert_at:
+        raise ValueError("candidate firewall has no input chain for management holdover")
+    while insert_at < len(lines) and lines[insert_at].strip().startswith("type "):
+        insert_at += 1
+    lines[insert_at:insert_at] = additions
+    return "\n".join(lines) + "\n"
+
+
+def _management_handoff_addresses(
+    network_path: Path,
+    *,
+    previous_addresses: set[str] | None = None,
+    previous_dynamic_families: set[tuple[str, str]] | None = None,
+    discovery_attempts: int = 45,
+) -> list[str]:
+    """Return configured candidate management listener addresses.
+
+    Args:
+        network_path: Candidate staged network configuration.
+        previous_addresses: Addresses retained only for the old-path transition.
+        previous_dynamic_families: Interface/address families that were already dynamic.
+        discovery_attempts: Bounded runtime-address discovery attempts.
+
+    Returns:
+        The configured address list.
+    """
+    physical, vlans, _removed = _parse_network_config(network_path)
+    rows = [
+        row for row in physical
+        if row.get("role") == "management"
+        or (
+            row.get("role") == "access"
+            and row.get("mode") == "access"
+            and row.get("admin_state") == "up"
+            and row.get("access_management_ui_enabled", "false").lower() == "true"
+        )
+    ]
+    rows.extend(
+        row for row in vlans
+        if row.get("role") == "access"
+        and row.get("access_management_ui_enabled", "false").lower() == "true"
+    )
+    addresses: list[str] = []
+    previous_addresses = {
+        str(ip_address(address)) for address in (previous_addresses or set())
+    }
+    previous_dynamic_families = previous_dynamic_families or set()
+    dynamic_requirements: list[tuple[str, set[str]]] = []
+    for row in rows:
+        for key in ("ip_cidr", "ipv6_cidr"):
+            value = str(row.get(key) or "")
+            if value:
+                addresses.append(str(ip_interface(value).ip))
+        needs_runtime_ipv4 = row.get("ipv4_method") == "dhcp"
+        needs_runtime_ipv6 = (
+            str(row.get("ipv6_enabled", "false")).lower() == "true"
+            and not str(row.get("ipv6_cidr") or "")
+        )
+        required_families = set()
+        if needs_runtime_ipv4:
+            required_families.add("inet")
+        if needs_runtime_ipv6:
+            required_families.add("inet6")
+        if required_families:
+            dynamic_requirements.append((str(row.get("name") or ""), required_families))
+    discovered: dict[tuple[str, str], list[str]] = {}
+    for attempt in range(max(1, discovery_attempts)):
+        for interface, families in dynamic_requirements:
+            if all(discovered.get((interface, family)) for family in families):
+                continue
+            result = _run(["ip", "-j", "address", "show", "dev", interface])
+            if result.returncode != 0:
+                continue
+            try:
+                entries = json.loads(result.stdout)
+            except json.JSONDecodeError:
+                continue
+            for entry in entries:
+                for info in entry.get("addr_info", []):
+                    local = str(info.get("local") or "")
+                    family = str(info.get("family") or "")
+                    if info.get("scope") != "global" or not local or family not in families:
+                        continue
+                    try:
+                        normalized = str(ip_address(local))
+                    except ValueError:
+                        continue
+                    if (
+                        normalized in previous_addresses
+                        and (interface, family) not in previous_dynamic_families
+                    ):
+                        continue
+                    discovered.setdefault((interface, family), []).append(normalized)
+        if all(
+            discovered.get((interface, family))
+            for interface, families in dynamic_requirements
+            for family in families
+        ):
+            break
+        if attempt + 1 < max(1, discovery_attempts):
+            time.sleep(1)
+    missing = [
+        f"{interface} {'DHCP IPv4' if family == 'inet' else 'SLAAC IPv6'}"
+        for interface, families in dynamic_requirements
+        for family in sorted(families)
+        if not discovered.get((interface, family))
+    ]
+    if missing:
+        raise ValueError(
+            "candidate runtime address was not acquired for " + ", ".join(missing)
+        )
+    for runtime_addresses in discovered.values():
+        addresses.extend(runtime_addresses)
+    return list(dict.fromkeys(addresses))
+
+
+def _management_handoff_readiness(
+    addresses: list[str],
+    https_enabled: bool,
+    public_port: int,
+    *,
+    samples: int = 3,
+) -> dict:
+    """Require stable loopback and direct-address management readiness.
+
+    Args:
+        addresses: Management listener addresses to probe.
+        https_enabled: Whether the applied management front door uses HTTPS.
+        public_port: Configured host-facing management listener port.
+        samples: Required consecutive successful samples.
+
+    Returns:
+        Bounded readiness evidence.
+    """
+    curl = shutil.which("curl")
+    if curl is None:
+        raise ValueError("curl is not installed for management handoff readiness")
+    if not addresses:
+        raise ValueError("management handoff has no candidate listener address")
+    if public_port < 1 or public_port > 65535:
+        raise ValueError("management handoff readiness port must be between 1 and 65535")
+    deadline = time.monotonic() + 45
+    consecutive = 0
+    statuses: dict[str, str] = {}
+    while time.monotonic() < deadline:
+        statuses = {"Atlaso application loopback": _console_management_http_status(curl, "http://127.0.0.1:8000/openapi.json")}
+        for address in addresses:
+            host = f"[{address}]" if ":" in address else address
+            scheme = "https" if https_enabled else "http"
+            statuses[f"management {address}"] = _console_management_http_status(
+                curl,
+                f"{scheme}://{host}:{public_port}/openapi.json",
+                insecure=https_enabled,
+            )
+        if all(status == "200" for status in statuses.values()):
+            consecutive += 1
+            if consecutive >= samples:
+                return {"statuses": statuses, "stable_samples": consecutive}
+        else:
+            consecutive = 0
+        time.sleep(1)
+    summary = ", ".join(f"{label}={status}" for label, status in statuses.items())
+    raise ValueError(f"management readiness did not stabilize ({summary})")
+
+
+def _management_handoff_upstream_readiness(*, samples: int = 3) -> dict:
+    """Require stable Atlaso loopback readiness before nginx activation.
+
+    Args:
+        samples: Required consecutive successful samples.
+
+    Returns:
+        Bounded upstream readiness evidence.
+    """
+    curl = shutil.which("curl")
+    if curl is None:
+        raise ValueError("curl is not installed for Atlaso upstream readiness")
+    deadline = time.monotonic() + 45
+    consecutive = 0
+    status = "not-probed"
+    while time.monotonic() < deadline:
+        status = _console_management_http_status(curl, "http://127.0.0.1:8000/openapi.json")
+        if status == "200":
+            consecutive += 1
+            if consecutive >= samples:
+                return {"status": status, "stable_samples": consecutive}
+        else:
+            consecutive = 0
+        time.sleep(1)
+    raise ValueError(f"Atlaso loopback upstream did not stabilize (status={status})")
+
+
+def _management_handoff_snapshot_text(state: dict, runtime_path: Path) -> str:
+    """Return snapshotted text for one runtime path.
+
+    Args:
+        state: Durable transaction state.
+        runtime_path: Runtime file whose pre-mutation text is required.
+
+    Returns:
+        The captured text, or an empty string when the file did not exist.
+    """
+    for item in state.get("snapshots", []):
+        if str(item.get("path") or "") != str(runtime_path):
+            continue
+        backup = str(item.get("backup") or "")
+        return Path(backup).read_text(encoding="utf-8") if backup else ""
+    return ""
+
+
+def _management_handoff_snapshot_backup_path(state: dict, runtime_path: Path) -> Path:
+    """Return the durable backup for one snapshotted runtime file.
+
+    Args:
+        state: Durable transaction state.
+        runtime_path: Runtime file whose pre-mutation bytes are required.
+
+    Returns:
+        The separate backup path retained for the transaction.
+
+    Raises:
+        ValueError: If the runtime file was not captured with backup bytes.
+    """
+    for item in state.get("snapshots", []):
+        if str(item.get("path") or "") != str(runtime_path):
+            continue
+        backup = Path(str(item.get("backup") or ""))
+        if bool(item.get("existed")) and backup.is_file():
+            return backup
+        break
+    raise ValueError(f"previous management TLS artifact was not captured: {runtime_path}")
+
+
+def _management_handoff_protocol_holdover(state: dict, payload: dict) -> str:
+    """Render address-specific previous listeners during a handoff.
+
+    Args:
+        state: Durable transaction state containing the old listener contract.
+        payload: Candidate Appliance Settings payload.
+
+    Returns:
+        Transitional nginx server blocks, or an empty string when no holdover is required.
+    """
+    previous_https = bool(state.get("previous_https_enabled", True))
+    candidate_https = bool(payload.get("management_https_enabled"))
+    public_port = int(state.get("previous_management_public_port") or (443 if previous_https else 80))
+    candidate_port = int(
+        payload.get("management_public_https_port" if candidate_https else "management_public_http_port")
+        or (443 if candidate_https else 80)
+    )
+    if not previous_https and not candidate_https and public_port == candidate_port:
+        return ""
+    upstream_host = str(payload.get("management_upstream_host") or "127.0.0.1")
+    upstream_port = int(payload.get("management_upstream_port") or payload.get("management_http_port") or 8000)
+    certificate_lines: list[str] = []
+    if previous_https:
+        previous_site = _management_handoff_snapshot_text(state, NGINX_MANAGEMENT_SITE_PATH)
+        cert = re.search(r"(?m)^\s*ssl_certificate\s+([^;]+);\s*$", previous_site)
+        key = re.search(r"(?m)^\s*ssl_certificate_key\s+([^;]+);\s*$", previous_site)
+        if cert is None or key is None:
+            raise ValueError("previous HTTPS listener certificate paths could not be preserved")
+        previous_cert_path = _ca_managed_path(cert.group(1).strip(), "management_https_cert_path")
+        previous_key_path = _ca_managed_path(key.group(1).strip(), "management_https_key_path")
+        holdover_cert_path = _management_handoff_snapshot_backup_path(state, previous_cert_path)
+        holdover_key_path = _management_handoff_snapshot_backup_path(state, previous_key_path)
+        certificate_lines = [
+            f"  ssl_certificate {holdover_cert_path};",
+            f"  ssl_certificate_key {holdover_key_path};",
+        ]
+    blocks: list[str] = []
+    for address in state.get("previous_management_addresses", []):
+        parsed = ip_address(str(address))
+        listen_address = f"[{parsed}]" if parsed.version == 6 else str(parsed)
+        ssl = " ssl" if previous_https else ""
+        blocks.extend(
+            [
+                "server {",
+                f"  listen {listen_address}:{public_port}{ssl} bind;",
+                "  server_name _;",
+                *certificate_lines,
+                *_management_proxy_location(
+                    upstream_host,
+                    upstream_port,
+                    "https" if previous_https else "http",
+                ),
+                "}",
+                "",
+            ]
+        )
+    if not blocks:
+        raise ValueError("previous listener addresses are unavailable for protocol preservation")
+    return "\n".join(blocks)
+
+
+def _management_handoff_vlan_parents(vlan_interfaces: set[str]) -> set[str]:
+    """Return restored physical parents that declare the supplied VLAN links.
+
+    Args:
+        vlan_interfaces: VLAN interface names requiring recreation or reconfiguration.
+
+    Returns:
+        Physical parent interface names found in restored networkd configuration.
+    """
+    parents: set[str] = set()
+    for path in NETWORKD_CONFIG_DIR.glob("*.network"):
+        try:
+            text = path.read_text(encoding="utf-8")
+        except OSError:
+            continue
+        match = re.search(r"(?m)^Name=(\S+)\s*$", text)
+        if match is None:
+            continue
+        declared_vlans = set(re.findall(r"(?m)^VLAN=(\S+)\s*$", text))
+        if declared_vlans.intersection(vlan_interfaces):
+            parents.add(match.group(1))
+    return parents
+
+
+def _restore_management_handoff_links(state: dict, commands: list[dict[str, object]]) -> None:
+    """Reconfigure restored links and remove candidate-only VLAN devices.
+
+    Args:
+        state: Durable transaction state.
+        commands: Bounded rollback command evidence to extend.
+    """
+    previous_interfaces = _management_handoff_previous_link_interfaces(state)
+    candidate_physical = set(str(value) for value in state.get("candidate_physical_interfaces", []))
+    candidate_vlans = set(str(value) for value in state.get("candidate_vlan_interfaces", []))
+    raw_link_states = state.get("candidate_link_states") or {}
+    link_states = raw_link_states if isinstance(raw_link_states, dict) else {}
+    vlan_parents = _management_handoff_vlan_parents(candidate_vlans | previous_interfaces)
+    errors: list[str] = []
+
+    # Reconfiguring restored physical parents first recreates any previous VLAN
+    # that the final candidate apply may already have retired.
+    for interface in sorted(candidate_physical | vlan_parents):
+        if not interface or not _link_exists(interface):
+            continue
+        result = _run(["networkctl", "reconfigure", interface])
+        commands.append({"stage": "network rollback", "interface": interface, "returncode": result.returncode})
+        if result.returncode != 0:
+            errors.append(f"candidate parent {interface} reconfigure failed")
+
+    for interface in sorted(candidate_vlans):
+        saved = link_states.get(interface) if isinstance(link_states.get(interface), dict) else {}
+        if bool(saved.get("existed")) or not _link_exists(interface):
+            continue
+        result = _run(["ip", "link", "delete", "dev", interface])
+        commands.append({"stage": "network rollback", "interface": interface, "delete": result.returncode})
+        if result.returncode != 0:
+            errors.append(f"candidate VLAN {interface} removal failed")
+
+    restored_interfaces = previous_interfaces | {
+        interface
+        for interface in candidate_vlans
+        if bool((link_states.get(interface) or {}).get("existed"))
+    }
+    for interface in sorted(restored_interfaces):
+        for _attempt in range(10):
+            if _link_exists(interface):
+                break
+            time.sleep(0.5)
+        if not _link_exists(interface):
+            errors.append(f"restored link {interface} is missing")
+            continue
+        saved = link_states.get(interface) if isinstance(link_states.get(interface), dict) else {}
+        saved_mtu = saved.get("mtu")
+        if interface in candidate_vlans and bool(saved.get("existed")) and saved_mtu is not None:
+            if not isinstance(saved_mtu, int) or saved_mtu <= 0:
+                errors.append(f"restored link {interface} MTU evidence is invalid")
+            else:
+                mtu_result = _run(["ip", "link", "set", "dev", interface, "mtu", str(saved_mtu)])
+                commands.append(
+                    {
+                        "stage": "network rollback",
+                        "interface": interface,
+                        "mtu": saved_mtu,
+                        "returncode": mtu_result.returncode,
+                    }
+                )
+                if mtu_result.returncode != 0:
+                    errors.append(f"restored link {interface} MTU restore failed")
+        if interface in previous_interfaces:
+            link_up = _run(["ip", "link", "set", "dev", interface, "up"])
+            commands.append({"stage": "network rollback", "interface": interface, "link_up": link_up.returncode})
+            if link_up.returncode != 0:
+                errors.append(f"restored link {interface} activation failed")
+        result = _run(["networkctl", "reconfigure", interface])
+        commands.append({"stage": "network rollback", "interface": interface, "returncode": result.returncode})
+        if result.returncode != 0:
+            errors.append(f"restored link {interface} reconfigure failed")
+
+    # A candidate physical or pre-existing VLAN may have been administratively
+    # raised only for the handoff. Restore its pre-mutation state last so parent
+    # reconfiguration can first recreate the old management topology.
+    for interface in sorted(candidate_physical | candidate_vlans):
+        if interface in previous_interfaces or not _link_exists(interface):
+            continue
+        saved = link_states.get(interface) if isinstance(link_states.get(interface), dict) else {}
+        if not bool(saved.get("existed")):
+            continue
+        desired = "up" if bool(saved.get("admin_up")) else "down"
+        result = _run(["ip", "link", "set", "dev", interface, desired])
+        commands.append({"stage": "network rollback", "interface": interface, "admin_state": desired, "returncode": result.returncode})
+        if result.returncode != 0:
+            errors.append(f"candidate link {interface} administrative restore failed")
+    if errors:
+        bounded = errors[:8]
+        if len(errors) > len(bounded):
+            bounded.append(f"{len(errors) - len(bounded)} additional link rollback errors")
+        raise ValueError("network link rollback incomplete: " + "; ".join(bounded))
+
+
+def _restore_management_handoff_resolver(state: dict, commands: list[dict[str, object]]) -> None:
+    """Clear a candidate resolver override before restored links reconfigure.
+
+    Args:
+        state: Durable transaction state.
+        commands: Bounded rollback command evidence to extend.
+    """
+    if not bool(state.get("resolver_apply_started")):
+        return
+    resolver_interface = str(state.get("candidate_management_interface") or "")
+    if not _valid_network_interface_name(resolver_interface):
+        raise ValueError("resolver rollback interface is invalid")
+    result = _run(["resolvectl", "revert", resolver_interface])
+    commands.append(
+        {
+            "stage": "resolver rollback",
+            "interface": resolver_interface,
+            "returncode": result.returncode,
+        }
+    )
+    if result.returncode != 0:
+        raise ValueError("resolver rollback failed")
+
+
+def _quiesce_management_handoff_firewall(
+    state: dict,
+    commands: list[dict[str, object]],
+) -> None:
+    """Stop a candidate firewall service absent from the previous state.
+
+    Args:
+        state: Durable transaction state.
+        commands: Bounded rollback command evidence to extend.
+    """
+    previous_service_existed = state.get("previous_firewall_service_existed")
+    if previous_service_existed is None:
+        previous_service_existed = _management_handoff_previous_firewall_config_existed(state)
+    if bool(previous_service_existed) or not FIREWALL_SERVICE_PATH.is_file():
+        return
+    result = _run(["systemctl", "disable", "--now", "atlaso-firewall.service"])
+    commands.append(
+        {
+            "stage": "firewall service rollback",
+            "returncode": result.returncode,
+        }
+    )
+    if result.returncode != 0:
+        raise ValueError("firewall service rollback failed")
+
+
+def _restore_management_handoff_firewall(
+    state: dict,
+    commands: list[dict[str, object]],
+) -> None:
+    """Restore the previous filtered or explicitly open nftables state.
+
+    Args:
+        state: Durable transaction state.
+        commands: Bounded rollback command evidence to extend.
+    """
+    if _management_handoff_previous_firewall_config_existed(state):
+        if not FIREWALL_CONFIG_PATH.is_file():
+            raise ValueError("firewall rollback config is missing")
+        command = ["nft", "-f", str(FIREWALL_CONFIG_PATH)]
+    else:
+        command = ["nft", "flush", "ruleset"]
+    result = _run(command)
+    commands.append(
+        {
+            "stage": "firewall rollback",
+            "command": command,
+            "returncode": result.returncode,
+        }
+    )
+    if result.returncode != 0:
+        raise ValueError("firewall rollback failed")
+
+
+def _management_handoff_previous_firewall_config_existed(state: dict) -> bool:
+    """Return prior firewall presence, including legacy transaction markers.
+
+    Args:
+        state: Durable transaction state.
+
+    Returns:
+        Whether the previous Atlaso firewall config existed.
+    """
+    if "previous_firewall_config_existed" in state:
+        return bool(state["previous_firewall_config_existed"])
+    for item in state.get("snapshots", []):
+        if str(item.get("path") or "") == str(FIREWALL_CONFIG_PATH):
+            return bool(item.get("existed"))
+    raise ValueError("previous firewall snapshot state is missing")
+
+
+def _durable_management_handoff_unlink(path: Path) -> None:
+    """Remove one rollback-owned path and persist its directory entry.
+
+    Args:
+        path: Runtime path that must remain absent after a power loss.
+    """
+    existed = path.exists() or path.is_symlink()
+    path.unlink(missing_ok=True)
+    if existed:
+        _fsync_directory(path.parent)
+
+
+def _restore_management_handoff_snapshot(item: dict) -> None:
+    """Restore one snapshot and persist its bytes and directory entry.
+
+    Args:
+        item: Captured runtime artifact metadata.
+    """
+    path = Path(str(item["path"]))
+    if not bool(item.get("existed")):
+        _durable_management_handoff_unlink(path)
+        return
+    missing_parents: list[Path] = []
+    parent = path.parent
+    while not parent.exists():
+        missing_parents.append(parent)
+        if parent.parent == parent:
+            break
+        parent = parent.parent
+    path.parent.mkdir(parents=True, exist_ok=True)
+    for created_parent in reversed(missing_parents):
+        _fsync_directory(created_parent.parent)
+    temporary = path.with_name(f".{path.name}.atlaso-rollback")
+    try:
+        shutil.copy2(Path(str(item["backup"])), temporary)
+        os.chmod(temporary, int(item.get("mode", 0o600)))
+        os.chown(temporary, int(item.get("uid", 0)), int(item.get("gid", 0)))
+        _fsync_file(temporary)
+        temporary.replace(path)
+        _fsync_directory(path.parent)
+    finally:
+        temporary.unlink(missing_ok=True)
+
+
+def _restore_management_handoff(state: dict) -> dict:
+    """Restore every snapshotted management runtime artifact.
+
+    Args:
+        state: Durable transaction state.
+
+    Returns:
+        Bounded rollback evidence.
+    """
+    commands: list[dict[str, object]] = []
+    errors: list[str] = []
+
+    def attempt(stage: str, operation: Callable[[], None]) -> None:
+        """Run one rollback stage without preventing later restoration work.
+
+        Args:
+            stage: Bounded rollback layer name used in failure evidence.
+            operation: Restore operation to attempt.
+        """
+        try:
+            operation()
+        except (KeyError, OSError, TypeError, ValueError, json.JSONDecodeError, shutil.Error) as exc:
+            errors.append(f"{stage}: {type(exc).__name__}")
+
+    attempt(
+        "firewall service quiesce",
+        lambda: _quiesce_management_handoff_firewall(state, commands),
+    )
+    for path in NETWORKD_CONFIG_DIR.glob(f"{MANAGEMENT_HANDOFF_HOLDOVER_PREFIX}*.network"):
+        attempt(
+            "network holdover removal",
+            lambda path=path: _durable_management_handoff_unlink(path),
+        )
+    current_managed = [NETWORKD_MGMT_CONFIG_PATH, *NETWORKD_CONFIG_DIR.glob(f"{NETWORKD_MANAGED_PREFIX}*")]
+    for path in current_managed:
+        if path.is_file():
+            attempt(
+                "candidate network removal",
+                lambda path=path: _durable_management_handoff_unlink(path),
+            )
+    for index, item in enumerate(state.get("snapshots", [])):
+        attempt(
+            f"snapshot {index} restore",
+            lambda item=item: _restore_management_handoff_snapshot(item),
+        )
+    for command in (["networkctl", "reload"], ["systemctl", "daemon-reload"]):
+        def run_reload(command: list[str] = command) -> None:
+            """Run one required rollback reload command.
+
+            Args:
+                command: Reload command and arguments.
+            """
+            result = _run(command)
+            commands.append({"stage": "rollback", "command": command, "returncode": result.returncode})
+            if result.returncode != 0:
+                raise ValueError(f"rollback command failed: {' '.join(command)}")
+
+        attempt(f"{' '.join(command)}", run_reload)
+    attempt("resolver restore", lambda: _restore_management_handoff_resolver(state, commands))
+    attempt("network link restore", lambda: _restore_management_handoff_links(state, commands))
+    attempt("firewall restore", lambda: _restore_management_handoff_firewall(state, commands))
+
+    def validate_nginx() -> None:
+        if _nginx_binary() is None or _nginx_test_command().returncode != 0:
+            raise ValueError("nginx rollback validation failed")
+
+    attempt("nginx validation", validate_nginx)
+    for command in (["systemctl", "start", "atlaso.service"], ["systemctl", "reload-or-restart", "nginx.service"]):
+        def run_service(command: list[str] = command) -> None:
+            """Run one required rollback service command.
+
+            Args:
+                command: Service command and arguments.
+            """
+            result = _run(command)
+            commands.append({"stage": "service rollback", "command": command, "returncode": result.returncode})
+            if result.returncode != 0:
+                raise ValueError(f"service rollback failed: {' '.join(command)}")
+
+        attempt(f"{' '.join(command)}", run_service)
+    readiness: dict[str, object] = {}
+
+    def check_readiness() -> None:
+        nonlocal readiness
+        readiness = _management_handoff_readiness(
+            list(state.get("previous_management_addresses") or []),
+            bool(state.get("previous_https_enabled", True)),
+            int(
+                state.get("previous_management_public_port")
+                or (443 if state.get("previous_https_enabled", True) else 80)
+            ),
+        )
+
+    attempt("old-path readiness", check_readiness)
+    if errors:
+        bounded = errors[:8]
+        if len(errors) > len(bounded):
+            bounded.append(f"{len(errors) - len(bounded)} additional rollback errors")
+        raise ValueError("rollback incomplete: " + "; ".join(bounded))
+    return {"commands": commands, "readiness": readiness}
+
+
+def _clear_management_handoff_state(*, keep_commit_receipt: bool = False) -> None:
+    """Remove rollback state while optionally retaining an idempotent commit receipt.
+
+    Args:
+        keep_commit_receipt: Whether the last acknowledged job receipt remains durable.
+    """
+    state_dir_exists = MANAGEMENT_HANDOFF_STATE_DIR.is_dir()
+    MANAGEMENT_HANDOFF_STATE_PATH.unlink(missing_ok=True)
+    if state_dir_exists:
+        _fsync_directory(MANAGEMENT_HANDOFF_STATE_DIR)
+    if MANAGEMENT_HANDOFF_BACKUP_DIR.is_dir():
+        shutil.rmtree(MANAGEMENT_HANDOFF_BACKUP_DIR)
+    if not keep_commit_receipt:
+        MANAGEMENT_HANDOFF_COMMIT_PATH.unlink(missing_ok=True)
+    if MANAGEMENT_HANDOFF_STATE_DIR.is_dir():
+        _fsync_directory(MANAGEMENT_HANDOFF_STATE_DIR)
+    networkd_changed = False
+    for path in NETWORKD_CONFIG_DIR.glob(f"{MANAGEMENT_HANDOFF_HOLDOVER_PREFIX}*.network"):
+        path.unlink(missing_ok=True)
+        networkd_changed = True
+    if networkd_changed:
+        _fsync_directory(NETWORKD_CONFIG_DIR)
+    state_dir_removed = False
+    try:
+        MANAGEMENT_HANDOFF_STATE_DIR.rmdir()
+        state_dir_removed = True
+    except OSError:
+        pass
+    if state_dir_removed:
+        _fsync_directory(MANAGEMENT_HANDOFF_STATE_DIR.parent)
+
+
+def _acknowledge_management_handoff(job_id: str) -> int:
+    """Commit a candidate only after Atlaso durably records its baselines.
+
+    Args:
+        job_id: Appliance Apply task that owns the durable transaction.
+    """
+    if re.fullmatch(r"[A-Za-z0-9._:-]{1,128}", job_id) is None:
+        print("management handoff job id is invalid", file=sys.stderr)
+        return 2
+    if not MANAGEMENT_HANDOFF_STATE_PATH.is_file():
+        try:
+            receipt = json.loads(MANAGEMENT_HANDOFF_COMMIT_PATH.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError):
+            receipt = {}
+        if receipt.get("job_id") == job_id and receipt.get("phase") == "committed":
+            try:
+                _clear_management_handoff_state(keep_commit_receipt=True)
+            except OSError as exc:
+                print(
+                    json.dumps(
+                        {
+                            "management_handoff": "acknowledgement failed",
+                            "failing_layer": "application commit acknowledgement",
+                            "error": f"commit receipt is durable but rollback state cleanup failed: {exc}",
+                            "job_id": job_id,
+                        },
+                        sort_keys=True,
+                    ),
+                    file=sys.stderr,
+                )
+                return 1
+            print(json.dumps({"management_handoff": "already committed", "job_id": job_id}, sort_keys=True))
+            return 0
+        print(
+            json.dumps(
+                {
+                    "management_handoff": "acknowledgement failed",
+                    "failing_layer": "application commit acknowledgement",
+                    "error": "no matching durable handoff transaction or commit receipt",
+                    "job_id": job_id,
+                },
+                sort_keys=True,
+            ),
+            file=sys.stderr,
+        )
+        return 1
+    try:
+        state = json.loads(MANAGEMENT_HANDOFF_STATE_PATH.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError) as exc:
+        print(f"management handoff state is unreadable: {exc}", file=sys.stderr)
+        return 1
+    if state.get("job_id") != job_id or state.get("phase") != "awaiting-application-commit":
+        print(
+            json.dumps(
+                {
+                    "management_handoff": "acknowledgement failed",
+                    "failing_layer": "application commit acknowledgement",
+                    "error": "durable handoff owner or phase does not match",
+                    "job_id": job_id,
+                },
+                sort_keys=True,
+            ),
+            file=sys.stderr,
+        )
+        return 1
+    receipt = {
+        "schema_version": 1,
+        "job_id": job_id,
+        "phase": "committed",
+        "candidate_addresses": list(state.get("candidate_addresses") or []),
+    }
+    _durable_management_handoff_state_write(receipt, MANAGEMENT_HANDOFF_COMMIT_PATH)
+    try:
+        _clear_management_handoff_state(keep_commit_receipt=True)
+    except OSError as exc:
+        print(
+            json.dumps(
+                {
+                    "management_handoff": "acknowledgement failed",
+                    "failing_layer": "application commit acknowledgement",
+                    "error": f"commit receipt is durable but rollback state cleanup failed: {exc}",
+                    "job_id": job_id,
+                },
+                sort_keys=True,
+            ),
+            file=sys.stderr,
+        )
+        return 1
+    print(json.dumps({"management_handoff": "committed", "job_id": job_id}, sort_keys=True))
+    return 0
+
+
+def _quiesce_management_handoff_unit(unit_name: str, unit_label: str) -> dict[str, object]:
+    """Stop and verify one surviving transient handoff helper.
+
+    Args:
+        unit_name: Stable systemd unit identity to serialize.
+        unit_label: Bounded evidence label for the unit.
+
+    Returns:
+        Bounded systemd unit evidence.
+    """
+    if shutil.which("systemctl") is None:
+        raise ValueError("systemctl is unavailable; surviving management handoff state cannot be serialized")
+
+    def verified_state(result: subprocess.CompletedProcess[str], stage: str) -> str:
+        """Return one explicit, recognized systemd unit state.
+
+        Args:
+            result: Completed systemctl status probe.
+            stage: Probe stage included in bounded failure text.
+
+        Returns:
+            The recognized unit state.
+
+        Raises:
+            ValueError: If the probe did not return an explicit known state.
+        """
+        state = result.stdout.strip()
+        known_states = {
+            "active",
+            "activating",
+            "deactivating",
+            "reloading",
+            "inactive",
+            "failed",
+            "unknown",
+        }
+        if state not in known_states:
+            raise ValueError(f"{stage} handoff helper state could not be verified")
+        return state
+
+    status = _run(["systemctl", "is-active", unit_name])
+    state = verified_state(status, "initial")
+    if state not in {"active", "activating", "deactivating", "reloading"}:
+        return {f"{unit_label}_unit": unit_name, "state": state}
+    stop = _run(["systemctl", "stop", unit_name])
+    if stop.returncode != 0:
+        raise ValueError("surviving management handoff helper could not be stopped")
+    final = _run(["systemctl", "is-active", unit_name])
+    final_state = verified_state(final, "post-stop")
+    if final_state in {"active", "activating", "deactivating", "reloading"}:
+        raise ValueError("surviving management handoff helper did not stop")
+    return {
+        f"{unit_label}_unit": unit_name,
+        "state": final_state,
+        "stop_returncode": stop.returncode,
+    }
+
+
+def _quiesce_management_handoff_apply() -> dict[str, object]:
+    """Stop and verify any surviving transient apply helper before rollback."""
+    return _quiesce_management_handoff_unit(MANAGEMENT_HANDOFF_APPLY_UNIT, "apply")
+
+
+def _recover_management_handoff() -> int:
+    """Roll back an interrupted management handoff before Atlaso task recovery."""
+    try:
+        helper_state = _quiesce_management_handoff_apply()
+    except ValueError as exc:
+        print(
+            json.dumps(
+                {
+                    "management_handoff": "rollback incomplete",
+                    "failing_layer": "interruption serialization",
+                    "error": str(exc),
+                },
+                sort_keys=True,
+            ),
+            file=sys.stderr,
+        )
+        return 1
+    if not MANAGEMENT_HANDOFF_STATE_PATH.is_file():
+        print(
+            json.dumps(
+                {
+                    "management_handoff": "no interrupted transaction",
+                    "rolled_back": False,
+                    "helper_state": helper_state,
+                },
+                sort_keys=True,
+            )
+        )
+        return 0
+    try:
+        state = json.loads(MANAGEMENT_HANDOFF_STATE_PATH.read_text(encoding="utf-8"))
+        evidence = _restore_management_handoff(state)
+    except (OSError, ValueError, json.JSONDecodeError) as exc:
+        print(
+            json.dumps(
+                {
+                    "management_handoff": "rollback incomplete",
+                    "failing_layer": "interruption recovery",
+                    "error": str(exc),
+                },
+                sort_keys=True,
+            ),
+            file=sys.stderr,
+        )
+        return 1
+    try:
+        _clear_management_handoff_state()
+    except OSError as exc:
+        print(
+            json.dumps(
+                {
+                    "management_handoff": "rollback incomplete",
+                    "failing_layer": "interruption recovery",
+                    "error": f"rollback state cleanup failed: {exc}",
+                },
+                sort_keys=True,
+            ),
+            file=sys.stderr,
+        )
+        return 1
+    print(
+        json.dumps(
+            {
+                "management_handoff": "rolled back after interruption",
+                "rolled_back": True,
+                "helper_state": helper_state,
+                **evidence,
+            },
+            sort_keys=True,
+        )
+    )
+    return 0
+
+
+def _apply_management_handoff(payload: dict) -> int:
+    """Apply one reachability-safe, rollback-capable management transition.
+
+    Args:
+        payload: Validated handoff payload.
+    """
+    try:
+        state = _snapshot_management_handoff(payload)
+    except (OSError, ValueError, json.JSONDecodeError) as exc:
+        marker_exists = MANAGEMENT_HANDOFF_STATE_PATH.is_file()
+        cleanup_error = ""
+        if not marker_exists:
+            try:
+                _clear_management_handoff_state()
+            except OSError as cleanup_exc:
+                cleanup_error = f"; snapshot cleanup failed: {cleanup_exc}"
+        print(
+            json.dumps(
+                {
+                    "management_handoff": "recovery required" if marker_exists else "failed before mutation",
+                    "failing_layer": "snapshot",
+                    "error": f"{exc}{cleanup_error}",
+                },
+                sort_keys=True,
+            ),
+            file=sys.stderr,
+        )
+        return 1
+    failing_layer = "snapshot"
+    try:
+        failing_layer = "previous-path preflight"
+        previous_preflight = _management_handoff_readiness(
+            list(state["previous_management_addresses"]),
+            bool(state["previous_https_enabled"]),
+            int(state["previous_management_public_port"]),
+        )
+        holdovers = _install_management_holdovers(state, payload)
+        _write_management_handoff_state(state, "old-path-retained")
+        failing_layer = "certificate"
+        ca_path = str(payload.get("ca_config_path") or "")
+        if ca_path and _handle_ca("apply", [ca_path]) != 0:
+            raise ValueError("candidate management certificate apply failed")
+        settings_payload = _load_appliance_settings_config(
+            Path(str(payload["appliance_settings_config_path"]))
+        )
+        candidate_https = bool(settings_payload.get("management_https_enabled"))
+        candidate_public_port = int(
+            settings_payload.get(
+                "management_public_https_port" if candidate_https else "management_public_http_port"
+            )
+            or (443 if candidate_https else 80)
+        )
+        failing_layer = "network"
+        _apply_management_candidate_network(Path(str(payload["network_config_path"])), state)
+        previous_firewall = FIREWALL_CONFIG_PATH.read_text(encoding="utf-8") if FIREWALL_CONFIG_PATH.is_file() else ""
+        candidate_firewall_path = Path(str(payload["firewall_config_path"]))
+        candidate_firewall = candidate_firewall_path.read_text(encoding="utf-8")
+        candidate_management_rules = _management_handoff_candidate_firewall_rules(
+            Path(str(payload["network_config_path"])),
+            candidate_public_port,
+            candidate_firewall,
+        )
+        final_firewall = _management_handoff_firewall_text(
+            candidate_firewall,
+            candidate_firewall,
+            candidate_management_rules=candidate_management_rules,
+        )
+        transition_path = FIREWALL_APPLY_DIR / "atlaso-management-handoff.nft"
+        transition_path.write_text(
+            _management_handoff_firewall_text(
+                final_firewall,
+                previous_firewall,
+                candidate_management_rules=candidate_management_rules,
+            ),
+            encoding="utf-8",
+        )
+        os.chmod(transition_path, 0o600)
+        failing_layer = "firewall"
+        if _handle_firewall("apply", [str(transition_path)]) != 0:
+            raise ValueError("transitional nftables apply failed")
+        failing_layer = "Atlaso upstream"
+        upstream_readiness = _management_handoff_upstream_readiness()
+        resolver_interface = str(settings_payload.get("management_interface") or "")
+        if resolver_interface != str(state.get("candidate_management_interface") or ""):
+            raise ValueError("candidate management resolver interface changed after snapshot")
+        state["resolver_apply_started"] = True
+        _write_management_handoff_state(state, "resolver-applying")
+        failing_layer = "resolver"
+        resolver = _configure_management_handoff_resolver(settings_payload)
+        if resolver.returncode != 0:
+            raise ValueError("candidate management resolver apply failed")
+        protocol_holdover = _management_handoff_protocol_holdover(state, settings_payload)
+        failing_layer = "nginx management front door"
+        management_https_result, _restart_delay_seconds = _configure_atlaso_management_https(
+            settings_payload,
+            site_suffix=protocol_holdover,
+            restart_service=False,
+        )
+        if management_https_result != 0:
+            raise ValueError("candidate management nginx apply failed")
+        if _handle_public_services("apply", [str(payload["public_services_config_path"])]) != 0:
+            raise ValueError("candidate public-services nginx apply failed")
+        if _nginx_test_command().returncode != 0:
+            raise ValueError("candidate nginx validation failed")
+        candidate_addresses = _management_handoff_addresses(
+            Path(str(payload["network_config_path"])),
+            previous_addresses=set(state["previous_management_addresses"]),
+            previous_dynamic_families={
+                (str(path.get("name") or ""), family)
+                for path in state.get("previous_management_paths", [])
+                for family in (
+                    (["inet"] if path.get("ipv4_method") == "dhcp" else [])
+                    + (
+                        ["inet6"]
+                        if str(path.get("ipv6_enabled") or "").lower() == "true"
+                        and not str(path.get("ipv6_cidr") or "")
+                        else []
+                    )
+                )
+            },
+        )
+        failing_layer = "old-path preservation"
+        old_readiness = _management_handoff_readiness(
+            list(state["previous_management_addresses"]),
+            bool(state["previous_https_enabled"]),
+            int(state["previous_management_public_port"]),
+        )
+        failing_layer = "candidate readiness"
+        candidate_readiness = _management_handoff_readiness(
+            candidate_addresses,
+            candidate_https,
+            candidate_public_port,
+        )
+        _write_management_handoff_state(state, "candidate-ready")
+        failing_layer = "previous-path retirement"
+        for path in holdovers:
+            path.unlink(missing_ok=True)
+        if _handle_network("apply", [str(payload["network_config_path"])]) != 0:
+            raise ValueError("final network apply failed while retiring the previous path")
+        failing_layer = "resolver persistence"
+        resolver = _configure_management_handoff_resolver(settings_payload)
+        if resolver.returncode != 0:
+            raise ValueError("candidate management resolver persistence failed after final network apply")
+        candidate_physical, _candidate_vlans, _removed = _parse_network_config(
+            Path(str(payload["network_config_path"]))
+        )
+        reconfigure_interfaces = _management_handoff_previous_link_interfaces(state)
+        reconfigure_interfaces.update(str(row.get("name") or "") for row in candidate_physical)
+        for interface in sorted(reconfigure_interfaces):
+            if not interface or not _link_exists(interface):
+                continue
+            reconfigure = _run(["networkctl", "reconfigure", str(interface)])
+            if reconfigure.returncode != 0:
+                raise ValueError(f"networkd could not retire the previous path on {interface}")
+        transition_path.write_text(final_firewall, encoding="utf-8")
+        os.chmod(transition_path, 0o600)
+        if _handle_firewall("apply", [str(transition_path)]) != 0:
+            raise ValueError("final nftables apply failed while retiring the previous path")
+        if protocol_holdover:
+            failing_layer = "previous-protocol retirement"
+            management_https_result, _restart_delay_seconds = _configure_atlaso_management_https(
+                settings_payload,
+                restart_service=False,
+            )
+            if management_https_result != 0:
+                raise ValueError("candidate nginx could not retire the previous protocol listener")
+        failing_layer = "post-retirement readiness"
+        final_readiness = _management_handoff_readiness(
+            candidate_addresses,
+            candidate_https,
+            candidate_public_port,
+        )
+        failing_layer = "candidate durability"
+        _sync_management_handoff_candidate(state, payload)
+        state["candidate_addresses"] = candidate_addresses
+        _write_management_handoff_state(state, "awaiting-application-commit")
+    except (OSError, ValueError, json.JSONDecodeError) as exc:
+        rollback_error = ""
+        try:
+            rollback = _restore_management_handoff(state)
+        except (OSError, ValueError, json.JSONDecodeError) as rollback_exc:
+            rollback = {}
+            rollback_error = str(rollback_exc)
+        if not rollback_error:
+            try:
+                _clear_management_handoff_state()
+            except OSError as cleanup_exc:
+                rollback_error = f"rollback state cleanup failed: {cleanup_exc}"
+        print(
+            json.dumps(
+                {
+                    "management_handoff": "rolled back" if not rollback_error else "rollback incomplete",
+                    "failing_layer": failing_layer,
+                    "error": str(exc),
+                    "rollback_error": rollback_error,
+                    "rollback": rollback,
+                },
+                sort_keys=True,
+            ),
+            file=sys.stderr,
+        )
+        return 1
+    print(
+        json.dumps(
+            {
+                "management_handoff": "awaiting application commit",
+                "job_id": state["job_id"],
+                "candidate_addresses": candidate_addresses,
+                "previous_preflight": previous_preflight,
+                "upstream_readiness": upstream_readiness,
+                "old_path_readiness": old_readiness,
+                "candidate_readiness": candidate_readiness,
+                "final_readiness": final_readiness,
+                "retired_previous_interfaces": state["previous_management_interfaces"],
+            },
+            sort_keys=True,
+        )
+    )
+    return 0
+
+
+def _handle_management_handoff(action: str, args: list[str]) -> int:
+    """Handle management handoff validation, apply, and recovery.
+
+    Args:
+        action: Action consumed by the handler.
+        args: Parsed command-line options consumed by the operation.
+    """
+    if action == "recover":
+        if args:
+            print("management-handoff recover does not accept a path", file=sys.stderr)
+            return 2
+        return _recover_management_handoff()
+    if action == "acknowledge":
+        if len(args) != 1:
+            print("management-handoff acknowledge requires exactly one task id", file=sys.stderr)
+            return 2
+        return _acknowledge_management_handoff(args[0])
+    if len(args) != 1:
+        print(f"management-handoff {action} requires exactly one staged manifest", file=sys.stderr)
+        return 2
+    try:
+        manifest_path = _validate_management_handoff_manifest_path(args[0])
+        payload = _load_management_handoff_manifest(manifest_path)
+        errors = _management_handoff_validation_errors(payload)
+    except (OSError, ValueError, json.JSONDecodeError) as exc:
+        print(str(exc), file=sys.stderr)
+        return 2
+    if errors:
+        print("\n".join(errors), file=sys.stderr)
+        return 2
+    if action == "validate":
+        print(json.dumps({"management_handoff": "validation ok", "job_id": payload["job_id"]}, sort_keys=True))
+        return 0
+    return _apply_management_handoff(payload)
+
+
 def _handle_appliance_update(action: str, args: list[str]) -> int:
     """Handle appliance update.
 
@@ -15052,6 +17177,8 @@ def main(argv: list[str]) -> int:
         return _handle_firewall(action, normalized_args)
     if group == "network":
         return _handle_network(action, normalized_args)
+    if group == "management-handoff":
+        return _handle_management_handoff(action, normalized_args)
     if group == "wan":
         return _handle_wan(action, normalized_args)
     if group == "dnsmasq":
