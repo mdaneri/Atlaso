@@ -59,6 +59,20 @@ independently observable after a release failure when the restored worker suppor
 marked **skipped** with an explicit reason if either earlier selected stream failed. The parent succeeds only when every
 selected child succeeds.
 
+Every completed check also records bounded operational availability under
+`appliance_update.availability.v1`. Each stream keeps its latest attempt and its latest successful confirmation
+separately. A failed recheck therefore exposes its remediation without erasing an earlier confirmed update. Editing a
+stream's repositories, credentials, channel, or managed-module policy changes its configuration fingerprint; the old
+confirmation becomes stale and no longer contributes to the global indicator or installation admission.
+
+The Update Streams workspace presents one composite **Updates available**, **Up to date**, or **Check failed** result
+while keeping each stream's current and target state, bounded **What's new** details, and remediation independent.
+Photon stores at most 100 parsed package changes and shows at most 20 in the browser. PowerShell results distinguish a
+new install, an upgrade, an older side-by-side target, and a module that is already current; Atlaso never claims that an
+installation removes an existing module version. Signed Atlaso release manifests may supply a one-line summary and a
+credential-free HTTPS release-notes link. Older signed v2 manifests fall back to the version and commit without
+fabricating release notes.
+
 ## Release sources and channels
 
 GitHub is the default distribution origin:
@@ -113,20 +127,22 @@ explicitly writes only Atlaso-owned tdnf and PowerShell client configuration thr
 repository sync** task. Starting synchronization keeps the Update Sources workspace in place and refreshes only the
 shared **Recent update tasks** grid while the task runs. **Saved, not synchronized** means the
 desired repository is stored in Atlaso but has not yet been validated or written into its appliance package client.
-Atlaso records synchronization results per repository. A managed Photon repository must have a successful result before
-Photon OS checks or installation can use it, including immediately after the repository is created or edited. When one
-repository fails, other repositories that synchronized successfully remain ready. Atlaso disables the check and install
-actions only while a selected stream still depends on an unsynchronized repository. Selecting an older task for detail
-never changes current readiness; only completion of the synchronization task just submitted from the page updates the
-actions in place. Streams that do not depend on the failed package synchronization remain available independently.
+Atlaso records synchronization results per repository. A selected Photon or PowerShell check is still admitted when a
+referenced repository has not been synchronized. Its child performs read-only validation, records **Check failed**, and
+points to **Synchronize repositories** instead of silently preventing task creation. Installation remains blocked until
+every selected stream has a successful, current check and all package-client prerequisites are valid. When one
+repository fails, other repositories that synchronized successfully remain ready. Selecting an older task for detail
+never changes current readiness; only durable check and synchronization completion updates the actions in place.
+Streams that do not depend on the failed package synchronization remain available independently.
 Source details also show when synchronization succeeded or failed. Signed Atlaso sources are read directly, are checked
 during each update, and do not configure pip or report package-client synchronization state.
 
 Synchronization resolves each enabled PowerShell repository host before invoking PowerShellGet. A DNS failure names the
 repository and unresolved host directly in the task error instead of presenting PowerShellGet's generic invalid-URI
 message or only an aggregate step failure. It also performs a repository lookup after registration, so a reachable host
-with an invalid API path fails synchronization. PowerShell module checks and installations require every referenced
-repository to have a successful synchronization result; saved edits cannot silently reuse stale package-client state.
+with an invalid API path fails synchronization. PowerShell installation requires every referenced repository to have a
+successful synchronization result; a read-only check instead reports the mismatch as an actionable failed child, and
+saved edits cannot silently reuse stale package-client state.
 
 Each source detail presents repository identity first, then its location or discovered runtime data, followed by
 read-only **Repository behavior** values. Desired-state guidance and synchronization state remain together in a
@@ -159,6 +175,20 @@ and visible copy that identifies the check as read-only. The same header links r
 Schedules workspace, where operators can schedule Appliance Update checks or installations. The Update Info rail card
 reports whether durable updater evidence is available and opens the full JSON through the shared preview modal, matching
 Validation instead of rendering unbounded output inline.
+
+**Check for updates** is enabled whenever at least one stream is selected and no Appliance Update task is active.
+**Install updates** additionally requires every selected stream's latest attempt to be a successful, non-stale check,
+at least one selected stream to have a confirmed update, and all installation prerequisites to be valid. The exact
+disabled reason is displayed beside the actions, and the server enforces the same gate for manual submissions.
+Scheduled installations remain independent of browser state and retain their check-before-apply execution.
+
+When any non-stale stream has a confirmed update, authenticated pages render **Update available** beside the account
+menu with the affected-stream count. The link opens Update Streams. Atlaso refreshes the sanitized browser-only state
+every 60 seconds only while the page is visible, immediately after visibility returns, and after a newly submitted
+update task reaches a terminal state. The endpoint uses `Cache-Control: no-store`, is excluded from OpenAPI, and never
+returns commands, credentials, or raw helper output. Successful installation clears only the confirmations for streams
+that actually succeeded; failed or skipped streams keep their indication until a successful installation or recheck
+changes it.
 
 ## Trust contract
 
@@ -194,7 +224,9 @@ disable signature verification or copy private signing material to an appliance.
 
 A signed channel pointer contains its channel, selected version and full commit, immutable release-manifest URL, issue
 time, and signing-key ID. The signed release manifest contains its version and commit, build time, updater protocol,
-database schema version, supported Python ABIs, bundle URL/size/hash, and a hash for every bundled file.
+database schema version, supported Python ABIs, bundle URL/size/hash, and a hash for every bundled file. It may also
+contain the bounded release-commit subject as `summary` and a credential-free HTTPS `release_notes_url`; both remain
+inside the signed immutable document.
 
 Atlaso accepts only signed v2 channel pointers and immutable release manifests. The Pages root is informational and is
 not part of the update trust contract.

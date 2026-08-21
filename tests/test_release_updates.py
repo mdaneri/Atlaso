@@ -1163,6 +1163,36 @@ def test_release_manifest_rejects_non_appliance_python_abi():
         validate_release_manifest(payload)
 
 
+def test_release_manifest_validates_optional_summary_and_release_notes():
+    """Keep optional v2 publication metadata backward compatible and credential free."""
+    legacy = release_payload()
+    assert validate_release_manifest(legacy) is legacy
+
+    enriched = release_payload()
+    enriched["summary"] = "Improve durable update visibility"
+    enriched["release_notes_url"] = "https://github.com/mdaneri/Atlaso/releases/tag/v0.9.0"
+    assert validate_release_manifest(enriched) is enriched
+
+    for value, message in (
+        ({"summary": "first\nsecond"}, "summary"),
+        ({"summary": "x" * 241}, "summary"),
+        ({"release_notes_url": "http://example.test/release"}, "HTTPS URL"),
+        ({"release_notes_url": "https://user:secret@example.test/release"}, "HTTPS URL"),
+    ):
+        payload = release_payload()
+        payload.update(value)
+        with pytest.raises(ReleaseManifestError, match=message):
+            validate_release_manifest(payload)
+
+
+def test_release_bundle_publishes_commit_subject_summary_and_release_link():
+    """Keep manifest generation deterministic and tied to the immutable release tag."""
+    source = (ROOT / "scripts/build_release_bundle.py").read_text(encoding="utf-8")
+    assert 'git_value(["show", "-s", "--format=%s", commit])' in source
+    assert '"summary": release_summary' in source
+    assert '"release_notes_url": f"https://github.com/mdaneri/Atlaso/releases/tag/v{version}"' in source
+
+
 def test_release_workflows_use_successful_main_sha_and_promote_without_rebuilding():
     """Verify that release workflows use successful main sha and promote without rebuilding."""
     publication = (ROOT / ".github/workflows/release.yml").read_text(encoding="utf-8")

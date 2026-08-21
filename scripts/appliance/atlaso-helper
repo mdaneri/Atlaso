@@ -10188,7 +10188,12 @@ def _load_appliance_update_credentials(args: list[str]) -> dict[str, dict[str, s
     }
 
 
-def _appliance_update_config_errors(payload: dict, *, require_streams: bool = True) -> list[str]:
+def _appliance_update_config_errors(
+    payload: dict,
+    *,
+    require_streams: bool = True,
+    require_synchronized: bool = True,
+) -> list[str]:
     """Perform appliance update config errors.
 
     Args:
@@ -10225,7 +10230,7 @@ def _appliance_update_config_errors(payload: dict, *, require_streams: bool = Tr
                 errors.append("atlaso manifest URLs must not include embedded credentials.")
     powershell_repository_url = str(sources.get("powershell_repository_url") or "").strip()
     powershell_repository_name = str(sources.get("powershell_repository_name") or "").strip()
-    if "powershell_modules" in (selected or []) and not powershell_repository_url:
+    if require_synchronized and "powershell_modules" in (selected or []) and not powershell_repository_url:
         errors.append("powershell_repository_url is required when PowerShell Modules is selected.")
     if powershell_repository_url:
         parsed = urlparse(powershell_repository_url)
@@ -10244,7 +10249,7 @@ def _appliance_update_config_errors(payload: dict, *, require_streams: bool = Tr
         )
     ):
         errors.append("powershell_modules must be a list of module objects with names and repositories.")
-    if "powershell_modules" in (selected or []) and isinstance(powershell_modules, list):
+    if require_synchronized and "powershell_modules" in (selected or []) and isinstance(powershell_modules, list):
         referenced_repositories = {
             str(item.get("repository_name") or powershell_repository_name).strip()
             for item in powershell_modules
@@ -10263,7 +10268,7 @@ def _appliance_update_config_errors(payload: dict, *, require_streams: bool = Tr
             errors.append(
                 f"PowerShell repository {repository} is not synchronized; run Synchronize repositories before checking or installing managed modules."
             )
-    if "photon_os" in (selected or []):
+    if require_synchronized and "photon_os" in (selected or []):
         source_definitions = payload.get("source_definitions")
         unsynchronized_photon = [
             str(source.get("name") or "configured Photon repositories").strip()
@@ -10295,7 +10300,11 @@ def _appliance_update_python() -> str:
 
 
 def _command_payload(
-    command: list[str], *, success_codes: set[int] | None = None, env: dict[str, str] | None = None
+    command: list[str],
+    *,
+    success_codes: set[int] | None = None,
+    env: dict[str, str] | None = None,
+    stdout_limit: int = 4000,
 ) -> dict:
     """Perform command payload.
 
@@ -10303,10 +10312,11 @@ def _command_payload(
         command: Command and arguments to execute.
         success_codes: Success codes consumed by command payload.
         env: Environment variables supplied to the child process.
+        stdout_limit: Maximum trailing standard-output characters to retain.
     """
     result = _run(command, env=env) if env is not None else _run(command)
     success_codes = success_codes or {0}
-    stdout = result.stdout[-4000:]
+    stdout = result.stdout[-stdout_limit:]
     stderr = result.stderr[-4000:]
     if env:
         sensitive_values = [str(env.get("LF_REPO_USER") or ""), str(env.get("LF_REPO_SECRET") or "")]
@@ -10458,7 +10468,13 @@ def _validated_update_https_url(value: object, label: str) -> str:
     """
     url = str(value or "").strip()
     parsed = urlparse(url)
-    if parsed.scheme != "https" or not parsed.netloc or parsed.username or parsed.password:
+    if (
+        parsed.scheme != "https"
+        or not parsed.netloc
+        or parsed.username
+        or parsed.password
+        or any(character.isspace() or ord(character) < 32 for character in url)
+    ):
         raise ValueError(f"{label} must be an HTTPS URL without embedded credentials")
     return url
 
@@ -10615,6 +10631,18 @@ def _validate_release_manifest(release: dict) -> dict:
             raise ValueError(f"Atlaso release content hash is invalid for {name}")
     if re.fullmatch(r"[0-9]+\.[0-9]+\.[0-9]+", str(release.get("version") or "")) is None:
         raise ValueError("Atlaso release version must use X.Y.Z semantic versioning")
+    summary = release.get("summary")
+    if summary is not None and (
+        not isinstance(summary, str)
+        or not summary.strip()
+        or len(summary) > 240
+        or "\n" in summary
+        or "\r" in summary
+    ):
+        raise ValueError("Atlaso release summary must be one non-empty line of at most 240 characters")
+    release_notes_url = release.get("release_notes_url")
+    if release_notes_url is not None:
+        _validated_update_https_url(release_notes_url, "Atlaso release notes URL")
     _validated_update_timestamp(release.get("built_at"), "Atlaso release build time")
     if not str(release.get("signing_key_id") or "").strip():
         raise ValueError("Atlaso release manifest missing signing_key_id")
@@ -10915,6 +10943,71 @@ def _sync_appliance_update_sources(payload: dict, credentials: dict[str, dict[st
     return result
 
 
+def _failed_update_check(remediation: str, *, current: str = "", target: str = "") -> dict:
+    """Return one normalized failed update check."""
+    return {
+        "state": "failed",
+        "current": current,
+        "target": target,
+        "change_count": 0,
+        "changes": [],
+        "details_incomplete": False,
+        "summary": "The update check did not complete.",
+        "remediation": remediation,
+    }
+
+
+def _unsynchronized_update_sources(payload: dict, kind: str) -> list[str]:
+    """Return enabled managed repositories that are not synchronized."""
+    definitions = payload.get("source_definitions")
+    if not isinstance(definitions, list):
+        return []
+    return sorted(
+        str(source.get("name") or "configured repository").strip()
+        for source in definitions
+        if isinstance(source, dict)
+        and source.get("kind") == kind
+        and source.get("enabled") is True
+        and (kind != "photon" or bool((source.get("settings") or {}).get("managed")))
+        and source.get("validation_status") != "valid"
+    )
+
+
+def _parse_tdnf_update_rows(stdout: str) -> list[dict[str, str]]:
+    """Parse the stable package rows emitted by ``tdnf check-update``."""
+    rows: list[dict[str, str]] = []
+    arch_suffix = re.compile(r"\.(?:x86_64|noarch|aarch64|i[3-6]86|src)$")
+    for raw_line in stdout.splitlines():
+        line = raw_line.strip()
+        if not line or line.startswith(("Refreshing", "Metadata", "Obsoleting", "Installing", "Name ")):
+            continue
+        fields = line.split()
+        if len(fields) < 3 or not any(character.isdigit() for character in fields[1]):
+            continue
+        package = arch_suffix.sub("", fields[0])
+        if not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9+_.-]*", package):
+            continue
+        rows.append({"name": package, "target": fields[1], "repository": fields[2]})
+    return rows
+
+
+def _json_command_stdout(command: dict) -> dict:
+    """Return a command's compact JSON stdout object."""
+    try:
+        payload = json.loads(str(command.get("stdout") or "{}"))
+    except json.JSONDecodeError:
+        return {}
+    return payload if isinstance(payload, dict) else {}
+
+
+def _update_version_key(value: str) -> tuple:
+    """Return a deterministic comparison key for package and module versions."""
+    return tuple(
+        (0, int(part)) if part.isdigit() else (1, part.casefold())
+        for part in re.split(r"[.+_-]", value or "")
+    )
+
+
 def _check_appliance_update(payload: dict, credentials: dict[str, dict[str, str]] | None = None) -> dict:
     """Check appliance update.
 
@@ -10928,32 +11021,111 @@ def _check_appliance_update(payload: dict, credentials: dict[str, dict[str, str]
     commands: list[dict] = []
     checks: dict[str, object] = {}
     if "photon_os" in selected:
-        tdnf = _command_path("tdnf") or "tdnf"
-        commands.append(_command_payload([tdnf, "makecache"], success_codes={0}))
-        commands.append(_command_payload([tdnf, "check-update"], success_codes={0, 100}))
-        compatibility = _photon_python_compatibility()
-        commands.append(compatibility)
-        checks["photon_os"] = {
-            "message": "tdnf check-update completed; exit 100 means updates are available.",
-            "python_compatibility": compatibility.get("compatibility", {}),
-        }
+        unsynchronized = _unsynchronized_update_sources(payload, "photon")
+        if unsynchronized:
+            checks["photon_os"] = _failed_update_check(
+                f"Synchronize repositories for {', '.join(unsynchronized)} and check Photon OS again."
+            )
+        else:
+            tdnf = _command_path("tdnf") or "tdnf"
+            makecache = _command_payload([tdnf, "makecache"], success_codes={0})
+            commands.append(makecache)
+            check_command = _command_payload(
+                [tdnf, "check-update"], success_codes={0, 100}, stdout_limit=100000
+            )
+            full_check_stdout = str(check_command.get("stdout") or "")
+            commands.append(check_command)
+            compatibility = _photon_python_compatibility()
+            commands.append(compatibility)
+            if not makecache["success"] or not check_command["success"] or not compatibility["success"]:
+                checks["photon_os"] = _failed_update_check(
+                    "Review the Photon check output, correct repository or Python compatibility errors, and check again."
+                )
+            elif check_command["returncode"] == 0:
+                checks["photon_os"] = {
+                    "state": "up_to_date",
+                    "current": "Installed Photon OS packages",
+                    "target": "Current repository state",
+                    "change_count": 0,
+                    "changes": [],
+                    "details_incomplete": False,
+                    "summary": "Photon OS packages are up to date.",
+                    "remediation": "",
+                }
+            else:
+                candidates = _parse_tdnf_update_rows(full_check_stdout)
+                stored_candidates = candidates[:100]
+                installed_versions: dict[str, str] = {}
+                if stored_candidates:
+                    rpm = _command_path("rpm") or "rpm"
+                    rpm_query = _command_payload(
+                        [rpm, "-q", "--qf", "%{NAME}\t%{EPOCHNUM}:%{VERSION}-%{RELEASE}\\n", *[row["name"] for row in stored_candidates]],
+                        stdout_limit=50000,
+                    )
+                    commands.append(rpm_query)
+                    if rpm_query["success"]:
+                        for line in str(rpm_query.get("stdout") or "").splitlines():
+                            name, separator, version = line.partition("\t")
+                            if separator:
+                                installed_versions[name.strip()] = version.strip()
+                changes = [
+                    {
+                        "name": row["name"],
+                        "current": installed_versions.get(row["name"], "installed version unavailable"),
+                        "target": row["target"],
+                        "action": "upgrade",
+                        "summary": f"{row['name']} from {row['repository']}",
+                    }
+                    for row in stored_candidates
+                ]
+                details_incomplete = (
+                    len(candidates) > 100
+                    or not candidates
+                    or len(installed_versions) != len({row["name"] for row in stored_candidates})
+                )
+                checks["photon_os"] = {
+                    "state": "available",
+                    "current": "Installed Photon OS packages",
+                    "target": f"{len(candidates)} package update{'s' if len(candidates) != 1 else ''}",
+                    "change_count": len(candidates),
+                    "changes": changes,
+                    "details_incomplete": details_incomplete,
+                    "summary": (
+                        f"{len(candidates)} Photon OS package update{'s are' if len(candidates) != 1 else ' is'} available."
+                        if candidates
+                        else "Photon reported available updates, but package details could not be parsed completely."
+                    ),
+                    "remediation": "",
+                }
+                check_command["stdout"] = full_check_stdout[-4000:]
     if "powershell_modules" in selected:
         pwsh = _command_path("pwsh") or "pwsh"
         default_repository = str(sources.get("powershell_repository_name") or "").strip()
+        unsynchronized = _unsynchronized_update_sources(payload, "powershell")
+        modules = payload.get("powershell_modules") or []
         module_checks: list[dict] = []
-        for module in payload.get("powershell_modules") or []:
+        if not default_repository or unsynchronized:
+            names = ", ".join(unsynchronized) or default_repository or "the configured PowerShell repository"
+            checks["powershell_modules"] = _failed_update_check(
+                f"Synchronize repositories for {names} and check PowerShell Modules again."
+            )
+        for module in modules if not unsynchronized and default_repository else []:
             name = str(module.get("name") or "").strip()
             target = str(module.get("target_version") or "").strip()
             repository = str(module.get("repository_name") or default_repository).strip()
+            source = next((item for item in _enabled_sources(payload, "powershell") if str(item.get("name") or "") == repository), {})
+            expected_url = str(source.get("url") or sources.get("powershell_repository_url") or "").strip()
             script = (
                 '$ErrorActionPreference = "Stop"; '
                 "$credentialArgs = if ($env:LF_REPO_SECRET) { $credential = New-Object System.Management.Automation.PSCredential($env:LF_REPO_USER, (ConvertTo-SecureString $env:LF_REPO_SECRET -AsPlainText -Force)); @{Credential=$credential} } else { @{} }; "
+                f"$repository = Get-PSRepository -Name {_powershell_literal(repository)} -ErrorAction Stop; "
+                f"if ([string]$repository.SourceLocation -ne {_powershell_literal(expected_url)}) {{ throw 'Registered repository location does not match Atlaso desired state' }}; "
+                f"$installed = @(Get-Module -Name {_powershell_literal(name)} -ListAvailable | Sort-Object Version -Descending | ForEach-Object {{ $_.Version.ToString() }}); "
                 f"$module = Find-Module -Name {_powershell_literal(name)} -Repository {_powershell_literal(repository)}"
                 + (f" -RequiredVersion {_powershell_literal(target)}" if target else "")
                 + " @credentialArgs"
-                + "; $module | Select-Object Name,Version,Repository | ConvertTo-Json -Compress"
+                + "; [pscustomobject]@{Name=$module.Name; AvailableVersion=$module.Version.ToString(); Repository=$module.Repository; InstalledVersions=$installed} | ConvertTo-Json -Compress"
             )
-            source = next((item for item in _enabled_sources(payload, "powershell") if str(item.get("name") or "") == repository), {})
             credential = _source_credential(source, credentials)
             env = _appliance_update_powershell_environment()
             if credential:
@@ -10961,19 +11133,91 @@ def _check_appliance_update(payload: dict, credentials: dict[str, dict[str, str]
             command_args = [pwsh, "-NoLogo", "-NoProfile", "-NonInteractive", "-EncodedCommand", _powershell_encoded_command(script)]
             command = _command_payload(command_args, env=env)
             commands.append(command)
-            module_checks.append({"name": name, "repository": repository, "target_version": target, "success": command["success"]})
-        checks["powershell_modules"] = module_checks
+            detail = _json_command_stdout(command)
+            installed_value = detail.get("InstalledVersions")
+            installed = [str(value) for value in installed_value] if isinstance(installed_value, list) else [str(installed_value)] if installed_value else []
+            available_version = str(detail.get("AvailableVersion") or target)
+            if not command["success"] or not available_version:
+                module_checks.append({"name": name, "success": False})
+                continue
+            highest_installed = max(installed, key=_update_version_key) if installed else ""
+            action = (
+                "add"
+                if not installed
+                else "current"
+                if available_version in installed
+                else "upgrade"
+                if _update_version_key(available_version) > _update_version_key(highest_installed)
+                else "side-by-side"
+            )
+            module_checks.append(
+                {
+                    "name": name,
+                    "current": ", ".join(installed) or "Not installed",
+                    "target": available_version,
+                    "action": action,
+                    "summary": f"{action.replace('-', ' ')} {name}",
+                    "success": True,
+                }
+            )
+        if "powershell_modules" not in checks:
+            failed = [row for row in module_checks if not row.get("success")]
+            changes = [
+                {key: row[key] for key in ("name", "current", "target", "action", "summary") if key in row}
+                for row in module_checks
+                if row.get("success") and row.get("action") != "current"
+            ]
+            if failed:
+                checks["powershell_modules"] = _failed_update_check(
+                    "Review the PowerShell repository/module lookup output, synchronize repositories if needed, and check again."
+                )
+            else:
+                checks["powershell_modules"] = {
+                    "state": "available" if changes else "up_to_date",
+                    "current": f"{len(module_checks)} managed module{'s' if len(module_checks) != 1 else ''}",
+                    "target": f"{len(changes)} module change{'s' if len(changes) != 1 else ''}",
+                    "change_count": len(changes),
+                    "changes": changes,
+                    "details_incomplete": False,
+                    "summary": f"{len(changes)} managed PowerShell module change{'s are' if len(changes) != 1 else ' is'} available." if changes else "Managed PowerShell modules are up to date.",
+                    "remediation": "",
+                }
     if "atlaso_release" in selected:
-        channel, release, manifest_url, _credential = _download_signed_release_from_sources(payload, credentials)
-        checks["atlaso_release"] = {
-            "channel": channel.get("channel"),
-            "version": release.get("version"),
-            "git_commit": release.get("git_commit"),
-            "supported_python_abis": release.get("supported_python_abis"),
-            "signing_key_id": release.get("signing_key_id"),
-            "manifest_url": manifest_url,
-            "bundle_sha256": (release.get("bundle") or {}).get("sha256"),
-        }
+        try:
+            channel, release, manifest_url, _credential = _download_signed_release_from_sources(payload, credentials)
+            current = str((payload.get("current") or {}).get("base_version") or "")
+            target = str(release.get("version") or "")
+            available = _update_version_key(target) > _update_version_key(current)
+            checks["atlaso_release"] = {
+                "state": "available" if available else "up_to_date",
+                "current": current,
+                "target": target,
+                "change_count": 1 if available else 0,
+                "changes": [{"name": "Atlaso", "current": current, "target": target, "action": "upgrade"}] if available else [],
+                "details_incomplete": False,
+                "summary": str(release.get("summary") or f"Signed Atlaso release {target} at {str(release.get('git_commit') or '')[:12]}"),
+                "release_notes_url": str(release.get("release_notes_url") or ""),
+                "remediation": "",
+                "channel": channel.get("channel"),
+                "git_commit": release.get("git_commit"),
+                "supported_python_abis": release.get("supported_python_abis"),
+                "signing_key_id": release.get("signing_key_id"),
+                "manifest_url": manifest_url,
+                "bundle_sha256": (release.get("bundle") or {}).get("sha256"),
+            }
+        except Exception as exc:  # noqa: BLE001 - each selected stream records its own check failure.
+            checks["atlaso_release"] = _failed_update_check(
+                "Review the signed release source error, correct the repository or trust configuration, and check again."
+            )
+            commands.append(
+                {
+                    "command": ["signed-atlaso-release-check"],
+                    "returncode": 1,
+                    "success": False,
+                    "stdout": "",
+                    "stderr": str(exc)[:4000],
+                }
+            )
     return {"checks": checks, "commands": commands}
 
 
@@ -18430,7 +18674,17 @@ def _handle_appliance_update(action: str, args: list[str]) -> int:
         config_path = _validate_appliance_update_config_path(args[0])
         payload = _load_appliance_update_config(config_path)
         credentials = _load_appliance_update_credentials(args)
-        errors = _appliance_update_config_errors(payload, require_streams=action != "sync-sources")
+        if action == "check":
+            errors = _appliance_update_config_errors(
+                payload,
+                require_streams=True,
+                require_synchronized=False,
+            )
+        else:
+            errors = _appliance_update_config_errors(
+                payload,
+                require_streams=action != "sync-sources",
+            )
     except (IndexError, OSError, ValueError, json.JSONDecodeError) as exc:
         print(str(exc), file=sys.stderr)
         return 2
@@ -18446,7 +18700,10 @@ def _handle_appliance_update(action: str, args: list[str]) -> int:
             print(str(exc), file=sys.stderr)
             return 1
         print(json.dumps(result, indent=2, sort_keys=True))
-        if any(not command.get("success") for command in result.get("commands", [])):
+        if any(not command.get("success") for command in result.get("commands", [])) or any(
+            isinstance(check, dict) and check.get("state") == "failed"
+            for check in result.get("checks", {}).values()
+        ):
             return 1
         return 0
     if action == "apply":

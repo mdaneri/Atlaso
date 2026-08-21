@@ -54,10 +54,13 @@ brings infrastructure, storage, identity, networking, and lifecycle workflows in
   sources in read-only repository tabs, then create or edit desired source state through the shared reviewed wizard
   before explicitly synchronizing package clients. The built-in Atlaso source follows the signed `stable` channel;
   Pages publication guards verify that its pointer, immutable release manifest, trust key, and CPython 3.14
-  compatibility remain usable. Atlaso Release installation reports success only after the durable active link, signed
-  receipt, running version, internal API, nginx management front door, and post-maintenance service state all agree on
-  the candidate. Maintenance remains closed through every rollback-capable stage; after a durable activation commit,
-  final front-door failures preserve the candidate and retry forward through a gated post-start worker handoff instead
+  compatibility remain usable. Checks persist bounded per-stream availability, drive a global authenticated update
+  indicator, and gate manual installation on a fresh successful result without preventing an unsynchronized repository
+  from creating an actionable read-only check task. Atlaso Release installation reports success only after the durable
+  active link, signed receipt, running version, internal API, nginx management front door, and post-maintenance service
+  state all agree on the candidate. Maintenance remains closed through every rollback-capable stage; after a durable
+  activation commit, final front-door failures preserve the candidate and retry forward through a gated post-start
+  worker handoff instead
   of discarding later operator writes, including after reboot when the volatile gate must be recreated.
   Startup rejects inconsistent success evidence and resumes only untouched update children.
 - [Services](docs/services/index.md) — configure DNS, identity, storage, network boot, and VCF integrations.

@@ -387,14 +387,14 @@ route inventory, or normalized OpenAPI output.
 
 ## Extracted appliance-maintenance ownership
 
-The authenticated appliance power transport and the eleven Appliance Update transports live in
+The authenticated appliance power transport and the twelve Appliance Update transports live in
 `atlaso/app/routers/ui/appliance_maintenance.py`. The module returns two explicit ordered routers:
 `appliance_maintenance_power` remains immediately before Dashboard and Monitor, while
 `appliance_maintenance_update` remains immediately after them and before Automation. The facade contribution preceding
 power is named `facade_between_vaults_appliance_maintenance`, preserving every earlier front-door, protocol, public,
 authentication, account, and management route at its established position.
 
-The stable `atlaso/app/ui.py` facade continues to export `appliance_power_action`, `appliance_update_page`,
+The stable `atlaso/app/ui.py` facade continues to export `appliance_power_action`, `appliance_update_availability`, `appliance_update_page`,
 `update_appliance_update_settings`, `update_appliance_update_source`, `create_appliance_update_source`,
 `delete_appliance_update_source`, `create_managed_update_package`, `update_managed_update_package`,
 `delete_managed_update_package`, `sync_appliance_update_sources`, `check_appliance_update`, and

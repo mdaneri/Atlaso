@@ -155,31 +155,43 @@
     {% if update_error %}
       <div class="alert error">{{ update_error }}</div>
     {% endif %}
-    <form class="form-stack" method="post" data-appliance-update-submit-form>
+    <form class="form-stack" method="post" data-appliance-update-submit-form data-appliance-update-availability='{{ appliance_update_availability|tojson|forceescape }}'>
       <input type="hidden" name="csrf" value="{{ csrf_token }}">
       <div class="panel-head compact">
         <div>
           <h2>Update Streams</h2>
           <p class="muted appliance-update-action-guidance">Checking is read-only. Installing runs the selected maintenance streams.</p>
           <p class="muted appliance-update-schedule-guidance">For recurring maintenance, <a class="text-link" href="{{ management_ui_root }}/automation">schedule update checks or installations in Automation</a>.</p>
-          <p id="appliance-update-action-status" class="muted appliance-update-action-guidance hidden" role="status" data-appliance-update-action-status></p>
+          <p id="appliance-update-action-status" class="muted appliance-update-action-guidance {{ 'hidden' if not appliance_update_install_reason else '' }}" role="status" data-appliance-update-action-status>{{ appliance_update_install_reason }}</p>
         </div>
         <div class="apply-change-set-actions">
-          <button class="button secondary appliance-update-action" type="submit" formaction="{{ management_ui_root }}/appliance-update/check" title="Check the selected streams without installing changes" aria-describedby="appliance-update-action-status" data-appliance-update-action>
+          <button class="button secondary appliance-update-action" type="submit" formaction="{{ management_ui_root }}/appliance-update/check" title="Check the selected streams without installing changes" aria-describedby="appliance-update-action-status" data-appliance-update-action data-appliance-update-check-action {{ 'disabled' if appliance_update_active else '' }}>
             <svg class="button-icon" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><circle cx="11" cy="11" r="8"/><path d="m21 21-4.3-4.3"/></svg>
             <span>Check for updates</span>
           </button>
-          <button class="button primary appliance-update-action" type="submit" formaction="{{ management_ui_root }}/appliance-update/run" title="Install updates from the selected streams" aria-describedby="appliance-update-action-status" data-appliance-update-action>
+          <button class="button primary appliance-update-action" type="submit" formaction="{{ management_ui_root }}/appliance-update/run" title="Install updates from the selected streams" aria-describedby="appliance-update-action-status" data-appliance-update-action data-appliance-update-install-action {{ 'disabled' if appliance_update_install_reason else '' }}>
             <svg class="button-icon" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path d="M12 3v12"/><path d="m7 10 5 5 5-5"/><path d="M5 21h14"/></svg>
             <span>Install updates</span>
           </button>
         </div>
       </div>
+      <section class="appliance-update-result-summary" aria-live="polite" data-appliance-update-result-summary>
+        <div>
+          <span class="status-pill muted" data-appliance-update-result-pill>Not checked</span>
+          <strong data-appliance-update-result-title>Check the selected streams for current update information</strong>
+        </div>
+        <p class="muted" data-appliance-update-result-description>Each stream keeps its latest result independently.</p>
+      </section>
       <div class="apply-unit-list compact-list">
         {% for stream in update_streams %}
           {% set stream_checked = selected_update_stream_ids is not defined or stream.id in selected_update_stream_ids %}
-          <label class="apply-unit-card update-stream-card">
-            <span class="apply-unit-select">
+          {% set stream_availability = stream.availability %}
+          <div
+            class="apply-unit-card update-stream-card"
+            data-appliance-update-stream-card="{{ stream.id }}"
+            data-appliance-update-stale="{{ 'true' if stream_availability.stale else 'false' }}"
+          >
+            <label class="apply-unit-select">
               <input
                 type="checkbox"
                 name="selected_streams"
@@ -197,8 +209,43 @@
                   {% if stream.id == "atlaso_release" %}signed manifest verification, offline versioned install, health check, and automatic rollback{% endif %}
                 </small>
               </span>
+            </label>
+            <span class="update-stream-result" data-appliance-update-stream-result>
+              {% if stream_availability.stale %}
+                <span class="status-pill muted" data-appliance-update-stream-pill>Check required</span>
+                <strong data-appliance-update-stream-state>Configuration changed</strong>
+                <small data-appliance-update-stream-summary>Check this stream again to refresh its update information.</small>
+              {% elif stream_availability.last_attempt.state == 'failed' %}
+                <span class="status-pill error" data-appliance-update-stream-pill>Check failed</span>
+                <strong data-appliance-update-stream-state>{{ 'Previously confirmed update remains available' if stream_availability.confirmed and stream_availability.confirmed.update_available else 'Update state unavailable' }}</strong>
+                <small data-appliance-update-stream-summary>{{ stream_availability.last_attempt.remediation or 'Review the task and check again.' }}</small>
+                {% if stream_availability.confirmed and stream_availability.confirmed.release_notes_url %}<a class="text-link" href="{{ stream_availability.confirmed.release_notes_url }}" target="_blank" rel="noopener noreferrer" data-appliance-update-release-notes>Release notes</a>{% endif %}
+                {% if stream_availability.confirmed and stream_availability.confirmed.changes %}
+                  <details class="update-stream-changes" data-appliance-update-stream-changes>
+                    <summary>Previously confirmed What’s new · {{ stream_availability.confirmed.change_count }} {{ 'change' if stream_availability.confirmed.change_count == 1 else 'changes' }}</summary>
+                    <ul>{% for change in stream_availability.confirmed.changes %}<li><strong>{{ change.name }}</strong>{% if change.current or change.target %}: {{ change.current or 'not installed' }} → {{ change.target or 'current' }}{% endif %}{% if change.action %} · {{ change.action|replace('-', ' ') }}{% endif %}</li>{% endfor %}</ul>
+                    {% if stream_availability.confirmed.details_incomplete %}<p class="muted">Only bounded details are shown; review the earlier successful check task for the recorded evidence.</p>{% endif %}
+                  </details>
+                {% endif %}
+              {% elif stream_availability.confirmed %}
+                <span class="status-pill {{ 'warn' if stream_availability.confirmed.update_available else 'good' }}" data-appliance-update-stream-pill>{{ 'Update available' if stream_availability.confirmed.update_available else 'Up to date' }}</span>
+                <strong data-appliance-update-stream-state>{{ stream_availability.confirmed.current or 'Current state' }} → {{ stream_availability.confirmed.target or 'Current target' }}</strong>
+                <small data-appliance-update-stream-summary>{{ stream_availability.confirmed.summary or 'The latest successful check completed.' }}</small>
+                {% if stream_availability.confirmed.release_notes_url %}<a class="text-link" href="{{ stream_availability.confirmed.release_notes_url }}" target="_blank" rel="noopener noreferrer" data-appliance-update-release-notes>Release notes</a>{% endif %}
+                {% if stream_availability.confirmed.changes %}
+                  <details class="update-stream-changes" data-appliance-update-stream-changes>
+                    <summary>What’s new · {{ stream_availability.confirmed.change_count }} {{ 'change' if stream_availability.confirmed.change_count == 1 else 'changes' }}</summary>
+                    <ul>{% for change in stream_availability.confirmed.changes %}<li><strong>{{ change.name }}</strong>{% if change.current or change.target %}: {{ change.current or 'not installed' }} → {{ change.target or 'current' }}{% endif %}{% if change.action %} · {{ change.action|replace('-', ' ') }}{% endif %}</li>{% endfor %}</ul>
+                    {% if stream_availability.confirmed.details_incomplete %}<p class="muted">Only bounded details are shown; review the task for the recorded check evidence.</p>{% endif %}
+                  </details>
+                {% endif %}
+              {% else %}
+                <span class="status-pill muted" data-appliance-update-stream-pill>Not checked</span>
+                <strong data-appliance-update-stream-state>No confirmed result</strong>
+                <small data-appliance-update-stream-summary>Run Check for updates before installing this stream.</small>
+              {% endif %}
             </span>
-          </label>
+          </div>
         {% endfor %}
       </div>
     </form>

@@ -21,6 +21,7 @@ from atlaso import __version__
 from atlaso.app.models import Job, JobStatus, JobStep
 
 APPLIANCE_UPDATE_SETTINGS_KEY = "appliance_update.settings.v1"
+APPLIANCE_UPDATE_AVAILABILITY_KEY = "appliance_update.availability.v1"
 APPLIANCE_UPDATE_STAGED_CONFIG_PATH = "/var/lib/atlaso/apply/appliance-update/atlaso-update.json"
 APPLIANCE_UPDATE_STAGED_CREDENTIALS_PATH = "/var/lib/atlaso/apply/appliance-update/atlaso-update-credentials.json"
 APPLIANCE_UPDATE_INFO_PATH = "/etc/atlaso/update-info"
@@ -38,6 +39,263 @@ UPDATE_STREAM_LABELS = {
     "powershell_modules": "PowerShell Modules",
     "atlaso_release": "Atlaso Release",
 }
+
+AVAILABILITY_CHANGE_LIMIT = 100
+AVAILABILITY_VISIBLE_CHANGE_LIMIT = 20
+AVAILABILITY_TEXT_LIMIT = 500
+
+
+def _bounded_availability_text(value: Any, *, limit: int = AVAILABILITY_TEXT_LIMIT) -> str:
+    """Return one bounded line of public-safe availability text."""
+    text = " ".join(str(value or "").split())
+    return text if len(text) <= limit else f"{text[: limit - 1]}…"
+
+
+def empty_update_availability() -> dict[str, Any]:
+    """Return the persisted Appliance Update availability envelope."""
+    return {"schema_version": 1, "streams": {}}
+
+
+def update_availability_from_json(raw_value: str) -> dict[str, Any]:
+    """Parse persisted availability while rejecting unknown envelope shapes."""
+    try:
+        payload = json.loads(raw_value or "{}")
+    except json.JSONDecodeError:
+        return empty_update_availability()
+    if not isinstance(payload, dict) or payload.get("schema_version") != 1:
+        return empty_update_availability()
+    streams = payload.get("streams")
+    if not isinstance(streams, dict):
+        return empty_update_availability()
+    return {
+        "schema_version": 1,
+        "streams": {
+            stream: value
+            for stream, value in streams.items()
+            if stream in UPDATE_STREAMS and isinstance(value, dict)
+        },
+    }
+
+
+def update_availability_to_json(value: dict[str, Any]) -> str:
+    """Serialize the bounded availability envelope."""
+    return json.dumps(value, indent=2, sort_keys=True)
+
+
+def update_stream_configuration_fingerprint(stream: str, settings: dict[str, Any]) -> str:
+    """Bind a confirmation to the source and module configuration used to produce it."""
+    definitions = settings.get("source_definitions")
+    source_kind = {
+        "photon_os": "photon",
+        "powershell_modules": "powershell",
+        "atlaso_release": "atlaso",
+    }.get(stream, "")
+    sources = [
+        {
+            "id": source.get("id"),
+            "kind": source.get("kind"),
+            "name": source.get("name"),
+            "url": source.get("url"),
+            "enabled": source.get("enabled"),
+            "priority": source.get("priority"),
+            "settings": source.get("settings") if isinstance(source.get("settings"), dict) else {},
+            "credential_present": bool(source.get("credential_present")),
+            "validation_status": source.get("validation_status"),
+        }
+        for source in definitions or []
+        if isinstance(source, dict) and source.get("kind") == source_kind
+    ] if isinstance(definitions, list) else []
+    payload: dict[str, Any] = {"stream": stream, "sources": sources}
+    if stream == "powershell_modules":
+        payload["modules"] = settings.get("powershell_modules") if isinstance(settings.get("powershell_modules"), list) else []
+    elif stream == "atlaso_release" and not sources:
+        payload["manifest_urls"] = settings.get("atlaso_manifest_urls") or [settings.get("atlaso_manifest_url")]
+    elif stream == "photon_os" and not sources:
+        payload["source"] = settings.get("photon_source")
+    canonical = json.dumps(payload, separators=(",", ":"), sort_keys=True)
+    return hashlib.sha256(canonical.encode("utf-8")).hexdigest()
+
+
+def update_stream_configuration_fingerprints(settings: dict[str, Any]) -> dict[str, str]:
+    """Return current fingerprints for every update stream."""
+    return {
+        stream: update_stream_configuration_fingerprint(stream, settings)
+        for stream in UPDATE_STREAMS
+    }
+
+
+def normalized_availability_result(value: Any) -> dict[str, Any]:
+    """Normalize one helper result before it enters durable browser-visible state."""
+    source = value if isinstance(value, dict) else {}
+    state = str(source.get("state") or "failed")
+    if state not in {"available", "up_to_date", "failed"}:
+        state = "failed"
+    changes = source.get("changes") if isinstance(source.get("changes"), list) else []
+    bounded_changes = []
+    for change in changes[:AVAILABILITY_CHANGE_LIMIT]:
+        if not isinstance(change, dict):
+            continue
+        bounded_changes.append(
+            {
+                key: _bounded_availability_text(change.get(key), limit=160)
+                for key in ("name", "current", "target", "action", "summary")
+                if change.get(key) not in (None, "")
+            }
+        )
+    release_notes_url = str(source.get("release_notes_url") or "").strip()
+    try:
+        parsed_notes = urlparse(release_notes_url)
+    except ValueError:
+        parsed_notes = None
+    if (
+        parsed_notes is None
+        or parsed_notes.scheme != "https"
+        or not parsed_notes.netloc
+        or parsed_notes.username
+        or parsed_notes.password
+        or any(character.isspace() or ord(character) < 32 for character in release_notes_url)
+    ):
+        release_notes_url = ""
+    try:
+        change_count = int(source.get("change_count") or len(changes))
+    except (TypeError, ValueError):
+        change_count = len(changes)
+    return {
+        "state": state,
+        "update_available": state == "available",
+        "current": _bounded_availability_text(source.get("current"), limit=200),
+        "target": _bounded_availability_text(source.get("target"), limit=200),
+        "change_count": min(max(0, change_count), 1_000_000),
+        "changes": bounded_changes,
+        "details_incomplete": bool(source.get("details_incomplete")) or len(changes) > AVAILABILITY_CHANGE_LIMIT,
+        "summary": _bounded_availability_text(source.get("summary"), limit=240),
+        "release_notes_url": release_notes_url,
+        "remediation": _bounded_availability_text(source.get("remediation"), limit=300),
+    }
+
+
+def record_update_availability_attempt(
+    state: dict[str, Any],
+    *,
+    stream: str,
+    job_id: str,
+    checked_at: datetime,
+    fingerprint: str,
+    result: dict[str, Any],
+) -> dict[str, Any]:
+    """Record a check without erasing an earlier confirmation when the check fails."""
+    envelope = update_availability_from_json(update_availability_to_json(state))
+    normalized = normalized_availability_result(result)
+    stream_state = dict(envelope["streams"].get(stream) or {})
+    successful = normalized["state"] in {"available", "up_to_date"}
+    stream_state["last_attempt"] = {
+        "job_id": _bounded_availability_text(job_id, limit=100),
+        "checked_at": checked_at.isoformat(),
+        "success": successful,
+        "state": normalized["state"],
+        "fingerprint": fingerprint,
+        "remediation": normalized["remediation"],
+    }
+    if successful:
+        stream_state["confirmed"] = {
+            "fingerprint": fingerprint,
+            "checked_at": checked_at.isoformat(),
+            **{key: normalized[key] for key in (
+                "state", "update_available", "current", "target", "change_count", "changes",
+                "details_incomplete", "summary", "release_notes_url",
+            )},
+        }
+    envelope["streams"][stream] = stream_state
+    return envelope
+
+
+def clear_installed_update_availability(
+    state: dict[str, Any], *, successful_streams: list[str] | tuple[str, ...]
+) -> dict[str, Any]:
+    """Clear only confirmations for streams whose installation succeeded."""
+    envelope = update_availability_from_json(update_availability_to_json(state))
+    for stream in successful_streams:
+        stream_state = envelope["streams"].get(stream)
+        if isinstance(stream_state, dict):
+            stream_state.pop("confirmed", None)
+    return envelope
+
+
+def update_availability_summary(
+    state: dict[str, Any], settings: dict[str, Any]
+) -> dict[str, Any]:
+    """Project sanitized current availability for the UI and manual-install gate."""
+    envelope = update_availability_from_json(update_availability_to_json(state))
+    fingerprints = update_stream_configuration_fingerprints(settings)
+    rows: list[dict[str, Any]] = []
+    for stream in UPDATE_STREAMS:
+        stored = envelope["streams"].get(stream)
+        stored = stored if isinstance(stored, dict) else {}
+        attempt = stored.get("last_attempt") if isinstance(stored.get("last_attempt"), dict) else {}
+        confirmed = stored.get("confirmed") if isinstance(stored.get("confirmed"), dict) else {}
+        stale = bool(confirmed) and confirmed.get("fingerprint") != fingerprints[stream]
+        attempt_state = str(attempt.get("state") or "")
+        if attempt_state not in {"available", "up_to_date", "failed"}:
+            attempt_state = ""
+        row = {
+            "id": stream,
+            "label": UPDATE_STREAM_LABELS[stream],
+            "last_attempt": {
+                "checked_at": _bounded_availability_text(attempt.get("checked_at"), limit=80),
+                "success": attempt.get("success") is True,
+                "state": attempt_state,
+                "current": "",
+                "target": "",
+                "remediation": _bounded_availability_text(attempt.get("remediation"), limit=300),
+            },
+            "confirmed": None,
+            "stale": stale,
+        }
+        if confirmed:
+            row["last_attempt"]["current"] = _bounded_availability_text(confirmed.get("current"), limit=200)
+            row["last_attempt"]["target"] = _bounded_availability_text(confirmed.get("target"), limit=200)
+        if confirmed and not stale:
+            normalized = normalized_availability_result(confirmed)
+            normalized["checked_at"] = _bounded_availability_text(
+                confirmed.get("checked_at"), limit=80
+            )
+            normalized["changes"] = normalized["changes"][:AVAILABILITY_VISIBLE_CHANGE_LIMIT]
+            row["confirmed"] = normalized
+        rows.append(row)
+    available = [row for row in rows if row["confirmed"] and row["confirmed"]["update_available"]]
+    return {
+        "schema_version": 1,
+        "available": bool(available),
+        "affected_stream_count": len(available),
+        "streams": rows,
+        "url": "/ui/management/appliance-update#appliance-update-streams",
+    }
+
+
+def manual_install_gate(
+    summary: dict[str, Any], selected_streams: list[str] | tuple[str, ...]
+) -> tuple[bool, str]:
+    """Require a successful current check for every selected manual-install stream."""
+    selected = selected_update_streams(selected_streams)
+    if not selected:
+        return False, "Select at least one update stream."
+    rows = {str(row.get("id")): row for row in summary.get("streams", []) if isinstance(row, dict)}
+    for stream in selected:
+        row = rows.get(stream) or {}
+        attempt = row.get("last_attempt") if isinstance(row.get("last_attempt"), dict) else {}
+        confirmed = row.get("confirmed") if isinstance(row.get("confirmed"), dict) else None
+        if row.get("stale"):
+            return False, f"Check {UPDATE_STREAM_LABELS[stream]} again because its update configuration changed."
+        if attempt.get("success") is not True or confirmed is None:
+            remediation = str(attempt.get("remediation") or "").strip()
+            return False, remediation or f"Check {UPDATE_STREAM_LABELS[stream]} successfully before installing it."
+    if not any(
+        isinstance((rows.get(stream) or {}).get("confirmed"), dict)
+        and bool((rows.get(stream) or {})["confirmed"].get("update_available"))
+        for stream in selected
+    ):
+        return False, "The selected streams are up to date."
+    return True, ""
 
 
 def reconcile_release_success_finalizer(finalizer: dict[str, Any]) -> tuple[dict[str, Any], bool]:

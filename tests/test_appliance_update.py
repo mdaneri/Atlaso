@@ -4,6 +4,7 @@ import importlib.machinery
 import importlib.util
 import json
 import logging
+from datetime import datetime, timezone
 from pathlib import Path
 
 from sqlalchemy import select
@@ -46,6 +47,240 @@ def load_helper_module():
     module = importlib.util.module_from_spec(spec)
     loader.exec_module(module)
     return module
+
+
+def seed_available_confirmations(streams: list[str]) -> None:
+    """Persist fresh available confirmations for manual-install tests."""
+    from atlaso.app import ui
+    from atlaso.app.database import SessionLocal
+    from atlaso.app.services.appliance_update import (
+        APPLIANCE_UPDATE_AVAILABILITY_KEY,
+        empty_update_availability,
+        record_update_availability_attempt,
+        update_availability_to_json,
+        update_stream_configuration_fingerprints,
+    )
+
+    with SessionLocal() as db:
+        settings = ui.appliance_update_settings(db)
+        fingerprints = update_stream_configuration_fingerprints(settings)
+        state = empty_update_availability()
+        for stream in streams:
+            state = record_update_availability_attempt(
+                state,
+                stream=stream,
+                job_id="job-confirmed-check",
+                checked_at=datetime.now(timezone.utc),
+                fingerprint=fingerprints[stream],
+                result={
+                    "state": "available",
+                    "current": "installed",
+                    "target": "available",
+                    "change_count": 1,
+                    "changes": [{"name": stream, "action": "upgrade"}],
+                },
+            )
+        ui.set_setting_value(
+            db,
+            APPLIANCE_UPDATE_AVAILABILITY_KEY,
+            update_availability_to_json(state),
+        )
+        db.commit()
+
+
+def test_availability_preserves_confirmed_update_across_failed_recheck_and_stales_on_change():
+    """Preserve prior confirmation while making the failed latest attempt install-blocking."""
+    from atlaso.app.services.appliance_update import (
+        clear_installed_update_availability,
+        empty_update_availability,
+        manual_install_gate,
+        record_update_availability_attempt,
+        update_availability_summary,
+        update_stream_configuration_fingerprint,
+    )
+
+    settings = {
+        "source_definitions": [
+            {
+                "id": 10,
+                "kind": "photon",
+                "name": "Photon",
+                "url": "https://packages.example.test/photon",
+                "enabled": True,
+                "validation_status": "valid",
+                "settings": {"managed": True},
+            }
+        ]
+    }
+    fingerprint = update_stream_configuration_fingerprint("photon_os", settings)
+    changes = [
+        {"name": f"package-{index}", "current": "1", "target": "2", "action": "upgrade"}
+        for index in range(105)
+    ]
+    state = record_update_availability_attempt(
+        empty_update_availability(),
+        stream="photon_os",
+        job_id="job-success",
+        checked_at=datetime(2026, 8, 21, 10, tzinfo=timezone.utc),
+        fingerprint=fingerprint,
+        result={
+            "state": "available",
+            "current": "Installed packages",
+            "target": "105 updates",
+            "change_count": 105,
+            "changes": changes,
+            "summary": "Photon updates are available.",
+        },
+    )
+    state = record_update_availability_attempt(
+        state,
+        stream="photon_os",
+        job_id="job-failed",
+        checked_at=datetime(2026, 8, 21, 11, tzinfo=timezone.utc),
+        fingerprint=fingerprint,
+        result={
+            "state": "failed",
+            "remediation": "Synchronize repositories and check Photon OS again.",
+        },
+    )
+
+    summary = update_availability_summary(state, settings)
+    photon = next(row for row in summary["streams"] if row["id"] == "photon_os")
+    assert summary["available"] is True
+    assert summary["affected_stream_count"] == 1
+    assert photon["last_attempt"] == {
+        "checked_at": "2026-08-21T11:00:00+00:00",
+        "success": False,
+        "state": "failed",
+        "current": "Installed packages",
+        "target": "105 updates",
+        "remediation": "Synchronize repositories and check Photon OS again.",
+    }
+    assert photon["confirmed"]["change_count"] == 105
+    assert len(photon["confirmed"]["changes"]) == 20
+    assert photon["confirmed"]["details_incomplete"] is True
+    assert manual_install_gate(summary, ["photon_os"]) == (
+        False,
+        "Synchronize repositories and check Photon OS again.",
+    )
+
+    changed_settings = json.loads(json.dumps(settings))
+    changed_settings["source_definitions"][0]["url"] += "/changed"
+    stale = update_availability_summary(state, changed_settings)
+    stale_photon = next(row for row in stale["streams"] if row["id"] == "photon_os")
+    assert stale["available"] is False
+    assert stale_photon["stale"] is True
+    assert stale_photon["confirmed"] is None
+
+    retained = clear_installed_update_availability(
+        state, successful_streams=["powershell_modules"]
+    )
+    assert retained["streams"]["photon_os"]["confirmed"]
+    cleared = clear_installed_update_availability(
+        state, successful_streams=["photon_os"]
+    )
+    assert "confirmed" not in cleared["streams"]["photon_os"]
+
+
+def test_availability_mixed_stream_results_and_manual_install_gate():
+    """Expose mixed results independently and gate all selected streams."""
+    from atlaso.app.services.appliance_update import (
+        empty_update_availability,
+        manual_install_gate,
+        record_update_availability_attempt,
+        update_availability_summary,
+        update_stream_configuration_fingerprints,
+    )
+
+    settings = {}
+    fingerprints = update_stream_configuration_fingerprints(settings)
+    state = empty_update_availability()
+    for stream, result in (
+        ("photon_os", {"state": "available", "change_count": 2}),
+        ("powershell_modules", {"state": "up_to_date"}),
+        ("atlaso_release", {"state": "failed", "remediation": "Verify the signed source."}),
+    ):
+        state = record_update_availability_attempt(
+            state,
+            stream=stream,
+            job_id=f"job-{stream}",
+            checked_at=datetime(2026, 8, 21, 12, tzinfo=timezone.utc),
+            fingerprint=fingerprints[stream],
+            result=result,
+        )
+
+    summary = update_availability_summary(state, settings)
+    states = {
+        row["id"]: row["last_attempt"]["state"] for row in summary["streams"]
+    }
+    assert states == {
+        "photon_os": "available",
+        "powershell_modules": "up_to_date",
+        "atlaso_release": "failed",
+    }
+    assert manual_install_gate(summary, ["photon_os", "powershell_modules"]) == (
+        True,
+        "",
+    )
+    assert manual_install_gate(summary, ["powershell_modules"]) == (
+        False,
+        "The selected streams are up to date.",
+    )
+    assert manual_install_gate(summary, ["photon_os", "atlaso_release"]) == (
+        False,
+        "Verify the signed source.",
+    )
+
+
+def test_scheduled_check_persists_the_configuration_it_actually_used(client):
+    """Keep scheduled confirmations current even when their task config has no browser snapshot."""
+    from atlaso.app import ui
+    from atlaso.app.database import SessionLocal
+    from atlaso.app.models import Job, JobStatus
+
+    client.get("/ui/management/login")
+    with SessionLocal() as db:
+        settings = ui.appliance_update_settings(db)
+        job = Job(
+            id="job-scheduled-check",
+            type="appliance-update",
+            status=JobStatus.RUNNING.value,
+            created_by="automation",
+            trigger="schedule",
+            task_config_json=json.dumps(
+                {"mode": "check", "selected_streams": ["photon_os"]}
+            ),
+        )
+        db.add(job)
+        db.commit()
+        result = ui.aggregate_appliance_update_results(
+            selected_stream_ids=["photon_os"],
+            settings=settings,
+            actor="automation",
+            mode="check",
+            stream_results=[
+                {
+                    "unit_id": "photon_os",
+                    "status": JobStatus.SUCCEEDED.value,
+                    "success": True,
+                    "dry_run": False,
+                    "commands": [],
+                    "availability": {
+                        "state": "available",
+                        "current": "1",
+                        "target": "2",
+                        "change_count": 1,
+                    },
+                }
+            ],
+            job_id=job.id,
+        )
+        ui.complete_appliance_update_task(db, job=job, update_result=result)
+        summary = ui.appliance_update_availability_summary(db)
+
+    photon = next(row for row in summary["streams"] if row["id"] == "photon_os")
+    assert photon["stale"] is False
+    assert photon["confirmed"]["update_available"] is True
 
 
 def test_no_change_release_does_not_schedule_an_unverified_restart():
@@ -95,6 +330,7 @@ def test_appliance_update_page_and_dry_run_job(client):
         source.url = "https://updates.example.test/releases"
         db.add(source)
         db.commit()
+    seed_available_confirmations(["photon_os", "atlaso_release"])
     page = client.get("/appliance-update")
     assert page.status_code == 200
     assert "Appliance Update" in page.text
@@ -186,6 +422,40 @@ def test_appliance_update_page_and_dry_run_job(client):
     assert "atlaso-helper appliance-update check /var/lib/atlaso/apply/appliance-update/atlaso-update.json" in command_lines
     assert "atlaso-helper appliance-update apply /var/lib/atlaso/apply/appliance-update/atlaso-update.json" in command_lines
     assert "atlaso-helper appliance-update restart-service /var/lib/atlaso/apply/appliance-update/atlaso-update.json" in command_lines
+
+
+def test_install_action_has_server_rendered_fresh_check_reason(client):
+    """Keep the exact manual-install blocker available without JavaScript."""
+    login(client)
+    page = client.get("/ui/management/appliance-update")
+    assert page.status_code == 200
+    assert "Check Photon OS successfully before installing it." in page.text
+    assert "data-appliance-update-install-action disabled" in page.text
+
+
+def test_global_update_indicator_renders_and_has_visibility_aware_refresh(client):
+    """Render the affected-stream count and retain the polling accessibility contract."""
+    login(client)
+    seed_available_confirmations(["photon_os", "atlaso_release"])
+
+    page = client.get("/ui/management/dashboard")
+    assert page.status_code == 200
+    assert 'data-update-availability-indicator' in page.text
+    assert 'href="/ui/management/appliance-update#appliance-update-streams"' in page.text
+    assert 'aria-label="Update available for 2 update streams"' in page.text
+    assert 'data-update-availability-count>2</span>' in page.text
+
+    app_js = (Path(__file__).resolve().parents[1] / "atlaso" / "app" / "static" / "app.js").read_text(
+        encoding="utf-8"
+    )
+    assert 'fetch("/ui/management/appliance-update/availability"' in app_js
+    assert 'cache: "no-store"' in app_js
+    assert 'document.addEventListener("visibilitychange"' in app_js
+    assert "if (document.hidden) return;" in app_js
+    assert "}, 60000);" in app_js
+    assert "refreshApplianceUpdateAvailability().catch(() => {});" in app_js
+    assert "checkButton.disabled = active || selectedIds.length === 0" in app_js
+    assert "stream.last_attempt?.success !== true || !stream.confirmed" in app_js
 
 
 def test_appliance_update_real_helper_failure_is_logged(client, monkeypatch, caplog):
@@ -290,6 +560,7 @@ def test_appliance_update_staging_exception_records_failed_job_and_logs(client, 
     monkeypatch.setattr(ui, "stage_appliance_apply_config", fail_stage)
 
     login(client)
+    seed_available_confirmations(["photon_os"])
     page = client.get("/appliance-update")
     csrf = csrf_from_page(page.text)
     with caplog.at_level(logging.INFO, logger="atlaso.appliance_update"):
@@ -1057,6 +1328,9 @@ def test_helper_rejects_unsynchronized_powershell_repository():
     assert helper._appliance_update_config_errors(payload, require_streams=True) == [
         "PowerShell repository PSGallery is not synchronized; run Synchronize repositories before checking or installing managed modules."
     ]
+    assert helper._appliance_update_config_errors(
+        payload, require_streams=True, require_synchronized=False
+    ) == []
     payload["source_definitions"][0]["validation_status"] = "valid"
     assert helper._appliance_update_config_errors(payload, require_streams=True) == []
 
@@ -1081,6 +1355,9 @@ def test_helper_rejects_unsynchronized_managed_photon_repository():
     assert helper._appliance_update_config_errors(payload, require_streams=True) == [
         "Photon repository System Photon repositories is not synchronized; run Synchronize repositories before checking or installing Photon OS updates."
     ]
+    assert helper._appliance_update_config_errors(
+        payload, require_streams=True, require_synchronized=False
+    ) == []
     payload["source_definitions"][0]["validation_status"] = "valid"
     assert helper._appliance_update_config_errors(payload, require_streams=True) == []
 
@@ -1265,6 +1542,7 @@ def test_helper_retries_failed_powershell_repository_removal(monkeypatch, tmp_pa
             command: Command and arguments to execute.
             success_codes: Success codes supplied to the test scenario.
             env: Environment variables supplied to the child process.
+            stdout_limit: Maximum retained standard output supplied to the helper.
         """
         nonlocal attempts
         attempts += 1
@@ -1399,6 +1677,213 @@ def test_helper_promotes_source_sync_failure_to_stderr(monkeypatch, tmp_path, ca
     assert message in captured.err
 
 
+def test_helper_photon_check_parses_and_truncates_candidate_rows(monkeypatch):
+    """Use the tdnf return-code contract and retain bounded package details."""
+    helper = load_helper_module()
+    rows = [
+        f"package-{index}.x86_64 2.{index}-1 photon-updates"
+        for index in range(105)
+    ]
+
+    monkeypatch.setattr(helper, "_command_path", lambda name: f"/usr/bin/{name}")
+    monkeypatch.setattr(
+        helper,
+        "_photon_python_compatibility",
+        lambda: {
+            "command": ["python-compatibility"],
+            "returncode": 0,
+            "success": True,
+            "stdout": "compatible",
+            "stderr": "",
+        },
+    )
+
+    def fake_command(command, *, success_codes=None, env=None, stdout_limit=4000):
+        """Return stable tdnf and rpm evidence for the check."""
+        if command[1:] == ["check-update"]:
+            return {
+                "command": command,
+                "returncode": 100,
+                "success": True,
+                "stdout": "\n".join(rows),
+                "stderr": "",
+            }
+        if command[0].endswith("rpm"):
+            names = command[4:]
+            return {
+                "command": command,
+                "returncode": 0,
+                "success": True,
+                "stdout": "\n".join(f"{name}\t0:1.0-1" for name in names),
+                "stderr": "",
+            }
+        return {
+            "command": command,
+            "returncode": 0,
+            "success": True,
+            "stdout": "",
+            "stderr": "",
+        }
+
+    monkeypatch.setattr(helper, "_command_payload", fake_command)
+    result = helper._check_appliance_update(
+        {"selected_streams": ["photon_os"], "source_definitions": []}
+    )
+
+    check = result["checks"]["photon_os"]
+    assert check["state"] == "available"
+    assert check["change_count"] == 105
+    assert len(check["changes"]) == 100
+    assert check["changes"][0] == {
+        "name": "package-0",
+        "current": "0:1.0-1",
+        "target": "2.0-1",
+        "action": "upgrade",
+        "summary": "package-0 from photon-updates",
+    }
+    assert check["details_incomplete"] is True
+    assert result["commands"][1]["returncode"] == 100
+    assert len(result["commands"][1]["stdout"]) <= 4000
+
+
+def test_helper_powershell_check_reports_truthful_version_actions(monkeypatch, tmp_path):
+    """Distinguish add, upgrade, side-by-side, and current module states."""
+    import base64
+
+    helper = load_helper_module()
+    powershell_home = tmp_path / "powershell"
+    monkeypatch.setattr(helper, "ATLASO_POWERSHELL_HOME", powershell_home)
+    monkeypatch.setattr(helper, "_command_path", lambda _name: "/usr/bin/pwsh")
+    evidence = {
+        "Add.Tools": ("2.0.0", []),
+        "Upgrade.Tools": ("2.0.0", ["1.0.0"]),
+        "SideBySide.Tools": ("1.0.0", ["2.0.0"]),
+        "Current.Tools": ("2.0.0", ["1.0.0", "2.0.0"]),
+    }
+
+    def fake_command(command, *, success_codes=None, env=None, stdout_limit=4000):
+        script = base64.b64decode(command[-1]).decode("utf-16-le")
+        name = next(candidate for candidate in evidence if candidate in script)
+        available, installed = evidence[name]
+        return {
+            "command": command,
+            "returncode": 0,
+            "success": True,
+            "stdout": json.dumps(
+                {
+                    "Name": name,
+                    "AvailableVersion": available,
+                    "InstalledVersions": installed,
+                }
+            ),
+            "stderr": "",
+        }
+
+    monkeypatch.setattr(helper, "_command_payload", fake_command)
+    result = helper._check_appliance_update(
+        {
+            "selected_streams": ["powershell_modules"],
+            "sources": {
+                "powershell_repository_name": "PSGallery",
+                "powershell_repository_url": "https://www.powershellgallery.com/api/v2",
+            },
+            "powershell_modules": [
+                {"name": name, "repository_name": "PSGallery"}
+                for name in evidence
+            ],
+        }
+    )
+
+    check = result["checks"]["powershell_modules"]
+    assert check["state"] == "available"
+    assert {row["name"]: row["action"] for row in check["changes"]} == {
+        "Add.Tools": "add",
+        "Upgrade.Tools": "upgrade",
+        "SideBySide.Tools": "side-by-side",
+    }
+    assert "Current.Tools" not in {row["name"] for row in check["changes"]}
+    assert all("remove" not in row["action"] for row in check["changes"])
+
+
+def test_helper_atlaso_check_uses_signed_summary_and_legacy_fallback(monkeypatch):
+    """Expose optional signed release metadata without fabricating legacy notes."""
+    helper = load_helper_module()
+    release = {
+        "version": "0.9.999",
+        "git_commit": "a" * 40,
+        "supported_python_abis": [helper._current_python_abi()],
+        "signing_key_id": "test-key",
+        "bundle": {"sha256": "b" * 64},
+        "summary": "Improve durable update visibility",
+        "release_notes_url": "https://example.test/releases/v0.9.999",
+    }
+    monkeypatch.setattr(
+        helper,
+        "_download_signed_release_from_sources",
+        lambda _payload, _credentials: (
+            {"channel": "stable"},
+            release,
+            "https://example.test/releases/manifest.json",
+            None,
+        ),
+    )
+    payload = {
+        "selected_streams": ["atlaso_release"],
+        "current": {"base_version": "0.9.1"},
+    }
+    current = helper._check_appliance_update(payload)["checks"]["atlaso_release"]
+    assert current["summary"] == "Improve durable update visibility"
+    assert current["release_notes_url"] == "https://example.test/releases/v0.9.999"
+
+    release.pop("summary")
+    release.pop("release_notes_url")
+    legacy = helper._check_appliance_update(payload)["checks"]["atlaso_release"]
+    assert legacy["summary"] == f"Signed Atlaso release 0.9.999 at {'a' * 12}"
+    assert legacy["release_notes_url"] == ""
+
+
+def test_release_manifest_optional_summary_fields_are_backward_compatible_and_safe():
+    """Accept legacy v2 manifests and reject unsafe optional publication metadata."""
+    helper = load_helper_module()
+    manifest = {
+        "schema_version": 2,
+        "kind": "atlaso-release",
+        "updater_protocol": 2,
+        "database_schema_version": 1,
+        "version": "0.9.999",
+        "git_commit": "a" * 40,
+        "built_at": "2026-08-21T12:00:00Z",
+        "signing_key_id": "test-key",
+        "supported_python_abis": [helper._current_python_abi()],
+        "bundle": {
+            "url": "https://example.test/atlaso.tar.gz",
+            "sha256": "b" * 64,
+            "size": 123,
+        },
+        "content_hashes": {"packages/atlaso.whl": "c" * 64},
+    }
+    assert helper._validate_release_manifest(dict(manifest))["version"] == "0.9.999"
+
+    enriched = {
+        **manifest,
+        "summary": "Improve update visibility",
+        "release_notes_url": "https://example.test/releases/v0.9.999",
+    }
+    assert helper._validate_release_manifest(enriched)["summary"] == "Improve update visibility"
+
+    for invalid in (
+        {**manifest, "summary": "first\nsecond"},
+        {**manifest, "release_notes_url": "http://example.test/release"},
+        {**manifest, "release_notes_url": "https://user:secret@example.test/release"},
+    ):
+        try:
+            helper._validate_release_manifest(invalid)
+        except ValueError:
+            pass
+        else:
+            raise AssertionError("unsafe optional release metadata was accepted")
+
+
 def test_helper_uses_each_modules_bound_powershell_repository(monkeypatch, tmp_path):
     """Verify that helper uses each modules bound powershell repository.
 
@@ -1415,7 +1900,7 @@ def test_helper_uses_each_modules_bound_powershell_repository(monkeypatch, tmp_p
     monkeypatch.setattr(helper, "ATLASO_POWERSHELL_HOME", powershell_home)
     monkeypatch.setattr(helper, "_command_path", lambda _name: "/usr/bin/pwsh")
 
-    def fake_command(command, *, success_codes=None, env=None):
+    def fake_command(command, *, success_codes=None, env=None, stdout_limit=4000):
         """Return fake command.
 
         Args:
@@ -1425,20 +1910,41 @@ def test_helper_uses_each_modules_bound_powershell_repository(monkeypatch, tmp_p
         """
         scripts.append(base64.b64decode(command[-1]).decode("utf-16-le"))
         environments.append(env)
-        return {"command": command, "returncode": 0, "success": True, "stdout": "", "stderr": ""}
+        module_name = "Private.Tools" if "Private.Tools" in scripts[-1] else "VCF.PowerCLI"
+        available = "2.0.0" if module_name == "Private.Tools" else "9.1.0"
+        installed = ["1.0.0"] if module_name == "Private.Tools" else []
+        return {
+            "command": command,
+            "returncode": 0,
+            "success": True,
+            "stdout": json.dumps(
+                {
+                    "Name": module_name,
+                    "AvailableVersion": available,
+                    "InstalledVersions": installed,
+                }
+            ),
+            "stderr": "",
+        }
 
     monkeypatch.setattr(helper, "_command_payload", fake_command)
     result = helper._check_appliance_update(
         {
             "selected_streams": ["powershell_modules"],
-            "sources": {"powershell_repository_name": "PSGallery"},
+            "sources": {
+                "powershell_repository_name": "PSGallery",
+                "powershell_repository_url": "https://www.powershellgallery.com/api/v2",
+            },
             "powershell_modules": [
                 {"name": "VCF.PowerCLI", "repository_name": "PSGallery", "target_version": "9.1.0"},
                 {"name": "Private.Tools", "repository_name": "PrivateGallery", "target_version": ""},
             ],
         }
     )
-    assert result["checks"]["powershell_modules"][1]["repository"] == "PrivateGallery"
+    changes = result["checks"]["powershell_modules"]["changes"]
+    assert [change["name"] for change in changes] == ["VCF.PowerCLI", "Private.Tools"]
+    assert changes[0]["action"] == "add"
+    assert changes[1]["action"] == "upgrade"
     assert any("-Repository 'PrivateGallery'" in script for script in scripts)
     assert all(environment["HOME"] == str(powershell_home) for environment in environments)
 

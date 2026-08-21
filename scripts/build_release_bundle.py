@@ -370,6 +370,11 @@ def main() -> int:
         bundle_name = f"atlaso-appliance-{version}.tar.gz"
         bundle_path = output / bundle_name
         deterministic_tar_gz(bundle_root, bundle_path)
+        release_summary = " ".join(
+            git_value(["show", "-s", "--format=%s", commit]).split()
+        )[:240]
+        if not release_summary:
+            raise SystemExit("release commit subject is empty")
         release_manifest = {
             "schema_version": 2,
             "kind": "atlaso-release",
@@ -377,6 +382,8 @@ def main() -> int:
             "database_schema_version": 1,
             "version": version,
             "git_commit": commit,
+            "summary": release_summary,
+            "release_notes_url": f"https://github.com/mdaneri/Atlaso/releases/tag/v{version}",
             "built_at": built_at,
             "signing_key_id": args.signing_key_id,
             "supported_python_abis": list(SUPPORTED_ABIS),
