@@ -17,6 +17,7 @@ param(
     [string]$WheelPath = '',
     [string]$OnePasswordEnvironmentId = '',
     [Parameter(DontShow = $true)][string]$OnePasswordBridgeHandle = '',
+    [Parameter(DontShow = $true)][string]$OnePasswordBridgeChallenge = '',
     [switch]$ResetVaultEntries,
     [switch]$SkipHostCheck
 )
@@ -61,7 +62,7 @@ function Get-OnePasswordChildArguments {
 
     $childArguments = @('-NoLogo', '-NoProfile', '-NonInteractive', '-File', $ScriptPath)
     foreach ($entry in $BoundParameters.GetEnumerator()) {
-        if ($entry.Key -in @('OnePasswordEnvironmentId', 'OnePasswordBridgeHandle')) {
+        if ($entry.Key -in @('OnePasswordEnvironmentId', 'OnePasswordBridgeHandle', 'OnePasswordBridgeChallenge')) {
             continue
         }
         if ($entry.Value -is [System.Management.Automation.SwitchParameter]) {
@@ -99,6 +100,9 @@ function Invoke-OnePasswordEnvironmentBridge {
     }
 
     $childArguments = Get-OnePasswordChildArguments -BoundParameters $BoundParameters -ScriptPath $ScriptPath
+    $challengeBytes = [byte[]]::new(32)
+    [System.Security.Cryptography.RandomNumberGenerator]::Fill($challengeBytes)
+    $bridgeChallenge = [Convert]::ToHexString($challengeBytes)
     $bridgeServer = [System.IO.Pipes.AnonymousPipeServerStream]::new(
         [System.IO.Pipes.PipeDirection]::In,
         [System.IO.HandleInheritability]::Inheritable
@@ -107,7 +111,10 @@ function Invoke-OnePasswordEnvironmentBridge {
     $bridgeReadBuffer = [byte[]]::new(1)
     $bridgeReadTask = $bridgeServer.ReadAsync($bridgeReadBuffer, 0, 1)
     try {
-        $childArguments += @('-OnePasswordBridgeHandle', $bridgeHandle)
+        $childArguments += @(
+            '-OnePasswordBridgeHandle', $bridgeHandle,
+            '-OnePasswordBridgeChallenge', $bridgeChallenge
+        )
         & $opPath run --environment $EnvironmentId -- $pwsh.Source @childArguments
         $bridgeExitCode = $LASTEXITCODE
         if (-not $bridgeReadTask.Wait(5000) -or $bridgeReadTask.Result -ne 1 -or $bridgeReadBuffer[0] -ne 165) {
@@ -172,32 +179,39 @@ function Test-OnePasswordBridgeServerAncestor {
     return $false
 }
 
-function Get-OnePasswordBridgeServerEnvironmentId {
-    param([Parameter(Mandatory = $true)][int]$ServerProcessId)
-
-    try {
-        $serverProcess = Get-CimInstance -ClassName Win32_Process -Filter "ProcessId = $ServerProcessId" -ErrorAction Stop
-    } catch {
-        throw 'Unable to authenticate the 1Password Environment bridge process ancestry; deployment stopped before authentication.'
-    }
-    if (-not $serverProcess) {
-        return ''
-    }
-    $serverCommandLine = [string]$serverProcess.CommandLine
-    if ($serverCommandLine -notmatch '(?i)deploy-wheel\.ps1') {
-        return ''
-    }
-    $environment = [regex]::Match(
-        $serverCommandLine,
-        '(?i)(?:^|\s)-OnePasswordEnvironmentId(?:=|\s+)"?(?<id>[A-Za-z0-9_-]{8,128})"?(?=\s|$)'
+function Test-OnePasswordEnvironmentPasswordProof {
+    param(
+        [Parameter(Mandatory = $true)][string]$EnvironmentId,
+        [Parameter(Mandatory = $true)][string]$Challenge,
+        [Parameter(Mandatory = $true)][string]$Password
     )
-    if (-not $environment.Success) {
-        return ''
+
+    if ($Challenge -notmatch '^[0-9A-Fa-f]{64}$') {
+        return $false
     }
-    return $environment.Groups['id'].Value
+    $challengeBytes = [Convert]::FromHexString($Challenge)
+    $hmac = [System.Security.Cryptography.HMACSHA256]::new(
+        [System.Text.Encoding]::UTF8.GetBytes($Password)
+    )
+    try {
+        $expectedProof = [Convert]::ToHexString($hmac.ComputeHash($challengeBytes))
+    } finally {
+        $hmac.Dispose()
+    }
+
+    $opPath = Resolve-OnePasswordCliPath
+    $pwsh = Get-Command pwsh -ErrorAction SilentlyContinue
+    if (-not $pwsh) {
+        return $false
+    }
+    $verificationScript = '$password = [Environment]::GetEnvironmentVariable("DEFAULT_ADMIN_PASSWORD"); if ([string]::IsNullOrEmpty($password)) { exit 41 }; $hmac = [System.Security.Cryptography.HMACSHA256]::new([System.Text.Encoding]::UTF8.GetBytes($password)); try { [Convert]::ToHexString($hmac.ComputeHash([Convert]::FromHexString($args[0]))) } finally { $hmac.Dispose() }'
+    $verificationOutput = (& $opPath run --environment $EnvironmentId -- $pwsh.Source -NoLogo -NoProfile -NonInteractive -Command $verificationScript $Challenge 2>$null | Out-String).Trim()
+    return $LASTEXITCODE -eq 0 -and [string]::Equals($verificationOutput, $expectedProof, [System.StringComparison]::OrdinalIgnoreCase)
 }
 
 function Test-OnePasswordBridgeProcess {
+    param([string]$Password = '')
+
     $processId = [int]$PID
     $visited = @{}
     while ($processId -gt 0 -and -not $visited.ContainsKey($processId)) {
@@ -212,7 +226,8 @@ function Test-OnePasswordBridgeProcess {
         }
         $childCommandLine = [string]$process.CommandLine
         if ($childCommandLine -notmatch '(?i)deploy-wheel\.ps1' -or
-            $childCommandLine -notmatch '(?i)(^|\s)-OnePasswordBridgeHandle(?:=|\s)') {
+            $childCommandLine -notmatch '(?i)(^|\s)-OnePasswordBridgeHandle(?:=|\s)' -or
+            $childCommandLine -notmatch '(?i)(^|\s)-OnePasswordBridgeChallenge(?:=|\s)') {
             $processId = [int]$process.ParentProcessId
             continue
         }
@@ -221,6 +236,14 @@ function Test-OnePasswordBridgeProcess {
             '(?i)(?:^|\s)-OnePasswordBridgeHandle(?:=|\s+)"?(?<handle>[0-9A-Fa-fx]+)"?(?=\s|$)'
         )
         if (-not $childHandle.Success) {
+            $processId = [int]$process.ParentProcessId
+            continue
+        }
+        $childChallenge = [regex]::Match(
+            $childCommandLine,
+            '(?i)(?:^|\s)-OnePasswordBridgeChallenge(?:=|\s+)"?(?<challenge>[0-9A-Fa-f]{64})"?(?=\s|$)'
+        )
+        if (-not $childChallenge.Success) {
             $processId = [int]$process.ParentProcessId
             continue
         }
@@ -250,20 +273,14 @@ function Test-OnePasswordBridgeProcess {
                 )
                 try {
                     $serverProcessId = Get-OnePasswordBridgePipeServerProcessId -PipeClient $bridgeClient
-                    $trustedEnvironmentId = if ($serverProcessId -gt 0) {
-                        Get-OnePasswordBridgeServerEnvironmentId -ServerProcessId $serverProcessId
-                    } else {
-                        ''
-                    }
-                    $isTrustedEnvironment = $trustedEnvironmentId -and
-                        [string]::Equals(
-                            $trustedEnvironmentId,
-                            $opEnvironment.Groups['id'].Value,
-                            [System.StringComparison]::Ordinal
-                        )
-                    $isDirectOpChild = $serverProcessId -gt 0 -and [int]$parent.ParentProcessId -eq $serverProcessId
-                    if ($isTrustedEnvironment -and $isDirectOpChild -and
-                        (Test-OnePasswordBridgeServerAncestor -ServerProcessId $serverProcessId)) {
+                    $isAuthenticatedPipe = $serverProcessId -gt 0 -and
+                        (Test-OnePasswordBridgeServerAncestor -ServerProcessId $serverProcessId)
+                    $isAuthenticatedPassword = [string]::IsNullOrEmpty($Password) -or
+                        (Test-OnePasswordEnvironmentPasswordProof `
+                            -EnvironmentId $opEnvironment.Groups['id'].Value `
+                            -Challenge $childChallenge.Groups['challenge'].Value `
+                            -Password $Password)
+                    if ($isAuthenticatedPipe -and $isAuthenticatedPassword) {
                         $bridgeClient.WriteByte(165)
                         $bridgeClient.Flush()
                         return $true
@@ -285,7 +302,9 @@ function Test-OnePasswordBridgeProcess {
 }
 
 function Assert-OnePasswordBridgeProcess {
-    if (Test-OnePasswordBridgeProcess) {
+    param([Parameter(Mandatory = $true)][string]$Password)
+
+    if (Test-OnePasswordBridgeProcess -Password $Password) {
         return
     }
     throw 'The deployment password was not supplied by an authenticated 1Password Environment subprocess; deployment stopped before authentication.'
@@ -298,12 +317,12 @@ function Resolve-OnePasswordChildPassword {
         }
         return ''
     }
-    Assert-OnePasswordBridgeProcess
     $password = [string]$env:DEFAULT_ADMIN_PASSWORD
     Remove-Item Env:\DEFAULT_ADMIN_PASSWORD -ErrorAction SilentlyContinue
     if ([string]::IsNullOrEmpty($password)) {
         throw 'The exact 1Password Environment did not provide DEFAULT_ADMIN_PASSWORD; deployment stopped before authentication.'
     }
+    Assert-OnePasswordBridgeProcess -Password $password
     return $password
 }
 

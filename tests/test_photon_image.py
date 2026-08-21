@@ -1580,9 +1580,9 @@ def test_vmware_deploy_wheel_supports_secure_onepassword_password_deploy():
 
     assert "[string]$OnePasswordEnvironmentId = ''" in script
     assert "Get-CimInstance -ClassName Win32_Process" in script
-    assert "Get-OnePasswordBridgeServerEnvironmentId" in script
-    assert "$trustedEnvironmentId" in script
-    assert "$isDirectOpChild" in script
+    assert "Test-OnePasswordEnvironmentPasswordProof" in script
+    assert "HMACSHA256" in script
+    assert "OnePasswordBridgeChallenge" in script
     assert "[switch]$OnePasswordEnvironmentChild" not in script
     assert "function Invoke-OnePasswordEnvironmentBridge" in script
     assert "--environment $EnvironmentId" in script
@@ -1639,7 +1639,7 @@ def test_vmware_deploy_wheel_supports_secure_onepassword_password_deploy():
     assert "[System.IO.Pipes.PipeDirection]::In" in script
     assert "[System.IO.Pipes.PipeDirection]::Out" in script
     assert "[System.IO.HandleInheritability]::Inheritable" in script
-    assert "handle's server to be the direct deploy-script parent" in readme
+    assert "fresh HMAC proof while the captured password is already removed" in readme
     assert "$invokingProcess.CommandLine" not in script
     assert "client.set_missing_host_key_policy(paramiko.RejectPolicy())" in script
     assert "client.load_system_host_keys()" in script

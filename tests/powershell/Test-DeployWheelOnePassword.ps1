@@ -49,26 +49,6 @@ Assert-Throws {
     Assert-OnePasswordEnvironmentSupport -RunHelp 'Flags:`n  --env-file string'
 } 'A CLI without Environment loading must fail closed.'
 
-$script:bridgeServerProcessFixture = [pscustomobject]@{
-    CommandLine = 'pwsh.exe -File C:\repo\deploy-wheel.ps1 -OnePasswordEnvironmentId blgexucrwfr2dtsxe2q4uu7dp4'
-}
-function Get-CimInstance {
-    param([Parameter(ValueFromRemainingArguments = $true)]$Arguments)
-    return $script:bridgeServerProcessFixture
-}
-try {
-    if ((Get-OnePasswordBridgeServerEnvironmentId -ServerProcessId 1234) -ne 'blgexucrwfr2dtsxe2q4uu7dp4') {
-        throw 'The bridge must recover the Environment ID from the deploy-script parent.'
-    }
-    $script:bridgeServerProcessFixture.CommandLine = 'pwsh.exe -File C:\repo\deploy-wheel.ps1 -OnePasswordBridgeHandle 1234'
-    if (Get-OnePasswordBridgeServerEnvironmentId -ServerProcessId 1234) {
-        throw 'A direct op run without the parent-selected Environment ID must fail closed.'
-    }
-} finally {
-    Remove-Item Function:\Get-CimInstance -ErrorAction SilentlyContinue
-    Remove-Variable bridgeServerProcessFixture -Scope Script -ErrorAction SilentlyContinue
-}
-
 $boundParameters = @{
     OnePasswordEnvironmentId = 'blgexucrwfr2dtsxe2q4uu7dp4'
     OnePasswordBridgeHandle = 'caller-controlled-value-must-not-forward'
@@ -98,7 +78,10 @@ $env:DEFAULT_ADMIN_PASSWORD = 'fixture-secret-is-not-output'
 Assert-Throws {
     Resolve-OnePasswordChildPassword
 } 'A caller-provided DEFAULT_ADMIN_PASSWORD without an authenticated op process must fail closed.'
-function Assert-OnePasswordBridgeProcess {}
+$env:DEFAULT_ADMIN_PASSWORD = 'fixture-secret-is-not-output'
+function Assert-OnePasswordBridgeProcess {
+    param([string]$Password)
+}
 try {
     if ((Resolve-OnePasswordChildPassword) -ne 'fixture-secret-is-not-output') {
         throw 'The bridge child did not consume the named Environment variable.'
@@ -149,10 +132,10 @@ if ($scriptText.Contains('[switch]$OnePasswordEnvironmentChild', [System.StringC
 if (-not $scriptText.Contains('Get-CimInstance -ClassName Win32_Process', [System.StringComparison]::Ordinal)) {
     throw 'The bridge child must authenticate its op.exe process ancestry.'
 }
-if (-not $scriptText.Contains('Get-OnePasswordBridgeServerEnvironmentId', [System.StringComparison]::Ordinal) -or
-    -not $scriptText.Contains('$trustedEnvironmentId', [System.StringComparison]::Ordinal) -or
-    -not $scriptText.Contains('$isDirectOpChild', [System.StringComparison]::Ordinal)) {
-    throw 'The bridge child must bind the inherited handle to the trusted parent-selected Environment.'
+if (-not $scriptText.Contains('Test-OnePasswordEnvironmentPasswordProof', [System.StringComparison]::Ordinal) -or
+    -not $scriptText.Contains('HMACSHA256', [System.StringComparison]::Ordinal) -or
+    -not $scriptText.Contains('OnePasswordBridgeChallenge', [System.StringComparison]::Ordinal)) {
+    throw 'The bridge child must bind the inherited handle to an exact Environment password proof.'
 }
 if (-not $scriptText.Contains('Test-OnePasswordBridgeProcess', [System.StringComparison]::Ordinal)) {
     throw 'The bridge child must fail closed when the authenticated Environment omits DEFAULT_ADMIN_PASSWORD.'
@@ -184,7 +167,9 @@ if (-not $scriptText.Contains('read_paramiko_command_output', [System.StringComp
     -not $scriptText.Contains('args.timeout + 60', [System.StringComparison]::Ordinal)) {
     throw 'Password-backed deployment must drain Paramiko stdout and stderr without channel deadlock.'
 }
-if ($scriptText.Contains('$invokingProcess.CommandLine', [System.StringComparison]::Ordinal)) {
+if ($scriptText.Contains('$invokingProcess.CommandLine', [System.StringComparison]::Ordinal) -or
+    $scriptText.Contains('Get-OnePasswordBridgeServerEnvironmentId', [System.StringComparison]::Ordinal) -or
+    $scriptText.Contains('$isDirectOpChild', [System.StringComparison]::Ordinal)) {
     throw 'Bridge authorization must not depend on the interactive PowerShell startup command line.'
 }
 
