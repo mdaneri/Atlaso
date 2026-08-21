@@ -616,14 +616,49 @@ def test_factory_reset_scrubs_credentials_outside_apply_staging(tmp_path, monkey
     assert list(ldap_recovery.iterdir()) == []
     assert retained_home_file.read_text(encoding="utf-8") == "retained payload"
     assert retained_root_ssh_config.read_text(encoding="utf-8") == "retained root SSH config"
-    assert set(synced_directories) == {
+    expected_synced_directories = {
         authorized_keys,
         terminal_requests,
         terminal_private_key.parent,
         bootstrap_ssh,
         root_ssh,
-        ldap_recovery,
     }
+    if os.name != "posix":
+        expected_synced_directories.add(ldap_recovery)
+    assert set(synced_directories) == expected_synced_directories
+
+
+@pytest.mark.skipif(os.name != "posix", reason="requires POSIX directory descriptors")
+def test_factory_reset_fsyncs_posix_ldap_recovery_directory(tmp_path, monkeypatch):
+    """LDAP export removal synchronizes its pinned directory descriptor.
+
+    Args:
+        tmp_path: Temporary directory provided by pytest for isolated filesystem state.
+        monkeypatch: Pytest fixture used to record descriptor synchronization.
+    """
+    import atlaso.app.factory_reset as factory_reset
+
+    recovery_directory = tmp_path / "ldap" / "recovery"
+    recovery_directory.mkdir(parents=True)
+    (recovery_directory / "ldap-recovery.tar.gz").write_text(
+        "password hashes",
+        encoding="utf-8",
+    )
+    recovery_inode = recovery_directory.stat().st_ino
+    synced_inodes: list[int] = []
+    monkeypatch.setattr(
+        factory_reset.os,
+        "fsync",
+        lambda descriptor: synced_inodes.append(os.fstat(descriptor).st_ino),
+    )
+
+    factory_reset._clear_symlink_resistant_directory(
+        recovery_directory,
+        label="LDAP recovery staging",
+    )
+
+    assert list(recovery_directory.iterdir()) == []
+    assert recovery_inode in synced_inodes
 
 
 def test_factory_reset_rejects_symlinked_ldap_recovery_staging(tmp_path, monkeypatch):
