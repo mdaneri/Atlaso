@@ -5179,35 +5179,48 @@ silently skipped.</p>
 helper. If you already know the appliance IP, this is the most direct path:</p>
 <div class="language-powershell highlight"><pre><span></span><code><span id="__span-35-1"><a id="__codelineno-35-1" name="__codelineno-35-1" href="#__codelineno-35-1"></a><span class="p">.\</span><span class="n">scripts</span><span class="p">\</span><span class="n">windows</span><span class="p">\</span><span class="n">vmware</span><span class="p">\</span><span class="n">deploy-wheel</span><span class="p">.</span><span class="n">ps1</span> <span class="p">`</span>
 </span><span id="__span-35-2"><a id="__codelineno-35-2" name="__codelineno-35-2" href="#__codelineno-35-2"></a>  <span class="n">-IpAddress</span> <span class="n">192</span><span class="p">.</span><span class="n">168</span><span class="p">.</span><span class="n">167</span><span class="p">.</span><span class="n">10</span> <span class="p">`</span>
-</span><span id="__span-35-3"><a id="__codelineno-35-3" name="__codelineno-35-3" href="#__codelineno-35-3"></a>  <span class="n">-SshPassword</span> <span class="s1">&#39;&lt;admin-password&gt;&#39;</span>
+</span><span id="__span-35-3"><a id="__codelineno-35-3" name="__codelineno-35-3" href="#__codelineno-35-3"></a>  <span class="n">-OnePasswordEnvironmentId</span> <span class="s1">&#39;&lt;atlaso-environment-id&gt;&#39;</span>
 </span></code></pre></div>
 <p>If you want the helper to resolve the guest IP from VMware Tools, pass the VMX path as the <code>-VmxPath</code> argument:</p>
 <div class="language-powershell highlight"><pre><span></span><code><span id="__span-36-1"><a id="__codelineno-36-1" name="__codelineno-36-1" href="#__codelineno-36-1"></a><span class="p">.\</span><span class="n">scripts</span><span class="p">\</span><span class="n">windows</span><span class="p">\</span><span class="n">vmware</span><span class="p">\</span><span class="n">deploy-wheel</span><span class="p">.</span><span class="n">ps1</span> <span class="p">`</span>
 </span><span id="__span-36-2"><a id="__codelineno-36-2" name="__codelineno-36-2" href="#__codelineno-36-2"></a>  <span class="n">-VmxPath</span> <span class="s2">&quot;image\vmware-workstation\test-vms\Atlaso-VMware\Atlaso-VMware.vmx&quot;</span> <span class="p">`</span>
-</span><span id="__span-36-3"><a id="__codelineno-36-3" name="__codelineno-36-3" href="#__codelineno-36-3"></a>  <span class="n">-SshPassword</span> <span class="s1">&#39;&lt;admin-password&gt;&#39;</span>
+</span><span id="__span-36-3"><a id="__codelineno-36-3" name="__codelineno-36-3" href="#__codelineno-36-3"></a>  <span class="n">-OnePasswordEnvironmentId</span> <span class="s1">&#39;&lt;atlaso-environment-id&gt;&#39;</span>
 </span></code></pre></div>
-<p>Do not pipe the VMX path or put it on a separate line by itself; PowerShell will try to execute the <code>.vmx</code> file. The
-helper builds <code>python -m pip wheel . -w dist</code>, uploads the latest <code>atlaso-*.whl</code> plus the pinned <code>Authlib</code>, <code>joserfc</code>,
-and <code>pycdlib</code> runtime wheels, installs them into <code>/opt/atlaso/.venv</code>, syncs <code>scripts/appliance/atlaso-helper</code> to
-<code>/opt/atlaso/bin/atlaso-helper</code>,
-builds and installs the independently versioned Inventory Linux package from <code>image/inventory-linux/output</code>, restores
-virtualenv permissions, restarts <code>atlaso.service</code>, and verifies both guest loopback and host-facing
-<code>/openapi.json</code>. With <code>-SshPassword</code>, the helper uses the local Python runtime and Paramiko so SSH and sudo do not
-prompt interactively. If the selected Python cannot already import Paramiko, the helper installs it and its dependencies
-into the temporary deployment directory from the wheels downloaded under <code>dist</code>; it does not modify the global Python
-environment. When using <code>-SkipBuild</code>, keep those dependency wheels in <code>dist</code> or install the Atlaso Python dependencies
-first. You can also set <code>ATLASO_DEPLOY_SSH_PASSWORD</code> instead of passing the password on the command line. Without a
-password, it preserves the original <code>scp</code>/<code>ssh</code> key or agent workflow. Helper sync matters because the privileged helper
-is installed outside the Python virtualenv and is not replaced by <code>pip install</code>. If the app takes longer to import after
-reinstalling the wheel, increase the readiness wait with <code>-ReadinessTimeoutSeconds 120</code>. Use
-<code>-SkipInventoryLinuxSync</code> only when deliberately leaving the appliance's existing Inventory Linux package unchanged.
-The password-backed helper omits skipped optional asset arguments instead of passing empty native-command values, so
-these skip switches behave consistently in Windows PowerShell and PowerShell 7 native-argument modes.</p>
+<p>Do not pipe the VMX path or put it on a separate line by itself; PowerShell will try to execute the <code>.vmx</code> file. Before
+using the password-backed path, authenticate the local 1Password integration, verify that exactly one Environment named
+<code>Atlaso</code> exists, and confirm that <code>DEFAULT_ADMIN_PASSWORD</code> is present and concealed without reading its value. Copy the
+opaque Environment ID from that exact Environment and pass only the ID above. The parent performs local build and input
+preparation without the credential, then invokes the bounded Paramiko helper directly as
+<code>op run --environment &lt;id&gt; -- &lt;python&gt; ...</code>; 1Password provisions <code>DEFAULT_ADMIN_PASSWORD</code> only into that child
+deployment process. The child removes the variable from its process environment immediately after capture, then starts
+Python with <code>-I -S</code> and prepends only its explicit dependency directory, so <code>sitecustomize</code>, <code>usercustomize</code>, executable
+<code>.pth</code> hooks, and inherited <code>PYTHONPATH</code> cannot observe the variable. The helper fails closed when the CLI capability,
+authorization, Environment, or variable is missing. It never accepts a password argument, local <code>.env</code> file, or the
+retired <code>ATLASO_DEPLOY_SSH_PASSWORD</code> fallback. An interactive <code>op run</code> shell is not a supported substitute for the
+exact Environment handoff.</p>
+<p>The child uses the local Python runtime and Paramiko so SSH and sudo do not prompt interactively. Paramiko loads the
+user's SSH known-hosts database and rejects unknown host keys; approve the verified appliance host key before running
+the deployment. It drains non-PTY stdout and stderr concurrently so a verbose remote failure cannot block on one
+channel and enforces the separate <code>-DeploymentTimeoutSeconds</code> remote-command deadline; the remote readiness retry keeps
+its independent <code>-ReadinessTimeoutSeconds</code> allowance. If the selected Python cannot already import Paramiko, the
+helper installs it and its dependencies into
+a temporary deployment directory from the wheels downloaded under <code>dist</code>; it does not modify the global Python
+environment. Without <code>-OnePasswordEnvironmentId</code>, the helper preserves the original <code>scp</code>/<code>ssh</code> key or agent workflow.
+Helper sync matters because the privileged helper is installed outside the Python virtualenv and is not replaced by
+<code>pip install</code>. If the app takes longer to import after reinstalling the wheel, increase the readiness wait with
+<code>-ReadinessTimeoutSeconds 120</code>. Use <code>-SkipInventoryLinuxSync</code> only when deliberately leaving the appliance's existing
+Inventory Linux package unchanged. The password-backed helper omits skipped optional asset arguments instead of passing
+empty native-command values, so these skip switches behave consistently in Windows PowerShell and PowerShell 7
+native-argument modes.</p>
 <p><code>-RemoteDirectory</code> defaults to <code>/tmp</code> and accepts an absolute POSIX path made only from ASCII letters, digits, <code>/</code>,
 <code>.</code>, <code>_</code>, and <code>-</code>; <code>.</code> and <code>..</code> path components are not allowed. The helper normalizes a trailing slash and applies the
 same validation before build or upload for password-backed and key/agent-backed SSH. Paths containing whitespace,
 apostrophes, dollar signs, backticks, semicolons, other shell metacharacters, or control characters are rejected rather
-than reinterpreted. The key/agent branch also serializes each argument at the remote shell boundary.</p>
+than reinterpreted. The key/agent branch also serializes each argument at the remote shell boundary. On Windows, it
+keeps each <code>scp</code> source and destination as separate native arguments and sends the remote POSIX command through a
+single-argument <code>sh -lc</code> wrapper containing only a base64-encoded, secret-free command. Password-backed SSH accepts
+either password or one password-only keyboard-interactive challenge, rejects unexpected and OTP/MFA prompts, and sends
+the sudo password over a non-PTY stdin handoff with <code>sudo -S -p ''</code>.</p>
 <p>Pass <code>-IncludeLabNetworkAdapters</code> only after <code>VMnet2</code>, <code>VMnet3</code>, and <code>VMnet4</code> exist for the SiteA, WAN/SiteB, and
 trunk-like validation networks.</p>
 <p>Discover the running Workstation appliance address with:</p>
