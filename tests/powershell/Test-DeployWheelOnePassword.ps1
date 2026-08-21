@@ -93,6 +93,18 @@ if ($scriptText.Contains('ATLASO_DEPLOY_SSH_PASSWORD', [System.StringComparison]
 if (-not $scriptText.Contains('paramiko.RejectPolicy()', [System.StringComparison]::Ordinal)) {
     throw 'Password-backed deployment must reject unknown SSH host keys.'
 }
+if (-not $scriptText.Contains('auth_interactive', [System.StringComparison]::Ordinal) -or
+    -not $scriptText.Contains('connect_password_or_keyboard_interactive', [System.StringComparison]::Ordinal)) {
+    throw 'Password-backed deployment must support keyboard-interactive SSH authentication.'
+}
+if (-not $scriptText.Contains('get_pty=False', [System.StringComparison]::Ordinal) -or
+    -not $scriptText.Contains('shutdown_write()', [System.StringComparison]::Ordinal)) {
+    throw 'Password-backed sudo handoff must remain noninteractive.'
+}
+if (-not $scriptText.Contains('ConvertTo-WindowsSshRemoteCommand', [System.StringComparison]::Ordinal) -or
+    -not $scriptText.Contains('base64 -d | sh', [System.StringComparison]::Ordinal)) {
+    throw 'Windows key-backed SSH must use the PowerShell login-shell transport wrapper.'
+}
 if (-not $scriptText.Contains('Secret redaction failed', [System.StringComparison]::Ordinal)) {
     throw 'Password-backed deployment must fail closed when output redaction fails.'
 }
@@ -105,8 +117,12 @@ if ($scriptText.Contains('[switch]$OnePasswordEnvironmentChild', [System.StringC
 if (-not $scriptText.Contains('Get-CimInstance -ClassName Win32_Process', [System.StringComparison]::Ordinal)) {
     throw 'The bridge child must authenticate its op.exe process ancestry.'
 }
-if (-not $scriptText.Contains('--environment(\s|$)', [System.StringComparison]::Ordinal)) {
-    throw 'The bridge child must authenticate the op run --environment command line.'
+if (-not $scriptText.Contains('deploy-wheel\.ps1', [System.StringComparison]::Ordinal) -or
+    -not $scriptText.Contains('-OnePasswordEnvironmentId', [System.StringComparison]::Ordinal)) {
+    throw 'The bridge child must authenticate the parent deploy-wheel invocation.'
+}
+if (-not $scriptText.Contains('$opEnvironment.Groups[''id''].Value -ceq $scriptEnvironment.Groups[''id''].Value', [System.StringComparison]::Ordinal)) {
+    throw 'The bridge child must bind op --environment to the requested Environment ID.'
 }
 
 Write-Output 'Deploy wheel 1Password bridge tests passed.'

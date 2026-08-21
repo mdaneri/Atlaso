@@ -679,7 +679,11 @@ Terminal order:
 - The wheel helper's `RemoteDirectory` is one shared pre-upload contract for key/agent and password-backed SSH. Accept
   only absolute POSIX paths composed of ASCII letters, digits, `/`, `.`, `_`, and `-`, reject `.` and `..` components,
   whitespace, shell metacharacters, and control characters before local build work, and serialize every key-backed
-  remote command argument with the shared POSIX quoting helper. Do not depend on `scp` version-specific remote quoting.
+  remote command argument with the shared POSIX quoting helper. On Windows, preserve separate `scp` source/destination
+  arguments and cross a PowerShell login shell with one `sh -lc` argument containing a secret-free base64 command.
+  Password-backed Paramiko must support password-only keyboard-interactive authentication, reject unexpected prompts,
+  verify system known hosts, and hand `sudo -S -p ''` a non-PTY password line before closing stdin. Do not depend on
+  `scp` version-specific remote quoting.
 - For manual live appliance patching, build a local wheel with `python -m pip wheel . -w dist`, copy only the Atlaso
   wheel to the VM, install it with `/opt/atlaso/.venv/bin/python -m pip install --force-reinstall --no-deps`, then
   restore venv readability for the `atlaso` service user with directory `0755`, file `0644`, and executable bits under

@@ -18,8 +18,13 @@ Windows 1Password bridge documented in the [full technical reference](full-techn
 local integration, verify the unique `Atlaso` Environment and concealed `DEFAULT_ADMIN_PASSWORD` variable by name,
 then pass only its opaque Environment ID through `-OnePasswordEnvironmentId`. The bridge requires the supported
 `op run --environment` capability, keeps the value inside the bounded child process, preserves SSH known-host
-verification, and fails closed when authorization or any required Environment input is unavailable. Do not pass a
-password argument, create a local `.env` file, or use the retired `ATLASO_DEPLOY_SSH_PASSWORD` fallback.
+verification, and fails closed when authorization or any required Environment input is unavailable. Key-backed Windows
+transfers keep `scp` sources and destinations separate and cross the PowerShell login shell through a secret-free
+base64 `sh -lc` wrapper. Password-backed SSH supports one password-only keyboard-interactive challenge and a non-PTY
+`sudo -S` handoff. Do not pass a password argument, create a local `.env` file, or use the retired
+`ATLASO_DEPLOY_SSH_PASSWORD` fallback.
+The bounded child also authenticates that the deployment script's parent invoked `op run --environment` with the same
+opaque ID; an interactive `op run` shell is rejected.
 
 Atlaso can run a VMware Workstation lifecycle lab alongside the Hyper-V lab. The Workstation path uses VMX/VMDK
 artifacts and `vmrun.exe`, then delegates appliance behavior checks to the shared Python lifecycle runner.

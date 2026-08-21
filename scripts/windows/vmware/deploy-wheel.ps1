@@ -126,10 +126,33 @@ function Assert-OnePasswordBridgeProcess {
         } catch {
             throw 'Unable to authenticate the 1Password Environment bridge process ancestry; deployment stopped before authentication.'
         }
-        if ($parent -and $parent.Name -in @('op.exe', 'op') -and
-            $parent.CommandLine -match '(?i)(^|\s)run(\s|$)' -and
-            $parent.CommandLine -match '(?i)(^|\s)--environment(\s|$)') {
-            return
+        if ($parent -and $parent.Name -in @('op.exe', 'op')) {
+            if ($parent.CommandLine -notmatch '(?i)(^|\s)run(\s|$)' -or
+                $parent.CommandLine -notmatch '(?i)(^|\s)--environment(?:=|\s)') {
+                break
+            }
+            try {
+                $invokingProcess = Get-CimInstance -ClassName Win32_Process -Filter "ProcessId = $([int]$parent.ParentProcessId)" -ErrorAction Stop
+            } catch {
+                throw 'Unable to authenticate the 1Password Environment bridge invocation; deployment stopped before authentication.'
+            }
+            if (-not $invokingProcess -or $invokingProcess.CommandLine -notmatch '(?i)deploy-wheel\.ps1' -or
+                $invokingProcess.CommandLine -notmatch '(?i)(^|\s)-OnePasswordEnvironmentId(?:=|\s)') {
+                break
+            }
+            $opEnvironment = [regex]::Match(
+                $parent.CommandLine,
+                '(?i)(?:^|\s)--environment(?:=|\s+)"?(?<id>[A-Za-z0-9_-]{8,128})"?(?=\s|$)'
+            )
+            $scriptEnvironment = [regex]::Match(
+                $invokingProcess.CommandLine,
+                '(?i)(?:^|\s)-OnePasswordEnvironmentId(?:=|\s+)"?(?<id>[A-Za-z0-9_-]{8,128})"?(?=\s|$)'
+            )
+            if ($opEnvironment.Success -and $scriptEnvironment.Success -and
+                $opEnvironment.Groups['id'].Value -ceq $scriptEnvironment.Groups['id'].Value) {
+                return
+            }
+            break
         }
         $processId = $parentId
     }
@@ -356,6 +379,17 @@ function ConvertTo-PosixShellArgument {
     return "$apostrophe$($Value.Replace("$apostrophe", $escapedApostrophe))$apostrophe"
 }
 
+function ConvertTo-WindowsSshRemoteCommand {
+    param([Parameter(Mandatory = $true)][string]$Command)
+
+    if (-not ($IsWindows -or $env:OS -eq 'Windows_NT')) {
+        return $Command
+    }
+
+    $encodedCommand = [Convert]::ToBase64String([System.Text.Encoding]::UTF8.GetBytes($Command))
+    return "sh -lc `"printf '%s' $encodedCommand | base64 -d | sh`""
+}
+
 function Initialize-PasswordDeployPythonPath {
     param(
         [Parameter(Mandatory = $true)][string]$PythonCommand,
@@ -446,6 +480,7 @@ import argparse
 import os
 import pathlib
 import shlex
+import socket
 import sys
 
 if hasattr(sys.stdout, "reconfigure"):
@@ -552,19 +587,52 @@ if args.local_inventory_linux_package:
         (pathlib.Path(args.local_inventory_linux_package), args.remote_inventory_linux_package)
     )
 
+def connect_password_or_keyboard_interactive(client, host, username, password):
+    sock = socket.create_connection((host, 22), timeout=15)
+    transport = paramiko.Transport(sock)
+    try:
+        transport.start_client(timeout=15)
+        server_key = transport.get_remote_server_key()
+        known_key_entry = None
+        for host_keys in (client._system_host_keys, client._host_keys):
+            host_key_entry = host_keys.lookup(host)
+            if host_key_entry:
+                known_key_entry = host_key_entry
+                if any(server_key == expected_key for expected_key in host_key_entry.values()):
+                    break
+                expected_key = next(iter(host_key_entry.values()))
+                raise paramiko.BadHostKeyException(host, server_key, expected_key)
+        if known_key_entry is None:
+            client._policy.missing_host_key(client, host, server_key)
+
+        try:
+            transport.auth_password(username, password)
+        except (paramiko.AuthenticationException, paramiko.BadAuthenticationType):
+            def keyboard_interactive_handler(title, instructions, prompts):
+                if len(prompts) != 1:
+                    raise paramiko.SSHException(
+                        "Unexpected keyboard-interactive prompt count; refusing non-password input."
+                    )
+                prompt, echo = prompts[0]
+                if echo or "password" not in prompt.lower():
+                    raise paramiko.SSHException(
+                        "Unexpected keyboard-interactive prompt; refusing non-password input."
+                    )
+                return [password]
+
+            transport.auth_interactive(username, keyboard_interactive_handler)
+        if not transport.is_authenticated():
+            raise paramiko.AuthenticationException("Password or keyboard-interactive authentication failed.")
+        client._transport = transport
+    except Exception:
+        transport.close()
+        raise
+
+
 client = paramiko.SSHClient()
 client.load_system_host_keys()
 client.set_missing_host_key_policy(paramiko.RejectPolicy())
-client.connect(
-    hostname=args.host,
-    username=args.user,
-    password=password,
-    allow_agent=False,
-    look_for_keys=False,
-    timeout=15,
-    banner_timeout=15,
-    auth_timeout=15,
-)
+connect_password_or_keyboard_interactive(client, args.host, args.user, password)
 try:
     sftp = client.open_sftp()
     try:
@@ -608,9 +676,10 @@ try:
         f"{shell_quote('true' if args.reset_vault_entries else 'false')} "
         f"{shell_quote(remote_inventory_linux_package_argument)}"
     )
-    stdin, stdout, stderr = client.exec_command(command, get_pty=True, timeout=args.timeout + 60)
+    stdin, stdout, stderr = client.exec_command(command, get_pty=False, timeout=args.timeout + 60)
     stdin.write(password + "\n")
     stdin.flush()
+    stdin.channel.shutdown_write()
     stdout_text = stdout.read().decode("utf-8", "replace")
     stderr_text = stderr.read().decode("utf-8", "replace")
     exit_code = stdout.channel.recv_exit_status()
@@ -1175,7 +1244,7 @@ New-Item -ItemType Directory -Path $tempDeployDirectory | Out-Null
 $tempScript = Join-Path $tempDeployDirectory 'atlaso-deploy-wheel.sh'
 [System.IO.File]::WriteAllText($tempScript, ($deployScript -replace "`r?`n", "`n"), [System.Text.UTF8Encoding]::new($false))
 $sshControlPath = Join-Path ([System.IO.Path]::GetTempPath()) "lf-ssh-$([guid]::NewGuid().ToString('N')).sock"
-$sshConnectionArguments = Get-SshConnectionArguments -ControlPath $sshControlPath
+$sshConnectionArguments = @(Get-SshConnectionArguments -ControlPath $sshControlPath)
 
 try {
     $uploadPaths = @($resolvedWheelPath) + $runtimeDependencyPaths + $trustKeyPaths
@@ -1282,6 +1351,7 @@ try {
         $remoteCommand = (
             $remoteCommandArguments | ForEach-Object { ConvertTo-PosixShellArgument -Value $_ }
         ) -join ' '
+        $remoteCommand = ConvertTo-WindowsSshRemoteCommand -Command $remoteCommand
         Invoke-CheckedCommand -FilePath 'ssh' -Arguments @(
             $sshConnectionArguments + '-t', "${SshUser}@${IpAddress}", $remoteCommand
         )

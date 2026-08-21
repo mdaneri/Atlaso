@@ -122,7 +122,10 @@ $fixtureFiles = @(
     'image\vmware-workstation\systemd\atlaso.service',
     'image\common\systemd\atlaso-worker.service',
     'image\common\systemd\atlaso-require-data-disks.conf',
-    'image\common\systemd\nginx-atlaso-data-disks.conf'
+    'image\common\systemd\nginx-atlaso-data-disks.conf',
+    'scripts\appliance\atlaso-install-boot-branding',
+    'image\common\boot\grub\theme.txt',
+    'image\common\boot\grub\atlaso.png'
 )
 foreach ($fixtureFile in $fixtureFiles) {
     $fixturePath = Join-Path $fixtureRoot $fixtureFile
@@ -144,7 +147,7 @@ $ReadinessPollSeconds = 2
 $SkipBuild = $true
 $SkipHelperSync = $true
 $SkipConsoleAssetSync = $true
-$SkipBootBrandingSync = $true
+$SkipBootBrandingSync = $false
 $SkipInventoryLinuxSync = $true
 $WheelPath = $wheelPath.FullName
 $ResetVaultEntries = $false
@@ -163,6 +166,21 @@ if (-not $upload) {
 }
 $uploadArguments = @($upload.Arguments)
 Assert-Equal $uploadArguments[-1] "admin@192.0.2.10:$safeDirectory/" 'The normalized safe directory must remain one scp destination argument.'
+if (-not ($uploadArguments | Where-Object { (Split-Path -Leaf $_) -eq $wheelFileName }) -or $uploadArguments.Count -lt 3) {
+    throw 'The primary scp upload must preserve each source and destination as separate arguments.'
+}
+$themePath = Join-Path $fixtureRoot 'image\common\boot\grub\theme.txt'
+$themeUpload = $capturedCommands |
+    Where-Object { $_.Command -eq 'scp' -and $_.Arguments -contains $themePath } |
+    Select-Object -First 1
+if (-not $themeUpload) {
+    throw 'The Windows key-backed fixture did not preserve the boot theme source argument.'
+}
+$themeArguments = @($themeUpload.Arguments)
+Assert-Equal $themeArguments[-1] "admin@192.0.2.10:$safeDirectory/atlaso-grub-theme.txt" 'The boot theme destination must remain separate from its source.'
+if ($themeArguments.Count -lt 2 -or $themeArguments[-2] -ne $themePath) {
+    throw 'The boot theme scp source and destination must be separate arguments.'
+}
 
 $install = $capturedCommands |
     Where-Object { $_.Command -eq 'ssh' -and $_.Arguments -contains '-t' } |
@@ -172,6 +190,13 @@ if (-not $install) {
 }
 $installArguments = @($install.Arguments)
 $remoteCommand = $installArguments[-1]
+$encodedRemoteCommand = [regex]::Match($remoteCommand, '^sh -lc "printf ''%s'' (?<payload>[A-Za-z0-9+/=]+) \| base64 -d \| sh"$')
+if (-not $encodedRemoteCommand.Success) {
+    throw 'Windows key-backed SSH must use the single-argument sh -lc base64 transport wrapper.'
+}
+$remoteCommand = [System.Text.Encoding]::UTF8.GetString(
+    [Convert]::FromBase64String($encodedRemoteCommand.Groups['payload'].Value)
+)
 $expectedScriptArgument = ConvertTo-PosixShellArgument -Value "$safeDirectory/atlaso-deploy-wheel.sh"
 $expectedWheelArgument = ConvertTo-PosixShellArgument -Value "$safeDirectory/$wheelFileName"
 if (-not $remoteCommand.Contains($expectedScriptArgument, [System.StringComparison]::Ordinal)) {

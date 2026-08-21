@@ -1622,10 +1622,16 @@ def test_vmware_deploy_wheel_supports_secure_onepassword_password_deploy():
     assert "ATLASO_DEPLOY_RUNTIME_PASSWORD" in script
     assert "Remove-Item Env:\\DEFAULT_ADMIN_PASSWORD" in script
     assert "The deployment password was not supplied by an authenticated 1Password Environment subprocess" in script
+    assert "deploy-wheel\\.ps1" in script
+    assert "opEnvironment.Groups['id'].Value -ceq $scriptEnvironment.Groups['id'].Value" in script
     assert "client.set_missing_host_key_policy(paramiko.RejectPolicy())" in script
     assert "client.load_system_host_keys()" in script
-    assert "allow_agent=False" in script
-    assert "look_for_keys=False" in script
+    assert "auth_interactive" in script
+    assert "connect_password_or_keyboard_interactive" in script
+    assert "get_pty=False" in script
+    assert "shutdown_write()" in script
+    assert "ConvertTo-WindowsSshRemoteCommand" in script
+    assert "base64 -d | sh" in script
     assert "sudo -S -p '' sh" in script
     assert "sanitized(stdout_text, password)" in script
     assert "if (-not $SshPassword) {" in script

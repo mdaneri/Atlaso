@@ -1395,6 +1395,9 @@ opaque Environment ID from that exact Environment and pass only the ID above. Th
 `op run --environment <id> --` with PowerShell 7, so 1Password provisions the named variable only into the bounded child
 deployment process. The helper fails closed when the CLI capability, authorization, Environment, or variable is missing;
 it never accepts a password argument, local `.env` file, or the retired `ATLASO_DEPLOY_SSH_PASSWORD` fallback.
+The bounded child authenticates the `op.exe` ancestry and requires the parent deployment invocation and
+`op run --environment` command to carry the same opaque ID; launching the script from an interactive `op run` shell
+therefore fails closed.
 
 The child uses the local Python runtime and Paramiko so SSH and sudo do not prompt interactively. Paramiko loads the
 user's SSH known-hosts database and rejects unknown host keys; approve the verified appliance host key before running
@@ -1412,7 +1415,11 @@ native-argument modes.
 `.`, `_`, and `-`; `.` and `..` path components are not allowed. The helper normalizes a trailing slash and applies the
 same validation before build or upload for password-backed and key/agent-backed SSH. Paths containing whitespace,
 apostrophes, dollar signs, backticks, semicolons, other shell metacharacters, or control characters are rejected rather
-than reinterpreted. The key/agent branch also serializes each argument at the remote shell boundary.
+than reinterpreted. The key/agent branch also serializes each argument at the remote shell boundary. On Windows, it
+keeps each `scp` source and destination as separate native arguments and sends the remote POSIX command through a
+single-argument `sh -lc` wrapper containing only a base64-encoded, secret-free command. Password-backed SSH accepts
+either password or one password-only keyboard-interactive challenge, rejects unexpected prompts, and sends the sudo
+password over a non-PTY stdin handoff with `sudo -S -p ''`.
 
 Pass `-IncludeLabNetworkAdapters` only after `VMnet2`, `VMnet3`, and `VMnet4` exist for the SiteA, WAN/SiteB, and
 trunk-like validation networks.
