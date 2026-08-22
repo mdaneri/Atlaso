@@ -7685,6 +7685,23 @@ async function refreshNetworkSideStack() {
   }
 }
 
+async function refreshPersistedPhysicalInterfaceRow(row) {
+  const response = await fetch(window.location.href, {
+    credentials: "same-origin",
+    headers: { "X-Requested-With": "AtlasoPhysicalInterfaceRowRefresh" },
+  });
+  if (!response.ok) throw new Error("The persisted interface row could not be refreshed.");
+  const html = await response.text();
+  const nextDocument = new DOMParser().parseFromString(html, "text/html");
+  const nextTable = nextDocument.getElementById("physical-interfaces-table");
+  const rows = JSON.parse(nextTable?.dataset.interfaces || "[]");
+  const currentId = String(row.getData().id);
+  const persisted = rows.find((candidate) => String(candidate.id) === currentId);
+  if (!persisted) throw new Error("The persisted interface row is unavailable.");
+  await row.update(persisted);
+  row.reformat();
+}
+
 async function autoSavePhysicalInterface(cell, csrf) {
   clearCaMessage("physical-interface-error");
   const row = cell.getRow();
@@ -7706,8 +7723,10 @@ async function autoSavePhysicalInterface(cell, csrf) {
     await refreshNetworkSideStack();
   } catch (error) {
     showNetworkMessage("physical-interface-error", error instanceof Error ? error.message : "The physical interface could not be saved.");
-    if (typeof cell.restoreOldValue === "function") {
-      cell.restoreOldValue();
+    try {
+      await refreshPersistedPhysicalInterfaceRow(row);
+    } catch (_refreshError) {
+      if (typeof cell.restoreOldValue === "function") cell.restoreOldValue();
     }
   }
 }

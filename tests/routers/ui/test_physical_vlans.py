@@ -247,6 +247,8 @@ def test_physical_and_vlan_pages_render(client):
         "function newVlanWizardRow", 1
     )[0]
     assert 'body.set(key, value ? "on" : "off")' in network_action_js
+    assert "async function refreshPersistedPhysicalInterfaceRow(row)" in app_js
+    assert "await refreshPersistedPhysicalInterfaceRow(row)" in app_js
     physical_table_js = app_js.split("function initializePhysicalInterfacesTable()", 1)[1].split(
         "function initializeVlanInterfacesTable()", 1
     )[0]
