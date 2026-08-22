@@ -451,6 +451,7 @@ from atlaso.app.services.networking import (
     IPV4_METHODS,
     NETWORK_INVENTORY_CLEANUP_WARNING_KEY,
     NETWORK_ROLES,
+    discover_host_physical_interfaces,
     is_canonical_network_role,
     normalize_interface_mode,
     normalize_interface_role,
@@ -9385,6 +9386,63 @@ def network_management_paths(config_preview: str) -> list[dict[str, str]]:
     )
 
 
+def refresh_management_handoff_dynamic_observations(
+    db: Session,
+    config_preview: str,
+    handoff_evidence: dict[str, Any],
+) -> None:
+    """Persist helper-confirmed dynamic addresses before publishing the Network baseline.
+
+    Args:
+        db: Active Appliance Apply transaction.
+        config_preview: Exact Network configuration staged for the successful handoff.
+        handoff_evidence: Bounded helper result containing every probed candidate address.
+    """
+    dynamic_paths = [
+        path
+        for path in network_management_paths(config_preview)
+        if path.get("kind") == "physical"
+        and (
+            path.get("ipv4_method") == "dhcp"
+            or (
+                path.get("ipv6_enabled", "").lower() == "true"
+                and not path.get("ipv6_cidr")
+            )
+        )
+    ]
+    if not dynamic_paths:
+        return
+    try:
+        confirmed_addresses = {
+            str(ip_address(str(value)))
+            for value in handoff_evidence.get("candidate_addresses", [])
+        }
+    except ValueError as exc:
+        raise RuntimeError("Management handoff returned an invalid candidate address.") from exc
+    discovered = {row.name: row for row in discover_host_physical_interfaces()}
+    for path in dynamic_paths:
+        name = str(path.get("name") or "")
+        observed = discovered.get(name)
+        interface = db.scalar(select(PhysicalInterface).where(PhysicalInterface.name == name))
+        if observed is None or interface is None:
+            raise RuntimeError(
+                f"Management handoff could not refresh observed addresses for {name}."
+            )
+        required = []
+        if path.get("ipv4_method") == "dhcp":
+            required.append(("IPv4", observed.host_ip_cidr, "host_ip_cidr"))
+        if path.get("ipv6_enabled", "").lower() == "true" and not path.get("ipv6_cidr"):
+            required.append(("IPv6", observed.host_ipv6_cidr, "host_ipv6_cidr"))
+        for family, cidr, attribute in required:
+            address = address_from_cidr(cidr)
+            if not address or address not in confirmed_addresses:
+                raise RuntimeError(
+                    f"Management handoff could not confirm the observed dynamic {family} address for {name}."
+                )
+            setattr(interface, attribute, cidr)
+    db.flush()
+
+
 def management_handoff_required(network_unit: dict[str, Any], baseline: dict[str, Any] | None) -> bool:
     """Return whether Network changes require a two-phase handoff.
 
@@ -14459,6 +14517,12 @@ def run_appliance_apply_job(job_id: str, *, force_real: bool = False) -> None:
                         # state may change in another session while the bounded
                         # readiness probes run; never promote that newer,
                         # unexecuted state into the applied baselines.
+                        if not group_result.get("dry_run"):
+                            refresh_management_handoff_dynamic_observations(
+                                db,
+                                str(current_by_id["network"].get("config_preview") or ""),
+                                group_result["management_handoff"],
+                            )
                         applied = [
                             current_by_id[unit_id]
                             for unit_id in MANAGEMENT_HANDOFF_UNIT_IDS

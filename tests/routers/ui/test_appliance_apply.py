@@ -1232,6 +1232,75 @@ def test_management_handoff_baselines_exact_applied_snapshot(client, monkeypatch
         assert current["changed"] is True
 
 
+def test_management_handoff_persists_helper_confirmed_dynamic_address(client, monkeypatch):
+    """Publish a DHCP listener binding from the address probed by the handoff helper.
+
+    Args:
+        client: HTTP test client providing an isolated database.
+        monkeypatch: Pytest fixture used to provide the post-handoff host observation.
+    """
+    from sqlalchemy import select
+
+    import atlaso.app.ui as ui
+    from atlaso.app.database import SessionLocal
+    from atlaso.app.models import PhysicalInterface
+    from atlaso.app.services.management_bindings import applied_management_bindings
+    from atlaso.app.services.networking import HostPhysicalInterface
+
+    config_preview = """\
+[physical_interfaces]
+interface=eth0
+role=management
+mode=access
+admin_state=up
+ipv4_method=dhcp
+ip_cidr=
+ipv6_enabled=false
+ipv6_cidr=
+"""
+    observed = HostPhysicalInterface(
+        name="eth0",
+        mac_address="00:15:5d:01:01:01",
+        driver="vmxnet3",
+        speed="10000 Mbps",
+        host_ip_cidr="192.168.167.134/24",
+        host_mtu=1500,
+        host_admin_state="up",
+        oper_state="up",
+    )
+    monkeypatch.setattr(ui, "discover_host_physical_interfaces", lambda: [observed])
+
+    with SessionLocal() as db:
+        interface = db.scalar(select(PhysicalInterface).where(PhysicalInterface.name == "eth0"))
+        assert interface is not None
+        interface.role = "management"
+        interface.mode = "access"
+        interface.admin_state = "up"
+        interface.ipv4_method = "dhcp"
+        interface.ip_cidr = None
+        interface.host_ip_cidr = "192.168.49.10/24"
+        ui.refresh_management_handoff_dynamic_observations(
+            db,
+            config_preview,
+            {"candidate_addresses": ["192.168.167.134"]},
+        )
+        ui.save_appliance_apply_baselines(
+            db,
+            {"network": {"config_preview": config_preview}},
+        )
+        db.commit()
+
+    with SessionLocal() as db:
+        assert applied_management_bindings(db) == [
+            {
+                "interface": "eth0",
+                "role": "management",
+                "address": "192.168.167.134",
+                "management_ui": "true",
+            }
+        ]
+
+
 def test_management_handoff_staging_failure_clears_unstarted_runtime_lock(client, monkeypatch):
     """Do not retain the Apply lock when the helper proves no transaction began.
 
