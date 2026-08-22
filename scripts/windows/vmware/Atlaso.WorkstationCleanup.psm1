@@ -1009,12 +1009,35 @@ function Set-AtlasoWorkstationVmxBytesIfIdentityMatches {
         [System.IO.File]::WriteAllBytes($temporaryVmxPath, $ReplacementBytes)
         $replacementContent = [System.IO.File]::ReadAllText($temporaryVmxPath)
         [System.IO.File]::Replace($temporaryVmxPath, $VmxPath, $backupVmxPath, $true)
-        $displacedIdentity = Get-AtlasoVmxFileIdentity `
-            -Path $backupVmxPath `
-            -InventoryDescription 'displaced VMware cleanup target'
-        $displacedBytes = [System.IO.File]::ReadAllBytes($backupVmxPath)
+        $preserveBackupVmxPath = $true
+        try {
+            $displacedIdentity = Get-AtlasoVmxFileIdentity `
+                -Path $backupVmxPath `
+                -InventoryDescription 'displaced VMware cleanup target'
+            $displacedBytes = [System.IO.File]::ReadAllBytes($backupVmxPath)
+            $replacementIdentity = Get-AtlasoVmxFileIdentity `
+                -Path $VmxPath `
+                -InventoryDescription 'replacement VMware cleanup target'
+        }
+        catch {
+            $validationError = $_.Exception.Message
+            try {
+                $backupContent = [System.IO.File]::ReadAllText($backupVmxPath)
+                Restore-AtlasoWorkstationFileAfterCasFailure `
+                    -TargetPath $VmxPath `
+                    -ExpectedCurrentContent $replacementContent `
+                    -ReplacementPath $backupVmxPath `
+                    -ReplacementContent $backupContent `
+                    -StateDescription 'VMware Workstation VMX' `
+                    -RecoveryExtension 'vmx'
+            }
+            catch {
+                $rollbackError = $_.Exception.Message
+                throw "VMware Workstation VMX validation failed after replacement. The original backup was retained at '$backupVmxPath'. Validation error: $validationError Rollback error: $rollbackError"
+            }
+            throw "VMware Workstation VMX validation failed after replacement; the original VMX was restored. Validation error: $validationError"
+        }
         if (-not $displacedIdentity.Equals($ExpectedIdentity, [System.StringComparison]::Ordinal)) {
-            $preserveBackupVmxPath = $true
             Restore-AtlasoWorkstationFileAfterCasFailure `
                 -TargetPath $VmxPath `
                 -ExpectedCurrentContent $replacementContent `
@@ -1024,12 +1047,12 @@ function Set-AtlasoWorkstationVmxBytesIfIdentityMatches {
                 -RecoveryExtension 'vmx'
             throw $FailureMessage
         }
-        return [pscustomobject]@{
+        $result = [pscustomobject]@{
             DisplacedBytes = $displacedBytes
-            ReplacementIdentity = Get-AtlasoVmxFileIdentity `
-                -Path $VmxPath `
-                -InventoryDescription 'replacement VMware cleanup target'
+            ReplacementIdentity = $replacementIdentity
         }
+        $preserveBackupVmxPath = $false
+        return $result
     }
     finally {
         if (Test-Path -LiteralPath $temporaryVmxPath) {

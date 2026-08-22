@@ -1791,6 +1791,49 @@ $module = Import-Module '{module_path}' -Force -PassThru
     assert vmx_path.read_text(encoding="utf-8") == "concurrent replacement"
 
 
+def test_vmx_cas_restores_backup_after_post_replace_validation_failure(
+    tmp_path: Path,
+) -> None:
+    """A post-replacement validation error must restore the displaced VMX.
+
+    Args:
+        tmp_path: Isolated test directory.
+    """
+    vmx_path = tmp_path / "Atlaso-Test.vmx"
+    original_content = '.encoding = "UTF-8"\ndisplayName = "Original"\n'
+    vmx_path.write_text(original_content, encoding="utf-8")
+    module_path = VMWARE_SCRIPT_ROOT / "Atlaso.WorkstationCleanup.psm1"
+    wrapper = tmp_path / "fail-post-replace-validation.ps1"
+    wrapper.write_text(
+        f"""$ErrorActionPreference = 'Stop'
+$module = Import-Module '{module_path}' -Force -PassThru
+& $module {{
+    param($vmxPath)
+    function Get-AtlasoVmxFileIdentity {{
+        param([string]$Path, [string]$InventoryDescription)
+        if ($InventoryDescription -eq 'displaced VMware cleanup target') {{
+            throw 'simulated displaced-identity read failure'
+        }}
+        return 'test-identity'
+    }}
+    Set-AtlasoWorkstationVmxBytesIfIdentityMatches `
+        -VmxPath $vmxPath `
+        -ExpectedIdentity 'test-identity' `
+        -ReplacementBytes ([System.Text.Encoding]::UTF8.GetBytes('detached candidate')) `
+        -FailureMessage 'identity mismatch'
+}} '{vmx_path}'
+""",
+        encoding="utf-8",
+    )
+
+    result = _run_script(wrapper, environment=os.environ.copy())
+
+    assert result.returncode != 0
+    assert "original VMX was restored" in result.stderr
+    assert vmx_path.read_text(encoding="utf-8") == original_content
+    assert not list(tmp_path.glob("Atlaso-Test.vmx.atlaso-backup-*.tmp"))
+
+
 def test_general_removal_matches_a_running_vmx_by_filesystem_identity(
     tmp_path: Path,
 ) -> None:

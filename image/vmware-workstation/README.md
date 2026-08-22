@@ -102,6 +102,7 @@ alias fails closed before VMX replacement. Stale-row replacement verifies its di
 concurrent provider replacement, and rejects library IDs with multiple config owners. Multi-VM cleanup repeats immutable
 identity, running, stable registration, and VMX-set checks before each `deleteVM`. VMX detachment and restoration compare
 the displaced identity and roll back a concurrent replacement; stale paths are rechecked before inventory replacement.
+The displaced VMX backup remains protected through post-replacement validation and is restored on validation failure.
 Surviving or recreated original paths must retain their immutable identity through both post-delete VMX-set gates.
 Cleanup remains scoped to this image target's configured output directory.
 With the Workstation UI closed, the module verifies VMX deletion and running state, then atomically removes stale library

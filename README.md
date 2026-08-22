@@ -141,6 +141,8 @@ atomic replacement, verifies the exact displaced backup, and rolls back a concur
 It removes stale library rows only for canonical missing VMX paths beneath its validated exact or multi-root artifact
 scope; every library ID must have exactly one config owner, and missing registration paths outside that scope remain fatal.
 Every stale path is rechecked immediately before the inventory swap.
+VMX replacement retains the displaced backup until identity and byte validation completes, restoring it on validation
+failure or preserving an actionable recovery copy if rollback cannot complete.
 Hyper-V remains
 the authoritative lifecycle interoperability environment for exact access and trunk VLAN behavior.
 Image-build download caches verify pinned checksums before reuse or durable promotion; ordinary retries replace only

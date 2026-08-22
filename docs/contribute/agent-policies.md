@@ -397,6 +397,8 @@ Terminal order:
   the cleanup target and reject a registration reachable only through a filesystem alias before replacing the VMX. If
   the deletion transition fails while the exact detached VMX survives, atomically restore its original bytes. Detachment
   and restoration must atomically compare the displaced VMX identity and roll back rather than overwrite a replacement.
+  Retain the displaced backup until every post-replacement identity and byte read succeeds; restore it on validation
+  failure or preserve an actionable recovery copy when rollback cannot complete.
   Capture immutable identities for every target and repeat identity, running, stable registration, and recursive VMX-set
   checks immediately before each individual `deleteVM` invocation.
   A preflight failure preserves all artifacts. A nonzero or

@@ -381,6 +381,8 @@ The following cross-cutting boundaries always apply:
   target and reject a registration reachable only through a filesystem alias before replacing the VMX. Restore the
   original VMX byte-for-byte whenever a deletion transition fails while that exact detached file survives. Detachment
   and restoration must atomically compare the displaced VMX identity and roll back rather than overwrite a replacement.
+  Retain the displaced backup until every post-replacement identity and byte read succeeds; restore it on validation
+  failure or preserve an actionable recovery copy when rollback cannot complete.
   Capture immutable identities for every target and repeat identity, running, stable registration, and recursive VMX-set
   checks immediately before each individual `deleteVM` invocation.
   Preflight failures preserve all artifacts; a provider deletion or postcondition failure preserves the remaining

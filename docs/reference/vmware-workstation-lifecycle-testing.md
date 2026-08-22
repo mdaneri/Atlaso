@@ -163,7 +163,9 @@ Immediately before provider deletion, cleanup detaches every VMDK device resolve
 reused depot, backup, or other shared disk cannot be deleted with the VM.
 Cleanup requires the registered canonical path to equal the validated target; a registration reachable only through a
 filesystem alias fails closed before detachment replaces the VMX. Detachment and failure restoration atomically compare
-the displaced VMX identity and roll back instead of overwriting a concurrent replacement.
+the displaced VMX identity and roll back instead of overwriting a concurrent replacement. The displaced backup remains
+protected until post-replacement identity and byte validation succeeds; failed validation restores it or retains a
+recovery copy if rollback cannot finish.
 For multi-VM roots, cleanup captures every target's immutable identity and repeats identity, running, stable
 registration, and recursive VMX-set checks immediately before each individual `deleteVM`.
 If `deleteVM` fails or returns success while the VMX survives, cleanup atomically restores the original VMX bytes and
