@@ -1252,6 +1252,16 @@ def test_cleanup_safety_content_read_errors_are_terminating() -> None:
     assert module.count("Get-Content") == module.count("Get-Content -LiteralPath") == 2
     assert "Start-Sleep -Milliseconds 250" in module
     assert "registration inventory changed during verification" in module
+    write_lock = module.index("$inventoryWriteLock = [System.IO.File]::Open(")
+    locked_read = module.index("$lockedContent = $inventoryReader.ReadToEnd()", write_lock)
+    locked_comparison = module.index("$snapshot.Content.Equals($lockedContent", locked_read)
+    inventory_replace = module.index(
+        "[System.IO.File]::Replace($temporaryInventoryPath, $InventoryPath, $backupInventoryPath, $true)",
+        locked_comparison,
+    )
+    lock_release = module.index("$inventoryWriteLock.Dispose()", inventory_replace)
+    assert "[System.IO.FileShare]::Read -bor [System.IO.FileShare]::Delete" in module
+    assert write_lock < locked_read < locked_comparison < inventory_replace < lock_release
 
 
 def test_general_removal_uses_inventory_file_for_registered_state(tmp_path: Path) -> None:

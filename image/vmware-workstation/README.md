@@ -382,7 +382,8 @@ duplicate, or mismatched target preserves the
 directory and returns an actionable failure. Cleanup checks the running and registered Workstation inventories by
 Windows filesystem identity, stops through checked `vmrun` when needed, and completes all final state and VMX-set
 preflights before checked `vmrun deleteVM` removes registered targets. Preflight failures preserve all artifacts;
-provider deletion or postcondition failures preserve the remaining artifacts and return failure.
+provider deletion or postcondition failures preserve the remaining artifacts and return failure. Stale library-row
+cleanup holds a write-excluding inventory handle through its final byte comparison and atomic replacement.
 Pass `-IncludeLabNetworkAdapters` only after `VMnet2`, `VMnet3`, and `VMnet4` exist for the
 SiteA, WAN/SiteB, and trunk-like lifecycle networks. `-TrustRootCa` downloads the freshly deployed appliance root CA,
 removes stale Atlaso root CAs from the current-user Trusted Root store, and trusts the new root so Edge and the Codex

@@ -667,13 +667,47 @@ function Remove-AtlasoWorkstationMissingRegistrations {
     $secondSnapshot = Get-AtlasoWorkstationInventorySnapshot -InventoryPath $InventoryPath
     Assert-AtlasoWorkstationInventorySnapshotsEqual -First $snapshot -Second $secondSnapshot -InventoryPath $InventoryPath
     $temporaryInventoryPath = "$InventoryPath.atlaso-cleanup-$([System.Guid]::NewGuid().ToString('N')).tmp"
+    $backupInventoryPath = "$InventoryPath.atlaso-backup-$([System.Guid]::NewGuid().ToString('N')).tmp"
     try {
         [System.IO.File]::WriteAllLines($temporaryInventoryPath, $updatedLines, [System.Text.UTF8Encoding]::new($false))
-        [System.IO.File]::Move($temporaryInventoryPath, $InventoryPath, $true)
+        # Deny writers from the last byte comparison through the atomic replace.
+        # ShareDelete permits ReplaceFile to replace the path while this handle
+        # continues to protect the verified old file from concurrent mutation.
+        $inventoryWriteLock = [System.IO.File]::Open(
+            $InventoryPath,
+            [System.IO.FileMode]::Open,
+            [System.IO.FileAccess]::Read,
+            ([System.IO.FileShare]::Read -bor [System.IO.FileShare]::Delete)
+        )
+        try {
+            $inventoryReader = [System.IO.StreamReader]::new(
+                $inventoryWriteLock,
+                [System.Text.UTF8Encoding]::new($false),
+                $true,
+                1024,
+                $true
+            )
+            try {
+                $lockedContent = $inventoryReader.ReadToEnd()
+            }
+            finally {
+                $inventoryReader.Dispose()
+            }
+            if (-not $snapshot.Content.Equals($lockedContent, [System.StringComparison]::Ordinal)) {
+                throw 'VMware Workstation inventory changed before stale registration removal; refusing to rewrite it.'
+            }
+            [System.IO.File]::Replace($temporaryInventoryPath, $InventoryPath, $backupInventoryPath, $true)
+        }
+        finally {
+            $inventoryWriteLock.Dispose()
+        }
     }
     finally {
         if (Test-Path -LiteralPath $temporaryInventoryPath) {
             Remove-Item -LiteralPath $temporaryInventoryPath -Force -ErrorAction SilentlyContinue
+        }
+        if (Test-Path -LiteralPath $backupInventoryPath) {
+            Remove-Item -LiteralPath $backupInventoryPath -Force -ErrorAction SilentlyContinue
         }
     }
 }

@@ -132,8 +132,9 @@ before detaching external VMDKs and allowing `vmrun deleteVM` to remove register
 state and the recursive VMX set immediately before removing the remaining exact VM artifact directories. Standalone
 VMware and Hyper-V image cleanup also reconciles provider inventory and fails closed
 before deleting canonical artifact roots.
-With the Workstation UI closed, cleanup atomically removes stale library rows only for canonical missing VMX paths
-beneath its validated exact or multi-root artifact scope; missing registration paths outside that scope remain fatal.
+With the Workstation UI closed, cleanup holds a write-excluding inventory handle through its final byte comparison and
+atomic replacement, removing stale library rows only for canonical missing VMX paths beneath its validated exact or
+multi-root artifact scope; missing registration paths outside that scope remain fatal.
 Hyper-V remains
 the authoritative lifecycle interoperability environment for exact access and trunk VLAN behavior.
 Image-build download caches verify pinned checksums before reuse or durable promotion; ordinary retries replace only

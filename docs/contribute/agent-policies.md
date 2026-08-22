@@ -382,8 +382,9 @@ Terminal order:
   `vmrun` running inventory and Workstation registration inventory and stop through checked `vmrun` when needed. Stabilize
   both inventories and the recursive VMX set before invoking checked `vmrun deleteVM` for registered targets, then verify
   each target VMX is absent and no target remains running before removing any remaining files. With the Workstation UI
-  closed, atomically prune provider-retained library rows only for canonical missing VMX paths beneath the validated
-  cleanup scope. Standalone cleanup uses its exact root; multi-root cleanup uses the canonical artifact parent. Missing
+  closed, hold a write-excluding inventory handle from the final byte comparison through atomic replacement, pruning
+  provider-retained library rows only for canonical missing VMX paths beneath the validated cleanup scope. Standalone
+  cleanup uses its exact root; multi-root cleanup uses the canonical artifact parent. Missing
   registrations outside that scope remain fatal. Revalidate stable registration state and the recursive VMX set after
   provider deletion and immediately before recursive removal.
   Detach every VMDK device whose resolved path is outside the exact removal root before `deleteVM`, because provider

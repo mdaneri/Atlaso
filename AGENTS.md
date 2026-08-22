@@ -366,8 +366,9 @@ The following cross-cutting boundaries always apply:
   `vmrun` running inventory and Workstation registration inventory and stop running targets. Current Workstation
   automation has no unregister-only operation, so registered targets may use checked `vmrun deleteVM` only after every
   fail-closed preflight succeeds, then verify the target VMX is absent and no target remains running. With the Workstation
-  UI closed, atomically prune provider-retained library rows only for canonical missing VMX paths beneath the validated
-  cleanup scope. Standalone cleanup scopes this to its exact root; multi-root cleanup scopes it to the canonical artifact
+  UI closed, hold a write-excluding inventory handle from the final byte comparison through atomic replacement, pruning
+  provider-retained library rows only for canonical missing VMX paths beneath the validated cleanup scope. Standalone
+  cleanup scopes this to its exact root; multi-root cleanup scopes it to the canonical artifact
   parent. Missing registrations anywhere else remain fatal. Revalidate stable registration state and the recursive VMX
   set after provider deletion and immediately before recursive removal.
   Before `deleteVM`, detach every VMDK device whose resolved path is outside the exact removal root so provider deletion
