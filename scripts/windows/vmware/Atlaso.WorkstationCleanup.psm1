@@ -648,11 +648,20 @@ function Remove-AtlasoWorkstationMissingRegistrations {
     $presentTargets = [System.Collections.Generic.HashSet[string]]::new([System.StringComparer]::OrdinalIgnoreCase)
     $indexedTargets = [System.Collections.Generic.HashSet[string]]::new([System.StringComparer]::OrdinalIgnoreCase)
     $indexGroups = @{}
+    $vmlistConfigOwners = @{}
     $targetIndexNumbers = [System.Collections.Generic.HashSet[int]]::new()
     foreach ($line in $lines) {
-        if ($line -match '^\s*vmlist(?<id>\d+)\.config\s*=\s*"(?<path>.*)"\s*$' -and $targets.Contains($Matches.path)) {
-            $vmlistIds.Add($Matches.id) | Out-Null
-            $presentTargets.Add($Matches.path) | Out-Null
+        if ($line -match '^\s*vmlist(?<id>\d+)\.config\s*=\s*"(?<path>.*)"\s*$') {
+            $vmlistId = $Matches.id
+            $vmlistPath = $Matches.path
+            if (-not $vmlistConfigOwners.ContainsKey($vmlistId)) {
+                $vmlistConfigOwners[$vmlistId] = [System.Collections.Generic.List[string]]::new()
+            }
+            $vmlistConfigOwners[$vmlistId].Add($vmlistPath)
+            if ($targets.Contains($vmlistPath)) {
+                $vmlistIds.Add($vmlistId) | Out-Null
+                $presentTargets.Add($vmlistPath) | Out-Null
+            }
         }
         if ($line -match '^\s*index(?<number>\d+)(?<suffix>\..*)$') {
             $number = [int]$Matches.number
@@ -665,6 +674,9 @@ function Remove-AtlasoWorkstationMissingRegistrations {
                 $indexedTargets.Add($Matches.path) | Out-Null
             }
         }
+    }
+    if (@($vmlistConfigOwners.Values | Where-Object { $_.Count -ne 1 }).Count -ne 0) {
+        throw 'VMware Workstation registration inventory assigns one library ID to multiple config paths; refusing to rewrite it.'
     }
     if ($presentTargets.Count -eq 0 -and $indexedTargets.Count -eq 0) {
         return
@@ -866,6 +878,107 @@ function Confirm-AtlasoWorkstationVmInactive {
     }
 }
 
+function Assert-AtlasoWorkstationVmxIdentity {
+    param(
+        [Parameter(Mandatory = $true)]
+        [string]$VmxPath,
+        [Parameter(Mandatory = $true)]
+        [string]$ExpectedIdentity
+    )
+
+    if (-not (Test-Path -LiteralPath $VmxPath -PathType Leaf)) {
+        throw "A validated VMware Workstation VMX disappeared before provider deletion; artifacts were preserved: $VmxPath"
+    }
+    $currentIdentity = Get-AtlasoVmxFileIdentity `
+        -Path $VmxPath `
+        -InventoryDescription 'VMware cleanup target revalidation'
+    if (-not $currentIdentity.Equals($ExpectedIdentity, [System.StringComparison]::Ordinal)) {
+        throw "A validated VMware Workstation VMX was replaced before provider deletion; artifacts were preserved: $VmxPath"
+    }
+}
+
+function Confirm-AtlasoWorkstationDeletePreconditions {
+    param(
+        [Parameter(Mandatory = $true)]
+        [string]$VmrunPath,
+        [Parameter(Mandatory = $true)]
+        [string]$InventoryPath,
+        [Parameter(Mandatory = $true)]
+        [string]$RemovalRoot,
+        [Parameter(Mandatory = $true)]
+        [string]$AllowMissingRegistrationsUnderRoot,
+        [Parameter(Mandatory = $true)]
+        [string]$TargetVmxPath,
+        [Parameter(Mandatory = $true)]
+        [string]$ExpectedTargetIdentity,
+        [Parameter(Mandatory = $true)]
+        [AllowEmptyCollection()]
+        [string[]]$RemainingVmxPaths,
+        [Parameter(Mandatory = $true)]
+        [hashtable]$ValidatedVmxIdentities
+    )
+
+    foreach ($remainingVmxPath in $RemainingVmxPaths) {
+        Assert-AtlasoWorkstationVmxIdentity `
+            -VmxPath $remainingVmxPath `
+            -ExpectedIdentity $ValidatedVmxIdentities[$remainingVmxPath]
+    }
+    Assert-AtlasoWorkstationRemovalVmxSet `
+        -RemovalRoot $RemovalRoot `
+        -ValidatedVmxPaths $RemainingVmxPaths
+
+    $firstRunningPaths = @(Get-AtlasoWorkstationVmPaths -VmrunPath $VmrunPath -State running)
+    if (Test-AtlasoWorkstationVmListed -Paths $firstRunningPaths -VmxPath $TargetVmxPath) {
+        throw "VMware Workstation VM restarted before provider deletion; artifacts were preserved: $TargetVmxPath"
+    }
+    $firstRegistrationSnapshot = Get-AtlasoWorkstationInventorySnapshot -InventoryPath $InventoryPath
+    Start-Sleep -Milliseconds 250
+    $secondRegistrationSnapshot = Get-AtlasoWorkstationInventorySnapshot -InventoryPath $InventoryPath
+    Assert-AtlasoWorkstationInventorySnapshotsEqual `
+        -First $firstRegistrationSnapshot `
+        -Second $secondRegistrationSnapshot `
+        -InventoryPath $InventoryPath
+    $registeredPaths = @(
+        ConvertFrom-AtlasoWorkstationRegisteredVmInventoryLines `
+            -InventoryLines @($secondRegistrationSnapshot.Content -split '\r?\n') `
+            -InventoryPath $InventoryPath `
+            -AllowMissingUnderRoot $AllowMissingRegistrationsUnderRoot
+    )
+    $matchingRegisteredPaths = @(
+        $registeredPaths | Where-Object {
+            (Test-Path -LiteralPath $_ -PathType Leaf) -and
+            (Test-AtlasoWorkstationVmListed -Paths @($_) -VmxPath $TargetVmxPath)
+        }
+    )
+    if (
+        $matchingRegisteredPaths.Count -ne 1 -or
+        -not (Test-AtlasoSamePath -Left $matchingRegisteredPaths[0] -Right $TargetVmxPath)
+    ) {
+        throw "VMware Workstation registration changed before provider deletion; artifacts were preserved: $TargetVmxPath"
+    }
+
+    foreach ($remainingVmxPath in $RemainingVmxPaths) {
+        Assert-AtlasoWorkstationVmxIdentity `
+            -VmxPath $remainingVmxPath `
+            -ExpectedIdentity $ValidatedVmxIdentities[$remainingVmxPath]
+    }
+    Assert-AtlasoWorkstationRemovalVmxSet `
+        -RemovalRoot $RemovalRoot `
+        -ValidatedVmxPaths $RemainingVmxPaths
+    $secondRunningPaths = @(Get-AtlasoWorkstationVmPaths -VmrunPath $VmrunPath -State running)
+    if (Test-AtlasoWorkstationVmListed -Paths $secondRunningPaths -VmxPath $TargetVmxPath) {
+        throw "VMware Workstation VM restarted before provider deletion; artifacts were preserved: $TargetVmxPath"
+    }
+    $finalRegistrationSnapshot = Get-AtlasoWorkstationInventorySnapshot -InventoryPath $InventoryPath
+    Assert-AtlasoWorkstationInventorySnapshotsEqual `
+        -First $secondRegistrationSnapshot `
+        -Second $finalRegistrationSnapshot `
+        -InventoryPath $InventoryPath
+    Assert-AtlasoWorkstationVmxIdentity `
+        -VmxPath $TargetVmxPath `
+        -ExpectedIdentity $ExpectedTargetIdentity
+}
+
 function Disconnect-AtlasoWorkstationExternalVmdks {
     param(
         [Parameter(Mandatory = $true)]
@@ -1008,6 +1121,7 @@ function Remove-AtlasoWorkstationVmArtifacts {
     Assert-AtlasoPathHasNoReparsePoint -Path $resolvedRemovalRoot
 
     $resolvedVmxPaths = @()
+    $validatedVmxIdentities = @{}
     foreach ($vmxPath in $VmxPaths) {
         $resolvedVmxPath = (Resolve-Path -LiteralPath $vmxPath).Path
         Assert-AtlasoStrictDescendantPath `
@@ -1015,6 +1129,9 @@ function Remove-AtlasoWorkstationVmArtifacts {
             -ChildPath $resolvedVmxPath `
             -FailureMessage 'Refusing to remove a VMware VMX outside the exact artifact directory'
         $resolvedVmxPaths += $resolvedVmxPath
+        $validatedVmxIdentities[$resolvedVmxPath] = Get-AtlasoVmxFileIdentity `
+            -Path $resolvedVmxPath `
+            -InventoryDescription 'validated VMware cleanup target'
     }
     Assert-AtlasoWorkstationRemovalVmxSet `
         -RemovalRoot $resolvedRemovalRoot `
@@ -1119,6 +1236,18 @@ function Remove-AtlasoWorkstationVmArtifacts {
         $registeredTargetPaths += $resolvedVmxPath
     }
     foreach ($registeredTargetPath in $registeredTargetPaths) {
+        $remainingVmxPaths = @(
+            $resolvedVmxPaths | Where-Object { Test-Path -LiteralPath $_ -PathType Leaf }
+        )
+        Confirm-AtlasoWorkstationDeletePreconditions `
+            -VmrunPath $VmrunPath `
+            -InventoryPath $inventoryPath `
+            -RemovalRoot $resolvedRemovalRoot `
+            -AllowMissingRegistrationsUnderRoot $resolvedMissingRegistrationRoot `
+            -TargetVmxPath $registeredTargetPath `
+            -ExpectedTargetIdentity $validatedVmxIdentities[$registeredTargetPath] `
+            -RemainingVmxPaths $remainingVmxPaths `
+            -ValidatedVmxIdentities $validatedVmxIdentities
         $externalDiskDetachment = Disconnect-AtlasoWorkstationExternalVmdks `
             -VmxPath $registeredTargetPath `
             -RemovalRoot $resolvedRemovalRoot

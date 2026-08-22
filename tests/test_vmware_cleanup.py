@@ -38,6 +38,7 @@ def _write_fake_vmrun(
     late_registered_list_count: int = 3,
     late_running_vmx: Path | None = None,
     late_running_list_count: int = 4,
+    replace_after_delete_vmx: Path | None = None,
 ) -> tuple[Path, dict[str, str], Path]:
     """Create a stateful fake ``vmrun`` command and Workstation inventory.
 
@@ -56,6 +57,7 @@ def _write_fake_vmrun(
         late_registered_list_count: Checked running-state read that triggers late registration.
         late_running_vmx: VMX injected into running inventory after registration stabilizes.
         late_running_list_count: Checked running-state read that triggers late running state.
+        replace_after_delete_vmx: VMX replaced after the first successful deleteVM operation.
 
     Returns:
         The fake command path, its environment, and the command-log path.
@@ -200,6 +202,16 @@ if command == "deleteVM":
         target_path.unlink(missing_ok=True)
     write_paths("registered", registered_paths)
     write_inventory(registered_paths)
+    replacement = os.environ.get("ATLASO_FAKE_VMRUN_REPLACE_AFTER_DELETE_VMX", "")
+    replacement_marker = state / "replacement-injected"
+    if replacement and not replacement_marker.exists():
+        replacement_path = Path(replacement)
+        replacement_path.unlink(missing_ok=True)
+        replacement_path.write_text(
+            '.encoding = "UTF-8"\\ndisplayName = "Concurrent replacement"\\n',
+            encoding="utf-8",
+        )
+        replacement_marker.write_text("done", encoding="utf-8")
     raise SystemExit(0)
 print(f"unsupported vmrun command: {command}", file=sys.stderr)
 raise SystemExit(64)
@@ -237,6 +249,9 @@ raise SystemExit(64)
             "ATLASO_FAKE_VMRUN_LATE_REGISTERED_LIST_COUNT": str(late_registered_list_count),
             "ATLASO_FAKE_VMRUN_LATE_RUNNING_VMX": str(late_running_vmx or ""),
             "ATLASO_FAKE_VMRUN_LATE_RUNNING_LIST_COUNT": str(late_running_list_count),
+            "ATLASO_FAKE_VMRUN_REPLACE_AFTER_DELETE_VMX": str(
+                replace_after_delete_vmx or ""
+            ),
             "APPDATA": str(appdata_directory),
         }
     )
@@ -395,6 +410,47 @@ def test_whole_artifact_root_cleanup_accepts_stale_missing_registration_in_artif
     assert str(stale_vmx.resolve()) not in inventory_path.read_text(encoding="utf-8")
 
 
+def test_whole_artifact_root_cleanup_rejects_shared_vmlist_config_id(
+    tmp_path: Path,
+) -> None:
+    """A stale and valid registration sharing one library ID must fail closed.
+
+    Args:
+        tmp_path: Isolated test directory.
+    """
+    artifact_parent = tmp_path / "image-root"
+    removal_root = artifact_parent / "test-vms"
+    stale_vmx = artifact_parent / "output" / "Atlaso-Builder.vmx"
+    valid_vmx = tmp_path / "unrelated" / "Unrelated.vmx"
+    sentinel = removal_root / "sentinel.txt"
+    _write_vmx(stale_vmx, "Atlaso-Builder")
+    _write_vmx(valid_vmx, "Unrelated")
+    removal_root.mkdir(parents=True)
+    sentinel.write_text("remaining artifact", encoding="utf-8")
+    vmrun_path, environment, _ = _write_fake_vmrun(
+        tmp_path / "fake", [stale_vmx, valid_vmx], running=False, registered=True
+    )
+    inventory_path = Path(environment["ATLASO_FAKE_VMRUN_INVENTORY"])
+    malformed_inventory = inventory_path.read_text(encoding="utf-8").replace(
+        "vmlist2.config", "vmlist1.config"
+    )
+    inventory_path.write_text(malformed_inventory, encoding="utf-8")
+    stale_vmx.unlink()
+
+    result = _run_artifact_root_cleanup(
+        tmp_path,
+        artifact_parent=artifact_parent,
+        removal_root=removal_root,
+        vmrun_path=vmrun_path,
+        environment=environment,
+    )
+
+    assert result.returncode != 0
+    assert "one library ID to multiple config paths" in result.stderr
+    assert sentinel.read_text(encoding="utf-8") == "remaining artifact"
+    assert str(valid_vmx.resolve()) in inventory_path.read_text(encoding="utf-8")
+
+
 def test_whole_artifact_root_cleanup_rejects_stale_missing_registration_outside_root(
     tmp_path: Path,
 ) -> None:
@@ -541,6 +597,45 @@ def test_whole_artifact_root_cleanup_removes_all_verified_vms(tmp_path: Path) ->
     commands = [json.loads(line) for line in log_path.read_text(encoding="utf-8").splitlines()]
     assert [command[2] for command in commands].count("stop") == 2
     assert [command[2] for command in commands].count("deleteVM") == 2
+
+
+def test_whole_artifact_root_cleanup_revalidates_each_target_before_delete(
+    tmp_path: Path,
+) -> None:
+    """Replacing a later VMX during an earlier delete must preserve the new VM.
+
+    Args:
+        tmp_path: Isolated test directory.
+    """
+    artifact_parent = tmp_path / "image-root"
+    removal_root = artifact_parent / "test-vms"
+    first_vmx = removal_root / "one" / "One.vmx"
+    second_vmx = removal_root / "two" / "Two.vmx"
+    _write_vmx(first_vmx, "One")
+    _write_vmx(second_vmx, "Two")
+    vmrun_path, environment, log_path = _write_fake_vmrun(
+        tmp_path / "fake",
+        [first_vmx, second_vmx],
+        running=False,
+        registered=True,
+        replace_after_delete_vmx=second_vmx,
+    )
+
+    result = _run_artifact_root_cleanup(
+        tmp_path,
+        artifact_parent=artifact_parent,
+        removal_root=removal_root,
+        vmrun_path=vmrun_path,
+        environment=environment,
+    )
+
+    assert result.returncode != 0
+    assert "VMX was replaced before provider deletion" in result.stderr
+    assert second_vmx.read_text(encoding="utf-8").endswith(
+        'displayName = "Concurrent replacement"\n'
+    )
+    commands = [json.loads(line) for line in log_path.read_text(encoding="utf-8").splitlines()]
+    assert [command[2] for command in commands].count("deleteVM") == 1
 
 
 def test_whole_artifact_root_cleanup_detaches_external_vmdks_before_delete(
@@ -777,7 +872,7 @@ def test_whole_artifact_root_cleanup_rejects_vmx_created_during_delete(
         running=False,
         registered=True,
         late_registered_vmx=late_vmx,
-        late_registered_list_count=5,
+        late_registered_list_count=7,
     )
 
     result = _run_artifact_root_cleanup(

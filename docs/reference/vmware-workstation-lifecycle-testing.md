@@ -162,6 +162,8 @@ Immediately before provider deletion, cleanup detaches every VMDK device resolve
 reused depot, backup, or other shared disk cannot be deleted with the VM.
 Cleanup requires the registered canonical path to equal the validated target; a registration reachable only through a
 filesystem alias fails closed before detachment replaces the VMX.
+For multi-VM roots, cleanup captures every target's immutable identity and repeats identity, running, stable
+registration, and recursive VMX-set checks immediately before each individual `deleteVM`.
 If `deleteVM` fails or returns success while the VMX survives, cleanup atomically restores the original VMX bytes and
 reports failure.
 Filesystem aliases such as DOS 8.3 or mapped-drive forms therefore
@@ -188,7 +190,8 @@ provider deletion begins preserve the remaining artifacts and return failure. Wi
 holds a write-excluding inventory handle from the final byte comparison through atomic replacement. It verifies the
 exact displaced backup as an optimistic compare-and-swap and atomically restores the newest captured provider state if
 another writer replaced the path. Only canonical missing VMX rows beneath the validated exact or multi-root artifact
-scope are removed. Missing inventory paths elsewhere still fail closed.
+scope are removed, and every `vmlistN` library ID must own exactly one config path. Missing inventory paths elsewhere
+still fail closed.
 When lifecycle
 execution and cleanup both fail, the final error reports the original scenario failure together with the cleanup failure
 and preserved path.
