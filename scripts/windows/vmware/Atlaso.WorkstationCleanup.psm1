@@ -1045,11 +1045,25 @@ function Remove-AtlasoWorkstationVmArtifacts {
     $existingFinalRegisteredPaths = @(
         $finalRegisteredPaths | Where-Object { Test-Path -LiteralPath $_ -PathType Leaf }
     )
-    $registeredTargetPaths = @(
-        $resolvedVmxPaths | Where-Object {
-            Test-AtlasoWorkstationVmListed -Paths $existingFinalRegisteredPaths -VmxPath $_
+    $registeredTargetPaths = @()
+    foreach ($resolvedVmxPath in $resolvedVmxPaths) {
+        $matchingRegisteredPaths = @(
+            $existingFinalRegisteredPaths | Where-Object {
+                Test-AtlasoWorkstationVmListed -Paths @($_) -VmxPath $resolvedVmxPath
+            }
+        )
+        if ($matchingRegisteredPaths.Count -eq 0) {
+            continue
         }
-    )
+        if (
+            @($matchingRegisteredPaths | Where-Object {
+                    Test-AtlasoSamePath -Left $_ -Right $resolvedVmxPath
+                }).Count -ne 1
+        ) {
+            throw "VMware Workstation registered the cleanup target through a filesystem alias; artifacts were preserved: $resolvedVmxPath"
+        }
+        $registeredTargetPaths += $resolvedVmxPath
+    }
     foreach ($registeredTargetPath in $registeredTargetPaths) {
         $externalDiskDetachment = Disconnect-AtlasoWorkstationExternalVmdks `
             -VmxPath $registeredTargetPath `

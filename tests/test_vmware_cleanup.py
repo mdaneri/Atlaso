@@ -575,6 +575,49 @@ def test_whole_artifact_root_cleanup_detaches_external_vmdks_before_delete(
     assert external_vmdk.read_text(encoding="utf-8") == "shared depot disk"
 
 
+def test_whole_artifact_root_cleanup_rejects_registered_hard_link_alias(
+    tmp_path: Path,
+) -> None:
+    """A registered hard-link alias must fail before VMX replacement breaks identity.
+
+    Args:
+        tmp_path: Isolated test directory.
+    """
+    artifact_parent = tmp_path / "image-root"
+    removal_root = artifact_parent / "test-vms" / "Atlaso-Test"
+    vmx_path = removal_root / "Atlaso-Test.vmx"
+    registered_alias = tmp_path / "inventory-alias" / "Atlaso-Test-Alias.vmx"
+    external_vmdk = tmp_path / "shared-disks" / "Atlaso-Depot.vmdk"
+    _write_vmx(vmx_path, "Atlaso-Test")
+    registered_alias.parent.mkdir(parents=True)
+    os.link(vmx_path, registered_alias)
+    external_vmdk.parent.mkdir(parents=True)
+    external_vmdk.write_text("shared depot disk", encoding="utf-8")
+    with vmx_path.open("a", encoding="utf-8") as stream:
+        stream.write('scsi0:2.present = "TRUE"\n')
+        stream.write(f'scsi0:2.fileName = "{external_vmdk.resolve()}"\n')
+    original_vmx = vmx_path.read_bytes()
+    vmrun_path, environment, log_path = _write_fake_vmrun(
+        tmp_path / "fake", [registered_alias], running=False, registered=True
+    )
+
+    result = _run_artifact_root_cleanup(
+        tmp_path,
+        artifact_parent=artifact_parent,
+        removal_root=removal_root,
+        vmrun_path=vmrun_path,
+        environment=environment,
+    )
+
+    assert result.returncode != 0
+    assert "registered the cleanup target through a filesystem alias" in result.stderr
+    assert vmx_path.read_bytes() == original_vmx
+    assert registered_alias.read_bytes() == original_vmx
+    assert external_vmdk.read_text(encoding="utf-8") == "shared depot disk"
+    commands = [json.loads(line) for line in log_path.read_text(encoding="utf-8").splitlines()]
+    assert "deleteVM" not in [command[2] for command in commands]
+
+
 @pytest.mark.parametrize(
     ("unregister_exit", "unregister_sticky", "expected_error"),
     [

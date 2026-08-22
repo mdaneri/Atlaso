@@ -96,7 +96,8 @@ module stabilizes the running and registration inventories and the VMX set befor
 registered target. It first detaches VMDK devices resolved outside the exact cleanup root, protecting reused depot,
 backup, and other shared disks; any failed deletion transition restores a surviving VMX byte-for-byte. After provider
 deletion, cleanup revalidates stable registration state and the recursive VMX set immediately before removing remaining
-files. Cleanup remains scoped to this image target's configured output directory.
+files. A target registered only through a filesystem alias fails closed before VMX replacement. Cleanup remains scoped
+to this image target's configured output directory.
 With the Workstation UI closed, the module verifies VMX deletion and running state, then atomically removes stale library
 rows only for canonical missing VMX paths beneath the validated artifact scope. Missing registrations elsewhere remain
 fatal.

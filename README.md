@@ -129,7 +129,8 @@ brings infrastructure, storage, identity, networking, and lifecycle workflows in
 Photon OS 5.0 is the appliance operating system. VMware Workstation is the default live-test target; its cleanup tools
 verify checked running and registration inventories, stop running targets, and complete every fail-closed preflight
 before detaching external VMDKs and allowing `vmrun deleteVM` to remove registered targets. It revalidates registration
-state and the recursive VMX set immediately before removing the remaining exact VM artifact directories. Standalone
+state and the recursive VMX set immediately before removing the remaining exact VM artifact directories. A target
+registered only through a filesystem alias fails closed before VMX replacement. Standalone
 VMware and Hyper-V image cleanup also reconciles provider inventory and fails closed
 before deleting canonical artifact roots.
 With the Workstation UI closed, cleanup holds a write-excluding inventory handle through its final byte comparison and

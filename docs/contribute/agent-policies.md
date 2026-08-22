@@ -388,8 +388,9 @@ Terminal order:
   registrations outside that scope remain fatal. Revalidate stable registration state and the recursive VMX set after
   provider deletion and immediately before recursive removal.
   Detach every VMDK device whose resolved path is outside the exact removal root before `deleteVM`, because provider
-  deletion must never remove reused depot, backup, or other shared disks. If the deletion transition fails while the VMX
-  survives, atomically restore its original bytes.
+  deletion must never remove reused depot, backup, or other shared disks. Require the registered canonical path to equal
+  the cleanup target and reject a registration reachable only through a filesystem alias before replacing the VMX. If
+  the deletion transition fails while the VMX survives, atomically restore its original bytes.
   A preflight failure preserves all artifacts. A nonzero or
   malformed command result, unreadable registration inventory, provider deletion failure, or failed postcondition must
   propagate as a cleanup failure and preserve the remaining artifacts; lifecycle cleanup must retain the original

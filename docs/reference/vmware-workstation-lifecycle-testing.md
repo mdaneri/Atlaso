@@ -159,6 +159,8 @@ before checked `vmrun deleteVM` removes a registered target. After provider dele
 state and the recursive VMX set immediately before removing any remaining files.
 Immediately before provider deletion, cleanup detaches every VMDK device resolved outside the exact removal root so a
 reused depot, backup, or other shared disk cannot be deleted with the VM.
+Cleanup requires the registered canonical path to equal the validated target; a registration reachable only through a
+filesystem alias fails closed before detachment replaces the VMX.
 If `deleteVM` fails or returns success while the VMX survives, cleanup atomically restores the original VMX bytes and
 reports failure.
 Filesystem aliases such as DOS 8.3 or mapped-drive forms therefore
