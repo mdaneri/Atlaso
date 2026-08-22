@@ -711,6 +711,42 @@ def test_whole_artifact_root_cleanup_rejects_late_registered_vmx(tmp_path: Path)
     assert late_vmx.exists()
 
 
+def test_whole_artifact_root_cleanup_rejects_vmx_created_during_delete(
+    tmp_path: Path,
+) -> None:
+    """The post-delete VMX and registration gates must preserve a concurrent build.
+
+    Args:
+        tmp_path: Isolated test directory.
+    """
+    artifact_parent = tmp_path / "image-root"
+    removal_root = artifact_parent / "output"
+    initial_vmx = removal_root / "initial" / "Initial.vmx"
+    late_vmx = removal_root / "late" / "Late.vmx"
+    _write_vmx(initial_vmx, "Initial")
+    vmrun_path, environment, _ = _write_fake_vmrun(
+        tmp_path / "fake",
+        [initial_vmx],
+        running=False,
+        registered=True,
+        late_registered_vmx=late_vmx,
+        late_registered_list_count=5,
+    )
+
+    result = _run_artifact_root_cleanup(
+        tmp_path,
+        artifact_parent=artifact_parent,
+        removal_root=removal_root,
+        vmrun_path=vmrun_path,
+        environment=environment,
+    )
+
+    assert result.returncode != 0
+    assert "directory contains an unvalidated VMX" in result.stderr
+    assert removal_root.exists()
+    assert late_vmx.exists()
+
+
 def test_whole_artifact_root_cleanup_rechecks_running_vms_after_inventory_stability(
     tmp_path: Path,
 ) -> None:

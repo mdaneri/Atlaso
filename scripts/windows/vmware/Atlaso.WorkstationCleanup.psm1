@@ -1054,6 +1054,36 @@ function Remove-AtlasoWorkstationVmArtifacts {
         }
     }
 
+    # Provider deletion can take long enough for another build to populate the
+    # same output root. Re-read stable registration state and then admit only
+    # the still-existing members of the original VMX set immediately before the
+    # recursive filesystem operation.
+    $postDeleteRegisteredPaths = @(
+        ConvertFrom-AtlasoWorkstationRegisteredVmInventoryLines `
+            -InventoryLines @(Get-AtlasoStableWorkstationInventoryLines -InventoryPath $inventoryPath) `
+            -InventoryPath $inventoryPath `
+            -AllowMissingUnderRoot $resolvedMissingRegistrationRoot
+    )
+    $postDeleteValidatedVmxPaths = @(
+        $resolvedVmxPaths | Where-Object { Test-Path -LiteralPath $_ -PathType Leaf }
+    )
+    Assert-AtlasoWorkstationRemovalVmxSet `
+        -RemovalRoot $resolvedRemovalRoot `
+        -ValidatedVmxPaths $postDeleteValidatedVmxPaths
+    foreach ($postDeleteRegisteredPath in $postDeleteRegisteredPaths) {
+        if (
+            (Test-AtlasoStrictDescendantPath -ParentPath $resolvedRemovalRoot -ChildPath $postDeleteRegisteredPath) -or
+            (
+                (Test-Path -LiteralPath $postDeleteRegisteredPath -PathType Leaf) -and
+                (Test-AtlasoWorkstationVmListed `
+                    -Paths $postDeleteValidatedVmxPaths `
+                    -VmxPath $postDeleteRegisteredPath)
+            )
+        ) {
+            throw "A VMware Workstation VM became registered before filesystem cleanup; artifacts were preserved: $postDeleteRegisteredPath"
+        }
+    }
+
     if (Test-Path -LiteralPath $resolvedRemovalRoot) {
         Remove-Item -LiteralPath $resolvedRemovalRoot -Recurse -Force -ErrorAction Stop
     }

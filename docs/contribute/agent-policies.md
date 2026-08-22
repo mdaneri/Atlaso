@@ -384,9 +384,10 @@ Terminal order:
   each target VMX is absent and no target remains running before removing any remaining files. With the Workstation UI
   closed, atomically prune provider-retained library rows only for canonical missing VMX paths beneath the validated
   cleanup scope. Standalone cleanup uses its exact root; multi-root cleanup uses the canonical artifact parent. Missing
-  registrations outside that scope remain fatal.
+  registrations outside that scope remain fatal. Revalidate stable registration state and the recursive VMX set after
+  provider deletion and immediately before recursive removal.
   Detach every VMDK device whose resolved path is outside the exact removal root before `deleteVM`, because provider
-  deletion must never remove reused depot, backup, or other shared disks. If provider deletion fails while the VMX
+  deletion must never remove reused depot, backup, or other shared disks. If the deletion transition fails while the VMX
   survives, atomically restore its original bytes.
   A preflight failure preserves all artifacts. A nonzero or
   malformed command result, unreadable registration inventory, provider deletion failure, or failed postcondition must

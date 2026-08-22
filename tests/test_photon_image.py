@@ -1853,13 +1853,18 @@ def test_vmware_lifecycle_cleanup_only_removes_existing_lifecycle_vms():
     assert cleanup_module.index("Confirm-AtlasoWorkstationVmInactive") < cleanup_module.index(
         "Remove-Item -LiteralPath $resolvedRemovalRoot -Recurse -Force"
     )
-    final_scan = cleanup_module.rindex("Assert-AtlasoWorkstationRemovalVmxSet")
     first_running_state = cleanup_module.rindex("$firstRunningPaths = @(")
     first_registered_state = cleanup_module.rindex("$firstRegistrationSnapshot = ")
     second_running_state = cleanup_module.rindex("$secondRunningPaths = @(")
     second_registered_state = cleanup_module.rindex("$secondRegistrationSnapshot = ")
+    pre_delete_scan = cleanup_module.index(
+        "Assert-AtlasoWorkstationRemovalVmxSet", second_registered_state
+    )
     final_running_state = cleanup_module.rindex("$finalRunningPaths = @(")
     final_registered_state = cleanup_module.rindex("$finalRegistrationSnapshot = ")
+    post_delete_running_state = cleanup_module.rindex("$postDeleteRunningPaths = @(")
+    post_delete_registered_state = cleanup_module.rindex("$postDeleteRegisteredPaths = @(")
+    post_delete_scan = cleanup_module.rindex("Assert-AtlasoWorkstationRemovalVmxSet")
     recursive_delete = cleanup_module.rindex(
         "Remove-Item -LiteralPath $resolvedRemovalRoot -Recurse -Force -ErrorAction Stop"
     )
@@ -1868,9 +1873,12 @@ def test_vmware_lifecycle_cleanup_only_removes_existing_lifecycle_vms():
         < first_registered_state
         < second_running_state
         < second_registered_state
-        < final_scan
+        < pre_delete_scan
         < final_running_state
         < final_registered_state
+        < post_delete_running_state
+        < post_delete_registered_state
+        < post_delete_scan
         < recursive_delete
     )
     assert "VMware artifact directory remains after recursive cleanup; refusing to report success" in cleanup_module
