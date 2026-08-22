@@ -137,6 +137,13 @@ def test_physical_interface_api_enforces_access_only_management_ui_flag(client):
     headers = {"Authorization": f"Bearer {token}"}
     interfaces = client.get("/api/v1/interfaces/physical", headers=headers).json()
     management = next(row for row in interfaces if row["role"] == "management")
+    rejected_static = client.patch(
+        f"/api/v1/interfaces/physical/{management['name']}",
+        headers=headers,
+        json={"ipv4_method": "static", "ip_cidr": ""},
+    )
+    assert rejected_static.status_code == 422, rejected_static.text
+    assert "At least one complete management listener must remain" in rejected_static.text
     with SessionLocal() as db:
         interface = db.execute(
             select(PhysicalInterface).where(PhysicalInterface.name == management["name"])

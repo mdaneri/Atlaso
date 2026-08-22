@@ -179,10 +179,13 @@ def desired_management_candidate_exists(db: Session) -> bool:
         role = normalize_interface_role(interface.role)
         mode = normalize_interface_mode(interface.mode)
         if role == "management" and mode == "access":
-            if interface.ipv4_method == "dhcp" or _has_usable_address(
-                interface.ip_cidr or interface.host_ip_cidr,
-                interface.ipv6_cidr or interface.host_ipv6_cidr,
-            ):
+            ipv4_candidate = interface.ipv4_method == "dhcp" or _has_usable_address(
+                interface.ip_cidr
+            )
+            ipv6_candidate = interface.ipv6_enabled and _has_usable_address(
+                interface.ipv6_cidr or interface.host_ipv6_cidr
+            )
+            if ipv4_candidate or ipv6_candidate:
                 return True
         if (
             role == "access"
