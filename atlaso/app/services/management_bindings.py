@@ -18,7 +18,11 @@ APPLIANCE_APPLY_BASELINES_KEY = "appliance_apply.baselines.v1"
 
 
 def _address_from_cidr(value: str | None) -> str:
-    """Return a normalized host address from an optional CIDR."""
+    """Return a normalized host address from an optional CIDR.
+
+    Args:
+        value: Optional interface address in CIDR notation.
+    """
     if not value:
         return ""
     try:
@@ -28,7 +32,11 @@ def _address_from_cidr(value: str | None) -> str:
 
 
 def _network_rows(config_preview: str) -> list[dict[str, str]]:
-    """Parse physical and VLAN rows from a rendered Network preview."""
+    """Parse physical and VLAN rows from a rendered Network preview.
+
+    Args:
+        config_preview: Rendered Network configuration snapshot.
+    """
     rows: list[dict[str, str]] = []
     section = ""
     current: dict[str, str] | None = None
@@ -55,7 +63,11 @@ def _network_rows(config_preview: str) -> list[dict[str, str]]:
 
 
 def _network_baseline_preview(db: Session) -> str | None:
-    """Return the last-applied Network preview, or ``None`` when no baseline exists."""
+    """Return the last-applied Network preview, or ``None`` when no baseline exists.
+
+    Args:
+        db: Active database session used to load the baseline setting.
+    """
     setting = db.execute(
         select(Setting).where(Setting.key == APPLIANCE_APPLY_BASELINES_KEY)
     ).scalar_one_or_none()
@@ -131,7 +143,11 @@ def applied_management_bindings(db: Session) -> list[dict[str, str]] | None:
 
 
 def _has_usable_address(*values: str | None) -> bool:
-    """Return whether any CIDR contains a usable non-loopback, non-link-local address."""
+    """Return whether any CIDR contains a usable non-loopback, non-link-local address.
+
+    Args:
+        *values: Desired or observed address values in CIDR notation.
+    """
     for value in values:
         if not value:
             continue
@@ -167,7 +183,12 @@ def desired_management_candidate_exists(db: Session) -> bool:
             role == "access"
             and mode == "access"
             and interface.access_management_ui_enabled
-            and _has_usable_address(interface.ip_cidr, interface.ipv6_cidr)
+            and _has_usable_address(
+                interface.ip_cidr,
+                interface.ipv6_cidr,
+                interface.host_ip_cidr,
+                interface.host_ipv6_cidr,
+            )
         ):
             return True
     for vlan in db.execute(select(VlanInterface).where(VlanInterface.enabled.is_(True))).scalars().all():

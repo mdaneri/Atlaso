@@ -1772,7 +1772,7 @@ interface=eth0
         eth0.oper_state = "up"
         eth0.host_ip_cidr = "192.168.49.1/24"
         eth0.ipv4_method = "static"
-        eth0.ip_cidr = "192.168.49.1/24"
+        eth0.ip_cidr = None
         db.add(eth0)
         ui.save_appliance_apply_baselines(
             db,
@@ -1806,7 +1806,7 @@ interface=eth0
             "role": "unused",
             "mode": "access",
             "ipv4_method": "static",
-            "ip_cidr": "192.168.49.1/24",
+            "ip_cidr": "",
             "ipv6_cidr": "",
             "mtu": "1500",
             "admin_state": "up",
@@ -1825,7 +1825,7 @@ interface=eth0
             "role": "access",
             "mode": "access",
             "ipv4_method": "static",
-            "ip_cidr": "192.168.49.1/24",
+            "ip_cidr": "",
             "ipv6_cidr": "",
             "mtu": "1500",
             "admin_state": "up",
@@ -1857,7 +1857,7 @@ interface=eth0
             "role": "management",
             "mode": "access",
             "ipv4_method": "static",
-            "ip_cidr": "192.168.49.1/24",
+            "ip_cidr": "",
             "ipv6_cidr": "",
             "mtu": "1500",
             "admin_state": "up",
