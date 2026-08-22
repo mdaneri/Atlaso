@@ -391,6 +391,8 @@ The following cross-cutting boundaries always apply:
 - First-boot depot and backup initialization requires the root-owned image policy, exact platform SCSI identities,
   topology-derived `atlaso-path-*` links, and exact 500 GiB capacities. Complete an all-disk preflight before `mkfs` and
   fail closed for missing, extra, reordered, ambiguous, read-only, in-use, or identity/capacity-mismatched disks.
+  Resolve the root filesystem through its complete block-device dependency chain, require exactly one physical backing
+  disk, and exclude only that resolved disk from the candidate set; mapper path layout must never fabricate a disk path.
   Existing correctly labeled ext4 disks remain UUID-mounted and must never be reformatted. After both fixed disks are
   initialized, admit additional disks only when they satisfy the root-owned managed ESX Storage identity, UUID, mount,
   and fstab contract. Atlaso-formatted disks retain their `lf-<hash>` label; claimed existing ext4 disks additionally

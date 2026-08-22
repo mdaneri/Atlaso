@@ -226,7 +226,8 @@ disk. ESXi creates the latter two disks during deployment without payload files.
 ordered disks, requires file-backed payloads for the first two, uses VMware Paravirtual SCSI, and removes the build-time
 CD-ROM device. On first boot, the independent Atlaso `tty1` console and OVF management-network validation start before
 data-disk discovery. After networking validates, `atlaso-data-disks.service` ignores the formatted system-content disk
-and requires the two data disks at SCSI units 2 and 3 to expose topology-derived `atlaso-path-*` identities and exact
+and resolves `/` through its complete block-device dependency tree. The service requires exactly one physical OS disk,
+then requires the two data disks at SCSI units 2 and 3 to expose topology-derived `atlaso-path-*` identities and exact
 500 GiB capacities. It completes an all-disk preflight before formatting either disk and fails closed for any missing,
 extra, reordered, ambiguous, or mismatched device. Verified blank disks become ext4 volumes labeled
 `ATLASO_DEPOT` and `ATLASO_BKUP`; correctly labeled ext4 disks are never reformatted. The service writes their UUIDs to
