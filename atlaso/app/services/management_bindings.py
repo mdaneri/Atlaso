@@ -15,6 +15,11 @@ from atlaso.app.services.networking import (
 )
 
 APPLIANCE_APPLY_BASELINES_KEY = "appliance_apply.baselines.v1"
+MANAGEMENT_LISTENER_REQUIRED_DETAIL = (
+    "At least one complete management listener must remain. Keep a management-role interface, "
+    "or configure an enabled access-role interface or VLAN with Management UI exposure and a "
+    "usable address before removing the final listener."
+)
 
 
 def _address_from_cidr(value: str | None) -> str:

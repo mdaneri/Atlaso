@@ -20,6 +20,10 @@ from atlaso.app.services.interface_updates import (
     PhysicalInterfaceUpdateError,
     refresh_interface_dependent_addresses,
 )
+from atlaso.app.services.management_bindings import (
+    MANAGEMENT_LISTENER_REQUIRED_DETAIL,
+    desired_management_candidate_exists,
+)
 from atlaso.app.services.networking import sync_host_physical_interfaces
 from atlaso.app.services.physical_interfaces import (
     PhysicalInterfaceMutation,
@@ -449,6 +453,7 @@ def build_router(dependencies: PhysicalVlanUiDependencies) -> PhysicalVlanUiRout
         old_name = vlan.name
         old_ip_cidr = vlan.ip_cidr
         old_ipv6_cidr = vlan.ipv6_cidr
+        had_management_candidate = desired_management_candidate_exists(db)
         vlan.parent_interface = parent_name
         vlan.vlan_id = parsed_vlan_id
         vlan.name = f"{vlan.parent_interface}.{vlan.vlan_id}"
@@ -459,6 +464,9 @@ def build_router(dependencies: PhysicalVlanUiDependencies) -> PhysicalVlanUiRout
         vlan.enabled = requested_enabled and not parent_missing
         vlan.access_management_ui_enabled = management_ui_value
         try:
+            db.flush()
+            if had_management_candidate and not desired_management_candidate_exists(db):
+                raise PhysicalInterfaceUpdateError(MANAGEMENT_LISTENER_REQUIRED_DETAIL)
             dependent_updates = refresh_interface_dependent_addresses(
                 db,
                 old_name=old_name,
@@ -532,9 +540,12 @@ def build_router(dependencies: PhysicalVlanUiDependencies) -> PhysicalVlanUiRout
         old_name = vlan.name
         old_ip_cidr = vlan.ip_cidr
         old_ipv6_cidr = vlan.ipv6_cidr
+        had_management_candidate = desired_management_candidate_exists(db)
         try:
             db.delete(vlan)
             db.flush()
+            if had_management_candidate and not desired_management_candidate_exists(db):
+                raise PhysicalInterfaceUpdateError(MANAGEMENT_LISTENER_REQUIRED_DETAIL)
             dependent_updates = refresh_interface_dependent_addresses(
                 db,
                 old_name=old_name,

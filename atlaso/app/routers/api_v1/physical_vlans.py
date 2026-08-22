@@ -25,6 +25,10 @@ from atlaso.app.security import Identity, require_scope
 from atlaso.app.services.interface_updates import (
     PhysicalInterfaceUpdateError,
 )
+from atlaso.app.services.management_bindings import (
+    MANAGEMENT_LISTENER_REQUIRED_DETAIL,
+    desired_management_candidate_exists,
+)
 from atlaso.app.services.networking import sync_host_physical_interfaces
 from atlaso.app.services.physical_interfaces import (
     PhysicalInterfaceMutation,
@@ -387,10 +391,15 @@ def build_router(dependencies: PhysicalVlanApiDependencies) -> PhysicalVlanApiRo
         vlan = db.get(VlanInterface, vlan_id)
         if not vlan:
             raise HTTPException(status_code=404, detail="VLAN not found")
+        had_management_candidate = desired_management_candidate_exists(db)
         values = dependencies.validate_vlan_api_payload(payload, db)
         for key, value in values.items():
             setattr(vlan, key, value)
         vlan.name = f"{vlan.parent_interface}.{vlan.vlan_id}"
+        db.flush()
+        if had_management_candidate and not desired_management_candidate_exists(db):
+            db.rollback()
+            raise HTTPException(status_code=422, detail=MANAGEMENT_LISTENER_REQUIRED_DETAIL)
         db.commit()
         db.refresh(vlan)
         record_audit(
@@ -429,7 +438,12 @@ def build_router(dependencies: PhysicalVlanApiDependencies) -> PhysicalVlanApiRo
         vlan = db.get(VlanInterface, vlan_id)
         if not vlan:
             raise HTTPException(status_code=404, detail="VLAN not found")
+        had_management_candidate = desired_management_candidate_exists(db)
         db.delete(vlan)
+        db.flush()
+        if had_management_candidate and not desired_management_candidate_exists(db):
+            db.rollback()
+            raise HTTPException(status_code=422, detail=MANAGEMENT_LISTENER_REQUIRED_DETAIL)
         db.commit()
         record_audit(
             db,
@@ -521,7 +535,12 @@ def build_router(dependencies: PhysicalVlanApiDependencies) -> PhysicalVlanApiRo
         vlan = db.get(VlanInterface, vlan_id)
         if not vlan:
             raise HTTPException(status_code=404, detail="VLAN not found")
+        had_management_candidate = desired_management_candidate_exists(db)
         vlan.enabled = False
+        db.flush()
+        if had_management_candidate and not desired_management_candidate_exists(db):
+            db.rollback()
+            raise HTTPException(status_code=422, detail=MANAGEMENT_LISTENER_REQUIRED_DETAIL)
         db.commit()
         db.refresh(vlan)
         record_audit(

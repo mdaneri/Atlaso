@@ -260,6 +260,64 @@ def test_vlan_api_preserves_case_insensitive_canonical_roles(client):
     assert updated.json()["role"] == "route"
 
 
+def test_vlan_api_rejects_removing_final_management_listener(client):
+    """Keep the final flagged management VLAN intact across API mutations.
+
+    Args:
+        client: Authenticated-capable application test client fixture.
+    """
+    from sqlalchemy import select
+
+    from atlaso.app.database import SessionLocal
+    from atlaso.app.models import PhysicalInterface, VlanInterface
+
+    with SessionLocal() as db:
+        for interface in db.execute(select(PhysicalInterface)).scalars().all():
+            interface.role = "unused"
+            interface.access_management_ui_enabled = False
+        parent = db.execute(
+            select(PhysicalInterface).where(PhysicalInterface.name == "eth1")
+        ).scalar_one()
+        parent.mode = "trunk"
+        parent.admin_state = "up"
+        parent.oper_state = "up"
+        vlan = VlanInterface(
+            name="eth1.469",
+            parent_interface="eth1",
+            vlan_id=469,
+            ip_cidr="192.168.69.1/24",
+            role="access",
+            enabled=True,
+            access_management_ui_enabled=True,
+        )
+        db.add(vlan)
+        db.commit()
+        vlan_id = vlan.id
+
+    token, _metadata = create_token(client, scopes=["write:vlans"])
+    headers = {"Authorization": f"Bearer {token}"}
+    payload = {
+        "parent_interface": "eth1",
+        "vlan_id": 469,
+        "ip_cidr": "192.168.69.1/24",
+        "role": "access",
+        "enabled": True,
+        "access_management_ui_enabled": False,
+    }
+    updated = client.patch(f"/api/v1/vlans/{vlan_id}", headers=headers, json=payload)
+    disabled = client.post(f"/api/v1/vlans/{vlan_id}/disable", headers=headers)
+    deleted = client.delete(f"/api/v1/vlans/{vlan_id}", headers=headers)
+
+    for response in (updated, disabled, deleted):
+        assert response.status_code == 422, response.text
+        assert "At least one complete management listener must remain" in response.text
+    with SessionLocal() as db:
+        preserved = db.get(VlanInterface, vlan_id)
+        assert preserved is not None
+        assert preserved.enabled is True
+        assert preserved.access_management_ui_enabled is True
+
+
 def test_physical_interface_api_atomically_refreshes_ipv4_and_ipv6_dependencies(client):
     """Verify the typed API update keeps service, DHCP, and Network Boot addresses aligned.
 

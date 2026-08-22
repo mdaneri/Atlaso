@@ -7432,9 +7432,9 @@ async function postNetworkAction(url, data, csrf, options = {}) {
     ) {
       continue;
     }
-    if (key === "enabled") {
+    if (key === "enabled" || key === "access_management_ui_enabled") {
       if (value) {
-        body.set("enabled", "on");
+        body.set(key, "on");
       }
       continue;
     }

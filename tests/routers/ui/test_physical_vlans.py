@@ -243,6 +243,10 @@ def test_physical_and_vlan_pages_render(client):
     assert 'name="access_management_ui_enabled"' in vlans.text
     assert 'name="enabled" checked' in vlans.text
     app_js = client.get("/static/app.js").text
+    network_action_js = app_js.split("async function postNetworkAction", 1)[1].split(
+        "function newVlanWizardRow", 1
+    )[0]
+    assert 'key === "enabled" || key === "access_management_ui_enabled"' in network_action_js
     physical_table_js = app_js.split("function initializePhysicalInterfacesTable()", 1)[1].split(
         "function initializeVlanInterfacesTable()", 1
     )[0]
@@ -1182,6 +1186,72 @@ def test_vlan_interface_create_edit_delete_and_apply(client):
     deleted = client.post(f"/vlan-interfaces/{vlan_id}/delete", data={"csrf": csrf}, follow_redirects=False)
     assert deleted.status_code == 303
     assert "eth1.50" not in client.get("/vlan-interfaces").text
+
+
+def test_vlan_ui_rejects_removing_final_management_listener(client):
+    """Keep the final flagged management VLAN intact across UI edit and delete.
+
+    Args:
+        client: HTTP test client used to exercise the Atlaso application.
+    """
+    from sqlalchemy import select
+
+    from atlaso.app.database import SessionLocal
+    from atlaso.app.models import PhysicalInterface, VlanInterface
+
+    login(client)
+    with SessionLocal() as db:
+        for interface in db.execute(select(PhysicalInterface)).scalars().all():
+            interface.role = "unused"
+            interface.access_management_ui_enabled = False
+        parent = db.execute(
+            select(PhysicalInterface).where(PhysicalInterface.name == "eth1")
+        ).scalar_one()
+        parent.mode = "trunk"
+        parent.admin_state = "up"
+        parent.oper_state = "up"
+        vlan = VlanInterface(
+            name="eth1.469",
+            parent_interface="eth1",
+            vlan_id=469,
+            ip_cidr="192.168.69.1/24",
+            role="access",
+            enabled=True,
+            access_management_ui_enabled=True,
+        )
+        db.add(vlan)
+        db.commit()
+        vlan_id = vlan.id
+
+    page = client.get("/vlan-interfaces")
+    csrf = page.text.split('name="csrf" value="', 1)[1].split('"', 1)[0]
+    updated = client.post(
+        f"/vlan-interfaces/{vlan_id}/edit",
+        data={
+            "parent_interface": "eth1",
+            "vlan_id": "469",
+            "ip_cidr": "192.168.69.1/24",
+            "mtu": "1500",
+            "role": "access",
+            "enabled": "on",
+            "csrf": csrf,
+        },
+        headers={"X-Atlaso-Grid": "1", "Accept": "application/json"},
+    )
+    deleted = client.post(
+        f"/vlan-interfaces/{vlan_id}/delete",
+        data={"csrf": csrf},
+        follow_redirects=False,
+    )
+
+    for response in (updated, deleted):
+        assert response.status_code == 422, response.text
+        assert "At least one complete management listener must remain" in response.text
+    with SessionLocal() as db:
+        preserved = db.get(VlanInterface, vlan_id)
+        assert preserved is not None
+        assert preserved.enabled is True
+        assert preserved.access_management_ui_enabled is True
 
 
 def test_vlan_interface_edit_reports_unrepresentable_dhcp_range(client):

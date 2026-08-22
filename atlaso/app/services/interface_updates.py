@@ -62,7 +62,10 @@ from atlaso.app.services.esxi_pxe import (
     esxi_pxe_boot_settings,
     save_esxi_pxe_boot_settings,
 )
-from atlaso.app.services.management_bindings import desired_management_candidate_exists
+from atlaso.app.services.management_bindings import (
+    MANAGEMENT_LISTENER_REQUIRED_DETAIL,
+    desired_management_candidate_exists,
+)
 from atlaso.app.services.networking import (
     NETWORK_ROLES,
     is_canonical_network_role,
@@ -1337,11 +1340,7 @@ def update_physical_interface_desired_state(
         db.add(interface)
         db.flush()
         if not desired_management_candidate_exists(db):
-            raise PhysicalInterfaceUpdateError(
-                "At least one complete management listener must remain. Keep a management-role "
-                "interface, or configure an enabled access-role interface or VLAN with Management "
-                "UI exposure and a usable address before removing the final listener."
-            )
+            raise PhysicalInterfaceUpdateError(MANAGEMENT_LISTENER_REQUIRED_DETAIL)
         dependent_updates = refresh_interface_dependent_addresses(
             db,
             old_name=interface.name,
