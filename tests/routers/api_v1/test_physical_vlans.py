@@ -154,6 +154,7 @@ def test_physical_interface_api_enforces_access_only_management_ui_flag(client):
     )
     assert converted.status_code == 200, converted.text
     assert converted.json()["access_management_ui_enabled"] is True
+    assert converted.json()["ip_cidr"] == "192.168.49.1/24"
 
     final_listener = client.patch(
         f"/api/v1/interfaces/physical/{management['name']}",

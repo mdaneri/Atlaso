@@ -246,7 +246,7 @@ def test_physical_and_vlan_pages_render(client):
     network_action_js = app_js.split("async function postNetworkAction", 1)[1].split(
         "function newVlanWizardRow", 1
     )[0]
-    assert 'key === "enabled" || key === "access_management_ui_enabled"' in network_action_js
+    assert 'body.set(key, value ? "on" : "off")' in network_action_js
     physical_table_js = app_js.split("function initializePhysicalInterfacesTable()", 1)[1].split(
         "function initializeVlanInterfacesTable()", 1
     )[0]
@@ -901,6 +901,30 @@ def test_management_to_access_conversion_preserves_ui_and_reverse_conversion_cle
         interface = db.execute(select(PhysicalInterface).where(PhysicalInterface.id == eth0["id"])).scalar_one()
         assert interface.role == "access"
         assert interface.access_management_ui_enabled is True
+        replacement = db.execute(
+            select(PhysicalInterface).where(PhysicalInterface.name == "eth1")
+        ).scalar_one()
+        replacement.role = "management"
+        replacement.mode = "access"
+        replacement.admin_state = "up"
+        replacement.oper_state = "up"
+        replacement.ipv4_method = "static"
+        replacement.ip_cidr = "192.168.168.10/24"
+        db.commit()
+
+    disabled_flag = client.post(
+        f"/physical-interfaces/{eth0['id']}/edit",
+        data={
+            **common,
+            "role": "access",
+            "access_management_ui_enabled": "off",
+        },
+        follow_redirects=False,
+    )
+    assert disabled_flag.status_code == 303
+    with SessionLocal() as db:
+        interface = db.execute(select(PhysicalInterface).where(PhysicalInterface.id == eth0["id"])).scalar_one()
+        assert interface.access_management_ui_enabled is False
 
     reverted = client.post(
         f"/physical-interfaces/{eth0['id']}/edit",
