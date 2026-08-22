@@ -156,7 +156,8 @@ Workstation cleanup removes a VM directory only after validating that every targ
 non-reparse-point artifact root. It reads checked running and registered VM inventories, resolves each canonical absolute
 VMX to its Windows volume and file identity, stops a listed running VM through checked `vmrun`, and stabilizes all state
 before checked `vmrun deleteVM` removes a registered target. After provider deletion, it revalidates stable registration
-state and the recursive VMX set immediately before removing any remaining files.
+state and the recursive VMX set, then performs one last identity-aware running check followed only by registration
+snapshots around a repeated VMX-set check before removing any remaining files.
 Immediately before provider deletion, cleanup detaches every VMDK device resolved outside the exact removal root so a
 reused depot, backup, or other shared disk cannot be deleted with the VM.
 Cleanup requires the registered canonical path to equal the validated target; a registration reachable only through a
@@ -184,9 +185,10 @@ rounds 250 milliseconds apart, repeats the recursive VMX-set scan, and captures 
 `vmrun list` state followed by the registration file, and all state sets must remain identical, so a VM restarted or
 registered during the stability window or final filesystem verification preserves all artifacts. Failures after the
 provider deletion begins preserve the remaining artifacts and return failure. With the Workstation UI closed, cleanup
-holds a write-excluding inventory handle from the final byte comparison through atomic replacement, removing
-provider-retained library rows only for canonical missing VMX paths beneath the validated exact or multi-root artifact
-scope. Missing inventory paths elsewhere still fail closed.
+holds a write-excluding inventory handle from the final byte comparison through atomic replacement. It verifies the
+exact displaced backup as an optimistic compare-and-swap and atomically restores the newest captured provider state if
+another writer replaced the path. Only canonical missing VMX rows beneath the validated exact or multi-root artifact
+scope are removed. Missing inventory paths elsewhere still fail closed.
 When lifecycle
 execution and cleanup both fail, the final error reports the original scenario failure together with the cleanup failure
 and preserved path.

@@ -576,6 +576,48 @@ function Get-AtlasoWorkstationRegisteredVmPaths {
     )
 }
 
+function Restore-AtlasoWorkstationInventoryAfterCasFailure {
+    param(
+        [Parameter(Mandatory = $true)]
+        [string]$InventoryPath,
+        [Parameter(Mandatory = $true)]
+        [string]$ExpectedCurrentContent,
+        [Parameter(Mandatory = $true)]
+        [string]$ReplacementPath,
+        [Parameter(Mandatory = $true)]
+        [string]$ReplacementContent
+    )
+
+    # File.Replace captures the exact displaced file. If another writer won the
+    # path race, atomically put that captured state back. Repeat when a writer
+    # races the rollback itself so no observed provider update is discarded.
+    foreach ($attempt in 1..16) {
+        $capturedPath = "$InventoryPath.atlaso-cas-$([System.Guid]::NewGuid().ToString('N')).tmp"
+        try {
+            [System.IO.File]::Replace($ReplacementPath, $InventoryPath, $capturedPath, $true)
+        }
+        catch {
+            $replaceError = $_.Exception.Message
+            $recoveryPath = "$InventoryPath.atlaso-recovery-$([System.Guid]::NewGuid().ToString('N')).vmls"
+            [System.IO.File]::Move($ReplacementPath, $recoveryPath)
+            throw "VMware Workstation inventory rollback failed; the newest captured provider state was preserved for recovery at '$recoveryPath'. Replace error: $replaceError"
+        }
+        $capturedContent = [System.IO.File]::ReadAllText($capturedPath)
+        if ($capturedContent.Equals($ExpectedCurrentContent, [System.StringComparison]::Ordinal)) {
+            Remove-Item -LiteralPath $capturedPath -Force -ErrorAction Stop
+            return
+        }
+
+        $ExpectedCurrentContent = $ReplacementContent
+        $ReplacementPath = $capturedPath
+        $ReplacementContent = $capturedContent
+    }
+
+    $recoveryPath = "$InventoryPath.atlaso-recovery-$([System.Guid]::NewGuid().ToString('N')).vmls"
+    [System.IO.File]::Move($ReplacementPath, $recoveryPath)
+    throw "VMware Workstation inventory changed repeatedly during stale registration rollback; the newest captured provider state was preserved for recovery: $recoveryPath"
+}
+
 function Remove-AtlasoWorkstationMissingRegistrations {
     param(
         [Parameter(Mandatory = $true)]
@@ -668,8 +710,10 @@ function Remove-AtlasoWorkstationMissingRegistrations {
     Assert-AtlasoWorkstationInventorySnapshotsEqual -First $snapshot -Second $secondSnapshot -InventoryPath $InventoryPath
     $temporaryInventoryPath = "$InventoryPath.atlaso-cleanup-$([System.Guid]::NewGuid().ToString('N')).tmp"
     $backupInventoryPath = "$InventoryPath.atlaso-backup-$([System.Guid]::NewGuid().ToString('N')).tmp"
+    $preserveBackupInventoryPath = $false
     try {
         [System.IO.File]::WriteAllLines($temporaryInventoryPath, $updatedLines, [System.Text.UTF8Encoding]::new($false))
+        $replacementContent = [System.IO.File]::ReadAllText($temporaryInventoryPath)
         # Deny writers from the last byte comparison through the atomic replace.
         # ShareDelete permits ReplaceFile to replace the path while this handle
         # continues to protect the verified old file from concurrent mutation.
@@ -701,12 +745,22 @@ function Remove-AtlasoWorkstationMissingRegistrations {
         finally {
             $inventoryWriteLock.Dispose()
         }
+        $displacedContent = [System.IO.File]::ReadAllText($backupInventoryPath)
+        if (-not $snapshot.Content.Equals($displacedContent, [System.StringComparison]::Ordinal)) {
+            $preserveBackupInventoryPath = $true
+            Restore-AtlasoWorkstationInventoryAfterCasFailure `
+                -InventoryPath $InventoryPath `
+                -ExpectedCurrentContent $replacementContent `
+                -ReplacementPath $backupInventoryPath `
+                -ReplacementContent $displacedContent
+            throw 'VMware Workstation inventory was replaced during stale registration removal; the provider state was restored and artifacts were preserved.'
+        }
     }
     finally {
         if (Test-Path -LiteralPath $temporaryInventoryPath) {
             Remove-Item -LiteralPath $temporaryInventoryPath -Force -ErrorAction SilentlyContinue
         }
-        if (Test-Path -LiteralPath $backupInventoryPath) {
+        if (-not $preserveBackupInventoryPath -and (Test-Path -LiteralPath $backupInventoryPath)) {
             Remove-Item -LiteralPath $backupInventoryPath -Force -ErrorAction SilentlyContinue
         }
     }
@@ -1095,20 +1149,20 @@ function Remove-AtlasoWorkstationVmArtifacts {
         -InventoryPath $inventoryPath `
         -MissingPaths $missingFinalRegisteredPaths
 
-    $postDeleteRunningPaths = @(Get-AtlasoWorkstationVmPaths -VmrunPath $VmrunPath -State running)
-    foreach ($postDeleteRunningPath in $postDeleteRunningPaths) {
-        if (Test-AtlasoStrictDescendantPath -ParentPath $resolvedRemovalRoot -ChildPath $postDeleteRunningPath) {
-            throw "A VMware Workstation VM remains running after deleteVM succeeded: $postDeleteRunningPath"
-        }
-    }
-
     # Provider deletion can take long enough for another build to populate the
     # same output root. Re-read stable registration state and then admit only
     # the still-existing members of the original VMX set immediately before the
     # recursive filesystem operation.
+    $postDeleteRegistrationFirstSnapshot = Get-AtlasoWorkstationInventorySnapshot -InventoryPath $inventoryPath
+    Start-Sleep -Milliseconds 250
+    $postDeleteRegistrationSnapshot = Get-AtlasoWorkstationInventorySnapshot -InventoryPath $inventoryPath
+    Assert-AtlasoWorkstationInventorySnapshotsEqual `
+        -First $postDeleteRegistrationFirstSnapshot `
+        -Second $postDeleteRegistrationSnapshot `
+        -InventoryPath $inventoryPath
     $postDeleteRegisteredPaths = @(
         ConvertFrom-AtlasoWorkstationRegisteredVmInventoryLines `
-            -InventoryLines @(Get-AtlasoStableWorkstationInventoryLines -InventoryPath $inventoryPath) `
+            -InventoryLines @($postDeleteRegistrationSnapshot.Content -split '\r?\n') `
             -InventoryPath $inventoryPath `
             -AllowMissingUnderRoot $resolvedMissingRegistrationRoot
     )
@@ -1131,6 +1185,38 @@ function Remove-AtlasoWorkstationVmArtifacts {
             throw "A VMware Workstation VM became registered before filesystem cleanup; artifacts were preserved: $postDeleteRegisteredPath"
         }
     }
+
+    # Keep the checked running inventory last: registration stabilization waits
+    # long enough for an unregistered target to start without changing the
+    # provider inventory. Match aliases by file identity as well as root path.
+    $postDeleteRunningPaths = @(Get-AtlasoWorkstationVmPaths -VmrunPath $VmrunPath -State running)
+    foreach ($postDeleteRunningPath in $postDeleteRunningPaths) {
+        if (
+            (Test-AtlasoStrictDescendantPath -ParentPath $resolvedRemovalRoot -ChildPath $postDeleteRunningPath) -or
+            (
+                $postDeleteValidatedVmxPaths.Count -gt 0 -and
+                (Test-AtlasoWorkstationVmListed `
+                    -Paths $postDeleteValidatedVmxPaths `
+                    -VmxPath $postDeleteRunningPath)
+            )
+        ) {
+            throw "A VMware Workstation VM remains running after deleteVM succeeded: $postDeleteRunningPath"
+        }
+    }
+
+    $postRunningRegistrationFirstSnapshot = Get-AtlasoWorkstationInventorySnapshot -InventoryPath $inventoryPath
+    Assert-AtlasoWorkstationInventorySnapshotsEqual `
+        -First $postDeleteRegistrationSnapshot `
+        -Second $postRunningRegistrationFirstSnapshot `
+        -InventoryPath $inventoryPath
+    Assert-AtlasoWorkstationRemovalVmxSet `
+        -RemovalRoot $resolvedRemovalRoot `
+        -ValidatedVmxPaths $postDeleteValidatedVmxPaths
+    $postRunningRegistrationSecondSnapshot = Get-AtlasoWorkstationInventorySnapshot -InventoryPath $inventoryPath
+    Assert-AtlasoWorkstationInventorySnapshotsEqual `
+        -First $postRunningRegistrationFirstSnapshot `
+        -Second $postRunningRegistrationSecondSnapshot `
+        -InventoryPath $inventoryPath
 
     if (Test-Path -LiteralPath $resolvedRemovalRoot) {
         Remove-Item -LiteralPath $resolvedRemovalRoot -Recurse -Force -ErrorAction Stop

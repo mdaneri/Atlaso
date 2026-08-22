@@ -37,6 +37,7 @@ def _write_fake_vmrun(
     late_registered_alias: Path | None = None,
     late_registered_list_count: int = 3,
     late_running_vmx: Path | None = None,
+    late_running_list_count: int = 4,
 ) -> tuple[Path, dict[str, str], Path]:
     """Create a stateful fake ``vmrun`` command and Workstation inventory.
 
@@ -54,6 +55,7 @@ def _write_fake_vmrun(
         late_registered_alias: Optional hard-link alias registered instead of the injected VMX path.
         late_registered_list_count: Checked running-state read that triggers late registration.
         late_running_vmx: VMX injected into running inventory after registration stabilizes.
+        late_running_list_count: Checked running-state read that triggers late running state.
 
     Returns:
         The fake command path, its environment, and the command-log path.
@@ -154,7 +156,8 @@ if command == "list":
         write_paths("registered", registered_paths)
         write_inventory(registered_paths)
     late_running = os.environ.get("ATLASO_FAKE_VMRUN_LATE_RUNNING_VMX", "")
-    if late_running and list_count == 4:
+    late_running_list_count = int(os.environ["ATLASO_FAKE_VMRUN_LATE_RUNNING_LIST_COUNT"])
+    if late_running and list_count == late_running_list_count:
         running_paths = read_paths("running")
         running_paths.append(str(Path(late_running).resolve()))
         write_paths("running", running_paths)
@@ -233,6 +236,7 @@ raise SystemExit(64)
             "ATLASO_FAKE_VMRUN_LATE_REGISTERED_ALIAS": str(late_registered_alias or ""),
             "ATLASO_FAKE_VMRUN_LATE_REGISTERED_LIST_COUNT": str(late_registered_list_count),
             "ATLASO_FAKE_VMRUN_LATE_RUNNING_VMX": str(late_running_vmx or ""),
+            "ATLASO_FAKE_VMRUN_LATE_RUNNING_LIST_COUNT": str(late_running_list_count),
             "APPDATA": str(appdata_directory),
         }
     )
@@ -785,7 +789,7 @@ def test_whole_artifact_root_cleanup_rejects_vmx_created_during_delete(
     )
 
     assert result.returncode != 0
-    assert "directory contains an unvalidated VMX" in result.stderr
+    assert "registration inventory changed during verification" in result.stderr
     assert removal_root.exists()
     assert late_vmx.exists()
 
@@ -821,6 +825,44 @@ def test_whole_artifact_root_cleanup_rechecks_running_vms_after_inventory_stabil
     assert result.returncode != 0
     assert "running inventory changed during final verification" in result.stderr
     assert vmx_path.exists()
+
+
+def test_whole_artifact_root_cleanup_rechecks_running_alias_immediately_before_removal(
+    tmp_path: Path,
+) -> None:
+    """The last running check must match an unregistered target through a hard link.
+
+    Args:
+        tmp_path: Isolated test directory.
+    """
+    artifact_parent = tmp_path / "image-root"
+    removal_root = artifact_parent / "output"
+    vmx_path = removal_root / "Atlaso-Builder.vmx"
+    running_alias = tmp_path / "running-alias" / "Atlaso-Builder-Alias.vmx"
+    _write_vmx(vmx_path, "Atlaso-Builder")
+    running_alias.parent.mkdir(parents=True)
+    os.link(vmx_path, running_alias)
+    vmrun_path, environment, _ = _write_fake_vmrun(
+        tmp_path / "fake",
+        [vmx_path],
+        running=False,
+        registered=False,
+        late_running_vmx=running_alias,
+        late_running_list_count=5,
+    )
+
+    result = _run_artifact_root_cleanup(
+        tmp_path,
+        artifact_parent=artifact_parent,
+        removal_root=removal_root,
+        vmrun_path=vmrun_path,
+        environment=environment,
+    )
+
+    assert result.returncode != 0
+    assert "remains running after deleteVM succeeded" in result.stderr
+    assert vmx_path.exists()
+    assert running_alias.exists()
 
 
 def test_whole_artifact_root_cleanup_rechecks_registration_after_final_running_query(
@@ -1303,8 +1345,23 @@ def test_cleanup_safety_content_read_errors_are_terminating() -> None:
         locked_comparison,
     )
     lock_release = module.index("$inventoryWriteLock.Dispose()", inventory_replace)
+    displaced_read = module.index(
+        "$displacedContent = [System.IO.File]::ReadAllText($backupInventoryPath)",
+        lock_release,
+    )
+    cas_rollback = module.index(
+        "Restore-AtlasoWorkstationInventoryAfterCasFailure `", displaced_read
+    )
     assert "[System.IO.FileShare]::Read -bor [System.IO.FileShare]::Delete" in module
-    assert write_lock < locked_read < locked_comparison < inventory_replace < lock_release
+    assert (
+        write_lock
+        < locked_read
+        < locked_comparison
+        < inventory_replace
+        < lock_release
+        < displaced_read
+        < cas_rollback
+    )
 
 
 def test_general_removal_uses_inventory_file_for_registered_state(tmp_path: Path) -> None:
@@ -1417,6 +1474,43 @@ $module = Import-Module '{module_path}' -Force -PassThru
 
     assert result.returncode != 0
     assert "registration inventory changed during verification" in result.stderr
+
+
+def test_inventory_cas_rollback_restores_concurrent_provider_replacement(
+    tmp_path: Path,
+) -> None:
+    """A failed inventory compare-and-swap must restore the displaced provider state.
+
+    Args:
+        tmp_path: Isolated test directory.
+    """
+    inventory_path = tmp_path / "inventory.vmls"
+    replacement_path = tmp_path / "captured-provider.vmls"
+    inventory_path.write_text("concurrent provider state", encoding="utf-8")
+    replacement_path.write_text("original provider state", encoding="utf-8")
+    module_path = VMWARE_SCRIPT_ROOT / "Atlaso.WorkstationCleanup.psm1"
+    wrapper = tmp_path / "restore-inventory-cas.ps1"
+    wrapper.write_text(
+        f"""$ErrorActionPreference = 'Stop'
+$module = Import-Module '{module_path}' -Force -PassThru
+& $module {{
+    param($inventoryPath, $replacementPath)
+    Restore-AtlasoWorkstationInventoryAfterCasFailure `
+        -InventoryPath $inventoryPath `
+        -ExpectedCurrentContent 'cleanup candidate state' `
+        -ReplacementPath $replacementPath `
+        -ReplacementContent 'original provider state'
+}} '{inventory_path}' '{replacement_path}'
+""",
+        encoding="utf-8",
+    )
+
+    result = _run_script(wrapper, environment=os.environ.copy())
+
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert inventory_path.read_text(encoding="utf-8") == "concurrent provider state"
+    assert not list(tmp_path.glob("inventory.vmls.atlaso-cas-*.tmp"))
+    assert not list(tmp_path.glob("inventory.vmls.atlaso-recovery-*.vmls"))
 
 
 def test_general_removal_matches_a_running_vmx_by_filesystem_identity(

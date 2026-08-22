@@ -367,10 +367,13 @@ The following cross-cutting boundaries always apply:
   automation has no unregister-only operation, so registered targets may use checked `vmrun deleteVM` only after every
   fail-closed preflight succeeds, then verify the target VMX is absent and no target remains running. With the Workstation
   UI closed, hold a write-excluding inventory handle from the final byte comparison through atomic replacement, pruning
-  provider-retained library rows only for canonical missing VMX paths beneath the validated cleanup scope. Standalone
+  provider-retained library rows only for canonical missing VMX paths beneath the validated cleanup scope. Verify the
+  exact displaced backup as an optimistic compare-and-swap and atomically restore the newest captured provider state if
+  another writer replaced the inventory path. Standalone
   cleanup scopes this to its exact root; multi-root cleanup scopes it to the canonical artifact
   parent. Missing registrations anywhere else remain fatal. Revalidate stable registration state and the recursive VMX
-  set after provider deletion and immediately before recursive removal.
+  set after provider deletion, then perform an identity-aware running-inventory read followed only by registration
+  snapshots around a repeated VMX-set check before recursive removal.
   Before `deleteVM`, detach every VMDK device whose resolved path is outside the exact removal root so provider deletion
   cannot erase a reused depot, backup, or other shared disk. Require the registered canonical path to equal the cleanup
   target and reject a registration reachable only through a filesystem alias before replacing the VMX. Restore the
