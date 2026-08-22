@@ -146,9 +146,11 @@ are size-gated individually, while the combined OVA is published only when it re
 export limits recursive replacement to repository-owned OVF output descendants; release mode implicitly replaces only
 its canonical destination, and an explicit existing destination also requires `-Force`.
 First boot formats those data disks only after both match the image's fixed SCSI-slot, stable `atlaso-path-*`, and exact
-capacity policy. Missing, extra, reordered, ambiguous, or mismatched disks stop initialization before either disk is
-formatted; correctly labeled disks remain idempotent and mount by UUID. After both fixed disks are initialized, only
-positively identified Atlaso-managed ESX Storage volumes are accepted as additional disks. Existing ext4 whole disks
+capacity policy. The preflight resolves `/` through its block-device dependency chain and requires exactly one physical
+operating-system disk before excluding it from data-disk candidates. Missing, extra, reordered, ambiguous, or mismatched
+disks stop initialization before either disk is formatted; correctly labeled disks remain idempotent and mount by UUID.
+After both fixed disks are initialized, only positively identified Atlaso-managed ESX Storage volumes are accepted as
+additional disks. Existing ext4 whole disks
 also require UUID-backed fstab persistence and a root-owned Atlaso claim. A failed disk preflight blocks nginx, the
 HTTPS bootstrap, control plane, and worker rather than starting them against empty root-filesystem directories.
 VMware first boot validates management addresses and gateways as one contract before host mutation. Invalid OVF

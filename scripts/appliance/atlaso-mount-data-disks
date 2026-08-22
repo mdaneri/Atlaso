@@ -54,12 +54,15 @@ root_disk() {
   if [ -z "$root_source" ]; then
     return 0
   fi
-  parent="$(lsblk -no PKNAME "$root_source" 2>/dev/null | head -n 1 || true)"
-  if [ -n "$parent" ]; then
-    printf '%s/%s\n' "${root_source%/*}" "$parent"
-    return 0
-  fi
-  readlink -f "$root_source" 2>/dev/null || printf '%s\n' "$root_source"
+  root_disks="$(
+    lsblk -s -n -o PATH,TYPE "$root_source" 2>/dev/null |
+      awk '$2 == "disk" { print $1 }' |
+      sort -u
+  )"
+  root_disk_count="$(printf '%s\n' "$root_disks" | awk 'NF { count++ } END { print count + 0 }')"
+  [ "$root_disk_count" -eq 1 ] ||
+    fail "operating-system root source resolves to $root_disk_count physical disks; expected exactly one"
+  printf '%s\n' "$root_disks"
 }
 
 scsi_address() {

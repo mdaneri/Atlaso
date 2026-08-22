@@ -64,6 +64,8 @@ def _run_mount_script(
     fstab: str = "",
     esx_allowlist: str = "",
     policy_source: Path | None = None,
+    root_source: Path | None = None,
+    root_disks: list[Path] | None = None,
 ) -> tuple[subprocess.CompletedProcess[str], list[list[str]]]:
     """Execute the appliance mount script against fake block-device commands.
 
@@ -78,6 +80,8 @@ def _run_mount_script(
         fstab: Initial fake fstab content.
         esx_allowlist: Initial root-owned managed ESX Storage disk claims.
         policy_source: Optional checked-in platform policy copied verbatim for validation.
+        root_source: Optional root-filesystem source exposed by ``findmnt``.
+        root_disks: Optional physical disks exposed as ancestors of the root source.
 
     Returns:
         Completed shell process and recorded ``mkfs.ext4`` argument lists.
@@ -105,6 +109,9 @@ def _run_mount_script(
 
     root_partition = dev_root / "sda1"
     root_partition.touch()
+    selected_root_source = root_source or root_partition
+    selected_root_source.parent.mkdir(parents=True, exist_ok=True)
+    selected_root_source.touch(exist_ok=True)
     for disk_index, disk in enumerate(disks):
         path = Path(str(disk["path"]))
         path.parent.mkdir(parents=True, exist_ok=True)
@@ -240,6 +247,11 @@ def _run_mount_script(
                     raise SystemExit(1)
                 raise SystemExit(1)
             if command == "lsblk":
+                if args[:4] == ["-s", "-n", "-o", "PATH,TYPE"]:
+                    for root_disk in os.environ["ATLASO_TEST_ROOT_DISKS"].split(os.pathsep):
+                        if root_disk:
+                            print(f"{root_disk} disk")
+                    raise SystemExit(0)
                 if args[:3] == ["-dn", "-o", "PATH,TYPE"]:
                     for disk in disks:
                         print(f'{disk["path"]} disk')
@@ -347,7 +359,10 @@ def _run_mount_script(
             "ATLASO_DATA_DISK_FSTAB_PATH": str(fstab_path),
             "ATLASO_ESX_STORAGE_ALLOWLIST_PATH": str(esx_allowlist_path),
             "ATLASO_TEST_STATE": str(state_path),
-            "ATLASO_TEST_ROOT_PARTITION": str(root_partition),
+            "ATLASO_TEST_ROOT_PARTITION": str(selected_root_source),
+            "ATLASO_TEST_ROOT_DISKS": os.pathsep.join(
+                str(path) for path in (root_disks if root_disks is not None else [dev_root / "sda"])
+            ),
             "ATLASO_TEST_MKFS_LOG": str(mkfs_log),
         }
     )
@@ -407,6 +422,47 @@ def test_vmware_first_boot_formats_only_fixed_identity_disks(tmp_path: Path):
     assert [call[call.index("-L") + 1] for call in calls] == ["ATLASO_DEPOT", "ATLASO_BKUP"]
     assert [Path(call[-1]).name for call in calls] == ["sdc", "sdd"]
     assert all("atlaso-path-test-" not in call[-1] for call in calls)
+
+
+def test_vmware_first_boot_resolves_mapper_root_to_physical_os_disk(tmp_path: Path):
+    """Resolve a mapper-backed root through its unique physical disk ancestor.
+
+    Args:
+        tmp_path: Pytest-provided isolated filesystem root.
+    """
+    disks = _vmware_disks(tmp_path)
+    completed, calls = _run_mount_script(
+        tmp_path,
+        disks,
+        depot_tuple="0:2:0",
+        backup_tuple="0:3:0",
+        root_source=tmp_path / "dev" / "mapper" / "atlaso-root",
+        root_disks=[Path(str(disks[0]["path"]))],
+    )
+
+    assert completed.returncode == 0, completed.stdout + completed.stderr
+    assert [Path(call[-1]).name for call in calls] == ["sdc", "sdd"]
+
+
+def test_first_boot_rejects_ambiguous_multi_disk_root(tmp_path: Path):
+    """Reject a root source backed by more than one physical disk.
+
+    Args:
+        tmp_path: Pytest-provided isolated filesystem root.
+    """
+    disks = _vmware_disks(tmp_path)
+    completed, calls = _run_mount_script(
+        tmp_path,
+        disks,
+        depot_tuple="0:2:0",
+        backup_tuple="0:3:0",
+        root_source=tmp_path / "dev" / "mapper" / "striped-root",
+        root_disks=[Path(str(disks[0]["path"])), Path(str(disks[1]["path"]))],
+    )
+
+    assert completed.returncode != 0
+    assert "root source resolves to 2 physical disks; expected exactly one" in completed.stdout + completed.stderr
+    assert calls == []
 
 
 def test_hyperv_first_boot_uses_fixed_controller_locations(tmp_path: Path):
