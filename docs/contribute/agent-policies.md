@@ -383,6 +383,8 @@ Terminal order:
   both inventories and the recursive VMX set before invoking checked `vmrun deleteVM` for registered targets, then verify
   each target VMX is absent and no target remains running before removing any remaining files. Workstation may retain a
   stale library row until the UI refreshes; never rewrite its live inventory merely to hide that provider behavior.
+  Detach every VMDK device whose resolved path is outside the exact removal root before `deleteVM`, because provider
+  deletion must never remove reused depot, backup, or other shared disks.
   A preflight failure preserves all artifacts. A nonzero or
   malformed command result, unreadable registration inventory, provider deletion failure, or failed postcondition must
   propagate as a cleanup failure and preserve the remaining artifacts; lifecycle cleanup must retain the original

@@ -93,7 +93,8 @@ itself use `scripts/windows/common/Build-AtlasoInventoryLinux.ps1` and its `-Wsl
 Before `packer build -force` replaces the Workstation output directory, the wrapper routes any existing output VMX
 through the checked cleanup module. Current Workstation automation has no supported unregister-only operation, so the
 module stabilizes the running and registration inventories and the VMX set before using checked `vmrun deleteVM` for a
-registered target. Cleanup remains scoped to this image target's configured output directory.
+registered target. It first detaches VMDK devices resolved outside the exact cleanup root, protecting reused depot,
+backup, and other shared disks. Cleanup remains scoped to this image target's configured output directory.
 Workstation may keep a stale library row until its UI refreshes; the module verifies the VMX deletion and running state
 without rewriting Workstation's live inventory file.
 

@@ -636,6 +636,78 @@ function Confirm-AtlasoWorkstationVmInactive {
     }
 }
 
+function Disconnect-AtlasoWorkstationExternalVmdks {
+    param(
+        [Parameter(Mandatory = $true)]
+        [string]$VmxPath,
+        [Parameter(Mandatory = $true)]
+        [string]$RemovalRoot
+    )
+
+    $vmxDirectory = Split-Path -Parent $VmxPath
+    $lines = @([System.IO.File]::ReadAllLines($VmxPath))
+    $externalDevices = [System.Collections.Generic.HashSet[string]]::new(
+        [System.StringComparer]::OrdinalIgnoreCase
+    )
+    foreach ($line in $lines) {
+        if ($line -notmatch '^\s*(?<device>(?:scsi|sata|ide|nvme)\d+:\d+)\.fileName\s*=') {
+            continue
+        }
+        $device = $Matches.device
+        if ($line -notmatch '^\s*(?:scsi|sata|ide|nvme)\d+:\d+\.fileName\s*=\s*"(?<path>[^"\r\n]+)"\s*$') {
+            throw "VMware cleanup found a malformed attached-disk path; artifacts were preserved: $VmxPath"
+        }
+        $configuredPath = $Matches.path
+        if (-not [System.IO.Path]::GetExtension($configuredPath).Equals('.vmdk', [System.StringComparison]::OrdinalIgnoreCase)) {
+            continue
+        }
+        $diskPath = if ([System.IO.Path]::IsPathFullyQualified($configuredPath)) {
+            [System.IO.Path]::GetFullPath($configuredPath)
+        } else {
+            [System.IO.Path]::GetFullPath((Join-Path $vmxDirectory $configuredPath))
+        }
+        $relativeDiskPath = [System.IO.Path]::GetRelativePath($RemovalRoot, $diskPath)
+        $isInsideRemovalRoot = (
+            -not [System.IO.Path]::IsPathFullyQualified($relativeDiskPath) -and
+            $relativeDiskPath -ne '..' -and
+            -not $relativeDiskPath.StartsWith("..$([System.IO.Path]::DirectorySeparatorChar)")
+        )
+        if (-not $isInsideRemovalRoot) {
+            $externalDevices.Add($device) | Out-Null
+        } elseif (Test-Path -LiteralPath $diskPath) {
+            Assert-AtlasoPathHasNoReparsePoint -Path $diskPath
+        }
+    }
+    if ($externalDevices.Count -eq 0) {
+        return
+    }
+
+    # deleteVM follows attached virtual disks. Remove every property for an
+    # external disk device from the stopped VMX before giving deletion to VMware.
+    $protectedLines = @(
+        $lines | Where-Object {
+            if ($_ -match '^\s*(?<device>(?:scsi|sata|ide|nvme)\d+:\d+)\.') {
+                return -not $externalDevices.Contains($Matches.device)
+            }
+            return $true
+        }
+    )
+    $temporaryVmxPath = "$VmxPath.atlaso-cleanup-$([System.Guid]::NewGuid().ToString('N')).tmp"
+    try {
+        [System.IO.File]::WriteAllLines(
+            $temporaryVmxPath,
+            $protectedLines,
+            [System.Text.UTF8Encoding]::new($false)
+        )
+        [System.IO.File]::Move($temporaryVmxPath, $VmxPath, $true)
+    }
+    finally {
+        if (Test-Path -LiteralPath $temporaryVmxPath) {
+            Remove-Item -LiteralPath $temporaryVmxPath -Force -ErrorAction SilentlyContinue
+        }
+    }
+}
+
 # Whole-root removal is intentionally multi-phase: admit the exact filesystem
 # target, reconcile each known VM, stabilize global state, then repeat the state
 # and VMX-set checks immediately before recursive deletion.
@@ -752,6 +824,9 @@ function Remove-AtlasoWorkstationVmArtifacts {
         }
     )
     foreach ($registeredTargetPath in $registeredTargetPaths) {
+        Disconnect-AtlasoWorkstationExternalVmdks `
+            -VmxPath $registeredTargetPath `
+            -RemovalRoot $resolvedRemovalRoot
         Invoke-AtlasoVmrunChecked `
             -VmrunPath $VmrunPath `
             -Arguments @('-T', 'ws', 'deleteVM', $registeredTargetPath) `

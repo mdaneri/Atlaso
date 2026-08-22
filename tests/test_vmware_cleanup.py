@@ -183,7 +183,18 @@ if command == "deleteVM":
     registered_paths = read_paths("registered")
     if os.environ.get("ATLASO_FAKE_VMRUN_UNREGISTER_STICKY") != "1":
         registered_paths = [path for path in registered_paths if not same_file(path, target)]
-        Path(target).unlink(missing_ok=True)
+        target_path = Path(target)
+        for line in target_path.read_text(encoding="utf-8").splitlines():
+            if ".fileName" not in line or "=" not in line:
+                continue
+            configured_path = line.split("=", 1)[1].strip().strip('"')
+            if Path(configured_path).suffix.lower() != ".vmdk":
+                continue
+            disk_path = Path(configured_path)
+            if not disk_path.is_absolute():
+                disk_path = target_path.parent / disk_path
+            disk_path.unlink(missing_ok=True)
+        target_path.unlink(missing_ok=True)
     write_paths("registered", registered_paths)
     write_inventory(registered_paths)
     raise SystemExit(0)
@@ -457,6 +468,42 @@ def test_whole_artifact_root_cleanup_removes_all_verified_vms(tmp_path: Path) ->
     commands = [json.loads(line) for line in log_path.read_text(encoding="utf-8").splitlines()]
     assert [command[2] for command in commands].count("stop") == 2
     assert [command[2] for command in commands].count("deleteVM") == 2
+
+
+def test_whole_artifact_root_cleanup_detaches_external_vmdks_before_delete(
+    tmp_path: Path,
+) -> None:
+    """Provider deletion must not remove a data disk outside the cleanup root.
+
+    Args:
+        tmp_path: Isolated test directory.
+    """
+    artifact_parent = tmp_path / "image-root"
+    removal_root = artifact_parent / "test-vms" / "Atlaso-Test"
+    vmx_path = removal_root / "Atlaso-Test.vmx"
+    external_vmdk = tmp_path / "shared-disks" / "Atlaso-Depot.vmdk"
+    _write_vmx(vmx_path, "Atlaso-Test")
+    external_vmdk.parent.mkdir(parents=True)
+    external_vmdk.write_text("shared depot disk", encoding="utf-8")
+    with vmx_path.open("a", encoding="utf-8") as stream:
+        stream.write('scsi0:2.present = "TRUE"\n')
+        stream.write(f'scsi0:2.fileName = "{external_vmdk.resolve()}"\n')
+        stream.write('scsi0:2.redo = ""\n')
+    vmrun_path, environment, _ = _write_fake_vmrun(
+        tmp_path / "fake", [vmx_path], running=False, registered=True
+    )
+
+    result = _run_artifact_root_cleanup(
+        tmp_path,
+        artifact_parent=artifact_parent,
+        removal_root=removal_root,
+        vmrun_path=vmrun_path,
+        environment=environment,
+    )
+
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert not removal_root.exists()
+    assert external_vmdk.read_text(encoding="utf-8") == "shared depot disk"
 
 
 @pytest.mark.parametrize(
