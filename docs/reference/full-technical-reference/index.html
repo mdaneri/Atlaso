@@ -5122,7 +5122,12 @@ the Workstation image installs <code>open-vm-tools</code> instead of Hyper-V gue
 </span></code></pre></div>
 <p>Before a forced Workstation rebuild deletes the output directory, the wrapper routes the complete output root through
 the checked VMware cleanup module. It inventories every VMX, verifies the checked running and registered inventories,
-and confirms each required stop and unregister transition before removing the exact non-reparse-point output root.
+stops running targets, and stabilizes both inventories and the VMX set before checked <code>vmrun deleteVM</code> removes any
+registered target and the module removes the remaining exact non-reparse-point output root. Before provider deletion,
+the module detaches VMDK devices resolved outside that root so shared disks remain untouched.
+If provider deletion fails while the VMX survives, the module atomically restores its original bytes.
+With the Workstation UI closed, cleanup atomically removes provider-retained library rows only for canonical missing VMX
+paths beneath the validated artifact scope. Missing inventory paths elsewhere remain fatal.
 Any inventory, transition, or removal failure preserves the remaining artifacts and prevents Packer from starting.
 The remastered kickstart disables Photon's socket-activated SSH unit and enables the normal
 <code>sshd.service</code>, ensuring Packer receives a deterministic SSH daemon after the first installed-system boot. The temporary
@@ -5155,10 +5160,13 @@ authoritative for that VLAN-specific behavior. Details live in
 <p>Workstation test-VM and lifecycle cleanup fails closed around recursive removal. Redeploy requires the exact named VMX
 with exactly one well-formed expected display-name assignment; duplicate, malformed, or conflicting assignments preserve
 the artifacts. Data-disk reset accepts only strict non-reparse-point descendants of the selected VM
-output, and cleanup verifies checked running and registered inventories plus successful stop/unregister transitions
-before deleting an artifact root. Inventory entries must be canonical absolute VMX paths whose Windows volume and file
+output. Cleanup verifies checked running and registered inventories, stops running targets, and completes every
+fail-closed preflight before checked <code>vmrun deleteVM</code> removes registered targets and the remaining artifact root.
+External VMDK devices are detached from the stopped VMX immediately before provider deletion.
+Inventory entries must be canonical absolute VMX paths whose Windows volume and file
 identities can be resolved, so 8.3, mapped-drive, and other filesystem aliases cannot bypass state detection. Any
-malformed inventory or unresolved <code>vmrun</code> state preserves the files and returns failure.
+malformed inventory or unresolved preflight state preserves all files and returns failure; a deletion or postcondition
+failure preserves the remaining files and returns failure.
 Immediately before recursive deletion, cleanup checks every fresh running and registered Workstation inventory entry
 by filesystem identity against a fresh root scan, so aliases and VMX files introduced after the initial directory
 snapshot preserve the entire artifact tree.</p>
