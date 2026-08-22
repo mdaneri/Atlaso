@@ -680,10 +680,45 @@ def test_whole_artifact_root_cleanup_revalidates_each_target_before_delete(
     )
 
     assert result.returncode != 0
-    assert "VMX was replaced before provider deletion" in result.stderr
+    assert "VMX was replaced after validation" in result.stderr
     assert second_vmx.read_text(encoding="utf-8").endswith(
         'displayName = "Concurrent replacement"\n'
     )
+    commands = [json.loads(line) for line in log_path.read_text(encoding="utf-8").splitlines()]
+    assert [command[2] for command in commands].count("deleteVM") == 1
+
+
+def test_whole_artifact_root_cleanup_rejects_vmx_recreated_after_delete(
+    tmp_path: Path,
+) -> None:
+    """A post-delete VMX recreated at the same path must preserve the root.
+
+    Args:
+        tmp_path: Isolated test directory.
+    """
+    artifact_parent = tmp_path / "image-root"
+    removal_root = artifact_parent / "output"
+    vmx_path = removal_root / "Atlaso-Builder.vmx"
+    _write_vmx(vmx_path, "Atlaso-Builder")
+    vmrun_path, environment, log_path = _write_fake_vmrun(
+        tmp_path / "fake",
+        [vmx_path],
+        running=False,
+        registered=True,
+        replace_after_delete_vmx=vmx_path,
+    )
+
+    result = _run_artifact_root_cleanup(
+        tmp_path,
+        artifact_parent=artifact_parent,
+        removal_root=removal_root,
+        vmrun_path=vmrun_path,
+        environment=environment,
+    )
+
+    assert result.returncode != 0
+    assert "VMX remains after deleteVM succeeded" in result.stderr
+    assert 'displayName = "Concurrent replacement"' in vmx_path.read_text(encoding="utf-8")
     commands = [json.loads(line) for line in log_path.read_text(encoding="utf-8").splitlines()]
     assert [command[2] for command in commands].count("deleteVM") == 1
 
@@ -1550,6 +1585,22 @@ def test_cleanup_safety_content_read_errors_are_terminating() -> None:
         < displaced_read
         < cas_rollback
     )
+    post_delete_collection = module.index("$postDeleteValidatedVmxPaths = @(")
+    post_delete_identity = module.index(
+        "Assert-AtlasoWorkstationVmxIdentity `", post_delete_collection
+    )
+    post_delete_set = module.index(
+        "Assert-AtlasoWorkstationRemovalVmxSet `", post_delete_identity
+    )
+    post_running_snapshot = module.index("$postRunningRegistrationFirstSnapshot = ")
+    post_running_identity = module.index(
+        "Assert-AtlasoWorkstationVmxIdentity `", post_running_snapshot
+    )
+    post_running_set = module.index(
+        "Assert-AtlasoWorkstationRemovalVmxSet `", post_running_identity
+    )
+    assert post_delete_collection < post_delete_identity < post_delete_set
+    assert post_running_snapshot < post_running_identity < post_running_set
 
 
 def test_general_removal_uses_inventory_file_for_registered_state(tmp_path: Path) -> None:

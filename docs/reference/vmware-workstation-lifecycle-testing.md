@@ -157,7 +157,8 @@ non-reparse-point artifact root. It reads checked running and registered VM inve
 VMX to its Windows volume and file identity, stops a listed running VM through checked `vmrun`, and stabilizes all state
 before checked `vmrun deleteVM` removes a registered target. After provider deletion, it revalidates stable registration
 state and the recursive VMX set, then performs one last identity-aware running check followed only by registration
-snapshots around a repeated VMX-set check before removing any remaining files.
+snapshots around a repeated VMX-set check before removing any remaining files. A surviving or recreated original path
+must match its immutable pre-cleanup identity at both post-delete set checks.
 Immediately before provider deletion, cleanup detaches every VMDK device resolved outside the exact removal root so a
 reused depot, backup, or other shared disk cannot be deleted with the VM.
 Cleanup requires the registered canonical path to equal the validated target; a registration reachable only through a

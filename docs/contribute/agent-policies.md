@@ -390,7 +390,8 @@ Terminal order:
   cleanup uses its exact root; multi-root cleanup uses the canonical artifact parent. Missing
   registrations outside that scope remain fatal. Revalidate stable registration state and the recursive VMX set after
   provider deletion, then perform an identity-aware running-inventory read followed only by registration snapshots around
-  a repeated VMX-set check before recursive removal.
+  a repeated VMX-set check before recursive removal. Every surviving or recreated original path must still match its
+  immutable pre-cleanup identity at both post-delete VMX-set gates.
   Detach every VMDK device whose resolved path is outside the exact removal root before `deleteVM`, because provider
   deletion must never remove reused depot, backup, or other shared disks. Require the registered canonical path to equal
   the cleanup target and reject a registration reachable only through a filesystem alias before replacing the VMX. If

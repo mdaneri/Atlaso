@@ -904,7 +904,7 @@ function Assert-AtlasoWorkstationVmxIdentity {
         -Path $VmxPath `
         -InventoryDescription 'VMware cleanup target revalidation'
     if (-not $currentIdentity.Equals($ExpectedIdentity, [System.StringComparison]::Ordinal)) {
-        throw "A validated VMware Workstation VMX was replaced before provider deletion; artifacts were preserved: $VmxPath"
+        throw "A validated VMware Workstation VMX was replaced after validation; artifacts were preserved: $VmxPath"
     }
 }
 
@@ -1352,6 +1352,11 @@ function Remove-AtlasoWorkstationVmArtifacts {
     $postDeleteValidatedVmxPaths = @(
         $resolvedVmxPaths | Where-Object { Test-Path -LiteralPath $_ -PathType Leaf }
     )
+    foreach ($postDeleteValidatedVmxPath in $postDeleteValidatedVmxPaths) {
+        Assert-AtlasoWorkstationVmxIdentity `
+            -VmxPath $postDeleteValidatedVmxPath `
+            -ExpectedIdentity $validatedVmxIdentities[$postDeleteValidatedVmxPath]
+    }
     Assert-AtlasoWorkstationRemovalVmxSet `
         -RemovalRoot $resolvedRemovalRoot `
         -ValidatedVmxPaths $postDeleteValidatedVmxPaths
@@ -1392,6 +1397,11 @@ function Remove-AtlasoWorkstationVmArtifacts {
         -First $postDeleteRegistrationSnapshot `
         -Second $postRunningRegistrationFirstSnapshot `
         -InventoryPath $inventoryPath
+    foreach ($postDeleteValidatedVmxPath in $postDeleteValidatedVmxPaths) {
+        Assert-AtlasoWorkstationVmxIdentity `
+            -VmxPath $postDeleteValidatedVmxPath `
+            -ExpectedIdentity $validatedVmxIdentities[$postDeleteValidatedVmxPath]
+    }
     Assert-AtlasoWorkstationRemovalVmxSet `
         -RemovalRoot $resolvedRemovalRoot `
         -ValidatedVmxPaths $postDeleteValidatedVmxPaths

@@ -130,8 +130,9 @@ Photon OS 5.0 is the appliance operating system. VMware Workstation is the defau
 verify checked running and registration inventories, stop running targets, and complete every fail-closed preflight
 before detaching external VMDKs and allowing `vmrun deleteVM` to remove registered targets. It revalidates registration
 state and the recursive VMX set, then performs one last identity-aware running check followed only by registration
-snapshots around a repeated VMX-set check before removing the remaining exact VM artifact directories. A target
-registered only through a filesystem alias fails closed before VMX replacement, and every target repeats immutable
+snapshots around a repeated VMX-set check before removing the remaining exact VM artifact directories. Any target
+surviving or recreated after provider deletion must still match its original immutable identity. A target registered
+only through a filesystem alias fails closed before VMX replacement, and every target repeats immutable
 identity, running, registration, and VMX-set checks immediately before its individual `deleteVM`. Standalone
 VMware and Hyper-V image cleanup also reconciles provider inventory and fails closed
 before deleting canonical artifact roots.
