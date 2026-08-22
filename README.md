@@ -127,8 +127,10 @@ brings infrastructure, storage, identity, networking, and lifecycle workflows in
 ## Supported appliance targets
 
 Photon OS 5.0 is the appliance operating system. VMware Workstation is the default live-test target; its cleanup tools
-verify stop and unregister state before removing exact VM artifact directories. Standalone VMware and Hyper-V image
-cleanup also reconciles provider inventory and fails closed before deleting canonical artifact roots. Hyper-V remains
+verify checked running and registration inventories, stop running targets, and complete every fail-closed preflight
+before `vmrun deleteVM` removes registered targets and the remaining exact VM artifact directories. Standalone VMware
+and Hyper-V image cleanup also reconciles provider inventory and fails closed before deleting canonical artifact roots.
+Hyper-V remains
 the authoritative lifecycle interoperability environment for exact access and trunk VLAN behavior.
 Image-build download caches verify pinned checksums before reuse or durable promotion; ordinary retries replace only
 the exact corrupt expected cache entries and do not require manual cleanup.
