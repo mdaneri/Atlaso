@@ -363,8 +363,30 @@ The following cross-cutting boundaries always apply:
 - VMware Workstation recursive cleanup requires an exact non-reparse-point artifact root containing every expected VMX.
   Test-VM redeploy fails closed when its named VMX is missing or has another display name, and data-disk reset accepts
   only strict path-component descendants of that VM output. Before deleting files, cleanup must use the checked
-  `vmrun` running inventory and Workstation registration inventory, stop running targets, unregister registered targets,
-  and verify both transitions; any unresolved command or state preserves the artifacts and returns failure.
+  `vmrun` running inventory and Workstation registration inventory and stop running targets. Current Workstation
+  automation has no unregister-only operation, so registered targets may use checked `vmrun deleteVM` only after every
+  fail-closed preflight succeeds, then verify the target VMX is absent and no target remains running. With the Workstation
+  UI closed, hold a write-excluding inventory handle from the final byte comparison through atomic replacement, pruning
+  provider-retained library rows only for canonical missing VMX paths beneath the validated cleanup scope. Verify the
+  exact displaced backup as an optimistic compare-and-swap and atomically restore the newest captured provider state if
+  another writer replaced the inventory path. Require every `vmlistN` library ID to own exactly one config path before
+  pruning any row, and recheck every stale path remains absent immediately before the inventory swap. Standalone
+  cleanup scopes this to its exact root; multi-root cleanup scopes it to the canonical artifact
+  parent. Missing registrations anywhere else remain fatal. Revalidate stable registration state and the recursive VMX
+  set after provider deletion, then perform an identity-aware running-inventory read followed only by registration
+  snapshots around a repeated VMX-set check before recursive removal. Every surviving or recreated original path must
+  still match its immutable pre-cleanup identity at both post-delete VMX-set gates.
+  Before `deleteVM`, detach every VMDK device whose resolved path is outside the exact removal root so provider deletion
+  cannot erase a reused depot, backup, or other shared disk. Require the registered canonical path to equal the cleanup
+  target and reject a registration reachable only through a filesystem alias before replacing the VMX. Restore the
+  original VMX byte-for-byte whenever a deletion transition fails while that exact detached file survives. Detachment
+  and restoration must atomically compare the displaced VMX identity and roll back rather than overwrite a replacement.
+  Retain the displaced backup until every post-replacement identity and byte read succeeds; restore it on validation
+  failure or preserve an actionable recovery copy when rollback cannot complete.
+  Capture immutable identities for every target and repeat identity, running, stable registration, and recursive VMX-set
+  checks immediately before each individual `deleteVM` invocation.
+  Preflight failures preserve all artifacts; a provider deletion or postcondition failure preserves the remaining
+  artifacts and returns failure.
 - VLAN Interfaces use the shared wizard-backed Tabulator with the ESX Storage interaction. Keep every persisted field,
   including Admin Up, out of inline editing and review the complete VLAN record in the add/edit wizard. New VLANs
   default to Admin Up; edits preserve saved state; a missing-parent VLAN may remain saved only while disabled. Saving

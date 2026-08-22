@@ -79,7 +79,7 @@ foreach ($candidateGroup in $candidates | Group-Object -Property Directory) {
         }
     }
 
-    if ($PSCmdlet.ShouldProcess($candidateGroup.Name, 'Stop, unregister, and remove VMware Workstation lifecycle artifacts')) {
+    if ($PSCmdlet.ShouldProcess($candidateGroup.Name, 'Stop and delete VMware Workstation lifecycle artifacts')) {
         Remove-AtlasoWorkstationVmArtifacts `
             -VmrunPath $resolvedVmrun `
             -VmxPaths @($groupCandidates.Path) `
