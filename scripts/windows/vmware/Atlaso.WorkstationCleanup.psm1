@@ -1,4 +1,27 @@
+<#
+.SYNOPSIS
+Fail-closed VMware Workstation artifact cleanup primitives for Atlaso.
+
+.DESCRIPTION
+This module validates canonical paths and Windows filesystem identities before it
+removes VMware build or lifecycle artifacts. Running state comes from the checked
+vmrun command surface. Registration state comes from stable, structurally complete
+Workstation inventory snapshots. Current Workstation releases do not expose an
+unregister-only automation command, so a registered target is removed with checked
+vmrun deleteVM only after every fail-closed preflight succeeds.
+
+The final deletion gate repeats both inventories around filesystem discovery. Any
+missing, malformed, changing, or unverifiable preflight state preserves the root.
+
+.NOTES
+Keep this module self-contained for the Windows image-build and lifecycle scripts.
+Do not weaken the exact-root, non-reparse-point, stable-inventory, or file-identity
+checks when adding another cleanup entry point.
+#>
+
 Set-StrictMode -Version Latest
+
+# Native helpers bind path checks and inventory entries to Windows file identity.
 
 if (-not ('Atlaso.WorkstationFileIdentity' -as [type])) {
     Add-Type -TypeDefinition @'
@@ -84,6 +107,10 @@ namespace Atlaso
 }
 '@
 }
+
+# Path admission and identity helpers deliberately precede every VMware state
+# transition. Later inventory checks rely on these canonical identities rather
+# than path spelling alone, including hard-link aliases.
 
 function Get-AtlasoCanonicalPath {
     param(
@@ -293,7 +320,7 @@ function Get-AtlasoWorkstationVmPaths {
     param(
         [Parameter(Mandatory = $true)]
         [string]$VmrunPath,
-        [Parameter(Mandatory = $true)]
+        [Parameter(Mandatory = $false)]
         [ValidateSet('running')]
         [string]$State = 'running'
     )
@@ -335,6 +362,9 @@ function Get-AtlasoWorkstationVmPaths {
     return $paths
 }
 
+# Workstation does not expose registered-VM enumeration through vmrun. Treat its
+# inventory as a safety-critical database: require a stable file identity, stable
+# bytes, complete mirrored config/index records, and resolvable VMX identities.
 function Resolve-AtlasoWorkstationInventoryPath {
     if (-not $env:APPDATA) {
         throw 'APPDATA is unavailable; refusing cleanup because VMware Workstation registration state cannot be verified.'
@@ -585,14 +615,12 @@ function Assert-AtlasoWorkstationRemovalVmxSet {
     }
 }
 
-function Confirm-AtlasoWorkstationVmInactiveAndUnregistered {
+function Confirm-AtlasoWorkstationVmInactive {
     param(
         [Parameter(Mandatory = $true)]
         [string]$VmrunPath,
         [Parameter(Mandatory = $true)]
-        [string]$VmxPath,
-        [Parameter(Mandatory = $true)]
-        [string]$InventoryPath
+        [string]$VmxPath
     )
 
     $runningPaths = @(Get-AtlasoWorkstationVmPaths -VmrunPath $VmrunPath -State running)
@@ -606,20 +634,11 @@ function Confirm-AtlasoWorkstationVmInactiveAndUnregistered {
             throw "VMware Workstation VM remains running after stop succeeded: $VmxPath"
         }
     }
-
-    $registeredPaths = @(Get-AtlasoWorkstationRegisteredVmPaths -InventoryPath $InventoryPath)
-    if (Test-AtlasoWorkstationVmListed -Paths $registeredPaths -VmxPath $VmxPath) {
-        Invoke-AtlasoVmrunChecked `
-            -VmrunPath $VmrunPath `
-            -Arguments @('-T', 'ws', 'unregister', $VmxPath) `
-            -Action "Unregister VMware Workstation VM '$VmxPath'" | Out-Null
-        $registeredPaths = @(Get-AtlasoWorkstationRegisteredVmPaths -InventoryPath $InventoryPath)
-        if (Test-AtlasoWorkstationVmListed -Paths $registeredPaths -VmxPath $VmxPath) {
-            throw "VMware Workstation VM remains registered after unregister succeeded: $VmxPath"
-        }
-    }
 }
 
+# Whole-root removal is intentionally multi-phase: admit the exact filesystem
+# target, reconcile each known VM, stabilize global state, then repeat the state
+# and VMX-set checks immediately before recursive deletion.
 function Remove-AtlasoWorkstationVmArtifacts {
     [CmdletBinding(SupportsShouldProcess = $true)]
     param(
@@ -652,16 +671,14 @@ function Remove-AtlasoWorkstationVmArtifacts {
     Assert-AtlasoWorkstationRemovalVmxSet `
         -RemovalRoot $resolvedRemovalRoot `
         -ValidatedVmxPaths $resolvedVmxPaths
-
-    if (-not $PSCmdlet.ShouldProcess($resolvedRemovalRoot, 'Stop, unregister, and remove VMware Workstation VM artifacts')) {
+    if (-not $PSCmdlet.ShouldProcess($resolvedRemovalRoot, 'Stop and delete VMware Workstation VM artifacts')) {
         return
     }
 
     foreach ($resolvedVmxPath in $resolvedVmxPaths) {
-        Confirm-AtlasoWorkstationVmInactiveAndUnregistered `
+        Confirm-AtlasoWorkstationVmInactive `
             -VmrunPath $VmrunPath `
-            -VmxPath $resolvedVmxPath `
-            -InventoryPath $inventoryPath
+            -VmxPath $resolvedVmxPath
     }
 
     Assert-AtlasoWorkstationRemovalVmxSet `
@@ -709,20 +726,45 @@ function Remove-AtlasoWorkstationVmArtifacts {
             -InventoryLines @($finalRegistrationSnapshot.Content -split '\r?\n') `
             -InventoryPath $inventoryPath
     )
-    foreach ($finalInventoryPath in @($finalRunningPaths) + @($finalRegisteredPaths)) {
+    foreach ($finalInventoryPath in $finalRunningPaths) {
         if (
             (Test-AtlasoStrictDescendantPath -ParentPath $resolvedRemovalRoot -ChildPath $finalInventoryPath) -or
             (Test-AtlasoWorkstationVmListed -Paths $finalRootVmxPaths -VmxPath $finalInventoryPath)
         ) {
-            throw "A new running or registered VMware VMX appeared before filesystem cleanup; artifacts were preserved: $finalInventoryPath"
+            throw "A new running VMware VMX appeared before filesystem cleanup; artifacts were preserved: $finalInventoryPath"
         }
     }
-    foreach ($resolvedVmxPath in $resolvedVmxPaths) {
+    foreach ($finalRegisteredPath in $finalRegisteredPaths) {
         if (
-            (Test-AtlasoWorkstationVmListed -Paths $finalRunningPaths -VmxPath $resolvedVmxPath) -or
-            (Test-AtlasoWorkstationVmListed -Paths $finalRegisteredPaths -VmxPath $resolvedVmxPath)
+            (Test-AtlasoStrictDescendantPath -ParentPath $resolvedRemovalRoot -ChildPath $finalRegisteredPath) -and
+            -not (Test-AtlasoWorkstationVmListed -Paths $resolvedVmxPaths -VmxPath $finalRegisteredPath)
         ) {
-            throw "VMware Workstation VM state changed before filesystem cleanup; artifacts were preserved: $resolvedVmxPath"
+            throw "A new registered VMware VMX appeared before filesystem cleanup; artifacts were preserved: $finalRegisteredPath"
+        }
+    }
+
+    # deleteVM is the only supported non-interactive Workstation command that
+    # removes a registered local VM. Run it only after every fail-closed preflight;
+    # it performs the provider-owned registration and file deletion transition.
+    $registeredTargetPaths = @(
+        $resolvedVmxPaths | Where-Object {
+            Test-AtlasoWorkstationVmListed -Paths $finalRegisteredPaths -VmxPath $_
+        }
+    )
+    foreach ($registeredTargetPath in $registeredTargetPaths) {
+        Invoke-AtlasoVmrunChecked `
+            -VmrunPath $VmrunPath `
+            -Arguments @('-T', 'ws', 'deleteVM', $registeredTargetPath) `
+            -Action "Delete VMware Workstation VM '$registeredTargetPath'" | Out-Null
+        if (Test-Path -LiteralPath $registeredTargetPath) {
+            throw "VMware Workstation VMX remains after deleteVM succeeded: $registeredTargetPath"
+        }
+    }
+
+    $postDeleteRunningPaths = @(Get-AtlasoWorkstationVmPaths -VmrunPath $VmrunPath -State running)
+    foreach ($postDeleteRunningPath in $postDeleteRunningPaths) {
+        if (Test-AtlasoStrictDescendantPath -ParentPath $resolvedRemovalRoot -ChildPath $postDeleteRunningPath) {
+            throw "A VMware Workstation VM remains running after deleteVM succeeded: $postDeleteRunningPath"
         }
     }
 

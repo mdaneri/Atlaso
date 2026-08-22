@@ -90,10 +90,12 @@ The wrapper does not build or embed Inventory Linux. New templates leave it unin
 **Download latest** to retrieve the signed independent release when needed. Contributors building Inventory Linux
 itself use `scripts/windows/common/Build-AtlasoInventoryLinux.ps1` and its `-WslDistribution <name>` option.
 
-Before `packer build -force` replaces the Workstation output directory, the wrapper checks for an existing output VMX
-and unregisters it with `vmrun -T ws unregister`. The `vmrun.exe` path is resolved through the same Workstation
-discovery path used by the rest of the VMware scripts, and the cleanup is scoped to this image target's configured
-output directory.
+Before `packer build -force` replaces the Workstation output directory, the wrapper routes any existing output VMX
+through the checked cleanup module. Current Workstation automation has no supported unregister-only operation, so the
+module stabilizes the running and registration inventories and the VMX set before using checked `vmrun deleteVM` for a
+registered target. Cleanup remains scoped to this image target's configured output directory.
+Workstation may keep a stale library row until its UI refreshes; the module verifies the VMX deletion and running state
+without rewriting Workstation's live inventory file.
 
 For lifecycle/demo images that should use real appliance adapters:
 
@@ -374,8 +376,9 @@ virtual capacity in its descriptor or deployment stops before cloning the target
 `-Redeploy` requires the exact named VMX and exactly one well-formed, matching `displayName`; a missing, malformed,
 duplicate, or mismatched target preserves the
 directory and returns an actionable failure. Cleanup checks the running and registered Workstation inventories by
-Windows filesystem identity, stops and unregisters only when needed, verifies both transitions, and preserves all
-artifacts if an inventory path is malformed or cannot be resolved, or if `vmrun` fails or returns unverifiable state.
+Windows filesystem identity, stops through checked `vmrun` when needed, and completes all final state and VMX-set
+preflights before checked `vmrun deleteVM` removes registered targets. Preflight failures preserve all artifacts;
+provider deletion or postcondition failures preserve the remaining artifacts and return failure.
 Pass `-IncludeLabNetworkAdapters` only after `VMnet2`, `VMnet3`, and `VMnet4` exist for the
 SiteA, WAN/SiteB, and trunk-like lifecycle networks. `-TrustRootCa` downloads the freshly deployed appliance root CA,
 removes stale Atlaso root CAs from the current-user Trusted Root store, and trusts the new root so Edge and the Codex

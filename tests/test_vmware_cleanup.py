@@ -46,10 +46,10 @@ def _write_fake_vmrun(
         running: Whether the supplied VMX paths begin in the running inventory.
         registered: Whether the supplied VMX paths begin in the registration inventory.
         stop_exit: Exit code returned by a requested stop operation.
-        unregister_exit: Exit code returned by a requested unregister operation.
+        unregister_exit: Exit code returned by a requested deleteVM operation.
         running_path_format: Format applied to each path printed by ``vmrun list``.
         stop_sticky: Whether a successful stop leaves the VM in running inventory.
-        unregister_sticky: Whether a successful unregister leaves the VM registered.
+        unregister_sticky: Whether a successful deleteVM leaves the VM registered.
         late_registered_vmx: VMX injected into registration inventory at the final state gate.
         late_registered_alias: Optional hard-link alias registered instead of the injected VMX path.
         late_registered_list_count: Checked running-state read that triggers late registration.
@@ -175,14 +175,15 @@ if command == "stop":
     if os.environ.get("ATLASO_FAKE_VMRUN_STOP_STICKY") != "1":
         write_paths("running", [path for path in read_paths("running") if not same_file(path, target)])
     raise SystemExit(0)
-if command == "unregister":
+if command == "deleteVM":
     exit_code = int(os.environ.get("ATLASO_FAKE_VMRUN_UNREGISTER_EXIT", "0"))
     if exit_code:
-        print("simulated unregister failure", file=sys.stderr)
+        print("simulated deleteVM failure", file=sys.stderr)
         raise SystemExit(exit_code)
     registered_paths = read_paths("registered")
     if os.environ.get("ATLASO_FAKE_VMRUN_UNREGISTER_STICKY") != "1":
         registered_paths = [path for path in registered_paths if not same_file(path, target)]
+        Path(target).unlink(missing_ok=True)
     write_paths("registered", registered_paths)
     write_inventory(registered_paths)
     raise SystemExit(0)
@@ -376,7 +377,7 @@ def test_whole_artifact_root_cleanup_rejects_configured_root_mismatch(tmp_path: 
     ("stop_exit", "unregister_exit", "expected_error"),
     [
         (9, 0, "Stop VMware Workstation VM"),
-        (0, 9, "Unregister VMware Workstation VM"),
+        (0, 9, "Delete VMware Workstation VM"),
     ],
 )
 def test_whole_artifact_root_cleanup_preserves_files_after_vmrun_failure(
@@ -455,14 +456,14 @@ def test_whole_artifact_root_cleanup_removes_all_verified_vms(tmp_path: Path) ->
     assert not removal_root.exists()
     commands = [json.loads(line) for line in log_path.read_text(encoding="utf-8").splitlines()]
     assert [command[2] for command in commands].count("stop") == 2
-    assert [command[2] for command in commands].count("unregister") == 2
+    assert [command[2] for command in commands].count("deleteVM") == 2
 
 
 @pytest.mark.parametrize(
     ("stop_sticky", "unregister_sticky", "expected_error"),
     [
         (True, False, "remains running after stop succeeded"),
-        (False, True, "remains registered after unregister succeeded"),
+        (False, True, "VMX remains after deleteVM succeeded"),
     ],
 )
 def test_whole_artifact_root_cleanup_rejects_incomplete_vmrun_transition(
@@ -476,7 +477,7 @@ def test_whole_artifact_root_cleanup_rejects_incomplete_vmrun_transition(
     Args:
         tmp_path: Isolated test directory.
         stop_sticky: Whether the fake running inventory remains unchanged after stop.
-        unregister_sticky: Whether registration remains after unregister.
+        unregister_sticky: Whether registration remains after deleteVM.
         expected_error: Expected cleanup failure text.
     """
     artifact_parent = tmp_path / "image-root"
@@ -708,7 +709,7 @@ def test_whole_artifact_root_cleanup_does_not_claim_success_after_locked_file(
     ("running", "registered", "stop_exit", "unregister_exit", "expected_error"),
     [
         (True, True, 9, 0, "Stop VMware Workstation VM"),
-        (False, True, 0, 9, "Unregister VMware Workstation VM"),
+        (False, True, 0, 9, "Delete VMware Workstation VM"),
     ],
 )
 def test_general_removal_preserves_artifacts_after_vmrun_failure(
@@ -719,14 +720,14 @@ def test_general_removal_preserves_artifacts_after_vmrun_failure(
     unregister_exit: int,
     expected_error: str,
 ) -> None:
-    """A failed stop or unregister must prevent recursive VM-directory deletion.
+    """A failed stop or deleteVM must prevent recursive VM-directory deletion.
 
     Args:
         tmp_path: Isolated test directory.
         running: Whether the VM begins in the running inventory.
         registered: Whether the VM begins in the registration inventory.
         stop_exit: Exit code returned by the fake stop operation.
-        unregister_exit: Exit code returned by the fake unregister operation.
+        unregister_exit: Exit code returned by the fake deleteVM operation.
         expected_error: Action text expected in the propagated failure.
     """
     vm_directory = tmp_path / "Atlaso-Test"
@@ -797,7 +798,7 @@ def test_general_removal_is_verified_and_idempotent(
     commands = [json.loads(line) for line in log_path.read_text(encoding="utf-8").splitlines()]
     action_names = [command[2] for command in commands]
     assert ("stop" in action_names) is running
-    assert ("unregister" in action_names) is registered
+    assert ("deleteVM" in action_names) is registered
 
 
 def test_general_removal_rejects_an_unvalidated_vmx_in_the_removal_root(
@@ -1076,7 +1077,7 @@ def test_general_removal_uses_inventory_file_for_registered_state(tmp_path: Path
     assert not vm_directory.exists()
     commands = [json.loads(line) for line in log_path.read_text(encoding="utf-8").splitlines()]
     command_names = [command[2] for command in commands]
-    assert "unregister" in command_names
+    assert "deleteVM" in command_names
     assert "listRegisteredVM" not in command_names
 
 
@@ -1432,7 +1433,7 @@ def test_standalone_lifecycle_cleanup_preserves_artifacts_after_vmrun_failure(
         running: Whether the lifecycle VM begins in the running inventory.
         registered: Whether the lifecycle VM begins in the registration inventory.
         stop_exit: Exit code returned by the fake stop operation.
-        unregister_exit: Exit code returned by the fake unregister operation.
+        unregister_exit: Exit code returned by the fake deleteVM operation.
     """
     copied_script_root = tmp_path / "repo" / "scripts" / "windows" / "vmware"
     copied_script_root.mkdir(parents=True)

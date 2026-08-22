@@ -1307,7 +1307,9 @@ pwsh -ExecutionPolicy Bypass `
 
 Before a forced Workstation rebuild deletes the output directory, the wrapper routes the complete output root through
 the checked VMware cleanup module. It inventories every VMX, verifies the checked running and registered inventories,
-and confirms each required stop and unregister transition before removing the exact non-reparse-point output root.
+stops running targets, and stabilizes both inventories and the VMX set before checked `vmrun deleteVM` removes any
+registered target and the module removes the remaining exact non-reparse-point output root.
+Workstation may retain a stale library row until its UI refreshes; cleanup does not rewrite the live inventory.
 Any inventory, transition, or removal failure preserves the remaining artifacts and prevents Packer from starting.
 The remastered kickstart disables Photon's socket-activated SSH unit and enables the normal
 `sshd.service`, ensuring Packer receives a deterministic SSH daemon after the first installed-system boot. The temporary
@@ -1346,10 +1348,12 @@ authoritative for that VLAN-specific behavior. Details live in
 Workstation test-VM and lifecycle cleanup fails closed around recursive removal. Redeploy requires the exact named VMX
 with exactly one well-formed expected display-name assignment; duplicate, malformed, or conflicting assignments preserve
 the artifacts. Data-disk reset accepts only strict non-reparse-point descendants of the selected VM
-output, and cleanup verifies checked running and registered inventories plus successful stop/unregister transitions
-before deleting an artifact root. Inventory entries must be canonical absolute VMX paths whose Windows volume and file
+output. Cleanup verifies checked running and registered inventories, stops running targets, and completes every
+fail-closed preflight before checked `vmrun deleteVM` removes registered targets and the remaining artifact root.
+Inventory entries must be canonical absolute VMX paths whose Windows volume and file
 identities can be resolved, so 8.3, mapped-drive, and other filesystem aliases cannot bypass state detection. Any
-malformed inventory or unresolved `vmrun` state preserves the files and returns failure.
+malformed inventory or unresolved preflight state preserves all files and returns failure; a deletion or postcondition
+failure preserves the remaining files and returns failure.
 Immediately before recursive deletion, cleanup checks every fresh running and registered Workstation inventory entry
 by filesystem identity against a fresh root scan, so aliases and VMX files introduced after the initial directory
 snapshot preserve the entire artifact tree.

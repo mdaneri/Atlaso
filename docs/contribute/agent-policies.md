@@ -371,16 +371,22 @@ Terminal order:
 - The first real OS appliance target is Photon OS 5.0. Keep Hyper-V image-build work under `image/hyperv/`. VMware
   Workstation work lives under `image/vmware-workstation/` and should share Photon image-build/provisioning code with
   Hyper-V whenever possible.
-- Before a VMware Workstation image rebuild force-replaces the configured output directory, unregister any existing
-  output VMX with `vmrun -T ws unregister` through the same Workstation/vmrun discovery path used by the rest of the
-  VMware scripts. Keep this cleanup scoped to the configured image output directory.
+- Before a VMware Workstation image rebuild force-replaces the configured output directory, route any existing output
+  VMX through the checked cleanup module. Current Workstation automation has no unregister-only operation: `vmrun`
+  rejects unregister, VIX reports it unsupported, and `vmrest` exposes only credentialed destructive deletion. After
+  every fail-closed preflight succeeds, use checked local `vmrun deleteVM` for a registered target. Keep this cleanup
+  scoped to the configured image output directory.
 - Workstation test-VM and lifecycle cleanup may recursively remove only an exact, non-reparse-point artifact root that
   contains every validated target VMX. A named redeploy with no matching VMX fails closed, and data-disk reset paths
   must be strict path-component descendants of that VM output rather than sibling-prefix matches. Query the checked
-  `vmrun` running inventory and Workstation registration inventory, stop and unregister only when needed, then verify
-  the target is absent from both before removing files. Any nonzero or malformed `vmrun` result or unreadable
-  registration inventory preserves the artifacts and must propagate as a cleanup failure; lifecycle cleanup must retain
-  the original scenario failure alongside that cleanup evidence.
+  `vmrun` running inventory and Workstation registration inventory and stop through checked `vmrun` when needed. Stabilize
+  both inventories and the recursive VMX set before invoking checked `vmrun deleteVM` for registered targets, then verify
+  each target VMX is absent and no target remains running before removing any remaining files. Workstation may retain a
+  stale library row until the UI refreshes; never rewrite its live inventory merely to hide that provider behavior.
+  A preflight failure preserves all artifacts. A nonzero or
+  malformed command result, unreadable registration inventory, provider deletion failure, or failed postcondition must
+  propagate as a cleanup failure and preserve the remaining artifacts; lifecycle cleanup must retain the original
+  scenario failure alongside that cleanup evidence.
 - Keep VMware release images on two compacted payload VMDKs: the Photon OS disk and a required UUID-mounted
   `ATLASO_SYSTEM` disk containing `/opt/atlaso` and appliance-wide PowerShell modules. OVF export must preserve both
   payload files, add only the empty depot and backup definitions, preflight every GitHub asset below 2 GiB, and omit an

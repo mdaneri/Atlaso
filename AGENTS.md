@@ -363,8 +363,12 @@ The following cross-cutting boundaries always apply:
 - VMware Workstation recursive cleanup requires an exact non-reparse-point artifact root containing every expected VMX.
   Test-VM redeploy fails closed when its named VMX is missing or has another display name, and data-disk reset accepts
   only strict path-component descendants of that VM output. Before deleting files, cleanup must use the checked
-  `vmrun` running inventory and Workstation registration inventory, stop running targets, unregister registered targets,
-  and verify both transitions; any unresolved command or state preserves the artifacts and returns failure.
+  `vmrun` running inventory and Workstation registration inventory and stop running targets. Current Workstation
+  automation has no unregister-only operation, so registered targets may use checked `vmrun deleteVM` only after every
+  fail-closed preflight succeeds, then verify the target VMX is absent and no target remains running. Workstation may
+  retain a stale library row until its UI refreshes; do not edit its live inventory to hide that provider behavior.
+  Preflight failures preserve all artifacts; a provider deletion or postcondition failure preserves the remaining
+  artifacts and returns failure.
 - VLAN Interfaces use the shared wizard-backed Tabulator with the ESX Storage interaction. Keep every persisted field,
   including Admin Up, out of inline editing and review the complete VLAN record in the add/edit wizard. New VLANs
   default to Admin Up; edits preserve saved state; a missing-parent VLAN may remain saved only while disabled. Saving

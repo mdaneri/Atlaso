@@ -154,8 +154,9 @@ pwsh -ExecutionPolicy Bypass `
 
 Workstation cleanup removes a VM directory only after validating that every target VMX is inside the exact
 non-reparse-point artifact root. It reads checked running and registered VM inventories, resolves each canonical absolute
-VMX to its Windows volume and file identity, stops a listed running VM, unregisters a listed registration, and confirms
-that each transition completed before deleting files. Filesystem aliases such as DOS 8.3 or mapped-drive forms therefore
+VMX to its Windows volume and file identity, stops a listed running VM through checked `vmrun`, and stabilizes all state
+before checked `vmrun deleteVM` removes a registered target and the module removes any remaining files.
+Filesystem aliases such as DOS 8.3 or mapped-drive forms therefore
 cannot make a running or registered target appear unrelated. Already-stopped and already-unregistered VMs remain
 idempotent cleanup cases. A nonzero command, malformed (including asymmetrically quoted paths or nonnumeric and
 separator/whitespace-corrupted registration keys) or unresolvable inventory,
@@ -165,13 +166,19 @@ be interpreted as an empty or partial registered-VM set. VMX identity reads use 
 a partial file from validating one displayed name while unread content remains unresolved. Cleanup also requires the
 Workstation `inventory.vmls` snapshot to contain only well-formed `vmlistN.config` entries whose VMX filesystem
 identities can be resolved. The independent `index.count` and `indexN.id` search index must describe the same complete
-VMX identity set. Cleanup also requires the file identity, size, last-write timestamp, and byte content to remain
+VMX identity set. Cleanup also requires the inventory file identity, size, last-write timestamp, and byte content to remain
 unchanged across two reads 250 milliseconds apart, so a header-only, partially rewritten, or momentary self-consistent
-empty snapshot fails closed. VMware Workstation does not expose a registered-VM listing through `vmrun`, so cleanup does
-not invoke the unsupported `listRegisteredVM` command. The final gate captures two complete running-and-registration
+empty snapshot fails closed. VMware Workstation does not expose registered-VM listing or a supported unregister-only
+command, and the native VIX unregister operation also reports unsupported. Cleanup therefore reads `inventory.vmls` and
+uses the already checked local `vmrun deleteVM` operation only after Atlaso's final gate; `vmrest` is not used because it
+requires a separate daemon and credentials while exposing the same destructive semantics. The final gate captures two
+complete running-and-registration
 rounds 250 milliseconds apart, repeats the recursive VMX-set scan, and captures a third round. Each round reads checked
 `vmrun list` state followed by the registration file, and all state sets must remain identical, so a VM restarted or
-registered during the stability window or final filesystem verification preserves its artifacts.
+registered during the stability window or final filesystem verification preserves all artifacts. Failures after the
+provider deletion begins preserve the remaining artifacts and return failure. Workstation can retain a stale library
+row until its UI refreshes after `deleteVM`; cleanup verifies VMX removal and running state but does not rewrite the live
+inventory file.
 When lifecycle
 execution and cleanup both fail, the final error reports the original scenario failure together with the cleanup failure
 and preserved path.
