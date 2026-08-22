@@ -1,6 +1,6 @@
 [project]
 name = "atlaso"
-version = "0.9.183"
+version = "0.9.184"
 description = "Atlaso supports POC, lab, and test environments by simplifying deployment, maintenance, and validation."
 readme = "README.md"
 license = "MIT"
@@ -95,6 +95,7 @@ files = [
   "atlaso/app/routers/ui/routes_wan.py",
   "atlaso/app/services/identity_credentials.py",
   "atlaso/app/services/interface_updates.py",
+  "atlaso/app/services/management_bindings.py",
   "atlaso/app/services/physical_interfaces.py",
   "atlaso/app/services/service_registry.py",
 ]

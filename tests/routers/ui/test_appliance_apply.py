@@ -10,7 +10,7 @@ from tests.routers.ui.helpers import login
 
 def test_management_path_signature_covers_dedicated_and_flagged_access_transitions():
     """Detect every supported management-listener topology change."""
-    from atlaso.app.ui import network_management_paths
+    from atlaso.app.ui import management_handoff_required, network_management_paths
 
     dedicated = """[physical_interfaces]
 interface=eth0
@@ -64,6 +64,10 @@ interface=eth1
             "ipv6_gateway": "",
         }
     ]
+    assert management_handoff_required(
+        {"raw_config_preview": flagged},
+        {"config_preview": dedicated},
+    )
 
 
 def test_appliance_settings_stages_flagged_access_resolver_interface(client):

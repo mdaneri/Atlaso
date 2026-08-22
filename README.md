@@ -20,7 +20,9 @@ Management-path changes use one recoverable Appliance Apply handoff across Netwo
 Appliance Settings, and Public Services. Atlaso keeps the previous path active until the candidate listener passes
 bounded application-upstream, nginx, and host-facing readiness checks. Its rollback marker remains durable until the
 task and baselines commit; a failure or pre-commit restart restores the previous runtime state and records the
-non-secret failing layer in the task.
+non-secret failing layer in the task. Physical Interface autosave does not alter active requested-interface routing:
+the last-applied management bindings remain authoritative until that handoff commits, and a desired-state mutation that
+would leave no complete replacement management listener is rejected before it can strand the current session.
 
 ![Atlaso — Everything your virtualization lab needs](docs/assets/brand/atlaso-docs-header-dark-1600x400.png)
 

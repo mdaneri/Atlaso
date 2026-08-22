@@ -444,6 +444,7 @@ from atlaso.app.services.local_users import (
     validate_local_usernames,
     validate_password,
 )
+from atlaso.app.services.management_bindings import applied_management_bindings
 from atlaso.app.services.monitoring import monitor_payload
 from atlaso.app.services.networking import (
     INTERFACE_MODES,
@@ -4704,22 +4705,8 @@ def request_host_interface_role(request_host: str, db: Session) -> str:
         request_host: Request host supplied by the caller.
         db: Active database session.
     """
-    if not request_host:
-        return ""
-    for interface in db.execute(select(PhysicalInterface)).scalars().all():
-        addresses = {
-            interface_address(interface.ip_cidr),
-            interface_address(interface.host_ip_cidr),
-            interface_address(interface.ipv6_cidr),
-            interface_address(interface.host_ipv6_cidr),
-        }
-        if request_host in addresses:
-            return normalize_interface_role(interface.role)
-    for vlan in db.execute(select(VlanInterface).where(VlanInterface.enabled.is_(True))).scalars().all():
-        addresses = {interface_address(vlan.ip_cidr), interface_address(vlan.ipv6_cidr)}
-        if request_host in addresses:
-            return normalize_interface_role(vlan.role)
-    return ""
+    binding = request_host_interface_binding(request_host, db)
+    return str((binding or {}).get("role") or "")
 
 
 def request_host_interface_binding(request_host: str, db: Session) -> dict[str, Any] | None:
@@ -4741,18 +4728,24 @@ def request_host_interface_binding(request_host: str, db: Session) -> dict[str, 
         physical_interfaces,
         enabled_vlans,
     )
+    applied_bindings = applied_management_bindings(db)
+    use_desired_fallback = applied_bindings is None
     physical_management = {
-        interface.name: normalize_interface_role(interface.role) == "management"
-        or (
-            normalize_interface_role(interface.role) == "access"
-            and normalize_interface_mode(interface.mode) == "access"
-            and interface.admin_state == "up"
-            and interface.access_management_ui_enabled
+        interface.name: use_desired_fallback
+        and (
+            normalize_interface_role(interface.role) == "management"
+            or (
+                normalize_interface_role(interface.role) == "access"
+                and normalize_interface_mode(interface.mode) == "access"
+                and interface.admin_state == "up"
+                and interface.access_management_ui_enabled
+            )
         )
         for interface in physical_interfaces
     }
     vlan_management = {
-        vlan.name: normalize_interface_role(vlan.role) == "access"
+        vlan.name: use_desired_fallback
+        and normalize_interface_role(vlan.role) == "access"
         and vlan.access_management_ui_enabled
         for vlan in enabled_vlans
     }
@@ -4775,6 +4768,14 @@ def request_host_interface_binding(request_host: str, db: Session) -> dict[str, 
                         "management_ui": physical_management.get(interface.name, False),
                     }
                 )
+    if applied_bindings is not None:
+        entries.extend(
+            {
+                **binding,
+                "management_ui": True,
+            }
+            for binding in applied_bindings
+        )
     by_address = {entry["address"].lower(): entry for entry in entries}
     try:
         parsed_host = str(ip_address(request_host.strip("[]"))).lower()

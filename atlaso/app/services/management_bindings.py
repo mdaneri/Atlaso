@@ -1,0 +1,185 @@
+"""Resolve applied and desired management browser bindings."""
+
+from __future__ import annotations
+
+import json
+from ipaddress import ip_interface
+
+from sqlalchemy import select
+from sqlalchemy.orm import Session
+
+from atlaso.app.models import PhysicalInterface, Setting, VlanInterface
+from atlaso.app.services.networking import (
+    normalize_interface_mode,
+    normalize_interface_role,
+)
+
+APPLIANCE_APPLY_BASELINES_KEY = "appliance_apply.baselines.v1"
+
+
+def _address_from_cidr(value: str | None) -> str:
+    """Return a normalized host address from an optional CIDR."""
+    if not value:
+        return ""
+    try:
+        return str(ip_interface(value).ip).lower()
+    except ValueError:
+        return ""
+
+
+def _network_rows(config_preview: str) -> list[dict[str, str]]:
+    """Parse physical and VLAN rows from a rendered Network preview."""
+    rows: list[dict[str, str]] = []
+    section = ""
+    current: dict[str, str] | None = None
+    for raw_line in (config_preview or "").splitlines():
+        line = raw_line.strip()
+        if not line or line.startswith("#"):
+            continue
+        if line.startswith("[") and line.endswith("]"):
+            section = line.strip("[]")
+            current = None
+            continue
+        if "=" not in line:
+            continue
+        key, value = [part.strip() for part in line.split("=", 1)]
+        if section == "physical_interfaces" and key == "interface":
+            current = {"kind": "physical", "name": value}
+            rows.append(current)
+        elif section == "vlan_interfaces" and key == "vlan":
+            current = {"kind": "vlan", "name": value}
+            rows.append(current)
+        elif current is not None and section in {"physical_interfaces", "vlan_interfaces"}:
+            current[key] = value
+    return rows
+
+
+def _network_baseline_preview(db: Session) -> str | None:
+    """Return the last-applied Network preview, or ``None`` when no baseline exists."""
+    setting = db.execute(
+        select(Setting).where(Setting.key == APPLIANCE_APPLY_BASELINES_KEY)
+    ).scalar_one_or_none()
+    if setting is None or not setting.value:
+        return None
+    try:
+        payload = json.loads(setting.value)
+    except json.JSONDecodeError:
+        return None
+    if not isinstance(payload, dict):
+        return None
+    network = payload.get("network")
+    if not isinstance(network, dict) or not isinstance(network.get("config_preview"), str):
+        return None
+    return str(network["config_preview"])
+
+
+def applied_management_bindings(db: Session) -> list[dict[str, str]] | None:
+    """Return address-specific management bindings from the last-applied Network state.
+
+    ``None`` means no usable baseline exists and lets development or upgrade compatibility callers
+    retain the legacy desired-state fallback. An empty list is authoritative when an applied baseline
+    exists but contains no management listener.
+
+    Args:
+        db: Active database session used to load applied and observed network state.
+    """
+    preview = _network_baseline_preview(db)
+    if preview is None:
+        return None
+    rows = _network_rows(preview)
+    current_physical = {
+        interface.name: interface
+        for interface in db.execute(select(PhysicalInterface)).scalars().all()
+    }
+    bindings: list[dict[str, str]] = []
+    seen: set[str] = set()
+    for row in rows:
+        dedicated = row.get("kind") == "physical" and row.get("role") == "management"
+        flagged_physical = (
+            row.get("kind") == "physical"
+            and row.get("role") == "access"
+            and row.get("mode") == "access"
+            and row.get("admin_state") == "up"
+            and row.get("access_management_ui_enabled", "false").lower() == "true"
+        )
+        flagged_vlan = (
+            row.get("kind") == "vlan"
+            and row.get("role") == "access"
+            and row.get("access_management_ui_enabled", "false").lower() == "true"
+        )
+        if not (dedicated or flagged_physical or flagged_vlan):
+            continue
+        cidrs = [row.get("ip_cidr"), row.get("ipv6_cidr")]
+        if row.get("kind") == "physical":
+            observed = current_physical.get(row.get("name", ""))
+            if observed is not None and observed.oper_state != "missing":
+                cidrs.extend((observed.host_ip_cidr, observed.host_ipv6_cidr))
+        for cidr in cidrs:
+            address = _address_from_cidr(cidr)
+            if not address or address in seen:
+                continue
+            seen.add(address)
+            bindings.append(
+                {
+                    "interface": row.get("name", ""),
+                    "role": row.get("role", ""),
+                    "address": address,
+                    "management_ui": "true",
+                }
+            )
+    return bindings
+
+
+def _has_usable_address(*values: str | None) -> bool:
+    """Return whether any CIDR contains a usable non-loopback, non-link-local address."""
+    for value in values:
+        if not value:
+            continue
+        try:
+            address = ip_interface(value).ip
+        except ValueError:
+            continue
+        if not address.is_loopback and not address.is_link_local and not address.is_unspecified:
+            return True
+    return False
+
+
+def desired_management_candidate_exists(db: Session) -> bool:
+    """Return whether desired state contains a complete management listener candidate.
+
+    Args:
+        db: Active transaction containing the proposed desired-state mutation.
+    """
+    physical_interfaces = db.execute(select(PhysicalInterface)).scalars().all()
+    physical_by_name = {interface.name: interface for interface in physical_interfaces}
+    for interface in physical_interfaces:
+        if interface.oper_state == "missing" or interface.admin_state != "up":
+            continue
+        role = normalize_interface_role(interface.role)
+        mode = normalize_interface_mode(interface.mode)
+        if role == "management" and mode == "access":
+            if interface.ipv4_method == "dhcp" or _has_usable_address(
+                interface.ip_cidr or interface.host_ip_cidr,
+                interface.ipv6_cidr or interface.host_ipv6_cidr,
+            ):
+                return True
+        if (
+            role == "access"
+            and mode == "access"
+            and interface.access_management_ui_enabled
+            and _has_usable_address(interface.ip_cidr, interface.ipv6_cidr)
+        ):
+            return True
+    for vlan in db.execute(select(VlanInterface).where(VlanInterface.enabled.is_(True))).scalars().all():
+        parent = physical_by_name.get(vlan.parent_interface)
+        if (
+            normalize_interface_role(vlan.role) == "access"
+            and vlan.access_management_ui_enabled
+            and parent is not None
+            and parent.oper_state != "missing"
+            and parent.admin_state == "up"
+            and normalize_interface_mode(parent.mode) == "trunk"
+            and _has_usable_address(vlan.ip_cidr, vlan.ipv6_cidr)
+        ):
+            return True
+    return False

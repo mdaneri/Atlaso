@@ -70,6 +70,11 @@ The saved interface, all reconciled dependent rows, and the value-free audit eve
 names only dependent units whose desired state changed; a reconciliation or audit-staging failure leaves no partial
 interface, dependency, reservation, DNS, or audit update.
 
+Physical Interface autosave also validates management continuity in this shared UI/API transaction. Atlaso rejects an
+edit that would remove the final complete management candidate and explains that a dedicated management role or an
+enabled, addressed access-management listener must be configured first. A successful save changes desired state only;
+it does not change which requested interface may serve `/ui/management`.
+
 ### Choose where the management UI is available
 
 A physical interface with the **management** role always exposes `/ui/management`; it has no separate management UI
@@ -98,6 +103,10 @@ When an Apply changes an effective management interface, address, gateway, or li
 bundles Network with Firewall, Certificate Authority, Appliance Settings, and Public Services. The old management path
 stays active while the candidate network, policy routes, firewall, certificate/nginx configuration, Atlaso loopback
 upstream, and host-facing `/openapi.json` complete bounded readiness checks. Only then does Atlaso retire the old path.
+Before that commit, fresh requests and existing sessions continue to use the last-applied Network binding paired with
+observed addresses. Unapplied access-management flags do not publish a new administrative listener, and unapplied role
+or address edits do not demote the old listener to `/ui/public`. Cancelling, reverting, or rolling back the candidate
+therefore leaves the previous management browser path authoritative and the pending desired state recoverable.
 
 Only a dedicated management role owns management DHCP, default gateways, DHCP resolver recovery, and isolated
 management policy routing. If that role is absent, flagged access interfaces retain their normal access routes. The

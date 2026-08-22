@@ -18,7 +18,7 @@ host is entitled to neither.
 
 | Plane | Canonical root | Publication boundary |
 | --- | --- | --- |
-| Management | `/ui/management` | Management-role interface or an explicitly reviewed future management binding |
+| Management | `/ui/management` | Last-applied management-role or flagged access-management binding, paired with observed addresses |
 | Public | `/ui/public` | Non-management host/interface with applied Public Services state |
 | Dispatcher | `/` | Uses the requested host/interface binding; it does not own a page |
 
@@ -30,6 +30,9 @@ list only services eligible on the called host/interface.
 The prefixes organize browser presentation; they do not replace authentication, authorization, CSRF, session, listener,
 Nginx, or Firewall enforcement. A request for `/ui/management/login` on a public-only listener returns not found and does
 not reveal the management shell or login behavior. A management listener likewise does not publish `/ui/public`.
+Pending desired Network edits do not change this dispatch boundary. The previously applied management binding remains
+authoritative until the protected management handoff commits; a newly flagged access listener stays public-only until
+then, and a pending role conversion does not expose `/ui/public` on the active management origin.
 
 ## Stable machine and protocol routes
 

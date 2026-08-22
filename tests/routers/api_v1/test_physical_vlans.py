@@ -141,6 +141,14 @@ def test_physical_interface_api_enforces_access_only_management_ui_flag(client):
     assert converted.status_code == 200, converted.text
     assert converted.json()["access_management_ui_enabled"] is True
 
+    final_listener = client.patch(
+        f"/api/v1/interfaces/physical/{management['name']}",
+        headers=headers,
+        json={"access_management_ui_enabled": False},
+    )
+    assert final_listener.status_code == 422, final_listener.text
+    assert "At least one complete management listener must remain" in final_listener.text
+
     invalid = client.patch(
         f"/api/v1/interfaces/physical/{management['name']}",
         headers=headers,
