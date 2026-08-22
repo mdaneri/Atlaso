@@ -94,7 +94,8 @@ Before `packer build -force` replaces the Workstation output directory, the wrap
 through the checked cleanup module. Current Workstation automation has no supported unregister-only operation, so the
 module stabilizes the running and registration inventories and the VMX set before using checked `vmrun deleteVM` for a
 registered target. It first detaches VMDK devices resolved outside the exact cleanup root, protecting reused depot,
-backup, and other shared disks. Cleanup remains scoped to this image target's configured output directory.
+backup, and other shared disks; a provider failure restores a surviving VMX byte-for-byte. Cleanup remains scoped to
+this image target's configured output directory.
 With the Workstation UI closed, the module verifies VMX deletion and running state, then atomically removes stale library
 rows only for canonical missing VMX paths beneath the validated artifact scope. Missing registrations elsewhere remain
 fatal.

@@ -787,6 +787,7 @@ function Disconnect-AtlasoWorkstationExternalVmdks {
     )
 
     $vmxDirectory = Split-Path -Parent $VmxPath
+    $originalVmxBytes = [System.IO.File]::ReadAllBytes($VmxPath)
     $lines = @([System.IO.File]::ReadAllLines($VmxPath))
     $externalDevices = [System.Collections.Generic.HashSet[string]]::new(
         [System.StringComparer]::OrdinalIgnoreCase
@@ -842,6 +843,7 @@ function Disconnect-AtlasoWorkstationExternalVmdks {
             [System.Text.UTF8Encoding]::new($false)
         )
         [System.IO.File]::Move($temporaryVmxPath, $VmxPath, $true)
+        return [pscustomobject]@{ OriginalBytes = $originalVmxBytes }
     }
     finally {
         if (Test-Path -LiteralPath $temporaryVmxPath) {
@@ -988,13 +990,30 @@ function Remove-AtlasoWorkstationVmArtifacts {
         }
     )
     foreach ($registeredTargetPath in $registeredTargetPaths) {
-        Disconnect-AtlasoWorkstationExternalVmdks `
+        $externalDiskDetachment = Disconnect-AtlasoWorkstationExternalVmdks `
             -VmxPath $registeredTargetPath `
             -RemovalRoot $resolvedRemovalRoot
-        Invoke-AtlasoVmrunChecked `
-            -VmrunPath $VmrunPath `
-            -Arguments @('-T', 'ws', 'deleteVM', $registeredTargetPath) `
-            -Action "Delete VMware Workstation VM '$registeredTargetPath'" | Out-Null
+        try {
+            Invoke-AtlasoVmrunChecked `
+                -VmrunPath $VmrunPath `
+                -Arguments @('-T', 'ws', 'deleteVM', $registeredTargetPath) `
+                -Action "Delete VMware Workstation VM '$registeredTargetPath'" | Out-Null
+        }
+        catch {
+            if ($null -ne $externalDiskDetachment -and (Test-Path -LiteralPath $registeredTargetPath -PathType Leaf)) {
+                $restorePath = "$registeredTargetPath.atlaso-restore-$([System.Guid]::NewGuid().ToString('N')).tmp"
+                try {
+                    [System.IO.File]::WriteAllBytes($restorePath, $externalDiskDetachment.OriginalBytes)
+                    [System.IO.File]::Move($restorePath, $registeredTargetPath, $true)
+                }
+                finally {
+                    if (Test-Path -LiteralPath $restorePath) {
+                        Remove-Item -LiteralPath $restorePath -Force -ErrorAction SilentlyContinue
+                    }
+                }
+            }
+            throw
+        }
         if (Test-Path -LiteralPath $registeredTargetPath) {
             throw "VMware Workstation VMX remains after deleteVM succeeded: $registeredTargetPath"
         }

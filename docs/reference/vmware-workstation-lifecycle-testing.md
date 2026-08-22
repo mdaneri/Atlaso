@@ -158,6 +158,7 @@ VMX to its Windows volume and file identity, stops a listed running VM through c
 before checked `vmrun deleteVM` removes a registered target and the module removes any remaining files.
 Immediately before provider deletion, cleanup detaches every VMDK device resolved outside the exact removal root so a
 reused depot, backup, or other shared disk cannot be deleted with the VM.
+If `deleteVM` fails while the VMX survives, cleanup atomically restores the original VMX bytes and reports failure.
 Filesystem aliases such as DOS 8.3 or mapped-drive forms therefore
 cannot make a running or registered target appear unrelated. Already-stopped and already-unregistered VMs remain
 idempotent cleanup cases. A nonzero command, malformed (including asymmetrically quoted paths or nonnumeric and

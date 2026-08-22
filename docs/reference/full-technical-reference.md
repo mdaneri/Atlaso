@@ -1310,6 +1310,7 @@ the checked VMware cleanup module. It inventories every VMX, verifies the checke
 stops running targets, and stabilizes both inventories and the VMX set before checked `vmrun deleteVM` removes any
 registered target and the module removes the remaining exact non-reparse-point output root. Before provider deletion,
 the module detaches VMDK devices resolved outside that root so shared disks remain untouched.
+If provider deletion fails while the VMX survives, the module atomically restores its original bytes.
 With the Workstation UI closed, cleanup atomically removes provider-retained library rows only for canonical missing VMX
 paths beneath the validated artifact scope. Missing inventory paths elsewhere remain fatal.
 Any inventory, transition, or removal failure preserves the remaining artifacts and prevents Packer from starting.

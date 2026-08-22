@@ -370,7 +370,8 @@ The following cross-cutting boundaries always apply:
   cleanup scope. Standalone cleanup scopes this to its exact root; multi-root cleanup scopes it to the canonical artifact
   parent. Missing registrations anywhere else remain fatal.
   Before `deleteVM`, detach every VMDK device whose resolved path is outside the exact removal root so provider deletion
-  cannot erase a reused depot, backup, or other shared disk.
+  cannot erase a reused depot, backup, or other shared disk. Restore the original VMX byte-for-byte if provider deletion
+  fails while that VMX survives.
   Preflight failures preserve all artifacts; a provider deletion or postcondition failure preserves the remaining
   artifacts and returns failure.
 - VLAN Interfaces use the shared wizard-backed Tabulator with the ESX Storage interaction. Keep every persisted field,

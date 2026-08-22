@@ -575,6 +575,48 @@ def test_whole_artifact_root_cleanup_detaches_external_vmdks_before_delete(
     assert external_vmdk.read_text(encoding="utf-8") == "shared depot disk"
 
 
+def test_whole_artifact_root_cleanup_restores_external_vmdks_after_delete_failure(
+    tmp_path: Path,
+) -> None:
+    """A failed provider deletion must restore the surviving VMX byte-for-byte.
+
+    Args:
+        tmp_path: Isolated test directory.
+    """
+    artifact_parent = tmp_path / "image-root"
+    removal_root = artifact_parent / "test-vms" / "Atlaso-Test"
+    vmx_path = removal_root / "Atlaso-Test.vmx"
+    external_vmdk = tmp_path / "shared-disks" / "Atlaso-Depot.vmdk"
+    _write_vmx(vmx_path, "Atlaso-Test")
+    external_vmdk.parent.mkdir(parents=True)
+    external_vmdk.write_text("shared depot disk", encoding="utf-8")
+    with vmx_path.open("a", encoding="utf-8") as stream:
+        stream.write('scsi0:2.present = "TRUE"\n')
+        stream.write(f'scsi0:2.fileName = "{external_vmdk.resolve()}"\n')
+        stream.write('scsi0:2.redo = ""\n')
+    original_vmx = vmx_path.read_bytes()
+    vmrun_path, environment, _ = _write_fake_vmrun(
+        tmp_path / "fake",
+        [vmx_path],
+        running=False,
+        registered=True,
+        unregister_exit=9,
+    )
+
+    result = _run_artifact_root_cleanup(
+        tmp_path,
+        artifact_parent=artifact_parent,
+        removal_root=removal_root,
+        vmrun_path=vmrun_path,
+        environment=environment,
+    )
+
+    assert result.returncode != 0
+    assert "Delete VMware Workstation VM" in result.stderr
+    assert vmx_path.read_bytes() == original_vmx
+    assert external_vmdk.read_text(encoding="utf-8") == "shared depot disk"
+
+
 @pytest.mark.parametrize(
     ("stop_sticky", "unregister_sticky", "expected_error"),
     [

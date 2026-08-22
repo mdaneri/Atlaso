@@ -386,7 +386,8 @@ Terminal order:
   cleanup scope. Standalone cleanup uses its exact root; multi-root cleanup uses the canonical artifact parent. Missing
   registrations outside that scope remain fatal.
   Detach every VMDK device whose resolved path is outside the exact removal root before `deleteVM`, because provider
-  deletion must never remove reused depot, backup, or other shared disks.
+  deletion must never remove reused depot, backup, or other shared disks. If provider deletion fails while the VMX
+  survives, atomically restore its original bytes.
   A preflight failure preserves all artifacts. A nonzero or
   malformed command result, unreadable registration inventory, provider deletion failure, or failed postcondition must
   propagate as a cleanup failure and preserve the remaining artifacts; lifecycle cleanup must retain the original
