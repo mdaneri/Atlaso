@@ -4103,8 +4103,10 @@ precede those disks with file-backed Photon OS and Atlaso system-content VMDKs; 
 appliance-wide PowerShell modules through required UUID-backed mounts. Keep depot and backup workloads off both payload
 disks. The root-owned image policy binds <code>ATLASO_DEPOT</code> and <code>ATLASO_BKUP</code> to the platform's fixed SCSI locations, a
 topology-derived <code>atlaso-path-*</code> identity, and an exact 500 GiB capacity. Before the first <code>mkfs</code>,
-<code>atlaso-data-disks.service</code> verifies both disks and rejects missing, extra, reordered, ambiguous, read-only, in-use,
-raw-device-open, or identity/capacity-mismatched devices. It formats only the two verified blank whole disks as ext4,
+<code>atlaso-data-disks.service</code> resolves the root filesystem's complete inverse block-device dependency tree and requires
+exactly one physical operating-system disk. It excludes only that disk, verifies both fixed data disks, and rejects
+missing, extra, reordered, ambiguous, read-only, in-use, raw-device-open, or identity/capacity-mismatched devices. It
+formats only the two verified blank whole disks as ext4,
 persists their
 UUIDs in <code>/etc/fstab</code>, and mounts them at the fixed paths before <code>atlaso.service</code> starts. Existing correctly labeled
 ext4 disks must occupy their assigned identities and are mounted without reformatting. Each occupied or newly mounted
