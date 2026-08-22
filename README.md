@@ -139,6 +139,7 @@ With the Workstation UI closed, cleanup holds a write-excluding inventory handle
 atomic replacement, verifies the exact displaced backup, and rolls back a concurrently replaced provider inventory.
 It removes stale library rows only for canonical missing VMX paths beneath its validated exact or multi-root artifact
 scope; every library ID must have exactly one config owner, and missing registration paths outside that scope remain fatal.
+Every stale path is rechecked immediately before the inventory swap.
 Hyper-V remains
 the authoritative lifecycle interoperability environment for exact access and trunk VLAN behavior.
 Image-build download caches verify pinned checksums before reuse or durable promotion; ordinary retries replace only

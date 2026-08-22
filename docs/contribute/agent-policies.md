@@ -386,7 +386,7 @@ Terminal order:
   provider-retained library rows only for canonical missing VMX paths beneath the validated cleanup scope. Verify the
   exact displaced backup as an optimistic compare-and-swap and atomically restore the newest captured provider state if
   another writer replaced the inventory path. Require every `vmlistN` library ID to own exactly one config path before
-  pruning any row. Standalone
+  pruning any row, and recheck every stale path remains absent immediately before the inventory swap. Standalone
   cleanup uses its exact root; multi-root cleanup uses the canonical artifact parent. Missing
   registrations outside that scope remain fatal. Revalidate stable registration state and the recursive VMX set after
   provider deletion, then perform an identity-aware running-inventory read followed only by registration snapshots around
@@ -394,7 +394,8 @@ Terminal order:
   Detach every VMDK device whose resolved path is outside the exact removal root before `deleteVM`, because provider
   deletion must never remove reused depot, backup, or other shared disks. Require the registered canonical path to equal
   the cleanup target and reject a registration reachable only through a filesystem alias before replacing the VMX. If
-  the deletion transition fails while the VMX survives, atomically restore its original bytes.
+  the deletion transition fails while the exact detached VMX survives, atomically restore its original bytes. Detachment
+  and restoration must atomically compare the displaced VMX identity and roll back rather than overwrite a replacement.
   Capture immutable identities for every target and repeat identity, running, stable registration, and recursive VMX-set
   checks immediately before each individual `deleteVM` invocation.
   A preflight failure preserves all artifacts. A nonzero or

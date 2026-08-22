@@ -370,7 +370,7 @@ The following cross-cutting boundaries always apply:
   provider-retained library rows only for canonical missing VMX paths beneath the validated cleanup scope. Verify the
   exact displaced backup as an optimistic compare-and-swap and atomically restore the newest captured provider state if
   another writer replaced the inventory path. Require every `vmlistN` library ID to own exactly one config path before
-  pruning any row. Standalone
+  pruning any row, and recheck every stale path remains absent immediately before the inventory swap. Standalone
   cleanup scopes this to its exact root; multi-root cleanup scopes it to the canonical artifact
   parent. Missing registrations anywhere else remain fatal. Revalidate stable registration state and the recursive VMX
   set after provider deletion, then perform an identity-aware running-inventory read followed only by registration
@@ -378,7 +378,8 @@ The following cross-cutting boundaries always apply:
   Before `deleteVM`, detach every VMDK device whose resolved path is outside the exact removal root so provider deletion
   cannot erase a reused depot, backup, or other shared disk. Require the registered canonical path to equal the cleanup
   target and reject a registration reachable only through a filesystem alias before replacing the VMX. Restore the
-  original VMX byte-for-byte whenever a deletion transition fails while that VMX survives.
+  original VMX byte-for-byte whenever a deletion transition fails while that exact detached file survives. Detachment
+  and restoration must atomically compare the displaced VMX identity and roll back rather than overwrite a replacement.
   Capture immutable identities for every target and repeat identity, running, stable registration, and recursive VMX-set
   checks immediately before each individual `deleteVM` invocation.
   Preflight failures preserve all artifacts; a provider deletion or postcondition failure preserves the remaining

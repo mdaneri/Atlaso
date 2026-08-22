@@ -39,6 +39,7 @@ def _write_fake_vmrun(
     late_running_vmx: Path | None = None,
     late_running_list_count: int = 4,
     replace_after_delete_vmx: Path | None = None,
+    replace_before_delete: bool = False,
 ) -> tuple[Path, dict[str, str], Path]:
     """Create a stateful fake ``vmrun`` command and Workstation inventory.
 
@@ -58,6 +59,7 @@ def _write_fake_vmrun(
         late_running_vmx: VMX injected into running inventory after registration stabilizes.
         late_running_list_count: Checked running-state read that triggers late running state.
         replace_after_delete_vmx: VMX replaced after the first successful deleteVM operation.
+        replace_before_delete: Whether deleteVM replaces its target before returning.
 
     Returns:
         The fake command path, its environment, and the command-log path.
@@ -181,6 +183,13 @@ if command == "stop":
         write_paths("running", [path for path in read_paths("running") if not same_file(path, target)])
     raise SystemExit(0)
 if command == "deleteVM":
+    if os.environ.get("ATLASO_FAKE_VMRUN_REPLACE_BEFORE_DELETE") == "1":
+        replacement_target = Path(target)
+        replacement_target.unlink(missing_ok=True)
+        replacement_target.write_text(
+            '.encoding = "UTF-8"\\ndisplayName = "Concurrent delete replacement"\\n',
+            encoding="utf-8",
+        )
     exit_code = int(os.environ.get("ATLASO_FAKE_VMRUN_UNREGISTER_EXIT", "0"))
     if exit_code:
         print("simulated deleteVM failure", file=sys.stderr)
@@ -252,6 +261,7 @@ raise SystemExit(64)
             "ATLASO_FAKE_VMRUN_REPLACE_AFTER_DELETE_VMX": str(
                 replace_after_delete_vmx or ""
             ),
+            "ATLASO_FAKE_VMRUN_REPLACE_BEFORE_DELETE": "1" if replace_before_delete else "0",
             "APPDATA": str(appdata_directory),
         }
     )
@@ -449,6 +459,46 @@ def test_whole_artifact_root_cleanup_rejects_shared_vmlist_config_id(
     assert "one library ID to multiple config paths" in result.stderr
     assert sentinel.read_text(encoding="utf-8") == "remaining artifact"
     assert str(valid_vmx.resolve()) in inventory_path.read_text(encoding="utf-8")
+
+
+def test_stale_registration_pruning_rechecks_missing_path_before_replace(
+    tmp_path: Path,
+) -> None:
+    """A recreated VMX must preserve its registration before the inventory swap.
+
+    Args:
+        tmp_path: Isolated test directory.
+    """
+    vmx_path = tmp_path / "recreated" / "Recreated.vmx"
+    _write_vmx(vmx_path, "Recreated")
+    inventory_path = tmp_path / "inventory.vmls"
+    inventory_content = (
+        '.encoding = "UTF-8"\n'
+        f'vmlist1.config = "{vmx_path.resolve()}"\n'
+        f'index0.id = "{vmx_path.resolve()}"\n'
+        'index.count = "1"\n'
+    )
+    inventory_path.write_text(inventory_content, encoding="utf-8")
+    module_path = VMWARE_SCRIPT_ROOT / "Atlaso.WorkstationCleanup.psm1"
+    wrapper = tmp_path / "recheck-stale-registration.ps1"
+    wrapper.write_text(
+        f"""$ErrorActionPreference = 'Stop'
+$module = Import-Module '{module_path}' -Force -PassThru
+& $module {{
+    param($inventoryPath, $vmxPath)
+    Remove-AtlasoWorkstationMissingRegistrations `
+        -InventoryPath $inventoryPath `
+        -MissingPaths @($vmxPath)
+}} '{inventory_path}' '{vmx_path}'
+""",
+        encoding="utf-8",
+    )
+
+    result = _run_script(wrapper, environment=os.environ.copy())
+
+    assert result.returncode != 0
+    assert "registration path was recreated" in result.stderr
+    assert inventory_path.read_text(encoding="utf-8") == inventory_content
 
 
 def test_whole_artifact_root_cleanup_rejects_stale_missing_registration_outside_root(
@@ -770,6 +820,49 @@ def test_whole_artifact_root_cleanup_restores_external_vmdks_after_failed_delete
     assert result.returncode != 0
     assert expected_error in result.stderr
     assert vmx_path.read_bytes() == original_vmx
+    assert external_vmdk.read_text(encoding="utf-8") == "shared depot disk"
+
+
+def test_whole_artifact_root_cleanup_preserves_vmx_replaced_during_delete(
+    tmp_path: Path,
+) -> None:
+    """A concurrent VMX replacement must not be overwritten by failure restoration.
+
+    Args:
+        tmp_path: Isolated test directory.
+    """
+    artifact_parent = tmp_path / "image-root"
+    removal_root = artifact_parent / "test-vms" / "Atlaso-Test"
+    vmx_path = removal_root / "Atlaso-Test.vmx"
+    external_vmdk = tmp_path / "shared-disks" / "Atlaso-Depot.vmdk"
+    _write_vmx(vmx_path, "Atlaso-Test")
+    external_vmdk.parent.mkdir(parents=True)
+    external_vmdk.write_text("shared depot disk", encoding="utf-8")
+    with vmx_path.open("a", encoding="utf-8") as stream:
+        stream.write('scsi0:2.present = "TRUE"\n')
+        stream.write(f'scsi0:2.fileName = "{external_vmdk.resolve()}"\n')
+    vmrun_path, environment, _ = _write_fake_vmrun(
+        tmp_path / "fake",
+        [vmx_path],
+        running=False,
+        registered=True,
+        unregister_exit=9,
+        replace_before_delete=True,
+    )
+
+    result = _run_artifact_root_cleanup(
+        tmp_path,
+        artifact_parent=artifact_parent,
+        removal_root=removal_root,
+        vmrun_path=vmrun_path,
+        environment=environment,
+    )
+
+    assert result.returncode != 0
+    assert "replacement was preserved" in result.stderr
+    assert 'displayName = "Concurrent delete replacement"' in vmx_path.read_text(
+        encoding="utf-8"
+    )
     assert external_vmdk.read_text(encoding="utf-8") == "shared depot disk"
 
 
@@ -1445,7 +1538,7 @@ def test_cleanup_safety_content_read_errors_are_terminating() -> None:
         lock_release,
     )
     cas_rollback = module.index(
-        "Restore-AtlasoWorkstationInventoryAfterCasFailure `", displaced_read
+        "Restore-AtlasoWorkstationFileAfterCasFailure `", displaced_read
     )
     assert "[System.IO.FileShare]::Read -bor [System.IO.FileShare]::Delete" in module
     assert (
@@ -1590,11 +1683,13 @@ def test_inventory_cas_rollback_restores_concurrent_provider_replacement(
 $module = Import-Module '{module_path}' -Force -PassThru
 & $module {{
     param($inventoryPath, $replacementPath)
-    Restore-AtlasoWorkstationInventoryAfterCasFailure `
-        -InventoryPath $inventoryPath `
+    Restore-AtlasoWorkstationFileAfterCasFailure `
+        -TargetPath $inventoryPath `
         -ExpectedCurrentContent 'cleanup candidate state' `
         -ReplacementPath $replacementPath `
-        -ReplacementContent 'original provider state'
+        -ReplacementContent 'original provider state' `
+        -StateDescription 'VMware Workstation inventory' `
+        -RecoveryExtension 'vmls'
 }} '{inventory_path}' '{replacement_path}'
 """,
         encoding="utf-8",
@@ -1606,6 +1701,43 @@ $module = Import-Module '{module_path}' -Force -PassThru
     assert inventory_path.read_text(encoding="utf-8") == "concurrent provider state"
     assert not list(tmp_path.glob("inventory.vmls.atlaso-cas-*.tmp"))
     assert not list(tmp_path.glob("inventory.vmls.atlaso-recovery-*.vmls"))
+
+
+def test_vmx_cas_rejects_replacement_before_detachment_commit(tmp_path: Path) -> None:
+    """VMX replacement must win an identity mismatch at the detachment CAS.
+
+    Args:
+        tmp_path: Isolated test directory.
+    """
+    vmx_path = tmp_path / "Atlaso-Test.vmx"
+    _write_vmx(vmx_path, "Original")
+    module_path = VMWARE_SCRIPT_ROOT / "Atlaso.WorkstationCleanup.psm1"
+    wrapper = tmp_path / "replace-vmx-cas.ps1"
+    wrapper.write_text(
+        f"""$ErrorActionPreference = 'Stop'
+$module = Import-Module '{module_path}' -Force -PassThru
+& $module {{
+    param($vmxPath)
+    $expectedIdentity = Get-AtlasoVmxFileIdentity `
+        -Path $vmxPath `
+        -InventoryDescription 'test baseline'
+    Remove-Item -LiteralPath $vmxPath -Force
+    [System.IO.File]::WriteAllText($vmxPath, 'concurrent replacement')
+    Set-AtlasoWorkstationVmxBytesIfIdentityMatches `
+        -VmxPath $vmxPath `
+        -ExpectedIdentity $expectedIdentity `
+        -ReplacementBytes ([System.Text.Encoding]::UTF8.GetBytes('detached candidate')) `
+        -FailureMessage 'detachment identity mismatch'
+}} '{vmx_path}'
+""",
+        encoding="utf-8",
+    )
+
+    result = _run_script(wrapper, environment=os.environ.copy())
+
+    assert result.returncode != 0
+    assert "detachment identity mismatch" in result.stderr
+    assert vmx_path.read_text(encoding="utf-8") == "concurrent replacement"
 
 
 def test_general_removal_matches_a_running_vmx_by_filesystem_identity(

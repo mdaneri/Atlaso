@@ -100,8 +100,9 @@ files, with an identity-aware running read followed only by registration snapsho
 target registered only through a filesystem
 alias fails closed before VMX replacement. Stale-row replacement verifies its displaced backup and rolls back a
 concurrent provider replacement, and rejects library IDs with multiple config owners. Multi-VM cleanup repeats immutable
-identity, running, stable registration, and VMX-set checks before each `deleteVM`. Cleanup remains scoped to this image
-target's configured output directory.
+identity, running, stable registration, and VMX-set checks before each `deleteVM`. VMX detachment and restoration compare
+the displaced identity and roll back a concurrent replacement; stale paths are rechecked before inventory replacement.
+Cleanup remains scoped to this image target's configured output directory.
 With the Workstation UI closed, the module verifies VMX deletion and running state, then atomically removes stale library
 rows only for canonical missing VMX paths beneath the validated artifact scope. Missing registrations elsewhere remain
 fatal.
