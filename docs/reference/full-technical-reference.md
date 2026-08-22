@@ -1310,7 +1310,8 @@ the checked VMware cleanup module. It inventories every VMX, verifies the checke
 stops running targets, and stabilizes both inventories and the VMX set before checked `vmrun deleteVM` removes any
 registered target and the module removes the remaining exact non-reparse-point output root. Before provider deletion,
 the module detaches VMDK devices resolved outside that root so shared disks remain untouched.
-Workstation may retain a stale library row until its UI refreshes; cleanup does not rewrite the live inventory.
+With the Workstation UI closed, cleanup atomically removes provider-retained library rows only for canonical missing VMX
+paths beneath the validated artifact scope. Missing inventory paths elsewhere remain fatal.
 Any inventory, transition, or removal failure preserves the remaining artifacts and prevents Packer from starting.
 The remastered kickstart disables Photon's socket-activated SSH unit and enables the normal
 `sshd.service`, ensuring Packer receives a deterministic SSH daemon after the first installed-system boot. The temporary

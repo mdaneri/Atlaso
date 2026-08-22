@@ -95,8 +95,9 @@ through the checked cleanup module. Current Workstation automation has no suppor
 module stabilizes the running and registration inventories and the VMX set before using checked `vmrun deleteVM` for a
 registered target. It first detaches VMDK devices resolved outside the exact cleanup root, protecting reused depot,
 backup, and other shared disks. Cleanup remains scoped to this image target's configured output directory.
-Workstation may keep a stale library row until its UI refreshes; the module verifies the VMX deletion and running state
-without rewriting Workstation's live inventory file.
+With the Workstation UI closed, the module verifies VMX deletion and running state, then atomically removes stale library
+rows only for canonical missing VMX paths beneath the validated artifact scope. Missing registrations elsewhere remain
+fatal.
 
 For lifecycle/demo images that should use real appliance adapters:
 

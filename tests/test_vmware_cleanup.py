@@ -355,6 +355,75 @@ def test_whole_artifact_root_cleanup_accepts_exact_absolute_configured_root(
     assert not removal_root.exists()
 
 
+def test_whole_artifact_root_cleanup_accepts_stale_missing_registration_in_artifact_parent(
+    tmp_path: Path,
+) -> None:
+    """Multi-root cleanup may pass a stale row from an already-removed sibling.
+
+    Args:
+        tmp_path: Isolated test directory.
+    """
+    artifact_parent = tmp_path / "image-root"
+    removal_root = artifact_parent / "test-vms"
+    stale_vmx = artifact_parent / "output" / "Atlaso-Builder.vmx"
+    sentinel = removal_root / "sentinel.txt"
+    _write_vmx(stale_vmx, "Atlaso-Builder")
+    removal_root.mkdir(parents=True)
+    sentinel.write_text("remaining artifact", encoding="utf-8")
+    vmrun_path, environment, log_path = _write_fake_vmrun(
+        tmp_path / "fake", [stale_vmx], running=False, registered=True
+    )
+    stale_vmx.unlink()
+
+    result = _run_artifact_root_cleanup(
+        tmp_path,
+        artifact_parent=artifact_parent,
+        removal_root=removal_root,
+        vmrun_path=vmrun_path,
+        environment=environment,
+    )
+
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert not removal_root.exists()
+    commands = [json.loads(line) for line in log_path.read_text(encoding="utf-8").splitlines()]
+    assert "deleteVM" not in [command[2] for command in commands]
+    inventory_path = Path(environment["ATLASO_FAKE_VMRUN_INVENTORY"])
+    assert str(stale_vmx.resolve()) not in inventory_path.read_text(encoding="utf-8")
+
+
+def test_whole_artifact_root_cleanup_rejects_stale_missing_registration_outside_root(
+    tmp_path: Path,
+) -> None:
+    """A missing unrelated inventory entry must retain strict global verification.
+
+    Args:
+        tmp_path: Isolated test directory.
+    """
+    artifact_parent = tmp_path / "image-root"
+    removal_root = artifact_parent / "output"
+    stale_vmx = tmp_path / "unrelated" / "Missing.vmx"
+    sentinel = removal_root / "sentinel.txt"
+    _write_vmx(stale_vmx, "Missing")
+    removal_root.mkdir(parents=True)
+    sentinel.write_text("preserve", encoding="utf-8")
+    vmrun_path, environment, _ = _write_fake_vmrun(
+        tmp_path / "fake", [stale_vmx], running=False, registered=True
+    )
+    stale_vmx.unlink()
+
+    result = _run_artifact_root_cleanup(
+        tmp_path,
+        artifact_parent=artifact_parent,
+        removal_root=removal_root,
+        vmrun_path=vmrun_path,
+        environment=environment,
+    )
+
+    assert result.returncode != 0
+    assert "filesystem identity cannot be resolved" in result.stderr
+    assert sentinel.read_text(encoding="utf-8") == "preserve"
+
+
 def test_whole_artifact_root_cleanup_rejects_configured_root_mismatch(tmp_path: Path) -> None:
     """Exact-root mode cannot be redirected to a sibling of the configured output.
 

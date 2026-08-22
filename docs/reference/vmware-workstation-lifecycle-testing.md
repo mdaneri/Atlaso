@@ -178,9 +178,9 @@ complete running-and-registration
 rounds 250 milliseconds apart, repeats the recursive VMX-set scan, and captures a third round. Each round reads checked
 `vmrun list` state followed by the registration file, and all state sets must remain identical, so a VM restarted or
 registered during the stability window or final filesystem verification preserves all artifacts. Failures after the
-provider deletion begins preserve the remaining artifacts and return failure. Workstation can retain a stale library
-row until its UI refreshes after `deleteVM`; cleanup verifies VMX removal and running state but does not rewrite the live
-inventory file.
+provider deletion begins preserve the remaining artifacts and return failure. With the Workstation UI closed, cleanup
+atomically removes provider-retained library rows only for canonical missing VMX paths beneath the validated exact or
+multi-root artifact scope. Missing inventory paths elsewhere still fail closed.
 When lifecycle
 execution and cleanup both fail, the final error reports the original scenario failure together with the cleanup failure
 and preserved path.
