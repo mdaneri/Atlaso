@@ -461,6 +461,51 @@ def test_whole_artifact_root_cleanup_rejects_shared_vmlist_config_id(
     assert str(valid_vmx.resolve()) in inventory_path.read_text(encoding="utf-8")
 
 
+def test_stale_registration_pruning_rejects_shared_numeric_index(
+    tmp_path: Path,
+) -> None:
+    """A stale and valid registration cannot share one numeric index.
+
+    Args:
+        tmp_path: Isolated test directory.
+    """
+    stale_vmx = tmp_path / "output" / "Atlaso-Builder.vmx"
+    valid_vmx = tmp_path / "unrelated" / "Unrelated.vmx"
+    _write_vmx(stale_vmx, "Atlaso-Builder")
+    _write_vmx(valid_vmx, "Unrelated")
+    inventory_path = tmp_path / "inventory.vmls"
+    inventory_content = (
+        '.encoding = "UTF-8"\n'
+        f'vmlist1.config = "{stale_vmx.resolve()}"\n'
+        f'vmlist2.config = "{valid_vmx.resolve()}"\n'
+        f'index0.id = "{stale_vmx.resolve()}"\n'
+        f'index0.id = "{valid_vmx.resolve()}"\n'
+        'index.count = "2"\n'
+    )
+    inventory_path.write_text(inventory_content, encoding="utf-8")
+    stale_vmx.unlink()
+    module_path = VMWARE_SCRIPT_ROOT / "Atlaso.WorkstationCleanup.psm1"
+    wrapper = tmp_path / "reject-shared-index.ps1"
+    wrapper.write_text(
+        f"""$ErrorActionPreference = 'Stop'
+$module = Import-Module '{module_path}' -Force -PassThru
+& $module {{
+    param($inventoryPath, $vmxPath)
+    Remove-AtlasoWorkstationMissingRegistrations `
+        -InventoryPath $inventoryPath `
+        -MissingPaths @($vmxPath)
+}} '{inventory_path}' '{stale_vmx.resolve()}'
+""",
+        encoding="utf-8",
+    )
+
+    result = _run_script(wrapper, environment=os.environ.copy())
+
+    assert result.returncode != 0
+    assert "one index number to an invalid number of VM paths" in result.stderr
+    assert inventory_path.read_text(encoding="utf-8") == inventory_content
+
+
 def test_stale_registration_pruning_rechecks_missing_path_before_replace(
     tmp_path: Path,
 ) -> None:
@@ -1556,20 +1601,24 @@ def test_cleanup_safety_content_read_errors_are_terminating() -> None:
     module = (VMWARE_SCRIPT_ROOT / "Atlaso.WorkstationCleanup.psm1").read_text(encoding="utf-8")
 
     assert "Get-Content -LiteralPath $Path -ErrorAction Stop" in module
-    assert "Get-Content -LiteralPath $InventoryPath -ErrorAction Stop" in module
-    assert module.count("Get-Content") == module.count("Get-Content -LiteralPath") == 2
+    assert "$bytes = [System.IO.File]::ReadAllBytes($InventoryPath)" in module
+    assert "[System.Text.UTF8Encoding]::new($false, $true).GetString($bytes)" in module
     assert "Start-Sleep -Milliseconds 250" in module
     assert "registration inventory changed during verification" in module
     write_lock = module.index("$inventoryWriteLock = [System.IO.File]::Open(")
-    locked_read = module.index("$lockedContent = $inventoryReader.ReadToEnd()", write_lock)
-    locked_comparison = module.index("$snapshot.Content.Equals($lockedContent", locked_read)
+    locked_read = module.index(
+        "$lockedBytes = Read-AtlasoFileStreamBytes -Stream $inventoryWriteLock", write_lock
+    )
+    locked_comparison = module.index(
+        "Test-AtlasoByteArraysEqual -Left $snapshot.Bytes -Right $lockedBytes", locked_read
+    )
     inventory_replace = module.index(
         "[System.IO.File]::Replace($temporaryInventoryPath, $InventoryPath, $backupInventoryPath, $true)",
         locked_comparison,
     )
     lock_release = module.index("$inventoryWriteLock.Dispose()", inventory_replace)
     displaced_read = module.index(
-        "$displacedContent = [System.IO.File]::ReadAllText($backupInventoryPath)",
+        "$displacedBytes = [System.IO.File]::ReadAllBytes($backupInventoryPath)",
         lock_release,
     )
     cas_rollback = module.index(
@@ -1725,8 +1774,8 @@ def test_inventory_cas_rollback_restores_concurrent_provider_replacement(
     """
     inventory_path = tmp_path / "inventory.vmls"
     replacement_path = tmp_path / "captured-provider.vmls"
-    inventory_path.write_text("concurrent provider state", encoding="utf-8")
-    replacement_path.write_text("original provider state", encoding="utf-8")
+    inventory_path.write_bytes(b"\x80")
+    replacement_path.write_bytes(b"original provider state")
     module_path = VMWARE_SCRIPT_ROOT / "Atlaso.WorkstationCleanup.psm1"
     wrapper = tmp_path / "restore-inventory-cas.ps1"
     wrapper.write_text(
@@ -1736,9 +1785,9 @@ $module = Import-Module '{module_path}' -Force -PassThru
     param($inventoryPath, $replacementPath)
     Restore-AtlasoWorkstationFileAfterCasFailure `
         -TargetPath $inventoryPath `
-        -ExpectedCurrentContent 'cleanup candidate state' `
+        -ExpectedCurrentBytes ([byte[]](0x81)) `
         -ReplacementPath $replacementPath `
-        -ReplacementContent 'original provider state' `
+        -ReplacementBytes ([System.IO.File]::ReadAllBytes($replacementPath)) `
         -StateDescription 'VMware Workstation inventory' `
         -RecoveryExtension 'vmls'
 }} '{inventory_path}' '{replacement_path}'
@@ -1749,7 +1798,7 @@ $module = Import-Module '{module_path}' -Force -PassThru
     result = _run_script(wrapper, environment=os.environ.copy())
 
     assert result.returncode == 0, result.stdout + result.stderr
-    assert inventory_path.read_text(encoding="utf-8") == "concurrent provider state"
+    assert inventory_path.read_bytes() == b"\x80"
     assert not list(tmp_path.glob("inventory.vmls.atlaso-cas-*.tmp"))
     assert not list(tmp_path.glob("inventory.vmls.atlaso-recovery-*.vmls"))
 

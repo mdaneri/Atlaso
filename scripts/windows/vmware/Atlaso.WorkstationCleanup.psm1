@@ -413,7 +413,8 @@ function Get-AtlasoWorkstationInventorySnapshot {
 
     $before = Get-Item -LiteralPath $InventoryPath -Force -ErrorAction Stop
     $identityBefore = [Atlaso.WorkstationFileIdentity]::Get($InventoryPath)
-    $content = [string](Get-Content -LiteralPath $InventoryPath -ErrorAction Stop -Raw)
+    $bytes = [System.IO.File]::ReadAllBytes($InventoryPath)
+    $content = [System.Text.UTF8Encoding]::new($false, $true).GetString($bytes)
     $identityAfter = [Atlaso.WorkstationFileIdentity]::Get($InventoryPath)
     $after = Get-Item -LiteralPath $InventoryPath -Force -ErrorAction Stop
     if (
@@ -425,6 +426,7 @@ function Get-AtlasoWorkstationInventorySnapshot {
     }
     return [pscustomobject]@{
         Content = $content
+        Bytes = $bytes
         Identity = $identityAfter
         Length = $after.Length
         LastWriteTimeUtcTicks = $after.LastWriteTimeUtc.Ticks
@@ -445,10 +447,53 @@ function Assert-AtlasoWorkstationInventorySnapshotsEqual {
         $First.Identity -ne $Second.Identity -or
         $First.Length -ne $Second.Length -or
         $First.LastWriteTimeUtcTicks -ne $Second.LastWriteTimeUtcTicks -or
-        -not $First.Content.Equals($Second.Content, [System.StringComparison]::Ordinal)
+        -not (Test-AtlasoByteArraysEqual -Left $First.Bytes -Right $Second.Bytes)
     ) {
         throw "VMware Workstation registration inventory changed during verification; refusing filesystem cleanup: $InventoryPath"
     }
+}
+
+function Test-AtlasoByteArraysEqual {
+    param(
+        [Parameter(Mandatory = $true)]
+        [byte[]]$Left,
+        [Parameter(Mandatory = $true)]
+        [byte[]]$Right
+    )
+
+    if ($Left.Length -ne $Right.Length) {
+        return $false
+    }
+    for ($index = 0; $index -lt $Left.Length; $index++) {
+        if ($Left[$index] -ne $Right[$index]) {
+            return $false
+        }
+    }
+    return $true
+}
+
+function Read-AtlasoFileStreamBytes {
+    param(
+        [Parameter(Mandatory = $true)]
+        [System.IO.FileStream]$Stream
+    )
+
+    if ($Stream.Length -gt [int]::MaxValue) {
+        throw 'VMware Workstation inventory is too large to verify safely.'
+    }
+    $bytes = [byte[]]::new([int]$Stream.Length)
+    $offset = 0
+    while ($offset -lt $bytes.Length) {
+        $count = $Stream.Read($bytes, $offset, $bytes.Length - $offset)
+        if ($count -eq 0) {
+            throw 'VMware Workstation inventory ended before its locked byte snapshot was complete.'
+        }
+        $offset += $count
+    }
+    if ($Stream.ReadByte() -ne -1) {
+        throw 'VMware Workstation inventory grew during its locked byte snapshot.'
+    }
+    return $bytes
 }
 
 function Get-AtlasoStableWorkstationInventoryLines {
@@ -581,11 +626,11 @@ function Restore-AtlasoWorkstationFileAfterCasFailure {
         [Parameter(Mandatory = $true)]
         [string]$TargetPath,
         [Parameter(Mandatory = $true)]
-        [string]$ExpectedCurrentContent,
+        [byte[]]$ExpectedCurrentBytes,
         [Parameter(Mandatory = $true)]
         [string]$ReplacementPath,
         [Parameter(Mandatory = $true)]
-        [string]$ReplacementContent,
+        [byte[]]$ReplacementBytes,
         [Parameter(Mandatory = $true)]
         [string]$StateDescription,
         [Parameter(Mandatory = $true)]
@@ -606,15 +651,15 @@ function Restore-AtlasoWorkstationFileAfterCasFailure {
             [System.IO.File]::Move($ReplacementPath, $recoveryPath)
             throw "$StateDescription rollback failed; the newest captured state was preserved for recovery at '$recoveryPath'. Replace error: $replaceError"
         }
-        $capturedContent = [System.IO.File]::ReadAllText($capturedPath)
-        if ($capturedContent.Equals($ExpectedCurrentContent, [System.StringComparison]::Ordinal)) {
+        $capturedBytes = [System.IO.File]::ReadAllBytes($capturedPath)
+        if (Test-AtlasoByteArraysEqual -Left $capturedBytes -Right $ExpectedCurrentBytes) {
             Remove-Item -LiteralPath $capturedPath -Force -ErrorAction Stop
             return
         }
 
-        $ExpectedCurrentContent = $ReplacementContent
+        $ExpectedCurrentBytes = $ReplacementBytes
         $ReplacementPath = $capturedPath
-        $ReplacementContent = $capturedContent
+        $ReplacementBytes = $capturedBytes
     }
 
     $recoveryPath = "$TargetPath.atlaso-recovery-$([System.Guid]::NewGuid().ToString('N')).$RecoveryExtension"
@@ -652,6 +697,7 @@ function Remove-AtlasoWorkstationMissingRegistrations {
     $presentTargets = [System.Collections.Generic.HashSet[string]]::new([System.StringComparer]::OrdinalIgnoreCase)
     $indexedTargets = [System.Collections.Generic.HashSet[string]]::new([System.StringComparer]::OrdinalIgnoreCase)
     $indexGroups = @{}
+    $indexIdCounts = @{}
     $vmlistConfigOwners = @{}
     $targetIndexNumbers = [System.Collections.Generic.HashSet[int]]::new()
     foreach ($line in $lines) {
@@ -673,14 +719,23 @@ function Remove-AtlasoWorkstationMissingRegistrations {
                 $indexGroups[$number] = [System.Collections.Generic.List[string]]::new()
             }
             $indexGroups[$number].Add($line)
-            if ($line -match '^\s*index\d+\.id\s*=\s*"(?<path>.+)"\s*$' -and $targets.Contains($Matches.path)) {
-                $targetIndexNumbers.Add($number) | Out-Null
-                $indexedTargets.Add($Matches.path) | Out-Null
+            if ($line -match '^\s*index\d+\.id\s*=\s*"(?<path>.+)"\s*$') {
+                if (-not $indexIdCounts.ContainsKey($number)) {
+                    $indexIdCounts[$number] = 0
+                }
+                $indexIdCounts[$number]++
+                if ($targets.Contains($Matches.path)) {
+                    $targetIndexNumbers.Add($number) | Out-Null
+                    $indexedTargets.Add($Matches.path) | Out-Null
+                }
             }
         }
     }
     if (@($vmlistConfigOwners.Values | Where-Object { $_.Count -ne 1 }).Count -ne 0) {
         throw 'VMware Workstation registration inventory assigns one library ID to multiple config paths; refusing to rewrite it.'
+    }
+    if (@($indexGroups.Keys | Where-Object { -not $indexIdCounts.ContainsKey($_) -or $indexIdCounts[$_] -ne 1 }).Count -ne 0) {
+        throw 'VMware Workstation registration inventory assigns one index number to an invalid number of VM paths; refusing to rewrite it.'
     }
     if ($presentTargets.Count -eq 0 -and $indexedTargets.Count -eq 0) {
         return
@@ -729,7 +784,7 @@ function Remove-AtlasoWorkstationMissingRegistrations {
     $preserveBackupInventoryPath = $false
     try {
         [System.IO.File]::WriteAllLines($temporaryInventoryPath, $updatedLines, [System.Text.UTF8Encoding]::new($false))
-        $replacementContent = [System.IO.File]::ReadAllText($temporaryInventoryPath)
+        $replacementBytes = [System.IO.File]::ReadAllBytes($temporaryInventoryPath)
         # Deny writers from the last byte comparison through the atomic replace.
         # ShareDelete permits ReplaceFile to replace the path while this handle
         # continues to protect the verified old file from concurrent mutation.
@@ -740,20 +795,8 @@ function Remove-AtlasoWorkstationMissingRegistrations {
             ([System.IO.FileShare]::Read -bor [System.IO.FileShare]::Delete)
         )
         try {
-            $inventoryReader = [System.IO.StreamReader]::new(
-                $inventoryWriteLock,
-                [System.Text.UTF8Encoding]::new($false),
-                $true,
-                1024,
-                $true
-            )
-            try {
-                $lockedContent = $inventoryReader.ReadToEnd()
-            }
-            finally {
-                $inventoryReader.Dispose()
-            }
-            if (-not $snapshot.Content.Equals($lockedContent, [System.StringComparison]::Ordinal)) {
+            $lockedBytes = Read-AtlasoFileStreamBytes -Stream $inventoryWriteLock
+            if (-not (Test-AtlasoByteArraysEqual -Left $snapshot.Bytes -Right $lockedBytes)) {
                 throw 'VMware Workstation inventory changed before stale registration removal; refusing to rewrite it.'
             }
             foreach ($missingPath in $MissingPaths) {
@@ -766,14 +809,14 @@ function Remove-AtlasoWorkstationMissingRegistrations {
         finally {
             $inventoryWriteLock.Dispose()
         }
-        $displacedContent = [System.IO.File]::ReadAllText($backupInventoryPath)
-        if (-not $snapshot.Content.Equals($displacedContent, [System.StringComparison]::Ordinal)) {
+        $displacedBytes = [System.IO.File]::ReadAllBytes($backupInventoryPath)
+        if (-not (Test-AtlasoByteArraysEqual -Left $snapshot.Bytes -Right $displacedBytes)) {
             $preserveBackupInventoryPath = $true
             Restore-AtlasoWorkstationFileAfterCasFailure `
                 -TargetPath $InventoryPath `
-                -ExpectedCurrentContent $replacementContent `
+                -ExpectedCurrentBytes $replacementBytes `
                 -ReplacementPath $backupInventoryPath `
-                -ReplacementContent $displacedContent `
+                -ReplacementBytes $displacedBytes `
                 -StateDescription 'VMware Workstation inventory' `
                 -RecoveryExtension 'vmls'
             throw 'VMware Workstation inventory was replaced during stale registration removal; the provider state was restored and artifacts were preserved.'
@@ -1007,7 +1050,7 @@ function Set-AtlasoWorkstationVmxBytesIfIdentityMatches {
     $preserveBackupVmxPath = $false
     try {
         [System.IO.File]::WriteAllBytes($temporaryVmxPath, $ReplacementBytes)
-        $replacementContent = [System.IO.File]::ReadAllText($temporaryVmxPath)
+        $replacementBytes = [System.IO.File]::ReadAllBytes($temporaryVmxPath)
         [System.IO.File]::Replace($temporaryVmxPath, $VmxPath, $backupVmxPath, $true)
         $preserveBackupVmxPath = $true
         try {
@@ -1022,12 +1065,12 @@ function Set-AtlasoWorkstationVmxBytesIfIdentityMatches {
         catch {
             $validationError = $_.Exception.Message
             try {
-                $backupContent = [System.IO.File]::ReadAllText($backupVmxPath)
+                $backupBytes = [System.IO.File]::ReadAllBytes($backupVmxPath)
                 Restore-AtlasoWorkstationFileAfterCasFailure `
                     -TargetPath $VmxPath `
-                    -ExpectedCurrentContent $replacementContent `
+                    -ExpectedCurrentBytes $replacementBytes `
                     -ReplacementPath $backupVmxPath `
-                    -ReplacementContent $backupContent `
+                    -ReplacementBytes $backupBytes `
                     -StateDescription 'VMware Workstation VMX' `
                     -RecoveryExtension 'vmx'
             }
@@ -1040,9 +1083,9 @@ function Set-AtlasoWorkstationVmxBytesIfIdentityMatches {
         if (-not $displacedIdentity.Equals($ExpectedIdentity, [System.StringComparison]::Ordinal)) {
             Restore-AtlasoWorkstationFileAfterCasFailure `
                 -TargetPath $VmxPath `
-                -ExpectedCurrentContent $replacementContent `
+                -ExpectedCurrentBytes $replacementBytes `
                 -ReplacementPath $backupVmxPath `
-                -ReplacementContent ([System.IO.File]::ReadAllText($backupVmxPath)) `
+                -ReplacementBytes ([System.IO.File]::ReadAllBytes($backupVmxPath)) `
                 -StateDescription 'VMware Workstation VMX' `
                 -RecoveryExtension 'vmx'
             throw $FailureMessage
