@@ -852,6 +852,33 @@ function Disconnect-AtlasoWorkstationExternalVmdks {
     }
 }
 
+function Restore-AtlasoWorkstationDetachedVmdks {
+    param(
+        [Parameter(Mandatory = $true)]
+        [string]$VmxPath,
+        [Parameter(Mandatory = $false)]
+        [AllowNull()]
+        [psobject]$Detachment
+    )
+
+    if ($null -eq $Detachment -or -not (Test-Path -LiteralPath $VmxPath -PathType Leaf)) {
+        return
+    }
+
+    # A provider failure or an unfulfilled success postcondition must leave a
+    # surviving VM exactly as it was before external disks were protected.
+    $restorePath = "$VmxPath.atlaso-restore-$([System.Guid]::NewGuid().ToString('N')).tmp"
+    try {
+        [System.IO.File]::WriteAllBytes($restorePath, $Detachment.OriginalBytes)
+        [System.IO.File]::Move($restorePath, $VmxPath, $true)
+    }
+    finally {
+        if (Test-Path -LiteralPath $restorePath) {
+            Remove-Item -LiteralPath $restorePath -Force -ErrorAction SilentlyContinue
+        }
+    }
+}
+
 # Whole-root removal is intentionally multi-phase: admit the exact filesystem
 # target, reconcile each known VM, stabilize global state, then repeat the state
 # and VMX-set checks immediately before recursive deletion.
@@ -1000,21 +1027,15 @@ function Remove-AtlasoWorkstationVmArtifacts {
                 -Action "Delete VMware Workstation VM '$registeredTargetPath'" | Out-Null
         }
         catch {
-            if ($null -ne $externalDiskDetachment -and (Test-Path -LiteralPath $registeredTargetPath -PathType Leaf)) {
-                $restorePath = "$registeredTargetPath.atlaso-restore-$([System.Guid]::NewGuid().ToString('N')).tmp"
-                try {
-                    [System.IO.File]::WriteAllBytes($restorePath, $externalDiskDetachment.OriginalBytes)
-                    [System.IO.File]::Move($restorePath, $registeredTargetPath, $true)
-                }
-                finally {
-                    if (Test-Path -LiteralPath $restorePath) {
-                        Remove-Item -LiteralPath $restorePath -Force -ErrorAction SilentlyContinue
-                    }
-                }
-            }
+            Restore-AtlasoWorkstationDetachedVmdks `
+                -VmxPath $registeredTargetPath `
+                -Detachment $externalDiskDetachment
             throw
         }
         if (Test-Path -LiteralPath $registeredTargetPath) {
+            Restore-AtlasoWorkstationDetachedVmdks `
+                -VmxPath $registeredTargetPath `
+                -Detachment $externalDiskDetachment
             throw "VMware Workstation VMX remains after deleteVM succeeded: $registeredTargetPath"
         }
     }

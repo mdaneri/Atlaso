@@ -575,13 +575,26 @@ def test_whole_artifact_root_cleanup_detaches_external_vmdks_before_delete(
     assert external_vmdk.read_text(encoding="utf-8") == "shared depot disk"
 
 
-def test_whole_artifact_root_cleanup_restores_external_vmdks_after_delete_failure(
+@pytest.mark.parametrize(
+    ("unregister_exit", "unregister_sticky", "expected_error"),
+    [
+        (9, False, "Delete VMware Workstation VM"),
+        (0, True, "VMX remains after deleteVM succeeded"),
+    ],
+)
+def test_whole_artifact_root_cleanup_restores_external_vmdks_after_failed_delete(
     tmp_path: Path,
+    unregister_exit: int,
+    unregister_sticky: bool,
+    expected_error: str,
 ) -> None:
-    """A failed provider deletion must restore the surviving VMX byte-for-byte.
+    """A failed deletion transition must restore the surviving VMX byte-for-byte.
 
     Args:
         tmp_path: Isolated test directory.
+        unregister_exit: Exit code returned by the fake deleteVM operation.
+        unregister_sticky: Whether a successful deleteVM leaves the VMX in place.
+        expected_error: Expected cleanup failure text.
     """
     artifact_parent = tmp_path / "image-root"
     removal_root = artifact_parent / "test-vms" / "Atlaso-Test"
@@ -600,7 +613,8 @@ def test_whole_artifact_root_cleanup_restores_external_vmdks_after_delete_failur
         [vmx_path],
         running=False,
         registered=True,
-        unregister_exit=9,
+        unregister_exit=unregister_exit,
+        unregister_sticky=unregister_sticky,
     )
 
     result = _run_artifact_root_cleanup(
@@ -612,7 +626,7 @@ def test_whole_artifact_root_cleanup_restores_external_vmdks_after_delete_failur
     )
 
     assert result.returncode != 0
-    assert "Delete VMware Workstation VM" in result.stderr
+    assert expected_error in result.stderr
     assert vmx_path.read_bytes() == original_vmx
     assert external_vmdk.read_text(encoding="utf-8") == "shared depot disk"
 
