@@ -7783,18 +7783,25 @@ async function togglePhysicalInterfaceFromMenu(row, csrf) {
 async function convertManagementDhcpInterfaceToStatic(row, csrf) {
   const data = row.getData();
   const observedIpv4 = String(data.host_ip_cidr || "").trim();
+  const [observedIpv4Address = "", observedIpv4Prefix = ""] = observedIpv4.split("/");
+  const observedGatewayCandidate = String(data.host_ipv4_gateway || "").trim();
+  const observedGateway = ipv4GatewayIsOnLink(observedGatewayCandidate, observedIpv4) ? observedGatewayCandidate : "";
   const observedIpv6 = String(data.host_ipv6_cidr || "").trim();
   if (data.role !== "management" || data.ipv4_method !== "dhcp") {
     showNetworkMessage("physical-interface-error", "Only a management interface using IPv4 DHCP can be converted to static addressing.");
     return;
   }
-  if (!observedIpv4 && !observedIpv6) {
-    showNetworkMessage("physical-interface-error", `${data.name} has no observed DHCP IPv4 or IPv6 CIDR to copy into desired state.`);
+  if (!observedIpv4) {
+    showNetworkMessage("physical-interface-error", `${data.name} has no observed DHCP IPv4 address and prefix to copy into static desired state.`);
     return;
   }
   const confirmed = await requestConfirmation({
     title: `Convert ${data.name} DHCP lease to static?`,
-    message: `This copies the observed DHCP address${observedIpv6 ? "es" : ""} into desired IPv4/IPv6 CIDR fields and changes IPv4 method to static. If DHCP-provided DNS was being used, Atlaso also preserves it as static resolver or DNS forwarder desired state. The appliance is not changed until global appliance apply runs.`,
+    message: observedGateway
+      ? "Review the observed IPv4 address, prefix, and DHCP-learned gateway together. Atlaso will preserve them as static desired state; global appliance apply remains the host-mutation boundary."
+      : "No usable DHCP-learned IPv4 gateway was observed. Saving without a gateway intentionally removes off-subnet routed connectivity; only same-subnet management remains. Global appliance apply remains the host-mutation boundary.",
+    detail: `IPv4 address: ${observedIpv4Address}\nIPv4 prefix: /${observedIpv4Prefix}\nIPv4 gateway: ${observedGateway || "none - off-subnet connectivity unavailable"}${observedIpv6 ? `\nIPv6 CIDR: ${observedIpv6}` : ""}`,
+    detailLabel: "Proposed static network",
     label: "Convert to static",
   });
   if (!confirmed) {
@@ -7803,6 +7810,7 @@ async function convertManagementDhcpInterfaceToStatic(row, csrf) {
   const previous = {
     ipv4_method: data.ipv4_method,
     ip_cidr: data.ip_cidr,
+    gateway: data.gateway,
     ipv6_cidr: data.ipv6_cidr,
     ipv6_gateway: data.ipv6_gateway,
     ipv6_enabled: data.ipv6_enabled,
@@ -7811,6 +7819,7 @@ async function convertManagementDhcpInterfaceToStatic(row, csrf) {
     await row.update({
       ipv4_method: "static",
       ip_cidr: observedIpv4 || data.ip_cidr || "",
+      gateway: observedGateway,
       ipv6_cidr: observedIpv6 || data.ipv6_cidr || "",
       ipv6_gateway: "",
       ipv6_enabled: Boolean(observedIpv6 || data.ipv6_enabled),
@@ -7819,6 +7828,17 @@ async function convertManagementDhcpInterfaceToStatic(row, csrf) {
   } catch (_error) {
     await row.update(previous);
   }
+}
+
+async function confirmManagementGatewayClear(data, previousGateway, nextGateway) {
+  if (!String(previousGateway || "").trim() || String(nextGateway || "").trim()) return true;
+  return requestConfirmation({
+    title: `Clear ${data.name} management gateway?`,
+    message: "This intentionally removes the IPv4 default route. The appliance will retain same-subnet management access, but off-subnet HTTPS, DNS, repositories, and updates will be unavailable after global appliance apply.",
+    detail: `IPv4 CIDR: ${data.ip_cidr || "not configured"}\nIPv4 gateway: none`,
+    detailLabel: "Resulting static network",
+    label: "Clear gateway",
+  });
 }
 
 async function forgetPhysicalInterfaceFromMenu(row, csrf) {
@@ -7908,7 +7928,7 @@ function initializePhysicalInterfacesTable() {
           label: "Convert DHCP lease to static",
           disabled: (component) => {
             const data = component.getData();
-            return data.role !== "management" || data.ipv4_method !== "dhcp" || (!data.host_ip_cidr && !data.host_ipv6_cidr);
+            return data.role !== "management" || data.ipv4_method !== "dhcp" || !data.host_ip_cidr;
           },
           action: (event, row) => convertManagementDhcpInterfaceToStatic(row, csrf),
         },
@@ -7924,6 +7944,7 @@ function initializePhysicalInterfacesTable() {
         { title: "Driver", field: "driver", width: 110 },
         { title: "Speed", field: "speed", width: 110 },
         { title: "Observed IPv4", field: "host_ip_cidr", minWidth: 150, headerSort: false },
+        { title: "Observed Gateway", field: "host_ipv4_gateway", minWidth: 155, headerSort: false },
         { title: "Observed IPv6", field: "host_ipv6_cidr", minWidth: 180, headerSort: false },
         {
           title: "IPv4 Method",
@@ -7945,6 +7966,10 @@ function initializePhysicalInterfacesTable() {
             }
             if (data.ipv4_method === "dhcp") {
               await row.update({ ip_cidr: "", gateway: "" });
+            } else if (typeof cell.getOldValue === "function" && cell.getOldValue() === "dhcp") {
+              await row.update({ ipv4_method: "dhcp" });
+              await convertManagementDhcpInterfaceToStatic(row, csrf);
+              return;
             }
             await autoSavePhysicalInterface(cell, csrf);
           },
@@ -7974,11 +7999,6 @@ function initializePhysicalInterfacesTable() {
           },
           minWidth: 160,
           cellEdited: async (cell) => {
-            const row = cell.getRow();
-            const data = row.getData();
-            if (data.gateway && !ipv4GatewayIsOnLink(data.gateway, data.ip_cidr)) {
-              await row.update({ gateway: "" });
-            }
             await autoSavePhysicalInterface(cell, csrf);
           },
         },
@@ -7997,7 +8017,15 @@ function initializePhysicalInterfacesTable() {
           },
           headerTooltip: "Default IPv4 gateway for management traffic only. It must be on-link for the management CIDR and is installed in the main table plus management route table 100.",
           minWidth: 145,
-          cellEdited: (cell) => autoSavePhysicalInterface(cell, csrf),
+          cellEdited: async (cell) => {
+            const previousGateway = String(typeof cell.getOldValue === "function" ? cell.getOldValue() || "" : "").trim();
+            const nextGateway = String(cell.getValue() || "").trim();
+            if (!await confirmManagementGatewayClear(cell.getRow().getData(), previousGateway, nextGateway)) {
+              if (typeof cell.restoreOldValue === "function") cell.restoreOldValue();
+              return;
+            }
+            await autoSavePhysicalInterface(cell, csrf);
+          },
         },
         {
           title: "IPv6",

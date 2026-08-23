@@ -1091,6 +1091,10 @@ Terminal order:
 - Physical Interfaces automatically refresh observed Photon/Hyper-V NIC inventory on appliance startup and may also
   refresh it manually from the page, but host inventory is read-only context; desired-state edits remain separate and
   enforcement still goes through `/ui/management/appliance-apply`.
+- When the dedicated management interface uses IPv4 DHCP, its direct-edit grid discovers a usable DHCP-protocol default
+  route on that exact host interface. DHCP-to-static conversion reviews the observed CIDR and on-link gateway together
+  before saving both as desired state. No observed gateway remains an explicit supported isolation choice with an
+  off-subnet-connectivity warning, and clearing a configured gateway requires the same warning.
 - Host NIC reconciliation must match observed adapters by MAC address before Linux interface name. When a host NIC
   disappears, mark the missing physical interface inert, set dependent VLANs disabled/admin down where modeled, remove
   the missing interface and derived IP addresses from service listeners, disable services left without any listener, and

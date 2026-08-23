@@ -33,6 +33,7 @@ from atlaso.app.services.networking import (
     is_canonical_network_role,
     normalize_interface_role,
     parse_linux_ip_interfaces,
+    parse_linux_ipv4_default_routes,
     reconcile_host_physical_interfaces,
     render_network_config,
     sync_host_physical_interfaces,
@@ -90,6 +91,31 @@ def test_parse_linux_ip_interfaces_skips_loopback_and_vlans():
     assert interfaces[0].host_ip_cidr == "192.168.49.22/24"
     assert interfaces[0].host_mtu == 1500
     assert interfaces[0].host_admin_state == "up"
+
+
+def test_parse_linux_ipv4_default_routes_keeps_preferred_dhcp_gateway_per_interface():
+    """Verify observed gateways come only from usable DHCP default routes."""
+    payload = json.dumps(
+        [
+            {"dst": "default", "gateway": "192.168.167.3", "dev": "eth0", "protocol": "dhcp", "metric": 200},
+            {"dst": "default", "gateway": "192.168.167.2", "dev": "eth0", "protocol": "dhcp", "metric": 100},
+            {"dst": "default", "gateway": "192.168.50.1", "dev": "eth1", "protocol": "static", "metric": 10},
+            {"dst": "default", "gateway": "127.0.0.1", "dev": "eth2", "protocol": "dhcp"},
+            {"dst": "default", "gateway": "not-an-address", "dev": "eth3", "protocol": "dhcp"},
+        ]
+    )
+
+    assert parse_linux_ipv4_default_routes(payload) == {"eth0": "192.168.167.2"}
+
+
+@pytest.mark.parametrize("payload", ["not-json", "{}", "null"])
+def test_parse_linux_ipv4_default_routes_fails_closed_for_malformed_payload(payload):
+    """Verify malformed route inventory cannot propose a static gateway.
+
+    Args:
+        payload: Malformed or structurally invalid route inventory.
+    """
+    assert parse_linux_ipv4_default_routes(payload) == {}
 
 
 def test_reconcile_host_inventory_replaces_seed_but_preserves_user_desired_state():
