@@ -13015,15 +13015,16 @@ function validApplianceUpdateAvailabilityPayload(payload) {
     if (!validText(value)) return false;
     if (!value) return true;
     if ([...value].some((character) => /\s/u.test(character) || character.codePointAt(0) < 32)) return false;
-    try {
-      const parsed = new URL(value);
-      return parsed.protocol === "https:"
-        && Boolean(parsed.host)
-        && !parsed.username
-        && !parsed.password;
-    } catch (_error) {
-      return false;
-    }
+    const match = /^https:\/\/([^/?#]+)(?:[/?#]|$)/iu.exec(value);
+    if (!match) return false;
+    const authority = match[1];
+    const credentialSeparator = authority.lastIndexOf("@");
+    if (credentialSeparator < 0) return true;
+    const userInfo = authority.slice(0, credentialSeparator);
+    const passwordSeparator = userInfo.indexOf(":");
+    const username = passwordSeparator < 0 ? userInfo : userInfo.slice(0, passwordSeparator);
+    const password = passwordSeparator < 0 ? "" : userInfo.slice(passwordSeparator + 1);
+    return !username && !password;
   };
   const validChange = (change) => (
     change

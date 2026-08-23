@@ -111,7 +111,6 @@ function availabilityIndicatorScenario() {
     HTMLAnchorElement,
     HTMLElement,
     HTMLTemplateElement,
-    URL,
     CSS: { escape: (value) => String(value) },
   });
   vm.runInContext(
@@ -325,7 +324,7 @@ test("validated polling creates, updates, and removes the positive indicator", a
             confirmed: {
               ...stream.confirmed,
               current: "😀".repeat(200),
-              release_notes_url: "https://example.test/releases/v0.9.186",
+              release_notes_url: "https://example.test:bad/releases/v0.9.186",
             },
           }
           : stream
@@ -350,6 +349,10 @@ test("validated polling creates, updates, and removes the positive indicator", a
               success: false,
               state: "failed",
               remediation: "Try the check again.",
+            },
+            confirmed: {
+              ...stream.confirmed,
+              release_notes_url: "https://example.test:99999/releases/v0.9.186",
             },
           }
           : stream
