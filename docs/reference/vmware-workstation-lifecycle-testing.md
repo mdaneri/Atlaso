@@ -163,11 +163,13 @@ running target with checked `vmrun -T ws stop <vmx> hard` and verifies that the 
 registration row for that exact in-root VMX selects checked `vmrun -T ws deleteVM <vmx>`. Already-stopped and
 already-unregistered VMs remain idempotent cleanup cases. A nonzero provider command, a target that remains running, or
 a VMX that survives provider deletion preserves the remaining root and returns failure.
+Immediately before each `deleteVM`, cleanup repeats the target identity and identity-aware running check, confirms the
+exact scoped registration, and verifies that the recursive VMX set still contains only the validated targets.
 
 Immediately before `deleteVM`, cleanup removes every VMX device whose resolved VMDK path is outside the exact cleanup
 root. This prevents provider deletion from following a shared depot, backup, or other external disk. A failed provider
-operation restores the original VMX only when the stopped target still has the same filesystem identity and protected
-content; a concurrent replacement is preserved instead of overwritten.
+operation atomically restores the displaced original VMX only when the stopped target still has the protected identity
+and content; a concurrent replacement is preserved instead of overwritten.
 
 Normal deletion does not require global `inventory.vmls` consistency. Unrelated stale, malformed, missing, duplicate,
 or otherwise inconsistent Workstation library entries cannot block cleanup of the Atlaso root. Inventory parsing is

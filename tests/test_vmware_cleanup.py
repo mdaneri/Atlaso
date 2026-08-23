@@ -100,7 +100,10 @@ def write_paths(name: str, paths: list[str]) -> None:
     (state / f"{name}.json").write_text(json.dumps(paths), encoding="utf-8")
 
 def same_path(left: str, right: str) -> bool:
-    return Path(left).resolve() == Path(right).resolve()
+    try:
+        return os.path.samefile(left, right)
+    except (FileNotFoundError, OSError):
+        return Path(left).resolve() == Path(right).resolve()
 
 def update_inventory(paths: list[str]) -> None:
     old_lines = inventory.read_text(encoding="utf-8").splitlines()
@@ -316,6 +319,32 @@ def test_running_registered_vm_is_stopped_hard_before_delete(tmp_path: Path) -> 
     assert commands.index(stop) < commands.index(delete)
 
 
+def test_running_hard_link_alias_is_matched_by_filesystem_identity(tmp_path: Path) -> None:
+    """An out-of-root alias cannot conceal a running in-root target."""
+    root = tmp_path / "artifacts" / "vm"
+    vmx = root / "Atlaso.vmx"
+    alias = tmp_path / "aliases" / "Atlaso-alias.vmx"
+    _write_vmx(vmx)
+    alias.parent.mkdir(parents=True)
+    os.link(vmx, alias)
+    vmrun, environment, log, _ = _write_fake_vmrun(
+        tmp_path / "fake", [vmx], registered=True
+    )
+    state = Path(environment["ATLASO_FAKE_VMRUN_STATE"])
+    (state / "running.json").write_text(json.dumps([str(alias.resolve())]), encoding="utf-8")
+
+    result = _run_root_cleanup(
+        tmp_path,
+        removal_root=root,
+        expected_root=root,
+        vmrun_path=vmrun,
+        environment=environment,
+    )
+
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert "stop" in [command[2] for command in _commands(log)]
+
+
 def test_already_unregistered_vm_uses_filesystem_cleanup_only(tmp_path: Path) -> None:
     """An existing unregistered target remains an idempotent cleanup case."""
     root = tmp_path / "artifacts" / "vm"
@@ -372,6 +401,40 @@ def test_stale_atlaso_registration_ignores_unrelated_broken_entries(tmp_path: Pa
     assert "unrelated.value = keep-me" in inventory_text
 
 
+def test_stale_repair_rejects_duplicate_selected_library_id(tmp_path: Path) -> None:
+    """Scoped repair never prunes an ID that also owns another config path."""
+    parent = tmp_path / "image" / "vmware-workstation"
+    root = parent / "test-vms"
+    root.mkdir(parents=True)
+    sentinel = root / "sentinel.txt"
+    sentinel.write_text("keep", encoding="utf-8")
+    stale = root / "missing.vmx"
+    unrelated = tmp_path / "other" / "Unrelated.vmx"
+    _write_vmx(unrelated, "Unrelated")
+    vmrun, environment, _, inventory = _write_fake_vmrun(
+        tmp_path / "fake",
+        [],
+        inventory_suffix=(
+            f'vmlist7.config = "{stale.resolve()}"\n'
+            f'vmlist7.config = "{unrelated.resolve()}"\n'
+            f'index7.id = "{stale.resolve()}"\n'
+        ),
+    )
+
+    result = _run_root_cleanup(
+        tmp_path,
+        removal_root=root,
+        artifact_parent=parent,
+        vmrun_path=vmrun,
+        environment=environment,
+    )
+
+    assert result.returncode != 0
+    assert "selected library ID '7' to multiple config paths" in result.stderr
+    assert sentinel.read_text(encoding="utf-8") == "keep"
+    assert str(unrelated.resolve()) in inventory.read_text(encoding="utf-8")
+
+
 def test_external_vmdk_is_detached_before_deletevm(tmp_path: Path) -> None:
     """Provider deletion never follows a disk path outside the removal root."""
     root = tmp_path / "artifacts" / "vm"
@@ -399,6 +462,34 @@ def test_external_vmdk_is_detached_before_deletevm(tmp_path: Path) -> None:
 
     assert result.returncode == 0, result.stdout + result.stderr
     assert external_disk.read_text(encoding="utf-8") == "shared"
+
+
+def test_failed_deletevm_atomically_restores_external_vmdk_attachment(tmp_path: Path) -> None:
+    """A provider failure restores the complete original VMX from its backup."""
+    root = tmp_path / "artifacts" / "vm"
+    external_disk = tmp_path / "shared" / "depot.vmdk"
+    external_disk.parent.mkdir(parents=True)
+    external_disk.write_text("shared", encoding="utf-8")
+    vmx = root / "Atlaso.vmx"
+    _write_vmx(vmx, "Atlaso", f'scsi0:2.fileName = "{external_disk.resolve()}"')
+    original_bytes = vmx.read_bytes()
+    vmrun, environment, _, _ = _write_fake_vmrun(
+        tmp_path / "fake", [vmx], registered=True, delete_exit=9
+    )
+
+    result = _run_root_cleanup(
+        tmp_path,
+        removal_root=root,
+        expected_root=root,
+        vmrun_path=vmrun,
+        environment=environment,
+    )
+
+    assert result.returncode != 0
+    assert "Delete VMware Workstation VM" in result.stderr
+    assert vmx.read_bytes() == original_bytes
+    assert external_disk.read_text(encoding="utf-8") == "shared"
+    assert not list(root.glob("*.atlaso-*.tmp"))
 
 
 def test_concurrent_vmx_replacement_is_preserved(tmp_path: Path) -> None:
@@ -593,4 +684,7 @@ def test_module_keeps_inventory_work_out_of_normal_delete_path() -> None:
     assert "Start-Sleep" not in normal_path
     assert "InventorySnapshotsEqual" not in module
     assert "index.count" not in normal_path
-    assert len(module.splitlines()) < 800
+    assert normal_path.count("Confirm-AtlasoWorkstationVmInactive") >= 2
+    assert "[System.IO.File]::Replace($temporaryPath, $VmxPath, $backupPath, $true)" in module
+    assert "[System.IO.FileShare]::Read -bor [System.IO.FileShare]::Delete" in module
+    assert len(module.splitlines()) < 1_000

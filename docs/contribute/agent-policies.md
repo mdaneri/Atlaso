@@ -29,6 +29,30 @@ status: current
 - If a policy is unavailable, conflicting, or unclear, stop before implementation and ask for maintainer direction.
   Never silently bypass a policy.
 
+## Sol and Spark Delegation
+
+Atlaso's project-scoped custom agent is `spark_worker`, defined in `.codex/agents/spark-worker.toml` with
+`gpt-5.3-codex-spark` and medium reasoning effort. Codex loads project agents from `.codex/agents/`; each agent requires
+a name, description, and developer instructions, and can pin its model and reasoning effort. The Atlaso agent omits
+sandbox and tool overrides so it inherits the primary session's permissions. See the official
+[Codex subagent configuration](https://learn.chatgpt.com/docs/agent-configuration/subagents) and
+[Codex model guide](https://learn.chatgpt.com/docs/models). Spark availability depends on the current account and
+runtime.
+
+- Sol should delegate small, fully specified work when it improves speed or context isolation: localized edits,
+  repository searches, mechanical refactoring, isolated unit tests, Ruff or mypy cleanup, documentation and docstrings,
+  and narrowly scoped UI tweaks whose interaction and reference are already decided.
+- Sol owns architecture and design, ambiguous or difficult debugging, cross-component and integration decisions,
+  security-sensitive work, task decomposition, review and integration of every delegated result, final validation, and
+  repository delivery.
+- Every Spark prompt must name exact scope, owned files, expected output, relevant checks, and the Mandatory Agent
+  Startup Gate. UI prompts must also include the Mandatory UI Design Guide Gate, interaction classification, and reused
+  Atlaso reference. The worker must not commit, push, change GitHub state, or spawn another agent.
+- Parallel Spark work is permitted only for independent tasks with non-overlapping file ownership. Sol reviews every
+  returned diff before using it.
+- If Spark is unavailable, Sol performs the work directly and reports the unavailable delegation. Do not silently
+  substitute another model.
+
 ## Mandatory UI Design Guide Gate
 
 - Any change affecting templates, authored CSS, browser JavaScript, controls, layouts, data grids, dialogs, wizards, or
@@ -376,34 +400,28 @@ Terminal order:
   rejects unregister, VIX reports it unsupported, and `vmrest` exposes only credentialed destructive deletion. After
   every fail-closed preflight succeeds, use checked local `vmrun deleteVM` for a registered target. Keep this cleanup
   scoped to the configured image output directory.
-- Workstation test-VM and lifecycle cleanup may recursively remove only an exact, non-reparse-point artifact root that
-  contains every validated target VMX. A named redeploy with no matching VMX fails closed, and data-disk reset paths
-  must be strict path-component descendants of that VM output rather than sibling-prefix matches. Query the checked
-  `vmrun` running inventory and Workstation registration inventory and stop through checked `vmrun` when needed. Stabilize
-  both inventories and the recursive VMX set before invoking checked `vmrun deleteVM` for registered targets, then verify
-  each target VMX is absent and no target remains running before removing any remaining files. With the Workstation UI
-  closed, hold a write-excluding inventory handle from the final byte comparison through atomic replacement, pruning
-  provider-retained library rows only for canonical missing VMX paths beneath the validated cleanup scope. Verify the
-  exact displaced backup as an optimistic compare-and-swap and atomically restore the newest captured provider state if
-  another writer replaced the inventory path. Require every `vmlistN` library ID to own exactly one config path before
-  pruning any row, and recheck every stale path remains absent immediately before the inventory swap. Standalone
-  cleanup uses its exact root; multi-root cleanup uses the canonical artifact parent. Missing
-  registrations outside that scope remain fatal. Revalidate stable registration state and the recursive VMX set after
-  provider deletion, then perform an identity-aware running-inventory read followed only by registration snapshots around
-  a repeated VMX-set check before recursive removal. Every surviving or recreated original path must still match its
-  immutable pre-cleanup identity at both post-delete VMX-set gates.
+- Workstation test-VM and lifecycle cleanup may recursively remove only an exact, non-reparse-point Atlaso artifact root
+  containing every validated target VMX. A named redeploy with no matching VMX fails closed, and data-disk reset paths
+  must be strict path-component descendants of that VM output rather than sibling-prefix matches. Capture immutable
+  root, descendant, and target identities before provider operations; a new or replaced entry or root blocks recursive
+  removal. Query checked `vmrun` running output, match an exact target or filesystem alias by identity, stop through
+  checked `vmrun` when needed, and verify inactivity. Use checked `vmrun deleteVM` only for a well-formed exact in-scope
+  registration and verify the target VMX is absent. Immediately before each deletion, repeat the target identity and
+  identity-aware running check, confirm the scoped registration, and verify the recursive VMX set contains only the
+  validated surviving targets.
   Detach every VMDK device whose resolved path is outside the exact removal root before `deleteVM`, because provider
-  deletion must never remove reused depot, backup, or other shared disks. Require the registered canonical path to equal
-  the cleanup target and reject a registration reachable only through a filesystem alias before replacing the VMX. If
-  the deletion transition fails while the exact detached VMX survives, atomically restore its original bytes. Detachment
-  and restoration must atomically compare the displaced VMX identity and roll back rather than overwrite a replacement.
-  Retain the displaced backup until every post-replacement identity and byte read succeeds; restore it on validation
-  failure or preserve an actionable recovery copy when rollback cannot complete.
-  Capture immutable identities for every target and repeat identity, running, stable registration, and recursive VMX-set
-  checks immediately before each individual `deleteVM` invocation.
-  A preflight failure preserves all artifacts. A nonzero or
-  malformed command result, unreadable registration inventory, provider deletion failure, or failed postcondition must
-  propagate as a cleanup failure and preserve the remaining artifacts; lifecycle cleanup must retain the original
+  deletion must never remove reused depot, backup, or other shared disks. Atomically replace the VMX while retaining the
+  displaced backup. Restore that backup only when the detached identity and content still match; preserve a concurrent
+  replacement and an actionable recovery copy instead of overwriting either.
+  Normal Atlaso deletion must not require global `inventory.vmls` consistency. Unrelated stale, malformed, missing,
+  duplicate, or inconsistent Workstation library entries cannot block cleanup of an exact Atlaso-owned root. Reserve
+  inventory mutation for a well-formed Atlaso-scoped registration whose VMX is already missing. With the Workstation UI
+  closed, validate only that each selected `vmlistN` ID owns one config path, recheck the scoped VMX remains absent, and
+  hold a write-excluding handle from the final byte comparison through atomic replacement and rollback. Remove only the
+  selected library and matching index records; leave unrelated registrations in place and do not require them to
+  resolve. A preflight failure preserves all artifacts. A nonzero or malformed command result, scoped inventory read or
+  repair failure, provider deletion failure, failed postcondition, or recursive-removal failure must propagate as a
+  cleanup failure and preserve the remaining artifacts; lifecycle cleanup must retain the original
   scenario failure alongside that cleanup evidence.
 - Keep VMware release images on two compacted payload VMDKs: the Photon OS disk and a required UUID-mounted
   `ATLASO_SYSTEM` disk containing `/opt/atlaso` and appliance-wide PowerShell modules. OVF export must preserve both
