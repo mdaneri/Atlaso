@@ -25,6 +25,11 @@ class Element {
     this.checked = false;
     this.textContent = "";
     this.classList = { toggle() {} };
+    this.focused = false;
+  }
+
+  focus() {
+    this.focused = true;
   }
 }
 class HTMLInputElement extends Element {}
@@ -225,5 +230,40 @@ test("repository remediation opens the source workspace and focuses synchronizat
   assert.match(appSource, /data-tab-target="appliance-update-sources"/);
   assert.match(appSource, /update-source-group-\$\{kind\}/);
   assert.match(appSource, /data-appliance-update-source-sync-action/);
-  assert.match(appSource, /syncAction\.focus\(\{ preventScroll: true \}\)/);
+  assert.match(appSource, /syncAction instanceof HTMLButtonElement && !syncAction\.disabled/);
+  assert.match(appSource, /sourcesTab\.focus\(\{ preventScroll: true \}\)/);
+});
+
+test("repository remediation retains visible focus while synchronization is active", () => {
+  let clickHandler = null;
+  const remediation = new HTMLButtonElement();
+  remediation.dataset.applianceUpdateSourceKind = "powershell";
+  remediation.closest = () => remediation;
+  const sourcesTab = new HTMLButtonElement();
+  sourcesTab.click = () => {};
+  const syncAction = new HTMLButtonElement();
+  syncAction.disabled = true;
+  class HTMLDetailsElement extends Element {
+    scrollIntoView() {}
+  }
+  const sourceGroup = new HTMLDetailsElement();
+  const context = vm.createContext({
+    Element,
+    HTMLButtonElement,
+    HTMLDetailsElement,
+    document: {
+      addEventListener: (_event, handler) => { clickHandler = handler; },
+      getElementById: () => sourceGroup,
+      querySelector: (selector) => selector.includes("data-tab-target") ? sourcesTab : syncAction,
+    },
+    managementUiPath: (path) => path,
+    window: {
+      history: { replaceState() {} },
+      requestAnimationFrame: (callback) => callback(),
+    },
+  });
+  vm.runInContext(`${functionSource("initializeApplianceUpdateSourceRemediation")}\ninitializeApplianceUpdateSourceRemediation();`, context);
+  clickHandler({ target: remediation });
+  assert.equal(syncAction.focused, false);
+  assert.equal(sourcesTab.focused, true);
 });

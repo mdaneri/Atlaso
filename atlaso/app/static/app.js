@@ -14013,7 +14013,11 @@ function initializeApplianceUpdateSourceRemediation() {
     window.history.replaceState(null, "", managementUiPath(`/appliance-update#update-source-group-${kind}`));
     window.requestAnimationFrame(() => {
       const syncAction = document.querySelector("[data-appliance-update-source-sync-action]");
-      if (syncAction instanceof HTMLButtonElement) syncAction.focus({ preventScroll: true });
+      if (syncAction instanceof HTMLButtonElement && !syncAction.disabled) {
+        syncAction.focus({ preventScroll: true });
+      } else if (sourcesTab instanceof HTMLButtonElement) {
+        sourcesTab.focus({ preventScroll: true });
+      }
     });
   });
 }
