@@ -380,6 +380,18 @@ pwsh -ExecutionPolicy Bypass `
   -TrustRootCa
 ```
 
+Before preparing networks, removing an existing target, or creating the VM, the wrapper resolves the current Windows
+user's existing `.ssh/id_ed25519.pub` and validates it as one canonical Ed25519 public key. First boot installs exactly
+that key for `admin` and a separate development-only passwordless-sudo drop-in. Pass
+`-SshPublicKeyPath <path-to-existing-ed25519-public-key>` to select another public key, or
+`-SkipSshKeyProvisioning` to retain the prior password-backed SSH and sudo behavior; those options cannot be combined.
+The wrapper fails early for a missing, malformed, multiline, non-Ed25519, or unbounded key and never generates or copies
+a private key. Root SSH stays disabled, and the Workstation lifecycle runner and exported OVF/OVA properties do not
+receive this test-only access. Complete factory reset removes the development key and sudoers drop-in. Verify and
+approve the appliance SSH host key once through the normal OpenSSH known-hosts workflow; subsequent local Codex and
+Copilot tasks under the same Windows user can use ordinary key/agent
+authentication and `sudo -n` without the 1Password bridge.
+
 The wrapper requires the cloned Photon OS and Atlaso system-content VMDKs at SCSI units 0 and 1, then creates fresh
 Depot and Backups data VMDKs at units 2 and 3 when needed. `-ResetDataDisks` removes those data VMDKs before recreating
 them only when their canonical paths are strict, non-reparse-point descendants of the selected VM output directory.
@@ -406,14 +418,16 @@ Swagger URL, OpenAPI URL, root certificate URL, and `ssh admin@<appliance-ip>` c
 
 Both this wrapper and the Workstation lifecycle runner inject a complete `guestinfo.ovfEnv` document into a raw cloned
 VMX before power-on. The default document selects IPv4 DHCP, leaves resolver overrides blank, keeps IPv6 and root SSH
-disabled, and supplies the required appliance identity and first-boot credentials. This gives raw Workstation clones the
-same fail-closed initialization contract as an OVA deployment instead of leaving the customizer waiting for properties
+disabled, and supplies the required appliance identity and first-boot credentials. The normal test wrapper alone adds
+the internal development administrator public-key property; the lifecycle runner omits it. This gives raw Workstation
+clones the same fail-closed initialization contract as an OVA deployment instead of leaving the customizer waiting for
+properties
 that only an OVF deployment normally supplies. A generated non-secret deployment identifier distinguishes each raw
 clone attempt during pending-marker crash recovery. Use `-FirstBootFqdn`, `-AdminPassword`, and `-RootPassword` to
-override the normal test-VM values; the lifecycle wrapper uses its existing admin-password input. Password values are written
-only to the guestinfo-backed VMX setting until successful first-boot consumption clears it; they are never printed in
-plan, result, or connection-summary output. Raw-clone credential overrides must be at least 12 characters and cannot
-contain leading, trailing, XML control, or non-XML characters that would change during OVF attribute parsing.
+override the normal test-VM values; the lifecycle wrapper uses its existing admin-password input. Password values are
+written only to the guestinfo-backed VMX setting until successful first-boot consumption clears it; they are never
+printed in plan, result, or connection-summary output. Raw-clone credential overrides must be at least 12 characters
+and cannot contain leading, trailing, XML control, or non-XML characters that would change during OVF attribute parsing.
 
 The VM's first virtual terminal runs the Atlaso recovery console; tty2 and later terminals retain Photon login prompts.
 Its normal 80x30 layout includes boot and runtime state for the appliance services, including Firewall desired state. F3

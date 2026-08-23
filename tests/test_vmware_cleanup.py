@@ -2104,6 +2104,7 @@ def test_redeploy_missing_target_and_sibling_disk_fail_closed(tmp_path: Path) ->
         "-VdiskManagerPath",
         str(vmrun_path),
         "-Redeploy",
+        "-SkipSshKeyProvisioning",
         "-SkipNetworkPrepare",
         "-NoStart",
         environment=environment,
@@ -2131,6 +2132,7 @@ def test_redeploy_missing_target_and_sibling_disk_fail_closed(tmp_path: Path) ->
         "-DepotVmdkPath",
         str(sibling_disk),
         "-ResetDataDisks",
+        "-SkipSshKeyProvisioning",
         "-SkipNetworkPrepare",
         "-NoStart",
         environment=environment,
@@ -2138,6 +2140,62 @@ def test_redeploy_missing_target_and_sibling_disk_fail_closed(tmp_path: Path) ->
     assert disk_reset.returncode != 0
     assert "outside the VM output directory" in disk_reset.stderr
     assert sibling_disk.read_text(encoding="utf-8") == "preserve"
+
+
+def test_test_vm_ssh_key_inputs_fail_before_cleanup(tmp_path: Path) -> None:
+    """Missing or conflicting SSH key inputs must preserve an existing test VM.
+
+    Args:
+        tmp_path: Isolated test directory.
+    """
+    source_vmx = tmp_path / "source" / "source.vmx"
+    _write_vmx(source_vmx, "Source")
+    output_directory = tmp_path / "vm"
+    target_vmx = output_directory / "ProtectedVm.vmx"
+    _write_vmx(target_vmx, "ProtectedVm")
+    sentinel = output_directory / "sentinel.txt"
+    sentinel.write_text("preserve", encoding="utf-8")
+
+    missing_key = _run_script(
+        VMWARE_SCRIPT_ROOT / "create-atlaso-test-vm.ps1",
+        "-Name",
+        "ProtectedVm",
+        "-ApplianceVmxPath",
+        str(source_vmx),
+        "-OutputDirectory",
+        str(output_directory),
+        "-SshPublicKeyPath",
+        str(tmp_path / "missing.pub"),
+        "-Redeploy",
+        "-SkipNetworkPrepare",
+        "-NoStart",
+        environment=os.environ.copy(),
+    )
+    assert missing_key.returncode != 0
+    assert "SSH public key not found" in missing_key.stderr
+    assert target_vmx.exists()
+    assert sentinel.read_text(encoding="utf-8") == "preserve"
+
+    conflicting_key_options = _run_script(
+        VMWARE_SCRIPT_ROOT / "create-atlaso-test-vm.ps1",
+        "-Name",
+        "ProtectedVm",
+        "-ApplianceVmxPath",
+        str(source_vmx),
+        "-OutputDirectory",
+        str(output_directory),
+        "-SshPublicKeyPath",
+        str(tmp_path / "missing.pub"),
+        "-SkipSshKeyProvisioning",
+        "-Redeploy",
+        "-SkipNetworkPrepare",
+        "-NoStart",
+        environment=os.environ.copy(),
+    )
+    assert conflicting_key_options.returncode != 0
+    assert "Pass either -SshPublicKeyPath or -SkipSshKeyProvisioning" in conflicting_key_options.stderr
+    assert target_vmx.exists()
+    assert sentinel.read_text(encoding="utf-8") == "preserve"
 
 
 @pytest.mark.parametrize(

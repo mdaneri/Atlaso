@@ -1388,6 +1388,10 @@ def test_create_atlaso_vmware_test_vm_wrapper_uses_common_helpers():
     assert "[switch]$ResetDataDisks" in script
     assert "[switch]$WaitForIp" in script
     assert "[switch]$TrustRootCa" in script
+    assert "[string]$SshPublicKeyPath = ''" in script
+    assert "[switch]$SkipSshKeyProvisioning" in script
+    assert "Resolve-AtlasoWorkstationAdminSshPublicKey -Path $SshPublicKeyPath" in script
+    assert "Pass either -SshPublicKeyPath or -SkipSshKeyProvisioning" in script
     assert "[int]$TimeoutSeconds = 300" in script
     assert "Install-ApplianceRootCa" in script
     assert "Waiting up to $TimeoutSeconds seconds for the Atlaso root CA" in script
@@ -1411,6 +1415,7 @@ def test_create_atlaso_vmware_test_vm_wrapper_uses_common_helpers():
     assert 'Write-SummaryRow -Label "Swagger URL:" -Value "https://$IpAddress/api/docs"' in script
     assert 'Write-SummaryRow -Label "Root CA URL:" -Value "http://$IpAddress/ca/downloads/root-ca.pem"' in script
     assert 'Write-SummaryRow -Label "SSH:" -Value "ssh admin@$IpAddress"' in script
+    assert "test-only passwordless sudo" in script
     assert 'Write-SummaryRow -Label "Lab DNS:"' in script
     assert "Windows DNS for lab FQDNs" in script
     assert "pass -TrustRootCa to trust this appliance root CA" in script
@@ -1521,6 +1526,7 @@ def test_vmware_raw_vmx_workflows_inject_complete_first_boot_ovf_environment_bef
         "atlaso.root_ssh_enabled",
     ):
         assert f"'{key}'" in helper
+    assert "'atlaso.development_admin_ssh_public_key'" in helper
     assert "[guid]::NewGuid().ToString('D')" in helper
     assert "[System.Security.SecurityElement]::Escape($Value)" in helper
     assert "[System.Xml.XmlConvert]::VerifyXmlChars($passwordInput.Value)" in helper
@@ -1531,6 +1537,9 @@ def test_vmware_raw_vmx_workflows_inject_complete_first_boot_ovf_environment_bef
     assert "First-boot FQDN must not use .local." in helper
     assert "guestinfo.ovfEnv = " in helper
     assert "Write-Host" not in helper
+    assert "Assert-AtlasoWorkstationEd25519PublicKey" in helper
+    assert "Resolve-AtlasoWorkstationAdminSshPublicKey" in helper
+    assert "[System.Xml.XmlConvert]::VerifyXmlChars($normalized)" in helper
 
     assert "Atlaso.WorkstationFirstBoot.ps1" in test_vm
     assert "New-AtlasoWorkstationOvfEnvironment" in test_vm
@@ -1543,6 +1552,7 @@ def test_vmware_raw_vmx_workflows_inject_complete_first_boot_ovf_environment_bef
     assert "New-AtlasoWorkstationOvfEnvironment" in lifecycle
     assert "-RootSshEnabled:($ApplianceSshUser -eq 'root')" in lifecycle
     assert "Set-AtlasoWorkstationOvfEnvironment -VmxPath $applianceVmx" in lifecycle
+    assert "DevelopmentAdminSshPublicKey" not in lifecycle
     assert lifecycle.index("Set-AtlasoWorkstationOvfEnvironment -VmxPath $applianceVmx") < lifecycle.index(
         "Start-WorkstationVm -Path $vmx"
     )
