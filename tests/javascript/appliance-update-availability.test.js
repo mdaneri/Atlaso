@@ -512,6 +512,18 @@ test("failed polling preserves only an existing positive indicator", async () =>
     await assert.rejects(positive.context.refresh(), /Unable to refresh update availability/);
     assert.equal(positive.indicator, lastKnown);
   }
+  const staleConfirmedStreams = availabilityStreams(["atlaso_release"]);
+  staleConfirmedStreams.find((stream) => stream.id === "atlaso_release").stale = true;
+  positive.setFetchResponse({
+    ok: true,
+    json: () => Promise.resolve({
+      available: false,
+      affected_stream_count: 0,
+      streams: staleConfirmedStreams,
+    }),
+  });
+  await assert.rejects(positive.context.refresh(), /Unable to refresh update availability/);
+  assert.equal(positive.indicator, lastKnown);
   positive.setFetchResponse({
     ok: true,
     json: () => Promise.resolve({

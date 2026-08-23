@@ -13077,6 +13077,7 @@ function validApplianceUpdateAvailabilityPayload(payload) {
       && typeof stream.stale === "boolean"
       && validLastAttempt(stream.last_attempt)
       && validConfirmed(stream.confirmed)
+      && (!stream.stale || stream.confirmed === null)
       && (
         !stream.last_attempt.success
         || stream.confirmed === null
