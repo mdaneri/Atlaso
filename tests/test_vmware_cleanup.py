@@ -373,6 +373,31 @@ def test_running_hard_link_alias_is_matched_by_filesystem_identity(tmp_path: Pat
     assert "stop" in [command[2] for command in _commands(log)]
 
 
+@pytest.mark.parametrize("reported_path", ["relative-running.vmx", 'C:\\Atlaso.vmx"'])
+def test_malformed_running_inventory_path_fails_closed(
+    tmp_path: Path, reported_path: str
+) -> None:
+    """Every declared running path must be absolute and unambiguously quoted."""
+    root = tmp_path / "artifacts" / "vm"
+    vmx = root / "Atlaso.vmx"
+    _write_vmx(vmx)
+    vmrun, environment, _, _ = _write_fake_vmrun(tmp_path / "fake", [vmx])
+    state = Path(environment["ATLASO_FAKE_VMRUN_STATE"])
+    (state / "running.json").write_text(json.dumps([reported_path]), encoding="utf-8")
+
+    result = _run_root_cleanup(
+        tmp_path,
+        removal_root=root,
+        expected_root=root,
+        vmrun_path=vmrun,
+        environment=environment,
+    )
+
+    assert result.returncode != 0
+    assert "non-absolute or malformed VMX path" in result.stderr
+    assert vmx.exists()
+
+
 def test_registered_hard_link_alias_uses_deletevm(tmp_path: Path) -> None:
     """An out-of-root library alias still identifies the registered target."""
     root = tmp_path / "artifacts" / "vm"
@@ -698,6 +723,50 @@ def test_failed_deletevm_atomically_restores_external_vmdk_attachment(tmp_path: 
 
     assert result.returncode != 0
     assert "Delete VMware Workstation VM" in result.stderr
+    assert vmx.read_bytes() == original_bytes
+    assert external_disk.read_text(encoding="utf-8") == "shared"
+    assert not list(root.glob("*.atlaso-*.tmp"))
+
+
+def test_post_detachment_validation_failure_restores_original_vmx(tmp_path: Path) -> None:
+    """An exception after atomic replacement restores the retained original."""
+    root = tmp_path / "artifacts" / "vm"
+    vmx = root / "Atlaso.vmx"
+    external_disk = tmp_path / "shared" / "depot.vmdk"
+    external_disk.parent.mkdir(parents=True)
+    external_disk.write_text("shared", encoding="utf-8")
+    _write_vmx(vmx, "Atlaso", f'scsi0:2.fileName = "{external_disk.resolve()}"')
+    original_bytes = vmx.read_bytes()
+    wrapper = tmp_path / "post-swap-failure.ps1"
+    module_path = VMWARE_SCRIPT_ROOT / "Atlaso.WorkstationCleanup.psm1"
+    wrapper.write_text(
+        f"""$ErrorActionPreference = 'Stop'
+$module = Import-Module '{module_path}' -Force -PassThru
+& $module {{
+    param([string]$VmxPath, [string]$RemovalRoot)
+    $script:atlasoTestHashCalls = 0
+    function script:Get-AtlasoFileSha256 {{
+        param([string]$Path)
+        $script:atlasoTestHashCalls++
+        if ($script:atlasoTestHashCalls -eq 1) {{
+            throw 'simulated post-replacement hash failure'
+        }}
+        return (Get-FileHash -LiteralPath $Path -Algorithm SHA256).Hash
+    }}
+    $identity = Get-AtlasoPathIdentity -Path $VmxPath -Description 'test VMX'
+    Disconnect-AtlasoWorkstationExternalVmdks `
+        -VmxPath $VmxPath `
+        -RemovalRoot $RemovalRoot `
+        -ExpectedIdentity $identity
+}} '{vmx}' '{root}'
+""",
+        encoding="utf-8",
+    )
+
+    result = _run_script(wrapper, environment=os.environ.copy())
+
+    assert result.returncode != 0
+    assert "simulated post-replacement hash failure" in result.stderr
     assert vmx.read_bytes() == original_bytes
     assert external_disk.read_text(encoding="utf-8") == "shared"
     assert not list(root.glob("*.atlaso-*.tmp"))

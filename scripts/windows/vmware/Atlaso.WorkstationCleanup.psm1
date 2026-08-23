@@ -402,6 +402,11 @@ function Get-AtlasoWorkstationVmPaths {
     if ($reportedPaths.Count -ne $declaredCount) {
         throw "vmrun list reported $declaredCount VMs but returned $($reportedPaths.Count) paths; artifacts were preserved."
     }
+    if (@($reportedPaths | Where-Object {
+                -not [System.IO.Path]::IsPathFullyQualified($_) -or $_.Contains('"')
+            }).Count -gt 0) {
+        throw 'vmrun list returned a non-absolute or malformed VMX path; artifacts were preserved.'
+    }
     return $reportedPaths
 }
 
@@ -976,8 +981,19 @@ function Disconnect-AtlasoWorkstationExternalVmdks {
     $temporaryPath = "$VmxPath.atlaso-detach-$([System.Guid]::NewGuid().ToString('N')).tmp"
     $backupPath = "$VmxPath.atlaso-backup-$([System.Guid]::NewGuid().ToString('N')).tmp"
     $replacementApplied = $false
+    $detachment = $null
     try {
         [System.IO.File]::WriteAllBytes($temporaryPath, $protectedBytes)
+        $detachment = [pscustomobject]@{
+            Detached = $true
+            OriginalIdentity = $ExpectedIdentity
+            OriginalBytes = $originalBytes
+            OriginalHash = $originalHash
+            ProtectedIdentity = Get-AtlasoPathIdentity -Path $temporaryPath -Description 'protected VMware cleanup target'
+            ProtectedBytes = $protectedBytes
+            ProtectedHash = $protectedHash
+            BackupPath = $backupPath
+        }
         $vmxLock = [System.IO.File]::Open(
             $VmxPath,
             [System.IO.FileMode]::Open,
@@ -998,24 +1014,26 @@ function Disconnect-AtlasoWorkstationExternalVmdks {
             $vmxLock.Dispose()
         }
 
-        $detachment = [pscustomobject]@{
-            Detached = $true
-            OriginalIdentity = $ExpectedIdentity
-            OriginalBytes = $originalBytes
-            OriginalHash = $originalHash
-            ProtectedIdentity = Get-AtlasoPathIdentity -Path $VmxPath -Description 'detached VMware cleanup target'
-            ProtectedBytes = $protectedBytes
-            ProtectedHash = $protectedHash
-            BackupPath = $backupPath
-        }
         if (
+            (Get-AtlasoPathIdentity -Path $VmxPath -Description 'detached VMware cleanup target') -ne $detachment.ProtectedIdentity -or
             -not (Test-AtlasoByteArraysEqual -Left $originalBytes -Right ([System.IO.File]::ReadAllBytes($backupPath))) -or
             (Get-AtlasoFileSha256 -Path $VmxPath) -ne $protectedHash
         ) {
-            Restore-AtlasoWorkstationExternalVmdks -VmxPath $VmxPath -Detachment $detachment
-            throw "VMware Workstation VMX changed during external-disk protection; original bytes were restored: $VmxPath"
+            throw "VMware Workstation VMX changed during external-disk protection: $VmxPath"
         }
         return $detachment
+    }
+    catch {
+        $protectionError = $_
+        if ($replacementApplied) {
+            try {
+                Restore-AtlasoWorkstationExternalVmdks -VmxPath $VmxPath -Detachment $detachment
+            }
+            catch {
+                throw "VMware Workstation VMX protection failed and automatic restoration also failed: $($_.Exception.Message)"
+            }
+        }
+        throw $protectionError
     }
     finally {
         Remove-Item -LiteralPath $temporaryPath -Force -ErrorAction SilentlyContinue
