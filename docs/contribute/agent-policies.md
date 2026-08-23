@@ -531,7 +531,7 @@ Terminal order:
 - Atlaso releases must come from signed v2 channel pointers and immutable signed release manifests verified by named
   Ed25519 public keys under `/etc/atlaso/update-trust.d`. Optional release `summary` and `release_notes_url` fields
   remain backward compatible; bound the summary to one line derived from the release commit subject and accept only
-  credential-free HTTPS notes URLs. Install the exact ABI wheelhouse offline with
+  credential-free HTTPS notes URLs of at most 2,048 characters. Install the exact ABI wheelhouse offline with
   `PIP_CONFIG_FILE=/dev/null`, `--no-index`, and hash verification under `/opt/atlaso/releases/<version>`, switch
   `/opt/atlaso/current` atomically, and preserve `/opt/atlaso/.venv` as a compatibility symlink. Restore the previous
   release, helper/systemd files, and SQLite snapshot on failure. Inspect Photon transactions before mutation, use the

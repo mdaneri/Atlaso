@@ -422,6 +422,7 @@ test("failed polling preserves only an existing positive indicator", async () =>
     "https://[/notes",
     "https://[example.com]/notes",
     "https://user:pass@example.test/notes",
+    `https://example.test/${"a".repeat(2049)}`,
   ]) {
     positive.setFetchResponse({
       ok: true,

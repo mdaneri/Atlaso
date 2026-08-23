@@ -70,8 +70,8 @@ while keeping each stream's current and target state, bounded **What's new** det
 Photon stores at most 100 parsed package changes and shows at most 20 in the browser. PowerShell results distinguish a
 new install, an upgrade, an older side-by-side target, and a module that is already current; Atlaso never claims that an
 installation removes an existing module version. Signed Atlaso release manifests may supply a one-line summary and a
-credential-free HTTPS release-notes link. Older signed v2 manifests fall back to the version and commit without
-fabricating release notes.
+credential-free HTTPS release-notes link limited to 2,048 characters before durable storage or browser polling. Older
+signed v2 manifests fall back to the version and commit without fabricating release notes.
 
 ## Release sources and channels
 

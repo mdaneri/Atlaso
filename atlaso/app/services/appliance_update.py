@@ -19,6 +19,7 @@ from sqlalchemy.orm import Session
 
 from atlaso import __version__
 from atlaso.app.models import Job, JobStatus, JobStep
+from atlaso.app.services.release_updates import RELEASE_NOTES_URL_MAX_LENGTH
 
 APPLIANCE_UPDATE_SETTINGS_KEY = "appliance_update.settings.v1"
 APPLIANCE_UPDATE_AVAILABILITY_KEY = "appliance_update.availability.v1"
@@ -200,6 +201,7 @@ def normalized_availability_result(value: Any) -> dict[str, Any]:
         or not parsed_notes.netloc
         or parsed_notes.username
         or parsed_notes.password
+        or len(release_notes_url) > RELEASE_NOTES_URL_MAX_LENGTH
         or any(character.isspace() or ord(character) < 32 for character in release_notes_url)
     ):
         release_notes_url = ""

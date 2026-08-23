@@ -29,6 +29,7 @@ VERSION_RE = re.compile(r"^[0-9]+\.[0-9]+\.[0-9]+$")
 INVENTORY_VERSION_RE = re.compile(r"^[0-9]+\.[0-9]+\.[0-9]+\+[0-9]+$")
 INVENTORY_PACKAGE_MAX_BYTES = 2 * 1024 * 1024 * 1024
 INVENTORY_RELEASE_REPOSITORY = "mdaneri/Atlaso"
+RELEASE_NOTES_URL_MAX_LENGTH = 2048
 
 
 class ReleaseManifestError(ValueError):
@@ -225,6 +226,10 @@ def validate_release_manifest(payload: dict[str, Any]) -> dict[str, Any]:
             "Release summary must be one non-empty line of at most 240 characters."
         )
     if payload.get("release_notes_url") is not None:
+        if len(str(payload["release_notes_url"]).strip()) > RELEASE_NOTES_URL_MAX_LENGTH:
+            raise ReleaseManifestError(
+                f"Release notes URL must be at most {RELEASE_NOTES_URL_MAX_LENGTH} characters."
+            )
         _https_url(payload, "release_notes_url")
     _timestamp(payload, "built_at")
     return payload

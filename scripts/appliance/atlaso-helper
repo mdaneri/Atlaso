@@ -155,6 +155,7 @@ SYSTEMD_RUN_REAL_ACTIONS = {
 }
 SYSTEMD_RUN_CHILD_ENV = "ATLASO_HELPER_SYSTEMD_RUN_CHILD"
 SYSTEMD_RUN_ACTION_UNIT_PREFIX = "atlaso-helper-action"
+UPDATE_RELEASE_NOTES_URL_MAX_LENGTH = 2048
 NO_PATH_ACTIONS = {
     ("dnsmasq", "leases"),
     ("dnsmasq", "logs"),
@@ -10460,12 +10461,15 @@ def _current_python_abi() -> str:
     return f"cp{sys.version_info.major}{sys.version_info.minor}"
 
 
-def _validated_update_https_url(value: object, label: str) -> str:
+def _validated_update_https_url(
+    value: object, label: str, *, max_length: int | None = None
+) -> str:
     """Perform validated update HTTPS URL.
 
     Args:
         value: Candidate value consumed by validated update HTTPS URL.
         label: Human-readable label used to identify the result.
+        max_length: Optional maximum number of URL characters.
     """
     url = str(value or "").strip()
     parsed = urlparse(url)
@@ -10474,6 +10478,7 @@ def _validated_update_https_url(value: object, label: str) -> str:
         or not parsed.netloc
         or parsed.username
         or parsed.password
+        or (max_length is not None and len(url) > max_length)
         or any(character.isspace() or ord(character) < 32 for character in url)
     ):
         raise ValueError(f"{label} must be an HTTPS URL without embedded credentials")
@@ -10643,7 +10648,11 @@ def _validate_release_manifest(release: dict) -> dict:
         raise ValueError("Atlaso release summary must be one non-empty line of at most 240 characters")
     release_notes_url = release.get("release_notes_url")
     if release_notes_url is not None:
-        _validated_update_https_url(release_notes_url, "Atlaso release notes URL")
+        _validated_update_https_url(
+            release_notes_url,
+            "Atlaso release notes URL",
+            max_length=UPDATE_RELEASE_NOTES_URL_MAX_LENGTH,
+        )
     _validated_update_timestamp(release.get("built_at"), "Atlaso release build time")
     if not str(release.get("signing_key_id") or "").strip():
         raise ValueError("Atlaso release manifest missing signing_key_id")

@@ -1178,6 +1178,7 @@ def test_release_manifest_validates_optional_summary_and_release_notes():
         ({"summary": "x" * 241}, "summary"),
         ({"release_notes_url": "http://example.test/release"}, "HTTPS URL"),
         ({"release_notes_url": "https://user:secret@example.test/release"}, "HTTPS URL"),
+        ({"release_notes_url": "https://example.test/" + "a" * 2049}, "at most 2048"),
     ):
         payload = release_payload()
         payload.update(value)

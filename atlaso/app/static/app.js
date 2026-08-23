@@ -13007,17 +13007,26 @@ function validApplianceUpdateAvailabilityPayload(payload) {
     ["atlaso_release", "Atlaso Release"],
   ]);
   const visibleChangeLimit = 20;
-  const validText = (value, limit) => (
-    typeof value === "string"
-    && (limit === undefined || [...value].length <= limit)
-  );
+  const releaseNotesUrlLimit = 2048;
+  const validText = (value, limit) => {
+    if (typeof value !== "string") return false;
+    if (limit === undefined) return true;
+    let length = 0;
+    for (const _character of value) {
+      length += 1;
+      if (length > limit) return false;
+    }
+    return true;
+  };
   const validReleaseNotesUrl = (value) => {
-    if (!validText(value)) return false;
+    if (!validText(value, releaseNotesUrlLimit)) return false;
     if (!value) return true;
-    if ([...value].some((character) => (
-      character.codePointAt(0) < 32
-      || /[ \u0085\u00A0\u1680\u2000-\u200A\u2028\u2029\u202F\u205F\u3000]/u.test(character)
-    ))) return false;
+    for (const character of value) {
+      if (
+        character.codePointAt(0) < 32
+        || /[ \u0085\u00A0\u1680\u2000-\u200A\u2028\u2029\u202F\u205F\u3000]/u.test(character)
+      ) return false;
+    }
     const match = /^https:\/\/([^/?#]+)(?:[/?#]|$)/i.exec(value);
     if (!match) return false;
     const authority = match[1];
