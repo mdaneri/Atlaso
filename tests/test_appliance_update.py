@@ -1390,6 +1390,31 @@ def test_source_readiness_bounds_repository_details(client, monkeypatch):
     assert "Gallery06" not in page.text
 
 
+def test_blocked_streams_do_not_contribute_to_global_availability(client):
+    """Count confirmed updates only when their source prerequisite is ready.
+
+    Args:
+        client: Test application HTTP client.
+    """
+    login(client)
+    seed_available_confirmations(["powershell_modules"])
+
+    blocked_only = client.get(
+        "/ui/management/appliance-update/availability"
+    ).json()
+    assert blocked_only["available"] is False
+    assert blocked_only["affected_stream_count"] == 0
+
+    seed_available_confirmations(["powershell_modules", "atlaso_release"])
+    mixed = client.get("/ui/management/appliance-update/availability").json()
+    streams = {stream["id"]: stream for stream in mixed["streams"]}
+    assert streams["powershell_modules"]["confirmed"]["update_available"] is True
+    assert streams["powershell_modules"]["source_sync"]["ready"] is False
+    assert streams["atlaso_release"]["source_sync"]["ready"] is True
+    assert mixed["available"] is True
+    assert mixed["affected_stream_count"] == 1
+
+
 def test_forged_unsynchronized_stream_is_rejected_for_check_and_install(client):
     """Reject blocked stream identifiers at the server admission boundary.
 

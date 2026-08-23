@@ -11377,6 +11377,15 @@ def appliance_update_availability_summary(
     for row in summary["streams"]:
         row["source_sync"] = source_readiness[str(row["id"])]
         row["check_required"] = str(row["id"]) in prerequisite_attempts_cleared
+    available = [
+        row
+        for row in summary["streams"]
+        if row["source_sync"]["ready"]
+        and row["confirmed"]
+        and row["confirmed"]["update_available"]
+    ]
+    summary["available"] = bool(available)
+    summary["affected_stream_count"] = len(available)
     return summary
 
 
