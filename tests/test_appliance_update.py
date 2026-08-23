@@ -230,6 +230,8 @@ def test_update_evidence_state_validates_available_and_actionable_records(tmp_pa
         {"status": "succeeded", "commands": []},
         {**aggregate, "reboot_recommended": "false"},
         {**aggregate, "selected_streams": ["unknown"]},
+        {**aggregate, "selected_streams": ["atlaso_release"]},
+        {**aggregate, "finalizer_status_path": str(finalizer_path)},
     ):
         info_path.write_text(json.dumps(incompatible), encoding="utf-8")
         incompatible_state = appliance_update_evidence_state(
@@ -284,6 +286,7 @@ def test_update_evidence_state_validates_available_and_actionable_records(tmp_pa
         json.dumps(
             {
                 **aggregate,
+                "selected_streams": ["atlaso_release"],
                 "finalizer_status_path": str(finalizer_path),
             }
         ),
@@ -298,6 +301,7 @@ def test_update_evidence_state_validates_available_and_actionable_records(tmp_pa
         json.dumps(
             {
                 **aggregate,
+                "selected_streams": ["atlaso_release"],
                 "finished_at": "2026-08-22T19:59:59+00:00",
                 "finalizer_status_path": str(finalizer_path),
             }
@@ -313,6 +317,7 @@ def test_update_evidence_state_validates_available_and_actionable_records(tmp_pa
         json.dumps(
             {
                 **aggregate,
+                "selected_streams": ["atlaso_release"],
                 "finished_at": "2026-08-22T20:00:01",
                 "finalizer_status_path": str(finalizer_path),
             }

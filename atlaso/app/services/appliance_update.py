@@ -963,6 +963,13 @@ def appliance_update_evidence_state(
                     and all(stream in UPDATE_STREAMS for stream in selected_streams)
                 )
             )
+            and (
+                "selected_streams" not in payload
+                or (
+                    ("atlaso_release" in selected_streams)
+                    == bool(payload["finalizer_status_path"])
+                )
+            )
         )
 
     def _valid_finalizer(payload: dict[str, Any]) -> bool:
