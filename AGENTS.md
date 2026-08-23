@@ -504,8 +504,11 @@ The following cross-cutting boundaries always apply:
   non-secret failure guidance after a failed sync. Require fresh successful non-stale checks, at least one confirmed
   update, and valid prerequisites for manual installation. Keep scheduled check-before-apply independent. Render the
   authenticated global indicator from sanitized no-store browser state, poll it only while visible and after terminal
-  update tasks, and clear only successfully installed streams. Optional signed release summaries must be bounded commit
-  subjects and release links must be credential-free HTTPS.
+  update tasks, create or update exactly one control for a positive confirmed count, remove every live control
+  completely from visual and accessibility trees at zero current confirmed updates, preserve only valid last-known
+  positive state through transient, structurally invalid, or noncanonical polling failures, require `up_to_date`
+  confirmations to carry zero changes, and clear only successfully installed streams. Optional signed release summaries
+  must be bounded commit subjects and release links must be credential-free HTTPS of at most 2,048 characters.
 - A signed Atlaso Release update succeeds only after durable candidate activation is proven: `current`, the compatibility
   virtualenv, signed receipt, finalizer, internal OpenAPI version, nginx management-front-door version, maintenance
   cleanup, nginx validation/reload, and required service state must agree. Restart the worker under a provisional

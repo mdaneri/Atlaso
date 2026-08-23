@@ -12980,17 +12980,232 @@ function updateApplianceUpdateResultSummary() {
   description.textContent = descriptionText;
 }
 
+function createApplianceUpdateAvailabilityIndicator() {
+  const template = document.querySelector("[data-update-availability-template]");
+  if (!(template instanceof HTMLTemplateElement)) return null;
+  const prototype = template.content.querySelector("[data-update-availability-prototype]");
+  if (!(prototype instanceof HTMLAnchorElement)) return null;
+  const indicator = prototype.cloneNode(true);
+  indicator.removeAttribute("data-update-availability-prototype");
+  indicator.setAttribute("data-update-availability-indicator", "");
+  template.before(indicator);
+  return indicator;
+}
+
+function validApplianceUpdateAvailabilityPayload(payload) {
+  const expectedStreams = new Map([
+    ["photon_os", "Photon OS"],
+    ["powershell_modules", "PowerShell Modules"],
+    ["atlaso_release", "Atlaso Release"],
+  ]);
+  const expectedSourceKinds = new Map([
+    ["photon_os", "photon"],
+    ["powershell_modules", "powershell"],
+    ["atlaso_release", "atlaso"],
+  ]);
+  const visibleChangeLimit = 20;
+  const releaseNotesUrlLimit = 2048;
+  const pythonWhitespacePattern = /[\u0009-\u000D\u001C-\u001F \u0085\u00A0\u1680\u2000-\u200A\u2028\u2029\u202F\u205F\u3000]/u;
+  const validText = (value, limit) => {
+    if (typeof value !== "string") return false;
+    let length = 0;
+    let previousSpace = true;
+    for (const character of value) {
+      length += 1;
+      if (limit !== undefined && length > limit) return false;
+      if (pythonWhitespacePattern.test(character)) {
+        if (character !== " " || previousSpace) return false;
+        previousSpace = true;
+      } else {
+        previousSpace = false;
+      }
+    }
+    return value === "" || !previousSpace;
+  };
+  const validBoundedString = (value, limit, { nonempty = false } = {}) => {
+    if (typeof value !== "string") return false;
+    let length = 0;
+    for (const _character of value) {
+      length += 1;
+      if (length > limit) return false;
+    }
+    return !nonempty || length > 0;
+  };
+  const validRepositoryName = (value) => (
+    validBoundedString(value, 160, { nonempty: true })
+    && !pythonWhitespacePattern.test(value[0])
+    && !pythonWhitespacePattern.test(value[value.length - 1])
+  );
+  const validReleaseNotesUrl = (value) => {
+    if (!validText(value, releaseNotesUrlLimit)) return false;
+    if (!value) return true;
+    for (const character of value) {
+      if (
+        character.codePointAt(0) < 32
+        || pythonWhitespacePattern.test(character)
+      ) return false;
+    }
+    const match = /^https:\/\/([^/?#]+)(?:[/?#]|$)/i.exec(value);
+    if (!match) return false;
+    const authority = match[1];
+    const normalizedNetloc = authority.replace(/[@:#?]/g, "").normalize("NFKC");
+    if (["/", "?", "#", "@", ":"].some((delimiter) => normalizedNetloc.includes(delimiter))) return false;
+    const credentialSeparator = authority.lastIndexOf("@");
+    let hostPort = authority;
+    if (credentialSeparator >= 0) {
+      const userInfo = authority.slice(0, credentialSeparator);
+      const passwordSeparator = userInfo.indexOf(":");
+      const username = passwordSeparator < 0 ? userInfo : userInfo.slice(0, passwordSeparator);
+      const password = passwordSeparator < 0 ? "" : userInfo.slice(passwordSeparator + 1);
+      if (username || password) return false;
+      hostPort = authority.slice(credentialSeparator + 1);
+    }
+    if (!hostPort.includes("[") && !hostPort.includes("]")) return true;
+    const bracketed = /^\[([^\[\]]+)\](?::.*)?$/.exec(hostPort);
+    if (!bracketed) return false;
+    const bracketedHost = bracketed[1];
+    if (/^v[0-9A-Fa-f]+\..+$/.test(bracketedHost)) return true;
+    const scopeSeparator = bracketedHost.indexOf("%");
+    let ipv6Address = bracketedHost;
+    if (scopeSeparator >= 0) {
+      if (
+        scopeSeparator !== bracketedHost.lastIndexOf("%")
+        || scopeSeparator === 0
+        || scopeSeparator === bracketedHost.length - 1
+      ) return false;
+      ipv6Address = bracketedHost.slice(0, scopeSeparator);
+    }
+    try {
+      new URL(`https://[${ipv6Address}]/`);
+      return true;
+    } catch (_error) {
+      return false;
+    }
+  };
+  const validChange = (change) => (
+    change
+    && typeof change === "object"
+    && !Array.isArray(change)
+    && ["name", "current", "target", "action", "summary"].every((field) => (
+      change[field] === undefined || validText(change[field], 160)
+    ))
+  );
+  const validConfirmed = (confirmed) => confirmed === null || (
+    confirmed
+    && typeof confirmed === "object"
+    && ["available", "up_to_date"].includes(confirmed.state)
+    && typeof confirmed.update_available === "boolean"
+    && confirmed.update_available === (confirmed.state === "available")
+    && validText(confirmed.current, 200)
+    && validText(confirmed.target, 200)
+    && Number.isInteger(confirmed.change_count)
+    && confirmed.change_count >= 0
+    && confirmed.change_count <= 1_000_000
+    && Array.isArray(confirmed.changes)
+    && confirmed.changes.length <= visibleChangeLimit
+    && confirmed.changes.every(validChange)
+    && (
+      confirmed.state !== "up_to_date"
+      || (confirmed.change_count === 0 && confirmed.changes.length === 0)
+    )
+    && typeof confirmed.details_incomplete === "boolean"
+    && validText(confirmed.summary, 240)
+    && validReleaseNotesUrl(confirmed.release_notes_url)
+    && validText(confirmed.remediation, 300)
+    && validText(confirmed.checked_at, 80)
+  );
+  const validLastAttempt = (attempt) => (
+    attempt
+    && typeof attempt === "object"
+    && typeof attempt.success === "boolean"
+    && ["", "available", "up_to_date", "failed"].includes(attempt.state)
+    && attempt.success === ["available", "up_to_date"].includes(attempt.state)
+    && validText(attempt.checked_at, 80)
+    && validText(attempt.current, 200)
+    && validText(attempt.target, 200)
+    && validText(attempt.remediation, 300)
+  );
+  const validSourceSync = (sourceSync, streamId) => (
+    sourceSync
+    && typeof sourceSync === "object"
+    && !Array.isArray(sourceSync)
+    && typeof sourceSync.required === "boolean"
+    && sourceSync.required === (streamId !== "atlaso_release")
+    && typeof sourceSync.ready === "boolean"
+    && ["ready", "required", "synchronizing", "failed"].includes(sourceSync.state)
+    && sourceSync.source_kind === expectedSourceKinds.get(streamId)
+    && Array.isArray(sourceSync.repositories)
+    && sourceSync.repositories.length <= 6
+    && sourceSync.repositories.every(validRepositoryName)
+    && Number.isInteger(sourceSync.repository_count)
+    && sourceSync.repository_count >= sourceSync.repositories.length
+    && sourceSync.repository_count <= 1_000_000
+    && Number.isInteger(sourceSync.repositories_omitted)
+    && sourceSync.repositories_omitted === sourceSync.repository_count - sourceSync.repositories.length
+    && validBoundedString(sourceSync.reason, 1200)
+    && (sourceSync.required || sourceSync.ready)
+    && (sourceSync.ready === (sourceSync.state === "ready"))
+    && (sourceSync.required || (
+      sourceSync.repositories.length === 0
+      && sourceSync.repository_count === 0
+      && sourceSync.reason === ""
+    ))
+  );
+  const streamIds = Array.isArray(payload?.streams)
+    ? payload.streams.map((stream) => stream?.id)
+    : [];
+  const streamsValid = streamIds.length === expectedStreams.size
+    && new Set(streamIds).size === expectedStreams.size
+    && streamIds.every((streamId) => expectedStreams.has(streamId))
+    && payload.streams.every((stream) => (
+      stream
+      && typeof stream === "object"
+      && stream.label === expectedStreams.get(stream.id)
+      && typeof stream.stale === "boolean"
+      && typeof stream.check_required === "boolean"
+      && validSourceSync(stream.source_sync, stream.id)
+      && validLastAttempt(stream.last_attempt)
+      && validConfirmed(stream.confirmed)
+      && (!stream.stale || stream.confirmed === null)
+      && (
+        !stream.last_attempt.success
+        || stream.confirmed === null
+        || stream.last_attempt.state === stream.confirmed.state
+      )
+    ));
+  const confirmedUpdateCount = streamsValid
+    ? payload.streams.filter((stream) => (
+      stream.stale === false
+      && stream.source_sync.ready === true
+      && stream.confirmed?.update_available === true
+    )).length
+    : -1;
+  return Boolean(payload)
+    && payload.schema_version === 1
+    && streamsValid
+    && typeof payload.available === "boolean"
+    && Number.isInteger(payload.affected_stream_count)
+    && payload.affected_stream_count >= 0
+    && payload.available === (payload.affected_stream_count > 0)
+    && payload.affected_stream_count === confirmedUpdateCount;
+}
+
 function renderApplianceUpdateAvailability(payload) {
   atlasoUpdateAvailability = payload && Array.isArray(payload.streams)
     ? payload
     : { available: false, affected_stream_count: 0, streams: [] };
-  const indicator = document.querySelector("[data-update-availability-indicator]");
-  const count = document.querySelector("[data-update-availability-count]");
-  if (indicator instanceof HTMLAnchorElement) {
-    const affected = Number(atlasoUpdateAvailability.affected_stream_count || 0);
-    indicator.hidden = !atlasoUpdateAvailability.available;
-    indicator.setAttribute("aria-label", `Update available for ${affected} update ${affected === 1 ? "stream" : "streams"}`);
-    if (count instanceof HTMLElement) count.textContent = String(affected);
+  const affected = Number(atlasoUpdateAvailability.affected_stream_count || 0);
+  const available = atlasoUpdateAvailability.available === true && Number.isFinite(affected) && affected > 0;
+  let indicator = document.querySelector("[data-update-availability-indicator]");
+  if (!available) {
+    if (indicator instanceof HTMLAnchorElement) indicator.remove();
+  } else {
+    if (!(indicator instanceof HTMLAnchorElement)) indicator = createApplianceUpdateAvailabilityIndicator();
+    if (indicator instanceof HTMLAnchorElement) {
+      const count = indicator.querySelector("[data-update-availability-count]");
+      indicator.setAttribute("aria-label", `Update available for ${affected} update ${affected === 1 ? "stream" : "streams"}`);
+      if (count instanceof HTMLElement) count.textContent = String(affected);
+    }
   }
   atlasoUpdateAvailability.streams.forEach((stream) => {
     const card = document.querySelector(`[data-appliance-update-stream-card="${CSS.escape(stream.id || "")}"]`);
@@ -13133,6 +13348,9 @@ async function refreshApplianceUpdateAvailability(options = null) {
       return response.json();
     })
     .then((payload) => {
+      if (!validApplianceUpdateAvailabilityPayload(payload)) {
+        throw new Error("Unable to refresh update availability.");
+      }
       if (requestSequence === atlasoUpdateAvailabilityRequestSequence) {
         renderApplianceUpdateAvailability(payload);
       }
@@ -13161,8 +13379,8 @@ function scheduleApplianceUpdateAvailabilityRefresh() {
 }
 
 function initializeApplianceUpdateAvailability() {
-  const indicator = document.querySelector("[data-update-availability-indicator]");
-  if (!(indicator instanceof HTMLAnchorElement)) return;
+  const template = document.querySelector("[data-update-availability-template]");
+  if (!(template instanceof HTMLTemplateElement)) return;
   const form = document.querySelector("[data-appliance-update-submit-form]");
   if (form instanceof HTMLFormElement) {
     try {

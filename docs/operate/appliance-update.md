@@ -70,8 +70,8 @@ while keeping each stream's current and target state, bounded **What's new** det
 Photon stores at most 100 parsed package changes and shows at most 20 in the browser. PowerShell results distinguish a
 new install, an upgrade, an older side-by-side target, and a module that is already current; Atlaso never claims that an
 installation removes an existing module version. Signed Atlaso release manifests may supply a one-line summary and a
-credential-free HTTPS release-notes link. Older signed v2 manifests fall back to the version and commit without
-fabricating release notes.
+credential-free HTTPS release-notes link limited to 2,048 characters before durable storage or browser polling. Older
+signed v2 manifests fall back to the version and commit without fabricating release notes.
 
 ## Release sources and channels
 
@@ -194,9 +194,16 @@ When any non-stale stream has a confirmed update, authenticated pages render **U
 menu with the affected-stream count. The link opens Update Streams. Atlaso refreshes the sanitized browser-only state
 every 60 seconds only while the page is visible, immediately after visibility returns, and after a newly submitted
 update task reaches a terminal state. The endpoint uses `Cache-Control: no-store`, is excluded from OpenAPI, and never
-returns commands, credentials, or raw helper output. Successful installation clears only the confirmations for streams
-that actually succeeded; failed or skipped streams keep their indication until a successful installation or recheck
-changes it.
+returns commands, credentials, or raw helper output. When the current confirmed count is zero, the control is absent
+from both the page and its accessibility tree. A later confirmed update creates it with the current count, and a
+confirmed transition back to zero removes it. A transient, structurally invalid, or noncanonical polling response
+preserves a valid last-known positive indicator but never creates a zero-count alert. Successful installation clears
+only the confirmations for streams that
+actually succeeded; failed or skipped streams keep their indication until a successful installation or recheck changes
+it.
+
+Browser polling also requires every confirmed **Up to date** stream to report zero changes and no **What's new** rows;
+contradictory payloads are treated as transient failures and cannot clear the last-known positive indicator.
 
 ## Trust contract
 

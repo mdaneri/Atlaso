@@ -507,8 +507,12 @@ Terminal order:
   check-before-apply.
 - Render the authenticated topbar **Update available** link from server state and refresh its sanitized, browser-only,
   no-store projection every 60 seconds only while visible, after visibility returns, and after terminal update tasks.
-  Exclude that route from OpenAPI and never expose commands, credentials, or raw helper output. Clear confirmations only
-  for successfully installed streams.
+  Render no live control when the current confirmed count is zero, create or update exactly one control for a positive
+  count, and remove it again on a confirmed transition to zero so no focusable, visual, tooltip, badge, or screen-reader
+  zero state remains. A transient, structurally invalid, or noncanonical polling response may preserve only a valid
+  last-known positive control. Exclude that route from OpenAPI and never expose commands, credentials, or raw helper
+  output. Require every browser-polled `up_to_date` confirmation to carry zero changes. Clear confirmations only for
+  successfully installed streams.
 - Appliance Update sources are repository-style desired runtime-maintenance configuration. Support multiple named
   Photon, PowerShell, and HTTPS Atlaso release sources, using secondary signed Atlaso channels as failover sources. Keep
   repository tabs inside collapsible ecosystem sections and managed PowerShell modules in their own one-tab-per-module
@@ -533,7 +537,7 @@ Terminal order:
 - Atlaso releases must come from signed v2 channel pointers and immutable signed release manifests verified by named
   Ed25519 public keys under `/etc/atlaso/update-trust.d`. Optional release `summary` and `release_notes_url` fields
   remain backward compatible; bound the summary to one line derived from the release commit subject and accept only
-  credential-free HTTPS notes URLs. Install the exact ABI wheelhouse offline with
+  credential-free HTTPS notes URLs of at most 2,048 characters. Install the exact ABI wheelhouse offline with
   `PIP_CONFIG_FILE=/dev/null`, `--no-index`, and hash verification under `/opt/atlaso/releases/<version>`, switch
   `/opt/atlaso/current` atomically, and preserve `/opt/atlaso/.venv` as a compatibility symlink. Restore the previous
   release, helper/systemd files, and SQLite snapshot on failure. Inspect Photon transactions before mutation, use the
