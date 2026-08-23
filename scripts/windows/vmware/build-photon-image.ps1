@@ -1,3 +1,69 @@
+<#
+.SYNOPSIS
+Build or validate the supported Atlaso VMware Workstation Photon image.
+.PARAMETER IsoUrl
+Pinned Photon source URL or local path.
+.PARAMETER IsoChecksum
+Expected Photon ISO checksum.
+.PARAMETER SshPassword
+Temporary Packer SSH password.
+.PARAMETER BootstrapAdminPassword
+Initial appliance administrator password.
+.PARAMETER VmName
+Builder virtual-machine name.
+.PARAMETER OutputDirectory
+Artifact output directory.
+.PARAMETER SshHost
+Optional explicit builder SSH address.
+.PARAMETER SharedSourceDirectory
+Shared checksum-verified ISO cache.
+.PARAMETER VmrunPath
+Optional VMware vmrun executable path.
+.PARAMETER VmnetName
+Management VMware network.
+.PARAMETER ServiceVmnetName
+Services VMware network.
+.PARAMETER BridgedInterfaceAlias
+Optional host adapter for bridged management.
+.PARAMETER BuilderStaticIp
+Temporary Photon builder address.
+.PARAMETER BuilderStaticNetmask
+Temporary Photon builder netmask.
+.PARAMETER BuilderStaticGateway
+Temporary Photon builder gateway.
+.PARAMETER BuilderStaticDns
+Temporary Photon builder DNS servers.
+.PARAMETER FinalMgmtAddress
+Final appliance management address policy.
+.PARAMETER FinalMgmtGateway
+Final appliance management gateway.
+.PARAMETER FinalMgmtInterface
+Final appliance management interface.
+.PARAMETER PipGlobalIndex
+Optional pip global index setting.
+.PARAMETER PipGlobalIndexUrl
+Optional pip index URL.
+.PARAMETER PackerDirectory
+VMware Packer template directory.
+.PARAMETER PreparedIsoPath
+Optional remastered ISO path.
+.PARAMETER PackerOnError
+Packer failure-handling mode.
+.PARAMETER AllowExistingManagementSubnet
+Permit an existing matching management subnet.
+.PARAMETER SkipNetworkCheck
+Skip VMware network preflight.
+.PARAMETER Headless
+Run the VMware builder without a console window.
+.PARAMETER KeepExistingOutput
+Preserve an existing output directory.
+.PARAMETER EnableRealSystemAdapters
+Enable real system adapters in the image.
+.PARAMETER ValidateOnly
+Validate Packer inputs without building.
+.PARAMETER PrepareIsoOnly
+Stop after preparing the remastered ISO.
+#>
 [Diagnostics.CodeAnalysis.SuppressMessageAttribute('PSAvoidUsingPlainTextForPassword', '')]
 [CmdletBinding()]
 param(
@@ -47,6 +113,14 @@ Import-Module (Join-Path $PSScriptRoot '..\common\Atlaso.PhotonImage.psm1') -For
 Import-Module (Join-Path $PSScriptRoot 'Atlaso.WorkstationCleanup.psm1') -Force
 Import-Module (Join-Path $PSScriptRoot 'Atlaso.VmwarePayload.psm1') -Force
 
+<#
+.SYNOPSIS
+Normalize and validate a VMware vmnet name.
+.PARAMETER Name
+Network name to normalize.
+.PARAMETER ParameterName
+Caller parameter name used in diagnostics.
+#>
 function ConvertTo-WorkstationVmnetName {
     param(
         [Parameter(Mandatory = $true)][string]$Name,
@@ -59,6 +133,12 @@ function ConvertTo-WorkstationVmnetName {
     return "VMnet$($Matches[1])"
 }
 
+<#
+.SYNOPSIS
+Convert an IPv4 address to its integer representation.
+.PARAMETER Address
+IPv4 address to convert.
+#>
 function ConvertTo-Ipv4Integer {
     param([Parameter(Mandatory = $true)][string]$Address)
 
@@ -69,6 +149,12 @@ function ConvertTo-Ipv4Integer {
     return (([uint32]$bytes[0] -shl 24) -bor ([uint32]$bytes[1] -shl 16) -bor ([uint32]$bytes[2] -shl 8) -bor [uint32]$bytes[3])
 }
 
+<#
+.SYNOPSIS
+Convert an integer to an IPv4 address.
+.PARAMETER Address
+Integer address value.
+#>
 function ConvertFrom-Ipv4Integer {
     param([Parameter(Mandatory = $true)][uint32]$Address)
 
@@ -81,6 +167,12 @@ function ConvertFrom-Ipv4Integer {
     return ([System.Net.IPAddress]::new($bytes)).ToString()
 }
 
+<#
+.SYNOPSIS
+Return the prefix length for a contiguous IPv4 netmask.
+.PARAMETER Netmask
+IPv4 netmask to validate.
+#>
 function Get-Ipv4PrefixLength {
     param([Parameter(Mandatory = $true)][string]$Netmask)
 
@@ -101,6 +193,16 @@ function Get-Ipv4PrefixLength {
     return $prefix
 }
 
+<#
+.SYNOPSIS
+Return a host CIDR at an offset within an IPv4 subnet.
+.PARAMETER Subnet
+IPv4 subnet base address.
+.PARAMETER Netmask
+IPv4 subnet netmask.
+.PARAMETER HostOffset
+Host offset within the subnet.
+#>
 function Get-Ipv4CidrFromSubnetOffset {
     param(
         [Parameter(Mandatory = $true)][string]$Subnet,
@@ -124,6 +226,16 @@ function Get-Ipv4CidrFromSubnetOffset {
     return "$(ConvertFrom-Ipv4Integer -Address $address)/$prefix"
 }
 
+<#
+.SYNOPSIS
+Return a host address at an offset within an IPv4 subnet.
+.PARAMETER Subnet
+IPv4 subnet base address.
+.PARAMETER Netmask
+IPv4 subnet netmask.
+.PARAMETER HostOffset
+Host offset within the subnet.
+#>
 function Get-Ipv4AddressFromSubnetOffset {
     param(
         [Parameter(Mandatory = $true)][string]$Subnet,
@@ -134,6 +246,12 @@ function Get-Ipv4AddressFromSubnetOffset {
     return (Get-Ipv4CidrFromSubnetOffset -Subnet $Subnet -Netmask $Netmask -HostOffset $HostOffset) -split '/', 2 | Select-Object -First 1
 }
 
+<#
+.SYNOPSIS
+Resolve the VMware Workstation vmrun executable.
+.PARAMETER Path
+Optional explicit executable path.
+#>
 function Resolve-WorkstationVmrunPath {
     param([string]$Path)
 
@@ -161,6 +279,14 @@ function Resolve-WorkstationVmrunPath {
     throw 'vmrun.exe was not found. Install VMware Workstation Pro or pass -VmrunPath.'
 }
 
+<#
+.SYNOPSIS
+Resolve the guarded VMware build output directory.
+.PARAMETER PackerDirectory
+VMware Packer template directory.
+.PARAMETER OutputDirectory
+Optional explicit artifact directory.
+#>
 function Resolve-WorkstationOutputDirectory {
     param(
         [Parameter(Mandatory = $true)][string]$PackerDirectory,
@@ -177,6 +303,16 @@ function Resolve-WorkstationOutputDirectory {
     return $ExecutionContext.SessionState.Path.GetUnresolvedProviderPathFromPSPath($effectiveOutput)
 }
 
+<#
+.SYNOPSIS
+Write and verify role-bound VMware build provenance.
+.PARAMETER OutputDirectory
+Completed Packer artifact directory.
+.PARAMETER VmName
+Expected VMX base name.
+.PARAMETER RepoRoot
+Source repository root.
+#>
 function Write-AtlasoVmwareBuildProvenance {
     param(
         [Parameter(Mandatory = $true)][string]$OutputDirectory,
@@ -221,6 +357,18 @@ function Write-AtlasoVmwareBuildProvenance {
     Write-Host "VMware build provenance: $provenancePath ($($provenance.source_commit))"
 }
 
+<#
+.SYNOPSIS
+Return the validated VMware management-network build plan.
+.PARAMETER NetworkName
+Management vmnet name.
+.PARAMETER ServiceNetworkName
+Services vmnet name.
+.PARAMETER ResolvedVmrunPath
+Resolved vmrun executable.
+.PARAMETER BridgedInterfaceAlias
+Optional host adapter for bridged management.
+#>
 function Get-WorkstationManagementNetwork {
     param(
         [string]$NetworkName,

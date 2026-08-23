@@ -1,10 +1,27 @@
+<#
+.SYNOPSIS
+Provide shared Photon image-build helpers for supported Atlaso hypervisors.
+#>
+
 Set-StrictMode -Version Latest
 
+<#
+.SYNOPSIS
+Resolve a repository-relative or absolute path.
+.PARAMETER Path
+Path to resolve.
+#>
 function Resolve-AtlasoRepoPath {
     param([Parameter(Mandatory = $true)][string]$Path)
     return (Resolve-Path -LiteralPath $Path).Path
 }
 
+<#
+.SYNOPSIS
+Return the host address from a builder CIDR.
+.PARAMETER Cidr
+Builder address in CIDR notation.
+#>
 function Get-AtlasoBuilderAddress {
     param([string]$Cidr)
     if ([string]::IsNullOrWhiteSpace($Cidr)) {
@@ -13,6 +30,12 @@ function Get-AtlasoBuilderAddress {
     return ($Cidr -split '/', 2)[0]
 }
 
+<#
+.SYNOPSIS
+Return usable host IPv4 DNS servers.
+.PARAMETER ExcludedInterfaceAlias
+Interface whose DNS servers must be excluded.
+#>
 function Get-AtlasoHostIpv4DnsServers {
     param([string]$ExcludedInterfaceAlias = 'vEthernet (Atlaso-Mgmt)')
 
@@ -35,6 +58,12 @@ function Get-AtlasoHostIpv4DnsServers {
     return @($servers | Select-Object -Unique)
 }
 
+<#
+.SYNOPSIS
+Encode a string as UTF-8 Base64.
+.PARAMETER Value
+String to encode.
+#>
 function ConvertTo-AtlasoUtf8Base64 {
     param([AllowEmptyString()][string]$Value)
 
@@ -42,6 +71,32 @@ function ConvertTo-AtlasoUtf8Base64 {
     return [System.Convert]::ToBase64String($bytes)
 }
 
+<#
+.SYNOPSIS
+Write the canonical Photon kickstart document.
+.PARAMETER Path
+Destination JSON path.
+.PARAMETER RootPassword
+Photon root password embedded for installation.
+.PARAMETER BuildPassword
+Temporary image-build account password.
+.PARAMETER BuildUsername
+Temporary image-build account name.
+.PARAMETER StaticAddress
+Optional builder static address.
+.PARAMETER StaticNetmask
+Optional builder static netmask.
+.PARAMETER StaticGateway
+Optional builder static gateway.
+.PARAMETER StaticDns
+Optional builder DNS servers.
+.PARAMETER AdditionalPackages
+Provider-specific Photon packages.
+.PARAMETER PostInstallCommands
+Provider-specific post-install commands.
+.PARAMETER InstallDiskLayout
+Provider disk-discovery policy used by the installer.
+#>
 function New-AtlasoPhotonKickstart {
     param(
         [Parameter(Mandatory = $true)][string]$Path,
@@ -141,6 +196,12 @@ function New-AtlasoPhotonKickstart {
     [System.IO.File]::WriteAllText($Path, $json, [System.Text.UTF8Encoding]::new($false))
 }
 
+<#
+.SYNOPSIS
+Split a Packer checksum into algorithm and digest.
+.PARAMETER Checksum
+Packer checksum expression.
+#>
 function Split-AtlasoPackerChecksum {
     param([Parameter(Mandatory = $true)][string]$Checksum)
 
@@ -154,6 +215,14 @@ function Split-AtlasoPackerChecksum {
     }
 }
 
+<#
+.SYNOPSIS
+Return a file digest in normalized hexadecimal form.
+.PARAMETER Path
+File to hash.
+.PARAMETER Algorithm
+Digest algorithm.
+#>
 function Get-AtlasoFileHashHex {
     param(
         [Parameter(Mandatory = $true)][string]$Path,
@@ -177,6 +246,14 @@ function Get-AtlasoFileHashHex {
     }
 }
 
+<#
+.SYNOPSIS
+Return whether a file matches a Packer checksum.
+.PARAMETER Path
+File to validate.
+.PARAMETER Checksum
+Expected Packer checksum.
+#>
 function Test-AtlasoFileChecksum {
     param(
         [Parameter(Mandatory = $true)][string]$Path,
@@ -188,6 +265,20 @@ function Test-AtlasoFileChecksum {
     return $actual -eq $parsed.Hash
 }
 
+<#
+.SYNOPSIS
+Resolve or download the checksum-pinned Photon source ISO.
+.PARAMETER UrlOrPath
+Source URL or local ISO path.
+.PARAMETER Checksum
+Expected source checksum.
+.PARAMETER BuildDirectory
+Provider build workspace.
+.PARAMETER PackerDirectory
+Packer template directory.
+.PARAMETER SharedSourceDirectory
+Shared verified-image cache.
+#>
 function Resolve-AtlasoPhotonSourceIso {
     param(
         [Parameter(Mandatory = $true)][string]$UrlOrPath,
@@ -242,6 +333,16 @@ function Resolve-AtlasoPhotonSourceIso {
     return $downloadPath
 }
 
+<#
+.SYNOPSIS
+Create a Photon ISO with the Atlaso unattended installer embedded.
+.PARAMETER SourceIso
+Verified Photon source ISO.
+.PARAMETER KickstartJson
+Generated Photon kickstart document.
+.PARAMETER OutputIso
+Destination remastered ISO.
+#>
 function New-AtlasoRemasteredPhotonIso {
     param(
         [Parameter(Mandatory = $true)][string]$SourceIso,
@@ -260,11 +361,25 @@ function New-AtlasoRemasteredPhotonIso {
     }
 }
 
+<#
+.SYNOPSIS
+Convert a value to a Packer HCL literal.
+.PARAMETER Value
+Value to serialize.
+#>
 function ConvertTo-AtlasoHclLiteral {
     param([AllowNull()]$Value)
     return ConvertTo-Json -InputObject $Value -Compress
 }
 
+<#
+.SYNOPSIS
+Write generated Packer variables as HCL.
+.PARAMETER Path
+Destination variable-file path.
+.PARAMETER Variables
+Variables to serialize.
+#>
 function Write-AtlasoPackerVarFile {
     param(
         [Parameter(Mandatory = $true)][string]$Path,
@@ -278,6 +393,12 @@ function Write-AtlasoPackerVarFile {
     [System.IO.File]::WriteAllLines($Path, [string[]]$lines, [System.Text.UTF8Encoding]::new($false))
 }
 
+<#
+.SYNOPSIS
+Return whether an existing file can be opened for writing.
+.PARAMETER Path
+File to probe.
+#>
 function Test-AtlasoFileWritable {
     param([Parameter(Mandatory = $true)][string]$Path)
 
@@ -293,6 +414,12 @@ function Test-AtlasoFileWritable {
     }
 }
 
+<#
+.SYNOPSIS
+Resolve a prepared ISO path while preserving actionable lock failures.
+.PARAMETER Path
+Requested prepared ISO path.
+#>
 function Resolve-AtlasoPreparedIsoPath {
     param([Parameter(Mandatory = $true)][string]$Path)
 
@@ -309,6 +436,12 @@ function Resolve-AtlasoPreparedIsoPath {
     return $fallback
 }
 
+<#
+.SYNOPSIS
+Create a collision-resistant fallback prepared-ISO path.
+.PARAMETER Path
+Original prepared ISO path.
+#>
 function New-AtlasoFallbackPreparedIsoPath {
     param([Parameter(Mandatory = $true)][string]$Path)
 
@@ -319,6 +452,66 @@ function New-AtlasoFallbackPreparedIsoPath {
     return (Join-Path $directory "$leaf-$stamp$extension")
 }
 
+<#
+.SYNOPSIS
+Build or validate a supported Atlaso Photon image with Packer.
+.PARAMETER IsoUrl
+Pinned Photon source URL or path.
+.PARAMETER IsoChecksum
+Expected Photon source checksum.
+.PARAMETER PackerDirectory
+Provider Packer template directory.
+.PARAMETER SshPassword
+Temporary Packer SSH password.
+.PARAMETER BootstrapAdminPassword
+Initial appliance administrator password.
+.PARAMETER VmName
+Builder virtual-machine name.
+.PARAMETER OutputDirectory
+Packer artifact output directory.
+.PARAMETER SshHost
+Optional explicit Packer SSH target.
+.PARAMETER SharedSourceDirectory
+Shared verified Photon ISO cache.
+.PARAMETER BuilderStaticIp
+Temporary builder address.
+.PARAMETER BuilderStaticNetmask
+Temporary builder netmask.
+.PARAMETER BuilderStaticGateway
+Temporary builder gateway.
+.PARAMETER BuilderStaticDns
+Temporary builder DNS servers.
+.PARAMETER FinalMgmtAddress
+Final appliance management address policy.
+.PARAMETER FinalMgmtGateway
+Final appliance management gateway.
+.PARAMETER FinalMgmtInterface
+Final appliance management interface.
+.PARAMETER PipGlobalIndex
+Optional pip index configuration.
+.PARAMETER PipGlobalIndexUrl
+Optional pip index URL.
+.PARAMETER PreparedIsoPath
+Optional remastered ISO destination.
+.PARAMETER PackerOnError
+Packer failure-handling mode.
+.PARAMETER GuestPackages
+Provider-specific guest packages.
+.PARAMETER GuestPostInstallCommands
+Provider-specific guest post-install commands.
+.PARAMETER InstallDiskLayout
+Provider install-disk discovery policy.
+.PARAMETER AdditionalPackerVariables
+Provider-specific Packer variables.
+.PARAMETER KeepExistingOutput
+Preserve an existing artifact directory.
+.PARAMETER EnableRealSystemAdapters
+Enable real system adapters in the image.
+.PARAMETER ValidateOnly
+Validate without building an artifact.
+.PARAMETER PrepareIsoOnly
+Stop after remastering the Photon ISO.
+#>
 function Invoke-AtlasoPhotonImageBuild {
     param(
         [Parameter(Mandatory = $true)][string]$IsoUrl,

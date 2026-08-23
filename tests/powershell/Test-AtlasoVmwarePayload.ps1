@@ -1,3 +1,11 @@
+<#
+.SYNOPSIS
+Verify canonical and rejected VMware payload layouts and provenance.
+.PARAMETER RepositoryRoot
+Atlaso repository root.
+.PARAMETER OutputDirectory
+Isolated test-output directory.
+#>
 param(
     [Parameter(Mandatory = $true)]
     [string]$RepositoryRoot,
@@ -12,6 +20,14 @@ $ErrorActionPreference = 'Stop'
 $modulePath = Join-Path $RepositoryRoot 'scripts\windows\vmware\Atlaso.VmwarePayload.psm1'
 Import-Module $modulePath -Force
 
+<#
+.SYNOPSIS
+Write a compact synthetic VMDK descriptor.
+.PARAMETER Path
+Destination descriptor path.
+.PARAMETER CapacityBytes
+Declared virtual capacity.
+#>
 function Write-TestVmdk {
     param(
         [Parameter(Mandatory = $true)][string]$Path,
@@ -29,6 +45,16 @@ function Write-TestVmdk {
     )
 }
 
+<#
+.SYNOPSIS
+Write a synthetic two-payload VMX.
+.PARAMETER Path
+Destination VMX path.
+.PARAMETER UnitZero
+Unit-zero VMDK filename.
+.PARAMETER UnitOne
+Unit-one VMDK filename.
+#>
 function Write-TestVmx {
     param(
         [Parameter(Mandatory = $true)][string]$Path,
@@ -46,6 +72,18 @@ function Write-TestVmx {
     [System.IO.File]::WriteAllLines($Path, $content, [System.Text.UTF8Encoding]::new($false))
 }
 
+<#
+.SYNOPSIS
+Write synthetic role-bound payload provenance.
+.PARAMETER VmxPath
+VMX whose bytes are recorded.
+.PARAMETER Layout
+Verified payload layout records.
+.PARAMETER SchemaVersion
+Provenance schema version.
+.PARAMETER ReverseRoles
+Swap recorded roles to test rejection.
+#>
 function Write-TestProvenance {
     param(
         [Parameter(Mandatory = $true)][string]$VmxPath,

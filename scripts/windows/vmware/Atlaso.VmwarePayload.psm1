@@ -1,8 +1,21 @@
+<#
+.SYNOPSIS
+Validate canonical Atlaso VMware payload layout and build provenance.
+#>
+
 Set-StrictMode -Version Latest
 
 $script:PhotonPayloadBytes = 40GB
 $script:SystemPayloadBytes = 20GB
 
+<#
+.SYNOPSIS
+Return one unambiguous VMX assignment value.
+.PARAMETER Path
+VMX file to inspect.
+.PARAMETER Key
+VMX assignment key.
+#>
 function Get-AtlasoVmxValue {
     param(
         [Parameter(Mandatory = $true)][string]$Path,
@@ -22,6 +35,12 @@ function Get-AtlasoVmxValue {
     return $parsed.Groups['value'].Value
 }
 
+<#
+.SYNOPSIS
+Return the virtual capacity declared by an embedded VMDK descriptor.
+.PARAMETER Path
+VMDK file to inspect.
+#>
 function Get-AtlasoVmdkCapacityBytes {
     param([Parameter(Mandatory = $true)][string]$Path)
 
@@ -45,6 +64,14 @@ function Get-AtlasoVmdkCapacityBytes {
     return $capacityBytes
 }
 
+<#
+.SYNOPSIS
+Return the verified Photon and system-content payload layout.
+.PARAMETER VmxPath
+VMX file whose payload topology is validated.
+.PARAMETER RequireExactlyTwoVmdks
+Require the image directory to contain only the two payload VMDKs.
+#>
 function Get-AtlasoVmwarePayloadLayout {
     param(
         [Parameter(Mandatory = $true)][string]$VmxPath,
@@ -100,6 +127,14 @@ function Get-AtlasoVmwarePayloadLayout {
     return @($layout)
 }
 
+<#
+.SYNOPSIS
+Verify role-bound payload provenance against current artifact bytes.
+.PARAMETER VmxPath
+VMX file whose provenance is validated.
+.PARAMETER ProvenancePath
+Optional explicit provenance document path.
+#>
 function Assert-AtlasoVmwarePayloadProvenance {
     param(
         [Parameter(Mandatory = $true)][string]$VmxPath,

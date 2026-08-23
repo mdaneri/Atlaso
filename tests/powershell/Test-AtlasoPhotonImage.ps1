@@ -1,3 +1,11 @@
+<#
+.SYNOPSIS
+Verify provider-specific Atlaso Photon kickstart generation.
+.PARAMETER RepositoryRoot
+Atlaso repository root.
+.PARAMETER OutputDirectory
+Isolated test-output directory.
+#>
 param(
     [Parameter(Mandatory = $true)]
     [string]$RepositoryRoot,
