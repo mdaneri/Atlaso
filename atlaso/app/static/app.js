@@ -13022,6 +13022,20 @@ function validApplianceUpdateAvailabilityPayload(payload) {
     }
     return value === "" || !previousSpace;
   };
+  const validBoundedString = (value, limit, { nonempty = false } = {}) => {
+    if (typeof value !== "string") return false;
+    let length = 0;
+    for (const _character of value) {
+      length += 1;
+      if (length > limit) return false;
+    }
+    return !nonempty || length > 0;
+  };
+  const validRepositoryName = (value) => (
+    validBoundedString(value, 160, { nonempty: true })
+    && !pythonWhitespacePattern.test(value[0])
+    && !pythonWhitespacePattern.test(value[value.length - 1])
+  );
   const validReleaseNotesUrl = (value) => {
     if (!validText(value, releaseNotesUrlLimit)) return false;
     if (!value) return true;
@@ -13122,13 +13136,13 @@ function validApplianceUpdateAvailabilityPayload(payload) {
     && sourceSync.source_kind === expectedSourceKinds.get(streamId)
     && Array.isArray(sourceSync.repositories)
     && sourceSync.repositories.length <= 6
-    && sourceSync.repositories.every((repository) => validText(repository, 120))
+    && sourceSync.repositories.every(validRepositoryName)
     && Number.isInteger(sourceSync.repository_count)
     && sourceSync.repository_count >= sourceSync.repositories.length
     && sourceSync.repository_count <= 1_000_000
     && Number.isInteger(sourceSync.repositories_omitted)
     && sourceSync.repositories_omitted === sourceSync.repository_count - sourceSync.repositories.length
-    && validText(sourceSync.reason, 1200)
+    && validBoundedString(sourceSync.reason, 1200)
     && (sourceSync.required || sourceSync.ready)
     && (sourceSync.ready === (sourceSync.state === "ready"))
     && (sourceSync.required || (

@@ -403,13 +403,14 @@ test("validated polling creates, updates, and removes the positive indicator", a
 
   const blockedStreams = availabilityStreams(["powershell_modules"]);
   const blockedPowerShell = blockedStreams.find((stream) => stream.id === "powershell_modules");
+  const longRepositoryName = "R".repeat(160);
   blockedPowerShell.source_sync = {
     ...blockedPowerShell.source_sync,
     ready: false,
     state: "required",
-    repositories: ["PSGallery"],
-    repository_count: 1,
-    reason: "Synchronize repositories for PSGallery before checking or installing PowerShell Modules.",
+    repositories: ["Internal  Mirror", longRepositoryName],
+    repository_count: 2,
+    reason: `Synchronize repositories for Internal  Mirror, ${longRepositoryName} before checking or installing PowerShell Modules.`,
   };
   scenario.setFetchResponse({
     ok: true,
@@ -628,7 +629,7 @@ test("failed polling preserves only an existing positive indicator", async () =>
     (stream) => { stream.check_required = "false"; },
     (stream) => { stream.source_sync.ready = "true"; },
     (stream) => { stream.source_sync.state = "required"; },
-    (stream) => { stream.source_sync.repositories = ["x".repeat(121)]; },
+    (stream) => { stream.source_sync.repositories = ["x".repeat(161)]; },
     (stream) => { stream.source_sync.repository_count = -1; },
     (stream) => { stream.source_sync.reason = "x".repeat(1201); },
     (stream) => {
