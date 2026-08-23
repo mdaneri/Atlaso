@@ -1539,6 +1539,7 @@ def test_vmware_raw_vmx_workflows_inject_complete_first_boot_ovf_environment_bef
     assert "Write-Host" not in helper
     assert "Assert-AtlasoWorkstationEd25519PublicKey" in helper
     assert "Resolve-AtlasoWorkstationAdminSshPublicKey" in helper
+    assert "[System.Xml.XmlConvert]::VerifyXmlChars($normalized)" in helper
 
     assert "Atlaso.WorkstationFirstBoot.ps1" in test_vm
     assert "New-AtlasoWorkstationOvfEnvironment" in test_vm

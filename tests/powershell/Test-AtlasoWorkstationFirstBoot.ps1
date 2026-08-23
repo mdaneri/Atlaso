@@ -95,6 +95,8 @@ try {
 
     Assert-Throws { Assert-AtlasoWorkstationEd25519PublicKey -PublicKey 'ssh-rsa invalid' } 'Non-Ed25519 keys must fail.'
     Assert-Throws { Assert-AtlasoWorkstationEd25519PublicKey -PublicKey "$validKey`nsecond" } 'Multiline keys must fail.'
+    $xmlInvalidKey = "$validKey$([char]0xFFFE)"
+    Assert-Throws { Assert-AtlasoWorkstationEd25519PublicKey -PublicKey $xmlInvalidKey } 'XML-invalid key comments must fail.'
     Assert-Throws { Resolve-AtlasoWorkstationAdminSshPublicKey -Path (Join-Path $temporaryRoot 'missing.pub') } 'Missing key files must fail.'
 }
 finally {

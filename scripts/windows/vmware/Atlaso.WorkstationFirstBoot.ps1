@@ -138,6 +138,12 @@ function Assert-AtlasoWorkstationEd25519PublicKey {
     if ($parts.Count -eq 3 -and $parts[2]) {
         $normalized += " $($parts[2])"
     }
+    try {
+        [void][System.Xml.XmlConvert]::VerifyXmlChars($normalized)
+    }
+    catch {
+        throw 'The SSH public key contains characters that cannot be represented in the OVF environment.'
+    }
     return $normalized
 }
 
