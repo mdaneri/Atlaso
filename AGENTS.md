@@ -37,6 +37,25 @@ Include every linked issue and pull-request identifier in the first progress upd
 reporting surfaces accept free-form traceability metadata. When a required output schema does not permit extra metadata,
 follow the schema and do not block solely to add the identifiers.
 
+## Sol and Spark Delegation
+
+Atlaso defines the project-scoped `spark_worker` in `.codex/agents/spark-worker.toml` with
+`gpt-5.3-codex-spark` at medium reasoning effort. The primary Sol agent should delegate small, fully specified work to
+that worker when doing so materially improves speed or keeps noisy exploration and validation out of the primary
+context. Suitable work includes localized edits, repository searches, mechanical refactoring, isolated unit tests,
+Ruff or mypy cleanup, documentation and docstrings, and narrowly scoped UI tweaks whose interaction and reference are
+already decided.
+
+Sol retains architecture and design decisions, ambiguous or difficult debugging, cross-component and integration
+work, security-sensitive changes, task decomposition, review of every delegated result, final validation, and delivery.
+Every delegated prompt must state the exact scope, owned files, expected result, relevant checks, and the Mandatory
+Agent Startup Gate. UI prompts must also include the Mandatory UI Design Guide Gate, interaction classification, and
+reused Atlaso reference. Spark must not commit, push, change GitHub state, or delegate further.
+
+Run multiple Spark workers only for independent tasks with non-overlapping file ownership. Sol must inspect and
+integrate every returned diff before relying on it. If Spark is unavailable in the current account or runtime, Sol
+performs the work directly, reports that delegation was unavailable, and never substitutes another model.
+
 ## Mandatory UI Design Guide Gate
 
 Before planning or implementing any user-interface change, read the

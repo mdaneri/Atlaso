@@ -12,6 +12,9 @@ from scripts.check_repo import (
     PRIVATE_REMEDIATION_REMOTE_MARKER,
     REMOTE_BRANCH_LEASE_MARKER,
     REQUIRED_POLICY_MARKERS,
+    SPARK_WORKER_AGENT_PATH,
+    SPARK_WORKER_REQUIRED_INSTRUCTION_MARKERS,
+    SPARK_WORKER_REQUIRED_VALUES,
     TERMINAL_CLEANUP_ORDER_ANCHOR,
     TERMINAL_CLEANUP_ORDER_LINES,
     TERMINAL_CLEANUP_SECTION_ANCHORS,
@@ -19,10 +22,168 @@ from scripts.check_repo import (
     TITLE_CONTROL_UNAVAILABLE_MARKER,
     WORKTREE_REMOVAL_RESUME_MARKER,
     check_agent_policy_gate,
+    check_spark_worker_agent,
     check_ui_pattern_foundation,
     collect_files,
     is_checkable,
 )
+
+
+def write_spark_worker_agent(
+    root: Path,
+    *,
+    values: dict[str, str] | None = None,
+    description: str = "Fast worker for focused Atlaso tasks.",
+    instructions: str | None = None,
+    sandbox_mode: str | None = None,
+) -> None:
+    """Persist a Spark worker fixture.
+
+    Args:
+        root: Repository or filesystem root searched by the operation.
+        values: Required scalar values to override for the fixture.
+        description: Human-facing agent description.
+        instructions: Developer instructions or the required marker set by default.
+        sandbox_mode: Optional sandbox override used to exercise inheritance checks.
+    """
+    config_values = {**SPARK_WORKER_REQUIRED_VALUES, **(values or {})}
+    instruction_text = instructions or "\n".join(
+        SPARK_WORKER_REQUIRED_INSTRUCTION_MARKERS
+    )
+    path = root / SPARK_WORKER_AGENT_PATH
+    path.parent.mkdir(parents=True, exist_ok=True)
+    lines = [
+        f'name = "{config_values["name"]}"',
+        f'description = "{description}"',
+        f'model = "{config_values["model"]}"',
+        (
+            'model_reasoning_effort = '
+            f'"{config_values["model_reasoning_effort"]}"'
+        ),
+    ]
+    if sandbox_mode is not None:
+        lines.append(f'sandbox_mode = "{sandbox_mode}"')
+    lines.extend(("", 'developer_instructions = """', instruction_text, '"""'))
+    path.write_text("\n".join(lines) + "\n", encoding="utf-8")
+
+
+def test_spark_worker_agent_accepts_required_contract(tmp_path: Path) -> None:
+    """Verify that the project Spark worker contract is accepted.
+
+    Args:
+        tmp_path: Temporary directory provided by pytest for isolated filesystem state.
+    """
+    write_spark_worker_agent(tmp_path)
+
+    assert check_spark_worker_agent(tmp_path) == []
+
+
+def test_spark_worker_agent_rejects_missing_file(tmp_path: Path) -> None:
+    """Verify that the project Spark worker must remain checked in.
+
+    Args:
+        tmp_path: Temporary directory provided by pytest for isolated filesystem state.
+    """
+    findings = check_spark_worker_agent(tmp_path)
+
+    assert len(findings) == 1
+    assert findings[0].path == tmp_path / SPARK_WORKER_AGENT_PATH
+    assert findings[0].message == "required Spark worker agent is missing or unreadable"
+
+
+def test_spark_worker_agent_rejects_invalid_toml(tmp_path: Path) -> None:
+    """Verify that malformed custom-agent configuration fails clearly.
+
+    Args:
+        tmp_path: Temporary directory provided by pytest for isolated filesystem state.
+    """
+    path = tmp_path / SPARK_WORKER_AGENT_PATH
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text('name = "unterminated\n', encoding="utf-8")
+
+    findings = check_spark_worker_agent(tmp_path)
+
+    assert len(findings) == 1
+    assert findings[0].message.startswith("invalid Spark worker TOML:")
+
+
+def test_spark_worker_agent_rejects_incorrect_required_values(
+    tmp_path: Path,
+) -> None:
+    """Verify that the worker keeps its stable identity, model, and effort.
+
+    Args:
+        tmp_path: Temporary directory provided by pytest for isolated filesystem state.
+    """
+    replacements = {
+        "name": "other_worker",
+        "model": "gpt-5.6-luna",
+        "model_reasoning_effort": "low",
+    }
+
+    for key, replacement in replacements.items():
+        write_spark_worker_agent(tmp_path, values={key: replacement})
+
+        findings = check_spark_worker_agent(tmp_path)
+
+        assert len(findings) == 1
+        assert findings[0].message == (
+            f"Spark worker {key} must equal {SPARK_WORKER_REQUIRED_VALUES[key]!r}"
+        )
+
+
+def test_spark_worker_agent_rejects_blank_required_text(tmp_path: Path) -> None:
+    """Verify that the agent description and instructions remain substantive.
+
+    Args:
+        tmp_path: Temporary directory provided by pytest for isolated filesystem state.
+    """
+    write_spark_worker_agent(tmp_path, description="", instructions=" ")
+
+    findings = check_spark_worker_agent(tmp_path)
+
+    assert {finding.message for finding in findings} == {
+        "Spark worker description must be non-empty",
+        "Spark worker developer_instructions must be non-empty",
+    }
+
+
+def test_spark_worker_agent_rejects_missing_safety_instruction(
+    tmp_path: Path,
+) -> None:
+    """Verify that the worker cannot lose a required scope restriction.
+
+    Args:
+        tmp_path: Temporary directory provided by pytest for isolated filesystem state.
+    """
+    missing_marker = "Do not make architecture decisions."
+    instructions = "\n".join(
+        marker
+        for marker in SPARK_WORKER_REQUIRED_INSTRUCTION_MARKERS
+        if marker != missing_marker
+    )
+    write_spark_worker_agent(tmp_path, instructions=instructions)
+
+    findings = check_spark_worker_agent(tmp_path)
+
+    assert len(findings) == 1
+    assert findings[0].message == (
+        "required Spark worker instruction marker is missing: " + missing_marker
+    )
+
+
+def test_spark_worker_agent_rejects_sandbox_override(tmp_path: Path) -> None:
+    """Verify that the worker inherits the parent permission mode.
+
+    Args:
+        tmp_path: Temporary directory provided by pytest for isolated filesystem state.
+    """
+    write_spark_worker_agent(tmp_path, sandbox_mode="workspace-write")
+
+    findings = check_spark_worker_agent(tmp_path)
+
+    assert len(findings) == 1
+    assert findings[0].message == "Spark worker must inherit the parent sandbox mode"
 
 
 def test_deployment_assets_are_checkable_text() -> None:
@@ -111,6 +272,32 @@ def test_agent_policy_gate_rejects_missing_marker(tmp_path: Path) -> None:
     assert findings[0].path == agents_path
     assert findings[0].message == (
         "required agent policy marker is missing: delegating agent"
+    )
+
+
+def test_agent_policy_gate_rejects_missing_spark_delegation_policy(
+    tmp_path: Path,
+) -> None:
+    """Verify that Sol and Spark responsibilities remain in canonical policy.
+
+    Args:
+        tmp_path: Temporary directory provided by pytest for isolated filesystem state.
+    """
+    write_policy_files(tmp_path)
+    agents_path = tmp_path / "AGENTS.md"
+    agents_path.write_text(
+        agents_path.read_text(encoding="utf-8").replace(
+            "## Sol and Spark Delegation", ""
+        ),
+        encoding="utf-8",
+    )
+
+    findings = check_agent_policy_gate(tmp_path)
+
+    assert len(findings) == 1
+    assert findings[0].path == agents_path
+    assert findings[0].message == (
+        "required agent policy marker is missing: ## Sol and Spark Delegation"
     )
 
 

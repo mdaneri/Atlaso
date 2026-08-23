@@ -29,6 +29,30 @@ status: current
 - If a policy is unavailable, conflicting, or unclear, stop before implementation and ask for maintainer direction.
   Never silently bypass a policy.
 
+## Sol and Spark Delegation
+
+Atlaso's project-scoped custom agent is `spark_worker`, defined in `.codex/agents/spark-worker.toml` with
+`gpt-5.3-codex-spark` and medium reasoning effort. Codex loads project agents from `.codex/agents/`; each agent requires
+a name, description, and developer instructions, and can pin its model and reasoning effort. The Atlaso agent omits
+sandbox and tool overrides so it inherits the primary session's permissions. See the official
+[Codex subagent configuration](https://learn.chatgpt.com/docs/agent-configuration/subagents) and
+[Codex model guide](https://learn.chatgpt.com/docs/models). Spark availability depends on the current account and
+runtime.
+
+- Sol should delegate small, fully specified work when it improves speed or context isolation: localized edits,
+  repository searches, mechanical refactoring, isolated unit tests, Ruff or mypy cleanup, documentation and docstrings,
+  and narrowly scoped UI tweaks whose interaction and reference are already decided.
+- Sol owns architecture and design, ambiguous or difficult debugging, cross-component and integration decisions,
+  security-sensitive work, task decomposition, review and integration of every delegated result, final validation, and
+  repository delivery.
+- Every Spark prompt must name exact scope, owned files, expected output, relevant checks, and the Mandatory Agent
+  Startup Gate. UI prompts must also include the Mandatory UI Design Guide Gate, interaction classification, and reused
+  Atlaso reference. The worker must not commit, push, change GitHub state, or spawn another agent.
+- Parallel Spark work is permitted only for independent tasks with non-overlapping file ownership. Sol reviews every
+  returned diff before using it.
+- If Spark is unavailable, Sol performs the work directly and reports the unavailable delegation. Do not silently
+  substitute another model.
+
 ## Mandatory UI Design Guide Gate
 
 - Any change affecting templates, authored CSS, browser JavaScript, controls, layouts, data grids, dialogs, wizards, or

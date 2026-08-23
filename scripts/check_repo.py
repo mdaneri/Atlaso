@@ -91,6 +91,29 @@ FORBIDDEN_PAGE_WIZARD_CONTROLLER_MARKERS = (
     "dataset.atlasoWizardNav",
 )
 
+SPARK_WORKER_AGENT_PATH = Path(".codex/agents/spark-worker.toml")
+SPARK_WORKER_REQUIRED_VALUES = {
+    "name": "spark_worker",
+    "model": "gpt-5.3-codex-spark",
+    "model_reasoning_effort": "medium",
+}
+SPARK_WORKER_REQUIRED_INSTRUCTION_MARKERS = (
+    "Mandatory Agent Startup Gate",
+    "Mandatory UI Design Guide Gate",
+    "Do not make architecture decisions.",
+    "Do not broaden the assigned scope.",
+    "Do not handle security-sensitive work",
+    "cross-component integration decisions",
+    "final verification",
+    "Do not spawn or delegate to other agents.",
+    "Do not commit, push",
+    "change GitHub state.",
+    "Run focused tests",
+    "Ruff",
+    "mypy",
+    "Return a concise summary",
+)
+
 REQUIRED_POLICY_MARKERS = {
     Path("AGENTS.md"): (
         "## Mandatory Agent Startup Gate",
@@ -99,6 +122,10 @@ REQUIRED_POLICY_MARKERS = {
         "Short description · Issue #<issue> · PR #<pr>",
         "### Unsupported title controls",
         "### Schema-constrained reporting",
+        "## Sol and Spark Delegation",
+        "`spark_worker`",
+        "`gpt-5.3-codex-spark`",
+        "never substitutes another model",
         "## Mandatory UI Design Guide Gate",
         "CONTRIBUTING.md",
         "CODE_OF_CONDUCT.md",
@@ -214,6 +241,10 @@ REQUIRED_POLICY_MARKERS = {
     Path("docs/contribute/agent-policies.md"): (
         "# Detailed agent policies",
         "## Mandatory Agent Startup Gate",
+        "## Sol and Spark Delegation",
+        "`spark_worker`",
+        "`gpt-5.3-codex-spark`",
+        "Do not silently",
         "## Repository Delivery Workflow",
         "private vulnerability remediation",
         "temporary private fork",
@@ -805,6 +836,57 @@ def check_agent_policy_gate(root: Path) -> list[Finding]:
                         + " -> ".join(ordered_markers),
                     )
                 )
+    return findings
+
+
+def check_spark_worker_agent(root: Path) -> list[Finding]:
+    """Require Atlaso's project-scoped Spark worker contract.
+
+    Args:
+        root: Repository or filesystem root searched by the operation.
+    """
+    path = root / SPARK_WORKER_AGENT_PATH
+    text, error = read_text(path)
+    if error is not None:
+        return [Finding(path, "required Spark worker agent is missing or unreadable")]
+    assert text is not None
+
+    try:
+        config = tomllib.loads(text)
+    except tomllib.TOMLDecodeError as exc:
+        return [Finding(path, f"invalid Spark worker TOML: {exc}")]
+
+    findings: list[Finding] = []
+    for key, expected in SPARK_WORKER_REQUIRED_VALUES.items():
+        if config.get(key) != expected:
+            findings.append(
+                Finding(path, f"Spark worker {key} must equal {expected!r}")
+            )
+
+    description = config.get("description")
+    if not isinstance(description, str) or not description.strip():
+        findings.append(Finding(path, "Spark worker description must be non-empty"))
+
+    instructions = config.get("developer_instructions")
+    if not isinstance(instructions, str) or not instructions.strip():
+        findings.append(
+            Finding(path, "Spark worker developer_instructions must be non-empty")
+        )
+    else:
+        for marker in SPARK_WORKER_REQUIRED_INSTRUCTION_MARKERS:
+            if marker not in instructions:
+                findings.append(
+                    Finding(
+                        path,
+                        "required Spark worker instruction marker is missing: "
+                        + marker,
+                    )
+                )
+
+    if "sandbox_mode" in config:
+        findings.append(
+            Finding(path, "Spark worker must inherit the parent sandbox mode")
+        )
     return findings
 
 
@@ -2512,6 +2594,7 @@ def main(argv: list[str] | None = None) -> int:
     for path in files:
         findings.extend(check_file(path))
     findings.extend(check_agent_policy_gate(ROOT))
+    findings.extend(check_spark_worker_agent(ROOT))
     findings.extend(check_ui_pattern_foundation(ROOT))
 
     if findings:
