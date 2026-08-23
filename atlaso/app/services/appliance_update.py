@@ -879,6 +879,121 @@ def read_appliance_file(path_value: str) -> dict[str, Any]:
     return {"path": path_value, "available": True, "content": text, "sha256": hashlib.sha256(text.encode("utf-8")).hexdigest()}
 
 
+def appliance_update_evidence_state(
+    update_jobs: list[Job],
+    *,
+    update_info_path: str = APPLIANCE_UPDATE_INFO_PATH,
+    finalizer_path: str = APPLIANCE_UPDATE_FINALIZER_PATH,
+) -> dict[str, Any]:
+    """Return the operator-facing durable update transaction evidence state.
+
+    This projection is intentionally read-only. It does not participate in, or
+    replace, the release activation, receipt, finalizer, rollback, or recovery
+    gates enforced by the worker and privileged helper.
+
+    Args:
+        update_jobs: Recent Appliance Update jobs used to identify completed,
+            non-dry-run installation attempts.
+        update_info_path: Durable helper update evidence path.
+        finalizer_path: Durable Atlaso release finalizer path.
+    """
+
+    def _read_json_object(path_value: str) -> tuple[str, dict[str, Any], str]:
+        try:
+            content = Path(path_value).read_text(encoding="utf-8")
+        except FileNotFoundError:
+            return "missing", {}, ""
+        except OSError:
+            return "unreadable", {}, ""
+        try:
+            payload = json.loads(content)
+        except (json.JSONDecodeError, UnicodeError):
+            return "malformed", {}, content
+        if not isinstance(payload, dict) or not str(payload.get("status") or "").strip():
+            return "malformed", {}, content
+        return "available", payload, content
+
+    qualifying_job = False
+    for job in update_jobs:
+        if job.status not in {JobStatus.SUCCEEDED.value, JobStatus.FAILED.value}:
+            continue
+        try:
+            config = json.loads(job.task_config_json or "{}")
+            result = json.loads(job.result or "{}")
+        except json.JSONDecodeError:
+            continue
+        if not isinstance(config, dict) or not isinstance(result, dict):
+            continue
+        selected = config.get("selected_streams")
+        if (
+            config.get("mode") == "run"
+            and isinstance(selected, list)
+            and any(str(stream) in UPDATE_STREAMS for stream in selected)
+            and result.get("dry_run") is False
+        ):
+            qualifying_job = True
+            break
+
+    finalizer_state, finalizer, _finalizer_content = _read_json_object(finalizer_path)
+    evidence_expected = qualifying_job or finalizer_state != "missing"
+    evidence_state, evidence, content = _read_json_object(update_info_path)
+
+    if evidence_state == "missing" and not evidence_expected:
+        return {
+            "state": "not_recorded",
+            "label": "Not recorded",
+            "available": False,
+            "content": "",
+            "message": "No qualifying update transaction has recorded durable evidence yet.",
+        }
+    if evidence_state != "available":
+        reason = "is absent even though a completed update transaction expects it"
+        if evidence_state == "unreadable":
+            reason = "cannot be read"
+        elif evidence_state == "malformed":
+            reason = "is not a valid updater evidence record"
+        return {
+            "state": "needs_attention",
+            "label": "Needs attention",
+            "available": False,
+            "content": "",
+            "message": (
+                f"Durable update transaction evidence {reason}. "
+                "Review the Appliance Update task and atlaso-helper service journal before the next installation."
+            ),
+        }
+
+    inconsistent = finalizer_state in {"unreadable", "malformed"}
+    if finalizer_state == "available":
+        evidence_job_id = str(evidence.get("job_id") or "")
+        finalizer_job_id = str(finalizer.get("job_id") or "")
+        if evidence_job_id and finalizer_job_id and evidence_job_id != finalizer_job_id:
+            inconsistent = True
+        evidence_status = str(evidence.get("status") or "")
+        finalizer_status = str(finalizer.get("status") or "")
+        if evidence_job_id and evidence_status != finalizer_status:
+            inconsistent = True
+    if inconsistent:
+        return {
+            "state": "needs_attention",
+            "label": "Needs attention",
+            "available": False,
+            "content": "",
+            "message": (
+                "Durable update transaction evidence is inconsistent with the release finalizer. "
+                "Review the Appliance Update task and atlaso-helper service journal before the next installation."
+            ),
+        }
+    return {
+        "state": "available",
+        "label": "Available",
+        "available": True,
+        "content": content,
+        "sha256": hashlib.sha256(content.encode("utf-8")).hexdigest(),
+        "message": "Recorded release installation, compatibility, finalizer, and recovery evidence.",
+    }
+
+
 def photon_repository_details(repository_dir: Path | None = None) -> list[dict[str, str]]:
     """Return photon repository details.
 

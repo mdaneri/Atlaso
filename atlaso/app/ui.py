@@ -236,6 +236,7 @@ from atlaso.app.services.appliance_update import (
     DEFAULT_ATLASO_MANIFEST_URL,
     UPDATE_STREAM_LABELS,
     UPDATE_STREAMS,
+    appliance_update_evidence_state,
     clear_installed_update_availability,
     current_version_info,
     ensure_appliance_update_job_steps,
@@ -11257,6 +11258,12 @@ def appliance_update_context(
         .order_by(desc(Job.created_at))
         .limit(8)
     ).scalars().all()
+    evidence_jobs = db.execute(
+        select(Job).where(
+            Job.status.in_([JobStatus.SUCCEEDED.value, JobStatus.FAILED.value]),
+            _appliance_update_mode_filter_clause("run"),
+        )
+    ).scalars().all()
     sources = source_rows(db)
     packages = managed_package_rows(db)
     source_payloads = [update_source_payload(source) for source in sources]
@@ -11335,7 +11342,7 @@ def appliance_update_context(
         "recent_update_tasks": [_task_row(job) for job in recent_jobs],
         "task_component_filter_options": _task_component_filter_options(db),
         "appliance_update_info_path": APPLIANCE_UPDATE_INFO_PATH,
-        "update_info_file": read_appliance_file(APPLIANCE_UPDATE_INFO_PATH),
+        "update_info_file": appliance_update_evidence_state(evidence_jobs),
         "update_settings_errors": validate_update_settings(settings),
         "system_adapter_dry_run": get_settings().dry_run_system_adapters,
     }

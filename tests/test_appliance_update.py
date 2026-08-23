@@ -6,6 +6,7 @@ import json
 import logging
 from datetime import datetime, timezone
 from pathlib import Path
+from types import SimpleNamespace
 
 from sqlalchemy import select
 
@@ -47,6 +48,118 @@ def load_helper_module():
     module = importlib.util.module_from_spec(spec)
     loader.exec_module(module)
     return module
+
+
+def test_update_evidence_state_distinguishes_normal_absence_and_read_only_checks(tmp_path):
+    """Keep source, fresh packaged, and read-only states neutral without fabricating evidence."""
+    from atlaso.app.services.appliance_update import appliance_update_evidence_state
+
+    missing_info = tmp_path / "update-info"
+    missing_finalizer = tmp_path / "finalizer.json"
+    read_only_job = SimpleNamespace(
+        status="succeeded",
+        task_config_json=json.dumps({"mode": "check", "selected_streams": ["atlaso_release"]}),
+        result=json.dumps({"dry_run": False}),
+    )
+
+    source_state = appliance_update_evidence_state(
+        [], update_info_path=str(missing_info), finalizer_path=str(missing_finalizer)
+    )
+    packaged_state = appliance_update_evidence_state(
+        [], update_info_path=str(missing_info), finalizer_path=str(missing_finalizer)
+    )
+    check_state = appliance_update_evidence_state(
+        [read_only_job], update_info_path=str(missing_info), finalizer_path=str(missing_finalizer)
+    )
+
+    assert source_state["state"] == "not_recorded"
+    assert packaged_state["label"] == "Not recorded"
+    assert check_state["state"] == "not_recorded"
+    assert "No such file" not in check_state["message"]
+
+
+def test_update_evidence_state_validates_available_and_actionable_records(tmp_path):
+    """Expose valid evidence and flag missing, unreadable, malformed, or inconsistent records."""
+    from atlaso.app.services.appliance_update import appliance_update_evidence_state
+
+    info_path = tmp_path / "update-info"
+    finalizer_path = tmp_path / "finalizer.json"
+    install_job = SimpleNamespace(
+        status="succeeded",
+        task_config_json=json.dumps({"mode": "run", "selected_streams": ["atlaso_release"]}),
+        result=json.dumps({"dry_run": False}),
+    )
+
+    expected_missing = appliance_update_evidence_state(
+        [install_job], update_info_path=str(info_path), finalizer_path=str(finalizer_path)
+    )
+    assert expected_missing["state"] == "needs_attention"
+    assert "No such file" not in expected_missing["message"]
+
+    info_path.write_text('{"status":"succeeded","job_id":"job-1"}\n', encoding="utf-8")
+    available = appliance_update_evidence_state(
+        [install_job], update_info_path=str(info_path), finalizer_path=str(finalizer_path)
+    )
+    assert available["state"] == "available"
+    assert available["label"] == "Available"
+    assert available["content"].startswith('{"status"')
+
+    info_path.write_text("not-json", encoding="utf-8")
+    malformed = appliance_update_evidence_state(
+        [], update_info_path=str(info_path), finalizer_path=str(finalizer_path)
+    )
+    assert malformed["state"] == "needs_attention"
+
+    unreadable_path = tmp_path / "update-info-directory"
+    unreadable_path.mkdir()
+    unreadable = appliance_update_evidence_state(
+        [], update_info_path=str(unreadable_path), finalizer_path=str(finalizer_path)
+    )
+    assert unreadable["state"] == "needs_attention"
+
+    info_path.write_text('{"status":"succeeded","job_id":"job-1"}\n', encoding="utf-8")
+    finalizer_path.write_text('{"status":"succeeded","job_id":"job-2"}\n', encoding="utf-8")
+    inconsistent = appliance_update_evidence_state(
+        [], update_info_path=str(info_path), finalizer_path=str(finalizer_path)
+    )
+    assert inconsistent["state"] == "needs_attention"
+    assert "inconsistent" in inconsistent["message"]
+
+    info_path.write_text('{"status":"failed","job_id":"job-2"}\n', encoding="utf-8")
+    inconsistent_status = appliance_update_evidence_state(
+        [], update_info_path=str(info_path), finalizer_path=str(finalizer_path)
+    )
+    assert inconsistent_status["state"] == "needs_attention"
+
+
+def test_update_evidence_panel_accessibility_states(client, monkeypatch):
+    """Render neutral evidence without an alert and actionable evidence with one."""
+    from atlaso.app import ui
+
+    login(client)
+    states = {
+        "state": "not_recorded",
+        "label": "Not recorded",
+        "available": False,
+        "content": "",
+        "message": "No qualifying update transaction has recorded durable evidence yet.",
+    }
+    monkeypatch.setattr(ui, "appliance_update_evidence_state", lambda _jobs: states)
+    neutral = client.get("/ui/management/appliance-update")
+    panel = neutral.text.split("<h2>Update transaction evidence</h2>", 1)[1].split("</div>\n    </div>", 1)[0]
+    assert "Not recorded" in panel
+    assert 'role="alert"' not in panel
+    assert "No such file" not in neutral.text
+
+    states.update(
+        state="needs_attention",
+        label="Needs attention",
+        message="Durable update transaction evidence cannot be read. Review the Appliance Update task.",
+    )
+    actionable = client.get("/ui/management/appliance-update")
+    panel = actionable.text.split("<h2>Update transaction evidence</h2>", 1)[1].split("</aside>", 1)[0]
+    assert "Needs attention" in panel
+    assert 'role="alert"' in panel
 
 
 def seed_available_confirmations(streams: list[str]) -> None:
@@ -1380,7 +1493,9 @@ def test_software_source_and_managed_module_lifecycle(client):
     assert "Staged update manifest" in grouped_page.text
     assert 'data-config-preview-open' in grouped_page.text
     assert '<div class="config-preview">' not in grouped_page.text
-    assert grouped_page.text.index("Update Info") < grouped_page.text.index('data-appliance-update-validation-panel')
+    assert grouped_page.text.index("Update transaction evidence") < grouped_page.text.index(
+        'data-appliance-update-validation-panel'
+    )
     source_actions = grouped_page.text.index('class="appliance-update-source-actions"')
     source_list = grouped_page.text.index('class="apply-unit-list"', source_actions)
     assert source_actions < source_list
