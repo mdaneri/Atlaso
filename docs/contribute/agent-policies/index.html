@@ -4718,8 +4718,10 @@ runtime.</p>
   apply behavior, and client-observable results.</li>
 <li>For the default VMware test appliance, resolve the current IP with <code>scripts/windows/vmware/get-atlaso-vm-ip.ps1</code> and
   check web reachability with <code>Invoke-WebRequest https://&lt;vmware-ip&gt;/openapi.json -SkipCertificateCheck</code>. Use the
-  bootstrap <code>admin</code> account for SSH connections and run privileged checks through password-backed <code>sudo</code>; do not assume
-  root SSH is enabled on VMware test appliances. Check SSH/service state with <code>systemctl status atlaso --no-pager</code>,
+  bootstrap <code>admin</code> account for SSH connections. The normal <code>create-atlaso-test-vm.ps1</code> wrapper installs the current
+  Windows user's existing <code>.ssh/id_ed25519.pub</code> and a separate test-only passwordless-sudo rule unless explicitly
+  skipped, so key/agent-backed privileged checks use <code>sudo -n</code>; it must not generate a key or extend this authority to
+  lifecycle or exported appliances. Root SSH remains disabled. Check SSH/service state with <code>systemctl status atlaso --no-pager</code>,
   <code>journalctl -u atlaso -n 120 --no-pager</code>, and relevant real-state commands such as <code>nft list ruleset</code>,
   <code>resolvectl query &lt;name&gt;</code>, <code>getent hosts &lt;name&gt;</code>, <code>ip link</code>, <code>systemctl status ntpd --no-pager</code>, or
   <code>systemctl status systemd-timesyncd --no-pager</code>.</li>
@@ -5472,6 +5474,11 @@ runtime.</p>
 <li>Before committing branch work, run <code>python scripts/check_repo.py</code> or install the local hook with <code>pre-commit install</code>
   so changed Python, Jinja/HTML, Markdown, CSS, JavaScript, JSON, TOML, YAML, PowerShell, and SVG files get
   syntax/content checks. The hook is a fast pre-commit guard and does not replace focused tests.</li>
+<li>Treat comment-based help and rationale-focused comments as the PowerShell authoring standard. Every new or changed
+  <code>.ps1</code> or <code>.psm1</code> file requires file/module help and help for every function, including nested helpers, with a concise
+  <code>.SYNOPSIS</code> and one <code>.PARAMETER</code> entry per declared parameter. Explain non-obvious safety ordering, trust boundaries,
+  and platform behavior without narrating self-evident commands. Run <code>scripts/check_powershell_help.ps1</code> against the
+  base checkout; CI applies the same incremental whole-file gate to every changed PowerShell source.</li>
 <li>Before finalizing UI/backend changes, run focused tests for the touched area when available. Do not run the complete
   Python test suite locally; GitHub CI owns it. Also run <code>python -m compileall atlaso</code> after broad
   Python/template-adjacent changes.</li>
