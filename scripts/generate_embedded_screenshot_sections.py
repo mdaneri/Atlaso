@@ -28,7 +28,7 @@ PRIMARY_IMAGES = {
     "operate/appliance-settings.md": "settings-clean-desktop.webp",
     "operate/tasks.md": "tasks-clean-desktop.webp",
     "operate/appliance-console.md": "appliance-console-applied.webp",
-    "operate/appliance-update.md": "appliance-update-clean-desktop.webp",
+    "operate/appliance-update.md": "appliance-update-repository-setup-required-desktop.webp",
     "operate/backup-restore.md": "backup-restore-clean-desktop.webp",
     "operate/automation.md": "automation-clean-desktop.webp",
     "operate/networking.md": "physical-interfaces-clean-desktop.webp",

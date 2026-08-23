@@ -5139,6 +5139,20 @@ textarea {
   gap: 10px;
 }
 
+.update-stream-card.repository-setup-required {
+  border-color: #c47b10;
+  background: #fff9ed;
+}
+
+.update-stream-card.repository-setup-required > .apply-unit-select {
+  cursor: not-allowed;
+}
+
+.update-stream-card.repository-setup-required > .apply-unit-select,
+.update-stream-card.repository-setup-required .update-stream-result > small {
+  color: var(--text);
+}
+
 .update-stream-card > .apply-unit-select {
   cursor: pointer;
 }
@@ -5160,6 +5174,10 @@ textarea {
 
 .update-stream-result > .status-pill,
 .update-stream-result > .text-link {
+  justify-self: start;
+}
+
+.update-stream-remediation {
   justify-self: start;
 }
 

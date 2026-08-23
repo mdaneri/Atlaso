@@ -495,11 +495,16 @@ Terminal order:
   Update task reaches a terminal state; do not restore a separate submission-result card.
 - Persist bounded per-stream check state under `appliance_update.availability.v1`, separating the latest attempt from
   the latest successful confirmation. Retain a prior confirmed update after a failed recheck, but make configuration
-  fingerprint mismatches stale and exclude them from global indication and manual installation. Admit a manual check
-  whenever at least one stream is selected and no Appliance Update task is active; unsynchronized Photon or PowerShell
-  repositories fail inside their read-only child with **Synchronize repositories** remediation. Require every selected
-  manual-install stream to have a successful, current latest attempt, require at least one confirmed update, enforce
-  package-client prerequisites, and apply the same gate server-side. Scheduled installs retain check-before-apply.
+  fingerprint mismatches stale and exclude them from global indication and manual installation. Disable an
+  unsynchronized Photon or PowerShell stream with an accessible **Repository setup required** reason and a direct path
+  to its Update Sources context and audited **Synchronize repositories** action. Reject blocked stream identifiers
+  server-side for checks and installations while preserving independent ready streams. Refresh readiness promptly after
+  synchronization, prevent older browser responses from overwriting a newer state, replace an obsolete prerequisite
+  failure with **Check required** after success, and retain actionable non-secret failure guidance after a failed sync.
+  Admit a manual check whenever at least one ready stream is selected and no Appliance Update task is active. Require
+  every selected manual-install stream to have a successful, current latest attempt, require at least one confirmed
+  update, enforce package-client prerequisites, and apply the same gate server-side. Scheduled installs retain
+  check-before-apply.
 - Render the authenticated topbar **Update available** link from server state and refresh its sanitized, browser-only,
   no-store projection every 60 seconds only while visible, after visibility returns, and after terminal update tasks.
   Exclude that route from OpenAPI and never expose commands, credentials, or raw helper output. Clear confirmations only

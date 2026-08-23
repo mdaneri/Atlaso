@@ -22,9 +22,9 @@ rollback result, and final outcome.
 
 This verified appliance view provides visual orientation before you begin.
 
-![Atlaso Appliance Update page in the clean-appliance desktop viewport.](../assets/screenshots/appliance-update-clean-desktop.webp)
+![Atlaso Appliance Update showing PowerShell Modules disabled with Repository setup required and an Open Update Sources action.](../assets/screenshots/appliance-update-repository-setup-required-desktop.webp)
 
-*Figure: Appliance Update in the verified clean-appliance desktop state.*
+*Figure: Appliance Update with a repository-backed stream blocked until synchronization.*
 
 <!-- END GENERATED INTERFACE OVERVIEW -->
 
@@ -127,22 +127,26 @@ explicitly writes only Atlaso-owned tdnf and PowerShell client configuration thr
 repository sync** task. Starting synchronization keeps the Update Sources workspace in place and refreshes only the
 shared **Recent update tasks** grid while the task runs. **Saved, not synchronized** means the
 desired repository is stored in Atlaso but has not yet been validated or written into its appliance package client.
-Atlaso records synchronization results per repository. A selected Photon or PowerShell check is still admitted when a
-referenced repository has not been synchronized. Its child performs read-only validation, records **Check failed**, and
-points to **Synchronize repositories** instead of silently preventing task creation. Installation remains blocked until
-every selected stream has a successful, current check and all package-client prerequisites are valid. When one
-repository fails, other repositories that synchronized successfully remain ready. Selecting an older task for detail
-never changes current readiness; only durable check and synchronization completion updates the actions in place.
-Streams that do not depend on the failed package synchronization remain available independently.
+Atlaso records synchronization results per repository. When a Photon or PowerShell stream depends on a repository that
+is not synchronized, its checkbox is unavailable and the card displays **Repository setup required** with the exact
+repository prerequisite. **Open Update Sources** opens the matching repository group and moves keyboard focus to
+**Synchronize repositories**. The browser and server both reject that blocked stream for checks and installations;
+ready streams remain independently selectable and runnable.
+
+While synchronization runs, the blocked card reports **Synchronizing repositories**. A successful task refreshes
+readiness without a page reload, enables the stream, and replaces an obsolete prerequisite failure with **Check
+required**. A failed task keeps the stream blocked, names the affected repository, and directs the operator to review
+the recent task, correct the reported repository problem, and retry. Selecting an older task for detail never changes
+current readiness; only durable synchronization completion does. Repository names and remediation remain bounded and
+non-secret.
 Source details also show when synchronization succeeded or failed. Signed Atlaso sources are read directly, are checked
 during each update, and do not configure pip or report package-client synchronization state.
 
 Synchronization resolves each enabled PowerShell repository host before invoking PowerShellGet. A DNS failure names the
 repository and unresolved host directly in the task error instead of presenting PowerShellGet's generic invalid-URI
 message or only an aggregate step failure. It also performs a repository lookup after registration, so a reachable host
-with an invalid API path fails synchronization. PowerShell installation requires every referenced repository to have a
-successful synchronization result; a read-only check instead reports the mismatch as an actionable failed child, and
-saved edits cannot silently reuse stale package-client state.
+with an invalid API path fails synchronization. PowerShell checks and installations require every referenced repository
+to have a successful synchronization result; saved edits cannot silently reuse stale package-client state.
 
 Each source detail presents repository identity first, then its location or discovered runtime data, followed by
 read-only **Repository behavior** values. Desired-state guidance and synchronization state remain together in a
@@ -177,10 +181,13 @@ evidence** rail card
 reports whether durable updater evidence is available and opens the full JSON through the shared preview modal, matching
 Validation instead of rendering unbounded output inline.
 
-**Check for updates** is enabled whenever at least one stream is selected and no Appliance Update task is active.
+**Check for updates** is enabled whenever at least one ready stream is selected and no Appliance Update task is active.
 **Install updates** additionally requires every selected stream's latest attempt to be a successful, non-stale check,
 at least one selected stream to have a confirmed update, and all installation prerequisites to be valid. The exact
-disabled reason is displayed beside the actions, and the server enforces the same gate for manual submissions.
+disabled reason is displayed beside the actions, and the server enforces the same gate for manual submissions. If no
+ready stream is selected, both actions are disabled and their shared accessible description directs the operator to
+repository setup. Availability refreshes use request ordering so an older response cannot overwrite a newer
+post-synchronization state.
 Scheduled installations remain independent of browser state and retain their check-before-apply execution.
 
 When any non-stale stream has a confirmed update, authenticated pages render **Update available** beside the account
@@ -485,8 +492,18 @@ These captures show responsive layouts and useful operational states referenced 
 
 ### Appliance Update
 
+![Atlaso Appliance Update page in the clean-appliance desktop viewport.](../assets/screenshots/appliance-update-clean-desktop.webp)
+
+*Figure: Appliance Update in the verified clean-appliance desktop state.*
+
 ![Atlaso Appliance Update page in the clean-appliance responsive viewport.](../assets/screenshots/appliance-update-clean-responsive.webp)
 
 *Figure: Appliance Update in the verified clean-appliance responsive state.*
+
+### Appliance Update: Appliance Update Streams
+
+![Atlaso Appliance Update responsive view showing the disabled PowerShell Modules stream, repository prerequisite, and remediation action.](../assets/screenshots/appliance-update-repository-setup-required-responsive.webp)
+
+*Figure: Appliance Update repository readiness at the responsive viewport.*
 
 <!-- END GENERATED ADDITIONAL SCREENSHOTS -->
