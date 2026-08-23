@@ -12960,17 +12960,34 @@ function updateApplianceUpdateResultSummary() {
   description.textContent = descriptionText;
 }
 
+function createApplianceUpdateAvailabilityIndicator() {
+  const template = document.querySelector("[data-update-availability-template]");
+  if (!(template instanceof HTMLTemplateElement)) return null;
+  const prototype = template.content.querySelector("[data-update-availability-prototype]");
+  if (!(prototype instanceof HTMLAnchorElement)) return null;
+  const indicator = prototype.cloneNode(true);
+  indicator.removeAttribute("data-update-availability-prototype");
+  indicator.setAttribute("data-update-availability-indicator", "");
+  template.before(indicator);
+  return indicator;
+}
+
 function renderApplianceUpdateAvailability(payload) {
   atlasoUpdateAvailability = payload && Array.isArray(payload.streams)
     ? payload
     : { available: false, affected_stream_count: 0, streams: [] };
-  const indicator = document.querySelector("[data-update-availability-indicator]");
-  const count = document.querySelector("[data-update-availability-count]");
-  if (indicator instanceof HTMLAnchorElement) {
-    const affected = Number(atlasoUpdateAvailability.affected_stream_count || 0);
-    indicator.hidden = !atlasoUpdateAvailability.available;
-    indicator.setAttribute("aria-label", `Update available for ${affected} update ${affected === 1 ? "stream" : "streams"}`);
-    if (count instanceof HTMLElement) count.textContent = String(affected);
+  const affected = Number(atlasoUpdateAvailability.affected_stream_count || 0);
+  const available = atlasoUpdateAvailability.available === true && Number.isFinite(affected) && affected > 0;
+  let indicator = document.querySelector("[data-update-availability-indicator]");
+  if (!available) {
+    if (indicator instanceof HTMLAnchorElement) indicator.remove();
+  } else {
+    if (!(indicator instanceof HTMLAnchorElement)) indicator = createApplianceUpdateAvailabilityIndicator();
+    if (indicator instanceof HTMLAnchorElement) {
+      const count = indicator.querySelector("[data-update-availability-count]");
+      indicator.setAttribute("aria-label", `Update available for ${affected} update ${affected === 1 ? "stream" : "streams"}`);
+      if (count instanceof HTMLElement) count.textContent = String(affected);
+    }
   }
   atlasoUpdateAvailability.streams.forEach((stream) => {
     const card = document.querySelector(`[data-appliance-update-stream-card="${CSS.escape(stream.id || "")}"]`);
@@ -13065,7 +13082,12 @@ async function refreshApplianceUpdateAvailability() {
       if (!response.ok) throw new Error("Unable to refresh update availability.");
       return response.json();
     })
-    .then(renderApplianceUpdateAvailability)
+    .then((payload) => {
+      if (!payload || !Array.isArray(payload.streams)) {
+        throw new Error("Unable to refresh update availability.");
+      }
+      renderApplianceUpdateAvailability(payload);
+    })
     .finally(() => {
       atlasoUpdateAvailabilityRequest = null;
     });
@@ -13086,8 +13108,8 @@ function scheduleApplianceUpdateAvailabilityRefresh() {
 }
 
 function initializeApplianceUpdateAvailability() {
-  const indicator = document.querySelector("[data-update-availability-indicator]");
-  if (!(indicator instanceof HTMLAnchorElement)) return;
+  const template = document.querySelector("[data-update-availability-template]");
+  if (!(template instanceof HTMLTemplateElement)) return;
   const form = document.querySelector("[data-appliance-update-submit-form]");
   if (form instanceof HTMLFormElement) {
     try {

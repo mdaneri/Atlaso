@@ -755,7 +755,25 @@ def test_no_javascript_install_can_submit_valid_subset_from_mixed_results(client
     assert response.json()["selected_streams"] == ["photon_os"]
 
 
-def test_global_update_indicator_renders_and_has_visibility_aware_refresh(client):
+def test_global_update_indicator_is_omitted_for_initial_zero_state(client):
+    """Omit every live indicator artifact when no stream has an update.
+
+    Args:
+        client: Test application HTTP client.
+    """
+    login(client)
+
+    page = client.get("/ui/management/dashboard")
+
+    assert page.status_code == 200
+    assert "data-update-availability-template" in page.text
+    assert "data-update-availability-prototype" in page.text
+    assert "data-update-availability-indicator" not in page.text
+    assert "Update available for 0 update streams" not in page.text
+    assert "data-update-availability-count>0</span>" not in page.text
+
+
+def test_global_update_indicator_renders_positive_state_and_visibility_aware_refresh(client):
     """Render the count and retain the polling accessibility contract.
 
     Args:

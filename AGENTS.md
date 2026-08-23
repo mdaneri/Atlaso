@@ -495,9 +495,10 @@ The following cross-cutting boundaries always apply:
   evidence. Admit unsynchronized Photon and PowerShell checks so their child records actionable **Synchronize
   repositories** remediation, but require fresh successful non-stale checks, at least one confirmed update, and valid
   prerequisites for manual installation. Keep scheduled check-before-apply independent. Render the authenticated global
-  indicator from sanitized no-store browser state, poll it only while visible and after terminal update tasks, and clear
-  only successfully installed streams. Optional signed release summaries must be bounded commit subjects and release
-  links must be credential-free HTTPS.
+  indicator from sanitized no-store browser state, poll it only while visible and after terminal update tasks, omit it
+  completely from visual and accessibility trees at zero current confirmed updates, preserve only valid last-known
+  positive state through transient polling failures, and clear only successfully installed streams. Optional signed
+  release summaries must be bounded commit subjects and release links must be credential-free HTTPS.
 - A signed Atlaso Release update succeeds only after durable candidate activation is proven: `current`, the compatibility
   virtualenv, signed receipt, finalizer, internal OpenAPI version, nginx management-front-door version, maintenance
   cleanup, nginx validation/reload, and required service state must agree. Restart the worker under a provisional

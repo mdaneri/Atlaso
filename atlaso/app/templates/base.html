@@ -145,17 +145,31 @@
           {% if identity %}
             <div class="topbar-actions">
               {% if identity.can("admin:all") %}
-                <a
-                  class="topbar-update-indicator"
-                  href="{{ management_ui_path('/appliance-update') }}#appliance-update-streams"
-                  aria-label="Update available for {{ global_update_availability.affected_stream_count|default(0) }} update {{ 'stream' if global_update_availability.affected_stream_count|default(0) == 1 else 'streams' }}"
-                  data-update-availability-indicator
-                  {{ 'hidden' if not global_update_availability.available|default(false) else '' }}
-                >
-                  <svg class="button-icon" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path d="M12 3v12"/><path d="m7 10 5 5 5-5"/><path d="M5 21h14"/></svg>
-                  <span>Update available</span>
-                  <span class="status-pill warn" data-update-availability-count>{{ global_update_availability.affected_stream_count|default(0) }}</span>
-                </a>
+                {% set update_available = global_update_availability.available|default(false) %}
+                {% set update_count = global_update_availability.affected_stream_count|default(0) %}
+                {% if update_available and update_count > 0 %}
+                  <a
+                    class="topbar-update-indicator"
+                    href="{{ management_ui_path('/appliance-update') }}#appliance-update-streams"
+                    aria-label="Update available for {{ update_count }} update {{ 'stream' if update_count == 1 else 'streams' }}"
+                    data-update-availability-indicator
+                  >
+                    <svg class="button-icon" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path d="M12 3v12"/><path d="m7 10 5 5 5-5"/><path d="M5 21h14"/></svg>
+                    <span>Update available</span>
+                    <span class="status-pill warn" data-update-availability-count>{{ update_count }}</span>
+                  </a>
+                {% endif %}
+                <template data-update-availability-template>
+                  <a
+                    class="topbar-update-indicator"
+                    href="{{ management_ui_path('/appliance-update') }}#appliance-update-streams"
+                    data-update-availability-prototype
+                  >
+                    <svg class="button-icon" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path d="M12 3v12"/><path d="m7 10 5 5 5-5"/><path d="M5 21h14"/></svg>
+                    <span>Update available</span>
+                    <span class="status-pill warn" data-update-availability-count></span>
+                  </a>
+                </template>
               {% endif %}
               <details class="account-menu" data-account-menu>
                 <summary class="account-menu-trigger" title="Roles: {{ identity.roles|join(', ') }}" aria-label="Open account menu for {{ identity.username }}">
@@ -376,7 +390,7 @@
     <link rel="stylesheet" href="/static/vendor/monaco/atlaso-monaco.min.css?v=atlaso-monaco-20260806-7">
     <script src="/static/vendor/monaco/atlaso-monaco.min.js?v=atlaso-monaco-20260806-7"></script>
     <script src="/static/ui-routes.js?v=issue-287-1"></script>
-    <script src="/static/app.js?v=issue-469-1"></script>
+    <script src="/static/app.js?v=issue-471-1"></script>
     <script src="/static/pwa.js?v=issue-287-2"></script>
     {% block extra_scripts %}{% endblock %}
   </body>
