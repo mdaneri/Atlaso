@@ -3737,8 +3737,8 @@ while keeping each stream's current and target state, bounded <strong>What's new
 Photon stores at most 100 parsed package changes and shows at most 20 in the browser. PowerShell results distinguish a
 new install, an upgrade, an older side-by-side target, and a module that is already current; Atlaso never claims that an
 installation removes an existing module version. Signed Atlaso release manifests may supply a one-line summary and a
-credential-free HTTPS release-notes link. Older signed v2 manifests fall back to the version and commit without
-fabricating release notes.</p>
+credential-free HTTPS release-notes link limited to 2,048 characters before durable storage or browser polling. Older
+signed v2 manifests fall back to the version and commit without fabricating release notes.</p>
 <h2 id="release-sources-and-channels">Release sources and channels<a class="headerlink" href="#release-sources-and-channels" title="Permanent link">&para;</a></h2>
 <p>GitHub is the default distribution origin:</p>
 <ul>
@@ -3843,9 +3843,15 @@ Scheduled installations remain independent of browser state and retain their che
 menu with the affected-stream count. The link opens Update Streams. Atlaso refreshes the sanitized browser-only state
 every 60 seconds only while the page is visible, immediately after visibility returns, and after a newly submitted
 update task reaches a terminal state. The endpoint uses <code>Cache-Control: no-store</code>, is excluded from OpenAPI, and never
-returns commands, credentials, or raw helper output. Successful installation clears only the confirmations for streams
-that actually succeeded; failed or skipped streams keep their indication until a successful installation or recheck
-changes it.</p>
+returns commands, credentials, or raw helper output. When the current confirmed count is zero, the control is absent
+from both the page and its accessibility tree. A later confirmed update creates it with the current count, and a
+confirmed transition back to zero removes it. A transient, structurally invalid, or noncanonical polling response
+preserves a valid last-known positive indicator but never creates a zero-count alert. Successful installation clears
+only the confirmations for streams that
+actually succeeded; failed or skipped streams keep their indication until a successful installation or recheck changes
+it.</p>
+<p>Browser polling also requires every confirmed <strong>Up to date</strong> stream to report zero changes and no <strong>What's new</strong> rows;
+contradictory payloads are treated as transient failures and cannot clear the last-known positive indicator.</p>
 <h2 id="trust-contract">Trust contract<a class="headerlink" href="#trust-contract" title="Permanent link">&para;</a></h2>
 <p>Appliances contain named Ed25519 public keys under:</p>
 <div class="language-text highlight"><pre><span></span><code><span id="__span-2-1"><a id="__codelineno-2-1" name="__codelineno-2-1" href="#__codelineno-2-1"></a>/etc/atlaso/update-trust.d/&lt;key-id&gt;.pem

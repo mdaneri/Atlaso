@@ -4486,8 +4486,12 @@
   check-before-apply.</li>
 <li>Render the authenticated topbar <strong>Update available</strong> link from server state and refresh its sanitized, browser-only,
   no-store projection every 60 seconds only while visible, after visibility returns, and after terminal update tasks.
-  Exclude that route from OpenAPI and never expose commands, credentials, or raw helper output. Clear confirmations only
-  for successfully installed streams.</li>
+  Render no live control when the current confirmed count is zero, create or update exactly one control for a positive
+  count, and remove it again on a confirmed transition to zero so no focusable, visual, tooltip, badge, or screen-reader
+  zero state remains. A transient, structurally invalid, or noncanonical polling response may preserve only a valid
+  last-known positive control. Exclude that route from OpenAPI and never expose commands, credentials, or raw helper
+  output. Require every browser-polled <code>up_to_date</code> confirmation to carry zero changes. Clear confirmations only for
+  successfully installed streams.</li>
 <li>Appliance Update sources are repository-style desired runtime-maintenance configuration. Support multiple named
   Photon, PowerShell, and HTTPS Atlaso release sources, using secondary signed Atlaso channels as failover sources. Keep
   repository tabs inside collapsible ecosystem sections and managed PowerShell modules in their own one-tab-per-module
@@ -4512,7 +4516,7 @@
 <li>Atlaso releases must come from signed v2 channel pointers and immutable signed release manifests verified by named
   Ed25519 public keys under <code>/etc/atlaso/update-trust.d</code>. Optional release <code>summary</code> and <code>release_notes_url</code> fields
   remain backward compatible; bound the summary to one line derived from the release commit subject and accept only
-  credential-free HTTPS notes URLs. Install the exact ABI wheelhouse offline with
+  credential-free HTTPS notes URLs of at most 2,048 characters. Install the exact ABI wheelhouse offline with
   <code>PIP_CONFIG_FILE=/dev/null</code>, <code>--no-index</code>, and hash verification under <code>/opt/atlaso/releases/&lt;version&gt;</code>, switch
   <code>/opt/atlaso/current</code> atomically, and preserve <code>/opt/atlaso/.venv</code> as a compatibility symlink. Restore the previous
   release, helper/systemd files, and SQLite snapshot on failure. Inspect Photon transactions before mutation, use the
