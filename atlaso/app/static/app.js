@@ -12974,6 +12974,35 @@ function createApplianceUpdateAvailabilityIndicator() {
 
 function validApplianceUpdateAvailabilityPayload(payload) {
   const expectedStreamIds = new Set(["photon_os", "powershell_modules", "atlaso_release"]);
+  const validText = (value) => typeof value === "string";
+  const validChange = (change) => (
+    change
+    && typeof change === "object"
+    && ["name", "current", "target", "action", "summary"].every((field) => (
+      change[field] === undefined || validText(change[field])
+    ))
+  );
+  const validConfirmed = (confirmed) => confirmed === null || (
+    confirmed
+    && typeof confirmed === "object"
+    && typeof confirmed.update_available === "boolean"
+    && validText(confirmed.current)
+    && validText(confirmed.target)
+    && Number.isInteger(confirmed.change_count)
+    && confirmed.change_count >= 0
+    && Array.isArray(confirmed.changes)
+    && confirmed.changes.every(validChange)
+    && typeof confirmed.details_incomplete === "boolean"
+    && validText(confirmed.summary)
+    && validText(confirmed.release_notes_url)
+  );
+  const validLastAttempt = (attempt) => (
+    attempt
+    && typeof attempt === "object"
+    && typeof attempt.success === "boolean"
+    && ["", "available", "up_to_date", "failed"].includes(attempt.state)
+    && validText(attempt.remediation)
+  );
   const streamIds = Array.isArray(payload?.streams)
     ? payload.streams.map((stream) => stream?.id)
     : [];
@@ -12983,11 +13012,10 @@ function validApplianceUpdateAvailabilityPayload(payload) {
     && payload.streams.every((stream) => (
       stream
       && typeof stream === "object"
+      && typeof stream.label === "string"
       && typeof stream.stale === "boolean"
-      && (stream.confirmed === null || (
-        typeof stream.confirmed === "object"
-        && typeof stream.confirmed.update_available === "boolean"
-      ))
+      && validLastAttempt(stream.last_attempt)
+      && validConfirmed(stream.confirmed)
     ));
   const confirmedUpdateCount = streamsValid
     ? payload.streams.filter((stream) => (

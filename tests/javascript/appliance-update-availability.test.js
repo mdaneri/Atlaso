@@ -136,8 +136,23 @@ function availabilityIndicatorScenario() {
 function availabilityStreams(availableIds = []) {
   return ["photon_os", "powershell_modules", "atlaso_release"].map((id) => ({
     id,
+    label: id,
     stale: false,
-    confirmed: { update_available: availableIds.includes(id) },
+    last_attempt: {
+      success: true,
+      state: availableIds.includes(id) ? "available" : "up_to_date",
+      remediation: "",
+    },
+    confirmed: {
+      update_available: availableIds.includes(id),
+      current: "current",
+      target: "target",
+      change_count: 0,
+      changes: [],
+      details_incomplete: false,
+      summary: "",
+      release_notes_url: "",
+    },
   }));
 }
 
@@ -340,6 +355,18 @@ test("failed polling preserves only an existing positive indicator", async () =>
   positive.setFetchResponse({
     ok: true,
     json: () => Promise.resolve({ available: false, affected_stream_count: 0, streams: [] }),
+  });
+  await assert.rejects(positive.context.refresh(), /Unable to refresh update availability/);
+  assert.equal(positive.indicator, lastKnown);
+  positive.setFetchResponse({
+    ok: true,
+    json: () => Promise.resolve({
+      available: true,
+      affected_stream_count: 1,
+      streams: availabilityStreams(["atlaso_release"]).map((stream, index) => (
+        index === 0 ? { ...stream, last_attempt: { state: "up_to_date", remediation: "" } } : stream
+      )),
+    }),
   });
   await assert.rejects(positive.context.refresh(), /Unable to refresh update availability/);
   assert.equal(positive.indicator, lastKnown);
