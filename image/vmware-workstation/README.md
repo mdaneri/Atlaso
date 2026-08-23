@@ -90,24 +90,17 @@ The wrapper does not build or embed Inventory Linux. New templates leave it unin
 **Download latest** to retrieve the signed independent release when needed. Contributors building Inventory Linux
 itself use `scripts/windows/common/Build-AtlasoInventoryLinux.ps1` and its `-WslDistribution <name>` option.
 
-Before `packer build -force` replaces the Workstation output directory, the wrapper routes any existing output VMX
-through the checked cleanup module. Current Workstation automation has no supported unregister-only operation, so the
-module stabilizes the running and registration inventories and the VMX set before using checked `vmrun deleteVM` for a
-registered target. It first detaches VMDK devices resolved outside the exact cleanup root, protecting reused depot,
-backup, and other shared disks; any failed deletion transition restores a surviving VMX byte-for-byte. After provider
-deletion, cleanup revalidates stable registration state and the recursive VMX set immediately before removing remaining
-files, with an identity-aware running read followed only by registration snapshots around a repeated VMX-set check. A
-target registered only through a filesystem
-alias fails closed before VMX replacement. Stale-row replacement verifies its displaced backup and rolls back a
-concurrent provider replacement, and rejects library IDs with multiple config owners. Multi-VM cleanup repeats immutable
-identity, running, stable registration, and VMX-set checks before each `deleteVM`. VMX detachment and restoration compare
-the displaced identity and roll back a concurrent replacement; stale paths are rechecked before inventory replacement.
-The displaced VMX backup remains protected through post-replacement validation and is restored on validation failure.
-Surviving or recreated original paths must retain their immutable identity through both post-delete VMX-set gates.
-Cleanup remains scoped to this image target's configured output directory.
-With the Workstation UI closed, the module verifies VMX deletion and running state, then atomically removes stale library
-rows only for canonical missing VMX paths beneath the validated artifact scope. Missing registrations elsewhere remain
-fatal.
+Before `packer build -force` replaces the Workstation output directory, the wrapper routes every in-root VMX through the
+checked cleanup module. The module validates the exact non-reparse-point output root, captures its filesystem identity
+and contents, stops running targets, and uses checked `vmrun deleteVM` only for existing registered targets. It detaches
+VMDKs resolved outside the exact root before provider deletion so shared depot, backup, and other external disks remain
+protected. A new or replaced root entry blocks recursive removal, and any failed provider transition preserves the
+remaining artifacts. Already-stopped and already-unregistered targets are idempotent.
+
+Unrelated Workstation library state is not a cleanup prerequisite. `inventory.vmls` is read only for an exact in-scope
+registration and for the exceptional stale Atlaso row whose VMX is already missing. With the Workstation UI closed, that
+narrow fallback removes only the scoped stale record after a byte comparison and leaves unrelated malformed, missing,
+or inconsistent registrations untouched.
 
 For lifecycle/demo images that should use real appliance adapters:
 
