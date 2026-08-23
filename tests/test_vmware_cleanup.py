@@ -41,6 +41,8 @@ def _write_fake_vmrun(
     stop_sticky: bool = False,
     delete_sticky: bool = False,
     replace_after_delete: bool = False,
+    rewrite_on_list: int = 0,
+    rewrite_disk: Path | None = None,
     inventory_suffix: str = "",
 ) -> tuple[Path, dict[str, str], Path, Path]:
     """Create a stateful fake vmrun command and Workstation inventory."""
@@ -124,6 +126,14 @@ def update_inventory(paths: list[str]) -> None:
     )
 
 if command == "list":
+    count_path = state / "list-count.txt"
+    list_count = int(count_path.read_text(encoding="utf-8")) + 1 if count_path.exists() else 1
+    count_path.write_text(str(list_count), encoding="utf-8")
+    if list_count == int(os.environ["ATLASO_FAKE_VMRUN_REWRITE_ON_LIST"]):
+        rewrite_target = Path(os.environ["ATLASO_FAKE_VMRUN_REWRITE_TARGET"])
+        rewrite_disk = os.environ["ATLASO_FAKE_VMRUN_REWRITE_DISK"]
+        with rewrite_target.open("a", encoding="utf-8") as stream:
+            stream.write(f'scsi0:2.fileName = "{rewrite_disk}"\n')
     paths = read_paths("running")
     print(f"Total running VMs: {len(paths)}")
     print("\n".join(paths))
@@ -197,6 +207,9 @@ raise SystemExit(64)
             "ATLASO_FAKE_VMRUN_STOP_STICKY": "1" if stop_sticky else "0",
             "ATLASO_FAKE_VMRUN_DELETE_STICKY": "1" if delete_sticky else "0",
             "ATLASO_FAKE_VMRUN_REPLACE_AFTER_DELETE": "1" if replace_after_delete else "0",
+            "ATLASO_FAKE_VMRUN_REWRITE_ON_LIST": str(rewrite_on_list),
+            "ATLASO_FAKE_VMRUN_REWRITE_TARGET": canonical_paths[0] if canonical_paths else "",
+            "ATLASO_FAKE_VMRUN_REWRITE_DISK": str(rewrite_disk or ""),
         }
     )
     return command, environment, log, inventory
@@ -376,6 +389,34 @@ def test_registered_hard_link_alias_uses_deletevm(tmp_path: Path) -> None:
     assert [command[2] for command in _commands(log)].count("deleteVM") == 1
 
 
+def test_live_registration_rejects_duplicate_library_id(tmp_path: Path) -> None:
+    """A live target's selected library ID must have one config owner."""
+    root = tmp_path / "artifacts" / "vm"
+    vmx = root / "Atlaso.vmx"
+    unrelated = tmp_path / "other" / "Unrelated.vmx"
+    _write_vmx(vmx)
+    _write_vmx(unrelated, "Unrelated")
+    vmrun, environment, log, _ = _write_fake_vmrun(
+        tmp_path / "fake",
+        [vmx],
+        registered=True,
+        inventory_suffix=f'vmlist1.config = "{unrelated.resolve()}"\n',
+    )
+
+    result = _run_root_cleanup(
+        tmp_path,
+        removal_root=root,
+        expected_root=root,
+        vmrun_path=vmrun,
+        environment=environment,
+    )
+
+    assert result.returncode != 0
+    assert "ambiguous library ID" in result.stderr
+    assert vmx.exists()
+    assert "deleteVM" not in [command[2] for command in _commands(log)]
+
+
 def test_already_unregistered_vm_uses_filesystem_cleanup_only(tmp_path: Path) -> None:
     """An existing unregistered target remains an idempotent cleanup case."""
     root = tmp_path / "artifacts" / "vm"
@@ -493,6 +534,36 @@ def test_external_vmdk_is_detached_before_deletevm(tmp_path: Path) -> None:
 
     assert result.returncode == 0, result.stdout + result.stderr
     assert external_disk.read_text(encoding="utf-8") == "shared"
+
+
+def test_in_place_vmx_rewrite_after_scan_blocks_deletevm(tmp_path: Path) -> None:
+    """Content evidence is rechecked even when initial detachment was unnecessary."""
+    root = tmp_path / "artifacts" / "vm"
+    vmx = root / "Atlaso.vmx"
+    external_disk = tmp_path / "shared" / "depot.vmdk"
+    external_disk.parent.mkdir(parents=True)
+    external_disk.write_text("shared", encoding="utf-8")
+    _write_vmx(vmx)
+    vmrun, environment, log, _ = _write_fake_vmrun(
+        tmp_path / "fake",
+        [vmx],
+        registered=True,
+        rewrite_on_list=3,
+        rewrite_disk=external_disk,
+    )
+
+    result = _run_root_cleanup(
+        tmp_path,
+        removal_root=root,
+        expected_root=root,
+        vmrun_path=vmrun,
+        environment=environment,
+    )
+
+    assert result.returncode != 0
+    assert "changed immediately before deleteVM" in result.stderr
+    assert external_disk.read_text(encoding="utf-8") == "shared"
+    assert "deleteVM" not in [command[2] for command in _commands(log)]
 
 
 def test_failed_deletevm_atomically_restores_external_vmdk_attachment(tmp_path: Path) -> None:

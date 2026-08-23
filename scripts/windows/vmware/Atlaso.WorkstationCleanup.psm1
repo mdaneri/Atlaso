@@ -343,23 +343,42 @@ function Test-AtlasoWorkstationVmxRegistered {
         return $false
     }
     $targetIdentity = Get-AtlasoPathIdentity -Path $VmxPath -Description 'VMware cleanup target'
+    $ownersById = @{}
     foreach ($line in Get-Content -LiteralPath $InventoryPath -ErrorAction Stop) {
-        if ($line -notmatch '^\s*vmlist\d+\.config\s*=\s*"(?<path>.*)"\s*$') {
+        if ($line -notmatch '^\s*vmlist(?<id>\d+)\.config\s*=\s*"(?<path>.*)"\s*$') {
             continue
         }
+        $id = $Matches.id
         $candidate = $Matches.path
         if (-not $candidate -or -not [System.IO.Path]::IsPathFullyQualified($candidate)) { continue }
         $canonicalPath = Get-AtlasoCanonicalPath -Path $candidate
-        if (Test-AtlasoSamePath -Left $canonicalPath -Right $VmxPath) { return $true }
-        if (-not (Test-Path -LiteralPath $canonicalPath -PathType Leaf)) { continue }
-        if (
-            (Get-AtlasoPathIdentity -Path $canonicalPath -Description 'registered VMware VMX') -eq
-            $targetIdentity
-        ) {
-            return $true
+        if (-not $ownersById.ContainsKey($id)) {
+            $ownersById[$id] = [System.Collections.Generic.List[string]]::new()
+        }
+        $ownersById[$id].Add($canonicalPath)
+    }
+    $matchingIds = [System.Collections.Generic.HashSet[string]]::new([System.StringComparer]::OrdinalIgnoreCase)
+    foreach ($id in $ownersById.Keys) {
+        foreach ($canonicalPath in $ownersById[$id]) {
+            $matchesTarget = Test-AtlasoSamePath -Left $canonicalPath -Right $VmxPath
+            if (-not $matchesTarget -and (Test-Path -LiteralPath $canonicalPath -PathType Leaf)) {
+                $matchesTarget = (
+                    (Get-AtlasoPathIdentity -Path $canonicalPath -Description 'registered VMware VMX') -eq
+                    $targetIdentity
+                )
+            }
+            if ($matchesTarget) { $matchingIds.Add($id) | Out-Null }
         }
     }
-    return $false
+    foreach ($id in $matchingIds) {
+        if (
+            $ownersById[$id].Count -ne 1 -or
+            $matchingIds.Count -ne 1
+        ) {
+            throw "VMware Workstation inventory assigns the live cleanup target to an ambiguous library ID; artifacts were preserved."
+        }
+    }
+    return $matchingIds.Count -eq 1
 }
 
 function Read-AtlasoStreamBytes {
@@ -660,6 +679,9 @@ function Disconnect-AtlasoWorkstationExternalVmdks {
         throw "VMware Workstation VMX was replaced before external-disk protection; artifacts were preserved: $VmxPath"
     }
     $originalBytes = [System.IO.File]::ReadAllBytes($VmxPath)
+    $originalHash = [System.BitConverter]::ToString(
+        [System.Security.Cryptography.SHA256]::HashData($originalBytes)
+    ).Replace('-', '')
     $lines = @([System.Text.Encoding]::UTF8.GetString($originalBytes) -split '\r?\n')
     $externalDevices = [System.Collections.Generic.HashSet[string]]::new([System.StringComparer]::OrdinalIgnoreCase)
     $vmxDirectory = Split-Path -Parent $VmxPath
@@ -689,7 +711,12 @@ function Disconnect-AtlasoWorkstationExternalVmdks {
         }
     }
     if ($externalDevices.Count -eq 0) {
-        return $null
+        return [pscustomobject]@{
+            Detached = $false
+            ProtectedIdentity = $ExpectedIdentity
+            ProtectedBytes = $originalBytes
+            ProtectedHash = $originalHash
+        }
     }
 
     $protectedLines = @($lines | Where-Object {
@@ -728,11 +755,10 @@ function Disconnect-AtlasoWorkstationExternalVmdks {
         }
 
         $detachment = [pscustomobject]@{
+            Detached = $true
             OriginalIdentity = $ExpectedIdentity
             OriginalBytes = $originalBytes
-            OriginalHash = [System.BitConverter]::ToString(
-                [System.Security.Cryptography.SHA256]::HashData($originalBytes)
-            ).Replace('-', '')
+            OriginalHash = $originalHash
             ProtectedIdentity = Get-AtlasoPathIdentity -Path $VmxPath -Description 'detached VMware cleanup target'
             ProtectedBytes = $protectedBytes
             ProtectedHash = $protectedHash
@@ -761,7 +787,7 @@ function Restore-AtlasoWorkstationExternalVmdks {
         [Parameter(Mandatory = $false)][AllowNull()][psobject]$Detachment
     )
 
-    if ($null -eq $Detachment) {
+    if ($null -eq $Detachment -or -not $Detachment.Detached) {
         return
     }
     if (-not (Test-Path -LiteralPath $VmxPath -PathType Leaf)) {
@@ -899,16 +925,11 @@ function Remove-AtlasoWorkstationVmArtifacts {
             -ExpectedIdentity $targetIdentity
         try {
             Confirm-AtlasoWorkstationVmInactive -VmrunPath $VmrunPath -VmxPath $resolvedVmxPath
-            $expectedDeleteIdentity = if ($null -ne $detachment) {
-                $detachment.ProtectedIdentity
-            } else {
-                $targetIdentity
-            }
+            $expectedDeleteIdentity = $detachment.ProtectedIdentity
             if ((Get-AtlasoPathIdentity -Path $resolvedVmxPath -Description 'VMware cleanup target') -ne $expectedDeleteIdentity) {
                 throw "VMware Workstation VMX was replaced immediately before deleteVM; artifacts were preserved: $resolvedVmxPath"
             }
             if (
-                $null -ne $detachment -and
                 (Get-AtlasoFileSha256 -Path $resolvedVmxPath) -ne $detachment.ProtectedHash
             ) {
                 throw "VMware Workstation VMX changed immediately before deleteVM; artifacts were preserved: $resolvedVmxPath"
@@ -943,7 +964,7 @@ function Remove-AtlasoWorkstationVmArtifacts {
             Restore-AtlasoWorkstationExternalVmdks -VmxPath $resolvedVmxPath -Detachment $detachment
             throw "VMware Workstation VMX remains after deleteVM succeeded: $resolvedVmxPath"
         }
-        if ($null -ne $detachment) {
+        if ($detachment.Detached) {
             Remove-Item -LiteralPath $detachment.BackupPath -Force -ErrorAction Stop
         }
     }
