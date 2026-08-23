@@ -292,6 +292,70 @@ def test_vmware_ovf_customizer_restores_authorized_keys_when_sudoers_validation_
     assert not customizer.DEVELOPMENT_ADMIN_SUDOERS_PATH.exists()
 
 
+def test_vmware_ovf_customizer_restores_authorized_keys_when_key_directory_sync_fails(
+    tmp_path, monkeypatch
+):
+    """Restore prior administrator access if the new key is not durably installed.
+
+    Args:
+        tmp_path: Isolated filesystem root.
+        monkeypatch: Pytest monkeypatch fixture.
+    """
+    customizer = load_customizer()
+    home = tmp_path / "admin"
+    ssh_directory = home / ".ssh"
+    ssh_directory.mkdir(parents=True)
+    authorized_keys = ssh_directory / "authorized_keys"
+    authorized_keys.write_text("prior-key\n", encoding="utf-8")
+    sudoers_directory = tmp_path / "sudoers.d"
+    sudoers_directory.mkdir()
+    customizer.DEVELOPMENT_ADMIN_SUDOERS_PATH = sudoers_directory / "atlaso-test-vm-admin"
+    account = type(
+        "Account",
+        (),
+        {"pw_dir": str(home), "pw_uid": 1001, "pw_gid": 1001},
+    )()
+    monkeypatch.setattr(customizer, "resolve_os_account", lambda username: account)
+    monkeypatch.setattr(customizer, "chown_path", lambda path, uid, gid: None)
+    monkeypatch.setattr(customizer.shutil, "which", lambda command: "/usr/sbin/visudo")
+    monkeypatch.setattr(
+        customizer.subprocess,
+        "run",
+        lambda command, **kwargs: subprocess.CompletedProcess(command, 0),
+    )
+    original_fsync_parent = customizer.fsync_parent_directory
+    failed = False
+
+    def fail_first_new_key_sync(path):
+        """Fail once after the replacement key reaches its final pathname.
+
+        Args:
+            path: Destination whose parent is being synchronized.
+
+        Raises:
+            OSError: Once, after the new authorized key has been installed.
+        """
+        nonlocal failed
+        candidate = Path(path)
+        if (
+            candidate == authorized_keys
+            and not failed
+            and candidate.read_text(encoding="utf-8") == f"{VALID_ED25519_PUBLIC_KEY}\n"
+        ):
+            failed = True
+            raise OSError("simulated authorized_keys directory sync failure")
+        original_fsync_parent(candidate)
+
+    monkeypatch.setattr(customizer, "fsync_parent_directory", fail_first_new_key_sync)
+
+    with pytest.raises(customizer.OvfCustomizationError, match="passwordless sudo validation failed"):
+        customizer.configure_development_admin_ssh("admin", VALID_ED25519_PUBLIC_KEY)
+
+    assert failed is True
+    assert authorized_keys.read_text(encoding="utf-8") == "prior-key\n"
+    assert not customizer.DEVELOPMENT_ADMIN_SUDOERS_PATH.exists()
+
+
 def test_vmware_ovf_customizer_rolls_back_both_files_after_sudoers_replace_failure(
     tmp_path, monkeypatch
 ):

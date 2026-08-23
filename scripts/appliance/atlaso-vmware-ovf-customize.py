@@ -1332,14 +1332,6 @@ def configure_development_admin_ssh(username: str, public_key: str) -> None:
         if DEVELOPMENT_ADMIN_SUDOERS_PATH.exists()
         else None
     )
-    _write_owned_file_atomic(
-        authorized_keys,
-        f"{key}\n".encode("utf-8"),
-        mode=0o600,
-        uid=int(account.pw_uid),
-        gid=int(account.pw_gid),
-    )
-
     sudoers_content = (
         "# Development-only access provisioned by create-atlaso-test-vm.ps1.\n"
         f"{username} ALL=(ALL) NOPASSWD: ALL\n"
@@ -1349,6 +1341,13 @@ def configure_development_admin_ssh(username: str, public_key: str) -> None:
     )
     sudoers_replaced = False
     try:
+        _write_owned_file_atomic(
+            authorized_keys,
+            f"{key}\n".encode("utf-8"),
+            mode=0o600,
+            uid=int(account.pw_uid),
+            gid=int(account.pw_gid),
+        )
         with temporary_sudoers.open("xb") as handle:
             handle.write(sudoers_content)
             handle.flush()
@@ -1364,7 +1363,7 @@ def configure_development_admin_ssh(username: str, public_key: str) -> None:
         replace_path_atomic(temporary_sudoers, DEVELOPMENT_ADMIN_SUDOERS_PATH)
         sudoers_replaced = True
         fsync_parent_directory(DEVELOPMENT_ADMIN_SUDOERS_PATH)
-    except (OSError, subprocess.CalledProcessError) as exc:
+    except (OSError, OvfCustomizationError, subprocess.CalledProcessError) as exc:
         try:
             if sudoers_replaced:
                 if previous_sudoers is None:
