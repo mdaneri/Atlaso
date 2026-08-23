@@ -325,7 +325,7 @@ test("validated polling creates, updates, and removes the positive indicator", a
             confirmed: {
               ...stream.confirmed,
               current: "😀".repeat(200),
-              release_notes_url: "https://example.test:bad/releases/v0.9.186",
+              release_notes_url: "https://example.test:bad/releases/\uFEFFv0.9.186",
             },
           }
           : stream

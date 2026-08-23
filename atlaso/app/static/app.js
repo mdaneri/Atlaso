@@ -13015,9 +13015,8 @@ function validApplianceUpdateAvailabilityPayload(payload) {
     if (!validText(value)) return false;
     if (!value) return true;
     if ([...value].some((character) => (
-      /\s/u.test(character)
-      || character.codePointAt(0) < 32
-      || character.codePointAt(0) === 0x85
+      character.codePointAt(0) < 32
+      || /[ \u0085\u00A0\u1680\u2000-\u200A\u2028\u2029\u202F\u205F\u3000]/u.test(character)
     ))) return false;
     const match = /^https:\/\/([^/?#]+)(?:[/?#]|$)/i.exec(value);
     if (!match) return false;
