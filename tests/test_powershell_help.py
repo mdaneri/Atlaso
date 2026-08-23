@@ -18,6 +18,21 @@ def test_powershell_help_policy_is_wired_to_exact_base_ci() -> None:
     assert "path: .powershell-base" in workflow
     assert "inputs.base_sha || github.event.pull_request.base.sha" in workflow
     assert "./scripts/check_powershell_help.ps1 -BaseRoot .powershell-base" in workflow
+    repository_job = workflow.split("  repository-checks:", maxsplit=1)[1].split(
+        "  deployment-packer:", maxsplit=1
+    )[0]
+    base_checkout = repository_job.index("- name: Check out repository-check base")
+    powershell_check = repository_job.index(
+        "- name: Enforce changed PowerShell comment help"
+    )
+    for whole_tree_check in (
+        "npm run lint:markdown",
+        "python scripts/check_repo.py",
+        "python scripts/check_python_static_analysis.py",
+        "python scripts/check_deployment_assets.py --mode linux",
+    ):
+        assert repository_job.index(whole_tree_check) < base_checkout
+    assert base_checkout < powershell_check
     assert "Every new or changed `.ps1` or `.psm1` file" in contributing
     assert "comment-based help and rationale-focused comments" in agent_policies
 
