@@ -11260,8 +11260,10 @@ def appliance_update_context(
     ).scalars().all()
     apply_started_patterns = ('"apply_started":true', '"apply_started": true')
     legacy_apply_patterns = (
-        '"command_line":"atlaso-helper appliance-update apply ',
-        '"command_line": "atlaso-helper appliance-update apply ',
+        '"command_line":"/opt/atlaso/bin/atlaso-helper appliance-update apply --real ',
+        '"command_line": "/opt/atlaso/bin/atlaso-helper appliance-update apply --real ',
+        '"command_line":"sudo -n /opt/atlaso/bin/atlaso-helper appliance-update apply --real ',
+        '"command_line": "sudo -n /opt/atlaso/bin/atlaso-helper appliance-update apply --real ',
     )
     qualifying_install_expected = db.execute(
         select(Job.id).where(
@@ -11629,6 +11631,7 @@ def execute_appliance_update_job(
     mode: str,
     job_id: str = "",
     credentials: dict[str, dict[str, str]] | None = None,
+    before_apply: Callable[[], None] | None = None,
 ) -> dict[str, Any]:
     """Run appliance update job.
 
@@ -11639,6 +11642,7 @@ def execute_appliance_update_job(
         mode: Operating mode selected for the workflow.
         job_id: Identifier of the job.
         credentials: Credential bundle used for the immediate external request.
+        before_apply: Durable phase-transition callback run before a real apply.
 
     Returns:
         The execute appliance update job result.
@@ -11674,6 +11678,8 @@ def execute_appliance_update_job(
                 else adapter.check_appliance_update_config(config_path)
             ]
             if mode == "run" and results[-1].returncode == 0:
+                if not adapter.dry_run and before_apply is not None:
+                    before_apply()
                 results.append(
                     adapter.apply_appliance_update_config(config_path, credentials_path)
                     if credentials_path

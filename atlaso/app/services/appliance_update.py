@@ -1089,6 +1089,7 @@ def appliance_update_evidence_state(
 
     inconsistent = finalizer_state in {"unreadable", "malformed"}
     rollback_evidence = _valid_rollback(evidence)
+    direct_finalizer_evidence = _valid_finalizer(evidence) or _valid_legacy_finalizer(evidence)
     evidence_finalizer_path = str(evidence.get("finalizer_status_path") or "")
     references_finalizer = evidence_finalizer_path == finalizer_path
     if evidence_finalizer_path and not references_finalizer:
@@ -1096,6 +1097,8 @@ def appliance_update_evidence_state(
     if references_finalizer and finalizer_state != "available":
         inconsistent = True
     if rollback_evidence and finalizer_state != "available":
+        inconsistent = True
+    if direct_finalizer_evidence and finalizer_state != "available":
         inconsistent = True
     if finalizer_state == "available":
         evidence_job_id = str(evidence.get("job_id") or "")
@@ -1105,6 +1108,11 @@ def appliance_update_evidence_state(
         evidence_status = str(evidence.get("status") or "")
         finalizer_status = str(finalizer.get("status") or "")
         if (evidence_job_id or references_finalizer) and evidence_status != finalizer_status:
+            inconsistent = True
+        if direct_finalizer_evidence and (
+            evidence.get("release") != finalizer.get("release")
+            or evidence.get("rolled_back") != finalizer.get("rolled_back")
+        ):
             inconsistent = True
         if rollback_evidence:
             if (

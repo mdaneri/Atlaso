@@ -209,6 +209,11 @@ def test_update_evidence_state_validates_available_and_actionable_records(tmp_pa
     assert invalid_utf8["state"] == "needs_attention"
 
     info_path.write_text(json.dumps({**finalizer, "job_id": "job-1"}), encoding="utf-8")
+    missing_paired_finalizer = appliance_update_evidence_state(
+        update_info_path=str(info_path), finalizer_path=str(finalizer_path)
+    )
+    assert missing_paired_finalizer["state"] == "needs_attention"
+
     finalizer_path.write_text(json.dumps({**finalizer, "job_id": "job-2"}), encoding="utf-8")
     inconsistent = appliance_update_evidence_state(
         update_info_path=str(info_path), finalizer_path=str(finalizer_path)
@@ -353,7 +358,28 @@ def test_update_evidence_panel_accessibility_states(client, monkeypatch):
                 "commands": [
                     {
                         "command_line": (
-                            "atlaso-helper appliance-update apply "
+                            "/opt/atlaso/bin/atlaso-helper appliance-update apply --real "
+                            "/var/lib/atlaso/apply/appliance-update/atlaso-update.json"
+                        )
+                    }
+                ],
+            }
+        )
+        db.add(job)
+        db.commit()
+    client.get("/ui/management/appliance-update")
+    assert captured["qualifying_install_expected"] is True
+
+    with SessionLocal() as db:
+        job = db.get(Job, "job_real_evidence_expected")
+        assert job is not None
+        job.result = json.dumps(
+            {
+                "dry_run": False,
+                "commands": [
+                    {
+                        "command_line": (
+                            "sudo -n /opt/atlaso/bin/atlaso-helper appliance-update apply --real "
                             "/var/lib/atlaso/apply/appliance-update/atlaso-update.json"
                         )
                     }
@@ -373,6 +399,8 @@ def test_real_install_marks_evidence_expected_only_after_apply_starts(monkeypatc
         monkeypatch: Pytest fixture used to replace the system adapter and staging path.
     """
     from atlaso.app import ui
+
+    events: list[str] = []
 
     class PreflightFailingAdapter:
         """Reject the read-only check before apply can start."""
@@ -418,6 +446,7 @@ def test_real_install_marks_evidence_expected_only_after_apply_starts(monkeypatc
             Args:
                 config_path: Staged Appliance Update manifest path.
             """
+            events.append("apply")
             return AdapterResult(
                 command=["atlaso-helper", "appliance-update", "apply", config_path],
                 dry_run=False,
@@ -443,6 +472,7 @@ def test_real_install_marks_evidence_expected_only_after_apply_starts(monkeypatc
         settings={},
         actor="admin",
         mode="run",
+        before_apply=lambda: events.append("persist"),
     )
     aggregate = ui.aggregate_appliance_update_results(
         selected_stream_ids=["photon_os"],
@@ -454,6 +484,46 @@ def test_real_install_marks_evidence_expected_only_after_apply_starts(monkeypatc
 
     assert result["apply_started"] is True
     assert aggregate["apply_started"] is True
+    assert events == ["persist", "apply"]
+
+
+def test_worker_persists_apply_started_for_interruption_recovery():
+    """Keep durable apply-started evidence when the worker is interrupted."""
+    from atlaso.app import ui, worker
+    from atlaso.app.database import SessionLocal
+    from atlaso.app.models import Job, JobStatus, JobStep
+
+    job_id = "job_apply_started_interruption"
+    with SessionLocal() as db:
+        job = Job(
+            id=job_id,
+            type="appliance-update",
+            status=JobStatus.RUNNING.value,
+            created_by="admin",
+            task_config_json=json.dumps({"mode": "run", "selected_streams": ["photon_os"]}),
+            result=json.dumps({"apply_started": False}),
+        )
+        db.add(job)
+        db.flush()
+        ui.ensure_appliance_update_job_steps(db, job=job, selected_streams=["photon_os"])
+        db.commit()
+
+    worker._mark_appliance_update_apply_started(job_id, "photon_os")
+
+    with SessionLocal() as db:
+        job = db.get(Job, job_id)
+        step = db.get(JobStep, f"{job_id}:photon_os")
+        assert job is not None
+        assert step is not None
+        assert json.loads(job.result or "{}")["apply_started"] is True
+        assert json.loads(step.result or "{}")["apply_started"] is True
+        recovered = worker._recovered_appliance_update_step_result(
+            job,
+            step,
+            status=JobStatus.FAILED.value,
+            error="The Atlaso worker restarted while this update stream was running.",
+        )
+        assert recovered["apply_started"] is True
 
 
 def seed_available_confirmations(streams: list[str]) -> None:
