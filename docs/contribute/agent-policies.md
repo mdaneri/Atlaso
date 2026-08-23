@@ -506,7 +506,7 @@ Terminal order:
   count, and remove it again on a confirmed transition to zero so no focusable, visual, tooltip, badge, or screen-reader
   zero state remains. A transient, structurally invalid, or noncanonical polling response may preserve only a valid
   last-known positive control. Exclude that route from OpenAPI and never expose commands, credentials, or raw helper
-  output. Clear confirmations only for
+  output. Require every browser-polled `up_to_date` confirmation to carry zero changes. Clear confirmations only for
   successfully installed streams.
 - Appliance Update sources are repository-style desired runtime-maintenance configuration. Support multiple named
   Photon, PowerShell, and HTTPS Atlaso release sources, using secondary signed Atlaso channels as failover sources. Keep

@@ -455,6 +455,25 @@ test("failed polling preserves only an existing positive indicator", async () =>
     await assert.rejects(positive.context.refresh(), /Unable to refresh update availability/);
     assert.equal(positive.indicator, lastKnown);
   }
+  for (const inconsistentUpToDate of [
+    { change_count: 1, changes: [] },
+    { change_count: 0, changes: [{ name: "Unexpected change" }] },
+  ]) {
+    positive.setFetchResponse({
+      ok: true,
+      json: () => Promise.resolve({
+        available: false,
+        affected_stream_count: 0,
+        streams: availabilityStreams().map((stream, index) => (
+          index === 0
+            ? { ...stream, confirmed: { ...stream.confirmed, ...inconsistentUpToDate } }
+            : stream
+        )),
+      }),
+    });
+    await assert.rejects(positive.context.refresh(), /Unable to refresh update availability/);
+    assert.equal(positive.indicator, lastKnown);
+  }
   positive.setFetchResponse({
     ok: true,
     json: () => Promise.resolve({

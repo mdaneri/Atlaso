@@ -195,6 +195,9 @@ only the confirmations for streams that
 actually succeeded; failed or skipped streams keep their indication until a successful installation or recheck changes
 it.
 
+Browser polling also requires every confirmed **Up to date** stream to report zero changes and no **What's new** rows;
+contradictory payloads are treated as transient failures and cannot clear the last-known positive indicator.
+
 ## Trust contract
 
 Appliances contain named Ed25519 public keys under:

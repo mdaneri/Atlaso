@@ -13093,6 +13093,10 @@ function validApplianceUpdateAvailabilityPayload(payload) {
     && Array.isArray(confirmed.changes)
     && confirmed.changes.length <= visibleChangeLimit
     && confirmed.changes.every(validChange)
+    && (
+      confirmed.state !== "up_to_date"
+      || (confirmed.change_count === 0 && confirmed.changes.length === 0)
+    )
     && typeof confirmed.details_incomplete === "boolean"
     && validText(confirmed.summary, 240)
     && validReleaseNotesUrl(confirmed.release_notes_url)
