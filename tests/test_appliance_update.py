@@ -123,6 +123,59 @@ def test_update_evidence_state_validates_available_and_actionable_records(tmp_pa
     assert available["label"] == "Available"
     assert available["content"].startswith("{")
 
+    legacy_finalizer = {
+        "status": "succeeded",
+        "job_id": "job-legacy",
+        "release": "0.9.185",
+        "git_commit": "a" * 40,
+        "bundle_sha256": "b" * 64,
+        "release_manifest_sha256": "c" * 64,
+        "rolled_back": False,
+        "service_health": True,
+    }
+    info_path.write_text(json.dumps(legacy_finalizer), encoding="utf-8")
+    finalizer_path.write_text(json.dumps(legacy_finalizer), encoding="utf-8")
+    legacy_available = appliance_update_evidence_state(
+        update_info_path=str(info_path), finalizer_path=str(finalizer_path)
+    )
+    assert legacy_available["state"] == "available"
+
+    unmarked_legacy = dict(legacy_finalizer)
+    unmarked_legacy.pop("service_health")
+    info_path.write_text(json.dumps(unmarked_legacy), encoding="utf-8")
+    finalizer_path.write_text(json.dumps(unmarked_legacy), encoding="utf-8")
+    invalid_legacy = appliance_update_evidence_state(
+        update_info_path=str(info_path), finalizer_path=str(finalizer_path)
+    )
+    assert invalid_legacy["state"] == "needs_attention"
+
+    rollback_finalizer = {**finalizer, "status": "failed", "rolled_back": True}
+    rollback = {
+        "status": "failed",
+        "success": False,
+        "release": "0.9.186",
+        "rolled_back": True,
+        "host_facing_ready": True,
+        "failure_layer": "candidate_health",
+        "rollback_health": {"openapi": {"success": True}},
+        "rollback_failures": [],
+        "error": "Candidate readiness failed and the previous release was restored.",
+        "finished_at": "2026-08-22T20:00:01+00:00",
+    }
+    info_path.write_text(json.dumps(rollback), encoding="utf-8")
+    finalizer_path.write_text(json.dumps(rollback_finalizer), encoding="utf-8")
+    rollback_available = appliance_update_evidence_state(
+        update_info_path=str(info_path), finalizer_path=str(finalizer_path)
+    )
+    assert rollback_available["state"] == "available"
+
+    info_path.write_text(json.dumps({**rollback, "release": "0.9.184"}), encoding="utf-8")
+    rollback_mismatch = appliance_update_evidence_state(
+        update_info_path=str(info_path), finalizer_path=str(finalizer_path)
+    )
+    assert rollback_mismatch["state"] == "needs_attention"
+    finalizer_path.unlink()
+
     for incompatible in (
         {"status": "arbitrary"},
         {"status": 123},

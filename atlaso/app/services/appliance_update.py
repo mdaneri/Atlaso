@@ -920,6 +920,19 @@ def appliance_update_evidence_state(
         """
         return isinstance(value, list) and all(isinstance(command, dict) for command in value)
 
+    def _valid_hex(value: object, length: int) -> bool:
+        """Return whether a value is a fixed-width lowercase-insensitive hex string.
+
+        Args:
+            value: Candidate hexadecimal value.
+            length: Required character count.
+        """
+        return bool(
+            isinstance(value, str)
+            and len(value) == length
+            and set(value.lower()) <= set("0123456789abcdef")
+        )
+
     def _valid_aggregate(payload: dict[str, Any]) -> bool:
         """Return whether payload matches the aggregate updater record.
 
@@ -967,6 +980,51 @@ def appliance_update_evidence_state(
             and _valid_timestamp(payload.get(timestamp_key))
         )
 
+    def _valid_legacy_finalizer(payload: dict[str, Any]) -> bool:
+        """Return whether payload matches the supported legacy success finalizer.
+
+        Args:
+            payload: Parsed durable evidence object.
+        """
+        return bool(
+            payload.get("status") == "succeeded"
+            and isinstance(payload.get("job_id"), str)
+            and payload["job_id"].strip()
+            and isinstance(payload.get("release"), str)
+            and payload["release"].strip()
+            and _valid_hex(payload.get("git_commit"), 40)
+            and _valid_hex(payload.get("bundle_sha256"), 64)
+            and _valid_hex(payload.get("release_manifest_sha256"), 64)
+            and payload.get("rolled_back") is False
+            and (payload.get("service_health") is True or payload.get("no_change") is True)
+            and "active_release_verification" not in payload
+            and "worker_restart" not in payload
+        )
+
+    def _valid_rollback(payload: dict[str, Any]) -> bool:
+        """Return whether payload matches helper rollback status evidence.
+
+        Args:
+            payload: Parsed durable evidence object.
+        """
+        rollback_failures = payload.get("rollback_failures")
+        return bool(
+            payload.get("status") == "failed"
+            and payload.get("success") is False
+            and isinstance(payload.get("release"), str)
+            and payload["release"].strip()
+            and isinstance(payload.get("rolled_back"), bool)
+            and isinstance(payload.get("host_facing_ready"), bool)
+            and isinstance(payload.get("failure_layer"), str)
+            and payload["failure_layer"].strip()
+            and isinstance(payload.get("rollback_health"), dict)
+            and isinstance(rollback_failures, list)
+            and all(isinstance(failure, str) for failure in rollback_failures)
+            and isinstance(payload.get("error"), str)
+            and payload["error"].strip()
+            and _valid_timestamp(payload.get("finished_at"))
+        )
+
     def _read_json_object(
         path_value: str, *, finalizer_only: bool = False
     ) -> tuple[str, dict[str, Any], str]:
@@ -990,8 +1048,9 @@ def appliance_update_evidence_state(
             return "malformed", {}, content
         if not isinstance(payload, dict):
             return "malformed", {}, content
-        valid = _valid_finalizer(payload) if finalizer_only else (
-            _valid_aggregate(payload) or _valid_finalizer(payload)
+        valid_finalizer = _valid_finalizer(payload) or _valid_legacy_finalizer(payload)
+        valid = valid_finalizer if finalizer_only else (
+            _valid_aggregate(payload) or valid_finalizer or _valid_rollback(payload)
         )
         if not valid:
             return "malformed", {}, content
@@ -1029,11 +1088,14 @@ def appliance_update_evidence_state(
         }
 
     inconsistent = finalizer_state in {"unreadable", "malformed"}
+    rollback_evidence = _valid_rollback(evidence)
     evidence_finalizer_path = str(evidence.get("finalizer_status_path") or "")
     references_finalizer = evidence_finalizer_path == finalizer_path
     if evidence_finalizer_path and not references_finalizer:
         inconsistent = True
     if references_finalizer and finalizer_state != "available":
+        inconsistent = True
+    if rollback_evidence and finalizer_state != "available":
         inconsistent = True
     if finalizer_state == "available":
         evidence_job_id = str(evidence.get("job_id") or "")
@@ -1044,6 +1106,23 @@ def appliance_update_evidence_state(
         finalizer_status = str(finalizer.get("status") or "")
         if (evidence_job_id or references_finalizer) and evidence_status != finalizer_status:
             inconsistent = True
+        if rollback_evidence:
+            if (
+                evidence_status != finalizer_status
+                or evidence.get("release") != finalizer.get("release")
+                or evidence.get("rolled_back") != finalizer.get("rolled_back")
+            ):
+                inconsistent = True
+            try:
+                evidence_finished = datetime.fromisoformat(str(evidence["finished_at"]).replace("Z", "+00:00"))
+                finalizer_finished = datetime.fromisoformat(str(finalizer["finished_at"]).replace("Z", "+00:00"))
+            except (KeyError, TypeError, ValueError):
+                inconsistent = True
+            else:
+                if evidence_finished.tzinfo is None or finalizer_finished.tzinfo is None:
+                    inconsistent = True
+                elif evidence_finished < finalizer_finished:
+                    inconsistent = True
         if references_finalizer:
             try:
                 evidence_finished = datetime.fromisoformat(str(evidence["finished_at"]).replace("Z", "+00:00"))
