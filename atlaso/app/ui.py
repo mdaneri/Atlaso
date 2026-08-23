@@ -451,6 +451,7 @@ from atlaso.app.services.networking import (
     IPV4_METHODS,
     NETWORK_INVENTORY_CLEANUP_WARNING_KEY,
     NETWORK_ROLES,
+    discover_host_ipv4_default_gateways,
     discover_host_physical_interfaces,
     is_canonical_network_role,
     normalize_interface_mode,
@@ -5228,6 +5229,7 @@ def network_context(db: Session) -> dict:
     vlan_counts: dict[str, int] = {}
     for vlan in vlans:
         vlan_counts[vlan.parent_interface] = vlan_counts.get(vlan.parent_interface, 0) + 1
+    observed_ipv4_gateways = discover_host_ipv4_default_gateways()
     config_preview = render_network_config(interfaces=interfaces, vlans=vlans)
     validation_errors = validate_network_state(interfaces=interfaces, vlans=vlans)
     trunk_interfaces = [
@@ -5237,7 +5239,14 @@ def network_context(db: Session) -> dict:
     ]
     return {
         "physical_interfaces": interfaces,
-        "physical_interface_rows": [physical_interface_to_dict(interface, vlan_counts.get(interface.name, 0)) for interface in interfaces],
+        "physical_interface_rows": [
+            physical_interface_to_dict(
+                interface,
+                vlan_counts.get(interface.name, 0),
+                observed_ipv4_gateway=observed_ipv4_gateways.get(interface.name, ""),
+            )
+            for interface in interfaces
+        ],
         "vlan_interfaces": vlans,
         "vlan_interface_rows": [
             vlan_interface_to_dict(

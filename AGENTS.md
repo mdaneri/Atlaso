@@ -328,6 +328,10 @@ The following cross-cutting boundaries always apply:
   row when reconciliation fails, rebase reservations and their app-owned DNS records only when one updated DHCP scope
   is unambiguous, ignore inactive legacy DHCP binding fields when real scopes exist, and audit the dependent units that
   changed.
+- Converting the dedicated management interface from DHCP to static must discover a usable DHCP-protocol IPv4 default
+  route on that exact interface, review its observed address/prefix and on-link gateway together, and preserve the
+  gateway in desired state. An absent or intentionally cleared gateway must warn that off-subnet connectivity will be
+  unavailable; shared gateway validation, global Apply, baseline commit, and rollback remain authoritative.
 - Keep **Static Routes** separate from **Routing Permissions** in operator language. Static Routes choose destination,
   gateway, target interface/VLAN, and metric in the lab route table; Routing Permissions authorize forwarding between
   interface/VLAN networks, with route-role paths generated automatically and Access networks requiring explicit rules.

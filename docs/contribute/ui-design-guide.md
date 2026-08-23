@@ -107,6 +107,9 @@ Physical Interfaces is the reference.
 - On failure, retain the attempted value and a useful error, or roll back to the last confirmed value when the current
   contract requires rollback.
 - Refresh affected validation and preview content in place.
+- Physical Interfaces may use the shared confirmation detail region to review an observed DHCP address/prefix and
+  gateway together before its bounded DHCP-to-static row action saves desired state. Clearing that gateway uses the
+  same shared confirmation pattern with an explicit routed-connectivity warning.
 - Put the new-record row at the bottom, keep it pinned there under every sort direction, and label it `+ Add record here`.
 - In a new-record placeholder, enable only the required identity field first. Keep generated or defaulted cells blank
   and locked until identity is valid.

@@ -126,12 +126,18 @@ def normalize_ipv4_method(value: str | None) -> str:
     return method if method in IPV4_METHODS else "static"
 
 
-def physical_interface_to_dict(interface: PhysicalInterface, vlan_count: int = 0) -> dict:
+def physical_interface_to_dict(
+    interface: PhysicalInterface,
+    vlan_count: int = 0,
+    *,
+    observed_ipv4_gateway: str = "",
+) -> dict:
     """Return physical interface to dict.
 
     Args:
         interface: Network interface affected or inspected by the operation.
         vlan_count: Number of VLAN entries.
+        observed_ipv4_gateway: Valid DHCP-learned host gateway for review only.
     """
     role = normalize_interface_role(interface.role)
     return {
@@ -142,6 +148,7 @@ def physical_interface_to_dict(interface: PhysicalInterface, vlan_count: int = 0
         "speed": interface.speed or "",
         "host_ip_cidr": interface.host_ip_cidr or "",
         "host_ipv6_cidr": interface.host_ipv6_cidr or "",
+        "host_ipv4_gateway": observed_ipv4_gateway,
         "host_mtu": interface.host_mtu,
         "host_admin_state": interface.host_admin_state or "",
         "ip_cidr": interface.ip_cidr or "",
@@ -323,6 +330,70 @@ def discover_host_physical_interfaces() -> list[HostPhysicalInterface]:
     if completed.returncode != 0:
         return []
     return parse_linux_ip_interfaces(completed.stdout)
+
+
+def parse_linux_ipv4_default_routes(payload: str) -> dict[str, str]:
+    """Return one usable DHCP-learned IPv4 default gateway per interface.
+
+    Args:
+        payload: JSON emitted by ``ip -j -4 route show default``.
+
+    Returns:
+        Mapping of interface names to their preferred observed gateways.
+    """
+    try:
+        rows = json.loads(payload)
+    except json.JSONDecodeError:
+        return {}
+    if not isinstance(rows, list):
+        return {}
+    candidates: dict[str, list[tuple[int, str]]] = {}
+    for row in rows:
+        if not isinstance(row, dict) or str(row.get("dst") or "default") != "default":
+            continue
+        protocol = str(row.get("protocol") or row.get("proto") or "").strip().lower()
+        if protocol != "dhcp":
+            continue
+        interface_name = str(row.get("dev") or "").strip()
+        gateway_value = str(row.get("gateway") or "").strip()
+        try:
+            gateway = ip_address(gateway_value)
+        except ValueError:
+            continue
+        if (
+            not interface_name
+            or gateway.version != 4
+            or gateway.is_unspecified
+            or gateway.is_loopback
+            or gateway.is_link_local
+            or gateway.is_multicast
+            or gateway.is_reserved
+        ):
+            continue
+        metric_value = row.get("metric", 0)
+        metric = metric_value if isinstance(metric_value, int) and metric_value >= 0 else 0
+        candidates.setdefault(interface_name, []).append((metric, str(gateway)))
+    return {
+        interface_name: sorted(set(interface_candidates))[0][1]
+        for interface_name, interface_candidates in candidates.items()
+        if interface_candidates
+    }
+
+
+def discover_host_ipv4_default_gateways() -> dict[str, str]:
+    """Return observed DHCP-learned IPv4 default gateways keyed by interface."""
+    try:
+        completed = subprocess.run(
+            ["ip", "-j", "-4", "route", "show", "default"],
+            check=False,
+            capture_output=True,
+            text=True,
+        )
+    except OSError:
+        return {}
+    if completed.returncode != 0:
+        return {}
+    return parse_linux_ipv4_default_routes(completed.stdout)
 
 
 def _mac_key(value: str | None) -> str:
