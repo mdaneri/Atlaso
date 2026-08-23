@@ -1857,7 +1857,7 @@ interface=eth0
             "role": "management",
             "mode": "access",
             "ipv4_method": "static",
-            "ip_cidr": "",
+            "ip_cidr": "192.168.49.1/24",
             "ipv6_cidr": "",
             "mtu": "1500",
             "admin_state": "up",
