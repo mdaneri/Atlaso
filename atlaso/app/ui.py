@@ -11265,8 +11265,8 @@ def appliance_update_context(
         '"command_line":"sudo -n /opt/atlaso/bin/atlaso-helper appliance-update apply --real ',
         '"command_line": "sudo -n /opt/atlaso/bin/atlaso-helper appliance-update apply --real ',
     )
-    qualifying_install_expected = db.execute(
-        select(Job.id).where(
+    qualifying_install = db.execute(
+        select(Job.id, Job.started_at, Job.created_at).where(
             Job.status.in_([JobStatus.SUCCEEDED.value, JobStatus.FAILED.value]),
             _appliance_update_mode_filter_clause("run"),
             or_(
@@ -11275,8 +11275,10 @@ def appliance_update_context(
                     for pattern in (*apply_started_patterns, *legacy_apply_patterns)
                 )
             ),
-        ).limit(1)
-    ).scalar_one_or_none() is not None
+        )
+        .order_by(desc(func.coalesce(Job.started_at, Job.created_at)), desc(Job.id))
+        .limit(1)
+    ).first()
     sources = source_rows(db)
     packages = managed_package_rows(db)
     source_payloads = [update_source_payload(source) for source in sources]
@@ -11356,7 +11358,14 @@ def appliance_update_context(
         "task_component_filter_options": _task_component_filter_options(db),
         "appliance_update_info_path": APPLIANCE_UPDATE_INFO_PATH,
         "update_info_file": appliance_update_evidence_state(
-            qualifying_install_expected=qualifying_install_expected
+            qualifying_install_job_id=(
+                str(qualifying_install.id) if qualifying_install is not None else ""
+            ),
+            qualifying_install_started_at=(
+                qualifying_install.started_at or qualifying_install.created_at
+                if qualifying_install is not None
+                else None
+            ),
         ),
         "update_settings_errors": validate_update_settings(settings),
         "system_adapter_dry_run": get_settings().dry_run_system_adapters,

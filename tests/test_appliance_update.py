@@ -87,6 +87,7 @@ def test_update_evidence_state_validates_available_and_actionable_records(tmp_pa
     finalizer_path = tmp_path / "finalizer.json"
     aggregate = {
         "status": "succeeded",
+        "job_id": "job-3",
         "applied": {"photon_os": {}},
         "attempted": {"photon_os": {}},
         "commands": [],
@@ -122,6 +123,41 @@ def test_update_evidence_state_validates_available_and_actionable_records(tmp_pa
     assert available["state"] == "available"
     assert available["label"] == "Available"
     assert available["content"].startswith("{")
+
+    matching_task = appliance_update_evidence_state(
+        qualifying_install_job_id="job-3",
+        qualifying_install_started_at=datetime(2026, 8, 22, 19, 59, tzinfo=timezone.utc),
+        update_info_path=str(info_path),
+        finalizer_path=str(finalizer_path),
+    )
+    assert matching_task["state"] == "available"
+
+    stale_task = appliance_update_evidence_state(
+        qualifying_install_job_id="job-4",
+        qualifying_install_started_at=datetime(2026, 8, 22, 20, 0, 2, tzinfo=timezone.utc),
+        update_info_path=str(info_path),
+        finalizer_path=str(finalizer_path),
+    )
+    assert stale_task["state"] == "needs_attention"
+
+    legacy_aggregate = dict(aggregate)
+    legacy_aggregate.pop("job_id")
+    info_path.write_text(json.dumps(legacy_aggregate), encoding="utf-8")
+    stale_legacy_task = appliance_update_evidence_state(
+        qualifying_install_job_id="job-legacy-latest",
+        qualifying_install_started_at=datetime(2026, 8, 22, 20, 0, 2, tzinfo=timezone.utc),
+        update_info_path=str(info_path),
+        finalizer_path=str(finalizer_path),
+    )
+    assert stale_legacy_task["state"] == "needs_attention"
+
+    current_legacy_task = appliance_update_evidence_state(
+        qualifying_install_job_id="job-legacy-current",
+        qualifying_install_started_at=datetime(2026, 8, 22, 19, 59, tzinfo=timezone.utc),
+        update_info_path=str(info_path),
+        finalizer_path=str(finalizer_path),
+    )
+    assert current_legacy_task["state"] == "available"
 
     legacy_finalizer = {
         "status": "succeeded",
@@ -325,7 +361,7 @@ def test_update_evidence_panel_accessibility_states(client, monkeypatch):
             )
         )
         db.commit()
-    captured: dict[str, bool] = {}
+    captured: dict[str, object] = {}
 
     def capture_expected_state(**kwargs):
         """Capture the bounded durable-task existence projection.
@@ -338,7 +374,7 @@ def test_update_evidence_panel_accessibility_states(client, monkeypatch):
 
     monkeypatch.setattr(ui, "appliance_update_evidence_state", capture_expected_state)
     client.get("/ui/management/appliance-update")
-    assert captured["qualifying_install_expected"] is False
+    assert captured["qualifying_install_job_id"] == ""
 
     with SessionLocal() as db:
         job = db.get(Job, "job_real_evidence_expected")
@@ -347,7 +383,8 @@ def test_update_evidence_panel_accessibility_states(client, monkeypatch):
         db.add(job)
         db.commit()
     client.get("/ui/management/appliance-update")
-    assert captured["qualifying_install_expected"] is True
+    assert captured["qualifying_install_job_id"] == "job_real_evidence_expected"
+    assert isinstance(captured["qualifying_install_started_at"], datetime)
 
     with SessionLocal() as db:
         job = db.get(Job, "job_real_evidence_expected")
@@ -368,7 +405,7 @@ def test_update_evidence_panel_accessibility_states(client, monkeypatch):
         db.add(job)
         db.commit()
     client.get("/ui/management/appliance-update")
-    assert captured["qualifying_install_expected"] is True
+    assert captured["qualifying_install_job_id"] == "job_real_evidence_expected"
 
     with SessionLocal() as db:
         job = db.get(Job, "job_real_evidence_expected")
@@ -389,7 +426,7 @@ def test_update_evidence_panel_accessibility_states(client, monkeypatch):
         db.add(job)
         db.commit()
     client.get("/ui/management/appliance-update")
-    assert captured["qualifying_install_expected"] is True
+    assert captured["qualifying_install_job_id"] == "job_real_evidence_expected"
 
 
 def test_real_install_marks_evidence_expected_only_after_apply_starts(monkeypatch):
@@ -3260,13 +3297,20 @@ def test_helper_writes_failed_update_info_for_failed_commands(monkeypatch):
     monkeypatch.setattr(helper, "_command_path", lambda command: command)
     monkeypatch.setattr(helper, "_write_update_info", lambda payload: written.update(payload))
 
-    result = helper._apply_appliance_update({"selected_streams": ["photon_os"], "sources": {}})
+    result = helper._apply_appliance_update(
+        {
+            "job_id": "job_photon_evidence_identity",
+            "selected_streams": ["photon_os"],
+            "sources": {},
+        }
+    )
     assert result["status"] == "failed"
     assert result["applied"] == {}
     assert result["attempted"]["photon_os"]["automatic_rpm_rollback"] is False
     assert result["reboot_recommended"] is False
     assert "error" in result
     assert written["status"] == "failed"
+    assert written["job_id"] == "job_photon_evidence_identity"
 
 
 def test_helper_queries_photon_python_without_unsupported_latest_limit(monkeypatch):

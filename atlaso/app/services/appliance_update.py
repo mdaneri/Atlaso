@@ -882,6 +882,8 @@ def read_appliance_file(path_value: str) -> dict[str, Any]:
 def appliance_update_evidence_state(
     *,
     qualifying_install_expected: bool = False,
+    qualifying_install_job_id: str = "",
+    qualifying_install_started_at: datetime | None = None,
     update_info_path: str = APPLIANCE_UPDATE_INFO_PATH,
     finalizer_path: str = APPLIANCE_UPDATE_FINALIZER_PATH,
 ) -> dict[str, Any]:
@@ -894,6 +896,8 @@ def appliance_update_evidence_state(
     Args:
         qualifying_install_expected: Whether durable task state records a
             completed, non-dry-run installation attempt.
+        qualifying_install_job_id: Latest qualifying installation task identity.
+        qualifying_install_started_at: Start time of the latest qualifying task.
         update_info_path: Durable helper update evidence path.
         finalizer_path: Durable Atlaso release finalizer path.
     """
@@ -1059,7 +1063,10 @@ def appliance_update_evidence_state(
     finalizer_state, finalizer, _finalizer_content = _read_json_object(
         finalizer_path, finalizer_only=True
     )
-    evidence_expected = qualifying_install_expected or finalizer_state != "missing"
+    expected_job_id = qualifying_install_job_id.strip()
+    evidence_expected = bool(
+        qualifying_install_expected or expected_job_id or finalizer_state != "missing"
+    )
     evidence_state, evidence, content = _read_json_object(update_info_path)
 
     if evidence_state == "missing" and not evidence_expected:
@@ -1100,14 +1107,22 @@ def appliance_update_evidence_state(
         inconsistent = True
     if direct_finalizer_evidence and finalizer_state != "available":
         inconsistent = True
+    paired_finalizer = bool(
+        references_finalizer or rollback_evidence or direct_finalizer_evidence
+    )
     if finalizer_state == "available":
         evidence_job_id = str(evidence.get("job_id") or "")
         finalizer_job_id = str(finalizer.get("job_id") or "")
-        if evidence_job_id and finalizer_job_id and evidence_job_id != finalizer_job_id:
+        if (
+            paired_finalizer
+            and evidence_job_id
+            and finalizer_job_id
+            and evidence_job_id != finalizer_job_id
+        ):
             inconsistent = True
         evidence_status = str(evidence.get("status") or "")
         finalizer_status = str(finalizer.get("status") or "")
-        if (evidence_job_id or references_finalizer) and evidence_status != finalizer_status:
+        if paired_finalizer and evidence_status != finalizer_status:
             inconsistent = True
         if direct_finalizer_evidence and (
             evidence.get("release") != finalizer.get("release")
@@ -1142,6 +1157,32 @@ def appliance_update_evidence_state(
                     inconsistent = True
                 elif evidence_finished < finalizer_finished:
                     inconsistent = True
+    evidence_job_id = str(evidence.get("job_id") or "").strip()
+    bound_job_id = (
+        str(finalizer.get("job_id") or "").strip()
+        if paired_finalizer and finalizer_state == "available"
+        else evidence_job_id
+    )
+    if expected_job_id:
+        if bound_job_id:
+            if bound_job_id != expected_job_id:
+                inconsistent = True
+        else:
+            try:
+                evidence_finished = datetime.fromisoformat(
+                    str(evidence["finished_at"]).replace("Z", "+00:00")
+                )
+            except (KeyError, TypeError, ValueError):
+                inconsistent = True
+            else:
+                expected_started = qualifying_install_started_at
+                if expected_started is None or evidence_finished.tzinfo is None:
+                    inconsistent = True
+                else:
+                    if expected_started.tzinfo is None:
+                        expected_started = expected_started.replace(tzinfo=timezone.utc)
+                    if evidence_finished < expected_started:
+                        inconsistent = True
     if inconsistent:
         return {
             "state": "needs_attention",
@@ -1149,7 +1190,7 @@ def appliance_update_evidence_state(
             "available": False,
             "content": "",
             "message": (
-                "Durable update transaction evidence is inconsistent with the release finalizer. "
+                "Durable update transaction evidence is inconsistent with the latest update task or release finalizer. "
                 "Review the Appliance Update task and atlaso-helper service journal before the next installation."
             ),
         }
