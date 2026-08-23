@@ -111,6 +111,7 @@ function availabilityIndicatorScenario() {
     HTMLAnchorElement,
     HTMLElement,
     HTMLTemplateElement,
+    URL,
     CSS: { escape: (value) => String(value) },
   });
   vm.runInContext(
@@ -299,7 +300,17 @@ test("validated polling creates, updates, and removes the positive indicator", a
     json: () => Promise.resolve({
       available: true,
       affected_stream_count: 1,
-      streams: availabilityStreams(["atlaso_release"]),
+      streams: availabilityStreams(["atlaso_release"]).map((stream) => (
+        stream.id === "atlaso_release"
+          ? {
+            ...stream,
+            confirmed: {
+              ...stream.confirmed,
+              release_notes_url: "https://example.test/releases/v0.9.186",
+            },
+          }
+          : stream
+      )),
     }),
   });
   await scenario.context.refresh();
@@ -338,6 +349,48 @@ test("failed polling preserves only an existing positive indicator", async () =>
   assert.equal(positive.indicator, lastKnown);
   assert.equal(positive.indicator.count.textContent, "2");
   positive.setFetchResponse({ ok: true, json: () => Promise.resolve({ streams: [] }) });
+  await assert.rejects(positive.context.refresh(), /Unable to refresh update availability/);
+  assert.equal(positive.indicator, lastKnown);
+  for (const unsafeReleaseNotesUrl of [
+    "javascript:alert(1)",
+    "https://user:pass@example.test/notes",
+  ]) {
+    positive.setFetchResponse({
+      ok: true,
+      json: () => Promise.resolve({
+        available: true,
+        affected_stream_count: 1,
+        streams: availabilityStreams(["atlaso_release"]).map((stream, index) => (
+          index === 0
+            ? { ...stream, confirmed: { ...stream.confirmed, release_notes_url: unsafeReleaseNotesUrl } }
+            : stream
+        )),
+      }),
+    });
+    await assert.rejects(positive.context.refresh(), /Unable to refresh update availability/);
+    assert.equal(positive.indicator, lastKnown);
+  }
+  positive.setFetchResponse({
+    ok: true,
+    json: () => Promise.resolve({
+      available: true,
+      affected_stream_count: 1,
+      streams: availabilityStreams(["atlaso_release"]).map((stream, index) => (
+        index === 0
+          ? {
+            ...stream,
+            confirmed: {
+              ...stream.confirmed,
+              change_count: 21,
+              changes: Array.from({ length: 21 }, (_value, changeIndex) => ({
+                name: `Change ${changeIndex + 1}`,
+              })),
+            },
+          }
+          : stream
+      )),
+    }),
+  });
   await assert.rejects(positive.context.refresh(), /Unable to refresh update availability/);
   assert.equal(positive.indicator, lastKnown);
   positive.setFetchResponse({

@@ -13002,7 +13002,22 @@ function createApplianceUpdateAvailabilityIndicator() {
 
 function validApplianceUpdateAvailabilityPayload(payload) {
   const expectedStreamIds = new Set(["photon_os", "powershell_modules", "atlaso_release"]);
+  const visibleChangeLimit = 20;
   const validText = (value) => typeof value === "string";
+  const validReleaseNotesUrl = (value) => {
+    if (!validText(value)) return false;
+    if (!value) return true;
+    if ([...value].some((character) => /\s/u.test(character) || character.codePointAt(0) < 32)) return false;
+    try {
+      const parsed = new URL(value);
+      return parsed.protocol === "https:"
+        && Boolean(parsed.host)
+        && !parsed.username
+        && !parsed.password;
+    } catch (_error) {
+      return false;
+    }
+  };
   const validChange = (change) => (
     change
     && typeof change === "object"
@@ -13020,10 +13035,11 @@ function validApplianceUpdateAvailabilityPayload(payload) {
     && Number.isInteger(confirmed.change_count)
     && confirmed.change_count >= 0
     && Array.isArray(confirmed.changes)
+    && confirmed.changes.length <= visibleChangeLimit
     && confirmed.changes.every(validChange)
     && typeof confirmed.details_incomplete === "boolean"
     && validText(confirmed.summary)
-    && validText(confirmed.release_notes_url)
+    && validReleaseNotesUrl(confirmed.release_notes_url)
   );
   const validLastAttempt = (attempt) => (
     attempt
