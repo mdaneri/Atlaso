@@ -288,11 +288,33 @@ def test_sync_host_inventory_cleans_removed_nic_bindings_and_retargets_survivors
                 PhysicalInterface(
                     name="eth2",
                     mac_address="00:15:5d:01:1d:15",
-                    role="access",
+                    role="management",
                     mode="access",
-                    ip_cidr="192.168.20.1/24",
+                    ipv4_method="dhcp",
                     inventory_source="host",
                     desired_state_source="user",
+                ),
+                Setting(
+                    key="appliance_apply.baselines.v1",
+                    value=json.dumps(
+                        {
+                            "network": {
+                                "config_preview": "\n".join(
+                                    [
+                                        "[physical_interfaces]",
+                                        "interface=eth2",
+                                        "role=management",
+                                        "mode=access",
+                                        "admin_state=up",
+                                        "ipv4_method=dhcp",
+                                        "ip_cidr=",
+                                        "ipv6_enabled=false",
+                                        "ipv6_cidr=",
+                                    ]
+                                )
+                            }
+                        }
+                    ),
                 ),
                 VlanInterface(parent_interface="eth1", name="eth1.22", vlan_id=22, ip_cidr="192.168.22.1/24"),
                 VlanInterface(parent_interface="eth2", name="eth2.50", vlan_id=50, ip_cidr="192.168.50.1/24"),
@@ -316,7 +338,7 @@ def test_sync_host_inventory_cleans_removed_nic_bindings_and_retargets_survivors
         survivor = db.execute(select(PhysicalInterface).where(PhysicalInterface.mac_address == "00:15:5d:01:1d:15")).scalar_one()
         removed = db.execute(select(PhysicalInterface).where(PhysicalInterface.mac_address == "00:15:5d:01:1d:14")).scalar_one()
         assert survivor.name == "eth1"
-        assert survivor.ip_cidr == "192.168.20.1/24"
+        assert survivor.ip_cidr is None
         assert removed.name.startswith("missing_")
         assert removed.oper_state == "missing"
         assert removed.mode == "unused"
@@ -372,6 +394,16 @@ def test_sync_host_inventory_cleans_removed_nic_bindings_and_retargets_survivors
         assert "disabled VLAN eth1.22" in (audit.detail or "")
         assert "disabled KMS / KMIP" in (audit.detail or "")
         assert "Missing physical interface cleanup" in caplog.text
+        from atlaso.app.services.management_bindings import applied_management_bindings
+
+        assert applied_management_bindings(db) == [
+            {
+                "interface": "eth1",
+                "role": "management",
+                "address": "192.168.20.1",
+                "management_ui": "true",
+            }
+        ]
 
     get_settings.cache_clear()
 

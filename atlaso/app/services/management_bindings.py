@@ -67,8 +67,8 @@ def _network_rows(config_preview: str) -> list[dict[str, str]]:
     return rows
 
 
-def _network_baseline_preview(db: Session) -> str | None:
-    """Return the last-applied Network preview, or ``None`` when no baseline exists.
+def _network_baseline(db: Session) -> dict[str, object] | None:
+    """Return the last-applied Network baseline, or ``None`` when none is usable.
 
     Args:
         db: Active database session used to load the baseline setting.
@@ -87,7 +87,7 @@ def _network_baseline_preview(db: Session) -> str | None:
     network = payload.get("network")
     if not isinstance(network, dict) or not isinstance(network.get("config_preview"), str):
         return None
-    return str(network["config_preview"])
+    return network
 
 
 def applied_management_bindings(db: Session) -> list[dict[str, str]] | None:
@@ -100,10 +100,16 @@ def applied_management_bindings(db: Session) -> list[dict[str, str]] | None:
     Args:
         db: Active database session used to load applied and observed network state.
     """
-    preview = _network_baseline_preview(db)
-    if preview is None:
+    baseline = _network_baseline(db)
+    if baseline is None:
         return None
-    rows = _network_rows(preview)
+    rows = _network_rows(str(baseline["config_preview"]))
+    raw_aliases = baseline.get("physical_interface_aliases")
+    aliases = (
+        {str(old_name): str(new_name) for old_name, new_name in raw_aliases.items()}
+        if isinstance(raw_aliases, dict)
+        else {}
+    )
     current_physical = {
         interface.name: interface
         for interface in db.execute(select(PhysicalInterface)).scalars().all()
@@ -128,7 +134,9 @@ def applied_management_bindings(db: Session) -> list[dict[str, str]] | None:
             continue
         cidrs = [row.get("ip_cidr"), row.get("ipv6_cidr")]
         if row.get("kind") == "physical":
-            observed = current_physical.get(row.get("name", ""))
+            applied_name = row.get("name", "")
+            current_name = aliases.get(applied_name, applied_name)
+            observed = current_physical.get(current_name)
             if observed is not None and observed.oper_state != "missing":
                 cidrs.extend((observed.host_ip_cidr, observed.host_ipv6_cidr))
         for cidr in cidrs:
@@ -138,7 +146,7 @@ def applied_management_bindings(db: Session) -> list[dict[str, str]] | None:
             seen.add(address)
             bindings.append(
                 {
-                    "interface": row.get("name", ""),
+                    "interface": current_name if row.get("kind") == "physical" else row.get("name", ""),
                     "role": row.get("role", ""),
                     "address": address,
                     "management_ui": "true",

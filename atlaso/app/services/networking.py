@@ -34,6 +34,7 @@ from atlaso.app.models import (
 
 LOGGER = logging.getLogger("atlaso.networking")
 NETWORK_INVENTORY_CLEANUP_WARNING_KEY = "network.inventory_cleanup.warning"
+APPLIANCE_APPLY_BASELINES_KEY = "appliance_apply.baselines.v1"
 NETWORK_ROLES = ["management", "access", "route", "unused"]
 LEGACY_NETWORK_ROLE_REPLACEMENTS = {"services": "access", "storage": "access"}
 INTERFACE_MODES = ["access", "trunk", "unused"]
@@ -710,6 +711,47 @@ def _retarget_interface_references(db: Session, renames: dict[str, str]) -> None
         esxi_listen_interface.value = _replace_interface_tokens(esxi_listen_interface.value, expanded_renames)
 
 
+def _record_applied_physical_interface_aliases(db: Session, renames: dict[str, str]) -> None:
+    """Retain observed-address lookup identity when Linux renames an applied NIC.
+
+    The applied Network preview remains byte-for-byte authoritative. Alias metadata records only
+    the inventory identity transition until the next successful Network Apply replaces the baseline.
+
+    Args:
+        db: Active database session.
+        renames: Applied physical interface names mapped to their current inventory names.
+    """
+    if not renames:
+        return
+    setting = db.execute(
+        select(Setting).where(Setting.key == APPLIANCE_APPLY_BASELINES_KEY)
+    ).scalar_one_or_none()
+    if setting is None or not setting.value:
+        return
+    try:
+        baselines = json.loads(setting.value)
+    except json.JSONDecodeError:
+        return
+    if not isinstance(baselines, dict):
+        return
+    network = baselines.get("network")
+    if not isinstance(network, dict) or not isinstance(network.get("config_preview"), str):
+        return
+    raw_aliases = network.get("physical_interface_aliases")
+    aliases = (
+        {str(old_name): str(new_name) for old_name, new_name in raw_aliases.items()}
+        if isinstance(raw_aliases, dict)
+        else {}
+    )
+    for applied_name, current_name in list(aliases.items()):
+        aliases[applied_name] = renames.get(current_name, current_name)
+    for old_name, new_name in renames.items():
+        aliases.setdefault(old_name, new_name)
+    network["physical_interface_aliases"] = aliases
+    setting.value = json.dumps(baselines, indent=2, sort_keys=True)
+    setting.updated_at = utcnow()
+
+
 def _rename_interface(
     interface: PhysicalInterface,
     new_name: str,
@@ -912,6 +954,7 @@ def sync_host_physical_interfaces(db: Session) -> tuple[list[PhysicalInterface],
     _cleanup_missing_interface_references(db, missing_renames)
     live_renames = {old: new for old, new in final_renames.items() if old not in missing_renames and new not in set(missing_renames.values())}
     _retarget_interface_references(db, live_renames)
+    _record_applied_physical_interface_aliases(db, live_renames)
     if discovered:
         discovered_names = {interface.name for interface in discovered}
         seed_only_missing = [
