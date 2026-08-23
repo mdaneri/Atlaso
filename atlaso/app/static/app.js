@@ -13015,7 +13015,7 @@ function validApplianceUpdateAvailabilityPayload(payload) {
     if (!validText(value)) return false;
     if (!value) return true;
     if ([...value].some((character) => /\s/u.test(character) || character.codePointAt(0) < 32)) return false;
-    const match = /^https:\/\/([^/?#]+)(?:[/?#]|$)/iu.exec(value);
+    const match = /^https:\/\/([^/?#]+)(?:[/?#]|$)/i.exec(value);
     if (!match) return false;
     const authority = match[1];
     const credentialSeparator = authority.lastIndexOf("@");
