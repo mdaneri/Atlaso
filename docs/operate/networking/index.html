@@ -3850,6 +3850,10 @@ That isolation is allowed when intentional. Clearing a populated <strong>IPv4 Ga
 off-subnet HTTPS, DNS, repository, and update access will stop after Apply. Off-link gateways and a gateway equal to the
 interface address remain invalid. Cancel the review or revert the pending Network desired state to retain the applied
 DHCP address and route; a failed protected management handoff rolls back to the last-applied DHCP path.</p>
+<p>For a static dedicated-management address with a gateway, Atlaso persists three related networkd objects: the connected
+management prefix in policy table <code>100</code>, a source rule selecting that table, and the default route through the reviewed
+gateway. The connected route keeps replies to the VMware host or another same-subnet client on-link after reboot; the
+default route continues to carry off-subnet appliance traffic.</p>
 <h3 id="assign-an-interface-role">Assign an interface role<a class="headerlink" href="#assign-an-interface-role" title="Permanent link">&para;</a></h3>
 <p>Physical and VLAN interfaces share one role contract:</p>
 <ul>
@@ -3956,11 +3960,16 @@ with its entered values. Saving refreshes validation and the configuration previ
 global <strong>Appliance Apply</strong> with the <code>network</code> unit when the reviewed desired state is ready for enforcement. Delete
 remains a confirmed row-context action.</p>
 <h2 id="verify-and-roll-back">Verify and roll back<a class="headerlink" href="#verify-and-roll-back" title="Permanent link">&para;</a></h2>
-<p>Confirm the management URL, expected routes, and interface state after apply. A failed management handoff reports its
-non-secret failing layer and rolls back the captured network, firewall, nginx, certificate, and service state before
-the task becomes failed. Rollback also reconfigures interfaces introduced to the candidate and deletes candidate-only
-VLAN devices. If automatic rollback cannot restore access, use the local console network recovery action to
-restore a known-good management configuration, then review desired state before retrying.</p>
+<p>Confirm the management URL, expected routes, and interface state after apply and again after an appliance reboot. For a
+static dedicated-management interface with a gateway, <code>ip route show table 100</code> must include both the directly connected
+management prefix on the interface and the default through the configured gateway; <code>ip rule</code> must select table <code>100</code>
+for that source prefix. A retained address and a successful gateway ping prove neither firewall admission nor the reply
+route to a same-subnet host. Verify the Atlaso loopback <code>/openapi.json</code>, the guest-local management front door, and
+<code>/openapi.json</code> from the actual management host before declaring recovery.</p>
+<p>A failed management handoff reports its non-secret failing layer and rolls back the captured network, firewall, nginx,
+certificate, and service state before the task becomes failed. Rollback also reconfigures interfaces introduced to the
+candidate and deletes candidate-only VLAN devices. If automatic rollback cannot restore access, use the local console
+network recovery action to restore a known-good management configuration, then review desired state before retrying.</p>
 <h2 id="transport-ownership">Transport ownership<a class="headerlink" href="#transport-ownership" title="Permanent link">&para;</a></h2>
 <p>The management Routes/WAN transports and their API v1 counterparts are owned by the dedicated <code>routes_wan</code> domain
 routers. The stable UI and API facade modules continue to aggregate and export those handlers. This internal ownership

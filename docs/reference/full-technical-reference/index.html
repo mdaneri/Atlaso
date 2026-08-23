@@ -4883,7 +4883,8 @@ CA/certificate material while host file writes still go through <code>atlaso-hel
   links, and reconciles VLAN links. The appliance image's default <code>00-atlaso-mgmt.network</code> matches only <code>eth0</code>, Atlaso
   retires Photon catchall network defaults, and apply keeps management explicit while avoiding blind management-link
   reconfiguration. Management source networks use the management route table; access and route networks use the lab
-  route table.</li>
+  route table. A static dedicated-management family with a default gateway persists its connected prefix as a scope-link
+  route in table <code>100</code>, beside the source rule and default, so same-subnet host-facing replies remain direct after reboot.</li>
 <li>Photon image provisioning installs Photon's <code>powershell</code> package, system-wide <code>VCF.PowerCLI</code> <code>9.1.0.25380678</code>, and
   Python <code>vcf-sdk</code> <code>9.1.0.0</code>. It keeps the system module tree root-owned and read-only to non-root users, verifies
   <code>Connect-VIServer</code> from the bootstrap administrator's unprivileged PowerShell session, records tool versions in
