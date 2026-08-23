@@ -13037,8 +13037,18 @@ function validApplianceUpdateAvailabilityPayload(payload) {
     if (!bracketed) return false;
     const bracketedHost = bracketed[1];
     if (/^v[0-9A-Fa-f]+\..+$/.test(bracketedHost)) return true;
+    const scopeSeparator = bracketedHost.indexOf("%");
+    let ipv6Address = bracketedHost;
+    if (scopeSeparator >= 0) {
+      if (
+        scopeSeparator !== bracketedHost.lastIndexOf("%")
+        || scopeSeparator === 0
+        || scopeSeparator === bracketedHost.length - 1
+      ) return false;
+      ipv6Address = bracketedHost.slice(0, scopeSeparator);
+    }
     try {
-      new URL(`https://[${bracketedHost}]/`);
+      new URL(`https://[${ipv6Address}]/`);
       return true;
     } catch (_error) {
       return false;

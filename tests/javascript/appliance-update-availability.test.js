@@ -112,6 +112,7 @@ function availabilityIndicatorScenario() {
     HTMLElement,
     HTMLTemplateElement,
     CSS: { escape: (value) => String(value) },
+    URL,
   });
   vm.runInContext(
     `let atlasoUpdateAvailability = { available: false, affected_stream_count: 0, streams: [] };
@@ -352,7 +353,7 @@ test("validated polling creates, updates, and removes the positive indicator", a
             },
             confirmed: {
               ...stream.confirmed,
-              release_notes_url: "https://example.test:99999/releases/v0.9.186",
+              release_notes_url: "https://[fe80::1%25eth0]:99999/releases/v0.9.186",
             },
           }
           : stream
