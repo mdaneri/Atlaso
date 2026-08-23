@@ -126,3 +126,32 @@ function Invoke-Sample { param([string]$Value) }
     assert invalid.returncode != 0
     assert "function Invoke-Sample parameter" in invalid.stderr
     assert "'Value' has no .PARAMETER entry" in invalid.stderr
+
+
+@pytest.mark.skipif(shutil.which("pwsh") is None, reason="PowerShell is not installed")
+def test_powershell_help_policy_checks_signature_style_parameters(tmp_path: Path) -> None:
+    """Require help for parameters declared in a function signature.
+
+    Args:
+        tmp_path: Isolated filesystem root.
+    """
+    base = tmp_path / "base"
+    candidate = tmp_path / "candidate"
+    _initialize_checkout(base, "Write-Host 'base'\n")
+    signature_style = """<#
+.SYNOPSIS
+Run the sample script.
+#>
+
+<#
+.SYNOPSIS
+Run one signature-style function.
+#>
+function Invoke-Sample([string]$Value) {}
+"""
+    _initialize_checkout(candidate, signature_style)
+
+    invalid = _run_help_check(candidate, base)
+    assert invalid.returncode != 0
+    assert "function Invoke-Sample parameter" in invalid.stderr
+    assert "'Value' has no .PARAMETER entry" in invalid.stderr

@@ -99,7 +99,12 @@ function Get-PowerShellScopeHelpFinding {
         }
     }
     elseif ($Scope -is [System.Management.Automation.Language.FunctionDefinitionAst]) {
-        if ($null -ne $Scope.Body.ParamBlock) {
+        # Signature-style functions store their declaration on the function AST,
+        # while ordinary param blocks live on the body AST.
+        if ($null -ne $Scope.Parameters -and $Scope.Parameters.Count -gt 0) {
+            $parameters = @($Scope.Parameters)
+        }
+        elseif ($null -ne $Scope.Body.ParamBlock) {
             $parameters = @($Scope.Body.ParamBlock.Parameters)
         }
     }
