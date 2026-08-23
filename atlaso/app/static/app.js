@@ -13023,12 +13023,26 @@ function validApplianceUpdateAvailabilityPayload(payload) {
     if (!match) return false;
     const authority = match[1];
     const credentialSeparator = authority.lastIndexOf("@");
-    if (credentialSeparator < 0) return true;
-    const userInfo = authority.slice(0, credentialSeparator);
-    const passwordSeparator = userInfo.indexOf(":");
-    const username = passwordSeparator < 0 ? userInfo : userInfo.slice(0, passwordSeparator);
-    const password = passwordSeparator < 0 ? "" : userInfo.slice(passwordSeparator + 1);
-    return !username && !password;
+    let hostPort = authority;
+    if (credentialSeparator >= 0) {
+      const userInfo = authority.slice(0, credentialSeparator);
+      const passwordSeparator = userInfo.indexOf(":");
+      const username = passwordSeparator < 0 ? userInfo : userInfo.slice(0, passwordSeparator);
+      const password = passwordSeparator < 0 ? "" : userInfo.slice(passwordSeparator + 1);
+      if (username || password) return false;
+      hostPort = authority.slice(credentialSeparator + 1);
+    }
+    if (!hostPort.includes("[") && !hostPort.includes("]")) return true;
+    const bracketed = /^\[([^\[\]]+)\](?::.*)?$/.exec(hostPort);
+    if (!bracketed) return false;
+    const bracketedHost = bracketed[1];
+    if (/^v[0-9A-Fa-f]+\..+$/.test(bracketedHost)) return true;
+    try {
+      new URL(`https://[${bracketedHost}]/`);
+      return true;
+    } catch (_error) {
+      return false;
+    }
   };
   const validChange = (change) => (
     change
