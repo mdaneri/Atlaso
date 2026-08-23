@@ -200,6 +200,16 @@ routing. The preferred appliance identity is a flagged `eth0`, then the first st
 flagged VLAN. The app-owned appliance FQDN records and `appliance:https` certificate SANs cover all effective management
 UI addresses.
 
+Browser requested-interface eligibility is an applied-state projection, not the mutable desired Network projection.
+Atlaso parses the last-applied Network baseline, combines its physical paths with observed DHCP/static host addresses,
+and authorizes `/ui/management` only on those address-specific bindings. Desired physical-interface mutations use the
+shared domain transaction for UI and API callers and reject removal of the final complete management candidate. A
+complete flagged access replacement remains pending and is detected as a management-path change by the handoff; it is
+not published as an active management listener until the handoff succeeds and commits the new baseline. Failed,
+cancelled, reverted, and pre-commit rolled-back attempts leave the prior applied projection unchanged. Desired public
+service eligibility remains separate, and the applied management origin is not reclassified as public during a pending
+role conversion.
+
 ### Network apply
 
 The real network apply path is Photon `systemd-networkd` backed. The `network` apply unit stages Atlaso's rendered

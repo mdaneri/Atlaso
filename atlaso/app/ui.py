@@ -444,12 +444,14 @@ from atlaso.app.services.local_users import (
     validate_local_usernames,
     validate_password,
 )
+from atlaso.app.services.management_bindings import applied_management_bindings
 from atlaso.app.services.monitoring import monitor_payload
 from atlaso.app.services.networking import (
     INTERFACE_MODES,
     IPV4_METHODS,
     NETWORK_INVENTORY_CLEANUP_WARNING_KEY,
     NETWORK_ROLES,
+    discover_host_physical_interfaces,
     is_canonical_network_role,
     normalize_interface_mode,
     normalize_interface_role,
@@ -4704,22 +4706,8 @@ def request_host_interface_role(request_host: str, db: Session) -> str:
         request_host: Request host supplied by the caller.
         db: Active database session.
     """
-    if not request_host:
-        return ""
-    for interface in db.execute(select(PhysicalInterface)).scalars().all():
-        addresses = {
-            interface_address(interface.ip_cidr),
-            interface_address(interface.host_ip_cidr),
-            interface_address(interface.ipv6_cidr),
-            interface_address(interface.host_ipv6_cidr),
-        }
-        if request_host in addresses:
-            return normalize_interface_role(interface.role)
-    for vlan in db.execute(select(VlanInterface).where(VlanInterface.enabled.is_(True))).scalars().all():
-        addresses = {interface_address(vlan.ip_cidr), interface_address(vlan.ipv6_cidr)}
-        if request_host in addresses:
-            return normalize_interface_role(vlan.role)
-    return ""
+    binding = request_host_interface_binding(request_host, db)
+    return str((binding or {}).get("role") or "")
 
 
 def request_host_interface_binding(request_host: str, db: Session) -> dict[str, Any] | None:
@@ -4741,18 +4729,24 @@ def request_host_interface_binding(request_host: str, db: Session) -> dict[str, 
         physical_interfaces,
         enabled_vlans,
     )
+    applied_bindings = applied_management_bindings(db)
+    use_desired_fallback = applied_bindings is None
     physical_management = {
-        interface.name: normalize_interface_role(interface.role) == "management"
-        or (
-            normalize_interface_role(interface.role) == "access"
-            and normalize_interface_mode(interface.mode) == "access"
-            and interface.admin_state == "up"
-            and interface.access_management_ui_enabled
+        interface.name: use_desired_fallback
+        and (
+            normalize_interface_role(interface.role) == "management"
+            or (
+                normalize_interface_role(interface.role) == "access"
+                and normalize_interface_mode(interface.mode) == "access"
+                and interface.admin_state == "up"
+                and interface.access_management_ui_enabled
+            )
         )
         for interface in physical_interfaces
     }
     vlan_management = {
-        vlan.name: normalize_interface_role(vlan.role) == "access"
+        vlan.name: use_desired_fallback
+        and normalize_interface_role(vlan.role) == "access"
         and vlan.access_management_ui_enabled
         for vlan in enabled_vlans
     }
@@ -4775,6 +4769,14 @@ def request_host_interface_binding(request_host: str, db: Session) -> dict[str, 
                         "management_ui": physical_management.get(interface.name, False),
                     }
                 )
+    if applied_bindings is not None:
+        entries.extend(
+            {
+                **binding,
+                "management_ui": True,
+            }
+            for binding in applied_bindings
+        )
     by_address = {entry["address"].lower(): entry for entry in entries}
     try:
         parsed_host = str(ip_address(request_host.strip("[]"))).lower()
@@ -9382,6 +9384,63 @@ def network_management_paths(config_preview: str) -> list[dict[str, str]]:
             item["ipv6_gateway"],
         ),
     )
+
+
+def refresh_management_handoff_dynamic_observations(
+    db: Session,
+    config_preview: str,
+    handoff_evidence: dict[str, Any],
+) -> None:
+    """Persist helper-confirmed dynamic addresses before publishing the Network baseline.
+
+    Args:
+        db: Active Appliance Apply transaction.
+        config_preview: Exact Network configuration staged for the successful handoff.
+        handoff_evidence: Bounded helper result containing every probed candidate address.
+    """
+    dynamic_paths = [
+        path
+        for path in network_management_paths(config_preview)
+        if path.get("kind") == "physical"
+        and (
+            path.get("ipv4_method") == "dhcp"
+            or (
+                path.get("ipv6_enabled", "").lower() == "true"
+                and not path.get("ipv6_cidr")
+            )
+        )
+    ]
+    if not dynamic_paths:
+        return
+    try:
+        confirmed_addresses = {
+            str(ip_address(str(value)))
+            for value in handoff_evidence.get("candidate_addresses", [])
+        }
+    except ValueError as exc:
+        raise RuntimeError("Management handoff returned an invalid candidate address.") from exc
+    discovered = {row.name: row for row in discover_host_physical_interfaces()}
+    for path in dynamic_paths:
+        name = str(path.get("name") or "")
+        observed = discovered.get(name)
+        interface = db.scalar(select(PhysicalInterface).where(PhysicalInterface.name == name))
+        if observed is None or interface is None:
+            raise RuntimeError(
+                f"Management handoff could not refresh observed addresses for {name}."
+            )
+        required = []
+        if path.get("ipv4_method") == "dhcp":
+            required.append(("IPv4", observed.host_ip_cidr, "host_ip_cidr"))
+        if path.get("ipv6_enabled", "").lower() == "true" and not path.get("ipv6_cidr"):
+            required.append(("IPv6", observed.host_ipv6_cidr, "host_ipv6_cidr"))
+        for family, cidr, attribute in required:
+            address = address_from_cidr(cidr)
+            if not address or address not in confirmed_addresses:
+                raise RuntimeError(
+                    f"Management handoff could not confirm the observed dynamic {family} address for {name}."
+                )
+            setattr(interface, attribute, cidr)
+    db.flush()
 
 
 def management_handoff_required(network_unit: dict[str, Any], baseline: dict[str, Any] | None) -> bool:
@@ -14458,6 +14517,12 @@ def run_appliance_apply_job(job_id: str, *, force_real: bool = False) -> None:
                         # state may change in another session while the bounded
                         # readiness probes run; never promote that newer,
                         # unexecuted state into the applied baselines.
+                        if not group_result.get("dry_run"):
+                            refresh_management_handoff_dynamic_observations(
+                                db,
+                                str(current_by_id["network"].get("config_preview") or ""),
+                                group_result["management_handoff"],
+                            )
                         applied = [
                             current_by_id[unit_id]
                             for unit_id in MANAGEMENT_HANDOFF_UNIT_IDS

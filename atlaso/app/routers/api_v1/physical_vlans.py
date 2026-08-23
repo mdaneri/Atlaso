@@ -25,6 +25,10 @@ from atlaso.app.security import Identity, require_scope
 from atlaso.app.services.interface_updates import (
     PhysicalInterfaceUpdateError,
 )
+from atlaso.app.services.management_bindings import (
+    MANAGEMENT_LISTENER_REQUIRED_DETAIL,
+    desired_management_candidate_exists,
+)
 from atlaso.app.services.networking import sync_host_physical_interfaces
 from atlaso.app.services.physical_interfaces import (
     PhysicalInterfaceMutation,
@@ -138,8 +142,9 @@ def build_router(dependencies: PhysicalVlanApiDependencies) -> PhysicalVlanApiRo
         physical-interface fields, then atomically reconciles dependent DNS, NTP/NTS, Certificate
         Authority, KMS, LDAP, VCF service, ESX Storage, Web Terminal, DHCP, and Network Boot bindings.
         If any dependent update fails, Atlaso rolls back the interface and every dependent row. The
-        call changes desired state only; the global Appliance Apply workflow remains the
-        host-enforcement boundary.
+        operation also rejects a transition that leaves no complete desired management listener. The
+        call changes desired state only; active requested-interface eligibility stays on the
+        last-applied Network binding until the global Appliance Apply management handoff commits.
 
         Args:
             name: Stable name identifying the resource or operation.
@@ -386,10 +391,15 @@ def build_router(dependencies: PhysicalVlanApiDependencies) -> PhysicalVlanApiRo
         vlan = db.get(VlanInterface, vlan_id)
         if not vlan:
             raise HTTPException(status_code=404, detail="VLAN not found")
+        had_management_candidate = desired_management_candidate_exists(db)
         values = dependencies.validate_vlan_api_payload(payload, db)
         for key, value in values.items():
             setattr(vlan, key, value)
         vlan.name = f"{vlan.parent_interface}.{vlan.vlan_id}"
+        db.flush()
+        if had_management_candidate and not desired_management_candidate_exists(db):
+            db.rollback()
+            raise HTTPException(status_code=422, detail=MANAGEMENT_LISTENER_REQUIRED_DETAIL)
         db.commit()
         db.refresh(vlan)
         record_audit(
@@ -428,7 +438,12 @@ def build_router(dependencies: PhysicalVlanApiDependencies) -> PhysicalVlanApiRo
         vlan = db.get(VlanInterface, vlan_id)
         if not vlan:
             raise HTTPException(status_code=404, detail="VLAN not found")
+        had_management_candidate = desired_management_candidate_exists(db)
         db.delete(vlan)
+        db.flush()
+        if had_management_candidate and not desired_management_candidate_exists(db):
+            db.rollback()
+            raise HTTPException(status_code=422, detail=MANAGEMENT_LISTENER_REQUIRED_DETAIL)
         db.commit()
         record_audit(
             db,
@@ -520,7 +535,12 @@ def build_router(dependencies: PhysicalVlanApiDependencies) -> PhysicalVlanApiRo
         vlan = db.get(VlanInterface, vlan_id)
         if not vlan:
             raise HTTPException(status_code=404, detail="VLAN not found")
+        had_management_candidate = desired_management_candidate_exists(db)
         vlan.enabled = False
+        db.flush()
+        if had_management_candidate and not desired_management_candidate_exists(db):
+            db.rollback()
+            raise HTTPException(status_code=422, detail=MANAGEMENT_LISTENER_REQUIRED_DETAIL)
         db.commit()
         db.refresh(vlan)
         record_audit(

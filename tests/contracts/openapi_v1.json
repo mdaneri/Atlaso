@@ -12502,7 +12502,7 @@
         ]
       },
       "patch": {
-        "description": "Update Physical Interface Desired State.\n\nRequires the `write:interfaces` API scope. This operation validates and saves the supplied\nphysical-interface fields, then atomically reconciles dependent DNS, NTP/NTS, Certificate\nAuthority, KMS, LDAP, VCF service, ESX Storage, Web Terminal, DHCP, and Network Boot bindings.\nIf any dependent update fails, Atlaso rolls back the interface and every dependent row. The\ncall changes desired state only; the global Appliance Apply workflow remains the\nhost-enforcement boundary.",
+        "description": "Update Physical Interface Desired State.\n\nRequires the `write:interfaces` API scope. This operation validates and saves the supplied\nphysical-interface fields, then atomically reconciles dependent DNS, NTP/NTS, Certificate\nAuthority, KMS, LDAP, VCF service, ESX Storage, Web Terminal, DHCP, and Network Boot bindings.\nIf any dependent update fails, Atlaso rolls back the interface and every dependent row. The\noperation also rejects a transition that leaves no complete desired management listener. The\ncall changes desired state only; active requested-interface eligibility stays on the\nlast-applied Network binding until the global Appliance Apply management handoff commits.",
         "operationId": "updatePhysicalInterface",
         "parameters": [
           {

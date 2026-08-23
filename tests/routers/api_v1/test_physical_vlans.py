@@ -128,18 +128,62 @@ def test_physical_interface_api_enforces_access_only_management_ui_flag(client):
     Args:
         client: Authenticated-capable application test client fixture.
     """
+    from sqlalchemy import select
+
+    from atlaso.app.database import SessionLocal
+    from atlaso.app.models import PhysicalInterface
+
     token, _metadata = create_token(client, scopes=["read:interfaces", "write:interfaces"])
     headers = {"Authorization": f"Bearer {token}"}
     interfaces = client.get("/api/v1/interfaces/physical", headers=headers).json()
     management = next(row for row in interfaces if row["role"] == "management")
+    rejected_multicast = client.patch(
+        f"/api/v1/interfaces/physical/{management['name']}",
+        headers=headers,
+        json={"role": "access", "ipv4_method": "static", "ip_cidr": "224.0.0.1/24"},
+    )
+    assert rejected_multicast.status_code == 422, rejected_multicast.text
+    assert "At least one complete management listener must remain" in rejected_multicast.text
+    with SessionLocal() as db:
+        interface = db.execute(
+            select(PhysicalInterface).where(PhysicalInterface.name == management["name"])
+        ).scalar_one()
+        interface.ipv6_enabled = True
+        interface.ipv6_cidr = "fd00:469::1/64"
+        db.commit()
+    rejected_static = client.patch(
+        f"/api/v1/interfaces/physical/{management['name']}",
+        headers=headers,
+        json={"ipv4_method": "static", "ip_cidr": ""},
+    )
+    assert rejected_static.status_code == 422, rejected_static.text
+    assert "At least one complete management listener must remain" in rejected_static.text
+    with SessionLocal() as db:
+        interface = db.execute(
+            select(PhysicalInterface).where(PhysicalInterface.name == management["name"])
+        ).scalar_one()
+        interface.ipv4_method = "static"
+        interface.ip_cidr = None
+        interface.host_ip_cidr = "192.168.49.1/24"
+        db.add(interface)
+        db.commit()
 
     converted = client.patch(
         f"/api/v1/interfaces/physical/{management['name']}",
         headers=headers,
-        json={"role": "access", "ipv4_method": "static", "ip_cidr": "192.168.49.1/24"},
+        json={"role": "access", "ipv4_method": "static", "ip_cidr": ""},
     )
     assert converted.status_code == 200, converted.text
     assert converted.json()["access_management_ui_enabled"] is True
+    assert converted.json()["ip_cidr"] == "192.168.49.1/24"
+
+    final_listener = client.patch(
+        f"/api/v1/interfaces/physical/{management['name']}",
+        headers=headers,
+        json={"access_management_ui_enabled": False},
+    )
+    assert final_listener.status_code == 422, final_listener.text
+    assert "At least one complete management listener must remain" in final_listener.text
 
     invalid = client.patch(
         f"/api/v1/interfaces/physical/{management['name']}",
@@ -155,6 +199,107 @@ def test_physical_interface_api_enforces_access_only_management_ui_flag(client):
     )
     assert reverted.status_code == 200, reverted.text
     assert reverted.json()["access_management_ui_enabled"] is False
+
+
+def test_physical_interface_api_allows_repair_when_no_desired_management_candidate(client):
+    """Allow unrelated edits and incremental repair of a pre-existing incomplete desired state.
+
+    Args:
+        client: Authenticated-capable application test client fixture.
+    """
+    from sqlalchemy import select
+
+    from atlaso.app.database import SessionLocal
+    from atlaso.app.models import PhysicalInterface
+
+    with SessionLocal() as db:
+        for interface in db.execute(select(PhysicalInterface)).scalars().all():
+            interface.role = "unused"
+            interface.access_management_ui_enabled = False
+        repair = db.execute(
+            select(PhysicalInterface).where(PhysicalInterface.name == "eth2")
+        ).scalar_one()
+        repair.mode = "access"
+        repair.admin_state = "up"
+        repair.oper_state = "up"
+        repair.ipv4_method = "static"
+        repair.ip_cidr = None
+        db.commit()
+
+    token, _metadata = create_token(client, scopes=["read:interfaces", "write:interfaces"])
+    headers = {"Authorization": f"Bearer {token}"}
+    unrelated = client.patch(
+        "/api/v1/interfaces/physical/eth2",
+        headers=headers,
+        json={"mtu": 1600},
+    )
+    address = client.patch(
+        "/api/v1/interfaces/physical/eth2",
+        headers=headers,
+        json={"ip_cidr": "192.168.69.1/24"},
+    )
+    role = client.patch(
+        "/api/v1/interfaces/physical/eth2",
+        headers=headers,
+        json={"role": "access"},
+    )
+    completed = client.patch(
+        "/api/v1/interfaces/physical/eth2",
+        headers=headers,
+        json={"access_management_ui_enabled": True},
+    )
+
+    for response in (unrelated, address, role, completed):
+        assert response.status_code == 200, response.text
+    assert completed.json()["mtu"] == 1600
+    assert completed.json()["ip_cidr"] == "192.168.69.1/24"
+    assert completed.json()["role"] == "access"
+    assert completed.json()["access_management_ui_enabled"] is True
+
+
+def test_physical_interface_api_preserves_final_slaac_access_management_listener(client):
+    """Reject disabling the sole flagged access listener backed by observed SLAAC.
+
+    Args:
+        client: Authenticated-capable application test client fixture.
+    """
+    from sqlalchemy import select
+
+    from atlaso.app.database import SessionLocal
+    from atlaso.app.models import PhysicalInterface
+
+    with SessionLocal() as db:
+        for interface in db.execute(select(PhysicalInterface)).scalars().all():
+            interface.role = "unused"
+            interface.access_management_ui_enabled = False
+        listener = db.execute(
+            select(PhysicalInterface).where(PhysicalInterface.name == "eth2")
+        ).scalar_one()
+        listener.role = "access"
+        listener.mode = "access"
+        listener.admin_state = "up"
+        listener.oper_state = "up"
+        listener.ipv4_method = "static"
+        listener.ip_cidr = None
+        listener.ipv6_enabled = True
+        listener.ipv6_cidr = None
+        listener.host_ipv6_cidr = "2001:db8:469::1/64"
+        listener.access_management_ui_enabled = True
+        db.commit()
+
+    token, _metadata = create_token(client, scopes=["read:interfaces", "write:interfaces"])
+    headers = {"Authorization": f"Bearer {token}"}
+    rejected = client.patch(
+        "/api/v1/interfaces/physical/eth2",
+        headers=headers,
+        json={"access_management_ui_enabled": False},
+    )
+
+    assert rejected.status_code == 422, rejected.text
+    assert "At least one complete management listener must remain" in rejected.text
+    current = client.get("/api/v1/interfaces/physical", headers=headers)
+    listener_row = next(row for row in current.json() if row["name"] == "eth2")
+    assert listener_row["access_management_ui_enabled"] is True
 
 
 @pytest.mark.parametrize("retired_role", ["services", "storage"])
@@ -236,6 +381,64 @@ def test_vlan_api_preserves_case_insensitive_canonical_roles(client):
     )
     assert updated.status_code == 200, updated.text
     assert updated.json()["role"] == "route"
+
+
+def test_vlan_api_rejects_removing_final_management_listener(client):
+    """Keep the final flagged management VLAN intact across API mutations.
+
+    Args:
+        client: Authenticated-capable application test client fixture.
+    """
+    from sqlalchemy import select
+
+    from atlaso.app.database import SessionLocal
+    from atlaso.app.models import PhysicalInterface, VlanInterface
+
+    with SessionLocal() as db:
+        for interface in db.execute(select(PhysicalInterface)).scalars().all():
+            interface.role = "unused"
+            interface.access_management_ui_enabled = False
+        parent = db.execute(
+            select(PhysicalInterface).where(PhysicalInterface.name == "eth1")
+        ).scalar_one()
+        parent.mode = "trunk"
+        parent.admin_state = "up"
+        parent.oper_state = "up"
+        vlan = VlanInterface(
+            name="eth1.469",
+            parent_interface="eth1",
+            vlan_id=469,
+            ip_cidr="192.168.69.1/24",
+            role="access",
+            enabled=True,
+            access_management_ui_enabled=True,
+        )
+        db.add(vlan)
+        db.commit()
+        vlan_id = vlan.id
+
+    token, _metadata = create_token(client, scopes=["write:vlans"])
+    headers = {"Authorization": f"Bearer {token}"}
+    payload = {
+        "parent_interface": "eth1",
+        "vlan_id": 469,
+        "ip_cidr": "192.168.69.1/24",
+        "role": "access",
+        "enabled": True,
+        "access_management_ui_enabled": False,
+    }
+    updated = client.patch(f"/api/v1/vlans/{vlan_id}", headers=headers, json=payload)
+    disabled = client.post(f"/api/v1/vlans/{vlan_id}/disable", headers=headers)
+    deleted = client.delete(f"/api/v1/vlans/{vlan_id}", headers=headers)
+
+    for response in (updated, disabled, deleted):
+        assert response.status_code == 422, response.text
+        assert "At least one complete management listener must remain" in response.text
+    with SessionLocal() as db:
+        preserved = db.get(VlanInterface, vlan_id)
+        assert preserved is not None
+        assert preserved.enabled is True
+        assert preserved.access_management_ui_enabled is True
 
 
 def test_physical_interface_api_atomically_refreshes_ipv4_and_ipv6_dependencies(client):

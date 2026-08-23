@@ -262,6 +262,10 @@ The following cross-cutting boundaries always apply:
 - Canonical human browser surfaces belong to `/ui/management` or `/ui/public`; `/` is only the requested-interface
   dispatcher. Keep API, OpenAPI, OIDC, CA-download, PXE, `/PROD/`, registry, static, and other machine/protocol routes at
   their stable paths. A URL prefix never replaces listener, authentication, authorization, CSRF, or session enforcement.
+  Resolve management requested-interface eligibility from the last-applied Network binding plus observed addresses,
+  never from unapplied desired role, address, or exposure edits. Reject a desired-state mutation that removes the final
+  complete management candidate, while admitting a complete explicit access-management replacement to the protected
+  management handoff. Keep `/ui/public` independently governed throughout pending, failed, and reverted edits.
   Safe legacy `GET`/`HEAD` bookmarks may redirect only after destination eligibility is proven; bridge legacy mutations
   internally and never replay them through `307`/`308`. Route-inventory coverage must fail for an undeclared human UI
   route. Scope management browser caching to `/ui/management/` and keep public UI caching disabled.

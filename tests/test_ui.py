@@ -888,7 +888,7 @@ def test_pwa_manifest_service_worker_and_offline_shell(client):
     assert service_worker.headers["cache-control"] == "no-cache"
     assert service_worker.headers["service-worker-allowed"] == "/ui/management/"
     assert "ATLASO_CACHE" in service_worker.text
-    assert "atlaso-management-pwa-v267" in service_worker.text
+    assert "atlaso-management-pwa-v268" in service_worker.text
     assert 'fetch(asset, { cache: "reload" })' in service_worker.text
     assert ".catch(() => undefined)" in service_worker.text
     assert 'request.mode === "navigate"' in service_worker.text
@@ -906,7 +906,7 @@ def test_pwa_manifest_service_worker_and_offline_shell(client):
     assert "/static/ui-patterns.js?v=atlaso-ui-foundation-20260726-8" in service_worker.text
     assert "/static/appliance-apply-polling.js?v=issue-420-6" in service_worker.text
     assert "/static/ui-routes.js?v=issue-287-1" in service_worker.text
-    assert "/static/app.js?v=appliance-update-availability-20260821-1" in service_worker.text
+    assert "/static/app.js?v=issue-469-1" in service_worker.text
     assert "/static/terminal.js?v=issue-287-2" in service_worker.text
     assert "/static/pwa.js?v=issue-287-2" in service_worker.text
     assert "vcfdt-configuration-248-20260807-14" not in service_worker.text
@@ -946,8 +946,8 @@ def test_shared_ui_pattern_shell_and_wizard_contracts(client):
     base = (templates / "base.html").read_text(encoding="utf-8")
     public_base = (templates / "public_portal_base.html").read_text(encoding="utf-8")
     for shell, app_asset in (
-        (base, "/static/app.js?v=appliance-update-availability-20260821-1"),
-        (public_base, "/static/app.js?v=appliance-update-availability-20260821-1"),
+        (base, "/static/app.js?v=issue-469-1"),
+        (public_base, "/static/app.js?v=issue-469-1"),
         (base, "/static/appliance-apply-polling.js?v=issue-420-6"),
     ):
         assert shell.index("/static/vendor/tabulator/tabulator.min.js") < shell.index(
@@ -1593,7 +1593,7 @@ def test_monitor_page_renders_template_and_browser_assets(client):
     assert "swagger-link-icon" in page.text
     assert "/static/app.css?v=appliance-update-availability-20260821-1" in page.text
     assert "/static/ui-patterns.js?v=atlaso-ui-foundation-20260726-8" in page.text
-    assert "/static/app.js?v=appliance-update-availability-20260821-1" in page.text
+    assert "/static/app.js?v=issue-469-1" in page.text
     app_css = client.get("/static/app.css")
     assert app_css.status_code == 200
     assert ".split-workspace > .wide-panel" in app_css.text
@@ -1740,6 +1740,288 @@ def test_flagged_access_interface_cohosts_management_and_public_ui(client):
     assert login_page.status_code == 200
     assert 'href="/ui/public"' in login_page.text
     assert public.status_code == 200
+
+
+def test_applied_management_binding_survives_desired_role_autosave_and_revert(client):
+    """Keep active management routing on the applied binding until Network Apply commits.
+
+    Args:
+        client: Application test client fixture.
+    """
+    from sqlalchemy import select
+
+    from atlaso.app import ui
+    from atlaso.app.database import SessionLocal
+    from atlaso.app.models import PhysicalInterface
+
+    management_host = "192.168.49.1"
+    headers = {"host": management_host}
+    applied_preview = """[physical_interfaces]
+interface=eth0
+  role=management
+  mode=access
+  admin_state=up
+  ipv4_method=dhcp
+  ip_cidr=
+  access_management_ui_enabled=false
+"""
+    with SessionLocal() as db:
+        eth0 = db.execute(
+            select(PhysicalInterface).where(PhysicalInterface.name == "eth0")
+        ).scalar_one()
+        eth0.oper_state = "up"
+        eth0.host_ip_cidr = "192.168.49.1/24"
+        eth0.ipv4_method = "static"
+        eth0.ip_cidr = "192.168.49.1/24"
+        db.add(eth0)
+        ui.save_appliance_apply_baselines(
+            db,
+            {"network": {"config_preview": applied_preview}},
+        )
+        db.commit()
+
+    login_page = client.get("/ui/management/login", headers=headers)
+    assert login_page.status_code == 200
+    csrf = login_page.text.split('name="csrf" value="', 1)[1].split('"', 1)[0]
+    signed_in = client.post(
+        "/ui/management/login",
+        headers=headers,
+        data={"username": "admin", "password": "atlaso-admin", "csrf": csrf},
+        follow_redirects=False,
+    )
+    assert signed_in.status_code == 303
+
+    page = client.get("/ui/management/physical-interfaces", headers=headers)
+    assert page.status_code == 200
+    csrf = page.text.split('name="csrf" value="', 1)[1].split('"', 1)[0]
+    with SessionLocal() as db:
+        interface_id = db.execute(
+            select(PhysicalInterface.id).where(PhysicalInterface.name == "eth0")
+        ).scalar_one()
+
+    rejected = client.post(
+        f"/ui/management/physical-interfaces/{interface_id}/edit",
+        headers=headers,
+        data={
+            "role": "unused",
+            "mode": "access",
+            "ipv4_method": "static",
+            "ip_cidr": "",
+            "ipv6_cidr": "",
+            "mtu": "1500",
+            "admin_state": "up",
+            "csrf": csrf,
+        },
+        follow_redirects=False,
+    )
+    assert rejected.status_code == 422
+    assert "At least one complete management listener must remain" in rejected.text
+    assert client.get("/ui/management/physical-interfaces", headers=headers).status_code == 200
+
+    autosave = client.post(
+        f"/ui/management/physical-interfaces/{interface_id}/edit",
+        headers=headers,
+        data={
+            "role": "access",
+            "mode": "access",
+            "ipv4_method": "static",
+            "ip_cidr": "",
+            "ipv6_cidr": "",
+            "mtu": "1500",
+            "admin_state": "up",
+            "access_management_ui_enabled": "on",
+            "csrf": csrf,
+        },
+        follow_redirects=False,
+    )
+    assert autosave.status_code == 303
+    assert client.get("/ui/management/physical-interfaces", headers=headers).status_code == 200
+    assert client.get("/ui/public", headers=headers).status_code == 404
+
+    client.cookies.clear()
+    fresh_login = client.get("/ui/management/login", headers=headers)
+    assert fresh_login.status_code == 200
+    csrf = fresh_login.text.split('name="csrf" value="', 1)[1].split('"', 1)[0]
+    assert client.post(
+        "/ui/management/login",
+        headers=headers,
+        data={"username": "admin", "password": "atlaso-admin", "csrf": csrf},
+        follow_redirects=False,
+    ).status_code == 303
+    revert_page = client.get("/ui/management/physical-interfaces", headers=headers)
+    csrf = revert_page.text.split('name="csrf" value="', 1)[1].split('"', 1)[0]
+    reverted = client.post(
+        f"/ui/management/physical-interfaces/{interface_id}/edit",
+        headers=headers,
+        data={
+            "role": "management",
+            "mode": "access",
+            "ipv4_method": "static",
+            "ip_cidr": "192.168.49.1/24",
+            "ipv6_cidr": "",
+            "mtu": "1500",
+            "admin_state": "up",
+            "csrf": csrf,
+        },
+        follow_redirects=False,
+    )
+    assert reverted.status_code == 303
+    with SessionLocal() as db:
+        eth0 = db.execute(
+            select(PhysicalInterface).where(PhysicalInterface.name == "eth0")
+        ).scalar_one()
+        assert eth0.role == "management"
+        assert eth0.access_management_ui_enabled is False
+        binding = ui.request_host_interface_binding(management_host, db)
+        assert binding is not None
+        assert binding["role"] == "management"
+        assert binding["management_ui"] is True
+
+
+def test_pending_access_management_listener_does_not_activate_before_apply(client):
+    """Keep a newly flagged desired access listener on the public plane until Apply.
+
+    Args:
+        client: Application test client fixture.
+    """
+    from sqlalchemy import select
+
+    from atlaso.app import ui
+    from atlaso.app.database import SessionLocal
+    from atlaso.app.models import PhysicalInterface
+
+    with SessionLocal() as db:
+        eth2 = db.execute(
+            select(PhysicalInterface).where(PhysicalInterface.name == "eth2")
+        ).scalar_one()
+        eth2.role = "access"
+        eth2.mode = "access"
+        eth2.admin_state = "up"
+        eth2.oper_state = "up"
+        eth2.ipv4_method = "static"
+        eth2.ip_cidr = "192.168.50.1/24"
+        eth2.access_management_ui_enabled = True
+        db.add(eth2)
+        ui.save_appliance_apply_baselines(
+            db,
+            {
+                "network": {
+                    "config_preview": """[physical_interfaces]
+interface=eth0
+  role=management
+  mode=access
+  admin_state=up
+  ipv4_method=static
+  ip_cidr=192.168.49.1/24
+"""
+                }
+            },
+        )
+        db.commit()
+
+    headers = {"host": "192.168.50.1"}
+    assert client.get("/ui/management/login", headers=headers).status_code == 404
+    assert client.get("/ui/public", headers=headers).status_code == 200
+
+    with SessionLocal() as db:
+        ui.save_appliance_apply_baselines(
+            db,
+            {
+                "network": {
+                    "config_preview": """[physical_interfaces]
+interface=eth0
+  role=management
+  mode=access
+  admin_state=up
+  ipv4_method=static
+  ip_cidr=192.168.49.1/24
+interface=eth2
+  role=access
+  mode=access
+  admin_state=up
+  ipv4_method=static
+  ip_cidr=192.168.50.1/24
+  access_management_ui_enabled=true
+"""
+                }
+            },
+        )
+        db.commit()
+
+    assert client.get("/ui/management/login", headers=headers).status_code == 200
+    assert client.get("/ui/public", headers=headers).status_code == 200
+
+
+def test_static_applied_management_binding_ignores_stale_observed_address(client):
+    """Keep a reused old static management address on the public access interface.
+
+    Args:
+        client: Application test client fixture.
+    """
+    from sqlalchemy import select
+
+    from atlaso.app import ui
+    from atlaso.app.database import SessionLocal
+    from atlaso.app.models import PhysicalInterface
+    from atlaso.app.services.management_bindings import applied_management_bindings
+
+    with SessionLocal() as db:
+        eth0 = db.execute(
+            select(PhysicalInterface).where(PhysicalInterface.name == "eth0")
+        ).scalar_one()
+        eth0.role = "management"
+        eth0.mode = "access"
+        eth0.admin_state = "up"
+        eth0.oper_state = "up"
+        eth0.ipv4_method = "static"
+        eth0.ip_cidr = "192.168.49.2/24"
+        eth0.host_ip_cidr = "192.168.49.1/24"
+        eth2 = db.execute(
+            select(PhysicalInterface).where(PhysicalInterface.name == "eth2")
+        ).scalar_one()
+        eth2.role = "access"
+        eth2.mode = "access"
+        eth2.admin_state = "up"
+        eth2.oper_state = "up"
+        eth2.ipv4_method = "static"
+        eth2.ip_cidr = "192.168.49.1/24"
+        eth2.host_ip_cidr = "192.168.49.1/24"
+        eth2.access_management_ui_enabled = False
+        ui.save_appliance_apply_baselines(
+            db,
+            {
+                "network": {
+                    "config_preview": """[physical_interfaces]
+interface=eth0
+  role=management
+  mode=access
+  admin_state=up
+  ipv4_method=static
+  ip_cidr=192.168.49.2/24
+interface=eth2
+  role=access
+  mode=access
+  admin_state=up
+  ipv4_method=static
+  ip_cidr=192.168.49.1/24
+  access_management_ui_enabled=false
+"""
+                }
+            },
+        )
+        db.commit()
+        assert applied_management_bindings(db) == [
+            {
+                "interface": "eth0",
+                "role": "management",
+                "address": "192.168.49.2",
+                "management_ui": "true",
+            }
+        ]
+
+    headers = {"host": "192.168.49.1"}
+    assert client.get("/ui/management/login", headers=headers).status_code == 404
+    assert client.get("/ui/public", headers=headers).status_code == 200
 
 
 def test_unflagged_access_interface_hides_management_namespace(client):

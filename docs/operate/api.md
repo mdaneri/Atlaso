@@ -66,7 +66,9 @@ documented authorization and apply behavior before execution.
 `access_management_ui_enabled`. Set it only on an access-role, access-mode physical interface or an access-role VLAN.
 The switch exposes the authenticated `/ui/management` browser plane without changing that interface's access routing or
 public-service eligibility. A management-role physical interface ignores the switch because it exposes management
-inherently. Network apply rejects a configuration that would leave no effective management UI listener.
+inherently. Physical-interface mutation rejects a desired configuration that would leave no complete management UI
+candidate. A complete flagged access replacement is saved as desired state and enters the protected management handoff
+when Network Apply is submitted; it does not become an active requested-interface binding at API-save time.
 
 Physical-interface and VLAN role fields accept exactly `management`, `access`, `route`, or `unused`. The retired
 `services` and `storage` values are rejected on new requests. Appliance startup and settings-archive restore map those
@@ -90,6 +92,11 @@ its enabled child VLANs. If other selected interfaces remain eligible, Atlaso re
 Web Terminal, or PXE selection. Disable or move a final binding first. The audit event names the dependent units that
 were refreshed. This remains a desired-state edit: review the resulting network and service previews, then use global
 Appliance Apply for host enforcement.
+
+Requested-interface authorization continues to use the last-applied Network management bindings and observed addresses
+after a successful PATCH. Pending role, address, or `access_management_ui_enabled` values cannot remove the current
+management origin or publish a candidate origin early. If the protected Apply fails, is cancelled, or rolls back, the
+previous binding remains authoritative and the saved desired edit remains available to correct or revert.
 
 The internal Certificate Authority is the exception: if its last selected portal interface becomes ineligible, Atlaso
 clears the public CA portal binding and app-owned alias while leaving internal CA custody enabled.
