@@ -13008,15 +13008,22 @@ function validApplianceUpdateAvailabilityPayload(payload) {
   ]);
   const visibleChangeLimit = 20;
   const releaseNotesUrlLimit = 2048;
+  const pythonWhitespacePattern = /[\u0009-\u000D\u001C-\u001F \u0085\u00A0\u1680\u2000-\u200A\u2028\u2029\u202F\u205F\u3000]/u;
   const validText = (value, limit) => {
     if (typeof value !== "string") return false;
-    if (limit === undefined) return true;
     let length = 0;
-    for (const _character of value) {
+    let previousSpace = true;
+    for (const character of value) {
       length += 1;
-      if (length > limit) return false;
+      if (limit !== undefined && length > limit) return false;
+      if (pythonWhitespacePattern.test(character)) {
+        if (character !== " " || previousSpace) return false;
+        previousSpace = true;
+      } else {
+        previousSpace = false;
+      }
     }
-    return true;
+    return value === "" || !previousSpace;
   };
   const validReleaseNotesUrl = (value) => {
     if (!validText(value, releaseNotesUrlLimit)) return false;
@@ -13024,7 +13031,7 @@ function validApplianceUpdateAvailabilityPayload(payload) {
     for (const character of value) {
       if (
         character.codePointAt(0) < 32
-        || /[ \u0085\u00A0\u1680\u2000-\u200A\u2028\u2029\u202F\u205F\u3000]/u.test(character)
+        || pythonWhitespacePattern.test(character)
       ) return false;
     }
     const match = /^https:\/\/([^/?#]+)(?:[/?#]|$)/i.exec(value);

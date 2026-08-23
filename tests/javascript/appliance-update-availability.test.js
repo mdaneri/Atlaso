@@ -439,6 +439,22 @@ test("failed polling preserves only an existing positive indicator", async () =>
     await assert.rejects(positive.context.refresh(), /Unable to refresh update availability/);
     assert.equal(positive.indicator, lastKnown);
   }
+  for (const noncanonicalSummary of ["\n", " leading", "trailing ", "two  spaces", "nonbreaking\u00A0space"]) {
+    positive.setFetchResponse({
+      ok: true,
+      json: () => Promise.resolve({
+        available: false,
+        affected_stream_count: 0,
+        streams: availabilityStreams().map((stream, index) => (
+          index === 0
+            ? { ...stream, confirmed: { ...stream.confirmed, summary: noncanonicalSummary } }
+            : stream
+        )),
+      }),
+    });
+    await assert.rejects(positive.context.refresh(), /Unable to refresh update availability/);
+    assert.equal(positive.indicator, lastKnown);
+  }
   positive.setFetchResponse({
     ok: true,
     json: () => Promise.resolve({
