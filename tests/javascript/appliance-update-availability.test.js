@@ -129,7 +129,14 @@ function availabilityIndicatorScenario() {
   );
   return {
     context,
-    setFetchResponse(response) { fetchResponse = response; },
+    setFetchResponse(response, { addSchemaVersion = true } = {}) {
+      fetchResponse = addSchemaVersion && typeof response?.json === "function"
+        ? {
+          ...response,
+          json: async () => ({ schema_version: 1, ...(await response.json()) }),
+        }
+        : response;
+    },
     get indicator() { return indicator; },
   };
 }
@@ -387,6 +394,22 @@ test("failed polling preserves only an existing positive indicator", async () =>
   positive.setFetchResponse({ ok: true, json: () => Promise.resolve({ streams: [] }) });
   await assert.rejects(positive.context.refresh(), /Unable to refresh update availability/);
   assert.equal(positive.indicator, lastKnown);
+  for (const versionPayload of [
+    {},
+    { schema_version: 2 },
+  ]) {
+    positive.setFetchResponse({
+      ok: true,
+      json: () => Promise.resolve({
+        ...versionPayload,
+        available: false,
+        affected_stream_count: 0,
+        streams: availabilityStreams(),
+      }),
+    }, { addSchemaVersion: false });
+    await assert.rejects(positive.context.refresh(), /Unable to refresh update availability/);
+    assert.equal(positive.indicator, lastKnown);
+  }
   for (const unsafeReleaseNotesUrl of [
     "javascript:alert(1)",
     "https://user:pass@example.test/notes",

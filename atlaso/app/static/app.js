@@ -13091,6 +13091,7 @@ function validApplianceUpdateAvailabilityPayload(payload) {
     )).length
     : -1;
   return Boolean(payload)
+    && payload.schema_version === 1
     && streamsValid
     && typeof payload.available === "boolean"
     && Number.isInteger(payload.affected_stream_count)
