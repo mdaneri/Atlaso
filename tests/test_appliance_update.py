@@ -171,6 +171,21 @@ def test_update_evidence_state_validates_available_and_actionable_records(tmp_pa
     )
     assert stale["state"] == "needs_attention"
 
+    info_path.write_text(
+        json.dumps(
+            {
+                "status": "succeeded",
+                "finished_at": "2026-08-22T20:00:01",
+                "finalizer_status_path": str(finalizer_path),
+            }
+        ),
+        encoding="utf-8",
+    )
+    mixed_timezone = appliance_update_evidence_state(
+        update_info_path=str(info_path), finalizer_path=str(finalizer_path)
+    )
+    assert mixed_timezone["state"] == "needs_attention"
+
 
 def test_update_evidence_panel_accessibility_states(client, monkeypatch):
     """Render neutral evidence without an alert and actionable evidence with one.

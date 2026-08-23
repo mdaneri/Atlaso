@@ -972,7 +972,9 @@ def appliance_update_evidence_state(
             except (KeyError, TypeError, ValueError):
                 inconsistent = True
             else:
-                if evidence_finished < finalizer_finished:
+                if evidence_finished.tzinfo is None or finalizer_finished.tzinfo is None:
+                    inconsistent = True
+                elif evidence_finished < finalizer_finished:
                     inconsistent = True
     if inconsistent:
         return {
