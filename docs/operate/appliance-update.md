@@ -176,7 +176,8 @@ succeeds, fails, or is cancelled. Parent rows identify **Appliance Update check*
 **Appliance Update repository sync** so read-only checks are distinct from package-changing work. The stream actions use
 explicit **Check for updates** and **Install updates** labels, with distinct search and install cues
 and visible copy that identifies the check as read-only. The same header links recurring maintenance to the Automation
-Schedules workspace, where operators can schedule Appliance Update checks or installations. The Update Info rail card
+Schedules workspace, where operators can schedule Appliance Update checks or installations. The **Update transaction
+evidence** rail card
 reports whether durable updater evidence is available and opens the full JSON through the shared preview modal, matching
 Validation instead of rendering unbounded output inline.
 
@@ -345,6 +346,18 @@ A matching definitive success or verified healthy rollback is authoritative if t
 runtime gate: privileged pre-start recovery clears that orphaned gate, and worker startup can defensively supersede it.
 An incomplete rollback keeps maintenance and the gate in place, preventing queued work until rollback can be retried or
 an administrator repairs the recorded failing layer.
+
+The **Update transaction evidence** detail panel reports the durable `/etc/atlaso/update-info` record separately from
+the Version panel's build identity. **Not recorded** is the normal neutral state for a source checkout, development
+wheel, fresh packaged appliance, or read-only update check before any qualifying installation transaction. Atlaso does
+not manufacture transaction provenance for those deployments. **Available** means the helper record is readable,
+well-formed, bound to the latest applied stream in the latest qualifying real installation attempt, and consistent
+with any release finalizer; the
+existing redacted preview can then be inspected. **Needs
+attention** means a completed real installation or finalizer proves evidence should exist but it is absent, or the
+record is unreadable, malformed, or inconsistent. In that state, inspect the Appliance Update task and the
+`atlaso-helper` service journal before another installation. These presentation states are read-only and do not replace
+or relax activation, receipt, finalizer, rollback, recovery, or reboot-persistence checks.
 
 A failure in systemd asset activation, the atomic switch, candidate startup, internal readiness, or worker handoff before
 `activation_committed` enters the rollback boundary. Before rollback can restart a worker,

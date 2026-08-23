@@ -7,6 +7,7 @@ import logging
 import os
 import signal
 import time
+from functools import partial
 from pathlib import Path
 from secrets import compare_digest
 from typing import Any
@@ -754,6 +755,40 @@ def _set_appliance_update_step_running(job_id: str, stream: str, *, completed: i
         db.commit()
 
 
+def _mark_appliance_update_apply_started(job_id: str, stream: str) -> None:
+    """Durably record a real helper apply phase before invoking it.
+
+    Args:
+        job_id: Stable identifier of the associated job resource.
+        stream: Update stream whose real apply phase is starting.
+    """
+    with SessionLocal() as db:
+        job = db.get(Job, job_id)
+        step = db.get(JobStep, f"{job_id}:{stream}")
+        if job is None or step is None:
+            raise RuntimeError("Appliance Update apply phase has no durable task record.")
+
+        def _marked_payload(value: str | None) -> str:
+            """Return a serialized task payload with the apply marker.
+
+            Args:
+                value: Existing serialized task payload.
+            """
+            try:
+                payload = json.loads(value or "{}")
+            except json.JSONDecodeError:
+                payload = {}
+            if not isinstance(payload, dict):
+                payload = {}
+            payload["apply_started"] = True
+            return json.dumps(payload, indent=2, sort_keys=True)
+
+        step.result = _marked_payload(step.result)
+        job.result = _marked_payload(job.result)
+        db.add_all([job, step])
+        db.commit()
+
+
 def _complete_appliance_update_step(
     job_id: str,
     stream: str,
@@ -919,6 +954,7 @@ def _run_appliance_update(job_id: str) -> None:
                         mode=mode,
                         job_id=job_id,
                         credentials=credentials,
+                        before_apply=partial(_mark_appliance_update_apply_started, job_id, stream),
                     )
                 except Exception as exc:  # noqa: BLE001 - each child step must reach a terminal state.
                     LOGGER.exception("Appliance update stream %s for job %s failed before helper completion", stream, job_id)

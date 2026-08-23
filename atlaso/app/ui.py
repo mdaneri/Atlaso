@@ -236,6 +236,7 @@ from atlaso.app.services.appliance_update import (
     DEFAULT_ATLASO_MANIFEST_URL,
     UPDATE_STREAM_LABELS,
     UPDATE_STREAMS,
+    appliance_update_evidence_state,
     clear_installed_update_availability,
     current_version_info,
     ensure_appliance_update_job_steps,
@@ -11398,6 +11399,87 @@ def appliance_update_context(
         .order_by(desc(Job.created_at))
         .limit(8)
     ).scalars().all()
+    apply_started_patterns = ('"apply_started":true', '"apply_started": true')
+    legacy_apply_patterns = (
+        '"command_line":"/opt/atlaso/bin/atlaso-helper appliance-update apply --real ',
+        '"command_line": "/opt/atlaso/bin/atlaso-helper appliance-update apply --real ',
+        '"command_line":"sudo -n /opt/atlaso/bin/atlaso-helper appliance-update apply --real ',
+        '"command_line": "sudo -n /opt/atlaso/bin/atlaso-helper appliance-update apply --real ',
+    )
+    qualifying_step = db.execute(
+        select(
+            Job.id.label("job_id"),
+            JobStep.component_key.label("stream"),
+            JobStep.started_at.label("step_started_at"),
+            Job.started_at.label("job_started_at"),
+            Job.created_at.label("job_created_at"),
+        )
+        .join(Job, Job.id == JobStep.job_id)
+        .where(
+            Job.type == "appliance-update",
+            Job.status.in_([JobStatus.SUCCEEDED.value, JobStatus.FAILED.value]),
+            _appliance_update_mode_filter_clause("run"),
+            or_(
+                *(
+                    func.lower(JobStep.result).contains(pattern)
+                    for pattern in (*apply_started_patterns, *legacy_apply_patterns)
+                )
+            ),
+        )
+        .order_by(
+            desc(func.coalesce(JobStep.started_at, Job.started_at, Job.created_at)),
+            desc(JobStep.id),
+        )
+        .limit(1)
+    ).first()
+    qualifying_stepless_job = db.execute(
+        select(Job.id, Job.started_at, Job.created_at).where(
+            Job.type == "appliance-update",
+            Job.status.in_([JobStatus.SUCCEEDED.value, JobStatus.FAILED.value]),
+            _appliance_update_mode_filter_clause("run"),
+            ~Job.steps.any(),
+            or_(
+                *(
+                    func.lower(Job.result).contains(pattern)
+                    for pattern in (*apply_started_patterns, *legacy_apply_patterns)
+                )
+            ),
+        )
+        .order_by(desc(func.coalesce(Job.started_at, Job.created_at)), desc(Job.id))
+        .limit(1)
+    ).first()
+    qualifying_candidates: list[dict[str, Any]] = []
+    if qualifying_step is not None:
+        qualifying_candidates.append(
+            {
+                "job_id": str(qualifying_step.job_id),
+                "stream": str(qualifying_step.stream),
+                "started_at": (
+                    qualifying_step.step_started_at
+                    or qualifying_step.job_started_at
+                    or qualifying_step.job_created_at
+                ),
+            }
+        )
+    if qualifying_stepless_job is not None:
+        qualifying_candidates.append(
+            {
+                "job_id": str(qualifying_stepless_job.id),
+                "stream": "",
+                "started_at": (
+                    qualifying_stepless_job.started_at or qualifying_stepless_job.created_at
+                ),
+            }
+        )
+    qualifying_install = max(
+        qualifying_candidates,
+        key=lambda candidate: (
+            candidate["started_at"],
+            candidate["job_id"],
+            candidate["stream"],
+        ),
+        default=None,
+    )
     sources = source_rows(db)
     packages = managed_package_rows(db)
     source_payloads = [update_source_payload(source) for source in sources]
@@ -11496,7 +11578,17 @@ def appliance_update_context(
         "recent_update_tasks": [_task_row(job) for job in recent_jobs],
         "task_component_filter_options": _task_component_filter_options(db),
         "appliance_update_info_path": APPLIANCE_UPDATE_INFO_PATH,
-        "update_info_file": read_appliance_file(APPLIANCE_UPDATE_INFO_PATH),
+        "update_info_file": appliance_update_evidence_state(
+            qualifying_install_job_id=(
+                str(qualifying_install["job_id"]) if qualifying_install is not None else ""
+            ),
+            qualifying_install_stream=(
+                str(qualifying_install["stream"]) if qualifying_install is not None else ""
+            ),
+            qualifying_install_started_at=(
+                qualifying_install["started_at"] if qualifying_install is not None else None
+            ),
+        ),
         "update_settings_errors": validate_update_settings(settings),
         "system_adapter_dry_run": get_settings().dry_run_system_adapters,
     }
@@ -11770,6 +11862,7 @@ def execute_appliance_update_job(
     mode: str,
     job_id: str = "",
     credentials: dict[str, dict[str, str]] | None = None,
+    before_apply: Callable[[], None] | None = None,
 ) -> dict[str, Any]:
     """Run appliance update job.
 
@@ -11780,6 +11873,7 @@ def execute_appliance_update_job(
         mode: Operating mode selected for the workflow.
         job_id: Identifier of the job.
         credentials: Credential bundle used for the immediate external request.
+        before_apply: Durable phase-transition callback run before a real apply.
 
     Returns:
         The execute appliance update job result.
@@ -11815,6 +11909,8 @@ def execute_appliance_update_job(
                 else adapter.check_appliance_update_config(config_path)
             ]
             if mode == "run" and results[-1].returncode == 0:
+                if not adapter.dry_run and before_apply is not None:
+                    before_apply()
                 results.append(
                     adapter.apply_appliance_update_config(config_path, credentials_path)
                     if credentials_path
@@ -11902,6 +11998,7 @@ def execute_appliance_update_job(
         "status": JobStatus.SUCCEEDED.value if succeeded else JobStatus.FAILED.value,
         "success": succeeded,
         "dry_run": any(result.dry_run for result in results),
+        "apply_started": mode == "run" and len(results) > 1 and not results[1].dry_run,
         "restart_after_commit": mode == "run"
         and succeeded
         and bool({"atlaso_release", "photon_os"} & set(selected_stream_ids)),
@@ -11970,6 +12067,7 @@ def aggregate_appliance_update_results(
         "status": JobStatus.SUCCEEDED.value if succeeded else JobStatus.FAILED.value,
         "success": succeeded,
         "dry_run": any(bool(result.get("dry_run")) for result in ordered_results),
+        "apply_started": any(bool(result.get("apply_started")) for result in ordered_results),
         "restart_after_commit": mode == "run"
         and succeeded
         and (
@@ -14246,6 +14344,7 @@ def submit_appliance_update(
         "status": JobStatus.PENDING.value,
         "success": False,
         "dry_run": get_settings().dry_run_system_adapters,
+        "apply_started": False,
         "commands": [],
     }
     job = Job(

@@ -298,19 +298,21 @@
 
     <div class="panel detail-panel">
       <div class="panel-head">
-        <h2>Update Info</h2>
-        <span class="status-pill {{ 'good' if update_info_file.available else 'warn' }}">{{ "available" if update_info_file.available else "missing" }}</span>
+        <h2>Update transaction evidence</h2>
+        <span class="status-pill{% if update_info_file.state == 'available' %} good{% elif update_info_file.state == 'needs_attention' %} warn{% endif %}">{{ update_info_file.label }}</span>
       </div>
       {% if update_info_file.available %}
-        <p class="muted">Recorded release, compatibility, and recovery evidence from the appliance updater.</p>
+        <p class="muted">{{ update_info_file.message }}</p>
         {% set preview_label = "Appliance update evidence" %}
         {% set preview_path = appliance_update_info_path %}
         {% set preview_title = "Appliance Update evidence" %}
         {% set preview_text = update_info_file.content %}
         {% set preview_code_class = "language-json" %}
         {% include "partials/config_preview_action.html" %}
+      {% elif update_info_file.state == 'needs_attention' %}
+        <div class="alert error" role="alert">{{ update_info_file.message }}</div>
       {% else %}
-        <p class="muted">{{ update_info_file.error }}</p>
+        <p class="muted">{{ update_info_file.message }}</p>
       {% endif %}
     </div>
 

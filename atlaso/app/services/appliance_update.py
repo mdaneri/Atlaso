@@ -879,6 +879,360 @@ def read_appliance_file(path_value: str) -> dict[str, Any]:
     return {"path": path_value, "available": True, "content": text, "sha256": hashlib.sha256(text.encode("utf-8")).hexdigest()}
 
 
+def appliance_update_evidence_state(
+    *,
+    qualifying_install_expected: bool = False,
+    qualifying_install_job_id: str = "",
+    qualifying_install_stream: str = "",
+    qualifying_install_started_at: datetime | None = None,
+    update_info_path: str = APPLIANCE_UPDATE_INFO_PATH,
+    finalizer_path: str = APPLIANCE_UPDATE_FINALIZER_PATH,
+) -> dict[str, Any]:
+    """Return the operator-facing durable update transaction evidence state.
+
+    This projection is intentionally read-only. It does not participate in, or
+    replace, the release activation, receipt, finalizer, rollback, or recovery
+    gates enforced by the worker and privileged helper.
+
+    Args:
+        qualifying_install_expected: Whether durable task state records a
+            completed, non-dry-run installation attempt.
+        qualifying_install_job_id: Latest qualifying installation task identity.
+        qualifying_install_stream: Latest qualifying applied stream identifier.
+        qualifying_install_started_at: Start time of the latest qualifying task.
+        update_info_path: Durable helper update evidence path.
+        finalizer_path: Durable Atlaso release finalizer path.
+    """
+
+    def _valid_timestamp(value: object) -> bool:
+        """Return whether a durable timestamp is timezone-aware ISO 8601.
+
+        Args:
+            value: Candidate timestamp value.
+        """
+        if not isinstance(value, str) or not value.strip():
+            return False
+        try:
+            parsed = datetime.fromisoformat(value.replace("Z", "+00:00"))
+        except ValueError:
+            return False
+        return parsed.tzinfo is not None
+
+    def _valid_commands(value: object) -> bool:
+        """Return whether a durable command collection has the helper shape.
+
+        Args:
+            value: Candidate command collection.
+        """
+        return isinstance(value, list) and all(isinstance(command, dict) for command in value)
+
+    def _valid_hex(value: object, length: int) -> bool:
+        """Return whether a value is a fixed-width lowercase-insensitive hex string.
+
+        Args:
+            value: Candidate hexadecimal value.
+            length: Required character count.
+        """
+        return bool(
+            isinstance(value, str)
+            and len(value) == length
+            and set(value.lower()) <= set("0123456789abcdef")
+        )
+
+    def _valid_aggregate(payload: dict[str, Any]) -> bool:
+        """Return whether payload matches the aggregate updater record.
+
+        Args:
+            payload: Parsed durable evidence object.
+        """
+        selected_streams = payload.get("selected_streams")
+        return bool(
+            payload.get("status") in {"succeeded", "failed"}
+            and isinstance(payload.get("applied"), dict)
+            and isinstance(payload.get("attempted"), dict)
+            and _valid_commands(payload.get("commands"))
+            and isinstance(payload.get("reboot_recommended"), bool)
+            and isinstance(payload.get("restart_required"), bool)
+            and _valid_timestamp(payload.get("finished_at"))
+            and isinstance(payload.get("finalizer_status_path"), str)
+            and (
+                "selected_streams" not in payload
+                or (
+                    isinstance(selected_streams, list)
+                    and selected_streams
+                    and all(stream in UPDATE_STREAMS for stream in selected_streams)
+                )
+            )
+            and (
+                "selected_streams" not in payload
+                or (
+                    ("atlaso_release" in selected_streams)
+                    == bool(payload["finalizer_status_path"])
+                )
+            )
+        )
+
+    def _valid_finalizer(payload: dict[str, Any]) -> bool:
+        """Return whether payload matches a release finalizer record.
+
+        Args:
+            payload: Parsed durable evidence object.
+        """
+        status = payload.get("status")
+        timestamp_key = "finished_at" if status in {"succeeded", "failed"} else "started_at"
+        return bool(
+            status
+            in {
+                "transaction_pending",
+                "restart_pending",
+                "activation_committed",
+                "rollback_pending",
+                "succeeded",
+                "failed",
+            }
+            and isinstance(payload.get("job_id"), str)
+            and payload["job_id"].strip()
+            and isinstance(payload.get("release"), str)
+            and payload["release"].strip()
+            and isinstance(payload.get("candidate_version"), str)
+            and payload["candidate_version"].strip()
+            and isinstance(payload.get("compatibility"), dict)
+            and isinstance(payload.get("rolled_back"), bool)
+            and _valid_commands(payload.get("commands"))
+            and _valid_timestamp(payload.get(timestamp_key))
+        )
+
+    def _valid_legacy_finalizer(payload: dict[str, Any]) -> bool:
+        """Return whether payload matches the supported legacy success finalizer.
+
+        Args:
+            payload: Parsed durable evidence object.
+        """
+        return bool(
+            payload.get("status") == "succeeded"
+            and isinstance(payload.get("job_id"), str)
+            and payload["job_id"].strip()
+            and isinstance(payload.get("release"), str)
+            and payload["release"].strip()
+            and _valid_hex(payload.get("git_commit"), 40)
+            and _valid_hex(payload.get("bundle_sha256"), 64)
+            and _valid_hex(payload.get("release_manifest_sha256"), 64)
+            and payload.get("rolled_back") is False
+            and (payload.get("service_health") is True or payload.get("no_change") is True)
+            and "active_release_verification" not in payload
+            and "worker_restart" not in payload
+        )
+
+    def _valid_rollback(payload: dict[str, Any]) -> bool:
+        """Return whether payload matches helper rollback status evidence.
+
+        Args:
+            payload: Parsed durable evidence object.
+        """
+        rollback_failures = payload.get("rollback_failures")
+        return bool(
+            payload.get("status") == "failed"
+            and payload.get("success") is False
+            and isinstance(payload.get("release"), str)
+            and payload["release"].strip()
+            and isinstance(payload.get("rolled_back"), bool)
+            and isinstance(payload.get("host_facing_ready"), bool)
+            and isinstance(payload.get("failure_layer"), str)
+            and payload["failure_layer"].strip()
+            and isinstance(payload.get("rollback_health"), dict)
+            and isinstance(rollback_failures, list)
+            and all(isinstance(failure, str) for failure in rollback_failures)
+            and isinstance(payload.get("error"), str)
+            and payload["error"].strip()
+            and _valid_timestamp(payload.get("finished_at"))
+        )
+
+    def _read_json_object(
+        path_value: str, *, finalizer_only: bool = False
+    ) -> tuple[str, dict[str, Any], str]:
+        """Read one durable evidence file as a JSON object.
+
+        Args:
+            path_value: Durable evidence path to inspect.
+            finalizer_only: Whether only the release-finalizer schema is valid.
+        """
+        try:
+            content = Path(path_value).read_text(encoding="utf-8")
+        except FileNotFoundError:
+            return "missing", {}, ""
+        except UnicodeError:
+            return "malformed", {}, ""
+        except OSError:
+            return "unreadable", {}, ""
+        try:
+            payload = json.loads(content)
+        except json.JSONDecodeError:
+            return "malformed", {}, content
+        if not isinstance(payload, dict):
+            return "malformed", {}, content
+        valid_finalizer = _valid_finalizer(payload) or _valid_legacy_finalizer(payload)
+        valid = valid_finalizer if finalizer_only else (
+            _valid_aggregate(payload) or valid_finalizer or _valid_rollback(payload)
+        )
+        if not valid:
+            return "malformed", {}, content
+        return "available", payload, content
+
+    finalizer_state, finalizer, _finalizer_content = _read_json_object(
+        finalizer_path, finalizer_only=True
+    )
+    expected_job_id = qualifying_install_job_id.strip()
+    expected_stream = qualifying_install_stream.strip()
+    evidence_expected = bool(
+        qualifying_install_expected or expected_job_id or finalizer_state != "missing"
+    )
+    evidence_state, evidence, content = _read_json_object(update_info_path)
+
+    if evidence_state == "missing" and not evidence_expected:
+        return {
+            "state": "not_recorded",
+            "label": "Not recorded",
+            "available": False,
+            "content": "",
+            "message": "No qualifying update transaction has recorded durable evidence yet.",
+        }
+    if evidence_state != "available":
+        reason = "is absent even though a completed update transaction expects it"
+        if evidence_state == "unreadable":
+            reason = "cannot be read"
+        elif evidence_state == "malformed":
+            reason = "is not a valid updater evidence record"
+        return {
+            "state": "needs_attention",
+            "label": "Needs attention",
+            "available": False,
+            "content": "",
+            "message": (
+                f"Durable update transaction evidence {reason}. "
+                "Review the Appliance Update task and atlaso-helper service journal before the next installation."
+            ),
+        }
+
+    inconsistent = finalizer_state in {"unreadable", "malformed"}
+    rollback_evidence = _valid_rollback(evidence)
+    direct_finalizer_evidence = _valid_finalizer(evidence) or _valid_legacy_finalizer(evidence)
+    evidence_finalizer_path = str(evidence.get("finalizer_status_path") or "")
+    references_finalizer = evidence_finalizer_path == finalizer_path
+    if evidence_finalizer_path and not references_finalizer:
+        inconsistent = True
+    if references_finalizer and finalizer_state != "available":
+        inconsistent = True
+    if rollback_evidence and finalizer_state != "available":
+        inconsistent = True
+    if direct_finalizer_evidence and finalizer_state != "available":
+        inconsistent = True
+    paired_finalizer = bool(
+        references_finalizer or rollback_evidence or direct_finalizer_evidence
+    )
+    if finalizer_state == "available":
+        evidence_job_id = str(evidence.get("job_id") or "")
+        finalizer_job_id = str(finalizer.get("job_id") or "")
+        if (
+            paired_finalizer
+            and evidence_job_id
+            and finalizer_job_id
+            and evidence_job_id != finalizer_job_id
+        ):
+            inconsistent = True
+        evidence_status = str(evidence.get("status") or "")
+        finalizer_status = str(finalizer.get("status") or "")
+        if paired_finalizer and evidence_status != finalizer_status:
+            inconsistent = True
+        if direct_finalizer_evidence and evidence != finalizer:
+            inconsistent = True
+        if rollback_evidence:
+            if (
+                evidence_status != finalizer_status
+                or evidence.get("release") != finalizer.get("release")
+                or evidence.get("rolled_back") != finalizer.get("rolled_back")
+            ):
+                inconsistent = True
+            try:
+                evidence_finished = datetime.fromisoformat(str(evidence["finished_at"]).replace("Z", "+00:00"))
+                finalizer_finished = datetime.fromisoformat(str(finalizer["finished_at"]).replace("Z", "+00:00"))
+            except (KeyError, TypeError, ValueError):
+                inconsistent = True
+            else:
+                if evidence_finished.tzinfo is None or finalizer_finished.tzinfo is None:
+                    inconsistent = True
+                elif evidence_finished < finalizer_finished:
+                    inconsistent = True
+        if references_finalizer:
+            try:
+                evidence_finished = datetime.fromisoformat(str(evidence["finished_at"]).replace("Z", "+00:00"))
+                finalizer_finished = datetime.fromisoformat(str(finalizer["finished_at"]).replace("Z", "+00:00"))
+            except (KeyError, TypeError, ValueError):
+                inconsistent = True
+            else:
+                if evidence_finished.tzinfo is None or finalizer_finished.tzinfo is None:
+                    inconsistent = True
+                elif evidence_finished < finalizer_finished:
+                    inconsistent = True
+    evidence_job_id = str(evidence.get("job_id") or "").strip()
+    bound_job_id = (
+        str(finalizer.get("job_id") or "").strip()
+        if paired_finalizer and finalizer_state == "available"
+        else evidence_job_id
+    )
+    timestamp_binding_required = False
+    if expected_job_id:
+        if bound_job_id:
+            if bound_job_id != expected_job_id:
+                inconsistent = True
+        else:
+            timestamp_binding_required = True
+    if expected_stream:
+        selected_streams = evidence.get("selected_streams")
+        if isinstance(selected_streams, list) and selected_streams:
+            if expected_stream not in selected_streams:
+                inconsistent = True
+        elif paired_finalizer:
+            if expected_stream != "atlaso_release":
+                inconsistent = True
+        else:
+            timestamp_binding_required = True
+    if timestamp_binding_required:
+        try:
+            evidence_finished = datetime.fromisoformat(
+                str(evidence["finished_at"]).replace("Z", "+00:00")
+            )
+        except (KeyError, TypeError, ValueError):
+            inconsistent = True
+        else:
+            expected_started = qualifying_install_started_at
+            if expected_started is None or evidence_finished.tzinfo is None:
+                inconsistent = True
+            else:
+                if expected_started.tzinfo is None:
+                    expected_started = expected_started.replace(tzinfo=timezone.utc)
+                if evidence_finished < expected_started:
+                    inconsistent = True
+    if inconsistent:
+        return {
+            "state": "needs_attention",
+            "label": "Needs attention",
+            "available": False,
+            "content": "",
+            "message": (
+                "Durable update transaction evidence is inconsistent with the latest update task or release finalizer. "
+                "Review the Appliance Update task and atlaso-helper service journal before the next installation."
+            ),
+        }
+    return {
+        "state": "available",
+        "label": "Available",
+        "available": True,
+        "content": content,
+        "sha256": hashlib.sha256(content.encode("utf-8")).hexdigest(),
+        "message": "Recorded release installation, compatibility, finalizer, and recovery evidence.",
+    }
+
+
 def photon_repository_details(repository_dir: Path | None = None) -> list[dict[str, str]]:
     """Return photon repository details.
 
