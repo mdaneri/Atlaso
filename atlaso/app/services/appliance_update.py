@@ -960,7 +960,7 @@ def appliance_update_evidence_state(
                 or (
                     isinstance(selected_streams, list)
                     and selected_streams
-                    and all(isinstance(stream, str) and stream for stream in selected_streams)
+                    and all(stream in UPDATE_STREAMS for stream in selected_streams)
                 )
             )
         )

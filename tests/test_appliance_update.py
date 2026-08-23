@@ -229,6 +229,7 @@ def test_update_evidence_state_validates_available_and_actionable_records(tmp_pa
         {"status": 123},
         {"status": "succeeded", "commands": []},
         {**aggregate, "reboot_recommended": "false"},
+        {**aggregate, "selected_streams": ["unknown"]},
     ):
         info_path.write_text(json.dumps(incompatible), encoding="utf-8")
         incompatible_state = appliance_update_evidence_state(
