@@ -11220,6 +11220,9 @@ def appliance_update_availability_state(db: Session) -> dict[str, Any]:
     )
 
 
+APPLIANCE_UPDATE_SOURCE_READINESS_REPOSITORY_LIMIT = 6
+
+
 def appliance_update_source_readiness(
     db: Session, settings: dict[str, Any]
 ) -> dict[str, dict[str, Any]]:
@@ -11264,7 +11267,13 @@ def appliance_update_source_readiness(
             unsynchronized_powershell_repositories(settings),
         ),
     ):
-        names = [str(name).strip() for name in repositories if str(name).strip()]
+        names = list(
+            dict.fromkeys(
+                str(name).strip() for name in repositories if str(name).strip()
+            )
+        )
+        displayed_names = names[:APPLIANCE_UPDATE_SOURCE_READINESS_REPOSITORY_LIMIT]
+        repositories_omitted = len(names) - len(displayed_names)
         invalid_names = {
             str(source.get("name") or "").strip()
             for source in definitions
@@ -11282,11 +11291,13 @@ def appliance_update_source_readiness(
             if invalid_names.intersection(names)
             else "required"
         )
-        repository_label = ", ".join(names) or (
+        repository_label = ", ".join(displayed_names) or (
             "configured Photon repositories"
             if kind == "photon"
             else "configured PowerShell repositories"
         )
+        if repositories_omitted:
+            repository_label += f", and {repositories_omitted} more repositories"
         reason = ""
         if state == "synchronizing":
             reason = (
@@ -11308,7 +11319,9 @@ def appliance_update_source_readiness(
             "ready": ready,
             "state": state,
             "source_kind": kind,
-            "repositories": names,
+            "repositories": displayed_names,
+            "repository_count": len(names),
+            "repositories_omitted": repositories_omitted,
             "reason": reason,
         }
     rows["atlaso_release"] = {
@@ -11317,6 +11330,8 @@ def appliance_update_source_readiness(
         "state": "ready",
         "source_kind": "atlaso",
         "repositories": [],
+        "repository_count": 0,
+        "repositories_omitted": 0,
         "reason": "",
     }
     return rows

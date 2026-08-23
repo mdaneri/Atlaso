@@ -787,6 +787,39 @@ def test_unsynchronized_stream_is_accessibly_blocked_with_direct_remediation(cli
     assert "opacity:" not in blocked_card_rule + blocked_text_rule
 
 
+def test_source_readiness_bounds_repository_details(client, monkeypatch):
+    """Bound repository readiness details while preserving an omitted count.
+
+    Args:
+        client: Test application HTTP client.
+        monkeypatch: Pytest fixture used to replace repository discovery.
+    """
+    from atlaso.app import ui
+
+    repository_names = [f"Gallery{index:02d}" for index in range(10)]
+    monkeypatch.setattr(
+        ui,
+        "unsynchronized_powershell_repositories",
+        lambda _settings: repository_names,
+    )
+    login(client)
+
+    payload = client.get("/ui/management/appliance-update/availability").json()
+    stream = next(
+        row for row in payload["streams"] if row["id"] == "powershell_modules"
+    )
+    readiness = stream["source_sync"]
+    assert readiness["repositories"] == repository_names[:6]
+    assert readiness["repository_count"] == 10
+    assert readiness["repositories_omitted"] == 4
+    assert "Gallery05, and 4 more repositories" in readiness["reason"]
+    assert "Gallery06" not in readiness["reason"]
+
+    page = client.get("/ui/management/appliance-update")
+    assert "Gallery05, and 4 more repositories" in page.text
+    assert "Gallery06" not in page.text
+
+
 def test_forged_unsynchronized_stream_is_rejected_for_check_and_install(client):
     """Reject blocked stream identifiers at the server admission boundary.
 
