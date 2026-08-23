@@ -273,6 +273,19 @@ def test_update_evidence_state_validates_available_and_actionable_records(tmp_pa
     assert "inconsistent" in inconsistent["message"]
 
     info_path.write_text(
+        json.dumps({**finalizer, "commands": [{"success": True, "layer": "old"}]}),
+        encoding="utf-8",
+    )
+    finalizer_path.write_text(
+        json.dumps({**finalizer, "commands": [{"success": True, "layer": "recovered"}]}),
+        encoding="utf-8",
+    )
+    stale_direct_finalizer = appliance_update_evidence_state(
+        update_info_path=str(info_path), finalizer_path=str(finalizer_path)
+    )
+    assert stale_direct_finalizer["state"] == "needs_attention"
+
+    info_path.write_text(
         json.dumps({**finalizer, "status": "failed", "job_id": "job-2"}),
         encoding="utf-8",
     )

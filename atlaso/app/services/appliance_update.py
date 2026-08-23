@@ -1143,10 +1143,7 @@ def appliance_update_evidence_state(
         finalizer_status = str(finalizer.get("status") or "")
         if paired_finalizer and evidence_status != finalizer_status:
             inconsistent = True
-        if direct_finalizer_evidence and (
-            evidence.get("release") != finalizer.get("release")
-            or evidence.get("rolled_back") != finalizer.get("rolled_back")
-        ):
+        if direct_finalizer_evidence and evidence != finalizer:
             inconsistent = True
         if rollback_evidence:
             if (
