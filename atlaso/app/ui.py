@@ -11258,13 +11258,13 @@ def appliance_update_context(
         .order_by(desc(Job.created_at))
         .limit(8)
     ).scalars().all()
-    real_install_patterns = ('"dry_run":false', '"dry_run": false')
+    apply_started_patterns = ('"apply_started":true', '"apply_started": true')
     qualifying_install_expected = db.execute(
         select(Job.id).where(
             Job.status.in_([JobStatus.SUCCEEDED.value, JobStatus.FAILED.value]),
             _appliance_update_mode_filter_clause("run"),
             or_(
-                *(func.lower(Job.result).contains(pattern) for pattern in real_install_patterns)
+                *(func.lower(Job.result).contains(pattern) for pattern in apply_started_patterns)
             ),
         ).limit(1)
     ).scalar_one_or_none() is not None
@@ -11754,6 +11754,7 @@ def execute_appliance_update_job(
         "status": JobStatus.SUCCEEDED.value if succeeded else JobStatus.FAILED.value,
         "success": succeeded,
         "dry_run": any(result.dry_run for result in results),
+        "apply_started": mode == "run" and len(results) > 1 and not results[1].dry_run,
         "restart_after_commit": mode == "run"
         and succeeded
         and bool({"atlaso_release", "photon_os"} & set(selected_stream_ids)),
@@ -11822,6 +11823,7 @@ def aggregate_appliance_update_results(
         "status": JobStatus.SUCCEEDED.value if succeeded else JobStatus.FAILED.value,
         "success": succeeded,
         "dry_run": any(bool(result.get("dry_run")) for result in ordered_results),
+        "apply_started": any(bool(result.get("apply_started")) for result in ordered_results),
         "restart_after_commit": mode == "run"
         and succeeded
         and (
@@ -14098,6 +14100,7 @@ def submit_appliance_update(
         "status": JobStatus.PENDING.value,
         "success": False,
         "dry_run": get_settings().dry_run_system_adapters,
+        "apply_started": False,
         "commands": [],
     }
     job = Job(

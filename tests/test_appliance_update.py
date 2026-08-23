@@ -204,7 +204,7 @@ def test_update_evidence_panel_accessibility_states(client, monkeypatch):
                 status="succeeded",
                 created_by="admin",
                 task_config_json=json.dumps({"mode": "run", "selected_streams": ["atlaso_release"]}),
-                result=json.dumps({"dry_run": False}),
+                result=json.dumps({"dry_run": False, "apply_started": False}),
             )
         )
         db.commit()
@@ -217,7 +217,90 @@ def test_update_evidence_panel_accessibility_states(client, monkeypatch):
 
     monkeypatch.setattr(ui, "appliance_update_evidence_state", capture_expected_state)
     client.get("/ui/management/appliance-update")
+    assert captured["qualifying_install_expected"] is False
+
+    with SessionLocal() as db:
+        job = db.get(Job, "job_real_evidence_expected")
+        assert job is not None
+        job.result = json.dumps({"dry_run": False, "apply_started": True})
+        db.add(job)
+        db.commit()
+    client.get("/ui/management/appliance-update")
     assert captured["qualifying_install_expected"] is True
+
+
+def test_real_install_marks_evidence_expected_only_after_apply_starts(monkeypatch):
+    """Distinguish a failed read-only preflight from an invoked evidence-writing apply helper."""
+    from atlaso.app import ui
+
+    class PreflightFailingAdapter:
+        """Reject the read-only check before apply can start."""
+
+        dry_run = False
+
+        def check_appliance_update_config(self, config_path: str) -> AdapterResult:
+            """Reject the read-only preflight."""
+            return AdapterResult(
+                command=["atlaso-helper", "appliance-update", "check", config_path],
+                dry_run=False,
+                stdout="",
+                stderr="preflight failed",
+                returncode=1,
+            )
+
+    class ApplyFailingAdapter:
+        """Return a successful check followed by a failed real apply."""
+
+        dry_run = False
+
+        def check_appliance_update_config(self, config_path: str) -> AdapterResult:
+            """Accept the read-only preflight."""
+            return AdapterResult(
+                command=["atlaso-helper", "appliance-update", "check", config_path],
+                dry_run=False,
+                stdout='{"checks":{}}',
+                stderr="",
+                returncode=0,
+            )
+
+        def apply_appliance_update_config(self, config_path: str) -> AdapterResult:
+            """Fail after the evidence-writing helper is invoked."""
+            return AdapterResult(
+                command=["atlaso-helper", "appliance-update", "apply", config_path],
+                dry_run=False,
+                stdout='{"status":"failed"}',
+                stderr="apply failed",
+                returncode=1,
+            )
+
+    monkeypatch.setattr(ui, "stage_appliance_apply_config", lambda _path, _preview: "atlaso-update.json")
+
+    monkeypatch.setattr(ui, "SystemAdapter", lambda: PreflightFailingAdapter())
+    preflight = ui.execute_appliance_update_job(
+        selected_stream_ids=["photon_os"],
+        settings={},
+        actor="admin",
+        mode="run",
+    )
+    assert preflight["apply_started"] is False
+
+    monkeypatch.setattr(ui, "SystemAdapter", lambda: ApplyFailingAdapter())
+    result = ui.execute_appliance_update_job(
+        selected_stream_ids=["photon_os"],
+        settings={},
+        actor="admin",
+        mode="run",
+    )
+    aggregate = ui.aggregate_appliance_update_results(
+        selected_stream_ids=["photon_os"],
+        settings={},
+        actor="admin",
+        mode="run",
+        stream_results=[result],
+    )
+
+    assert result["apply_started"] is True
+    assert aggregate["apply_started"] is True
 
 
 def seed_available_confirmations(streams: list[str]) -> None:
