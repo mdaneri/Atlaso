@@ -1772,7 +1772,7 @@ interface=eth0
         eth0.oper_state = "up"
         eth0.host_ip_cidr = "192.168.49.1/24"
         eth0.ipv4_method = "static"
-        eth0.ip_cidr = None
+        eth0.ip_cidr = "192.168.49.1/24"
         db.add(eth0)
         ui.save_appliance_apply_baselines(
             db,
