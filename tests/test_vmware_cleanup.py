@@ -43,6 +43,8 @@ def _write_fake_vmrun(
     replace_after_delete: bool = False,
     rewrite_on_list: int = 0,
     rewrite_disk: Path | None = None,
+    create_on_list: int = 0,
+    create_path: Path | None = None,
     inventory_suffix: str = "",
 ) -> tuple[Path, dict[str, str], Path, Path]:
     """Create a stateful fake vmrun command and Workstation inventory."""
@@ -134,6 +136,10 @@ if command == "list":
         rewrite_disk = os.environ["ATLASO_FAKE_VMRUN_REWRITE_DISK"]
         with rewrite_target.open("a", encoding="utf-8") as stream:
             stream.write(f'scsi0:2.fileName = "{rewrite_disk}"\n')
+    if list_count == int(os.environ["ATLASO_FAKE_VMRUN_CREATE_ON_LIST"]):
+        Path(os.environ["ATLASO_FAKE_VMRUN_CREATE_PATH"]).write_text(
+            "late artifact", encoding="utf-8"
+        )
     paths = read_paths("running")
     print(f"Total running VMs: {len(paths)}")
     print("\n".join(paths))
@@ -210,6 +216,8 @@ raise SystemExit(64)
             "ATLASO_FAKE_VMRUN_REWRITE_ON_LIST": str(rewrite_on_list),
             "ATLASO_FAKE_VMRUN_REWRITE_TARGET": canonical_paths[0] if canonical_paths else "",
             "ATLASO_FAKE_VMRUN_REWRITE_DISK": str(rewrite_disk or ""),
+            "ATLASO_FAKE_VMRUN_CREATE_ON_LIST": str(create_on_list),
+            "ATLASO_FAKE_VMRUN_CREATE_PATH": str(create_path or ""),
         }
     )
     return command, environment, log, inventory
@@ -507,6 +515,39 @@ def test_stale_repair_rejects_duplicate_selected_library_id(tmp_path: Path) -> N
     assert str(unrelated.resolve()) in inventory.read_text(encoding="utf-8")
 
 
+def test_stale_repair_preserves_ambiguously_owned_index(tmp_path: Path) -> None:
+    """Duplicate index ownership is left untouched during scoped repair."""
+    parent = tmp_path / "image" / "vmware-workstation"
+    root = parent / "test-vms"
+    root.mkdir(parents=True)
+    stale = root / "missing.vmx"
+    unrelated = tmp_path / "other" / "Unrelated.vmx"
+    _write_vmx(unrelated, "Unrelated")
+    vmrun, environment, _, inventory = _write_fake_vmrun(
+        tmp_path / "fake",
+        [],
+        inventory_suffix=(
+            f'vmlist7.config = "{stale.resolve()}"\n'
+            f'index7.id = "{stale.resolve()}"\n'
+            f'index7.id = "{unrelated.resolve()}"\n'
+        ),
+    )
+
+    result = _run_root_cleanup(
+        tmp_path,
+        removal_root=root,
+        artifact_parent=parent,
+        vmrun_path=vmrun,
+        environment=environment,
+    )
+
+    assert result.returncode == 0, result.stdout + result.stderr
+    inventory_text = inventory.read_text(encoding="utf-8")
+    assert f'vmlist7.config = "{stale.resolve()}"' not in inventory_text
+    assert f'index7.id = "{stale.resolve()}"' in inventory_text
+    assert f'index7.id = "{unrelated.resolve()}"' in inventory_text
+
+
 def test_external_vmdk_is_detached_before_deletevm(tmp_path: Path) -> None:
     """Provider deletion never follows a disk path outside the removal root."""
     root = tmp_path / "artifacts" / "vm"
@@ -772,6 +813,31 @@ Remove-AtlasoWorkstationVmArtifacts `
     assert result.returncode != 0
     assert "unvalidated VMX" in result.stderr
     assert first.exists() and second.exists()
+
+
+def test_late_artifact_after_final_vmrun_list_blocks_root_removal(tmp_path: Path) -> None:
+    """The root snapshot is rechecked after the final provider-state query."""
+    root = tmp_path / "artifacts" / "vm"
+    root.mkdir(parents=True)
+    sentinel = root / "sentinel.txt"
+    sentinel.write_text("keep", encoding="utf-8")
+    late = root / "late.txt"
+    vmrun, environment, _, _ = _write_fake_vmrun(
+        tmp_path / "fake", [], create_on_list=1, create_path=late
+    )
+
+    result = _run_root_cleanup(
+        tmp_path,
+        removal_root=root,
+        expected_root=root,
+        vmrun_path=vmrun,
+        environment=environment,
+    )
+
+    assert result.returncode != 0
+    assert "new VMware artifact appeared" in result.stderr
+    assert sentinel.read_text(encoding="utf-8") == "keep"
+    assert late.read_text(encoding="utf-8") == "late artifact"
 
 
 def test_module_keeps_inventory_work_out_of_normal_delete_path() -> None:

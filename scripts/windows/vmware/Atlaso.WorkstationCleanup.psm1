@@ -503,16 +503,27 @@ function Remove-AtlasoWorkstationStaleRegistrations {
         }
     }
 
-    $targetIndexes = [System.Collections.Generic.HashSet[string]]::new([System.StringComparer]::OrdinalIgnoreCase)
+    $indexOwners = @{}
+    $invalidIndexes = [System.Collections.Generic.HashSet[string]]::new([System.StringComparer]::OrdinalIgnoreCase)
     foreach ($line in $lines) {
-        if ($line -match '^\s*index(?<index>\d+)\.id\s*=\s*"(?<path>.*)"\s*$') {
-            $candidate = $Matches.path
-            if ([System.IO.Path]::IsPathFullyQualified($candidate)) {
-                $canonicalPath = Get-AtlasoCanonicalPath -Path $candidate
-                if ($targetPaths.Contains($canonicalPath)) {
-                    $targetIndexes.Add($Matches.index) | Out-Null
-                }
-            }
+        if ($line -notmatch '^\s*index(?<index>\d+)\.id\s*=') { continue }
+        $index = $Matches.index
+        if ($line -notmatch '^\s*index\d+\.id\s*=\s*"(?<path>.*)"\s*$' -or
+            -not [System.IO.Path]::IsPathFullyQualified($Matches.path)) {
+            $invalidIndexes.Add($index) | Out-Null
+            continue
+        }
+        if (-not $indexOwners.ContainsKey($index)) {
+            $indexOwners[$index] = [System.Collections.Generic.List[string]]::new()
+        }
+        $indexOwners[$index].Add((Get-AtlasoCanonicalPath -Path $Matches.path))
+    }
+    $targetIndexes = [System.Collections.Generic.HashSet[string]]::new([System.StringComparer]::OrdinalIgnoreCase)
+    foreach ($index in $indexOwners.Keys) {
+        if (-not $invalidIndexes.Contains($index) -and
+            $indexOwners[$index].Count -eq 1 -and
+            $targetPaths.Contains($indexOwners[$index][0])) {
+            $targetIndexes.Add($index) | Out-Null
         }
     }
 
@@ -990,6 +1001,7 @@ function Remove-AtlasoWorkstationVmArtifacts {
             throw "A VMware Workstation VM remains running inside the cleanup root; artifacts were preserved: $runningPath"
         }
     }
+    Assert-AtlasoRootSnapshotUnreplaced -RemovalRoot $resolvedRemovalRoot -Snapshot $snapshot
     if (Test-Path -LiteralPath $resolvedRemovalRoot) {
         Remove-Item -LiteralPath $resolvedRemovalRoot -Recurse -Force -ErrorAction Stop
     }

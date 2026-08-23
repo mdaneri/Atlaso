@@ -1857,8 +1857,11 @@ def test_vmware_lifecycle_cleanup_only_removes_existing_lifecycle_vms():
     inactive = cleanup_module.rindex("Confirm-AtlasoWorkstationVmInactive")
     provider_delete = cleanup_module.rindex("'-T', 'ws', 'deleteVM', $resolvedVmxPath")
     stale_repair = cleanup_module.rindex("Remove-AtlasoWorkstationStaleRegistrations")
-    replacement_guard = cleanup_module.rindex("Assert-AtlasoRootSnapshotUnreplaced")
+    replacement_guard = cleanup_module.index("Assert-AtlasoRootSnapshotUnreplaced", stale_repair)
     final_running_state = cleanup_module.rindex("Get-AtlasoWorkstationVmPaths -VmrunPath $VmrunPath -State running")
+    final_replacement_guard = cleanup_module.index(
+        "Assert-AtlasoRootSnapshotUnreplaced", final_running_state
+    )
     recursive_delete = cleanup_module.rindex(
         "Remove-Item -LiteralPath $resolvedRemovalRoot -Recurse -Force -ErrorAction Stop"
     )
@@ -1869,6 +1872,7 @@ def test_vmware_lifecycle_cleanup_only_removes_existing_lifecycle_vms():
         < stale_repair
         < replacement_guard
         < final_running_state
+        < final_replacement_guard
         < recursive_delete
     )
     assert "Start-Sleep" not in cleanup_module
