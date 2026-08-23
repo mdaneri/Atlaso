@@ -13036,7 +13036,7 @@ function validApplianceUpdateAvailabilityPayload(payload) {
   const validConfirmed = (confirmed) => confirmed === null || (
     confirmed
     && typeof confirmed === "object"
-    && ["available", "up_to_date", "failed"].includes(confirmed.state)
+    && ["available", "up_to_date"].includes(confirmed.state)
     && typeof confirmed.update_available === "boolean"
     && confirmed.update_available === (confirmed.state === "available")
     && validText(confirmed.current, 200)
