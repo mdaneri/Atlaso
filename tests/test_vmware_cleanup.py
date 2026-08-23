@@ -46,6 +46,7 @@ def _write_fake_vmrun(
     rewrite_disk: Path | None = None,
     create_on_list: int = 0,
     create_path: Path | None = None,
+    register_on_list: int = 0,
     inventory_suffix: str = "",
 ) -> tuple[Path, dict[str, str], Path, Path]:
     """Create a stateful fake vmrun command and Workstation inventory."""
@@ -141,6 +142,10 @@ if command == "list":
         Path(os.environ["ATLASO_FAKE_VMRUN_CREATE_PATH"]).write_text(
             "late artifact", encoding="utf-8"
         )
+    if list_count == int(os.environ["ATLASO_FAKE_VMRUN_REGISTER_ON_LIST"]):
+        late_target = os.environ["ATLASO_FAKE_VMRUN_REWRITE_TARGET"]
+        write_paths("registered", [late_target])
+        update_inventory([late_target])
     paths = read_paths("running")
     print(f"Total running VMs: {len(paths)}")
     print("\n".join(paths))
@@ -219,6 +224,7 @@ raise SystemExit(64)
             "ATLASO_FAKE_VMRUN_REWRITE_DISK": str(rewrite_disk or ""),
             "ATLASO_FAKE_VMRUN_CREATE_ON_LIST": str(create_on_list),
             "ATLASO_FAKE_VMRUN_CREATE_PATH": str(create_path or ""),
+            "ATLASO_FAKE_VMRUN_REGISTER_ON_LIST": str(register_on_list),
         }
     )
     return command, environment, log, inventory
@@ -398,6 +404,44 @@ def test_registered_hard_link_alias_uses_deletevm(tmp_path: Path) -> None:
     assert [command[2] for command in _commands(log)].count("deleteVM") == 1
 
 
+def test_registered_alias_with_external_vmdk_fails_closed(tmp_path: Path) -> None:
+    """Atomic detachment cannot silently strand an out-of-root registration."""
+    root = tmp_path / "artifacts" / "vm"
+    vmx = root / "Atlaso.vmx"
+    alias = tmp_path / "aliases" / "Atlaso-alias.vmx"
+    external_disk = tmp_path / "shared" / "depot.vmdk"
+    external_disk.parent.mkdir(parents=True)
+    external_disk.write_text("shared", encoding="utf-8")
+    _write_vmx(vmx, "Atlaso", f'scsi0:2.fileName = "{external_disk.resolve()}"')
+    original_bytes = vmx.read_bytes()
+    alias.parent.mkdir(parents=True)
+    os.link(vmx, alias)
+    vmrun, environment, _, inventory = _write_fake_vmrun(
+        tmp_path / "fake", [vmx], registered=True
+    )
+    inventory.write_text(
+        '.encoding = "UTF-8"\n'
+        f'vmlist1.config = "{alias.resolve()}"\n'
+        f'index0.id = "{alias.resolve()}"\n'
+        'index.count = "1"\n',
+        encoding="utf-8",
+    )
+
+    result = _run_root_cleanup(
+        tmp_path,
+        removal_root=root,
+        expected_root=root,
+        vmrun_path=vmrun,
+        environment=environment,
+    )
+
+    assert result.returncode != 0
+    assert "registration changed after VMX protection" in result.stderr
+    assert vmx.read_bytes() == original_bytes
+    assert alias.read_bytes() == original_bytes
+    assert external_disk.read_text(encoding="utf-8") == "shared"
+
+
 def test_live_registration_rejects_duplicate_library_id(tmp_path: Path) -> None:
     """A live target's selected library ID must have one config owner."""
     root = tmp_path / "artifacts" / "vm"
@@ -443,6 +487,29 @@ def test_already_unregistered_vm_uses_filesystem_cleanup_only(tmp_path: Path) ->
 
     assert result.returncode == 0, result.stdout + result.stderr
     assert not root.exists()
+    assert "deleteVM" not in [command[2] for command in _commands(log)]
+
+
+def test_registration_appearing_before_root_removal_fails_closed(tmp_path: Path) -> None:
+    """A VMX registered after its initial check prevents recursive deletion."""
+    root = tmp_path / "artifacts" / "vm"
+    vmx = root / "Atlaso.vmx"
+    _write_vmx(vmx)
+    vmrun, environment, log, _ = _write_fake_vmrun(
+        tmp_path / "fake", [vmx], register_on_list=3
+    )
+
+    result = _run_root_cleanup(
+        tmp_path,
+        removal_root=root,
+        expected_root=root,
+        vmrun_path=vmrun,
+        environment=environment,
+    )
+
+    assert result.returncode != 0
+    assert "became registered during cleanup" in result.stderr
+    assert vmx.exists()
     assert "deleteVM" not in [command[2] for command in _commands(log)]
 
 

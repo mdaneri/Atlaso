@@ -1218,8 +1218,9 @@ function Remove-AtlasoWorkstationVmArtifacts {
                     -InventoryPath $inventoryPath `
                     -VmxPath $resolvedVmxPath `
                     -ScopeRoot $resolvedRemovalRoot)) {
-                Restore-AtlasoWorkstationExternalVmdks -VmxPath $resolvedVmxPath -Detachment $detachment
-                continue
+                # A hard-link alias still references the pre-replacement file, so
+                # falling back to recursive deletion would strand its registration.
+                throw "VMware Workstation registration changed after VMX protection; the original VMX and artifacts were preserved: $resolvedVmxPath"
             }
             Invoke-AtlasoVmrunChecked `
                 -VmrunPath $VmrunPath `
@@ -1258,6 +1259,17 @@ function Remove-AtlasoWorkstationVmArtifacts {
             )
         ) {
             throw "A VMware Workstation VM remains running inside the cleanup root; artifacts were preserved: $runningPath"
+        }
+    }
+    # Re-resolve the inventory because it may have appeared after the initial
+    # snapshot; surviving VMX files are safe for direct removal only while unregistered.
+    $finalInventoryPath = Resolve-AtlasoWorkstationInventoryPath
+    foreach ($survivingVmxPath in @($resolvedVmxPaths | Where-Object { Test-Path -LiteralPath $_ -PathType Leaf })) {
+        if (Test-AtlasoWorkstationVmxRegistered `
+                -InventoryPath $finalInventoryPath `
+                -VmxPath $survivingVmxPath `
+                -ScopeRoot $resolvedRemovalRoot) {
+            throw "A VMware Workstation VM became registered during cleanup; artifacts were preserved: $survivingVmxPath"
         }
     }
     Assert-AtlasoRootSnapshotUnreplaced -RemovalRoot $resolvedRemovalRoot -Snapshot $snapshot
