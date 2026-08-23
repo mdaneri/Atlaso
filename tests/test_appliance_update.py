@@ -260,6 +260,27 @@ def test_update_evidence_panel_accessibility_states(client, monkeypatch):
     client.get("/ui/management/appliance-update")
     assert captured["qualifying_install_expected"] is True
 
+    with SessionLocal() as db:
+        job = db.get(Job, "job_real_evidence_expected")
+        assert job is not None
+        job.result = json.dumps(
+            {
+                "dry_run": False,
+                "commands": [
+                    {
+                        "command_line": (
+                            "atlaso-helper appliance-update apply "
+                            "/var/lib/atlaso/apply/appliance-update/atlaso-update.json"
+                        )
+                    }
+                ],
+            }
+        )
+        db.add(job)
+        db.commit()
+    client.get("/ui/management/appliance-update")
+    assert captured["qualifying_install_expected"] is True
+
 
 def test_real_install_marks_evidence_expected_only_after_apply_starts(monkeypatch):
     """Distinguish a failed preflight from an invoked evidence-writing apply helper.

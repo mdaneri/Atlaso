@@ -11259,12 +11259,19 @@ def appliance_update_context(
         .limit(8)
     ).scalars().all()
     apply_started_patterns = ('"apply_started":true', '"apply_started": true')
+    legacy_apply_patterns = (
+        '"command_line":"atlaso-helper appliance-update apply ',
+        '"command_line": "atlaso-helper appliance-update apply ',
+    )
     qualifying_install_expected = db.execute(
         select(Job.id).where(
             Job.status.in_([JobStatus.SUCCEEDED.value, JobStatus.FAILED.value]),
             _appliance_update_mode_filter_clause("run"),
             or_(
-                *(func.lower(Job.result).contains(pattern) for pattern in apply_started_patterns)
+                *(
+                    func.lower(Job.result).contains(pattern)
+                    for pattern in (*apply_started_patterns, *legacy_apply_patterns)
+                )
             ),
         ).limit(1)
     ).scalar_one_or_none() is not None
