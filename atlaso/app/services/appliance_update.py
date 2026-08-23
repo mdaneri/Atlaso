@@ -899,6 +899,11 @@ def appliance_update_evidence_state(
     """
 
     def _read_json_object(path_value: str) -> tuple[str, dict[str, Any], str]:
+        """Read one durable evidence file as a JSON object.
+
+        Args:
+            path_value: Durable evidence path to inspect.
+        """
         try:
             content = Path(path_value).read_text(encoding="utf-8")
         except FileNotFoundError:

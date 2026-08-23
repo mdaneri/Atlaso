@@ -50,7 +50,11 @@ def load_helper_module():
 
 
 def test_update_evidence_state_distinguishes_normal_absence_and_read_only_checks(tmp_path):
-    """Keep source, fresh packaged, and read-only states neutral without fabricating evidence."""
+    """Keep source, fresh packaged, and read-only states neutral without fabricating evidence.
+
+    Args:
+        tmp_path: Temporary directory provided by pytest.
+    """
     from atlaso.app.services.appliance_update import appliance_update_evidence_state
 
     missing_info = tmp_path / "update-info"
@@ -72,7 +76,11 @@ def test_update_evidence_state_distinguishes_normal_absence_and_read_only_checks
 
 
 def test_update_evidence_state_validates_available_and_actionable_records(tmp_path):
-    """Expose valid evidence and flag missing, unreadable, malformed, or inconsistent records."""
+    """Expose valid evidence and flag missing, unreadable, malformed, or inconsistent records.
+
+    Args:
+        tmp_path: Temporary directory provided by pytest.
+    """
     from atlaso.app.services.appliance_update import appliance_update_evidence_state
 
     info_path = tmp_path / "update-info"
@@ -165,7 +173,12 @@ def test_update_evidence_state_validates_available_and_actionable_records(tmp_pa
 
 
 def test_update_evidence_panel_accessibility_states(client, monkeypatch):
-    """Render neutral evidence without an alert and actionable evidence with one."""
+    """Render neutral evidence without an alert and actionable evidence with one.
+
+    Args:
+        client: HTTP test client used to render the management page.
+        monkeypatch: Pytest fixture used to replace the evidence projection.
+    """
     from atlaso.app import ui
 
     login(client)
@@ -211,7 +224,11 @@ def test_update_evidence_panel_accessibility_states(client, monkeypatch):
     captured: dict[str, bool] = {}
 
     def capture_expected_state(**kwargs):
-        """Capture the bounded durable-task existence projection."""
+        """Capture the bounded durable-task existence projection.
+
+        Args:
+            **kwargs: Evidence projection keyword arguments.
+        """
         captured.update(kwargs)
         return states
 
@@ -230,7 +247,11 @@ def test_update_evidence_panel_accessibility_states(client, monkeypatch):
 
 
 def test_real_install_marks_evidence_expected_only_after_apply_starts(monkeypatch):
-    """Distinguish a failed read-only preflight from an invoked evidence-writing apply helper."""
+    """Distinguish a failed preflight from an invoked evidence-writing apply helper.
+
+    Args:
+        monkeypatch: Pytest fixture used to replace the system adapter and staging path.
+    """
     from atlaso.app import ui
 
     class PreflightFailingAdapter:
@@ -239,7 +260,11 @@ def test_real_install_marks_evidence_expected_only_after_apply_starts(monkeypatc
         dry_run = False
 
         def check_appliance_update_config(self, config_path: str) -> AdapterResult:
-            """Reject the read-only preflight."""
+            """Reject the read-only preflight.
+
+            Args:
+                config_path: Staged Appliance Update manifest path.
+            """
             return AdapterResult(
                 command=["atlaso-helper", "appliance-update", "check", config_path],
                 dry_run=False,
@@ -254,7 +279,11 @@ def test_real_install_marks_evidence_expected_only_after_apply_starts(monkeypatc
         dry_run = False
 
         def check_appliance_update_config(self, config_path: str) -> AdapterResult:
-            """Accept the read-only preflight."""
+            """Accept the read-only preflight.
+
+            Args:
+                config_path: Staged Appliance Update manifest path.
+            """
             return AdapterResult(
                 command=["atlaso-helper", "appliance-update", "check", config_path],
                 dry_run=False,
@@ -264,7 +293,11 @@ def test_real_install_marks_evidence_expected_only_after_apply_starts(monkeypatc
             )
 
         def apply_appliance_update_config(self, config_path: str) -> AdapterResult:
-            """Fail after the evidence-writing helper is invoked."""
+            """Fail after the evidence-writing helper is invoked.
+
+            Args:
+                config_path: Staged Appliance Update manifest path.
+            """
             return AdapterResult(
                 command=["atlaso-helper", "appliance-update", "apply", config_path],
                 dry_run=False,
