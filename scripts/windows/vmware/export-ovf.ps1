@@ -1,3 +1,48 @@
+<#
+.SYNOPSIS
+Export a VMware VMX into an Atlaso OVF/OVA package and optionally publish release assets.
+
+.PARAMETER SourceVmxPath
+Path to the source VMX used for ovftool export.
+.PARAMETER OutputDirectory
+Directory to hold generated OVF artifacts.
+.PARAMETER Name
+Base name for exported assets.
+.PARAMETER OvfToolPath
+Optional path to ovftool or an ovftool installation directory.
+.PARAMETER TarPath
+Optional path to tar used when creating OVA archives.
+.PARAMETER Release
+Publish generated assets to the checked-out GitHub release.
+.PARAMETER MaximumReleaseAssetBytes
+Maximum asset size for uploaded release assets.
+.PARAMETER NoOva
+Skip OVA creation and emit OVF only.
+.PARAMETER Force
+Allow destructive output cleanup during release export.
+#>
+<#
+.SYNOPSIS
+Export a verified Atlaso VMware image as a customized OVF or OVA package.
+.PARAMETER SourceVmxPath
+Source Vmx Path value.
+.PARAMETER OutputDirectory
+Output Directory value.
+.PARAMETER Name
+Name value.
+.PARAMETER OvfToolPath
+Ovf Tool Path value.
+.PARAMETER TarPath
+Tar Path value.
+.PARAMETER Release
+Release value.
+.PARAMETER MaximumReleaseAssetBytes
+Maximum Release Asset Bytes value.
+.PARAMETER NoOva
+No Ova value.
+.PARAMETER Force
+Force value.
+#>
 [CmdletBinding()]
 param(
     [string]$SourceVmxPath = 'image/vmware-workstation/output/atlaso-photon-vmware-workstation/Atlaso-Photon-Builder-VMware.vmx',
@@ -16,11 +61,26 @@ $ErrorActionPreference = 'Stop'
 
 $outputSafetyModule = Join-Path $PSScriptRoot 'Atlaso.OvfExport.psm1'
 Import-Module $outputSafetyModule -Force
+$payloadModule = Join-Path $PSScriptRoot 'Atlaso.VmwarePayload.psm1'
+Import-Module $payloadModule -Force
 
 $ovfNamespace = 'http://schemas.dmtf.org/ovf/envelope/1'
 $rasdNamespace = 'http://schemas.dmtf.org/wbem/wscim/1/cim-schema/2/CIM_ResourceAllocationSettingData'
 $vmwNamespace = 'http://www.vmware.com/schema/ovf'
 
+<#
+.SYNOPSIS
+Resolve the location of ovftool from a provided path or common install locations.
+
+.PARAMETER Path
+Path to an ovftool executable or directory containing ovftool.exe.
+#>
+<#
+.SYNOPSIS
+Resolve Ovf Tool Path.
+.PARAMETER Path
+Path value.
+#>
 function Resolve-OvfToolPath {
     param([string]$Path)
 
@@ -55,6 +115,19 @@ function Resolve-OvfToolPath {
     throw 'ovftool was not found. Install VMware Workstation or pass -OvfToolPath.'
 }
 
+<#
+.SYNOPSIS
+Resolve the tar executable used for OVA archive creation.
+
+.PARAMETER Path
+Optional custom tar path.
+#>
+<#
+.SYNOPSIS
+Resolve Tar Path.
+.PARAMETER Path
+Path value.
+#>
 function Resolve-TarPath {
     param([string]$Path)
 
@@ -76,6 +149,14 @@ function Resolve-TarPath {
     throw 'tar.exe was not found. Pass -NoOva to keep only the OVF folder.'
 }
 
+<#
+.SYNOPSIS
+Resolve the GitHub CLI executable path.
+#>
+<#
+.SYNOPSIS
+Resolve Gh Path.
+#>
 function Resolve-GhPath {
     $command = Get-Command gh -ErrorAction SilentlyContinue
     if (-not $command) {
@@ -84,6 +165,19 @@ function Resolve-GhPath {
     return $command.Source
 }
 
+<#
+.SYNOPSIS
+Resolve the current release tag from repository version metadata.
+
+.PARAMETER RepoRoot
+Repository root used to resolve the synchronized version.
+#>
+<#
+.SYNOPSIS
+Resolve Atlaso Release Tag.
+.PARAMETER RepoRoot
+Repo Root value.
+#>
 function Resolve-AtlasoReleaseTag {
     param([string]$RepoRoot)
 
@@ -112,6 +206,27 @@ function Resolve-AtlasoReleaseTag {
     return $tag
 }
 
+<#
+.SYNOPSIS
+Validate repository state and VMX provenance against the current release tag.
+
+.PARAMETER RepoRoot
+Repository root used for provenance validation.
+.PARAMETER Tag
+Release tag expected to match the exported VMX.
+.PARAMETER SourceVmxPath
+VMX path whose provenance is validated.
+#>
+<#
+.SYNOPSIS
+Validate Atlaso Release Provenance.
+.PARAMETER RepoRoot
+Repo Root value.
+.PARAMETER Tag
+Tag value.
+.PARAMETER SourceVmxPath
+Source Vmx Path value.
+#>
 function Assert-AtlasoReleaseProvenance {
     param(
         [string]$RepoRoot,
@@ -140,44 +255,47 @@ function Assert-AtlasoReleaseProvenance {
         throw "Release tag $Tag identifies $tagCommit, but the exported image checkout is $headCommit."
     }
 
-    $provenancePath = [System.IO.Path]::ChangeExtension($SourceVmxPath, 'provenance.json')
-    if (-not (Test-Path -LiteralPath $provenancePath -PathType Leaf)) {
-        throw "VMware build provenance is missing: $provenancePath"
-    }
-    try {
-        $provenance = Get-Content -LiteralPath $provenancePath -Raw | ConvertFrom-Json
-    }
-    catch {
-        throw "VMware build provenance is invalid: $($_.Exception.Message)"
-    }
-    if ($provenance.schema_version -ne 1 -or
-        $provenance.source_commit -ne $headCommit -or
+    $provenance = Assert-AtlasoVmwarePayloadProvenance -VmxPath $SourceVmxPath
+    if ($provenance.source_commit -ne $headCommit -or
         [bool]$provenance.tracked_source_dirty) {
         throw 'VMware build provenance does not identify this exact clean release commit.'
-    }
-
-    $vmx = Get-Item -LiteralPath $SourceVmxPath
-    if ($provenance.vmx.name -ne $vmx.Name -or
-        [long]$provenance.vmx.bytes -ne $vmx.Length -or
-        $provenance.vmx.sha256 -ne (Get-FileHash -LiteralPath $vmx.FullName -Algorithm SHA256).Hash.ToLowerInvariant()) {
-        throw 'VMware build provenance does not match the source VMX bytes.'
-    }
-    $vmdks = @(Get-ChildItem -LiteralPath $vmx.DirectoryName -Filter '*.vmdk' -File | Sort-Object Name)
-    $recordedVmdks = @($provenance.vmdks)
-    if ($vmdks.Count -ne 2 -or $recordedVmdks.Count -ne 2) {
-        throw 'VMware build provenance must identify exactly two payload VMDKs.'
-    }
-    foreach ($vmdk in $vmdks) {
-        $record = $recordedVmdks | Where-Object { $_.name -eq $vmdk.Name } | Select-Object -First 1
-        if (-not $record -or
-            [long]$record.bytes -ne $vmdk.Length -or
-            $record.sha256 -ne (Get-FileHash -LiteralPath $vmdk.FullName -Algorithm SHA256).Hash.ToLowerInvariant()) {
-            throw "VMware build provenance does not match payload VMDK $($vmdk.Name)."
-        }
     }
     return $provenance
 }
 
+<#
+.SYNOPSIS
+Publish OVF release assets to GitHub after validation.
+
+.PARAMETER GhPath
+Path to the GitHub CLI binary.
+.PARAMETER Tag
+Release tag receiving the exported artifacts.
+.PARAMETER OvfDirectory
+Directory with generated OVF descriptor and companion files.
+.PARAMETER OvaPath
+Optional OVA file path to upload when present.
+.PARAMETER ExpectedCommit
+Expected source commit hash for provenance checks.
+.PARAMETER MaximumBytes
+Per-file byte limit for uploaded release assets.
+#>
+<#
+.SYNOPSIS
+Publish Atlaso Release Assets.
+.PARAMETER GhPath
+Gh Path value.
+.PARAMETER Tag
+Tag value.
+.PARAMETER OvfDirectory
+Ovf Directory value.
+.PARAMETER OvaPath
+Ova Path value.
+.PARAMETER ExpectedCommit
+Expected Commit value.
+.PARAMETER MaximumBytes
+Maximum Bytes value.
+#>
 function Publish-AtlasoReleaseAssets {
     param(
         [string]$GhPath,
@@ -269,6 +387,27 @@ function Publish-AtlasoReleaseAssets {
     }
 }
 
+<#
+.SYNOPSIS
+Create a new OVF namespace attribute on an XML element.
+
+.PARAMETER Document
+XML document owning the created attribute.
+.PARAMETER Name
+Attribute local name.
+.PARAMETER Value
+Attribute value.
+#>
+<#
+.SYNOPSIS
+Create Ovf Attribute.
+.PARAMETER Document
+Document value.
+.PARAMETER Name
+Name value.
+.PARAMETER Value
+Value value.
+#>
 function New-OvfAttribute {
     param(
         [xml]$Document,
@@ -281,6 +420,31 @@ function New-OvfAttribute {
     return $attribute
 }
 
+<#
+.SYNOPSIS
+Set an OVF namespaced attribute value on an element.
+
+.PARAMETER Document
+XML document used for creating new attributes when missing.
+.PARAMETER Element
+XML element receiving the attribute.
+.PARAMETER Name
+Attribute local name.
+.PARAMETER Value
+Attribute value.
+#>
+<#
+.SYNOPSIS
+Set Ovf Attribute.
+.PARAMETER Document
+Document value.
+.PARAMETER Element
+Element value.
+.PARAMETER Name
+Name value.
+.PARAMETER Value
+Value value.
+#>
 function Set-OvfAttribute {
     param(
         [xml]$Document,
@@ -297,6 +461,31 @@ function Set-OvfAttribute {
     [void]$Element.Attributes.Append((New-OvfAttribute -Document $Document -Name $Name -Value $Value))
 }
 
+<#
+.SYNOPSIS
+Set a VMware namespaced attribute value on an element.
+
+.PARAMETER Document
+XML document used for creating new attributes when missing.
+.PARAMETER Element
+XML element receiving the attribute.
+.PARAMETER Name
+Attribute local name.
+.PARAMETER Value
+Attribute value.
+#>
+<#
+.SYNOPSIS
+Set Vmw Attribute.
+.PARAMETER Document
+Document value.
+.PARAMETER Element
+Element value.
+.PARAMETER Name
+Name value.
+.PARAMETER Value
+Value value.
+#>
 function Set-VmwAttribute {
     param(
         [xml]$Document,
@@ -315,6 +504,31 @@ function Set-VmwAttribute {
     [void]$Element.Attributes.Append($attribute)
 }
 
+<#
+.SYNOPSIS
+Add a text child element to a parent using the OVF namespace.
+
+.PARAMETER Document
+XML document used to create new elements.
+.PARAMETER Parent
+Parent element for the new node.
+.PARAMETER LocalName
+Local element name.
+.PARAMETER Value
+Inner text value.
+#>
+<#
+.SYNOPSIS
+Add Text Element.
+.PARAMETER Document
+Document value.
+.PARAMETER Parent
+Parent value.
+.PARAMETER LocalName
+Local Name value.
+.PARAMETER Value
+Value value.
+#>
 function Add-TextElement {
     param(
         [xml]$Document,
@@ -329,6 +543,27 @@ function Add-TextElement {
     return $element
 }
 
+<#
+.SYNOPSIS
+Find a child element by local name and namespace.
+
+.PARAMETER Parent
+Parent XML element to scan.
+.PARAMETER LocalName
+Child element local name to match.
+.PARAMETER Namespace
+Child element namespace URI to match.
+#>
+<#
+.SYNOPSIS
+Return Namespaced Child Element.
+.PARAMETER Parent
+Parent value.
+.PARAMETER LocalName
+Local Name value.
+.PARAMETER Namespace
+Namespace value.
+#>
 function Get-NamespacedChildElement {
     param(
         [System.Xml.XmlElement]$Parent,
@@ -344,6 +579,39 @@ function Get-NamespacedChildElement {
     return $null
 }
 
+<#
+.SYNOPSIS
+Set an element's inner text in a namespaced context.
+
+.PARAMETER Document
+XML document used to create missing nodes.
+.PARAMETER Parent
+Parent element for the node.
+.PARAMETER Prefix
+Namespace prefix used when creating a missing node.
+.PARAMETER LocalName
+Child local name.
+.PARAMETER Namespace
+Namespace URI for lookup and creation.
+.PARAMETER Value
+Value to set.
+#>
+<#
+.SYNOPSIS
+Set Namespaced Text Element.
+.PARAMETER Document
+Document value.
+.PARAMETER Parent
+Parent value.
+.PARAMETER Prefix
+Prefix value.
+.PARAMETER LocalName
+Local Name value.
+.PARAMETER Namespace
+Namespace value.
+.PARAMETER Value
+Value value.
+#>
 function Set-NamespacedTextElement {
     param(
         [xml]$Document,
@@ -363,6 +631,27 @@ function Set-NamespacedTextElement {
     return $element
 }
 
+<#
+.SYNOPSIS
+Remove all matching child elements by local name and namespace.
+
+.PARAMETER Parent
+Parent element whose children are pruned.
+.PARAMETER LocalName
+Child local name to remove.
+.PARAMETER Namespace
+Child namespace URI to match.
+#>
+<#
+.SYNOPSIS
+Remove Namespaced Child Element.
+.PARAMETER Parent
+Parent value.
+.PARAMETER LocalName
+Local Name value.
+.PARAMETER Namespace
+Namespace value.
+#>
 function Remove-NamespacedChildElement {
     param(
         [System.Xml.XmlElement]$Parent,
@@ -377,6 +666,23 @@ function Remove-NamespacedChildElement {
     }
 }
 
+<#
+.SYNOPSIS
+Read a RASD value from an item by local name.
+
+.PARAMETER Item
+RASD item node.
+.PARAMETER LocalName
+Target child local name.
+#>
+<#
+.SYNOPSIS
+Return Rasd Value.
+.PARAMETER Item
+Item value.
+.PARAMETER LocalName
+Local Name value.
+#>
 function Get-RasdValue {
     param(
         [System.Xml.XmlElement]$Item,
@@ -390,6 +696,31 @@ function Get-RasdValue {
     return ''
 }
 
+<#
+.SYNOPSIS
+Set a RASD child text value.
+
+.PARAMETER Document
+XML document used for creating missing nodes.
+.PARAMETER Item
+RASD item node.
+.PARAMETER LocalName
+Child local name.
+.PARAMETER Value
+Value to assign.
+#>
+<#
+.SYNOPSIS
+Set Rasd Value.
+.PARAMETER Document
+Document value.
+.PARAMETER Item
+Item value.
+.PARAMETER LocalName
+Local Name value.
+.PARAMETER Value
+Value value.
+#>
 function Set-RasdValue {
     param(
         [xml]$Document,
@@ -401,6 +732,27 @@ function Set-RasdValue {
     [void](Set-NamespacedTextElement -Document $Document -Parent $Item -Prefix 'rasd' -LocalName $LocalName -Namespace $rasdNamespace -Value $Value)
 }
 
+<#
+.SYNOPSIS
+Set or reorder the RASD description value.
+
+.PARAMETER Document
+XML document used for namespaced operations.
+.PARAMETER Item
+RASD item node.
+.PARAMETER Value
+Description text.
+#>
+<#
+.SYNOPSIS
+Set Rasd Description.
+.PARAMETER Document
+Document value.
+.PARAMETER Item
+Item value.
+.PARAMETER Value
+Value value.
+#>
 function Set-RasdDescription {
     param(
         [xml]$Document,
@@ -416,6 +768,23 @@ function Set-RasdDescription {
     }
 }
 
+<#
+.SYNOPSIS
+Compute the next available RASD InstanceID for a hardware section.
+
+.PARAMETER HardwareSection
+Hardware section containing existing Item nodes.
+.PARAMETER NamespaceManager
+Namespace manager used for OVF queries.
+#>
+<#
+.SYNOPSIS
+Return Next Rasd Instance Id.
+.PARAMETER HardwareSection
+Hardware Section value.
+.PARAMETER NamespaceManager
+Namespace Manager value.
+#>
 function Get-NextRasdInstanceId {
     param(
         [System.Xml.XmlElement]$HardwareSection,
@@ -432,6 +801,31 @@ function Get-NextRasdInstanceId {
     return $maxId + 1
 }
 
+<#
+.SYNOPSIS
+Update the network element metadata in an OVF VirtualHardware section.
+
+.PARAMETER Document
+XML document for attribute and child updates.
+.PARAMETER Network
+OVF network element to update.
+.PARAMETER Name
+New network name.
+.PARAMETER Description
+New network description text.
+#>
+<#
+.SYNOPSIS
+Set Ovf Network.
+.PARAMETER Document
+Document value.
+.PARAMETER Network
+Network value.
+.PARAMETER Name
+Name value.
+.PARAMETER Description
+Description value.
+#>
 function Set-OvfNetwork {
     param(
         [xml]$Document,
@@ -444,6 +838,31 @@ function Set-OvfNetwork {
     [void](Set-NamespacedTextElement -Document $Document -Parent $Network -Prefix 'ovf' -LocalName 'Description' -Namespace $ovfNamespace -Value $Description)
 }
 
+<#
+.SYNOPSIS
+Normalize network topology in the OVF payload.
+
+.PARAMETER Document
+OVF XML document to normalize.
+.PARAMETER VirtualSystem
+Target VirtualSystem node.
+.PARAMETER HardwareSection
+VirtualHardwareSection under the virtual system.
+.PARAMETER NamespaceManager
+Namespace manager for OVF selectors.
+#>
+<#
+.SYNOPSIS
+Ensure Atlaso Ovf Networks.
+.PARAMETER Document
+Document value.
+.PARAMETER VirtualSystem
+Virtual System value.
+.PARAMETER HardwareSection
+Hardware Section value.
+.PARAMETER NamespaceManager
+Namespace Manager value.
+#>
 function Ensure-AtlasoOvfNetworks {
     param(
         [xml]$Document,
@@ -520,6 +939,27 @@ function Ensure-AtlasoOvfNetworks {
     Set-RasdValue -Document $Document -Item $serviceAdapter -LocalName 'Connection' -Value $serviceNetworkName
 }
 
+<#
+.SYNOPSIS
+Ensure Atlaso-required empty data disks exist and remove stale payload entries.
+
+.PARAMETER Document
+OVF XML document to validate.
+.PARAMETER HardwareSection
+VirtualHardwareSection containing disk hardware items.
+.PARAMETER NamespaceManager
+Namespace manager for OVF selectors.
+#>
+<#
+.SYNOPSIS
+Ensure Atlaso Ovf Empty Data Disks.
+.PARAMETER Document
+Document value.
+.PARAMETER HardwareSection
+Hardware Section value.
+.PARAMETER NamespaceManager
+Namespace Manager value.
+#>
 function Ensure-AtlasoOvfEmptyDataDisks {
     param(
         [xml]$Document,
@@ -620,6 +1060,27 @@ function Ensure-AtlasoOvfEmptyDataDisks {
     }
 }
 
+<#
+.SYNOPSIS
+Normalize Atlaso hardware section for VM topology and required disk layout.
+
+.PARAMETER Document
+OVF XML document to update.
+.PARAMETER HardwareSection
+VirtualHardwareSection to normalize.
+.PARAMETER NamespaceManager
+Namespace manager for OVF selectors.
+#>
+<#
+.SYNOPSIS
+Set Atlaso Ovf Hardware.
+.PARAMETER Document
+Document value.
+.PARAMETER HardwareSection
+Hardware Section value.
+.PARAMETER NamespaceManager
+Namespace Manager value.
+#>
 function Set-AtlasoOvfHardware {
     param(
         [xml]$Document,
@@ -680,6 +1141,19 @@ function Set-AtlasoOvfHardware {
     }
 }
 
+<#
+.SYNOPSIS
+Validate the OVF disk ordering and required topology for Atlaso payloads.
+
+.PARAMETER OvfPath
+OVF descriptor path to validate.
+#>
+<#
+.SYNOPSIS
+Validate Atlaso Ovf Disk Topology.
+.PARAMETER OvfPath
+Ovf Path value.
+#>
 function Assert-AtlasoOvfDiskTopology {
     param([string]$OvfPath)
 
@@ -743,6 +1217,23 @@ function Assert-AtlasoOvfDiskTopology {
     }
 }
 
+<#
+.SYNOPSIS
+Find an existing product property by key.
+
+.PARAMETER ProductSection
+OVF product section to search.
+.PARAMETER Key
+Property key value to match.
+#>
+<#
+.SYNOPSIS
+Return Ovf Property.
+.PARAMETER ProductSection
+Product Section value.
+.PARAMETER Key
+Key value.
+#>
 function Get-OvfProperty {
     param(
         [System.Xml.XmlElement]$ProductSection,
@@ -758,6 +1249,27 @@ function Get-OvfProperty {
     return $null
 }
 
+<#
+.SYNOPSIS
+Add a property category element to the OVF product section.
+
+.PARAMETER Document
+OVF document used to create the category node.
+.PARAMETER ProductSection
+ProductSection node receiving the new category.
+.PARAMETER Name
+Category display name.
+#>
+<#
+.SYNOPSIS
+Add Atlaso Ovf Category.
+.PARAMETER Document
+Document value.
+.PARAMETER ProductSection
+Product Section value.
+.PARAMETER Name
+Name value.
+#>
 function Add-AtlasoOvfCategory {
     param(
         [xml]$Document,
@@ -768,6 +1280,55 @@ function Add-AtlasoOvfCategory {
     [void](Add-TextElement -Document $Document -Parent $ProductSection -LocalName 'Category' -Value $Name)
 }
 
+<#
+.SYNOPSIS
+Add or update a typed OVF product property definition.
+
+.PARAMETER Document
+OVF document containing the property.
+.PARAMETER ProductSection
+ProductSection receiving the property.
+.PARAMETER Key
+Property key.
+.PARAMETER Label
+Property label.
+.PARAMETER Description
+Property description text.
+.PARAMETER Required
+Whether the property is required.
+.PARAMETER Password
+Whether the property uses password input semantics.
+.PARAMETER Boolean
+Whether the property uses boolean input semantics.
+.PARAMETER DefaultValue
+Optional default value.
+.PARAMETER MinLength
+Minimum permitted string length for password-like strings.
+#>
+<#
+.SYNOPSIS
+Set Atlaso Ovf Property.
+.PARAMETER Document
+Document value.
+.PARAMETER ProductSection
+Product Section value.
+.PARAMETER Key
+Key value.
+.PARAMETER Label
+Label value.
+.PARAMETER Description
+Description value.
+.PARAMETER Required
+Required value.
+.PARAMETER Password
+Password value.
+.PARAMETER Boolean
+Boolean value.
+.PARAMETER DefaultValue
+Default Value value.
+.PARAMETER MinLength
+Min Length value.
+#>
 function Set-AtlasoOvfProperty {
     param(
         [xml]$Document,
@@ -815,6 +1376,19 @@ function Set-AtlasoOvfProperty {
     [void](Add-TextElement -Document $Document -Parent $property -LocalName 'Description' -Value $Description)
 }
 
+<#
+.SYNOPSIS
+Inject Atlaso product properties and normalize OVF metadata.
+
+.PARAMETER OvfPath
+OVF descriptor path to modify.
+#>
+<#
+.SYNOPSIS
+Add Atlaso Ovf Properties.
+.PARAMETER OvfPath
+Ovf Path value.
+#>
 function Add-AtlasoOvfProperties {
     param([string]$OvfPath)
 
@@ -889,6 +1463,19 @@ function Add-AtlasoOvfProperties {
     }
 }
 
+<#
+.SYNOPSIS
+Rewrite the manifest for all OVF package files.
+
+.PARAMETER OvfDirectory
+Directory containing the OVF package files.
+#>
+<#
+.SYNOPSIS
+Update Ovf Manifest.
+.PARAMETER OvfDirectory
+Ovf Directory value.
+#>
 function Update-OvfManifest {
     param([string]$OvfDirectory)
 
@@ -908,6 +1495,27 @@ function Update-OvfManifest {
     return $manifest
 }
 
+<#
+.SYNOPSIS
+Create an OVA archive from an exported OVF directory.
+
+.PARAMETER OvfDirectory
+Directory containing OVF package files.
+.PARAMETER OvaPath
+Destination OVA output path.
+.PARAMETER ResolvedTarPath
+Path to the tar executable.
+#>
+<#
+.SYNOPSIS
+Create Ova Archive.
+.PARAMETER OvfDirectory
+Ovf Directory value.
+.PARAMETER OvaPath
+Ova Path value.
+.PARAMETER ResolvedTarPath
+Resolved Tar Path value.
+#>
 function New-OvaArchive {
     param(
         [string]$OvfDirectory,
@@ -934,6 +1542,19 @@ function New-OvaArchive {
     }
 }
 
+<#
+.SYNOPSIS
+Resolve the OVF descriptor path from an export directory.
+
+.PARAMETER OutputDirectory
+Directory where ovftool wrote output files.
+#>
+<#
+.SYNOPSIS
+Return Ovf Descriptor Path.
+.PARAMETER OutputDirectory
+Output Directory value.
+#>
 function Get-OvfDescriptorPath {
     param([string]$OutputDirectory)
 
@@ -958,6 +1579,9 @@ $releaseProvenance = $null
 if ($Release) {
     $releaseTag = Resolve-AtlasoReleaseTag -RepoRoot $repoRoot
     $releaseProvenance = Assert-AtlasoReleaseProvenance -RepoRoot $repoRoot -Tag $releaseTag -SourceVmxPath $resolvedSourceVmx
+}
+else {
+    $releaseProvenance = Assert-AtlasoVmwarePayloadProvenance -VmxPath $resolvedSourceVmx
 }
 $callerSpecifiedOutputDirectory = $PSBoundParameters.ContainsKey('OutputDirectory')
 $outputPlan = Resolve-AtlasoOvfOutputPlan `

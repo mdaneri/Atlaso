@@ -1,3 +1,140 @@
+<#
+.SYNOPSIS
+Run the VMware Workstation lifecycle interop scenario for Atlaso image regression and backup/restore verification.
+
+.PARAMETER LabName
+Lifecycle lab name prefix for created VM artifacts.
+.PARAMETER ApplianceVmxPath
+Path to the appliance source VMX.
+.PARAMETER ClientVmdkPath
+Path to the base client VMDK used by generated clients.
+.PARAMETER VmrunPath
+Optional explicit vmrun.exe path.
+.PARAMETER ManagementNetwork
+VMnet/LAN segment name for management traffic.
+.PARAMETER SiteANetwork
+VMnet/LAN segment name for site A traffic.
+.PARAMETER SiteBNetwork
+VMnet/LAN segment name for site B traffic.
+.PARAMETER TrunkNetwork
+VMnet/LAN segment name for trunk connectivity.
+.PARAMETER ApplianceIPAddress
+Optional override for appliance management IPv4.
+.PARAMETER ApplianceUrl
+Optional override for appliance URL.
+.PARAMETER SiteInterface
+Interface name used for site routing in workload checks.
+.PARAMETER SiteCidr
+Site A IPv4 CIDR used in test harness arguments.
+.PARAMETER AdminUsername
+Atlaso web admin username.
+.PARAMETER AdminPassword
+Atlaso web admin password.
+.PARAMETER ApplianceSshUser
+SSH username for appliance interactions.
+.PARAMETER ClientSshUser
+SSH username for client guest interactions.
+.PARAMETER SshPassword
+Password for client SSH and appliance operations.
+.PARAMETER VcfBackupPassword
+Password used for VCF backup archive export/import.
+.PARAMETER VlanId
+VLAN identifier for WAN scenario traffic.
+.PARAMETER TaggedVlanCidr
+Tagged VLAN IPv4 CIDR.
+.PARAMETER WanCidr
+WAN IPv4 CIDR used by workload tests.
+.PARAMETER AllowDryRunApply
+Permit dry-run apply mode for the Python lifecycle harness.
+.PARAMETER SkipBackupRestoreTest
+Skip backup/restore validation pass.
+.PARAMETER OidcOnly
+Run only OIDC scenario path.
+.PARAMETER RoutingWanOnly
+Run only WAN routing scenario.
+.PARAMETER FullEsxiPxeInstall
+Include ESXi PXE install scenario.
+.PARAMETER PxeInstallerIsoPath
+Path to ESXi installer ISO when PXE mode is enabled.
+.PARAMETER PxeClientIPAddress
+Optional explicit ESXi PXE client address.
+.PARAMETER EsxiInstallTimeoutSeconds
+Timeout waiting for ESXi installer guest IP.
+.PARAMETER EsxiInstallProbeDelaySeconds
+Delay before probing PXE-installed guest.
+.PARAMETER CleanupCreatedLab
+Remove generated lifecycle VM artifacts when complete.
+.PARAMETER PlanOnly
+Emit and return planning JSON without executing scenarios.
+#>
+<#
+.SYNOPSIS
+Run the bounded Atlaso VMware Workstation lifecycle interoperability lab.
+.PARAMETER LabName
+Lab Name value.
+.PARAMETER ApplianceVmxPath
+Appliance Vmx Path value.
+.PARAMETER ClientVmdkPath
+Client Vmdk Path value.
+.PARAMETER VmrunPath
+Vmrun Path value.
+.PARAMETER ManagementNetwork
+Management Network value.
+.PARAMETER SiteANetwork
+Site A Network value.
+.PARAMETER SiteBNetwork
+Site B Network value.
+.PARAMETER TrunkNetwork
+Trunk Network value.
+.PARAMETER ApplianceIPAddress
+Appliance IP Address value.
+.PARAMETER ApplianceUrl
+Appliance Url value.
+.PARAMETER SiteInterface
+Site Interface value.
+.PARAMETER SiteCidr
+Site Cidr value.
+.PARAMETER AdminUsername
+Admin Username value.
+.PARAMETER AdminPassword
+Admin Password value.
+.PARAMETER ApplianceSshUser
+Appliance Ssh User value.
+.PARAMETER ClientSshUser
+Client Ssh User value.
+.PARAMETER SshPassword
+Ssh Password value.
+.PARAMETER VcfBackupPassword
+Vcf Backup Password value.
+.PARAMETER VlanId
+Vlan Id value.
+.PARAMETER TaggedVlanCidr
+Tagged Vlan Cidr value.
+.PARAMETER WanCidr
+Wan Cidr value.
+.PARAMETER AllowDryRunApply
+Allow Dry Run Apply value.
+.PARAMETER SkipBackupRestoreTest
+Skip Backup Restore Test value.
+.PARAMETER OidcOnly
+Oidc Only value.
+.PARAMETER RoutingWanOnly
+Routing Wan Only value.
+.PARAMETER FullEsxiPxeInstall
+Full Esxi Pxe Install value.
+.PARAMETER PxeInstallerIsoPath
+Pxe Installer Iso Path value.
+.PARAMETER PxeClientIPAddress
+Pxe Client IP Address value.
+.PARAMETER EsxiInstallTimeoutSeconds
+Esxi Install Timeout Seconds value.
+.PARAMETER EsxiInstallProbeDelaySeconds
+Esxi Install Probe Delay Seconds value.
+.PARAMETER CleanupCreatedLab
+Cleanup Created Lab value.
+.PARAMETER PlanOnly
+Plan Only value.
+#>
 [Diagnostics.CodeAnalysis.SuppressMessageAttribute('PSAvoidUsingPlainTextForPassword', '')]
 [CmdletBinding(SupportsShouldProcess = $true)]
 param(
@@ -40,6 +177,7 @@ param(
 $ErrorActionPreference = 'Stop'
 . (Join-Path $PSScriptRoot 'Atlaso.WorkstationFirstBoot.ps1')
 Import-Module (Join-Path $PSScriptRoot 'Atlaso.WorkstationCleanup.psm1') -Force
+Import-Module (Join-Path $PSScriptRoot 'Atlaso.VmwarePayload.psm1') -Force
 
 $repoRoot = Resolve-Path -LiteralPath (Join-Path $PSScriptRoot '..\..\..')
 if (-not $SshPassword) {
@@ -59,6 +197,17 @@ $vmRoot = Join-Path $resultRoot 'vms'
 $seedRoot = Join-Path $resultRoot 'seed'
 $createdVmxPaths = New-Object System.Collections.Generic.List[string]
 
+<#
+.SYNOPSIS
+Resolve the vmrun path from a user override or common install locations.
+
+.PARAMETER VmrunPath
+Optional vmrun.exe path or install directory.
+#>
+<#
+.SYNOPSIS
+Resolve Vmrun Path.
+#>
 function Resolve-VmrunPath {
     if ($VmrunPath) {
         if (-not (Test-Path -LiteralPath $VmrunPath)) {
@@ -81,6 +230,10 @@ function Resolve-VmrunPath {
     throw 'vmrun.exe was not found. Install VMware Workstation Pro or pass -VmrunPath.'
 }
 
+<#
+.SYNOPSIS
+Resolve Vdisk Manager Path.
+#>
 function Resolve-VdiskManagerPath {
     $vmrunDirectory = Split-Path -Parent $resolvedVmrun
     $candidate = Join-Path $vmrunDirectory 'vmware-vdiskmanager.exe'
@@ -102,6 +255,19 @@ function Resolve-VdiskManagerPath {
     throw 'vmware-vdiskmanager.exe was not found. It is required for -FullEsxiPxeInstall.'
 }
 
+<#
+.SYNOPSIS
+Reject reserved VM names to avoid clobbering protected environments.
+
+.PARAMETER Name
+VM name to validate.
+#>
+<#
+.SYNOPSIS
+Validate Safe Lifecycle Name.
+.PARAMETER Name
+Name value.
+#>
 function Assert-SafeLifecycleName {
     param([string]$Name)
 
@@ -114,11 +280,37 @@ function Assert-SafeLifecycleName {
     }
 }
 
+<#
+.SYNOPSIS
+Escape a value for single-quoted shell expansion.
+
+.PARAMETER Value
+String value to escape.
+#>
+<#
+.SYNOPSIS
+Convert Guest Shell Single Quote.
+.PARAMETER Value
+Value value.
+#>
 function ConvertTo-GuestShellSingleQuote {
     param([string]$Value)
     return "'" + ($Value -replace "'", "'\''") + "'"
 }
 
+<#
+.SYNOPSIS
+Escape an argument for native command execution.
+
+.PARAMETER Value
+Input string to escape.
+#>
+<#
+.SYNOPSIS
+Convert Native Argument.
+.PARAMETER Value
+Value value.
+#>
 function ConvertTo-NativeArgument {
     param([string]$Value)
 
@@ -131,6 +323,23 @@ function ConvertTo-NativeArgument {
     return '"' + ($Value -replace '"', '\"') + '"'
 }
 
+<#
+.SYNOPSIS
+Run vmrun through .NET process execution with bounded timeout.
+
+.PARAMETER Arguments
+Argument list for vmrun.
+.PARAMETER TimeoutSeconds
+Bounded timeout in seconds.
+#>
+<#
+.SYNOPSIS
+Invoke Vmrun Bounded.
+.PARAMETER Arguments
+Arguments value.
+.PARAMETER TimeoutSeconds
+Timeout Seconds value.
+#>
 function Invoke-VmrunBounded {
     param(
         [string[]]$Arguments,
@@ -166,16 +375,47 @@ function Invoke-VmrunBounded {
     }
 }
 
+<#
+.SYNOPSIS
+Generate a randomized static MAC in VMware OUI space.
+#>
+<#
+.SYNOPSIS
+Create Static Vmware Mac.
+#>
 function New-StaticVmwareMac {
     $bytes = [guid]::NewGuid().ToByteArray()
     return ('00:50:56:{0:x2}:{1:x2}:{2:x2}' -f (0x20 -bor ($bytes[0] -band 0x1f)), $bytes[1], $bytes[2])
 }
 
+<#
+.SYNOPSIS
+Escape a VMX value for literal writing.
+
+.PARAMETER Value
+Raw string value.
+#>
+<#
+.SYNOPSIS
+Convert Vmx String.
+.PARAMETER Value
+Value value.
+#>
 function ConvertTo-VmxString {
     param([string]$Value)
     return '"' + ($Value -replace '\\', '\\' -replace '"', '\"') + '"'
 }
 
+<#
+.SYNOPSIS
+Set Vmx Value.
+.PARAMETER Path
+Path value.
+.PARAMETER Key
+Key value.
+.PARAMETER Value
+Value value.
+#>
 function Set-VmxValue {
     param(
         [string]$Path,
@@ -205,6 +445,23 @@ function Set-VmxValue {
     [System.IO.File]::WriteAllLines($Path, [string[]]$content, [System.Text.UTF8Encoding]::new($false))
 }
 
+<#
+.SYNOPSIS
+Remove a VMX setting key from a VMX file.
+
+.PARAMETER Path
+Path to VMX file.
+.PARAMETER Key
+VMX key name to remove.
+#>
+<#
+.SYNOPSIS
+Remove Vmx Value.
+.PARAMETER Path
+Path value.
+.PARAMETER Key
+Key value.
+#>
 function Remove-VmxValue {
     param(
         [string]$Path,
@@ -219,6 +476,19 @@ function Remove-VmxValue {
     [System.IO.File]::WriteAllLines($Path, [string[]]$content, [System.Text.UTF8Encoding]::new($false))
 }
 
+<#
+.SYNOPSIS
+Create deterministic SCSI-compatible IDs for LAN segments.
+
+.PARAMETER Name
+Segment name used as input entropy.
+#>
+<#
+.SYNOPSIS
+Create Lan Segment Id.
+.PARAMETER Name
+Name value.
+#>
 function New-LanSegmentId {
     param([string]$Name)
 
@@ -235,6 +505,19 @@ function New-LanSegmentId {
     return "$first-$second"
 }
 
+<#
+.SYNOPSIS
+Resolve or create a VMware LAN segment ID for a named segment.
+
+.PARAMETER Name
+LAN segment name to resolve.
+#>
+<#
+.SYNOPSIS
+Resolve Lan Segment Id.
+.PARAMETER Name
+Name value.
+#>
 function Resolve-LanSegmentId {
     param([string]$Name)
 
@@ -331,6 +614,35 @@ function Resolve-LanSegmentId {
     return $pvnId
 }
 
+<#
+.SYNOPSIS
+Apply a VMX ethernet adapter configuration.
+
+.PARAMETER Path
+VMX path to mutate.
+.PARAMETER Index
+Ethernet adapter index.
+.PARAMETER Vmnet
+VMnet or lan-segment reference.
+.PARAMETER StaticMac
+Optional static MAC address.
+.PARAMETER VirtualDev
+VMXNET device type.
+#>
+<#
+.SYNOPSIS
+Set Vmx Network Adapter.
+.PARAMETER Path
+Path value.
+.PARAMETER Index
+Index value.
+.PARAMETER Vmnet
+Vmnet value.
+.PARAMETER StaticMac
+Static Mac value.
+.PARAMETER VirtualDev
+Virtual Dev value.
+#>
 function Set-VmxNetworkAdapter {
     param(
         [string]$Path,
@@ -364,6 +676,27 @@ function Set-VmxNetworkAdapter {
     Set-VmxValue -Path $Path -Key "$prefix.startConnected" -Value 'TRUE'
 }
 
+<#
+.SYNOPSIS
+Copy a source VMX into a managed lifecycle lab directory.
+
+.PARAMETER SourceVmx
+Source VMX path.
+.PARAMETER DestinationDirectory
+Destination directory for the copied appliance.
+.PARAMETER Name
+Lifecycle VM name.
+#>
+<#
+.SYNOPSIS
+Copy Vm Directory.
+.PARAMETER SourceVmx
+Source Vmx value.
+.PARAMETER DestinationDirectory
+Destination Directory value.
+.PARAMETER Name
+Name value.
+#>
 function Copy-VmDirectory {
     param(
         [string]$SourceVmx,
@@ -372,10 +705,12 @@ function Copy-VmDirectory {
     )
 
     Assert-SafeLifecycleName -Name $Name
+    $resolvedSourceVmx = (Resolve-Path -LiteralPath $SourceVmx).Path
+    Assert-AtlasoVmwarePayloadProvenance -VmxPath $resolvedSourceVmx | Out-Null
     if (Test-Path -LiteralPath $DestinationDirectory) {
         throw "Lifecycle VM directory already exists: $DestinationDirectory"
     }
-    $sourceDirectory = Split-Path -Parent (Resolve-Path -LiteralPath $SourceVmx)
+    $sourceDirectory = Split-Path -Parent $resolvedSourceVmx
     if ($PSCmdlet.ShouldProcess($DestinationDirectory, "Copy Workstation VM $Name")) {
         Copy-Item -LiteralPath $sourceDirectory -Destination $DestinationDirectory -Recurse
     }
@@ -386,10 +721,40 @@ function Copy-VmDirectory {
     $targetVmx = Join-Path $DestinationDirectory "$Name.vmx"
     Rename-Item -LiteralPath $vmx.FullName -NewName "$Name.vmx"
     Set-VmxValue -Path $targetVmx -Key 'displayName' -Value $Name
+    Get-AtlasoVmwarePayloadLayout -VmxPath $targetVmx -RequireExactlyTwoVmdks | Out-Null
     $createdVmxPaths.Add($targetVmx)
     return $targetVmx
 }
 
+<#
+.SYNOPSIS
+Create a new client VM from a base VMDK and seed ISO.
+
+.PARAMETER Name
+Client VM name.
+.PARAMETER Directory
+Destination VM directory.
+.PARAMETER DiskPath
+Base client VMDK path.
+.PARAMETER SeedIso
+NoCloud seed ISO path.
+.PARAMETER Networks
+VM adapter target networks by index.
+#>
+<#
+.SYNOPSIS
+Create Client Vm.
+.PARAMETER Name
+Name value.
+.PARAMETER Directory
+Directory value.
+.PARAMETER DiskPath
+Disk Path value.
+.PARAMETER SeedIso
+Seed Iso value.
+.PARAMETER Networks
+Networks value.
+#>
 function New-ClientVm {
     param(
         [string]$Name,
@@ -433,6 +798,31 @@ function New-ClientVm {
     return $vmxPath
 }
 
+<#
+.SYNOPSIS
+Create a temporary ESXi PXE install VM for extended lifecycle coverage.
+
+.PARAMETER Name
+ESXi VM name.
+.PARAMETER Directory
+VM directory.
+.PARAMETER Network
+Initial network attachment.
+.PARAMETER MacAddress
+Optional static MAC address.
+#>
+<#
+.SYNOPSIS
+Create Esxi Pxe Vm.
+.PARAMETER Name
+Name value.
+.PARAMETER Directory
+Directory value.
+.PARAMETER Network
+Network value.
+.PARAMETER MacAddress
+Mac Address value.
+#>
 function New-EsxiPxeVm {
     param(
         [string]$Name,
@@ -491,6 +881,23 @@ function New-EsxiPxeVm {
     return $vmxPath
 }
 
+<#
+.SYNOPSIS
+Create a NoCloud seed ISO for a client VM.
+
+.PARAMETER Path
+Seed ISO output path.
+.PARAMETER HostName
+Client hostname for cloud-init metadata.
+#>
+<#
+.SYNOPSIS
+Create Cloud Init Seed Iso.
+.PARAMETER Path
+Path value.
+.PARAMETER HostName
+Host Name value.
+#>
 function New-CloudInitSeedIso {
     param(
         [string]$Path,
@@ -510,6 +917,19 @@ function New-CloudInitSeedIso {
     }
 }
 
+<#
+.SYNOPSIS
+Invoke vmrun with fail-fast behavior.
+
+.PARAMETER Arguments
+vmrun arguments.
+#>
+<#
+.SYNOPSIS
+Invoke Vmrun.
+.PARAMETER Arguments
+Arguments value.
+#>
 function Invoke-Vmrun {
     param([string[]]$Arguments)
     & $resolvedVmrun @Arguments
@@ -518,6 +938,19 @@ function Invoke-Vmrun {
     }
 }
 
+<#
+.SYNOPSIS
+Register a Workstation VM if possible.
+
+.PARAMETER Path
+VMX path to register.
+#>
+<#
+.SYNOPSIS
+Register Workstation Vm.
+.PARAMETER Path
+Path value.
+#>
 function Register-WorkstationVm {
     param([string]$Path)
     if ($PSCmdlet.ShouldProcess($Path, 'Register Workstation VM')) {
@@ -528,6 +961,19 @@ function Register-WorkstationVm {
     }
 }
 
+<#
+.SYNOPSIS
+Start a Workstation VM with bounded registration workflow.
+
+.PARAMETER Path
+VMX path to start.
+#>
+<#
+.SYNOPSIS
+Start Workstation Vm.
+.PARAMETER Path
+Path value.
+#>
 function Start-WorkstationVm {
     param([string]$Path)
     if ($PSCmdlet.ShouldProcess($Path, 'Start Workstation VM')) {
@@ -536,7 +982,28 @@ function Start-WorkstationVm {
     }
 }
 
+<#
+.SYNOPSIS
+Test Tcp Port.
+.PARAMETER HostName
+Host Name value.
+.PARAMETER Port
+Port value.
+.PARAMETER TimeoutMilliseconds
+Timeout Milliseconds value.
+#>
 function Test-TcpPort {
+<#
+.SYNOPSIS
+Check host/port reachability with bounded timeout.
+
+.PARAMETER HostName
+Target host.
+.PARAMETER Port
+Target TCP port.
+.PARAMETER TimeoutMilliseconds
+Connection timeout in milliseconds.
+#>
     param(
         [string]$HostName,
         [int]$Port,
@@ -558,6 +1025,27 @@ function Test-TcpPort {
     }
 }
 
+<#
+.SYNOPSIS
+Read host SSH key fingerprint text via plink probe.
+
+.PARAMETER HostName
+SSH host to probe.
+.PARAMETER UserName
+SSH username.
+.PARAMETER Password
+SSH password.
+#>
+<#
+.SYNOPSIS
+Return Plink Host Key.
+.PARAMETER HostName
+Host Name value.
+.PARAMETER UserName
+User Name value.
+.PARAMETER Password
+Password value.
+#>
 function Get-PlinkHostKey {
     param(
         [string]$HostName,
@@ -597,6 +1085,19 @@ function Get-PlinkHostKey {
     return ''
 }
 
+<#
+.SYNOPSIS
+Parse IPv4 addresses from text lines.
+
+.PARAMETER Lines
+Text lines to scan.
+#>
+<#
+.SYNOPSIS
+Return Guest I Pv4 From Address Text.
+.PARAMETER Lines
+Lines value.
+#>
 function Get-GuestIPv4FromAddressText {
     param([string[]]$Lines)
 
@@ -617,12 +1118,42 @@ function Get-GuestIPv4FromAddressText {
     return ''
 }
 
+<#
+.SYNOPSIS
+Normalize MAC addresses to hyphen format.
+
+.PARAMETER MacAddress
+MAC address input.
+#>
+<#
+.SYNOPSIS
+Convert Hyphen Mac.
+.PARAMETER MacAddress
+Mac Address value.
+#>
 function ConvertTo-HyphenMac {
     param([string]$MacAddress)
 
     return ($MacAddress -replace '[^0-9A-Fa-f]', '').ToLowerInvariant() -replace '(.{2})(?!$)', '$1-'
 }
 
+<#
+.SYNOPSIS
+Read a VMX ethernet MAC address by adapter index.
+
+.PARAMETER Path
+VMX path.
+.PARAMETER Index
+Ethernet adapter index.
+#>
+<#
+.SYNOPSIS
+Return Vmx Ethernet Mac Address.
+.PARAMETER Path
+Path value.
+.PARAMETER Index
+Index value.
+#>
 function Get-VmxEthernetMacAddress {
     param(
         [string]$Path,
@@ -644,6 +1175,23 @@ function Get-VmxEthernetMacAddress {
     return ''
 }
 
+<#
+.SYNOPSIS
+Resolve a guest IPv4 address from neighbor cache by MAC.
+
+.PARAMETER Path
+VMX path.
+.PARAMETER Index
+Ethernet adapter index.
+#>
+<#
+.SYNOPSIS
+Return Guest I Pv4 From Host Neighbor.
+.PARAMETER Path
+Path value.
+.PARAMETER Index
+Index value.
+#>
 function Get-GuestIPv4FromHostNeighbor {
     param(
         [string]$Path,
@@ -671,6 +1219,31 @@ function Get-GuestIPv4FromHostNeighbor {
     return ''
 }
 
+<#
+.SYNOPSIS
+Resolve guest IPv4 using VMware guest operations.
+
+.PARAMETER Path
+VMX path.
+.PARAMETER GuestUser
+Guest username.
+.PARAMETER GuestPassword
+Guest password.
+.PARAMETER Name
+VM-friendly name for temporary host output names.
+#>
+<#
+.SYNOPSIS
+Return Guest I Pv4 Via Guest Ops.
+.PARAMETER Path
+Path value.
+.PARAMETER GuestUser
+Guest User value.
+.PARAMETER GuestPassword
+Guest Password value.
+.PARAMETER Name
+Name value.
+#>
 function Get-GuestIPv4ViaGuestOps {
     param(
         [string]$Path,
@@ -697,6 +1270,35 @@ function Get-GuestIPv4ViaGuestOps {
     return Get-GuestIPv4FromAddressText -Lines @(Get-Content -LiteralPath $hostOutput)
 }
 
+<#
+.SYNOPSIS
+Wait for a guest IPv4 address from multiple retrieval methods.
+
+.PARAMETER Path
+VMX path.
+.PARAMETER TimeoutSeconds
+Maximum seconds to wait.
+.PARAMETER GuestUser
+Guest username used for guest-ops probing.
+.PARAMETER GuestPassword
+Guest password used for guest-ops probing.
+.PARAMETER Name
+VM name used for temporary artifacts.
+#>
+<#
+.SYNOPSIS
+Wait Guest I Pv4.
+.PARAMETER Path
+Path value.
+.PARAMETER TimeoutSeconds
+Timeout Seconds value.
+.PARAMETER GuestUser
+Guest User value.
+.PARAMETER GuestPassword
+Guest Password value.
+.PARAMETER Name
+Name value.
+#>
 function Wait-GuestIPv4 {
     param(
         [string]$Path,
@@ -728,6 +1330,23 @@ function Wait-GuestIPv4 {
     return ''
 }
 
+<#
+.SYNOPSIS
+Execute a shell command inside the appliance guest.
+
+.PARAMETER ApplianceVmx
+Appliance VMX path.
+.PARAMETER Script
+Shell script content.
+#>
+<#
+.SYNOPSIS
+Invoke Appliance Guest Script.
+.PARAMETER ApplianceVmx
+Appliance Vmx value.
+.PARAMETER Script
+Script value.
+#>
 function Invoke-ApplianceGuestScript {
     param(
         [string]$ApplianceVmx,
@@ -740,6 +1359,19 @@ function Invoke-ApplianceGuestScript {
     }
 }
 
+<#
+.SYNOPSIS
+Probe a URL for successful openapi endpoint response.
+
+.PARAMETER Url
+OpenAPI URL to probe.
+#>
+<#
+.SYNOPSIS
+Test Appliance Open Api.
+.PARAMETER Url
+Url value.
+#>
 function Test-ApplianceOpenApi {
     param([string]$Url)
 
@@ -768,6 +1400,12 @@ function Test-ApplianceOpenApi {
     }
 }
 
+<#
+.SYNOPSIS
+Synchronize Appliance Helper Script.
+.PARAMETER ApplianceVmx
+Appliance Vmx value.
+#>
 function Sync-ApplianceHelperScript {
     param([string]$ApplianceVmx)
 
@@ -788,6 +1426,12 @@ function Sync-ApplianceHelperScript {
     }
 }
 
+<#
+.SYNOPSIS
+Synchronize Appliance Application Wheel.
+.PARAMETER ApplianceVmx
+Appliance Vmx value.
+#>
 function Sync-ApplianceApplicationWheel {
     param([string]$ApplianceVmx)
 
@@ -830,6 +1474,12 @@ function Sync-ApplianceApplicationWheel {
     throw "Timed out waiting for Atlaso web service after installing $($wheel.Name)."
 }
 
+<#
+.SYNOPSIS
+Find Appliance Esxi Iso Path.
+.PARAMETER ApplianceVmx
+Appliance Vmx value.
+#>
 function Find-ApplianceEsxiIsoPath {
     param([string]$ApplianceVmx)
 
@@ -847,6 +1497,12 @@ function Find-ApplianceEsxiIsoPath {
     return ((Get-Content -LiteralPath $hostOutput | Select-Object -First 1) -as [string]).Trim()
 }
 
+<#
+.SYNOPSIS
+Resolve Appliance Esxi Iso Path.
+.PARAMETER ApplianceVmx
+Appliance Vmx value.
+#>
 function Resolve-ApplianceEsxiIsoPath {
     param([string]$ApplianceVmx)
 
@@ -881,6 +1537,20 @@ function Resolve-ApplianceEsxiIsoPath {
     return $guestTarget
 }
 
+<#
+.SYNOPSIS
+Add Lifecycle Result Step.
+.PARAMETER ResultDirectory
+Result Directory value.
+.PARAMETER Name
+Name value.
+.PARAMETER Status
+Status value.
+.PARAMETER Evidence
+Evidence value.
+.PARAMETER ErrorMessage
+Error Message value.
+#>
 function Add-LifecycleResultStep {
     param(
         [string]$ResultDirectory,
