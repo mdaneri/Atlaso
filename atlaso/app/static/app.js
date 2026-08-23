@@ -13046,6 +13046,7 @@ function validApplianceUpdateAvailabilityPayload(payload) {
     && typeof attempt === "object"
     && typeof attempt.success === "boolean"
     && ["", "available", "up_to_date", "failed"].includes(attempt.state)
+    && attempt.success === ["available", "up_to_date"].includes(attempt.state)
     && validText(attempt.remediation)
   );
   const streamIds = Array.isArray(payload?.streams)
