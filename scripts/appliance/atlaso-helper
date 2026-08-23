@@ -7367,6 +7367,11 @@ def _systemd_networkd_files(path: Path) -> tuple[dict[str, str], list[str], list
                 lines.extend(
                     [
                         "",
+                        "[Route]",
+                        f"Destination={network}",
+                        "Scope=link",
+                        f"Table={MANAGEMENT_ROUTE_TABLE_ID}",
+                        "",
                         "[RoutingPolicyRule]",
                         f"From={network}",
                         f"Table={MANAGEMENT_ROUTE_TABLE_ID}",

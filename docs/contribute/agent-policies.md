@@ -1119,8 +1119,11 @@ Terminal order:
   defaults such as `50-static-en.network` and `99-dhcp-en.network`. The default desired state keeps management on `eth0`,
   but an operator may assign the single dedicated management role to another physical interface or use only flagged
   access listeners. Do not blindly reconfigure a dedicated management link without reachability safeguards. When one
-  exists, management uses its own policy-routing table and must never forward traffic from or to access/route networks;
-  non-management lab routes use the lab route table.
+  exists, management uses its own policy-routing table and must never forward traffic from or to access/route networks.
+  Persist each static dedicated-management connected prefix as an on-link route in table `100` before its source rule
+  can select that table, together with the family-matching default route. Address persistence and outbound gateway
+  reachability alone are insufficient because a missing connected route sends same-subnet replies through the gateway
+  after reboot. Non-management lab routes use the lab route table.
 - Do not offer trunk physical interfaces as direct service bind targets. Service bind selectors should include access
   physical interfaces with an IPv4 or IPv6 CIDR and enabled VLAN interfaces with an IPv4 or IPv6 CIDR.
 - When a service bind target is selected, derive IPv4 and IPv6 listen addresses from the selected interface or VLAN

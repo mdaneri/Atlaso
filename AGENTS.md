@@ -292,7 +292,9 @@ The following cross-cutting boundaries always apply:
   networkd file both before readiness and after the final Network regeneration, and restore the
   previous resolver state with the network snapshot on rollback. On success, include the applied resolver mode,
   servers, and local-DNS state in the Appliance Settings baseline completion so those executed changes do not remain
-  falsely pending. Derive loopback/local-DNS resolver mode only from the
+  falsely pending. Persist every static dedicated-management connected prefix as an on-link route in table `100`
+  beside its source rule and default route; an address and working outbound gateway do not prove that same-subnet
+  host-facing replies will survive reboot. Derive loopback/local-DNS resolver mode only from the
   last-applied DNS/DHCP baseline; leave an unapplied DNS enablement pending instead of activating loopback early. When
   disabling applied local DNS, force Appliance Settings ahead of DNS/DHCP so the resolver leaves loopback before the
   listener stops. Retire the old path only

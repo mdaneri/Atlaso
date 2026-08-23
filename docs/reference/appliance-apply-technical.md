@@ -186,10 +186,12 @@ restore; unrelated role strings fail closed.
 
 The management physical interface may define optional static IPv4 and IPv6 gateways. IPv4 must be on-link. IPv6 may be
 on-link or link-local (`fe80::/10`); neither gateway may equal its interface address. Network apply writes each
-configured management default to both the main table and management policy table `100`; non-management physical
-interfaces and VLANs cannot set these fields. IPv4 DHCP and IPv6 Disabled or Automatic clear the corresponding static
-gateway. Lab route gateways remain owned by Routes & WAN Simulation in table `200`, allowing management and lab traffic
-to use different exits.
+configured management default to both the main table and management policy table `100`. For every static address family
+with a configured default, it also writes the directly connected prefix as a scope-link route in table `100` before the
+source rule selects that table. This prevents same-subnet management replies from following the default gateway after a
+clean reboot. Non-management physical interfaces and VLANs cannot set these fields. IPv4 DHCP and IPv6 Disabled or
+Automatic clear the corresponding static gateway. Lab route gateways remain owned by Routes & WAN Simulation in table
+`200`, allowing management and lab traffic to use different exits.
 
 For the Physical Interfaces DHCP-to-static action, Atlaso reads `ip -j -4 route show default`, accepts only a usable
 IPv4 route whose protocol is DHCP and whose device matches the row, and proposes the lowest-metric result. Browser
@@ -225,7 +227,9 @@ gateway intent, installs Atlaso-owned `.network` and `.netdev` files under `/etc
 and reconfigures non-management links. Disabled management IPv6 renders `IPv6AcceptRA=no` with no static IPv6 address or
 route. Automatic renders `IPv6AcceptRA=yes` with IPv6 link-local addressing. Static renders `IPv6AcceptRA=no`, the
 configured address, IPv6 link-local addressing, and the optional default route in both the main and management policy
-  tables. The helper does not blindly reconfigure a dedicated management link during this first pass. Dedicated
+  tables. Static networkd output also persists the family-matching connected prefix in the management policy table so
+  reboot reconstruction retains on-link host replies as well as routed egress. The helper does not blindly reconfigure
+  a dedicated management link during this first pass. Dedicated
   management source networks use the Atlaso management route table, while access and route networks use the
 lab route table. When a VLAN was present in successful Atlaso network apply history and is no longer desired, the staged
 config includes an explicit removal target and the helper deletes that VLAN link after verifying it is a VLAN device.

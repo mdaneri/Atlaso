@@ -4805,8 +4805,39 @@ def test_network_helper_renders_explicit_management_gateway_without_runtime_fall
 
     rendered = files["00-atlaso-mgmt.network"]
     assert "From=192.168.49.0/24" in rendered
+    assert "Destination=192.168.49.0/24\nScope=link\nTable=100" in rendered
     assert rendered.count("Gateway=192.168.49.254") == 2
     assert "Table=100" in rendered
+
+
+def test_network_helper_persists_management_connected_route_for_reboot(monkeypatch, tmp_path):
+    """Keep host-facing static management replies on-link after a clean boot.
+
+    Args:
+        monkeypatch: Pytest fixture used to replace dependencies for the test.
+        tmp_path: Temporary directory provided by pytest for isolated filesystem state.
+    """
+    helper = load_helper_module()
+    config_path = tmp_path / "management-reboot.conf"
+    config_path.write_text(
+        network_config_text(management_gateway="192.168.167.2").replace(
+            "ip_cidr=192.168.49.1/24",
+            "ip_cidr=192.168.167.134/24",
+            1,
+        ),
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(helper, "NETWORKD_MGMT_CONFIG_PATH", tmp_path / "missing.network")
+    monkeypatch.setattr(helper, "_runtime_default_gateways_for_interface", lambda _interface_name: [])
+    monkeypatch.setattr(helper.shutil, "which", lambda command: f"/usr/sbin/{command}" if command == "ip" else None)
+
+    files, _links, _admin_down = helper._systemd_networkd_files(config_path)
+
+    rendered = files["00-atlaso-mgmt.network"]
+    assert "Address=192.168.167.134/24" in rendered
+    assert "Destination=192.168.167.0/24\nScope=link\nTable=100" in rendered
+    assert "From=192.168.167.0/24\nTable=100" in rendered
+    assert "Gateway=192.168.167.2\nTable=100" in rendered
 
 
 def test_network_helper_rejects_static_management_without_ipv4(tmp_path):
@@ -5141,6 +5172,7 @@ def test_network_helper_renders_static_management_ipv6_gateway_in_main_and_table
     assert "IPv6AcceptRA=no" in rendered
     assert "LinkLocalAddressing=ipv6" in rendered
     assert "Address=2001:db8:49::10/64" in rendered
+    assert "Destination=2001:db8:49::/64\nScope=link\nTable=100" in rendered
     assert "From=2001:db8:49::/64" in rendered
     assert rendered.count("Gateway=fe80::1") == 2
     assert "Table=100" in rendered
