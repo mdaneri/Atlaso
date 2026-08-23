@@ -48,6 +48,11 @@ off-subnet HTTPS, DNS, repository, and update access will stop after Apply. Off-
 interface address remain invalid. Cancel the review or revert the pending Network desired state to retain the applied
 DHCP address and route; a failed protected management handoff rolls back to the last-applied DHCP path.
 
+For a static dedicated-management address with a gateway, Atlaso persists three related networkd objects: the connected
+management prefix in policy table `100`, a source rule selecting that table, and the default route through the reviewed
+gateway. The connected route keeps replies to the VMware host or another same-subnet client on-link after reboot; the
+default route continues to carry off-subnet appliance traffic.
+
 ### Assign an interface role
 
 Physical and VLAN interfaces share one role contract:
@@ -174,11 +179,17 @@ remains a confirmed row-context action.
 
 ## Verify and roll back
 
-Confirm the management URL, expected routes, and interface state after apply. A failed management handoff reports its
-non-secret failing layer and rolls back the captured network, firewall, nginx, certificate, and service state before
-the task becomes failed. Rollback also reconfigures interfaces introduced to the candidate and deletes candidate-only
-VLAN devices. If automatic rollback cannot restore access, use the local console network recovery action to
-restore a known-good management configuration, then review desired state before retrying.
+Confirm the management URL, expected routes, and interface state after apply and again after an appliance reboot. For a
+static dedicated-management interface with a gateway, `ip route show table 100` must include both the directly connected
+management prefix on the interface and the default through the configured gateway; `ip rule` must select table `100`
+for that source prefix. A retained address and a successful gateway ping prove neither firewall admission nor the reply
+route to a same-subnet host. Verify the Atlaso loopback `/openapi.json`, the guest-local management front door, and
+`/openapi.json` from the actual management host before declaring recovery.
+
+A failed management handoff reports its non-secret failing layer and rolls back the captured network, firewall, nginx,
+certificate, and service state before the task becomes failed. Rollback also reconfigures interfaces introduced to the
+candidate and deletes candidate-only VLAN devices. If automatic rollback cannot restore access, use the local console
+network recovery action to restore a known-good management configuration, then review desired state before retrying.
 
 ## Transport ownership
 

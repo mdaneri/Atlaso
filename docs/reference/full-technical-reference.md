@@ -1010,7 +1010,8 @@ The MVP follows these boundaries:
   links, and reconciles VLAN links. The appliance image's default `00-atlaso-mgmt.network` matches only `eth0`, Atlaso
   retires Photon catchall network defaults, and apply keeps management explicit while avoiding blind management-link
   reconfiguration. Management source networks use the management route table; access and route networks use the lab
-  route table.
+  route table. A static dedicated-management family with a default gateway persists its connected prefix as a scope-link
+  route in table `100`, beside the source rule and default, so same-subnet host-facing replies remain direct after reboot.
 - Photon image provisioning installs Photon's `powershell` package, system-wide `VCF.PowerCLI` `9.1.0.25380678`, and
   Python `vcf-sdk` `9.1.0.0`. It keeps the system module tree root-owned and read-only to non-root users, verifies
   `Connect-VIServer` from the bootstrap administrator's unprivileged PowerShell session, records tool versions in

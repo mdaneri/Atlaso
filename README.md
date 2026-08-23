@@ -22,7 +22,9 @@ bounded application-upstream, nginx, and host-facing readiness checks. Its rollb
 task and baselines commit; a failure or pre-commit restart restores the previous runtime state and records the
 non-secret failing layer in the task. Physical Interface autosave does not alter active requested-interface routing:
 the last-applied management bindings remain authoritative until that handoff commits, and a desired-state mutation that
-would leave no complete replacement management listener is rejected before it can strand the current session.
+would leave no complete replacement management listener is rejected before it can strand the current session. Static
+dedicated-management policy routing persists both the on-link subnet and its default route in table 100 so same-subnet
+host replies and routed traffic recover together after reboot.
 
 ![Atlaso — Everything your virtualization lab needs](docs/assets/brand/atlaso-docs-header-dark-1600x400.png)
 
