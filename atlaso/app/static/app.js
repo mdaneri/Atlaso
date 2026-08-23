@@ -12972,6 +12972,15 @@ function createApplianceUpdateAvailabilityIndicator() {
   return indicator;
 }
 
+function validApplianceUpdateAvailabilityPayload(payload) {
+  return Boolean(payload)
+    && Array.isArray(payload.streams)
+    && typeof payload.available === "boolean"
+    && Number.isInteger(payload.affected_stream_count)
+    && payload.affected_stream_count >= 0
+    && payload.available === (payload.affected_stream_count > 0);
+}
+
 function renderApplianceUpdateAvailability(payload) {
   atlasoUpdateAvailability = payload && Array.isArray(payload.streams)
     ? payload
@@ -13083,7 +13092,7 @@ async function refreshApplianceUpdateAvailability() {
       return response.json();
     })
     .then((payload) => {
-      if (!payload || !Array.isArray(payload.streams)) {
+      if (!validApplianceUpdateAvailabilityPayload(payload)) {
         throw new Error("Unable to refresh update availability.");
       }
       renderApplianceUpdateAvailability(payload);

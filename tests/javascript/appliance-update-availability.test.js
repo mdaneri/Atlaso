@@ -118,6 +118,7 @@ function availabilityIndicatorScenario() {
      function updateApplianceUpdateResultSummary() {}
      function updateApplianceUpdateActions() {}
      ${functionSource("createApplianceUpdateAvailabilityIndicator")}
+     ${functionSource("validApplianceUpdateAvailabilityPayload")}
      ${functionSource("renderApplianceUpdateAvailability")}
      ${functionSource("refreshApplianceUpdateAvailability")}
      globalThis.render = renderApplianceUpdateAvailability;
@@ -274,7 +275,13 @@ test("failed polling preserves only an existing positive indicator", async () =>
   await assert.rejects(positive.context.refresh(), /Unable to refresh update availability/);
   assert.equal(positive.indicator, lastKnown);
   assert.equal(positive.indicator.count.textContent, "2");
-  positive.setFetchResponse({ ok: true, json: () => Promise.resolve({ available: false }) });
+  positive.setFetchResponse({ ok: true, json: () => Promise.resolve({ streams: [] }) });
+  await assert.rejects(positive.context.refresh(), /Unable to refresh update availability/);
+  assert.equal(positive.indicator, lastKnown);
+  positive.setFetchResponse({
+    ok: true,
+    json: () => Promise.resolve({ available: false, affected_stream_count: 2, streams: [] }),
+  });
   await assert.rejects(positive.context.refresh(), /Unable to refresh update availability/);
   assert.equal(positive.indicator, lastKnown);
 
