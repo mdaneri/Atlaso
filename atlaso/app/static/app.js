@@ -12973,12 +12973,29 @@ function createApplianceUpdateAvailabilityIndicator() {
 }
 
 function validApplianceUpdateAvailabilityPayload(payload) {
+  const streamsValid = Array.isArray(payload?.streams)
+    && payload.streams.every((stream) => (
+      stream
+      && typeof stream === "object"
+      && typeof stream.stale === "boolean"
+      && (stream.confirmed === null || (
+        typeof stream.confirmed === "object"
+        && typeof stream.confirmed.update_available === "boolean"
+      ))
+    ));
+  const confirmedUpdateCount = streamsValid
+    ? payload.streams.filter((stream) => (
+      stream.stale === false
+      && stream.confirmed?.update_available === true
+    )).length
+    : -1;
   return Boolean(payload)
-    && Array.isArray(payload.streams)
+    && streamsValid
     && typeof payload.available === "boolean"
     && Number.isInteger(payload.affected_stream_count)
     && payload.affected_stream_count >= 0
-    && payload.available === (payload.affected_stream_count > 0);
+    && payload.available === (payload.affected_stream_count > 0)
+    && payload.affected_stream_count === confirmedUpdateCount;
 }
 
 function renderApplianceUpdateAvailability(payload) {

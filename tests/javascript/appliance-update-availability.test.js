@@ -111,6 +111,7 @@ function availabilityIndicatorScenario() {
     HTMLAnchorElement,
     HTMLElement,
     HTMLTemplateElement,
+    CSS: { escape: (value) => String(value) },
   });
   vm.runInContext(
     `let atlasoUpdateAvailability = { available: false, affected_stream_count: 0, streams: [] };
@@ -268,6 +269,47 @@ test("availability rendering creates, updates, and removes exactly one positive 
   assert.equal(scenario.indicator, null);
 });
 
+test("validated polling creates, updates, and removes the positive indicator", async () => {
+  const scenario = availabilityIndicatorScenario();
+  scenario.setFetchResponse({
+    ok: true,
+    json: () => Promise.resolve({
+      available: true,
+      affected_stream_count: 1,
+      streams: [{ id: "atlaso_release", stale: false, confirmed: { update_available: true } }],
+    }),
+  });
+  await scenario.context.refresh();
+  const first = scenario.indicator;
+  assert.equal(first.count.textContent, "1");
+
+  scenario.setFetchResponse({
+    ok: true,
+    json: () => Promise.resolve({
+      available: true,
+      affected_stream_count: 2,
+      streams: [
+        { id: "atlaso_release", stale: false, confirmed: { update_available: true } },
+        { id: "photon_os", stale: false, confirmed: { update_available: true } },
+      ],
+    }),
+  });
+  await scenario.context.refresh();
+  assert.equal(scenario.indicator, first);
+  assert.equal(first.count.textContent, "2");
+
+  scenario.setFetchResponse({
+    ok: true,
+    json: () => Promise.resolve({
+      available: false,
+      affected_stream_count: 0,
+      streams: [{ id: "atlaso_release", stale: false, confirmed: { update_available: false } }],
+    }),
+  });
+  await scenario.context.refresh();
+  assert.equal(scenario.indicator, null);
+});
+
 test("failed polling preserves only an existing positive indicator", async () => {
   const positive = availabilityIndicatorScenario();
   positive.context.render({ available: true, affected_stream_count: 2, streams: [] });
@@ -281,6 +323,32 @@ test("failed polling preserves only an existing positive indicator", async () =>
   positive.setFetchResponse({
     ok: true,
     json: () => Promise.resolve({ available: false, affected_stream_count: 2, streams: [] }),
+  });
+  await assert.rejects(positive.context.refresh(), /Unable to refresh update availability/);
+  assert.equal(positive.indicator, lastKnown);
+  positive.setFetchResponse({
+    ok: true,
+    json: () => Promise.resolve({ available: true, affected_stream_count: 1, streams: [] }),
+  });
+  await assert.rejects(positive.context.refresh(), /Unable to refresh update availability/);
+  assert.equal(positive.indicator, lastKnown);
+  positive.setFetchResponse({
+    ok: true,
+    json: () => Promise.resolve({
+      available: true,
+      affected_stream_count: 1,
+      streams: [{ confirmed: { update_available: true } }],
+    }),
+  });
+  await assert.rejects(positive.context.refresh(), /Unable to refresh update availability/);
+  assert.equal(positive.indicator, lastKnown);
+  positive.setFetchResponse({
+    ok: true,
+    json: () => Promise.resolve({
+      available: true,
+      affected_stream_count: 1,
+      streams: [{ stale: true, confirmed: { update_available: true } }],
+    }),
   });
   await assert.rejects(positive.context.refresh(), /Unable to refresh update availability/);
   assert.equal(positive.indicator, lastKnown);
