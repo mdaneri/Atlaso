@@ -138,7 +138,13 @@ def applied_management_bindings(db: Session) -> list[dict[str, str]] | None:
             current_name = aliases.get(applied_name, applied_name)
             observed = current_physical.get(current_name)
             if observed is not None and observed.oper_state != "missing":
-                cidrs.extend((observed.host_ip_cidr, observed.host_ipv6_cidr))
+                if row.get("ipv4_method") == "dhcp" and not row.get("ip_cidr"):
+                    cidrs.append(observed.host_ip_cidr)
+                if (
+                    row.get("ipv6_enabled", "false").lower() == "true"
+                    and not row.get("ipv6_cidr")
+                ):
+                    cidrs.append(observed.host_ipv6_cidr)
         for cidr in cidrs:
             address = _address_from_cidr(cidr)
             if not address or address in seen:

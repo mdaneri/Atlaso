@@ -1952,6 +1952,78 @@ interface=eth2
     assert client.get("/ui/public", headers=headers).status_code == 200
 
 
+def test_static_applied_management_binding_ignores_stale_observed_address(client):
+    """Keep a reused old static management address on the public access interface.
+
+    Args:
+        client: Application test client fixture.
+    """
+    from sqlalchemy import select
+
+    from atlaso.app import ui
+    from atlaso.app.database import SessionLocal
+    from atlaso.app.models import PhysicalInterface
+    from atlaso.app.services.management_bindings import applied_management_bindings
+
+    with SessionLocal() as db:
+        eth0 = db.execute(
+            select(PhysicalInterface).where(PhysicalInterface.name == "eth0")
+        ).scalar_one()
+        eth0.role = "management"
+        eth0.mode = "access"
+        eth0.admin_state = "up"
+        eth0.oper_state = "up"
+        eth0.ipv4_method = "static"
+        eth0.ip_cidr = "192.168.49.2/24"
+        eth0.host_ip_cidr = "192.168.49.1/24"
+        eth2 = db.execute(
+            select(PhysicalInterface).where(PhysicalInterface.name == "eth2")
+        ).scalar_one()
+        eth2.role = "access"
+        eth2.mode = "access"
+        eth2.admin_state = "up"
+        eth2.oper_state = "up"
+        eth2.ipv4_method = "static"
+        eth2.ip_cidr = "192.168.49.1/24"
+        eth2.host_ip_cidr = "192.168.49.1/24"
+        eth2.access_management_ui_enabled = False
+        ui.save_appliance_apply_baselines(
+            db,
+            {
+                "network": {
+                    "config_preview": """[physical_interfaces]
+interface=eth0
+  role=management
+  mode=access
+  admin_state=up
+  ipv4_method=static
+  ip_cidr=192.168.49.2/24
+interface=eth2
+  role=access
+  mode=access
+  admin_state=up
+  ipv4_method=static
+  ip_cidr=192.168.49.1/24
+  access_management_ui_enabled=false
+"""
+                }
+            },
+        )
+        db.commit()
+        assert applied_management_bindings(db) == [
+            {
+                "interface": "eth0",
+                "role": "management",
+                "address": "192.168.49.2",
+                "management_ui": "true",
+            }
+        ]
+
+    headers = {"host": "192.168.49.1"}
+    assert client.get("/ui/management/login", headers=headers).status_code == 404
+    assert client.get("/ui/public", headers=headers).status_code == 200
+
+
 def test_unflagged_access_interface_hides_management_namespace(client):
     """Verify an ordinary access listener still returns not found for management UI routes.
 
