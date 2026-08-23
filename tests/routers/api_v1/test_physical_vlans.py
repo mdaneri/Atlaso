@@ -137,6 +137,13 @@ def test_physical_interface_api_enforces_access_only_management_ui_flag(client):
     headers = {"Authorization": f"Bearer {token}"}
     interfaces = client.get("/api/v1/interfaces/physical", headers=headers).json()
     management = next(row for row in interfaces if row["role"] == "management")
+    with SessionLocal() as db:
+        interface = db.execute(
+            select(PhysicalInterface).where(PhysicalInterface.name == management["name"])
+        ).scalar_one()
+        interface.ipv6_enabled = True
+        interface.ipv6_cidr = "fd00:469::1/64"
+        db.commit()
     rejected_static = client.patch(
         f"/api/v1/interfaces/physical/{management['name']}",
         headers=headers,

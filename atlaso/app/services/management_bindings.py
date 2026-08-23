@@ -190,10 +190,9 @@ def desired_management_candidate_exists(db: Session) -> bool:
             ipv4_candidate = interface.ipv4_method == "dhcp" or _has_usable_address(
                 interface.ip_cidr
             )
-            ipv6_candidate = interface.ipv6_enabled and _has_usable_address(
-                interface.ipv6_cidr or interface.host_ipv6_cidr
-            )
-            if ipv4_candidate or ipv6_candidate:
+            # Network validation requires every static management interface to configure IPv4;
+            # IPv6 availability cannot substitute for that Apply prerequisite.
+            if ipv4_candidate:
                 return True
         if (
             role == "access"
