@@ -325,8 +325,8 @@ def test_update_submission_keeps_facade_monkeypatch_seam(client, monkeypatch):
     assert observed["selected_streams"] == ["photon_os"]
 
 
-def test_powershell_check_queues_and_records_synchronization_remediation(client):
-    """Let the child record PowerShell repository synchronization remediation.
+def test_powershell_check_rejects_unsynchronized_repository(client):
+    """Reject PowerShell checks until repository synchronization succeeds.
 
     Args:
         client: HTTP test client used to exercise the Atlaso application.
@@ -341,11 +341,8 @@ def test_powershell_check_queues_and_records_synchronization_remediation(client)
         data={"csrf": csrf, "selected_streams": ["powershell_modules"]},
     )
 
-    assert response.status_code == 202
-
-    from atlaso.app.worker import run_worker_once
-
-    assert run_worker_once()
+    assert response.status_code == 422
+    assert "Synchronize PowerShell repository PSGallery" in response.json()["detail"]
     availability = client.get(
         "/ui/management/appliance-update/availability"
     )
@@ -355,13 +352,13 @@ def test_powershell_check_queues_and_records_synchronization_remediation(client)
         row for row in availability.json()["streams"]
         if row["id"] == "powershell_modules"
     )
-    assert stream["last_attempt"]["success"] is False
-    assert stream["last_attempt"]["state"] == "failed"
-    assert "Synchronize repositories" in stream["last_attempt"]["remediation"]
+    assert stream["source_sync"]["ready"] is False
+    assert stream["source_sync"]["state"] == "required"
+    assert "Synchronize repositories" in stream["source_sync"]["reason"]
 
 
-def test_photon_check_queues_and_records_synchronization_remediation(client):
-    """Let the child record managed Photon repository synchronization remediation.
+def test_photon_check_rejects_unsynchronized_repository(client):
+    """Reject Photon checks until managed repository synchronization succeeds.
 
     Args:
         client: HTTP test client used to exercise the Atlaso application.
@@ -394,11 +391,8 @@ def test_photon_check_queues_and_records_synchronization_remediation(client):
         data={"csrf": csrf, "selected_streams": ["photon_os"]},
     )
 
-    assert response.status_code == 202
-
-    from atlaso.app.worker import run_worker_once
-
-    assert run_worker_once()
+    assert response.status_code == 422
+    assert source_name in response.json()["detail"]
     availability = client.get(
         "/ui/management/appliance-update/availability"
     )
@@ -407,9 +401,9 @@ def test_photon_check_queues_and_records_synchronization_remediation(client):
         row for row in availability.json()["streams"]
         if row["id"] == "photon_os"
     )
-    assert stream["last_attempt"]["success"] is False
-    assert stream["last_attempt"]["state"] == "failed"
-    assert source_name in stream["last_attempt"]["remediation"]
+    assert stream["source_sync"]["ready"] is False
+    assert stream["source_sync"]["state"] == "required"
+    assert source_name in stream["source_sync"]["reason"]
 
 
 def test_appliance_update_settings_validate_urls(client):

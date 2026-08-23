@@ -755,6 +755,161 @@ def test_no_javascript_install_can_submit_valid_subset_from_mixed_results(client
     assert response.json()["selected_streams"] == ["photon_os"]
 
 
+def test_unsynchronized_stream_is_accessibly_blocked_with_direct_remediation(client):
+    """Render repository readiness as a non-selectable prerequisite state.
+
+    Args:
+        client: Test application HTTP client.
+    """
+    login(client)
+    page = client.get("/ui/management/appliance-update")
+    assert page.status_code == 200
+    powershell_input = page.text.split('value="powershell_modules"', 1)[1].split(">", 1)[0]
+    assert "disabled" in powershell_input
+    assert 'aria-describedby="appliance-update-source-reason-powershell_modules"' in powershell_input
+    assert 'data-appliance-update-source-sync-ready="false"' in powershell_input
+    assert 'data-appliance-update-source-kind="powershell"' in powershell_input
+    assert "Repository setup required" in page.text
+    assert "Synchronize repositories for PSGallery" in page.text
+    assert 'data-appliance-update-source-remediation' in page.text
+    assert ">Open Update Sources</button>" in page.text
+    stylesheet = (
+        Path(__file__).resolve().parents[1] / "atlaso" / "app" / "static" / "app.css"
+    ).read_text(encoding="utf-8")
+    blocked_card_rule = stylesheet.split(
+        ".update-stream-card.repository-setup-required {", 1
+    )[1].split("}", 1)[0]
+    blocked_text_rule = stylesheet.split(
+        ".update-stream-card.repository-setup-required > .apply-unit-select,", 1
+    )[1].split("}", 1)[0]
+    assert "background: #fff9ed;" in blocked_card_rule
+    assert "color: var(--text);" in blocked_text_rule
+    assert "opacity:" not in blocked_card_rule + blocked_text_rule
+
+
+def test_forged_unsynchronized_stream_is_rejected_for_check_and_install(client):
+    """Reject blocked stream identifiers at the server admission boundary.
+
+    Args:
+        client: Test application HTTP client.
+    """
+    from atlaso.app.database import SessionLocal
+    from atlaso.app.models import Job
+
+    login(client)
+    page = client.get("/ui/management/appliance-update")
+    csrf = csrf_from_page(page.text)
+    for route in ("check", "run"):
+        response = client.post(
+            f"/ui/management/appliance-update/{route}",
+            headers={"Accept": "application/json"},
+            data={"csrf": csrf, "selected_streams": ["powershell_modules"]},
+        )
+        assert response.status_code == 422
+        assert "Synchronize PowerShell repository PSGallery" in response.json()["detail"]
+    fallback = client.post(
+        "/ui/management/appliance-update/check",
+        data={"csrf": csrf, "selected_streams": ["powershell_modules"]},
+    )
+    assert fallback.status_code == 422
+    assert "data-appliance-update-check-action disabled" in fallback.text
+    assert "data-appliance-update-install-action disabled" in fallback.text
+    assert "Select a ready update stream. Repository setup is required for PowerShell Modules." in fallback.text
+    with SessionLocal() as db:
+        assert db.execute(select(Job).where(Job.type == "appliance-update")).scalars().all() == []
+
+
+def test_source_readiness_projects_synchronizing_and_failed_states(client):
+    """Expose active and failed synchronization guidance without secret output.
+
+    Args:
+        client: Test application HTTP client.
+    """
+    from atlaso.app.database import SessionLocal
+    from atlaso.app.models import Job, JobStatus, UpdateSource
+
+    login(client)
+    with SessionLocal() as db:
+        job = Job(
+            id="job_source_sync_active",
+            type="appliance-update",
+            status=JobStatus.RUNNING.value,
+            created_by="admin",
+            task_config_json=json.dumps({"mode": "source_sync", "selected_streams": []}),
+            result=json.dumps({"mode": "source_sync", "status": "running"}),
+        )
+        db.add(job)
+        db.commit()
+    payload = client.get("/ui/management/appliance-update/availability").json()
+    streams = {stream["id"]: stream for stream in payload["streams"]}
+    assert streams["powershell_modules"]["source_sync"]["state"] == "synchronizing"
+    assert "in progress for PSGallery" in streams["powershell_modules"]["source_sync"]["reason"]
+
+    with SessionLocal() as db:
+        job = db.get(Job, "job_source_sync_active")
+        job.status = JobStatus.FAILED.value
+        source = db.execute(select(UpdateSource).where(UpdateSource.kind == "powershell")).scalar_one()
+        source.validation_status = "invalid"
+        source.validation_message = "Source synchronization failed. Review the task output."
+        db.add_all([job, source])
+        db.commit()
+    payload = client.get("/ui/management/appliance-update/availability").json()
+    streams = {stream["id"]: stream for stream in payload["streams"]}
+    failed = streams["powershell_modules"]["source_sync"]
+    assert failed["state"] == "failed"
+    assert "correct the reported repository problem" in failed["reason"]
+    assert "secret" not in failed["reason"].lower()
+
+
+def test_successful_sync_clears_prerequisite_failure_to_check_required(client):
+    """Replace the obsolete prerequisite failure when synchronization becomes ready.
+
+    Args:
+        client: Test application HTTP client.
+    """
+    from atlaso.app import ui
+    from atlaso.app.database import SessionLocal
+    from atlaso.app.models import UpdateSource
+    from atlaso.app.services.appliance_update import (
+        APPLIANCE_UPDATE_AVAILABILITY_KEY,
+        record_update_availability_attempt,
+        update_availability_to_json,
+        update_stream_configuration_fingerprints,
+    )
+
+    login(client)
+    with SessionLocal() as db:
+        settings = ui.appliance_update_settings(db)
+        state = record_update_availability_attempt(
+            ui.appliance_update_availability_state(db),
+            stream="powershell_modules",
+            job_id="job_old_prerequisite_failure",
+            checked_at=datetime.now(timezone.utc),
+            fingerprint=update_stream_configuration_fingerprints(settings)["powershell_modules"],
+            result={
+                "state": "failed",
+                "remediation": "Synchronize repositories for PSGallery and check PowerShell Modules again.",
+            },
+        )
+        ui.set_setting_value(db, APPLIANCE_UPDATE_AVAILABILITY_KEY, update_availability_to_json(state))
+        source = db.execute(select(UpdateSource).where(UpdateSource.kind == "powershell")).scalar_one()
+        source.validation_status = "valid"
+        source.validation_message = "Repository synchronized with its appliance package client."
+        source.validated_at = datetime.now(timezone.utc)
+        db.add(source)
+        db.commit()
+
+    payload = client.get("/ui/management/appliance-update/availability").json()
+    powershell = next(stream for stream in payload["streams"] if stream["id"] == "powershell_modules")
+    assert powershell["source_sync"]["ready"] is True
+    assert powershell["check_required"] is True
+    assert powershell["last_attempt"]["state"] == ""
+    page = client.get("/ui/management/appliance-update")
+    assert "Repository setup completed" in page.text
+    assert "Check required" in page.text
+    assert "job_old_prerequisite_failure" not in page.text
+
+
 def test_global_update_indicator_renders_and_has_visibility_aware_refresh(client):
     """Render the count and retain the polling accessibility contract.
 

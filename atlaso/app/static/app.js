@@ -12845,6 +12845,8 @@ let atlasoTasksReopenSelected = false;
 let atlasoUpdateAvailability = { available: false, affected_stream_count: 0, streams: [] };
 let atlasoUpdateAvailabilityTimer = 0;
 let atlasoUpdateAvailabilityRequest = null;
+let atlasoUpdateAvailabilityRequestSequence = 0;
+let atlasoLastSourceSyncTaskState = "";
 const atlasoAvailabilityTerminalTaskIds = new Set();
 
 function taskStatusActive(status) {
@@ -12873,7 +12875,7 @@ function refreshAvailabilityForTerminalUpdateTasks(tasks) {
     );
   }
   if (newlyObserved) {
-    refreshApplianceUpdateAvailability().catch(() => {});
+    refreshApplianceUpdateAvailability({ force: true }).catch(() => {});
   }
 }
 
@@ -12908,23 +12910,13 @@ function updateApplianceUpdateSourceSyncState(task) {
     || task.id !== atlasoNewTaskId
     || task.is_step
     || task.result?.mode !== "source_sync"
-    || taskStatusActive(task.status)
   ) {
     return;
   }
-  document.querySelectorAll('[data-appliance-update-source-sync-required="true"]').forEach((input) => {
-    if (input instanceof HTMLInputElement) {
-      const stream = input.value;
-      const kind = stream === "photon_os" ? "photon" : stream === "powershell_modules" ? "powershell" : "";
-      const results = Array.isArray(task.result?.source_results)
-        ? task.result.source_results.filter((result) => result?.kind === kind)
-        : [];
-      const ready = results.length
-        ? results.every((result) => result.success === true)
-        : task.status === "succeeded";
-      input.dataset.applianceUpdateSourceSyncReady = ready ? "true" : "false";
-    }
-  });
+  const stateKey = `${task.id}:${task.status}`;
+  if (stateKey === atlasoLastSourceSyncTaskState) return;
+  atlasoLastSourceSyncTaskState = stateKey;
+  refreshApplianceUpdateAvailability({ force: true }).catch(() => {});
 }
 
 function selectedUnsynchronizedUpdateStreams() {
@@ -12932,7 +12924,7 @@ function selectedUnsynchronizedUpdateStreams() {
   if (!(form instanceof HTMLFormElement)) {
     return [];
   }
-  return [...form.querySelectorAll('[name="selected_streams"]:checked')]
+  return [...form.querySelectorAll('[name="selected_streams"]')]
     .filter((input) => input instanceof HTMLInputElement
       && input.dataset.applianceUpdateSourceSyncRequired === "true"
       && input.dataset.applianceUpdateSourceSyncReady !== "true")
@@ -12942,8 +12934,8 @@ function selectedUnsynchronizedUpdateStreams() {
 function selectedApplianceUpdateStreamIds() {
   const form = document.querySelector("[data-appliance-update-submit-form]");
   if (!(form instanceof HTMLFormElement)) return [];
-  return [...form.querySelectorAll('[name="selected_streams"]:checked')]
-    .filter((input) => input instanceof HTMLInputElement)
+  return [...form.querySelectorAll('[name="selected_streams"]')]
+    .filter((input) => input instanceof HTMLInputElement && input.checked && !input.disabled)
     .map((input) => input.value);
 }
 
@@ -13006,10 +12998,34 @@ function renderApplianceUpdateAvailability(payload) {
     const pill = card.querySelector("[data-appliance-update-stream-pill]");
     const state = card.querySelector("[data-appliance-update-stream-state]");
     const summary = card.querySelector("[data-appliance-update-stream-summary]");
+    const input = card.querySelector('[name="selected_streams"]');
+    const sourceSync = stream.source_sync && typeof stream.source_sync === "object"
+      ? stream.source_sync
+      : { required: false, ready: true, state: "ready", reason: "" };
+    const sourceReady = sourceSync.ready !== false;
+    const checkRequired = stream.check_required === true || stream.stale === true;
     const confirmed = stream.confirmed && !stream.stale ? stream.confirmed : null;
     card.dataset.applianceUpdateStale = stream.stale ? "true" : "false";
+    card.dataset.applianceUpdateSourceSyncState = sourceSync.state || "ready";
+    card.classList.toggle("repository-setup-required", !sourceReady);
+    if (input instanceof HTMLInputElement) {
+      input.dataset.applianceUpdateSourceSyncRequired = sourceSync.required ? "true" : "false";
+      input.dataset.applianceUpdateSourceSyncReady = sourceReady ? "true" : "false";
+      input.dataset.applianceUpdateSourceKind = sourceSync.source_kind || "";
+      input.disabled = !sourceReady;
+      if (!sourceReady) {
+        input.checked = false;
+        const reasonId = `appliance-update-source-reason-${stream.id || input.value}`;
+        input.setAttribute("aria-describedby", reasonId);
+        if (summary instanceof HTMLElement) summary.id = reasonId;
+      } else {
+        input.removeAttribute("aria-describedby");
+      }
+    }
     if (pill instanceof HTMLElement) {
-      pill.textContent = stream.stale
+      pill.textContent = !sourceReady
+        ? "Repository setup required"
+        : checkRequired
         ? "Check required"
         : stream.last_attempt?.state === "failed"
           ? "Check failed"
@@ -13018,11 +13034,17 @@ function renderApplianceUpdateAvailability(payload) {
           : confirmed
             ? "Up to date"
             : "Not checked";
-      pill.className = `status-pill ${stream.stale ? "muted" : stream.last_attempt?.state === "failed" ? "error" : confirmed?.update_available ? "warn" : confirmed ? "good" : "muted"}`;
+      pill.className = `status-pill ${!sourceReady ? sourceSync.state === "failed" ? "error" : "warn" : checkRequired ? "muted" : stream.last_attempt?.state === "failed" ? "error" : confirmed?.update_available ? "warn" : confirmed ? "good" : "muted"}`;
     }
     if (state instanceof HTMLElement) {
-      state.textContent = stream.stale
-        ? "Configuration changed"
+      state.textContent = !sourceReady
+        ? sourceSync.state === "synchronizing"
+          ? "Synchronizing repositories"
+          : sourceSync.state === "failed"
+            ? "Repository synchronization failed"
+            : "Repository not synchronized"
+        : checkRequired
+        ? stream.check_required === true ? "Repository setup completed" : "Configuration changed"
         : stream.last_attempt?.state === "failed" && confirmed?.update_available
           ? "Previously confirmed update remains available"
           : stream.last_attempt?.state === "failed"
@@ -13032,7 +13054,9 @@ function renderApplianceUpdateAvailability(payload) {
           : "No confirmed result";
     }
     if (summary instanceof HTMLElement) {
-      summary.textContent = stream.stale
+      summary.textContent = !sourceReady
+        ? sourceSync.reason || "Synchronize repositories before using this update stream."
+        : checkRequired
         ? "Check this stream again to refresh its update information."
         : stream.last_attempt?.state === "failed"
           ? stream.last_attempt?.remediation || "Review the task and check again."
@@ -13042,6 +13066,19 @@ function renderApplianceUpdateAvailability(payload) {
     card.querySelector("[data-appliance-update-release-notes]")?.remove();
     card.querySelector("[data-appliance-update-stream-changes]")?.remove();
     const result = card.querySelector("[data-appliance-update-stream-result]");
+    if (!sourceReady) {
+      if (result instanceof HTMLElement && !card.querySelector("[data-appliance-update-source-remediation]")) {
+        const remediation = document.createElement("button");
+        remediation.className = "button secondary compact-button update-stream-remediation";
+        remediation.type = "button";
+        remediation.dataset.applianceUpdateSourceRemediation = "";
+        remediation.dataset.applianceUpdateSourceKind = sourceSync.source_kind || "";
+        remediation.textContent = "Open Update Sources";
+        result.append(remediation);
+      }
+      return;
+    }
+    card.querySelector("[data-appliance-update-source-remediation]")?.remove();
     if (result instanceof HTMLElement && confirmed?.release_notes_url) {
       const notes = document.createElement("a");
       notes.className = "text-link";
@@ -13082,9 +13119,11 @@ function renderApplianceUpdateAvailability(payload) {
   updateApplianceUpdateActions();
 }
 
-async function refreshApplianceUpdateAvailability() {
-  if (atlasoUpdateAvailabilityRequest) return atlasoUpdateAvailabilityRequest;
-  atlasoUpdateAvailabilityRequest = fetch("/ui/management/appliance-update/availability", {
+async function refreshApplianceUpdateAvailability(options = null) {
+  const force = options?.force === true;
+  if (atlasoUpdateAvailabilityRequest && !force) return atlasoUpdateAvailabilityRequest;
+  const requestSequence = ++atlasoUpdateAvailabilityRequestSequence;
+  const request = fetch("/ui/management/appliance-update/availability", {
     credentials: "same-origin",
     cache: "no-store",
     headers: { Accept: "application/json" },
@@ -13093,11 +13132,19 @@ async function refreshApplianceUpdateAvailability() {
       if (!response.ok) throw new Error("Unable to refresh update availability.");
       return response.json();
     })
-    .then(renderApplianceUpdateAvailability)
+    .then((payload) => {
+      if (requestSequence === atlasoUpdateAvailabilityRequestSequence) {
+        renderApplianceUpdateAvailability(payload);
+      }
+      return payload;
+    })
     .finally(() => {
-      atlasoUpdateAvailabilityRequest = null;
+      if (atlasoUpdateAvailabilityRequest === request) {
+        atlasoUpdateAvailabilityRequest = null;
+      }
     });
-  return atlasoUpdateAvailabilityRequest;
+  atlasoUpdateAvailabilityRequest = request;
+  return request;
 }
 
 function scheduleApplianceUpdateAvailabilityRefresh() {
@@ -13142,7 +13189,7 @@ function updateApplianceUpdateActions(tasks = atlasoTasks) {
   }
   const active = tasks.some((task) => !task.is_step && taskStatusActive(task.status));
   const selectedIds = selectedApplianceUpdateStreamIds();
-  const unsynchronized = selectedUnsynchronizedUpdateStreams();
+  const blockedStreams = selectedUnsynchronizedUpdateStreams();
   const checkButton = document.querySelector("[data-appliance-update-check-action]");
   const installButton = document.querySelector("[data-appliance-update-install-action]");
   if (checkButton instanceof HTMLButtonElement) checkButton.disabled = active || selectedIds.length === 0;
@@ -13150,8 +13197,10 @@ function updateApplianceUpdateActions(tasks = atlasoTasks) {
   let hasUpdate = false;
   for (const streamId of selectedIds) {
     const stream = availabilityStream(streamId);
-    if (!stream || stream.stale) {
-      installReason = `${stream?.label || "The selected stream"} must be checked again because its update configuration changed.`;
+    if (!stream || stream.stale || stream.check_required === true) {
+      installReason = stream?.check_required === true
+        ? `Check ${stream.label || streamId} after repository setup completed.`
+        : `${stream?.label || "The selected stream"} must be checked again because its update configuration changed.`;
       break;
     }
     if (stream.last_attempt?.success !== true || !stream.confirmed) {
@@ -13160,11 +13209,12 @@ function updateApplianceUpdateActions(tasks = atlasoTasks) {
     }
     hasUpdate ||= stream.confirmed.update_available === true;
   }
-  if (!installReason && unsynchronized.length) {
-    installReason = `Synchronize the repositories for ${unsynchronized.join(" and ")} before installing updates.`;
-  }
   if (!installReason && selectedIds.length && !hasUpdate) installReason = "The selected streams are up to date.";
-  if (!installReason && !selectedIds.length) installReason = "Select at least one update stream.";
+  if (!installReason && !selectedIds.length) {
+    installReason = blockedStreams.length
+      ? `Select a ready update stream. Repository setup is required for ${blockedStreams.join(" and ")}.`
+      : "Select at least one update stream.";
+  }
   if (active) installReason = "Wait for the active Appliance Update task to finish.";
   if (installButton instanceof HTMLButtonElement) installButton.disabled = Boolean(installReason);
   const form = document.querySelector("[data-appliance-update-submit-form]");
@@ -13943,6 +13993,28 @@ function initializeApplianceUpdateSourceSync() {
       updateApplianceUpdateActions();
       showTransientGridError(error instanceof Error ? error.message : "Unable to synchronize the update repositories.");
     }
+  });
+}
+
+function initializeApplianceUpdateSourceRemediation() {
+  document.addEventListener("click", (event) => {
+    const button = event.target instanceof Element
+      ? event.target.closest("[data-appliance-update-source-remediation]")
+      : null;
+    if (!(button instanceof HTMLButtonElement)) return;
+    const kind = button.dataset.applianceUpdateSourceKind || "";
+    const sourcesTab = document.querySelector('[data-tab-target="appliance-update-sources"]');
+    if (sourcesTab instanceof HTMLButtonElement) sourcesTab.click();
+    const sourceGroup = document.getElementById(`update-source-group-${kind}`);
+    if (sourceGroup instanceof HTMLDetailsElement) {
+      sourceGroup.open = true;
+      sourceGroup.scrollIntoView({ block: "nearest" });
+    }
+    window.history.replaceState(null, "", managementUiPath(`/appliance-update#update-source-group-${kind}`));
+    window.requestAnimationFrame(() => {
+      const syncAction = document.querySelector("[data-appliance-update-source-sync-action]");
+      if (syncAction instanceof HTMLButtonElement) syncAction.focus({ preventScroll: true });
+    });
   });
 }
 
@@ -21754,6 +21826,7 @@ document.addEventListener("DOMContentLoaded", initializeVcfDepotProfilesTable);
 document.addEventListener("DOMContentLoaded", initializeTasksPage);
 document.addEventListener("DOMContentLoaded", initializeApplianceUpdateSubmission);
 document.addEventListener("DOMContentLoaded", initializeApplianceUpdateSourceSync);
+document.addEventListener("DOMContentLoaded", initializeApplianceUpdateSourceRemediation);
 document.addEventListener("DOMContentLoaded", initializeApplianceUpdateAvailability);
 document.addEventListener("DOMContentLoaded", initializeServerTime);
 document.addEventListener("DOMContentLoaded", initializeFirewallRulesTable);
