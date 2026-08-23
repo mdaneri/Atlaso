@@ -13014,7 +13014,11 @@ function validApplianceUpdateAvailabilityPayload(payload) {
   const validReleaseNotesUrl = (value) => {
     if (!validText(value)) return false;
     if (!value) return true;
-    if ([...value].some((character) => /\s/u.test(character) || character.codePointAt(0) < 32)) return false;
+    if ([...value].some((character) => (
+      /\s/u.test(character)
+      || character.codePointAt(0) < 32
+      || character.codePointAt(0) === 0x85
+    ))) return false;
     const match = /^https:\/\/([^/?#]+)(?:[/?#]|$)/i.exec(value);
     if (!match) return false;
     const authority = match[1];

@@ -416,6 +416,7 @@ test("failed polling preserves only an existing positive indicator", async () =>
   for (const unsafeReleaseNotesUrl of [
     "javascript:alert(1)",
     "httpſ://evil.example/notes",
+    "https://example.com\u0085/notes",
     "https://user:pass@example.test/notes",
   ]) {
     positive.setFetchResponse({
