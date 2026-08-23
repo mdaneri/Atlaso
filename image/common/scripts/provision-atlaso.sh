@@ -24,6 +24,10 @@ ATLASO_POWERCLI_MODULE_SOURCE="${ATLASO_POWERCLI_MODULE_SOURCE:-}"
 ATLASO_POWERCLI_VERSION="${ATLASO_POWERCLI_VERSION:-9.1.0.25380678}"
 ATLASO_SYSTEM_CONTENT_DISK="${ATLASO_SYSTEM_CONTENT_DISK:-false}"
 ATLASO_SYSTEM_CONTENT_MOUNT="${ATLASO_SYSTEM_CONTENT_MOUNT:-/var/lib/atlaso-system}"
+ATLASO_ROOT_SCSI_TUPLE="${ATLASO_ROOT_SCSI_TUPLE:-}"
+ATLASO_SYSTEM_SCSI_TUPLE="${ATLASO_SYSTEM_SCSI_TUPLE:-}"
+ATLASO_ROOT_DISK_SIZE_BYTES="${ATLASO_ROOT_DISK_SIZE_BYTES:-}"
+ATLASO_SYSTEM_DISK_SIZE_BYTES="${ATLASO_SYSTEM_DISK_SIZE_BYTES:-}"
 BOOTSTRAP_USERNAME="${ATLASO_BOOTSTRAP_ADMIN_USERNAME:-admin}"
 BOOTSTRAP_PASSWORD="${ATLASO_BOOTSTRAP_ADMIN_PASSWORD:-}"
 BOOTSTRAP_SHELL="${ATLASO_BOOTSTRAP_ADMIN_SHELL:-/usr/bin/pwsh}"
@@ -114,16 +118,51 @@ prepare_system_content_disk() {
   fi
 
   log_step "preparing required Atlaso system-content disk"
-  root_source="$(findmnt -n -o SOURCE /)"
-  root_disk_name="$(lsblk -no PKNAME "$root_source" 2>/dev/null | awk 'NF { print; exit }')"
-  if [ -z "$root_disk_name" ]; then
-    root_disk_name="$(basename "$root_source")"
+  root_source="$(findmnt -n -o SOURCE / 2>/dev/null || true)"
+  [ -n "$root_source" ] || {
+    echo "Photon OS root source could not be identified." >&2
+    exit 2
+  }
+  root_disks="$({ lsblk -s -n -o PATH,TYPE "$root_source" 2>/dev/null || true; } | awk '$2 == "disk" { print $1 }' | sort -u)"
+  root_disk_count="$(printf '%s\n' "$root_disks" | awk 'NF { count++ } END { print count + 0 }')"
+  if [ "$root_disk_count" -ne 1 ]; then
+    echo "Photon OS root source resolves to $root_disk_count physical disks; expected exactly one." >&2
+    exit 2
+  fi
+  root_disk="$(readlink -f "$root_disks")"
+
+  scsi_tuple_for_disk() {
+    disk="$(readlink -f "$1" 2>/dev/null || true)"
+    [ -n "$disk" ] || return 1
+    device_path="$(readlink -f "/sys/class/block/${disk##*/}/device" 2>/dev/null || true)"
+    scsi_address="${device_path##*/}"
+    case "$scsi_address" in
+      *:*:*:*) printf '%s\n' "${scsi_address#*:}" ;;
+      *) return 1 ;;
+    esac
+  }
+
+  if [ -z "$ATLASO_ROOT_SCSI_TUPLE" ] || [ -z "$ATLASO_SYSTEM_SCSI_TUPLE" ] ||
+    [ -z "$ATLASO_ROOT_DISK_SIZE_BYTES" ] || [ -z "$ATLASO_SYSTEM_DISK_SIZE_BYTES" ]; then
+    echo "VMware payload-disk identity policy is incomplete." >&2
+    exit 2
+  fi
+  root_tuple="$(scsi_tuple_for_disk "$root_disk" || true)"
+  if [ "$root_tuple" != "$ATLASO_ROOT_SCSI_TUPLE" ]; then
+    echo "Photon OS root disk must use SCSI identity $ATLASO_ROOT_SCSI_TUPLE; found ${root_tuple:-unknown}." >&2
+    exit 2
+  fi
+  root_size="$(blockdev --getsize64 "$root_disk" 2>/dev/null || true)"
+  if [ "$root_size" != "$ATLASO_ROOT_DISK_SIZE_BYTES" ]; then
+    echo "Photon OS root disk must expose $ATLASO_ROOT_DISK_SIZE_BYTES bytes; found ${root_size:-unknown}." >&2
+    exit 2
   fi
 
   candidate_count=0
   system_disk=""
   for candidate in $(lsblk -dn -o NAME,TYPE | awk '$2 == "disk" { print "/dev/" $1 }'); do
-    if [ "$(basename "$candidate")" = "$root_disk_name" ]; then
+    candidate="$(readlink -f "$candidate")"
+    if [ "$candidate" = "$root_disk" ]; then
       continue
     fi
     if [ "$(lsblk -nr -o TYPE "$candidate" | wc -l)" -ne 1 ]; then
@@ -141,7 +180,27 @@ prepare_system_content_disk() {
     exit 2
   fi
 
+  system_tuple="$(scsi_tuple_for_disk "$system_disk" || true)"
+  if [ "$system_tuple" != "$ATLASO_SYSTEM_SCSI_TUPLE" ]; then
+    echo "Atlaso system-content disk must use SCSI identity $ATLASO_SYSTEM_SCSI_TUPLE; found ${system_tuple:-unknown}." >&2
+    exit 2
+  fi
+  system_size="$(blockdev --getsize64 "$system_disk" 2>/dev/null || true)"
+  if [ "$system_size" != "$ATLASO_SYSTEM_DISK_SIZE_BYTES" ]; then
+    echo "Atlaso system-content disk must expose $ATLASO_SYSTEM_DISK_SIZE_BYTES bytes; found ${system_size:-unknown}." >&2
+    exit 2
+  fi
+  physical_disk_count="$(lsblk -dn -o TYPE | awk '$1 == "disk" { count++ } END { print count + 0 }')"
+  if [ "$physical_disk_count" -ne 2 ]; then
+    echo "VMware image provisioning requires exactly two payload disks; found $physical_disk_count physical disks." >&2
+    exit 2
+  fi
+
   mkfs.ext4 -F -L ATLASO_SYSTEM "$system_disk"
+  if [ "$(blkid -s LABEL -o value "$system_disk" 2>/dev/null || true)" != "ATLASO_SYSTEM" ]; then
+    echo "Atlaso system-content disk label was not readable after formatting." >&2
+    exit 2
+  fi
   system_uuid="$(blkid -s UUID -o value "$system_disk")"
   if [ -z "$system_uuid" ]; then
     echo "Atlaso system-content disk did not expose a filesystem UUID after formatting." >&2

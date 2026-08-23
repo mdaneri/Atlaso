@@ -430,7 +430,6 @@ def test_photon_kickstart_generator_is_canonical_and_provider_specific(tmp_path)
         for provider in ("hyperv", "vmware-workstation")
     }
     for kickstart in generated.values():
-        assert kickstart["disk"] == "/dev/sda"
         assert kickstart["bootmode"] == "efi"
         assert kickstart["packagelist_file"] == "packages_minimal.json"
         assert kickstart["partitions"] == [
@@ -457,6 +456,13 @@ def test_photon_kickstart_generator_is_canonical_and_provider_specific(tmp_path)
 
     hyperv = generated["hyperv"]
     vmware = generated["vmware-workstation"]
+    assert hyperv["disk"] == "/dev/sda"
+    assert hyperv["preinstall"] == []
+    assert vmware["disk"] == "$ATLASO_PHOTON_INSTALL_DISK"
+    vmware_preinstall = "\n".join(vmware["preinstall"])
+    assert "scsi-0:0:0:0" in vmware_preinstall
+    assert '"$disk_count" -ne 1' in vmware_preinstall
+    assert "/dev/sda" not in vmware_preinstall
     assert "hyper-v" in hyperv["additional_packages"]
     assert "open-vm-tools" not in hyperv["additional_packages"]
     assert "systemctl enable hv_kvp_daemon || true" in hyperv["postinstall"]
@@ -887,7 +893,16 @@ def test_photon_provisioning_prepares_attached_data_disks():
     assert "No blank data disk available" not in mount_script
 
     assert 'ATLASO_SYSTEM_CONTENT_DISK="${ATLASO_SYSTEM_CONTENT_DISK:-false}"' in provision
+    assert 'lsblk -s -n -o PATH,TYPE "$root_source"' in provision
+    assert 'Photon OS root source resolves to $root_disk_count physical disks' in provision
+    assert 'root_tuple="$(scsi_tuple_for_disk "$root_disk" || true)"' in provision
+    assert '"$root_tuple" != "$ATLASO_ROOT_SCSI_TUPLE"' in provision
+    assert '"$system_tuple" != "$ATLASO_SYSTEM_SCSI_TUPLE"' in provision
+    assert 'VMware image provisioning requires exactly two payload disks' in provision
     assert 'mkfs.ext4 -F -L ATLASO_SYSTEM "$system_disk"' in provision
+    assert provision.index('"$system_tuple" != "$ATLASO_SYSTEM_SCSI_TUPLE"') < provision.index(
+        'mkfs.ext4 -F -L ATLASO_SYSTEM "$system_disk"'
+    )
     assert "Expected exactly one additional blank disk for Atlaso system content" in provision
     assert 'UUID=%s %s ext4 defaults 0 2' in provision
     assert "x-systemd.requires-mounts-for=%s" in provision
@@ -978,10 +993,50 @@ def test_vmware_packer_build_uses_two_compacted_payload_disks():
     assert 'disk_type_id         = 0' in template
     assert 'skip_compaction      = false' in template
     assert '"ATLASO_SYSTEM_CONTENT_DISK=true"' in template
+    assert '"ATLASO_ROOT_SCSI_TUPLE=0:0:0"' in template
+    assert '"ATLASO_SYSTEM_SCSI_TUPLE=0:1:0"' in template
+    assert "-InstallDiskLayout 'vmware-workstation'" in wrapper
+    assert "Atlaso.VmwarePayload.psm1" in wrapper
     assert "Write-AtlasoVmwareBuildProvenance" in wrapper
     assert "tracked_source_dirty" in wrapper
-    assert "Expected exactly two Packer payload VMDKs" in wrapper
-    assert "Get-FileHash -LiteralPath $vmx.FullName -Algorithm SHA256" in wrapper
+    assert "schema_version       = 2" in wrapper
+    assert "payload_disks" in wrapper
+    assert "Get-AtlasoVmwarePayloadLayout" in wrapper
+    payload_module = Path("scripts/windows/vmware/Atlaso.VmwarePayload.psm1").read_text(
+        encoding="utf-8"
+    )
+    assert "Get-FileHash -LiteralPath $vmx.FullName -Algorithm SHA256" in payload_module
+
+
+def test_vmware_payload_layout_and_provenance_fail_closed(tmp_path: Path) -> None:
+    """Verify canonical payload roles pass while reversed layouts and roles fail.
+
+    Args:
+        tmp_path: Pytest-provided isolated output directory.
+    """
+    pwsh = shutil.which("pwsh")
+    if pwsh is None:
+        pytest.skip("PowerShell 7 is required")
+
+    result = subprocess.run(
+        [
+            pwsh,
+            "-NoLogo",
+            "-NoProfile",
+            "-NonInteractive",
+            "-File",
+            "tests/powershell/Test-AtlasoVmwarePayload.ps1",
+            "-RepositoryRoot",
+            str(Path.cwd()),
+            "-OutputDirectory",
+            str(tmp_path / "vmware-payload"),
+        ],
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert "Atlaso VMware payload layout and provenance tests passed." in result.stdout
 
 
 def test_photon_kickstart_uses_deterministic_build_time_sshd_service():
@@ -1439,8 +1494,11 @@ def test_create_atlaso_vmware_test_vm_wrapper_uses_common_helpers():
     assert "expected Atlaso VMX is missing" in script
     assert "-ExpectedName $Name" in script
     assert "Assert-AtlasoStrictDescendantPath" in script
-    assert "Assert-ClonedPayloadDisks -VmxPath $targetVmx" in vm_script
-    assert "VMware clone did not retain the $($payloadDisk.Name) disk" in vm_script
+    assert "Assert-AtlasoVmwarePayloadProvenance -VmxPath $resolvedSourceVmx" in vm_script
+    assert "Get-AtlasoVmwarePayloadLayout -VmxPath $targetVmx -RequireExactlyTwoVmdks" in vm_script
+    assert vm_script.index(
+        "Assert-AtlasoVmwarePayloadProvenance -VmxPath $resolvedSourceVmx"
+    ) < vm_script.index("Invoke-Vmrun -Arguments @('-T', 'ws', 'clone'")
     assert "Set-VmxScsiDisk -Path $targetVmx -Unit 2 -DiskPath $resolvedDepotVmdkPath" in vm_script
     assert "Set-VmxScsiDisk -Path $targetVmx -Unit 3 -DiskPath $resolvedBackupVmdkPath" in vm_script
     assert "Set-VmxScsiDisk -Path $targetVmx -Unit 1 -DiskPath $resolvedDepotVmdkPath" not in vm_script
@@ -1464,6 +1522,15 @@ def test_create_atlaso_vmware_test_vm_wrapper_uses_common_helpers():
     assert "disk.EnableUUID" in vm_script
     assert "scsi0:$Unit" in vm_script
     assert "set-test-nics.ps1" in vm_script
+
+    lifecycle_script = Path(
+        "scripts/windows/vmware/run-lifecycle-test.ps1"
+    ).read_text(encoding="utf-8")
+    assert "Assert-AtlasoVmwarePayloadProvenance -VmxPath $resolvedSourceVmx" in lifecycle_script
+    assert "Get-AtlasoVmwarePayloadLayout -VmxPath $targetVmx -RequireExactlyTwoVmdks" in lifecycle_script
+    assert lifecycle_script.index(
+        "Assert-AtlasoVmwarePayloadProvenance -VmxPath $resolvedSourceVmx"
+    ) < lifecycle_script.index("Copy-Item -LiteralPath $sourceDirectory")
     assert '"$prefix.vnet"' in nics_script
     assert "if ($Vmnet -match '^(?i)vmnet(\\d+)$')" in nics_script
     assert '$Vmnet = "VMnet$($Matches[1])"' in nics_script
