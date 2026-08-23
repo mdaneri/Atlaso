@@ -13001,9 +13001,16 @@ function createApplianceUpdateAvailabilityIndicator() {
 }
 
 function validApplianceUpdateAvailabilityPayload(payload) {
-  const expectedStreamIds = new Set(["photon_os", "powershell_modules", "atlaso_release"]);
+  const expectedStreams = new Map([
+    ["photon_os", "Photon OS"],
+    ["powershell_modules", "PowerShell Modules"],
+    ["atlaso_release", "Atlaso Release"],
+  ]);
   const visibleChangeLimit = 20;
-  const validText = (value) => typeof value === "string";
+  const validText = (value, limit) => (
+    typeof value === "string"
+    && (limit === undefined || [...value].length <= limit)
+  );
   const validReleaseNotesUrl = (value) => {
     if (!validText(value)) return false;
     if (!value) return true;
@@ -13023,23 +13030,28 @@ function validApplianceUpdateAvailabilityPayload(payload) {
     && typeof change === "object"
     && !Array.isArray(change)
     && ["name", "current", "target", "action", "summary"].every((field) => (
-      change[field] === undefined || validText(change[field])
+      change[field] === undefined || validText(change[field], 160)
     ))
   );
   const validConfirmed = (confirmed) => confirmed === null || (
     confirmed
     && typeof confirmed === "object"
+    && ["available", "up_to_date", "failed"].includes(confirmed.state)
     && typeof confirmed.update_available === "boolean"
-    && validText(confirmed.current)
-    && validText(confirmed.target)
+    && confirmed.update_available === (confirmed.state === "available")
+    && validText(confirmed.current, 200)
+    && validText(confirmed.target, 200)
     && Number.isInteger(confirmed.change_count)
     && confirmed.change_count >= 0
+    && confirmed.change_count <= 1_000_000
     && Array.isArray(confirmed.changes)
     && confirmed.changes.length <= visibleChangeLimit
     && confirmed.changes.every(validChange)
     && typeof confirmed.details_incomplete === "boolean"
-    && validText(confirmed.summary)
+    && validText(confirmed.summary, 240)
     && validReleaseNotesUrl(confirmed.release_notes_url)
+    && validText(confirmed.remediation, 300)
+    && validText(confirmed.checked_at, 80)
   );
   const validLastAttempt = (attempt) => (
     attempt
@@ -13047,21 +13059,29 @@ function validApplianceUpdateAvailabilityPayload(payload) {
     && typeof attempt.success === "boolean"
     && ["", "available", "up_to_date", "failed"].includes(attempt.state)
     && attempt.success === ["available", "up_to_date"].includes(attempt.state)
-    && validText(attempt.remediation)
+    && validText(attempt.checked_at, 80)
+    && validText(attempt.current, 200)
+    && validText(attempt.target, 200)
+    && validText(attempt.remediation, 300)
   );
   const streamIds = Array.isArray(payload?.streams)
     ? payload.streams.map((stream) => stream?.id)
     : [];
-  const streamsValid = streamIds.length === expectedStreamIds.size
-    && new Set(streamIds).size === expectedStreamIds.size
-    && streamIds.every((streamId) => expectedStreamIds.has(streamId))
+  const streamsValid = streamIds.length === expectedStreams.size
+    && new Set(streamIds).size === expectedStreams.size
+    && streamIds.every((streamId) => expectedStreams.has(streamId))
     && payload.streams.every((stream) => (
       stream
       && typeof stream === "object"
-      && typeof stream.label === "string"
+      && stream.label === expectedStreams.get(stream.id)
       && typeof stream.stale === "boolean"
       && validLastAttempt(stream.last_attempt)
       && validConfirmed(stream.confirmed)
+      && (
+        !stream.last_attempt.success
+        || stream.confirmed === null
+        || stream.last_attempt.state === stream.confirmed.state
+      )
     ));
   const confirmedUpdateCount = streamsValid
     ? payload.streams.filter((stream) => (

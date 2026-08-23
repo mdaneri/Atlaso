@@ -135,16 +135,25 @@ function availabilityIndicatorScenario() {
 }
 
 function availabilityStreams(availableIds = []) {
+  const labels = {
+    photon_os: "Photon OS",
+    powershell_modules: "PowerShell Modules",
+    atlaso_release: "Atlaso Release",
+  };
   return ["photon_os", "powershell_modules", "atlaso_release"].map((id) => ({
     id,
-    label: id,
+    label: labels[id],
     stale: false,
     last_attempt: {
+      checked_at: "2026-08-23T04:00:00+00:00",
       success: true,
       state: availableIds.includes(id) ? "available" : "up_to_date",
+      current: "current",
+      target: "target",
       remediation: "",
     },
     confirmed: {
+      state: availableIds.includes(id) ? "available" : "up_to_date",
       update_available: availableIds.includes(id),
       current: "current",
       target: "target",
@@ -153,6 +162,8 @@ function availabilityStreams(availableIds = []) {
       details_incomplete: false,
       summary: "",
       release_notes_url: "",
+      remediation: "",
+      checked_at: "2026-08-23T04:00:00+00:00",
     },
   }));
 }
@@ -306,6 +317,7 @@ test("validated polling creates, updates, and removes the positive indicator", a
             ...stream,
             confirmed: {
               ...stream.confirmed,
+              current: "😀".repeat(200),
               release_notes_url: "https://example.test/releases/v0.9.186",
             },
           }
@@ -315,6 +327,30 @@ test("validated polling creates, updates, and removes the positive indicator", a
   });
   await scenario.context.refresh();
   const first = scenario.indicator;
+  assert.equal(first.count.textContent, "1");
+
+  scenario.setFetchResponse({
+    ok: true,
+    json: () => Promise.resolve({
+      available: true,
+      affected_stream_count: 1,
+      streams: availabilityStreams(["atlaso_release"]).map((stream) => (
+        stream.id === "atlaso_release"
+          ? {
+            ...stream,
+            last_attempt: {
+              ...stream.last_attempt,
+              success: false,
+              state: "failed",
+              remediation: "Try the check again.",
+            },
+          }
+          : stream
+      )),
+    }),
+  });
+  await scenario.context.refresh();
+  assert.equal(scenario.indicator, first);
   assert.equal(first.count.textContent, "1");
 
   scenario.setFetchResponse({
@@ -425,10 +461,12 @@ test("failed polling preserves only an existing positive indicator", async () =>
   });
   await assert.rejects(positive.context.refresh(), /Unable to refresh update availability/);
   assert.equal(positive.indicator, lastKnown);
+  const availableAttempt = availabilityStreams(["atlaso_release"])
+    .find((stream) => stream.id === "atlaso_release").last_attempt;
   for (const invalidLastAttempt of [
-    { state: "up_to_date", remediation: "" },
-    { success: true, state: "failed", remediation: "Check failed." },
-    { success: false, state: "available", remediation: "" },
+    { ...availableAttempt, success: undefined },
+    { ...availableAttempt, success: true, state: "failed", remediation: "Check failed." },
+    { ...availableAttempt, success: false, state: "available" },
   ]) {
     positive.setFetchResponse({
       ok: true,
@@ -438,6 +476,37 @@ test("failed polling preserves only an existing positive indicator", async () =>
         streams: availabilityStreams(["atlaso_release"]).map((stream, index) => (
           index === 0 ? { ...stream, last_attempt: invalidLastAttempt } : stream
         )),
+      }),
+    });
+    await assert.rejects(positive.context.refresh(), /Unable to refresh update availability/);
+    assert.equal(positive.indicator, lastKnown);
+  }
+  const invalidStreamMutators = [
+    (stream) => { stream.label = "x".repeat(501); },
+    (stream) => { stream.last_attempt.remediation = "x".repeat(301); },
+    (stream) => { stream.last_attempt.current = "x".repeat(201); },
+    (stream) => { stream.confirmed.target = "x".repeat(201); },
+    (stream) => { stream.confirmed.summary = "x".repeat(241); },
+    (stream) => { stream.confirmed.remediation = "x".repeat(301); },
+    (stream) => {
+      stream.confirmed.change_count = 1;
+      stream.confirmed.changes = [{ name: "x".repeat(161) }];
+    },
+    (stream) => { stream.last_attempt.state = "up_to_date"; },
+    (stream) => {
+      stream.last_attempt.state = "up_to_date";
+      stream.confirmed.state = "up_to_date";
+    },
+  ];
+  for (const mutateStream of invalidStreamMutators) {
+    const streams = availabilityStreams(["atlaso_release"]);
+    mutateStream(streams.find((stream) => stream.id === "atlaso_release"));
+    positive.setFetchResponse({
+      ok: true,
+      json: () => Promise.resolve({
+        available: true,
+        affected_stream_count: 1,
+        streams,
       }),
     });
     await assert.rejects(positive.context.refresh(), /Unable to refresh update availability/);
