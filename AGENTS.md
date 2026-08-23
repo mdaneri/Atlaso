@@ -496,13 +496,19 @@ The following cross-cutting boundaries always apply:
   saves desired runtime-maintenance state only; package-client changes still require the explicit audited
   **Synchronize repositories** task.
 - Persist bounded per-stream Appliance Update availability with separate latest-attempt and successful-confirmation
-  evidence. Admit unsynchronized Photon and PowerShell checks so their child records actionable **Synchronize
-  repositories** remediation, but require fresh successful non-stale checks, at least one confirmed update, and valid
-  prerequisites for manual installation. Keep scheduled check-before-apply independent. Render the authenticated global
-  indicator from sanitized no-store browser state, poll it only while visible and after terminal update tasks, omit it
+  evidence. Disable an unsynchronized Photon or PowerShell stream with an accessible **Repository setup required**
+  reason and a direct path to the matching Update Sources context and audited **Synchronize repositories** action.
+  Reject blocked streams server-side for both checks and installations while preserving independent ready streams.
+  Refresh readiness promptly after synchronization, order browser responses so stale data cannot overwrite the new
+  state, replace an obsolete prerequisite failure with **Check required** after success, and retain actionable
+  non-secret failure guidance after a failed sync. Require fresh successful non-stale checks, at least one confirmed
+  update, and valid prerequisites for manual installation. Keep scheduled check-before-apply independent. Render the
+  authenticated global indicator from sanitized no-store browser state, poll it only while visible and after terminal
+  update tasks, create or update exactly one control for a positive confirmed count, remove every live control
   completely from visual and accessibility trees at zero current confirmed updates, preserve only valid last-known
-  positive state through transient polling failures, and clear only successfully installed streams. Optional signed
-  release summaries must be bounded commit subjects and release links must be credential-free HTTPS.
+  positive state through transient, structurally invalid, or noncanonical polling failures, require `up_to_date`
+  confirmations to carry zero changes, and clear only successfully installed streams. Optional signed release summaries
+  must be bounded commit subjects and release links must be credential-free HTTPS of at most 2,048 characters.
 - A signed Atlaso Release update succeeds only after durable candidate activation is proven: `current`, the compatibility
   virtualenv, signed receipt, finalizer, internal OpenAPI version, nginx management-front-door version, maintenance
   cleanup, nginx validation/reload, and required service state must agree. Restart the worker under a provisional

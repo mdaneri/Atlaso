@@ -11221,6 +11221,123 @@ def appliance_update_availability_state(db: Session) -> dict[str, Any]:
     )
 
 
+APPLIANCE_UPDATE_SOURCE_READINESS_REPOSITORY_LIMIT = 6
+
+
+def appliance_update_source_readiness(
+    db: Session, settings: dict[str, Any]
+) -> dict[str, dict[str, Any]]:
+    """Return current repository synchronization readiness by update stream.
+
+    Args:
+        db: Active database session.
+        settings: Effective Appliance Update settings.
+    """
+    recent_jobs = db.execute(
+        select(Job)
+        .where(Job.type == "appliance-update")
+        .order_by(desc(Job.created_at))
+        .limit(24)
+    ).scalars().all()
+    source_sync_active = False
+    for job in recent_jobs:
+        try:
+            task_config = json.loads(job.task_config_json or "{}")
+        except json.JSONDecodeError:
+            task_config = {}
+        if not isinstance(task_config, dict) or task_config.get("mode") != "source_sync":
+            continue
+        source_sync_active = job.status in {
+            JobStatus.PENDING.value,
+            JobStatus.RUNNING.value,
+        }
+        break
+
+    definitions = settings.get("source_definitions")
+    definitions = definitions if isinstance(definitions, list) else []
+    rows: dict[str, dict[str, Any]] = {}
+    for stream, kind, repositories in (
+        (
+            "photon_os",
+            "photon",
+            unsynchronized_photon_repositories(settings),
+        ),
+        (
+            "powershell_modules",
+            "powershell",
+            unsynchronized_powershell_repositories(settings),
+        ),
+    ):
+        names = list(
+            dict.fromkeys(
+                str(name).strip() for name in repositories if str(name).strip()
+            )
+        )
+        displayed_names = names[:APPLIANCE_UPDATE_SOURCE_READINESS_REPOSITORY_LIMIT]
+        repositories_omitted = len(names) - len(displayed_names)
+        invalid_names = {
+            str(source.get("name") or "").strip()
+            for source in definitions
+            if isinstance(source, dict)
+            and source.get("kind") == kind
+            and source.get("validation_status") == "invalid"
+        }
+        ready = not names
+        state = (
+            "ready"
+            if ready
+            else "synchronizing"
+            if source_sync_active
+            else "failed"
+            if invalid_names.intersection(names)
+            else "required"
+        )
+        repository_label = ", ".join(displayed_names) or (
+            "configured Photon repositories"
+            if kind == "photon"
+            else "configured PowerShell repositories"
+        )
+        if repositories_omitted:
+            repository_label += f", and {repositories_omitted} more repositories"
+        reason = ""
+        if state == "synchronizing":
+            reason = (
+                f"Repository synchronization is in progress for {repository_label}. "
+                f"{UPDATE_STREAM_LABELS[stream]} becomes available after it succeeds."
+            )
+        elif state == "failed":
+            reason = (
+                f"Repository synchronization failed for {repository_label}. Review the recent task, "
+                "correct the reported repository problem, and retry Synchronize repositories."
+            )
+        elif state == "required":
+            reason = (
+                f"Synchronize repositories for {repository_label} before checking or installing "
+                f"{UPDATE_STREAM_LABELS[stream]}."
+            )
+        rows[stream] = {
+            "required": True,
+            "ready": ready,
+            "state": state,
+            "source_kind": kind,
+            "repositories": displayed_names,
+            "repository_count": len(names),
+            "repositories_omitted": repositories_omitted,
+            "reason": reason,
+        }
+    rows["atlaso_release"] = {
+        "required": False,
+        "ready": True,
+        "state": "ready",
+        "source_kind": "atlaso",
+        "repositories": [],
+        "repository_count": 0,
+        "repositories_omitted": 0,
+        "reason": "",
+    }
+    return rows
+
+
 def appliance_update_availability_summary(
     db: Session,
     *,
@@ -11232,11 +11349,44 @@ def appliance_update_availability_summary(
         db: Active database session.
         result_streams: Optional stream subset for the composite result summary.
     """
-    return update_availability_summary(
-        appliance_update_availability_state(db),
-        appliance_update_settings(db),
+    settings = appliance_update_settings(db)
+    source_readiness = appliance_update_source_readiness(db, settings)
+    availability_state = appliance_update_availability_state(db)
+    sanitized_state = update_availability_from_json(
+        update_availability_to_json(availability_state)
+    )
+    prerequisite_attempts_cleared: set[str] = set()
+    for stream, readiness in source_readiness.items():
+        stream_state = sanitized_state["streams"].get(stream)
+        if not readiness["required"] or not isinstance(stream_state, dict):
+            continue
+        attempt = stream_state.get("last_attempt")
+        remediation = (
+            str(attempt.get("remediation") or "")
+            if isinstance(attempt, dict)
+            else ""
+        )
+        if "Synchronize repositories" in remediation:
+            stream_state.pop("last_attempt", None)
+            prerequisite_attempts_cleared.add(stream)
+    summary = update_availability_summary(
+        sanitized_state,
+        settings,
         result_streams=result_streams,
     )
+    for row in summary["streams"]:
+        row["source_sync"] = source_readiness[str(row["id"])]
+        row["check_required"] = str(row["id"]) in prerequisite_attempts_cleared
+    available = [
+        row
+        for row in summary["streams"]
+        if row["source_sync"]["ready"]
+        and row["confirmed"]
+        and row["confirmed"]["update_available"]
+    ]
+    summary["available"] = bool(available)
+    summary["affected_stream_count"] = len(available)
+    return summary
 
 
 def appliance_update_context(
@@ -11356,7 +11506,14 @@ def appliance_update_context(
         for package in packages
         if package.ecosystem == "powershell"
     ]
-    selected = list(UPDATE_STREAMS)
+    readiness = appliance_update_source_readiness(db, settings)
+    selected = [
+        stream
+        for stream in selected_update_streams(
+            selected_stream_ids if selected_stream_ids is not None else UPDATE_STREAMS
+        )
+        if readiness[stream]["ready"]
+    ]
     manifest_preview = render_update_manifest(selected_streams=selected, settings=settings, actor="preview")
     photon_repositories = photon_repository_details()
     availability = appliance_update_availability_summary(
@@ -11374,6 +11531,18 @@ def appliance_update_context(
         )
     ).scalars().first()
     _install_allowed, install_reason = manual_install_gate(availability, selected)
+    submitted = selected_update_streams(selected_stream_ids or [])
+    blocked_submitted = [
+        stream for stream in submitted if not readiness[stream]["ready"]
+    ]
+    if not selected and blocked_submitted:
+        blocked_labels = " and ".join(
+            UPDATE_STREAM_LABELS[stream] for stream in blocked_submitted
+        )
+        install_reason = (
+            "Select a ready update stream. Repository setup is required for "
+            f"{blocked_labels}."
+        )
     if active_update_task is not None:
         install_reason = "Wait for the active Appliance Update task to finish."
     return {
@@ -11395,20 +11564,21 @@ def appliance_update_context(
             {
                 "id": stream,
                 "label": UPDATE_STREAM_LABELS[stream],
-                "source_sync_required": stream in {"photon_os", "powershell_modules"},
-                "source_sync_ready": not (
-                    unsynchronized_photon_repositories(settings)
-                    if stream == "photon_os"
-                    else unsynchronized_powershell_repositories(settings)
-                    if stream == "powershell_modules"
-                    else []
-                ),
+                "source_sync_required": readiness[stream]["required"],
+                "source_sync_ready": readiness[stream]["ready"],
+                "source_sync_state": readiness[stream]["state"],
+                "source_sync_reason": readiness[stream]["reason"],
+                "source_kind": readiness[stream]["source_kind"],
+                "source_repositories": readiness[stream]["repositories"],
                 "availability": availability_by_stream.get(stream),
             }
             for stream in UPDATE_STREAMS
         ],
         "appliance_update_availability": availability,
         "appliance_update_active": active_update_task is not None,
+        "selected_update_stream_ids": selected,
+        "appliance_update_check_allowed": bool(selected)
+        and active_update_task is None,
         "appliance_update_install_reason": install_reason,
         "default_atlaso_manifest_url": DEFAULT_ATLASO_MANIFEST_URL,
         "current_version_info": current_version_info(),
@@ -14122,12 +14292,12 @@ def submit_appliance_update(
         errors.append("Configure a signed Atlaso release repository before selecting Atlaso Release.")
     if mode == "run" and "powershell_modules" in selected and not str(settings.get("powershell_repository_url") or "").strip():
         errors.append("Configure an enabled PowerShell repository before selecting PowerShell Modules.")
-    if mode == "run" and "powershell_modules" in selected:
+    if "powershell_modules" in selected:
         for repository in unsynchronized_powershell_repositories(settings):
             errors.append(
                 f"Synchronize PowerShell repository {repository} before checking or installing its managed modules."
             )
-    if mode == "run" and "photon_os" in selected:
+    if "photon_os" in selected:
         for repository in unsynchronized_photon_repositories(settings):
             errors.append(
                 f"Synchronize Photon repository {repository} before checking or installing Photon OS updates."

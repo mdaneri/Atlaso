@@ -165,11 +165,11 @@
           <p id="appliance-update-action-status" class="muted appliance-update-action-guidance {{ 'hidden' if not appliance_update_install_reason else '' }}" role="status" data-appliance-update-action-status>{{ appliance_update_install_reason }}</p>
         </div>
         <div class="apply-change-set-actions">
-          <button class="button secondary appliance-update-action" type="submit" formaction="{{ management_ui_root }}/appliance-update/check" title="Check the selected streams without installing changes" aria-describedby="appliance-update-action-status" data-appliance-update-action data-appliance-update-check-action {{ 'disabled' if appliance_update_active else '' }}>
+          <button class="button secondary appliance-update-action" type="submit" formaction="{{ management_ui_root }}/appliance-update/check" title="Check the selected streams without installing changes" aria-describedby="appliance-update-action-status" data-appliance-update-action data-appliance-update-check-action {{ 'disabled' if not appliance_update_check_allowed else '' }}>
             <svg class="button-icon" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><circle cx="11" cy="11" r="8"/><path d="m21 21-4.3-4.3"/></svg>
             <span>Check for updates</span>
           </button>
-          <button class="button primary appliance-update-action" type="submit" formaction="{{ management_ui_root }}/appliance-update/run" title="Install updates from the selected streams" aria-describedby="appliance-update-action-status" data-appliance-update-action data-appliance-update-install-action {{ 'disabled' if appliance_update_active else '' }}>
+          <button class="button primary appliance-update-action" type="submit" formaction="{{ management_ui_root }}/appliance-update/run" title="Install updates from the selected streams" aria-describedby="appliance-update-action-status" data-appliance-update-action data-appliance-update-install-action {{ 'disabled' if not appliance_update_check_allowed else '' }}>
             <svg class="button-icon" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path d="M12 3v12"/><path d="m7 10 5 5 5-5"/><path d="M5 21h14"/></svg>
             <span>Install updates</span>
           </button>
@@ -184,12 +184,13 @@
       </section>
       <div class="apply-unit-list compact-list">
         {% for stream in update_streams %}
-          {% set stream_checked = selected_update_stream_ids is not defined or stream.id in selected_update_stream_ids %}
+          {% set stream_checked = stream.id in selected_update_stream_ids and stream.source_sync_ready %}
           {% set stream_availability = stream.availability %}
           <div
-            class="apply-unit-card update-stream-card"
+            class="apply-unit-card update-stream-card {{ 'repository-setup-required' if not stream.source_sync_ready else '' }}"
             data-appliance-update-stream-card="{{ stream.id }}"
             data-appliance-update-stale="{{ 'true' if stream_availability.stale else 'false' }}"
+            data-appliance-update-source-sync-state="{{ stream.source_sync_state }}"
           >
             <label class="apply-unit-select">
               <input
@@ -197,8 +198,11 @@
                 name="selected_streams"
                 value="{{ stream.id }}"
                 {{ "checked" if stream_checked else "" }}
+                {{ "disabled" if not stream.source_sync_ready else "" }}
+                {% if not stream.source_sync_ready %}aria-describedby="appliance-update-source-reason-{{ stream.id }}"{% endif %}
                 data-appliance-update-source-sync-required="{{ 'true' if stream.source_sync_required else 'false' }}"
                 data-appliance-update-source-sync-ready="{{ 'true' if stream.source_sync_ready else 'false' }}"
+                data-appliance-update-source-kind="{{ stream.source_kind }}"
                 data-appliance-update-stream-label="{{ stream.label }}"
               >
               <span>
@@ -211,9 +215,16 @@
               </span>
             </label>
             <span class="update-stream-result" data-appliance-update-stream-result>
-              {% if stream_availability.stale %}
+              {% if not stream.source_sync_ready %}
+                <span class="status-pill {{ 'error' if stream.source_sync_state == 'failed' else 'warn' }}" data-appliance-update-stream-pill>Repository setup required</span>
+                <strong data-appliance-update-stream-state>
+                  {% if stream.source_sync_state == 'synchronizing' %}Synchronizing repositories{% elif stream.source_sync_state == 'failed' %}Repository synchronization failed{% else %}Repository not synchronized{% endif %}
+                </strong>
+                <small id="appliance-update-source-reason-{{ stream.id }}" data-appliance-update-stream-summary>{{ stream.source_sync_reason }}</small>
+                <button class="button secondary compact-button update-stream-remediation" type="button" data-appliance-update-source-remediation data-appliance-update-source-kind="{{ stream.source_kind }}">Open Update Sources</button>
+              {% elif stream_availability.check_required or stream_availability.stale %}
                 <span class="status-pill muted" data-appliance-update-stream-pill>Check required</span>
-                <strong data-appliance-update-stream-state>Configuration changed</strong>
+                <strong data-appliance-update-stream-state>{{ 'Repository setup completed' if stream_availability.check_required else 'Configuration changed' }}</strong>
                 <small data-appliance-update-stream-summary>Check this stream again to refresh its update information.</small>
               {% elif stream_availability.last_attempt.state == 'failed' %}
                 <span class="status-pill error" data-appliance-update-stream-pill>Check failed</span>

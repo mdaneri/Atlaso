@@ -22,9 +22,15 @@ class Element {
   constructor() {
     this.dataset = {};
     this.disabled = false;
+    this.checked = false;
     this.textContent = "";
     this.attributes = new Map();
     this.classList = { toggle() {} };
+    this.focused = false;
+  }
+
+  focus() {
+    this.focused = true;
   }
 
   setAttribute(name, value) {
@@ -117,6 +123,7 @@ function availabilityIndicatorScenario() {
   vm.runInContext(
     `let atlasoUpdateAvailability = { available: false, affected_stream_count: 0, streams: [] };
      let atlasoUpdateAvailabilityRequest = null;
+     let atlasoUpdateAvailabilityRequestSequence = 0;
      function updateApplianceUpdateResultSummary() {}
      function updateApplianceUpdateActions() {}
      ${functionSource("createApplianceUpdateAvailabilityIndicator")}
@@ -151,6 +158,17 @@ function availabilityStreams(availableIds = []) {
     id,
     label: labels[id],
     stale: false,
+    check_required: false,
+    source_sync: {
+      required: id !== "atlaso_release",
+      ready: true,
+      state: "ready",
+      source_kind: id === "photon_os" ? "photon" : id === "powershell_modules" ? "powershell" : "atlaso",
+      repositories: [],
+      repository_count: 0,
+      repositories_omitted: 0,
+      reason: "",
+    },
     last_attempt: {
       checked_at: "2026-08-23T04:00:00+00:00",
       success: true,
@@ -215,14 +233,16 @@ function scenario({ streams, inputs }) {
 function selectedInput(value, label, synchronized = true) {
   const input = new HTMLInputElement();
   input.value = value;
+  input.checked = true;
   input.dataset.applianceUpdateStreamLabel = label;
   input.dataset.applianceUpdateSourceSyncRequired = "true";
   input.dataset.applianceUpdateSourceSyncReady = synchronized ? "true" : "false";
   return input;
 }
 
-test("unsynchronized repositories allow checks but block installation with an exact reason", () => {
+test("an unsynchronized repository stream is excluded and blocks both actions when no ready stream is selected", () => {
   const input = selectedInput("powershell_modules", "PowerShell Modules", false);
+  input.disabled = true;
   const result = scenario({
     inputs: [input],
     streams: [{
@@ -233,16 +253,21 @@ test("unsynchronized repositories allow checks but block installation with an ex
       confirmed: null,
     }],
   });
-  assert.equal(result.checkButton.disabled, false);
+  assert.equal(result.checkButton.disabled, true);
   assert.equal(result.installButton.disabled, true);
-  assert.equal(result.status.textContent, "Synchronize repositories and check again.");
+  assert.equal(
+    result.status.textContent,
+    "Select a ready update stream. Repository setup is required for PowerShell Modules.",
+  );
 });
 
-test("a fresh mixed selection installs when every stream succeeded and one has an update", () => {
+test("a ready stream remains independently usable beside a blocked stream", () => {
+  const blocked = selectedInput("powershell_modules", "PowerShell Modules", false);
+  blocked.disabled = true;
   const result = scenario({
     inputs: [
       selectedInput("photon_os", "Photon OS"),
-      selectedInput("powershell_modules", "PowerShell Modules"),
+      blocked,
     ],
     streams: [
       {
@@ -375,6 +400,27 @@ test("validated polling creates, updates, and removes the positive indicator", a
   await scenario.context.refresh();
   assert.equal(scenario.indicator, first);
   assert.equal(first.count.textContent, "2");
+
+  const blockedStreams = availabilityStreams(["powershell_modules"]);
+  const blockedPowerShell = blockedStreams.find((stream) => stream.id === "powershell_modules");
+  blockedPowerShell.source_sync = {
+    ...blockedPowerShell.source_sync,
+    ready: false,
+    state: "required",
+    repositories: ["PSGallery"],
+    repository_count: 1,
+    reason: "Synchronize repositories for PSGallery before checking or installing PowerShell Modules.",
+  };
+  scenario.setFetchResponse({
+    ok: true,
+    json: () => Promise.resolve({
+      available: false,
+      affected_stream_count: 0,
+      streams: blockedStreams,
+    }),
+  });
+  await scenario.context.refresh();
+  assert.equal(scenario.indicator, null);
 
   scenario.setFetchResponse({
     ok: true,
@@ -579,6 +625,12 @@ test("failed polling preserves only an existing positive indicator", async () =>
     (stream) => { stream.confirmed.target = "x".repeat(201); },
     (stream) => { stream.confirmed.summary = "x".repeat(241); },
     (stream) => { stream.confirmed.remediation = "x".repeat(301); },
+    (stream) => { stream.check_required = "false"; },
+    (stream) => { stream.source_sync.ready = "true"; },
+    (stream) => { stream.source_sync.state = "required"; },
+    (stream) => { stream.source_sync.repositories = ["x".repeat(121)]; },
+    (stream) => { stream.source_sync.repository_count = -1; },
+    (stream) => { stream.source_sync.reason = "x".repeat(1201); },
     (stream) => {
       stream.confirmed.change_count = 1;
       stream.confirmed.changes = [{ name: "x".repeat(161) }];
@@ -680,4 +732,75 @@ test("terminal appliance update tasks refresh availability once per observed par
   assert.equal(context.calls, 1);
   context.run([{ ...running, status: "succeeded" }]);
   assert.equal(context.calls, 2);
+});
+
+test("a newer forced availability response wins over an older response", async () => {
+  const pending = [];
+  const rendered = [];
+  const context = vm.createContext({
+    fetch: () => new Promise((resolve) => pending.push(resolve)),
+    rendered,
+  });
+  vm.runInContext(
+    `let atlasoUpdateAvailabilityRequest = null;
+     let atlasoUpdateAvailabilityRequestSequence = 0;
+     function validApplianceUpdateAvailabilityPayload() { return true; }
+     function renderApplianceUpdateAvailability(payload) { rendered.push(payload.id); }
+     ${functionSource("refreshApplianceUpdateAvailability")}
+     globalThis.run = refreshApplianceUpdateAvailability;`,
+    context,
+  );
+  const older = context.run({ force: true });
+  const newer = context.run({ force: true });
+  pending[1]({ ok: true, json: () => Promise.resolve({ id: "newer" }) });
+  await newer;
+  pending[0]({ ok: true, json: () => Promise.resolve({ id: "older" }) });
+  await older;
+  assert.deepEqual(rendered, ["newer"]);
+});
+
+test("repository remediation opens the source workspace and focuses synchronization", () => {
+  assert.match(appSource, /data-appliance-update-source-remediation/);
+  assert.match(appSource, /document\.createElement\("button"\)/);
+  assert.match(appSource, /result\.append\(remediation\)/);
+  assert.match(appSource, /event\.target\.closest\("\[data-appliance-update-source-remediation\]"\)/);
+  assert.match(appSource, /data-tab-target="appliance-update-sources"/);
+  assert.match(appSource, /update-source-group-\$\{kind\}/);
+  assert.match(appSource, /data-appliance-update-source-sync-action/);
+  assert.match(appSource, /syncAction instanceof HTMLButtonElement && !syncAction\.disabled/);
+  assert.match(appSource, /sourcesTab\.focus\(\{ preventScroll: true \}\)/);
+});
+
+test("repository remediation retains visible focus while synchronization is active", () => {
+  let clickHandler = null;
+  const remediation = new HTMLButtonElement();
+  remediation.dataset.applianceUpdateSourceKind = "powershell";
+  remediation.closest = () => remediation;
+  const sourcesTab = new HTMLButtonElement();
+  sourcesTab.click = () => {};
+  const syncAction = new HTMLButtonElement();
+  syncAction.disabled = true;
+  class HTMLDetailsElement extends Element {
+    scrollIntoView() {}
+  }
+  const sourceGroup = new HTMLDetailsElement();
+  const context = vm.createContext({
+    Element,
+    HTMLButtonElement,
+    HTMLDetailsElement,
+    document: {
+      addEventListener: (_event, handler) => { clickHandler = handler; },
+      getElementById: () => sourceGroup,
+      querySelector: (selector) => selector.includes("data-tab-target") ? sourcesTab : syncAction,
+    },
+    managementUiPath: (path) => path,
+    window: {
+      history: { replaceState() {} },
+      requestAnimationFrame: (callback) => callback(),
+    },
+  });
+  vm.runInContext(`${functionSource("initializeApplianceUpdateSourceRemediation")}\ninitializeApplianceUpdateSourceRemediation();`, context);
+  clickHandler({ target: remediation });
+  assert.equal(syncAction.focused, false);
+  assert.equal(sourcesTab.focused, true);
 });

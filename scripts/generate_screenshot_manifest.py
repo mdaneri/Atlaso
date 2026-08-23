@@ -12,6 +12,16 @@ SOURCE_COMMIT = "0247c34bc85e+working-tree"
 ATLASO_VERSION = "0.9.21"
 
 CAPTURE_OVERRIDES = {
+    "appliance-update-repository-setup-required-desktop": {
+        "source_commit": "dba0a41c4b07+working-tree",
+        "atlaso_version": "0.9.186",
+        "capture_method": "codex-in-app-browser",
+    },
+    "appliance-update-repository-setup-required-responsive": {
+        "source_commit": "dba0a41c4b07+working-tree",
+        "atlaso_version": "0.9.186",
+        "capture_method": "codex-in-app-browser",
+    },
     "primary-navigation-expanded-desktop": {
         "source_commit": "d3734de0+working-tree",
         "atlaso_version": "0.9.142",
@@ -218,6 +228,18 @@ SPECIAL = {
         "review-modal",
         "Appliance change review with valid and invalid desired-state units.",
         "Review appliance changes dialog with selected valid units and one unit needing attention.",
+    ),
+    "appliance-update-repository-setup-required-desktop": (
+        "/appliance-update#appliance-update-streams",
+        "repository-setup-required",
+        "Appliance Update with a repository-backed stream blocked until synchronization.",
+        "Atlaso Appliance Update showing PowerShell Modules disabled with Repository setup required and an Open Update Sources action.",
+    ),
+    "appliance-update-repository-setup-required-responsive": (
+        "/appliance-update#appliance-update-streams",
+        "repository-setup-required",
+        "Appliance Update repository readiness at the responsive viewport.",
+        "Atlaso Appliance Update responsive view showing the disabled PowerShell Modules stream, repository prerequisite, and remediation action.",
     ),
     "automation-vcf-schedule-wizard-desktop": (
         "/automation#schedules",
