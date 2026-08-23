@@ -160,7 +160,11 @@ foreach ($relativePath in Get-TrackedPowerShellPath -RepositoryRoot $candidateRo
 }
 
 if ($findings.Count -gt 0) {
-    Write-Error "PowerShell comment-help checks failed with $($findings.Count) issue(s):`n  - $($findings -join "`n  - ")"
+    # Plain stderr keeps CI diagnostics stable across PowerShell hosts whose
+    # Write-Error rendering may inject ANSI styling into asserted path text.
+    [Console]::Error.WriteLine(
+        "PowerShell comment-help checks failed with $($findings.Count) issue(s):`n  - $($findings -join "`n  - ")"
+    )
     exit 1
 }
 
