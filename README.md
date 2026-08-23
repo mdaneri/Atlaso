@@ -109,6 +109,7 @@ brings infrastructure, storage, identity, networking, and lifecycle workflows in
 - [Technical reference](docs/reference/index.md) — API, image building, lifecycle testing, and detailed behavior.
 - [Contributing](CONTRIBUTING.md) — issue, version, focused local validation, full-suite GitHub CI, exact-head review
   follow-through, protected trusted-CI status handoff, multi-entry GitHub Pages publication serialization,
+  incremental comment-based-help enforcement for changed PowerShell files,
   pull-request, capability-aware completed-task lease-guarded remote/local-branch, worktree, and title cleanup with
   guarded resumable restoration,
   and seven-day Python dependency-age requirements.
@@ -157,6 +158,10 @@ the exact corrupt expected cache entries and do not require manual cleanup.
 The VMware wheel-deployment helper accepts only absolute POSIX remote staging directories composed of ASCII letters,
 digits, `/`, `.`, `_`, and `-`, with no `.` or `..` components. It rejects whitespace, shell metacharacters, and control
 characters before building or uploading through either SSH authentication mode.
+The normal VMware test-VM wrapper provisions the current Windows user's existing `.ssh/id_ed25519.pub` for `admin`
+and grants that development VM passwordless sudo, so subsequent local key/agent-backed deployments need no password
+handoff. It never generates or copies a private key, and lifecycle and exported appliances retain their ordinary
+password-backed sudo policy.
 Password-backed Windows deployment binds the concealed `DEFAULT_ADMIN_PASSWORD` variable from the verified `Atlaso`
 1Password Environment through `op run --environment`; it rejects unknown SSH host keys and never accepts a password
 argument, local `.env`, or the retired `ATLASO_DEPLOY_SSH_PASSWORD` fallback. See the

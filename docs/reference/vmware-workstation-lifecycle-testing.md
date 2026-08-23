@@ -231,6 +231,14 @@ That is the Workstation counterpart to `scripts/windows/hyperv/create-atlaso-tes
 vmnet only; pass `-IncludeLabNetworkAdapters` after creating the SiteA, WAN/SiteB, and trunk-like vmnets.
 The wrapper injects the same complete DHCP-first OVF environment before power-on; use `-FirstBootFqdn`,
 `-AdminPassword`, and `-RootPassword` when the default local test identity or credentials are not appropriate.
+It also resolves the current Windows user's existing `.ssh/id_ed25519.pub` before any network preparation, cleanup, or
+VM creation, installs that Ed25519 public key for `admin`, and adds a separate test-only passwordless-sudo rule. Pass
+`-SshPublicKeyPath <path>` to select another existing Ed25519 public key, or `-SkipSshKeyProvisioning` to retain
+password-backed SSH and sudo. The two options are mutually exclusive. Missing, malformed, multiline, non-Ed25519, and
+unbounded key input fails before the existing VM can be changed. The wrapper never generates or copies a private key.
+This development authority does not apply to the Workstation lifecycle lab or exported OVF/OVA appliances, and root SSH
+remains disabled. Approve the appliance's verified host key through the normal OpenSSH known-hosts workflow once;
+subsequent Codex and Copilot tasks under the same Windows user reuse that trust and key identity.
 Credential overrides must be at least 12 characters, contain no leading, trailing, tab, carriage-return, or newline
 whitespace, and contain only XML-representable characters so the OVF value round-trips unchanged.
 `-TrustRootCa` waits for the first-boot CA endpoint, removes partial downloads best-effort between retries, validates the

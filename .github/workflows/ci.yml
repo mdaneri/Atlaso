@@ -108,6 +108,13 @@ jobs:
         with:
           ref: ${{ github.event_name == 'workflow_dispatch' && inputs.head_sha || github.sha }}
           persist-credentials: false
+      - name: Check out repository-check base
+        if: github.event_name != 'push'
+        uses: actions/checkout@v7
+        with:
+          ref: ${{ github.event_name == 'workflow_dispatch' && inputs.base_sha || github.event.pull_request.base.sha }}
+          path: .powershell-base
+          persist-credentials: false
       - uses: actions/setup-python@v7
         with:
           python-version: '3.14'
@@ -131,6 +138,10 @@ jobs:
       - name: Enforce the exact appliance dependency lock
         run: python scripts/check_appliance_lock.py
       - run: python scripts/check_repo.py
+      - name: Enforce changed PowerShell comment help
+        if: github.event_name != 'push'
+        shell: pwsh
+        run: ./scripts/check_powershell_help.ps1 -BaseRoot .powershell-base
       - name: Enforce Python static-analysis baseline
         run: python scripts/check_python_static_analysis.py
       - name: Validate systemd and sudoers assets

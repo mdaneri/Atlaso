@@ -9,6 +9,12 @@ from pathlib import Path
 
 import pytest
 
+VALID_ED25519_PUBLIC_KEY = (
+    "ssh-ed25519 "
+    "AAAAC3NzaC1lZDI1NTE5AAAAIAABAgMEBQYHCAkKCwwNDg8QERITFBUWFxgZGhscHR4f "
+    "atlaso-test"
+)
+
 
 def load_customizer():
     """Return customizer."""
@@ -74,6 +80,307 @@ def test_vmware_ovf_customizer_supports_dhcp_management_by_default():
     assert config["gateway"] == ""
     assert config["dns_servers"] == []
     assert config["management_source_cidr"] == ""
+
+
+def test_vmware_ovf_customizer_validates_optional_development_admin_key():
+    """Accept exactly one canonical Ed25519 key without affecting ordinary OVF inputs."""
+    customizer = load_customizer()
+    properties = customizer.parse_ovf_environment(OVF_ENV)
+
+    assert customizer.validate_properties(properties)["development_admin_ssh_public_key"] == ""
+
+    properties[customizer.PROPERTY_DEVELOPMENT_ADMIN_SSH_PUBLIC_KEY] = VALID_ED25519_PUBLIC_KEY
+    config = customizer.validate_properties(properties)
+    summary = customizer.redacted_summary(config)
+
+    assert config["development_admin_ssh_public_key"] == VALID_ED25519_PUBLIC_KEY
+    assert summary["development_admin_ssh_key_set"] is True
+    assert summary["development_admin_passwordless_sudo"] is True
+    assert VALID_ED25519_PUBLIC_KEY not in str(summary)
+
+
+@pytest.mark.parametrize(
+    "candidate",
+    [
+        "ssh-rsa AAAAB3NzaC1yc2EAAAADAQABAAABAQ==",
+        "ssh-ed25519 not-base64",
+        "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAHw==",
+        f"{VALID_ED25519_PUBLIC_KEY}\nsecond-key",
+        f" {VALID_ED25519_PUBLIC_KEY}",
+        "x" * 4097,
+    ],
+)
+def test_vmware_ovf_customizer_rejects_unsafe_development_admin_keys(candidate):
+    """Reject malformed, non-Ed25519, multiline, and unbounded development keys.
+
+    Args:
+        candidate: Invalid public-key input under test.
+    """
+    customizer = load_customizer()
+
+    with pytest.raises(customizer.OvfCustomizationError, match="development_admin_ssh_public_key"):
+        customizer.validate_ed25519_public_key(candidate)
+
+
+def test_vmware_ovf_customizer_installs_development_key_and_validated_sudoers(
+    tmp_path, monkeypatch
+):
+    """Install exact key access idempotently with constrained ownership and modes.
+
+    Args:
+        tmp_path: Isolated filesystem root.
+        monkeypatch: Pytest monkeypatch fixture.
+    """
+    customizer = load_customizer()
+    home = tmp_path / "admin"
+    home.mkdir()
+    sudoers_directory = tmp_path / "sudoers.d"
+    sudoers_directory.mkdir()
+    customizer.DEVELOPMENT_ADMIN_SUDOERS_PATH = sudoers_directory / "atlaso-test-vm-admin"
+    account = type(
+        "Account",
+        (),
+        {"pw_dir": str(home), "pw_uid": 1001, "pw_gid": 1001},
+    )()
+    monkeypatch.setattr(customizer, "resolve_os_account", lambda username: account)
+    chowns = []
+    monkeypatch.setattr(
+        customizer,
+        "chown_path",
+        lambda path, uid, gid: chowns.append((Path(path), uid, gid)),
+    )
+    chmods = []
+
+    def record_chmod(path, mode):
+        """Record and emulate one POSIX mode change.
+
+        Args:
+            path: Exact path whose mode changes.
+            mode: Requested POSIX mode.
+        """
+        chmods.append((Path(path), mode))
+        Path(path).chmod(mode)
+
+    monkeypatch.setattr(customizer, "chmod_path", record_chmod)
+    if sys.platform == "win32":
+        def replace_readonly_file(source, destination):
+            """Emulate POSIX replacement despite Windows read-only attributes.
+
+            Args:
+                source: Prepared source file.
+                destination: Destination file to replace.
+            """
+            final_mode = source.stat().st_mode & 0o777
+            source.chmod(0o600)
+            if destination.exists():
+                destination.chmod(0o600)
+            source.replace(destination)
+            destination.chmod(final_mode)
+
+        def unlink_readonly_file(path):
+            """Remove a POSIX-read-only test file on Windows.
+
+            Args:
+                path: Exact test file to remove.
+            """
+            if path.exists():
+                path.chmod(0o600)
+                path.unlink()
+
+        monkeypatch.setattr(customizer, "replace_path_atomic", replace_readonly_file)
+        monkeypatch.setattr(customizer, "unlink_path", unlink_readonly_file)
+    monkeypatch.setattr(customizer.shutil, "which", lambda command: "/usr/sbin/visudo" if command == "visudo" else None)
+    visudo_calls = []
+
+    def run_visudo(command, **kwargs):
+        """Validate the generated sudoers candidate without invoking Linux visudo.
+
+        Args:
+            command: Requested visudo command line.
+            **kwargs: Subprocess options supplied by the customizer.
+
+        Returns:
+            A successful simulated subprocess result.
+        """
+        assert command[:2] == ["/usr/sbin/visudo", "-cf"]
+        candidate = Path(command[2])
+        assert candidate.read_text(encoding="utf-8").endswith(
+            "admin ALL=(ALL) NOPASSWD: ALL\n"
+        )
+        visudo_calls.append(candidate)
+        return subprocess.CompletedProcess(command, 0)
+
+    monkeypatch.setattr(customizer.subprocess, "run", run_visudo)
+
+    customizer.configure_development_admin_ssh("admin", VALID_ED25519_PUBLIC_KEY)
+    customizer.configure_development_admin_ssh("admin", VALID_ED25519_PUBLIC_KEY)
+
+    authorized_keys = home / ".ssh" / "authorized_keys"
+    assert authorized_keys.read_text(encoding="utf-8") == f"{VALID_ED25519_PUBLIC_KEY}\n"
+    if sys.platform == "win32":
+        assert (home / ".ssh", 0o700) in chmods
+        assert any(path.name.startswith(".authorized_keys.") and mode == 0o600 for path, mode in chmods)
+        assert any(path.name.startswith(".atlaso-test-vm-admin.") and mode == 0o440 for path, mode in chmods)
+    else:
+        assert authorized_keys.stat().st_mode & 0o777 == 0o600
+        assert (home / ".ssh").stat().st_mode & 0o777 == 0o700
+        assert customizer.DEVELOPMENT_ADMIN_SUDOERS_PATH.stat().st_mode & 0o777 == 0o440
+    assert len(visudo_calls) == 2
+    assert any(
+        path.name.startswith(".authorized_keys.") and uid == 1001 and gid == 1001
+        for path, uid, gid in chowns
+    )
+
+
+def test_vmware_ovf_customizer_restores_authorized_keys_when_sudoers_validation_fails(
+    tmp_path, monkeypatch
+):
+    """Leave prior administrator access unchanged when the sudoers candidate is invalid.
+
+    Args:
+        tmp_path: Isolated filesystem root.
+        monkeypatch: Pytest monkeypatch fixture.
+    """
+    customizer = load_customizer()
+    home = tmp_path / "admin"
+    ssh_directory = home / ".ssh"
+    ssh_directory.mkdir(parents=True)
+    authorized_keys = ssh_directory / "authorized_keys"
+    authorized_keys.write_text("prior-key\n", encoding="utf-8")
+    sudoers_directory = tmp_path / "sudoers.d"
+    sudoers_directory.mkdir()
+    customizer.DEVELOPMENT_ADMIN_SUDOERS_PATH = sudoers_directory / "atlaso-test-vm-admin"
+    account = type(
+        "Account",
+        (),
+        {"pw_dir": str(home), "pw_uid": 1001, "pw_gid": 1001},
+    )()
+    monkeypatch.setattr(customizer, "resolve_os_account", lambda username: account)
+    monkeypatch.setattr(customizer, "chown_path", lambda path, uid, gid: None)
+    if sys.platform == "win32":
+        def unlink_readonly_file(path):
+            """Remove a POSIX-read-only test file on Windows.
+
+            Args:
+                path: Exact test file to remove.
+            """
+            if path.exists():
+                path.chmod(0o600)
+                path.unlink()
+
+        monkeypatch.setattr(customizer, "unlink_path", unlink_readonly_file)
+    monkeypatch.setattr(customizer.shutil, "which", lambda command: "/usr/sbin/visudo")
+
+    def reject_sudoers(command, **kwargs):
+        """Simulate a sudoers syntax-validation failure.
+
+        Args:
+            command: Requested visudo command line.
+            **kwargs: Subprocess options supplied by the customizer.
+
+        Raises:
+            subprocess.CalledProcessError: Always, to exercise rollback.
+        """
+        raise subprocess.CalledProcessError(1, command)
+
+    monkeypatch.setattr(customizer.subprocess, "run", reject_sudoers)
+
+    with pytest.raises(customizer.OvfCustomizationError, match="passwordless sudo validation failed"):
+        customizer.configure_development_admin_ssh("admin", VALID_ED25519_PUBLIC_KEY)
+
+    assert authorized_keys.read_text(encoding="utf-8") == "prior-key\n"
+    assert not customizer.DEVELOPMENT_ADMIN_SUDOERS_PATH.exists()
+
+
+def test_vmware_ovf_customizer_rolls_back_both_files_after_sudoers_replace_failure(
+    tmp_path, monkeypatch
+):
+    """Restore prior key and sudoers content if post-replacement persistence fails.
+
+    Args:
+        tmp_path: Isolated filesystem root.
+        monkeypatch: Pytest monkeypatch fixture.
+    """
+    customizer = load_customizer()
+    home = tmp_path / "admin"
+    ssh_directory = home / ".ssh"
+    ssh_directory.mkdir(parents=True)
+    authorized_keys = ssh_directory / "authorized_keys"
+    authorized_keys.write_text("prior-key\n", encoding="utf-8")
+    sudoers_directory = tmp_path / "sudoers.d"
+    sudoers_directory.mkdir()
+    sudoers_path = sudoers_directory / "atlaso-test-vm-admin"
+    sudoers_path.write_text("prior sudoers\n", encoding="utf-8")
+    customizer.DEVELOPMENT_ADMIN_SUDOERS_PATH = sudoers_path
+    account = type(
+        "Account",
+        (),
+        {"pw_dir": str(home), "pw_uid": 1001, "pw_gid": 1001},
+    )()
+    monkeypatch.setattr(customizer, "resolve_os_account", lambda username: account)
+    monkeypatch.setattr(customizer, "chown_path", lambda path, uid, gid: None)
+    monkeypatch.setattr(customizer.shutil, "which", lambda command: "/usr/sbin/visudo")
+    monkeypatch.setattr(
+        customizer.subprocess,
+        "run",
+        lambda command, **kwargs: subprocess.CompletedProcess(command, 0),
+    )
+
+    if sys.platform == "win32":
+        def replace_readonly_file(source, destination):
+            """Emulate POSIX replacement despite Windows read-only attributes.
+
+            Args:
+                source: Prepared source file.
+                destination: Destination file to replace.
+            """
+            final_mode = source.stat().st_mode & 0o777
+            source.chmod(0o600)
+            if destination.exists():
+                destination.chmod(0o600)
+            source.replace(destination)
+            destination.chmod(final_mode)
+
+        def unlink_readonly_file(path):
+            """Remove a POSIX-read-only test file on Windows.
+
+            Args:
+                path: Exact test file to remove.
+            """
+            if path.exists():
+                path.chmod(0o600)
+                path.unlink()
+
+        monkeypatch.setattr(customizer, "replace_path_atomic", replace_readonly_file)
+        monkeypatch.setattr(customizer, "unlink_path", unlink_readonly_file)
+
+    original_fsync_parent = customizer.fsync_parent_directory
+    failed = False
+
+    def fail_first_new_sudoers_sync(path):
+        """Fail only the first directory sync after new sudoers replacement.
+
+        Args:
+            path: Destination whose parent is being synchronized.
+
+        Raises:
+            OSError: Once, after the new sudoers content has been installed.
+        """
+        nonlocal failed
+        candidate = Path(path)
+        if candidate == sudoers_path and not failed and b"NOPASSWD" in candidate.read_bytes():
+            failed = True
+            raise OSError("simulated sudoers directory sync failure")
+        original_fsync_parent(candidate)
+
+    monkeypatch.setattr(customizer, "fsync_parent_directory", fail_first_new_sudoers_sync)
+
+    with pytest.raises(customizer.OvfCustomizationError, match="passwordless sudo validation failed"):
+        customizer.configure_development_admin_ssh("admin", VALID_ED25519_PUBLIC_KEY)
+
+    assert failed is True
+    assert authorized_keys.read_text(encoding="utf-8") == "prior-key\n"
+    assert sudoers_path.read_text(encoding="utf-8") == "prior sudoers\n"
 
 
 def test_vmware_ovf_customizer_rejects_empty_or_whitespace_passwords():
@@ -1563,6 +1870,10 @@ def test_vmware_ovf_customizer_rotates_clone_specific_env_secrets(tmp_path, monk
     customizer.set_password = lambda username, password: None
     customizer.set_hostname = lambda fqdn: None
     customizer.configure_root_ssh = lambda enabled: None
+    development_ssh = []
+    customizer.configure_development_admin_ssh = lambda username, key: development_ssh.append(
+        (username, key)
+    )
     scrubbed = []
 
     def clear_ovf_environment():
@@ -1587,6 +1898,7 @@ def test_vmware_ovf_customizer_rotates_clone_specific_env_secrets(tmp_path, monk
     properties = customizer.parse_ovf_environment(OVF_ENV)
     properties["atlaso.ipv6_enabled"] = "true"
     properties["atlaso.root_ssh_enabled"] = "true"
+    properties[customizer.PROPERTY_DEVELOPMENT_ADMIN_SSH_PUBLIC_KEY] = VALID_ED25519_PUBLIC_KEY
     config = customizer.validate_properties(properties)
 
     summary = customizer.apply_customization(config)
@@ -1604,9 +1916,12 @@ def test_vmware_ovf_customizer_rotates_clone_specific_env_secrets(tmp_path, monk
     assert console_restarted == [True]
     assert synchronized == [True]
     assert scrubbed == [True]
+    assert development_ssh == [("admin", VALID_ED25519_PUBLIC_KEY)]
     assert marker["cidr"] == "192.168.10.10/24"
     assert "admin-secret" not in str(marker)
     assert "root-secret1" not in str(marker)
+    assert VALID_ED25519_PUBLIC_KEY not in str(marker)
+    assert marker["development_admin_ssh_key_set"] is True
 
 
 def test_vmware_ovf_export_and_image_plumbing_are_present():
@@ -1699,6 +2014,7 @@ def test_vmware_ovf_export_and_image_plumbing_are_present():
     assert "$property.RemoveAttribute('password', $vmwNamespace)" in export_script
     assert "-Key 'admin_password'" in export_script and "-Password $true -MinLength 12" in export_script
     assert "-Key 'root_password'" in export_script and "-Password $true -MinLength 12" in export_script
+    assert "development_admin_ssh_public_key" not in export_script
     assert "-Name 'qualifiers' -Value \"MinLen($MinLength)\"" in export_script
     assert "Atlaso Management Network" in export_script
     assert "Atlaso Services Network" in export_script
