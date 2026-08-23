@@ -13022,6 +13022,8 @@ function validApplianceUpdateAvailabilityPayload(payload) {
     const match = /^https:\/\/([^/?#]+)(?:[/?#]|$)/i.exec(value);
     if (!match) return false;
     const authority = match[1];
+    const normalizedNetloc = authority.replace(/[@:#?]/g, "").normalize("NFKC");
+    if (["/", "?", "#", "@", ":"].some((delimiter) => normalizedNetloc.includes(delimiter))) return false;
     const credentialSeparator = authority.lastIndexOf("@");
     let hostPort = authority;
     if (credentialSeparator >= 0) {
