@@ -345,6 +345,37 @@ def test_running_hard_link_alias_is_matched_by_filesystem_identity(tmp_path: Pat
     assert "stop" in [command[2] for command in _commands(log)]
 
 
+def test_registered_hard_link_alias_uses_deletevm(tmp_path: Path) -> None:
+    """An out-of-root library alias still identifies the registered target."""
+    root = tmp_path / "artifacts" / "vm"
+    vmx = root / "Atlaso.vmx"
+    alias = tmp_path / "aliases" / "Atlaso-alias.vmx"
+    _write_vmx(vmx)
+    alias.parent.mkdir(parents=True)
+    os.link(vmx, alias)
+    vmrun, environment, log, inventory = _write_fake_vmrun(
+        tmp_path / "fake", [vmx], registered=True
+    )
+    inventory.write_text(
+        '.encoding = "UTF-8"\n'
+        f'vmlist1.config = "{alias.resolve()}"\n'
+        f'index0.id = "{alias.resolve()}"\n'
+        'index.count = "1"\n',
+        encoding="utf-8",
+    )
+
+    result = _run_root_cleanup(
+        tmp_path,
+        removal_root=root,
+        expected_root=root,
+        vmrun_path=vmrun,
+        environment=environment,
+    )
+
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert [command[2] for command in _commands(log)].count("deleteVM") == 1
+
+
 def test_already_unregistered_vm_uses_filesystem_cleanup_only(tmp_path: Path) -> None:
     """An existing unregistered target remains an idempotent cleanup case."""
     root = tmp_path / "artifacts" / "vm"
@@ -687,4 +718,8 @@ def test_module_keeps_inventory_work_out_of_normal_delete_path() -> None:
     assert normal_path.count("Confirm-AtlasoWorkstationVmInactive") >= 2
     assert "[System.IO.File]::Replace($temporaryPath, $VmxPath, $backupPath, $true)" in module
     assert "[System.IO.FileShare]::Read -bor [System.IO.FileShare]::Delete" in module
-    assert len(module.splitlines()) < 1_000
+    assert "Get-AtlasoScopedInventoryEntriesFromLines -Lines $lines" in module
+    assert "-ExpectedCurrentIdentity $Detachment.OriginalIdentity" in module
+    assert "-ReplacementIdentity $displacedIdentity" in module
+    assert "-PreserveCapturedOnSuccess" in module
+    assert len(module.splitlines()) < 1_100
