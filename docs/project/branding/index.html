@@ -3541,7 +3541,9 @@ elements, or adding shadows.</p>
 </ul>
 <p>The PWA manifest uses the dark 192 and 512 pixel application icons as maskable icons. Its start URL and service-worker
 scope are restricted to <code>/ui/management/</code>; public UI caching is disabled. Browser templates also expose the SVG mark
-and the 180 pixel Apple touch icon.</p>
+and the 180 pixel Apple touch icon. The cached management offline fallback uses the horizontal light SVG within the
+same bounded, aspect-preserving logo presentation as the sign-in card so the recovery copy remains readable at narrow
+viewports and browser zoom.</p>
 <h2 id="appliance-boot">Appliance boot<a class="headerlink" href="#appliance-boot" title="Permanent link">&para;</a></h2>
 <p><code>image/common/boot/grub/atlaso.png</code> is a deterministic 640×480 composition derived from the Atlaso dark application
 icon. It carries the headline and retains the required <strong>Powered by Photon OS</strong> attribution. GRUB timing, boot entries,
