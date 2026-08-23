@@ -191,6 +191,13 @@ interfaces and VLANs cannot set these fields. IPv4 DHCP and IPv6 Disabled or Aut
 gateway. Lab route gateways remain owned by Routes & WAN Simulation in table `200`, allowing management and lab traffic
 to use different exits.
 
+For the Physical Interfaces DHCP-to-static action, Atlaso reads `ip -j -4 route show default`, accepts only a usable
+IPv4 route whose protocol is DHCP and whose device matches the row, and proposes the lowest-metric result. Browser
+review preserves it only when it is on-link for the observed CIDR and differs from the interface address. Saving the
+conversion writes that gateway through the same physical-interface domain transaction, rendered Network preview,
+protected management handoff, baseline commit, and rollback contract as a manual static gateway edit. An empty gateway
+is permitted only as an explicit operator choice accompanied by the routed-connectivity warning.
+
 A physical management role exposes `/ui/management` inherently. Addressed access-mode physical interfaces and enabled
 access VLANs may additionally persist `access_management_ui_enabled=true`. This does not change their routing domain or
 service-binding eligibility. Desired-state and helper validation allow zero or one dedicated management physical

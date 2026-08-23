@@ -1028,6 +1028,7 @@ def test_management_dhcp_interface_can_be_saved_as_static_from_observed_addresse
 
     login(client)
     monkeypatch.setattr("atlaso.app.services.appliance_settings.observed_management_dhcp_dns_servers", lambda interface_name: ["127.0.0.1", "::1", "192.168.167.2", "192.168.167.3"])
+    monkeypatch.setattr("atlaso.app.ui.discover_host_ipv4_default_gateways", lambda: {"eth0": "192.168.167.2"})
     with SessionLocal() as db:
         appliance_settings = db.execute(select(ApplianceSettings)).scalar_one()
         appliance_settings.external_dns_servers = ""
@@ -1047,6 +1048,8 @@ def test_management_dhcp_interface_can_be_saved_as_static_from_observed_addresse
     payload = page.text.split("data-interfaces='", 1)[1].split("'", 1)[0]
     rows = json.loads(html.unescape(payload))
     eth0_row = next(row for row in rows if row["name"] == "eth0")
+    assert eth0_row["host_ipv4_gateway"] == "192.168.167.2"
+    assert "Observed gateway" in page.text
     csrf = page.text.split('name="csrf" value="', 1)[1].split('"', 1)[0]
 
     response = client.post(
@@ -1056,6 +1059,7 @@ def test_management_dhcp_interface_can_be_saved_as_static_from_observed_addresse
             "mode": "access",
             "ipv4_method": "static",
             "ip_cidr": eth0_row["host_ip_cidr"],
+            "gateway": eth0_row["host_ipv4_gateway"],
             "ipv6_enabled": "on",
             "ipv6_cidr": eth0_row["host_ipv6_cidr"],
             "mtu": "1500",
@@ -1070,11 +1074,17 @@ def test_management_dhcp_interface_can_be_saved_as_static_from_observed_addresse
         eth0 = db.execute(select(PhysicalInterface).where(PhysicalInterface.name == "eth0")).scalar_one()
         assert eth0.ipv4_method == "static"
         assert eth0.ip_cidr == "192.168.167.219/24"
+        assert eth0.gateway == "192.168.167.2"
         assert eth0.ipv6_cidr == "fd00:167::219/64"
         appliance_settings = db.execute(select(ApplianceSettings)).scalar_one()
         dns_settings = db.execute(select(DnsSettings)).scalar_one()
         assert appliance_settings.external_dns_servers == "192.168.167.2\n192.168.167.3"
         assert dns_settings.upstream_servers == "192.168.167.2\n192.168.167.3"
+
+    review = client.get("/appliance-apply/review")
+    assert review.status_code == 200
+    assert "management IPv4 gateway 192.168.167.2" in review.text
+    assert "gateway=192.168.167.2" in review.text
 
 
 def test_management_physical_interface_cannot_be_disabled(client):

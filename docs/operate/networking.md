@@ -36,6 +36,18 @@ unreachable after apply.
 4. Review validation and rendered network previews.
 5. Submit the selected network units through [Appliance Apply](appliance-apply.md).
 
+### Convert management DHCP to static IPv4
+
+Use **Convert DHCP lease to static** from the management interface row menu. Atlaso reviews the observed IPv4 CIDR and
+the usable DHCP-learned gateway from that same interface before saving them as static desired state. Confirm that the
+address, prefix, and gateway match the intended network; the change does not reach Photon until global Appliance Apply.
+
+If no usable gateway is observed, the review shows **none** and warns that only same-subnet management will remain.
+That isolation is allowed when intentional. Clearing a populated **IPv4 Gateway** cell requires the same warning because
+off-subnet HTTPS, DNS, repository, and update access will stop after Apply. Off-link gateways and a gateway equal to the
+interface address remain invalid. Cancel the review or revert the pending Network desired state to retain the applied
+DHCP address and route; a failed protected management handoff rolls back to the last-applied DHCP path.
+
 ### Assign an interface role
 
 Physical and VLAN interfaces share one role contract:
