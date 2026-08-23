@@ -1478,7 +1478,9 @@ def test_reported_template_accessibility_contracts():
     resource_wizard = (templates / "partials" / "resource_wizard.html").read_text(encoding="utf-8")
 
     assert 'aria-selected="{{' not in appliance_update
-    assert "Recorded release, compatibility, and recovery evidence" in appliance_update
+    assert "Update transaction evidence" in appliance_update
+    assert "update_info_file.state == 'needs_attention'" in appliance_update
+    assert 'class="alert error" role="alert"' in appliance_update
     assert '{% set preview_label = "Appliance update evidence" %}' in appliance_update
     assert '{% set preview_title = "Appliance Update evidence" %}' in appliance_update
     assert '<pre><code class="language-json">{{ update_info_file.content }}</code></pre>' not in appliance_update

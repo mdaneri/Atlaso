@@ -49,6 +49,576 @@ def load_helper_module():
     return module
 
 
+def test_update_evidence_state_distinguishes_normal_absence_and_read_only_checks(tmp_path):
+    """Keep source, fresh packaged, and read-only states neutral without fabricating evidence.
+
+    Args:
+        tmp_path: Temporary directory provided by pytest.
+    """
+    from atlaso.app.services.appliance_update import appliance_update_evidence_state
+
+    missing_info = tmp_path / "update-info"
+    missing_finalizer = tmp_path / "finalizer.json"
+    source_state = appliance_update_evidence_state(
+        update_info_path=str(missing_info), finalizer_path=str(missing_finalizer)
+    )
+    packaged_state = appliance_update_evidence_state(
+        update_info_path=str(missing_info), finalizer_path=str(missing_finalizer)
+    )
+    check_state = appliance_update_evidence_state(
+        update_info_path=str(missing_info), finalizer_path=str(missing_finalizer)
+    )
+
+    assert source_state["state"] == "not_recorded"
+    assert packaged_state["label"] == "Not recorded"
+    assert check_state["state"] == "not_recorded"
+    assert "No such file" not in check_state["message"]
+
+
+def test_update_evidence_state_validates_available_and_actionable_records(tmp_path):
+    """Expose valid evidence and flag missing, unreadable, malformed, or inconsistent records.
+
+    Args:
+        tmp_path: Temporary directory provided by pytest.
+    """
+    from atlaso.app.services.appliance_update import appliance_update_evidence_state
+
+    info_path = tmp_path / "update-info"
+    finalizer_path = tmp_path / "finalizer.json"
+    aggregate = {
+        "status": "succeeded",
+        "job_id": "job-3",
+        "applied": {"photon_os": {}},
+        "attempted": {"photon_os": {}},
+        "commands": [],
+        "reboot_recommended": False,
+        "restart_required": False,
+        "selected_streams": ["photon_os"],
+        "finished_at": "2026-08-22T20:00:01+00:00",
+        "finalizer_status_path": "",
+    }
+    finalizer = {
+        "status": "succeeded",
+        "job_id": "job-3",
+        "release": "0.9.186",
+        "candidate_version": "0.9.186",
+        "compatibility": {},
+        "rolled_back": False,
+        "commands": [],
+        "finished_at": "2026-08-22T20:00:00+00:00",
+    }
+    expected_missing = appliance_update_evidence_state(
+        qualifying_install_expected=True,
+        update_info_path=str(info_path),
+        finalizer_path=str(finalizer_path),
+    )
+    assert expected_missing["state"] == "needs_attention"
+    assert "No such file" not in expected_missing["message"]
+
+    info_path.write_text(json.dumps(aggregate), encoding="utf-8")
+    available = appliance_update_evidence_state(
+        qualifying_install_expected=True,
+        update_info_path=str(info_path),
+        finalizer_path=str(finalizer_path),
+    )
+    assert available["state"] == "available"
+    assert available["label"] == "Available"
+    assert available["content"].startswith("{")
+
+    matching_task = appliance_update_evidence_state(
+        qualifying_install_job_id="job-3",
+        qualifying_install_stream="photon_os",
+        qualifying_install_started_at=datetime(2026, 8, 22, 19, 59, tzinfo=timezone.utc),
+        update_info_path=str(info_path),
+        finalizer_path=str(finalizer_path),
+    )
+    assert matching_task["state"] == "available"
+
+    later_stream = appliance_update_evidence_state(
+        qualifying_install_job_id="job-3",
+        qualifying_install_stream="powershell_modules",
+        qualifying_install_started_at=datetime(2026, 8, 22, 20, 0, 2, tzinfo=timezone.utc),
+        update_info_path=str(info_path),
+        finalizer_path=str(finalizer_path),
+    )
+    assert later_stream["state"] == "needs_attention"
+
+    stale_task = appliance_update_evidence_state(
+        qualifying_install_job_id="job-4",
+        qualifying_install_started_at=datetime(2026, 8, 22, 20, 0, 2, tzinfo=timezone.utc),
+        update_info_path=str(info_path),
+        finalizer_path=str(finalizer_path),
+    )
+    assert stale_task["state"] == "needs_attention"
+
+    legacy_aggregate = dict(aggregate)
+    legacy_aggregate.pop("job_id")
+    legacy_aggregate.pop("selected_streams")
+    info_path.write_text(json.dumps(legacy_aggregate), encoding="utf-8")
+    stale_legacy_task = appliance_update_evidence_state(
+        qualifying_install_job_id="job-legacy-latest",
+        qualifying_install_started_at=datetime(2026, 8, 22, 20, 0, 2, tzinfo=timezone.utc),
+        update_info_path=str(info_path),
+        finalizer_path=str(finalizer_path),
+    )
+    assert stale_legacy_task["state"] == "needs_attention"
+
+    current_legacy_task = appliance_update_evidence_state(
+        qualifying_install_job_id="job-legacy-current",
+        qualifying_install_started_at=datetime(2026, 8, 22, 19, 59, tzinfo=timezone.utc),
+        update_info_path=str(info_path),
+        finalizer_path=str(finalizer_path),
+    )
+    assert current_legacy_task["state"] == "available"
+
+    legacy_finalizer = {
+        "status": "succeeded",
+        "job_id": "job-legacy",
+        "release": "0.9.185",
+        "git_commit": "a" * 40,
+        "bundle_sha256": "b" * 64,
+        "release_manifest_sha256": "c" * 64,
+        "rolled_back": False,
+        "service_health": True,
+    }
+    info_path.write_text(json.dumps(legacy_finalizer), encoding="utf-8")
+    finalizer_path.write_text(json.dumps(legacy_finalizer), encoding="utf-8")
+    legacy_available = appliance_update_evidence_state(
+        update_info_path=str(info_path), finalizer_path=str(finalizer_path)
+    )
+    assert legacy_available["state"] == "available"
+
+    unmarked_legacy = dict(legacy_finalizer)
+    unmarked_legacy.pop("service_health")
+    info_path.write_text(json.dumps(unmarked_legacy), encoding="utf-8")
+    finalizer_path.write_text(json.dumps(unmarked_legacy), encoding="utf-8")
+    invalid_legacy = appliance_update_evidence_state(
+        update_info_path=str(info_path), finalizer_path=str(finalizer_path)
+    )
+    assert invalid_legacy["state"] == "needs_attention"
+
+    rollback_finalizer = {**finalizer, "status": "failed", "rolled_back": True}
+    rollback = {
+        "status": "failed",
+        "success": False,
+        "release": "0.9.186",
+        "rolled_back": True,
+        "host_facing_ready": True,
+        "failure_layer": "candidate_health",
+        "rollback_health": {"openapi": {"success": True}},
+        "rollback_failures": [],
+        "error": "Candidate readiness failed and the previous release was restored.",
+        "finished_at": "2026-08-22T20:00:01+00:00",
+    }
+    info_path.write_text(json.dumps(rollback), encoding="utf-8")
+    finalizer_path.write_text(json.dumps(rollback_finalizer), encoding="utf-8")
+    rollback_available = appliance_update_evidence_state(
+        update_info_path=str(info_path), finalizer_path=str(finalizer_path)
+    )
+    assert rollback_available["state"] == "available"
+
+    info_path.write_text(json.dumps({**rollback, "release": "0.9.184"}), encoding="utf-8")
+    rollback_mismatch = appliance_update_evidence_state(
+        update_info_path=str(info_path), finalizer_path=str(finalizer_path)
+    )
+    assert rollback_mismatch["state"] == "needs_attention"
+    finalizer_path.unlink()
+
+    for incompatible in (
+        {"status": "arbitrary"},
+        {"status": 123},
+        {"status": "succeeded", "commands": []},
+        {**aggregate, "reboot_recommended": "false"},
+        {**aggregate, "selected_streams": ["unknown"]},
+        {**aggregate, "selected_streams": ["atlaso_release"]},
+        {**aggregate, "finalizer_status_path": str(finalizer_path)},
+    ):
+        info_path.write_text(json.dumps(incompatible), encoding="utf-8")
+        incompatible_state = appliance_update_evidence_state(
+            update_info_path=str(info_path), finalizer_path=str(finalizer_path)
+        )
+        assert incompatible_state["state"] == "needs_attention"
+
+    info_path.write_text("not-json", encoding="utf-8")
+    malformed = appliance_update_evidence_state(
+        update_info_path=str(info_path), finalizer_path=str(finalizer_path)
+    )
+    assert malformed["state"] == "needs_attention"
+
+    unreadable_path = tmp_path / "update-info-directory"
+    unreadable_path.mkdir()
+    unreadable = appliance_update_evidence_state(
+        update_info_path=str(unreadable_path), finalizer_path=str(finalizer_path)
+    )
+    assert unreadable["state"] == "needs_attention"
+
+    invalid_utf8_path = tmp_path / "update-info-invalid-utf8"
+    invalid_utf8_path.write_bytes(b'\xff{"status":"succeeded"}')
+    invalid_utf8 = appliance_update_evidence_state(
+        update_info_path=str(invalid_utf8_path), finalizer_path=str(finalizer_path)
+    )
+    assert invalid_utf8["state"] == "needs_attention"
+
+    info_path.write_text(json.dumps({**finalizer, "job_id": "job-1"}), encoding="utf-8")
+    missing_paired_finalizer = appliance_update_evidence_state(
+        update_info_path=str(info_path), finalizer_path=str(finalizer_path)
+    )
+    assert missing_paired_finalizer["state"] == "needs_attention"
+
+    finalizer_path.write_text(json.dumps({**finalizer, "job_id": "job-2"}), encoding="utf-8")
+    inconsistent = appliance_update_evidence_state(
+        update_info_path=str(info_path), finalizer_path=str(finalizer_path)
+    )
+    assert inconsistent["state"] == "needs_attention"
+    assert "inconsistent" in inconsistent["message"]
+
+    info_path.write_text(
+        json.dumps({**finalizer, "commands": [{"success": True, "layer": "old"}]}),
+        encoding="utf-8",
+    )
+    finalizer_path.write_text(
+        json.dumps({**finalizer, "commands": [{"success": True, "layer": "recovered"}]}),
+        encoding="utf-8",
+    )
+    stale_direct_finalizer = appliance_update_evidence_state(
+        update_info_path=str(info_path), finalizer_path=str(finalizer_path)
+    )
+    assert stale_direct_finalizer["state"] == "needs_attention"
+
+    info_path.write_text(
+        json.dumps({**finalizer, "status": "failed", "job_id": "job-2"}),
+        encoding="utf-8",
+    )
+    inconsistent_status = appliance_update_evidence_state(
+        update_info_path=str(info_path), finalizer_path=str(finalizer_path)
+    )
+    assert inconsistent_status["state"] == "needs_attention"
+
+    finalizer_path.write_text(json.dumps(finalizer), encoding="utf-8")
+    info_path.write_text(
+        json.dumps(
+            {
+                **aggregate,
+                "selected_streams": ["atlaso_release"],
+                "finalizer_status_path": str(finalizer_path),
+            }
+        ),
+        encoding="utf-8",
+    )
+    bound = appliance_update_evidence_state(
+        update_info_path=str(info_path), finalizer_path=str(finalizer_path)
+    )
+    assert bound["state"] == "available"
+
+    info_path.write_text(
+        json.dumps(
+            {
+                **aggregate,
+                "selected_streams": ["atlaso_release"],
+                "finished_at": "2026-08-22T19:59:59+00:00",
+                "finalizer_status_path": str(finalizer_path),
+            }
+        ),
+        encoding="utf-8",
+    )
+    stale = appliance_update_evidence_state(
+        update_info_path=str(info_path), finalizer_path=str(finalizer_path)
+    )
+    assert stale["state"] == "needs_attention"
+
+    info_path.write_text(
+        json.dumps(
+            {
+                **aggregate,
+                "selected_streams": ["atlaso_release"],
+                "finished_at": "2026-08-22T20:00:01",
+                "finalizer_status_path": str(finalizer_path),
+            }
+        ),
+        encoding="utf-8",
+    )
+    mixed_timezone = appliance_update_evidence_state(
+        update_info_path=str(info_path), finalizer_path=str(finalizer_path)
+    )
+    assert mixed_timezone["state"] == "needs_attention"
+
+
+def test_update_evidence_panel_accessibility_states(client, monkeypatch):
+    """Render neutral evidence without an alert and actionable evidence with one.
+
+    Args:
+        client: HTTP test client used to render the management page.
+        monkeypatch: Pytest fixture used to replace the evidence projection.
+    """
+    from atlaso.app import ui
+
+    login(client)
+    states = {
+        "state": "not_recorded",
+        "label": "Not recorded",
+        "available": False,
+        "content": "",
+        "message": "No qualifying update transaction has recorded durable evidence yet.",
+    }
+    monkeypatch.setattr(ui, "appliance_update_evidence_state", lambda **_kwargs: states)
+    neutral = client.get("/ui/management/appliance-update")
+    panel = neutral.text.split("<h2>Update transaction evidence</h2>", 1)[1].split("</div>\n    </div>", 1)[0]
+    assert "Not recorded" in panel
+    assert 'role="alert"' not in panel
+    assert "No such file" not in neutral.text
+
+    states.update(
+        state="needs_attention",
+        label="Needs attention",
+        message="Durable update transaction evidence cannot be read. Review the Appliance Update task.",
+    )
+    actionable = client.get("/ui/management/appliance-update")
+    panel = actionable.text.split("<h2>Update transaction evidence</h2>", 1)[1].split("</aside>", 1)[0]
+    assert "Needs attention" in panel
+    assert 'role="alert"' in panel
+
+    from atlaso.app.database import SessionLocal
+    from atlaso.app.models import Job, JobStep
+
+    with SessionLocal() as db:
+        db.add(
+            Job(
+                id="job_real_evidence_expected",
+                type="appliance-update",
+                status="succeeded",
+                created_by="admin",
+                task_config_json=json.dumps({"mode": "run", "selected_streams": ["atlaso_release"]}),
+                result=json.dumps({"dry_run": False, "apply_started": False}),
+            )
+        )
+        db.add(
+            JobStep(
+                id="job_real_evidence_expected:atlaso_release",
+                job_id="job_real_evidence_expected",
+                component_key="atlaso_release",
+                label="Atlaso release",
+                position=0,
+                status="succeeded",
+                started_at=datetime(2026, 8, 22, 20, 0, tzinfo=timezone.utc),
+                result=json.dumps({"apply_started": False}),
+            )
+        )
+        db.commit()
+    captured: dict[str, object] = {}
+
+    def capture_expected_state(**kwargs):
+        """Capture the bounded durable-task existence projection.
+
+        Args:
+            **kwargs: Evidence projection keyword arguments.
+        """
+        captured.update(kwargs)
+        return states
+
+    monkeypatch.setattr(ui, "appliance_update_evidence_state", capture_expected_state)
+    client.get("/ui/management/appliance-update")
+    assert captured["qualifying_install_job_id"] == ""
+
+    with SessionLocal() as db:
+        job = db.get(Job, "job_real_evidence_expected")
+        assert job is not None
+        job.result = json.dumps({"dry_run": False, "apply_started": True})
+        step = db.get(JobStep, "job_real_evidence_expected:atlaso_release")
+        assert step is not None
+        step.result = json.dumps({"dry_run": False, "apply_started": True})
+        db.add(job)
+        db.add(step)
+        db.commit()
+    client.get("/ui/management/appliance-update")
+    assert captured["qualifying_install_job_id"] == "job_real_evidence_expected"
+    assert captured["qualifying_install_stream"] == "atlaso_release"
+    assert isinstance(captured["qualifying_install_started_at"], datetime)
+
+    with SessionLocal() as db:
+        job = db.get(Job, "job_real_evidence_expected")
+        assert job is not None
+        job.result = json.dumps(
+            {
+                "dry_run": False,
+                "commands": [
+                    {
+                        "command_line": (
+                            "/opt/atlaso/bin/atlaso-helper appliance-update apply --real "
+                            "/var/lib/atlaso/apply/appliance-update/atlaso-update.json"
+                        )
+                    }
+                ],
+            }
+        )
+        step = db.get(JobStep, "job_real_evidence_expected:atlaso_release")
+        assert step is not None
+        step.result = job.result
+        db.add(job)
+        db.add(step)
+        db.commit()
+    client.get("/ui/management/appliance-update")
+    assert captured["qualifying_install_job_id"] == "job_real_evidence_expected"
+
+    with SessionLocal() as db:
+        job = db.get(Job, "job_real_evidence_expected")
+        assert job is not None
+        job.result = json.dumps(
+            {
+                "dry_run": False,
+                "commands": [
+                    {
+                        "command_line": (
+                            "sudo -n /opt/atlaso/bin/atlaso-helper appliance-update apply --real "
+                            "/var/lib/atlaso/apply/appliance-update/atlaso-update.json"
+                        )
+                    }
+                ],
+            }
+        )
+        step = db.get(JobStep, "job_real_evidence_expected:atlaso_release")
+        assert step is not None
+        step.result = job.result
+        db.add(job)
+        db.add(step)
+        db.commit()
+    client.get("/ui/management/appliance-update")
+    assert captured["qualifying_install_job_id"] == "job_real_evidence_expected"
+
+
+def test_real_install_marks_evidence_expected_only_after_apply_starts(monkeypatch):
+    """Distinguish a failed preflight from an invoked evidence-writing apply helper.
+
+    Args:
+        monkeypatch: Pytest fixture used to replace the system adapter and staging path.
+    """
+    from atlaso.app import ui
+
+    events: list[str] = []
+
+    class PreflightFailingAdapter:
+        """Reject the read-only check before apply can start."""
+
+        dry_run = False
+
+        def check_appliance_update_config(self, config_path: str) -> AdapterResult:
+            """Reject the read-only preflight.
+
+            Args:
+                config_path: Staged Appliance Update manifest path.
+            """
+            return AdapterResult(
+                command=["atlaso-helper", "appliance-update", "check", config_path],
+                dry_run=False,
+                stdout="",
+                stderr="preflight failed",
+                returncode=1,
+            )
+
+    class ApplyFailingAdapter:
+        """Return a successful check followed by a failed real apply."""
+
+        dry_run = False
+
+        def check_appliance_update_config(self, config_path: str) -> AdapterResult:
+            """Accept the read-only preflight.
+
+            Args:
+                config_path: Staged Appliance Update manifest path.
+            """
+            return AdapterResult(
+                command=["atlaso-helper", "appliance-update", "check", config_path],
+                dry_run=False,
+                stdout='{"checks":{}}',
+                stderr="",
+                returncode=0,
+            )
+
+        def apply_appliance_update_config(self, config_path: str) -> AdapterResult:
+            """Fail after the evidence-writing helper is invoked.
+
+            Args:
+                config_path: Staged Appliance Update manifest path.
+            """
+            events.append("apply")
+            return AdapterResult(
+                command=["atlaso-helper", "appliance-update", "apply", config_path],
+                dry_run=False,
+                stdout='{"status":"failed"}',
+                stderr="apply failed",
+                returncode=1,
+            )
+
+    monkeypatch.setattr(ui, "stage_appliance_apply_config", lambda _path, _preview: "atlaso-update.json")
+
+    monkeypatch.setattr(ui, "SystemAdapter", lambda: PreflightFailingAdapter())
+    preflight = ui.execute_appliance_update_job(
+        selected_stream_ids=["photon_os"],
+        settings={},
+        actor="admin",
+        mode="run",
+    )
+    assert preflight["apply_started"] is False
+
+    monkeypatch.setattr(ui, "SystemAdapter", lambda: ApplyFailingAdapter())
+    result = ui.execute_appliance_update_job(
+        selected_stream_ids=["photon_os"],
+        settings={},
+        actor="admin",
+        mode="run",
+        before_apply=lambda: events.append("persist"),
+    )
+    aggregate = ui.aggregate_appliance_update_results(
+        selected_stream_ids=["photon_os"],
+        settings={},
+        actor="admin",
+        mode="run",
+        stream_results=[result],
+    )
+
+    assert result["apply_started"] is True
+    assert aggregate["apply_started"] is True
+    assert events == ["persist", "apply"]
+
+
+def test_worker_persists_apply_started_for_interruption_recovery():
+    """Keep durable apply-started evidence when the worker is interrupted."""
+    from atlaso.app import ui, worker
+    from atlaso.app.database import SessionLocal
+    from atlaso.app.models import Job, JobStatus, JobStep
+
+    job_id = "job_apply_started_interruption"
+    with SessionLocal() as db:
+        job = Job(
+            id=job_id,
+            type="appliance-update",
+            status=JobStatus.RUNNING.value,
+            created_by="admin",
+            task_config_json=json.dumps({"mode": "run", "selected_streams": ["photon_os"]}),
+            result=json.dumps({"apply_started": False}),
+        )
+        db.add(job)
+        db.flush()
+        ui.ensure_appliance_update_job_steps(db, job=job, selected_streams=["photon_os"])
+        db.commit()
+
+    worker._mark_appliance_update_apply_started(job_id, "photon_os")
+
+    with SessionLocal() as db:
+        job = db.get(Job, job_id)
+        step = db.get(JobStep, f"{job_id}:photon_os")
+        assert job is not None
+        assert step is not None
+        assert json.loads(job.result or "{}")["apply_started"] is True
+        assert json.loads(step.result or "{}")["apply_started"] is True
+        recovered = worker._recovered_appliance_update_step_result(
+            job,
+            step,
+            status=JobStatus.FAILED.value,
+            error="The Atlaso worker restarted while this update stream was running.",
+        )
+        assert recovered["apply_started"] is True
+
+
 def seed_available_confirmations(streams: list[str]) -> None:
     """Persist fresh available confirmations for manual-install tests.
 
@@ -1398,7 +1968,9 @@ def test_software_source_and_managed_module_lifecycle(client):
     assert "Staged update manifest" in grouped_page.text
     assert 'data-config-preview-open' in grouped_page.text
     assert '<div class="config-preview">' not in grouped_page.text
-    assert grouped_page.text.index("Update Info") < grouped_page.text.index('data-appliance-update-validation-panel')
+    assert grouped_page.text.index("Update transaction evidence") < grouped_page.text.index(
+        'data-appliance-update-validation-panel'
+    )
     source_actions = grouped_page.text.index('class="appliance-update-source-actions"')
     source_list = grouped_page.text.index('class="apply-unit-list"', source_actions)
     assert source_actions < source_list
@@ -2799,13 +3371,21 @@ def test_helper_writes_failed_update_info_for_failed_commands(monkeypatch):
     monkeypatch.setattr(helper, "_command_path", lambda command: command)
     monkeypatch.setattr(helper, "_write_update_info", lambda payload: written.update(payload))
 
-    result = helper._apply_appliance_update({"selected_streams": ["photon_os"], "sources": {}})
+    result = helper._apply_appliance_update(
+        {
+            "job_id": "job_photon_evidence_identity",
+            "selected_streams": ["photon_os"],
+            "sources": {},
+        }
+    )
     assert result["status"] == "failed"
     assert result["applied"] == {}
     assert result["attempted"]["photon_os"]["automatic_rpm_rollback"] is False
     assert result["reboot_recommended"] is False
     assert "error" in result
     assert written["status"] == "failed"
+    assert written["job_id"] == "job_photon_evidence_identity"
+    assert written["selected_streams"] == ["photon_os"]
 
 
 def test_helper_queries_photon_python_without_unsupported_latest_limit(monkeypatch):
