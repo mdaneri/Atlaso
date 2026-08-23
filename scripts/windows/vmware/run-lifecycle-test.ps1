@@ -40,6 +40,7 @@ param(
 $ErrorActionPreference = 'Stop'
 . (Join-Path $PSScriptRoot 'Atlaso.WorkstationFirstBoot.ps1')
 Import-Module (Join-Path $PSScriptRoot 'Atlaso.WorkstationCleanup.psm1') -Force
+Import-Module (Join-Path $PSScriptRoot 'Atlaso.VmwarePayload.psm1') -Force
 
 $repoRoot = Resolve-Path -LiteralPath (Join-Path $PSScriptRoot '..\..\..')
 if (-not $SshPassword) {
@@ -372,10 +373,12 @@ function Copy-VmDirectory {
     )
 
     Assert-SafeLifecycleName -Name $Name
+    $resolvedSourceVmx = (Resolve-Path -LiteralPath $SourceVmx).Path
+    Assert-AtlasoVmwarePayloadProvenance -VmxPath $resolvedSourceVmx | Out-Null
     if (Test-Path -LiteralPath $DestinationDirectory) {
         throw "Lifecycle VM directory already exists: $DestinationDirectory"
     }
-    $sourceDirectory = Split-Path -Parent (Resolve-Path -LiteralPath $SourceVmx)
+    $sourceDirectory = Split-Path -Parent $resolvedSourceVmx
     if ($PSCmdlet.ShouldProcess($DestinationDirectory, "Copy Workstation VM $Name")) {
         Copy-Item -LiteralPath $sourceDirectory -Destination $DestinationDirectory -Recurse
     }
@@ -386,6 +389,7 @@ function Copy-VmDirectory {
     $targetVmx = Join-Path $DestinationDirectory "$Name.vmx"
     Rename-Item -LiteralPath $vmx.FullName -NewName "$Name.vmx"
     Set-VmxValue -Path $targetVmx -Key 'displayName' -Value $Name
+    Get-AtlasoVmwarePayloadLayout -VmxPath $targetVmx -RequireExactlyTwoVmdks | Out-Null
     $createdVmxPaths.Add($targetVmx)
     return $targetVmx
 }

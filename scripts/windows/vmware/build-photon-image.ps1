@@ -45,6 +45,7 @@ $ErrorActionPreference = 'Stop'
 
 Import-Module (Join-Path $PSScriptRoot '..\common\Atlaso.PhotonImage.psm1') -Force
 Import-Module (Join-Path $PSScriptRoot 'Atlaso.WorkstationCleanup.psm1') -Force
+Import-Module (Join-Path $PSScriptRoot 'Atlaso.VmwarePayload.psm1') -Force
 
 function ConvertTo-WorkstationVmnetName {
     param(
@@ -184,10 +185,7 @@ function Write-AtlasoVmwareBuildProvenance {
     )
 
     $vmx = Get-Item -LiteralPath (Join-Path $OutputDirectory "$VmName.vmx") -ErrorAction Stop
-    $vmdks = @(Get-ChildItem -LiteralPath $OutputDirectory -Filter '*.vmdk' -File | Sort-Object Name)
-    if ($vmdks.Count -ne 2) {
-        throw "Expected exactly two Packer payload VMDKs before recording provenance; found $($vmdks.Count)."
-    }
+    $payloadLayout = @(Get-AtlasoVmwarePayloadLayout -VmxPath $vmx.FullName -RequireExactlyTwoVmdks)
     $sourceCommit = [string](& git -C $RepoRoot rev-parse HEAD)
     if ($LASTEXITCODE -ne 0 -or $sourceCommit.Trim() -notmatch '^[0-9a-f]{40}$') {
         throw 'Could not resolve the exact source commit for the VMware image build.'
@@ -197,7 +195,7 @@ function Write-AtlasoVmwareBuildProvenance {
         throw 'Could not inspect tracked source changes for VMware image provenance.'
     }
     $provenance = [ordered]@{
-        schema_version       = 1
+        schema_version       = 2
         source_commit        = $sourceCommit.Trim()
         tracked_source_dirty = $trackedChanges.Count -ne 0
         vmx                  = [ordered]@{
@@ -205,17 +203,21 @@ function Write-AtlasoVmwareBuildProvenance {
             bytes  = $vmx.Length
             sha256 = (Get-FileHash -LiteralPath $vmx.FullName -Algorithm SHA256).Hash.ToLowerInvariant()
         }
-        vmdks                = @($vmdks | ForEach-Object {
+        payload_disks        = @($payloadLayout | ForEach-Object {
                 [ordered]@{
-                    name   = $_.Name
-                    bytes  = $_.Length
-                    sha256 = (Get-FileHash -LiteralPath $_.FullName -Algorithm SHA256).Hash.ToLowerInvariant()
+                    role           = $_.Role
+                    scsi_unit      = $_.ScsiUnit
+                    name           = $_.File.Name
+                    capacity_bytes = $_.CapacityBytes
+                    bytes          = $_.File.Length
+                    sha256         = (Get-FileHash -LiteralPath $_.File.FullName -Algorithm SHA256).Hash.ToLowerInvariant()
                 }
             })
     }
     $provenancePath = [System.IO.Path]::ChangeExtension($vmx.FullName, 'provenance.json')
     $json = $provenance | ConvertTo-Json -Depth 5
     [System.IO.File]::WriteAllText($provenancePath, "$json`n", [System.Text.UTF8Encoding]::new($false))
+    $null = Assert-AtlasoVmwarePayloadProvenance -VmxPath $vmx.FullName -ProvenancePath $provenancePath
     Write-Host "VMware build provenance: $provenancePath ($($provenance.source_commit))"
 }
 
@@ -379,6 +381,7 @@ Invoke-AtlasoPhotonImageBuild `
     -PackerOnError $PackerOnError `
     -GuestPackages @('open-vm-tools') `
     -GuestPostInstallCommands @('systemctl enable vmtoolsd || true') `
+    -InstallDiskLayout 'vmware-workstation' `
     -AdditionalPackerVariables $packerVariables `
     -KeepExistingOutput:$KeepExistingOutput `
     -EnableRealSystemAdapters:$EnableRealSystemAdapters `

@@ -14,6 +14,7 @@ $module = Import-Module $modulePath -Force -PassThru
 $providers = @(
     [pscustomobject]@{
         Name                = 'hyperv'
+        InstallDiskLayout   = 'default'
         AdditionalPackages  = @('hyper-v')
         PostInstallCommands = @(
             'systemctl enable hv_kvp_daemon || true',
@@ -23,6 +24,7 @@ $providers = @(
     },
     [pscustomobject]@{
         Name                = 'vmware-workstation'
+        InstallDiskLayout   = 'vmware-workstation'
         AdditionalPackages  = @('open-vm-tools')
         PostInstallCommands = @('systemctl enable vmtoolsd || true')
     }
@@ -52,19 +54,36 @@ foreach ($provider in $providers) {
     foreach ($password in $passwords) {
         $path = Join-Path $OutputDirectory "$($provider.Name)-kickstart.json"
         & $module {
-            param($KickstartPath, $Credential, $AdditionalPackages, $PostInstallCommands)
+            param($KickstartPath, $Credential, $AdditionalPackages, $PostInstallCommands, $InstallDiskLayout)
             New-AtlasoPhotonKickstart `
                 -Path $KickstartPath `
                 -RootPassword $Credential `
                 -BuildPassword $Credential `
                 -BuildUsername 'atlaso-build' `
                 -AdditionalPackages $AdditionalPackages `
-                -PostInstallCommands $PostInstallCommands
-        } $path $password $provider.AdditionalPackages $provider.PostInstallCommands
+                -PostInstallCommands $PostInstallCommands `
+                -InstallDiskLayout $InstallDiskLayout
+        } $path $password $provider.AdditionalPackages $provider.PostInstallCommands $provider.InstallDiskLayout
 
         $kickstart = Get-Content -LiteralPath $path -Raw | ConvertFrom-Json
         if ($kickstart.password.text -cne $password) {
             throw 'Photon kickstart did not preserve the root password exactly.'
+        }
+        if ($provider.Name -eq 'vmware-workstation') {
+            if ($kickstart.disk -cne '$ATLASO_PHOTON_INSTALL_DISK') {
+                throw 'VMware Photon kickstart does not bind installation through its topology-selected disk.'
+            }
+            $preInstall = @($kickstart.preinstall)
+            if (($preInstall -join "`n") -notmatch 'scsi-0:0:0:0' -or
+                ($preInstall -join "`n") -notmatch 'disk_count.*-ne 1') {
+                throw 'VMware Photon kickstart does not fail closed on SCSI unit 0 discovery.'
+            }
+            if (($preInstall -join "`n") -match '/dev/sd[a-z]') {
+                throw 'VMware Photon kickstart must not select its install disk by enumerated sdX name.'
+            }
+        }
+        elseif ($kickstart.disk -cne '/dev/sda' -or @($kickstart.preinstall).Count -ne 0) {
+            throw 'The default Photon kickstart disk contract changed unexpectedly.'
         }
 
         $postInstall = @($kickstart.postinstall)

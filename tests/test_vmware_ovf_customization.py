@@ -1991,6 +1991,9 @@ def test_vmware_ovf_customizer_rotates_clone_specific_env_secrets(tmp_path, monk
 def test_vmware_ovf_export_and_image_plumbing_are_present():
     """Verify that vmware ovf export and image plumbing are present."""
     export_script = Path("scripts/windows/vmware/export-ovf.ps1").read_text(encoding="utf-8")
+    payload_module = Path("scripts/windows/vmware/Atlaso.VmwarePayload.psm1").read_text(
+        encoding="utf-8"
+    )
     packer_template = Path("image/vmware-workstation/atlaso-photon.pkr.hcl").read_text(encoding="utf-8")
     provision_script = Path("image/common/scripts/provision-atlaso.sh").read_text(encoding="utf-8")
     bootstrap_script = Path("scripts/appliance/atlaso-bootstrap-https").read_text(encoding="utf-8")
@@ -2051,8 +2054,12 @@ def test_vmware_ovf_export_and_image_plumbing_are_present():
     assert 'repo view --json nameWithOwner' in export_script
     assert "Release publication requires a clean tracked worktree" in export_script
     assert 'rev-parse "$Tag^{}"' in export_script
-    assert "VMware build provenance does not match the source VMX bytes" in export_script
-    assert "VMware build provenance must identify exactly two payload VMDKs" in export_script
+    assert "VMware build provenance does not match the source VMX bytes" in payload_module
+    assert "Atlaso.VmwarePayload.psm1" in export_script
+    assert "Assert-AtlasoVmwarePayloadProvenance" in export_script
+    assert export_script.index(
+        "Assert-AtlasoVmwarePayloadProvenance -VmxPath $resolvedSourceVmx"
+    ) < export_script.index("Clear-AtlasoOvfOutputDirectory")
     assert 'api "repos/$effectiveRepository/commits/$Tag"' in export_script
     assert "Destination release tag $Tag identifies" in export_script
     assert "Skipping OVA release asset" in export_script

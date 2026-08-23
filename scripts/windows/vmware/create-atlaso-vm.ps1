@@ -21,6 +21,8 @@ param(
 
 $ErrorActionPreference = 'Stop'
 
+Import-Module (Join-Path $PSScriptRoot 'Atlaso.VmwarePayload.psm1') -Force
+
 function Resolve-VmrunPath {
     param([string]$Path)
 
@@ -126,33 +128,6 @@ function Get-VmxValue {
     return ''
 }
 
-function Assert-ClonedPayloadDisks {
-    param([string]$VmxPath)
-
-    $vmDirectory = Split-Path -Parent $VmxPath
-    foreach ($payloadDisk in @(
-            @{ Unit = 0; Name = 'Photon OS' },
-            @{ Unit = 1; Name = 'Atlaso system content' }
-        )) {
-        $prefix = "scsi0:$($payloadDisk.Unit)"
-        if ((Get-VmxValue -Path $VmxPath -Key "$prefix.present") -ne 'TRUE') {
-            throw "VMware clone did not retain the $($payloadDisk.Name) disk at SCSI unit $($payloadDisk.Unit)."
-        }
-        $fileName = Get-VmxValue -Path $VmxPath -Key "$prefix.fileName"
-        if ([string]::IsNullOrWhiteSpace($fileName)) {
-            throw "VMware clone did not identify the $($payloadDisk.Name) VMDK at SCSI unit $($payloadDisk.Unit)."
-        }
-        $diskPath = if ([System.IO.Path]::IsPathRooted($fileName)) {
-            $fileName
-        } else {
-            Join-Path $vmDirectory $fileName
-        }
-        if (-not (Test-Path -LiteralPath $diskPath -PathType Leaf)) {
-            throw "VMware clone $($payloadDisk.Name) VMDK is missing: $diskPath"
-        }
-    }
-}
-
 function Assert-ExistingDataVmdk {
     param(
         [string]$Path,
@@ -234,6 +209,7 @@ $repoRoot = (Resolve-Path -LiteralPath (Join-Path $PSScriptRoot '..\..\..')).Pat
 $resolvedVmrun = Resolve-VmrunPath -Path $VmrunPath
 $resolvedVdiskManager = Resolve-VdiskManagerPath -Path $VdiskManagerPath
 $resolvedSourceVmx = (Resolve-Path -LiteralPath $ApplianceVmxPath).Path
+$null = Assert-AtlasoVmwarePayloadProvenance -VmxPath $resolvedSourceVmx
 
 if (-not $OutputDirectory) {
     $OutputDirectory = Join-Path $repoRoot "image\vmware-workstation\test-vms\$Name"
@@ -273,7 +249,7 @@ if (-not (Test-Path -LiteralPath $targetVmx)) {
     throw "VMware clone completed but target VMX was not found: $targetVmx"
 }
 
-Assert-ClonedPayloadDisks -VmxPath $targetVmx
+$null = Get-AtlasoVmwarePayloadLayout -VmxPath $targetVmx -RequireExactlyTwoVmdks
 Set-VmxValue -Path $targetVmx -Key 'displayName' -Value $Name
 Set-VmxValue -Path $targetVmx -Key 'disk.EnableUUID' -Value 'TRUE'
 New-DataVmdk -Path $resolvedDepotVmdkPath -Size $DepotDiskSize -Label 'VCF Offline Depot'

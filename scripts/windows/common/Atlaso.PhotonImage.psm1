@@ -53,7 +53,9 @@ function New-AtlasoPhotonKickstart {
         [string]$StaticGateway,
         [string[]]$StaticDns = @(),
         [string[]]$AdditionalPackages = @(),
-        [string[]]$PostInstallCommands = @()
+        [string[]]$PostInstallCommands = @(),
+        [ValidateSet('default', 'vmware-workstation')]
+        [string]$InstallDiskLayout = 'default'
     )
 
     $network = if ($StaticAddress) {
@@ -97,13 +99,28 @@ function New-AtlasoPhotonKickstart {
         'chmod 0440 /etc/sudoers.d/90-atlaso-build'
     ) + $PostInstallCommands
 
+    $installDisk = '/dev/sda'
+    $preInstall = @()
+    if ($InstallDiskLayout -eq 'vmware-workstation') {
+        $installDisk = '$ATLASO_PHOTON_INSTALL_DISK'
+        $preInstall = @(
+            '#!/bin/sh',
+            'set -eu',
+            'disk_matches="$(find /dev/disk/by-path -maxdepth 1 -type l -name ''*-scsi-0:0:0:0'' -print)"',
+            'disk_count="$(printf ''%s\n'' "$disk_matches" | awk ''NF { count++ } END { print count + 0 }'')"',
+            'if [ "$disk_count" -ne 1 ]; then echo "Expected exactly one VMware Photon install disk at SCSI identity 0:0:0; found $disk_count." >&2; exit 2; fi',
+            'ATLASO_PHOTON_INSTALL_DISK="$disk_matches"',
+            'export ATLASO_PHOTON_INSTALL_DISK'
+        )
+    }
+
     $kickstart = [ordered]@{
         hostname            = 'atlaso'
         password            = [ordered]@{
             crypted = $false
             text    = $RootPassword
         }
-        disk                = '/dev/sda'
+        disk                = $installDisk
         partitions          = @(
             [ordered]@{ mountpoint = '/'; size = 0; filesystem = 'ext4' },
             [ordered]@{ mountpoint = '/boot'; size = 256; filesystem = 'ext4' },
@@ -114,6 +131,7 @@ function New-AtlasoPhotonKickstart {
         additional_packages = @($basePackages + $AdditionalPackages | Select-Object -Unique)
         linux_flavor        = 'linux'
         network             = $network
+        preinstall          = $preInstall
         postinstall         = $postInstall
     }
 
@@ -326,6 +344,8 @@ function Invoke-AtlasoPhotonImageBuild {
         [string]$PackerOnError = 'cleanup',
         [string[]]$GuestPackages = @(),
         [string[]]$GuestPostInstallCommands = @(),
+        [ValidateSet('default', 'vmware-workstation')]
+        [string]$InstallDiskLayout = 'default',
         [hashtable]$AdditionalPackerVariables = @{},
         [switch]$KeepExistingOutput,
         [switch]$EnableRealSystemAdapters,
@@ -376,7 +396,8 @@ function Invoke-AtlasoPhotonImageBuild {
         -StaticGateway $BuilderStaticGateway `
         -StaticDns $BuilderStaticDns `
         -AdditionalPackages $GuestPackages `
-        -PostInstallCommands $GuestPostInstallCommands
+        -PostInstallCommands $GuestPostInstallCommands `
+        -InstallDiskLayout $InstallDiskLayout
 
     $sourceIsoPath = Resolve-AtlasoPhotonSourceIso -UrlOrPath $IsoUrl -Checksum $IsoChecksum -BuildDirectory $buildDir -PackerDirectory $packerDir -SharedSourceDirectory $sharedSourceDir
     try {

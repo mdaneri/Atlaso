@@ -16,6 +16,8 @@ $ErrorActionPreference = 'Stop'
 
 $outputSafetyModule = Join-Path $PSScriptRoot 'Atlaso.OvfExport.psm1'
 Import-Module $outputSafetyModule -Force
+$payloadModule = Join-Path $PSScriptRoot 'Atlaso.VmwarePayload.psm1'
+Import-Module $payloadModule -Force
 
 $ovfNamespace = 'http://schemas.dmtf.org/ovf/envelope/1'
 $rasdNamespace = 'http://schemas.dmtf.org/wbem/wscim/1/cim-schema/2/CIM_ResourceAllocationSettingData'
@@ -140,40 +142,10 @@ function Assert-AtlasoReleaseProvenance {
         throw "Release tag $Tag identifies $tagCommit, but the exported image checkout is $headCommit."
     }
 
-    $provenancePath = [System.IO.Path]::ChangeExtension($SourceVmxPath, 'provenance.json')
-    if (-not (Test-Path -LiteralPath $provenancePath -PathType Leaf)) {
-        throw "VMware build provenance is missing: $provenancePath"
-    }
-    try {
-        $provenance = Get-Content -LiteralPath $provenancePath -Raw | ConvertFrom-Json
-    }
-    catch {
-        throw "VMware build provenance is invalid: $($_.Exception.Message)"
-    }
-    if ($provenance.schema_version -ne 1 -or
-        $provenance.source_commit -ne $headCommit -or
+    $provenance = Assert-AtlasoVmwarePayloadProvenance -VmxPath $SourceVmxPath
+    if ($provenance.source_commit -ne $headCommit -or
         [bool]$provenance.tracked_source_dirty) {
         throw 'VMware build provenance does not identify this exact clean release commit.'
-    }
-
-    $vmx = Get-Item -LiteralPath $SourceVmxPath
-    if ($provenance.vmx.name -ne $vmx.Name -or
-        [long]$provenance.vmx.bytes -ne $vmx.Length -or
-        $provenance.vmx.sha256 -ne (Get-FileHash -LiteralPath $vmx.FullName -Algorithm SHA256).Hash.ToLowerInvariant()) {
-        throw 'VMware build provenance does not match the source VMX bytes.'
-    }
-    $vmdks = @(Get-ChildItem -LiteralPath $vmx.DirectoryName -Filter '*.vmdk' -File | Sort-Object Name)
-    $recordedVmdks = @($provenance.vmdks)
-    if ($vmdks.Count -ne 2 -or $recordedVmdks.Count -ne 2) {
-        throw 'VMware build provenance must identify exactly two payload VMDKs.'
-    }
-    foreach ($vmdk in $vmdks) {
-        $record = $recordedVmdks | Where-Object { $_.name -eq $vmdk.Name } | Select-Object -First 1
-        if (-not $record -or
-            [long]$record.bytes -ne $vmdk.Length -or
-            $record.sha256 -ne (Get-FileHash -LiteralPath $vmdk.FullName -Algorithm SHA256).Hash.ToLowerInvariant()) {
-            throw "VMware build provenance does not match payload VMDK $($vmdk.Name)."
-        }
     }
     return $provenance
 }
@@ -958,6 +930,9 @@ $releaseProvenance = $null
 if ($Release) {
     $releaseTag = Resolve-AtlasoReleaseTag -RepoRoot $repoRoot
     $releaseProvenance = Assert-AtlasoReleaseProvenance -RepoRoot $repoRoot -Tag $releaseTag -SourceVmxPath $resolvedSourceVmx
+}
+else {
+    $releaseProvenance = Assert-AtlasoVmwarePayloadProvenance -VmxPath $resolvedSourceVmx
 }
 $callerSpecifiedOutputDirectory = $PSBoundParameters.ContainsKey('OutputDirectory')
 $outputPlan = Resolve-AtlasoOvfOutputPlan `
