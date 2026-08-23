@@ -1150,6 +1150,17 @@
       <ul class="md-nav__list">
         
           <li class="md-nav__item">
+  <a href="#convert-management-dhcp-to-static-ipv4" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Convert management DHCP to static IPv4
+      </span>
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
   <a href="#assign-an-interface-role" class="md-nav__link">
     <span class="md-ellipsis">
       <span class="md-typeset">
@@ -3529,6 +3540,17 @@
       <ul class="md-nav__list">
         
           <li class="md-nav__item">
+  <a href="#convert-management-dhcp-to-static-ipv4" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Convert management DHCP to static IPv4
+      </span>
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
   <a href="#assign-an-interface-role" class="md-nav__link">
     <span class="md-ellipsis">
       <span class="md-typeset">
@@ -3819,6 +3841,15 @@ unreachable after apply.</p>
 <li>Review validation and rendered network previews.</li>
 <li>Submit the selected network units through <a href="../appliance-apply/">Appliance Apply</a>.</li>
 </ol>
+<h3 id="convert-management-dhcp-to-static-ipv4">Convert management DHCP to static IPv4<a class="headerlink" href="#convert-management-dhcp-to-static-ipv4" title="Permanent link">&para;</a></h3>
+<p>Use <strong>Convert DHCP lease to static</strong> from the management interface row menu. Atlaso reviews the observed IPv4 CIDR and
+the usable DHCP-learned gateway from that same interface before saving them as static desired state. Confirm that the
+address, prefix, and gateway match the intended network; the change does not reach Photon until global Appliance Apply.</p>
+<p>If no usable gateway is observed, the review shows <strong>none</strong> and warns that only same-subnet management will remain.
+That isolation is allowed when intentional. Clearing a populated <strong>IPv4 Gateway</strong> cell requires the same warning because
+off-subnet HTTPS, DNS, repository, and update access will stop after Apply. Off-link gateways and a gateway equal to the
+interface address remain invalid. Cancel the review or revert the pending Network desired state to retain the applied
+DHCP address and route; a failed protected management handoff rolls back to the last-applied DHCP path.</p>
 <h3 id="assign-an-interface-role">Assign an interface role<a class="headerlink" href="#assign-an-interface-role" title="Permanent link">&para;</a></h3>
 <p>Physical and VLAN interfaces share one role contract:</p>
 <ul>
