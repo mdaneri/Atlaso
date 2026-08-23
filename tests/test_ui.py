@@ -687,7 +687,7 @@ def test_tasks_page_lists_redacts_logs_and_cancels(client):
     assert "function selectedUnsynchronizedUpdateStreams()" in app_js
     assert "updateApplianceUpdateSourceSyncState(selected);" in app_js
     assert "task.id !== atlasoNewTaskId" in app_js
-    assert "task.result.source_results.filter" in app_js
+    assert "refreshApplianceUpdateAvailability({ force: true })" in app_js
     assert 'headers: { Accept: "application/json" }' in app_js
     assert 'setApplianceUpdateActionsDisabled(true);' in app_js
     source_sync_js = app_js.split("function initializeApplianceUpdateSourceSync()", 1)[1].split("function ", 1)[0]
