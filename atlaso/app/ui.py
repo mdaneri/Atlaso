@@ -11258,12 +11258,16 @@ def appliance_update_context(
         .order_by(desc(Job.created_at))
         .limit(8)
     ).scalars().all()
-    evidence_jobs = db.execute(
-        select(Job).where(
+    real_install_patterns = ('"dry_run":false', '"dry_run": false')
+    qualifying_install_expected = db.execute(
+        select(Job.id).where(
             Job.status.in_([JobStatus.SUCCEEDED.value, JobStatus.FAILED.value]),
             _appliance_update_mode_filter_clause("run"),
-        )
-    ).scalars().all()
+            or_(
+                *(func.lower(Job.result).contains(pattern) for pattern in real_install_patterns)
+            ),
+        ).limit(1)
+    ).scalar_one_or_none() is not None
     sources = source_rows(db)
     packages = managed_package_rows(db)
     source_payloads = [update_source_payload(source) for source in sources]
@@ -11342,7 +11346,9 @@ def appliance_update_context(
         "recent_update_tasks": [_task_row(job) for job in recent_jobs],
         "task_component_filter_options": _task_component_filter_options(db),
         "appliance_update_info_path": APPLIANCE_UPDATE_INFO_PATH,
-        "update_info_file": appliance_update_evidence_state(evidence_jobs),
+        "update_info_file": appliance_update_evidence_state(
+            qualifying_install_expected=qualifying_install_expected
+        ),
         "update_settings_errors": validate_update_settings(settings),
         "system_adapter_dry_run": get_settings().dry_run_system_adapters,
     }

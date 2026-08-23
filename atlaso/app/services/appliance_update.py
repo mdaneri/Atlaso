@@ -880,8 +880,8 @@ def read_appliance_file(path_value: str) -> dict[str, Any]:
 
 
 def appliance_update_evidence_state(
-    update_jobs: list[Job],
     *,
+    qualifying_install_expected: bool = False,
     update_info_path: str = APPLIANCE_UPDATE_INFO_PATH,
     finalizer_path: str = APPLIANCE_UPDATE_FINALIZER_PATH,
 ) -> dict[str, Any]:
@@ -892,8 +892,8 @@ def appliance_update_evidence_state(
     gates enforced by the worker and privileged helper.
 
     Args:
-        update_jobs: Recent Appliance Update jobs used to identify completed,
-            non-dry-run installation attempts.
+        qualifying_install_expected: Whether durable task state records a
+            completed, non-dry-run installation attempt.
         update_info_path: Durable helper update evidence path.
         finalizer_path: Durable Atlaso release finalizer path.
     """
@@ -903,39 +903,20 @@ def appliance_update_evidence_state(
             content = Path(path_value).read_text(encoding="utf-8")
         except FileNotFoundError:
             return "missing", {}, ""
+        except UnicodeError:
+            return "malformed", {}, ""
         except OSError:
             return "unreadable", {}, ""
         try:
             payload = json.loads(content)
-        except (json.JSONDecodeError, UnicodeError):
+        except json.JSONDecodeError:
             return "malformed", {}, content
         if not isinstance(payload, dict) or not str(payload.get("status") or "").strip():
             return "malformed", {}, content
         return "available", payload, content
 
-    qualifying_job = False
-    for job in update_jobs:
-        if job.status not in {JobStatus.SUCCEEDED.value, JobStatus.FAILED.value}:
-            continue
-        try:
-            config = json.loads(job.task_config_json or "{}")
-            result = json.loads(job.result or "{}")
-        except json.JSONDecodeError:
-            continue
-        if not isinstance(config, dict) or not isinstance(result, dict):
-            continue
-        selected = config.get("selected_streams")
-        if (
-            config.get("mode") == "run"
-            and isinstance(selected, list)
-            and any(str(stream) in UPDATE_STREAMS for stream in selected)
-            and result.get("dry_run") is False
-        ):
-            qualifying_job = True
-            break
-
     finalizer_state, finalizer, _finalizer_content = _read_json_object(finalizer_path)
-    evidence_expected = qualifying_job or finalizer_state != "missing"
+    evidence_expected = qualifying_install_expected or finalizer_state != "missing"
     evidence_state, evidence, content = _read_json_object(update_info_path)
 
     if evidence_state == "missing" and not evidence_expected:
@@ -964,6 +945,12 @@ def appliance_update_evidence_state(
         }
 
     inconsistent = finalizer_state in {"unreadable", "malformed"}
+    evidence_finalizer_path = str(evidence.get("finalizer_status_path") or "")
+    references_finalizer = evidence_finalizer_path == finalizer_path
+    if evidence_finalizer_path and not references_finalizer:
+        inconsistent = True
+    if references_finalizer and finalizer_state != "available":
+        inconsistent = True
     if finalizer_state == "available":
         evidence_job_id = str(evidence.get("job_id") or "")
         finalizer_job_id = str(finalizer.get("job_id") or "")
@@ -971,8 +958,17 @@ def appliance_update_evidence_state(
             inconsistent = True
         evidence_status = str(evidence.get("status") or "")
         finalizer_status = str(finalizer.get("status") or "")
-        if evidence_job_id and evidence_status != finalizer_status:
+        if (evidence_job_id or references_finalizer) and evidence_status != finalizer_status:
             inconsistent = True
+        if references_finalizer:
+            try:
+                evidence_finished = datetime.fromisoformat(str(evidence["finished_at"]).replace("Z", "+00:00"))
+                finalizer_finished = datetime.fromisoformat(str(finalizer["finished_at"]).replace("Z", "+00:00"))
+            except (KeyError, TypeError, ValueError):
+                inconsistent = True
+            else:
+                if evidence_finished < finalizer_finished:
+                    inconsistent = True
     if inconsistent:
         return {
             "state": "needs_attention",
