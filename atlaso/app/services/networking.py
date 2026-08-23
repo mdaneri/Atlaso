@@ -954,7 +954,9 @@ def sync_host_physical_interfaces(db: Session) -> tuple[list[PhysicalInterface],
     _cleanup_missing_interface_references(db, missing_renames)
     live_renames = {old: new for old, new in final_renames.items() if old not in missing_renames and new not in set(missing_renames.values())}
     _retarget_interface_references(db, live_renames)
-    _record_applied_physical_interface_aliases(db, live_renames)
+    # Applied dynamic bindings must retain identity even through a missing inventory pass so a
+    # later missing-name-to-live-name transition can chain back to the original applied name.
+    _record_applied_physical_interface_aliases(db, final_renames)
     if discovered:
         discovered_names = {interface.name for interface in discovered}
         seed_only_missing = [
