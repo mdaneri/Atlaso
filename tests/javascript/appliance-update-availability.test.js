@@ -133,6 +133,14 @@ function availabilityIndicatorScenario() {
   };
 }
 
+function availabilityStreams(availableIds = []) {
+  return ["photon_os", "powershell_modules", "atlaso_release"].map((id) => ({
+    id,
+    stale: false,
+    confirmed: { update_available: availableIds.includes(id) },
+  }));
+}
+
 function scenario({ streams, inputs }) {
   const checkButton = new HTMLButtonElement();
   const installButton = new HTMLButtonElement();
@@ -276,7 +284,7 @@ test("validated polling creates, updates, and removes the positive indicator", a
     json: () => Promise.resolve({
       available: true,
       affected_stream_count: 1,
-      streams: [{ id: "atlaso_release", stale: false, confirmed: { update_available: true } }],
+      streams: availabilityStreams(["atlaso_release"]),
     }),
   });
   await scenario.context.refresh();
@@ -288,10 +296,7 @@ test("validated polling creates, updates, and removes the positive indicator", a
     json: () => Promise.resolve({
       available: true,
       affected_stream_count: 2,
-      streams: [
-        { id: "atlaso_release", stale: false, confirmed: { update_available: true } },
-        { id: "photon_os", stale: false, confirmed: { update_available: true } },
-      ],
+      streams: availabilityStreams(["atlaso_release", "photon_os"]),
     }),
   });
   await scenario.context.refresh();
@@ -303,7 +308,7 @@ test("validated polling creates, updates, and removes the positive indicator", a
     json: () => Promise.resolve({
       available: false,
       affected_stream_count: 0,
-      streams: [{ id: "atlaso_release", stale: false, confirmed: { update_available: false } }],
+      streams: availabilityStreams(),
     }),
   });
   await scenario.context.refresh();
@@ -329,6 +334,26 @@ test("failed polling preserves only an existing positive indicator", async () =>
   positive.setFetchResponse({
     ok: true,
     json: () => Promise.resolve({ available: true, affected_stream_count: 1, streams: [] }),
+  });
+  await assert.rejects(positive.context.refresh(), /Unable to refresh update availability/);
+  assert.equal(positive.indicator, lastKnown);
+  positive.setFetchResponse({
+    ok: true,
+    json: () => Promise.resolve({ available: false, affected_stream_count: 0, streams: [] }),
+  });
+  await assert.rejects(positive.context.refresh(), /Unable to refresh update availability/);
+  assert.equal(positive.indicator, lastKnown);
+  positive.setFetchResponse({
+    ok: true,
+    json: () => Promise.resolve({
+      available: true,
+      affected_stream_count: 1,
+      streams: [
+        { id: "photon_os", stale: false, confirmed: { update_available: true } },
+        { id: "photon_os", stale: false, confirmed: { update_available: false } },
+        { id: "atlaso_release", stale: false, confirmed: { update_available: false } },
+      ],
+    }),
   });
   await assert.rejects(positive.context.refresh(), /Unable to refresh update availability/);
   assert.equal(positive.indicator, lastKnown);

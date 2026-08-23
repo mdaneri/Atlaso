@@ -12973,7 +12973,13 @@ function createApplianceUpdateAvailabilityIndicator() {
 }
 
 function validApplianceUpdateAvailabilityPayload(payload) {
-  const streamsValid = Array.isArray(payload?.streams)
+  const expectedStreamIds = new Set(["photon_os", "powershell_modules", "atlaso_release"]);
+  const streamIds = Array.isArray(payload?.streams)
+    ? payload.streams.map((stream) => stream?.id)
+    : [];
+  const streamsValid = streamIds.length === expectedStreamIds.size
+    && new Set(streamIds).size === expectedStreamIds.size
+    && streamIds.every((streamId) => expectedStreamIds.has(streamId))
     && payload.streams.every((stream) => (
       stream
       && typeof stream === "object"
