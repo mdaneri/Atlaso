@@ -344,7 +344,8 @@ The **Update transaction evidence** detail panel reports the durable `/etc/atlas
 the Version panel's build identity. **Not recorded** is the normal neutral state for a source checkout, development
 wheel, fresh packaged appliance, or read-only update check before any qualifying installation transaction. Atlaso does
 not manufacture transaction provenance for those deployments. **Available** means the helper record is readable,
-well-formed, bound to the latest qualifying real installation attempt, and consistent with any release finalizer; the
+well-formed, bound to the latest applied stream in the latest qualifying real installation attempt, and consistent
+with any release finalizer; the
 existing redacted preview can then be inspected. **Needs
 attention** means a completed real installation or finalizer proves evidence should exist but it is absent, or the
 record is unreadable, malformed, or inconsistent. In that state, inspect the Appliance Update task and the

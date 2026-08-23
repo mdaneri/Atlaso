@@ -93,6 +93,7 @@ def test_update_evidence_state_validates_available_and_actionable_records(tmp_pa
         "commands": [],
         "reboot_recommended": False,
         "restart_required": False,
+        "selected_streams": ["photon_os"],
         "finished_at": "2026-08-22T20:00:01+00:00",
         "finalizer_status_path": "",
     }
@@ -126,11 +127,21 @@ def test_update_evidence_state_validates_available_and_actionable_records(tmp_pa
 
     matching_task = appliance_update_evidence_state(
         qualifying_install_job_id="job-3",
+        qualifying_install_stream="photon_os",
         qualifying_install_started_at=datetime(2026, 8, 22, 19, 59, tzinfo=timezone.utc),
         update_info_path=str(info_path),
         finalizer_path=str(finalizer_path),
     )
     assert matching_task["state"] == "available"
+
+    later_stream = appliance_update_evidence_state(
+        qualifying_install_job_id="job-3",
+        qualifying_install_stream="powershell_modules",
+        qualifying_install_started_at=datetime(2026, 8, 22, 20, 0, 2, tzinfo=timezone.utc),
+        update_info_path=str(info_path),
+        finalizer_path=str(finalizer_path),
+    )
+    assert later_stream["state"] == "needs_attention"
 
     stale_task = appliance_update_evidence_state(
         qualifying_install_job_id="job-4",
@@ -142,6 +153,7 @@ def test_update_evidence_state_validates_available_and_actionable_records(tmp_pa
 
     legacy_aggregate = dict(aggregate)
     legacy_aggregate.pop("job_id")
+    legacy_aggregate.pop("selected_streams")
     info_path.write_text(json.dumps(legacy_aggregate), encoding="utf-8")
     stale_legacy_task = appliance_update_evidence_state(
         qualifying_install_job_id="job-legacy-latest",
@@ -347,7 +359,7 @@ def test_update_evidence_panel_accessibility_states(client, monkeypatch):
     assert 'role="alert"' in panel
 
     from atlaso.app.database import SessionLocal
-    from atlaso.app.models import Job
+    from atlaso.app.models import Job, JobStep
 
     with SessionLocal() as db:
         db.add(
@@ -358,6 +370,18 @@ def test_update_evidence_panel_accessibility_states(client, monkeypatch):
                 created_by="admin",
                 task_config_json=json.dumps({"mode": "run", "selected_streams": ["atlaso_release"]}),
                 result=json.dumps({"dry_run": False, "apply_started": False}),
+            )
+        )
+        db.add(
+            JobStep(
+                id="job_real_evidence_expected:atlaso_release",
+                job_id="job_real_evidence_expected",
+                component_key="atlaso_release",
+                label="Atlaso release",
+                position=0,
+                status="succeeded",
+                started_at=datetime(2026, 8, 22, 20, 0, tzinfo=timezone.utc),
+                result=json.dumps({"apply_started": False}),
             )
         )
         db.commit()
@@ -380,10 +404,15 @@ def test_update_evidence_panel_accessibility_states(client, monkeypatch):
         job = db.get(Job, "job_real_evidence_expected")
         assert job is not None
         job.result = json.dumps({"dry_run": False, "apply_started": True})
+        step = db.get(JobStep, "job_real_evidence_expected:atlaso_release")
+        assert step is not None
+        step.result = json.dumps({"dry_run": False, "apply_started": True})
         db.add(job)
+        db.add(step)
         db.commit()
     client.get("/ui/management/appliance-update")
     assert captured["qualifying_install_job_id"] == "job_real_evidence_expected"
+    assert captured["qualifying_install_stream"] == "atlaso_release"
     assert isinstance(captured["qualifying_install_started_at"], datetime)
 
     with SessionLocal() as db:
@@ -402,7 +431,11 @@ def test_update_evidence_panel_accessibility_states(client, monkeypatch):
                 ],
             }
         )
+        step = db.get(JobStep, "job_real_evidence_expected:atlaso_release")
+        assert step is not None
+        step.result = job.result
         db.add(job)
+        db.add(step)
         db.commit()
     client.get("/ui/management/appliance-update")
     assert captured["qualifying_install_job_id"] == "job_real_evidence_expected"
@@ -423,7 +456,11 @@ def test_update_evidence_panel_accessibility_states(client, monkeypatch):
                 ],
             }
         )
+        step = db.get(JobStep, "job_real_evidence_expected:atlaso_release")
+        assert step is not None
+        step.result = job.result
         db.add(job)
+        db.add(step)
         db.commit()
     client.get("/ui/management/appliance-update")
     assert captured["qualifying_install_job_id"] == "job_real_evidence_expected"
@@ -3311,6 +3348,7 @@ def test_helper_writes_failed_update_info_for_failed_commands(monkeypatch):
     assert "error" in result
     assert written["status"] == "failed"
     assert written["job_id"] == "job_photon_evidence_identity"
+    assert written["selected_streams"] == ["photon_os"]
 
 
 def test_helper_queries_photon_python_without_unsupported_latest_limit(monkeypatch):

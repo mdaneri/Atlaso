@@ -883,6 +883,7 @@ def appliance_update_evidence_state(
     *,
     qualifying_install_expected: bool = False,
     qualifying_install_job_id: str = "",
+    qualifying_install_stream: str = "",
     qualifying_install_started_at: datetime | None = None,
     update_info_path: str = APPLIANCE_UPDATE_INFO_PATH,
     finalizer_path: str = APPLIANCE_UPDATE_FINALIZER_PATH,
@@ -897,6 +898,7 @@ def appliance_update_evidence_state(
         qualifying_install_expected: Whether durable task state records a
             completed, non-dry-run installation attempt.
         qualifying_install_job_id: Latest qualifying installation task identity.
+        qualifying_install_stream: Latest qualifying applied stream identifier.
         qualifying_install_started_at: Start time of the latest qualifying task.
         update_info_path: Durable helper update evidence path.
         finalizer_path: Durable Atlaso release finalizer path.
@@ -943,6 +945,7 @@ def appliance_update_evidence_state(
         Args:
             payload: Parsed durable evidence object.
         """
+        selected_streams = payload.get("selected_streams")
         return bool(
             payload.get("status") in {"succeeded", "failed"}
             and isinstance(payload.get("applied"), dict)
@@ -952,6 +955,14 @@ def appliance_update_evidence_state(
             and isinstance(payload.get("restart_required"), bool)
             and _valid_timestamp(payload.get("finished_at"))
             and isinstance(payload.get("finalizer_status_path"), str)
+            and (
+                "selected_streams" not in payload
+                or (
+                    isinstance(selected_streams, list)
+                    and selected_streams
+                    and all(isinstance(stream, str) and stream for stream in selected_streams)
+                )
+            )
         )
 
     def _valid_finalizer(payload: dict[str, Any]) -> bool:
@@ -1064,6 +1075,7 @@ def appliance_update_evidence_state(
         finalizer_path, finalizer_only=True
     )
     expected_job_id = qualifying_install_job_id.strip()
+    expected_stream = qualifying_install_stream.strip()
     evidence_expected = bool(
         qualifying_install_expected or expected_job_id or finalizer_state != "missing"
     )
@@ -1163,26 +1175,39 @@ def appliance_update_evidence_state(
         if paired_finalizer and finalizer_state == "available"
         else evidence_job_id
     )
+    timestamp_binding_required = False
     if expected_job_id:
         if bound_job_id:
             if bound_job_id != expected_job_id:
                 inconsistent = True
         else:
-            try:
-                evidence_finished = datetime.fromisoformat(
-                    str(evidence["finished_at"]).replace("Z", "+00:00")
-                )
-            except (KeyError, TypeError, ValueError):
+            timestamp_binding_required = True
+    if expected_stream:
+        selected_streams = evidence.get("selected_streams")
+        if isinstance(selected_streams, list) and selected_streams:
+            if expected_stream not in selected_streams:
+                inconsistent = True
+        elif paired_finalizer:
+            if expected_stream != "atlaso_release":
+                inconsistent = True
+        else:
+            timestamp_binding_required = True
+    if timestamp_binding_required:
+        try:
+            evidence_finished = datetime.fromisoformat(
+                str(evidence["finished_at"]).replace("Z", "+00:00")
+            )
+        except (KeyError, TypeError, ValueError):
+            inconsistent = True
+        else:
+            expected_started = qualifying_install_started_at
+            if expected_started is None or evidence_finished.tzinfo is None:
                 inconsistent = True
             else:
-                expected_started = qualifying_install_started_at
-                if expected_started is None or evidence_finished.tzinfo is None:
+                if expected_started.tzinfo is None:
+                    expected_started = expected_started.replace(tzinfo=timezone.utc)
+                if evidence_finished < expected_started:
                     inconsistent = True
-                else:
-                    if expected_started.tzinfo is None:
-                        expected_started = expected_started.replace(tzinfo=timezone.utc)
-                    if evidence_finished < expected_started:
-                        inconsistent = True
     if inconsistent:
         return {
             "state": "needs_attention",

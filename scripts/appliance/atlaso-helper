@@ -14418,6 +14418,7 @@ def _apply_appliance_update(
         "commands": commands,
         "reboot_recommended": reboot_recommended if succeeded else False,
         "restart_required": restart_required and succeeded,
+        "selected_streams": sorted(selected),
         "finished_at": datetime.now(timezone.utc).isoformat(),
         "finalizer_status_path": str(ATLASO_UPDATE_FINALIZER_PATH) if "atlaso_release" in selected else "",
     }
