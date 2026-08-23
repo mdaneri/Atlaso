@@ -135,6 +135,17 @@ jobs:
         run: python scripts/check_python_static_analysis.py
       - name: Validate systemd and sudoers assets
         run: python scripts/check_deployment_assets.py --mode linux
+      - name: Check out repository-check base
+        if: github.event_name != 'push'
+        uses: actions/checkout@v7
+        with:
+          ref: ${{ github.event_name == 'workflow_dispatch' && inputs.base_sha || github.event.pull_request.base.sha }}
+          path: .powershell-base
+          persist-credentials: false
+      - name: Enforce changed PowerShell comment help
+        if: github.event_name != 'push'
+        shell: pwsh
+        run: ./scripts/check_powershell_help.ps1 -BaseRoot .powershell-base
 
   deployment-packer:
     name: ${{ github.event_name == 'workflow_dispatch' && 'Trusted Packer deployment validation' || github.event_name == 'pull_request' && github.actor == 'github-actions[bot]' && 'Approval-gated Packer deployment validation' || 'Packer deployment validation' }}

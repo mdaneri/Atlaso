@@ -103,6 +103,13 @@ namespace Atlaso
 '@
 }
 
+<#
+.SYNOPSIS
+Return a normalized absolute path without a non-root trailing separator.
+
+.PARAMETER Path
+Path to normalize.
+#>
 function Get-AtlasoCanonicalPath {
     param([Parameter(Mandatory = $true)][string]$Path)
 
@@ -117,6 +124,16 @@ function Get-AtlasoCanonicalPath {
     )
 }
 
+<#
+.SYNOPSIS
+Compare two paths using Windows path semantics.
+
+.PARAMETER Left
+First path.
+
+.PARAMETER Right
+Second path.
+#>
 function Test-AtlasoSamePath {
     param(
         [Parameter(Mandatory = $true)][string]$Left,
@@ -129,6 +146,16 @@ function Test-AtlasoSamePath {
     )
 }
 
+<#
+.SYNOPSIS
+Return whether a child is strictly below a parent path.
+
+.PARAMETER ParentPath
+Candidate parent directory.
+
+.PARAMETER ChildPath
+Candidate descendant path.
+#>
 function Test-AtlasoStrictDescendantPath {
     [CmdletBinding()]
     param(
@@ -150,6 +177,13 @@ function Test-AtlasoStrictDescendantPath {
     )
 }
 
+<#
+.SYNOPSIS
+Reject a path whose existing ancestry contains a reparse point.
+
+.PARAMETER Path
+Path whose ancestry is validated.
+#>
 function Assert-AtlasoPathHasNoReparsePoint {
     param([Parameter(Mandatory = $true)][string]$Path)
 
@@ -167,6 +201,19 @@ function Assert-AtlasoPathHasNoReparsePoint {
     }
 }
 
+<#
+.SYNOPSIS
+Require a reparse-free path to be strictly below a parent.
+
+.PARAMETER ParentPath
+Required parent directory.
+
+.PARAMETER ChildPath
+Path required below the parent.
+
+.PARAMETER FailureMessage
+Error prefix used when validation fails.
+#>
 function Assert-AtlasoStrictDescendantPath {
     [CmdletBinding()]
     param(
@@ -182,6 +229,16 @@ function Assert-AtlasoStrictDescendantPath {
     Assert-AtlasoPathHasNoReparsePoint -Path $ChildPath
 }
 
+<#
+.SYNOPSIS
+Return the stable Windows filesystem identity for an existing path.
+
+.PARAMETER Path
+Existing path to identify.
+
+.PARAMETER Description
+Safe object description used in errors.
+#>
 function Get-AtlasoPathIdentity {
     param(
         [Parameter(Mandatory = $true)][string]$Path,
@@ -199,12 +256,29 @@ function Get-AtlasoPathIdentity {
     }
 }
 
+<#
+.SYNOPSIS
+Return the SHA-256 content hash of a file.
+
+.PARAMETER Path
+File to hash.
+#>
 function Get-AtlasoFileSha256 {
     param([Parameter(Mandatory = $true)][string]$Path)
 
     return (Get-FileHash -LiteralPath $Path -Algorithm SHA256 -ErrorAction Stop).Hash
 }
 
+<#
+.SYNOPSIS
+Compare two byte arrays without text conversion.
+
+.PARAMETER Left
+First byte array.
+
+.PARAMETER Right
+Second byte array.
+#>
 function Test-AtlasoByteArraysEqual {
     param(
         [Parameter(Mandatory = $true)][byte[]]$Left,
@@ -222,6 +296,19 @@ function Test-AtlasoByteArraysEqual {
     return $true
 }
 
+<#
+.SYNOPSIS
+Invoke vmrun and reject every nonzero provider result.
+
+.PARAMETER VmrunPath
+Path to the vmrun executable.
+
+.PARAMETER Arguments
+Arguments passed directly to vmrun.
+
+.PARAMETER Action
+Safe action description used in errors.
+#>
 function Invoke-AtlasoVmrunChecked {
     param(
         [Parameter(Mandatory = $true)][string]$VmrunPath,
@@ -241,6 +328,13 @@ function Invoke-AtlasoVmrunChecked {
     return $output
 }
 
+<#
+.SYNOPSIS
+Read the single well-formed display name from a VMX file.
+
+.PARAMETER Path
+VMX file to inspect.
+#>
 function Get-AtlasoVmxDisplayName {
     param([Parameter(Mandatory = $true)][string]$Path)
 
@@ -254,6 +348,13 @@ function Get-AtlasoVmxDisplayName {
     return $Matches[1]
 }
 
+<#
+.SYNOPSIS
+Normalize one path line returned by vmrun.
+
+.PARAMETER InventoryLine
+Raw vmrun output line.
+#>
 function ConvertFrom-AtlasoVmrunInventoryPath {
     param([Parameter(Mandatory = $true)][AllowEmptyString()][string]$InventoryLine)
 
@@ -267,6 +368,16 @@ function ConvertFrom-AtlasoVmrunInventoryPath {
     return $candidate
 }
 
+<#
+.SYNOPSIS
+Return the checked VMware Workstation running-VM paths.
+
+.PARAMETER VmrunPath
+Path to the vmrun executable.
+
+.PARAMETER State
+Provider state to query; currently only running is supported.
+#>
 function Get-AtlasoWorkstationVmPaths {
     param(
         [Parameter(Mandatory = $true)][string]$VmrunPath,
@@ -294,6 +405,10 @@ function Get-AtlasoWorkstationVmPaths {
     return $reportedPaths
 }
 
+<#
+.SYNOPSIS
+Return the current user's Workstation inventory path when it exists.
+#>
 function Resolve-AtlasoWorkstationInventoryPath {
     $inventoryPath = Join-Path $env:APPDATA 'VMware\inventory.vmls'
     if (-not (Test-Path -LiteralPath $inventoryPath -PathType Leaf)) {
@@ -302,6 +417,16 @@ function Resolve-AtlasoWorkstationInventoryPath {
     return (Resolve-Path -LiteralPath $inventoryPath -ErrorAction Stop).Path
 }
 
+<#
+.SYNOPSIS
+Parse well-formed Workstation registrations inside one cleanup scope.
+
+.PARAMETER Lines
+Inventory snapshot lines to parse.
+
+.PARAMETER ScopeRoot
+Canonical root that bounds returned registrations.
+#>
 function Get-AtlasoScopedInventoryEntriesFromLines {
     param(
         [Parameter(Mandatory = $true)][AllowEmptyCollection()][AllowEmptyString()][string[]]$Lines,
@@ -332,6 +457,19 @@ function Get-AtlasoScopedInventoryEntriesFromLines {
     return $entries
 }
 
+<#
+.SYNOPSIS
+Return whether one unambiguously owned registration identifies a VMX.
+
+.PARAMETER InventoryPath
+Optional Workstation inventory file.
+
+.PARAMETER VmxPath
+Existing cleanup target VMX.
+
+.PARAMETER ScopeRoot
+Validated cleanup root associated with the query.
+#>
 function Test-AtlasoWorkstationVmxRegistered {
     param(
         [Parameter(Mandatory = $false)][AllowNull()][string]$InventoryPath,
@@ -381,6 +519,13 @@ function Test-AtlasoWorkstationVmxRegistered {
     return $matchingIds.Count -eq 1
 }
 
+<#
+.SYNOPSIS
+Read all bytes from the beginning of an open stream.
+
+.PARAMETER Stream
+Readable seekable stream.
+#>
 function Read-AtlasoStreamBytes {
     param([Parameter(Mandatory = $true)][System.IO.Stream]$Stream)
 
@@ -395,6 +540,34 @@ function Read-AtlasoStreamBytes {
     }
 }
 
+<#
+.SYNOPSIS
+Restore the newest file state with bounded identity-and-content CAS retries.
+
+.PARAMETER TargetPath
+Live path whose state is restored.
+
+.PARAMETER ExpectedCurrentBytes
+Bytes expected to be displaced by the next atomic replacement.
+
+.PARAMETER ReplacementPath
+File containing the state to restore.
+
+.PARAMETER ReplacementBytes
+Expected bytes of the replacement file.
+
+.PARAMETER Description
+Safe object description used in recovery errors.
+
+.PARAMETER ExpectedCurrentIdentity
+Optional filesystem identity expected at the target.
+
+.PARAMETER ReplacementIdentity
+Optional filesystem identity of the replacement.
+
+.PARAMETER PreserveCapturedOnSuccess
+Retain the displaced expected state as an actionable recovery copy.
+#>
 function Restore-AtlasoFileAfterCasFailure {
     param(
         [Parameter(Mandatory = $true)][string]$TargetPath,
@@ -446,6 +619,16 @@ function Restore-AtlasoFileAfterCasFailure {
     throw "$Description changed repeatedly during rollback; the newest captured state was preserved at '$recoveryPath'."
 }
 
+<#
+.SYNOPSIS
+Remove only uniquely owned stale registrations inside an Atlaso scope.
+
+.PARAMETER InventoryPath
+Optional Workstation inventory file.
+
+.PARAMETER ScopeRoot
+Canonical root that bounds stale registration selection.
+#>
 function Remove-AtlasoWorkstationStaleRegistrations {
     param(
         [Parameter(Mandatory = $false)][AllowNull()][string]$InventoryPath,
@@ -598,6 +781,13 @@ function Remove-AtlasoWorkstationStaleRegistrations {
     }
 }
 
+<#
+.SYNOPSIS
+Capture filesystem identities for a validated artifact root and descendants.
+
+.PARAMETER RemovalRoot
+Exact artifact root to snapshot.
+#>
 function Get-AtlasoRootSnapshot {
     param([Parameter(Mandatory = $true)][string]$RemovalRoot)
 
@@ -613,6 +803,16 @@ function Get-AtlasoRootSnapshot {
     }
 }
 
+<#
+.SYNOPSIS
+Reject new or identity-replaced entries in a captured artifact root.
+
+.PARAMETER RemovalRoot
+Exact artifact root being revalidated.
+
+.PARAMETER Snapshot
+Previously captured root and descendant identities.
+#>
 function Assert-AtlasoRootSnapshotUnreplaced {
     param(
         [Parameter(Mandatory = $true)][string]$RemovalRoot,
@@ -636,6 +836,16 @@ function Assert-AtlasoRootSnapshotUnreplaced {
     }
 }
 
+<#
+.SYNOPSIS
+Match a running VMX path to a target by path or filesystem identity.
+
+.PARAMETER RunningPath
+Path reported by vmrun.
+
+.PARAMETER VmxPath
+Validated cleanup target VMX.
+#>
 function Test-AtlasoRunningPathMatchesTarget {
     param(
         [Parameter(Mandatory = $true)][string]$RunningPath,
@@ -660,6 +870,16 @@ function Test-AtlasoRunningPathMatchesTarget {
     return $false
 }
 
+<#
+.SYNOPSIS
+Stop an exact running target and prove it is inactive.
+
+.PARAMETER VmrunPath
+Path to the vmrun executable.
+
+.PARAMETER VmxPath
+Validated cleanup target VMX.
+#>
 function Confirm-AtlasoWorkstationVmInactive {
     param(
         [Parameter(Mandatory = $true)][string]$VmrunPath,
@@ -679,6 +899,19 @@ function Confirm-AtlasoWorkstationVmInactive {
     }
 }
 
+<#
+.SYNOPSIS
+Atomically detach external VMDKs and return immutable delete evidence.
+
+.PARAMETER VmxPath
+Validated cleanup target VMX.
+
+.PARAMETER RemovalRoot
+Exact recursive removal boundary.
+
+.PARAMETER ExpectedIdentity
+Filesystem identity captured before provider operations.
+#>
 function Disconnect-AtlasoWorkstationExternalVmdks {
     param(
         [Parameter(Mandatory = $true)][string]$VmxPath,
@@ -792,6 +1025,16 @@ function Disconnect-AtlasoWorkstationExternalVmdks {
     }
 }
 
+<#
+.SYNOPSIS
+Restore an externally protected VMX without overwriting concurrent state.
+
+.PARAMETER VmxPath
+VMX path to restore.
+
+.PARAMETER Detachment
+Immutable detachment evidence and retained backup.
+#>
 function Restore-AtlasoWorkstationExternalVmdks {
     param(
         [Parameter(Mandatory = $true)][string]$VmxPath,
@@ -859,6 +1102,22 @@ function Restore-AtlasoWorkstationExternalVmdks {
     }
 }
 
+<#
+.SYNOPSIS
+Safely remove validated VMware Workstation artifacts under one exact root.
+
+.PARAMETER VmrunPath
+Path to the vmrun executable.
+
+.PARAMETER VmxPaths
+Complete set of expected VMX files below the root.
+
+.PARAMETER RemovalRoot
+Exact non-reparse-point artifact root to remove.
+
+.PARAMETER AllowMissingRegistrationsUnderRoot
+Optional containing scope for narrow stale-registration repair.
+#>
 function Remove-AtlasoWorkstationVmArtifacts {
     [CmdletBinding(SupportsShouldProcess = $true)]
     param(
@@ -1010,6 +1269,22 @@ function Remove-AtlasoWorkstationVmArtifacts {
     }
 }
 
+<#
+.SYNOPSIS
+Validate a configured or canonical artifact root and remove it safely.
+
+.PARAMETER VmrunPath
+Path to the vmrun executable.
+
+.PARAMETER ArtifactParentRoot
+Canonical parent that must strictly contain the removal root.
+
+.PARAMETER ExpectedRemovalRoot
+Exact configured root allowed for removal.
+
+.PARAMETER RemovalRoot
+Requested artifact root.
+#>
 function Remove-AtlasoWorkstationArtifactRoot {
     [CmdletBinding(DefaultParameterSetName = 'CanonicalParent', SupportsShouldProcess = $true)]
     param(

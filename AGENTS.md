@@ -258,6 +258,12 @@ Markdown is the canonical documentation source. Follow the
 update affected pages and media manifests whenever behavior or UI changes. Follow the
 [Atlaso Brand Kit](docs/assets/brand/BRAND_GUIDE.md) for documentation, screenshots, video, and promotional claims.
 
+Every new or changed PowerShell script or module must provide comment-based help at file/module scope and for every
+function, including nested helpers. Include a concise `.SYNOPSIS`, document every declared parameter with `.PARAMETER`,
+and add rationale comments for non-obvious safety ordering, trust boundaries, and platform behavior. Run
+`scripts/check_powershell_help.ps1` against the base checkout; the incremental gate requires complete compliance for
+each touched PowerShell file without forcing unrelated legacy rewrites.
+
 Every new or changed `/api/v1` operation must follow the
 [API authoring standard](docs/contribute/api-authoring.md), including operation, authorization, parameter,
 schema-property, response, compatibility, enforcement-test, and topic-documentation requirements. Keep supported
@@ -456,6 +462,12 @@ The following cross-cutting boundaries always apply:
   `DEFAULT_ADMIN_PASSWORD` variable only inside the bounded deployment child, preserve known-host verification, and fail
   closed for missing CLI capability, authorization, Environment, variable, or redaction. Never use a password argument,
   local `.env`, caller-provided `DEFAULT_ADMIN_PASSWORD`, or the retired `ATLASO_DEPLOY_SSH_PASSWORD` fallback.
+- The normal `create-atlaso-test-vm.ps1` Workstation wrapper provisions an existing Ed25519 public key for the bootstrap
+  administrator and a separate test-only passwordless-sudo drop-in by default. Resolve the default only from the current
+  Windows user's `.ssh/id_ed25519.pub`, permit an explicit public-key path or explicit skip, and fail before cleanup or
+  creation for missing, malformed, non-Ed25519, multiline, or conflicting input. Never generate, copy, or expose a
+  private key. Keep the property internal to this wrapper, preserve root SSH as disabled, and do not extend this
+  development-only authority to lifecycle VMs or exported OVF/OVA deployments.
 - Inventory Linux reports use bounded schema v2 while accepting and normalizing legacy v1. Keep sysfs authoritative for
   device enumeration, use metadata tools only for structured enrichment/readable names, retain JSON in the existing
   report column, enforce the 256 KiB boundary, and never submit raw command output. Its five-minute local console

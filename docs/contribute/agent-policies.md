@@ -712,8 +712,10 @@ Terminal order:
   apply behavior, and client-observable results.
 - For the default VMware test appliance, resolve the current IP with `scripts/windows/vmware/get-atlaso-vm-ip.ps1` and
   check web reachability with `Invoke-WebRequest https://<vmware-ip>/openapi.json -SkipCertificateCheck`. Use the
-  bootstrap `admin` account for SSH connections and run privileged checks through password-backed `sudo`; do not assume
-  root SSH is enabled on VMware test appliances. Check SSH/service state with `systemctl status atlaso --no-pager`,
+  bootstrap `admin` account for SSH connections. The normal `create-atlaso-test-vm.ps1` wrapper installs the current
+  Windows user's existing `.ssh/id_ed25519.pub` and a separate test-only passwordless-sudo rule unless explicitly
+  skipped, so key/agent-backed privileged checks use `sudo -n`; it must not generate a key or extend this authority to
+  lifecycle or exported appliances. Root SSH remains disabled. Check SSH/service state with `systemctl status atlaso --no-pager`,
   `journalctl -u atlaso -n 120 --no-pager`, and relevant real-state commands such as `nft list ruleset`,
   `resolvectl query <name>`, `getent hosts <name>`, `ip link`, `systemctl status ntpd --no-pager`, or
   `systemctl status systemd-timesyncd --no-pager`.
@@ -1466,6 +1468,11 @@ Terminal order:
 - Before committing branch work, run `python scripts/check_repo.py` or install the local hook with `pre-commit install`
   so changed Python, Jinja/HTML, Markdown, CSS, JavaScript, JSON, TOML, YAML, PowerShell, and SVG files get
   syntax/content checks. The hook is a fast pre-commit guard and does not replace focused tests.
+- Treat comment-based help and rationale-focused comments as the PowerShell authoring standard. Every new or changed
+  `.ps1` or `.psm1` file requires file/module help and help for every function, including nested helpers, with a concise
+  `.SYNOPSIS` and one `.PARAMETER` entry per declared parameter. Explain non-obvious safety ordering, trust boundaries,
+  and platform behavior without narrating self-evident commands. Run `scripts/check_powershell_help.ps1` against the
+  base checkout; CI applies the same incremental whole-file gate to every changed PowerShell source.
 - Before finalizing UI/backend changes, run focused tests for the touched area when available. Do not run the complete
   Python test suite locally; GitHub CI owns it. Also run `python -m compileall atlaso` after broad
   Python/template-adjacent changes.

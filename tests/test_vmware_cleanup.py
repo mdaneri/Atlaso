@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import shutil
 import subprocess
 import sys
@@ -840,6 +841,58 @@ def test_late_artifact_after_final_vmrun_list_blocks_root_removal(tmp_path: Path
     assert late.read_text(encoding="utf-8") == "late artifact"
 
 
+def test_test_vm_ssh_key_inputs_fail_before_cleanup(tmp_path: Path) -> None:
+    """Missing or conflicting SSH key inputs preserve an existing test VM."""
+    source_vmx = tmp_path / "source" / "source.vmx"
+    _write_vmx(source_vmx, "Source")
+    output_directory = tmp_path / "vm"
+    target_vmx = output_directory / "ProtectedVm.vmx"
+    _write_vmx(target_vmx, "ProtectedVm")
+    sentinel = output_directory / "sentinel.txt"
+    sentinel.write_text("preserve", encoding="utf-8")
+
+    missing_key = _run_script(
+        VMWARE_SCRIPT_ROOT / "create-atlaso-test-vm.ps1",
+        "-Name",
+        "ProtectedVm",
+        "-ApplianceVmxPath",
+        str(source_vmx),
+        "-OutputDirectory",
+        str(output_directory),
+        "-SshPublicKeyPath",
+        str(tmp_path / "missing.pub"),
+        "-Redeploy",
+        "-SkipNetworkPrepare",
+        "-NoStart",
+        environment=os.environ.copy(),
+    )
+    assert missing_key.returncode != 0
+    assert "SSH public key not found" in missing_key.stderr
+    assert target_vmx.exists()
+    assert sentinel.read_text(encoding="utf-8") == "preserve"
+
+    conflicting_key_options = _run_script(
+        VMWARE_SCRIPT_ROOT / "create-atlaso-test-vm.ps1",
+        "-Name",
+        "ProtectedVm",
+        "-ApplianceVmxPath",
+        str(source_vmx),
+        "-OutputDirectory",
+        str(output_directory),
+        "-SshPublicKeyPath",
+        str(tmp_path / "missing.pub"),
+        "-SkipSshKeyProvisioning",
+        "-Redeploy",
+        "-SkipNetworkPrepare",
+        "-NoStart",
+        environment=os.environ.copy(),
+    )
+    assert conflicting_key_options.returncode != 0
+    assert "Pass either -SshPublicKeyPath or -SkipSshKeyProvisioning" in conflicting_key_options.stderr
+    assert target_vmx.exists()
+    assert sentinel.read_text(encoding="utf-8") == "preserve"
+
+
 def test_module_keeps_inventory_work_out_of_normal_delete_path() -> None:
     """Regression guard for the simplified root-scoped architecture."""
     module = (VMWARE_SCRIPT_ROOT / "Atlaso.WorkstationCleanup.psm1").read_text(
@@ -859,4 +912,5 @@ def test_module_keeps_inventory_work_out_of_normal_delete_path() -> None:
     assert "-ExpectedCurrentIdentity $Detachment.OriginalIdentity" in module
     assert "-ReplacementIdentity $displacedIdentity" in module
     assert "-PreserveCapturedOnSuccess" in module
-    assert len(module.splitlines()) < 1_100
+    implementation = re.sub(r"<#.*?#>\s*", "", module, flags=re.DOTALL)
+    assert len(implementation.splitlines()) < 1_100

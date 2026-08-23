@@ -32,7 +32,7 @@ def test_trusted_ci_publishes_revalidated_required_statuses() -> None:
     assert "inputs.pull_number || github.ref" in workflow
     assert workflow.count("statuses: write") == 2
     assert workflow.count("pull-requests: read") == 2
-    assert workflow.count("persist-credentials: false") == 5
+    assert workflow.count("persist-credentials: false") == 6
     assert "github.event_name == 'workflow_dispatch'" in workflow
     assert "github.actor == 'github-actions[bot]'" in workflow
     assert '"$base_ref" != "main"' in workflow

@@ -4,6 +4,8 @@
 from __future__ import annotations
 
 import argparse
+import base64
+import binascii
 import json
 import os
 import re
@@ -36,6 +38,7 @@ PROPERTY_DNS = f"{PROPERTY_PREFIX}dns_servers"
 PROPERTY_ADMIN_PASSWORD = f"{PROPERTY_PREFIX}admin_password"
 PROPERTY_ROOT_PASSWORD = f"{PROPERTY_PREFIX}root_password"
 PROPERTY_ROOT_SSH_ENABLED = f"{PROPERTY_PREFIX}root_ssh_enabled"
+PROPERTY_DEVELOPMENT_ADMIN_SSH_PUBLIC_KEY = f"{PROPERTY_PREFIX}development_admin_ssh_public_key"
 PROPERTY_DEPLOYMENT_ID = f"{PROPERTY_PREFIX}deployment_id"
 MINIMUM_PASSWORD_LENGTH = 12
 REQUIRED_PROPERTIES = {
@@ -50,6 +53,7 @@ RESOLV_CONF_PATH = Path("/etc/resolv.conf")
 NGINX_MANAGEMENT_PATH = Path("/etc/atlaso/nginx/sites.d/management.conf")
 FIREWALL_CONFIG_PATH = Path("/etc/atlaso/nftables.d/atlaso.nft")
 SSHD_ROOT_LOGIN_CONFIG_PATH = Path("/etc/ssh/sshd_config.d/atlaso-root-login.conf")
+DEVELOPMENT_ADMIN_SUDOERS_PATH = Path("/etc/sudoers.d/atlaso-test-vm-admin")
 MARKER_PATH = Path("/var/lib/atlaso/vmware-ovf-customization.applied")
 PENDING_MARKER_PATH = Path("/var/lib/atlaso/vmware-ovf-customization.pending")
 NO_OVF_MARKER_PATH = Path("/var/lib/atlaso/vmware-no-ovf-initialization.applied")
@@ -186,6 +190,81 @@ def parse_boolean_property(properties: dict[str, str], key: str, *, default: boo
     raise OvfCustomizationError(f"{key} must be true or false")
 
 
+def validate_ed25519_public_key(value: str) -> str:
+    """Validate and normalize one bounded OpenSSH Ed25519 public key.
+
+    Args:
+        value: Candidate OpenSSH public-key line.
+
+    Returns:
+        The normalized public-key line, or an empty string when omitted.
+
+    Raises:
+        OvfCustomizationError: If the key is not one canonical Ed25519 public key.
+    """
+    if not value:
+        return ""
+    if (
+        len(value) > 4096
+        or value != value.strip()
+        or any(ord(character) < 32 or ord(character) == 127 for character in value)
+    ):
+        raise OvfCustomizationError(
+            f"{PROPERTY_DEVELOPMENT_ADMIN_SSH_PUBLIC_KEY} must be one bounded OpenSSH line"
+        )
+    parts = value.split(maxsplit=2)
+    if len(parts) < 2 or parts[0] != "ssh-ed25519":
+        raise OvfCustomizationError(
+            f"{PROPERTY_DEVELOPMENT_ADMIN_SSH_PUBLIC_KEY} must use ssh-ed25519"
+        )
+    try:
+        blob = base64.b64decode(parts[1], validate=True)
+    except (binascii.Error, ValueError) as exc:
+        raise OvfCustomizationError(
+            f"{PROPERTY_DEVELOPMENT_ADMIN_SSH_PUBLIC_KEY} payload is not valid base64"
+        ) from exc
+    if base64.b64encode(blob).decode("ascii") != parts[1]:
+        raise OvfCustomizationError(
+            f"{PROPERTY_DEVELOPMENT_ADMIN_SSH_PUBLIC_KEY} payload is not canonical base64"
+        )
+
+    def read_ssh_string(offset: int) -> tuple[bytes, int]:
+        """Read one length-prefixed string from the decoded SSH blob.
+
+        Args:
+            offset: Zero-based offset of the string length.
+
+        Returns:
+            The decoded string and the offset immediately after it.
+
+        Raises:
+            OvfCustomizationError: If the string is truncated.
+        """
+        if offset + 4 > len(blob):
+            raise OvfCustomizationError(
+                f"{PROPERTY_DEVELOPMENT_ADMIN_SSH_PUBLIC_KEY} payload is truncated"
+            )
+        length = int.from_bytes(blob[offset : offset + 4], "big")
+        start = offset + 4
+        end = start + length
+        if end > len(blob):
+            raise OvfCustomizationError(
+                f"{PROPERTY_DEVELOPMENT_ADMIN_SSH_PUBLIC_KEY} payload is truncated"
+            )
+        return blob[start:end], end
+
+    algorithm, offset = read_ssh_string(0)
+    public_bytes, offset = read_ssh_string(offset)
+    if algorithm != b"ssh-ed25519" or len(public_bytes) != 32 or offset != len(blob):
+        raise OvfCustomizationError(
+            f"{PROPERTY_DEVELOPMENT_ADMIN_SSH_PUBLIC_KEY} payload is not one complete Ed25519 key"
+        )
+    normalized = f"ssh-ed25519 {parts[1]}"
+    if len(parts) == 3 and parts[2]:
+        normalized += f" {parts[2]}"
+    return normalized
+
+
 def validate_non_network_properties(properties: dict[str, str]) -> dict[str, object]:
     """Validate OVF fields that the network-only console flow cannot correct.
 
@@ -217,6 +296,9 @@ def validate_non_network_properties(properties: dict[str, str]) -> dict[str, obj
         "admin_password": properties[PROPERTY_ADMIN_PASSWORD],
         "root_password": properties[PROPERTY_ROOT_PASSWORD],
         "root_ssh_enabled": parse_boolean_property(properties, PROPERTY_ROOT_SSH_ENABLED),
+        "development_admin_ssh_public_key": validate_ed25519_public_key(
+            properties.get(PROPERTY_DEVELOPMENT_ADMIN_SSH_PUBLIC_KEY, "")
+        ),
         "deployment_id": deployment_id,
     }
 
@@ -292,6 +374,9 @@ def validate_properties(
         "admin_password": validated_non_network["admin_password"],
         "root_password": validated_non_network["root_password"],
         "root_ssh_enabled": validated_non_network["root_ssh_enabled"],
+        "development_admin_ssh_public_key": validated_non_network[
+            "development_admin_ssh_public_key"
+        ],
         "deployment_id": validated_non_network["deployment_id"],
         "management_source_cidr": management_source_cidr,
         "management_source_ipv6_cidr": management_source_ipv6_cidr,
@@ -737,6 +822,10 @@ def redacted_summary(config: dict[str, object]) -> dict[str, object]:
         "admin_password_set": bool(config["admin_password"]),
         "root_password_set": bool(config["root_password"]),
         "root_ssh_enabled": config["root_ssh_enabled"],
+        "development_admin_ssh_key_set": bool(config["development_admin_ssh_public_key"]),
+        "development_admin_passwordless_sudo": bool(
+            config["development_admin_ssh_public_key"]
+        ),
         "deployment_id": config["deployment_id"],
     }
 
@@ -1100,6 +1189,214 @@ def configure_root_ssh(enabled: bool) -> None:
         raise OvfCustomizationError("Photon sshd configuration validation failed") from exc
 
 
+def resolve_os_account(username: str) -> object:
+    """Resolve one local operating-system account without importing pwd on Windows.
+
+    Args:
+        username: Exact local account name.
+
+    Returns:
+        The platform account record.
+    """
+    import pwd
+
+    return pwd.getpwnam(username)
+
+
+def chown_path(path: Path, uid: int, gid: int) -> None:
+    """Assign Linux ownership through a testable platform boundary.
+
+    Args:
+        path: Exact file-system path whose ownership changes.
+        uid: Final owner user ID.
+        gid: Final owner group ID.
+    """
+    os.chown(path, uid, gid)
+
+
+def chmod_path(path: Path, mode: int) -> None:
+    """Assign a POSIX mode through a testable platform boundary.
+
+    Args:
+        path: Exact file-system path whose mode changes.
+        mode: Final POSIX mode.
+    """
+    os.chmod(path, mode)
+
+
+def replace_path_atomic(source: Path, destination: Path) -> None:
+    """Atomically replace one destination through a testable platform boundary.
+
+    Args:
+        source: Prepared file in the destination directory.
+        destination: Exact path to replace.
+    """
+    source.replace(destination)
+
+
+def unlink_path(path: Path) -> None:
+    """Remove one file when present through a testable platform boundary.
+
+    Args:
+        path: Exact file to remove.
+    """
+    path.unlink(missing_ok=True)
+
+
+def _write_owned_file_atomic(
+    path: Path,
+    content: bytes,
+    *,
+    mode: int,
+    uid: int,
+    gid: int,
+) -> None:
+    """Atomically replace one owned file and synchronize its parent.
+
+    Args:
+        path: Exact destination path.
+        content: Bytes to write.
+        mode: Final file mode.
+        uid: Final owner user ID.
+        gid: Final owner group ID.
+    """
+    if path.is_symlink():
+        raise OvfCustomizationError(f"Refusing symlink-backed development SSH path: {path}")
+    temporary = path.with_name(f".{path.name}.{os.getpid()}.tmp")
+    try:
+        with temporary.open("xb") as handle:
+            handle.write(content)
+            handle.flush()
+            os.fsync(handle.fileno())
+        chmod_path(temporary, mode)
+        chown_path(temporary, uid, gid)
+        replace_path_atomic(temporary, path)
+        fsync_parent_directory(path)
+    finally:
+        unlink_path(temporary)
+
+
+def configure_development_admin_ssh(username: str, public_key: str) -> None:
+    """Install test-VM-only administrator key access and passwordless sudo.
+
+    Args:
+        username: Bootstrap administrator account name.
+        public_key: Validated Ed25519 OpenSSH public key.
+
+    Raises:
+        OvfCustomizationError: If account, path, ownership, or sudoers validation fails.
+    """
+    if not re.fullmatch(r"[a-z_][a-z0-9_-]*", username):
+        raise OvfCustomizationError("Bootstrap administrator account name is not safe for sudoers")
+    key = validate_ed25519_public_key(public_key)
+    if not key:
+        return
+    try:
+        account = resolve_os_account(username)
+    except (KeyError, ImportError) as exc:
+        raise OvfCustomizationError("Bootstrap administrator operating-system account was not found") from exc
+    home = Path(str(account.pw_dir))
+    if not home.is_absolute() or not home.exists() or not home.is_dir() or home.is_symlink():
+        raise OvfCustomizationError("Bootstrap administrator home is not a safe existing directory")
+    ssh_directory = home / ".ssh"
+    if ssh_directory.exists() and (not ssh_directory.is_dir() or ssh_directory.is_symlink()):
+        raise OvfCustomizationError("Bootstrap administrator SSH directory is not a safe directory")
+    ssh_directory.mkdir(mode=0o700, exist_ok=True)
+    chmod_path(ssh_directory, 0o700)
+    chown_path(ssh_directory, int(account.pw_uid), int(account.pw_gid))
+    authorized_keys = ssh_directory / "authorized_keys"
+    if authorized_keys.is_symlink():
+        raise OvfCustomizationError("Bootstrap administrator authorized_keys is not a safe file")
+
+    sudoers_directory = DEVELOPMENT_ADMIN_SUDOERS_PATH.parent
+    if (
+        not sudoers_directory.exists()
+        or not sudoers_directory.is_dir()
+        or sudoers_directory.is_symlink()
+        or DEVELOPMENT_ADMIN_SUDOERS_PATH.is_symlink()
+    ):
+        raise OvfCustomizationError("Development sudoers directory is not a safe existing directory")
+    visudo = shutil.which("visudo")
+    if visudo is None:
+        raise OvfCustomizationError("visudo is required for development passwordless sudo validation")
+
+    previous_authorized_keys = authorized_keys.read_bytes() if authorized_keys.exists() else None
+    previous_stat = authorized_keys.stat() if authorized_keys.exists() else None
+    previous_sudoers = (
+        DEVELOPMENT_ADMIN_SUDOERS_PATH.read_bytes()
+        if DEVELOPMENT_ADMIN_SUDOERS_PATH.exists()
+        else None
+    )
+    previous_sudoers_stat = (
+        DEVELOPMENT_ADMIN_SUDOERS_PATH.stat()
+        if DEVELOPMENT_ADMIN_SUDOERS_PATH.exists()
+        else None
+    )
+    sudoers_content = (
+        "# Development-only access provisioned by create-atlaso-test-vm.ps1.\n"
+        f"{username} ALL=(ALL) NOPASSWD: ALL\n"
+    ).encode("utf-8")
+    temporary_sudoers = DEVELOPMENT_ADMIN_SUDOERS_PATH.with_name(
+        f".{DEVELOPMENT_ADMIN_SUDOERS_PATH.name}.{os.getpid()}.tmp"
+    )
+    sudoers_replaced = False
+    try:
+        _write_owned_file_atomic(
+            authorized_keys,
+            f"{key}\n".encode("utf-8"),
+            mode=0o600,
+            uid=int(account.pw_uid),
+            gid=int(account.pw_gid),
+        )
+        with temporary_sudoers.open("xb") as handle:
+            handle.write(sudoers_content)
+            handle.flush()
+            os.fsync(handle.fileno())
+        chmod_path(temporary_sudoers, 0o440)
+        chown_path(temporary_sudoers, 0, 0)
+        subprocess.run(
+            [visudo, "-cf", str(temporary_sudoers)],
+            check=True,
+            text=True,
+            capture_output=True,
+        )
+        replace_path_atomic(temporary_sudoers, DEVELOPMENT_ADMIN_SUDOERS_PATH)
+        sudoers_replaced = True
+        fsync_parent_directory(DEVELOPMENT_ADMIN_SUDOERS_PATH)
+    except (OSError, OvfCustomizationError, subprocess.CalledProcessError) as exc:
+        try:
+            if sudoers_replaced:
+                if previous_sudoers is None:
+                    unlink_path(DEVELOPMENT_ADMIN_SUDOERS_PATH)
+                    fsync_parent_directory(DEVELOPMENT_ADMIN_SUDOERS_PATH)
+                elif previous_sudoers_stat is not None:
+                    _write_owned_file_atomic(
+                        DEVELOPMENT_ADMIN_SUDOERS_PATH,
+                        previous_sudoers,
+                        mode=previous_sudoers_stat.st_mode & 0o7777,
+                        uid=previous_sudoers_stat.st_uid,
+                        gid=previous_sudoers_stat.st_gid,
+                    )
+            if previous_authorized_keys is None:
+                unlink_path(authorized_keys)
+                fsync_parent_directory(authorized_keys)
+            elif previous_stat is not None:
+                _write_owned_file_atomic(
+                    authorized_keys,
+                    previous_authorized_keys,
+                    mode=previous_stat.st_mode & 0o7777,
+                    uid=previous_stat.st_uid,
+                    gid=previous_stat.st_gid,
+                )
+        except (OSError, OvfCustomizationError) as rollback_exc:
+            raise OvfCustomizationError(
+                "Development sudoers validation failed and authorized_keys rollback was incomplete"
+            ) from rollback_exc
+        raise OvfCustomizationError("Development passwordless sudo validation failed") from exc
+    finally:
+        unlink_path(temporary_sudoers)
+
+
 def restart_console() -> None:
     """Restart tty1 so it reloads the newly applied appliance secrets."""
     systemctl = shutil.which("systemctl")
@@ -1179,6 +1476,14 @@ def apply_customization(config: dict[str, object], *, dry_run: bool = False) -> 
         "bootstrap administrator password",
         lambda: set_password(bootstrap_user, str(config["admin_password"])),
     )
+    if config["development_admin_ssh_public_key"]:
+        run_initialization_layer(
+            "development administrator SSH",
+            lambda: configure_development_admin_ssh(
+                bootstrap_user,
+                str(config["development_admin_ssh_public_key"]),
+            ),
+        )
     run_initialization_layer(
         "appliance environment",
         lambda: write_env_file(

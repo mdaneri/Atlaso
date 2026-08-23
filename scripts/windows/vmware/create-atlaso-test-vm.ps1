@@ -1,3 +1,104 @@
+<#
+.SYNOPSIS
+Create or redeploy the normal Atlaso VMware Workstation test appliance.
+
+.DESCRIPTION
+Clones the latest or explicitly selected Workstation appliance, attaches the fixed
+data disks and requested lab adapters, injects the complete first-boot environment,
+and optionally waits for the management address and trusts the appliance root CA.
+
+By default the wrapper validates the current Windows user's existing
+.ssh/id_ed25519.pub before any cleanup or VM mutation, then provisions that public
+key for the bootstrap administrator with test-only passwordless sudo. It never
+creates or reads a private key. Use -SkipSshKeyProvisioning to retain the prior
+password-backed development behavior.
+
+.PARAMETER Name
+VMware display name and default output-folder name for the test appliance.
+
+.PARAMETER ApplianceVmxPath
+Optional built appliance VMX to clone; the newest build output is selected by default.
+
+.PARAMETER OutputDirectory
+Optional exact destination directory for the cloned test VM.
+
+.PARAMETER VmrunPath
+Optional VMware vmrun executable override.
+
+.PARAMETER ManagementNetwork
+VMnet used by the management adapter.
+
+.PARAMETER SiteANetwork
+VMnet used by the optional Site A lab adapter.
+
+.PARAMETER SiteBNetwork
+VMnet used by the optional Site B lab adapter.
+
+.PARAMETER TrunkNetwork
+VMnet used by the optional trunk lab adapter.
+
+.PARAMETER VdiskManagerPath
+Optional VMware virtual-disk manager executable override.
+
+.PARAMETER DepotVmdkPath
+Optional exact path for the persistent depot data disk.
+
+.PARAMETER BackupVmdkPath
+Optional exact path for the persistent backup data disk.
+
+.PARAMETER DepotDiskSize
+Capacity used when creating or resetting the depot disk.
+
+.PARAMETER BackupDiskSize
+Capacity used when creating or resetting the backup disk.
+
+.PARAMETER Redeploy
+Safely remove and recreate only the exact named test VM.
+
+.PARAMETER SkipLabNetworkAdapters
+Create only the management adapter.
+
+.PARAMETER IncludeLabNetworkAdapters
+Explicitly include the complete lab adapter set.
+
+.PARAMETER ResetDataDisks
+Recreate the exact managed depot and backup disks after safety validation.
+
+.PARAMETER NoStart
+Leave the cloned VM powered off after preparation.
+
+.PARAMETER SkipNetworkPrepare
+Use existing VMware networks without running network preparation.
+
+.PARAMETER WaitForIp
+Wait for the started VM management address and print its connection summary.
+
+.PARAMETER TrustRootCa
+Wait for and trust the generated appliance root CA for the current Windows user.
+
+.PARAMETER FirstBootFqdn
+Optional first-boot appliance FQDN override.
+
+.PARAMETER AdminPassword
+Initial Atlaso and Photon bootstrap administrator password.
+
+.PARAMETER RootPassword
+Initial Photon root console password.
+
+.PARAMETER RootSshEnabled
+Enable password-backed root SSH for this test VM; disabled by default.
+
+.PARAMETER SshPublicKeyPath
+Optional path to an existing Ed25519 public key. The current Windows user's
+.ssh/id_ed25519.pub is the default.
+
+.PARAMETER SkipSshKeyProvisioning
+Skip the development administrator public key and passwordless-sudo provisioning.
+Cannot be combined with -SshPublicKeyPath.
+
+.PARAMETER TimeoutSeconds
+Bounded wait used for management-address and root-CA readiness.
+#>
 [Diagnostics.CodeAnalysis.SuppressMessageAttribute('PSAvoidUsingPlainTextForPassword', '')]
 [CmdletBinding(SupportsShouldProcess = $true)]
 param(
@@ -26,6 +127,8 @@ param(
     [string]$AdminPassword = 'VMware01!Test',
     [string]$RootPassword = 'VMware01!Test',
     [switch]$RootSshEnabled,
+    [string]$SshPublicKeyPath = '',
+    [switch]$SkipSshKeyProvisioning,
     [int]$TimeoutSeconds = 300
 )
 
@@ -33,6 +136,13 @@ $ErrorActionPreference = 'Stop'
 . (Join-Path $PSScriptRoot 'Atlaso.WorkstationFirstBoot.ps1')
 Import-Module (Join-Path $PSScriptRoot 'Atlaso.WorkstationCleanup.psm1') -Force
 
+<#
+.SYNOPSIS
+Find the most recently written built Workstation appliance VMX.
+
+.PARAMETER RepoRoot
+The Atlaso repository root containing image/vmware-workstation/output.
+#>
 function Find-LatestApplianceVmx {
     param([string]$RepoRoot)
 
@@ -50,6 +160,22 @@ function Find-LatestApplianceVmx {
     return $selected.FullName
 }
 
+<#
+.SYNOPSIS
+Wait for and trust the freshly generated Atlaso root CA.
+
+.PARAMETER IpAddress
+The running appliance management IPv4 address.
+
+.PARAMETER Name
+The test VM name used for bounded temporary filenames.
+
+.PARAMETER TimeoutSeconds
+The total readiness deadline.
+
+.PARAMETER PollSeconds
+The delay between transient readiness failures.
+#>
 function Install-ApplianceRootCa {
     param(
         [Parameter(Mandatory = $true)][string]$IpAddress,
@@ -125,14 +251,47 @@ function Install-ApplianceRootCa {
     Write-Host "Trusted Atlaso root CA for current user: $($certificate.Thumbprint)"
 }
 
+<#
+.SYNOPSIS
+Print the normal test appliance connection endpoints and authentication state.
+
+.PARAMETER IpAddress
+The running appliance management IPv4 address.
+
+.PARAMETER Name
+The Workstation VM display name.
+
+.PARAMETER VmxPath
+The exact created VMX path.
+
+.PARAMETER RootCaTrusted
+Whether this run installed the appliance root CA for the current Windows user.
+
+.PARAMETER SshKeyProvisioned
+Whether this run injected development key access and passwordless sudo.
+#>
 function Write-ConnectionSummary {
     param(
         [Parameter(Mandatory = $true)][string]$IpAddress,
         [Parameter(Mandatory = $true)][string]$Name,
         [Parameter(Mandatory = $true)][string]$VmxPath,
-        [Parameter(Mandatory = $true)][bool]$RootCaTrusted
+        [Parameter(Mandatory = $true)][bool]$RootCaTrusted,
+        [Parameter(Mandatory = $true)][bool]$SshKeyProvisioned
     )
 
+    <#
+    .SYNOPSIS
+    Write one aligned connection-summary row.
+
+    .PARAMETER Label
+    The operator-facing row label.
+
+    .PARAMETER Value
+    The row value.
+
+    .PARAMETER ValueColor
+    The console color used for the value.
+    #>
     function Write-SummaryRow {
         param(
             [Parameter(Mandatory = $true)][string]$Label,
@@ -152,6 +311,12 @@ function Write-ConnectionSummary {
     Write-SummaryRow -Label "Swagger URL:" -Value "https://$IpAddress/api/docs"
     Write-SummaryRow -Label "Root CA URL:" -Value "http://$IpAddress/ca/downloads/root-ca.pem"
     Write-SummaryRow -Label "SSH:" -Value "ssh admin@$IpAddress"
+    if ($SshKeyProvisioned) {
+        Write-SummaryRow -Label "SSH auth:" -Value "host Ed25519 key; test-only passwordless sudo" -ValueColor Green
+    }
+    else {
+        Write-SummaryRow -Label "SSH auth:" -Value "password-backed; key provisioning explicitly skipped" -ValueColor Yellow
+    }
     if ($RootCaTrusted) {
         Write-SummaryRow -Label "HTTPS trust:" -Value "Atlaso root CA imported for current user" -ValueColor Green
     }
@@ -164,6 +329,19 @@ function Write-ConnectionSummary {
 
 $repoRoot = (Resolve-Path -LiteralPath (Join-Path $PSScriptRoot '..\..\..')).Path
 
+# Key input validation intentionally precedes network preparation, cleanup, disk
+# reset, and cloning so an authentication setup error preserves every existing VM.
+if ($SkipSshKeyProvisioning -and $PSBoundParameters.ContainsKey('SshPublicKeyPath')) {
+    throw 'Pass either -SshPublicKeyPath or -SkipSshKeyProvisioning, not both.'
+}
+$developmentAdminSshPublicKey = ''
+$resolvedSshPublicKeyPath = ''
+if (-not $SkipSshKeyProvisioning) {
+    $resolvedSshPublicKey = Resolve-AtlasoWorkstationAdminSshPublicKey -Path $SshPublicKeyPath
+    $developmentAdminSshPublicKey = $resolvedSshPublicKey.PublicKey
+    $resolvedSshPublicKeyPath = $resolvedSshPublicKey.Path
+}
+
 if (-not $FirstBootFqdn) {
     $FirstBootFqdn = New-AtlasoWorkstationFqdn -Name $Name
 }
@@ -171,7 +349,8 @@ $firstBootOvfEnvironment = New-AtlasoWorkstationOvfEnvironment `
     -Fqdn $FirstBootFqdn `
     -AdminPassword $AdminPassword `
     -RootPassword $RootPassword `
-    -RootSshEnabled:$RootSshEnabled
+    -RootSshEnabled:$RootSshEnabled `
+    -DevelopmentAdminSshPublicKey $developmentAdminSshPublicKey
 
 if ($SkipLabNetworkAdapters -and $IncludeLabNetworkAdapters) {
     throw "Pass either -SkipLabNetworkAdapters or -IncludeLabNetworkAdapters, not both."
@@ -289,6 +468,12 @@ if (-not $NoStart -and -not $WhatIfPreference) {
 
 Write-Host "Atlaso Workstation test VM ready: $Name"
 Write-Host "Appliance VMX: $targetVmx"
+if ($resolvedSshPublicKeyPath) {
+    Write-Host "Development SSH access: admin key from $resolvedSshPublicKeyPath with test-only passwordless sudo"
+}
+else {
+    Write-Host 'Development SSH access: key provisioning skipped; password-backed sudo remains required.'
+}
 
 if (($WaitForIp -or $TrustRootCa) -and -not $NoStart -and -not $WhatIfPreference) {
     $ip = & (Join-Path $PSScriptRoot 'get-atlaso-vm-ip.ps1') `
@@ -301,7 +486,12 @@ if (($WaitForIp -or $TrustRootCa) -and -not $NoStart -and -not $WhatIfPreference
     if ($TrustRootCa) {
         Install-ApplianceRootCa -IpAddress $ip -Name $Name -TimeoutSeconds $TimeoutSeconds
     }
-    Write-ConnectionSummary -IpAddress $ip -Name $Name -VmxPath $targetVmx -RootCaTrusted ([bool]$TrustRootCa)
+    Write-ConnectionSummary `
+        -IpAddress $ip `
+        -Name $Name `
+        -VmxPath $targetVmx `
+        -RootCaTrusted ([bool]$TrustRootCa) `
+        -SshKeyProvisioned (-not [bool]$SkipSshKeyProvisioning)
 }
 elseif (-not $NoStart -and -not $WhatIfPreference) {
     Write-Host "Pass -WaitForIp to print the HTTPS console, Swagger, root certificate, and SSH connection summary." -ForegroundColor DarkGray

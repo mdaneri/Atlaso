@@ -238,6 +238,17 @@ Use `window.AtlasoUiPatterns.createWizard(...)` and the generic `data-atlaso-wiz
 changed wizard. Raw Tabulator constructors outside the shared foundation are forbidden. Primary resource collections
 must not fall back to custom interactive native tables; retain semantic tables only for the reviewed summary exemptions.
 
+## PowerShell contributions
+
+Every new or changed `.ps1` or `.psm1` file must use comment-based help at file/module scope and before every function,
+including nested helpers. Provide a concise `.SYNOPSIS` and one `.PARAMETER` entry for every declared parameter. Add
+ordinary comments where they preserve non-obvious intent, safety ordering, trust boundaries, or platform-specific
+reasoning; comments should explain why the code is structured that way rather than restating the command.
+
+Run `pwsh -NoProfile -File scripts/check_powershell_help.ps1 -BaseRoot <base-checkout>` before committing PowerShell
+changes. CI compares the candidate with the exact pull-request base, so untouched legacy files remain valid until their
+next edit and every edited PowerShell file adopts the complete standard at once.
+
 ## API contributions
 
 Every new or changed `/api/v1` operation must follow the [API authoring standard](docs/contribute/api-authoring.md).

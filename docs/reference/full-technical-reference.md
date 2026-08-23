@@ -1380,8 +1380,22 @@ pwsh -ExecutionPolicy Bypass `
   -WaitForIp
 ```
 
+The normal wrapper resolves the current Windows user's existing `.ssh/id_ed25519.pub` before any cleanup or VM
+creation, validates it as one canonical Ed25519 public key, and provisions it for the bootstrap `admin` account with a
+separate test-only passwordless-sudo rule. Use `-SshPublicKeyPath <path>` for another existing Ed25519 public key or
+`-SkipSshKeyProvisioning` to preserve password-backed access. It never generates or copies a private key. Lifecycle
+VMs, exported OVF/OVA appliances, and root SSH remain unchanged. The canonical operational details and safety boundary
+are documented in [VMware Workstation Lifecycle Testing](vmware-workstation-lifecycle-testing.md#normal-test-vm).
+
 To deploy the current repo to an existing VMware test appliance without rebuilding the image, use the wheel deploy
-helper. If you already know the appliance IP, this is the most direct path:
+helper. A normal test VM created with the default key provisioning uses the existing key/agent path without 1Password:
+
+```powershell
+.\scripts\windows\vmware\deploy-wheel.ps1 -IpAddress 192.168.167.10
+```
+
+For an appliance created with `-SkipSshKeyProvisioning`, or another appliance that retains password-backed sudo, pass
+the exact 1Password Environment ID:
 
 ```powershell
 .\scripts\windows\vmware\deploy-wheel.ps1 `
@@ -1389,7 +1403,8 @@ helper. If you already know the appliance IP, this is the most direct path:
   -OnePasswordEnvironmentId '<atlaso-environment-id>'
 ```
 
-If you want the helper to resolve the guest IP from VMware Tools, pass the VMX path as the `-VmxPath` argument:
+If you want that password-backed helper to resolve the guest IP from VMware Tools, pass the VMX path as the `-VmxPath`
+argument:
 
 ```powershell
 .\scripts\windows\vmware\deploy-wheel.ps1 `

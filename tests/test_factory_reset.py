@@ -621,6 +621,7 @@ def test_factory_reset_scrubs_credentials_outside_apply_staging(tmp_path, monkey
     terminal_requests = tmp_path / "web-terminal" / "requests"
     terminal_private_key = tmp_path / "web-terminal-ca"
     terminal_public_key = tmp_path / "web-terminal-ca.pub"
+    development_sudoers = tmp_path / "sudoers.d" / "atlaso-test-vm-admin"
     local_users_home = tmp_path / "users"
     bootstrap_ssh = local_users_home / "admin" / ".ssh"
     root_ssh = tmp_path / "root" / ".ssh"
@@ -630,11 +631,13 @@ def test_factory_reset_scrubs_credentials_outside_apply_staging(tmp_path, monkey
     bootstrap_ssh.mkdir(parents=True)
     root_ssh.mkdir(parents=True)
     ldap_recovery.mkdir(parents=True)
+    development_sudoers.parent.mkdir(parents=True)
     for path in (
         authorized_keys / "vcf-backup",
         terminal_requests / "request.json",
         terminal_private_key,
         terminal_public_key,
+        development_sudoers,
         bootstrap_ssh / "authorized_keys",
         bootstrap_ssh / "authorized_keys2",
         root_ssh / "authorized_keys",
@@ -658,6 +661,7 @@ def test_factory_reset_scrubs_credentials_outside_apply_staging(tmp_path, monkey
     monkeypatch.setattr(factory_reset, "LOCAL_USERS_HOME_DIRECTORY", local_users_home)
     monkeypatch.setattr(factory_reset, "ROOT_SSH_DIRECTORY", root_ssh)
     monkeypatch.setattr(factory_reset, "LDAP_RECOVERY_DIRECTORY", ldap_recovery)
+    monkeypatch.setattr(factory_reset, "DEVELOPMENT_ADMIN_SUDOERS_PATH", development_sudoers)
     monkeypatch.setattr(
         factory_reset,
         "get_settings",
@@ -674,6 +678,7 @@ def test_factory_reset_scrubs_credentials_outside_apply_staging(tmp_path, monkey
     assert list(terminal_requests.iterdir()) == []
     assert not terminal_private_key.exists()
     assert not terminal_public_key.exists()
+    assert not development_sudoers.exists()
     assert not (bootstrap_ssh / "authorized_keys").exists()
     assert not (bootstrap_ssh / "authorized_keys2").exists()
     assert not (root_ssh / "authorized_keys").exists()
@@ -685,6 +690,7 @@ def test_factory_reset_scrubs_credentials_outside_apply_staging(tmp_path, monkey
         authorized_keys,
         terminal_requests,
         terminal_private_key.parent,
+        development_sudoers.parent,
         bootstrap_ssh,
         root_ssh,
     }

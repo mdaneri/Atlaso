@@ -1,3 +1,24 @@
+<#
+.SYNOPSIS
+Build and install Atlaso VMware Workstation first-boot metadata.
+
+.DESCRIPTION
+Provides the shared raw-VMX first-boot contract used by the normal Workstation
+test-VM wrapper and the lifecycle runner. The helper validates deployment inputs,
+serializes an OVF environment safely, and writes only the exact guestinfo entry.
+
+The optional development administrator public key is accepted only as one canonical
+Ed25519 OpenSSH key. Callers decide whether to include it; lifecycle and export paths
+omit it.
+#>
+
+<#
+.SYNOPSIS
+Escape one value for an OVF XML attribute.
+
+.PARAMETER Value
+The possibly empty value to encode.
+#>
 function ConvertTo-AtlasoOvfXmlValue {
     param(
         [AllowEmptyString()]
@@ -7,12 +28,168 @@ function ConvertTo-AtlasoOvfXmlValue {
     return [System.Security.SecurityElement]::Escape($Value)
 }
 
+<#
+.SYNOPSIS
+Quote one string for a VMX assignment.
+
+.PARAMETER Value
+The unquoted VMX value.
+#>
 function ConvertTo-AtlasoVmxString {
     param([string]$Value)
 
     return '"' + ($Value -replace '\\', '\\' -replace '"', '\"') + '"'
 }
 
+<#
+.SYNOPSIS
+Validate and normalize one OpenSSH Ed25519 public key.
+
+.DESCRIPTION
+Checks the bounded single-line text form, canonical base64, embedded SSH algorithm,
+and exact 32-byte Ed25519 public-key payload. The private key is never accessed.
+
+.PARAMETER PublicKey
+The OpenSSH public-key line to validate.
+#>
+function Assert-AtlasoWorkstationEd25519PublicKey {
+    param(
+        [Parameter(Mandatory = $true)]
+        [string]$PublicKey
+    )
+
+    $key = $PublicKey
+    # Public-key files conventionally end with one newline. Remove only that final
+    # terminator so an embedded or repeated newline still fails closed below.
+    if ($key.EndsWith("`r`n", [System.StringComparison]::Ordinal)) {
+        $key = $key.Substring(0, $key.Length - 2)
+    }
+    elseif ($key.EndsWith("`n", [System.StringComparison]::Ordinal)) {
+        $key = $key.Substring(0, $key.Length - 1)
+    }
+    if (
+        [string]::IsNullOrWhiteSpace($key) -or
+        $key.Length -gt 4096 -or
+        $key -ne $key.Trim() -or
+        $key -match '[\x00-\x1F\x7F]'
+    ) {
+        throw 'The SSH public key must be one bounded, non-empty OpenSSH line without surrounding whitespace or control characters.'
+    }
+
+    $parts = @($key -split ' +', 3)
+    if ($parts.Count -lt 2 -or $parts[0] -ne 'ssh-ed25519') {
+        throw 'The SSH public key must use the ssh-ed25519 algorithm.'
+    }
+    try {
+        $blob = [System.Convert]::FromBase64String($parts[1])
+    }
+    catch {
+        throw 'The SSH public key payload is not valid base64.'
+    }
+    if ([System.Convert]::ToBase64String($blob) -ne $parts[1] -or $blob.Length -ne 51) {
+        throw 'The SSH public key payload is not a canonical Ed25519 OpenSSH key.'
+    }
+
+    <#
+    .SYNOPSIS
+    Read one big-endian length from an SSH wire-format blob.
+
+    .PARAMETER Bytes
+    The complete decoded SSH public-key blob.
+
+    .PARAMETER Offset
+    The zero-based position of the four-byte length.
+    #>
+    function Read-AtlasoSshBlobLength {
+        param(
+            [Parameter(Mandatory = $true)][byte[]]$Bytes,
+            [Parameter(Mandatory = $true)][int]$Offset
+        )
+
+        if ($Offset -lt 0 -or $Offset + 4 -gt $Bytes.Length) {
+            throw 'The SSH public key payload is truncated.'
+        }
+        return [int](
+            ([uint64]$Bytes[$Offset] * 16777216) +
+            ([uint64]$Bytes[$Offset + 1] * 65536) +
+            ([uint64]$Bytes[$Offset + 2] * 256) +
+            [uint64]$Bytes[$Offset + 3]
+        )
+    }
+
+    # Decode the wire format as well as the visible prefix so a mislabeled base64
+    # payload cannot gain test-VM authorization.
+    $algorithmLength = Read-AtlasoSshBlobLength -Bytes $blob -Offset 0
+    if ($algorithmLength -ne 11 -or 4 + $algorithmLength + 4 -gt $blob.Length) {
+        throw 'The SSH public key payload does not contain an Ed25519 algorithm identifier.'
+    }
+    $algorithm = [System.Text.Encoding]::ASCII.GetString($blob, 4, $algorithmLength)
+    $publicKeyLengthOffset = 4 + $algorithmLength
+    $publicKeyLength = Read-AtlasoSshBlobLength -Bytes $blob -Offset $publicKeyLengthOffset
+    if (
+        $algorithm -ne 'ssh-ed25519' -or
+        $publicKeyLength -ne 32 -or
+        $publicKeyLengthOffset + 4 + $publicKeyLength -ne $blob.Length
+    ) {
+        throw 'The SSH public key payload does not contain one complete Ed25519 public key.'
+    }
+
+    $normalized = "ssh-ed25519 $($parts[1])"
+    if ($parts.Count -eq 3 -and $parts[2]) {
+        $normalized += " $($parts[2])"
+    }
+    try {
+        [void][System.Xml.XmlConvert]::VerifyXmlChars($normalized)
+    }
+    catch {
+        throw 'The SSH public key contains characters that cannot be represented in the OVF environment.'
+    }
+    return $normalized
+}
+
+<#
+.SYNOPSIS
+Resolve the existing host public key used by the normal Workstation test VM.
+
+.DESCRIPTION
+Uses an explicit path when supplied; otherwise selects the current Windows user's
+.ssh/id_ed25519.pub. This function validates only an existing public key and never
+generates, reads, or copies a private key.
+
+.PARAMETER Path
+Optional path to an existing Ed25519 OpenSSH public-key file.
+#>
+function Resolve-AtlasoWorkstationAdminSshPublicKey {
+    param([string]$Path = '')
+
+    $resolvedPath = $Path
+    if (-not $resolvedPath) {
+        $userProfile = [Environment]::GetFolderPath([Environment+SpecialFolder]::UserProfile)
+        if ([string]::IsNullOrWhiteSpace($userProfile)) {
+            throw 'The current Windows user profile could not be resolved. Pass -SshPublicKeyPath or -SkipSshKeyProvisioning.'
+        }
+        # A deterministic file default lets every local coding task under the same
+        # Windows user share the identity without agent-key ambiguity.
+        $resolvedPath = Join-Path $userProfile '.ssh\id_ed25519.pub'
+    }
+    if (-not (Test-Path -LiteralPath $resolvedPath -PathType Leaf)) {
+        throw "SSH public key not found: $resolvedPath. Create the existing key outside this script, pass -SshPublicKeyPath, or pass -SkipSshKeyProvisioning."
+    }
+    $fullPath = (Resolve-Path -LiteralPath $resolvedPath).Path
+    $publicKey = Assert-AtlasoWorkstationEd25519PublicKey -PublicKey ([System.IO.File]::ReadAllText($fullPath))
+    return [pscustomobject]@{
+        Path = $fullPath
+        PublicKey = $publicKey
+    }
+}
+
+<#
+.SYNOPSIS
+Derive a valid development FQDN from a Workstation VM name.
+
+.PARAMETER Name
+The requested Workstation VM display name.
+#>
 function New-AtlasoWorkstationFqdn {
     param(
         [Parameter(Mandatory = $true)]
@@ -29,6 +206,25 @@ function New-AtlasoWorkstationFqdn {
     return "$label.atlaso.internal"
 }
 
+<#
+.SYNOPSIS
+Create the complete raw-clone OVF environment for Atlaso first boot.
+
+.PARAMETER Fqdn
+The appliance fully qualified domain name.
+
+.PARAMETER AdminPassword
+The initial Atlaso and Photon bootstrap administrator password.
+
+.PARAMETER RootPassword
+The Photon root console password.
+
+.PARAMETER RootSshEnabled
+Whether first boot enables password-backed root SSH.
+
+.PARAMETER DevelopmentAdminSshPublicKey
+Optional validated public key used only by the normal development test wrapper.
+#>
 function New-AtlasoWorkstationOvfEnvironment {
     param(
         [Parameter(Mandatory = $true)]
@@ -40,7 +236,10 @@ function New-AtlasoWorkstationOvfEnvironment {
         [Parameter(Mandatory = $true)]
         [string]$RootPassword,
 
-        [switch]$RootSshEnabled
+        [switch]$RootSshEnabled,
+
+        [AllowEmptyString()]
+        [string]$DevelopmentAdminSshPublicKey = ''
     )
 
     foreach ($passwordInput in @(
@@ -67,6 +266,12 @@ function New-AtlasoWorkstationOvfEnvironment {
         throw 'First-boot FQDN must not use .local.'
     }
 
+    if ($DevelopmentAdminSshPublicKey) {
+        # Revalidate at the serialization boundary so another caller cannot bypass
+        # the test-wrapper resolver and inject arbitrary authorized_keys content.
+        $DevelopmentAdminSshPublicKey = Assert-AtlasoWorkstationEd25519PublicKey -PublicKey $DevelopmentAdminSshPublicKey
+    }
+
     $properties = [ordered]@{
         'atlaso.deployment_id' = [guid]::NewGuid().ToString('D')
         'atlaso.management_mode' = 'dhcp'
@@ -81,6 +286,9 @@ function New-AtlasoWorkstationOvfEnvironment {
         'atlaso.root_password' = $RootPassword
         'atlaso.root_ssh_enabled' = $RootSshEnabled.IsPresent.ToString().ToLowerInvariant()
     }
+    if ($DevelopmentAdminSshPublicKey) {
+        $properties['atlaso.development_admin_ssh_public_key'] = $DevelopmentAdminSshPublicKey
+    }
     $propertyXml = foreach ($entry in $properties.GetEnumerator()) {
         $key = ConvertTo-AtlasoOvfXmlValue -Value $entry.Key
         $value = ConvertTo-AtlasoOvfXmlValue -Value $entry.Value
@@ -89,6 +297,16 @@ function New-AtlasoWorkstationOvfEnvironment {
     return "<Environment xmlns='http://schemas.dmtf.org/ovf/environment/1' xmlns:oe='http://schemas.dmtf.org/ovf/environment/1' oe:id='vm'><PlatformSection><Kind>VMware Workstation</Kind><Version>17</Version><Vendor>VMware, Inc.</Vendor><Locale>en</Locale></PlatformSection><PropertySection>$($propertyXml -join '')</PropertySection></Environment>"
 }
 
+<#
+.SYNOPSIS
+Replace the exact guestinfo.ovfEnv assignment in a VMX file.
+
+.PARAMETER VmxPath
+The VMX file to update before power-on.
+
+.PARAMETER OvfEnvironment
+The complete validated OVF environment XML.
+#>
 function Set-AtlasoWorkstationOvfEnvironment {
     param(
         [Parameter(Mandatory = $true)]
