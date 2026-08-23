@@ -898,11 +898,83 @@ def appliance_update_evidence_state(
         finalizer_path: Durable Atlaso release finalizer path.
     """
 
-    def _read_json_object(path_value: str) -> tuple[str, dict[str, Any], str]:
+    def _valid_timestamp(value: object) -> bool:
+        """Return whether a durable timestamp is timezone-aware ISO 8601.
+
+        Args:
+            value: Candidate timestamp value.
+        """
+        if not isinstance(value, str) or not value.strip():
+            return False
+        try:
+            parsed = datetime.fromisoformat(value.replace("Z", "+00:00"))
+        except ValueError:
+            return False
+        return parsed.tzinfo is not None
+
+    def _valid_commands(value: object) -> bool:
+        """Return whether a durable command collection has the helper shape.
+
+        Args:
+            value: Candidate command collection.
+        """
+        return isinstance(value, list) and all(isinstance(command, dict) for command in value)
+
+    def _valid_aggregate(payload: dict[str, Any]) -> bool:
+        """Return whether payload matches the aggregate updater record.
+
+        Args:
+            payload: Parsed durable evidence object.
+        """
+        return bool(
+            payload.get("status") in {"succeeded", "failed"}
+            and isinstance(payload.get("applied"), dict)
+            and isinstance(payload.get("attempted"), dict)
+            and _valid_commands(payload.get("commands"))
+            and isinstance(payload.get("reboot_recommended"), bool)
+            and isinstance(payload.get("restart_required"), bool)
+            and _valid_timestamp(payload.get("finished_at"))
+            and isinstance(payload.get("finalizer_status_path"), str)
+        )
+
+    def _valid_finalizer(payload: dict[str, Any]) -> bool:
+        """Return whether payload matches a release finalizer record.
+
+        Args:
+            payload: Parsed durable evidence object.
+        """
+        status = payload.get("status")
+        timestamp_key = "finished_at" if status in {"succeeded", "failed"} else "started_at"
+        return bool(
+            status
+            in {
+                "transaction_pending",
+                "restart_pending",
+                "activation_committed",
+                "rollback_pending",
+                "succeeded",
+                "failed",
+            }
+            and isinstance(payload.get("job_id"), str)
+            and payload["job_id"].strip()
+            and isinstance(payload.get("release"), str)
+            and payload["release"].strip()
+            and isinstance(payload.get("candidate_version"), str)
+            and payload["candidate_version"].strip()
+            and isinstance(payload.get("compatibility"), dict)
+            and isinstance(payload.get("rolled_back"), bool)
+            and _valid_commands(payload.get("commands"))
+            and _valid_timestamp(payload.get(timestamp_key))
+        )
+
+    def _read_json_object(
+        path_value: str, *, finalizer_only: bool = False
+    ) -> tuple[str, dict[str, Any], str]:
         """Read one durable evidence file as a JSON object.
 
         Args:
             path_value: Durable evidence path to inspect.
+            finalizer_only: Whether only the release-finalizer schema is valid.
         """
         try:
             content = Path(path_value).read_text(encoding="utf-8")
@@ -916,11 +988,18 @@ def appliance_update_evidence_state(
             payload = json.loads(content)
         except json.JSONDecodeError:
             return "malformed", {}, content
-        if not isinstance(payload, dict) or not str(payload.get("status") or "").strip():
+        if not isinstance(payload, dict):
+            return "malformed", {}, content
+        valid = _valid_finalizer(payload) if finalizer_only else (
+            _valid_aggregate(payload) or _valid_finalizer(payload)
+        )
+        if not valid:
             return "malformed", {}, content
         return "available", payload, content
 
-    finalizer_state, finalizer, _finalizer_content = _read_json_object(finalizer_path)
+    finalizer_state, finalizer, _finalizer_content = _read_json_object(
+        finalizer_path, finalizer_only=True
+    )
     evidence_expected = qualifying_install_expected or finalizer_state != "missing"
     evidence_state, evidence, content = _read_json_object(update_info_path)
 

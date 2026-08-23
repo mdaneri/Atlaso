@@ -85,6 +85,26 @@ def test_update_evidence_state_validates_available_and_actionable_records(tmp_pa
 
     info_path = tmp_path / "update-info"
     finalizer_path = tmp_path / "finalizer.json"
+    aggregate = {
+        "status": "succeeded",
+        "applied": {"photon_os": {}},
+        "attempted": {"photon_os": {}},
+        "commands": [],
+        "reboot_recommended": False,
+        "restart_required": False,
+        "finished_at": "2026-08-22T20:00:01+00:00",
+        "finalizer_status_path": "",
+    }
+    finalizer = {
+        "status": "succeeded",
+        "job_id": "job-3",
+        "release": "0.9.186",
+        "candidate_version": "0.9.186",
+        "compatibility": {},
+        "rolled_back": False,
+        "commands": [],
+        "finished_at": "2026-08-22T20:00:00+00:00",
+    }
     expected_missing = appliance_update_evidence_state(
         qualifying_install_expected=True,
         update_info_path=str(info_path),
@@ -93,7 +113,7 @@ def test_update_evidence_state_validates_available_and_actionable_records(tmp_pa
     assert expected_missing["state"] == "needs_attention"
     assert "No such file" not in expected_missing["message"]
 
-    info_path.write_text('{"status":"succeeded","job_id":"job-1"}\n', encoding="utf-8")
+    info_path.write_text(json.dumps(aggregate), encoding="utf-8")
     available = appliance_update_evidence_state(
         qualifying_install_expected=True,
         update_info_path=str(info_path),
@@ -101,7 +121,19 @@ def test_update_evidence_state_validates_available_and_actionable_records(tmp_pa
     )
     assert available["state"] == "available"
     assert available["label"] == "Available"
-    assert available["content"].startswith('{"status"')
+    assert available["content"].startswith("{")
+
+    for incompatible in (
+        {"status": "arbitrary"},
+        {"status": 123},
+        {"status": "succeeded", "commands": []},
+        {**aggregate, "reboot_recommended": "false"},
+    ):
+        info_path.write_text(json.dumps(incompatible), encoding="utf-8")
+        incompatible_state = appliance_update_evidence_state(
+            update_info_path=str(info_path), finalizer_path=str(finalizer_path)
+        )
+        assert incompatible_state["state"] == "needs_attention"
 
     info_path.write_text("not-json", encoding="utf-8")
     malformed = appliance_update_evidence_state(
@@ -123,29 +155,28 @@ def test_update_evidence_state_validates_available_and_actionable_records(tmp_pa
     )
     assert invalid_utf8["state"] == "needs_attention"
 
-    info_path.write_text('{"status":"succeeded","job_id":"job-1"}\n', encoding="utf-8")
-    finalizer_path.write_text('{"status":"succeeded","job_id":"job-2"}\n', encoding="utf-8")
+    info_path.write_text(json.dumps({**finalizer, "job_id": "job-1"}), encoding="utf-8")
+    finalizer_path.write_text(json.dumps({**finalizer, "job_id": "job-2"}), encoding="utf-8")
     inconsistent = appliance_update_evidence_state(
         update_info_path=str(info_path), finalizer_path=str(finalizer_path)
     )
     assert inconsistent["state"] == "needs_attention"
     assert "inconsistent" in inconsistent["message"]
 
-    info_path.write_text('{"status":"failed","job_id":"job-2"}\n', encoding="utf-8")
+    info_path.write_text(
+        json.dumps({**finalizer, "status": "failed", "job_id": "job-2"}),
+        encoding="utf-8",
+    )
     inconsistent_status = appliance_update_evidence_state(
         update_info_path=str(info_path), finalizer_path=str(finalizer_path)
     )
     assert inconsistent_status["state"] == "needs_attention"
 
-    finalizer_path.write_text(
-        '{"status":"succeeded","job_id":"job-3","finished_at":"2026-08-22T20:00:00+00:00"}\n',
-        encoding="utf-8",
-    )
+    finalizer_path.write_text(json.dumps(finalizer), encoding="utf-8")
     info_path.write_text(
         json.dumps(
             {
-                "status": "succeeded",
-                "finished_at": "2026-08-22T20:00:01+00:00",
+                **aggregate,
                 "finalizer_status_path": str(finalizer_path),
             }
         ),
@@ -159,7 +190,7 @@ def test_update_evidence_state_validates_available_and_actionable_records(tmp_pa
     info_path.write_text(
         json.dumps(
             {
-                "status": "succeeded",
+                **aggregate,
                 "finished_at": "2026-08-22T19:59:59+00:00",
                 "finalizer_status_path": str(finalizer_path),
             }
@@ -174,7 +205,7 @@ def test_update_evidence_state_validates_available_and_actionable_records(tmp_pa
     info_path.write_text(
         json.dumps(
             {
-                "status": "succeeded",
+                **aggregate,
                 "finished_at": "2026-08-22T20:00:01",
                 "finalizer_status_path": str(finalizer_path),
             }
