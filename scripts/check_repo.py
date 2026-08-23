@@ -97,6 +97,14 @@ SPARK_WORKER_REQUIRED_VALUES = {
     "model": "gpt-5.3-codex-spark",
     "model_reasoning_effort": "medium",
 }
+SPARK_WORKER_ALLOWED_KEYS = frozenset(
+    (*SPARK_WORKER_REQUIRED_VALUES, "description", "developer_instructions")
+)
+SPARK_WORKER_OVERRIDE_MESSAGES = {
+    "approval_policy": "Spark worker must inherit the parent approval policy",
+    "sandbox_mode": "Spark worker must inherit the parent sandbox mode",
+    "tools": "Spark worker must inherit the parent tools",
+}
 SPARK_WORKER_REQUIRED_INSTRUCTION_MARKERS = (
     "Mandatory Agent Startup Gate",
     "Mandatory UI Design Guide Gate",
@@ -883,12 +891,12 @@ def check_spark_worker_agent(root: Path) -> list[Finding]:
                     )
                 )
 
-    if "sandbox_mode" in config:
-        findings.append(
-            Finding(path, "Spark worker must inherit the parent sandbox mode")
+    for key in sorted(config.keys() - SPARK_WORKER_ALLOWED_KEYS):
+        message = SPARK_WORKER_OVERRIDE_MESSAGES.get(
+            key,
+            f"Spark worker contains unsupported top-level key: {key}",
         )
-    if "tools" in config:
-        findings.append(Finding(path, "Spark worker must inherit the parent tools"))
+        findings.append(Finding(path, message))
     return findings
 
 

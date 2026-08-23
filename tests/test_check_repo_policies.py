@@ -13,6 +13,7 @@ from scripts.check_repo import (
     REMOTE_BRANCH_LEASE_MARKER,
     REQUIRED_POLICY_MARKERS,
     SPARK_WORKER_AGENT_PATH,
+    SPARK_WORKER_ALLOWED_KEYS,
     SPARK_WORKER_REQUIRED_INSTRUCTION_MARKERS,
     SPARK_WORKER_REQUIRED_VALUES,
     TERMINAL_CLEANUP_ORDER_ANCHOR,
@@ -37,6 +38,8 @@ def write_spark_worker_agent(
     instructions: str | None = None,
     sandbox_mode: str | None = None,
     tools: list[str] | None = None,
+    approval_policy: str | None = None,
+    extra_key: str | None = None,
 ) -> None:
     """Persist a Spark worker fixture.
 
@@ -47,6 +50,8 @@ def write_spark_worker_agent(
         instructions: Developer instructions or the required marker set by default.
         sandbox_mode: Optional sandbox override used to exercise inheritance checks.
         tools: Optional tool override used to exercise inheritance checks.
+        approval_policy: Optional approval override used to exercise inheritance checks.
+        extra_key: Optional unsupported key used to exercise the exact allowlist.
     """
     config_values = {**SPARK_WORKER_REQUIRED_VALUES, **(values or {})}
     instruction_text = instructions or "\n".join(
@@ -68,6 +73,10 @@ def write_spark_worker_agent(
     if tools is not None:
         quoted_tools = ", ".join(f'"{tool}"' for tool in tools)
         lines.append(f"tools = [{quoted_tools}]")
+    if approval_policy is not None:
+        lines.append(f'approval_policy = "{approval_policy}"')
+    if extra_key is not None:
+        lines.append(f'{extra_key} = "unexpected"')
     lines.extend(("", 'developer_instructions = """', instruction_text, '"""'))
     path.write_text("\n".join(lines) + "\n", encoding="utf-8")
 
@@ -203,6 +212,38 @@ def test_spark_worker_agent_rejects_tool_override(tmp_path: Path) -> None:
 
     assert len(findings) == 1
     assert findings[0].message == "Spark worker must inherit the parent tools"
+
+
+def test_spark_worker_agent_rejects_approval_policy_override(tmp_path: Path) -> None:
+    """Verify that the worker inherits the parent approval policy.
+
+    Args:
+        tmp_path: Temporary directory provided by pytest for isolated filesystem state.
+    """
+    write_spark_worker_agent(tmp_path, approval_policy="never")
+
+    findings = check_spark_worker_agent(tmp_path)
+
+    assert len(findings) == 1
+    assert findings[0].message == "Spark worker must inherit the parent approval policy"
+
+
+def test_spark_worker_agent_rejects_any_unsupported_key(tmp_path: Path) -> None:
+    """Verify that future top-level overrides fail closed.
+
+    Args:
+        tmp_path: Temporary directory provided by pytest for isolated filesystem state.
+    """
+    extra_key = "future_permission_override"
+    assert extra_key not in SPARK_WORKER_ALLOWED_KEYS
+    write_spark_worker_agent(tmp_path, extra_key=extra_key)
+
+    findings = check_spark_worker_agent(tmp_path)
+
+    assert len(findings) == 1
+    assert findings[0].message == (
+        "Spark worker contains unsupported top-level key: " + extra_key
+    )
 
 
 def test_deployment_assets_are_checkable_text() -> None:
