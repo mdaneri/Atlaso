@@ -487,13 +487,19 @@ function Test-AtlasoWorkstationVmxRegistered {
     }
     $targetIdentity = Get-AtlasoPathIdentity -Path $VmxPath -Description 'VMware cleanup target'
     $ownersById = @{}
+    $invalidOwnerIds = [System.Collections.Generic.HashSet[string]]::new([System.StringComparer]::OrdinalIgnoreCase)
     foreach ($line in Get-Content -LiteralPath $InventoryPath -ErrorAction Stop) {
-        if ($line -notmatch '^\s*vmlist(?<id>\d+)\.config\s*=\s*"(?<path>.*)"\s*$') {
+        if ($line -notmatch '^\s*vmlist(?<id>\d+)\.config\s*=') { continue }
+        $id = $Matches.id
+        if ($line -notmatch '^\s*vmlist\d+\.config\s*=\s*"(?<path>.*)"\s*$') {
+            $invalidOwnerIds.Add($id) | Out-Null
             continue
         }
-        $id = $Matches.id
         $candidate = $Matches.path
-        if (-not $candidate -or -not [System.IO.Path]::IsPathFullyQualified($candidate)) { continue }
+        if (-not $candidate -or -not [System.IO.Path]::IsPathFullyQualified($candidate)) {
+            $invalidOwnerIds.Add($id) | Out-Null
+            continue
+        }
         $canonicalPath = Get-AtlasoCanonicalPath -Path $candidate
         if (-not $ownersById.ContainsKey($id)) {
             $ownersById[$id] = [System.Collections.Generic.List[string]]::new()
@@ -515,6 +521,7 @@ function Test-AtlasoWorkstationVmxRegistered {
     }
     foreach ($id in $matchingIds) {
         if (
+            $invalidOwnerIds.Contains($id) -or
             $ownersById[$id].Count -ne 1 -or
             $matchingIds.Count -ne 1
         ) {
@@ -1066,20 +1073,26 @@ function Restore-AtlasoWorkstationExternalVmdks {
         throw "Detached VMware Workstation VMX is missing; original bytes remain at '$($Detachment.BackupPath)'."
     }
     $displacedPath = "$VmxPath.atlaso-displaced-$([System.Guid]::NewGuid().ToString('N')).tmp"
+    $originalRecoveryPath = "$VmxPath.atlaso-original-$([System.Guid]::NewGuid().ToString('N')).tmp"
     $preserveDisplaced = $false
+    $recoveryCreated = $false
+    $restorationVerified = $false
     try {
-        $vmxLock = [System.IO.File]::Open(
-            $VmxPath,
-            [System.IO.FileMode]::Open,
-            [System.IO.FileAccess]::Read,
-            ([System.IO.FileShare]::Read -bor [System.IO.FileShare]::Delete)
-        )
+        # Retain and flush an independent copy because File.Replace consumes the detachment backup.
+        $recoveryStream = [System.IO.File]::Open($originalRecoveryPath, 'CreateNew', 'Write', 'Read')
+        try {
+            $recoveryStream.Write($Detachment.OriginalBytes, 0, $Detachment.OriginalBytes.Length)
+            $recoveryStream.Flush($true)
+            $recoveryCreated = $true
+        }
+        finally {
+            $recoveryStream.Dispose()
+        }
+        $vmxLock = [System.IO.File]::Open($VmxPath, 'Open', 'Read', ([System.IO.FileShare]::Read -bor [System.IO.FileShare]::Delete))
         try {
             if (
                 (Get-AtlasoPathIdentity -Path $VmxPath -Description 'detached VMware cleanup target') -ne $Detachment.ProtectedIdentity -or
-                -not (Test-AtlasoByteArraysEqual `
-                    -Left $Detachment.ProtectedBytes `
-                    -Right (Read-AtlasoStreamBytes -Stream $vmxLock))
+                -not (Test-AtlasoByteArraysEqual -Left $Detachment.ProtectedBytes -Right (Read-AtlasoStreamBytes -Stream $vmxLock))
             ) {
                 throw "VMware Workstation VMX was replaced while deleteVM was running; the replacement and original backup were preserved: $VmxPath"
             }
@@ -1091,32 +1104,38 @@ function Restore-AtlasoWorkstationExternalVmdks {
                 -not (Test-AtlasoByteArraysEqual -Left $Detachment.ProtectedBytes -Right $displacedBytes)
             ) {
                 $preserveDisplaced = $true
-                $recoveryPath = Restore-AtlasoFileAfterCasFailure `
-                    -TargetPath $VmxPath `
-                    -ExpectedCurrentBytes $Detachment.OriginalBytes `
-                    -ExpectedCurrentIdentity $Detachment.OriginalIdentity `
-                    -ReplacementPath $displacedPath `
-                    -ReplacementBytes $displacedBytes `
-                    -ReplacementIdentity $displacedIdentity `
-                    -Description 'VMware Workstation VMX' `
-                    -PreserveCapturedOnSuccess
+                $recoveryPath = Restore-AtlasoFileAfterCasFailure -TargetPath $VmxPath `
+                    -ExpectedCurrentBytes $Detachment.OriginalBytes -ExpectedCurrentIdentity $Detachment.OriginalIdentity `
+                    -ReplacementPath $displacedPath -ReplacementBytes $displacedBytes `
+                    -ReplacementIdentity $displacedIdentity -Description 'VMware Workstation VMX' -PreserveCapturedOnSuccess
                 throw "VMware Workstation VMX changed during rollback; the replacement was restored and a recovery copy was preserved at '$recoveryPath'."
             }
         }
         finally {
             $vmxLock.Dispose()
         }
-        if (
-            (Get-AtlasoPathIdentity -Path $VmxPath -Description 'restored VMware cleanup target') -ne $Detachment.OriginalIdentity -or
-            (Get-AtlasoFileSha256 -Path $VmxPath) -ne $Detachment.OriginalHash
-        ) {
-            throw "VMware Workstation VMX restoration could not verify the original file: $VmxPath"
+        # Verify the new path while denying writers, deletion, and another atomic replacement.
+        $restoredLock = [System.IO.File]::Open($VmxPath, 'Open', 'Read', 'Read')
+        try {
+            if ((Get-AtlasoPathIdentity -Path $VmxPath -Description 'restored VMware cleanup target') -ne $Detachment.OriginalIdentity -or
+                -not (Test-AtlasoByteArraysEqual -Left $Detachment.OriginalBytes -Right (Read-AtlasoStreamBytes -Stream $restoredLock))) {
+                throw "VMware Workstation VMX restoration could not verify the original file: $VmxPath"
+            }
+            $restorationVerified = $true
+        }
+        finally {
+            $restoredLock.Dispose()
         }
     }
-    finally {
-        if (-not $preserveDisplaced) {
-            Remove-Item -LiteralPath $displacedPath -Force -ErrorAction SilentlyContinue
+    catch {
+        if ($recoveryCreated -and -not $restorationVerified) {
+            throw "$($_.Exception.Message) Original bytes remain at '$originalRecoveryPath'."
         }
+        throw
+    }
+    finally {
+        if (-not $preserveDisplaced) { Remove-Item -LiteralPath $displacedPath -Force -ErrorAction SilentlyContinue }
+        if ($restorationVerified -or -not $recoveryCreated) { Remove-Item -LiteralPath $originalRecoveryPath -Force -ErrorAction SilentlyContinue }
     }
 }
 
@@ -1181,17 +1200,18 @@ function Remove-AtlasoWorkstationVmArtifacts {
     if (@(Compare-Object -ReferenceObject $expectedSet -DifferenceObject $discoveredSet).Count -ne 0) {
         throw 'VMware artifact root contains an unvalidated VMX; artifacts were preserved.'
     }
-    if (-not $PSCmdlet.ShouldProcess($resolvedRemovalRoot, 'Stop and delete VMware Workstation VM artifacts')) {
-        return
-    }
-
     $snapshot = Get-AtlasoRootSnapshot -RemovalRoot $resolvedRemovalRoot
-    $inventoryPath = Resolve-AtlasoWorkstationInventoryPath
     $validatedTargetIdentities = @{}
     foreach ($resolvedVmxPath in $resolvedVmxPaths) {
         $relativeVmxPath = [System.IO.Path]::GetRelativePath($resolvedRemovalRoot, $resolvedVmxPath)
         $validatedTargetIdentities[$resolvedVmxPath] = $snapshot.Items[$relativeVmxPath]
     }
+    if (-not $PSCmdlet.ShouldProcess($resolvedRemovalRoot, 'Stop and delete VMware Workstation VM artifacts')) {
+        return
+    }
+    Assert-AtlasoRootSnapshotUnreplaced -RemovalRoot $resolvedRemovalRoot -Snapshot $snapshot
+
+    $inventoryPath = Resolve-AtlasoWorkstationInventoryPath
     foreach ($resolvedVmxPath in $resolvedVmxPaths) {
         $targetIdentity = $validatedTargetIdentities[$resolvedVmxPath]
         if ((Get-AtlasoPathIdentity -Path $resolvedVmxPath -Description 'VMware cleanup target') -ne $targetIdentity) {

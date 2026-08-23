@@ -495,6 +495,38 @@ def test_live_registration_rejects_duplicate_library_id(tmp_path: Path) -> None:
     assert "deleteVM" not in [command[2] for command in _commands(log)]
 
 
+@pytest.mark.parametrize(
+    "malformed_owner",
+    ['vmlist1.config = relative.vmx\n', 'vmlist1.config = "relative.vmx"\n'],
+)
+def test_live_registration_rejects_malformed_duplicate_library_id(
+    tmp_path: Path, malformed_owner: str
+) -> None:
+    """A malformed second owner cannot make the selected library ID unique."""
+    root = tmp_path / "artifacts" / "vm"
+    vmx = root / "Atlaso.vmx"
+    _write_vmx(vmx)
+    vmrun, environment, log, _ = _write_fake_vmrun(
+        tmp_path / "fake",
+        [vmx],
+        registered=True,
+        inventory_suffix=malformed_owner,
+    )
+
+    result = _run_root_cleanup(
+        tmp_path,
+        removal_root=root,
+        expected_root=root,
+        vmrun_path=vmrun,
+        environment=environment,
+    )
+
+    assert result.returncode != 0
+    assert "ambiguous library ID" in result.stderr
+    assert vmx.exists()
+    assert "deleteVM" not in [command[2] for command in _commands(log)]
+
+
 def test_already_unregistered_vm_uses_filesystem_cleanup_only(tmp_path: Path) -> None:
     """An existing unregistered target remains an idempotent cleanup case."""
     root = tmp_path / "artifacts" / "vm"
@@ -1034,7 +1066,9 @@ def test_module_keeps_inventory_work_out_of_normal_delete_path() -> None:
     module = (VMWARE_SCRIPT_ROOT / "Atlaso.WorkstationCleanup.psm1").read_text(
         encoding="utf-8"
     )
-    normal_path = module.split("function Remove-AtlasoWorkstationVmArtifacts", 1)[1]
+    normal_path = module.split("function Remove-AtlasoWorkstationVmArtifacts", 1)[1].split(
+        "function Remove-AtlasoWorkstationArtifactRoot", 1
+    )[0]
 
     assert "Test-AtlasoWorkstationVmxRegistered" in normal_path
     assert "Remove-AtlasoWorkstationStaleRegistrations" in normal_path
@@ -1048,5 +1082,15 @@ def test_module_keeps_inventory_work_out_of_normal_delete_path() -> None:
     assert "-ExpectedCurrentIdentity $Detachment.OriginalIdentity" in module
     assert "-ReplacementIdentity $displacedIdentity" in module
     assert "-PreserveCapturedOnSuccess" in module
+    assert ".atlaso-original-" in module
+    assert "$recoveryStream.Flush($true)" in module
+    assert "-Right (Read-AtlasoStreamBytes -Stream $restoredLock)" in module
+    assert "$restoredLock = [System.IO.File]::Open($VmxPath, 'Open', 'Read', 'Read')" in module
+    snapshot_index = normal_path.index("$snapshot = Get-AtlasoRootSnapshot")
+    confirmation_index = normal_path.index("$PSCmdlet.ShouldProcess")
+    post_confirmation_guard = normal_path.index(
+        "Assert-AtlasoRootSnapshotUnreplaced", confirmation_index
+    )
+    assert snapshot_index < confirmation_index < post_confirmation_guard
     implementation = re.sub(r"<#.*?#>\s*", "", module, flags=re.DOTALL)
     assert len(implementation.splitlines()) < 1_100
