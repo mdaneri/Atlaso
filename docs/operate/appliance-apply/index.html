@@ -3730,8 +3730,10 @@ Network, Firewall, Appliance Settings, and Public Services together after all ot
 recoverable handoff. It retains the previous addresses, listener, firewall policy, and TLS identity until bounded Atlaso
 loopback, candidate nginx, dynamic-address, and host-facing <code>/openapi.json</code> checks prove the candidate ready.
 The transaction validates bundled TLS material, persists the candidate resolver and source-restricted firewall rules,
-and retires the old path only after readiness succeeds. On failure it restores the complete previous state and records
-the same actionable failing layer and rollback result on every bundled component.
+and retires the old path only after readiness succeeds. Before publishing the applied Network baseline, Atlaso records
+the helper-confirmed DHCP or SLAAC address in observed interface state so the committed listener remains immediately
+eligible. On failure it restores the complete previous state and records the same actionable failing layer and rollback
+result on every bundled component.
 Successful baselines use the exact submitted snapshots, including applied resolver values; unrelated or concurrently
 saved Appliance Settings changes remain pending. A missing known-good Network baseline blocks mutation. Durable state
 and backups remain until the database commit is proven and acknowledged, so interruption or cleanup failure can retry

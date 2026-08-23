@@ -3565,7 +3565,7 @@ host is entitled to neither.</p>
 <tr>
 <td>Management</td>
 <td><code>/ui/management</code></td>
-<td>Management-role interface or an explicitly reviewed future management binding</td>
+<td>Last-applied management-role or flagged access-management binding, paired with observed addresses</td>
 </tr>
 <tr>
 <td>Public</td>
@@ -3585,7 +3585,10 @@ management root. App-owned public pages use the public root, including <code>/ui
 list only services eligible on the called host/interface.</p>
 <p>The prefixes organize browser presentation; they do not replace authentication, authorization, CSRF, session, listener,
 Nginx, or Firewall enforcement. A request for <code>/ui/management/login</code> on a public-only listener returns not found and does
-not reveal the management shell or login behavior. A management listener likewise does not publish <code>/ui/public</code>.</p>
+not reveal the management shell or login behavior. A management listener likewise does not publish <code>/ui/public</code>.
+Pending desired Network edits do not change this dispatch boundary. The previously applied management binding remains
+authoritative until the protected management handoff commits; a newly flagged access listener stays public-only until
+then, and a pending role conversion does not expose <code>/ui/public</code> on the active management origin.</p>
 <h2 id="stable-machine-and-protocol-routes">Stable machine and protocol routes<a class="headerlink" href="#stable-machine-and-protocol-routes" title="Permanent link">&para;</a></h2>
 <p>The following contracts stay outside <code>/ui</code>:</p>
 <ul>
