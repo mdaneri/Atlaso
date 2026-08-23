@@ -237,7 +237,9 @@ VM creation, installs that Ed25519 public key for `admin`, and adds a separate t
 password-backed SSH and sudo. The two options are mutually exclusive. Missing, malformed, multiline, non-Ed25519, and
 unbounded key input fails before the existing VM can be changed. The wrapper never generates or copies a private key.
 This development authority does not apply to the Workstation lifecycle lab or exported OVF/OVA appliances, and root SSH
-remains disabled. Approve the appliance's verified host key through the normal OpenSSH known-hosts workflow once;
+remains disabled. Complete factory reset removes both the development authorization key and its passwordless-sudo
+drop-in, restoring the ordinary password-backed sudo policy. Approve the appliance's verified host key through the
+normal OpenSSH known-hosts workflow once;
 subsequent Codex and Copilot tasks under the same Windows user reuse that trust and key identity.
 Credential overrides must be at least 12 characters, contain no leading, trailing, tab, carriage-return, or newline
 whitespace, and contain only XML-representable characters so the OVF value round-trips unchanged.

@@ -82,6 +82,7 @@ LOCAL_USERS_HOME_DIRECTORY = Path("/var/lib/atlaso/users")
 LOCAL_USER_NAME_PATTERN = re.compile(r"^[a-z_][a-z0-9_-]{0,31}$")
 ROOT_SSH_DIRECTORY = Path("/root/.ssh")
 SSH_AUTHORIZED_KEY_NAMES = ("authorized_keys", "authorized_keys2")
+DEVELOPMENT_ADMIN_SUDOERS_PATH = Path("/etc/sudoers.d/atlaso-test-vm-admin")
 AUTOMATION_TRANSIENT_UNIT_PATTERN = re.compile(r"^atlaso-automation-\d{20}\.service$")
 AUTOMATION_SCRIPT_DIRECTORY = Path("/var/lib/atlaso/automation/scripts")
 AUTOMATION_RUN_DIRECTORY = Path("/var/lib/atlaso/automation/runs")
@@ -1053,7 +1054,7 @@ def _remove_retired_ca_private_keys(paths: set[Path]) -> None:
 def _scrub_retained_credentials() -> None:
     """Remove fixed credential material that intentionally lives outside Apply staging."""
     synced_directories: set[Path] = set()
-    for path in WEB_TERMINAL_CREDENTIAL_PATHS:
+    for path in (*WEB_TERMINAL_CREDENTIAL_PATHS, DEVELOPMENT_ADMIN_SUDOERS_PATH):
         if path.is_symlink() or path.is_file():
             path.unlink(missing_ok=True)
             synced_directories.add(path.parent)

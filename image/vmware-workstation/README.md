@@ -387,8 +387,9 @@ that key for `admin` and a separate development-only passwordless-sudo drop-in. 
 `-SkipSshKeyProvisioning` to retain the prior password-backed SSH and sudo behavior; those options cannot be combined.
 The wrapper fails early for a missing, malformed, multiline, non-Ed25519, or unbounded key and never generates or copies
 a private key. Root SSH stays disabled, and the Workstation lifecycle runner and exported OVF/OVA properties do not
-receive this test-only access. Verify and approve the appliance SSH host key once through the normal OpenSSH
-known-hosts workflow; subsequent local Codex and Copilot tasks under the same Windows user can use ordinary key/agent
+receive this test-only access. Complete factory reset removes the development key and sudoers drop-in. Verify and
+approve the appliance SSH host key once through the normal OpenSSH known-hosts workflow; subsequent local Codex and
+Copilot tasks under the same Windows user can use ordinary key/agent
 authentication and `sudo -n` without the 1Password bridge.
 
 The wrapper requires the cloned Photon OS and Atlaso system-content VMDKs at SCSI units 0 and 1, then creates fresh
