@@ -257,6 +257,51 @@ def test_physical_interface_api_allows_repair_when_no_desired_management_candida
     assert completed.json()["access_management_ui_enabled"] is True
 
 
+def test_physical_interface_api_preserves_final_slaac_access_management_listener(client):
+    """Reject disabling the sole flagged access listener backed by observed SLAAC.
+
+    Args:
+        client: Authenticated-capable application test client fixture.
+    """
+    from sqlalchemy import select
+
+    from atlaso.app.database import SessionLocal
+    from atlaso.app.models import PhysicalInterface
+
+    with SessionLocal() as db:
+        for interface in db.execute(select(PhysicalInterface)).scalars().all():
+            interface.role = "unused"
+            interface.access_management_ui_enabled = False
+        listener = db.execute(
+            select(PhysicalInterface).where(PhysicalInterface.name == "eth2")
+        ).scalar_one()
+        listener.role = "access"
+        listener.mode = "access"
+        listener.admin_state = "up"
+        listener.oper_state = "up"
+        listener.ipv4_method = "static"
+        listener.ip_cidr = None
+        listener.ipv6_enabled = True
+        listener.ipv6_cidr = None
+        listener.host_ipv6_cidr = "2001:db8:469::1/64"
+        listener.access_management_ui_enabled = True
+        db.commit()
+
+    token, _metadata = create_token(client, scopes=["read:interfaces", "write:interfaces"])
+    headers = {"Authorization": f"Bearer {token}"}
+    rejected = client.patch(
+        "/api/v1/interfaces/physical/eth2",
+        headers=headers,
+        json={"access_management_ui_enabled": False},
+    )
+
+    assert rejected.status_code == 422, rejected.text
+    assert "At least one complete management listener must remain" in rejected.text
+    current = client.get("/api/v1/interfaces/physical", headers=headers)
+    listener_row = next(row for row in current.json() if row["name"] == "eth2")
+    assert listener_row["access_management_ui_enabled"] is True
+
+
 @pytest.mark.parametrize("retired_role", ["services", "storage"])
 def test_interface_apis_reject_retired_network_roles(client, retired_role):
     """Verify new physical-interface and VLAN requests accept only canonical roles.

@@ -212,6 +212,11 @@ def desired_management_candidate_exists(db: Session) -> bool:
             and _has_usable_address(
                 interface.ip_cidr,
                 interface.ipv6_cidr,
+                (
+                    interface.host_ipv6_cidr
+                    if interface.ipv6_enabled and not interface.ipv6_cidr
+                    else None
+                ),
             )
         ):
             return True
