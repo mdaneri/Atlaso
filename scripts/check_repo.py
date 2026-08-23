@@ -887,6 +887,8 @@ def check_spark_worker_agent(root: Path) -> list[Finding]:
         findings.append(
             Finding(path, "Spark worker must inherit the parent sandbox mode")
         )
+    if "tools" in config:
+        findings.append(Finding(path, "Spark worker must inherit the parent tools"))
     return findings
 
 

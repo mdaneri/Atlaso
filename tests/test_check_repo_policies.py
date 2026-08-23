@@ -36,6 +36,7 @@ def write_spark_worker_agent(
     description: str = "Fast worker for focused Atlaso tasks.",
     instructions: str | None = None,
     sandbox_mode: str | None = None,
+    tools: list[str] | None = None,
 ) -> None:
     """Persist a Spark worker fixture.
 
@@ -45,6 +46,7 @@ def write_spark_worker_agent(
         description: Human-facing agent description.
         instructions: Developer instructions or the required marker set by default.
         sandbox_mode: Optional sandbox override used to exercise inheritance checks.
+        tools: Optional tool override used to exercise inheritance checks.
     """
     config_values = {**SPARK_WORKER_REQUIRED_VALUES, **(values or {})}
     instruction_text = instructions or "\n".join(
@@ -63,6 +65,9 @@ def write_spark_worker_agent(
     ]
     if sandbox_mode is not None:
         lines.append(f'sandbox_mode = "{sandbox_mode}"')
+    if tools is not None:
+        quoted_tools = ", ".join(f'"{tool}"' for tool in tools)
+        lines.append(f"tools = [{quoted_tools}]")
     lines.extend(("", 'developer_instructions = """', instruction_text, '"""'))
     path.write_text("\n".join(lines) + "\n", encoding="utf-8")
 
@@ -184,6 +189,20 @@ def test_spark_worker_agent_rejects_sandbox_override(tmp_path: Path) -> None:
 
     assert len(findings) == 1
     assert findings[0].message == "Spark worker must inherit the parent sandbox mode"
+
+
+def test_spark_worker_agent_rejects_tool_override(tmp_path: Path) -> None:
+    """Verify that the worker inherits the parent tool capabilities.
+
+    Args:
+        tmp_path: Temporary directory provided by pytest for isolated filesystem state.
+    """
+    write_spark_worker_agent(tmp_path, tools=[])
+
+    findings = check_spark_worker_agent(tmp_path)
+
+    assert len(findings) == 1
+    assert findings[0].message == "Spark worker must inherit the parent tools"
 
 
 def test_deployment_assets_are_checkable_text() -> None:
