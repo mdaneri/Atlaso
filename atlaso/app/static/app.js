@@ -12978,6 +12978,7 @@ function validApplianceUpdateAvailabilityPayload(payload) {
   const validChange = (change) => (
     change
     && typeof change === "object"
+    && !Array.isArray(change)
     && ["name", "current", "target", "action", "summary"].every((field) => (
       change[field] === undefined || validText(change[field])
     ))
