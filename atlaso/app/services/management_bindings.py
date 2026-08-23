@@ -168,7 +168,12 @@ def _has_usable_address(*values: str | None) -> bool:
             address = ip_interface(value).ip
         except ValueError:
             continue
-        if not address.is_loopback and not address.is_link_local and not address.is_unspecified:
+        if not (
+            address.is_loopback
+            or address.is_link_local
+            or address.is_multicast
+            or address.is_unspecified
+        ):
             return True
     return False
 

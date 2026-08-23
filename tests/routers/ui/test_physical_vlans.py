@@ -1264,13 +1264,27 @@ def test_vlan_ui_rejects_removing_final_management_listener(client):
         },
         headers={"X-Atlaso-Grid": "1", "Accept": "application/json"},
     )
+    multicast = client.post(
+        f"/vlan-interfaces/{vlan_id}/edit",
+        data={
+            "parent_interface": "eth1",
+            "vlan_id": "469",
+            "ip_cidr": "224.0.0.1/24",
+            "mtu": "1500",
+            "role": "access",
+            "enabled": "on",
+            "access_management_ui_enabled": "on",
+            "csrf": csrf,
+        },
+        headers={"X-Atlaso-Grid": "1", "Accept": "application/json"},
+    )
     deleted = client.post(
         f"/vlan-interfaces/{vlan_id}/delete",
         data={"csrf": csrf},
         follow_redirects=False,
     )
 
-    for response in (updated, deleted):
+    for response in (updated, multicast, deleted):
         assert response.status_code == 422, response.text
         assert "At least one complete management listener must remain" in response.text
     with SessionLocal() as db:
