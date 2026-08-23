@@ -4162,6 +4162,10 @@ confirmation dialogs or immediate destructive submits.</p>
 <ul>
 <li>Validation states use explicit <strong>valid</strong>, <strong>needs attention</strong>, <strong>disabled</strong>, or other truthful language already
   established by the appliance.</li>
+<li>Read-only evidence panels use a neutral <strong>Not recorded</strong> state when an artifact is not yet expected, <strong>Available</strong>
+  only for validated inspectable evidence, and actionable <strong>Needs attention</strong> when durable state expects an absent,
+  unreadable, malformed, or inconsistent artifact. Neutral absence is ordinary text, not an alert; actionable evidence
+  failures remain perceivable as an alert without exposing raw filesystem exceptions.</li>
 <li>Errors explain what failed and how the operator can recover. Do not replace actionable errors with a generic failure
   toast.</li>
 <li>Loading and saving indicators must not cause large layout shifts.</li>

@@ -4497,6 +4497,13 @@
   <code>atlaso-helper appliance-update</code>; signed Atlaso sources never configure pip.</li>
 <li>Keep the staged Appliance Update manifest in a compact Validation card at the bottom of the detail rail and open its
   full JSON through the shared preview modal; do not render the full manifest inline in Update Streams.</li>
+<li>Treat <code>/etc/atlaso/update-info</code> only as durable updater transaction and recovery evidence. Do not synthesize it for a
+  source checkout, development wheel, fresh packaged appliance, or read-only check. Project normal absence as neutral
+  <strong>Not recorded</strong>, evidence bound to the latest applied stream of the latest qualifying real task as <strong>Available</strong>, and
+  an expected-but-missing,
+  unreadable, malformed, stale, or finalizer-inconsistent record as <strong>Needs attention</strong> with non-secret remediation.
+  Keep this projection read-only and
+  independent from activation, receipt, finalizer, rollback, recovery, and reboot-persistence enforcement.</li>
 <li>Atlaso releases must come from signed v2 channel pointers and immutable signed release manifests verified by named
   Ed25519 public keys under <code>/etc/atlaso/update-trust.d</code>. Optional release <code>summary</code> and <code>release_notes_url</code> fields
   remain backward compatible; bound the summary to one line derived from the release commit subject and accept only
