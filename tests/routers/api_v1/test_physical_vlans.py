@@ -201,6 +201,62 @@ def test_physical_interface_api_enforces_access_only_management_ui_flag(client):
     assert reverted.json()["access_management_ui_enabled"] is False
 
 
+def test_physical_interface_api_allows_repair_when_no_desired_management_candidate(client):
+    """Allow unrelated edits and incremental repair of a pre-existing incomplete desired state.
+
+    Args:
+        client: Authenticated-capable application test client fixture.
+    """
+    from sqlalchemy import select
+
+    from atlaso.app.database import SessionLocal
+    from atlaso.app.models import PhysicalInterface
+
+    with SessionLocal() as db:
+        for interface in db.execute(select(PhysicalInterface)).scalars().all():
+            interface.role = "unused"
+            interface.access_management_ui_enabled = False
+        repair = db.execute(
+            select(PhysicalInterface).where(PhysicalInterface.name == "eth2")
+        ).scalar_one()
+        repair.mode = "access"
+        repair.admin_state = "up"
+        repair.oper_state = "up"
+        repair.ipv4_method = "static"
+        repair.ip_cidr = None
+        db.commit()
+
+    token, _metadata = create_token(client, scopes=["read:interfaces", "write:interfaces"])
+    headers = {"Authorization": f"Bearer {token}"}
+    unrelated = client.patch(
+        "/api/v1/interfaces/physical/eth2",
+        headers=headers,
+        json={"mtu": 1600},
+    )
+    address = client.patch(
+        "/api/v1/interfaces/physical/eth2",
+        headers=headers,
+        json={"ip_cidr": "192.168.69.1/24"},
+    )
+    role = client.patch(
+        "/api/v1/interfaces/physical/eth2",
+        headers=headers,
+        json={"role": "access"},
+    )
+    completed = client.patch(
+        "/api/v1/interfaces/physical/eth2",
+        headers=headers,
+        json={"access_management_ui_enabled": True},
+    )
+
+    for response in (unrelated, address, role, completed):
+        assert response.status_code == 200, response.text
+    assert completed.json()["mtu"] == 1600
+    assert completed.json()["ip_cidr"] == "192.168.69.1/24"
+    assert completed.json()["role"] == "access"
+    assert completed.json()["access_management_ui_enabled"] is True
+
+
 @pytest.mark.parametrize("retired_role", ["services", "storage"])
 def test_interface_apis_reject_retired_network_roles(client, retired_role):
     """Verify new physical-interface and VLAN requests accept only canonical roles.

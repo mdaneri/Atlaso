@@ -1157,6 +1157,7 @@ def update_physical_interface_desired_state(
         )
 
     try:
+        had_management_candidate = desired_management_candidate_exists(db)
         new_mode = normalize_interface_mode(str(changes.get("mode", interface.mode) or ""))
         vlan_count = db.scalar(
             select(func.count())
@@ -1353,7 +1354,7 @@ def update_physical_interface_desired_state(
         interface.desired_state_source = "user"
         db.add(interface)
         db.flush()
-        if not desired_management_candidate_exists(db):
+        if had_management_candidate and not desired_management_candidate_exists(db):
             raise PhysicalInterfaceUpdateError(MANAGEMENT_LISTENER_REQUIRED_DETAIL)
         dependent_updates = refresh_interface_dependent_addresses(
             db,
