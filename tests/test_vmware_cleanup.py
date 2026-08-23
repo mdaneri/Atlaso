@@ -40,6 +40,9 @@ def _write_fake_vmrun(
     late_running_list_count: int = 4,
     replace_after_delete_vmx: Path | None = None,
     replace_before_delete: bool = False,
+    provider_removes_root: bool = False,
+    late_root_recreation: Path | None = None,
+    late_root_recreation_list_count: int = 7,
 ) -> tuple[Path, dict[str, str], Path]:
     """Create a stateful fake ``vmrun`` command and Workstation inventory.
 
@@ -60,6 +63,9 @@ def _write_fake_vmrun(
         late_running_list_count: Checked running-state read that triggers late running state.
         replace_after_delete_vmx: VMX replaced after the first successful deleteVM operation.
         replace_before_delete: Whether deleteVM replaces its target before returning.
+        provider_removes_root: Whether deleteVM removes the target's complete parent directory.
+        late_root_recreation: Optional root path recreated during a checked running-state read.
+        late_root_recreation_list_count: Checked running-state read that recreates the root.
 
     Returns:
         The fake command path, its environment, and the command-log path.
@@ -98,6 +104,7 @@ def _write_fake_vmrun(
 import json
 import os
 from pathlib import Path
+import shutil
 import sys
 
 state = Path(os.environ["ATLASO_FAKE_VMRUN_STATE"])
@@ -165,10 +172,30 @@ if command == "list":
         running_paths = read_paths("running")
         running_paths.append(str(Path(late_running).resolve()))
         write_paths("running", running_paths)
+    late_root = os.environ.get("ATLASO_FAKE_VMRUN_LATE_ROOT_RECREATION", "")
+    late_root_list_count = int(os.environ["ATLASO_FAKE_VMRUN_LATE_ROOT_RECREATION_LIST_COUNT"])
+    if late_root and list_count == late_root_list_count:
+        recreated_root = Path(late_root)
+        recreated_root.mkdir(parents=True, exist_ok=True)
+        (recreated_root / "concurrent-build.txt").write_text("preserve", encoding="utf-8")
     paths = read_paths("running")
     print(f"Total running VMs: {len(paths)}")
     output_format = os.environ.get("ATLASO_FAKE_VMRUN_RUNNING_PATH_FORMAT", "{}")
     print("\\n".join(output_format.format(path) for path in paths))
+    raise SystemExit(0)
+if command == "clone":
+    if len(arguments) < 8:
+        print("incomplete clone arguments", file=sys.stderr)
+        raise SystemExit(64)
+    source_path = Path(arguments[3])
+    target_path = Path(arguments[4])
+    target_path.parent.mkdir(parents=True, exist_ok=True)
+    for source_file in source_path.parent.iterdir():
+        if source_file.is_file():
+            shutil.copy2(source_file, target_path.parent / source_file.name)
+    copied_vmx = target_path.parent / source_path.name
+    if copied_vmx != target_path:
+        copied_vmx.replace(target_path)
     raise SystemExit(0)
 if len(arguments) < 4:
     print("missing VMX path", file=sys.stderr)
@@ -209,6 +236,8 @@ if command == "deleteVM":
                 disk_path = target_path.parent / disk_path
             disk_path.unlink(missing_ok=True)
         target_path.unlink(missing_ok=True)
+        if os.environ.get("ATLASO_FAKE_VMRUN_PROVIDER_REMOVES_ROOT") == "1":
+            shutil.rmtree(target_path.parent)
     write_paths("registered", registered_paths)
     write_inventory(registered_paths)
     replacement = os.environ.get("ATLASO_FAKE_VMRUN_REPLACE_AFTER_DELETE_VMX", "")
@@ -262,10 +291,52 @@ raise SystemExit(64)
                 replace_after_delete_vmx or ""
             ),
             "ATLASO_FAKE_VMRUN_REPLACE_BEFORE_DELETE": "1" if replace_before_delete else "0",
+            "ATLASO_FAKE_VMRUN_PROVIDER_REMOVES_ROOT": "1" if provider_removes_root else "0",
+            "ATLASO_FAKE_VMRUN_LATE_ROOT_RECREATION": str(late_root_recreation or ""),
+            "ATLASO_FAKE_VMRUN_LATE_ROOT_RECREATION_LIST_COUNT": str(
+                late_root_recreation_list_count
+            ),
             "APPDATA": str(appdata_directory),
         }
     )
     return wrapper, environment, log_path
+
+
+def _write_fake_vdisk_manager(directory: Path) -> Path:
+    """Create a fake vdisk manager that writes a 500 GiB descriptor.
+
+    Args:
+        directory: Directory that receives the fake executable.
+
+    Returns:
+        Path to the fake executable.
+    """
+    directory.mkdir(parents=True, exist_ok=True)
+    fake_script = directory / "fake_vdisk_manager.py"
+    fake_script.write_text(
+        """from pathlib import Path
+import sys
+
+target = Path(sys.argv[-1])
+target.parent.mkdir(parents=True, exist_ok=True)
+target.write_text('RW 1048576000 SPARSE "data-flat.vmdk"\\n', encoding='ascii')
+""",
+        encoding="utf-8",
+    )
+    if os.name == "nt":
+        wrapper = directory / "vmware-vdiskmanager.cmd"
+        wrapper.write_text(
+            f'@echo off\r\n"{sys.executable}" "{fake_script}" %*\r\n',
+            encoding="utf-8",
+        )
+    else:
+        wrapper = directory / "vmware-vdiskmanager"
+        wrapper.write_text(
+            f'#!/bin/sh\nexec "{sys.executable}" "{fake_script}" "$@"\n',
+            encoding="utf-8",
+        )
+        wrapper.chmod(0o755)
+    return wrapper
 
 
 def _run_script(script: Path, *arguments: str, environment: dict[str, str]) -> subprocess.CompletedProcess[str]:
@@ -1360,6 +1431,218 @@ def test_general_removal_is_verified_and_idempotent(
     action_names = [command[2] for command in commands]
     assert ("stop" in action_names) is running
     assert ("deleteVM" in action_names) is registered
+
+
+def test_provider_delete_may_remove_the_complete_validated_root(tmp_path: Path) -> None:
+    """A checked provider deletion may satisfy cleanup by removing the exact root.
+
+    Args:
+        tmp_path: Isolated test directory.
+    """
+    vm_directory = tmp_path / "Atlaso-Provider-Root"
+    vmx_path = vm_directory / "Atlaso-Provider-Root.vmx"
+    external_vmdk = tmp_path / "shared-disks" / "Atlaso-Depot.vmdk"
+    _write_vmx(vmx_path, "Atlaso-Provider-Root")
+    external_vmdk.parent.mkdir(parents=True)
+    external_vmdk.write_text("shared depot disk", encoding="utf-8")
+    with vmx_path.open("a", encoding="utf-8") as stream:
+        stream.write('scsi0:2.present = "TRUE"\n')
+        stream.write(f'scsi0:2.fileName = "{external_vmdk.resolve()}"\n')
+    vmrun_path, environment, log_path = _write_fake_vmrun(
+        tmp_path / "fake-provider-root",
+        [vmx_path],
+        running=False,
+        registered=True,
+        provider_removes_root=True,
+    )
+
+    result = _run_script(
+        VMWARE_SCRIPT_ROOT / "remove-atlaso-vm.ps1",
+        "-VmxPath",
+        str(vmx_path),
+        "-VmrunPath",
+        str(vmrun_path),
+        "-ExpectedName",
+        "Atlaso-Provider-Root",
+        environment=environment,
+    )
+
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert not vm_directory.exists()
+    assert external_vmdk.read_text(encoding="utf-8") == "shared depot disk"
+    commands = [json.loads(line) for line in log_path.read_text(encoding="utf-8").splitlines()]
+    assert [command[2] for command in commands].count("deleteVM") == 1
+
+
+def test_provider_delete_leaving_root_uses_verified_recursive_cleanup(tmp_path: Path) -> None:
+    """Provider-retained files remain on the established recursive cleanup path.
+
+    Args:
+        tmp_path: Isolated test directory.
+    """
+    vm_directory = tmp_path / "Atlaso-Provider-Retained-Root"
+    vmx_path = vm_directory / "Atlaso-Provider-Retained-Root.vmx"
+    sentinel = vm_directory / "provider-retained.txt"
+    _write_vmx(vmx_path, "Atlaso-Provider-Retained-Root")
+    sentinel.write_text("remove after verification", encoding="utf-8")
+    vmrun_path, environment, _ = _write_fake_vmrun(
+        tmp_path / "fake-provider-retained-root",
+        [vmx_path],
+        running=False,
+        registered=True,
+    )
+
+    result = _run_script(
+        VMWARE_SCRIPT_ROOT / "remove-atlaso-vm.ps1",
+        "-VmxPath",
+        str(vmx_path),
+        "-VmrunPath",
+        str(vmrun_path),
+        "-ExpectedName",
+        "Atlaso-Provider-Retained-Root",
+        environment=environment,
+    )
+
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert not vm_directory.exists()
+
+
+@pytest.mark.parametrize("inventory_change", ["registration", "running"])
+def test_provider_removed_root_still_rejects_inventory_changes(
+    tmp_path: Path, inventory_change: str
+) -> None:
+    """The absent-root transition must not bypass registration or running checks.
+
+    Args:
+        tmp_path: Isolated test directory.
+        inventory_change: Provider inventory changed after root deletion.
+    """
+    vm_directory = tmp_path / f"Atlaso-Provider-{inventory_change}"
+    vmx_path = vm_directory / f"Atlaso-Provider-{inventory_change}.vmx"
+    _write_vmx(vmx_path, f"Atlaso-Provider-{inventory_change}")
+    vmrun_path, environment, _ = _write_fake_vmrun(
+        tmp_path / f"fake-provider-{inventory_change}",
+        [vmx_path],
+        running=False,
+        registered=True,
+        provider_removes_root=True,
+        late_registered_vmx=vmx_path if inventory_change == "registration" else None,
+        late_registered_list_count=7,
+        late_running_vmx=vmx_path if inventory_change == "running" else None,
+        late_running_list_count=7,
+    )
+
+    result = _run_script(
+        VMWARE_SCRIPT_ROOT / "remove-atlaso-vm.ps1",
+        "-VmxPath",
+        str(vmx_path),
+        "-VmrunPath",
+        str(vmrun_path),
+        "-ExpectedName",
+        f"Atlaso-Provider-{inventory_change}",
+        environment=environment,
+    )
+
+    assert result.returncode != 0
+    if inventory_change == "registration":
+        assert "registration inventory changed during verification" in result.stderr
+        assert vmx_path.exists()
+    else:
+        assert "filesystem identity cannot be resolved" in result.stderr
+        assert not vm_directory.exists()
+
+
+def test_provider_removed_root_rejects_ambiguous_recreation(tmp_path: Path) -> None:
+    """A root recreated after the absent-root transition must be preserved and rejected.
+
+    Args:
+        tmp_path: Isolated test directory.
+    """
+    vm_directory = tmp_path / "Atlaso-Provider-Recreated"
+    vmx_path = vm_directory / "Atlaso-Provider-Recreated.vmx"
+    _write_vmx(vmx_path, "Atlaso-Provider-Recreated")
+    vmrun_path, environment, _ = _write_fake_vmrun(
+        tmp_path / "fake-provider-recreated",
+        [vmx_path],
+        running=False,
+        registered=True,
+        provider_removes_root=True,
+        late_root_recreation=vm_directory,
+    )
+
+    result = _run_script(
+        VMWARE_SCRIPT_ROOT / "remove-atlaso-vm.ps1",
+        "-VmxPath",
+        str(vmx_path),
+        "-VmrunPath",
+        str(vmrun_path),
+        "-ExpectedName",
+        "Atlaso-Provider-Recreated",
+        environment=environment,
+    )
+
+    assert result.returncode != 0
+    assert "artifact root reappeared after provider deletion" in result.stderr
+    assert (vm_directory / "concurrent-build.txt").read_text(encoding="utf-8") == "preserve"
+
+
+def test_redeploy_continues_after_provider_removes_artifact_root(tmp_path: Path) -> None:
+    """The original redeploy invocation must recreate the VM after verified root absence.
+
+    Args:
+        tmp_path: Isolated test directory.
+    """
+    source_directory = tmp_path / "source"
+    source_vmx = source_directory / "source.vmx"
+    source_directory.mkdir(parents=True)
+    source_vmx.write_text(
+        'displayName = "Source"\n'
+        'scsi0:0.present = "TRUE"\n'
+        'scsi0:0.fileName = "photon.vmdk"\n'
+        'scsi0:1.present = "TRUE"\n'
+        'scsi0:1.fileName = "atlaso-system.vmdk"\n',
+        encoding="utf-8",
+    )
+    (source_directory / "photon.vmdk").write_text("photon", encoding="utf-8")
+    (source_directory / "atlaso-system.vmdk").write_text("atlaso", encoding="utf-8")
+
+    vm_directory = tmp_path / "redeploy"
+    vmx_path = vm_directory / "Atlaso-Redeploy.vmx"
+    _write_vmx(vmx_path, "Atlaso-Redeploy")
+    vmrun_path, environment, log_path = _write_fake_vmrun(
+        tmp_path / "fake-redeploy",
+        [vmx_path],
+        running=False,
+        registered=True,
+        provider_removes_root=True,
+    )
+    vdisk_manager_path = _write_fake_vdisk_manager(tmp_path / "fake-vdisk-manager")
+
+    result = _run_script(
+        VMWARE_SCRIPT_ROOT / "create-atlaso-test-vm.ps1",
+        "-Name",
+        "Atlaso-Redeploy",
+        "-ApplianceVmxPath",
+        str(source_vmx),
+        "-OutputDirectory",
+        str(vm_directory),
+        "-VmrunPath",
+        str(vmrun_path),
+        "-VdiskManagerPath",
+        str(vdisk_manager_path),
+        "-Redeploy",
+        "-SkipSshKeyProvisioning",
+        "-SkipNetworkPrepare",
+        "-NoStart",
+        environment=environment,
+    )
+
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert vmx_path.exists()
+    assert 'displayName = "Atlaso-Redeploy"' in vmx_path.read_text(encoding="utf-8")
+    commands = [json.loads(line) for line in log_path.read_text(encoding="utf-8").splitlines()]
+    command_names = [command[2] for command in commands]
+    assert command_names.index("deleteVM") < command_names.index("clone")
 
 
 def test_general_removal_rejects_an_unvalidated_vmx_in_the_removal_root(

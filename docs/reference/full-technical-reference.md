@@ -1355,6 +1355,9 @@ the artifacts. Data-disk reset accepts only strict non-reparse-point descendants
 output. Cleanup verifies checked running and registered inventories, stops running targets, and completes every
 fail-closed preflight before checked `vmrun deleteVM` removes registered targets and the remaining artifact root.
 External VMDK devices are detached from the stopped VMX immediately before provider deletion.
+When checked provider deletion removes the complete validated root, cleanup keeps the registration and running-inventory
+postconditions, requires that exact root to remain absent, and lets the active redeploy continue without enumerating the
+missing directory.
 Inventory entries must be canonical absolute VMX paths whose Windows volume and file
 identities can be resolved, so 8.3, mapped-drive, and other filesystem aliases cannot bypass state detection. Any
 malformed inventory or unresolved preflight state preserves all files and returns failure; a deletion or postcondition

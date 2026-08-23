@@ -114,6 +114,13 @@ namespace Atlaso
 # transition. Later inventory checks rely on these canonical identities rather
 # than path spelling alone, including hard-link aliases.
 
+<#
+.SYNOPSIS
+Resolve a Windows path to a canonical normalized form for safety checks.
+
+.PARAMETER Path
+The path to normalize.
+#>
 function Get-AtlasoCanonicalPath {
     param(
         [Parameter(Mandatory = $true)]
@@ -131,6 +138,16 @@ function Get-AtlasoCanonicalPath {
     )
 }
 
+<#
+.SYNOPSIS
+Compare two paths using canonical, case-insensitive path semantics.
+
+.PARAMETER Left
+First path for comparison.
+
+.PARAMETER Right
+Second path for comparison.
+#>
 function Test-AtlasoSamePath {
     param(
         [Parameter(Mandatory = $true)]
@@ -144,6 +161,16 @@ function Test-AtlasoSamePath {
     return $leftPath.Equals($rightPath, [System.StringComparison]::OrdinalIgnoreCase)
 }
 
+<#
+.SYNOPSIS
+Verify that one path is a strict descendant of another.
+
+.PARAMETER ParentPath
+The parent path that should contain the child.
+
+.PARAMETER ChildPath
+The candidate child path.
+#>
 function Test-AtlasoStrictDescendantPath {
     [CmdletBinding()]
     param(
@@ -174,6 +201,13 @@ function Test-AtlasoStrictDescendantPath {
     )
 }
 
+<#
+.SYNOPSIS
+Fail if any path segment from the provided path contains a reparse point.
+
+.PARAMETER Path
+Path to inspect for reparse points.
+#>
 function Assert-AtlasoPathHasNoReparsePoint {
     param(
         [Parameter(Mandatory = $true)]
@@ -197,6 +231,19 @@ function Assert-AtlasoPathHasNoReparsePoint {
     }
 }
 
+<#
+.SYNOPSIS
+Validate descendant admission and verify reparse-point safety for both paths.
+
+.PARAMETER ParentPath
+The expected parent path.
+
+.PARAMETER ChildPath
+The path required to be under the parent.
+
+.PARAMETER FailureMessage
+Error message to include on failure.
+#>
 function Assert-AtlasoStrictDescendantPath {
     [CmdletBinding()]
     param(
@@ -215,6 +262,19 @@ function Assert-AtlasoStrictDescendantPath {
     Assert-AtlasoPathHasNoReparsePoint -Path $ChildPath
 }
 
+<#
+.SYNOPSIS
+Run a vmrun command and fail if it exits non-zero.
+
+.PARAMETER VmrunPath
+Path to the vmrun executable.
+
+.PARAMETER Arguments
+Arguments to pass to vmrun.
+
+.PARAMETER Action
+Human-readable action label for error messages.
+#>
 function Invoke-AtlasoVmrunChecked {
     param(
         [Parameter(Mandatory = $true)]
@@ -237,6 +297,16 @@ function Invoke-AtlasoVmrunChecked {
     return $output
 }
 
+<#
+.SYNOPSIS
+Resolve and return a stable file-identity token for a VMX path.
+
+.PARAMETER Path
+VMX path to identify.
+
+.PARAMETER InventoryDescription
+Context text used in identity failure messages.
+#>
 function Get-AtlasoVmxFileIdentity {
     param(
         [Parameter(Mandatory = $true)]
@@ -256,6 +326,13 @@ function Get-AtlasoVmxFileIdentity {
     }
 }
 
+<#
+.SYNOPSIS
+Read and return the displayName value from a VMX file.
+
+.PARAMETER Path
+VMX file path to parse.
+#>
 function Get-AtlasoVmxDisplayName {
     param(
         [Parameter(Mandatory = $true)]
@@ -275,6 +352,19 @@ function Get-AtlasoVmxDisplayName {
     return $Matches[1]
 }
 
+<#
+.SYNOPSIS
+Resolve and validate a VMX path from inventory text.
+
+.PARAMETER Path
+Raw VMX path to validate.
+
+.PARAMETER InventoryDescription
+Context text used for failure reporting.
+
+.PARAMETER AllowMissingUnderRoot
+Optional root where a missing VMX can be tolerated.
+#>
 function Resolve-AtlasoVerifiedVmxInventoryPath {
     param(
         [Parameter(Mandatory = $true)]
@@ -311,6 +401,16 @@ function Resolve-AtlasoVerifiedVmxInventoryPath {
     return $canonicalPath
 }
 
+<#
+.SYNOPSIS
+Build a stable token for a VMX registration path snapshot.
+
+.PARAMETER Path
+VMX path to convert into a token.
+
+.PARAMETER InventoryDescription
+Context for identity lookup errors.
+#>
 function Get-AtlasoWorkstationInventoryPathToken {
     param(
         [Parameter(Mandatory = $true)]
@@ -325,6 +425,13 @@ function Get-AtlasoWorkstationInventoryPathToken {
     return "missing|$($Path.ToUpperInvariant())"
 }
 
+<#
+.SYNOPSIS
+Normalize one vmrun inventory line into a filesystem path value.
+
+.PARAMETER InventoryLine
+Single raw line from vmrun output.
+#>
 function ConvertFrom-AtlasoVmrunInventoryPath {
     param(
         [Parameter(Mandatory = $true)]
@@ -345,6 +452,16 @@ function ConvertFrom-AtlasoVmrunInventoryPath {
     return $candidate
 }
 
+<#
+.SYNOPSIS
+Read running VMware Workstation VM paths from vmrun list output.
+
+.PARAMETER VmrunPath
+Path to the vmrun executable.
+
+.PARAMETER State
+Target vmrun state query; currently supports `running`.
+#>
 function Get-AtlasoWorkstationVmPaths {
     param(
         [Parameter(Mandatory = $true)]
@@ -391,9 +508,10 @@ function Get-AtlasoWorkstationVmPaths {
     return $paths
 }
 
-# Workstation does not expose registered-VM enumeration through vmrun. Treat its
-# inventory as a safety-critical database: require a stable file identity, stable
-# bytes, complete mirrored config/index records, and resolvable VMX identities.
+<#
+.SYNOPSIS
+Locate and validate the VMware Workstation registration inventory file.
+#>
 function Resolve-AtlasoWorkstationInventoryPath {
     if (-not $env:APPDATA) {
         throw 'APPDATA is unavailable; refusing cleanup because VMware Workstation registration state cannot be verified.'
@@ -405,6 +523,13 @@ function Resolve-AtlasoWorkstationInventoryPath {
     return (Resolve-Path -LiteralPath $inventoryPath).Path
 }
 
+<#
+.SYNOPSIS
+Read and snapshot VMware Workstation inventory bytes and metadata.
+
+.PARAMETER InventoryPath
+Path to the inventory.vmls file.
+#>
 function Get-AtlasoWorkstationInventorySnapshot {
     param(
         [Parameter(Mandatory = $true)]
@@ -433,6 +558,19 @@ function Get-AtlasoWorkstationInventorySnapshot {
     }
 }
 
+<#
+.SYNOPSIS
+Validate two inventory snapshots are unchanged and identical.
+
+.PARAMETER First
+First snapshot object.
+
+.PARAMETER Second
+Second snapshot object.
+
+.PARAMETER InventoryPath
+Inventory path referenced in validation messages.
+#>
 function Assert-AtlasoWorkstationInventorySnapshotsEqual {
     param(
         [Parameter(Mandatory = $true)]
@@ -453,6 +591,16 @@ function Assert-AtlasoWorkstationInventorySnapshotsEqual {
     }
 }
 
+<#
+.SYNOPSIS
+Compare two byte arrays byte-for-byte.
+
+.PARAMETER Left
+First byte array to compare.
+
+.PARAMETER Right
+Second byte array to compare.
+#>
 function Test-AtlasoByteArraysEqual {
     param(
         [Parameter(Mandatory = $true)]
@@ -472,6 +620,13 @@ function Test-AtlasoByteArraysEqual {
     return $true
 }
 
+<#
+.SYNOPSIS
+Read an open stream fully into a byte array with lock-consistency checks.
+
+.PARAMETER Stream
+Open file stream to read.
+#>
 function Read-AtlasoFileStreamBytes {
     param(
         [Parameter(Mandatory = $true)]
@@ -496,6 +651,13 @@ function Read-AtlasoFileStreamBytes {
     return $bytes
 }
 
+<#
+.SYNOPSIS
+Read the VMware inventory file with two stable snapshots.
+
+.PARAMETER InventoryPath
+Path to the inventory.vmls file.
+#>
 function Get-AtlasoStableWorkstationInventoryLines {
     param(
         [Parameter(Mandatory = $true)]
@@ -512,6 +674,19 @@ function Get-AtlasoStableWorkstationInventoryLines {
     return @($second.Content -split '\r?\n')
 }
 
+<#
+.SYNOPSIS
+Parse VMware Workstation inventory lines into registered VMX paths.
+
+.PARAMETER InventoryLines
+Collection of inventory file lines to parse.
+
+.PARAMETER InventoryPath
+Path to the inventory file for error context.
+
+.PARAMETER AllowMissingUnderRoot
+Optional root under which missing registrations are tolerated.
+#>
 function ConvertFrom-AtlasoWorkstationRegisteredVmInventoryLines {
     param(
         [Parameter(Mandatory = $true)]
@@ -607,6 +782,13 @@ function ConvertFrom-AtlasoWorkstationRegisteredVmInventoryLines {
     return $paths
 }
 
+<#
+.SYNOPSIS
+Return registered VMX paths from a stable inventory snapshot.
+
+.PARAMETER InventoryPath
+Path to the registry inventory file.
+#>
 function Get-AtlasoWorkstationRegisteredVmPaths {
     param(
         [Parameter(Mandatory = $true)]
@@ -621,6 +803,28 @@ function Get-AtlasoWorkstationRegisteredVmPaths {
     )
 }
 
+<#
+.SYNOPSIS
+Attempt CAS rollback when a raced write changed a target file.
+
+.PARAMETER TargetPath
+File path being written through CAS replacement.
+
+.PARAMETER ExpectedCurrentBytes
+Expected pre-write bytes for conflict detection.
+
+.PARAMETER ReplacementPath
+Path to the file containing replacement content.
+
+.PARAMETER ReplacementBytes
+Expected bytes for the replacement input.
+
+.PARAMETER StateDescription
+Human-readable state label for diagnostics.
+
+.PARAMETER RecoveryExtension
+File extension used for temporary recovery artifacts.
+#>
 function Restore-AtlasoWorkstationFileAfterCasFailure {
     param(
         [Parameter(Mandatory = $true)]
@@ -667,6 +871,16 @@ function Restore-AtlasoWorkstationFileAfterCasFailure {
     throw "$StateDescription changed repeatedly during rollback; the newest captured state was preserved for recovery: $recoveryPath"
 }
 
+<#
+.SYNOPSIS
+Remove stale VMware registry entries for VMX paths that disappeared.
+
+.PARAMETER InventoryPath
+Workstation inventory path under update.
+
+.PARAMETER MissingPaths
+Registered VMX paths confirmed missing on disk.
+#>
 function Remove-AtlasoWorkstationMissingRegistrations {
     param(
         [Parameter(Mandatory = $true)]
@@ -832,6 +1046,16 @@ function Remove-AtlasoWorkstationMissingRegistrations {
     }
 }
 
+<#
+.SYNOPSIS
+Test whether a VMX path is present in a set by identity.
+
+.PARAMETER Paths
+Candidate VMX paths to compare against.
+
+.PARAMETER VmxPath
+Target VMX path to test.
+#>
 function Test-AtlasoWorkstationVmListed {
     param(
         [Parameter(Mandatory = $true)]
@@ -851,6 +1075,16 @@ function Test-AtlasoWorkstationVmListed {
     return $false
 }
 
+<#
+.SYNOPSIS
+Compare two VMX path sets by identity-preserving membership.
+
+.PARAMETER Left
+First path collection.
+
+.PARAMETER Right
+Second path collection.
+#>
 function Test-AtlasoWorkstationVmPathSetsEqual {
     param(
         [Parameter(Mandatory = $true)]
@@ -872,6 +1106,16 @@ function Test-AtlasoWorkstationVmPathSetsEqual {
     return $true
 }
 
+<#
+.SYNOPSIS
+Assert that an expected VMX set still exists under a validated root.
+
+.PARAMETER RemovalRoot
+Artifact root containing VMX candidates.
+
+.PARAMETER ValidatedVmxPaths
+Expected VMX paths established before cleanup.
+#>
 function Assert-AtlasoWorkstationRemovalVmxSet {
     param(
         [Parameter(Mandatory = $true)]
@@ -911,6 +1155,59 @@ function Assert-AtlasoWorkstationRemovalVmxSet {
     }
 }
 
+<#
+.SYNOPSIS
+Check whether a directory path is currently absent from disk.
+
+.PARAMETER RemovalRoot
+Candidate path to probe.
+#>
+function Test-AtlasoWorkstationArtifactRootAbsent {
+    param(
+        [Parameter(Mandatory = $true)]
+        [string]$RemovalRoot
+    )
+
+    try {
+        Get-Item -LiteralPath $RemovalRoot -Force -ErrorAction Stop | Out-Null
+    }
+    catch [System.Management.Automation.ItemNotFoundException] {
+        return $true
+    }
+    catch [System.IO.DirectoryNotFoundException] {
+        return $true
+    }
+    return $false
+}
+
+<#
+.SYNOPSIS
+Fail unless a VMware artifact root remains absent after provider action.
+
+.PARAMETER RemovalRoot
+Artifact root expected to be absent.
+#>
+function Assert-AtlasoWorkstationProviderRemovedRootAbsent {
+    param(
+        [Parameter(Mandatory = $true)]
+        [string]$RemovalRoot
+    )
+
+    if (-not (Test-AtlasoWorkstationArtifactRootAbsent -RemovalRoot $RemovalRoot)) {
+        throw "The VMware artifact root reappeared after provider deletion; artifacts were preserved: $RemovalRoot"
+    }
+}
+
+<#
+.SYNOPSIS
+Ensure a VM is not running, stopping it hard if necessary.
+
+.PARAMETER VmrunPath
+Path to vmrun executable.
+
+.PARAMETER VmxPath
+VMX path to verify inactive.
+#>
 function Confirm-AtlasoWorkstationVmInactive {
     param(
         [Parameter(Mandatory = $true)]
@@ -932,6 +1229,16 @@ function Confirm-AtlasoWorkstationVmInactive {
     }
 }
 
+<#
+.SYNOPSIS
+Verify a VMX path still exists and preserves expected identity.
+
+.PARAMETER VmxPath
+VMX path to verify.
+
+.PARAMETER ExpectedIdentity
+Expected identity token for the VMX.
+#>
 function Assert-AtlasoWorkstationVmxIdentity {
     param(
         [Parameter(Mandatory = $true)]
@@ -951,6 +1258,34 @@ function Assert-AtlasoWorkstationVmxIdentity {
     }
 }
 
+<#
+.SYNOPSIS
+Re-check running and registration state before invoking provider deletion.
+
+.PARAMETER VmrunPath
+Path to vmrun executable.
+
+.PARAMETER InventoryPath
+Workstation inventory path.
+
+.PARAMETER RemovalRoot
+Artifact root being cleaned.
+
+.PARAMETER AllowMissingRegistrationsUnderRoot
+Root that may permit registration entries disappearing.
+
+.PARAMETER TargetVmxPath
+Vmx path currently targeted for provider deletion.
+
+.PARAMETER ExpectedTargetIdentity
+Expected stable identity of the target VMX.
+
+.PARAMETER RemainingVmxPaths
+Other VMX paths that still require cleanup.
+
+.PARAMETER ValidatedVmxIdentities
+Map of expected VMX identities established before deletion.
+#>
 function Confirm-AtlasoWorkstationDeletePreconditions {
     param(
         [Parameter(Mandatory = $true)]
@@ -1033,6 +1368,22 @@ function Confirm-AtlasoWorkstationDeletePreconditions {
         -ExpectedIdentity $ExpectedTargetIdentity
 }
 
+<#
+.SYNOPSIS
+Atomically replace VMX contents only if file identity matches expected value.
+
+.PARAMETER VmxPath
+VMX path to replace.
+
+.PARAMETER ExpectedIdentity
+Expected current file identity.
+
+.PARAMETER ReplacementBytes
+New VMX bytes to write.
+
+.PARAMETER FailureMessage
+Diagnostic message when replacement validation fails.
+#>
 function Set-AtlasoWorkstationVmxBytesIfIdentityMatches {
     param(
         [Parameter(Mandatory = $true)]
@@ -1107,6 +1458,19 @@ function Set-AtlasoWorkstationVmxBytesIfIdentityMatches {
     }
 }
 
+<#
+.SYNOPSIS
+Detach external VMDK lines from a VMX before provider deletion.
+
+.PARAMETER VmxPath
+VMX file to rewrite.
+
+.PARAMETER RemovalRoot
+Artifact root used to classify VMDKs.
+
+.PARAMETER ExpectedIdentity
+Expected identity of the VMX before detachment.
+#>
 function Disconnect-AtlasoWorkstationExternalVmdks {
     param(
         [Parameter(Mandatory = $true)]
@@ -1177,6 +1541,16 @@ function Disconnect-AtlasoWorkstationExternalVmdks {
     }
 }
 
+<#
+.SYNOPSIS
+Restore externally detached VMDK properties if the VMX was not deleted.
+
+.PARAMETER VmxPath
+VMX file to restore.
+
+.PARAMETER Detachment
+Detachment state object captured before provider deletion.
+#>
 function Restore-AtlasoWorkstationDetachedVmdks {
     param(
         [Parameter(Mandatory = $true)]
@@ -1199,9 +1573,22 @@ function Restore-AtlasoWorkstationDetachedVmdks {
         -FailureMessage "VMware Workstation VMX was replaced while deleteVM was running; the replacement was preserved: $VmxPath" | Out-Null
 }
 
-# Whole-root removal is intentionally multi-phase: admit the exact filesystem
-# target, reconcile each known VM, stabilize global state, then repeat the state
-# and VMX-set checks immediately before recursive deletion.
+<#
+.SYNOPSIS
+Safely stop and delete validated artifact VMs, then remove the root directory.
+
+.PARAMETER VmrunPath
+Path to vmrun executable.
+
+.PARAMETER VmxPaths
+Candidate VMX paths accepted for cleanup.
+
+.PARAMETER RemovalRoot
+Artifact root to remove after all preconditions pass.
+
+.PARAMETER AllowMissingRegistrationsUnderRoot
+Root under which missing registrations are tolerated.
+#>
 function Remove-AtlasoWorkstationVmArtifacts {
     [CmdletBinding(SupportsShouldProcess = $true)]
     param(
@@ -1354,7 +1741,11 @@ function Remove-AtlasoWorkstationVmArtifacts {
         }
         $registeredTargetPaths += $resolvedVmxPath
     }
+    $providerRemovedRoot = $false
     foreach ($registeredTargetPath in $registeredTargetPaths) {
+        if ($providerRemovedRoot) {
+            throw "VMware Workstation removed the artifact root before every registered target was verified absent: $resolvedRemovalRoot"
+        }
         $remainingVmxPaths = @(
             $resolvedVmxPaths | Where-Object { Test-Path -LiteralPath $_ -PathType Leaf }
         )
@@ -1389,6 +1780,7 @@ function Remove-AtlasoWorkstationVmArtifacts {
                 -Detachment $externalDiskDetachment
             throw "VMware Workstation VMX remains after deleteVM succeeded: $registeredTargetPath"
         }
+        $providerRemovedRoot = Test-AtlasoWorkstationArtifactRootAbsent -RemovalRoot $resolvedRemovalRoot
     }
 
     $missingFinalRegisteredPaths = @(
@@ -1418,14 +1810,18 @@ function Remove-AtlasoWorkstationVmArtifacts {
     $postDeleteValidatedVmxPaths = @(
         $resolvedVmxPaths | Where-Object { Test-Path -LiteralPath $_ -PathType Leaf }
     )
-    foreach ($postDeleteValidatedVmxPath in $postDeleteValidatedVmxPaths) {
-        Assert-AtlasoWorkstationVmxIdentity `
-            -VmxPath $postDeleteValidatedVmxPath `
-            -ExpectedIdentity $validatedVmxIdentities[$postDeleteValidatedVmxPath]
+    if ($providerRemovedRoot) {
+        Assert-AtlasoWorkstationProviderRemovedRootAbsent -RemovalRoot $resolvedRemovalRoot
+    } else {
+        foreach ($postDeleteValidatedVmxPath in $postDeleteValidatedVmxPaths) {
+            Assert-AtlasoWorkstationVmxIdentity `
+                -VmxPath $postDeleteValidatedVmxPath `
+                -ExpectedIdentity $validatedVmxIdentities[$postDeleteValidatedVmxPath]
+        }
+        Assert-AtlasoWorkstationRemovalVmxSet `
+            -RemovalRoot $resolvedRemovalRoot `
+            -ValidatedVmxPaths $postDeleteValidatedVmxPaths
     }
-    Assert-AtlasoWorkstationRemovalVmxSet `
-        -RemovalRoot $resolvedRemovalRoot `
-        -ValidatedVmxPaths $postDeleteValidatedVmxPaths
     foreach ($postDeleteRegisteredPath in $postDeleteRegisteredPaths) {
         if (
             (Test-AtlasoStrictDescendantPath -ParentPath $resolvedRemovalRoot -ChildPath $postDeleteRegisteredPath) -or
@@ -1463,28 +1859,52 @@ function Remove-AtlasoWorkstationVmArtifacts {
         -First $postDeleteRegistrationSnapshot `
         -Second $postRunningRegistrationFirstSnapshot `
         -InventoryPath $inventoryPath
-    foreach ($postDeleteValidatedVmxPath in $postDeleteValidatedVmxPaths) {
-        Assert-AtlasoWorkstationVmxIdentity `
-            -VmxPath $postDeleteValidatedVmxPath `
-            -ExpectedIdentity $validatedVmxIdentities[$postDeleteValidatedVmxPath]
+    if ($providerRemovedRoot) {
+        Assert-AtlasoWorkstationProviderRemovedRootAbsent -RemovalRoot $resolvedRemovalRoot
+    } else {
+        foreach ($postDeleteValidatedVmxPath in $postDeleteValidatedVmxPaths) {
+            Assert-AtlasoWorkstationVmxIdentity `
+                -VmxPath $postDeleteValidatedVmxPath `
+                -ExpectedIdentity $validatedVmxIdentities[$postDeleteValidatedVmxPath]
+        }
+        Assert-AtlasoWorkstationRemovalVmxSet `
+            -RemovalRoot $resolvedRemovalRoot `
+            -ValidatedVmxPaths $postDeleteValidatedVmxPaths
     }
-    Assert-AtlasoWorkstationRemovalVmxSet `
-        -RemovalRoot $resolvedRemovalRoot `
-        -ValidatedVmxPaths $postDeleteValidatedVmxPaths
     $postRunningRegistrationSecondSnapshot = Get-AtlasoWorkstationInventorySnapshot -InventoryPath $inventoryPath
     Assert-AtlasoWorkstationInventorySnapshotsEqual `
         -First $postRunningRegistrationFirstSnapshot `
         -Second $postRunningRegistrationSecondSnapshot `
         -InventoryPath $inventoryPath
 
-    if (Test-Path -LiteralPath $resolvedRemovalRoot) {
-        Remove-Item -LiteralPath $resolvedRemovalRoot -Recurse -Force -ErrorAction Stop
+    if ($providerRemovedRoot) {
+        Assert-AtlasoWorkstationProviderRemovedRootAbsent -RemovalRoot $resolvedRemovalRoot
+    } else {
+        if (Test-Path -LiteralPath $resolvedRemovalRoot) {
+            Remove-Item -LiteralPath $resolvedRemovalRoot -Recurse -Force -ErrorAction Stop
+        }
     }
     if (Test-Path -LiteralPath $resolvedRemovalRoot) {
         throw "VMware artifact directory remains after recursive cleanup; refusing to report success: $resolvedRemovalRoot"
     }
 }
 
+<#
+.SYNOPSIS
+Top-level entry point to validate and remove a VMware artifact directory.
+
+.PARAMETER VmrunPath
+Path to vmrun executable.
+
+.PARAMETER ArtifactParentRoot
+Canonical parent directory for artifact directories.
+
+.PARAMETER ExpectedRemovalRoot
+Exact configured artifact root when validating exact-parent mode.
+
+.PARAMETER RemovalRoot
+Artifact directory to validate and remove.
+#>
 function Remove-AtlasoWorkstationArtifactRoot {
     [CmdletBinding(DefaultParameterSetName = 'CanonicalParent', SupportsShouldProcess = $true)]
     param(

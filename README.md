@@ -143,7 +143,9 @@ surviving or recreated after provider deletion must still match its original imm
 only through a filesystem alias fails closed before VMX replacement, and every target repeats immutable
 identity, running, registration, and VMX-set checks immediately before its individual `deleteVM`. Standalone
 VMware and Hyper-V image cleanup also reconciles provider inventory and fails closed
-before deleting canonical artifact roots.
+before deleting canonical artifact roots. If checked `deleteVM` removes the complete validated root, cleanup retains the
+same inventory checks, requires that exact root to stay absent, and lets the active redeploy continue without a second
+filesystem deletion.
 With the Workstation UI closed, cleanup holds a write-excluding inventory handle through its final byte comparison and
 atomic replacement, verifies the exact displaced backup, and rolls back a concurrently replaced provider inventory.
 It removes stale library rows only for canonical missing VMX paths beneath its validated exact or multi-root artifact
