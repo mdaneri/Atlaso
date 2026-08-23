@@ -46,7 +46,9 @@ The appliance package includes only the assets required at runtime under `atlaso
 
 The PWA manifest uses the dark 192 and 512 pixel application icons as maskable icons. Its start URL and service-worker
 scope are restricted to `/ui/management/`; public UI caching is disabled. Browser templates also expose the SVG mark
-and the 180 pixel Apple touch icon.
+and the 180 pixel Apple touch icon. The cached management offline fallback uses the horizontal light SVG within the
+same bounded, aspect-preserving logo presentation as the sign-in card so the recovery copy remains readable at narrow
+viewports and browser zoom.
 
 ## Appliance boot
 

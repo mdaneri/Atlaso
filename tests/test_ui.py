@@ -888,7 +888,7 @@ def test_pwa_manifest_service_worker_and_offline_shell(client):
     assert service_worker.headers["cache-control"] == "no-cache"
     assert service_worker.headers["service-worker-allowed"] == "/ui/management/"
     assert "ATLASO_CACHE" in service_worker.text
-    assert "atlaso-management-pwa-v268" in service_worker.text
+    assert "atlaso-management-pwa-v269" in service_worker.text
     assert 'fetch(asset, { cache: "reload" })' in service_worker.text
     assert ".catch(() => undefined)" in service_worker.text
     assert 'request.mode === "navigate"' in service_worker.text
@@ -922,6 +922,10 @@ def test_pwa_manifest_service_worker_and_offline_shell(client):
     offline = client.get("/static/offline.html")
     assert offline.status_code == 200
     assert "Appliance connection unavailable" in offline.text
+    assert 'class="login-logo"' in offline.text
+    assert 'class="login-graphic"' not in offline.text
+    assert 'src="/static/brand/atlaso-logo-horizontal-light.svg"' in offline.text
+    assert '"/static/brand/atlaso-logo-horizontal-light.svg"' in service_worker.text
     offline_stylesheet = re.search(
         r'<link rel="stylesheet" href="([^"]+)">',
         offline.text,
@@ -931,6 +935,16 @@ def test_pwa_manifest_service_worker_and_offline_shell(client):
         "/static/app.css?v=issue-474-1"
     )
     assert f'"{offline_stylesheet.group(1)}"' in service_worker.text
+
+    stylesheet = client.get("/static/app.css")
+    assert stylesheet.status_code == 200
+    login_logo_rule = re.search(r"\.login-logo\s*\{(?P<body>[^}]*)\}", stylesheet.text)
+    assert login_logo_rule is not None
+    declarations = login_logo_rule.group("body")
+    assert re.search(r"\bwidth:\s*100%;", declarations)
+    assert re.search(r"\bmax-width:\s*480px;", declarations)
+    assert re.search(r"\bheight:\s*auto;", declarations)
+    assert re.search(r"\bobject-fit:\s*contain;", declarations)
 
 
 def test_shared_ui_pattern_shell_and_wizard_contracts(client):
