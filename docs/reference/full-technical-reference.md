@@ -270,6 +270,13 @@ apply unit after the helper-backed command path is reviewed. Build disposable de
 Firewall desired state is nftables-backed. The image installs nftables and boots with management access to SSH, HTTPS,
 and the Atlaso web UI.
 
+Network Objects owns the canonical management UI and mutation route for Source Groups. The domain service projects
+validation and every nested-group, operator Firewall rule, managed assignment, and NAT consumer from the retained
+`firewall.managed_source_groups` state. Stable group IDs and archive shape remain unchanged. The Firewall and NAT
+wizards link to this surface with an allowlisted return token; only tab-local draft values are retained, choices are
+rendered fresh on return, and missing selections must be reviewed. Legacy Source Group reads redirect after management
+authorization, while legacy writes bridge to the canonical handler and finish with a non-replaying `303` response.
+
 Appliance Update is a separate runtime-maintenance workflow from global `/ui/management/appliance-apply`.
 Repository-style sources
 cover Photon/tdnf, PowerShell Gallery or internal PowerShell repositories, and signed Atlaso release channels; the
@@ -840,10 +847,11 @@ Management-role IPs stay on the management front door.
 The firewall preview derives Atlaso-managed service allow rules from service desired state, including management, DNS,
 DHCP, NTPsec, KMS, VCF Backup, VCF Offline Depot, and VCF Private Registry listeners. It also derives managed routing
 rules: route-role network pairs are allowed, explicit access routing rules are allowed, and management-to-lab or
-lab-to-management forwarding is always dropped. Managed listener rules default to the built-in `Any` group; operators
-can create, rename, remove, and assign firewall groups containing `any`, CIDRs, addresses, or other groups when rule
-sources or destinations need narrower access. DHCP bootstrap remains interface-bound because clients may not have an
-address yet: IPv4 zones open UDP/67 and IPv6 zones open UDP/547. NTPsec opens UDP/123 on selected service bind targets
+lab-to-management forwarding is always dropped. Managed listener rules default to the built-in `Any` Source Group;
+operators manage reusable Source Groups containing `any`, CIDRs, addresses, or nested group references from Network
+Objects when rule sources or destinations need narrower access. DHCP bootstrap remains interface-bound because clients
+may not have an address yet: IPv4 zones open UDP/67 and IPv6 zones open UDP/547. NTPsec opens UDP/123 on selected
+service bind targets
 and adds TCP/4460 when NTS server mode is enabled. Moving a DHCP scope, service listener, or routing permission to a
 VLAN such as `eth2.50` also changes the Firewall apply unit. In development, system adapters remain dry-run by default
 and record command intent instead of mutating host services directly.

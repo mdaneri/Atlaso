@@ -201,7 +201,7 @@ def validate_nat_source(value: str, source_group_ids: set[str] | None = None, so
                 resolved = source_group_to_rule_source(groups_by_id.get(group_id), groups_by_id)
                 return validate_nat_source(resolved, source_group_ids, None)
             return []
-        return [f"NAT source references a firewall group that does not exist: {raw_value}."]
+        return [f"NAT source references a Source Group that does not exist: {raw_value}."]
     errors: list[str] = []
     for item in re.split(r"[\n,]+", raw_value):
         source = item.strip()
@@ -210,7 +210,7 @@ def validate_nat_source(value: str, source_group_ids: set[str] | None = None, so
         try:
             network = ip_network(source, strict=False)
         except ValueError:
-            errors.append("NAT source must be 'any', a firewall group reference, or valid IPv4 CIDRs.")
+            errors.append("NAT source must be 'any', a Source Group reference, or valid IPv4 CIDRs.")
             break
         if network.version != 4:
             errors.append("NAT v1 supports IPv4 source CIDRs only.")
@@ -236,7 +236,7 @@ def validate_wan_state(
         target_names: Target names supplied by the caller.
         nat_rules: Nat rules supplied by the caller.
         wan_target_names: Wan target names supplied by the caller.
-        source_groups: Firewall source groups available to the rule.
+        source_groups: Source Groups available to the rule.
         routing_rules: Routing rules supplied by the caller.
         routing_target_names: Routing target names supplied by the caller.
 
@@ -413,7 +413,7 @@ def render_wan_config(
         targets: Targets supplied by the caller.
         routing_rules: Routing rules supplied by the caller.
         removed_routes: Removed routes supplied by the caller.
-        source_groups: Firewall source groups available to the rule.
+        source_groups: Source Groups available to the rule.
 
     Returns:
         The rendered wan config.

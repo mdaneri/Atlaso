@@ -37,6 +37,7 @@ from atlaso.app.services.firewall import (
     firewall_interface_networks,
     firewall_source_group_state,
 )
+from atlaso.app.services.network_objects import acquire_network_objects_write_lock
 from atlaso.app.services.networking import normalize_interface_mode
 from atlaso.app.services.routes_wan import validate_nat_source
 
@@ -508,6 +509,7 @@ def build_router(dependencies: RoutesWanApiDependencies) -> RoutesWanApiRouter:
             identity: Authenticated identity authorizing the operation.
             db: Active database session used by the operation.
         """
+        acquire_network_objects_write_lock(db)
         validate_nat_rule_payload(payload, db)
         rule = NatRule(**payload.model_dump())
         db.add(rule)
@@ -552,6 +554,7 @@ def build_router(dependencies: RoutesWanApiDependencies) -> RoutesWanApiRouter:
             identity: Authenticated identity authorizing the operation.
             db: Active database session used by the operation.
         """
+        acquire_network_objects_write_lock(db)
         rule = db.get(NatRule, rule_id)
         if not rule:
             raise HTTPException(status_code=404, detail="NAT rule not found")
@@ -580,6 +583,7 @@ def build_router(dependencies: RoutesWanApiDependencies) -> RoutesWanApiRouter:
             identity: Authenticated identity authorizing the operation.
             db: Active database session used by the operation.
         """
+        acquire_network_objects_write_lock(db)
         rule = db.get(NatRule, rule_id)
         if not rule:
             raise HTTPException(status_code=404, detail="NAT rule not found")

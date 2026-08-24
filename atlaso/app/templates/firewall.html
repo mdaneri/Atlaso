@@ -126,111 +126,6 @@
       </form>
     </div>
 
-    <div class="panel">
-      <div class="panel-head">
-        <h2>Groups</h2>
-        <span class="status-pill muted">{{ firewall_source_groups|length }} groups</span>
-      </div>
-      <form class="form-stack source-group-create-form" action="{{ management_ui_root }}/firewall/source-groups" method="post">
-        <input type="hidden" name="csrf" value="{{ csrf_token }}">
-        <input type="hidden" name="action" value="create">
-        <input type="hidden" name="group_entries" value="any">
-        <label>
-          <span class="field-label"><span>Add group</span><button class="help-icon" type="button" data-help="Creates a reusable firewall group. New groups start with any and can later be narrowed to CIDRs or other groups.">i</button></span>
-          <input type="text" name="group_name" placeholder="Group name" required>
-        </label>
-        <button class="button secondary compact-button" type="submit">Add group</button>
-        <p id="firewall-source-groups-status" class="autosave-status" data-state="idle">Changes save automatically.</p>
-      </form>
-      <div class="source-group-manager" data-source-group-manager>
-        {% set editable_source_groups = firewall_source_groups | rejectattr("builtin") | list %}
-        {% if editable_source_groups %}
-          <label>
-            <span class="field-label"><span>Edit group</span><button class="help-icon" type="button" data-help="Select a user-created firewall group to rename or edit. Rules default to Any until you assign another group in the grid.">i</button></span>
-            <select data-source-group-select>
-              {% for group in editable_source_groups %}
-                <option value="{{ group.id }}">{{ group.name }}</option>
-              {% endfor %}
-            </select>
-          </label>
-        {% else %}
-          <p class="muted">No custom groups yet.</p>
-        {% endif %}
-        {% for group in firewall_source_groups %}
-          {% if not group.builtin %}
-          <section class="source-group-editor {{ 'active' if editable_source_groups and group.id == editable_source_groups[0].id else '' }}" data-source-group-editor data-source-group-id="{{ group.id }}" {{ "" if editable_source_groups and group.id == editable_source_groups[0].id else "hidden" }}>
-            <form class="form-stack" action="{{ management_ui_root }}/firewall/source-groups" method="post" data-autosave-form data-autosave-trigger="change" data-firewall-source-groups data-autosave-status-id="firewall-source-groups-status">
-              <input type="hidden" name="csrf" value="{{ csrf_token }}">
-              <input type="hidden" name="action" value="update">
-              <input type="hidden" name="group_id" value="{{ group.id }}">
-              <input type="hidden" name="group_name" value="{{ group.name }}">
-              <div>
-                <span class="field-label"><span>Entries</span><button class="help-icon" type="button" data-help="Entries may be any, an IPv4 or IPv6 address/CIDR, or another firewall group. These entries are expanded into firewall rules during preview and appliance apply.">i</button></span>
-                <div class="source-group-entry-list" data-source-group-entry-list>
-                  {% for entry in group.entries %}
-                    <div class="source-group-entry-row">
-                      <input type="hidden" name="group_entries" value="{{ entry }}">
-                      <span class="source-group-entry-label">{{ entry }}</span>
-                      <button class="icon-button source-group-entry-remove" type="button" data-source-group-remove-entry aria-label="Remove entry">x</button>
-                    </div>
-                  {% endfor %}
-                </div>
-              </div>
-              <div class="source-group-add-controls">
-                <div class="inline-add-control">
-                  <input type="text" data-source-group-cidr-input placeholder="CIDR or address">
-                  <button class="button secondary compact-button" type="button" data-source-group-add-cidr>Add CIDR</button>
-                </div>
-                <div class="inline-add-control source-group-add-ref-control">
-                  <select data-source-group-ref-select aria-label="Source group reference">
-                    <option value="">Select group</option>
-                    {% for other in firewall_source_groups %}
-                      {% if other.id != group.id and not other.builtin %}
-                        <option value="group:{{ other.id }}">{{ other.name }}</option>
-                      {% endif %}
-                    {% endfor %}
-                  </select>
-                  <div class="source-group-inline-actions">
-                    <button class="button ghost compact-button" type="button" data-source-group-add-any>Add any</button>
-                    <button class="button secondary compact-button" type="button" data-source-group-add-ref>Add group</button>
-                  </div>
-                </div>
-              </div>
-            </form>
-            <div class="source-group-actions">
-              <button class="button secondary compact-button" type="button" data-source-group-rename data-group-id="{{ group.id }}" data-group-name="{{ group.name }}">Rename group</button>
-              <form action="{{ management_ui_root }}/firewall/source-groups" method="post" data-confirm-modal data-confirm-title="Remove {{ group.name }}?" data-confirm-message="This removes the firewall group from desired state and moves managed rules using it back to Any. The appliance changes only after global appliance apply." data-confirm-label="Remove group">
-                <input type="hidden" name="csrf" value="{{ csrf_token }}">
-                <input type="hidden" name="action" value="delete">
-                <input type="hidden" name="group_id" value="{{ group.id }}">
-                <button class="button ghost danger compact-button" type="submit">Remove group</button>
-              </form>
-            </div>
-          </section>
-          {% endif %}
-        {% endfor %}
-      </div>
-      <dialog id="firewall-rename-group-modal" class="confirm-modal" aria-labelledby="firewall-rename-group-title">
-        <form class="confirm-modal-panel" action="{{ management_ui_root }}/firewall/source-groups" method="post">
-          <input type="hidden" name="csrf" value="{{ csrf_token }}">
-          <input type="hidden" name="action" value="rename">
-          <input type="hidden" name="group_id" value="">
-          <div class="confirm-modal-body">
-            <p class="kicker">Firewall group</p>
-            <h2 id="firewall-rename-group-title">Rename group</h2>
-            <label>
-              <span class="field-label"><span>Group name</span><button class="help-icon" type="button" data-help="Changes the label shown in rule group selectors. Existing rule assignments stay attached to this group.">i</button></span>
-              <input type="text" name="group_name" value="" required data-firewall-rename-group-input>
-            </label>
-          </div>
-          <div class="confirm-modal-actions">
-            <button class="button ghost" type="button" data-firewall-rename-group-cancel>Cancel</button>
-            <button class="button primary" type="submit">Rename group</button>
-          </div>
-        </form>
-      </dialog>
-    </div>
-
     {% include "partials/appliance_apply_status.html" %}
 
     <div class="panel" data-firewall-validation-panel>
@@ -288,11 +183,12 @@
   <section class="hidden" data-atlaso-wizard-step="match">
     <div class="form-grid">
       <label><span class="field-label"><span>Protocol</span><button class="help-icon" type="button" data-help="Network protocol matched by this rule.">i</button></span><select name="protocol">{% for protocol in firewall_protocols %}<option value="{{ protocol }}">{{ protocol }}</option>{% endfor %}</select></label>
-      <label><span class="field-label"><span>Source</span><button class="help-icon" type="button" data-help="Source group or any traffic. Group membership is managed in the firewall settings rail.">i</button></span><select name="source"><option value="any">any</option>{% for group in firewall_source_groups %}<option value="{{ group.id }}">{{ group.name }}</option>{% endfor %}</select></label>
-      <label><span class="field-label"><span>Destination</span><button class="help-icon" type="button" data-help="Destination group or any traffic.">i</button></span><select name="destination"><option value="any">any</option>{% for group in firewall_source_groups %}<option value="{{ group.id }}">{{ group.name }}</option>{% endfor %}</select></label>
+      <label><span class="field-label"><span>Source</span><button class="help-icon" type="button" data-help="Source Group or Any traffic. Source Group membership is managed on Network Objects.">i</button></span><select name="source">{% for group in firewall_source_groups %}<option value="{{ group.id }}">{{ group.name }}</option>{% endfor %}</select></label>
+      <label><span class="field-label"><span>Destination</span><button class="help-icon" type="button" data-help="Destination Source Group or Any traffic.">i</button></span><select name="destination">{% for group in firewall_source_groups %}<option value="{{ group.id }}">{{ group.name }}</option>{% endfor %}</select></label>
       <label><span class="field-label"><span>Destination ports</span><button class="help-icon" type="button" data-help="Optional destination port or validated port expression for protocols that use ports.">i</button></span><input name="destination_port"></label>
       <label><span class="field-label"><span>Interface</span><button class="help-icon" type="button" data-help="Optionally constrain the match to one current service-capable interface.">i</button></span><select name="interface_name"><option value="">any</option>{% for interface in firewall_interface_options %}<option value="{{ interface.name }}">{{ interface.name }}</option>{% endfor %}</select></label>
     </div>
+    <a class="button ghost compact-button" href="{{ management_ui_path('/network-objects') }}?return_to=firewall-rule" data-source-group-manage="firewall-rule">Manage source groups</a>
   </section>
   <section class="hidden" data-atlaso-wizard-step="state">
     <div class="form-grid">

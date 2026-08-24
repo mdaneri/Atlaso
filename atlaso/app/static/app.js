@@ -1422,9 +1422,9 @@ function initializeAtlasoResourceWizard(config) {
       reportActionError(error);
     }
   };
-  const openResource = (data, launcher) => {
+  const openResource = (data, launcher, options = {}) => {
     if (!data?.is_new && !canEdit(data)) return;
-    wizard?.open({ launcher, context: data?.is_new ? null : data });
+    return wizard?.open({ launcher, context: data?.is_new ? null : data, ...options });
   };
   const deleteResource = async (row) => {
     const data = row.getData();
@@ -1500,9 +1500,9 @@ function initializeAtlasoResourceWizard(config) {
   table = grid.table;
   if (!table) {
     grid.setError(config.gridError || "Resource changes are unavailable because the interactive grid could not initialize.");
-    return { grid, table: null, wizard: null };
+  } else {
+    element.atlasoTabulator = table;
   }
-  element.atlasoTabulator = table;
 
   wizard = window.AtlasoUiPatterns.createWizard({
     form,
@@ -1537,6 +1537,10 @@ function initializeAtlasoResourceWizard(config) {
       const payload = await atlasoGridWizardRequest(url, body);
       const resource = config.normalizeResource?.(payload[config.resourceName], payload) || payload[config.resourceName];
       if (!resource) throw new Error("The server did not return the saved resource.");
+      if (!table) {
+        window.location.reload();
+        return { valid: true };
+      }
       if (recordId) {
         const existingRow = table.getRow(recordId) || table.getRow(Number(recordId));
         await existingRow?.update(resource);
@@ -1551,6 +1555,8 @@ function initializeAtlasoResourceWizard(config) {
       return { valid: true };
     },
   });
+  element.atlasoWizard = wizard;
+  element.atlasoWizardOpen = openResource;
   if (config.addLauncherSelector) {
     document.querySelectorAll(config.addLauncherSelector).forEach((launcher) => {
       if (!(launcher instanceof HTMLButtonElement)) return;
@@ -4281,7 +4287,7 @@ async function updateManagedFirewallSourceGroup(cell, csrf) {
       cell.restoreOldValue();
     }
     const text = await response.text();
-    showCaMessage("firewall-rule-error", text.trim().replace(/<[^>]+>/g, " ").replace(/\s+/g, " ") || "The managed firewall group could not be saved.");
+    showCaMessage("firewall-rule-error", text.trim().replace(/<[^>]+>/g, " ").replace(/\s+/g, " ") || "The managed Source Group could not be saved.");
     return;
   }
   showTransientGridStatus("Saved");
@@ -4348,6 +4354,369 @@ function initializeManagedFirewallRulesTable() {
       fallback.classList.remove("hidden");
     }
   }
+}
+
+function sourceGroupUsageFormatter(cell) {
+  const data = cell.getRow().getData();
+  const wrapper = document.createElement("span");
+  wrapper.className = "resource-cell-stack";
+  const primary = document.createElement("strong");
+  primary.textContent = data.consumer_count ? `${data.consumer_count} consumer${data.consumer_count === 1 ? "" : "s"}` : "Not in use";
+  wrapper.append(primary);
+  if (!data.consumer_count) {
+    return wrapper;
+  }
+  const secondary = document.createElement("small");
+  secondary.textContent = data.usage_summary || "Not in use";
+  wrapper.append(secondary);
+  return wrapper;
+}
+
+function sourceGroupValidationFormatter(cell) {
+  const state = String(cell.getValue() || "needs attention");
+  const pill = document.createElement("span");
+  pill.className = `status-pill ${state === "valid" ? "good" : "warn"}`;
+  pill.textContent = state;
+  return pill;
+}
+
+function renderNetworkObjectSourceGroupReferences(rows) {
+  const container = document.querySelector("[data-network-object-reference-list]");
+  if (!(container instanceof HTMLElement)) return;
+  const references = rows.filter((row) => !row.builtin && !row.is_new);
+  if (!references.length) {
+    const item = document.createElement("div");
+    const label = document.createElement("span");
+    label.textContent = "Nested Source Groups";
+    const value = document.createElement("strong");
+    value.textContent = "None available yet";
+    item.append(label, value);
+    container.replaceChildren(item);
+    return;
+  }
+  container.replaceChildren(...references.map((row) => {
+    const item = document.createElement("div");
+    const label = document.createElement("span");
+    label.textContent = row.name || row.id;
+    const value = document.createElement("code");
+    value.textContent = `group:${row.id}`;
+    item.append(label, value);
+    return item;
+  }));
+}
+
+async function deleteNetworkObjectSourceGroup(row, controller, csrf, replaceRows) {
+  const data = row.getData();
+  if (data.builtin || data.is_new) return;
+  if (data.consumer_count) {
+    const consumers = (data.consumers || []).map((consumer) => `${consumer.label} (${consumer.detail})`).join("; ");
+    showCaMessage("network-objects-error", `Source Group ${data.name} is in use and cannot be removed. ${consumers}`);
+    return;
+  }
+  const confirmed = await requestConfirmation({
+    title: `Remove ${data.name}?`,
+    message: "This removes the unreferenced Source Group from shared desired state. Firewall and WAN host behavior changes only through global appliance apply.",
+    label: "Remove Source Group",
+    tone: "danger",
+  });
+  if (!confirmed) return;
+  const body = new FormData();
+  body.set("csrf", csrf);
+  body.set("action", "delete");
+  body.set("group_id", data.id);
+  const payload = await atlasoGridWizardRequest(managementUiPath("/network-objects/source-groups"), body);
+  await replaceRows(payload.source_groups || []);
+  controller?.table?.redraw?.();
+  showTransientGridStatus("Deleted");
+}
+
+function initializeNetworkObjectSourceGroups() {
+  const element = document.getElementById("network-object-source-groups-table");
+  if (!(element instanceof HTMLElement)) return;
+  const dialog = document.getElementById("network-object-source-group-dialog");
+  const existingRows = JSON.parse(element.dataset.sourceGroups || "[]");
+  const canWrite = element.dataset.canWrite === "true";
+  const csrf = element.dataset.csrf || "";
+  const rowById = new Map(existingRows.map((row) => [String(row.id), row]));
+  const newRow = {
+    id: "__new__",
+    name: "",
+    group_name: "",
+    description: "",
+    entries: ["any"],
+    entry_count: 0,
+    entries_summary: "",
+    consumer_count: 0,
+    consumers: [],
+    usage_summary: "Not in use",
+    validation_state: "valid",
+    builtin: false,
+    is_new: true,
+  };
+  const gridOptions = {
+    height: `${Math.min(Math.max((existingRows.length + (canWrite ? 1 : 0)) * 42 + 34, 120), 440)}px`,
+    rowHeight: 42,
+    layout: "fitColumns",
+    columns: [
+      {
+        title: "Name",
+        field: "name",
+        minWidth: 180,
+        formatter: (cell) => cell.getRow().getData().is_new
+          ? '<button class="add-row-button" type="button" data-atlaso-wizard-add>+ Add Source Group here</button>'
+          : escapeHtml(cell.getValue()),
+      },
+      { title: "Entries", field: "entries_summary", minWidth: 260, formatter: (cell) => cell.getRow().getData().is_new ? "" : escapeHtml(`${cell.getValue() || ""} (${cell.getRow().getData().entry_count || 0})`) },
+      { title: "Consumers", field: "consumer_count", minWidth: 260, formatter: (cell) => cell.getRow().getData().is_new ? "" : sourceGroupUsageFormatter(cell) },
+      { title: "Built in", field: "builtin", width: 95, hozAlign: "center", formatter: (cell) => cell.getRow().getData().is_new ? "" : atlasoBooleanFormatter(cell) },
+      { title: "Validation", field: "validation_state", width: 145, formatter: (cell) => cell.getRow().getData().is_new ? "" : sourceGroupValidationFormatter(cell) },
+    ],
+    rowFormatter: (row) => markNewRecordRow(row, "name"),
+  };
+  if (!canWrite) {
+    const grid = window.AtlasoUiPatterns.createGrid({
+      element,
+      fallback: `#${element.dataset.fallbackId}`,
+      pattern: "read-only",
+      emptyMessage: "No Source Groups are available.",
+      options: { ...gridOptions, data: existingRows, index: "id" },
+    });
+    element.atlasoTabulator = grid.table;
+    return;
+  }
+  if (!(dialog instanceof HTMLDialogElement)) return;
+  let controller = null;
+  const replaceRows = async (rows, table = controller?.table) => {
+    const currentRows = Array.isArray(rows) ? rows : [];
+    rowById.clear();
+    currentRows.forEach((row) => rowById.set(String(row.id), row));
+    renderNetworkObjectSourceGroupReferences(currentRows);
+    await table?.replaceData?.([...currentRows, newRow]);
+  };
+  controller = initializeAtlasoResourceWizard({
+    elementId: "network-object-source-groups-table",
+    formSelector: "[data-network-object-source-group-form]",
+    dialogId: "network-object-source-group-dialog",
+    rows: existingRows,
+    newRow,
+    includeNewRow: canWrite,
+    resourceName: "source_group",
+    recordField: "group_id",
+    createUrl: managementUiPath("/network-objects/source-groups"),
+    editUrl: () => managementUiPath("/network-objects/source-groups"),
+    editLabel: "Edit Source Group",
+    createLabel: "Add Source Group",
+    updateLabel: "Update Source Group",
+    emptyMessage: "No Source Groups are available.",
+    actionErrorSelector: "#network-objects-error",
+    addLauncherSelector: "[data-network-object-source-group-open]",
+    defaults: { action: "create", group_name: "", description: "", group_entries: "any" },
+    canEdit: (data) => canWrite && !data.builtin,
+    inlineEnabled: false,
+    steps: [
+      { id: "identity", title: "Define the Source Group", description: "Name the reusable network object and explain its intended traffic boundary." },
+      { id: "entries", title: "Add Source Group entries", description: "Enter addresses, CIDRs, Any, or stable nested Source Group references." },
+      { id: "review", title: "Review Source Group desired state", description: "Confirm validation, every current consumer, and the appliance-apply boundary." },
+    ],
+    onOpen: ({ form, context }) => {
+      const rail = dialog.querySelector(".vcf-sddc-wizard-rail");
+      const railTitle = rail?.querySelector("h2");
+      const dialogTitle = context ? "Edit Source Group" : "Add Source Group";
+      if (railTitle instanceof HTMLElement) railTitle.textContent = dialogTitle;
+      if (rail instanceof HTMLElement) rail.setAttribute("aria-label", `${dialogTitle} steps`);
+      form.elements.action.value = context ? "update" : "create";
+      if (context) {
+        form.elements.group_name.value = context.name || "";
+        form.elements.group_entries.value = (context.entries || []).join("\n");
+      }
+    },
+    validateStep: ({ form, step }) => {
+      if (step.id !== "entries") return { valid: true };
+      const entries = form.elements.group_entries;
+      if (!(entries instanceof HTMLTextAreaElement) || !entries.value.trim()) {
+        return { valid: false, field: entries, message: "Enter at least one Source Group entry." };
+      }
+      return { valid: true };
+    },
+    prepareFormData: ({ body }) => {
+      body.set("action", body.get("group_id") ? "update" : "create");
+    },
+    prepareReview: ({ form }) => {
+      const current = rowById.get(String(form.elements.group_id.value || ""));
+      const entries = String(form.elements.group_entries.value || "").split(/[\n,]+/).map((item) => item.trim()).filter(Boolean);
+      const values = {
+        name: form.elements.group_name.value.trim() || "Not set",
+        entries: entries.join(", ") || "Not set",
+        consumers: current?.usage_summary || "Not in use",
+        validation: current?.validation_errors?.join(" ") || "Valid when saved",
+      };
+      Object.entries(values).forEach(([key, value]) => {
+        const target = form.querySelector(`[data-network-object-review="${key}"]`);
+        if (target instanceof HTMLElement) target.textContent = value;
+      });
+    },
+    onSaved: ({ payload, table }) => replaceRows(payload.source_groups || [], table),
+    extraActions: canWrite ? [
+      {
+        label: "Review consumers",
+        disabled: (row) => !row.getData().consumer_count,
+        action: (_event, row) => {
+          const data = row.getData();
+          const consumers = (data.consumers || []).map((consumer) => `${consumer.label} (${consumer.detail})`).join("; ");
+          showCaMessage("network-objects-error", `${data.name} is used by: ${consumers}`, "success");
+        },
+      },
+      {
+        label: "Remove Source Group",
+        disabled: (row) => row.getData().builtin || Boolean(row.getData().consumer_count),
+        action: (_event, row) => deleteNetworkObjectSourceGroup(row, controller, csrf, replaceRows),
+      },
+    ] : [],
+    options: gridOptions,
+  });
+}
+
+const SOURCE_GROUP_DRAFT_KEYS = {
+  "firewall-rule": "atlaso:source-group-return:firewall-rule",
+  "nat-rule": "atlaso:source-group-return:nat-rule",
+};
+const SOURCE_GROUP_DRAFT_WINDOW_PREFIX = "atlaso-source-group-draft:";
+
+function storeSourceGroupWizardDraft(storageKey, draft) {
+  const serialized = JSON.stringify(draft);
+  try {
+    window.sessionStorage.setItem(storageKey, serialized);
+    if (window.sessionStorage.getItem(storageKey) === serialized) return true;
+  } catch (_error) {
+    // Some embedded browser sessions disable Web Storage; use the same-tab window name below.
+  }
+  if (window.name && !window.name.startsWith(SOURCE_GROUP_DRAFT_WINDOW_PREFIX)) return false;
+  window.name = `${SOURCE_GROUP_DRAFT_WINDOW_PREFIX}${JSON.stringify({ storageKey, draft })}`;
+  return true;
+}
+
+function loadSourceGroupWizardDraft(storageKey) {
+  try {
+    const draft = JSON.parse(window.sessionStorage.getItem(storageKey) || "null");
+    if (draft) return draft;
+  } catch (_error) {
+    // Continue to the same-tab fallback.
+  }
+  if (!window.name.startsWith(SOURCE_GROUP_DRAFT_WINDOW_PREFIX)) return null;
+  try {
+    const envelope = JSON.parse(window.name.slice(SOURCE_GROUP_DRAFT_WINDOW_PREFIX.length));
+    return envelope.storageKey === storageKey ? envelope.draft : null;
+  } catch (_error) {
+    return null;
+  }
+}
+
+function clearSourceGroupWizardDraft(storageKey) {
+  try {
+    window.sessionStorage.removeItem(storageKey);
+  } catch (_error) {
+    // The same-tab fallback still needs clearing.
+  }
+  if (!window.name.startsWith(SOURCE_GROUP_DRAFT_WINDOW_PREFIX)) return;
+  try {
+    const envelope = JSON.parse(window.name.slice(SOURCE_GROUP_DRAFT_WINDOW_PREFIX.length));
+    if (envelope.storageKey === storageKey) window.name = "";
+  } catch (_error) {
+    window.name = "";
+  }
+}
+
+function captureSourceGroupWizardDraft(form) {
+  const values = {};
+  [...form.elements].forEach((control) => {
+    if (!control.name || control.name === "csrf") return;
+    if (control.type === "checkbox") {
+      values[control.name] = Boolean(control.checked);
+    } else if (control.type !== "radio" || control.checked) {
+      values[control.name] = control.value;
+    }
+  });
+  const editMatch = String(form.getAttribute("action") || "").match(/\/(?:rules|nat-rules)\/(\d+)\/edit$/);
+  return { values, editId: editMatch ? editMatch[1] : String(values.record_id || ""), savedAt: Date.now() };
+}
+
+function applySourceGroupWizardDraft(form, draft, focusSelector) {
+  const missingSourceGroupControls = [];
+  Object.entries(draft.values || {}).forEach(([name, value]) => {
+    const controls = [...form.querySelectorAll(`[name="${CSS.escape(name)}"]`)];
+    if (!controls.length) return;
+    const control = controls[0];
+    if (control.type === "checkbox") {
+      control.checked = Boolean(value);
+      return;
+    }
+    if (control instanceof HTMLSelectElement) {
+      const optionExists = [...control.options].some((option) => option.value === String(value));
+      control.value = optionExists ? String(value) : "";
+      if (!optionExists && value) {
+        missingSourceGroupControls.push(control);
+      }
+      return;
+    }
+    control.value = value ?? "";
+  });
+  form.querySelectorAll("select, textarea, input").forEach((control) => control.dispatchEvent(new Event("change", { bubbles: true })));
+  missingSourceGroupControls.forEach((control) => {
+    control.setCustomValidity("The previously selected Source Group is no longer available. Choose a current value.");
+    control.addEventListener("change", () => control.setCustomValidity(""), { once: true });
+  });
+  window.setTimeout(() => form.querySelector(focusSelector)?.focus(), 0);
+}
+
+async function initializeSourceGroupWizardReturnFlow() {
+  document.querySelectorAll("[data-source-group-manage]").forEach((link) => {
+    link.dataset.sourceGroupDraftReady = "true";
+    link.addEventListener("click", (event) => {
+      const token = link.dataset.sourceGroupManage || "";
+      const storageKey = SOURCE_GROUP_DRAFT_KEYS[token];
+      const form = link.closest("form");
+      if (!storageKey || !(form instanceof HTMLFormElement)) return;
+      let stored = false;
+      try {
+        stored = storeSourceGroupWizardDraft(storageKey, captureSourceGroupWizardDraft(form));
+      } catch (_error) {
+        stored = false;
+      }
+      if (!stored) {
+        event.preventDefault();
+        showTransientGridStatus("The rule draft could not be preserved in this browser tab. Network Objects was not opened.");
+      }
+    });
+  });
+
+  const token = new URL(window.location.href).searchParams.get("restore_source_group_draft") || "";
+  const storageKey = SOURCE_GROUP_DRAFT_KEYS[token];
+  if (!storageKey) return;
+  const draft = loadSourceGroupWizardDraft(storageKey);
+  if (!draft || typeof draft !== "object" || !draft.values) {
+    const cleanUrl = new URL(window.location.href);
+    cleanUrl.searchParams.delete("restore_source_group_draft");
+    window.history.replaceState({}, "", cleanUrl);
+    showTransientGridStatus("The saved rule draft is no longer available in this browser tab.");
+    return;
+  }
+  const data = { ...draft.values, id: draft.editId || undefined, is_new: !draft.editId };
+  if (token === "firewall-rule") {
+    const table = document.getElementById("firewall-rules-table");
+    const form = document.querySelector("[data-firewall-rule-form]");
+    const launcher = form?.querySelector('[data-source-group-manage="firewall-rule"]');
+    await table?.atlasoWizardOpen?.(data, launcher, { step: "match", highestStep: "match" });
+    if (form instanceof HTMLFormElement) applySourceGroupWizardDraft(form, draft, 'select[name="source"]');
+  } else if (token === "nat-rule") {
+    const form = document.querySelector('[data-routes-wan-wizard="nat"]');
+    const launcher = form?.querySelector('[data-source-group-manage="nat-rule"]');
+    await openRoutesWanWizard("nat", data, launcher, { step: "translation", highestStep: "translation" });
+    if (form instanceof HTMLFormElement) applySourceGroupWizardDraft(form, draft, "[data-routes-wan-nat-source-mode]");
+  }
+  clearSourceGroupWizardDraft(storageKey);
+  const cleanUrl = new URL(window.location.href);
+  cleanUrl.searchParams.delete("restore_source_group_draft");
+  window.history.replaceState(null, "", `${cleanUrl.pathname}${cleanUrl.search}${cleanUrl.hash}`);
 }
 
 function serviceRuntimeFormatter(cell) {
@@ -6626,8 +6995,8 @@ async function saveWanEnabledState(cell, csrf, path, errorId, fallbackMessage) {
 
 const routesWanWizardOpeners = new Map();
 
-function openRoutesWanWizard(kind, rowData = null, launcher = null) {
-  routesWanWizardOpeners.get(kind)?.(rowData, launcher);
+function openRoutesWanWizard(kind, rowData = null, launcher = null, options = {}) {
+  return routesWanWizardOpeners.get(kind)?.(rowData, launcher, options);
 }
 
 function routesWanAddButton(kind, label) {
@@ -7351,7 +7720,7 @@ function initializeRoutesWanWizards() {
       if (kind === "nat" && step.id === "translation") {
         syncNatSource();
         if (natSourceMode?.value === "group" && !routesWanField(form, "source")?.value) {
-          return { valid: false, message: "Choose an existing Firewall source group.", field: natGroup };
+          return { valid: false, message: "Choose an existing Source Group.", field: natGroup };
         }
         if (natSourceMode?.value === "cidrs" && !routesWanField(form, "source")?.value) {
           return { valid: false, message: "Enter at least one IPv4 source CIDR.", field: natCidrs };
@@ -7427,7 +7796,7 @@ function initializeRoutesWanWizards() {
       },
       closeOnSubmit: false,
     });
-    routesWanWizardOpeners.set(kind, (row = null, launcher = null) => wizard.open({ context: row, launcher }));
+    routesWanWizardOpeners.set(kind, (row = null, launcher = null, options = {}) => wizard.open({ context: row, launcher, ...options }));
   });
 
   document.addEventListener("click", (event) => {
@@ -11099,198 +11468,6 @@ function updateFirewallDesiredState(payload = {}) {
   validationPanel.classList.remove("validation-panel-refreshed");
   void validationPanel.offsetWidth;
   validationPanel.classList.add("validation-panel-refreshed");
-}
-
-const FIREWALL_SOURCE_GROUP_SELECTION_KEY = "atlaso:firewall:active-source-group";
-
-function rememberFirewallSourceGroup(groupId) {
-  try {
-    window.localStorage.setItem(FIREWALL_SOURCE_GROUP_SELECTION_KEY, groupId || "");
-  } catch {
-    // Remembering the selected editor is only a convenience.
-  }
-}
-
-function storedFirewallSourceGroup() {
-  try {
-    return window.localStorage.getItem(FIREWALL_SOURCE_GROUP_SELECTION_KEY) || "";
-  } catch {
-    return "";
-  }
-}
-
-function showFirewallSourceGroupEditor(manager, groupId) {
-  manager.querySelectorAll("[data-source-group-editor]").forEach((editor) => {
-    if (!(editor instanceof HTMLElement)) {
-      return;
-    }
-    const active = editor.dataset.sourceGroupId === groupId;
-    editor.classList.toggle("active", active);
-    if (active) {
-      editor.removeAttribute("hidden");
-    } else {
-      editor.setAttribute("hidden", "");
-    }
-  });
-}
-
-function triggerSourceGroupAutosave(form) {
-  if (form instanceof HTMLFormElement) {
-    form.dispatchEvent(new Event("change", { bubbles: true }));
-  }
-}
-
-function addSourceGroupEntry(form, value) {
-  const list = form.querySelector("[data-source-group-entry-list]");
-  const entry = String(value || "").trim();
-  if (!(list instanceof HTMLElement) || !entry) {
-    return;
-  }
-  const existingRows = Array.from(list.querySelectorAll(".source-group-entry-row"));
-  if (entry.toLowerCase() === "any") {
-    existingRows.forEach((row) => row.remove());
-  } else {
-    existingRows.forEach((row) => {
-      const input = row.querySelector('input[name="group_entries"]');
-      if (input instanceof HTMLInputElement && input.value.trim().toLowerCase() === "any") {
-        row.remove();
-      }
-    });
-  }
-  const duplicate = Array.from(list.querySelectorAll('input[name="group_entries"]')).some((input) => input instanceof HTMLInputElement && input.value.trim().toLowerCase() === entry.toLowerCase());
-  if (duplicate) {
-    triggerSourceGroupAutosave(form);
-    return;
-  }
-  const row = document.createElement("div");
-  row.className = "source-group-entry-row";
-  const input = document.createElement("input");
-  input.type = "hidden";
-  input.name = "group_entries";
-  input.value = entry;
-  const label = document.createElement("span");
-  label.className = "source-group-entry-label";
-  label.textContent = entry;
-  const remove = document.createElement("button");
-  remove.className = "icon-button source-group-entry-remove";
-  remove.type = "button";
-  remove.dataset.sourceGroupRemoveEntry = "";
-  remove.setAttribute("aria-label", "Remove entry");
-  remove.textContent = "x";
-  row.append(input, label, remove);
-  list.append(row);
-  triggerSourceGroupAutosave(form);
-}
-
-function ensureSourceGroupHasEntry(form) {
-  const list = form.querySelector("[data-source-group-entry-list]");
-  if (!(list instanceof HTMLElement) || list.querySelector("[name='group_entries']")) {
-    return;
-  }
-  addSourceGroupEntry(form, "any");
-}
-
-function initializeFirewallSourceGroupManager() {
-  const renameModal = document.getElementById("firewall-rename-group-modal");
-  const renameForm = renameModal instanceof HTMLDialogElement ? renameModal.querySelector("form") : null;
-  const renameGroupId = renameForm instanceof HTMLFormElement ? renameForm.querySelector('input[name="group_id"]') : null;
-  const renameGroupName = renameForm instanceof HTMLFormElement ? renameForm.querySelector('input[name="group_name"]') : null;
-  if (renameModal instanceof HTMLDialogElement) {
-    renameModal.querySelectorAll("[data-firewall-rename-group-cancel]").forEach((button) => {
-      button.addEventListener("click", () => renameModal.close());
-    });
-  }
-
-  document.querySelectorAll("[data-source-group-manager]").forEach((manager) => {
-    if (!(manager instanceof HTMLElement)) {
-      return;
-    }
-    const select = manager.querySelector("[data-source-group-select]");
-    if (!(select instanceof HTMLSelectElement)) {
-      return;
-    }
-    const storedGroup = storedFirewallSourceGroup();
-    if (storedGroup && Array.from(select.options).some((option) => option.value === storedGroup)) {
-      select.value = storedGroup;
-    }
-    showFirewallSourceGroupEditor(manager, select.value);
-    select.addEventListener("change", () => {
-      rememberFirewallSourceGroup(select.value);
-      showFirewallSourceGroupEditor(manager, select.value);
-    });
-  });
-
-  document.querySelectorAll("[data-source-group-editor]").forEach((editor) => {
-    if (!(editor instanceof HTMLElement)) {
-      return;
-    }
-    const form = editor.querySelector('form[data-firewall-source-groups]');
-    if (!(form instanceof HTMLFormElement)) {
-      return;
-    }
-    form.addEventListener("input", (event) => {
-      const target = event.target;
-      if (!(target instanceof HTMLInputElement) || target.name !== "group_name") {
-        return;
-      }
-      const manager = editor.closest("[data-source-group-manager]");
-      const select = manager?.querySelector("[data-source-group-select]");
-      const groupId = editor.dataset.sourceGroupId || "";
-      const option = select instanceof HTMLSelectElement ? Array.from(select.options).find((item) => item.value === groupId) : null;
-      if (option) {
-        option.textContent = target.value.trim() || groupId;
-      }
-    });
-    form.addEventListener("click", (event) => {
-      const target = event.target;
-      if (!(target instanceof HTMLElement)) {
-        return;
-      }
-      if (target.matches("[data-source-group-remove-entry]")) {
-        event.preventDefault();
-        target.closest(".source-group-entry-row")?.remove();
-        ensureSourceGroupHasEntry(form);
-        triggerSourceGroupAutosave(form);
-        return;
-      }
-      if (target.matches("[data-source-group-add-any]")) {
-        event.preventDefault();
-        addSourceGroupEntry(form, "any");
-        return;
-      }
-      if (target.matches("[data-source-group-add-cidr]")) {
-        event.preventDefault();
-        const input = form.querySelector("[data-source-group-cidr-input]");
-        if (input instanceof HTMLInputElement) {
-          addSourceGroupEntry(form, input.value);
-          input.value = "";
-          input.focus();
-        }
-        return;
-      }
-      if (target.matches("[data-source-group-add-ref]")) {
-        event.preventDefault();
-        const select = form.querySelector("[data-source-group-ref-select]");
-        if (select instanceof HTMLSelectElement && select.value) {
-          addSourceGroupEntry(form, select.value);
-          select.value = "";
-        }
-      }
-    });
-  });
-
-  document.querySelectorAll("[data-source-group-rename]").forEach((button) => {
-    button.addEventListener("click", () => {
-      if (!(renameModal instanceof HTMLDialogElement) || !(renameGroupId instanceof HTMLInputElement) || !(renameGroupName instanceof HTMLInputElement)) {
-        return;
-      }
-      renameGroupId.value = button instanceof HTMLElement ? button.dataset.groupId || "" : "";
-      renameGroupName.value = button instanceof HTMLElement ? button.dataset.groupName || "" : "";
-      renameModal.showModal();
-      renameGroupName.focus();
-      renameGroupName.select();
-    });
-  });
 }
 
 function initializeFirewallSettings(root = document) {
@@ -22086,7 +22263,7 @@ document.addEventListener("DOMContentLoaded", initializeApplianceUpdateAvailabil
 document.addEventListener("DOMContentLoaded", initializeServerTime);
 document.addEventListener("DOMContentLoaded", initializeFirewallRulesTable);
 document.addEventListener("DOMContentLoaded", initializeManagedFirewallRulesTable);
-document.addEventListener("DOMContentLoaded", initializeFirewallSourceGroupManager);
+document.addEventListener("DOMContentLoaded", initializeNetworkObjectSourceGroups);
 document.addEventListener("DOMContentLoaded", initializeServicesTable);
 document.addEventListener("DOMContentLoaded", initializeDepotBrowserTable);
 document.addEventListener("DOMContentLoaded", initializeUsersTable);
@@ -22096,6 +22273,7 @@ document.addEventListener("DOMContentLoaded", initializeRoutesWanRoutingTable);
 document.addEventListener("DOMContentLoaded", initializeRoutesWanNatTable);
 document.addEventListener("DOMContentLoaded", initializeRoutesWanPoliciesTable);
 document.addEventListener("DOMContentLoaded", initializeRoutesWanWizards);
+document.addEventListener("DOMContentLoaded", initializeSourceGroupWizardReturnFlow);
 document.addEventListener("DOMContentLoaded", initializePhysicalInterfacesTable);
 document.addEventListener("DOMContentLoaded", initializeApiTokensTable);
 document.addEventListener("DOMContentLoaded", () => initializeOidcProviderSettings());

@@ -32,6 +32,7 @@
               ("Settings", management_ui_path("/settings"), "admin:all"),
               ("Physical Interfaces", management_ui_path("/physical-interfaces"), "read:interfaces"),
               ("VLAN Interfaces", management_ui_path("/vlan-interfaces"), "read:vlans"),
+              ("Network Objects", management_ui_path("/network-objects"), "read:firewall"),
               ("Routes & WAN Simulation", management_ui_path("/routes-wan"), "read:routes"),
               ("Firewall", management_ui_path("/firewall"), "read:firewall")
             ]),
@@ -399,7 +400,7 @@
     <link rel="stylesheet" href="/static/vendor/monaco/atlaso-monaco.min.css?v=atlaso-monaco-20260806-7">
     <script src="/static/vendor/monaco/atlaso-monaco.min.js?v=atlaso-monaco-20260806-7"></script>
     <script src="/static/ui-routes.js?v=issue-287-1"></script>
-    <script src="/static/app.js?v=issues-499-500-2"></script>
+    <script src="/static/app.js?v=issue-337-11"></script>
     <script src="/static/pwa.js?v=issue-287-2"></script>
     {% block extra_scripts %}{% endblock %}
   </body>

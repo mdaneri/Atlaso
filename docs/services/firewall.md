@@ -1,6 +1,6 @@
 ---
 title: Firewall
-description: Review and configure Atlaso nftables desired state and access groups.
+description: Review and configure Atlaso nftables desired state with reusable Source Groups.
 audience:
   - operator
   - maintainer
@@ -10,7 +10,8 @@ status: current
 # Firewall
 
 Open **Firewall** to manage Atlaso-owned nftables desired state. The page combines generated service-listener rules,
-routing permissions, and operator-defined access groups.
+routing permissions, and operator-defined rules. Reusable Source Groups are owned by the separate
+[Network Objects](../operate/network-objects.md) page.
 
 <!-- BEGIN GENERATED INTERFACE OVERVIEW -->
 ## Interface overview
@@ -32,7 +33,7 @@ appliance-apply unit.
 
 1. Confirm management access remains allowed from the intended source.
 2. Review enabled service listeners and their bound interfaces.
-3. Use access groups to narrow sources or destinations when `Any` is too broad.
+3. Use **Manage source groups** in the rule wizard when a reusable Source Group should narrow a source or destination.
 4. Inspect the rendered ruleset and resolve validation errors.
 5. Submit the Firewall unit through [Appliance Apply](../operate/appliance-apply.md).
 
@@ -48,8 +49,9 @@ can verify the effective state with `nft list ruleset`. If a rule removes manage
 ## Transport ownership
 
 Firewall management and API v1 transports are owned by dedicated `firewall` domain routers and aggregated through the
-stable UI and API facades. This internal extraction does not change paths, methods, permissions, responses, nftables
-desired state, audit actions, or the global Appliance Apply boundary.
+stable UI and API facades. Network Objects owns Source Group projection and mutation while retaining the established
+`firewall.managed_source_groups` state and Firewall apply semantics. Both surfaces continue to use
+`read:firewall` and `write:firewall`, so moving the editor does not broaden access.
 
 <!-- BEGIN GENERATED ADDITIONAL SCREENSHOTS -->
 ## Additional verified states

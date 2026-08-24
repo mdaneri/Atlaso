@@ -153,7 +153,7 @@
         <input type="hidden" name="upstream_servers" value="{{ ntp_settings.upstream_servers }}">
         <input type="hidden" name="upstream_sources_json" value='{{ ntp_settings_json.upstream_sources | tojson }}' data-ntp-upstreams-json>
         <label>
-          <span class="field-label"><span>Allowed clients</span><button class="help-icon" type="button" data-help="Use any or one IPv4/IPv6 CIDR per line for NTPsec allow rules. Firewall source groups can still narrow UDP 123 exposure during Firewall apply.">i</button></span>
+          <span class="field-label"><span>Allowed clients</span><button class="help-icon" type="button" data-help="Use any or one IPv4/IPv6 CIDR per line for NTPsec allow rules. Source Groups can still narrow UDP 123 exposure during Firewall apply.">i</button></span>
           <textarea name="allow_clients" rows="4">{{ ntp_settings.allow_clients }}</textarea>
         </label>
         <label>

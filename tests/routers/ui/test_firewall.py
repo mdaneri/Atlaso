@@ -46,12 +46,11 @@ def test_firewall_preview_derives_dns_dhcp_rule_from_dhcp_scope_vlan(client):
 
     assert firewall.status_code == 200
     assert "Managed Service Rules" in firewall.text
-    assert "Groups" in firewall.text
+    assert "Network Objects" in firewall.text
+    assert "Manage source groups" in firewall.text
     assert "data-firewall-validation-refresh" in firewall.text
-    assert "Add group" in firewall.text
-    assert "No custom groups yet." in firewall.text
+    assert "source-group-create-form" not in firewall.text
     assert 'data-source-group-select' not in firewall.text
-    assert firewall.text.index('class="form-stack source-group-create-form"') < firewall.text.index('class="source-group-manager"')
     assert "eth2.50" in firewall.text
     assert "data-interfaces=" in firewall.text
     assert "&#34;eth2.50&#34;" in firewall.text
@@ -73,20 +72,26 @@ def test_firewall_preview_derives_dns_dhcp_rule_from_dhcp_scope_vlan(client):
     assert 'iifname &#34;eth2.50&#34; udp dport 67 accept comment &#34;sitea-dns-dhcp&#34;' in firewall.text
     assert 'iifname &#34;eth1&#34; ip saddr 192.168.50.0/24 udp dport { 53, 67 } accept comment &#34;sitea-dns-dhcp&#34;' not in firewall.text
 
-    csrf = firewall.text.split('name="csrf" value="', 1)[1].split('"', 1)[0]
+    network_objects = client.get("/network-objects")
+    assert network_objects.status_code == 200
+    assert "Source Groups" in network_objects.text
+    assert "network-object-source-groups-table" in network_objects.text
+    assert "Any" in network_objects.text
+    csrf = network_objects.text.split('name="csrf" value="', 1)[1].split('"', 1)[0]
     group_response = client.post(
-        "/firewall/source-groups",
+        "/network-objects/source-groups",
         data={
             "csrf": csrf,
             "action": "create",
             "group_name": "Managed clients",
             "group_entries": "any",
         },
+        headers={"X-Atlaso-Grid": "1"},
     )
-    assert group_response.status_code == 200
+    assert group_response.status_code == 201
 
     group_response = client.post(
-        "/firewall/source-groups",
+        "/network-objects/source-groups",
         data={
             "csrf": csrf,
             "action": "update",
@@ -94,21 +99,23 @@ def test_firewall_preview_derives_dns_dhcp_rule_from_dhcp_scope_vlan(client):
             "group_name": "Managed clients",
             "group_entries": "10.77.0.0/16",
         },
-        headers={"X-Atlaso-Autosave": "1"},
+        headers={"X-Atlaso-Grid": "1"},
     )
     assert group_response.status_code == 200
     assert group_response.json()["status"] == "saved"
     assert group_response.json()["updated_at"]
-    assert "config_preview" in group_response.json()
+    assert group_response.json()["source_group"]["entries"] == ["10.77.0.0/16"]
 
     rename_response = client.post(
-        "/firewall/source-groups",
+        "/network-objects/source-groups",
         data={
             "csrf": csrf,
-            "action": "rename",
+            "action": "update",
             "group_id": "custom:managed-clients",
             "group_name": "Managed client sources",
+            "group_entries": "10.77.0.0/16",
         },
+        headers={"X-Atlaso-Grid": "1"},
     )
     assert rename_response.status_code == 200
 
@@ -137,13 +144,10 @@ def test_firewall_preview_derives_dns_dhcp_rule_from_dhcp_scope_vlan(client):
     assert rule_response.status_code == 200
 
     updated_firewall = client.get("/firewall")
-    assert "10.77.0.0/16" in updated_firewall.text
     assert "Managed client sources" in updated_firewall.text
-    assert "data-source-group-rename" in updated_firewall.text
-    source_group_manager = re.search(r'<div class="source-group-manager" data-source-group-manager>(.*?)</div>\s*<dialog id="firewall-rename-group-modal"', updated_firewall.text, re.S)
-    assert source_group_manager is not None
-    assert 'data-source-group-select' in source_group_manager.group(1)
-    assert '<option value="any">' not in source_group_manager.group(1)
+    updated_network_objects = client.get("/network-objects")
+    assert "10.77.0.0/16" in updated_network_objects.text
+    assert "Managed client sources" in updated_network_objects.text
     assert 'iifname &#34;eth0&#34; ip saddr 10.77.0.0/16 tcp dport { 22, 80, 443 } accept comment &#34;mgmt-console&#34;' in updated_firewall.text
     assert 'iifname &#34;eth2.50&#34; ip saddr 10.77.0.0/16 ip daddr 10.77.0.0/16 tcp dport 443 accept comment &#34;grouped-custom&#34;' in updated_firewall.text
     assert 'iifname &#34;eth2.50&#34; udp dport 67 accept comment &#34;sitea-dns-dhcp&#34;' in updated_firewall.text
@@ -202,10 +206,10 @@ def test_firewall_page_create_rule_and_apply_task(client):
         follow_redirects=False,
     )
     assert rejected.status_code == 422
-    assert "Source must use Any or a firewall group." in rejected.text
+    assert "Source must use Any or a Source Group." in rejected.text
 
     group_response = client.post(
-        "/firewall/source-groups",
+        "/network-objects/source-groups",
         data={
             "csrf": csrf,
             "action": "create",

@@ -40,6 +40,7 @@ from atlaso.app.services.firewall import (
     firewall_source_group_state,
     validate_firewall_rule,
 )
+from atlaso.app.services.network_objects import acquire_network_objects_write_lock
 
 Endpoint = Callable[..., Any]
 
@@ -157,7 +158,7 @@ def build_router(dependencies: FirewallApiDependencies) -> FirewallApiRouter:
 
 
     def firewall_groups_for_api_validation(db: Session) -> list[dict[str, Any]]:
-        """Return firewall groups for api validation.
+        """Return Source Groups for API validation.
 
         Args:
             db: Active database session.
@@ -192,6 +193,7 @@ def build_router(dependencies: FirewallApiDependencies) -> FirewallApiRouter:
             identity: Authenticated identity authorizing the operation.
             db: Active database session used by the operation.
         """
+        acquire_network_objects_write_lock(db)
         rule = assign_firewall_rule_values(FirewallRule(), payload.model_dump())
         errors = validate_firewall_rule(rule, firewall_groups_for_api_validation(db), require_group_addresses=True)
         if errors:
@@ -225,6 +227,7 @@ def build_router(dependencies: FirewallApiDependencies) -> FirewallApiRouter:
             identity: Authenticated identity authorizing the operation.
             db: Active database session used by the operation.
         """
+        acquire_network_objects_write_lock(db)
         rule = db.get(FirewallRule, rule_id)
         if not rule:
             raise HTTPException(status_code=404, detail="Firewall rule not found")
@@ -260,6 +263,7 @@ def build_router(dependencies: FirewallApiDependencies) -> FirewallApiRouter:
             identity: Authenticated identity authorizing the operation.
             db: Active database session used by the operation.
         """
+        acquire_network_objects_write_lock(db)
         rule = db.get(FirewallRule, rule_id)
         if not rule:
             raise HTTPException(status_code=404, detail="Firewall rule not found")

@@ -15,6 +15,7 @@ from atlaso.app.audit import record_audit
 from atlaso.app.database import get_db
 from atlaso.app.models import NatRule, Route, RoutingRule, WanPolicy
 from atlaso.app.security import Identity, require_session_identity
+from atlaso.app.services.network_objects import acquire_network_objects_write_lock
 from atlaso.app.services.routes_wan import WAN_MODES, validate_nat_source
 from atlaso.app.ui_routes import MANAGEMENT_UI_ROOT
 
@@ -673,6 +674,7 @@ def build_router(dependencies: RoutesWanUiDependencies) -> RoutesWanUiRouter:
             The endpoint response.
         """
         verify_csrf(request, csrf)
+        acquire_network_objects_write_lock(db)
         parsed = validate_nat_rule_form_values(name, source, outbound_interface, priority, masquerade, db)
         if isinstance(parsed, Response):
             return parsed
@@ -734,6 +736,7 @@ def build_router(dependencies: RoutesWanUiDependencies) -> RoutesWanUiRouter:
             HTTPException: If the request cannot be fulfilled.
         """
         verify_csrf(request, csrf)
+        acquire_network_objects_write_lock(db)
         rule = db.get(NatRule, rule_id)
         if not rule:
             raise HTTPException(status_code=404, detail="NAT rule not found")
@@ -782,6 +785,7 @@ def build_router(dependencies: RoutesWanUiDependencies) -> RoutesWanUiRouter:
             HTTPException: If the request cannot be fulfilled.
         """
         verify_csrf(request, csrf)
+        acquire_network_objects_write_lock(db)
         rule = db.get(NatRule, rule_id)
         if not rule:
             raise HTTPException(status_code=404, detail="NAT rule not found")

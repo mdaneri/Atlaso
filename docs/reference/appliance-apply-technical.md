@@ -555,9 +555,12 @@ never generated.
 The Firewall apply unit derives Atlaso-managed service allow rules from enabled service listener desired state.
 Management, DNS, DHCP, KMS, NTPsec, VCF Backup, VCF Offline Depot, and VCF Private Registry listeners appear in the
 managed service rules grid on the Firewall page, while custom firewall rules remain editable in the main grid. Managed
-DNS and service listener rules default to the built-in `Any` group. Operators can create, rename, remove, and assign
-firewall groups containing `any`, CIDRs, addresses, or other groups when rule sources or destinations need narrower
-access than the default. DHCP bootstrap rules are the exception: they remain interface-bound input rules without group
+DNS and service listener rules default to the built-in `Any` Source Group. Network Objects owns Source Group creation,
+update, usage projection, and guarded removal while retaining `firewall.managed_source_groups`, stable IDs, nested
+references, and existing Firewall/WAN rendering semantics. Operators can assign Source Groups containing `any`, CIDRs,
+addresses, or other groups when rule sources or destinations need narrower access than the default. Deletion is blocked
+while a nested group, operator rule, managed assignment, or NAT rule remains a consumer. DHCP bootstrap rules are the
+exception: they remain interface-bound input rules without group
 filtering because clients and relay paths may arrive before a client address is assigned. IPv4 DHCP zones open UDP/67;
 IPv6 DHCP zones open UDP/547; NTPsec opens UDP/123 on selected bind targets and TCP/4460 when NTPsec NTS server mode is
 enabled. If a DHCP zone or service listener moves from a physical interface to a VLAN such as `eth2.50`, the firewall

@@ -23,6 +23,7 @@ EXTRACTED_DOMAIN_MODULES = {
         "atlaso.app.routers.ui.firewall",
         "atlaso.app.routers.ui.identity",
         "atlaso.app.routers.ui.network_boot",
+        "atlaso.app.routers.ui.network_objects",
         "atlaso.app.routers.ui.ntp",
         "atlaso.app.routers.ui.physical_vlans",
         "atlaso.app.routers.ui.routes_wan",

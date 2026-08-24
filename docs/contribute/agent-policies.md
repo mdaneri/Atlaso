@@ -780,9 +780,14 @@ Terminal order:
   service allow rules are generated from enabled service listener desired state, including management, DNS, DHCP, KMS,
   VCF Backup, VCF Offline Depot, and VCF Private Registry. Atlaso-managed routing rules allow route-role network pairs
   and explicit access routing permissions, while always dropping management-to-lab and lab-to-management forwarding.
-  Managed DNS/service listener rules default to the built-in `Any` group; operators can create, rename, remove, and
-  assign firewall groups containing `any`, CIDRs, addresses, or other groups when rule sources or destinations need
-  narrower access. DHCP bootstrap rules are interface-bound UDP/67 for IPv4 zones and UDP/547 for IPv6 zones and should
+  Managed DNS/service listener rules default to the built-in `Any` Source Group. Source Group writes belong to the
+  canonical Network Objects router/service while retaining `firewall.managed_source_groups`, stable IDs, nested
+  references, archive shape, and Firewall/WAN apply semantics. Keep **Any** visible and read-only; reject deletion while
+  a nested group, operator Firewall rule, managed assignment, or NAT rule still references the object. Firewall and NAT
+  wizard handoffs must use an allowlisted return token, tab-local draft storage, fresh server-rendered choices, and
+  focus restoration. Legacy safe reads redirect only after management authorization; legacy writes invoke the same
+  mutation handler and use a non-replaying `303`. DHCP bootstrap rules are interface-bound UDP/67 for IPv4 zones and
+  UDP/547 for IPv6 zones and should
   not be group-filtered. Changing a DHCP scope interface, service listener, or routing permission should make the
   Firewall apply unit move the generated rule to that same bind target.
 - Validate actual firewall state with `nft list ruleset`, not only the UI preview. The helper should run

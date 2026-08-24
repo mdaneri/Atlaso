@@ -75,6 +75,7 @@ def test_facades_register_extracted_domains_in_exact_order():
         "automation",
         "facade_between_automation_routes_wan",
         "appliance_apply",
+        "network_objects",
         "routes_wan",
         "firewall",
         "physical_vlans",
@@ -106,6 +107,7 @@ def test_facades_register_extracted_domains_in_exact_order():
         ui.automation_router,
         ui._management_before_routes_wan_router,
         ui.appliance_apply_router,
+        ui.network_objects_router,
         ui.routes_wan_router,
         ui.firewall_router,
         ui.physical_vlans_router,
@@ -200,6 +202,9 @@ def test_facades_register_extracted_domains_in_exact_order():
     assert {route.endpoint.__module__ for route in ui.routes_wan_router.routes} == {
         "atlaso.app.routers.ui.routes_wan"
     }
+    assert {
+        route.endpoint.__module__ for route in ui.network_objects_router.routes
+    } == {"atlaso.app.routers.ui.network_objects"}
     assert {route.endpoint.__module__ for route in ui.firewall_router.routes} == {
         "atlaso.app.routers.ui.firewall"
     }

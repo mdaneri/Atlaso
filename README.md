@@ -52,6 +52,8 @@ brings infrastructure, storage, identity, networking, and lifecycle workflows in
 - [Network configuration](docs/operate/networking.md) — inspect physical interfaces, preserve and explicitly review a
   DHCP-learned management gateway during DHCP-to-static conversion, and manage each tagged VLAN as one reviewed wizard
   record using the shared management, access, route, or unused role contract before global apply.
+- [Network Objects](docs/operate/network-objects.md) — create reusable Source Groups, review their nested, Firewall,
+  managed-rule, and NAT consumers, and return to an in-progress rule wizard without losing its tab-local draft.
 - [Use the Atlaso API](docs/operate/api.md) — create least-privilege tokens, call the versioned REST contract safely,
   and interpret responses, request IDs, locks, and apply boundaries. Typed physical-interface PATCH requests reconcile
   dependent service, ESX Storage, Web Terminal, DHCP, and Network Boot bindings in the same

@@ -355,6 +355,18 @@ Figure: ESXi custom variable wizard with Description on its own full-width row.
 
 Figure: ESXi custom variable wizard in the verified narrow viewport.
 
+## Network Objects
+
+Route: `/ui/management/network-objects`
+
+![Atlaso Network Objects page in the clean-appliance desktop viewport.](../assets/screenshots/network-objects-clean-desktop.webp)
+
+Figure: Network Objects in the verified clean-appliance desktop state.
+
+![Atlaso Network Objects page in the clean-appliance responsive viewport.](../assets/screenshots/network-objects-clean-responsive.webp)
+
+Figure: Network Objects in the verified clean-appliance responsive state.
+
 ## Ntp
 
 Route: `/ui/management/ntp`
