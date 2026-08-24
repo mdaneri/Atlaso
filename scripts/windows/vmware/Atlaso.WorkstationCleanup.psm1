@@ -1270,7 +1270,6 @@ function Remove-AtlasoWorkstationVmArtifacts {
         $providerRemovedRoot = -not (Test-Path -LiteralPath $resolvedRemovalRoot)
         if ($detachment.Detached -and (Test-Path -LiteralPath $detachment.BackupPath -PathType Leaf)) { Remove-Item -LiteralPath $detachment.BackupPath -Force -ErrorAction Stop }
     }
-    Remove-AtlasoWorkstationStaleRegistrations -InventoryPath $inventoryPath -ScopeRoot $staleScope
     if ($providerRemovedRoot -and (Test-Path -LiteralPath $resolvedRemovalRoot)) {
         throw "The VMware artifact root reappeared after provider deletion; artifacts were preserved: $resolvedRemovalRoot"
     }
@@ -1300,6 +1299,7 @@ function Remove-AtlasoWorkstationVmArtifacts {
     # Re-resolve the inventory because it may have appeared after the initial
     # snapshot; surviving VMX files are safe for direct removal only while unregistered.
     $finalInventoryPath = Resolve-AtlasoWorkstationInventoryPath
+    Remove-AtlasoWorkstationStaleRegistrations -InventoryPath $finalInventoryPath -ScopeRoot $staleScope
     foreach ($survivingVmxPath in @($resolvedVmxPaths | Where-Object { Test-Path -LiteralPath $_ -PathType Leaf })) {
         if (Test-AtlasoWorkstationVmxRegistered `
                 -InventoryPath $finalInventoryPath `

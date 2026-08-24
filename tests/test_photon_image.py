@@ -1933,9 +1933,11 @@ def test_vmware_lifecycle_cleanup_only_removes_existing_lifecycle_vms():
     snapshot = cleanup_module.rindex("$snapshot = Get-AtlasoRootSnapshot")
     inactive = cleanup_module.rindex("Confirm-AtlasoWorkstationVmInactive")
     provider_delete = cleanup_module.rindex("'-T', 'ws', 'deleteVM', $resolvedVmxPath")
-    stale_repair = cleanup_module.rindex("Remove-AtlasoWorkstationStaleRegistrations")
-    replacement_guard = cleanup_module.index("Assert-AtlasoRootSnapshotUnreplaced", stale_repair)
+    post_provider_guard = cleanup_module.index(
+        "Assert-AtlasoRootSnapshotUnreplaced", provider_delete
+    )
     final_running_state = cleanup_module.rindex("Get-AtlasoWorkstationVmPaths -VmrunPath $VmrunPath -State running")
+    stale_repair = cleanup_module.rindex("Remove-AtlasoWorkstationStaleRegistrations")
     final_replacement_guard = cleanup_module.index(
         "Assert-AtlasoRootSnapshotUnreplaced", final_running_state
     )
@@ -1946,9 +1948,9 @@ def test_vmware_lifecycle_cleanup_only_removes_existing_lifecycle_vms():
         snapshot
         < inactive
         < provider_delete
-        < stale_repair
-        < replacement_guard
+        < post_provider_guard
         < final_running_state
+        < stale_repair
         < final_replacement_guard
         < recursive_delete
     )

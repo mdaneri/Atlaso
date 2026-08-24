@@ -59,6 +59,8 @@ def _write_fake_vmrun(
     register_on_list: int = 0,
     run_on_list: int = 0,
     run_target: Path | None = None,
+    remove_on_list: int = 0,
+    remove_target: Path | None = None,
     inventory_suffix: str = "",
 ) -> tuple[Path, dict[str, str], Path, Path]:
     """Create a stateful fake vmrun command and Workstation inventory.
@@ -84,6 +86,8 @@ def _write_fake_vmrun(
         register_on_list: Provider call count that registers a VM.
         run_on_list: Provider list call count that starts a VM.
         run_target: VMX path marked running when run_on_list matches.
+        remove_on_list: Provider list call count that removes a VMX.
+        remove_target: VMX path removed when remove_on_list matches.
         inventory_suffix: Extra inventory file text appended to the fixture.
     """
     directory.mkdir(parents=True)
@@ -196,6 +200,8 @@ if command == "list":
         update_inventory([late_target])
     if list_count == int(os.environ["ATLASO_FAKE_VMRUN_RUN_ON_LIST"]):
         write_paths("running", [os.environ["ATLASO_FAKE_VMRUN_RUN_TARGET"]])
+    if list_count == int(os.environ["ATLASO_FAKE_VMRUN_REMOVE_ON_LIST"]):
+        Path(os.environ["ATLASO_FAKE_VMRUN_REMOVE_TARGET"]).unlink(missing_ok=True)
     paths = read_paths("running")
     print(f"Total running VMs: {len(paths)}")
     print("\n".join(paths))
@@ -283,6 +289,8 @@ raise SystemExit(64)
             "ATLASO_FAKE_VMRUN_REGISTER_ON_LIST": str(register_on_list),
             "ATLASO_FAKE_VMRUN_RUN_ON_LIST": str(run_on_list),
             "ATLASO_FAKE_VMRUN_RUN_TARGET": str(run_target or ""),
+            "ATLASO_FAKE_VMRUN_REMOVE_ON_LIST": str(remove_on_list),
+            "ATLASO_FAKE_VMRUN_REMOVE_TARGET": str(remove_target or ""),
         }
     )
     return command, environment, log, inventory
@@ -989,6 +997,38 @@ def test_registration_appearing_before_root_removal_fails_closed(tmp_path: Path)
     assert result.returncode != 0
     assert "became registered during cleanup" in result.stderr
     assert vmx.exists()
+    assert "deleteVM" not in [command[2] for command in _commands(log)]
+
+
+def test_missing_vmx_registered_before_root_removal_is_repaired(tmp_path: Path) -> None:
+    """Repair a late stale in-scope registration before removing the root.
+
+    Args:
+        tmp_path: Pytest temporary directory path.
+    """
+    root = tmp_path / "artifacts" / "vm"
+    vmx = root / "Atlaso.vmx"
+    _write_vmx(vmx)
+    vmrun, environment, log, inventory = _write_fake_vmrun(
+        tmp_path / "fake",
+        [vmx],
+        register_on_list=3,
+        remove_on_list=3,
+        remove_target=vmx,
+    )
+
+    result = _run_root_cleanup(
+        tmp_path,
+        removal_root=root,
+        expected_root=root,
+        vmrun_path=vmrun,
+        environment=environment,
+    )
+
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert not root.exists()
+    assert not vmx.exists()
+    assert str(vmx.resolve()) not in inventory.read_text(encoding="utf-8")
     assert "deleteVM" not in [command[2] for command in _commands(log)]
 
 
