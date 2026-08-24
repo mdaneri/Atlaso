@@ -145,6 +145,9 @@ write-excluding inventory handle through byte comparison and atomic replacement,
 provider inventory without requiring unrelated registrations to resolve. Atomic VMX replacement retains its displaced
 backup until identity and byte validation completes, restoring it on validation failure or preserving an actionable
 recovery copy if rollback cannot complete.
+If checked `deleteVM` removes the complete validated root, cleanup retains scoped registration and running-state
+verification, requires that exact root to stay absent, and lets the active redeploy continue without a second filesystem
+deletion.
 Hyper-V remains
 the authoritative lifecycle interoperability environment for exact access and trunk VLAN behavior.
 Image-build download caches verify pinned checksums before reuse or durable promotion; ordinary retries replace only

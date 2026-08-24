@@ -307,6 +307,10 @@ build {
     environment_vars = [
       "ATLASO_GUEST_PLATFORM=vmware",
       "ATLASO_SYSTEM_CONTENT_DISK=true",
+      "ATLASO_ROOT_SCSI_TUPLE=0:0:0",
+      "ATLASO_SYSTEM_SCSI_TUPLE=0:1:0",
+      "ATLASO_ROOT_DISK_SIZE_BYTES=42949672960",
+      "ATLASO_SYSTEM_DISK_SIZE_BYTES=21474836480",
       "ATLASO_IMAGE_ASSET_DIR=image/vmware-workstation",
       "ATLASO_BOOTSTRAP_ADMIN_PASSWORD=${local.bootstrap_admin_password}",
       "ATLASO_DRY_RUN_SYSTEM_ADAPTERS=${local.dry_run_system_adapters_text}",

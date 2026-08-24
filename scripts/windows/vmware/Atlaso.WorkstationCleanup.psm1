@@ -112,7 +112,6 @@ Path to normalize.
 #>
 function Get-AtlasoCanonicalPath {
     param([Parameter(Mandatory = $true)][string]$Path)
-
     $fullPath = [System.IO.Path]::GetFullPath($Path)
     $rootPath = [System.IO.Path]::GetPathRoot($fullPath)
     if ($rootPath -and $fullPath.Equals($rootPath, [System.StringComparison]::OrdinalIgnoreCase)) {
@@ -139,7 +138,6 @@ function Test-AtlasoSamePath {
         [Parameter(Mandatory = $true)][string]$Left,
         [Parameter(Mandatory = $true)][string]$Right
     )
-
     return (Get-AtlasoCanonicalPath -Path $Left).Equals(
         (Get-AtlasoCanonicalPath -Path $Right),
         [System.StringComparison]::OrdinalIgnoreCase
@@ -162,7 +160,6 @@ function Test-AtlasoStrictDescendantPath {
         [Parameter(Mandatory = $true)][string]$ParentPath,
         [Parameter(Mandatory = $true)][string]$ChildPath
     )
-
     $relativePath = [System.IO.Path]::GetRelativePath(
         (Get-AtlasoCanonicalPath -Path $ParentPath),
         (Get-AtlasoCanonicalPath -Path $ChildPath)
@@ -1163,7 +1160,6 @@ function Remove-AtlasoWorkstationVmArtifacts {
         [Parameter(Mandatory = $true)][string]$RemovalRoot,
         [Parameter(Mandatory = $false)][AllowEmptyString()][string]$AllowMissingRegistrationsUnderRoot = ''
     )
-
     $resolvedRemovalRoot = Get-AtlasoCanonicalPath -Path $RemovalRoot
     $filesystemRoot = [System.IO.Path]::GetPathRoot($resolvedRemovalRoot)
     if (-not $filesystemRoot -or (Test-AtlasoSamePath -Left $resolvedRemovalRoot -Right $filesystemRoot)) {
@@ -1182,7 +1178,6 @@ function Remove-AtlasoWorkstationVmArtifacts {
         throw 'The missing-registration scope must contain the exact VMware removal root.'
     }
     Assert-AtlasoPathHasNoReparsePoint -Path $staleScope
-
     $resolvedVmxPaths = @($VmxPaths | ForEach-Object {
             $resolvedVmxPath = (Resolve-Path -LiteralPath $_ -ErrorAction Stop).Path
             Assert-AtlasoStrictDescendantPath `
@@ -1210,9 +1205,10 @@ function Remove-AtlasoWorkstationVmArtifacts {
         return
     }
     Assert-AtlasoRootSnapshotUnreplaced -RemovalRoot $resolvedRemovalRoot -Snapshot $snapshot
-
     $inventoryPath = Resolve-AtlasoWorkstationInventoryPath
+    $providerRemovedRoot = $false
     foreach ($resolvedVmxPath in $resolvedVmxPaths) {
+        if ($providerRemovedRoot) { break }
         $targetIdentity = $validatedTargetIdentities[$resolvedVmxPath]
         if ((Get-AtlasoPathIdentity -Path $resolvedVmxPath -Description 'VMware cleanup target') -ne $targetIdentity) {
             throw "VMware Workstation VMX was replaced after root validation; artifacts were preserved: $resolvedVmxPath"
@@ -1273,13 +1269,16 @@ function Remove-AtlasoWorkstationVmArtifacts {
             Restore-AtlasoWorkstationExternalVmdks -VmxPath $resolvedVmxPath -Detachment $detachment
             throw "VMware Workstation VMX remains after deleteVM succeeded: $resolvedVmxPath"
         }
-        if ($detachment.Detached) {
-            Remove-Item -LiteralPath $detachment.BackupPath -Force -ErrorAction Stop
-        }
+        $providerRemovedRoot = -not (Test-Path -LiteralPath $resolvedRemovalRoot)
+        if ($detachment.Detached -and (Test-Path -LiteralPath $detachment.BackupPath -PathType Leaf)) { Remove-Item -LiteralPath $detachment.BackupPath -Force -ErrorAction Stop }
     }
-
     Remove-AtlasoWorkstationStaleRegistrations -InventoryPath $inventoryPath -ScopeRoot $staleScope
-    Assert-AtlasoRootSnapshotUnreplaced -RemovalRoot $resolvedRemovalRoot -Snapshot $snapshot
+    if ($providerRemovedRoot -and (Test-Path -LiteralPath $resolvedRemovalRoot)) {
+        throw "The VMware artifact root reappeared after provider deletion; artifacts were preserved: $resolvedRemovalRoot"
+    }
+    if (-not $providerRemovedRoot) {
+        Assert-AtlasoRootSnapshotUnreplaced -RemovalRoot $resolvedRemovalRoot -Snapshot $snapshot
+    }
     foreach ($runningPath in @(Get-AtlasoWorkstationVmPaths -VmrunPath $VmrunPath -State running)) {
         $matchesValidatedIdentity = $false
         if (
@@ -1299,6 +1298,7 @@ function Remove-AtlasoWorkstationVmArtifacts {
             throw "A VMware Workstation VM remains running inside the cleanup root; artifacts were preserved: $runningPath"
         }
     }
+    if ($providerRemovedRoot -and (Test-Path -LiteralPath $resolvedRemovalRoot)) { throw "The VMware artifact root reappeared after provider deletion; artifacts were preserved: $resolvedRemovalRoot" }
     # Re-resolve the inventory because it may have appeared after the initial
     # snapshot; surviving VMX files are safe for direct removal only while unregistered.
     $finalInventoryPath = Resolve-AtlasoWorkstationInventoryPath
@@ -1310,9 +1310,12 @@ function Remove-AtlasoWorkstationVmArtifacts {
             throw "A VMware Workstation VM became registered during cleanup; artifacts were preserved: $survivingVmxPath"
         }
     }
-    Assert-AtlasoRootSnapshotUnreplaced -RemovalRoot $resolvedRemovalRoot -Snapshot $snapshot
-    if (Test-Path -LiteralPath $resolvedRemovalRoot) {
-        Remove-Item -LiteralPath $resolvedRemovalRoot -Recurse -Force -ErrorAction Stop
+    if ($providerRemovedRoot -and (Test-Path -LiteralPath $resolvedRemovalRoot)) {
+        throw "The VMware artifact root reappeared after provider deletion; artifacts were preserved: $resolvedRemovalRoot"
+    }
+    if (-not $providerRemovedRoot) {
+        Assert-AtlasoRootSnapshotUnreplaced -RemovalRoot $resolvedRemovalRoot -Snapshot $snapshot
+        if (Test-Path -LiteralPath $resolvedRemovalRoot) { Remove-Item -LiteralPath $resolvedRemovalRoot -Recurse -Force -ErrorAction Stop }
     }
     if (Test-Path -LiteralPath $resolvedRemovalRoot) {
         throw "VMware artifact directory remains after recursive cleanup; refusing to report success: $resolvedRemovalRoot"

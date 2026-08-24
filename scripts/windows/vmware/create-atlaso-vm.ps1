@@ -1,3 +1,35 @@
+<#
+.SYNOPSIS
+Clone a verified Atlaso VMware appliance and attach its fixed data disks.
+.PARAMETER Name
+Target virtual-machine name.
+.PARAMETER ApplianceVmxPath
+Verified source appliance VMX.
+.PARAMETER OutputDirectory
+Target virtual-machine directory.
+.PARAMETER VmrunPath
+Optional vmrun executable path.
+.PARAMETER ManagementNetwork
+Management vmnet name.
+.PARAMETER SiteANetwork
+Site A vmnet name.
+.PARAMETER SiteBNetwork
+Site B vmnet name.
+.PARAMETER TrunkNetwork
+Trunk vmnet name.
+.PARAMETER VdiskManagerPath
+Optional virtual-disk manager path.
+.PARAMETER DepotVmdkPath
+Optional existing depot VMDK path.
+.PARAMETER BackupVmdkPath
+Optional existing backup VMDK path.
+.PARAMETER DepotDiskSize
+Required depot virtual capacity.
+.PARAMETER BackupDiskSize
+Required backup virtual capacity.
+.PARAMETER SkipLabNetworkAdapters
+Configure only the management adapter.
+#>
 [CmdletBinding(SupportsShouldProcess = $true)]
 param(
     [string]$Name = 'Atlaso-VMware',
@@ -21,6 +53,14 @@ param(
 
 $ErrorActionPreference = 'Stop'
 
+Import-Module (Join-Path $PSScriptRoot 'Atlaso.VmwarePayload.psm1') -Force
+
+<#
+.SYNOPSIS
+Resolve the VMware Workstation vmrun executable.
+.PARAMETER Path
+Optional explicit executable path.
+#>
 function Resolve-VmrunPath {
     param([string]$Path)
 
@@ -47,6 +87,12 @@ function Resolve-VmrunPath {
     throw 'vmrun.exe was not found. Install VMware Workstation Pro or pass -VmrunPath.'
 }
 
+<#
+.SYNOPSIS
+Invoke vmrun and fail on a nonzero result.
+.PARAMETER Arguments
+Arguments passed to vmrun.
+#>
 function Invoke-Vmrun {
     param([string[]]$Arguments)
     & $resolvedVmrun @Arguments
@@ -55,6 +101,12 @@ function Invoke-Vmrun {
     }
 }
 
+<#
+.SYNOPSIS
+Resolve the VMware virtual-disk manager executable.
+.PARAMETER Path
+Optional explicit executable path.
+#>
 function Resolve-VdiskManagerPath {
     param([string]$Path)
 
@@ -81,11 +133,27 @@ function Resolve-VdiskManagerPath {
     throw 'vmware-vdiskmanager.exe was not found. Install VMware Workstation Pro or pass -VdiskManagerPath.'
 }
 
+<#
+.SYNOPSIS
+Quote a string for a VMX assignment.
+.PARAMETER Value
+Value to quote.
+#>
 function ConvertTo-VmxString {
     param([string]$Value)
     return '"' + ($Value -replace '\\', '\\' -replace '"', '\"') + '"'
 }
 
+<#
+.SYNOPSIS
+Set one VMX assignment without retaining duplicates.
+.PARAMETER Path
+VMX file to update.
+.PARAMETER Key
+VMX assignment key.
+.PARAMETER Value
+VMX assignment value.
+#>
 function Set-VmxValue {
     param(
         [string]$Path,
@@ -111,6 +179,14 @@ function Set-VmxValue {
     [System.IO.File]::WriteAllLines($Path, [string[]]$content, [System.Text.UTF8Encoding]::new($false))
 }
 
+<#
+.SYNOPSIS
+Return a VMX assignment value when present.
+.PARAMETER Path
+VMX file to inspect.
+.PARAMETER Key
+VMX assignment key.
+#>
 function Get-VmxValue {
     param(
         [string]$Path,
@@ -126,33 +202,14 @@ function Get-VmxValue {
     return ''
 }
 
-function Assert-ClonedPayloadDisks {
-    param([string]$VmxPath)
-
-    $vmDirectory = Split-Path -Parent $VmxPath
-    foreach ($payloadDisk in @(
-            @{ Unit = 0; Name = 'Photon OS' },
-            @{ Unit = 1; Name = 'Atlaso system content' }
-        )) {
-        $prefix = "scsi0:$($payloadDisk.Unit)"
-        if ((Get-VmxValue -Path $VmxPath -Key "$prefix.present") -ne 'TRUE') {
-            throw "VMware clone did not retain the $($payloadDisk.Name) disk at SCSI unit $($payloadDisk.Unit)."
-        }
-        $fileName = Get-VmxValue -Path $VmxPath -Key "$prefix.fileName"
-        if ([string]::IsNullOrWhiteSpace($fileName)) {
-            throw "VMware clone did not identify the $($payloadDisk.Name) VMDK at SCSI unit $($payloadDisk.Unit)."
-        }
-        $diskPath = if ([System.IO.Path]::IsPathRooted($fileName)) {
-            $fileName
-        } else {
-            Join-Path $vmDirectory $fileName
-        }
-        if (-not (Test-Path -LiteralPath $diskPath -PathType Leaf)) {
-            throw "VMware clone $($payloadDisk.Name) VMDK is missing: $diskPath"
-        }
-    }
-}
-
+<#
+.SYNOPSIS
+Validate an explicitly reused 500 GiB data VMDK.
+.PARAMETER Path
+Existing VMDK path.
+.PARAMETER Label
+Operator-facing disk role.
+#>
 function Assert-ExistingDataVmdk {
     param(
         [string]$Path,
@@ -180,6 +237,16 @@ function Assert-ExistingDataVmdk {
     }
 }
 
+<#
+.SYNOPSIS
+Create a fixed-capacity VMware data VMDK when absent.
+.PARAMETER Path
+VMDK path.
+.PARAMETER Size
+Required virtual capacity.
+.PARAMETER Label
+Operator-facing disk role.
+#>
 function New-DataVmdk {
     param(
         [string]$Path,
@@ -203,6 +270,14 @@ function New-DataVmdk {
     }
 }
 
+<#
+.SYNOPSIS
+Return the safest VMX-relative VMDK reference.
+.PARAMETER VmxPath
+Target VMX path.
+.PARAMETER DiskPath
+Attached VMDK path.
+#>
 function Get-VmxDiskFileName {
     param(
         [string]$VmxPath,
@@ -217,6 +292,16 @@ function Get-VmxDiskFileName {
     return $resolvedDiskPath
 }
 
+<#
+.SYNOPSIS
+Attach a VMDK at one exact PVSCSI unit.
+.PARAMETER Path
+VMX file to update.
+.PARAMETER Unit
+PVSCSI unit number.
+.PARAMETER DiskPath
+VMDK path to attach.
+#>
 function Set-VmxScsiDisk {
     param(
         [string]$Path,
@@ -234,6 +319,7 @@ $repoRoot = (Resolve-Path -LiteralPath (Join-Path $PSScriptRoot '..\..\..')).Pat
 $resolvedVmrun = Resolve-VmrunPath -Path $VmrunPath
 $resolvedVdiskManager = Resolve-VdiskManagerPath -Path $VdiskManagerPath
 $resolvedSourceVmx = (Resolve-Path -LiteralPath $ApplianceVmxPath).Path
+$null = Assert-AtlasoVmwarePayloadProvenance -VmxPath $resolvedSourceVmx
 
 if (-not $OutputDirectory) {
     $OutputDirectory = Join-Path $repoRoot "image\vmware-workstation\test-vms\$Name"
@@ -273,7 +359,7 @@ if (-not (Test-Path -LiteralPath $targetVmx)) {
     throw "VMware clone completed but target VMX was not found: $targetVmx"
 }
 
-Assert-ClonedPayloadDisks -VmxPath $targetVmx
+$null = Get-AtlasoVmwarePayloadLayout -VmxPath $targetVmx -RequireExactlyTwoVmdks
 Set-VmxValue -Path $targetVmx -Key 'displayName' -Value $Name
 Set-VmxValue -Path $targetVmx -Key 'disk.EnableUUID' -Value 'TRUE'
 New-DataVmdk -Path $resolvedDepotVmdkPath -Size $DepotDiskSize -Label 'VCF Offline Depot'

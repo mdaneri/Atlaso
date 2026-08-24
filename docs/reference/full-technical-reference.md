@@ -1356,6 +1356,9 @@ assignments preserve the artifacts. Data-disk reset accepts only strict non-repa
 output. Cleanup stops exact in-root running targets, detaches external VMDKs, and uses checked `vmrun deleteVM` for exact
 registered targets. It does not make unrelated provider registrations part of the safety decision. A provider failure,
 a surviving target, or a new or identity-replaced artifact entry preserves the remaining root and returns failure.
+When checked provider deletion removes the complete validated root, cleanup keeps its scoped registration and running
+postconditions, requires that exact root to remain absent, and lets the active redeploy continue without enumerating the
+missing directory.
 
 The standalone VMware and Hyper-V `clean-artifacts.ps1` helpers apply the same fail-closed rule to their canonical
 `output`, `test-vms`, and provider-specific export roots. VMware cleanup reconciles `vmrun` and Workstation registration

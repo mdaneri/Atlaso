@@ -423,6 +423,9 @@ Terminal order:
   repair failure, provider deletion failure, failed postcondition, or recursive-removal failure must propagate as a
   cleanup failure and preserve the remaining artifacts; lifecycle cleanup must retain the original
   scenario failure alongside that cleanup evidence.
+  If checked `deleteVM` removes the complete validated artifact root, retain the scoped running and registration gates,
+  require the exact root to remain absent throughout them, and allow the initiating redeploy to continue only after
+  those checks succeed.
 - Keep VMware release images on two compacted payload VMDKs: the Photon OS disk and a required UUID-mounted
   `ATLASO_SYSTEM` disk containing `/opt/atlaso` and appliance-wide PowerShell modules. OVF export must preserve both
   payload files, add only the empty depot and backup definitions, preflight every GitHub asset below 2 GiB, and omit an

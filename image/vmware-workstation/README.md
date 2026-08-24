@@ -116,13 +116,20 @@ The built VMX keeps the first adapter on `-VmnetName` as management-only and add
 `-ServiceVmnetName` for service traffic. The service network defaults to Workstation's built-in host-only `VMnet1`. The
 Packer creates a 40 GiB Photon OS disk and a sparse 20 GiB Atlaso system-content disk. Provisioning formats the second
 disk as `ATLASO_SYSTEM`, mounts it by UUID, and places `/opt/atlaso` plus the appliance-wide PowerShell modules there.
+The remastered Photon kickstart discovers the install target by its exact VMware SCSI `0:0:0` topology instead of an
+enumeration-dependent `/dev/sdX` name. Before formatting the system-content disk, provisioning resolves the complete
+root block-device dependency chain, requires the Photon root disk at `0:0:0`, requires the blank 20 GiB system disk at
+`0:1:0`, and requires exactly those two payload disks. A missing, ambiguous, reversed, mislabeled, or capacity-mismatched
+layout fails the image build before it can become a reusable artifact.
 The two 500 GiB application data disks remain empty OVF declarations, so the reusable builder contains no large blank
 data-disk payloads. The build removes `python3-devel` after compatibility validation, clears build caches and staged
 sources, zero-fills free blocks on both payload filesystems while retaining a 512 MiB safety reserve, deletes the fill
 files, requests TRIM, and lets Packer compact both payload VMDKs. Zero-filling makes compaction deterministic even when
-the VMware virtual disks do not advertise discard. After a successful build, the wrapper writes
-a provenance JSON file beside the VMX containing the exact source commit, tracked-source state, and SHA-256 hashes and
-sizes for the VMX and both VMDKs.
+the VMware virtual disks do not advertise discard. After a successful build, the wrapper writes a schema-v2 provenance
+JSON file beside the VMX containing the exact source commit, tracked-source state, and the verified role, SCSI unit,
+virtual capacity, SHA-256 hash, and byte size for the VMX and both VMDKs. Test-VM cloning and OVF export require that
+exact role-bound provenance, so an older unproven image or a later reversed/tampered payload is rejected before cloning
+or export output replacement.
 
 ## Networking
 
@@ -390,6 +397,10 @@ Depot and Backups data VMDKs at units 2 and 3 when needed. `-ResetDataDisks` rem
 them only when their canonical paths are strict, non-reparse-point descendants of the selected VM output directory.
 Both creation-size arguments accept only `500GB`; an explicitly reused data VMDK must also expose an exact 500 GiB
 virtual capacity in its descriptor or deployment stops before cloning the target VM.
+Before cloning, the wrapper verifies the source VMX and both payload bytes against schema-v2 build provenance. After
+the full clone, it revalidates the PVSCSI unit assignments and exact 40 GiB/20 GiB payload capacities before it creates
+or attaches either data disk. Do not repair an ambiguous or reversed source by swapping filenames or formatting a disk;
+rebuild it through the supported wrapper.
 `-Redeploy` requires the exact named VMX and exactly one well-formed, matching `displayName`; a missing, malformed,
 duplicate, or mismatched target preserves the
 directory and returns an actionable failure. Cleanup checks the running and registered Workstation inventories by

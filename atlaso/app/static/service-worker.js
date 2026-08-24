@@ -1,4 +1,4 @@
-const ATLASO_CACHE = "atlaso-management-pwa-v268";
+const ATLASO_CACHE = "atlaso-management-pwa-v269";
 const ATLASO_ASSETS = [
   "/manifest.webmanifest",
   "/favicon.ico",

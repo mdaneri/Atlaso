@@ -98,6 +98,13 @@ source ISO is not duplicated under each target. The Workstation image installs `
 the `hyper-v` package and Hyper-V guest daemons. The Workstation build wrapper opens a visible VMware console by
 default. Use `-Headless` only when an unattended build is preferred.
 
+For Workstation, Photon installation is bound to VMware SCSI identity `0:0:0` through kickstart preinstall discovery,
+not `/dev/sda` enumeration. Provisioning then proves the complete root dependency chain reaches that disk and proves
+the blank `ATLASO_SYSTEM` target is the exact 20 GiB disk at `0:1:0` before formatting it. The completed VMX receives
+schema-v2 role-bound provenance; normal test-VM cloning and OVF export both verify it before accepting the source. A
+reversed, ambiguous, capacity-mismatched, legacy-unproven, or byte-modified payload must be rebuilt and is never repaired
+by formatting or silently swapping unrelated VMDKs.
+
 ## Single-Command Run
 
 ```powershell
@@ -182,6 +189,12 @@ inventory.
 When lifecycle
 execution and cleanup both fail, the final error reports the original scenario failure together with the cleanup failure
 and preserved path.
+
+Checked `deleteVM` may remove the complete validated artifact root itself. Cleanup records that transition immediately,
+continues the same registration and identity-aware running-inventory postconditions, and requires the exact root to stay
+absent through the final gate. It does not enumerate or recursively remove the missing directory, so the same
+`create-atlaso-test-vm.ps1 -Redeploy` invocation can proceed to a fresh clone. A recreated root or changed target
+inventory remains an ambiguous state that fails closed and preserves the new path.
 
 The read-only Workstation registration inventory may reside beneath a redirected `%APPDATA%` junction or symbolic link.
 The non-reparse-point requirement remains enforced on the Atlaso artifact root that cleanup recursively deletes, not on

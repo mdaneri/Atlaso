@@ -48,6 +48,7 @@ def _write_fake_vmrun(
     stop_sticky: bool = False,
     delete_sticky: bool = False,
     replace_after_delete: bool = False,
+    remove_root_after_delete: bool = False,
     rewrite_on_list: int = 0,
     rewrite_disk: Path | None = None,
     create_on_list: int = 0,
@@ -67,6 +68,7 @@ def _write_fake_vmrun(
         stop_sticky: If true, keep a stopped VM running in fake state.
         delete_sticky: If true, keep deleteVM from removing files.
         replace_after_delete: If true, rewrite the VMX after deleteVM.
+        remove_root_after_delete: If true, remove the VMX parent after deleteVM.
         rewrite_on_list: Provider call count at which to inject a VMDK path.
         rewrite_disk: Path written during list-based rewrite.
         create_on_list: Provider call count that creates extra artifact.
@@ -111,6 +113,7 @@ def _write_fake_vmrun(
 import json
 import os
 from pathlib import Path
+import shutil
 import sys
 
 state = Path(os.environ["ATLASO_FAKE_VMRUN_STATE"])
@@ -163,7 +166,9 @@ if command == "list":
         with rewrite_target.open("a", encoding="utf-8") as stream:
             stream.write(f'scsi0:2.fileName = "{rewrite_disk}"\n')
     if list_count == int(os.environ["ATLASO_FAKE_VMRUN_CREATE_ON_LIST"]):
-        Path(os.environ["ATLASO_FAKE_VMRUN_CREATE_PATH"]).write_text(
+        create_path = Path(os.environ["ATLASO_FAKE_VMRUN_CREATE_PATH"])
+        create_path.parent.mkdir(parents=True, exist_ok=True)
+        create_path.write_text(
             "late artifact", encoding="utf-8"
         )
     if list_count == int(os.environ["ATLASO_FAKE_VMRUN_REGISTER_ON_LIST"]):
@@ -211,6 +216,8 @@ if command == "deleteVM":
         ]
         write_paths("registered", registered_paths)
         update_inventory(registered_paths)
+    if os.environ["ATLASO_FAKE_VMRUN_REMOVE_ROOT_AFTER_DELETE"] == "1":
+        shutil.rmtree(Path(target).parent)
     if os.environ["ATLASO_FAKE_VMRUN_REPLACE_AFTER_DELETE"] == "1":
         Path(target).write_text('displayName = "Concurrent replacement"\n', encoding="utf-8")
     raise SystemExit(0)
@@ -243,6 +250,7 @@ raise SystemExit(64)
             "ATLASO_FAKE_VMRUN_STOP_STICKY": "1" if stop_sticky else "0",
             "ATLASO_FAKE_VMRUN_DELETE_STICKY": "1" if delete_sticky else "0",
             "ATLASO_FAKE_VMRUN_REPLACE_AFTER_DELETE": "1" if replace_after_delete else "0",
+            "ATLASO_FAKE_VMRUN_REMOVE_ROOT_AFTER_DELETE": "1" if remove_root_after_delete else "0",
             "ATLASO_FAKE_VMRUN_REWRITE_ON_LIST": str(rewrite_on_list),
             "ATLASO_FAKE_VMRUN_REWRITE_TARGET": canonical_paths[0] if canonical_paths else "",
             "ATLASO_FAKE_VMRUN_REWRITE_DISK": str(rewrite_disk or ""),
@@ -626,6 +634,68 @@ def test_already_unregistered_vm_uses_filesystem_cleanup_only(tmp_path: Path) ->
     assert result.returncode == 0, result.stdout + result.stderr
     assert not root.exists()
     assert "deleteVM" not in [command[2] for command in _commands(log)]
+
+
+def test_provider_delete_may_remove_the_complete_validated_root(tmp_path: Path) -> None:
+    """A checked provider deletion may satisfy cleanup by removing the exact root.
+
+    Args:
+        tmp_path: Pytest temporary directory path.
+    """
+    root = tmp_path / "artifacts" / "vm"
+    vmx = root / "Atlaso.vmx"
+    _write_vmx(vmx)
+    (root / "provider-owned.log").write_text("provider", encoding="utf-8")
+    vmrun, environment, log, _ = _write_fake_vmrun(
+        tmp_path / "fake",
+        [vmx],
+        registered=True,
+        remove_root_after_delete=True,
+    )
+
+    result = _run_root_cleanup(
+        tmp_path,
+        removal_root=root,
+        expected_root=root,
+        vmrun_path=vmrun,
+        environment=environment,
+    )
+
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert not root.exists()
+    assert "deleteVM" in [command[2] for command in _commands(log)]
+
+
+def test_provider_removed_root_rejects_ambiguous_recreation(tmp_path: Path) -> None:
+    """A root recreated after provider deletion is preserved and rejected.
+
+    Args:
+        tmp_path: Pytest temporary directory path.
+    """
+    root = tmp_path / "artifacts" / "vm"
+    vmx = root / "Atlaso.vmx"
+    replacement = root / "replacement.txt"
+    _write_vmx(vmx)
+    vmrun, environment, _, _ = _write_fake_vmrun(
+        tmp_path / "fake",
+        [vmx],
+        registered=True,
+        remove_root_after_delete=True,
+        create_on_list=5,
+        create_path=replacement,
+    )
+
+    result = _run_root_cleanup(
+        tmp_path,
+        removal_root=root,
+        expected_root=root,
+        vmrun_path=vmrun,
+        environment=environment,
+    )
+
+    assert result.returncode != 0
+    assert "reappeared after provider deletion" in result.stderr
+    assert replacement.read_text(encoding="utf-8") == "late artifact"
 
 
 def test_registration_appearing_before_root_removal_fails_closed(tmp_path: Path) -> None:

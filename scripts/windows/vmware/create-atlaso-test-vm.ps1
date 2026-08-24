@@ -135,6 +135,7 @@ param(
 $ErrorActionPreference = 'Stop'
 . (Join-Path $PSScriptRoot 'Atlaso.WorkstationFirstBoot.ps1')
 Import-Module (Join-Path $PSScriptRoot 'Atlaso.WorkstationCleanup.psm1') -Force
+Import-Module (Join-Path $PSScriptRoot 'Atlaso.VmwarePayload.psm1') -Force
 
 <#
 .SYNOPSIS
@@ -368,6 +369,7 @@ if (-not $ApplianceVmxPath) {
     $ApplianceVmxPath = Find-LatestApplianceVmx -RepoRoot $repoRoot
 }
 $resolvedSourceVmx = (Resolve-Path -LiteralPath $ApplianceVmxPath).Path
+Assert-AtlasoVmwarePayloadProvenance -VmxPath $resolvedSourceVmx | Out-Null
 
 if (-not $OutputDirectory) {
     $OutputDirectory = Join-Path $repoRoot "image\vmware-workstation\test-vms\$Name"

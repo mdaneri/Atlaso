@@ -415,7 +415,9 @@ The following cross-cutting boundaries always apply:
   write-excluding handle from the final byte comparison through atomic replacement and rollback. Remove only the
   selected library and matching index records; leave unrelated registrations in place and do not require them to
   resolve. Preflight failures preserve all artifacts; provider deletion, postcondition, rollback, or recursive-removal
-  failures preserve the remaining artifacts and return failure.
+  failures preserve the remaining artifacts and return failure. When checked `deleteVM` legitimately removes the
+  complete validated artifact root, keep scoped registration and running-state verification, require the exact root to
+  remain absent through the final gates, and let the initiating redeploy continue without a second filesystem deletion.
 - VLAN Interfaces use the shared wizard-backed Tabulator with the ESX Storage interaction. Keep every persisted field,
   including Admin Up, out of inline editing and review the complete VLAN record in the add/edit wizard. New VLANs
   default to Admin Up; edits preserve saved state; a missing-parent VLAN may remain saved only while disabled. Saving
