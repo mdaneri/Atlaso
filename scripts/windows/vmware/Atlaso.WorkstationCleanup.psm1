@@ -94,7 +94,6 @@ namespace Atlaso
 }
 '@
 }
-
 <#
 .SYNOPSIS
 Return a normalized absolute path without a non-root trailing separator.
@@ -114,7 +113,6 @@ function Get-AtlasoCanonicalPath {
         [System.IO.Path]::AltDirectorySeparatorChar
     )
 }
-
 <#
 .SYNOPSIS
 Compare two paths using Windows path semantics.
@@ -135,7 +133,6 @@ function Test-AtlasoSamePath {
         [System.StringComparison]::OrdinalIgnoreCase
     )
 }
-
 <#
 .SYNOPSIS
 Return whether a child is strictly below a parent path.
@@ -165,7 +162,6 @@ function Test-AtlasoStrictDescendantPath {
         $relativePath.StartsWith("..$([System.IO.Path]::AltDirectorySeparatorChar)")
     )
 }
-
 <#
 .SYNOPSIS
 Reject a path whose existing ancestry contains a reparse point.
@@ -188,7 +184,6 @@ function Assert-AtlasoPathHasNoReparsePoint {
         $currentPath = $parentPath
     }
 }
-
 <#
 .SYNOPSIS
 Require a reparse-free path to be strictly below a parent.
@@ -215,7 +210,6 @@ function Assert-AtlasoStrictDescendantPath {
     Assert-AtlasoPathHasNoReparsePoint -Path $ParentPath
     Assert-AtlasoPathHasNoReparsePoint -Path $ChildPath
 }
-
 <#
 .SYNOPSIS
 Return the stable Windows filesystem identity for an existing path.
@@ -241,7 +235,6 @@ function Get-AtlasoPathIdentity {
         throw "$Description filesystem identity cannot be resolved; artifacts were preserved: $Path"
     }
 }
-
 <#
 .SYNOPSIS
 Return the SHA-256 content hash of a file.
@@ -253,7 +246,6 @@ function Get-AtlasoFileSha256 {
     param([Parameter(Mandatory = $true)][string]$Path)
     return (Get-FileHash -LiteralPath $Path -Algorithm SHA256 -ErrorAction Stop).Hash
 }
-
 <#
 .SYNOPSIS
 Compare two byte arrays without text conversion.
@@ -279,7 +271,6 @@ function Test-AtlasoByteArraysEqual {
     }
     return $true
 }
-
 <#
 .SYNOPSIS
 Invoke vmrun and reject every nonzero provider result.
@@ -310,7 +301,6 @@ function Invoke-AtlasoVmrunChecked {
     }
     return $output
 }
-
 <#
 .SYNOPSIS
 Read the single well-formed display name from a VMX file.
@@ -329,7 +319,6 @@ function Get-AtlasoVmxDisplayName {
     }
     return $Matches[1]
 }
-
 <#
 .SYNOPSIS
 Normalize one path line returned by vmrun.
@@ -348,7 +337,6 @@ function ConvertFrom-AtlasoVmrunInventoryPath {
     }
     return $candidate
 }
-
 <#
 .SYNOPSIS
 Return the checked VMware Workstation running-VM paths.
@@ -390,7 +378,6 @@ function Get-AtlasoWorkstationVmPaths {
     if (@($reportedPaths | Where-Object { [System.IO.Path]::GetExtension($_) -ine '.vmx' -or -not (Test-Path -LiteralPath $_ -PathType Leaf) }).Count -gt 0) { throw 'vmrun list returned a missing or non-VMX running path; artifacts were preserved.' }
     return $reportedPaths
 }
-
 <#
 .SYNOPSIS
 Return the current user's Workstation inventory path when it exists.
@@ -402,7 +389,6 @@ function Resolve-AtlasoWorkstationInventoryPath {
     }
     return (Resolve-Path -LiteralPath $inventoryPath -ErrorAction Stop).Path
 }
-
 <#
 .SYNOPSIS
 Parse well-formed Workstation registrations inside one cleanup scope.
@@ -441,7 +427,6 @@ function Get-AtlasoScopedInventoryEntriesFromLines {
     }
     return $entries
 }
-
 <#
 .SYNOPSIS
 Return whether one unambiguously owned registration identifies a VMX.
@@ -701,8 +686,9 @@ function Remove-AtlasoWorkstationStaleRegistrations {
             $targetIndexes.Add($index) | Out-Null
         }
     }
-    $indexRenumbering = @{}
+    $indexRenumbering = if ($targetIndexes.Count -gt 0) { @{} } else { $null }
     foreach ($line in $lines) {
+        if ($null -eq $indexRenumbering) { break }
         if ($line -match '^\s*index(?<index>\d+)\.' -and -not $targetIndexes.Contains($Matches.index) -and -not $indexRenumbering.ContainsKey($Matches.index)) {
             if ($invalidIndexes.Contains($Matches.index) -or -not $indexOwners.ContainsKey($Matches.index) -or $indexOwners[$Matches.index].Count -ne 1) { $indexRenumbering = $null; break }
             $indexRenumbering[$Matches.index] = $indexRenumbering.Count
@@ -739,6 +725,7 @@ function Remove-AtlasoWorkstationStaleRegistrations {
     $temporaryPath = "$InventoryPath.atlaso-cleanup-$([System.Guid]::NewGuid().ToString('N')).tmp"
     $backupPath = "$InventoryPath.atlaso-backup-$([System.Guid]::NewGuid().ToString('N')).tmp"
     $preserveBackup = $false
+    $replacementApplied = $false
     try {
         [System.IO.File]::WriteAllBytes($temporaryPath, $replacementBytes)
         $inventoryLock = [System.IO.File]::Open(
@@ -758,9 +745,11 @@ function Remove-AtlasoWorkstationStaleRegistrations {
                 }
             }
             [System.IO.File]::Replace($temporaryPath, $InventoryPath, $backupPath, $true)
+            $replacementApplied = $true
             $displacedBytes = [System.IO.File]::ReadAllBytes($backupPath)
             if (-not (Test-AtlasoByteArraysEqual -Left $originalBytes -Right $displacedBytes)) {
                 $preserveBackup = $true
+                $replacementApplied = $false
                 Restore-AtlasoFileAfterCasFailure `
                     -TargetPath $InventoryPath `
                     -ExpectedCurrentBytes $replacementBytes `
@@ -773,6 +762,17 @@ function Remove-AtlasoWorkstationStaleRegistrations {
         finally {
             $inventoryLock.Dispose()
         }
+    }
+    catch {
+        $repairError = $_
+        if ($replacementApplied) {
+            $preserveBackup = $true
+            try {
+                Restore-AtlasoFileAfterCasFailure -TargetPath $InventoryPath -ExpectedCurrentBytes $replacementBytes -ReplacementPath $backupPath -ReplacementBytes $originalBytes -Description 'VMware Workstation inventory'
+                $preserveBackup = $false
+            } catch { throw "VMware Workstation inventory repair failed and rollback also failed: $($_.Exception.Message)" }
+        }
+        throw $repairError
     }
     finally {
         Remove-Item -LiteralPath $temporaryPath -Force -ErrorAction SilentlyContinue
@@ -791,14 +791,16 @@ Exact artifact root to snapshot.
 #>
 function Get-AtlasoRootSnapshot {
     param([Parameter(Mandatory = $true)][string]$RemovalRoot)
+    $rootIdentity = Get-AtlasoPathIdentity -Path $RemovalRoot -Description 'VMware artifact root'
     $items = @{}
     foreach ($item in Get-ChildItem -LiteralPath $RemovalRoot -Force -Recurse -ErrorAction Stop) {
         Assert-AtlasoPathHasNoReparsePoint -Path $item.FullName
         $relativePath = [System.IO.Path]::GetRelativePath($RemovalRoot, $item.FullName)
         $items[$relativePath] = Get-AtlasoPathIdentity -Path $item.FullName -Description 'VMware artifact entry'
     }
+    if ((Get-AtlasoPathIdentity -Path $RemovalRoot -Description 'VMware artifact root') -ne $rootIdentity) { throw "VMware artifact root changed while its cleanup snapshot was captured; artifacts were preserved: $RemovalRoot" }
     return [pscustomobject]@{
-        RootIdentity = Get-AtlasoPathIdentity -Path $RemovalRoot -Description 'VMware artifact root'
+        RootIdentity = $rootIdentity
         Items = $items
     }
 }

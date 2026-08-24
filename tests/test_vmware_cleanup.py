@@ -1298,6 +1298,44 @@ def test_stale_repair_compacts_surviving_inventory_indexes(tmp_path: Path) -> No
     assert 'index.count = "1"' in inventory_text
 
 
+def test_stale_repair_does_not_compact_without_a_removed_index(tmp_path: Path) -> None:
+    """A stale vmlist-only row does not normalize unrelated index numbering.
+
+    Args:
+        tmp_path: Pytest temporary directory path.
+    """
+    parent = tmp_path / "image" / "vmware-workstation"
+    root = parent / "test-vms"
+    root.mkdir(parents=True)
+    stale = root / "missing.vmx"
+    unrelated = tmp_path / "unrelated" / "live.vmx"
+    _write_vmx(unrelated)
+    vmrun, environment, _, inventory = _write_fake_vmrun(
+        tmp_path / "fake",
+        [],
+        inventory_suffix=(
+            f'vmlist7.config = "{stale.resolve()}"\n'
+            f'index7.id = "{unrelated.resolve()}"\n'
+            'index.count = "1"\n'
+        ),
+    )
+
+    result = _run_root_cleanup(
+        tmp_path,
+        removal_root=root,
+        artifact_parent=parent,
+        vmrun_path=vmrun,
+        environment=environment,
+    )
+
+    assert result.returncode == 0, result.stdout + result.stderr
+    inventory_text = inventory.read_text(encoding="utf-8")
+    assert f'vmlist7.config = "{stale.resolve()}"' not in inventory_text
+    assert f'index7.id = "{unrelated.resolve()}"' in inventory_text
+    assert "index0." not in inventory_text
+    assert 'index.count = "1"' in inventory_text
+
+
 def test_unrelated_oversized_inventory_index_count_does_not_block_repair(
     tmp_path: Path,
 ) -> None:
@@ -2011,5 +2049,27 @@ def test_module_keeps_inventory_work_out_of_normal_delete_path() -> None:
     wrapper_confirmation = wrapper_path.index("$PSCmdlet.ShouldProcess")
     wrapper_guard = wrapper_path.index("Assert-AtlasoRootSnapshotUnreplaced")
     assert wrapper_snapshot < wrapper_confirmation < wrapper_guard
+    snapshot_function = module.split("function Get-AtlasoRootSnapshot", 1)[1].split(
+        "function Assert-AtlasoRootSnapshotUnreplaced", 1
+    )[0]
+    traversal = snapshot_function.index("Get-ChildItem -LiteralPath $RemovalRoot")
+    identity_reads = [
+        match.start()
+        for match in re.finditer(
+            re.escape("Get-AtlasoPathIdentity -Path $RemovalRoot"), snapshot_function
+        )
+    ]
+    assert identity_reads[0] < traversal < identity_reads[1]
+    stale_repair = module.split(
+        "function Remove-AtlasoWorkstationStaleRegistrations", 1
+    )[1].split("function Get-AtlasoRootSnapshot", 1)[0]
+    inventory_replace = stale_repair.index(
+        "[System.IO.File]::Replace($temporaryPath, $InventoryPath, $backupPath, $true)"
+    )
+    rollback_catch = stale_repair.index("catch {", inventory_replace)
+    rollback_call = stale_repair.index(
+        "Restore-AtlasoFileAfterCasFailure -TargetPath $InventoryPath", rollback_catch
+    )
+    assert inventory_replace < rollback_catch < rollback_call
     implementation = re.sub(r"<#.*?#>\s*", "", module, flags=re.DOTALL)
     assert len(implementation.splitlines()) < 1_100
