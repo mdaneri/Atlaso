@@ -255,6 +255,63 @@ def test_network_objects_validation_is_attributed_to_exact_group_names():
     ]
 
 
+def test_network_objects_page_reports_existing_nat_consumer_validation(client):
+    """Show legacy NAT incompatibility in both page and exact Source Group row.
+
+    Args:
+        client: HTTP test client used to exercise the application.
+    """
+    from atlaso.app.database import SessionLocal
+    from atlaso.app.models import NatRule, Setting
+    from atlaso.app.services.firewall import FIREWALL_SOURCE_GROUPS_SETTING_KEY
+
+    with SessionLocal() as db:
+        db.merge(
+            Setting(
+                key=FIREWALL_SOURCE_GROUPS_SETTING_KEY,
+                value=json.dumps(
+                    {
+                        "groups": [
+                            {
+                                "id": "custom:legacy-ipv6",
+                                "name": "Legacy IPv6",
+                                "entries": ["2001:db8::/64"],
+                            }
+                        ],
+                        "assignments": {},
+                    }
+                ),
+            )
+        )
+        db.add(
+            NatRule(
+                name="legacy-ipv6-egress",
+                source="group:custom:legacy-ipv6",
+                outbound_interface="eth1",
+                enabled=True,
+            )
+        )
+        db.commit()
+
+    login(client)
+    page = client.get("/network-objects")
+
+    assert page.status_code == 200
+    assert "needs attention" in page.text
+    match = re.search(
+        r'id="network-object-source-groups-table"[^>]+data-source-groups=\'([^\']*)\'',
+        page.text,
+        re.S,
+    )
+    assert match is not None
+    rows = json.loads(html.unescape(match.group(1)))
+    legacy = next(row for row in rows if row["id"] == "custom:legacy-ipv6")
+    assert legacy["validation_state"] == "needs attention"
+    assert legacy["validation_errors"] == [
+        "NAT rule legacy-ipv6-egress: NAT v1 supports IPv4 source CIDRs only."
+    ]
+
+
 def test_network_objects_delete_conflict_lists_every_consumer_and_rechecks_on_post(client):
     """Block deletion for nested, operator, managed, and NAT consumers.
 

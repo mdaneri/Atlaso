@@ -34,10 +34,9 @@ from atlaso.app.services.network_objects import (
     normalize_source_group,
     source_group_consumers,
     source_group_id,
-    source_group_reference_target,
+    source_group_nat_validation_errors,
     source_group_rows,
 )
-from atlaso.app.services.routes_wan import validate_nat_source
 from atlaso.app.ui_routes import MANAGEMENT_UI_ROOT
 
 Endpoint = Callable[..., Any]
@@ -121,10 +120,16 @@ def build_router(dependencies: NetworkObjectsUiDependencies) -> NetworkObjectsUi
         firewall_rules = db.execute(select(FirewallRule).order_by(FirewallRule.priority, FirewallRule.name)).scalars().all()
         nat_rules = db.execute(select(NatRule).order_by(NatRule.priority, NatRule.name)).scalars().all()
         rows = source_group_rows(state["groups"], state["assignments"], firewall_rules, nat_rules)
+        validation_errors = validate_firewall_source_groups(state["groups"])
+        validation_errors.extend(
+            error
+            for errors in source_group_nat_validation_errors(state["groups"], nat_rules).values()
+            for error in errors
+        )
         return {
             "network_object_source_groups": rows,
             "network_object_source_groups_json": rows,
-            "network_object_validation_errors": validate_firewall_source_groups(state["groups"]),
+            "network_object_validation_errors": list(dict.fromkeys(validation_errors)),
         }
 
     @router.get("/network-objects", response_class=HTMLResponse, response_model=None)
@@ -314,15 +319,16 @@ def build_router(dependencies: NetworkObjectsUiDependencies) -> NetworkObjectsUi
                 )
 
         errors = validate_firewall_source_groups(groups)
-        source_group_ids = {str(group.get("id", "")) for group in groups}
         nat_rules = db.execute(select(NatRule).order_by(NatRule.priority, NatRule.name)).scalars().all()
-        for rule in nat_rules:
-            if not source_group_reference_target(str(rule.source), groups):
-                continue
-            errors.extend(
-                f"NAT rule {rule.name}: {error}"
-                for error in validate_nat_source(str(rule.source), source_group_ids, groups)
-            )
+        errors.extend(
+            error
+            for nat_errors in source_group_nat_validation_errors(
+                groups,
+                nat_rules,
+                include_disabled=True,
+            ).values()
+            for error in nat_errors
+        )
         if errors:
             return JSONResponse(
                 {"status": "error", "detail": " ".join(errors), "errors": errors},

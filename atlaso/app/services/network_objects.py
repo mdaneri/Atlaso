@@ -15,6 +15,7 @@ from atlaso.app.services.firewall import (
     FIREWALL_SOURCE_GROUP_REFERENCE_PREFIX,
     validate_firewall_source_groups,
 )
+from atlaso.app.services.routes_wan import validate_nat_source
 
 NETWORK_OBJECTS_WRITE_LOCK_ID = 0x4E45544F424A
 
@@ -190,6 +191,42 @@ def source_group_consumers(
     return sorted(consumers, key=lambda item: (item["kind"], item["label"].lower(), item["detail"]))
 
 
+def source_group_nat_validation_errors(
+    groups: list[dict[str, Any]],
+    nat_rules: Iterable[NatRule],
+    *,
+    include_disabled: bool = False,
+) -> dict[str, list[str]]:
+    """Return NAT validation failures keyed by the referenced Source Group.
+
+    Args:
+        groups: Candidate source groups available to NAT consumers.
+        nat_rules: Saved NAT rules to validate against the candidate groups.
+        include_disabled: Whether disabled consumers must also remain valid.
+
+    Returns:
+        Deterministically ordered NAT validation failures by Source Group ID.
+    """
+    source_group_ids = {str(group.get("id", "")) for group in groups}
+    errors_by_group: dict[str, list[str]] = {}
+    for nat_rule in nat_rules:
+        if not include_disabled and not nat_rule.enabled:
+            continue
+        group_id = source_group_reference_target(str(nat_rule.source), groups)
+        if not group_id:
+            continue
+        errors = [
+            f"NAT rule {nat_rule.name}: {error}"
+            for error in validate_nat_source(str(nat_rule.source), source_group_ids, groups)
+        ]
+        if errors:
+            errors_by_group.setdefault(group_id, []).extend(errors)
+    return {
+        group_id: list(dict.fromkeys(errors))
+        for group_id, errors in sorted(errors_by_group.items())
+    }
+
+
 def source_group_rows(
     groups: list[dict[str, Any]],
     assignments: dict[str, str],
@@ -210,6 +247,7 @@ def source_group_rows(
     firewall_rules = list(firewall_rules)
     nat_rules = list(nat_rules)
     all_errors = validate_firewall_source_groups(groups)
+    nat_errors_by_group = source_group_nat_validation_errors(groups, nat_rules)
     cycle_prefix = "Source Groups cannot reference each other in a cycle: "
     rows: list[dict[str, Any]] = []
     for group in groups:
@@ -236,6 +274,7 @@ def source_group_rows(
         ]
         if group_id == FIREWALL_ANY_SOURCE_GROUP_ID:
             validation_errors.extend(error for error in all_errors if error.startswith("Any "))
+        validation_errors.extend(nat_errors_by_group.get(group_id, []))
         rows.append(
             {
                 **normalize_source_group(group),
