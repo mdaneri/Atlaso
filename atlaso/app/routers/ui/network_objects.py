@@ -297,12 +297,17 @@ def build_router(dependencies: NetworkObjectsUiDependencies) -> NetworkObjectsUi
             if action == "rename":
                 groups[existing_index] = normalize_source_group({**current, "name": name})
             else:
+                description = (
+                    str(form.get("description") or "Custom source group.")
+                    if "description" in form
+                    else str(current["description"])
+                )
                 groups[existing_index] = normalize_source_group(
                     {
                         **current,
                         "name": name,
                         "entries": _entries_from_form(form),
-                        "description": str(form.get("description") or "Custom source group."),
+                        "description": description,
                     }
                 )
 
@@ -321,7 +326,7 @@ def build_router(dependencies: NetworkObjectsUiDependencies) -> NetworkObjectsUi
             resource_type="source_group",
             resource_id=affected_group_id or "source-groups",
         )
-        if grid_request(request):
+        if grid_request(request) or request.headers.get("X-Atlaso-Autosave") == "1":
             return _mutation_response(db, affected_group_id, status_code=201 if action == "create" else 200)
         return RedirectResponse(f"{MANAGEMENT_UI_ROOT}/network-objects", status_code=303)
 
@@ -360,7 +365,7 @@ def build_router(dependencies: NetworkObjectsUiDependencies) -> NetworkObjectsUi
             Canonical non-replaying redirect or validation response.
         """
         response = await _mutate_source_groups(request, identity, db)
-        if response.status_code < 300:
+        if response.status_code < 300 and request.headers.get("X-Atlaso-Autosave") != "1":
             return RedirectResponse(f"{MANAGEMENT_UI_ROOT}/network-objects", status_code=303)
         return response
 

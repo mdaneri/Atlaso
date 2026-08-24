@@ -278,6 +278,23 @@ def test_network_objects_unreferenced_delete_and_legacy_routes_are_non_replaying
     assert legacy_post.status_code == 303
     assert legacy_post.headers["location"] == "/ui/management/network-objects"
 
+    legacy_autosave = client.post(
+        "/firewall/source-groups",
+        data={
+            "csrf": csrf,
+            "action": "update",
+            "group_id": group_id,
+            "group_name": "Autosaved temporary networks",
+            "group_entries": "203.0.113.0/24",
+        },
+        headers={"X-Atlaso-Autosave": "1"},
+        follow_redirects=False,
+    )
+    assert legacy_autosave.status_code == 200
+    assert legacy_autosave.headers["content-type"].startswith("application/json")
+    assert legacy_autosave.json()["source_group"]["name"] == "Autosaved temporary networks"
+    assert legacy_autosave.json()["source_group"]["description"] == "Temporary clients description"
+
     legacy_rename = client.post(
         "/firewall/source-groups",
         data={
@@ -300,7 +317,7 @@ def test_network_objects_unreferenced_delete_and_legacy_routes_are_non_replaying
     renamed = next(row for row in renamed_rows if row["id"] == group_id)
     assert renamed["name"] == "Renamed temporary networks"
     assert renamed["entries"] == ["203.0.113.0/24"]
-    assert renamed["description"] == "Custom source group."
+    assert renamed["description"] == "Temporary clients description"
 
     deleted = client.post(
         "/network-objects/source-groups",
