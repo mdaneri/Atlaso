@@ -4343,7 +4343,32 @@ function sourceGroupValidationFormatter(cell) {
   return pill;
 }
 
-async function deleteNetworkObjectSourceGroup(row, controller, csrf) {
+function renderNetworkObjectSourceGroupReferences(rows) {
+  const container = document.querySelector("[data-network-object-reference-list]");
+  if (!(container instanceof HTMLElement)) return;
+  const references = rows.filter((row) => !row.builtin && !row.is_new);
+  if (!references.length) {
+    const item = document.createElement("div");
+    const label = document.createElement("span");
+    label.textContent = "Nested Source Groups";
+    const value = document.createElement("strong");
+    value.textContent = "None available yet";
+    item.append(label, value);
+    container.replaceChildren(item);
+    return;
+  }
+  container.replaceChildren(...references.map((row) => {
+    const item = document.createElement("div");
+    const label = document.createElement("span");
+    label.textContent = row.name || row.id;
+    const value = document.createElement("code");
+    value.textContent = `group:${row.id}`;
+    item.append(label, value);
+    return item;
+  }));
+}
+
+async function deleteNetworkObjectSourceGroup(row, controller, csrf, replaceRows) {
   const data = row.getData();
   if (data.builtin || data.is_new) return;
   if (data.consumer_count) {
@@ -4362,8 +4387,8 @@ async function deleteNetworkObjectSourceGroup(row, controller, csrf) {
   body.set("csrf", csrf);
   body.set("action", "delete");
   body.set("group_id", data.id);
-  await atlasoGridWizardRequest(managementUiPath("/network-objects/source-groups"), body);
-  await row.delete();
+  const payload = await atlasoGridWizardRequest(managementUiPath("/network-objects/source-groups"), body);
+  await replaceRows(payload.source_groups || []);
   controller?.table?.redraw?.();
   showTransientGridStatus("Deleted");
 }
@@ -4391,7 +4416,46 @@ function initializeNetworkObjectSourceGroups() {
     builtin: false,
     is_new: true,
   };
+  const gridOptions = {
+    height: `${Math.min(Math.max((existingRows.length + (canWrite ? 1 : 0)) * 42 + 34, 120), 440)}px`,
+    rowHeight: 42,
+    layout: "fitColumns",
+    columns: [
+      {
+        title: "Name",
+        field: "name",
+        minWidth: 180,
+        formatter: (cell) => cell.getRow().getData().is_new
+          ? '<button class="add-row-button" type="button" data-atlaso-wizard-add>+ Add Source Group here</button>'
+          : escapeHtml(cell.getValue()),
+      },
+      { title: "Entries", field: "entries_summary", minWidth: 260, formatter: (cell) => cell.getRow().getData().is_new ? "" : escapeHtml(`${cell.getValue() || ""} (${cell.getRow().getData().entry_count || 0})`) },
+      { title: "Consumers", field: "consumer_count", minWidth: 260, formatter: (cell) => cell.getRow().getData().is_new ? "" : sourceGroupUsageFormatter(cell) },
+      { title: "Built in", field: "builtin", width: 95, hozAlign: "center", formatter: (cell) => cell.getRow().getData().is_new ? "" : atlasoBooleanFormatter(cell) },
+      { title: "Validation", field: "validation_state", width: 145, formatter: (cell) => cell.getRow().getData().is_new ? "" : sourceGroupValidationFormatter(cell) },
+    ],
+    rowFormatter: (row) => markNewRecordRow(row, "name"),
+  };
+  if (!canWrite) {
+    const grid = window.AtlasoUiPatterns.createGrid({
+      element,
+      fallback: `#${element.dataset.fallbackId}`,
+      pattern: "read-only",
+      emptyMessage: "No Source Groups are available.",
+      options: { ...gridOptions, data: existingRows, index: "id" },
+    });
+    element.atlasoTabulator = grid.table;
+    return;
+  }
+  if (!(dialog instanceof HTMLDialogElement)) return;
   let controller = null;
+  const replaceRows = async (rows, table = controller?.table) => {
+    const currentRows = Array.isArray(rows) ? rows : [];
+    rowById.clear();
+    currentRows.forEach((row) => rowById.set(String(row.id), row));
+    renderNetworkObjectSourceGroupReferences(currentRows);
+    await table?.replaceData?.([...currentRows, newRow]);
+  };
   controller = initializeAtlasoResourceWizard({
     elementId: "network-object-source-groups-table",
     formSelector: "[data-network-object-source-group-form]",
@@ -4453,7 +4517,7 @@ function initializeNetworkObjectSourceGroups() {
         if (target instanceof HTMLElement) target.textContent = value;
       });
     },
-    onSaved: ({ resource }) => rowById.set(String(resource.id), resource),
+    onSaved: ({ payload, table }) => replaceRows(payload.source_groups || [], table),
     extraActions: canWrite ? [
       {
         label: "Review consumers",
@@ -4467,29 +4531,10 @@ function initializeNetworkObjectSourceGroups() {
       {
         label: "Remove Source Group",
         disabled: (row) => row.getData().builtin || Boolean(row.getData().consumer_count),
-        action: (_event, row) => deleteNetworkObjectSourceGroup(row, controller, csrf),
+        action: (_event, row) => deleteNetworkObjectSourceGroup(row, controller, csrf, replaceRows),
       },
     ] : [],
-    options: {
-      height: `${Math.min(Math.max((existingRows.length + (canWrite ? 1 : 0)) * 42 + 34, 120), 440)}px`,
-      rowHeight: 42,
-      layout: "fitColumns",
-      columns: [
-        {
-          title: "Name",
-          field: "name",
-          minWidth: 180,
-          formatter: (cell) => cell.getRow().getData().is_new
-            ? '<button class="add-row-button" type="button" data-atlaso-wizard-add>+ Add Source Group here</button>'
-            : escapeHtml(cell.getValue()),
-        },
-        { title: "Entries", field: "entries_summary", minWidth: 260, formatter: (cell) => cell.getRow().getData().is_new ? "" : escapeHtml(`${cell.getValue() || ""} (${cell.getRow().getData().entry_count || 0})`) },
-        { title: "Consumers", field: "consumer_count", minWidth: 260, formatter: (cell) => cell.getRow().getData().is_new ? "" : sourceGroupUsageFormatter(cell) },
-        { title: "Built in", field: "builtin", width: 95, hozAlign: "center", formatter: (cell) => cell.getRow().getData().is_new ? "" : atlasoBooleanFormatter(cell) },
-        { title: "Validation", field: "validation_state", width: 145, formatter: (cell) => cell.getRow().getData().is_new ? "" : sourceGroupValidationFormatter(cell) },
-      ],
-      rowFormatter: (row) => markNewRecordRow(row, "name"),
-    },
+    options: gridOptions,
   });
 }
 

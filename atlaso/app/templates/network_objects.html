@@ -76,7 +76,7 @@
   </section>
   <section class="hidden" data-atlaso-wizard-step="entries">
     <label><span class="field-label"><span>Entries</span><button class="help-icon" type="button" data-help="Enter one IPv4 or IPv6 address, CIDR, any, or nested Source Group reference per line. Nested references use group:&lt;stable-id&gt;; available stable references are listed below.">i</button></span><textarea name="group_entries" rows="8" required data-network-object-source-group-entries placeholder="192.0.2.0/24"></textarea></label>
-    <div class="settings-list network-object-reference-list">
+    <div class="settings-list network-object-reference-list" data-network-object-reference-list>
       {% for group in network_object_source_groups if not group.builtin %}<div><span>{{ group.name }}</span><code>group:{{ group.id }}</code></div>{% else %}<div><span>Nested Source Groups</span><strong>None available yet</strong></div>{% endfor %}
     </div>
   </section>

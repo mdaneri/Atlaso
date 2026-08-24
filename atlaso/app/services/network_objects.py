@@ -6,12 +6,46 @@ import re
 from collections.abc import Iterable
 from typing import Any
 
+from sqlalchemy import text
+from sqlalchemy.orm import Session
+
 from atlaso.app.models import FirewallRule, NatRule
 from atlaso.app.services.firewall import (
     FIREWALL_ANY_SOURCE_GROUP_ID,
     FIREWALL_SOURCE_GROUP_REFERENCE_PREFIX,
     validate_firewall_source_groups,
 )
+
+NETWORK_OBJECTS_WRITE_LOCK_ID = 0x4E45544F424A
+
+
+def acquire_network_objects_write_lock(db: Session) -> None:
+    """Serialize Source Group and consumer mutations in the current transaction.
+
+    Source Group deletion must not race a Firewall, managed-assignment, or NAT
+    write that would introduce a new reference after the consumer check. SQLite
+    uses its database writer lock, while PostgreSQL uses a transaction-scoped
+    advisory lock shared by every participating mutation endpoint.
+
+    Args:
+        db: Active database session before its first query.
+
+    Raises:
+        RuntimeError: If the configured database cannot provide the required lock.
+    """
+    connection = db.connection()
+    if connection.dialect.name == "sqlite":
+        connection.exec_driver_sql("BEGIN IMMEDIATE")
+        return
+    if connection.dialect.name == "postgresql":
+        connection.execute(
+            text("SELECT pg_advisory_xact_lock(:lock_id)"),
+            {"lock_id": NETWORK_OBJECTS_WRITE_LOCK_ID},
+        )
+        return
+    raise RuntimeError(
+        "Network Objects mutations require SQLite or PostgreSQL transaction locking."
+    )
 
 
 def normalize_source_group(group: dict[str, Any]) -> dict[str, Any]:

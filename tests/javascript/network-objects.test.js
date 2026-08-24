@@ -102,6 +102,46 @@ test("Source Group usage formatter renders persisted labels through textContent"
   assert.equal(value.children[1].children.length, 0);
 });
 
+test("Source Group reference choices refresh safely after in-page mutations", () => {
+  class FakeElement {
+    constructor(tagName) {
+      this.tagName = tagName;
+      this.textContent = "";
+      this.children = [];
+    }
+
+    append(...children) {
+      this.children.push(...children);
+    }
+
+    replaceChildren(...children) {
+      this.children = children;
+    }
+  }
+
+  const container = new FakeElement("div");
+  const context = vm.createContext({
+    HTMLElement: FakeElement,
+    document: {
+      createElement: (tagName) => new FakeElement(tagName),
+      querySelector: (selector) => selector === "[data-network-object-reference-list]" ? container : null,
+    },
+  });
+  vm.runInContext(`${functionSource("renderNetworkObjectSourceGroupReferences")}; this.renderReferences = renderNetworkObjectSourceGroupReferences;`, context);
+
+  context.renderReferences([
+    { id: "any", name: "Any", builtin: true },
+    { id: "custom:apps", name: '<img src=x onerror="alert(1)">', builtin: false },
+  ]);
+  assert.equal(container.children.length, 1);
+  assert.equal(container.children[0].children[0].textContent, '<img src=x onerror="alert(1)">');
+  assert.equal(container.children[0].children[1].textContent, "group:custom:apps");
+
+  context.renderReferences([{ id: "any", name: "Any", builtin: true }]);
+  assert.equal(container.children.length, 1);
+  assert.equal(container.children[0].children[1].textContent, "None available yet");
+});
+
 test("Source Group draft restoration rejects a removed server-rendered option and restores focus", () => {
   class FakeSelect {
     constructor(options) {

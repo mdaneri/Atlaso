@@ -19,6 +19,7 @@ from atlaso.app.services.firewall import (
     firewall_settings_to_dict,
     validate_firewall_rule,
 )
+from atlaso.app.services.network_objects import acquire_network_objects_write_lock
 from atlaso.app.ui_routes import MANAGEMENT_UI_ROOT
 
 Endpoint = Callable[..., Any]
@@ -188,6 +189,7 @@ def build_router(dependencies: FirewallUiDependencies) -> FirewallUiRouter:
             HTTPException: If the request cannot be fulfilled.
         """
         verify_csrf(request, csrf)
+        acquire_network_objects_write_lock(db)
         context = firewall_context(db)
         valid_rule_names = {
             row["name"]
@@ -297,6 +299,7 @@ def build_router(dependencies: FirewallUiDependencies) -> FirewallUiRouter:
             HTTPException: If the request cannot be fulfilled.
         """
         verify_csrf(request, csrf)
+        acquire_network_objects_write_lock(db)
         rule = _assign_firewall_rule(
             FirewallRule(),
             name=name,
@@ -379,6 +382,7 @@ def build_router(dependencies: FirewallUiDependencies) -> FirewallUiRouter:
             HTTPException: If the request cannot be fulfilled.
         """
         verify_csrf(request, csrf)
+        acquire_network_objects_write_lock(db)
         rule = db.get(FirewallRule, rule_id)
         if not rule:
             raise HTTPException(status_code=404, detail="Firewall rule not found")
@@ -442,6 +446,7 @@ def build_router(dependencies: FirewallUiDependencies) -> FirewallUiRouter:
             HTTPException: If the request cannot be fulfilled.
         """
         verify_csrf(request, csrf)
+        acquire_network_objects_write_lock(db)
         rule = db.get(FirewallRule, rule_id)
         if not rule:
             raise HTTPException(status_code=404, detail="Firewall rule not found")

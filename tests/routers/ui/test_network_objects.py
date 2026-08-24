@@ -3,6 +3,7 @@
 import html
 import json
 import re
+import threading
 
 from tests.routers.ui.helpers import login
 
@@ -106,6 +107,46 @@ def test_network_objects_create_update_preserves_identifier_and_shared_apply_sem
     assert "source_resolved=192.0.2.0/24" in html.unescape(routes_wan.text)
 
 
+def test_network_objects_validation_returns_actionable_wizard_detail(client):
+    """Expose Source Group validation text through the shared wizard error field."""
+    login(client)
+    csrf = _csrf(client.get("/network-objects"))
+
+    response = _create_group(client, csrf, "Broken nesting", "group:custom:missing")
+
+    assert response.status_code == 422
+    payload = response.json()
+    assert payload["detail"] == " ".join(payload["errors"])
+    assert "missing" in payload["detail"].lower()
+
+
+def test_network_objects_mutations_return_refreshed_consumer_rows(client):
+    """Return every row whose nested-group usage changed after a mutation."""
+    login(client)
+    csrf = _csrf(client.get("/network-objects"))
+    parent = _create_group(client, csrf, "Parent clients", "192.0.2.0/24").json()["source_group"]
+
+    nested_response = _create_group(client, csrf, "Nested clients", f"group:{parent['id']}")
+    parent_row = next(row for row in nested_response.json()["source_groups"] if row["id"] == parent["id"])
+    nested = nested_response.json()["source_group"]
+    assert parent_row["consumer_count"] == 1
+
+    updated = client.post(
+        "/network-objects/source-groups",
+        data={
+            "csrf": csrf,
+            "action": "update",
+            "group_id": nested["id"],
+            "group_name": nested["name"],
+            "group_entries": "198.51.100.0/24",
+            "description": nested["description"],
+        },
+        headers={"X-Atlaso-Grid": "1"},
+    )
+    parent_row = next(row for row in updated.json()["source_groups"] if row["id"] == parent["id"])
+    assert parent_row["consumer_count"] == 0
+
+
 def test_network_objects_delete_conflict_lists_every_consumer_and_rechecks_on_post(client):
     """Block deletion for nested, operator, managed, and NAT consumers."""
     login(client)
@@ -196,6 +237,30 @@ def test_network_objects_unreferenced_delete_and_legacy_routes_are_non_replaying
     assert legacy_post.status_code == 303
     assert legacy_post.headers["location"] == "/ui/management/network-objects"
 
+    legacy_rename = client.post(
+        "/firewall/source-groups",
+        data={
+            "csrf": csrf,
+            "action": "rename",
+            "group_id": group_id,
+            "group_name": "Renamed temporary networks",
+        },
+        follow_redirects=False,
+    )
+    assert legacy_rename.status_code == 303
+    renamed_page = client.get("/network-objects")
+    match = re.search(
+        r'id="network-object-source-groups-table"[^>]+data-source-groups=\'([^\']*)\'',
+        renamed_page.text,
+        re.S,
+    )
+    assert match is not None
+    renamed_rows = json.loads(html.unescape(match.group(1)))
+    renamed = next(row for row in renamed_rows if row["id"] == group_id)
+    assert renamed["name"] == "Renamed temporary networks"
+    assert renamed["entries"] == ["203.0.113.0/24"]
+    assert renamed["description"] == "Custom source group."
+
     deleted = client.post(
         "/network-objects/source-groups",
         data={"csrf": csrf, "action": "delete", "group_id": group_id},
@@ -210,3 +275,54 @@ def test_network_objects_reuses_firewall_authorization_scopes():
     from atlaso.app.security import UI_PATH_SCOPES
 
     assert ("/network-objects", "read:firewall", "write:firewall") in UI_PATH_SCOPES
+
+
+def test_network_objects_read_only_page_keeps_grid_without_wizard(client):
+    """Keep the read-only Tabulator host while omitting mutation controls."""
+    from sqlalchemy import select
+
+    from atlaso.app.database import SessionLocal
+    from atlaso.app.models import Role, User
+    from atlaso.app.security import roles_to_json
+
+    with SessionLocal() as db:
+        admin = db.execute(select(User).where(User.username == "admin")).scalar_one()
+        admin.role = Role.VIEWER.value
+        admin.roles_json = roles_to_json([Role.VIEWER.value])
+        db.commit()
+
+    login(client)
+    page = client.get("/network-objects")
+
+    assert page.status_code == 200
+    assert 'id="network-object-source-groups-table"' in page.text
+    assert 'data-can-write="false"' in page.text
+    assert 'id="network-object-source-group-dialog"' not in page.text
+    assert "+ Add Source Group here" not in page.text
+
+
+def test_network_objects_writer_lock_serializes_consumer_mutations():
+    """Block a second Source Group consumer transaction until the first completes."""
+    from atlaso.app.database import SessionLocal
+    from atlaso.app.services.network_objects import acquire_network_objects_write_lock
+
+    started = threading.Event()
+    acquired = threading.Event()
+
+    def acquire_second_lock() -> None:
+        with SessionLocal() as second:
+            started.set()
+            acquire_network_objects_write_lock(second)
+            acquired.set()
+            second.rollback()
+
+    with SessionLocal() as first:
+        acquire_network_objects_write_lock(first)
+        worker = threading.Thread(target=acquire_second_lock)
+        worker.start()
+        assert started.wait(1)
+        assert not acquired.wait(0.1)
+        first.rollback()
+        assert acquired.wait(2)
+        worker.join(timeout=2)
+        assert not worker.is_alive()

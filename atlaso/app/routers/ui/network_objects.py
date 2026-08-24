@@ -30,6 +30,7 @@ from atlaso.app.services.firewall import (
     validate_firewall_source_groups,
 )
 from atlaso.app.services.network_objects import (
+    acquire_network_objects_write_lock,
     normalize_source_group,
     source_group_consumers,
     source_group_id,
@@ -210,6 +211,7 @@ def build_router(dependencies: NetworkObjectsUiDependencies) -> NetworkObjectsUi
     ) -> Response:
         form = await request.form()
         verify_csrf(request, str(form.get("csrf", "")))
+        acquire_network_objects_write_lock(db)
         state = source_group_state_for_db(db)
         groups = [normalize_source_group(group) for group in state["groups"]]
         assignments = dict(state["assignments"])
@@ -264,18 +266,24 @@ def build_router(dependencies: NetworkObjectsUiDependencies) -> NetworkObjectsUi
             name = str(form.get("group_name") or "").strip()
             if not name:
                 raise HTTPException(status_code=422, detail="Source Group name is required.")
-            groups[existing_index] = normalize_source_group(
-                {
-                    **current,
-                    "name": name,
-                    "entries": _entries_from_form(form),
-                    "description": str(form.get("description") or "Custom source group."),
-                }
-            )
+            if action == "rename":
+                groups[existing_index] = normalize_source_group({**current, "name": name})
+            else:
+                groups[existing_index] = normalize_source_group(
+                    {
+                        **current,
+                        "name": name,
+                        "entries": _entries_from_form(form),
+                        "description": str(form.get("description") or "Custom source group."),
+                    }
+                )
 
         errors = validate_firewall_source_groups(groups)
         if errors:
-            return JSONResponse({"status": "error", "errors": errors}, status_code=422)
+            return JSONResponse(
+                {"status": "error", "detail": " ".join(errors), "errors": errors},
+                status_code=422,
+            )
         persist_source_group_state(db, {"groups": groups, "assignments": assignments})
         db.commit()
         record_audit(
