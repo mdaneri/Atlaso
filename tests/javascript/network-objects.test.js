@@ -159,7 +159,9 @@ test("Source Group draft restoration rejects a removed server-rendered option an
       this.listeners[name] = callback;
     }
 
-    dispatchEvent() {}
+    dispatchEvent(event) {
+      this.listeners[event.type]?.();
+    }
 
     focus() {
       this.focused = true;
@@ -179,7 +181,11 @@ test("Source Group draft restoration rejects a removed server-rendered option an
   };
   const context = vm.createContext({
     CSS: { escape: (value) => value },
-    Event: class Event {},
+    Event: class Event {
+      constructor(type) {
+        this.type = type;
+      }
+    },
     HTMLSelectElement: FakeSelect,
     window: { setTimeout: (callback) => callback() },
   });
@@ -189,6 +195,8 @@ test("Source Group draft restoration rejects a removed server-rendered option an
   assert.equal(source.value, "");
   assert.match(source.validityMessage, /no longer available/i);
   assert.equal(source.focused, true);
+  source.dispatchEvent({ type: "change" });
+  assert.equal(source.validityMessage, "");
 });
 
 test("Source Group fallback Add control retains a wizard when Tabulator is unavailable", () => {

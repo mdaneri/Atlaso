@@ -234,6 +234,27 @@ def test_network_objects_mutations_return_refreshed_consumer_rows(client):
     assert parent_row["consumer_count"] == 0
 
 
+def test_network_objects_validation_is_attributed_to_exact_group_names():
+    """Avoid marking a valid row from a longer group's matching name prefix."""
+    from atlaso.app.services.network_objects import source_group_rows
+
+    groups = [
+        {"id": "custom:app", "name": "App", "entries": ["192.0.2.0/24"]},
+        {"id": "custom:app-prod", "name": "App Prod", "entries": ["not-a-cidr"]},
+    ]
+
+    rows = source_group_rows(groups, {}, [], [])
+    app = next(row for row in rows if row["id"] == "custom:app")
+    app_prod = next(row for row in rows if row["id"] == "custom:app-prod")
+
+    assert app["validation_state"] == "valid"
+    assert app["validation_errors"] == []
+    assert app_prod["validation_state"] == "needs attention"
+    assert app_prod["validation_errors"] == [
+        "App Prod must be 'any' or valid IPv4/IPv6 addresses or CIDRs."
+    ]
+
+
 def test_network_objects_delete_conflict_lists_every_consumer_and_rechecks_on_post(client):
     """Block deletion for nested, operator, managed, and NAT consumers.
 

@@ -210,13 +210,30 @@ def source_group_rows(
     firewall_rules = list(firewall_rules)
     nat_rules = list(nat_rules)
     all_errors = validate_firewall_source_groups(groups)
+    cycle_prefix = "Source Groups cannot reference each other in a cycle: "
     rows: list[dict[str, Any]] = []
     for group in groups:
         group_id = str(group.get("id", ""))
         name = str(group.get("name") or group_id)
         entries = [str(entry) for entry in group.get("entries") or group.get("sources") or []]
         consumers = source_group_consumers(group_id, groups, assignments, firewall_rules, nat_rules)
-        validation_errors = [error for error in all_errors if name.lower() in error.lower()]
+        validation_errors = [
+            error
+            for error in all_errors
+            if error.startswith(
+                (
+                    f"{name} references ",
+                    f"{name} can use ",
+                    f"{name} must be ",
+                    f"Source Group name '{name}' ",
+                )
+            )
+            or (
+                error.startswith(cycle_prefix)
+                and name
+                in error.removeprefix(cycle_prefix).removesuffix(".").split(" -> ")
+            )
+        ]
         if group_id == FIREWALL_ANY_SOURCE_GROUP_ID:
             validation_errors.extend(error for error in all_errors if error.startswith("Any "))
         rows.append(

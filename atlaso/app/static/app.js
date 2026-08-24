@@ -4608,6 +4608,7 @@ function captureSourceGroupWizardDraft(form) {
 }
 
 function applySourceGroupWizardDraft(form, draft, focusSelector) {
+  const missingSourceGroupControls = [];
   Object.entries(draft.values || {}).forEach(([name, value]) => {
     const controls = [...form.querySelectorAll(`[name="${CSS.escape(name)}"]`)];
     if (!controls.length) return;
@@ -4620,14 +4621,17 @@ function applySourceGroupWizardDraft(form, draft, focusSelector) {
       const optionExists = [...control.options].some((option) => option.value === String(value));
       control.value = optionExists ? String(value) : "";
       if (!optionExists && value) {
-        control.setCustomValidity("The previously selected Source Group is no longer available. Choose a current value.");
-        control.addEventListener("change", () => control.setCustomValidity(""), { once: true });
+        missingSourceGroupControls.push(control);
       }
       return;
     }
     control.value = value ?? "";
   });
   form.querySelectorAll("select, textarea, input").forEach((control) => control.dispatchEvent(new Event("change", { bubbles: true })));
+  missingSourceGroupControls.forEach((control) => {
+    control.setCustomValidity("The previously selected Source Group is no longer available. Choose a current value.");
+    control.addEventListener("change", () => control.setCustomValidity(""), { once: true });
+  });
   window.setTimeout(() => form.querySelector(focusSelector)?.focus(), 0);
 }
 
