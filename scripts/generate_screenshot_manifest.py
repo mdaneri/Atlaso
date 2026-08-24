@@ -23,17 +23,17 @@ CAPTURE_OVERRIDES = {
         "capture_method": "codex-in-app-browser",
     },
     "primary-navigation-expanded-desktop": {
-        "source_commit": "0df3b4b3+working-tree",
-        "atlaso_version": "0.9.195",
+        "source_commit": "230f8534+working-tree",
+        "atlaso_version": "0.9.199",
         "capture_method": "codex-in-app-browser",
     },
     "primary-navigation-collapsed-desktop": {
-        "source_commit": "0df3b4b3+working-tree",
-        "atlaso_version": "0.9.195",
+        "source_commit": "230f8534+working-tree",
+        "atlaso_version": "0.9.199",
         "capture_method": "codex-in-app-browser",
     },
     "primary-navigation-collapsed-responsive": {
-        "source_commit": "ff68368d",
+        "source_commit": "230f8534+working-tree",
         "atlaso_version": "0.9.199",
         "capture_method": "codex-in-app-browser",
     },
