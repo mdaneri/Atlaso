@@ -52,9 +52,15 @@ Every delegated prompt must state the exact scope, owned files, expected result,
 Agent Startup Gate. UI prompts must also include the Mandatory UI Design Guide Gate, interaction classification, and
 reused Atlaso reference. Spark must not commit, push, change GitHub state, or delegate further.
 
-Run multiple Spark workers only for independent tasks with non-overlapping file ownership. Sol must inspect and
-integrate every returned diff before relying on it. If Spark is unavailable in the current account or runtime, Sol
-performs the work directly, reports that delegation was unavailable, and never substitutes another model.
+Run multiple Spark workers only for independent tasks with non-overlapping
+file ownership. Sol must inspect and integrate every returned diff before
+relying on it.
+
+If Spark is unavailable, rate-limited, its usage allowance is exhausted,
+or the worker cannot be started because of capacity/runtime limitations,
+Sol performs the work directly. Do not repeatedly retry Spark after a
+quota or rate-limit failure, and do not substitute another model.
+Report the fallback once for the current task.
 
 ## Mandatory UI Design Guide Gate
 
