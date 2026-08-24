@@ -32,6 +32,7 @@ from atlaso.app.services.firewall import (
 from atlaso.app.services.network_objects import (
     acquire_network_objects_write_lock,
     normalize_source_group,
+    orphaned_source_group_consumer_errors,
     source_group_consumers,
     source_group_id,
     source_group_nat_validation_errors,
@@ -125,6 +126,13 @@ def build_router(dependencies: NetworkObjectsUiDependencies) -> NetworkObjectsUi
             error
             for errors in source_group_nat_validation_errors(state["groups"], nat_rules).values()
             for error in errors
+        )
+        validation_errors.extend(
+            orphaned_source_group_consumer_errors(
+                state["groups"],
+                firewall_rules,
+                nat_rules,
+            )
         )
         return {
             "network_object_source_groups": rows,

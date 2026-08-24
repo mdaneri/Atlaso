@@ -13,6 +13,7 @@ from atlaso.app.models import FirewallRule, NatRule
 from atlaso.app.services.firewall import (
     FIREWALL_ANY_SOURCE_GROUP_ID,
     FIREWALL_SOURCE_GROUP_REFERENCE_PREFIX,
+    validate_firewall_rule,
     validate_firewall_source_groups,
 )
 from atlaso.app.services.routes_wan import validate_nat_source
@@ -225,6 +226,41 @@ def source_group_nat_validation_errors(
         group_id: list(dict.fromkeys(errors))
         for group_id, errors in sorted(errors_by_group.items())
     }
+
+
+def orphaned_source_group_consumer_errors(
+    groups: list[dict[str, Any]],
+    firewall_rules: Iterable[FirewallRule],
+    nat_rules: Iterable[NatRule],
+) -> list[str]:
+    """Return rule errors whose referenced Source Group no longer exists.
+
+    Args:
+        groups: Persisted Source Groups available to rule consumers.
+        firewall_rules: Operator-defined Firewall rules to validate.
+        nat_rules: Saved NAT rules to validate.
+
+    Returns:
+        Deterministically ordered page-level orphaned-reference errors.
+    """
+    missing_reference = "references a Source Group that does not exist"
+    errors: list[str] = []
+    for firewall_rule in firewall_rules:
+        errors.extend(
+            f"Firewall rule {firewall_rule.name}: {error}"
+            for error in validate_firewall_rule(firewall_rule, groups)
+            if missing_reference in error
+        )
+    source_group_ids = {str(group.get("id", "")) for group in groups}
+    for nat_rule in nat_rules:
+        if not nat_rule.enabled:
+            continue
+        errors.extend(
+            f"NAT rule {nat_rule.name}: {error}"
+            for error in validate_nat_source(str(nat_rule.source), source_group_ids, groups)
+            if missing_reference in error
+        )
+    return sorted(dict.fromkeys(errors))
 
 
 def source_group_rows(

@@ -312,6 +312,42 @@ def test_network_objects_page_reports_existing_nat_consumer_validation(client):
     ]
 
 
+def test_network_objects_page_reports_orphaned_rule_references(client):
+    """Expose missing Source Groups even when no collection row can own the error.
+
+    Args:
+        client: HTTP test client used to exercise the application.
+    """
+    from atlaso.app.database import SessionLocal
+    from atlaso.app.models import FirewallRule, NatRule
+
+    with SessionLocal() as db:
+        db.add(
+            FirewallRule(
+                name="orphaned-firewall-source",
+                source="group:custom:removed",
+                destination="any",
+            )
+        )
+        db.add(
+            NatRule(
+                name="orphaned-nat-source",
+                source="group:custom:removed",
+                outbound_interface="eth1",
+                enabled=True,
+            )
+        )
+        db.commit()
+
+    login(client)
+    page = client.get("/network-objects")
+
+    assert page.status_code == 200
+    assert "needs attention" in page.text
+    assert "Firewall rule orphaned-firewall-source: Source references a Source Group" in page.text
+    assert "NAT rule orphaned-nat-source: NAT source references a Source Group" in page.text
+
+
 def test_network_objects_delete_conflict_lists_every_consumer_and_rechecks_on_post(client):
     """Block deletion for nested, operator, managed, and NAT consumers.
 
