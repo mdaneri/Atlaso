@@ -1072,6 +1072,36 @@ def test_stale_atlaso_registration_ignores_unrelated_broken_entries(tmp_path: Pa
     assert "unrelated.value = keep-me" in inventory_text
 
 
+def test_unrelated_uncanonicalizable_inventory_owner_does_not_block_cleanup(
+    tmp_path: Path,
+) -> None:
+    """Ignore an unrelated absolute VMX owner whose path cannot be canonicalized.
+
+    Args:
+        tmp_path: Pytest temporary directory path.
+    """
+    root = tmp_path / "artifacts" / "vm"
+    vmx = root / "Atlaso.vmx"
+    _write_vmx(vmx)
+    malformed = f'vmlist7.config = "{tmp_path.resolve()}\\bad\x00owner.vmx"\n'
+    vmrun, environment, log, inventory = _write_fake_vmrun(
+        tmp_path / "fake", [vmx], inventory_suffix=malformed
+    )
+
+    result = _run_root_cleanup(
+        tmp_path,
+        removal_root=root,
+        expected_root=root,
+        vmrun_path=vmrun,
+        environment=environment,
+    )
+
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert not root.exists()
+    assert b"bad\x00owner.vmx" in inventory.read_bytes()
+    assert "deleteVM" not in [command[2] for command in _commands(log)]
+
+
 def test_stale_repair_rejects_duplicate_selected_library_id(tmp_path: Path) -> None:
     """Scoped repair never prunes an ID that also owns another config path.
 

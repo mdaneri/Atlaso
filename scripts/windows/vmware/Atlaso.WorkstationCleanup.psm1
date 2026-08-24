@@ -429,7 +429,7 @@ function Get-AtlasoScopedInventoryEntriesFromLines {
         if (-not $candidate -or -not [System.IO.Path]::IsPathFullyQualified($candidate) -or [System.IO.Path]::GetExtension($candidate) -ine '.vmx') {
             continue
         }
-        $canonicalPath = Get-AtlasoCanonicalPath -Path $candidate
+        try { $canonicalPath = Get-AtlasoCanonicalPath -Path $candidate } catch { continue }
         if (
             (Test-AtlasoSamePath -Left $canonicalPath -Right $ScopeRoot) -or
             (Test-AtlasoStrictDescendantPath -ParentPath $ScopeRoot -ChildPath $canonicalPath)
@@ -485,7 +485,8 @@ function Test-AtlasoWorkstationVmxRegistered {
             continue
         }
         if ([System.IO.Path]::GetExtension($candidate) -ine '.vmx') { $invalidOwnerIds.Add($id) | Out-Null }
-        $canonicalPath = Get-AtlasoCanonicalPath -Path $candidate
+        try { $canonicalPath = Get-AtlasoCanonicalPath -Path $candidate }
+        catch { $invalidOwnerIds.Add($id) | Out-Null; continue }
         if (-not $ownersById.ContainsKey($id)) {
             $ownersById[$id] = [System.Collections.Generic.List[string]]::new()
         }
