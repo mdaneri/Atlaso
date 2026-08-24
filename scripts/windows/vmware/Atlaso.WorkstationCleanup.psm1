@@ -175,7 +175,6 @@ Path whose ancestry is validated.
 #>
 function Assert-AtlasoPathHasNoReparsePoint {
     param([Parameter(Mandatory = $true)][string]$Path)
-
     $currentPath = Get-AtlasoCanonicalPath -Path $Path
     while ($currentPath) {
         $item = Get-Item -LiteralPath $currentPath -Force -ErrorAction SilentlyContinue
@@ -273,7 +272,6 @@ function Test-AtlasoByteArraysEqual {
         [Parameter(Mandatory = $true)][byte[]]$Left,
         [Parameter(Mandatory = $true)][byte[]]$Right
     )
-
     if ($Left.Length -ne $Right.Length) {
         return $false
     }
@@ -304,7 +302,6 @@ function Invoke-AtlasoVmrunChecked {
         [Parameter(Mandatory = $true)][string[]]$Arguments,
         [Parameter(Mandatory = $true)][string]$Action
     )
-
     $output = @(& $VmrunPath @Arguments 2>&1)
     $exitCode = $LASTEXITCODE
     if ($exitCode -ne 0) {
@@ -326,7 +323,6 @@ VMX file to inspect.
 #>
 function Get-AtlasoVmxDisplayName {
     param([Parameter(Mandatory = $true)][string]$Path)
-
     $displayNameLines = @(Get-Content -LiteralPath $Path -ErrorAction Stop | Where-Object { $_ -match '^\s*displayName\b' })
     if ($displayNameLines.Count -ne 1) {
         throw "Refusing VMware cleanup because the VMX must contain exactly one displayName assignment: $Path"
@@ -346,7 +342,6 @@ Raw vmrun output line.
 #>
 function ConvertFrom-AtlasoVmrunInventoryPath {
     param([Parameter(Mandatory = $true)][AllowEmptyString()][string]$InventoryLine)
-
     $candidate = $InventoryLine.Trim()
     if (-not $candidate) {
         return $null
@@ -374,7 +369,6 @@ function Get-AtlasoWorkstationVmPaths {
         [ValidateSet('running')]
         [string]$State = 'running'
     )
-
     $output = @(Invoke-AtlasoVmrunChecked `
             -VmrunPath $VmrunPath `
             -Arguments @('-T', 'ws', 'list') `
@@ -426,7 +420,6 @@ function Get-AtlasoScopedInventoryEntriesFromLines {
         [Parameter(Mandatory = $true)][AllowEmptyCollection()][AllowEmptyString()][string[]]$Lines,
         [Parameter(Mandatory = $true)][string]$ScopeRoot
     )
-
     $entries = @()
     foreach ($line in $Lines) {
         if ($line -notmatch '^\s*vmlist(?<id>\d+)\.config\s*=\s*"(?<path>.*)"\s*$') {
@@ -1253,6 +1246,14 @@ function Remove-AtlasoWorkstationVmArtifacts {
                 # A hard-link alias still references the pre-replacement file, so
                 # falling back to recursive deletion would strand its registration.
                 throw "VMware Workstation registration changed after VMX protection; the original VMX and artifacts were preserved: $resolvedVmxPath"
+            }
+            $relativeDeleteVmxPath = [System.IO.Path]::GetRelativePath($resolvedRemovalRoot, $resolvedVmxPath); $snapshot.Items[$relativeDeleteVmxPath] = $expectedDeleteIdentity
+            $backupRelativePath = if ($detachment.Detached) { [System.IO.Path]::GetRelativePath($resolvedRemovalRoot, $detachment.BackupPath) } else { $null }
+            if ($backupRelativePath) { $snapshot.Items[$backupRelativePath] = $detachment.OriginalIdentity }
+            try { Assert-AtlasoRootSnapshotUnreplaced -RemovalRoot $resolvedRemovalRoot -Snapshot $snapshot }
+            finally {
+                $snapshot.Items[$relativeDeleteVmxPath] = $targetIdentity
+                if ($backupRelativePath) { $snapshot.Items.Remove($backupRelativePath) | Out-Null }
             }
             Invoke-AtlasoVmrunChecked `
                 -VmrunPath $VmrunPath `

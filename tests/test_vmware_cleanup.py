@@ -852,6 +852,40 @@ def test_provider_delete_may_remove_the_complete_validated_root(tmp_path: Path) 
     assert "deleteVM" in [command[2] for command in _commands(log)]
 
 
+def test_provider_delete_rejects_a_late_non_vmx_artifact(tmp_path: Path) -> None:
+    """A late non-VMX descendant blocks provider-owned root deletion.
+
+    Args:
+        tmp_path: Pytest temporary directory path.
+    """
+    root = tmp_path / "artifacts" / "vm"
+    vmx = root / "Atlaso.vmx"
+    late_artifact = root / "late-provider-artifact.txt"
+    _write_vmx(vmx)
+    vmrun, environment, log, _ = _write_fake_vmrun(
+        tmp_path / "fake",
+        [vmx],
+        registered=True,
+        remove_root_after_delete=True,
+        create_on_list=4,
+        create_path=late_artifact,
+    )
+
+    result = _run_root_cleanup(
+        tmp_path,
+        removal_root=root,
+        expected_root=root,
+        vmrun_path=vmrun,
+        environment=environment,
+    )
+
+    assert result.returncode != 0
+    assert "new VMware artifact appeared" in result.stderr
+    assert vmx.exists()
+    assert late_artifact.read_text(encoding="utf-8") == "late artifact"
+    assert "deleteVM" not in [command[2] for command in _commands(log)]
+
+
 def test_provider_removed_root_rejects_ambiguous_recreation(tmp_path: Path) -> None:
     """A root recreated after provider deletion is preserved and rejected.
 
