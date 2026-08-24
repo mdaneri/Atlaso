@@ -49,6 +49,35 @@ def load_helper_module():
     return module
 
 
+def test_reserved_psgallery_source_requires_the_canonical_endpoint():
+    """Reject case-variant reserved names paired with custom endpoints."""
+    from atlaso.app.models import UpdateSource
+    from atlaso.app.services.update_sources import validate_update_source
+
+    invalid = UpdateSource(
+        kind="powershell",
+        name="psgallery",
+        url="https://packages.example.test/api/v2",
+        priority=50,
+        settings_json="{}",
+    )
+    valid = UpdateSource(
+        kind="powershell",
+        name="pSgAlLeRy",
+        url="https://www.powershellgallery.com/api/v2/",
+        priority=50,
+        settings_json="{}",
+    )
+
+    errors = validate_update_source(invalid)
+
+    assert errors == [
+        "PSGallery is reserved for the built-in PowerShell Gallery. "
+        "Use https://www.powershellgallery.com/api/v2, or choose a different repository name for a custom endpoint."
+    ]
+    assert validate_update_source(valid) == []
+
+
 def test_update_evidence_state_distinguishes_normal_absence_and_read_only_checks(tmp_path):
     """Keep source, fresh packaged, and read-only states neutral without fabricating evidence.
 
@@ -2689,6 +2718,272 @@ def test_helper_reports_unresolvable_powershell_repository_host(monkeypatch, tmp
     assert result["error"].startswith("PowerShell repository PSGallery host www.powershellgallery.com could not be resolved:")
 
 
+def test_helper_psgallery_sync_uses_default_registration_and_is_idempotent(monkeypatch, tmp_path):
+    """Use PowerShellGet's reserved-gallery path and retain canonical state across reruns.
+
+    Args:
+        monkeypatch: Pytest fixture used to replace dependencies for the test.
+        tmp_path: Temporary directory provided by pytest for isolated filesystem state.
+    """
+    import base64
+
+    helper = load_helper_module()
+    state_path = tmp_path / "update-sources.json"
+    scripts = []
+    monkeypatch.setattr(helper, "UPDATE_SOURCE_STATE_PATH", state_path)
+    monkeypatch.setattr(helper, "ATLASO_POWERSHELL_HOME", tmp_path / "powershell-home")
+    monkeypatch.setattr(helper, "_command_path", lambda _name: "/usr/bin/pwsh")
+    monkeypatch.setattr(helper.socket, "getaddrinfo", lambda *_args, **_kwargs: [(None, None, None, None, None)])
+
+    def successful_sync(command, *, success_codes=None, env=None):
+        """Capture one successful PowerShell synchronization command.
+
+        Args:
+            command: Command and arguments to execute.
+            success_codes: Success codes supplied to the test scenario.
+            env: Environment variables supplied to the child process.
+        """
+        scripts.append(base64.b64decode(command[-1]).decode("utf-16-le"))
+        return {
+            "command": command,
+            "returncode": 0,
+            "success": True,
+            "stdout": json.dumps(
+                {
+                    "Name": "PSGallery",
+                    "SourceLocation": "https://www.powershellgallery.com/api/v2",
+                    "InstallationPolicy": "Trusted",
+                    "ProbeSucceeded": True,
+                }
+            ),
+            "stderr": "",
+        }
+
+    monkeypatch.setattr(helper, "_command_payload", successful_sync)
+    payload = {
+        "source_definitions": [
+            {
+                "id": 1,
+                "kind": "powershell",
+                "name": "psgallery",
+                "url": "https://www.powershellgallery.com/api/v2",
+                "enabled": True,
+                "settings": {"trusted": True},
+            }
+        ]
+    }
+
+    first = helper._sync_appliance_update_sources(payload)
+    second = helper._sync_appliance_update_sources(payload)
+
+    assert first["status"] == second["status"] == "succeeded"
+    assert first["source_results"][0]["success"] is True
+    assert len(scripts) == 2
+    assert all("Register-PSRepository -Default -InstallationPolicy $policy" in script for script in scripts)
+    assert all("Register-PSRepository -Name $name" not in script for script in scripts)
+    assert all("Unregister-PSRepository -Name $existing.Name -ErrorAction Stop" in script for script in scripts)
+    assert all("Set-PSRepository -Name $existing.Name -InstallationPolicy $policy" in script for script in scripts)
+    assert all("Set-PSRepository -Name $existing.Name -SourceLocation $url" not in script for script in scripts)
+    assert all("Registered repository location does not match Atlaso desired state" in script for script in scripts)
+    assert all("Registered repository installation policy does not match Atlaso desired state" in script for script in scripts)
+    assert all("Find-Module -Repository $repository.Name" in script for script in scripts)
+    assert json.loads(state_path.read_text(encoding="utf-8")) == {
+        "powershell_repositories": ["PSGallery"]
+    }
+
+
+def test_helper_rejects_noncanonical_reserved_gallery_before_host_mutation(monkeypatch, tmp_path):
+    """Fail an invalid PSGallery definition before Photon or PowerShell mutation.
+
+    Args:
+        monkeypatch: Pytest fixture used to replace dependencies for the test.
+        tmp_path: Temporary directory provided by pytest for isolated filesystem state.
+    """
+    helper = load_helper_module()
+    photon_path = tmp_path / "atlaso-managed.repo"
+    monkeypatch.setattr(helper, "MANAGED_PHOTON_REPO_PATH", photon_path)
+    monkeypatch.setattr(
+        helper,
+        "_command_payload",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(AssertionError("host command must not run")),
+    )
+    payload = {
+        "source_definitions": [
+            {
+                "kind": "photon",
+                "name": "Internal Photon",
+                "url": "https://packages.example.test/photon",
+                "enabled": True,
+                "settings": {"managed": True},
+            },
+            {
+                "kind": "powershell",
+                "name": "PsGaLlErY",
+                "url": "https://packages.example.test/api/v2",
+                "enabled": True,
+                "settings": {"trusted": False},
+            },
+        ]
+    }
+
+    try:
+        helper._sync_appliance_update_sources(payload)
+    except ValueError as exc:
+        message = str(exc)
+    else:
+        raise AssertionError("invalid reserved PSGallery definition must fail")
+
+    assert "PSGallery is reserved" in message
+    assert "choose a different repository name" in message
+    assert not photon_path.exists()
+
+
+def test_helper_custom_repository_keeps_explicit_registration_and_credentials(monkeypatch, tmp_path):
+    """Keep custom registration, policy, probe, and protected credential behavior.
+
+    Args:
+        monkeypatch: Pytest fixture used to replace dependencies for the test.
+        tmp_path: Temporary directory provided by pytest for isolated filesystem state.
+    """
+    import base64
+
+    helper = load_helper_module()
+    state_path = tmp_path / "update-sources.json"
+    captured = {}
+    monkeypatch.setattr(helper, "UPDATE_SOURCE_STATE_PATH", state_path)
+    monkeypatch.setattr(helper, "ATLASO_POWERSHELL_HOME", tmp_path / "powershell-home")
+    monkeypatch.setattr(helper, "_command_path", lambda _name: "/usr/bin/pwsh")
+    monkeypatch.setattr(helper.socket, "getaddrinfo", lambda *_args, **_kwargs: [(None, None, None, None, None)])
+
+    def successful_sync(command, *, success_codes=None, env=None):
+        """Capture custom repository command and environment.
+
+        Args:
+            command: Command and arguments to execute.
+            success_codes: Success codes supplied to the test scenario.
+            env: Environment variables supplied to the child process.
+        """
+        captured["script"] = base64.b64decode(command[-1]).decode("utf-16-le")
+        captured["env"] = env
+        return {"command": command, "returncode": 0, "success": True, "stdout": "{}", "stderr": ""}
+
+    monkeypatch.setattr(helper, "_command_payload", successful_sync)
+    result = helper._sync_appliance_update_sources(
+        {
+            "source_definitions": [
+                {
+                    "id": 7,
+                    "kind": "powershell",
+                    "name": "PrivateGallery",
+                    "url": "https://packages.example.test/api/v2",
+                    "enabled": True,
+                    "settings": {"trusted": False},
+                }
+            ]
+        },
+        {"7": {"username": "operator", "secret": "test-secret"}},
+    )
+
+    assert result["status"] == "succeeded"
+    assert "Register-PSRepository -Name $name -SourceLocation $url" in captured["script"]
+    assert "Register-PSRepository -Default" not in captured["script"]
+    assert "Find-Module -Repository $repository.Name @credentialArgs" in captured["script"]
+    assert captured["env"]["LF_REPO_USER"] == "operator"
+    assert captured["env"]["LF_REPO_SECRET"] == "test-secret"
+    assert "test-secret" not in captured["script"]
+
+
+def test_helper_readback_mismatch_is_not_persisted_as_synchronized(monkeypatch, tmp_path):
+    """Keep a failed canonical readback out of successful synchronization state.
+
+    Args:
+        monkeypatch: Pytest fixture used to replace dependencies for the test.
+        tmp_path: Temporary directory provided by pytest for isolated filesystem state.
+    """
+    helper = load_helper_module()
+    state_path = tmp_path / "update-sources.json"
+    monkeypatch.setattr(helper, "UPDATE_SOURCE_STATE_PATH", state_path)
+    monkeypatch.setattr(helper, "ATLASO_POWERSHELL_HOME", tmp_path / "powershell-home")
+    monkeypatch.setattr(helper, "_command_path", lambda _name: "/usr/bin/pwsh")
+    monkeypatch.setattr(helper.socket, "getaddrinfo", lambda *_args, **_kwargs: [(None, None, None, None, None)])
+    monkeypatch.setattr(
+        helper,
+        "_command_payload",
+        lambda command, **_kwargs: {
+            "command": command,
+            "returncode": 1,
+            "success": False,
+            "stdout": "",
+            "stderr": "Registered repository location does not match Atlaso desired state",
+        },
+    )
+
+    result = helper._sync_appliance_update_sources(
+        {
+            "source_definitions": [
+                {
+                    "id": 1,
+                    "kind": "powershell",
+                    "name": "PSGallery",
+                    "url": "https://www.powershellgallery.com/api/v2",
+                    "enabled": True,
+                    "settings": {"trusted": False},
+                }
+            ]
+        }
+    )
+
+    assert result["status"] == "failed"
+    assert result["source_results"][0]["success"] is False
+    assert result["error"] == "Registered repository location does not match Atlaso desired state"
+    assert json.loads(state_path.read_text(encoding="utf-8")) == {"powershell_repositories": []}
+
+
+def test_helper_probe_failure_is_not_persisted_as_synchronized(monkeypatch, tmp_path):
+    """Keep a failed Find-Module probe actionable and out of synchronization state.
+
+    Args:
+        monkeypatch: Pytest fixture used to replace dependencies for the test.
+        tmp_path: Temporary directory provided by pytest for isolated filesystem state.
+    """
+    helper = load_helper_module()
+    state_path = tmp_path / "update-sources.json"
+    monkeypatch.setattr(helper, "UPDATE_SOURCE_STATE_PATH", state_path)
+    monkeypatch.setattr(helper, "ATLASO_POWERSHELL_HOME", tmp_path / "powershell-home")
+    monkeypatch.setattr(helper, "_command_path", lambda _name: "/usr/bin/pwsh")
+    monkeypatch.setattr(helper.socket, "getaddrinfo", lambda *_args, **_kwargs: [(None, None, None, None, None)])
+    monkeypatch.setattr(
+        helper,
+        "_command_payload",
+        lambda command, **_kwargs: {
+            "command": command,
+            "returncode": 1,
+            "success": False,
+            "stdout": "",
+            "stderr": "No match was found for the specified search criteria and repository name PSGallery.",
+        },
+    )
+
+    result = helper._sync_appliance_update_sources(
+        {
+            "source_definitions": [
+                {
+                    "id": 1,
+                    "kind": "powershell",
+                    "name": "PSGallery",
+                    "url": "https://www.powershellgallery.com/api/v2",
+                    "enabled": True,
+                    "settings": {"trusted": False},
+                }
+            ]
+        }
+    )
+
+    assert result["status"] == "failed"
+    assert result["error"].startswith("No match was found")
+    assert json.loads(state_path.read_text(encoding="utf-8")) == {"powershell_repositories": []}
+
+
 def test_helper_retries_failed_powershell_repository_removal(monkeypatch, tmp_path):
     """A failed unregister remains recorded until a later synchronization succeeds.
 
@@ -2773,7 +3068,7 @@ def test_helper_source_sync_probes_powershell_repository_endpoint(monkeypatch, t
             "returncode": 1,
             "success": False,
             "stdout": "",
-            "stderr": "No match was found for the specified search criteria and repository name PSGallery.",
+            "stderr": "No match was found for the specified search criteria and repository name PrivateGallery.",
         }
 
     monkeypatch.setattr(helper, "_command_payload", fail_invalid_endpoint)
@@ -2783,8 +3078,8 @@ def test_helper_source_sync_probes_powershell_repository_endpoint(monkeypatch, t
                 {
                     "id": 1,
                     "kind": "powershell",
-                    "name": "PSGallery",
-                    "url": "https://www.powershellgallery.com/api/v21",
+                    "name": "PrivateGallery",
+                    "url": "https://packages.example.test/api/v21",
                     "enabled": True,
                     "settings": {"trusted": False},
                 }
@@ -2795,11 +3090,11 @@ def test_helper_source_sync_probes_powershell_repository_endpoint(monkeypatch, t
     assert result["status"] == "failed"
     assert result["error"].startswith("No match was found")
     assert result["source_results"] == [
-        {"id": 1, "kind": "powershell", "name": "PSGallery", "success": False}
+        {"id": 1, "kind": "powershell", "name": "PrivateGallery", "success": False}
     ]
     assert "Set-PSRepository" in scripts[0]
-    assert "Find-Module -Repository $name" in scripts[0]
-    assert "https://www.powershellgallery.com/api/v21" in scripts[0]
+    assert "Find-Module -Repository $repository.Name" in scripts[0]
+    assert "https://packages.example.test/api/v21" in scripts[0]
 
 
 def test_appliance_update_failure_message_uses_actionable_command_stderr():
