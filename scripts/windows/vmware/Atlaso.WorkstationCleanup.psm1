@@ -46,7 +46,6 @@ namespace Atlaso
             public uint FileIndexHigh;
             public uint FileIndexLow;
         }
-
         [DllImport("kernel32.dll", CharSet = CharSet.Unicode, SetLastError = true)]
         private static extern SafeFileHandle CreateFileW(
             string fileName,
@@ -57,13 +56,11 @@ namespace Atlaso
             uint flagsAndAttributes,
             IntPtr templateFile
         );
-
         [DllImport("kernel32.dll", SetLastError = true)]
         private static extern bool GetFileInformationByHandle(
             SafeFileHandle file,
             out ByHandleFileInformation information
         );
-
         public static string Get(string path)
         {
             using (SafeFileHandle handle = CreateFileW(
@@ -80,13 +77,11 @@ namespace Atlaso
                 {
                     throw new Win32Exception(Marshal.GetLastWin32Error());
                 }
-
                 ByHandleFileInformation information;
                 if (!GetFileInformationByHandle(handle, out information))
                 {
                     throw new Win32Exception(Marshal.GetLastWin32Error());
                 }
-
                 return String.Format(
                     "{0:X8}:{1:X8}{2:X8}",
                     information.VolumeSerialNumber,
@@ -1237,7 +1232,11 @@ function Remove-AtlasoWorkstationVmArtifacts {
             ) {
                 throw "VMware Workstation VMX changed immediately before deleteVM; artifacts were preserved: $resolvedVmxPath"
             }
-            $currentKnownVmxPaths = @($resolvedVmxPaths | Where-Object { Test-Path -LiteralPath $_ -PathType Leaf })
+            $currentKnownVmxPaths = @($resolvedVmxPaths | Where-Object { Test-Path -LiteralPath $_ -PathType Leaf } | ForEach-Object {
+                    $expectedSurvivorIdentity = if (Test-AtlasoSamePath -Left $_ -Right $resolvedVmxPath) { $expectedDeleteIdentity } else { $validatedTargetIdentities[$_] }
+                    if ((Get-AtlasoPathIdentity -Path $_ -Description 'VMware cleanup target') -ne $expectedSurvivorIdentity) { throw "VMware Workstation VMX was replaced immediately before deleteVM; artifacts were preserved: $_" }
+                    $_
+                })
             $currentDiscoveredVmxPaths = @(
                 Get-ChildItem -LiteralPath $resolvedRemovalRoot -Filter '*.vmx' -File -Recurse -Force -ErrorAction Stop |
                     ForEach-Object { (Resolve-Path -LiteralPath $_.FullName -ErrorAction Stop).Path }

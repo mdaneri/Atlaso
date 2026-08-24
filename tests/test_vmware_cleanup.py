@@ -53,6 +53,9 @@ def _write_fake_vmrun(
     rewrite_disk: Path | None = None,
     create_on_list: int = 0,
     create_path: Path | None = None,
+    replace_on_list: int = 0,
+    replace_target: Path | None = None,
+    replace_with: str = 'displayName = "Concurrent replacement"\n',
     register_on_list: int = 0,
     inventory_suffix: str = "",
 ) -> tuple[Path, dict[str, str], Path, Path]:
@@ -73,6 +76,9 @@ def _write_fake_vmrun(
         rewrite_disk: Path written during list-based rewrite.
         create_on_list: Provider call count that creates extra artifact.
         create_path: Artifact path written when create_on_list matches.
+        replace_on_list: Provider list call count that replaces a VMX path.
+        replace_target: VMX path rewritten when replace_on_list matches.
+        replace_with: Replacement VMX content written by replace_on_list.
         register_on_list: Provider call count that registers a VM.
         inventory_suffix: Extra inventory file text appended to the fixture.
     """
@@ -160,6 +166,15 @@ if command == "list":
     count_path = state / "list-count.txt"
     list_count = int(count_path.read_text(encoding="utf-8")) + 1 if count_path.exists() else 1
     count_path.write_text(str(list_count), encoding="utf-8")
+    if (
+        list_count == int(os.environ["ATLASO_FAKE_VMRUN_REPLACE_ON_LIST"]) and
+        os.environ["ATLASO_FAKE_VMRUN_REPLACE_TARGET"]
+    ):
+        replace_target = Path(os.environ["ATLASO_FAKE_VMRUN_REPLACE_TARGET"])
+        replace_with = os.environ["ATLASO_FAKE_VMRUN_REPLACE_WITH"]
+        staging_target = replace_target.with_suffix(".atlaso-replacement.vmx")
+        staging_target.write_text(replace_with, encoding="utf-8")
+        staging_target.replace(replace_target)
     if list_count == int(os.environ["ATLASO_FAKE_VMRUN_REWRITE_ON_LIST"]):
         rewrite_target = Path(os.environ["ATLASO_FAKE_VMRUN_REWRITE_TARGET"])
         rewrite_disk = os.environ["ATLASO_FAKE_VMRUN_REWRITE_DISK"]
@@ -256,6 +271,9 @@ raise SystemExit(64)
             "ATLASO_FAKE_VMRUN_REWRITE_DISK": str(rewrite_disk or ""),
             "ATLASO_FAKE_VMRUN_CREATE_ON_LIST": str(create_on_list),
             "ATLASO_FAKE_VMRUN_CREATE_PATH": str(create_path or ""),
+            "ATLASO_FAKE_VMRUN_REPLACE_ON_LIST": str(replace_on_list),
+            "ATLASO_FAKE_VMRUN_REPLACE_TARGET": str(replace_target or ""),
+            "ATLASO_FAKE_VMRUN_REPLACE_WITH": replace_with,
             "ATLASO_FAKE_VMRUN_REGISTER_ON_LIST": str(register_on_list),
         }
     )
@@ -628,6 +646,49 @@ def test_multiple_vmx_cleanup_preflights_all_targets_before_first_delete(
     assert len(stop_indices) == 2
     assert delete_indices, commands
     assert max(stop_indices) < min(delete_indices)
+
+
+def test_multi_vmx_later_registration_replaced_before_first_delete_preserves_root(
+    tmp_path: Path,
+) -> None:
+    """A later VMX identity replacement blocks cleanup before any provider delete.
+
+    Args:
+        tmp_path: Pytest temporary directory path.
+    """
+    root = tmp_path / "artifacts" / "vm"
+    first_vmx = root / "first.vmx"
+    second_vmx = root / "second.vmx"
+    _write_vmx(first_vmx, "First")
+    _write_vmx(second_vmx, "Second")
+    vmrun, environment, log, _ = _write_fake_vmrun(
+        tmp_path / "fake",
+        [first_vmx, second_vmx],
+        replace_on_list=3,
+        replace_target=second_vmx,
+        replace_with='displayName = "Replaced later"\n',
+        inventory_suffix=(
+            f'vmlist1.config = "{first_vmx.resolve()}"\n'
+            f'index0.id = "{first_vmx.resolve()}"\n'
+            'index.count = "1"\n'
+        ),
+    )
+
+    result = _run_root_cleanup(
+        tmp_path,
+        removal_root=root,
+        expected_root=root,
+        vmrun_path=vmrun,
+        environment=environment,
+    )
+
+    assert result.returncode != 0
+    assert "replaced immediately before deleteVM" in result.stderr
+    assert root.exists()
+    assert first_vmx.exists()
+    assert second_vmx.exists()
+    assert second_vmx.read_text(encoding="utf-8") == 'displayName = "Replaced later"\n'
+    assert "deleteVM" not in [command[2] for command in _commands(log)]
 
 
 def test_live_registration_rejects_non_vmx_hardlink_inventory_entry(
