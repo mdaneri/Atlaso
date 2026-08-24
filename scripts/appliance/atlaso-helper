@@ -11025,12 +11025,13 @@ def _sync_appliance_update_sources(payload: dict, credentials: dict[str, dict[st
         commands.append(command)
         source_succeeded = bool(command.get("success"))
         record_source_result(source, success=source_succeeded)
-        if source_succeeded:
-            current_powershell_names[name_key] = (
-                PSGALLERY_NAME if _is_reserved_psgallery_name(name) else name
-            )
-        elif name_key in previous_powershell_names:
-            current_powershell_names[name_key] = previous_powershell_names[name_key]
+        # Once PowerShellGet runs, registration may have completed before a
+        # readback or probe failure. Retain ownership so a later disable,
+        # deletion, or reset still reconciles the possibly-created repository;
+        # source_results remains the authoritative synchronization outcome.
+        current_powershell_names[name_key] = (
+            PSGALLERY_NAME if _is_reserved_psgallery_name(name) else name
+        )
     if pwsh is not None:
         for name_key in sorted(previous_powershell_names.keys() - current_powershell_names.keys()):
             name = previous_powershell_names[name_key]

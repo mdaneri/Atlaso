@@ -2893,8 +2893,8 @@ def test_helper_custom_repository_keeps_explicit_registration_and_credentials(mo
     assert "test-secret" not in captured["script"]
 
 
-def test_helper_readback_mismatch_is_not_persisted_as_synchronized(monkeypatch, tmp_path):
-    """Keep a failed canonical readback out of successful synchronization state.
+def test_helper_readback_mismatch_retains_ownership_without_reporting_success(monkeypatch, tmp_path):
+    """Retain cleanup ownership while a failed readback remains unsynchronized.
 
     Args:
         monkeypatch: Pytest fixture used to replace dependencies for the test.
@@ -2936,11 +2936,13 @@ def test_helper_readback_mismatch_is_not_persisted_as_synchronized(monkeypatch, 
     assert result["status"] == "failed"
     assert result["source_results"][0]["success"] is False
     assert result["error"] == "Registered repository location does not match Atlaso desired state"
-    assert json.loads(state_path.read_text(encoding="utf-8")) == {"powershell_repositories": []}
+    assert json.loads(state_path.read_text(encoding="utf-8")) == {
+        "powershell_repositories": ["PSGallery"]
+    }
 
 
-def test_helper_probe_failure_is_not_persisted_as_synchronized(monkeypatch, tmp_path):
-    """Keep a failed Find-Module probe actionable and out of synchronization state.
+def test_helper_probe_failure_retains_ownership_without_reporting_success(monkeypatch, tmp_path):
+    """Retain cleanup ownership while a failed probe remains unsynchronized.
 
     Args:
         monkeypatch: Pytest fixture used to replace dependencies for the test.
@@ -2980,8 +2982,11 @@ def test_helper_probe_failure_is_not_persisted_as_synchronized(monkeypatch, tmp_
     )
 
     assert result["status"] == "failed"
+    assert result["source_results"][0]["success"] is False
     assert result["error"].startswith("No match was found")
-    assert json.loads(state_path.read_text(encoding="utf-8")) == {"powershell_repositories": []}
+    assert json.loads(state_path.read_text(encoding="utf-8")) == {
+        "powershell_repositories": ["PSGallery"]
+    }
 
 
 def test_helper_retries_failed_powershell_repository_removal(monkeypatch, tmp_path):
