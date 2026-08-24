@@ -834,8 +834,8 @@ function Assert-AtlasoRootSnapshotUnreplaced {
             throw "A VMware artifact was replaced during cleanup; the replacement was preserved: $($item.FullName)"
         }
     }
+    if ((Get-AtlasoPathIdentity -Path $RemovalRoot -Description 'VMware artifact root') -ne $Snapshot.RootIdentity) { throw "VMware artifact root was replaced during cleanup; the replacement was preserved: $RemovalRoot" }
 }
-
 <#
 .SYNOPSIS
 Match a running VMX path to a target by path or filesystem identity.
