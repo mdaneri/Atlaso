@@ -500,6 +500,33 @@ def test_malformed_running_inventory_path_fails_closed(
     assert vmx.exists()
 
 
+def test_missing_running_inventory_path_fails_closed(tmp_path: Path) -> None:
+    """A missing out-of-root running alias prevents recursive cleanup.
+
+    Args:
+        tmp_path: Pytest temporary directory path.
+    """
+    root = tmp_path / "artifacts" / "vm"
+    vmx = root / "Atlaso.vmx"
+    missing_alias = tmp_path / "aliases" / "missing.vmx"
+    _write_vmx(vmx)
+    vmrun, environment, _, _ = _write_fake_vmrun(
+        tmp_path / "fake", [missing_alias], running=True
+    )
+
+    result = _run_root_cleanup(
+        tmp_path,
+        removal_root=root,
+        expected_root=root,
+        vmrun_path=vmrun,
+        environment=environment,
+    )
+
+    assert result.returncode != 0
+    assert "missing or non-VMX running path" in result.stderr
+    assert vmx.exists()
+
+
 def test_registered_hard_link_alias_uses_deletevm(tmp_path: Path) -> None:
     """An out-of-root library alias still identifies the registered target.
 
@@ -1100,6 +1127,43 @@ def test_unrelated_uncanonicalizable_inventory_owner_does_not_block_cleanup(
     assert not root.exists()
     assert b"bad\x00owner.vmx" in inventory.read_bytes()
     assert "deleteVM" not in [command[2] for command in _commands(log)]
+
+
+def test_unrelated_uncanonicalizable_inventory_index_does_not_block_repair(
+    tmp_path: Path,
+) -> None:
+    """Ignore an unrelated index path that cannot be canonicalized.
+
+    Args:
+        tmp_path: Pytest temporary directory path.
+    """
+    parent = tmp_path / "image" / "vmware-workstation"
+    root = parent / "test-vms"
+    root.mkdir(parents=True)
+    stale = root / "missing.vmx"
+    malformed = f'index8.id = "{tmp_path.resolve()}\\bad\x00index.vmx"\n'
+    vmrun, environment, _, inventory = _write_fake_vmrun(
+        tmp_path / "fake",
+        [],
+        inventory_suffix=(
+            f'vmlist7.config = "{stale.resolve()}"\n'
+            f'index7.id = "{stale.resolve()}"\n'
+            f"{malformed}"
+        ),
+    )
+
+    result = _run_root_cleanup(
+        tmp_path,
+        removal_root=root,
+        artifact_parent=parent,
+        vmrun_path=vmrun,
+        environment=environment,
+    )
+
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert not root.exists()
+    assert str(stale.resolve()).encode() not in inventory.read_bytes()
+    assert b"bad\x00index.vmx" in inventory.read_bytes()
 
 
 def test_stale_repair_rejects_duplicate_selected_library_id(tmp_path: Path) -> None:

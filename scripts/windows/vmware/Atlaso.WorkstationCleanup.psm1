@@ -253,7 +253,6 @@ File to hash.
 #>
 function Get-AtlasoFileSha256 {
     param([Parameter(Mandatory = $true)][string]$Path)
-
     return (Get-FileHash -LiteralPath $Path -Algorithm SHA256 -ErrorAction Stop).Hash
 }
 
@@ -390,6 +389,7 @@ function Get-AtlasoWorkstationVmPaths {
             }).Count -gt 0) {
         throw 'vmrun list returned a non-absolute or malformed VMX path; artifacts were preserved.'
     }
+    if (@($reportedPaths | Where-Object { [System.IO.Path]::GetExtension($_) -ine '.vmx' -or -not (Test-Path -LiteralPath $_ -PathType Leaf) }).Count -gt 0) { throw 'vmrun list returned a missing or non-VMX running path; artifacts were preserved.' }
     return $reportedPaths
 }
 
@@ -697,7 +697,7 @@ function Remove-AtlasoWorkstationStaleRegistrations {
         if (-not $indexOwners.ContainsKey($index)) {
             $indexOwners[$index] = [System.Collections.Generic.List[string]]::new()
         }
-        $indexOwners[$index].Add((Get-AtlasoCanonicalPath -Path $Matches.path))
+        try { $indexOwners[$index].Add((Get-AtlasoCanonicalPath -Path $Matches.path)) } catch { $invalidIndexes.Add($index) | Out-Null }
     }
     $targetIndexes = [System.Collections.Generic.HashSet[string]]::new([System.StringComparer]::OrdinalIgnoreCase)
     foreach ($index in $indexOwners.Keys) {
