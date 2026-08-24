@@ -34,8 +34,10 @@ from atlaso.app.services.network_objects import (
     normalize_source_group,
     source_group_consumers,
     source_group_id,
+    source_group_reference_target,
     source_group_rows,
 )
+from atlaso.app.services.routes_wan import validate_nat_source
 from atlaso.app.ui_routes import MANAGEMENT_UI_ROOT
 
 Endpoint = Callable[..., Any]
@@ -312,6 +314,15 @@ def build_router(dependencies: NetworkObjectsUiDependencies) -> NetworkObjectsUi
                 )
 
         errors = validate_firewall_source_groups(groups)
+        source_group_ids = {str(group.get("id", "")) for group in groups}
+        nat_rules = db.execute(select(NatRule).order_by(NatRule.priority, NatRule.name)).scalars().all()
+        for rule in nat_rules:
+            if not source_group_reference_target(str(rule.source), groups):
+                continue
+            errors.extend(
+                f"NAT rule {rule.name}: {error}"
+                for error in validate_nat_source(str(rule.source), source_group_ids, groups)
+            )
         if errors:
             return JSONResponse(
                 {"status": "error", "detail": " ".join(errors), "errors": errors},

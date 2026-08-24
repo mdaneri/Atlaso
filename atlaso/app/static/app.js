@@ -1467,9 +1467,9 @@ function initializeAtlasoResourceWizard(config) {
   table = grid.table;
   if (!table) {
     grid.setError(config.gridError || "Resource changes are unavailable because the interactive grid could not initialize.");
-    return { grid, table: null, wizard: null };
+  } else {
+    element.atlasoTabulator = table;
   }
-  element.atlasoTabulator = table;
 
   wizard = window.AtlasoUiPatterns.createWizard({
     form,
@@ -1504,6 +1504,10 @@ function initializeAtlasoResourceWizard(config) {
       const payload = await atlasoGridWizardRequest(url, body);
       const resource = config.normalizeResource?.(payload[config.resourceName], payload) || payload[config.resourceName];
       if (!resource) throw new Error("The server did not return the saved resource.");
+      if (!table) {
+        window.location.reload();
+        return { valid: true };
+      }
       if (recordId) {
         const existingRow = table.getRow(recordId) || table.getRow(Number(recordId));
         await existingRow?.update(resource);
@@ -4472,6 +4476,7 @@ function initializeNetworkObjectSourceGroups() {
     updateLabel: "Update Source Group",
     emptyMessage: "No Source Groups are available.",
     actionErrorSelector: "#network-objects-error",
+    addLauncherSelector: "[data-network-object-source-group-open]",
     defaults: { action: "create", group_name: "", description: "", group_entries: "any" },
     canEdit: (data) => canWrite && !data.builtin,
     inlineEnabled: false,

@@ -149,6 +149,7 @@ from atlaso.app.services.local_users import (
     restore_pending_os_password_snapshot,
     validate_password_policy_json,
 )
+from atlaso.app.services.network_objects import acquire_network_objects_write_lock
 from atlaso.app.services.networking import (
     LEGACY_NETWORK_ROLE_REPLACEMENTS,
     NETWORK_ROLES,
@@ -1387,6 +1388,7 @@ def restore_settings_archive(db: Session, archive: dict[str, Any]) -> dict[str, 
         db: Active database session.
         archive: Archive payload or path to process.
     """
+    acquire_network_objects_write_lock(db)
     prepared_archive = deepcopy(archive)
     prepared_data = prepared_archive.get("data") if isinstance(prepared_archive, dict) else None
     if isinstance(prepared_data, dict):

@@ -190,3 +190,12 @@ test("Source Group draft restoration rejects a removed server-rendered option an
   assert.match(source.validityMessage, /no longer available/i);
   assert.equal(source.focused, true);
 });
+
+test("Source Group fallback Add control retains a wizard when Tabulator is unavailable", () => {
+  const initializer = functionSource("initializeNetworkObjectSourceGroups");
+  const adapter = functionSource("initializeAtlasoResourceWizard");
+
+  assert.match(initializer, /addLauncherSelector: "\[data-network-object-source-group-open\]"/);
+  assert.match(adapter, /if \(!table\) \{\s*window\.location\.reload\(\)/);
+  assert.doesNotMatch(adapter, /return \{ grid, table: null, wizard: null \}/);
+});

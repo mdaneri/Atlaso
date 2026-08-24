@@ -5,6 +5,8 @@ import json
 import re
 import threading
 
+import pytest
+
 from tests.routers.ui.helpers import login
 
 
@@ -147,6 +149,58 @@ def test_network_objects_validation_returns_actionable_wizard_detail(client):
     payload = response.json()
     assert payload["detail"] == " ".join(payload["errors"])
     assert "missing" in payload["detail"].lower()
+
+
+def test_network_objects_rejects_updates_that_invalidate_nat_consumers(client):
+    """Keep a shared Source Group valid for every referencing NAT rule.
+
+    Args:
+        client: HTTP test client used to exercise the application.
+    """
+    login(client)
+    csrf = _csrf(client.get("/network-objects"))
+    created = _create_group(client, csrf, "NAT clients", "192.0.2.0/24").json()["source_group"]
+
+    from sqlalchemy import select
+
+    from atlaso.app.database import SessionLocal
+    from atlaso.app.models import NatRule, Setting
+    from atlaso.app.services.firewall import FIREWALL_SOURCE_GROUPS_SETTING_KEY
+
+    with SessionLocal() as db:
+        db.add(
+            NatRule(
+                name="nat-clients-egress",
+                source=f"group:{created['id']}",
+                outbound_interface="eth1",
+                enabled=True,
+            )
+        )
+        db.commit()
+
+    response = client.post(
+        "/network-objects/source-groups",
+        data={
+            "csrf": csrf,
+            "action": "update",
+            "group_id": created["id"],
+            "group_name": created["name"],
+            "group_entries": "2001:db8::/64",
+            "description": created["description"],
+        },
+        headers={"X-Atlaso-Grid": "1"},
+    )
+
+    assert response.status_code == 422
+    assert "NAT rule nat-clients-egress" in response.json()["detail"]
+    assert "IPv4" in response.json()["detail"]
+    with SessionLocal() as db:
+        setting = db.execute(
+            select(Setting).where(Setting.key == FIREWALL_SOURCE_GROUPS_SETTING_KEY)
+        ).scalar_one()
+        groups = json.loads(setting.value)["groups"]
+        persisted = next(group for group in groups if group["id"] == created["id"])
+        assert persisted["entries"] == ["192.0.2.0/24"]
 
 
 def test_network_objects_mutations_return_refreshed_consumer_rows(client):
@@ -388,3 +442,40 @@ def test_network_objects_writer_lock_serializes_consumer_mutations():
         assert acquired.wait(2)
         worker.join(timeout=2)
         assert not worker.is_alive()
+
+
+def test_settings_restore_locks_network_objects_before_archive_validation(monkeypatch):
+    """Serialize archive validation and replacement with Source Group writers.
+
+    Args:
+        monkeypatch: Pytest fixture used to observe lock and validation ordering.
+    """
+    import atlaso.app.services.settings_archive as settings_archive
+    from atlaso.app.database import SessionLocal
+
+    events: list[str] = []
+
+    def acquire_lock(_db) -> None:
+        """Record acquisition of the shared transaction lock.
+
+        Args:
+            _db: Database session supplied by the restore service.
+        """
+        events.append("lock")
+
+    def reject_archive(_archive) -> None:
+        """Reject the candidate after recording validation order.
+
+        Args:
+            _archive: Candidate archive supplied by the restore service.
+        """
+        events.append("validate")
+        raise ValueError("invalid archive")
+
+    monkeypatch.setattr(settings_archive, "acquire_network_objects_write_lock", acquire_lock)
+    monkeypatch.setattr(settings_archive, "_validate_archive", reject_archive)
+
+    with SessionLocal() as db, pytest.raises(ValueError, match="invalid archive"):
+        settings_archive.restore_settings_archive(db, {})
+
+    assert events == ["lock", "validate"]
