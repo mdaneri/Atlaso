@@ -74,9 +74,9 @@ These captures show responsive layouts and useful operational states referenced 
 
 ### Dashboard
 
-![Atlaso Dashboard with several navigation sections collapsed and the double-right-angle expand control available.](../assets/screenshots/primary-navigation-collapsed-desktop.webp)
+![Atlaso Dashboard with all navigation sections collapsed and the double-right-angle expand control available.](../assets/screenshots/primary-navigation-collapsed-desktop.webp)
 
-*Figure: Authenticated primary navigation with independent sections partially collapsed and the shared bulk control.*
+*Figure: Authenticated primary navigation with every authorized section collapsed and the shared bulk control.*
 
 ![Responsive Atlaso Dashboard with independent navigation sections and the symbol bulk control.](../assets/screenshots/primary-navigation-collapsed-responsive.webp)
 

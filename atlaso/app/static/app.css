@@ -8571,6 +8571,10 @@ dialog.has-expanded-monaco .confirm-modal-panel {
     grid-template-columns: repeat(2, minmax(0, 1fr));
   }
 
+  .primary-nav-controls {
+    grid-column: 1 / -1;
+  }
+
   .sidebar-apply {
     margin-top: 12px;
     padding-top: 0;

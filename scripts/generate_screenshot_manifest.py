@@ -345,9 +345,9 @@ SPECIAL = {
     ),
     "primary-navigation-collapsed-desktop": (
         "/dashboard",
-        "navigation-partially-collapsed",
-        "Authenticated primary navigation with independent sections partially collapsed and the shared bulk control.",
-        "Atlaso Dashboard with several navigation sections collapsed and the double-right-angle expand control available.",
+        "navigation-collapsed",
+        "Authenticated primary navigation with every authorized section collapsed and the shared bulk control.",
+        "Atlaso Dashboard with all navigation sections collapsed and the double-right-angle expand control available.",
     ),
     "primary-navigation-collapsed-responsive": (
         "/dashboard",

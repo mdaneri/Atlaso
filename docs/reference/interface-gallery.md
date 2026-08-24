@@ -151,11 +151,11 @@ Figure: Dashboard in the verified clean-appliance responsive state.
 
 Figure: Dashboard with valid pending changes and a unit needing attention.
 
-![Atlaso Dashboard with several navigation sections collapsed and the double-right-angle expand control available.](../assets/screenshots/primary-navigation-collapsed-desktop.webp)
+![Atlaso Dashboard with all navigation sections collapsed and the double-right-angle expand control available.](../assets/screenshots/primary-navigation-collapsed-desktop.webp)
 
-Figure: Authenticated primary navigation with independent sections partially collapsed and the shared bulk control.
+Figure: Authenticated primary navigation with every authorized section collapsed and the shared bulk control.
 
-![Atlaso Dashboard responsive layout with independent expanded and collapsed navigation sections and the symbol bulk control.](../assets/screenshots/primary-navigation-collapsed-responsive.webp)
+![Responsive Atlaso Dashboard with independent navigation sections and the symbol bulk control.](../assets/screenshots/primary-navigation-collapsed-responsive.webp)
 
 Figure: Authenticated primary navigation and its compact bulk control at the responsive viewport.
 
