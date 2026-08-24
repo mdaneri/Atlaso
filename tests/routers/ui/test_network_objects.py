@@ -465,6 +465,20 @@ def test_network_objects_writer_lock_serializes_consumer_mutations():
         assert not worker.is_alive()
 
 
+def test_network_objects_writer_lock_upgrades_an_existing_sqlite_read_transaction():
+    """Acquire SQLite writer serialization after the caller has already queried."""
+    from sqlalchemy import select
+
+    from atlaso.app.database import SessionLocal
+    from atlaso.app.models import Setting
+    from atlaso.app.services.network_objects import acquire_network_objects_write_lock
+
+    with SessionLocal() as db:
+        db.execute(select(Setting).limit(1)).first()
+        acquire_network_objects_write_lock(db)
+        db.rollback()
+
+
 def test_settings_restore_locks_network_objects_before_archive_validation(monkeypatch):
     """Serialize archive validation and replacement with Source Group writers.
 

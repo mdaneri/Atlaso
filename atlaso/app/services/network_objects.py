@@ -35,7 +35,7 @@ def acquire_network_objects_write_lock(db: Session) -> None:
     """
     connection = db.connection()
     if connection.dialect.name == "sqlite":
-        connection.exec_driver_sql("BEGIN IMMEDIATE")
+        connection.exec_driver_sql("UPDATE settings SET value = value WHERE 0")
         return
     if connection.dialect.name == "postgresql":
         connection.execute(
@@ -159,13 +159,13 @@ def source_group_consumers(
                     }
                 )
                 break
-    for rule in firewall_rules:
+    for firewall_rule in firewall_rules:
         for field, label in (("source", "Source"), ("destination", "Destination")):
-            if source_group_reference_target(str(getattr(rule, field, "")), groups) == group_id:
+            if source_group_reference_target(str(getattr(firewall_rule, field, "")), groups) == group_id:
                 consumers.append(
                     {
                         "kind": "firewall_rule",
-                        "label": f"Firewall rule: {rule.name}",
+                        "label": f"Firewall rule: {firewall_rule.name}",
                         "detail": label,
                     }
                 )
@@ -178,12 +178,12 @@ def source_group_consumers(
                     "detail": "Source Group assignment",
                 }
             )
-    for rule in nat_rules:
-        if source_group_reference_target(str(rule.source), groups) == group_id:
+    for nat_rule in nat_rules:
+        if source_group_reference_target(str(nat_rule.source), groups) == group_id:
             consumers.append(
                 {
                     "kind": "nat_rule",
-                    "label": f"NAT rule: {rule.name}",
+                    "label": f"NAT rule: {nat_rule.name}",
                     "detail": "Source restriction",
                 }
             )
