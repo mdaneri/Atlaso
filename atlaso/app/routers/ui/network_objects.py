@@ -55,6 +55,7 @@ class NetworkObjectsUiDependencies:
     setting_value: Endpoint
     set_setting_value: Endpoint
     grid_request: Endpoint
+    firewall_context: Endpoint
 
 
 @dataclass(frozen=True)
@@ -81,6 +82,7 @@ def build_router(dependencies: NetworkObjectsUiDependencies) -> NetworkObjectsUi
     setting_value = dependencies.setting_value
     set_setting_value = dependencies.set_setting_value
     grid_request = dependencies.grid_request
+    firewall_context = dependencies.firewall_context
 
     def source_group_state_for_db(db: Session) -> dict[str, Any]:
         """Return Source Group state while retaining the historical settings key.
@@ -237,6 +239,27 @@ def build_router(dependencies: NetworkObjectsUiDependencies) -> NetworkObjectsUi
             status_code=status_code,
         )
 
+    def _legacy_autosave_response(db: Session) -> JSONResponse:
+        """Return the Firewall page contract expected by pre-upgrade browsers.
+
+        Args:
+            db: Active database session.
+
+        Returns:
+            Refreshed Firewall validation and rendered configuration preview.
+        """
+        context = firewall_context(db)
+        return JSONResponse(
+            {
+                "status": "saved",
+                "updated_at": utcnow().isoformat(),
+                "valid": not context["firewall_validation_errors"],
+                "validation_errors": context["firewall_validation_errors"],
+                "config_path": context["firewall_settings"].config_path,
+                "config_preview": context["firewall_config_preview"],
+            }
+        )
+
     async def _mutate_source_groups(
         request: Request,
         identity: Identity,
@@ -390,6 +413,8 @@ def build_router(dependencies: NetworkObjectsUiDependencies) -> NetworkObjectsUi
             Canonical non-replaying redirect or validation response.
         """
         response = await _mutate_source_groups(request, identity, db)
+        if response.status_code < 300 and request.headers.get("X-Atlaso-Autosave") == "1":
+            return _legacy_autosave_response(db)
         if response.status_code < 300 and request.headers.get("X-Atlaso-Autosave") != "1":
             return RedirectResponse(f"{MANAGEMENT_UI_ROOT}/network-objects", status_code=303)
         return response

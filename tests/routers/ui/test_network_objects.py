@@ -446,6 +446,15 @@ def test_network_objects_unreferenced_delete_and_legacy_routes_are_non_replaying
     assert legacy_post.status_code == 303
     assert legacy_post.headers["location"] == "/ui/management/network-objects"
 
+    from atlaso.app.database import SessionLocal
+    from atlaso.app.models import FirewallSettings
+
+    with SessionLocal() as db:
+        settings = db.query(FirewallSettings).first()
+        assert settings is not None
+        settings.default_input_policy = "invalid"
+        db.commit()
+
     legacy_autosave = client.post(
         "/firewall/source-groups",
         data={
@@ -460,8 +469,23 @@ def test_network_objects_unreferenced_delete_and_legacy_routes_are_non_replaying
     )
     assert legacy_autosave.status_code == 200
     assert legacy_autosave.headers["content-type"].startswith("application/json")
-    assert legacy_autosave.json()["source_group"]["name"] == "Autosaved temporary networks"
-    assert legacy_autosave.json()["source_group"]["description"] == "Temporary clients description"
+    legacy_payload = legacy_autosave.json()
+    assert legacy_payload["valid"] is False
+    assert "Default input policy must be accept or drop." in legacy_payload["validation_errors"]
+    assert legacy_payload["config_path"] == "/etc/atlaso/nftables.d/atlaso.nft"
+    assert "table inet atlaso" in legacy_payload["config_preview"]
+
+    refreshed_after_autosave = client.get("/network-objects")
+    match = re.search(
+        r'id="network-object-source-groups-table"[^>]+data-source-groups=\'([^\']*)\'',
+        refreshed_after_autosave.text,
+        re.S,
+    )
+    assert match is not None
+    autosaved_rows = json.loads(html.unescape(match.group(1)))
+    autosaved = next(row for row in autosaved_rows if row["id"] == group_id)
+    assert autosaved["name"] == "Autosaved temporary networks"
+    assert autosaved["description"] == "Temporary clients description"
 
     legacy_rename = client.post(
         "/firewall/source-groups",

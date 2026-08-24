@@ -15694,6 +15694,7 @@ _network_objects_ui = build_network_objects_ui_router(
         setting_value=setting_value,
         set_setting_value=set_setting_value,
         grid_request=grid_request,
+        firewall_context=firewall_context,
     )
 )
 network_objects_router = _network_objects_ui.router
