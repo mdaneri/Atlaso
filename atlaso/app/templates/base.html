@@ -12,7 +12,7 @@
     <link rel="icon" href="/favicon.ico" type="image/x-icon">
     <link rel="icon" href="/static/brand/atlaso-icon.svg" type="image/svg+xml">
     <link rel="stylesheet" href="/static/vendor/tabulator/tabulator.min.css">
-    <link rel="stylesheet" href="/static/app.css?v=issue-474-1">
+    <link rel="stylesheet" href="/static/app.css?v=issues-499-500-2">
     {% block extra_head %}{% endblock %}
   </head>
   <body>
@@ -22,7 +22,7 @@
         <a class="brand sidebar-brand" href="{{ management_ui_root }}" aria-label="Atlaso Dashboard">
           <img class="sidebar-brand-logo" src="/static/brand/atlaso-logo-horizontal-transparent-1200x300.png" alt="">
         </a>
-        <nav class="nav-stack" aria-label="Primary">
+        <nav class="nav-stack" aria-label="Primary" data-primary-navigation>
           {% set nav_groups = [
             ("overview", "Overview", [
               ("Dashboard", management_ui_path("/dashboard"), "read:dashboard"),
@@ -74,6 +74,7 @@
           {% set nav_group_aliases = {
             "identity-trust": [(management_ui_path("/ca/requests"), "write:ca-requests")]
           } %}
+          {% set primary_navigation = namespace(groups=[]) %}
           {% for group_key, group_label, links in nav_groups %}
             {% set group = namespace(authorized_links=[], active=false) %}
             {% for alias, scope in nav_group_aliases.get(group_key, []) %}
@@ -94,33 +95,41 @@
               {% endif %}
             {% endfor %}
             {% if group.authorized_links %}
-              <section class="nav-section{% if group.active %} active{% endif %}" data-primary-nav-group data-nav-group-key="{{ group_key }}">
+              {% set primary_navigation.groups = primary_navigation.groups + [{"key": group_key, "label": group_label, "links": group.authorized_links, "active": group.active}] %}
+            {% endif %}
+          {% endfor %}
+          {% if primary_navigation.groups %}
+            <div class="primary-nav-controls">
+              <button class="button ghost primary-nav-bulk-toggle" type="button" data-primary-nav-bulk-toggle data-primary-nav-bulk-action="collapse" aria-label="Collapse all navigation groups" title="Collapse all navigation groups">&lt;&lt;</button>
+            </div>
+          {% endif %}
+          {% for group in primary_navigation.groups %}
+              <section class="nav-section{% if group.active %} active{% endif %}" data-primary-nav-group data-nav-group-key="{{ group.key }}">
                 <button
-                  id="primary-nav-{{ group_key }}-toggle"
+                  id="primary-nav-{{ group.key }}-toggle"
                   class="nav-section-toggle"
                   type="button"
                   aria-expanded="true"
-                  aria-controls="primary-nav-{{ group_key }}-links"
+                  aria-controls="primary-nav-{{ group.key }}-links"
                   data-primary-nav-toggle
                 >
-                  <span>{{ group_label }}</span>
+                  <span>{{ group.label }}</span>
                   <svg class="nav-section-chevron" viewBox="0 0 20 20" aria-hidden="true" focusable="false">
                     <path d="m5.5 7.5 4.5 4.5 4.5-4.5"/>
                   </svg>
                 </button>
                 <div
-                  id="primary-nav-{{ group_key }}-links"
+                  id="primary-nav-{{ group.key }}-links"
                   class="nav-section-links"
                   role="group"
-                  aria-labelledby="primary-nav-{{ group_key }}-toggle"
+                  aria-labelledby="primary-nav-{{ group.key }}-toggle"
                   data-primary-nav-links
                 >
-                  {% for label, href, active in group.authorized_links %}
+                  {% for label, href, active in group.links %}
                     <a class="nav-link {% if active %}active{% endif %}" href="{{ href }}"{% if active %} aria-current="page"{% endif %}>{{ label }}</a>
                   {% endfor %}
                 </div>
               </section>
-            {% endif %}
           {% endfor %}
         </nav>
         {% if identity %}
@@ -390,7 +399,7 @@
     <link rel="stylesheet" href="/static/vendor/monaco/atlaso-monaco.min.css?v=atlaso-monaco-20260806-7">
     <script src="/static/vendor/monaco/atlaso-monaco.min.js?v=atlaso-monaco-20260806-7"></script>
     <script src="/static/ui-routes.js?v=issue-287-1"></script>
-    <script src="/static/app.js?v=issue-471-7"></script>
+    <script src="/static/app.js?v=issues-499-500-2"></script>
     <script src="/static/pwa.js?v=issue-287-2"></script>
     {% block extra_scripts %}{% endblock %}
   </body>

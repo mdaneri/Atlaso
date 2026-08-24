@@ -55,6 +55,14 @@ def test_login_and_dashboard_render(client):
         assert section in nav
     assert nav.count("data-primary-nav-group") == 6
     assert nav.count("data-primary-nav-toggle") == 6
+    assert "data-primary-navigation" in response.text
+    assert nav.count("data-primary-nav-bulk-toggle") == 1
+    assert 'data-primary-nav-bulk-action="collapse"' in nav
+    assert 'aria-label="Collapse all navigation groups"' in nav
+    assert 'title="Collapse all navigation groups"' in nav
+    assert ">&lt;&lt;</button>" in nav
+    assert "data-primary-nav-collapse-icon" not in nav
+    assert "data-primary-nav-expand-icon" not in nav
     assert nav.count('aria-expanded="true"') == 6
     assert nav.count('role="group"') == 6
     assert 'data-nav-group-key="overview"' in nav
@@ -888,7 +896,7 @@ def test_pwa_manifest_service_worker_and_offline_shell(client):
     assert service_worker.headers["cache-control"] == "no-cache"
     assert service_worker.headers["service-worker-allowed"] == "/ui/management/"
     assert "ATLASO_CACHE" in service_worker.text
-    assert "atlaso-management-pwa-v269" in service_worker.text
+    assert "atlaso-management-pwa-v271" in service_worker.text
     assert 'fetch(asset, { cache: "reload" })' in service_worker.text
     assert ".catch(() => undefined)" in service_worker.text
     assert 'request.mode === "navigate"' in service_worker.text
@@ -902,11 +910,11 @@ def test_pwa_manifest_service_worker_and_offline_shell(client):
     assert 'accept.includes("text/html")' in service_worker.text
     assert '!hasDownloadLikePath(url)' in service_worker.text
     assert "/static/vendor/monaco/atlaso-monaco.min.js?v=atlaso-monaco-20260806-7" in service_worker.text
-    assert "/static/app.css?v=issue-474-1" in service_worker.text
+    assert "/static/app.css?v=issues-499-500-2" in service_worker.text
     assert "/static/ui-patterns.js?v=atlaso-ui-foundation-20260726-8" in service_worker.text
     assert "/static/appliance-apply-polling.js?v=issue-420-6" in service_worker.text
     assert "/static/ui-routes.js?v=issue-287-1" in service_worker.text
-    assert "/static/app.js?v=issue-471-7" in service_worker.text
+    assert "/static/app.js?v=issues-499-500-2" in service_worker.text
     assert "/static/terminal.js?v=issue-287-2" in service_worker.text
     assert "/static/pwa.js?v=issue-287-2" in service_worker.text
     assert "vcfdt-configuration-248-20260807-14" not in service_worker.text
@@ -932,7 +940,7 @@ def test_pwa_manifest_service_worker_and_offline_shell(client):
     )
     assert offline_stylesheet is not None
     assert offline_stylesheet.group(1) == (
-        "/static/app.css?v=issue-474-1"
+        "/static/app.css?v=issues-499-500-2"
     )
     assert f'"{offline_stylesheet.group(1)}"' in service_worker.text
 
@@ -960,8 +968,8 @@ def test_shared_ui_pattern_shell_and_wizard_contracts(client):
     base = (templates / "base.html").read_text(encoding="utf-8")
     public_base = (templates / "public_portal_base.html").read_text(encoding="utf-8")
     for shell, app_asset in (
-        (base, "/static/app.js?v=issue-471-7"),
-        (public_base, "/static/app.js?v=issue-471-7"),
+        (base, "/static/app.js?v=issues-499-500-2"),
+        (public_base, "/static/app.js?v=issues-499-500-2"),
         (base, "/static/appliance-apply-polling.js?v=issue-420-6"),
     ):
         assert shell.index("/static/vendor/tabulator/tabulator.min.js") < shell.index(
@@ -1607,9 +1615,9 @@ def test_monitor_page_renders_template_and_browser_assets(client):
     assert "Loading devices" not in page.text
     assert "<th>Device</th><th>Read/s</th><th>Write/s</th>" in page.text
     assert "swagger-link-icon" in page.text
-    assert "/static/app.css?v=issue-474-1" in page.text
+    assert "/static/app.css?v=issues-499-500-2" in page.text
     assert "/static/ui-patterns.js?v=atlaso-ui-foundation-20260726-8" in page.text
-    assert "/static/app.js?v=issue-471-7" in page.text
+    assert "/static/app.js?v=issues-499-500-2" in page.text
     app_css = client.get("/static/app.css")
     assert app_css.status_code == 200
     assert ".split-workspace > .wide-panel" in app_css.text
@@ -2154,6 +2162,8 @@ def test_primary_navigation_omits_empty_permission_filtered_groups(client):
     assert 'primary-nav-appliance-setup' not in nav
     assert 'data-nav-group-key="core-services"' not in nav
     assert 'primary-nav-core-services' not in nav
+    assert nav.count("data-primary-nav-group") == 4
+    assert nav.count("data-primary-nav-bulk-toggle") == 1
 
 
 def test_primary_navigation_maps_secondary_routes_to_their_parent_link(client):
