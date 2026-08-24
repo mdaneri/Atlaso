@@ -803,6 +803,49 @@ def test_stale_repair_rejects_duplicate_selected_library_id(tmp_path: Path) -> N
     assert str(unrelated.resolve()) in inventory.read_text(encoding="utf-8")
 
 
+@pytest.mark.parametrize(
+    "malformed_owner",
+    ['vmlist7.config = relative.vmx\n', 'vmlist7.config = "relative.vmx"\n'],
+)
+def test_stale_repair_rejects_malformed_selected_library_owner(
+    tmp_path: Path, malformed_owner: str
+) -> None:
+    """Scoped repair preserves a selected ID with a malformed second owner.
+
+    Args:
+        tmp_path: Pytest temporary directory path.
+        malformed_owner: Malformed selected-ID row appended to the inventory.
+    """
+    parent = tmp_path / "image" / "vmware-workstation"
+    root = parent / "test-vms"
+    root.mkdir(parents=True)
+    sentinel = root / "sentinel.txt"
+    sentinel.write_text("keep", encoding="utf-8")
+    stale = root / "missing.vmx"
+    vmrun, environment, _, inventory = _write_fake_vmrun(
+        tmp_path / "fake",
+        [],
+        inventory_suffix=(
+            f'vmlist7.config = "{stale.resolve()}"\n'
+            f'index7.id = "{stale.resolve()}"\n'
+            f"{malformed_owner}"
+        ),
+    )
+
+    result = _run_root_cleanup(
+        tmp_path,
+        removal_root=root,
+        artifact_parent=parent,
+        vmrun_path=vmrun,
+        environment=environment,
+    )
+
+    assert result.returncode != 0
+    assert "selected library ID '7' to multiple config paths" in result.stderr
+    assert sentinel.read_text(encoding="utf-8") == "keep"
+    assert malformed_owner.strip() in inventory.read_text(encoding="utf-8")
+
+
 def test_stale_repair_preserves_ambiguously_owned_index(tmp_path: Path) -> None:
     """Duplicate index ownership is left untouched during scoped repair.
 
@@ -1315,5 +1358,10 @@ def test_module_keeps_inventory_work_out_of_normal_delete_path() -> None:
         "Assert-AtlasoRootSnapshotUnreplaced", confirmation_index
     )
     assert snapshot_index < confirmation_index < post_confirmation_guard
+    wrapper_path = module.split("function Remove-AtlasoWorkstationArtifactRoot", 1)[1]
+    wrapper_snapshot = wrapper_path.index("$wrapperSnapshot = Get-AtlasoRootSnapshot")
+    wrapper_confirmation = wrapper_path.index("$PSCmdlet.ShouldProcess")
+    wrapper_guard = wrapper_path.index("Assert-AtlasoRootSnapshotUnreplaced")
+    assert wrapper_snapshot < wrapper_confirmation < wrapper_guard
     implementation = re.sub(r"<#.*?#>\s*", "", module, flags=re.DOTALL)
     assert len(implementation.splitlines()) < 1_100

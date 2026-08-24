@@ -643,7 +643,6 @@ function Remove-AtlasoWorkstationStaleRegistrations {
         [Parameter(Mandatory = $false)][AllowNull()][string]$InventoryPath,
         [Parameter(Mandatory = $true)][string]$ScopeRoot
     )
-
     if (-not $InventoryPath) {
         return
     }
@@ -656,7 +655,6 @@ function Remove-AtlasoWorkstationStaleRegistrations {
     if ($staleEntries.Count -eq 0) {
         return
     }
-
     $realInventoryPath = Join-Path ([Environment]::GetFolderPath('ApplicationData')) 'VMware\inventory.vmls'
     if (
         (Test-AtlasoSamePath -Left $InventoryPath -Right $realInventoryPath) -and
@@ -664,7 +662,6 @@ function Remove-AtlasoWorkstationStaleRegistrations {
     ) {
         throw 'Close the VMware Workstation UI before removing stale Atlaso VM library entries.'
     }
-
     $targetIds = [System.Collections.Generic.HashSet[string]]::new([System.StringComparer]::OrdinalIgnoreCase)
     $targetPaths = [System.Collections.Generic.HashSet[string]]::new([System.StringComparer]::OrdinalIgnoreCase)
     $targetIdPaths = @{}
@@ -673,18 +670,22 @@ function Remove-AtlasoWorkstationStaleRegistrations {
         $targetPaths.Add($entry.Path) | Out-Null
         if (-not $targetIdPaths.ContainsKey($entry.Id)) { $targetIdPaths[$entry.Id] = $entry.Path }
     }
-
     $selectedIdOwners = @{}
+    $invalidSelectedIds = [System.Collections.Generic.HashSet[string]]::new([System.StringComparer]::OrdinalIgnoreCase)
     foreach ($line in $lines) {
-        if ($line -match '^\s*vmlist(?<id>\d+)\.config\s*=\s*"(?<path>.*)"\s*$' -and $targetIds.Contains($Matches.id)) {
-            if (-not $selectedIdOwners.ContainsKey($Matches.id)) {
-                $selectedIdOwners[$Matches.id] = [System.Collections.Generic.List[string]]::new()
-            }
-            $selectedIdOwners[$Matches.id].Add($Matches.path)
+        if ($line -notmatch '^\s*vmlist(?<id>\d+)\.config\s*=') { continue }
+        $selectedId = $Matches.id
+        if (-not $targetIds.Contains($selectedId)) { continue }
+        if ($line -notmatch '^\s*vmlist\d+\.config\s*=\s*"(?<path>.*)"\s*$' -or -not [System.IO.Path]::IsPathFullyQualified($Matches.path)) {
+            $invalidSelectedIds.Add($selectedId) | Out-Null
+            continue
         }
+        if (-not $selectedIdOwners.ContainsKey($selectedId)) { $selectedIdOwners[$selectedId] = [System.Collections.Generic.List[string]]::new() }
+        $selectedIdOwners[$selectedId].Add($Matches.path)
     }
     foreach ($targetId in $targetIds) {
         if (
+            $invalidSelectedIds.Contains($targetId) -or
             -not $selectedIdOwners.ContainsKey($targetId) -or
             $selectedIdOwners[$targetId].Count -ne 1 -or
             -not (Test-AtlasoSamePath `
@@ -694,7 +695,6 @@ function Remove-AtlasoWorkstationStaleRegistrations {
             throw "VMware Workstation inventory assigns selected library ID '$targetId' to multiple config paths; artifacts were preserved."
         }
     }
-
     $indexOwners = @{}
     $invalidIndexes = [System.Collections.Generic.HashSet[string]]::new([System.StringComparer]::OrdinalIgnoreCase)
     foreach ($line in $lines) {
@@ -718,7 +718,6 @@ function Remove-AtlasoWorkstationStaleRegistrations {
             $targetIndexes.Add($index) | Out-Null
         }
     }
-
     $updatedLines = [System.Collections.Generic.List[string]]::new()
     foreach ($line in $lines) {
         if ($line -match '^\s*vmlist(?<id>\d+)\.' -and $targetIds.Contains($Matches.id)) {
@@ -1346,7 +1345,6 @@ function Remove-AtlasoWorkstationArtifactRoot {
         [Parameter(Mandatory = $true, ParameterSetName = 'ExactConfiguredRoot')][string]$ExpectedRemovalRoot,
         [Parameter(Mandatory = $true)][string]$RemovalRoot
     )
-
     if ($null -eq (Get-Item -LiteralPath $RemovalRoot -Force -ErrorAction SilentlyContinue)) {
         return
     }
@@ -1372,7 +1370,9 @@ function Remove-AtlasoWorkstationArtifactRoot {
         Get-ChildItem -LiteralPath $resolvedRemovalRoot -Filter '*.vmx' -File -Recurse -Force -ErrorAction Stop |
             ForEach-Object { $_.FullName }
     )
+    $wrapperSnapshot = Get-AtlasoRootSnapshot -RemovalRoot $resolvedRemovalRoot
     if ($PSCmdlet.ShouldProcess($resolvedRemovalRoot, 'Verify VMware VM state and remove artifact root')) {
+        Assert-AtlasoRootSnapshotUnreplaced -RemovalRoot $resolvedRemovalRoot -Snapshot $wrapperSnapshot
         Remove-AtlasoWorkstationVmArtifacts `
             -VmrunPath $VmrunPath `
             -VmxPaths $vmxPaths `
