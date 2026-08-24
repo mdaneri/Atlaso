@@ -73,6 +73,16 @@ try {
     Assert-Equal $resolved.PublicKey $validKey 'The public key resolver must preserve one normalized Ed25519 key.'
     Assert-Equal $resolved.Path (Resolve-Path -LiteralPath $keyPath).Path 'The public key resolver must return the exact path.'
 
+    $hostKeyEvidence = ConvertTo-AtlasoWorkstationSshHostKeyEvidence -PublicKey $validKey
+    Assert-Equal `
+        $hostKeyEvidence.PublicKey `
+        ($validKey -replace ' atlaso&test$', '') `
+        'Host-key evidence must omit the non-identity comment.'
+    Assert-Equal `
+        $hostKeyEvidence.Fingerprint `
+        'SHA256:ZkAslGjFiUHdGf/WUL8rQvkib4PTvQatUV0OUQSncCA' `
+        'Host-key evidence must use the OpenSSH SHA-256 fingerprint format.'
+
     $withoutKey = New-AtlasoWorkstationOvfEnvironment `
         -Fqdn 'atlaso-test.atlaso.internal' `
         -AdminPassword 'VMware01!Test' `

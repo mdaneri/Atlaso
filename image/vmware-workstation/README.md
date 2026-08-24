@@ -395,8 +395,10 @@ that key for `admin` and a separate development-only passwordless-sudo drop-in. 
 The wrapper fails early for a missing, malformed, multiline, non-Ed25519, or unbounded key and never generates or copies
 a private key. Root SSH stays disabled, and the Workstation lifecycle runner and exported OVF/OVA properties do not
 receive this test-only access. Complete factory reset removes the development key and sudoers drop-in. Verify and
-approve the appliance SSH host key once through the normal OpenSSH known-hosts workflow; subsequent local Codex and
-Copilot tasks under the same Windows user can use ordinary key/agent
+approve the appliance SSH host key once from the wrapper's host-derived output. After startup it prints the exact
+public Ed25519 host key and SHA-256 fingerprint from test-only VMware guest-info for explicit `known_hosts`
+verification; the wrapper never trusts unauthenticated `ssh-keyscan` output. Subsequent local Codex and Copilot tasks
+under the same Windows user can use ordinary key/agent
 authentication and `sudo -n` without the 1Password bridge.
 
 The wrapper requires the cloned Photon OS and Atlaso system-content VMDKs at SCSI units 0 and 1, then creates fresh
@@ -425,12 +427,15 @@ default for the first-boot CA endpoint, retrying transient connection and servic
 best-effort between retries through .NET file APIs, including when the current user's temporary directory contains a
 dotted profile name or a valid DOS 8.3 short-path representation. Cleanup cannot replace the original readiness error
 or stop the retry loop. After the VM starts, the wrapper prints a connection summary with the HTTPS console URL,
-Swagger URL, OpenAPI URL, root certificate URL, and `ssh admin@<appliance-ip>` command.
+Swagger URL, OpenAPI URL, root certificate URL, `ssh admin@<appliance-ip>` command, and—when development key
+provisioning is enabled—the host-derived Ed25519 public key plus SHA-256 fingerprint.
 
 Both this wrapper and the Workstation lifecycle runner inject a complete `guestinfo.ovfEnv` document into a raw cloned
 VMX before power-on. The default document selects IPv4 DHCP, leaves resolver overrides blank, keeps IPv6 and root SSH
 disabled, and supplies the required appliance identity and first-boot credentials. The normal test wrapper alone adds
-the internal development administrator public-key property; the lifecycle runner omits it. This gives raw Workstation
+the internal development administrator public-key property; the lifecycle runner omits it. When that property is
+present, the customizer publishes the VM's public Ed25519 SSH host key through the separate
+`guestinfo.atlaso.test_vm_ssh_host_ed25519_public_key` value after wire-format validation. This gives raw Workstation
 clones the same fail-closed initialization contract as an OVA deployment instead of leaving the customizer waiting for
 properties
 that only an OVF deployment normally supplies. A generated non-secret deployment identifier distinguishes each raw

@@ -58,8 +58,8 @@ relying on it.
 
 If Spark is unavailable, rate-limited, its usage allowance is exhausted,
 or the worker cannot be started because of capacity/runtime limitations,
-Sol performs the work directly. Do not repeatedly retry Spark after a
-quota or rate-limit failure, and do not substitute another model.
+Sol performs the work directly. Sol does not repeatedly retry Spark after a
+quota or rate-limit failure and never substitutes another model.
 Report the fallback once for the current task.
 
 ## Mandatory UI Design Guide Gate
@@ -481,8 +481,11 @@ The following cross-cutting boundaries always apply:
   administrator and a separate test-only passwordless-sudo drop-in by default. Resolve the default only from the current
   Windows user's `.ssh/id_ed25519.pub`, permit an explicit public-key path or explicit skip, and fail before cleanup or
   creation for missing, malformed, non-Ed25519, multiline, or conflicting input. Never generate, copy, or expose a
-  private key. Keep the property internal to this wrapper, preserve root SSH as disabled, and do not extend this
-  development-only authority to lifecycle VMs or exported OVF/OVA deployments.
+  private key. When that test-only property is present, publish only the VM's public Ed25519 SSH host key through a
+  separate VMware guest-info value. Read, wire-validate, and fingerprint that host-derived value before displaying it
+  for explicit `known_hosts` verification; never substitute unauthenticated `ssh-keyscan` output.
+  Keep both properties internal to this wrapper, preserve root SSH as disabled, and do not extend this development-only
+  authority to lifecycle VMs or exported OVF/OVA deployments.
 - Inventory Linux reports use bounded schema v2 while accepting and normalizing legacy v1. Keep sysfs authoritative for
   device enumeration, use metadata tools only for structured enrichment/readable names, retain JSON in the existing
   report column, enforce the 256 KiB boundary, and never submit raw command output. Its five-minute local console

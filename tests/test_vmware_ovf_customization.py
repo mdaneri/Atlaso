@@ -1667,6 +1667,71 @@ def test_vmware_ovf_customizer_scrubs_consumed_guestinfo_credentials(monkeypatch
     assert "root-secret1" not in str(commands)
 
 
+def test_vmware_ovf_customizer_publishes_test_vm_host_key_without_client_key(
+    tmp_path, monkeypatch
+):
+    """Publish only the canonical public host key through test-only guest-info.
+
+    Args:
+        tmp_path: Isolated filesystem root.
+        monkeypatch: Pytest fixture used to replace VMware Tools.
+    """
+    customizer = load_customizer()
+    customizer.SSH_HOST_ED25519_PUBLIC_KEY_PATH = tmp_path / "ssh_host_ed25519_key.pub"
+    customizer.SSH_HOST_ED25519_PUBLIC_KEY_PATH.write_text(
+        f"{VALID_ED25519_PUBLIC_KEY}\n",
+        encoding="utf-8",
+    )
+    commands = []
+
+    def fake_run(command, **kwargs):
+        """Record one VMware guest-info publication.
+
+        Args:
+            command: Command and arguments to execute.
+            **kwargs: Additional subprocess options.
+
+        Returns:
+            A successful bounded command result.
+        """
+        commands.append((command, kwargs))
+        return type("Result", (), {"returncode": 0})()
+
+    monkeypatch.setattr(customizer.shutil, "which", lambda command: f"/usr/bin/{command}")
+    monkeypatch.setattr(customizer.subprocess, "run", fake_run)
+
+    customizer.publish_test_vm_ssh_host_key()
+
+    expected_host_key = " ".join(VALID_ED25519_PUBLIC_KEY.split()[:2])
+    assert commands == [
+        (
+            [
+                "/usr/bin/vmware-rpctool",
+                f'info-set {customizer.TEST_VM_SSH_HOST_KEY_GUESTINFO} "{expected_host_key}"',
+            ],
+            {"check": False, "text": True, "capture_output": True},
+        )
+    ]
+    assert "atlaso-test" not in str(commands)
+
+
+def test_vmware_ovf_customizer_rejects_invalid_test_vm_host_key(tmp_path):
+    """Fail before guest-info publication when the installed host key is invalid.
+
+    Args:
+        tmp_path: Isolated filesystem root.
+    """
+    customizer = load_customizer()
+    customizer.SSH_HOST_ED25519_PUBLIC_KEY_PATH = tmp_path / "ssh_host_ed25519_key.pub"
+    customizer.SSH_HOST_ED25519_PUBLIC_KEY_PATH.write_text(
+        "ssh-rsa invalid\n",
+        encoding="utf-8",
+    )
+
+    with pytest.raises(customizer.OvfCustomizationError, match="test_vm_ssh_host"):
+        customizer.publish_test_vm_ssh_host_key()
+
+
 def test_vmware_ovf_customizer_recovers_pending_marker_after_scrub_interruption(tmp_path, monkeypatch):
     """Verify a crash between credential scrub and marker promotion remains recoverable.
 
@@ -1938,6 +2003,8 @@ def test_vmware_ovf_customizer_rotates_clone_specific_env_secrets(tmp_path, monk
     customizer.configure_development_admin_ssh = lambda username, key: development_ssh.append(
         (username, key)
     )
+    published_host_keys = []
+    customizer.publish_test_vm_ssh_host_key = lambda: published_host_keys.append(True)
     scrubbed = []
 
     def clear_ovf_environment():
@@ -1981,6 +2048,7 @@ def test_vmware_ovf_customizer_rotates_clone_specific_env_secrets(tmp_path, monk
     assert synchronized == [True]
     assert scrubbed == [True]
     assert development_ssh == [("admin", VALID_ED25519_PUBLIC_KEY)]
+    assert published_host_keys == [True]
     assert marker["cidr"] == "192.168.10.10/24"
     assert "admin-secret" not in str(marker)
     assert "root-secret1" not in str(marker)

@@ -1393,7 +1393,10 @@ The normal wrapper resolves the current Windows user's existing `.ssh/id_ed25519
 creation, validates it as one canonical Ed25519 public key, and provisions it for the bootstrap `admin` account with a
 separate test-only passwordless-sudo rule. Use `-SshPublicKeyPath <path>` for another existing Ed25519 public key or
 `-SkipSshKeyProvisioning` to preserve password-backed access. It never generates or copies a private key. Lifecycle
-VMs, exported OVF/OVA appliances, and root SSH remain unchanged. The canonical operational details and safety boundary
+VMs, exported OVF/OVA appliances, and root SSH remain unchanged. After startup, the wrapper reads the VM's public
+Ed25519 host key from test-only VMware guest-info, validates its OpenSSH wire format, and prints the exact public key and
+SHA-256 fingerprint for explicit `known_hosts` verification without trusting unauthenticated `ssh-keyscan` output. The
+canonical operational details and safety boundary
 are documented in [VMware Workstation Lifecycle Testing](vmware-workstation-lifecycle-testing.md#normal-test-vm).
 
 To deploy the current repo to an existing VMware test appliance without rebuilding the image, use the wheel deploy
@@ -1435,8 +1438,9 @@ retired `ATLASO_DEPLOY_SSH_PASSWORD` fallback. An interactive `op run` shell is 
 exact Environment handoff.
 
 The child uses the local Python runtime and Paramiko so SSH and sudo do not prompt interactively. Paramiko loads the
-user's SSH known-hosts database and rejects unknown host keys; approve the verified appliance host key before running
-the deployment. It drains non-PTY stdout and stderr concurrently so a verbose remote failure cannot block on one
+user's SSH known-hosts database and rejects unknown host keys; use the normal test wrapper's host-derived key and
+fingerprint to update trust explicitly before running the deployment. It drains non-PTY stdout and stderr concurrently
+so a verbose remote failure cannot block on one
 channel and enforces the separate `-DeploymentTimeoutSeconds` remote-command deadline; the remote readiness retry keeps
 its independent `-ReadinessTimeoutSeconds` allowance. If the selected Python cannot already import Paramiko, the
 helper installs it and its dependencies into
