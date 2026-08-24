@@ -895,6 +895,34 @@ function Confirm-AtlasoWorkstationVmInactive {
 
 <#
 .SYNOPSIS
+Reject a running VM that belongs to the validated cleanup root.
+
+.PARAMETER VmrunPath
+Path to the vmrun executable.
+
+.PARAMETER RemovalRoot
+Validated cleanup root.
+
+.PARAMETER ValidatedTargetIdentities
+Captured identities for every expected VMX.
+#>
+function Assert-AtlasoWorkstationNoRunningTarget {
+    param(
+        [Parameter(Mandatory = $true)][string]$VmrunPath,
+        [Parameter(Mandatory = $true)][string]$RemovalRoot,
+        [Parameter(Mandatory = $true)][hashtable]$ValidatedTargetIdentities
+    )
+    foreach ($runningPath in @(Get-AtlasoWorkstationVmPaths -VmrunPath $VmrunPath -State running)) {
+        $runningIdentity = Get-AtlasoPathIdentity -Path $runningPath -Description 'running VMware VMX'
+        if (
+            @($ValidatedTargetIdentities.Values | Where-Object { $_ -eq $runningIdentity }).Count -gt 0 -or
+            (Test-AtlasoStrictDescendantPath -ParentPath $RemovalRoot -ChildPath $runningPath)
+        ) { throw "A VMware Workstation VM remains running inside the cleanup root; artifacts were preserved: $runningPath" }
+    }
+}
+
+<#
+.SYNOPSIS
 Atomically detach external VMDKs and return immutable delete evidence.
 
 .PARAMETER VmxPath
@@ -1276,25 +1304,7 @@ function Remove-AtlasoWorkstationVmArtifacts {
     if (-not $providerRemovedRoot) {
         Assert-AtlasoRootSnapshotUnreplaced -RemovalRoot $resolvedRemovalRoot -Snapshot $snapshot
     }
-    foreach ($runningPath in @(Get-AtlasoWorkstationVmPaths -VmrunPath $VmrunPath -State running)) {
-        $matchesValidatedIdentity = $false
-        if (
-            [System.IO.Path]::IsPathFullyQualified($runningPath) -and
-            (Test-Path -LiteralPath $runningPath -PathType Leaf)
-        ) {
-            $runningIdentity = Get-AtlasoPathIdentity -Path $runningPath -Description 'running VMware VMX'
-            $matchesValidatedIdentity = @($validatedTargetIdentities.Values | Where-Object { $_ -eq $runningIdentity }).Count -gt 0
-        }
-        if (
-            $matchesValidatedIdentity -or
-            (
-                [System.IO.Path]::IsPathFullyQualified($runningPath) -and
-                (Test-AtlasoStrictDescendantPath -ParentPath $resolvedRemovalRoot -ChildPath $runningPath)
-            )
-        ) {
-            throw "A VMware Workstation VM remains running inside the cleanup root; artifacts were preserved: $runningPath"
-        }
-    }
+    Assert-AtlasoWorkstationNoRunningTarget -VmrunPath $VmrunPath -RemovalRoot $resolvedRemovalRoot -ValidatedTargetIdentities $validatedTargetIdentities
     if ($providerRemovedRoot -and (Test-Path -LiteralPath $resolvedRemovalRoot)) { throw "The VMware artifact root reappeared after provider deletion; artifacts were preserved: $resolvedRemovalRoot" }
     # Re-resolve the inventory because it may have appeared after the initial
     # snapshot; surviving VMX files are safe for direct removal only while unregistered.
@@ -1308,6 +1318,7 @@ function Remove-AtlasoWorkstationVmArtifacts {
             throw "A VMware Workstation VM became registered during cleanup; artifacts were preserved: $survivingVmxPath"
         }
     }
+    Assert-AtlasoWorkstationNoRunningTarget -VmrunPath $VmrunPath -RemovalRoot $resolvedRemovalRoot -ValidatedTargetIdentities $validatedTargetIdentities
     if ($providerRemovedRoot -and (Test-Path -LiteralPath $resolvedRemovalRoot)) {
         throw "The VMware artifact root reappeared after provider deletion; artifacts were preserved: $resolvedRemovalRoot"
     }
