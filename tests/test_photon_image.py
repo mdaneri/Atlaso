@@ -1405,8 +1405,8 @@ def test_windows_script_names_use_provider_tokens():
     assert "vmware/set-test-nics.ps1" in script_paths
 
 
-def test_windows_documentation_requires_powershell_7():
-    """Verify that windows documentation requires powershell 7."""
+def test_windows_documentation_requires_powershell_74_or_newer():
+    """Verify that Windows documentation requires PowerShell 7.4 or newer."""
     documentation_paths = [
         Path("README.md"),
         *Path("clients").rglob("*.md"),
@@ -1418,7 +1418,7 @@ def test_windows_documentation_requires_powershell_7():
         powershell_blocks = re.findall(r"```powershell\n(.*?)```", text, re.DOTALL)
         assert all("powershell.exe" not in block.lower() for block in powershell_blocks), path
 
-    support_note = "PowerShell 7.x (`pwsh`)"
+    support_note = "PowerShell 7.4 or newer (`pwsh`)"
     for path in (
         Path("image/hyperv/README.md"),
         Path("image/vmware-workstation/README.md"),

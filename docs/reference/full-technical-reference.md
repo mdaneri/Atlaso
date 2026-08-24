@@ -181,8 +181,9 @@ June 21, 2026, live repository metadata showed `python3` as `3.14.5-2.ph5`. Atla
 python3 scripts/check_photon_compatibility.py
 ```
 
-Atlaso Windows automation supports only PowerShell 7.x (`pwsh`). Windows PowerShell 5.1 (`powershell.exe`) is not
-supported. Run every documented Windows command from `pwsh`, including elevated Hyper-V operations.
+Atlaso Windows automation supports PowerShell 7.4 or newer (`pwsh`). Earlier PowerShell releases and Windows PowerShell
+5.1 (`powershell.exe`) are not supported. Run every documented Windows command from `pwsh`, including elevated Hyper-V
+operations.
 
 The Windows Inventory Linux wrapper requires an already functional WSL 2 installation and uses the explicitly
 provisioned `Atlaso-Build` distribution by default. It does not install WSL or silently create a missing

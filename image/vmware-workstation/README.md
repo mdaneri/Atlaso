@@ -17,7 +17,8 @@ payload.
 
 ## Prerequisites
 
-- PowerShell 7.x (`pwsh`). Windows PowerShell 5.1 (`powershell.exe`) is not supported.
+- PowerShell 7.4 or newer (`pwsh`). Earlier PowerShell releases and Windows PowerShell 5.1 (`powershell.exe`) are not
+  supported.
 - WSL 2 installed and initialized before provisioning the default `Atlaso-Build` image-build distribution. See
   [Windows image-build WSL environment](../../docs/contribute/windows-image-build-wsl.md).
 - VMware Workstation Pro with `vmrun.exe` available under `C:\Program Files\VMware\VMware Workstation`.

@@ -34,7 +34,8 @@ Environment handoff.
 Atlaso can run a VMware Workstation lifecycle lab alongside the Hyper-V lab. The Workstation path uses VMX/VMDK
 artifacts and `vmrun.exe`, then delegates appliance behavior checks to the shared Python lifecycle runner.
 
-Run all Windows commands in PowerShell 7.x (`pwsh`). Windows PowerShell 5.1 (`powershell.exe`) is not supported.
+Run all Windows commands in PowerShell 7.4 or newer (`pwsh`). Earlier PowerShell releases and Windows PowerShell 5.1
+(`powershell.exe`) are not supported.
 The single-command wrapper enforces that runtime, resolves the installed `pwsh` application, and launches its lifecycle
 child in PowerShell 7 so the default cleanup path cannot fall back to Windows PowerShell 5.1. A missing `pwsh`
 installation fails before any lifecycle VM is created.
