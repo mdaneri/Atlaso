@@ -34,7 +34,8 @@ Environment handoff.
 Atlaso can run a VMware Workstation lifecycle lab alongside the Hyper-V lab. The Workstation path uses VMX/VMDK
 artifacts and `vmrun.exe`, then delegates appliance behavior checks to the shared Python lifecycle runner.
 
-Run all Windows commands in PowerShell 7.x (`pwsh`). Windows PowerShell 5.1 (`powershell.exe`) is not supported.
+Run all Windows commands in PowerShell 7.4 or newer (`pwsh`). Earlier PowerShell releases and Windows PowerShell 5.1
+(`powershell.exe`) are not supported.
 The single-command wrapper enforces that runtime, resolves the installed `pwsh` application, and launches its lifecycle
 child in PowerShell 7 so the default cleanup path cannot fall back to Windows PowerShell 5.1. A missing `pwsh`
 installation fails before any lifecycle VM is created.
@@ -252,8 +253,9 @@ unbounded key input fails before the existing VM can be changed. The wrapper nev
 This development authority does not apply to the Workstation lifecycle lab or exported OVF/OVA appliances, and root SSH
 remains disabled. Complete factory reset removes both the development authorization key and its passwordless-sudo
 drop-in, restoring the ordinary password-backed sudo policy. Approve the appliance's verified host key through the
-normal OpenSSH known-hosts workflow once;
-subsequent Codex and Copilot tasks under the same Windows user reuse that trust and key identity.
+wrapper's host-derived output: after startup it prints the exact Ed25519 public host key and SHA-256 fingerprint from
+test-only VMware guest-info for explicit `known_hosts` verification without trusting unauthenticated `ssh-keyscan`
+output. Subsequent Codex and Copilot tasks under the same Windows user reuse that trust and key identity.
 Credential overrides must be at least 12 characters, contain no leading, trailing, tab, carriage-return, or newline
 whitespace, and contain only XML-representable characters so the OVF value round-trips unchanged.
 `-TrustRootCa` waits for the first-boot CA endpoint, removes partial downloads best-effort between retries, validates the
