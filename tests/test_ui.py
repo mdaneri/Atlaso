@@ -1042,9 +1042,9 @@ def test_every_existing_tabulator_uses_the_shared_grid_foundation(client):
     app_js = client.get("/static/app.js").text
     create_grid = "window.AtlasoUiPatterns.createGrid({"
 
-    assert app_js.count(create_grid) == 40
+    assert app_js.count(create_grid) == 41
     assert app_js.count('pattern: "direct-edit"') == 8
-    assert app_js.count('pattern: "read-only"') == 16
+    assert app_js.count('pattern: "read-only"') == 17
     assert app_js.count('pattern: "wizard-backed"') == 16
     assert "new Tabulator(" not in app_js
     assert "new window.Tabulator(" not in app_js
@@ -1125,6 +1125,11 @@ def test_every_existing_tabulator_uses_the_shared_grid_foundation(client):
     assert "networkSlot.append(tasksPanel)" not in network_boot_workspace
     assert "kickstartsSlot.append(kickstartsSection)" in network_boot_workspace
     assert "staticRail.append(bootService)" in network_boot_workspace
+
+    network_objects = function_block("initializeNetworkObjectSourceGroups")
+    assert network_objects.count(create_grid) == 1
+    assert network_objects.count('pattern: "read-only"') == 1
+    assert "initializeAtlasoResourceWizard({" in network_objects
 
     adapter_block = function_block("initializeAtlasoResourceWizard")
     assert adapter_block.count(create_grid) == 1
