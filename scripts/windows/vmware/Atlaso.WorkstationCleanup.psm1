@@ -32,7 +32,6 @@ namespace Atlaso
         private const uint FileShareDelete = 0x4;
         private const uint OpenExisting = 3;
         private const uint BackupSemantics = 0x02000000;
-
         [StructLayout(LayoutKind.Sequential)]
         private struct ByHandleFileInformation
         {
@@ -497,6 +496,7 @@ function Test-AtlasoWorkstationVmxRegistered {
             $invalidOwnerIds.Add($id) | Out-Null
             continue
         }
+        if ([System.IO.Path]::GetExtension($candidate) -ine '.vmx') { $invalidOwnerIds.Add($id) | Out-Null }
         $canonicalPath = Get-AtlasoCanonicalPath -Path $candidate
         if (-not $ownersById.ContainsKey($id)) {
             $ownersById[$id] = [System.Collections.Generic.List[string]]::new()
@@ -1205,14 +1205,14 @@ function Remove-AtlasoWorkstationVmArtifacts {
     }
     Assert-AtlasoRootSnapshotUnreplaced -RemovalRoot $resolvedRemovalRoot -Snapshot $snapshot
     $inventoryPath = Resolve-AtlasoWorkstationInventoryPath
+    foreach ($resolvedVmxPath in $resolvedVmxPaths) {
+        if ((Get-AtlasoPathIdentity -Path $resolvedVmxPath -Description 'VMware cleanup target') -ne $validatedTargetIdentities[$resolvedVmxPath]) { throw "VMware Workstation VMX was replaced after root validation; artifacts were preserved: $resolvedVmxPath" }
+        Confirm-AtlasoWorkstationVmInactive -VmrunPath $VmrunPath -VmxPath $resolvedVmxPath
+    }
     $providerRemovedRoot = $false
     foreach ($resolvedVmxPath in $resolvedVmxPaths) {
         if ($providerRemovedRoot) { break }
         $targetIdentity = $validatedTargetIdentities[$resolvedVmxPath]
-        if ((Get-AtlasoPathIdentity -Path $resolvedVmxPath -Description 'VMware cleanup target') -ne $targetIdentity) {
-            throw "VMware Workstation VMX was replaced after root validation; artifacts were preserved: $resolvedVmxPath"
-        }
-        Confirm-AtlasoWorkstationVmInactive -VmrunPath $VmrunPath -VmxPath $resolvedVmxPath
         if (-not (Test-AtlasoWorkstationVmxRegistered `
                 -InventoryPath $inventoryPath `
                 -VmxPath $resolvedVmxPath `

@@ -590,6 +590,84 @@ finally {{
     assert vmx.exists()
 
 
+def test_multiple_vmx_cleanup_preflights_all_targets_before_first_delete(
+    tmp_path: Path,
+) -> None:
+    """Preflight every target before attempting the first provider deleteVM.
+
+    Args:
+        tmp_path: Pytest temporary directory path.
+    """
+    root = tmp_path / "artifacts" / "vm"
+    first_vmx = root / "first.vmx"
+    second_vmx = root / "second.vmx"
+    _write_vmx(first_vmx, "First")
+    _write_vmx(second_vmx, "Second")
+    vmrun, environment, log, _ = _write_fake_vmrun(
+        tmp_path / "fake",
+        [first_vmx, second_vmx],
+        running=True,
+        registered=True,
+        remove_root_after_delete=True,
+    )
+
+    result = _run_root_cleanup(
+        tmp_path,
+        removal_root=root,
+        expected_root=root,
+        vmrun_path=vmrun,
+        environment=environment,
+    )
+
+    commands = _commands(log)
+    stop_indices = [index for index, command in enumerate(commands) if command[2] == "stop"]
+    delete_indices = [
+        index for index, command in enumerate(commands) if command[2] == "deleteVM"
+    ]
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert len(stop_indices) == 2
+    assert delete_indices, commands
+    assert max(stop_indices) < min(delete_indices)
+
+
+def test_live_registration_rejects_non_vmx_hardlink_inventory_entry(
+    tmp_path: Path,
+) -> None:
+    """Reject hard-link aliases whose inventory owner path is an absolute non-vmx file.
+
+    Args:
+        tmp_path: Pytest temporary directory path.
+    """
+    root = tmp_path / "artifacts" / "vm"
+    vmx = root / "Atlaso.vmx"
+    _write_vmx(vmx)
+    alias = tmp_path / "aliases" / "Atlaso-alias.txt"
+    alias.parent.mkdir(parents=True)
+    os.link(vmx, alias)
+    vmrun, environment, log, _ = _write_fake_vmrun(
+        tmp_path / "fake",
+        [vmx],
+        inventory_suffix=(
+            f'vmlist1.config = "{alias.resolve()}"\n'
+            f'index0.id = "{alias.resolve()}"\n'
+            'index.count = "1"\n'
+        ),
+    )
+
+    result = _run_root_cleanup(
+        tmp_path,
+        removal_root=root,
+        expected_root=root,
+        vmrun_path=vmrun,
+        environment=environment,
+    )
+
+    assert result.returncode != 0
+    assert "ambiguous library ID" in result.stderr
+    assert vmx.exists()
+    assert "deleteVM" not in [command[2] for command in _commands(log)]
+
+
 def test_live_registration_rejects_duplicate_library_id(tmp_path: Path) -> None:
     """A live target's selected library ID must have one config owner.
 
