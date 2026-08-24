@@ -421,7 +421,10 @@ The following cross-cutting boundaries always apply:
   Capture immutable identities for every target and repeat identity, running, stable registration, and recursive VMX-set
   checks immediately before each individual `deleteVM` invocation.
   Preflight failures preserve all artifacts; a provider deletion or postcondition failure preserves the remaining
-  artifacts and returns failure.
+  artifacts and returns failure. When checked `deleteVM` legitimately removes the complete validated artifact root,
+  enter an explicit absent-root postcondition: keep every registration and running-inventory verification, require the
+  exact root to remain absent through the final gates, and let the initiating redeploy continue without attempting to
+  enumerate or recursively remove the missing directory.
 - VLAN Interfaces use the shared wizard-backed Tabulator with the ESX Storage interaction. Keep every persisted field,
   including Admin Up, out of inline editing and review the complete VLAN record in the add/edit wizard. New VLANs
   default to Admin Up; edits preserve saved state; a missing-parent VLAN may remain saved only while disabled. Saving

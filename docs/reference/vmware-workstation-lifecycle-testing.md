@@ -207,6 +207,12 @@ When lifecycle
 execution and cleanup both fail, the final error reports the original scenario failure together with the cleanup failure
 and preserved path.
 
+Checked `deleteVM` may remove the complete validated artifact root itself. Cleanup records that transition immediately,
+continues the same registration and identity-aware running-inventory postconditions, and requires the exact root to stay
+absent through the final gate. It does not enumerate or recursively remove the missing directory, so the same
+`create-atlaso-test-vm.ps1 -Redeploy` invocation can proceed to a fresh clone. A recreated root or changed target
+inventory remains an ambiguous state that fails closed and preserves the new path.
+
 The read-only Workstation registration inventory may reside beneath a redirected `%APPDATA%` junction or symbolic link.
 The non-reparse-point requirement remains enforced on the artifact root that cleanup recursively deletes.
 Recursive deletion errors are terminating, and cleanup reports success only after confirming that the artifact root is
