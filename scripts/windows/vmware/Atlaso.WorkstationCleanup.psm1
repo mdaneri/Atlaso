@@ -16,14 +16,12 @@ unchanged and does not require them to resolve.
 #>
 
 Set-StrictMode -Version Latest
-
 if (-not ('Atlaso.WorkstationFileIdentity' -as [type])) {
     Add-Type -TypeDefinition @'
 using System;
 using System.ComponentModel;
 using System.Runtime.InteropServices;
 using Microsoft.Win32.SafeHandles;
-
 namespace Atlaso
 {
     public static class WorkstationFileIdentity
@@ -441,7 +439,7 @@ function Get-AtlasoScopedInventoryEntriesFromLines {
             continue
         }
         $candidate = $Matches.path
-        if (-not $candidate -or -not [System.IO.Path]::IsPathFullyQualified($candidate)) {
+        if (-not $candidate -or -not [System.IO.Path]::IsPathFullyQualified($candidate) -or [System.IO.Path]::GetExtension($candidate) -ine '.vmx') {
             continue
         }
         $canonicalPath = Get-AtlasoCanonicalPath -Path $candidate
@@ -478,14 +476,16 @@ function Test-AtlasoWorkstationVmxRegistered {
         [Parameter(Mandatory = $true)][string]$VmxPath,
         [Parameter(Mandatory = $true)][string]$ScopeRoot
     )
-
     if (-not $InventoryPath) {
         return $false
     }
     $targetIdentity = Get-AtlasoPathIdentity -Path $VmxPath -Description 'VMware cleanup target'
+    $inventoryStream = [System.IO.FileStream]::new($InventoryPath, [System.IO.FileMode]::Open, [System.IO.FileAccess]::Read, [System.IO.FileShare]::Read)
+    try { $inventoryBytes = Read-AtlasoStreamBytes -Stream $inventoryStream } finally { $inventoryStream.Dispose() }
+    $inventoryLines = @([System.Text.Encoding]::UTF8.GetString($inventoryBytes) -split '\r?\n')
     $ownersById = @{}
     $invalidOwnerIds = [System.Collections.Generic.HashSet[string]]::new([System.StringComparer]::OrdinalIgnoreCase)
-    foreach ($line in Get-Content -LiteralPath $InventoryPath -ErrorAction Stop) {
+    foreach ($line in $inventoryLines) {
         if ($line -notmatch '^\s*vmlist(?<id>\d+)\.config\s*=') { continue }
         $id = $Matches.id
         if ($line -notmatch '^\s*vmlist\d+\.config\s*=\s*"(?<path>.*)"\s*$') {

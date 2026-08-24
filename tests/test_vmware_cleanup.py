@@ -543,6 +543,53 @@ def test_registered_alias_with_external_vmdk_fails_closed(tmp_path: Path) -> Non
     assert external_disk.read_text(encoding="utf-8") == "shared"
 
 
+def test_live_registration_requires_a_read_stable_inventory_snapshot(
+    tmp_path: Path,
+) -> None:
+    """An active inventory writer blocks registration approval and deletion.
+
+    Args:
+        tmp_path: Pytest temporary directory path.
+    """
+    root = tmp_path / "artifacts" / "vm"
+    vmx = root / "Atlaso.vmx"
+    _write_vmx(vmx)
+    vmrun, environment, log, _ = _write_fake_vmrun(
+        tmp_path / "fake",
+        [vmx],
+        registered=True,
+    )
+    wrapper = tmp_path / "cleanup-with-inventory-writer.ps1"
+    module = VMWARE_SCRIPT_ROOT / "Atlaso.WorkstationCleanup.psm1"
+    wrapper.write_text(
+        f"""$ErrorActionPreference = 'Stop'
+Import-Module '{module}' -Force
+$writer = [System.IO.FileStream]::new(
+    $env:ATLASO_FAKE_VMRUN_INVENTORY,
+    [System.IO.FileMode]::Open,
+    [System.IO.FileAccess]::Write,
+    [System.IO.FileShare]::ReadWrite
+)
+try {{
+    Remove-AtlasoWorkstationArtifactRoot `
+        -VmrunPath '{vmrun}' `
+        -ExpectedRemovalRoot '{root}' `
+        -RemovalRoot '{root}' `
+        -Confirm:$false
+}}
+finally {{
+    $writer.Dispose()
+}}
+""",
+        encoding="utf-8",
+    )
+    result = _run_script(wrapper, environment=environment)
+
+    assert result.returncode != 0
+    assert "deleteVM" not in [command[2] for command in _commands(log)]
+    assert vmx.exists()
+
+
 def test_live_registration_rejects_duplicate_library_id(tmp_path: Path) -> None:
     """A live target's selected library ID must have one config owner.
 
@@ -881,6 +928,43 @@ def test_stale_repair_preserves_ambiguously_owned_index(tmp_path: Path) -> None:
     assert f'vmlist7.config = "{stale.resolve()}"' not in inventory_text
     assert f'index7.id = "{stale.resolve()}"' in inventory_text
     assert f'index7.id = "{unrelated.resolve()}"' in inventory_text
+
+
+def test_stale_repair_preserves_missing_non_vmx_in_scope_entry(tmp_path: Path) -> None:
+    """Missing non-vmx absolute entries are preserved during scoped stale repair.
+
+    Args:
+        tmp_path: Pytest temporary directory path.
+    """
+    parent = tmp_path / "image" / "vmware-workstation"
+    root = parent / "test-vms"
+    root.mkdir(parents=True)
+    vmx = root / "Atlaso.vmx"
+    _write_vmx(vmx)
+    missing_entry = root / "unused-note.txt"
+    vmrun, environment, _, inventory = _write_fake_vmrun(
+        tmp_path / "fake",
+        [],
+        inventory_suffix=(
+            f'vmlist7.config = "{missing_entry.resolve()}"\n'
+            f'index7.id = "{missing_entry.resolve()}"\n'
+            'index.count = "1"\n'
+        ),
+    )
+
+    result = _run_root_cleanup(
+        tmp_path,
+        removal_root=root,
+        artifact_parent=parent,
+        vmrun_path=vmrun,
+        environment=environment,
+    )
+
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert not root.exists()
+    inventory_text = inventory.read_text(encoding="utf-8")
+    assert f'vmlist7.config = "{missing_entry.resolve()}"' in inventory_text
+    assert f'index7.id = "{missing_entry.resolve()}"' in inventory_text
 
 
 def test_external_vmdk_is_detached_before_deletevm(tmp_path: Path) -> None:
