@@ -33,8 +33,8 @@ CAPTURE_OVERRIDES = {
         "capture_method": "codex-in-app-browser",
     },
     "primary-navigation-collapsed-responsive": {
-        "source_commit": "0df3b4b3+working-tree",
-        "atlaso_version": "0.9.195",
+        "source_commit": "ff68368d",
+        "atlaso_version": "0.9.199",
         "capture_method": "codex-in-app-browser",
     },
     "dhcp-ip-zone-wizard-services-desktop": {
@@ -351,9 +351,9 @@ SPECIAL = {
     ),
     "primary-navigation-collapsed-responsive": (
         "/dashboard",
-        "navigation-partially-collapsed",
-        "Authenticated primary navigation and its compact bulk control at the responsive viewport.",
-        "Responsive Atlaso Dashboard with independent navigation sections and the symbol bulk control.",
+        "navigation-collapsed",
+        "Responsive navigation with all sections collapsed and expand-all above both columns.",
+        "Collapsed responsive navigation with expand-all.",
     ),
     "primary-navigation-expanded-desktop": (
         "/dashboard",

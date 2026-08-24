@@ -155,9 +155,9 @@ Figure: Dashboard with valid pending changes and a unit needing attention.
 
 Figure: Authenticated primary navigation with every authorized section collapsed and the shared bulk control.
 
-![Responsive Atlaso Dashboard with independent navigation sections and the symbol bulk control.](../assets/screenshots/primary-navigation-collapsed-responsive.webp)
+![Collapsed responsive navigation with expand-all.](../assets/screenshots/primary-navigation-collapsed-responsive.webp)
 
-Figure: Authenticated primary navigation and its compact bulk control at the responsive viewport.
+Figure: Responsive navigation with all sections collapsed and expand-all above both columns.
 
 ![Atlaso Dashboard with all authorized navigation sections expanded and the double-left-angle collapse control available.](../assets/screenshots/primary-navigation-expanded-desktop.webp)
 

@@ -78,8 +78,8 @@ These captures show responsive layouts and useful operational states referenced 
 
 *Figure: Authenticated primary navigation with every authorized section collapsed and the shared bulk control.*
 
-![Responsive Atlaso Dashboard with independent navigation sections and the symbol bulk control.](../assets/screenshots/primary-navigation-collapsed-responsive.webp)
+![Collapsed responsive navigation with expand-all.](../assets/screenshots/primary-navigation-collapsed-responsive.webp)
 
-*Figure: Authenticated primary navigation and its compact bulk control at the responsive viewport.*
+*Figure: Responsive navigation with all sections collapsed and expand-all above both columns.*
 
 <!-- END GENERATED ADDITIONAL SCREENSHOTS -->
