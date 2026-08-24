@@ -4181,8 +4181,9 @@ June 21, 2026, live repository metadata showed <code>python3</code> as <code>3.1
 (<code>requires-python &gt;=3.14,&lt;3.15</code>); verify the appliance stream with:</p>
 <div class="language-bash highlight"><pre><span></span><code><span id="__span-1-1"><a id="__codelineno-1-1" name="__codelineno-1-1" href="#__codelineno-1-1"></a>python3<span class="w"> </span>scripts/check_photon_compatibility.py
 </span></code></pre></div>
-<p>Atlaso Windows automation supports only PowerShell 7.x (<code>pwsh</code>). Windows PowerShell 5.1 (<code>powershell.exe</code>) is not
-supported. Run every documented Windows command from <code>pwsh</code>, including elevated Hyper-V operations.</p>
+<p>Atlaso Windows automation supports PowerShell 7.4 or newer (<code>pwsh</code>). Earlier PowerShell releases and Windows PowerShell
+5.1 (<code>powershell.exe</code>) are not supported. Run every documented Windows command from <code>pwsh</code>, including elevated Hyper-V
+operations.</p>
 <p>The Windows Inventory Linux wrapper requires an already functional WSL 2 installation and uses the explicitly
 provisioned <code>Atlaso-Build</code> distribution by default. It does not install WSL or silently create a missing
 distribution. <code>-WslDistribution &lt;name&gt;</code> selects an existing compatible alternative. Photon image wrappers do not build
@@ -5197,7 +5198,10 @@ silently skipped.</p>
 creation, validates it as one canonical Ed25519 public key, and provisions it for the bootstrap <code>admin</code> account with a
 separate test-only passwordless-sudo rule. Use <code>-SshPublicKeyPath &lt;path&gt;</code> for another existing Ed25519 public key or
 <code>-SkipSshKeyProvisioning</code> to preserve password-backed access. It never generates or copies a private key. Lifecycle
-VMs, exported OVF/OVA appliances, and root SSH remain unchanged. The canonical operational details and safety boundary
+VMs, exported OVF/OVA appliances, and root SSH remain unchanged. After startup, the wrapper reads the VM's public
+Ed25519 host key from test-only VMware guest-info, validates its OpenSSH wire format, and prints the exact public key and
+SHA-256 fingerprint for explicit <code>known_hosts</code> verification without trusting unauthenticated <code>ssh-keyscan</code> output. The
+canonical operational details and safety boundary
 are documented in <a href="../vmware-workstation-lifecycle-testing/#normal-test-vm">VMware Workstation Lifecycle Testing</a>.</p>
 <p>To deploy the current repo to an existing VMware test appliance without rebuilding the image, use the wheel deploy
 helper. A normal test VM created with the default key provisioning uses the existing key/agent path without 1Password:</p>
@@ -5228,8 +5232,9 @@ authorization, Environment, or variable is missing. It never accepts a password 
 retired <code>ATLASO_DEPLOY_SSH_PASSWORD</code> fallback. An interactive <code>op run</code> shell is not a supported substitute for the
 exact Environment handoff.</p>
 <p>The child uses the local Python runtime and Paramiko so SSH and sudo do not prompt interactively. Paramiko loads the
-user's SSH known-hosts database and rejects unknown host keys; approve the verified appliance host key before running
-the deployment. It drains non-PTY stdout and stderr concurrently so a verbose remote failure cannot block on one
+user's SSH known-hosts database and rejects unknown host keys; use the normal test wrapper's host-derived key and
+fingerprint to update trust explicitly before running the deployment. It drains non-PTY stdout and stderr concurrently
+so a verbose remote failure cannot block on one
 channel and enforces the separate <code>-DeploymentTimeoutSeconds</code> remote-command deadline; the remote readiness retry keeps
 its independent <code>-ReadinessTimeoutSeconds</code> allowance. If the selected Python cannot already import Paramiko, the
 helper installs it and its dependencies into

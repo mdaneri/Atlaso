@@ -4724,7 +4724,10 @@ runtime.</p>
   bootstrap <code>admin</code> account for SSH connections. The normal <code>create-atlaso-test-vm.ps1</code> wrapper installs the current
   Windows user's existing <code>.ssh/id_ed25519.pub</code> and a separate test-only passwordless-sudo rule unless explicitly
   skipped, so key/agent-backed privileged checks use <code>sudo -n</code>; it must not generate a key or extend this authority to
-  lifecycle or exported appliances. Root SSH remains disabled. Check SSH/service state with <code>systemctl status atlaso --no-pager</code>,
+  lifecycle or exported appliances. After startup, it reads the VM's public Ed25519 host key from test-only VMware
+  guest-info, validates and fingerprints it, and prints it for explicit <code>known_hosts</code> verification; never substitute
+  unauthenticated <code>ssh-keyscan</code> output. Root SSH remains disabled. Check SSH/service state with
+  <code>systemctl status atlaso --no-pager</code>,
   <code>journalctl -u atlaso -n 120 --no-pager</code>, and relevant real-state commands such as <code>nft list ruleset</code>,
   <code>resolvectl query &lt;name&gt;</code>, <code>getent hosts &lt;name&gt;</code>, <code>ip link</code>, <code>systemctl status ntpd --no-pager</code>, or
   <code>systemctl status systemd-timesyncd --no-pager</code>.</li>
