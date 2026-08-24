@@ -16,9 +16,9 @@ route names and established sidebar width while letting you reduce vertical spac
 
 This verified appliance view provides visual orientation before you begin.
 
-![Atlaso Dashboard with all authorized primary navigation sections expanded.](../assets/screenshots/primary-navigation-expanded-desktop.webp)
+![Atlaso Dashboard with all authorized navigation sections expanded and the double-left-angle collapse control available.](../assets/screenshots/primary-navigation-expanded-desktop.webp)
 
-*Figure: Authenticated primary navigation with every authorized section expanded.*
+*Figure: Authenticated primary navigation with every authorized section expanded and the shared bulk control.*
 
 <!-- END GENERATED INTERFACE OVERVIEW -->
 
@@ -74,12 +74,12 @@ These captures show responsive layouts and useful operational states referenced 
 
 ### Dashboard
 
-![Atlaso Dashboard with Appliance Setup, Identity and Trust, and VCF Workflows navigation sections collapsed.](../assets/screenshots/primary-navigation-collapsed-desktop.webp)
+![Atlaso Dashboard with several navigation sections collapsed and the double-right-angle expand control available.](../assets/screenshots/primary-navigation-collapsed-desktop.webp)
 
-*Figure: Authenticated primary navigation with independent sections partially collapsed.*
+*Figure: Authenticated primary navigation with independent sections partially collapsed and the shared bulk control.*
 
-![Atlaso Dashboard responsive layout with independent expanded and collapsed navigation sections.](../assets/screenshots/primary-navigation-collapsed-responsive.webp)
+![Responsive Atlaso Dashboard with independent navigation sections and the symbol bulk control.](../assets/screenshots/primary-navigation-collapsed-responsive.webp)
 
-*Figure: Authenticated primary navigation with complete disclosure rows at the responsive viewport.*
+*Figure: Authenticated primary navigation and its compact bulk control at the responsive viewport.*
 
 <!-- END GENERATED ADDITIONAL SCREENSHOTS -->
