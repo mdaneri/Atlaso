@@ -280,6 +280,8 @@
       
         
       
+        
+      
     
     
     
@@ -700,6 +702,8 @@
       
         
       
+        
+      
     
     
     
@@ -1046,6 +1050,40 @@
     
   
   Network configuration
+
+    
+  </span>
+  
+  
+    
+  
+  
+    <span class="md-status md-status--current"></span>
+  
+
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../operate/network-objects/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Network Objects
 
     
   </span>
@@ -4906,9 +4944,12 @@ never generated.</p>
 <p>The Firewall apply unit derives Atlaso-managed service allow rules from enabled service listener desired state.
 Management, DNS, DHCP, KMS, NTPsec, VCF Backup, VCF Offline Depot, and VCF Private Registry listeners appear in the
 managed service rules grid on the Firewall page, while custom firewall rules remain editable in the main grid. Managed
-DNS and service listener rules default to the built-in <code>Any</code> group. Operators can create, rename, remove, and assign
-firewall groups containing <code>any</code>, CIDRs, addresses, or other groups when rule sources or destinations need narrower
-access than the default. DHCP bootstrap rules are the exception: they remain interface-bound input rules without group
+DNS and service listener rules default to the built-in <code>Any</code> Source Group. Network Objects owns Source Group creation,
+update, usage projection, and guarded removal while retaining <code>firewall.managed_source_groups</code>, stable IDs, nested
+references, and existing Firewall/WAN rendering semantics. Operators can assign Source Groups containing <code>any</code>, CIDRs,
+addresses, or other groups when rule sources or destinations need narrower access than the default. Deletion is blocked
+while a nested group, operator rule, managed assignment, or NAT rule remains a consumer. DHCP bootstrap rules are the
+exception: they remain interface-bound input rules without group
 filtering because clients and relay paths may arrive before a client address is assigned. IPv4 DHCP zones open UDP/67;
 IPv6 DHCP zones open UDP/547; NTPsec opens UDP/123 on selected bind targets and TCP/4460 when NTPsec NTS server mode is
 enabled. If a DHCP zone or service listener moves from a physical interface to a VLAN such as <code>eth2.50</code>, the firewall

@@ -6,7 +6,7 @@
       <meta charset="utf-8">
       <meta name="viewport" content="width=device-width,initial-scale=1">
       
-        <meta name="description" content="Review and configure Atlaso nftables desired state and access groups.">
+        <meta name="description" content="Review and configure Atlaso nftables desired state with reusable Source Groups.">
       
       
         <meta name="author" content="Atlaso contributors">
@@ -248,6 +248,8 @@
       
         
           
+        
+      
         
       
         
@@ -700,6 +702,8 @@
       
         
       
+        
+      
     
     
     
@@ -1046,6 +1050,40 @@
     
   
   Network configuration
+
+    
+  </span>
+  
+  
+    
+  
+  
+    <span class="md-status md-status--current"></span>
+  
+
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../operate/network-objects/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Network Objects
 
     
   </span>
@@ -3583,7 +3621,8 @@
 
 <h1 id="firewall">Firewall<a class="headerlink" href="#firewall" title="Permanent link">&para;</a></h1>
 <p>Open <strong>Firewall</strong> to manage Atlaso-owned nftables desired state. The page combines generated service-listener rules,
-routing permissions, and operator-defined access groups.</p>
+routing permissions, and operator-defined rules. Reusable Source Groups are owned by the separate
+<a href="../../operate/network-objects/">Network Objects</a> page.</p>
 <!-- BEGIN GENERATED INTERFACE OVERVIEW -->
 <h2 id="interface-overview">Interface overview<a class="headerlink" href="#interface-overview" title="Permanent link">&para;</a></h2>
 <p>This verified appliance view provides visual orientation before you begin.</p>
@@ -3599,7 +3638,7 @@ appliance-apply unit.</p>
 <ol>
 <li>Confirm management access remains allowed from the intended source.</li>
 <li>Review enabled service listeners and their bound interfaces.</li>
-<li>Use access groups to narrow sources or destinations when <code>Any</code> is too broad.</li>
+<li>Use <strong>Manage source groups</strong> in the rule wizard when a reusable Source Group should narrow a source or destination.</li>
 <li>Inspect the rendered ruleset and resolve validation errors.</li>
 <li>Submit the Firewall unit through <a href="../../operate/appliance-apply/">Appliance Apply</a>.</li>
 </ol>
@@ -3611,8 +3650,9 @@ can verify the effective state with <code>nft list ruleset</code>. If a rule rem
 <a href="../../operate/appliance-console/">local appliance console</a> and restore the previous desired state.</p>
 <h2 id="transport-ownership">Transport ownership<a class="headerlink" href="#transport-ownership" title="Permanent link">&para;</a></h2>
 <p>Firewall management and API v1 transports are owned by dedicated <code>firewall</code> domain routers and aggregated through the
-stable UI and API facades. This internal extraction does not change paths, methods, permissions, responses, nftables
-desired state, audit actions, or the global Appliance Apply boundary.</p>
+stable UI and API facades. Network Objects owns Source Group projection and mutation while retaining the established
+<code>firewall.managed_source_groups</code> state and Firewall apply semantics. Both surfaces continue to use
+<code>read:firewall</code> and <code>write:firewall</code>, so moving the editor does not broaden access.</p>
 <!-- BEGIN GENERATED ADDITIONAL SCREENSHOTS -->
 <h2 id="additional-verified-states">Additional verified states<a class="headerlink" href="#additional-verified-states" title="Permanent link">&para;</a></h2>
 <p>These captures show responsive layouts and useful operational states referenced by this page.</p>

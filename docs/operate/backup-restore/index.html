@@ -282,6 +282,8 @@
       
         
       
+        
+      
     
     
     
@@ -702,6 +704,8 @@
       
         
       
+        
+      
     
     
     
@@ -1051,6 +1055,40 @@
     
   
   Network configuration
+
+    
+  </span>
+  
+  
+    
+  
+  
+    <span class="md-status md-status--current"></span>
+  
+
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../network-objects/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Network Objects
 
     
   </span>
@@ -3533,6 +3571,8 @@
       
         
       
+        
+      
     
     
     
@@ -3716,7 +3756,7 @@ records afterward. A candidate-rendering, schema-contract, or validation failure
 </ol>
 <p>Atlaso validates every supplied archive collection, required row field, relationship, and enabled VLAN or static-route
 target before it removes current desired state. Enabled service listener addresses must exactly match the addresses
-derived from their selected interfaces. Firewall source groups must use nonblank current-format identifiers and names,
+derived from their selected interfaces. Network Objects Source Groups must use nonblank current-format identifiers and names,
 nonempty string entry lists, unique identifiers, and assignments that resolve to <code>any</code> or a supplied group. Every
 non-comment DNS conditional-forwarder line must include a domain and one or more servers. Because password hashes remain
 outside settings archives, exported Managed LDAP users are disabled and restored archives that try to enable a user
@@ -3753,7 +3793,7 @@ removed. Archived ESXi custom-variable definitions retain the same 64-entry limi
 ESX Storage resources receive canonical validation even when the optional settings row is absent; Atlaso uses the same
 default disabled settings applied during later state reads.</p>
 <p>Preflight also requires every canonical service-status row, limits DHCP scopes to access physical interfaces or enabled
-VLANs with a matching address family, and reserves firewall source-group ID <code>any</code> for Atlaso's built-in unrestricted
+VLANs with a matching address family, and reserves Source Group ID <code>any</code> for Atlaso's built-in unrestricted
 group. These checks prevent a successful restore from creating missing service controls, publishing DHCP on management
 networks, or widening a restricted firewall assignment.
 All nonempty DHCP reservation addresses are parsed during preflight, including disabled rows; enabled reservations alone

@@ -6,19 +6,19 @@
       <meta charset="utf-8">
       <meta name="viewport" content="width=device-width,initial-scale=1">
       
-        <meta name="description" content="Schedule supported tasks and manage immutable automation scripts safely.">
+        <meta name="description" content="Create reusable Source Groups and review every Firewall and NAT consumer before changing them.">
       
       
         <meta name="author" content="Atlaso contributors">
       
       
-        <link rel="canonical" href="https://mdaneri.github.io/Atlaso/docs/operate/automation/">
+        <link rel="canonical" href="https://mdaneri.github.io/Atlaso/docs/operate/network-objects/">
       
       
-        <link rel="prev" href="../backup-restore/">
+        <link rel="prev" href="../networking/">
       
       
-        <link rel="next" href="../api/">
+        <link rel="next" href="../appliance-console/">
       
       
         
@@ -29,7 +29,7 @@
     
     
       
-        <title>Automation - Atlaso Documentation</title>
+        <title>Network Objects - Atlaso Documentation</title>
       
     
     
@@ -87,7 +87,7 @@
     <div data-md-component="skip">
       
         
-        <a href="#automation" class="md-skip">
+        <a href="#network-objects" class="md-skip">
           Skip to content
         </a>
       
@@ -122,7 +122,7 @@
         <div class="md-header__topic" data-md-component="header-topic">
           <span class="md-ellipsis">
             
-              Automation
+              Network Objects
             
           </span>
         </div>
@@ -1078,10 +1078,43 @@
                 
   
   
+    
   
   
-    <li class="md-nav__item">
-      <a href="../network-objects/" class="md-nav__link">
+  
+    <li class="md-nav__item md-nav__item--active">
+      
+      
+      
+      
+        
+      
+      
+        <label class="md-nav__link md-nav__link--active" for="__toc">
+          
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Network Objects
+
+    
+  </span>
+  
+  
+    
+  
+  
+    <span class="md-status md-status--current"></span>
+  
+
+  
+
+          <span class="md-nav__icon md-icon"></span>
+        </label>
+      
+      <a href="././" class="md-nav__link md-nav__link--active">
         
   
   
@@ -1103,6 +1136,99 @@
   
 
       </a>
+      
+        
+
+
+<nav class="md-nav md-nav--secondary" aria-label="On this page">
+  
+  
+  
+    
+  
+  
+    <label class="md-nav__title" for="__toc">
+      <span class="md-nav__icon md-icon"></span>
+      On this page
+    </label>
+    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
+      
+        <li class="md-nav__item">
+  <a href="#interface-overview" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Interface overview
+      </span>
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#add-or-edit-a-source-group" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Add or edit a Source Group
+      </span>
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#review-and-remove-an-object" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Review and remove an object
+      </span>
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#apply-and-archive-behavior" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Apply and archive behavior
+      </span>
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#additional-verified-states" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Additional verified states
+      </span>
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Additional verified states">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#network-objects_1" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Network Objects
+      </span>
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+    </ul>
+  
+</nav>
+      
     </li>
   
 
@@ -1214,43 +1340,10 @@
                 
   
   
-    
   
   
-  
-    <li class="md-nav__item md-nav__item--active">
-      
-      
-      
-      
-        
-      
-      
-        <label class="md-nav__link md-nav__link--active" for="__toc">
-          
-  
-  
-  <span class="md-ellipsis">
-    
-  
-  Automation
-
-    
-  </span>
-  
-  
-    
-  
-  
-    <span class="md-status md-status--current"></span>
-  
-
-  
-
-          <span class="md-nav__icon md-icon"></span>
-        </label>
-      
-      <a href="././" class="md-nav__link md-nav__link--active">
+    <li class="md-nav__item">
+      <a href="../automation/" class="md-nav__link">
         
   
   
@@ -1272,110 +1365,6 @@
   
 
       </a>
-      
-        
-
-
-<nav class="md-nav md-nav--secondary" aria-label="On this page">
-  
-  
-  
-    
-  
-  
-    <label class="md-nav__title" for="__toc">
-      <span class="md-nav__icon md-icon"></span>
-      On this page
-    </label>
-    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
-      
-        <li class="md-nav__item">
-  <a href="#interface-overview" class="md-nav__link">
-    <span class="md-ellipsis">
-      <span class="md-typeset">
-        Interface overview
-      </span>
-    </span>
-  </a>
-  
-</li>
-      
-        <li class="md-nav__item">
-  <a href="#managed-scripts" class="md-nav__link">
-    <span class="md-ellipsis">
-      <span class="md-typeset">
-        Managed scripts
-      </span>
-    </span>
-  </a>
-  
-</li>
-      
-        <li class="md-nav__item">
-  <a href="#service-operations" class="md-nav__link">
-    <span class="md-ellipsis">
-      <span class="md-typeset">
-        Service operations
-      </span>
-    </span>
-  </a>
-  
-</li>
-      
-        <li class="md-nav__item">
-  <a href="#task-history-and-output" class="md-nav__link">
-    <span class="md-ellipsis">
-      <span class="md-typeset">
-        Task history and output
-      </span>
-    </span>
-  </a>
-  
-</li>
-      
-        <li class="md-nav__item">
-  <a href="#additional-verified-states" class="md-nav__link">
-    <span class="md-ellipsis">
-      <span class="md-typeset">
-        Additional verified states
-      </span>
-    </span>
-  </a>
-  
-    <nav class="md-nav" aria-label="Additional verified states">
-      <ul class="md-nav__list">
-        
-          <li class="md-nav__item">
-  <a href="#automation_1" class="md-nav__link">
-    <span class="md-ellipsis">
-      <span class="md-typeset">
-        Automation
-      </span>
-    </span>
-  </a>
-  
-</li>
-        
-          <li class="md-nav__item">
-  <a href="#automation-schedules" class="md-nav__link">
-    <span class="md-ellipsis">
-      <span class="md-typeset">
-        Automation: Schedules
-      </span>
-    </span>
-  </a>
-  
-</li>
-        
-      </ul>
-    </nav>
-  
-</li>
-      
-    </ul>
-  
-</nav>
-      
     </li>
   
 
@@ -3444,10 +3433,10 @@
 </li>
       
         <li class="md-nav__item">
-  <a href="#managed-scripts" class="md-nav__link">
+  <a href="#add-or-edit-a-source-group" class="md-nav__link">
     <span class="md-ellipsis">
       <span class="md-typeset">
-        Managed scripts
+        Add or edit a Source Group
       </span>
     </span>
   </a>
@@ -3455,10 +3444,10 @@
 </li>
       
         <li class="md-nav__item">
-  <a href="#service-operations" class="md-nav__link">
+  <a href="#review-and-remove-an-object" class="md-nav__link">
     <span class="md-ellipsis">
       <span class="md-typeset">
-        Service operations
+        Review and remove an object
       </span>
     </span>
   </a>
@@ -3466,10 +3455,10 @@
 </li>
       
         <li class="md-nav__item">
-  <a href="#task-history-and-output" class="md-nav__link">
+  <a href="#apply-and-archive-behavior" class="md-nav__link">
     <span class="md-ellipsis">
       <span class="md-typeset">
-        Task history and output
+        Apply and archive behavior
       </span>
     </span>
   </a>
@@ -3489,21 +3478,10 @@
       <ul class="md-nav__list">
         
           <li class="md-nav__item">
-  <a href="#automation_1" class="md-nav__link">
+  <a href="#network-objects_1" class="md-nav__link">
     <span class="md-ellipsis">
       <span class="md-typeset">
-        Automation
-      </span>
-    </span>
-  </a>
-  
-</li>
-        
-          <li class="md-nav__item">
-  <a href="#automation-schedules" class="md-nav__link">
-    <span class="md-ellipsis">
-      <span class="md-typeset">
-        Automation: Schedules
+        Network Objects
       </span>
     </span>
   </a>
@@ -3621,7 +3599,7 @@
                 
                   
   
-    <a href="https://github.com/mdaneri/Atlaso/edit/main/docs/operate/automation.md" title="Edit this page" class="md-content__button md-icon" rel="edit">
+    <a href="https://github.com/mdaneri/Atlaso/edit/main/docs/operate/network-objects.md" title="Edit this page" class="md-content__button md-icon" rel="edit">
       
       <svg xmlns="http://www.w3.org/2000/svg" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="2" class="lucide lucide-file-pen" viewBox="0 0 24 24"><path d="M12.659 22H18a2 2 0 0 0 2-2V8a2.4 2.4 0 0 0-.706-1.706l-3.588-3.588A2.4 2.4 0 0 0 14 2H6a2 2 0 0 0-2 2v9.34"/><path d="M14 2v5a1 1 0 0 0 1 1h5M10.378 12.622a1 1 0 0 1 3 3.003L8.36 20.637a2 2 0 0 1-.854.506l-2.867.837a.5.5 0 0 1-.62-.62l.836-2.869a2 2 0 0 1 .506-.853z"/></svg>
     </a>
@@ -3630,145 +3608,58 @@
     
       
     
-    <a href="https://github.com/mdaneri/Atlaso/raw/main/docs/operate/automation.md" title="View source of this page" class="md-content__button md-icon">
+    <a href="https://github.com/mdaneri/Atlaso/raw/main/docs/operate/network-objects.md" title="View source of this page" class="md-content__button md-icon">
       
       <svg xmlns="http://www.w3.org/2000/svg" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="2" class="lucide lucide-file-code-2" viewBox="0 0 24 24"><path d="M4 12.15V4a2 2 0 0 1 2-2h8a2.4 2.4 0 0 1 1.706.706l3.588 3.588A2.4 2.4 0 0 1 20 8v12a2 2 0 0 1-2 2h-3.35"/><path d="M14 2v5a1 1 0 0 0 1 1h5M5 16l-3 3 3 3M9 22l3-3-3-3"/></svg>
     </a>
   
 
 
-<h1 id="automation">Automation<a class="headerlink" href="#automation" title="Permanent link">&para;</a></h1>
-<p>Atlaso's core scheduler runs in the separate persistent <code>atlaso-worker.service</code>. The web process creates task and
-schedule records; the worker claims pending work and writes the normal task, audit, result, and error history. It
-supports:</p>
+<h1 id="network-objects">Network Objects<a class="headerlink" href="#network-objects" title="Permanent link">&para;</a></h1>
+<p>Open <strong>Network Objects</strong> under <strong>Appliance Setup</strong> to manage reusable Source Groups. A Source Group can contain IPv4 or
+IPv6 addresses, CIDRs, <code>any</code>, or stable references to other Source Groups. Firewall rules, managed-rule assignments,
+and NAT rules consume the same objects.</p>
 <!-- BEGIN GENERATED INTERFACE OVERVIEW -->
 <h2 id="interface-overview">Interface overview<a class="headerlink" href="#interface-overview" title="Permanent link">&para;</a></h2>
 <p>This verified appliance view provides visual orientation before you begin.</p>
-<p><img alt="Atlaso Automation page in the clean-appliance desktop viewport." src="../../assets/screenshots/automation-clean-desktop.webp" /></p>
-<p><em>Figure: Automation in the verified clean-appliance desktop state.</em></p>
+<p><img alt="Atlaso Network Objects page in the clean-appliance desktop viewport." src="../../assets/screenshots/network-objects-clean-desktop.webp" /></p>
+<p><em>Figure: Network Objects in the verified clean-appliance desktop state.</em></p>
 <!-- END GENERATED INTERFACE OVERVIEW -->
 
-<ul>
-<li>Appliance Update checks and installs with selected update streams.</li>
-<li>Enabled VCF Offline Depot download profiles. Manual starts, <strong>Run now</strong>, and scheduled starts share one server-owned
-  admission and execution path. The same profile is atomically deduplicated while distinct profiles queue in FIFO order
-  behind exactly one executing VCFDT process. The worker rechecks the applied VCF Download Tool, staged credential,
-  current profile state, and generated command set immediately before execution, so a prerequisite removed after
-  queueing fails closed before VCFDT starts.</li>
-<li>Explicitly enabled immutable managed-script revisions.</li>
-</ul>
-<p>Schedules use either a one-time local date/time or a standard five-field cron expression
-(<code>minute hour day month weekday</code>) with an IANA timezone such as <code>UTC</code> or <code>America/Los_Angeles</code>. Execution timestamps are
-stored in UTC. Missed runs are not replayed. Every due occurrence advances to the next time. An occurrence for a profile
-that is already queued or running becomes a terminal skipped task linked to that profile's active task. A distinct
-profile remains queued and begins only after earlier VCFDT work reaches a terminal state. Pending or running Software
-Depot ID and VCF Offline Depot Appliance Apply tasks block new downloads; those exclusive operations cannot be admitted
-until the entire download queue drains. The shared database admission guard applies across web and scheduler processes.</p>
-<p>Schedules can be edited, enabled or disabled, run immediately, and deleted. <strong>Run now</strong> creates a normal queued task
-with a <code>manual_schedule</code> trigger and does not change the next calculated recurring run. The Automation table shows the
-latest task state; full execution output remains on the Tasks page.</p>
-<p>The Automation workspace uses three tabs:</p>
-<ul>
-<li><strong>Schedules</strong> fills the available workspace with the schedule grid. The standard State control enables or disables a
-  schedule directly. Run now, Edit, and Delete live in the row context menu rather than consuming columns.</li>
-<li><strong>Executions</strong> lists every task queued by a schedule, including succeeded and failed runs, and links each row to the
-  associated Tasks detail view.</li>
-<li><strong>Managed Scripts</strong> provides the immutable script-revision grid and source editor.</li>
-</ul>
-<p>Adding or editing a schedule opens the five-step wizard: schedule identity and task type, task-specific inputs, timing,
-enabled state, and review. The second step changes with the selected task: update streams, a VCF Offline Depot profile,
-or an enabled managed-script revision and its parameters. The timing step includes an hourly/daily/weekly/monthly cron
-builder with a generated summary; advanced operators can choose Custom for a standard five-field expression. The same
-wizard is used for edits.</p>
-<p>The <strong>Schedule download</strong> action in a VCF Offline Depot profile row opens the shared schedule form in place, without
-leaving the depot page. This contextual version has <strong>Schedule</strong>, <strong>Timing</strong>, <strong>State</strong>, and <strong>Review</strong> steps; it omits
-task-type and profile controls because the server binds <code>vcf_depot_download</code> and the selected row's stable profile ID.
-The generic Automation add/edit wizard remains the five-step flow described above. Schedule definitions contain that
-ID and timing only; they never contain Broadcom credentials, authenticated URLs, generated commands, or
-credential-bearing output. Profile renames and content edits therefore affect future runs without rewriting history.
-Disabling a profile disables its attached schedules and clears their next-run timestamps; re-enabling the profile does
-not silently re-enable them. Delete the attached schedules before deleting a profile.</p>
-<p>The profile selector shows every configured VCF Offline Depot profile so unavailable entries are not mistaken for
-missing data. Disabled profiles are labeled and cannot be selected. When no profile is enabled, the wizard reports that
-state and links back to <strong>VCF Offline Depot</strong>, where an administrator can review and enable the intended profile before
-creating the schedule.</p>
-<h2 id="managed-scripts">Managed scripts<a class="headerlink" href="#managed-scripts" title="Permanent link">&para;</a></h2>
-<p>Creating or editing a script always creates a new immutable, disabled revision. An administrator must review and enable
-a particular revision before it can be run manually or selected by a schedule. Schedules remain pinned to that exact
-revision; disabling it makes execution fail closed.</p>
-<p>Selecting <strong>+ Add managed script here</strong> opens a four-step wizard for identity, runtime, the first source revision, and
-review. The source editor expands through the available wizard workspace and accepts direct Monaco Editor input or imports
-<code>.sh</code>, <code>.bash</code>, <code>.py</code>, <code>.ps1</code>, or <code>.txt</code> files up to 1 MiB. Bash, PowerShell, and Python selections load matching syntax
-highlighting. Creation always stores immutable revision 1 in the disabled state and refreshes the managed-script grid so
-the new row is visible immediately.</p>
-<p>Existing managed-script rows edit name, description, interpreter, timeout, and state in the grid. Their compact source
-action opens a nearly full-window Monaco Editor modal for creating another disabled immutable revision. An edit that
-changes revision-owned fields creates a new disabled immutable revision; it never rewrites historical source. When a
-script has at least two revisions, selecting its revision cell opens a near-full-window, two-column comparison. Base
-and comparison selectors list every immutable revision with its creation date and state, so operators can compare any
-two revisions. The viewer aligns corresponding rows, shows original line numbers, collapses long unchanged runs,
-colors removals and additions, and uses a Prism grammar selected from the script interpreter.</p>
-<p><strong>Run latest revision</strong> opens a confirmation modal instead of immediately creating a task. The modal names the exact
-revision and interpreter and accepts the same literal parameter syntax used by schedules. Schedule and manual-run
-parameters are entered as one logical command line. Bash and Python use backslash line continuation and POSIX-style
-literal argument parsing; PowerShell uses the backtick continuation marker and PowerShell-style quoting. Atlaso passes
-the resulting argument vector directly to the selected script without a second shell-expansion pass. Parameters are
-bounded, stored with the schedule and task history, and must not contain secrets.</p>
-<p>Atlaso prevents disabling a revision used by an enabled schedule and prevents deleting a script while any schedule
-references one of its revisions. The operator must disable, edit, or delete those schedules first. Script deletion
-removes its stored revisions but preserves existing task history.</p>
-<p>Interpreters are allowlisted to Bash, system Python, and PowerShell. The helper runs scripts as the dedicated
-<code>atlaso-automation</code> account in a transient systemd unit with:</p>
-<ul>
-<li>no sudo or root identity;</li>
-<li><code>NoNewPrivileges=yes</code>;</li>
-<li>a private temporary directory and protected home directories;</li>
-<li>a read-only system filesystem except for <code>/var/lib/atlaso/automation/runs</code>;</li>
-<li>the revision's configured timeout, capped at 24 hours.</li>
-</ul>
-<p>Atlaso canonicalizes imported and pasted source to Unix LF line endings before storing and again before execution, so
-scripts authored on Windows do not pass carriage returns to Bash. A Bash shebang is optional because Atlaso invokes the
-selected interpreter explicitly; when supplied, it must begin with <code>#!</code> (for example, <code>#!/bin/bash</code>). A malformed Bash
-shebang reports the stable recovery guidance <strong>A Bash shebang must start with #!; add the missing # or remove the shebang
-line.</strong> Other source validation failures use bounded generic guidance. Neither response includes backend exception
-detail, and Atlaso does not create a rejected revision.</p>
-<p>Scripts receive no Atlaso credentials by default. A schedule or manual run may select one named VCF/ESX password vault.
-Atlaso stages that vault as a transient systemd credential and provides <code>atlaso-vault get --key &lt;key&gt;</code> to Bash/Python
-and <code>Get-AtlasoVault -Key &lt;key&gt;</code> to PowerShell. The helper fails outside the scoped process and exact injected values are
-redacted from captured output. Output is bounded in task history. Script definitions and schedules are included in
-settings archives, but restored revisions and schedules are always disabled and vault contents are never exported. See
-<a href="../../services/vaults/">Vaults</a> for the complete key, scope, and recovery contract.</p>
-<h2 id="service-operations">Service operations<a class="headerlink" href="#service-operations" title="Permanent link">&para;</a></h2>
-<div class="language-bash highlight"><pre><span></span><code><span id="__span-0-1"><a id="__codelineno-0-1" name="__codelineno-0-1" href="#__codelineno-0-1"></a>systemctl<span class="w"> </span>status<span class="w"> </span>atlaso-worker<span class="w"> </span>--no-pager
-</span><span id="__span-0-2"><a id="__codelineno-0-2" name="__codelineno-0-2" href="#__codelineno-0-2"></a>journalctl<span class="w"> </span>-u<span class="w"> </span>atlaso-worker<span class="w"> </span>-n<span class="w"> </span><span class="m">120</span><span class="w"> </span>--no-pager
-</span></code></pre></div>
-<p>If the worker restarts during a task, that task is marked failed and is not silently replayed. A queued task that was
-never claimed remains pending.</p>
-<h2 id="task-history-and-output">Task history and output<a class="headerlink" href="#task-history-and-output" title="Permanent link">&para;</a></h2>
-<p>Scheduled work always creates normal Atlaso Jobs, so it appears in both the Automation <strong>Executions</strong> tab and
-<code>/ui/management/tasks</code>.
-VCFDT scheduled tasks also appear in the profile-scoped task grid. Queued rows remain durable across worker restarts;
-only an interrupted running task is failed during recovery. Failed prerequisite checks and skipped same-profile or
-exclusive-operation overlaps are terminal history entries with schedule, profile, planned-time, and active-task
-context; missed or failed runs are not retried outside the next configured occurrence.
-The Tasks grid uses backend-owned filtering and pagination. Status and state are fixed lists; Task / Component is an
-autocomplete list built from recorded job types and component labels while still accepting a custom job id, task, or
-component fragment.</p>
-<p>Task detail keeps the complete redacted result payload for audit and diagnosis, but <strong>Console output</strong> shows only the
-managed process stdout and stderr. The helper execution envelope is removed from that console view, stdout keeps the
-normal terminal colors, and stderr is shown separately in red. Result and log previews keep copy/open controls overlaid
-in the corner without reserving blank text rows.</p>
+<h2 id="add-or-edit-a-source-group">Add or edit a Source Group<a class="headerlink" href="#add-or-edit-a-source-group" title="Permanent link">&para;</a></h2>
+<ol>
+<li>Select <strong>+ Add Source Group here</strong>, double-click an existing row, or choose <strong>Edit Source Group</strong> from its row menu.</li>
+<li>Enter a unique name and optional description.</li>
+<li>Enter one address, CIDR, <code>any</code>, or <code>group:&lt;stable-id&gt;</code> reference per line.</li>
+<li>Review the normalized entries, current consumers, and validation state before saving.</li>
+<li>Return to the Firewall or NAT wizard when Network Objects was opened from <strong>Manage source groups</strong>.</li>
+</ol>
+<p>The built-in <strong>Any</strong> row always remains visible and read-only. Saved identifiers remain stable when an object is
+renamed, so nested references and rule assignments do not silently change meaning.</p>
+<p>The return link preserves the current Firewall or NAT draft only in this browser tab. Atlaso reopens the originating
+wizard with fresh server-rendered Source Group choices and restores focus. If an object selected in the draft was
+removed, the wizard requires a current selection instead of silently widening the rule.</p>
+<h2 id="review-and-remove-an-object">Review and remove an object<a class="headerlink" href="#review-and-remove-an-object" title="Permanent link">&para;</a></h2>
+<p>The <strong>Consumers</strong> column summarizes current use. Choose <strong>Review consumers</strong> to inspect every nested Source Group,
+operator Firewall rule, managed-rule assignment, and NAT rule that references the object.</p>
+<p>Atlaso rejects removal with <code>409 Conflict</code> if any consumer appears during the final server-side check. This protects
+against another session adding a reference after the page was loaded. Remove or reassign every consumer first, then use
+the shared confirmation dialog to remove the unreferenced object. <strong>Any</strong> cannot be removed.</p>
+<h2 id="apply-and-archive-behavior">Apply and archive behavior<a class="headerlink" href="#apply-and-archive-behavior" title="Permanent link">&para;</a></h2>
+<p>Saving a Source Group changes desired state only. Firewall-rule and managed-assignment consumers remain enforced through
+the <strong>Firewall</strong> Appliance Apply unit; NAT consumers remain enforced through <strong>Routes &amp; WAN Simulation</strong>. Atlaso keeps
+the established <code>firewall.managed_source_groups</code> settings-archive shape, object identifiers, nested references, and
+assignments, so current archives round-trip without migration.</p>
+<p>The canonical collection route is <code>/ui/management/network-objects/source-groups</code>. Safe legacy <code>GET</code> and <code>HEAD</code> requests
+to <code>/ui/management/firewall/source-groups</code> redirect only after normal management-interface and session authorization.
+Legacy <code>POST</code> requests invoke the same mutation handler and return <code>303 See Other</code>, preventing a browser from replaying
+the mutation while following the canonical location.</p>
 <!-- BEGIN GENERATED ADDITIONAL SCREENSHOTS -->
 <h2 id="additional-verified-states">Additional verified states<a class="headerlink" href="#additional-verified-states" title="Permanent link">&para;</a></h2>
 <p>These captures show responsive layouts and useful operational states referenced by this page.</p>
-<h3 id="automation_1">Automation<a class="headerlink" href="#automation_1" title="Permanent link">&para;</a></h3>
-<p><img alt="Atlaso Automation page in the clean-appliance responsive viewport." src="../../assets/screenshots/automation-clean-responsive.webp" /></p>
-<p><em>Figure: Automation in the verified clean-appliance responsive state.</em></p>
-<h3 id="automation-schedules">Automation: Schedules<a class="headerlink" href="#automation-schedules" title="Permanent link">&para;</a></h3>
-<p><img alt="Atlaso Automation schedule wizard with VCF Offline Depot profile download selected at the desktop viewport." src="../../assets/screenshots/automation-vcf-schedule-wizard-desktop.webp" /></p>
-<p><em>Figure: VCF Offline Depot profile scheduling in the shared Automation wizard.</em></p>
-<p><img alt="Atlaso Automation schedule wizard with VCF Offline Depot profile download selected at the responsive viewport." src="../../assets/screenshots/automation-vcf-schedule-wizard-responsive.webp" /></p>
-<p><em>Figure: VCF Offline Depot profile scheduling in the shared Automation wizard at the responsive viewport.</em></p>
+<h3 id="network-objects_1">Network Objects<a class="headerlink" href="#network-objects_1" title="Permanent link">&para;</a></h3>
+<p><img alt="Atlaso Network Objects page in the clean-appliance responsive viewport." src="../../assets/screenshots/network-objects-clean-responsive.webp" /></p>
+<p><em>Figure: Network Objects in the verified clean-appliance responsive state.</em></p>
 <!-- END GENERATED ADDITIONAL SCREENSHOTS -->
 
 
@@ -3810,7 +3701,7 @@ in the corner without reserving blank text rows.</p>
       <nav class="md-footer__inner md-grid" aria-label="Footer" >
         
           
-          <a href="../backup-restore/" class="md-footer__link md-footer__link--prev" aria-label="Previous: Backup and restore">
+          <a href="../networking/" class="md-footer__link md-footer__link--prev" aria-label="Previous: Network configuration">
             <div class="md-footer__button md-icon">
               
               <svg xmlns="http://www.w3.org/2000/svg" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="2" class="lucide lucide-arrow-left" viewBox="0 0 24 24"><path d="m12 19-7-7 7-7M19 12H5"/></svg>
@@ -3820,20 +3711,20 @@ in the corner without reserving blank text rows.</p>
                 Previous
               </span>
               <div class="md-ellipsis">
-                Backup and restore
+                Network configuration
               </div>
             </div>
           </a>
         
         
           
-          <a href="../api/" class="md-footer__link md-footer__link--next" aria-label="Next: Use the API">
+          <a href="../appliance-console/" class="md-footer__link md-footer__link--next" aria-label="Next: Local appliance console">
             <div class="md-footer__title">
               <span class="md-footer__direction">
                 Next
               </span>
               <div class="md-ellipsis">
-                Use the API
+                Local appliance console
               </div>
             </div>
             <div class="md-footer__button md-icon">

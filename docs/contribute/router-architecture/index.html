@@ -280,6 +280,8 @@
       
         
       
+        
+      
     
     
     
@@ -700,6 +702,8 @@
       
         
       
+        
+      
     
     
     
@@ -1046,6 +1050,40 @@
     
   
   Network configuration
+
+    
+  </span>
+  
+  
+    
+  
+  
+    <span class="md-status md-status--current"></span>
+  
+
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../operate/network-objects/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Network Objects
 
     
   </span>
@@ -3996,6 +4034,12 @@ expected-domain tuples make an omitted or reordered contribution fail during fac
 <p>Service rendering, helper, lifecycle, and global Appliance Apply tests retain their existing ownership. This extraction
 does not change templates, browser assets, visible copy, API operations, normalized OpenAPI, route inventory, audit
 actions, or host-mutation boundaries.</p>
+<p>Network Objects management transport lives in <code>atlaso/app/routers/ui/network_objects.py</code>, with projection and consumer
+discovery in <code>atlaso/app/services/network_objects.py</code>. It owns Source Group management while the Firewall facade retains
+compatibility exports and supplies shared state helpers to Firewall transport construction. The historical
+<code>firewall.managed_source_groups</code> key, stable group IDs, nested-reference syntax, settings archives, and Firewall/WAN
+apply inputs do not move. Independently runnable transport coverage lives in
+<code>tests/routers/ui/test_network_objects.py</code>.</p>
 <h2 id="extracted-dnsdhcp-ownership">Extracted DNS/DHCP ownership<a class="headerlink" href="#extracted-dnsdhcp-ownership" title="Permanent link">&para;</a></h2>
 <p>DNS and DHCP management transports live in <code>atlaso/app/routers/ui/dns_dhcp.py</code>; their API v1 transports live in
 <code>atlaso/app/routers/api_v1/dns_dhcp.py</code>. The stable facades continue to export the established endpoint and helper

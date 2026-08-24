@@ -18,7 +18,7 @@
         <link rel="prev" href="../appliance-settings/">
       
       
-        <link rel="next" href="../appliance-console/">
+        <link rel="next" href="../network-objects/">
       
       
         
@@ -250,6 +250,8 @@
       
         
           
+        
+      
         
       
         
@@ -670,6 +672,8 @@
       
         
           
+        
+      
         
       
         
@@ -1313,6 +1317,40 @@
   
 </nav>
       
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../network-objects/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Network Objects
+
+    
+  </span>
+  
+  
+    
+  
+  
+    <span class="md-status md-status--current"></span>
+  
+
+  
+
+      </a>
     </li>
   
 
@@ -3777,6 +3815,8 @@
       
         
       
+        
+      
     
     
     
@@ -3934,8 +3974,10 @@ the same intended interfaces.</p>
 row menu to update it. The standard step rail remains beside the form on wide screens and adapts to the narrow layout.
 Each wizard retains entered values while moving backward, validates before Review, and saves only after the final
 add/update action. A saved row's <strong>Enabled</strong> value remains directly editable; this changes desired state only.</p>
-<p>The <strong>NAT</strong> wizard creates explicit IPv4 masquerade rules. Choose Any, an existing Firewall source group, or IPv4 source
-CIDRs, then select an eligible IPv4-bearing access interface or enabled VLAN. Atlaso does not infer an outbound target
+<p>The <strong>NAT</strong> wizard creates explicit IPv4 masquerade rules. Choose Any, an existing Source Group, or IPv4 source CIDRs,
+then select an eligible IPv4-bearing access interface or enabled VLAN. <strong>Manage source groups</strong> opens
+<a href="../network-objects/">Network Objects</a>, preserves the tab-local NAT draft, and restores it with fresh choices on return.
+Atlaso does not infer an outbound target
 from an interface role and does not provide destination NAT, port forwarding, or IPv6 NAT in v1.</p>
 <p>The <strong>WAN Policies</strong> wizard groups delay/capacity settings separately from packet loss and error effects. Assigning a
 policy to a Static Route identifies its target interface or VLAN; WAN Simulation v1 impairs all traffic on that target,
@@ -4055,13 +4097,13 @@ boundary described above.</p>
         
         
           
-          <a href="../appliance-console/" class="md-footer__link md-footer__link--next" aria-label="Next: Local appliance console">
+          <a href="../network-objects/" class="md-footer__link md-footer__link--next" aria-label="Next: Network Objects">
             <div class="md-footer__title">
               <span class="md-footer__direction">
                 Next
               </span>
               <div class="md-ellipsis">
-                Local appliance console
+                Network Objects
               </div>
             </div>
             <div class="md-footer__button md-icon">

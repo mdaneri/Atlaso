@@ -280,6 +280,8 @@
       
         
       
+        
+      
     
     
     
@@ -700,6 +702,8 @@
       
         
       
+        
+      
     
     
     
@@ -1046,6 +1050,40 @@
     
   
   Network configuration
+
+    
+  </span>
+  
+  
+    
+  
+  
+    <span class="md-status md-status--current"></span>
+  
+
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../operate/network-objects/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Network Objects
 
     
   </span>
@@ -3715,10 +3753,18 @@ read-only or unavailable surface has a mutation workflow.</p>
 <td>E1–E8</td>
 </tr>
 <tr>
-<td><code>/ui/management/firewall</code> — operator and managed rules, source groups</td>
+<td><code>/ui/management/network-objects</code> — Source Groups and consumer usage</td>
+<td>Wizard-backed Tabulator using the ESX Storage grid/wizard reference and Firewall rule semantics</td>
+<td>Source Group fallback, built-in Any, entries, consumers, and validation render in HTML</td>
+<td>Existing Firewall scopes; stable IDs; shared confirmation; in-use deletion conflict; no direct host mutation</td>
+<td>Pass D/N/K/F/Z/V</td>
+<td>E1–E8</td>
+</tr>
+<tr>
+<td><code>/ui/management/firewall</code> — operator and managed rules</td>
 <td>Wizard-backed and direct-edit Tabulator plus non-grid settings; DNS/ESX Storage references</td>
-<td>Rule and managed-rule fallbacks, source-group settings, validation, and preview</td>
-<td>Role-gated edits; shared remove confirmation; global <code>firewall</code> apply only</td>
+<td>Rule and managed-rule fallbacks, validation, and preview</td>
+<td>Role-gated edits; Network Objects return handoff; shared remove confirmation; global <code>firewall</code> apply only</td>
 <td>Pass D/N/K/F/Z/V</td>
 <td>E1–E8</td>
 </tr>
@@ -4057,7 +4103,7 @@ are explicitly inventoried so route/template changes cannot silently escape the 
   <code>appliance-update-source-dialog</code>, and <code>managed-package-dialog</code>.</li>
 <li>Networking and services: <code>dns-domain-dialog</code>, <code>dhcp-scope-dialog</code>, <code>dhcp-option-dialog</code>,
   <code>dhcp-lease-reservation-modal</code>, <code>dhcp-lease-pxe-modal</code>, <code>firewall-rule-dialog</code>,
-  <code>firewall-rename-group-modal</code>, and <code>ntp-source-dialog</code>.</li>
+  <code>network-object-source-group-dialog</code>, and <code>ntp-source-dialog</code>.</li>
 <li>Identity, CA, and vSphere Key Providers: <code>ca-csr-dialog</code>, <code>ca-profile-dialog</code>, <code>ca-certificate-dialog</code>,
   <code>ldap-organization-dialog</code>, <code>ldap-user-dialog</code>, <code>ldap-group-dialog</code>, <code>ldap-bind-secret-modal</code>,
   <code>ldap-password-modal</code>, <code>ldap-group-members-modal</code>, <code>ldap-generate-modal</code>, <code>vsphere-provider-dialog</code>,
@@ -4085,7 +4131,7 @@ moving essential title/action context outside the viewport.</p>
 <code>automation.html</code>, <code>backup_restore.html</code>, <code>ca_public.html</code>, <code>ca_request_login.html</code>, <code>ca_request_portal.html</code>,
 <code>ca_requests.html</code>, <code>certificate_authority.html</code>, <code>dashboard.html</code>, <code>depot_browser.html</code>, <code>dhcp.html</code>, <code>dns.html</code>,
 <code>esx_storage.html</code>, <code>esxi_pxe.html</code>, <code>firewall.html</code>, <code>kms.html</code>, <code>ldap.html</code>, <code>login.html</code>, <code>logs.html</code>, <code>monitor.html</code>,
-<code>ntp.html</code>, <code>physical_interfaces.html</code>, <code>placeholder.html</code>, <code>public_service_home.html</code>, <code>public_terminal.html</code>,
+<code>network_objects.html</code>, <code>ntp.html</code>, <code>physical_interfaces.html</code>, <code>placeholder.html</code>, <code>public_service_home.html</code>, <code>public_terminal.html</code>,
 <code>remote_terminal.html</code>, <code>routes_wan.html</code>, <code>services.html</code>, <code>settings.html</code>, <code>tasks.html</code>, <code>terminal.html</code>, <code>users.html</code>,
 <code>vaults.html</code>, <code>vcf_backups.html</code>, <code>vcf_helper.html</code>, <code>vcf_offline_depot.html</code>,
 <code>vcf_offline_depot_task_log.html</code>, <code>vcf_private_registry.html</code>, and <code>vlan_interfaces.html</code>.</p>
