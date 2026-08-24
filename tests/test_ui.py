@@ -888,7 +888,7 @@ def test_pwa_manifest_service_worker_and_offline_shell(client):
     assert service_worker.headers["cache-control"] == "no-cache"
     assert service_worker.headers["service-worker-allowed"] == "/ui/management/"
     assert "ATLASO_CACHE" in service_worker.text
-    assert "atlaso-management-pwa-v269" in service_worker.text
+    assert "atlaso-management-pwa-v271" in service_worker.text
     assert 'fetch(asset, { cache: "reload" })' in service_worker.text
     assert ".catch(() => undefined)" in service_worker.text
     assert 'request.mode === "navigate"' in service_worker.text
@@ -906,7 +906,7 @@ def test_pwa_manifest_service_worker_and_offline_shell(client):
     assert "/static/ui-patterns.js?v=atlaso-ui-foundation-20260726-8" in service_worker.text
     assert "/static/appliance-apply-polling.js?v=issue-420-6" in service_worker.text
     assert "/static/ui-routes.js?v=issue-287-1" in service_worker.text
-    assert "/static/app.js?v=issue-471-7" in service_worker.text
+    assert "/static/app.js?v=issue-337-8" in service_worker.text
     assert "/static/terminal.js?v=issue-287-2" in service_worker.text
     assert "/static/pwa.js?v=issue-287-2" in service_worker.text
     assert "vcfdt-configuration-248-20260807-14" not in service_worker.text
@@ -960,8 +960,8 @@ def test_shared_ui_pattern_shell_and_wizard_contracts(client):
     base = (templates / "base.html").read_text(encoding="utf-8")
     public_base = (templates / "public_portal_base.html").read_text(encoding="utf-8")
     for shell, app_asset in (
-        (base, "/static/app.js?v=issue-471-7"),
-        (public_base, "/static/app.js?v=issue-471-7"),
+        (base, "/static/app.js?v=issue-337-8"),
+        (public_base, "/static/app.js?v=issue-337-8"),
         (base, "/static/appliance-apply-polling.js?v=issue-420-6"),
     ):
         assert shell.index("/static/vendor/tabulator/tabulator.min.js") < shell.index(
@@ -974,6 +974,7 @@ def test_shared_ui_pattern_shell_and_wizard_contracts(client):
     wizard_templates = [
         templates / "automation.html",
         templates / "esx_storage.html",
+        templates / "network_objects.html",
         templates / "routes_wan.html",
         templates / "vlan_interfaces.html",
         templates / "vcf_offline_depot.html",
@@ -994,7 +995,7 @@ def test_shared_ui_pattern_shell_and_wizard_contracts(client):
         "data-atlaso-wizard-submit",
         "data-atlaso-wizard-error",
     ):
-        assert wizard_markup.count(marker) >= 6
+        assert wizard_markup.count(marker) >= 7
 
     foundation = client.get("/static/ui-patterns.js")
     assert foundation.status_code == 200
@@ -1609,7 +1610,7 @@ def test_monitor_page_renders_template_and_browser_assets(client):
     assert "swagger-link-icon" in page.text
     assert "/static/app.css?v=issue-474-1" in page.text
     assert "/static/ui-patterns.js?v=atlaso-ui-foundation-20260726-8" in page.text
-    assert "/static/app.js?v=issue-471-7" in page.text
+    assert "/static/app.js?v=issue-337-8" in page.text
     app_css = client.get("/static/app.css")
     assert app_css.status_code == 200
     assert ".split-workspace > .wide-panel" in app_css.text
@@ -6425,13 +6426,13 @@ def test_settings_archive_preflight_rejects_invalid_collection_row_and_required_
         (malformed_password_policy, "local user password policy is invalid"),
         (coerced_password_policy, "field require_uppercase must be a Boolean"),
         (invalid_nts_restoration_marker, "NTPsec NTS restoration marker is invalid"),
-        (invalid_firewall_source_groups, "firewall source groups state is invalid"),
-        (duplicate_firewall_source_group, "firewall source groups state is invalid"),
-        (malformed_firewall_source_group, "firewall source groups state is invalid"),
-        (reserved_firewall_source_group, "firewall source groups state is invalid"),
+        (invalid_firewall_source_groups, "Source Groups state is invalid"),
+        (duplicate_firewall_source_group, "Source Groups state is invalid"),
+        (malformed_firewall_source_group, "Source Groups state is invalid"),
+        (reserved_firewall_source_group, "Source Groups state is invalid"),
         (
             unresolved_firewall_source_group_assignment,
-            "firewall source groups state is invalid",
+            "Source Groups state is invalid",
         ),
         (malformed_conditional_forwarder, "DNS conditional forwarders state is invalid"),
         (oversized_esxi_custom_variables, "limited to 64 entries"),

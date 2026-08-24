@@ -9,12 +9,29 @@ from tests.routers.ui.helpers import login
 
 
 def _csrf(page) -> str:
-    """Return the first CSRF token from one rendered management page."""
+    """Return the first CSRF token from one rendered management page.
+
+    Args:
+        page: Rendered management response containing a CSRF field.
+
+    Returns:
+        Extracted CSRF token.
+    """
     return page.text.split('name="csrf" value="', 1)[1].split('"', 1)[0]
 
 
 def _create_group(client, csrf: str, name: str, entries: str = "any"):
-    """Create one Source Group through the canonical grid transport."""
+    """Create one Source Group through the canonical grid transport.
+
+    Args:
+        client: HTTP test client used to exercise the application.
+        csrf: Valid CSRF token for the authenticated session.
+        name: Display name for the new Source Group.
+        entries: Serialized Source Group entries.
+
+    Returns:
+        HTTP response from the Source Group mutation.
+    """
     return client.post(
         "/network-objects/source-groups",
         data={
@@ -29,7 +46,11 @@ def _create_group(client, csrf: str, name: str, entries: str = "any"):
 
 
 def test_network_objects_page_uses_canonical_grid_wizard_and_safe_return_tokens(client):
-    """Render Source Groups as the canonical wizard-backed collection."""
+    """Render Source Groups as the canonical wizard-backed collection.
+
+    Args:
+        client: HTTP test client used to exercise the application.
+    """
     login(client)
 
     page = client.get("/network-objects?return_to=firewall-rule")
@@ -50,7 +71,11 @@ def test_network_objects_page_uses_canonical_grid_wizard_and_safe_return_tokens(
 
 
 def test_network_objects_create_update_preserves_identifier_and_shared_apply_semantics(client):
-    """Keep stable IDs and the existing Firewall/WAN render behavior after edits."""
+    """Keep stable IDs and the existing Firewall/WAN render behavior after edits.
+
+    Args:
+        client: HTTP test client used to exercise the application.
+    """
     login(client)
     page = client.get("/network-objects")
     csrf = _csrf(page)
@@ -108,7 +133,11 @@ def test_network_objects_create_update_preserves_identifier_and_shared_apply_sem
 
 
 def test_network_objects_validation_returns_actionable_wizard_detail(client):
-    """Expose Source Group validation text through the shared wizard error field."""
+    """Expose Source Group validation text through the shared wizard error field.
+
+    Args:
+        client: HTTP test client used to exercise the application.
+    """
     login(client)
     csrf = _csrf(client.get("/network-objects"))
 
@@ -121,7 +150,11 @@ def test_network_objects_validation_returns_actionable_wizard_detail(client):
 
 
 def test_network_objects_mutations_return_refreshed_consumer_rows(client):
-    """Return every row whose nested-group usage changed after a mutation."""
+    """Return every row whose nested-group usage changed after a mutation.
+
+    Args:
+        client: HTTP test client used to exercise the application.
+    """
     login(client)
     csrf = _csrf(client.get("/network-objects"))
     parent = _create_group(client, csrf, "Parent clients", "192.0.2.0/24").json()["source_group"]
@@ -148,7 +181,11 @@ def test_network_objects_mutations_return_refreshed_consumer_rows(client):
 
 
 def test_network_objects_delete_conflict_lists_every_consumer_and_rechecks_on_post(client):
-    """Block deletion for nested, operator, managed, and NAT consumers."""
+    """Block deletion for nested, operator, managed, and NAT consumers.
+
+    Args:
+        client: HTTP test client used to exercise the application.
+    """
     login(client)
     page = client.get("/network-objects")
     csrf = _csrf(page)
@@ -203,7 +240,11 @@ def test_network_objects_delete_conflict_lists_every_consumer_and_rechecks_on_po
 
 
 def test_network_objects_unreferenced_delete_and_legacy_routes_are_non_replaying(client):
-    """Delete unused groups and retain safe legacy bookmark/form compatibility."""
+    """Delete unused groups and retain safe legacy bookmark/form compatibility.
+
+    Args:
+        client: HTTP test client used to exercise the application.
+    """
     unauthorized = client.get("/ui/management/firewall/source-groups", follow_redirects=False)
     assert unauthorized.status_code == 303
     assert unauthorized.headers["location"].startswith("/ui/management/login?")
@@ -278,7 +319,11 @@ def test_network_objects_reuses_firewall_authorization_scopes():
 
 
 def test_network_objects_read_only_page_keeps_grid_without_wizard(client):
-    """Keep the read-only Tabulator host while omitting mutation controls."""
+    """Keep the read-only Tabulator host while omitting mutation controls.
+
+    Args:
+        client: HTTP test client used to exercise the application.
+    """
     from sqlalchemy import select
 
     from atlaso.app.database import SessionLocal

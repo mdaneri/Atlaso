@@ -182,12 +182,30 @@ def build_router(dependencies: NetworkObjectsUiDependencies) -> NetworkObjectsUi
         return RedirectResponse(f"{MANAGEMENT_UI_ROOT}/network-objects{query}", status_code=308)
 
     def _entries_from_form(form: FormData) -> list[str]:
+        """Normalize Source Group entry fields from a submitted form.
+
+        Args:
+            form: Submitted Source Group form data.
+
+        Returns:
+            Normalized entries, defaulting to the built-in ``any`` entry.
+        """
         values: list[str] = []
         for raw_value in form.getlist("group_entries"):
             values.extend(item.strip() for item in re.split(r"[\n,]+", str(raw_value)) if item.strip())
         return values or ["any"]
 
     def _mutation_response(db: Session, group_id_value: str, *, status_code: int = 200) -> JSONResponse:
+        """Build the refreshed collection response after one mutation.
+
+        Args:
+            db: Active database session.
+            group_id_value: Stable identifier of the mutated Source Group.
+            status_code: HTTP status assigned to the JSON response.
+
+        Returns:
+            JSON response containing the mutated row and refreshed collection.
+        """
         context = network_objects_context(db)
         group = next(
             (row for row in context["network_object_source_groups"] if row["id"] == group_id_value),
@@ -209,6 +227,16 @@ def build_router(dependencies: NetworkObjectsUiDependencies) -> NetworkObjectsUi
         identity: Identity,
         db: Session,
     ) -> Response:
+        """Apply a canonical or bridged legacy Source Group mutation.
+
+        Args:
+            request: Incoming Source Group mutation request.
+            identity: Authenticated identity authorizing the mutation.
+            db: Active database session.
+
+        Returns:
+            Refreshed JSON for grid requests or a non-replaying redirect.
+        """
         form = await request.form()
         verify_csrf(request, str(form.get("csrf", "")))
         acquire_network_objects_write_lock(db)
