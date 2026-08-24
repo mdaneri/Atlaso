@@ -163,8 +163,8 @@ pwsh -ExecutionPolicy Bypass `
 Workstation cleanup is authoritative only for an exact Atlaso artifact root. It rejects filesystem roots, sibling or
 parent targets, and any root or descendant containing a reparse point. Every recursively discovered VMX must be a strict
 descendant of that root and must match the caller's validated target set. Cleanup captures the root and descendant
-filesystem identities before provider operations; a new or replaced entry, or a replaced root, blocks the final
-recursive removal and preserves the replacement.
+filesystem identities before provider operations. It checks the root identity both before and after descendant
+traversal; a new or replaced entry, or a replaced root, blocks the final recursive removal and preserves the replacement.
 
 For each target, cleanup uses checked `vmrun -T ws list` output to decide whether the exact VMX is running. It stops a
 running target with checked `vmrun -T ws stop <vmx> hard` and verifies that the target is no longer listed. A well-formed

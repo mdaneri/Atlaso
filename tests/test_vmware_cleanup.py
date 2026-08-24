@@ -2145,6 +2145,19 @@ def test_module_keeps_inventory_work_out_of_normal_delete_path() -> None:
         )
     ]
     assert identity_reads[0] < traversal < identity_reads[1]
+    assertion_function = module.split(
+        "function Assert-AtlasoRootSnapshotUnreplaced", 1
+    )[1].split("function Test-AtlasoRunningPathMatchesTarget", 1)[0]
+    assertion_traversal = assertion_function.index(
+        "Get-ChildItem -LiteralPath $RemovalRoot"
+    )
+    assertion_reads = [
+        match.start()
+        for match in re.finditer(
+            re.escape("Get-AtlasoPathIdentity -Path $RemovalRoot"), assertion_function
+        )
+    ]
+    assert assertion_reads[0] < assertion_traversal < assertion_reads[1]
     stale_repair = module.split(
         "function Remove-AtlasoWorkstationStaleRegistrations", 1
     )[1].split("function Get-AtlasoRootSnapshot", 1)[0]
