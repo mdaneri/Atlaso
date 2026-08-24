@@ -1534,9 +1534,10 @@ def apply_customization(config: dict[str, object], *, dry_run: bool = False) -> 
                 str(config["development_admin_ssh_public_key"]),
             ),
         )
-        # This guest-info value is enabled only by the normal test wrapper's
-        # development-key property. Lifecycle and exported appliances never
-        # publish a host key through this host-controlled convenience channel.
+        # Despite this module's historical OVF name, it is also the guest-side
+        # first-boot customizer for raw Workstation clones. Only the normal test
+        # wrapper injects this development-key property; lifecycle and exported
+        # appliances therefore never publish this convenience-channel value.
         run_initialization_layer("test VM SSH host key", publish_test_vm_ssh_host_key)
     run_initialization_layer(
         "appliance environment",

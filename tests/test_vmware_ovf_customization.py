@@ -1667,10 +1667,10 @@ def test_vmware_ovf_customizer_scrubs_consumed_guestinfo_credentials(monkeypatch
     assert "root-secret1" not in str(commands)
 
 
-def test_vmware_ovf_customizer_publishes_test_vm_host_key_without_client_key(
+def test_normal_test_vm_first_boot_publishes_host_key_without_client_key(
     tmp_path, monkeypatch
 ):
-    """Publish only the canonical public host key through test-only guest-info.
+    """Publish only the normal test VM's canonical key through guest-info.
 
     Args:
         tmp_path: Isolated filesystem root.
@@ -1715,8 +1715,8 @@ def test_vmware_ovf_customizer_publishes_test_vm_host_key_without_client_key(
     assert "atlaso-test" not in str(commands)
 
 
-def test_vmware_ovf_customizer_rejects_invalid_test_vm_host_key(tmp_path):
-    """Fail before guest-info publication when the installed host key is invalid.
+def test_normal_test_vm_first_boot_rejects_invalid_host_key(tmp_path):
+    """Fail test-only publication when the installed host key is invalid.
 
     Args:
         tmp_path: Isolated filesystem root.
