@@ -1308,14 +1308,15 @@ pwsh -ExecutionPolicy Bypass `
 ```
 
 Before a forced Workstation rebuild deletes the output directory, the wrapper routes the complete output root through
-the checked VMware cleanup module. It inventories every VMX, verifies the checked running and registered inventories,
-stops running targets, and stabilizes both inventories and the VMX set before checked `vmrun deleteVM` removes any
-registered target and the module removes the remaining exact non-reparse-point output root. Before provider deletion,
-the module detaches VMDK devices resolved outside that root so shared disks remain untouched.
-If provider deletion fails while the VMX survives, the module atomically restores its original bytes.
-With the Workstation UI closed, cleanup atomically removes provider-retained library rows only for canonical missing VMX
-paths beneath the validated artifact scope. Missing inventory paths elsewhere remain fatal.
-Any inventory, transition, or removal failure preserves the remaining artifacts and prevents Packer from starting.
+the checked VMware cleanup module. It validates the exact non-reparse-point Atlaso root, discovers only descendant VMX
+files, stops running targets, protects external VMDKs, and uses checked `vmrun deleteVM` for existing registered targets
+before removing the remaining root. A filesystem-identity snapshot blocks removal when the root or one of its surviving
+entries is recreated or replaced during cleanup. Provider and recursive-removal failures preserve remaining artifacts
+and prevent Packer from starting.
+
+Unrelated Workstation library state is not validated and cannot block normal Atlaso cleanup. With the Workstation UI
+closed, a narrow fallback removes only a well-formed Atlaso-scoped registration whose VMX is already missing; unrelated
+missing, malformed, or inconsistent registrations remain unchanged.
 The remastered kickstart disables Photon's socket-activated SSH unit and enables the normal
 `sshd.service`, ensuring Packer receives a deterministic SSH daemon after the first installed-system boot. The temporary
 Photon root/build password remains separate from the Atlaso web bootstrap administrator password.
@@ -1350,22 +1351,15 @@ layer-2 segments, but they do not model Hyper-V access/trunk VLAN port controls 
 authoritative for that VLAN-specific behavior. Details live in
 [VMware Workstation Lifecycle Testing](vmware-workstation-lifecycle-testing.md).
 
-Workstation test-VM and lifecycle cleanup fails closed around recursive removal. Redeploy requires the exact named VMX
-with exactly one well-formed expected display-name assignment; duplicate, malformed, or conflicting assignments preserve
-the artifacts. Data-disk reset accepts only strict non-reparse-point descendants of the selected VM
-output. Cleanup verifies checked running and registered inventories, stops running targets, and completes every
-fail-closed preflight before checked `vmrun deleteVM` removes registered targets and the remaining artifact root.
-External VMDK devices are detached from the stopped VMX immediately before provider deletion.
-When checked provider deletion removes the complete validated root, cleanup keeps the registration and running-inventory
+Workstation test-VM and lifecycle cleanup fails closed around the exact recursive-removal target. Redeploy requires the
+exact named VMX with exactly one well-formed expected display-name assignment; duplicate, malformed, or conflicting
+assignments preserve the artifacts. Data-disk reset accepts only strict non-reparse-point descendants of the selected VM
+output. Cleanup stops exact in-root running targets, detaches external VMDKs, and uses checked `vmrun deleteVM` for exact
+registered targets. It does not make unrelated provider registrations part of the safety decision. A provider failure,
+a surviving target, or a new or identity-replaced artifact entry preserves the remaining root and returns failure.
+When checked provider deletion removes the complete validated root, cleanup keeps its scoped registration and running
 postconditions, requires that exact root to remain absent, and lets the active redeploy continue without enumerating the
 missing directory.
-Inventory entries must be canonical absolute VMX paths whose Windows volume and file
-identities can be resolved, so 8.3, mapped-drive, and other filesystem aliases cannot bypass state detection. Any
-malformed inventory or unresolved preflight state preserves all files and returns failure; a deletion or postcondition
-failure preserves the remaining files and returns failure.
-Immediately before recursive deletion, cleanup checks every fresh running and registered Workstation inventory entry
-by filesystem identity against a fresh root scan, so aliases and VMX files introduced after the initial directory
-snapshot preserve the entire artifact tree.
 
 The standalone VMware and Hyper-V `clean-artifacts.ps1` helpers apply the same fail-closed rule to their canonical
 `output`, `test-vms`, and provider-specific export roots. VMware cleanup reconciles `vmrun` and Workstation registration

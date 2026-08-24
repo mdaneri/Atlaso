@@ -1931,7 +1931,7 @@ def test_vmware_lifecycle_cleanup_only_removes_existing_lifecycle_vms():
     assert "VMware\\inventory.vmls" in cleanup_module
     assert "[Parameter(Mandatory = $false)]\n        [ValidateSet('running')]\n        [string]$State = 'running'" in cleanup_module
     inventory_resolver = cleanup_module.split("function Resolve-AtlasoWorkstationInventoryPath", 1)[1].split(
-        "function Get-AtlasoWorkstationRegisteredVmPaths", 1
+        "function Get-AtlasoScopedInventoryEntries", 1
     )[0]
     assert "Assert-AtlasoPathHasNoReparsePoint" not in inventory_resolver
     assert "Assert-AtlasoPathHasNoReparsePoint -Path $resolvedRemovalRoot" in cleanup_module
@@ -1940,50 +1940,39 @@ def test_vmware_lifecycle_cleanup_only_removes_existing_lifecycle_vms():
     assert "VMware Workstation VMX remains after deleteVM succeeded" in cleanup_module
     assert "VixHost_UnregisterVM" not in cleanup_module
     assert "'-T', 'ws', 'unregister'" not in cleanup_module
-    assert "'-T', 'ws', 'deleteVM', $registeredTargetPath" in cleanup_module
+    assert "'-T', 'ws', 'deleteVM', $resolvedVmxPath" in cleanup_module
     assert cleanup_module.index("Confirm-AtlasoWorkstationVmInactive") < cleanup_module.index(
         "Remove-Item -LiteralPath $resolvedRemovalRoot -Recurse -Force"
     )
-    first_running_state = cleanup_module.rindex("$firstRunningPaths = @(")
-    first_registered_state = cleanup_module.rindex("$firstRegistrationSnapshot = ")
-    second_running_state = cleanup_module.rindex("$secondRunningPaths = @(")
-    second_registered_state = cleanup_module.rindex("$secondRegistrationSnapshot = ")
-    pre_delete_scan = cleanup_module.index(
-        "Assert-AtlasoWorkstationRemovalVmxSet", second_registered_state
+    snapshot = cleanup_module.rindex("$snapshot = Get-AtlasoRootSnapshot")
+    inactive = cleanup_module.rindex("Confirm-AtlasoWorkstationVmInactive")
+    provider_delete = cleanup_module.rindex("'-T', 'ws', 'deleteVM', $resolvedVmxPath")
+    post_provider_guard = cleanup_module.index(
+        "Assert-AtlasoRootSnapshotUnreplaced", provider_delete
     )
-    final_running_state = cleanup_module.rindex("$finalRunningPaths = @(")
-    final_registered_state = cleanup_module.rindex("$finalRegistrationSnapshot = ")
-    post_delete_running_state = cleanup_module.rindex("$postDeleteRunningPaths = @(")
-    post_delete_registered_state = cleanup_module.rindex("$postDeleteRegisteredPaths = @(")
-    pre_running_post_delete_scan = cleanup_module.index(
-        "Assert-AtlasoWorkstationRemovalVmxSet", post_delete_registered_state
-    )
-    post_running_first_registration = cleanup_module.rindex(
-        "$postRunningRegistrationFirstSnapshot = "
-    )
-    post_running_scan = cleanup_module.rindex("Assert-AtlasoWorkstationRemovalVmxSet")
-    post_running_second_registration = cleanup_module.rindex(
-        "$postRunningRegistrationSecondSnapshot = "
+    final_running_check = cleanup_module.rindex("Assert-AtlasoWorkstationNoRunningTarget -VmrunPath")
+    assert cleanup_module.count("Assert-AtlasoWorkstationNoRunningTarget -VmrunPath") == 2
+    stale_repair = cleanup_module.rindex("Remove-AtlasoWorkstationStaleRegistrations")
+    final_registration_check = cleanup_module.rindex("Test-AtlasoWorkstationVmxRegistered")
+    final_replacement_guard = cleanup_module.index(
+        "Assert-AtlasoRootSnapshotUnreplaced", final_registration_check
     )
     recursive_delete = cleanup_module.rindex(
         "Remove-Item -LiteralPath $resolvedRemovalRoot -Recurse -Force -ErrorAction Stop"
     )
     assert (
-        first_running_state
-        < first_registered_state
-        < second_running_state
-        < second_registered_state
-        < pre_delete_scan
-        < final_running_state
-        < final_registered_state
-        < post_delete_registered_state
-        < pre_running_post_delete_scan
-        < post_delete_running_state
-        < post_running_first_registration
-        < post_running_scan
-        < post_running_second_registration
+        snapshot
+        < inactive
+        < provider_delete
+        < post_provider_guard
+        < stale_repair
+        < final_running_check
+        < final_registration_check
+        < final_replacement_guard
         < recursive_delete
     )
+    assert "Start-Sleep" not in cleanup_module
+    assert "InventorySnapshotsEqual" not in cleanup_module
     assert "VMware artifact directory remains after recursive cleanup; refusing to report success" in cleanup_module
     assert "Atlaso.WorkstationCleanup.psm1" in runner
     assert "Remove-AtlasoWorkstationVmArtifacts" in runner
@@ -2060,7 +2049,7 @@ def test_lifecycle_vmware_script_supports_routing_wan_only_and_esxi_pxe_install(
     assert "function Register-WorkstationVm" in runner
     assert "$resolvedVmrun @Arguments" in runner
     assert "ws register $Path" in runner
-    assert "'-T', 'ws', 'deleteVM', $registeredTargetPath" in cleanup_module
+    assert "'-T', 'ws', 'deleteVM', $resolvedVmxPath" in cleanup_module
     assert "Invoke-AtlasoWorkstationVixUnregister" not in cleanup_module
     assert "Register-WorkstationVm -Path $Path" in runner
     assert "function New-EsxiPxeVm" in runner

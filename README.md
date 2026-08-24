@@ -135,24 +135,19 @@ brings infrastructure, storage, identity, networking, and lifecycle workflows in
 ## Supported appliance targets
 
 Photon OS 5.0 is the appliance operating system. VMware Workstation is the default live-test target; its cleanup tools
-verify checked running and registration inventories, stop running targets, and complete every fail-closed preflight
-before detaching external VMDKs and allowing `vmrun deleteVM` to remove registered targets. It revalidates registration
-state and the recursive VMX set, then performs one last identity-aware running check followed only by registration
-snapshots around a repeated VMX-set check before removing the remaining exact VM artifact directories. Any target
-surviving or recreated after provider deletion must still match its original immutable identity. A target registered
-only through a filesystem alias fails closed before VMX replacement, and every target repeats immutable
-identity, running, registration, and VMX-set checks immediately before its individual `deleteVM`. Standalone
-VMware and Hyper-V image cleanup also reconciles provider inventory and fails closed
-before deleting canonical artifact roots. If checked `deleteVM` removes the complete validated root, cleanup retains the
-same inventory checks, requires that exact root to stay absent, and lets the active redeploy continue without a second
-filesystem deletion.
-With the Workstation UI closed, cleanup holds a write-excluding inventory handle through its final byte comparison and
-atomic replacement, verifies the exact displaced backup, and rolls back a concurrently replaced provider inventory.
-It removes stale library rows only for canonical missing VMX paths beneath its validated exact or multi-root artifact
-scope; every library ID must have exactly one config owner, and missing registration paths outside that scope remain fatal.
-Every stale path is rechecked immediately before the inventory swap.
-VMX replacement retains the displaced backup until identity and byte validation completes, restoring it on validation
-failure or preserving an actionable recovery copy if rollback cannot complete.
+are authoritative only for exact non-reparse-point Atlaso artifact roots. They match running target aliases by
+filesystem identity, stop exact targets, atomically detach external VMDKs, and use checked `vmrun deleteVM` only for an
+exact in-scope registration. Immutable root and descendant identities plus an immediate target, running, registration,
+and VMX-set recheck protect each provider deletion and the final recursive removal. Unrelated stale, malformed, missing,
+or inconsistent Workstation library entries cannot block normal Atlaso cleanup.
+With the Workstation UI closed, a narrow stale-registration fallback validates only the selected library ID, holds a
+write-excluding inventory handle through byte comparison and atomic replacement, and rolls back a concurrently replaced
+provider inventory without requiring unrelated registrations to resolve. Atomic VMX replacement retains its displaced
+backup until identity and byte validation completes, restoring it on validation failure or preserving an actionable
+recovery copy if rollback cannot complete.
+If checked `deleteVM` removes the complete validated root, cleanup retains scoped registration and running-state
+verification, requires that exact root to stay absent, and lets the active redeploy continue without a second filesystem
+deletion.
 Hyper-V remains
 the authoritative lifecycle interoperability environment for exact access and trunk VLAN behavior.
 Image-build download caches verify pinned checksums before reuse or durable promotion; ordinary retries replace only

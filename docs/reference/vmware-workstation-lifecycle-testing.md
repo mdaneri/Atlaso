@@ -160,50 +160,33 @@ pwsh -ExecutionPolicy Bypass `
 
 ## Cleanup Safety
 
-Workstation cleanup removes a VM directory only after validating that every target VMX is inside the exact
-non-reparse-point artifact root. It reads checked running and registered VM inventories, resolves each canonical absolute
-VMX to its Windows volume and file identity, stops a listed running VM through checked `vmrun`, and stabilizes all state
-before checked `vmrun deleteVM` removes a registered target. After provider deletion, it revalidates stable registration
-state and the recursive VMX set, then performs one last identity-aware running check followed only by registration
-snapshots around a repeated VMX-set check before removing any remaining files. A surviving or recreated original path
-must match its immutable pre-cleanup identity at both post-delete set checks.
-Immediately before provider deletion, cleanup detaches every VMDK device resolved outside the exact removal root so a
-reused depot, backup, or other shared disk cannot be deleted with the VM.
-Cleanup requires the registered canonical path to equal the validated target; a registration reachable only through a
-filesystem alias fails closed before detachment replaces the VMX. Detachment and failure restoration atomically compare
-the displaced VMX identity and roll back instead of overwriting a concurrent replacement. The displaced backup remains
-protected until post-replacement identity and byte validation succeeds; failed validation restores it or retains a
-recovery copy if rollback cannot finish.
-For multi-VM roots, cleanup captures every target's immutable identity and repeats identity, running, stable
-registration, and recursive VMX-set checks immediately before each individual `deleteVM`.
-If `deleteVM` fails or returns success while the VMX survives, cleanup atomically restores the original VMX bytes and
-reports failure.
-Filesystem aliases such as DOS 8.3 or mapped-drive forms therefore
-cannot make a running or registered target appear unrelated. Already-stopped and already-unregistered VMs remain
-idempotent cleanup cases. A nonzero command, malformed (including asymmetrically quoted paths or nonnumeric and
-separator/whitespace-corrupted registration keys) or unresolvable inventory,
-target still listed after an apparently successful transition, or missing VMX preserves the artifact directory and
-makes the command fail. Registration inventory reads are terminating, so access denial or an incomplete I/O read cannot
-be interpreted as an empty or partial registered-VM set. VMX identity reads use the same terminating contract, preventing
-a partial file from validating one displayed name while unread content remains unresolved. Cleanup also requires the
-Workstation `inventory.vmls` snapshot to contain only well-formed `vmlistN.config` entries whose VMX filesystem
-identities can be resolved. The independent `index.count` and `indexN.id` search index must describe the same complete
-VMX identity set. Cleanup also requires the inventory file identity, size, last-write timestamp, and byte content to remain
-unchanged across two reads 250 milliseconds apart, so a header-only, partially rewritten, or momentary self-consistent
-empty snapshot fails closed. VMware Workstation does not expose registered-VM listing or a supported unregister-only
-command, and the native VIX unregister operation also reports unsupported. Cleanup therefore reads `inventory.vmls` and
-uses the already checked local `vmrun deleteVM` operation only after Atlaso's final gate; `vmrest` is not used because it
-requires a separate daemon and credentials while exposing the same destructive semantics. The final gate captures two
-complete running-and-registration
-rounds 250 milliseconds apart, repeats the recursive VMX-set scan, and captures a third round. Each round reads checked
-`vmrun list` state followed by the registration file, and all state sets must remain identical, so a VM restarted or
-registered during the stability window or final filesystem verification preserves all artifacts. Failures after the
-provider deletion begins preserve the remaining artifacts and return failure. With the Workstation UI closed, cleanup
-holds a write-excluding inventory handle from the final byte comparison through atomic replacement. It verifies the
-exact displaced backup as an optimistic compare-and-swap and atomically restores the newest captured provider state if
-another writer replaced the path. Only canonical missing VMX rows beneath the validated exact or multi-root artifact
-scope are removed, and every `vmlistN` library ID must own exactly one config path. Missing inventory paths elsewhere
-still fail closed; every stale path is rechecked immediately before the inventory swap.
+Workstation cleanup is authoritative only for an exact Atlaso artifact root. It rejects filesystem roots, sibling or
+parent targets, and any root or descendant containing a reparse point. Every recursively discovered VMX must be a strict
+descendant of that root and must match the caller's validated target set. Cleanup captures the root and descendant
+filesystem identities before provider operations; a new or replaced entry, or a replaced root, blocks the final
+recursive removal and preserves the replacement.
+
+For each target, cleanup uses checked `vmrun -T ws list` output to decide whether the exact VMX is running. It stops a
+running target with checked `vmrun -T ws stop <vmx> hard` and verifies that the target is no longer listed. A well-formed
+registration row for that exact in-root VMX selects checked `vmrun -T ws deleteVM <vmx>`. Already-stopped and
+already-unregistered VMs remain idempotent cleanup cases. A nonzero provider command, a target that remains running, or
+a VMX that survives provider deletion preserves the remaining root and returns failure.
+Immediately before each `deleteVM`, cleanup repeats the target identity and identity-aware running check, confirms the
+exact scoped registration, and verifies that the recursive VMX set still contains only the validated targets.
+
+Immediately before `deleteVM`, cleanup removes every VMX device whose resolved VMDK path is outside the exact cleanup
+root. This prevents provider deletion from following a shared depot, backup, or other external disk. A failed provider
+operation atomically restores the displaced original VMX only when the stopped target still has the protected identity
+and content; a concurrent replacement is preserved instead of overwritten.
+
+Normal deletion does not require global `inventory.vmls` consistency. Unrelated stale, malformed, missing, duplicate,
+or otherwise inconsistent Workstation library entries cannot block cleanup of the Atlaso root. Inventory parsing is
+limited to well-formed rows that resolve lexically beneath the approved cleanup scope. If an Atlaso-scoped row points to
+an already-missing VMX, the exceptional stale-registration fallback removes only that library record and its matching
+index record. It rechecks that the VMX is still missing, compares the inventory bytes immediately before replacement,
+and restores a concurrently displaced provider file before reporting failure. Unrelated registration records are left
+in place and are never required to resolve. Close the Workstation UI before this exceptional repair of the real user
+inventory.
 When lifecycle
 execution and cleanup both fail, the final error reports the original scenario failure together with the cleanup failure
 and preserved path.
@@ -215,7 +198,8 @@ absent through the final gate. It does not enumerate or recursively remove the m
 inventory remains an ambiguous state that fails closed and preserves the new path.
 
 The read-only Workstation registration inventory may reside beneath a redirected `%APPDATA%` junction or symbolic link.
-The non-reparse-point requirement remains enforced on the artifact root that cleanup recursively deletes.
+The non-reparse-point requirement remains enforced on the Atlaso artifact root that cleanup recursively deletes, not on
+unrelated provider state.
 Recursive deletion errors are terminating, and cleanup reports success only after confirming that the artifact root is
 absent.
 

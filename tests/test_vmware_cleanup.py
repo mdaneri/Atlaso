@@ -1,9 +1,10 @@
-"""Behavior tests for fail-closed VMware Workstation cleanup."""
+"""Behavior tests for root-scoped VMware Workstation cleanup."""
 
 from __future__ import annotations
 
 import json
 import os
+import re
 import shutil
 import subprocess
 import sys
@@ -16,75 +17,95 @@ VMWARE_SCRIPT_ROOT = REPOSITORY_ROOT / "scripts" / "windows" / "vmware"
 
 
 def _pwsh_path() -> str:
+    """Return PowerShell 7 or skip behavior tests when it is unavailable."""
     pwsh = shutil.which("pwsh")
     if pwsh is None:
         pytest.skip("PowerShell 7 is required for VMware cleanup behavior tests")
     return pwsh
 
 
+def _write_vmx(path: Path, display_name: str = "Atlaso-Test", *extra_lines: str) -> None:
+    """Write one minimal VMX file.
+
+    Args:
+        path: Destination VMX file path.
+        display_name: Optional display name written into the VMX content.
+        *extra_lines: Extra VMX lines appended before writing.
+    """
+    path.parent.mkdir(parents=True, exist_ok=True)
+    content = [f'displayName = "{display_name}"', *extra_lines]
+    path.write_text("\n".join(content) + "\n", encoding="utf-8")
+
+
 def _write_fake_vmrun(
     directory: Path,
     vmx_paths: list[Path],
     *,
-    running: bool,
-    registered: bool,
+    running: bool = False,
+    registered: bool = False,
     stop_exit: int = 0,
-    unregister_exit: int = 0,
-    running_path_format: str = "{}",
+    delete_exit: int = 0,
     stop_sticky: bool = False,
-    unregister_sticky: bool = False,
-    late_registered_vmx: Path | None = None,
-    late_registered_alias: Path | None = None,
-    late_registered_list_count: int = 3,
-    late_running_vmx: Path | None = None,
-    late_running_list_count: int = 4,
-    replace_after_delete_vmx: Path | None = None,
-    replace_before_delete: bool = False,
-    provider_removes_root: bool = False,
-    late_root_recreation: Path | None = None,
-    late_root_recreation_list_count: int = 7,
-) -> tuple[Path, dict[str, str], Path]:
-    """Create a stateful fake ``vmrun`` command and Workstation inventory.
+    delete_sticky: bool = False,
+    replace_after_delete: bool = False,
+    remove_root_after_delete: bool = False,
+    rewrite_on_list: int = 0,
+    rewrite_disk: Path | None = None,
+    create_on_list: int = 0,
+    create_path: Path | None = None,
+    replace_on_list: int = 0,
+    replace_target: Path | None = None,
+    replace_with: str = 'displayName = "Concurrent replacement"\n',
+    register_on_list: int = 0,
+    run_on_list: int = 0,
+    run_target: Path | None = None,
+    remove_on_list: int = 0,
+    remove_target: Path | None = None,
+    inventory_suffix: str = "",
+) -> tuple[Path, dict[str, str], Path, Path]:
+    """Create a stateful fake vmrun command and Workstation inventory.
 
     Args:
-        directory: Directory that receives the fake command and mutable state.
-        vmx_paths: VMX paths available to the fake running and registered inventories.
-        running: Whether the supplied VMX paths begin in the running inventory.
-        registered: Whether the supplied VMX paths begin in the registration inventory.
-        stop_exit: Exit code returned by a requested stop operation.
-        unregister_exit: Exit code returned by a requested deleteVM operation.
-        running_path_format: Format applied to each path printed by ``vmrun list``.
-        stop_sticky: Whether a successful stop leaves the VM in running inventory.
-        unregister_sticky: Whether a successful deleteVM leaves the VM registered.
-        late_registered_vmx: VMX injected into registration inventory at the final state gate.
-        late_registered_alias: Optional hard-link alias registered instead of the injected VMX path.
-        late_registered_list_count: Checked running-state read that triggers late registration.
-        late_running_vmx: VMX injected into running inventory after registration stabilizes.
-        late_running_list_count: Checked running-state read that triggers late running state.
-        replace_after_delete_vmx: VMX replaced after the first successful deleteVM operation.
-        replace_before_delete: Whether deleteVM replaces its target before returning.
-        provider_removes_root: Whether deleteVM removes the target's complete parent directory.
-        late_root_recreation: Optional root path recreated during a checked running-state read.
-        late_root_recreation_list_count: Checked running-state read that recreates the root.
-
-    Returns:
-        The fake command path, its environment, and the command-log path.
+        directory: Working directory for fake vmrun state and artifacts.
+        vmx_paths: VMX files to pre-populate as cataloged targets.
+        running: Marks those VMX paths as running.
+        registered: Marks those VMX paths as registered in inventory.
+        stop_exit: Exit code to return for stop commands.
+        delete_exit: Exit code to return for deleteVM commands.
+        stop_sticky: If true, keep a stopped VM running in fake state.
+        delete_sticky: If true, keep deleteVM from removing files.
+        replace_after_delete: If true, rewrite the VMX after deleteVM.
+        remove_root_after_delete: If true, remove the VMX parent after deleteVM.
+        rewrite_on_list: Provider call count at which to inject a VMDK path.
+        rewrite_disk: Path written during list-based rewrite.
+        create_on_list: Provider call count that creates extra artifact.
+        create_path: Artifact path written when create_on_list matches.
+        replace_on_list: Provider list call count that replaces a VMX path.
+        replace_target: VMX path rewritten when replace_on_list matches.
+        replace_with: Replacement VMX content written by replace_on_list.
+        register_on_list: Provider call count that registers a VM.
+        run_on_list: Provider list call count that starts a VM.
+        run_target: VMX path marked running when run_on_list matches.
+        remove_on_list: Provider list call count that removes a VMX.
+        remove_target: VMX path removed when remove_on_list matches.
+        inventory_suffix: Extra inventory file text appended to the fixture.
     """
-    directory.mkdir(parents=True, exist_ok=True)
-    state_directory = directory / "state"
-    state_directory.mkdir()
+    directory.mkdir(parents=True)
+    state = directory / "state"
+    state.mkdir()
     canonical_paths = [str(path.resolve()) for path in vmx_paths]
-    (state_directory / "running.json").write_text(
+    (state / "running.json").write_text(
         json.dumps(canonical_paths if running else []), encoding="utf-8"
     )
-    (state_directory / "registered.json").write_text(
+    (state / "registered.json").write_text(
         json.dumps(canonical_paths if registered else []), encoding="utf-8"
     )
-    appdata_directory = directory / "appdata"
-    inventory_path = appdata_directory / "VMware" / "inventory.vmls"
-    inventory_path.parent.mkdir(parents=True)
+
+    appdata = directory / "appdata"
+    inventory = appdata / "VMware" / "inventory.vmls"
+    inventory.parent.mkdir(parents=True)
     registered_paths = canonical_paths if registered else []
-    inventory_path.write_text(
+    inventory.write_text(
         '.encoding = "UTF-8"\n'
         + "".join(
             f'vmlist{index}.config = "{path}"\n'
@@ -94,13 +115,15 @@ def _write_fake_vmrun(
             f'index{index}.id = "{path}"\n'
             for index, path in enumerate(registered_paths)
         )
-        + f'index.count = "{len(registered_paths)}"\n',
+        + f'index.count = "{len(registered_paths)}"\n'
+        + inventory_suffix,
         encoding="utf-8",
     )
-    log_path = directory / "commands.jsonl"
-    fake_script = directory / "fake_vmrun.py"
-    fake_script.write_text(
-        """from __future__ import annotations
+
+    log = directory / "commands.jsonl"
+    fake = directory / "fake_vmrun.py"
+    fake.write_text(
+        r'''from __future__ import annotations
 import json
 import os
 from pathlib import Path
@@ -112,9 +135,8 @@ log = Path(os.environ["ATLASO_FAKE_VMRUN_LOG"])
 inventory = Path(os.environ["ATLASO_FAKE_VMRUN_INVENTORY"])
 arguments = sys.argv[1:]
 with log.open("a", encoding="utf-8") as stream:
-    stream.write(json.dumps(arguments) + "\\n")
+    stream.write(json.dumps(arguments) + "\n")
 if len(arguments) < 3 or arguments[:2] != ["-T", "ws"]:
-    print("unexpected vmrun arguments", file=sys.stderr)
     raise SystemExit(64)
 command = arguments[2]
 
@@ -124,24 +146,27 @@ def read_paths(name: str) -> list[str]:
 def write_paths(name: str, paths: list[str]) -> None:
     (state / f"{name}.json").write_text(json.dumps(paths), encoding="utf-8")
 
-def same_file(left: str, right: str) -> bool:
+def same_path(left: str, right: str) -> bool:
     try:
         return os.path.samefile(left, right)
     except (FileNotFoundError, OSError):
-        return Path(left) == Path(right)
+        return Path(left).resolve() == Path(right).resolve()
 
-def write_inventory(paths: list[str]) -> None:
+def update_inventory(paths: list[str]) -> None:
+    old_lines = inventory.read_text(encoding="utf-8").splitlines()
+    suffix = [
+        line for line in old_lines
+        if not line.lstrip().startswith("vmlist")
+        and not line.lstrip().startswith("index")
+        and not line.startswith(".encoding")
+    ]
     inventory.write_text(
-        '.encoding = "UTF-8"\\n'
-        + "".join(
-            f'vmlist{index}.config = "{path}"\\n'
-            for index, path in enumerate(paths, start=1)
-        )
-        + "".join(
-            f'index{index}.id = "{path}"\\n'
-            for index, path in enumerate(paths)
-        )
-        + f'index.count = "{len(paths)}"\\n',
+        '.encoding = "UTF-8"\n'
+        + "".join(f'vmlist{i}.config = "{path}"\n' for i, path in enumerate(paths, start=1))
+        + "".join(f'index{i}.id = "{path}"\n' for i, path in enumerate(paths))
+        + f'index.count = "{len(paths)}"\n'
+        + "\n".join(suffix)
+        + ("\n" if suffix else ""),
         encoding="utf-8",
     )
 
@@ -149,206 +174,137 @@ if command == "list":
     count_path = state / "list-count.txt"
     list_count = int(count_path.read_text(encoding="utf-8")) + 1 if count_path.exists() else 1
     count_path.write_text(str(list_count), encoding="utf-8")
-    late_registered = os.environ.get("ATLASO_FAKE_VMRUN_LATE_REGISTERED_VMX", "")
-    late_registered_list_count = int(os.environ["ATLASO_FAKE_VMRUN_LATE_REGISTERED_LIST_COUNT"])
-    if late_registered and list_count == late_registered_list_count:
-        late_path = Path(late_registered)
-        late_path.parent.mkdir(parents=True, exist_ok=True)
-        late_path.write_text(f'displayName = "{late_path.stem}"\\n', encoding="utf-8")
-        registered_path = late_path
-        late_alias = os.environ.get("ATLASO_FAKE_VMRUN_LATE_REGISTERED_ALIAS", "")
-        if late_alias:
-            alias_path = Path(late_alias)
-            alias_path.parent.mkdir(parents=True, exist_ok=True)
-            os.link(late_path, alias_path)
-            registered_path = alias_path
-        registered_paths = read_paths("registered")
-        registered_paths.append(str(registered_path.resolve()))
-        write_paths("registered", registered_paths)
-        write_inventory(registered_paths)
-    late_running = os.environ.get("ATLASO_FAKE_VMRUN_LATE_RUNNING_VMX", "")
-    late_running_list_count = int(os.environ["ATLASO_FAKE_VMRUN_LATE_RUNNING_LIST_COUNT"])
-    if late_running and list_count == late_running_list_count:
-        running_paths = read_paths("running")
-        running_paths.append(str(Path(late_running).resolve()))
-        write_paths("running", running_paths)
-    late_root = os.environ.get("ATLASO_FAKE_VMRUN_LATE_ROOT_RECREATION", "")
-    late_root_list_count = int(os.environ["ATLASO_FAKE_VMRUN_LATE_ROOT_RECREATION_LIST_COUNT"])
-    if late_root and list_count == late_root_list_count:
-        recreated_root = Path(late_root)
-        recreated_root.mkdir(parents=True, exist_ok=True)
-        (recreated_root / "concurrent-build.txt").write_text("preserve", encoding="utf-8")
+    if (
+        list_count == int(os.environ["ATLASO_FAKE_VMRUN_REPLACE_ON_LIST"]) and
+        os.environ["ATLASO_FAKE_VMRUN_REPLACE_TARGET"]
+    ):
+        replace_target = Path(os.environ["ATLASO_FAKE_VMRUN_REPLACE_TARGET"])
+        replace_with = os.environ["ATLASO_FAKE_VMRUN_REPLACE_WITH"]
+        staging_target = replace_target.with_suffix(".atlaso-replacement.vmx")
+        staging_target.write_text(replace_with, encoding="utf-8")
+        staging_target.replace(replace_target)
+    if list_count == int(os.environ["ATLASO_FAKE_VMRUN_REWRITE_ON_LIST"]):
+        rewrite_target = Path(os.environ["ATLASO_FAKE_VMRUN_REWRITE_TARGET"])
+        rewrite_disk = os.environ["ATLASO_FAKE_VMRUN_REWRITE_DISK"]
+        with rewrite_target.open("a", encoding="utf-8") as stream:
+            stream.write(f'scsi0:2.fileName = "{rewrite_disk}"\n')
+    if list_count == int(os.environ["ATLASO_FAKE_VMRUN_CREATE_ON_LIST"]):
+        create_path = Path(os.environ["ATLASO_FAKE_VMRUN_CREATE_PATH"])
+        create_path.parent.mkdir(parents=True, exist_ok=True)
+        create_path.write_text(
+            "late artifact", encoding="utf-8"
+        )
+    if list_count == int(os.environ["ATLASO_FAKE_VMRUN_REGISTER_ON_LIST"]):
+        late_target = os.environ["ATLASO_FAKE_VMRUN_REWRITE_TARGET"]
+        write_paths("registered", [late_target])
+        update_inventory([late_target])
+    if list_count == int(os.environ["ATLASO_FAKE_VMRUN_RUN_ON_LIST"]):
+        write_paths("running", [os.environ["ATLASO_FAKE_VMRUN_RUN_TARGET"]])
+    if list_count == int(os.environ["ATLASO_FAKE_VMRUN_REMOVE_ON_LIST"]):
+        Path(os.environ["ATLASO_FAKE_VMRUN_REMOVE_TARGET"]).unlink(missing_ok=True)
     paths = read_paths("running")
     print(f"Total running VMs: {len(paths)}")
-    output_format = os.environ.get("ATLASO_FAKE_VMRUN_RUNNING_PATH_FORMAT", "{}")
-    print("\\n".join(output_format.format(path) for path in paths))
+    print("\n".join(paths))
     raise SystemExit(0)
-if command == "clone":
-    if len(arguments) < 8:
-        print("incomplete clone arguments", file=sys.stderr)
-        raise SystemExit(64)
-    source_path = Path(arguments[3])
-    target_path = Path(arguments[4])
-    target_path.parent.mkdir(parents=True, exist_ok=True)
-    for source_file in source_path.parent.iterdir():
-        if source_file.is_file():
-            shutil.copy2(source_file, target_path.parent / source_file.name)
-    copied_vmx = target_path.parent / source_path.name
-    if copied_vmx != target_path:
-        copied_vmx.replace(target_path)
-    raise SystemExit(0)
+
 if len(arguments) < 4:
-    print("missing VMX path", file=sys.stderr)
     raise SystemExit(64)
 target = str(Path(arguments[3]).resolve())
 if command == "stop":
-    exit_code = int(os.environ.get("ATLASO_FAKE_VMRUN_STOP_EXIT", "0"))
+    exit_code = int(os.environ["ATLASO_FAKE_VMRUN_STOP_EXIT"])
     if exit_code:
         print("simulated stop failure", file=sys.stderr)
         raise SystemExit(exit_code)
-    if os.environ.get("ATLASO_FAKE_VMRUN_STOP_STICKY") != "1":
-        write_paths("running", [path for path in read_paths("running") if not same_file(path, target)])
+    if os.environ["ATLASO_FAKE_VMRUN_STOP_STICKY"] != "1":
+        write_paths("running", [path for path in read_paths("running") if not same_path(path, target)])
     raise SystemExit(0)
+
 if command == "deleteVM":
-    if os.environ.get("ATLASO_FAKE_VMRUN_REPLACE_BEFORE_DELETE") == "1":
-        replacement_target = Path(target)
-        replacement_target.unlink(missing_ok=True)
-        replacement_target.write_text(
-            '.encoding = "UTF-8"\\ndisplayName = "Concurrent delete replacement"\\n',
-            encoding="utf-8",
-        )
-    exit_code = int(os.environ.get("ATLASO_FAKE_VMRUN_UNREGISTER_EXIT", "0"))
+    exit_code = int(os.environ["ATLASO_FAKE_VMRUN_DELETE_EXIT"])
     if exit_code:
-        print("simulated deleteVM failure", file=sys.stderr)
+        print("simulated delete failure", file=sys.stderr)
         raise SystemExit(exit_code)
-    registered_paths = read_paths("registered")
-    if os.environ.get("ATLASO_FAKE_VMRUN_UNREGISTER_STICKY") != "1":
-        registered_paths = [path for path in registered_paths if not same_file(path, target)]
+    if os.environ["ATLASO_FAKE_VMRUN_DELETE_STICKY"] != "1":
         target_path = Path(target)
-        for line in target_path.read_text(encoding="utf-8").splitlines():
-            if ".fileName" not in line or "=" not in line:
-                continue
-            configured_path = line.split("=", 1)[1].strip().strip('"')
-            if Path(configured_path).suffix.lower() != ".vmdk":
-                continue
-            disk_path = Path(configured_path)
-            if not disk_path.is_absolute():
-                disk_path = target_path.parent / disk_path
-            disk_path.unlink(missing_ok=True)
-        target_path.unlink(missing_ok=True)
-        if os.environ.get("ATLASO_FAKE_VMRUN_PROVIDER_REMOVES_ROOT") == "1":
-            shutil.rmtree(target_path.parent)
-    write_paths("registered", registered_paths)
-    write_inventory(registered_paths)
-    replacement = os.environ.get("ATLASO_FAKE_VMRUN_REPLACE_AFTER_DELETE_VMX", "")
-    replacement_marker = state / "replacement-injected"
-    if replacement and not replacement_marker.exists():
-        replacement_path = Path(replacement)
-        replacement_path.unlink(missing_ok=True)
-        replacement_path.write_text(
-            '.encoding = "UTF-8"\\ndisplayName = "Concurrent replacement"\\n',
-            encoding="utf-8",
-        )
-        replacement_marker.write_text("done", encoding="utf-8")
+        if target_path.exists():
+            for line in target_path.read_text(encoding="utf-8").splitlines():
+                if ".fileName" not in line or "=" not in line:
+                    continue
+                configured = line.split("=", 1)[1].strip().strip('"')
+                if Path(configured).suffix.lower() != ".vmdk":
+                    continue
+                disk = Path(configured)
+                if not disk.is_absolute():
+                    disk = target_path.parent / disk
+                disk.unlink(missing_ok=True)
+            target_path.unlink(missing_ok=True)
+        registered_paths = [
+            path for path in read_paths("registered") if not same_path(path, target)
+        ]
+        write_paths("registered", registered_paths)
+        update_inventory(registered_paths)
+    if os.environ["ATLASO_FAKE_VMRUN_REMOVE_ROOT_AFTER_DELETE"] == "1":
+        shutil.rmtree(Path(target).parent)
+    if os.environ["ATLASO_FAKE_VMRUN_REPLACE_AFTER_DELETE"] == "1":
+        Path(target).write_text('displayName = "Concurrent replacement"\n', encoding="utf-8")
     raise SystemExit(0)
-print(f"unsupported vmrun command: {command}", file=sys.stderr)
+
 raise SystemExit(64)
-""",
+''',
         encoding="utf-8",
     )
-
     if os.name == "nt":
-        wrapper = directory / "vmrun.cmd"
-        wrapper.write_text(
-            f'@echo off\r\n"{sys.executable}" "{fake_script}" %*\r\n',
-            encoding="utf-8",
+        command = directory / "vmrun.cmd"
+        command.write_text(
+            f'@echo off\r\n"{sys.executable}" "{fake}" %*\r\n', encoding="utf-8"
         )
     else:
-        wrapper = directory / "vmrun"
-        wrapper.write_text(
-            f'#!/bin/sh\nexec "{sys.executable}" "{fake_script}" "$@"\n',
-            encoding="utf-8",
+        command = directory / "vmrun"
+        command.write_text(
+            f'#!/bin/sh\nexec "{sys.executable}" "{fake}" "$@"\n', encoding="utf-8"
         )
-        wrapper.chmod(0o755)
+        command.chmod(0o755)
 
     environment = os.environ.copy()
     environment.update(
         {
-            "ATLASO_FAKE_VMRUN_STATE": str(state_directory),
-            "ATLASO_FAKE_VMRUN_LOG": str(log_path),
-            "ATLASO_FAKE_VMRUN_INVENTORY": str(inventory_path),
+            "APPDATA": str(appdata),
+            "ATLASO_FAKE_VMRUN_STATE": str(state),
+            "ATLASO_FAKE_VMRUN_LOG": str(log),
+            "ATLASO_FAKE_VMRUN_INVENTORY": str(inventory),
             "ATLASO_FAKE_VMRUN_STOP_EXIT": str(stop_exit),
-            "ATLASO_FAKE_VMRUN_UNREGISTER_EXIT": str(unregister_exit),
-            "ATLASO_FAKE_VMRUN_RUNNING_PATH_FORMAT": running_path_format,
+            "ATLASO_FAKE_VMRUN_DELETE_EXIT": str(delete_exit),
             "ATLASO_FAKE_VMRUN_STOP_STICKY": "1" if stop_sticky else "0",
-            "ATLASO_FAKE_VMRUN_UNREGISTER_STICKY": "1" if unregister_sticky else "0",
-            "ATLASO_FAKE_VMRUN_LATE_REGISTERED_VMX": str(late_registered_vmx or ""),
-            "ATLASO_FAKE_VMRUN_LATE_REGISTERED_ALIAS": str(late_registered_alias or ""),
-            "ATLASO_FAKE_VMRUN_LATE_REGISTERED_LIST_COUNT": str(late_registered_list_count),
-            "ATLASO_FAKE_VMRUN_LATE_RUNNING_VMX": str(late_running_vmx or ""),
-            "ATLASO_FAKE_VMRUN_LATE_RUNNING_LIST_COUNT": str(late_running_list_count),
-            "ATLASO_FAKE_VMRUN_REPLACE_AFTER_DELETE_VMX": str(
-                replace_after_delete_vmx or ""
-            ),
-            "ATLASO_FAKE_VMRUN_REPLACE_BEFORE_DELETE": "1" if replace_before_delete else "0",
-            "ATLASO_FAKE_VMRUN_PROVIDER_REMOVES_ROOT": "1" if provider_removes_root else "0",
-            "ATLASO_FAKE_VMRUN_LATE_ROOT_RECREATION": str(late_root_recreation or ""),
-            "ATLASO_FAKE_VMRUN_LATE_ROOT_RECREATION_LIST_COUNT": str(
-                late_root_recreation_list_count
-            ),
-            "APPDATA": str(appdata_directory),
+            "ATLASO_FAKE_VMRUN_DELETE_STICKY": "1" if delete_sticky else "0",
+            "ATLASO_FAKE_VMRUN_REPLACE_AFTER_DELETE": "1" if replace_after_delete else "0",
+            "ATLASO_FAKE_VMRUN_REMOVE_ROOT_AFTER_DELETE": "1" if remove_root_after_delete else "0",
+            "ATLASO_FAKE_VMRUN_REWRITE_ON_LIST": str(rewrite_on_list),
+            "ATLASO_FAKE_VMRUN_REWRITE_TARGET": canonical_paths[0] if canonical_paths else "",
+            "ATLASO_FAKE_VMRUN_REWRITE_DISK": str(rewrite_disk or ""),
+            "ATLASO_FAKE_VMRUN_CREATE_ON_LIST": str(create_on_list),
+            "ATLASO_FAKE_VMRUN_CREATE_PATH": str(create_path or ""),
+            "ATLASO_FAKE_VMRUN_REPLACE_ON_LIST": str(replace_on_list),
+            "ATLASO_FAKE_VMRUN_REPLACE_TARGET": str(replace_target or ""),
+            "ATLASO_FAKE_VMRUN_REPLACE_WITH": replace_with,
+            "ATLASO_FAKE_VMRUN_REGISTER_ON_LIST": str(register_on_list),
+            "ATLASO_FAKE_VMRUN_RUN_ON_LIST": str(run_on_list),
+            "ATLASO_FAKE_VMRUN_RUN_TARGET": str(run_target or ""),
+            "ATLASO_FAKE_VMRUN_REMOVE_ON_LIST": str(remove_on_list),
+            "ATLASO_FAKE_VMRUN_REMOVE_TARGET": str(remove_target or ""),
         }
     )
-    return wrapper, environment, log_path
+    return command, environment, log, inventory
 
 
-def _write_fake_vdisk_manager(directory: Path) -> Path:
-    """Create a fake vdisk manager that writes a 500 GiB descriptor.
-
-    Args:
-        directory: Directory that receives the fake executable.
-
-    Returns:
-        Path to the fake executable.
-    """
-    directory.mkdir(parents=True, exist_ok=True)
-    fake_script = directory / "fake_vdisk_manager.py"
-    fake_script.write_text(
-        """from pathlib import Path
-import sys
-
-target = Path(sys.argv[-1])
-target.parent.mkdir(parents=True, exist_ok=True)
-target.write_text('RW 1048576000 SPARSE "data-flat.vmdk"\\n', encoding='ascii')
-""",
-        encoding="utf-8",
-    )
-    if os.name == "nt":
-        wrapper = directory / "vmware-vdiskmanager.cmd"
-        wrapper.write_text(
-            f'@echo off\r\n"{sys.executable}" "{fake_script}" %*\r\n',
-            encoding="utf-8",
-        )
-    else:
-        wrapper = directory / "vmware-vdiskmanager"
-        wrapper.write_text(
-            f'#!/bin/sh\nexec "{sys.executable}" "{fake_script}" "$@"\n',
-            encoding="utf-8",
-        )
-        wrapper.chmod(0o755)
-    return wrapper
-
-
-def _run_script(script: Path, *arguments: str, environment: dict[str, str]) -> subprocess.CompletedProcess[str]:
-    """Run a PowerShell test script without prompts.
+def _run_script(
+    script: Path, *arguments: str, environment: dict[str, str]
+) -> subprocess.CompletedProcess[str]:
+    """Run one PowerShell wrapper without prompts.
 
     Args:
-        script: PowerShell script to execute.
-        *arguments: Command-line arguments passed to the script.
-        environment: Environment containing the fake Workstation state.
-
-    Returns:
-        Completed process with captured text output.
+        script: Script path to execute.
+        *arguments: Additional positional arguments passed to the script.
+        environment: Environment variables for the subprocess.
     """
     return subprocess.run(
         [
@@ -370,2066 +326,1727 @@ def _run_script(script: Path, *arguments: str, environment: dict[str, str]) -> s
     )
 
 
-def _write_vmx(path: Path, display_name: str) -> None:
-    """Write a minimal VMX with a known display name.
-
-    Args:
-        path: VMX path to create.
-        display_name: Display name stored in the VMX.
-    """
-    path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(f'displayName = "{display_name}"\n', encoding="utf-8")
-
-
-def _run_artifact_root_cleanup(
+def _run_root_cleanup(
     tmp_path: Path,
     *,
-    artifact_parent: Path | None = None,
-    expected_removal_root: Path | None = None,
     removal_root: Path,
     vmrun_path: Path,
     environment: dict[str, str],
+    artifact_parent: Path | None = None,
+    expected_root: Path | None = None,
 ) -> subprocess.CompletedProcess[str]:
-    """Invoke the shared whole-root cleanup entry point from an isolated wrapper.
+    """Invoke the whole-root cleanup entry point.
 
     Args:
-        tmp_path: Isolated test directory.
-        artifact_parent: Optional canonical parent containing the removal root.
-        expected_removal_root: Optional exact configured removal root.
-        removal_root: Artifact directory requested for cleanup.
-        vmrun_path: Fake vmrun executable path.
-        environment: Environment for the PowerShell wrapper.
-
-    Returns:
-        Completed PowerShell process.
+        tmp_path: Scratch directory for test artifacts and generated wrapper.
+        removal_root: Root path to remove during cleanup.
+        vmrun_path: Fake or real vmrun executable path.
+        environment: Environment used to invoke the cleanup command.
+        artifact_parent: Optional artifact parent root for binding mode.
+        expected_root: Optional expected configured cleanup root for validation mode.
     """
-    wrapper = tmp_path / "remove-artifact-root.ps1"
-    module_path = VMWARE_SCRIPT_ROOT / "Atlaso.WorkstationCleanup.psm1"
-    if (artifact_parent is None) == (expected_removal_root is None):
-        raise ValueError("Select exactly one cleanup root binding")
-    root_binding = (
+    if (artifact_parent is None) == (expected_root is None):
+        raise ValueError("Select exactly one root binding")
+    binding = (
         f"-ArtifactParentRoot '{artifact_parent}'"
         if artifact_parent is not None
-        else f"-ExpectedRemovalRoot '{expected_removal_root}'"
+        else f"-ExpectedRemovalRoot '{expected_root}'"
     )
+    wrapper = tmp_path / "cleanup.ps1"
+    module = VMWARE_SCRIPT_ROOT / "Atlaso.WorkstationCleanup.psm1"
     wrapper.write_text(
         f"""$ErrorActionPreference = 'Stop'
-Import-Module '{module_path}' -Force
+Import-Module '{module}' -Force
 Remove-AtlasoWorkstationArtifactRoot `
     -VmrunPath '{vmrun_path}' `
-    {root_binding} `
+    {binding} `
     -RemovalRoot '{removal_root}' `
     -Confirm:$false
-Write-Host 'ROOT CLEANUP SUCCEEDED'
+Write-Host 'CLEANUP SUCCEEDED'
 """,
         encoding="utf-8",
     )
     return _run_script(wrapper, environment=environment)
 
 
-def test_whole_artifact_root_cleanup_accepts_exact_absolute_configured_root(
-    tmp_path: Path,
-) -> None:
-    """A supported absolute build output remains cleanable outside the Packer tree.
+def _commands(log: Path) -> list[list[str]]:
+    """Read fake vmrun invocations.
 
     Args:
-        tmp_path: Isolated test directory.
+        log: Path to the JSONL command log file.
     """
-    removal_root = tmp_path / "custom-output" / "atlaso-photon"
-    sentinel = removal_root / "sentinel.txt"
-    removal_root.mkdir(parents=True)
-    sentinel.write_text("replace", encoding="utf-8")
-    vmrun_path, environment, _ = _write_fake_vmrun(
-        tmp_path / "fake", [], running=False, registered=False
+    if not log.exists():
+        return []
+    return [json.loads(line) for line in log.read_text(encoding="utf-8").splitlines()]
+
+
+def test_registered_vm_uses_checked_deletevm(tmp_path: Path) -> None:
+    """An existing registered Atlaso VM is deleted through the provider.
+
+    Args:
+        tmp_path: Pytest temporary directory path.
+    """
+    root = tmp_path / "artifacts" / "vm"
+    vmx = root / "Atlaso.vmx"
+    _write_vmx(vmx)
+    unrelated_missing = tmp_path / "unrelated" / "missing.vmx"
+    vmrun, environment, log, _ = _write_fake_vmrun(
+        tmp_path / "fake",
+        [vmx],
+        registered=True,
+        inventory_suffix=(
+            f'vmlist8.config = "{unrelated_missing.resolve()}"\n'
+            "vmlistBROKEN.config = malformed\n"
+        ),
     )
 
-    result = _run_artifact_root_cleanup(
+    result = _run_root_cleanup(
         tmp_path,
-        expected_removal_root=removal_root,
-        removal_root=removal_root,
-        vmrun_path=vmrun_path,
+        removal_root=root,
+        expected_root=root,
+        vmrun_path=vmrun,
         environment=environment,
     )
 
     assert result.returncode == 0, result.stdout + result.stderr
-    assert not removal_root.exists()
+    assert not root.exists()
+    assert [command[2] for command in _commands(log)].count("deleteVM") == 1
 
 
-def test_whole_artifact_root_cleanup_accepts_stale_missing_registration_in_artifact_parent(
-    tmp_path: Path,
-) -> None:
-    """Multi-root cleanup may pass a stale row from an already-removed sibling.
+def test_running_registered_vm_is_stopped_hard_before_delete(tmp_path: Path) -> None:
+    """A running target is stopped with the checked local-provider operation.
 
     Args:
-        tmp_path: Isolated test directory.
+        tmp_path: Pytest temporary directory path.
     """
-    artifact_parent = tmp_path / "image-root"
-    removal_root = artifact_parent / "test-vms"
-    stale_vmx = artifact_parent / "output" / "Atlaso-Builder.vmx"
-    sentinel = removal_root / "sentinel.txt"
-    _write_vmx(stale_vmx, "Atlaso-Builder")
-    removal_root.mkdir(parents=True)
-    sentinel.write_text("remaining artifact", encoding="utf-8")
-    vmrun_path, environment, log_path = _write_fake_vmrun(
-        tmp_path / "fake", [stale_vmx], running=False, registered=True
+    root = tmp_path / "artifacts" / "vm"
+    vmx = root / "Atlaso.vmx"
+    _write_vmx(vmx)
+    vmrun, environment, log, _ = _write_fake_vmrun(
+        tmp_path / "fake", [vmx], running=True, registered=True
     )
-    stale_vmx.unlink()
 
-    result = _run_artifact_root_cleanup(
+    result = _run_root_cleanup(
         tmp_path,
-        artifact_parent=artifact_parent,
-        removal_root=removal_root,
-        vmrun_path=vmrun_path,
+        removal_root=root,
+        expected_root=root,
+        vmrun_path=vmrun,
         environment=environment,
     )
 
     assert result.returncode == 0, result.stdout + result.stderr
-    assert not removal_root.exists()
-    commands = [json.loads(line) for line in log_path.read_text(encoding="utf-8").splitlines()]
-    assert "deleteVM" not in [command[2] for command in commands]
-    inventory_path = Path(environment["ATLASO_FAKE_VMRUN_INVENTORY"])
-    assert str(stale_vmx.resolve()) not in inventory_path.read_text(encoding="utf-8")
+    commands = _commands(log)
+    stop = next(command for command in commands if command[2] == "stop")
+    delete = next(command for command in commands if command[2] == "deleteVM")
+    assert stop[-1] == "hard"
+    assert commands.index(stop) < commands.index(delete)
 
 
-def test_whole_artifact_root_cleanup_rejects_shared_vmlist_config_id(
-    tmp_path: Path,
-) -> None:
-    """A stale and valid registration sharing one library ID must fail closed.
+def test_running_hard_link_alias_is_matched_by_filesystem_identity(tmp_path: Path) -> None:
+    """An out-of-root alias cannot conceal a running in-root target.
 
     Args:
-        tmp_path: Isolated test directory.
+        tmp_path: Pytest temporary directory path.
     """
-    artifact_parent = tmp_path / "image-root"
-    removal_root = artifact_parent / "test-vms"
-    stale_vmx = artifact_parent / "output" / "Atlaso-Builder.vmx"
-    valid_vmx = tmp_path / "unrelated" / "Unrelated.vmx"
-    sentinel = removal_root / "sentinel.txt"
-    _write_vmx(stale_vmx, "Atlaso-Builder")
-    _write_vmx(valid_vmx, "Unrelated")
-    removal_root.mkdir(parents=True)
-    sentinel.write_text("remaining artifact", encoding="utf-8")
-    vmrun_path, environment, _ = _write_fake_vmrun(
-        tmp_path / "fake", [stale_vmx, valid_vmx], running=False, registered=True
+    root = tmp_path / "artifacts" / "vm"
+    vmx = root / "Atlaso.vmx"
+    alias = tmp_path / "aliases" / "Atlaso-alias.vmx"
+    _write_vmx(vmx)
+    alias.parent.mkdir(parents=True)
+    os.link(vmx, alias)
+    vmrun, environment, log, _ = _write_fake_vmrun(
+        tmp_path / "fake", [vmx], registered=True
     )
-    inventory_path = Path(environment["ATLASO_FAKE_VMRUN_INVENTORY"])
-    malformed_inventory = inventory_path.read_text(encoding="utf-8").replace(
-        "vmlist2.config", "vmlist1.config"
-    )
-    inventory_path.write_text(malformed_inventory, encoding="utf-8")
-    stale_vmx.unlink()
+    state = Path(environment["ATLASO_FAKE_VMRUN_STATE"])
+    (state / "running.json").write_text(json.dumps([str(alias.resolve())]), encoding="utf-8")
 
-    result = _run_artifact_root_cleanup(
+    result = _run_root_cleanup(
         tmp_path,
-        artifact_parent=artifact_parent,
-        removal_root=removal_root,
-        vmrun_path=vmrun_path,
+        removal_root=root,
+        expected_root=root,
+        vmrun_path=vmrun,
+        environment=environment,
+    )
+
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert "stop" in [command[2] for command in _commands(log)]
+
+
+@pytest.mark.parametrize("reported_path", ["relative-running.vmx", 'C:\\Atlaso.vmx"'])
+def test_malformed_running_inventory_path_fails_closed(
+    tmp_path: Path, reported_path: str
+) -> None:
+    """Every declared running path must be absolute and unambiguously quoted.
+
+    Args:
+        tmp_path: Pytest temporary directory path.
+        reported_path: Inventory path string passed through fake state.
+    """
+    root = tmp_path / "artifacts" / "vm"
+    vmx = root / "Atlaso.vmx"
+    _write_vmx(vmx)
+    vmrun, environment, _, _ = _write_fake_vmrun(tmp_path / "fake", [vmx])
+    state = Path(environment["ATLASO_FAKE_VMRUN_STATE"])
+    (state / "running.json").write_text(json.dumps([reported_path]), encoding="utf-8")
+
+    result = _run_root_cleanup(
+        tmp_path,
+        removal_root=root,
+        expected_root=root,
+        vmrun_path=vmrun,
         environment=environment,
     )
 
     assert result.returncode != 0
-    assert "one library ID to multiple config paths" in result.stderr
-    assert sentinel.read_text(encoding="utf-8") == "remaining artifact"
-    assert str(valid_vmx.resolve()) in inventory_path.read_text(encoding="utf-8")
+    assert "non-absolute or malformed VMX path" in result.stderr
+    assert vmx.exists()
 
 
-def test_stale_registration_pruning_rejects_shared_numeric_index(
-    tmp_path: Path,
-) -> None:
-    """A stale and valid registration cannot share one numeric index.
+def test_missing_running_inventory_path_fails_closed(tmp_path: Path) -> None:
+    """A missing out-of-root running alias prevents recursive cleanup.
 
     Args:
-        tmp_path: Isolated test directory.
+        tmp_path: Pytest temporary directory path.
     """
-    stale_vmx = tmp_path / "output" / "Atlaso-Builder.vmx"
-    valid_vmx = tmp_path / "unrelated" / "Unrelated.vmx"
-    _write_vmx(stale_vmx, "Atlaso-Builder")
-    _write_vmx(valid_vmx, "Unrelated")
-    inventory_path = tmp_path / "inventory.vmls"
-    inventory_content = (
-        '.encoding = "UTF-8"\n'
-        f'vmlist1.config = "{stale_vmx.resolve()}"\n'
-        f'vmlist2.config = "{valid_vmx.resolve()}"\n'
-        f'index0.id = "{stale_vmx.resolve()}"\n'
-        f'index0.id = "{valid_vmx.resolve()}"\n'
-        'index.count = "2"\n'
+    root = tmp_path / "artifacts" / "vm"
+    vmx = root / "Atlaso.vmx"
+    missing_alias = tmp_path / "aliases" / "missing.vmx"
+    _write_vmx(vmx)
+    vmrun, environment, _, _ = _write_fake_vmrun(
+        tmp_path / "fake", [missing_alias], running=True
     )
-    inventory_path.write_text(inventory_content, encoding="utf-8")
-    stale_vmx.unlink()
-    module_path = VMWARE_SCRIPT_ROOT / "Atlaso.WorkstationCleanup.psm1"
-    wrapper = tmp_path / "reject-shared-index.ps1"
-    wrapper.write_text(
-        f"""$ErrorActionPreference = 'Stop'
-$module = Import-Module '{module_path}' -Force -PassThru
-& $module {{
-    param($inventoryPath, $vmxPath)
-    Remove-AtlasoWorkstationMissingRegistrations `
-        -InventoryPath $inventoryPath `
-        -MissingPaths @($vmxPath)
-}} '{inventory_path}' '{stale_vmx.resolve()}'
-""",
+
+    result = _run_root_cleanup(
+        tmp_path,
+        removal_root=root,
+        expected_root=root,
+        vmrun_path=vmrun,
+        environment=environment,
+    )
+
+    assert result.returncode != 0
+    assert "missing or non-VMX running path" in result.stderr
+    assert vmx.exists()
+
+
+def test_registered_hard_link_alias_fails_closed(tmp_path: Path) -> None:
+    """Provider deletion requires the exact in-root registration path.
+
+    Args:
+        tmp_path: Pytest temporary directory path.
+    """
+    root = tmp_path / "artifacts" / "vm"
+    vmx = root / "Atlaso.vmx"
+    alias = tmp_path / "aliases" / "Atlaso-alias.vmx"
+    _write_vmx(vmx)
+    alias.parent.mkdir(parents=True)
+    os.link(vmx, alias)
+    vmrun, environment, log, inventory = _write_fake_vmrun(
+        tmp_path / "fake", [vmx], registered=True
+    )
+    inventory.write_text(
+        '.encoding = "UTF-8"\n'
+        f'vmlist1.config = "{alias.resolve()}"\n'
+        f'index0.id = "{alias.resolve()}"\n'
+        'index.count = "1"\n',
         encoding="utf-8",
     )
 
-    result = _run_script(wrapper, environment=os.environ.copy())
+    result = _run_root_cleanup(
+        tmp_path,
+        removal_root=root,
+        expected_root=root,
+        vmrun_path=vmrun,
+        environment=environment,
+    )
 
     assert result.returncode != 0
-    assert "one index number to an invalid number of VM paths" in result.stderr
-    assert inventory_path.read_text(encoding="utf-8") == inventory_content
+    assert "non-exact or out-of-scope library path" in result.stderr
+    assert vmx.exists()
+    assert alias.exists()
+    assert "deleteVM" not in [command[2] for command in _commands(log)]
 
 
-def test_stale_registration_pruning_rechecks_missing_path_before_replace(
-    tmp_path: Path,
-) -> None:
-    """A recreated VMX must preserve its registration before the inventory swap.
+def test_registered_alias_with_external_vmdk_fails_closed(tmp_path: Path) -> None:
+    """Atomic detachment cannot silently strand an out-of-root registration.
 
     Args:
-        tmp_path: Isolated test directory.
+        tmp_path: Pytest temporary directory path.
     """
-    vmx_path = tmp_path / "recreated" / "Recreated.vmx"
-    _write_vmx(vmx_path, "Recreated")
-    inventory_path = tmp_path / "inventory.vmls"
-    inventory_content = (
-        '.encoding = "UTF-8"\n'
-        f'vmlist1.config = "{vmx_path.resolve()}"\n'
-        f'index0.id = "{vmx_path.resolve()}"\n'
-        'index.count = "1"\n'
+    root = tmp_path / "artifacts" / "vm"
+    vmx = root / "Atlaso.vmx"
+    alias = tmp_path / "aliases" / "Atlaso-alias.vmx"
+    external_disk = tmp_path / "shared" / "depot.vmdk"
+    external_disk.parent.mkdir(parents=True)
+    external_disk.write_text("shared", encoding="utf-8")
+    _write_vmx(vmx, "Atlaso", f'scsi0:2.fileName = "{external_disk.resolve()}"')
+    original_bytes = vmx.read_bytes()
+    alias.parent.mkdir(parents=True)
+    os.link(vmx, alias)
+    vmrun, environment, _, inventory = _write_fake_vmrun(
+        tmp_path / "fake", [vmx], registered=True
     )
-    inventory_path.write_text(inventory_content, encoding="utf-8")
-    module_path = VMWARE_SCRIPT_ROOT / "Atlaso.WorkstationCleanup.psm1"
-    wrapper = tmp_path / "recheck-stale-registration.ps1"
-    wrapper.write_text(
-        f"""$ErrorActionPreference = 'Stop'
-$module = Import-Module '{module_path}' -Force -PassThru
-& $module {{
-    param($inventoryPath, $vmxPath)
-    Remove-AtlasoWorkstationMissingRegistrations `
-        -InventoryPath $inventoryPath `
-        -MissingPaths @($vmxPath)
-}} '{inventory_path}' '{vmx_path}'
-""",
+    inventory.write_text(
+        '.encoding = "UTF-8"\n'
+        f'vmlist1.config = "{alias.resolve()}"\n'
+        f'index0.id = "{alias.resolve()}"\n'
+        'index.count = "1"\n',
         encoding="utf-8",
     )
 
-    result = _run_script(wrapper, environment=os.environ.copy())
+    result = _run_root_cleanup(
+        tmp_path,
+        removal_root=root,
+        expected_root=root,
+        vmrun_path=vmrun,
+        environment=environment,
+    )
 
     assert result.returncode != 0
-    assert "registration path was recreated" in result.stderr
-    assert inventory_path.read_text(encoding="utf-8") == inventory_content
+    assert "non-exact or out-of-scope library path" in result.stderr
+    assert vmx.read_bytes() == original_bytes
+    assert alias.read_bytes() == original_bytes
+    assert external_disk.read_text(encoding="utf-8") == "shared"
 
 
-def test_whole_artifact_root_cleanup_rejects_stale_missing_registration_outside_root(
+def test_live_registration_requires_a_read_stable_inventory_snapshot(
     tmp_path: Path,
 ) -> None:
-    """A missing unrelated inventory entry must retain strict global verification.
+    """An active inventory writer blocks registration approval and deletion.
 
     Args:
-        tmp_path: Isolated test directory.
+        tmp_path: Pytest temporary directory path.
     """
-    artifact_parent = tmp_path / "image-root"
-    removal_root = artifact_parent / "output"
-    stale_vmx = tmp_path / "unrelated" / "Missing.vmx"
-    sentinel = removal_root / "sentinel.txt"
-    _write_vmx(stale_vmx, "Missing")
-    removal_root.mkdir(parents=True)
-    sentinel.write_text("preserve", encoding="utf-8")
-    vmrun_path, environment, _ = _write_fake_vmrun(
-        tmp_path / "fake", [stale_vmx], running=False, registered=True
+    root = tmp_path / "artifacts" / "vm"
+    vmx = root / "Atlaso.vmx"
+    _write_vmx(vmx)
+    vmrun, environment, log, _ = _write_fake_vmrun(
+        tmp_path / "fake",
+        [vmx],
+        registered=True,
     )
-    stale_vmx.unlink()
-
-    result = _run_artifact_root_cleanup(
-        tmp_path,
-        artifact_parent=artifact_parent,
-        removal_root=removal_root,
-        vmrun_path=vmrun_path,
-        environment=environment,
-    )
-
-    assert result.returncode != 0
-    assert "filesystem identity cannot be resolved" in result.stderr
-    assert sentinel.read_text(encoding="utf-8") == "preserve"
-
-
-def test_whole_artifact_root_cleanup_rejects_configured_root_mismatch(tmp_path: Path) -> None:
-    """Exact-root mode cannot be redirected to a sibling of the configured output.
-
-    Args:
-        tmp_path: Isolated test directory.
-    """
-    expected_root = tmp_path / "configured-output"
-    removal_root = tmp_path / "other-output"
-    expected_root.mkdir()
-    removal_root.mkdir()
-    sentinel = removal_root / "sentinel.txt"
-    sentinel.write_text("preserve", encoding="utf-8")
-    vmrun_path, environment, _ = _write_fake_vmrun(
-        tmp_path / "fake", [], running=False, registered=False
-    )
-
-    result = _run_artifact_root_cleanup(
-        tmp_path,
-        expected_removal_root=expected_root,
-        removal_root=removal_root,
-        vmrun_path=vmrun_path,
-        environment=environment,
-    )
-
-    assert result.returncode != 0
-    assert "other than the exact configured output root" in result.stderr
-    assert sentinel.exists()
-
-
-@pytest.mark.parametrize(
-    ("stop_exit", "unregister_exit", "expected_error"),
-    [
-        (9, 0, "Stop VMware Workstation VM"),
-        (0, 9, "Delete VMware Workstation VM"),
-    ],
+    wrapper = tmp_path / "cleanup-with-inventory-writer.ps1"
+    module = VMWARE_SCRIPT_ROOT / "Atlaso.WorkstationCleanup.psm1"
+    wrapper.write_text(
+        f"""$ErrorActionPreference = 'Stop'
+Import-Module '{module}' -Force
+$writer = [System.IO.FileStream]::new(
+    $env:ATLASO_FAKE_VMRUN_INVENTORY,
+    [System.IO.FileMode]::Open,
+    [System.IO.FileAccess]::Write,
+    [System.IO.FileShare]::ReadWrite
 )
-def test_whole_artifact_root_cleanup_preserves_files_after_vmrun_failure(
-    tmp_path: Path,
-    stop_exit: int,
-    unregister_exit: int,
-    expected_error: str,
-) -> None:
-    """Forced rebuild cleanup must stop before deletion when vmrun cannot transition a VM.
-
-    Args:
-        tmp_path: Isolated test directory.
-        stop_exit: Fake vmrun stop exit code.
-        unregister_exit: Fake vmrun unregister exit code.
-        expected_error: Expected cleanup failure text.
-    """
-    artifact_parent = tmp_path / "image-root"
-    removal_root = artifact_parent / "output"
-    vmx_path = removal_root / "Atlaso-Builder.vmx"
-    sentinel = removal_root / "sentinel.txt"
-    _write_vmx(vmx_path, "Atlaso-Builder")
-    sentinel.write_text("preserve", encoding="utf-8")
-    vmrun_path, environment, _ = _write_fake_vmrun(
-        tmp_path / "fake",
-        [vmx_path],
-        running=True,
-        registered=True,
-        stop_exit=stop_exit,
-        unregister_exit=unregister_exit,
+try {{
+    Remove-AtlasoWorkstationArtifactRoot `
+        -VmrunPath '{vmrun}' `
+        -ExpectedRemovalRoot '{root}' `
+        -RemovalRoot '{root}' `
+        -Confirm:$false
+}}
+finally {{
+    $writer.Dispose()
+}}
+""",
+        encoding="utf-8",
     )
-
-    result = _run_artifact_root_cleanup(
-        tmp_path,
-        artifact_parent=artifact_parent,
-        removal_root=removal_root,
-        vmrun_path=vmrun_path,
-        environment=environment,
-    )
+    result = _run_script(wrapper, environment=environment)
 
     assert result.returncode != 0
-    assert expected_error in result.stderr
-    assert "ROOT CLEANUP SUCCEEDED" not in result.stdout
-    assert sentinel.read_text(encoding="utf-8") == "preserve"
+    assert "deleteVM" not in [command[2] for command in _commands(log)]
+    assert vmx.exists()
 
 
-def test_whole_artifact_root_cleanup_removes_all_verified_vms(tmp_path: Path) -> None:
-    """The whole-root helper must reconcile every discovered VMX before deletion.
-
-    Args:
-        tmp_path: Isolated test directory.
-    """
-    artifact_parent = tmp_path / "image-root"
-    removal_root = artifact_parent / "test-vms"
-    vmx_paths = [
-        removal_root / "one" / "One.vmx",
-        removal_root / "two" / "Two.vmx",
-    ]
-    for vmx_path in vmx_paths:
-        _write_vmx(vmx_path, vmx_path.stem)
-    vmrun_path, environment, log_path = _write_fake_vmrun(
-        tmp_path / "fake",
-        vmx_paths,
-        running=True,
-        registered=True,
-    )
-
-    result = _run_artifact_root_cleanup(
-        tmp_path,
-        artifact_parent=artifact_parent,
-        removal_root=removal_root,
-        vmrun_path=vmrun_path,
-        environment=environment,
-    )
-
-    assert result.returncode == 0, result.stdout + result.stderr
-    assert not removal_root.exists()
-    commands = [json.loads(line) for line in log_path.read_text(encoding="utf-8").splitlines()]
-    assert [command[2] for command in commands].count("stop") == 2
-    assert [command[2] for command in commands].count("deleteVM") == 2
-
-
-def test_whole_artifact_root_cleanup_revalidates_each_target_before_delete(
+def test_multiple_vmx_cleanup_preflights_all_targets_before_first_delete(
     tmp_path: Path,
 ) -> None:
-    """Replacing a later VMX during an earlier delete must preserve the new VM.
+    """Preflight every target before attempting the first provider deleteVM.
 
     Args:
-        tmp_path: Isolated test directory.
+        tmp_path: Pytest temporary directory path.
     """
-    artifact_parent = tmp_path / "image-root"
-    removal_root = artifact_parent / "test-vms"
-    first_vmx = removal_root / "one" / "One.vmx"
-    second_vmx = removal_root / "two" / "Two.vmx"
-    _write_vmx(first_vmx, "One")
-    _write_vmx(second_vmx, "Two")
-    vmrun_path, environment, log_path = _write_fake_vmrun(
+    root = tmp_path / "artifacts" / "vm"
+    first_vmx = root / "first.vmx"
+    second_vmx = root / "second.vmx"
+    _write_vmx(first_vmx, "First")
+    _write_vmx(second_vmx, "Second")
+    vmrun, environment, log, _ = _write_fake_vmrun(
         tmp_path / "fake",
         [first_vmx, second_vmx],
-        running=False,
+        running=True,
         registered=True,
-        replace_after_delete_vmx=second_vmx,
+        remove_root_after_delete=True,
     )
 
-    result = _run_artifact_root_cleanup(
+    result = _run_root_cleanup(
         tmp_path,
-        artifact_parent=artifact_parent,
-        removal_root=removal_root,
-        vmrun_path=vmrun_path,
+        removal_root=root,
+        expected_root=root,
+        vmrun_path=vmrun,
         environment=environment,
     )
 
-    assert result.returncode != 0
-    assert "VMX was replaced after validation" in result.stderr
-    assert second_vmx.read_text(encoding="utf-8").endswith(
-        'displayName = "Concurrent replacement"\n'
-    )
-    commands = [json.loads(line) for line in log_path.read_text(encoding="utf-8").splitlines()]
-    assert [command[2] for command in commands].count("deleteVM") == 1
+    commands = _commands(log)
+    stop_indices = [index for index, command in enumerate(commands) if command[2] == "stop"]
+    delete_indices = [
+        index for index, command in enumerate(commands) if command[2] == "deleteVM"
+    ]
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert len(stop_indices) == 2
+    assert delete_indices, commands
+    assert max(stop_indices) < min(delete_indices)
 
 
-def test_whole_artifact_root_cleanup_rejects_vmx_recreated_after_delete(
+def test_multi_vmx_later_registration_replaced_before_first_delete_preserves_root(
     tmp_path: Path,
 ) -> None:
-    """A post-delete VMX recreated at the same path must preserve the root.
+    """A later VMX identity replacement blocks cleanup before any provider delete.
 
     Args:
-        tmp_path: Isolated test directory.
+        tmp_path: Pytest temporary directory path.
     """
-    artifact_parent = tmp_path / "image-root"
-    removal_root = artifact_parent / "output"
-    vmx_path = removal_root / "Atlaso-Builder.vmx"
-    _write_vmx(vmx_path, "Atlaso-Builder")
-    vmrun_path, environment, log_path = _write_fake_vmrun(
+    root = tmp_path / "artifacts" / "vm"
+    first_vmx = root / "first.vmx"
+    second_vmx = root / "second.vmx"
+    _write_vmx(first_vmx, "First")
+    _write_vmx(second_vmx, "Second")
+    vmrun, environment, log, _ = _write_fake_vmrun(
         tmp_path / "fake",
-        [vmx_path],
-        running=False,
-        registered=True,
-        replace_after_delete_vmx=vmx_path,
+        [first_vmx, second_vmx],
+        replace_on_list=3,
+        replace_target=second_vmx,
+        replace_with='displayName = "Replaced later"\n',
+        inventory_suffix=(
+            f'vmlist1.config = "{first_vmx.resolve()}"\n'
+            f'index0.id = "{first_vmx.resolve()}"\n'
+            'index.count = "1"\n'
+        ),
     )
 
-    result = _run_artifact_root_cleanup(
+    result = _run_root_cleanup(
         tmp_path,
-        artifact_parent=artifact_parent,
-        removal_root=removal_root,
-        vmrun_path=vmrun_path,
+        removal_root=root,
+        expected_root=root,
+        vmrun_path=vmrun,
         environment=environment,
     )
 
     assert result.returncode != 0
-    assert "VMX remains after deleteVM succeeded" in result.stderr
-    assert 'displayName = "Concurrent replacement"' in vmx_path.read_text(encoding="utf-8")
-    commands = [json.loads(line) for line in log_path.read_text(encoding="utf-8").splitlines()]
-    assert [command[2] for command in commands].count("deleteVM") == 1
+    assert "replaced immediately before deleteVM" in result.stderr
+    assert root.exists()
+    assert first_vmx.exists()
+    assert second_vmx.exists()
+    assert second_vmx.read_text(encoding="utf-8") == 'displayName = "Replaced later"\n'
+    assert "deleteVM" not in [command[2] for command in _commands(log)]
 
 
-def test_whole_artifact_root_cleanup_detaches_external_vmdks_before_delete(
+def test_multi_vmx_later_restart_before_first_delete_preserves_root(
     tmp_path: Path,
 ) -> None:
-    """Provider deletion must not remove a data disk outside the cleanup root.
+    """Recheck every survivor when a later VM restarts before provider deletion.
 
     Args:
-        tmp_path: Isolated test directory.
+        tmp_path: Pytest temporary directory path.
     """
-    artifact_parent = tmp_path / "image-root"
-    removal_root = artifact_parent / "test-vms" / "Atlaso-Test"
-    vmx_path = removal_root / "Atlaso-Test.vmx"
-    external_vmdk = tmp_path / "shared-disks" / "Atlaso-Depot.vmdk"
-    _write_vmx(vmx_path, "Atlaso-Test")
-    external_vmdk.parent.mkdir(parents=True)
-    external_vmdk.write_text("shared depot disk", encoding="utf-8")
-    with vmx_path.open("a", encoding="utf-8") as stream:
-        stream.write('scsi0:2.present = "TRUE"\n')
-        stream.write(f'scsi0:2.fileName = "{external_vmdk.resolve()}"\n')
-        stream.write('scsi0:2.redo = ""\n')
-    vmrun_path, environment, _ = _write_fake_vmrun(
-        tmp_path / "fake", [vmx_path], running=False, registered=True
+    root = tmp_path / "artifacts" / "vm"
+    first_vmx = root / "first.vmx"
+    second_vmx = root / "second.vmx"
+    _write_vmx(first_vmx, "First")
+    _write_vmx(second_vmx, "Second")
+    vmrun, environment, log, _ = _write_fake_vmrun(
+        tmp_path / "fake",
+        [first_vmx, second_vmx],
+        registered=True,
+        stop_sticky=True,
+        remove_root_after_delete=True,
+        run_on_list=7,
+        run_target=second_vmx,
     )
 
-    result = _run_artifact_root_cleanup(
+    result = _run_root_cleanup(
         tmp_path,
-        artifact_parent=artifact_parent,
-        removal_root=removal_root,
-        vmrun_path=vmrun_path,
+        removal_root=root,
+        expected_root=root,
+        vmrun_path=vmrun,
+        environment=environment,
+    )
+
+    assert result.returncode != 0
+    assert "VMware Workstation VM remains running after stop succeeded" in result.stderr
+    assert root.exists()
+    assert first_vmx.exists()
+    assert second_vmx.exists()
+    assert "deleteVM" not in [command[2] for command in _commands(log)]
+
+
+def test_multi_vmx_later_disappearance_before_first_delete_preserves_root(
+    tmp_path: Path,
+) -> None:
+    """A later expected VMX cannot disappear during final provider checks.
+
+    Args:
+        tmp_path: Pytest temporary directory path.
+    """
+    root = tmp_path / "artifacts" / "vm"
+    first_vmx = root / "first.vmx"
+    second_vmx = root / "second.vmx"
+    _write_vmx(first_vmx, "First")
+    _write_vmx(second_vmx, "Second")
+    vmrun, environment, log, _ = _write_fake_vmrun(
+        tmp_path / "fake",
+        [first_vmx, second_vmx],
+        registered=True,
+        remove_on_list=5,
+        remove_target=second_vmx,
+    )
+
+    result = _run_root_cleanup(
+        tmp_path,
+        removal_root=root,
+        expected_root=root,
+        vmrun_path=vmrun,
+        environment=environment,
+    )
+
+    assert result.returncode != 0
+    assert "VMware cleanup target no longer exists" in result.stderr
+    assert root.exists()
+    assert first_vmx.exists()
+    assert not second_vmx.exists()
+    assert "deleteVM" not in [command[2] for command in _commands(log)]
+
+
+def test_multi_vmx_later_ambiguous_registration_blocks_first_delete(
+    tmp_path: Path,
+) -> None:
+    """Preflight every target registration before a provider can remove the root.
+
+    Args:
+        tmp_path: Pytest temporary directory path.
+    """
+    root = tmp_path / "artifacts" / "vm"
+    first_vmx = root / "first.vmx"
+    second_vmx = root / "second.vmx"
+    unrelated = tmp_path / "other" / "unrelated.vmx"
+    _write_vmx(first_vmx, "First")
+    _write_vmx(second_vmx, "Second")
+    _write_vmx(unrelated, "Unrelated")
+    vmrun, environment, log, _ = _write_fake_vmrun(
+        tmp_path / "fake",
+        [first_vmx, second_vmx],
+        registered=True,
+        remove_root_after_delete=True,
+        inventory_suffix=f'vmlist2.config = "{unrelated.resolve()}"\n',
+    )
+
+    result = _run_root_cleanup(
+        tmp_path,
+        removal_root=root,
+        expected_root=root,
+        vmrun_path=vmrun,
+        environment=environment,
+    )
+
+    assert result.returncode != 0
+    assert "ambiguous library ID" in result.stderr
+    assert first_vmx.exists()
+    assert second_vmx.exists()
+    assert "deleteVM" not in [command[2] for command in _commands(log)]
+
+
+def test_live_registration_rejects_non_vmx_hardlink_inventory_entry(
+    tmp_path: Path,
+) -> None:
+    """Reject hard-link aliases whose inventory owner path is an absolute non-vmx file.
+
+    Args:
+        tmp_path: Pytest temporary directory path.
+    """
+    root = tmp_path / "artifacts" / "vm"
+    vmx = root / "Atlaso.vmx"
+    _write_vmx(vmx)
+    alias = tmp_path / "aliases" / "Atlaso-alias.txt"
+    alias.parent.mkdir(parents=True)
+    os.link(vmx, alias)
+    vmrun, environment, log, _ = _write_fake_vmrun(
+        tmp_path / "fake",
+        [vmx],
+        inventory_suffix=(
+            f'vmlist1.config = "{alias.resolve()}"\n'
+            f'index0.id = "{alias.resolve()}"\n'
+            'index.count = "1"\n'
+        ),
+    )
+
+    result = _run_root_cleanup(
+        tmp_path,
+        removal_root=root,
+        expected_root=root,
+        vmrun_path=vmrun,
+        environment=environment,
+    )
+
+    assert result.returncode != 0
+    assert "non-exact or out-of-scope library path" in result.stderr
+    assert vmx.exists()
+    assert "deleteVM" not in [command[2] for command in _commands(log)]
+
+
+def test_live_registration_rejects_duplicate_library_id(tmp_path: Path) -> None:
+    """A live target's selected library ID must have one config owner.
+
+    Args:
+        tmp_path: Pytest temporary directory path.
+    """
+    root = tmp_path / "artifacts" / "vm"
+    vmx = root / "Atlaso.vmx"
+    unrelated = tmp_path / "other" / "Unrelated.vmx"
+    _write_vmx(vmx)
+    _write_vmx(unrelated, "Unrelated")
+    vmrun, environment, log, _ = _write_fake_vmrun(
+        tmp_path / "fake",
+        [vmx],
+        registered=True,
+        inventory_suffix=f'vmlist1.config = "{unrelated.resolve()}"\n',
+    )
+
+    result = _run_root_cleanup(
+        tmp_path,
+        removal_root=root,
+        expected_root=root,
+        vmrun_path=vmrun,
+        environment=environment,
+    )
+
+    assert result.returncode != 0
+    assert "ambiguous library ID" in result.stderr
+    assert vmx.exists()
+    assert "deleteVM" not in [command[2] for command in _commands(log)]
+
+
+@pytest.mark.parametrize(
+    "malformed_owner",
+    ['vmlist1.config = relative.vmx\n', 'vmlist1.config = "relative.vmx"\n'],
+)
+def test_live_registration_rejects_malformed_duplicate_library_id(
+    tmp_path: Path, malformed_owner: str
+) -> None:
+    """A malformed second owner cannot make the selected library ID unique.
+
+    Args:
+        tmp_path: Pytest temporary directory path.
+        malformed_owner: Inventory row content injected as a malformed owner.
+    """
+    root = tmp_path / "artifacts" / "vm"
+    vmx = root / "Atlaso.vmx"
+    _write_vmx(vmx)
+    vmrun, environment, log, _ = _write_fake_vmrun(
+        tmp_path / "fake",
+        [vmx],
+        registered=True,
+        inventory_suffix=malformed_owner,
+    )
+
+    result = _run_root_cleanup(
+        tmp_path,
+        removal_root=root,
+        expected_root=root,
+        vmrun_path=vmrun,
+        environment=environment,
+    )
+
+    assert result.returncode != 0
+    assert "ambiguous library ID" in result.stderr
+    assert vmx.exists()
+    assert "deleteVM" not in [command[2] for command in _commands(log)]
+
+
+def test_already_unregistered_vm_uses_filesystem_cleanup_only(tmp_path: Path) -> None:
+    """An existing unregistered target remains an idempotent cleanup case.
+
+    Args:
+        tmp_path: Pytest temporary directory path.
+    """
+    root = tmp_path / "artifacts" / "vm"
+    vmx = root / "Atlaso.vmx"
+    _write_vmx(vmx)
+    vmrun, environment, log, _ = _write_fake_vmrun(tmp_path / "fake", [vmx])
+
+    result = _run_root_cleanup(
+        tmp_path,
+        removal_root=root,
+        expected_root=root,
+        vmrun_path=vmrun,
         environment=environment,
     )
 
     assert result.returncode == 0, result.stdout + result.stderr
-    assert not removal_root.exists()
-    assert external_vmdk.read_text(encoding="utf-8") == "shared depot disk"
-
-
-def test_whole_artifact_root_cleanup_rejects_registered_hard_link_alias(
-    tmp_path: Path,
-) -> None:
-    """A registered hard-link alias must fail before VMX replacement breaks identity.
-
-    Args:
-        tmp_path: Isolated test directory.
-    """
-    artifact_parent = tmp_path / "image-root"
-    removal_root = artifact_parent / "test-vms" / "Atlaso-Test"
-    vmx_path = removal_root / "Atlaso-Test.vmx"
-    registered_alias = tmp_path / "inventory-alias" / "Atlaso-Test-Alias.vmx"
-    external_vmdk = tmp_path / "shared-disks" / "Atlaso-Depot.vmdk"
-    _write_vmx(vmx_path, "Atlaso-Test")
-    registered_alias.parent.mkdir(parents=True)
-    os.link(vmx_path, registered_alias)
-    external_vmdk.parent.mkdir(parents=True)
-    external_vmdk.write_text("shared depot disk", encoding="utf-8")
-    with vmx_path.open("a", encoding="utf-8") as stream:
-        stream.write('scsi0:2.present = "TRUE"\n')
-        stream.write(f'scsi0:2.fileName = "{external_vmdk.resolve()}"\n')
-    original_vmx = vmx_path.read_bytes()
-    vmrun_path, environment, log_path = _write_fake_vmrun(
-        tmp_path / "fake", [registered_alias], running=False, registered=True
-    )
-
-    result = _run_artifact_root_cleanup(
-        tmp_path,
-        artifact_parent=artifact_parent,
-        removal_root=removal_root,
-        vmrun_path=vmrun_path,
-        environment=environment,
-    )
-
-    assert result.returncode != 0
-    assert "registered the cleanup target through a filesystem alias" in result.stderr
-    assert vmx_path.read_bytes() == original_vmx
-    assert registered_alias.read_bytes() == original_vmx
-    assert external_vmdk.read_text(encoding="utf-8") == "shared depot disk"
-    commands = [json.loads(line) for line in log_path.read_text(encoding="utf-8").splitlines()]
-    assert "deleteVM" not in [command[2] for command in commands]
-
-
-@pytest.mark.parametrize(
-    ("unregister_exit", "unregister_sticky", "expected_error"),
-    [
-        (9, False, "Delete VMware Workstation VM"),
-        (0, True, "VMX remains after deleteVM succeeded"),
-    ],
-)
-def test_whole_artifact_root_cleanup_restores_external_vmdks_after_failed_delete(
-    tmp_path: Path,
-    unregister_exit: int,
-    unregister_sticky: bool,
-    expected_error: str,
-) -> None:
-    """A failed deletion transition must restore the surviving VMX byte-for-byte.
-
-    Args:
-        tmp_path: Isolated test directory.
-        unregister_exit: Exit code returned by the fake deleteVM operation.
-        unregister_sticky: Whether a successful deleteVM leaves the VMX in place.
-        expected_error: Expected cleanup failure text.
-    """
-    artifact_parent = tmp_path / "image-root"
-    removal_root = artifact_parent / "test-vms" / "Atlaso-Test"
-    vmx_path = removal_root / "Atlaso-Test.vmx"
-    external_vmdk = tmp_path / "shared-disks" / "Atlaso-Depot.vmdk"
-    _write_vmx(vmx_path, "Atlaso-Test")
-    external_vmdk.parent.mkdir(parents=True)
-    external_vmdk.write_text("shared depot disk", encoding="utf-8")
-    with vmx_path.open("a", encoding="utf-8") as stream:
-        stream.write('scsi0:2.present = "TRUE"\n')
-        stream.write(f'scsi0:2.fileName = "{external_vmdk.resolve()}"\n')
-        stream.write('scsi0:2.redo = ""\n')
-    original_vmx = vmx_path.read_bytes()
-    vmrun_path, environment, _ = _write_fake_vmrun(
-        tmp_path / "fake",
-        [vmx_path],
-        running=False,
-        registered=True,
-        unregister_exit=unregister_exit,
-        unregister_sticky=unregister_sticky,
-    )
-
-    result = _run_artifact_root_cleanup(
-        tmp_path,
-        artifact_parent=artifact_parent,
-        removal_root=removal_root,
-        vmrun_path=vmrun_path,
-        environment=environment,
-    )
-
-    assert result.returncode != 0
-    assert expected_error in result.stderr
-    assert vmx_path.read_bytes() == original_vmx
-    assert external_vmdk.read_text(encoding="utf-8") == "shared depot disk"
-
-
-def test_whole_artifact_root_cleanup_preserves_vmx_replaced_during_delete(
-    tmp_path: Path,
-) -> None:
-    """A concurrent VMX replacement must not be overwritten by failure restoration.
-
-    Args:
-        tmp_path: Isolated test directory.
-    """
-    artifact_parent = tmp_path / "image-root"
-    removal_root = artifact_parent / "test-vms" / "Atlaso-Test"
-    vmx_path = removal_root / "Atlaso-Test.vmx"
-    external_vmdk = tmp_path / "shared-disks" / "Atlaso-Depot.vmdk"
-    _write_vmx(vmx_path, "Atlaso-Test")
-    external_vmdk.parent.mkdir(parents=True)
-    external_vmdk.write_text("shared depot disk", encoding="utf-8")
-    with vmx_path.open("a", encoding="utf-8") as stream:
-        stream.write('scsi0:2.present = "TRUE"\n')
-        stream.write(f'scsi0:2.fileName = "{external_vmdk.resolve()}"\n')
-    vmrun_path, environment, _ = _write_fake_vmrun(
-        tmp_path / "fake",
-        [vmx_path],
-        running=False,
-        registered=True,
-        unregister_exit=9,
-        replace_before_delete=True,
-    )
-
-    result = _run_artifact_root_cleanup(
-        tmp_path,
-        artifact_parent=artifact_parent,
-        removal_root=removal_root,
-        vmrun_path=vmrun_path,
-        environment=environment,
-    )
-
-    assert result.returncode != 0
-    assert "replacement was preserved" in result.stderr
-    assert 'displayName = "Concurrent delete replacement"' in vmx_path.read_text(
-        encoding="utf-8"
-    )
-    assert external_vmdk.read_text(encoding="utf-8") == "shared depot disk"
-
-
-@pytest.mark.parametrize(
-    ("stop_sticky", "unregister_sticky", "expected_error"),
-    [
-        (True, False, "remains running after stop succeeded"),
-        (False, True, "VMX remains after deleteVM succeeded"),
-    ],
-)
-def test_whole_artifact_root_cleanup_rejects_incomplete_vmrun_transition(
-    tmp_path: Path,
-    stop_sticky: bool,
-    unregister_sticky: bool,
-    expected_error: str,
-) -> None:
-    """A zero exit is insufficient when the follow-up inventory still contains the VM.
-
-    Args:
-        tmp_path: Isolated test directory.
-        stop_sticky: Whether the fake running inventory remains unchanged after stop.
-        unregister_sticky: Whether registration remains after deleteVM.
-        expected_error: Expected cleanup failure text.
-    """
-    artifact_parent = tmp_path / "image-root"
-    removal_root = artifact_parent / "output"
-    vmx_path = removal_root / "Atlaso-Builder.vmx"
-    _write_vmx(vmx_path, "Atlaso-Builder")
-    vmrun_path, environment, _ = _write_fake_vmrun(
-        tmp_path / "fake",
-        [vmx_path],
-        running=True,
-        registered=True,
-        stop_sticky=stop_sticky,
-        unregister_sticky=unregister_sticky,
-    )
-
-    result = _run_artifact_root_cleanup(
-        tmp_path,
-        artifact_parent=artifact_parent,
-        removal_root=removal_root,
-        vmrun_path=vmrun_path,
-        environment=environment,
-    )
-
-    assert result.returncode != 0
-    assert expected_error in result.stderr
-    assert vmx_path.exists()
-
-
-def test_whole_artifact_root_cleanup_rejects_late_registered_vmx(tmp_path: Path) -> None:
-    """The final full inventory gate must preserve a late-registered VMX.
-
-    Args:
-        tmp_path: Isolated test directory.
-    """
-    artifact_parent = tmp_path / "image-root"
-    removal_root = artifact_parent / "output"
-    initial_vmx = removal_root / "initial" / "Initial.vmx"
-    late_vmx = removal_root / "late" / "Late.vmx"
-    _write_vmx(initial_vmx, "Initial")
-    vmrun_path, environment, _ = _write_fake_vmrun(
-        tmp_path / "fake",
-        [initial_vmx],
-        running=True,
-        registered=True,
-        late_registered_vmx=late_vmx,
-    )
-
-    result = _run_artifact_root_cleanup(
-        tmp_path,
-        artifact_parent=artifact_parent,
-        removal_root=removal_root,
-        vmrun_path=vmrun_path,
-        environment=environment,
-    )
-
-    assert result.returncode != 0
-    assert "directory contains an unvalidated VMX" in result.stderr
-    assert removal_root.exists()
-    assert late_vmx.exists()
-
-
-def test_whole_artifact_root_cleanup_rejects_vmx_created_during_delete(
-    tmp_path: Path,
-) -> None:
-    """The post-delete VMX and registration gates must preserve a concurrent build.
-
-    Args:
-        tmp_path: Isolated test directory.
-    """
-    artifact_parent = tmp_path / "image-root"
-    removal_root = artifact_parent / "output"
-    initial_vmx = removal_root / "initial" / "Initial.vmx"
-    late_vmx = removal_root / "late" / "Late.vmx"
-    _write_vmx(initial_vmx, "Initial")
-    vmrun_path, environment, _ = _write_fake_vmrun(
-        tmp_path / "fake",
-        [initial_vmx],
-        running=False,
-        registered=True,
-        late_registered_vmx=late_vmx,
-        late_registered_list_count=7,
-    )
-
-    result = _run_artifact_root_cleanup(
-        tmp_path,
-        artifact_parent=artifact_parent,
-        removal_root=removal_root,
-        vmrun_path=vmrun_path,
-        environment=environment,
-    )
-
-    assert result.returncode != 0
-    assert "registration inventory changed during verification" in result.stderr
-    assert removal_root.exists()
-    assert late_vmx.exists()
-
-
-def test_whole_artifact_root_cleanup_rechecks_running_vms_after_inventory_stability(
-    tmp_path: Path,
-) -> None:
-    """A VM restarted during registration stabilization must preserve its artifacts.
-
-    Args:
-        tmp_path: Isolated test directory.
-    """
-    artifact_parent = tmp_path / "image-root"
-    removal_root = artifact_parent / "output"
-    vmx_path = removal_root / "Atlaso-Builder.vmx"
-    _write_vmx(vmx_path, "Atlaso-Builder")
-    vmrun_path, environment, _ = _write_fake_vmrun(
-        tmp_path / "fake",
-        [vmx_path],
-        running=True,
-        registered=True,
-        late_running_vmx=vmx_path,
-    )
-
-    result = _run_artifact_root_cleanup(
-        tmp_path,
-        artifact_parent=artifact_parent,
-        removal_root=removal_root,
-        vmrun_path=vmrun_path,
-        environment=environment,
-    )
-
-    assert result.returncode != 0
-    assert "running inventory changed during final verification" in result.stderr
-    assert vmx_path.exists()
-
-
-def test_whole_artifact_root_cleanup_rechecks_running_alias_immediately_before_removal(
-    tmp_path: Path,
-) -> None:
-    """The last running check must match an unregistered target through a hard link.
-
-    Args:
-        tmp_path: Isolated test directory.
-    """
-    artifact_parent = tmp_path / "image-root"
-    removal_root = artifact_parent / "output"
-    vmx_path = removal_root / "Atlaso-Builder.vmx"
-    running_alias = tmp_path / "running-alias" / "Atlaso-Builder-Alias.vmx"
-    _write_vmx(vmx_path, "Atlaso-Builder")
-    running_alias.parent.mkdir(parents=True)
-    os.link(vmx_path, running_alias)
-    vmrun_path, environment, _ = _write_fake_vmrun(
-        tmp_path / "fake",
-        [vmx_path],
-        running=False,
-        registered=False,
-        late_running_vmx=running_alias,
-        late_running_list_count=5,
-    )
-
-    result = _run_artifact_root_cleanup(
-        tmp_path,
-        artifact_parent=artifact_parent,
-        removal_root=removal_root,
-        vmrun_path=vmrun_path,
-        environment=environment,
-    )
-
-    assert result.returncode != 0
-    assert "remains running after deleteVM succeeded" in result.stderr
-    assert vmx_path.exists()
-    assert running_alias.exists()
-
-
-def test_whole_artifact_root_cleanup_rechecks_registration_after_final_running_query(
-    tmp_path: Path,
-) -> None:
-    """A VM registered by the final running query must preserve its artifacts.
-
-    Args:
-        tmp_path: Isolated test directory.
-    """
-    artifact_parent = tmp_path / "image-root"
-    removal_root = artifact_parent / "output"
-    vmx_path = removal_root / "Atlaso-Builder.vmx"
-    _write_vmx(vmx_path, "Atlaso-Builder")
-    vmrun_path, environment, _ = _write_fake_vmrun(
-        tmp_path / "fake",
-        [vmx_path],
-        running=True,
-        registered=True,
-        late_registered_vmx=vmx_path,
-        late_registered_list_count=4,
-    )
-
-    result = _run_artifact_root_cleanup(
-        tmp_path,
-        artifact_parent=artifact_parent,
-        removal_root=removal_root,
-        vmrun_path=vmrun_path,
-        environment=environment,
-    )
-
-    assert result.returncode != 0
-    assert "registration inventory changed during verification" in result.stderr
-    assert vmx_path.exists()
-
-
-def test_whole_artifact_root_cleanup_matches_late_inventory_alias_by_file_identity(
-    tmp_path: Path,
-) -> None:
-    """A late VMX registered through an out-of-root alias must preserve the root.
-
-    Args:
-        tmp_path: Isolated test directory.
-    """
-    artifact_parent = tmp_path / "image-root"
-    removal_root = artifact_parent / "output"
-    initial_vmx = removal_root / "initial" / "Initial.vmx"
-    late_vmx = removal_root / "late" / "Late.vmx"
-    late_alias = tmp_path / "inventory-alias" / "LateAlias.vmx"
-    _write_vmx(initial_vmx, "Initial")
-    vmrun_path, environment, _ = _write_fake_vmrun(
-        tmp_path / "fake",
-        [initial_vmx],
-        running=True,
-        registered=True,
-        late_registered_vmx=late_vmx,
-        late_registered_alias=late_alias,
-    )
-
-    result = _run_artifact_root_cleanup(
-        tmp_path,
-        artifact_parent=artifact_parent,
-        removal_root=removal_root,
-        vmrun_path=vmrun_path,
-        environment=environment,
-    )
-
-    assert result.returncode != 0
-    assert "directory contains an unvalidated VMX" in result.stderr
-    assert removal_root.exists()
-    assert late_vmx.exists()
-    assert late_alias.exists()
-
-
-def test_whole_artifact_root_cleanup_rejects_an_out_of_root_target(tmp_path: Path) -> None:
-    """A caller cannot widen recursive deletion beyond its canonical image root.
-
-    Args:
-        tmp_path: Isolated test directory.
-    """
-    artifact_parent = tmp_path / "image-root"
-    artifact_parent.mkdir()
-    removal_root = tmp_path / "outside"
-    removal_root.mkdir()
-    sentinel = removal_root / "sentinel.txt"
-    sentinel.write_text("preserve", encoding="utf-8")
-    vmrun_path, environment, _ = _write_fake_vmrun(
-        tmp_path / "fake", [], running=False, registered=False
-    )
-
-    result = _run_artifact_root_cleanup(
-        tmp_path,
-        artifact_parent=artifact_parent,
-        removal_root=removal_root,
-        vmrun_path=vmrun_path,
-        environment=environment,
-    )
-
-    assert result.returncode != 0
-    assert "outside the canonical parent root" in result.stderr
-    assert sentinel.exists()
-
-
-@pytest.mark.skipif(os.name != "nt", reason="Windows file-sharing semantics are required")
-def test_whole_artifact_root_cleanup_does_not_claim_success_after_locked_file(
-    tmp_path: Path,
-) -> None:
-    """A terminating recursive-delete failure preserves the root and suppresses success.
-
-    Args:
-        tmp_path: Isolated test directory.
-    """
-    artifact_parent = tmp_path / "image-root"
-    removal_root = artifact_parent / "ovf"
-    removal_root.mkdir(parents=True)
-    locked_path = removal_root / "locked.ova"
-    locked_path.write_text("locked", encoding="utf-8")
-    vmrun_path, environment, _ = _write_fake_vmrun(
-        tmp_path / "fake", [], running=False, registered=False
-    )
-
-    with locked_path.open("rb"):
-        result = _run_artifact_root_cleanup(
-            tmp_path,
-            artifact_parent=artifact_parent,
-            removal_root=removal_root,
-            vmrun_path=vmrun_path,
-            environment=environment,
-        )
-
-    assert result.returncode != 0
-    assert "ROOT CLEANUP SUCCEEDED" not in result.stdout
-    assert locked_path.exists()
-
-
-@pytest.mark.parametrize(
-    ("running", "registered", "stop_exit", "unregister_exit", "expected_error"),
-    [
-        (True, True, 9, 0, "Stop VMware Workstation VM"),
-        (False, True, 0, 9, "Delete VMware Workstation VM"),
-    ],
-)
-def test_general_removal_preserves_artifacts_after_vmrun_failure(
-    tmp_path: Path,
-    running: bool,
-    registered: bool,
-    stop_exit: int,
-    unregister_exit: int,
-    expected_error: str,
-) -> None:
-    """A failed stop or deleteVM must prevent recursive VM-directory deletion.
-
-    Args:
-        tmp_path: Isolated test directory.
-        running: Whether the VM begins in the running inventory.
-        registered: Whether the VM begins in the registration inventory.
-        stop_exit: Exit code returned by the fake stop operation.
-        unregister_exit: Exit code returned by the fake deleteVM operation.
-        expected_error: Action text expected in the propagated failure.
-    """
-    vm_directory = tmp_path / "Atlaso-Test"
-    vmx_path = vm_directory / "Atlaso-Test.vmx"
-    sentinel = vm_directory / "sentinel.txt"
-    _write_vmx(vmx_path, "Atlaso-Test")
-    sentinel.write_text("preserve", encoding="utf-8")
-    vmrun_path, environment, _ = _write_fake_vmrun(
-        tmp_path / "fake",
-        [vmx_path],
-        running=running,
-        registered=registered,
-        stop_exit=stop_exit,
-        unregister_exit=unregister_exit,
-    )
-
-    result = _run_script(
-        VMWARE_SCRIPT_ROOT / "remove-atlaso-vm.ps1",
-        "-VmxPath",
-        str(vmx_path),
-        "-VmrunPath",
-        str(vmrun_path),
-        "-ExpectedName",
-        "Atlaso-Test",
-        environment=environment,
-    )
-
-    assert result.returncode != 0
-    assert expected_error in result.stderr
-    assert sentinel.read_text(encoding="utf-8") == "preserve"
-
-
-@pytest.mark.parametrize(("running", "registered"), [(True, True), (False, False)])
-def test_general_removal_is_verified_and_idempotent(
-    tmp_path: Path, running: bool, registered: bool
-) -> None:
-    """Successful and already-inactive cleanup both remove the exact VM artifact directory.
-
-    Args:
-        tmp_path: Isolated test directory.
-        running: Whether the VM begins in the running inventory.
-        registered: Whether the VM begins in the registration inventory.
-    """
-    vm_directory = tmp_path / f"Atlaso-{running}-{registered}"
-    display_name = vm_directory.name
-    vmx_path = vm_directory / f"{display_name}.vmx"
-    _write_vmx(vmx_path, display_name)
-    vmrun_path, environment, log_path = _write_fake_vmrun(
-        tmp_path / "fake",
-        [vmx_path],
-        running=running,
-        registered=registered,
-    )
-
-    result = _run_script(
-        VMWARE_SCRIPT_ROOT / "remove-atlaso-vm.ps1",
-        "-VmxPath",
-        str(vmx_path),
-        "-VmrunPath",
-        str(vmrun_path),
-        "-ExpectedName",
-        display_name,
-        environment=environment,
-    )
-
-    assert result.returncode == 0, result.stdout + result.stderr
-    assert not vm_directory.exists()
-    commands = [json.loads(line) for line in log_path.read_text(encoding="utf-8").splitlines()]
-    action_names = [command[2] for command in commands]
-    assert ("stop" in action_names) is running
-    assert ("deleteVM" in action_names) is registered
+    assert not root.exists()
+    assert "deleteVM" not in [command[2] for command in _commands(log)]
 
 
 def test_provider_delete_may_remove_the_complete_validated_root(tmp_path: Path) -> None:
     """A checked provider deletion may satisfy cleanup by removing the exact root.
 
     Args:
-        tmp_path: Isolated test directory.
+        tmp_path: Pytest temporary directory path.
     """
-    vm_directory = tmp_path / "Atlaso-Provider-Root"
-    vmx_path = vm_directory / "Atlaso-Provider-Root.vmx"
-    external_vmdk = tmp_path / "shared-disks" / "Atlaso-Depot.vmdk"
-    _write_vmx(vmx_path, "Atlaso-Provider-Root")
-    external_vmdk.parent.mkdir(parents=True)
-    external_vmdk.write_text("shared depot disk", encoding="utf-8")
-    with vmx_path.open("a", encoding="utf-8") as stream:
-        stream.write('scsi0:2.present = "TRUE"\n')
-        stream.write(f'scsi0:2.fileName = "{external_vmdk.resolve()}"\n')
-    vmrun_path, environment, log_path = _write_fake_vmrun(
-        tmp_path / "fake-provider-root",
-        [vmx_path],
-        running=False,
+    root = tmp_path / "artifacts" / "vm"
+    vmx = root / "Atlaso.vmx"
+    _write_vmx(vmx)
+    (root / "provider-owned.log").write_text("provider", encoding="utf-8")
+    vmrun, environment, log, _ = _write_fake_vmrun(
+        tmp_path / "fake",
+        [vmx],
         registered=True,
-        provider_removes_root=True,
+        remove_root_after_delete=True,
     )
 
-    result = _run_script(
-        VMWARE_SCRIPT_ROOT / "remove-atlaso-vm.ps1",
-        "-VmxPath",
-        str(vmx_path),
-        "-VmrunPath",
-        str(vmrun_path),
-        "-ExpectedName",
-        "Atlaso-Provider-Root",
+    result = _run_root_cleanup(
+        tmp_path,
+        removal_root=root,
+        expected_root=root,
+        vmrun_path=vmrun,
         environment=environment,
     )
 
     assert result.returncode == 0, result.stdout + result.stderr
-    assert not vm_directory.exists()
-    assert external_vmdk.read_text(encoding="utf-8") == "shared depot disk"
-    commands = [json.loads(line) for line in log_path.read_text(encoding="utf-8").splitlines()]
-    assert [command[2] for command in commands].count("deleteVM") == 1
+    assert not root.exists()
+    assert "deleteVM" in [command[2] for command in _commands(log)]
 
 
-def test_provider_delete_leaving_root_uses_verified_recursive_cleanup(tmp_path: Path) -> None:
-    """Provider-retained files remain on the established recursive cleanup path.
+def test_provider_delete_rejects_a_late_non_vmx_artifact(tmp_path: Path) -> None:
+    """A late non-VMX descendant blocks provider-owned root deletion.
 
     Args:
-        tmp_path: Isolated test directory.
+        tmp_path: Pytest temporary directory path.
     """
-    vm_directory = tmp_path / "Atlaso-Provider-Retained-Root"
-    vmx_path = vm_directory / "Atlaso-Provider-Retained-Root.vmx"
-    sentinel = vm_directory / "provider-retained.txt"
-    _write_vmx(vmx_path, "Atlaso-Provider-Retained-Root")
-    sentinel.write_text("remove after verification", encoding="utf-8")
-    vmrun_path, environment, _ = _write_fake_vmrun(
-        tmp_path / "fake-provider-retained-root",
-        [vmx_path],
-        running=False,
+    root = tmp_path / "artifacts" / "vm"
+    vmx = root / "Atlaso.vmx"
+    late_artifact = root / "late-provider-artifact.txt"
+    _write_vmx(vmx)
+    vmrun, environment, log, _ = _write_fake_vmrun(
+        tmp_path / "fake",
+        [vmx],
         registered=True,
+        remove_root_after_delete=True,
+        create_on_list=4,
+        create_path=late_artifact,
     )
 
-    result = _run_script(
-        VMWARE_SCRIPT_ROOT / "remove-atlaso-vm.ps1",
-        "-VmxPath",
-        str(vmx_path),
-        "-VmrunPath",
-        str(vmrun_path),
-        "-ExpectedName",
-        "Atlaso-Provider-Retained-Root",
-        environment=environment,
-    )
-
-    assert result.returncode == 0, result.stdout + result.stderr
-    assert not vm_directory.exists()
-
-
-@pytest.mark.parametrize("inventory_change", ["registration", "running"])
-def test_provider_removed_root_still_rejects_inventory_changes(
-    tmp_path: Path, inventory_change: str
-) -> None:
-    """The absent-root transition must not bypass registration or running checks.
-
-    Args:
-        tmp_path: Isolated test directory.
-        inventory_change: Provider inventory changed after root deletion.
-    """
-    vm_directory = tmp_path / f"Atlaso-Provider-{inventory_change}"
-    vmx_path = vm_directory / f"Atlaso-Provider-{inventory_change}.vmx"
-    _write_vmx(vmx_path, f"Atlaso-Provider-{inventory_change}")
-    vmrun_path, environment, _ = _write_fake_vmrun(
-        tmp_path / f"fake-provider-{inventory_change}",
-        [vmx_path],
-        running=False,
-        registered=True,
-        provider_removes_root=True,
-        late_registered_vmx=vmx_path if inventory_change == "registration" else None,
-        late_registered_list_count=7,
-        late_running_vmx=vmx_path if inventory_change == "running" else None,
-        late_running_list_count=7,
-    )
-
-    result = _run_script(
-        VMWARE_SCRIPT_ROOT / "remove-atlaso-vm.ps1",
-        "-VmxPath",
-        str(vmx_path),
-        "-VmrunPath",
-        str(vmrun_path),
-        "-ExpectedName",
-        f"Atlaso-Provider-{inventory_change}",
+    result = _run_root_cleanup(
+        tmp_path,
+        removal_root=root,
+        expected_root=root,
+        vmrun_path=vmrun,
         environment=environment,
     )
 
     assert result.returncode != 0
-    if inventory_change == "registration":
-        assert "registration inventory changed during verification" in result.stderr
-        assert vmx_path.exists()
-    else:
-        assert "filesystem identity cannot be resolved" in result.stderr
-        assert not vm_directory.exists()
+    assert "new VMware artifact appeared" in result.stderr
+    assert vmx.exists()
+    assert late_artifact.read_text(encoding="utf-8") == "late artifact"
+    assert "deleteVM" not in [command[2] for command in _commands(log)]
 
 
 def test_provider_removed_root_rejects_ambiguous_recreation(tmp_path: Path) -> None:
-    """A root recreated after the absent-root transition must be preserved and rejected.
+    """A root recreated after provider deletion is preserved and rejected.
 
     Args:
-        tmp_path: Isolated test directory.
+        tmp_path: Pytest temporary directory path.
     """
-    vm_directory = tmp_path / "Atlaso-Provider-Recreated"
-    vmx_path = vm_directory / "Atlaso-Provider-Recreated.vmx"
-    _write_vmx(vmx_path, "Atlaso-Provider-Recreated")
-    vmrun_path, environment, _ = _write_fake_vmrun(
-        tmp_path / "fake-provider-recreated",
-        [vmx_path],
-        running=False,
+    root = tmp_path / "artifacts" / "vm"
+    vmx = root / "Atlaso.vmx"
+    replacement = root / "replacement.txt"
+    _write_vmx(vmx)
+    vmrun, environment, _, _ = _write_fake_vmrun(
+        tmp_path / "fake",
+        [vmx],
         registered=True,
-        provider_removes_root=True,
-        late_root_recreation=vm_directory,
+        remove_root_after_delete=True,
+        create_on_list=5,
+        create_path=replacement,
     )
 
-    result = _run_script(
-        VMWARE_SCRIPT_ROOT / "remove-atlaso-vm.ps1",
-        "-VmxPath",
-        str(vmx_path),
-        "-VmrunPath",
-        str(vmrun_path),
-        "-ExpectedName",
-        "Atlaso-Provider-Recreated",
+    result = _run_root_cleanup(
+        tmp_path,
+        removal_root=root,
+        expected_root=root,
+        vmrun_path=vmrun,
         environment=environment,
     )
 
     assert result.returncode != 0
-    assert "artifact root reappeared after provider deletion" in result.stderr
-    assert (vm_directory / "concurrent-build.txt").read_text(encoding="utf-8") == "preserve"
+    assert "reappeared after provider deletion" in result.stderr
+    assert replacement.read_text(encoding="utf-8") == "late artifact"
 
 
-def test_redeploy_continues_after_provider_removes_artifact_root(tmp_path: Path) -> None:
-    """The original redeploy invocation must recreate the VM after verified root absence.
+def test_registration_appearing_before_root_removal_fails_closed(tmp_path: Path) -> None:
+    """A VMX registered after its initial check prevents recursive deletion.
 
     Args:
-        tmp_path: Isolated test directory.
+        tmp_path: Pytest temporary directory path.
     """
-    source_directory = tmp_path / "source"
-    source_vmx = source_directory / "source.vmx"
-    source_directory.mkdir(parents=True)
-    source_vmx.write_text(
-        'displayName = "Source"\n'
-        'scsi0:0.present = "TRUE"\n'
-        'scsi0:0.fileName = "photon.vmdk"\n'
-        'scsi0:1.present = "TRUE"\n'
-        'scsi0:1.fileName = "atlaso-system.vmdk"\n',
-        encoding="utf-8",
+    root = tmp_path / "artifacts" / "vm"
+    vmx = root / "Atlaso.vmx"
+    _write_vmx(vmx)
+    vmrun, environment, log, _ = _write_fake_vmrun(
+        tmp_path / "fake", [vmx], register_on_list=3
     )
-    (source_directory / "photon.vmdk").write_text("photon", encoding="utf-8")
-    (source_directory / "atlaso-system.vmdk").write_text("atlaso", encoding="utf-8")
 
-    vm_directory = tmp_path / "redeploy"
-    vmx_path = vm_directory / "Atlaso-Redeploy.vmx"
-    _write_vmx(vmx_path, "Atlaso-Redeploy")
-    vmrun_path, environment, log_path = _write_fake_vmrun(
-        tmp_path / "fake-redeploy",
-        [vmx_path],
-        running=False,
-        registered=True,
-        provider_removes_root=True,
+    result = _run_root_cleanup(
+        tmp_path,
+        removal_root=root,
+        expected_root=root,
+        vmrun_path=vmrun,
+        environment=environment,
     )
-    vdisk_manager_path = _write_fake_vdisk_manager(tmp_path / "fake-vdisk-manager")
 
-    result = _run_script(
-        VMWARE_SCRIPT_ROOT / "create-atlaso-test-vm.ps1",
-        "-Name",
-        "Atlaso-Redeploy",
-        "-ApplianceVmxPath",
-        str(source_vmx),
-        "-OutputDirectory",
-        str(vm_directory),
-        "-VmrunPath",
-        str(vmrun_path),
-        "-VdiskManagerPath",
-        str(vdisk_manager_path),
-        "-Redeploy",
-        "-SkipSshKeyProvisioning",
-        "-SkipNetworkPrepare",
-        "-NoStart",
+    assert result.returncode != 0
+    assert "became registered during cleanup" in result.stderr
+    assert vmx.exists()
+    assert "deleteVM" not in [command[2] for command in _commands(log)]
+
+
+def test_vm_started_during_final_inventory_work_fails_closed(tmp_path: Path) -> None:
+    """Repeat running-state validation after final inventory work.
+
+    Args:
+        tmp_path: Pytest temporary directory path.
+    """
+    root = tmp_path / "artifacts" / "vm"
+    vmx = root / "Atlaso.vmx"
+    _write_vmx(vmx)
+    vmrun, environment, log, _ = _write_fake_vmrun(
+        tmp_path / "fake", [vmx], run_on_list=4, run_target=vmx
+    )
+
+    result = _run_root_cleanup(
+        tmp_path,
+        removal_root=root,
+        expected_root=root,
+        vmrun_path=vmrun,
+        environment=environment,
+    )
+
+    assert result.returncode != 0
+    assert "remains running inside the cleanup root" in result.stderr
+    assert vmx.exists()
+    assert "deleteVM" not in [command[2] for command in _commands(log)]
+
+
+def test_vm_registered_during_final_running_check_fails_closed(tmp_path: Path) -> None:
+    """Repeat registration validation after the final running-state query.
+
+    Args:
+        tmp_path: Pytest temporary directory path.
+    """
+    root = tmp_path / "artifacts" / "vm"
+    vmx = root / "Atlaso.vmx"
+    _write_vmx(vmx)
+    vmrun, environment, log, _ = _write_fake_vmrun(
+        tmp_path / "fake", [vmx], register_on_list=4
+    )
+
+    result = _run_root_cleanup(
+        tmp_path,
+        removal_root=root,
+        expected_root=root,
+        vmrun_path=vmrun,
+        environment=environment,
+    )
+
+    assert result.returncode != 0
+    assert "became registered during cleanup" in result.stderr
+    assert vmx.exists()
+    assert "deleteVM" not in [command[2] for command in _commands(log)]
+
+
+def test_missing_vmx_registered_before_root_removal_is_repaired(tmp_path: Path) -> None:
+    """Repair a late stale in-scope registration before removing the root.
+
+    Args:
+        tmp_path: Pytest temporary directory path.
+    """
+    root = tmp_path / "artifacts" / "vm"
+    vmx = root / "Atlaso.vmx"
+    _write_vmx(vmx)
+    vmrun, environment, log, inventory = _write_fake_vmrun(
+        tmp_path / "fake",
+        [vmx],
+        register_on_list=3,
+        remove_on_list=3,
+        remove_target=vmx,
+    )
+
+    result = _run_root_cleanup(
+        tmp_path,
+        removal_root=root,
+        expected_root=root,
+        vmrun_path=vmrun,
         environment=environment,
     )
 
     assert result.returncode == 0, result.stdout + result.stderr
-    assert vmx_path.exists()
-    assert 'displayName = "Atlaso-Redeploy"' in vmx_path.read_text(encoding="utf-8")
-    commands = [json.loads(line) for line in log_path.read_text(encoding="utf-8").splitlines()]
-    command_names = [command[2] for command in commands]
-    assert command_names.index("deleteVM") < command_names.index("clone")
+    assert not root.exists()
+    assert not vmx.exists()
+    assert str(vmx.resolve()) not in inventory.read_text(encoding="utf-8")
+    assert "deleteVM" not in [command[2] for command in _commands(log)]
 
 
-def test_general_removal_rejects_an_unvalidated_vmx_in_the_removal_root(
-    tmp_path: Path,
-) -> None:
-    """Recursive deletion must not include a VMX omitted by the caller.
+def test_stale_atlaso_registration_ignores_unrelated_broken_entries(tmp_path: Path) -> None:
+    """Scoped stale repair does not validate or remove unrelated library rows.
 
     Args:
-        tmp_path: Isolated test directory.
+        tmp_path: Pytest temporary directory path.
     """
-    vm_directory = tmp_path / "Atlaso-Multiple"
-    requested_vmx = vm_directory / "Atlaso-Multiple.vmx"
-    unvalidated_vmx = vm_directory / "copied-source" / "Source.vmx"
-    _write_vmx(requested_vmx, "Atlaso-Multiple")
-    _write_vmx(unvalidated_vmx, "Source")
-    vmrun_path, environment, _ = _write_fake_vmrun(
-        tmp_path / "fake",
-        [requested_vmx, unvalidated_vmx],
-        running=False,
-        registered=False,
+    parent = tmp_path / "image" / "vmware-workstation"
+    root = parent / "test-vms"
+    root.mkdir(parents=True)
+    (root / "sentinel.txt").write_text("artifact", encoding="utf-8")
+    stale = root / "missing.vmx"
+    unrelated_missing = tmp_path / "other" / "missing.vmx"
+    unrelated_suffix = (
+        f'vmlist7.config = "{stale.resolve()}"\n'
+        f'index7.id = "{stale.resolve()}"\n'
+        f'vmlist8.config = "{unrelated_missing.resolve()}"\n'
+        "vmlistBROKEN.config = malformed\n"
+        "unrelated.value = keep-me\n"
+    )
+    vmrun, environment, _, inventory = _write_fake_vmrun(
+        tmp_path / "fake", [], inventory_suffix=unrelated_suffix
     )
 
-    result = _run_script(
-        VMWARE_SCRIPT_ROOT / "remove-atlaso-vm.ps1",
-        "-VmxPath",
-        str(requested_vmx),
-        "-VmrunPath",
-        str(vmrun_path),
-        "-ExpectedName",
-        "Atlaso-Multiple",
-        environment=environment,
-    )
-
-    assert result.returncode != 0
-    assert "contains an unvalidated VMX" in result.stderr
-    assert requested_vmx.exists()
-    assert unvalidated_vmx.exists()
-
-
-def test_general_removal_rejects_a_relative_running_inventory_path(
-    tmp_path: Path,
-) -> None:
-    """A malformed vmrun entry must not let cleanup mistake a running VM for inactive.
-
-    Args:
-        tmp_path: Isolated test directory.
-    """
-    vm_directory = tmp_path / "Atlaso-Relative-Running"
-    vmx_path = vm_directory / "Atlaso-Relative-Running.vmx"
-    _write_vmx(vmx_path, "Atlaso-Relative-Running")
-    vmrun_path, environment, _ = _write_fake_vmrun(
-        tmp_path / "fake",
-        [vmx_path],
-        running=False,
-        registered=False,
-    )
-    state_directory = Path(environment["ATLASO_FAKE_VMRUN_STATE"])
-    (state_directory / "running.json").write_text(
-        json.dumps(["relative-running.vmx"]), encoding="utf-8"
-    )
-
-    result = _run_script(
-        VMWARE_SCRIPT_ROOT / "remove-atlaso-vm.ps1",
-        "-VmxPath",
-        str(vmx_path),
-        "-VmrunPath",
-        str(vmrun_path),
-        "-ExpectedName",
-        "Atlaso-Relative-Running",
-        environment=environment,
-    )
-
-    assert result.returncode != 0
-    assert "non-absolute VMX path" in result.stderr
-    assert vmx_path.exists()
-
-
-@pytest.mark.parametrize("inventory_format", ['"{}', '{}"'])
-def test_general_removal_rejects_unbalanced_running_inventory_quotes(
-    tmp_path: Path,
-    inventory_format: str,
-) -> None:
-    """An asymmetrically quoted vmrun path must preserve the target artifacts.
-
-    Args:
-        tmp_path: Isolated test directory.
-        inventory_format: Format that adds only a leading or trailing quote.
-    """
-    vm_directory = tmp_path / "Atlaso-Unbalanced-Running"
-    vmx_path = vm_directory / "Atlaso-Unbalanced-Running.vmx"
-    _write_vmx(vmx_path, "Atlaso-Unbalanced-Running")
-    vmrun_path, environment, _ = _write_fake_vmrun(
-        tmp_path / "fake",
-        [vmx_path],
-        running=True,
-        registered=False,
-        running_path_format=inventory_format,
-    )
-
-    result = _run_script(
-        VMWARE_SCRIPT_ROOT / "remove-atlaso-vm.ps1",
-        "-VmxPath",
-        str(vmx_path),
-        "-VmrunPath",
-        str(vmrun_path),
-        "-ExpectedName",
-        "Atlaso-Unbalanced-Running",
-        environment=environment,
-    )
-
-    assert result.returncode != 0
-    assert "unbalanced or embedded quote" in result.stderr
-    assert vmx_path.exists()
-
-
-def test_general_removal_accepts_balanced_running_inventory_quotes(tmp_path: Path) -> None:
-    """A fully quoted canonical vmrun path remains valid inventory.
-
-    Args:
-        tmp_path: Isolated test directory.
-    """
-    vm_directory = tmp_path / "Atlaso-Balanced-Running"
-    vmx_path = vm_directory / "Atlaso-Balanced-Running.vmx"
-    _write_vmx(vmx_path, "Atlaso-Balanced-Running")
-    vmrun_path, environment, _ = _write_fake_vmrun(
-        tmp_path / "fake",
-        [vmx_path],
-        running=True,
-        registered=False,
-        running_path_format='"{}"',
-    )
-
-    result = _run_script(
-        VMWARE_SCRIPT_ROOT / "remove-atlaso-vm.ps1",
-        "-VmxPath",
-        str(vmx_path),
-        "-VmrunPath",
-        str(vmrun_path),
-        "-ExpectedName",
-        "Atlaso-Balanced-Running",
+    result = _run_root_cleanup(
+        tmp_path,
+        removal_root=root,
+        artifact_parent=parent,
+        vmrun_path=vmrun,
         environment=environment,
     )
 
     assert result.returncode == 0, result.stdout + result.stderr
-    assert not vm_directory.exists()
+    assert not root.exists()
+    inventory_text = inventory.read_text(encoding="utf-8")
+    assert str(stale.resolve()) not in inventory_text
+    assert str(unrelated_missing.resolve()) in inventory_text
+    assert "vmlistBROKEN.config = malformed" in inventory_text
+    assert "unrelated.value = keep-me" in inventory_text
 
 
-@pytest.mark.parametrize(
-    "registration_entry",
-    [
-        "vmlist0.config\n",
-        'vmlist.config = "C:\\VMs\\Atlaso.vmx"\n',
-        'vmlistA.config = "C:\\VMs\\Atlaso.vmx"\n',
-        'vmlist 0.config = "C:\\VMs\\Atlaso.vmx"\n',
-        'vmlist0 .config = "C:\\VMs\\Atlaso.vmx"\n',
-        'vmlist0config = "C:\\VMs\\Atlaso.vmx"\n',
-        'vmlist0 config = "C:\\VMs\\Atlaso.vmx"\n',
-        'vmlist0.config = "relative-registered.vmx"\n',
-    ],
-)
-def test_general_removal_rejects_malformed_registration_entries(
-    tmp_path: Path,
-    registration_entry: str,
-) -> None:
-    """Malformed-key, incomplete, or relative registrations must preserve artifacts.
-
-    Args:
-        tmp_path: Isolated test directory.
-        registration_entry: Registration line written to the fake inventory.
-    """
-    vm_directory = tmp_path / "Atlaso-Malformed-Registration"
-    vmx_path = vm_directory / "Atlaso-Malformed-Registration.vmx"
-    _write_vmx(vmx_path, "Atlaso-Malformed-Registration")
-    vmrun_path, environment, _ = _write_fake_vmrun(
-        tmp_path / "fake",
-        [vmx_path],
-        running=False,
-        registered=False,
-    )
-    inventory_path = Path(environment["ATLASO_FAKE_VMRUN_INVENTORY"])
-    inventory_path.write_text(registration_entry, encoding="utf-8")
-
-    result = _run_script(
-        VMWARE_SCRIPT_ROOT / "remove-atlaso-vm.ps1",
-        "-VmxPath",
-        str(vmx_path),
-        "-VmrunPath",
-        str(vmrun_path),
-        "-ExpectedName",
-        "Atlaso-Malformed-Registration",
-        environment=environment,
-    )
-
-    assert result.returncode != 0
-    assert "refusing filesystem cleanup" in result.stderr
-    assert vmx_path.exists()
-
-
-def test_general_removal_ignores_config_text_in_unrelated_registration_values(
+def test_unrelated_uncanonicalizable_inventory_owner_does_not_block_cleanup(
     tmp_path: Path,
 ) -> None:
-    """A non-config inventory key remains unrelated when its value contains config text.
+    """Ignore an unrelated absolute VMX owner whose path cannot be canonicalized.
 
     Args:
-        tmp_path: Isolated test directory.
+        tmp_path: Pytest temporary directory path.
     """
-    vm_directory = tmp_path / "Atlaso-Unrelated-Registration"
-    vmx_path = vm_directory / "Atlaso-Unrelated-Registration.vmx"
-    _write_vmx(vmx_path, "Atlaso-Unrelated-Registration")
-    vmrun_path, environment, _ = _write_fake_vmrun(
-        tmp_path / "fake",
-        [vmx_path],
-        running=False,
-        registered=False,
-    )
-    inventory_path = Path(environment["ATLASO_FAKE_VMRUN_INVENTORY"])
-    inventory_path.write_text(
-        'vmlist0.DisplayName = "Atlaso.config"\nindex.count = "0"\n',
-        encoding="utf-8",
+    root = tmp_path / "artifacts" / "vm"
+    vmx = root / "Atlaso.vmx"
+    _write_vmx(vmx)
+    malformed = f'vmlist7.config = "{tmp_path.resolve()}\\bad\x00owner.vmx"\n'
+    vmrun, environment, log, inventory = _write_fake_vmrun(
+        tmp_path / "fake", [vmx], inventory_suffix=malformed
     )
 
-    result = _run_script(
-        VMWARE_SCRIPT_ROOT / "remove-atlaso-vm.ps1",
-        "-VmxPath",
-        str(vmx_path),
-        "-VmrunPath",
-        str(vmrun_path),
-        "-ExpectedName",
-        "Atlaso-Unrelated-Registration",
+    result = _run_root_cleanup(
+        tmp_path,
+        removal_root=root,
+        expected_root=root,
+        vmrun_path=vmrun,
         environment=environment,
     )
 
     assert result.returncode == 0, result.stdout + result.stderr
-    assert not vm_directory.exists()
+    assert not root.exists()
+    assert b"bad\x00owner.vmx" in inventory.read_bytes()
+    assert "deleteVM" not in [command[2] for command in _commands(log)]
 
 
-def test_cleanup_safety_content_read_errors_are_terminating() -> None:
-    """Incomplete VMX and inventory reads must abort instead of returning partial state."""
-    module = (VMWARE_SCRIPT_ROOT / "Atlaso.WorkstationCleanup.psm1").read_text(encoding="utf-8")
-
-    assert "Get-Content -LiteralPath $Path -ErrorAction Stop" in module
-    assert "$bytes = [System.IO.File]::ReadAllBytes($InventoryPath)" in module
-    assert "[System.Text.UTF8Encoding]::new($false, $true).GetString($bytes)" in module
-    assert "Start-Sleep -Milliseconds 250" in module
-    assert "registration inventory changed during verification" in module
-    write_lock = module.index("$inventoryWriteLock = [System.IO.File]::Open(")
-    locked_read = module.index(
-        "$lockedBytes = Read-AtlasoFileStreamBytes -Stream $inventoryWriteLock", write_lock
-    )
-    locked_comparison = module.index(
-        "Test-AtlasoByteArraysEqual -Left $snapshot.Bytes -Right $lockedBytes", locked_read
-    )
-    inventory_replace = module.index(
-        "[System.IO.File]::Replace($temporaryInventoryPath, $InventoryPath, $backupInventoryPath, $true)",
-        locked_comparison,
-    )
-    lock_release = module.index("$inventoryWriteLock.Dispose()", inventory_replace)
-    displaced_read = module.index(
-        "$displacedBytes = [System.IO.File]::ReadAllBytes($backupInventoryPath)",
-        lock_release,
-    )
-    cas_rollback = module.index(
-        "Restore-AtlasoWorkstationFileAfterCasFailure `", displaced_read
-    )
-    assert "[System.IO.FileShare]::Read -bor [System.IO.FileShare]::Delete" in module
-    assert (
-        write_lock
-        < locked_read
-        < locked_comparison
-        < inventory_replace
-        < lock_release
-        < displaced_read
-        < cas_rollback
-    )
-    post_delete_collection = module.index("$postDeleteValidatedVmxPaths = @(")
-    post_delete_identity = module.index(
-        "Assert-AtlasoWorkstationVmxIdentity `", post_delete_collection
-    )
-    post_delete_set = module.index(
-        "Assert-AtlasoWorkstationRemovalVmxSet `", post_delete_identity
-    )
-    post_running_snapshot = module.index("$postRunningRegistrationFirstSnapshot = ")
-    post_running_identity = module.index(
-        "Assert-AtlasoWorkstationVmxIdentity `", post_running_snapshot
-    )
-    post_running_set = module.index(
-        "Assert-AtlasoWorkstationRemovalVmxSet `", post_running_identity
-    )
-    assert post_delete_collection < post_delete_identity < post_delete_set
-    assert post_running_snapshot < post_running_identity < post_running_set
-
-
-def test_general_removal_uses_inventory_file_for_registered_state(tmp_path: Path) -> None:
-    """Registered state must not depend on an unsupported vmrun command.
-
-    Args:
-        tmp_path: Isolated test directory.
-    """
-    vm_directory = tmp_path / "Atlaso-Registered-Inventory"
-    vmx_path = vm_directory / "Atlaso-Registered-Inventory.vmx"
-    _write_vmx(vmx_path, "Atlaso-Registered-Inventory")
-    vmrun_path, environment, log_path = _write_fake_vmrun(
-        tmp_path / "fake",
-        [vmx_path],
-        running=False,
-        registered=True,
-    )
-
-    result = _run_script(
-        VMWARE_SCRIPT_ROOT / "remove-atlaso-vm.ps1",
-        "-VmxPath",
-        str(vmx_path),
-        "-VmrunPath",
-        str(vmrun_path),
-        "-ExpectedName",
-        "Atlaso-Registered-Inventory",
-        environment=environment,
-    )
-
-    assert result.returncode == 0, result.stdout + result.stderr
-    assert not vm_directory.exists()
-    commands = [json.loads(line) for line in log_path.read_text(encoding="utf-8").splitlines()]
-    command_names = [command[2] for command in commands]
-    assert "deleteVM" in command_names
-    assert "listRegisteredVM" not in command_names
-
-
-def test_general_removal_rejects_an_incomplete_registration_inventory(tmp_path: Path) -> None:
-    """A header-only Workstation inventory must preserve registered artifacts.
-
-    Args:
-        tmp_path: Isolated test directory.
-    """
-    vm_directory = tmp_path / "Atlaso-Incomplete-Registration"
-    vmx_path = vm_directory / "Atlaso-Incomplete-Registration.vmx"
-    _write_vmx(vmx_path, "Atlaso-Incomplete-Registration")
-    vmrun_path, environment, _ = _write_fake_vmrun(
-        tmp_path / "fake",
-        [vmx_path],
-        running=False,
-        registered=True,
-    )
-    inventory_path = Path(environment["ATLASO_FAKE_VMRUN_INVENTORY"])
-    inventory_path.write_text('.encoding = "UTF-8"\n', encoding="utf-8")
-
-    result = _run_script(
-        VMWARE_SCRIPT_ROOT / "remove-atlaso-vm.ps1",
-        "-VmxPath",
-        str(vmx_path),
-        "-VmrunPath",
-        str(vmrun_path),
-        "-ExpectedName",
-        "Atlaso-Incomplete-Registration",
-        environment=environment,
-    )
-
-    assert result.returncode != 0
-    assert "registration inventory is incomplete or changing" in result.stderr
-    assert vmx_path.exists()
-
-
-def test_registered_inventory_rejects_a_snapshot_that_changes_during_stability_window(
+def test_unrelated_uncanonicalizable_inventory_index_does_not_block_repair(
     tmp_path: Path,
 ) -> None:
-    """Two different complete snapshots must not authorize cleanup state.
+    """Ignore an unrelated index path that cannot be canonicalized.
 
     Args:
-        tmp_path: Isolated test directory.
+        tmp_path: Pytest temporary directory path.
     """
-    vmx_path = tmp_path / "registered" / "Atlaso-Changing-Registration.vmx"
-    _write_vmx(vmx_path, "Atlaso-Changing-Registration")
-    inventory_path = tmp_path / "inventory.vmls"
-    replacement_path = tmp_path / "inventory-replacement.vmls"
-    inventory_path.write_text('.encoding = "UTF-8"\nindex.count = "0"\n', encoding="utf-8")
-    replacement_path.write_text(
-        '.encoding = "UTF-8"\n'
-        f'vmlist1.config = "{vmx_path.resolve()}"\n'
-        f'index0.id = "{vmx_path.resolve()}"\n'
-        'index.count = "1"\n',
-        encoding="utf-8",
-    )
-    module_path = VMWARE_SCRIPT_ROOT / "Atlaso.WorkstationCleanup.psm1"
-    wrapper = tmp_path / "read-changing-inventory.ps1"
-    wrapper.write_text(
-        f"""$ErrorActionPreference = 'Stop'
-$module = Import-Module '{module_path}' -Force -PassThru
-& $module {{
-    param($inventoryPath, $replacementPath)
-    function Start-Sleep {{
-        param([int]$Milliseconds)
-        Copy-Item -LiteralPath $replacementPath -Destination $inventoryPath -Force
-    }}
-    Get-AtlasoWorkstationRegisteredVmPaths -InventoryPath $inventoryPath
-}} '{inventory_path}' '{replacement_path}'
-""",
-        encoding="utf-8",
-    )
-
-    result = _run_script(wrapper, environment=os.environ.copy())
-
-    assert result.returncode != 0
-    assert "registration inventory changed during verification" in result.stderr
-
-
-def test_inventory_cas_rollback_restores_concurrent_provider_replacement(
-    tmp_path: Path,
-) -> None:
-    """A failed inventory compare-and-swap must restore the displaced provider state.
-
-    Args:
-        tmp_path: Isolated test directory.
-    """
-    inventory_path = tmp_path / "inventory.vmls"
-    replacement_path = tmp_path / "captured-provider.vmls"
-    inventory_path.write_bytes(b"\x80")
-    replacement_path.write_bytes(b"original provider state")
-    module_path = VMWARE_SCRIPT_ROOT / "Atlaso.WorkstationCleanup.psm1"
-    wrapper = tmp_path / "restore-inventory-cas.ps1"
-    wrapper.write_text(
-        f"""$ErrorActionPreference = 'Stop'
-$module = Import-Module '{module_path}' -Force -PassThru
-& $module {{
-    param($inventoryPath, $replacementPath)
-    Restore-AtlasoWorkstationFileAfterCasFailure `
-        -TargetPath $inventoryPath `
-        -ExpectedCurrentBytes ([byte[]](0x81)) `
-        -ReplacementPath $replacementPath `
-        -ReplacementBytes ([System.IO.File]::ReadAllBytes($replacementPath)) `
-        -StateDescription 'VMware Workstation inventory' `
-        -RecoveryExtension 'vmls'
-}} '{inventory_path}' '{replacement_path}'
-""",
-        encoding="utf-8",
-    )
-
-    result = _run_script(wrapper, environment=os.environ.copy())
-
-    assert result.returncode == 0, result.stdout + result.stderr
-    assert inventory_path.read_bytes() == b"\x80"
-    assert not list(tmp_path.glob("inventory.vmls.atlaso-cas-*.tmp"))
-    assert not list(tmp_path.glob("inventory.vmls.atlaso-recovery-*.vmls"))
-
-
-def test_vmx_cas_rejects_replacement_before_detachment_commit(tmp_path: Path) -> None:
-    """VMX replacement must win an identity mismatch at the detachment CAS.
-
-    Args:
-        tmp_path: Isolated test directory.
-    """
-    vmx_path = tmp_path / "Atlaso-Test.vmx"
-    _write_vmx(vmx_path, "Original")
-    module_path = VMWARE_SCRIPT_ROOT / "Atlaso.WorkstationCleanup.psm1"
-    wrapper = tmp_path / "replace-vmx-cas.ps1"
-    wrapper.write_text(
-        f"""$ErrorActionPreference = 'Stop'
-$module = Import-Module '{module_path}' -Force -PassThru
-& $module {{
-    param($vmxPath)
-    $expectedIdentity = Get-AtlasoVmxFileIdentity `
-        -Path $vmxPath `
-        -InventoryDescription 'test baseline'
-    Remove-Item -LiteralPath $vmxPath -Force
-    [System.IO.File]::WriteAllText($vmxPath, 'concurrent replacement')
-    Set-AtlasoWorkstationVmxBytesIfIdentityMatches `
-        -VmxPath $vmxPath `
-        -ExpectedIdentity $expectedIdentity `
-        -ReplacementBytes ([System.Text.Encoding]::UTF8.GetBytes('detached candidate')) `
-        -FailureMessage 'detachment identity mismatch'
-}} '{vmx_path}'
-""",
-        encoding="utf-8",
-    )
-
-    result = _run_script(wrapper, environment=os.environ.copy())
-
-    assert result.returncode != 0
-    assert "detachment identity mismatch" in result.stderr
-    assert vmx_path.read_text(encoding="utf-8") == "concurrent replacement"
-
-
-def test_vmx_cas_restores_backup_after_post_replace_validation_failure(
-    tmp_path: Path,
-) -> None:
-    """A post-replacement validation error must restore the displaced VMX.
-
-    Args:
-        tmp_path: Isolated test directory.
-    """
-    vmx_path = tmp_path / "Atlaso-Test.vmx"
-    original_content = '.encoding = "UTF-8"\ndisplayName = "Original"\n'
-    vmx_path.write_text(original_content, encoding="utf-8")
-    module_path = VMWARE_SCRIPT_ROOT / "Atlaso.WorkstationCleanup.psm1"
-    wrapper = tmp_path / "fail-post-replace-validation.ps1"
-    wrapper.write_text(
-        f"""$ErrorActionPreference = 'Stop'
-$module = Import-Module '{module_path}' -Force -PassThru
-& $module {{
-    param($vmxPath)
-    function Get-AtlasoVmxFileIdentity {{
-        param([string]$Path, [string]$InventoryDescription)
-        if ($InventoryDescription -eq 'displaced VMware cleanup target') {{
-            throw 'simulated displaced-identity read failure'
-        }}
-        return 'test-identity'
-    }}
-    Set-AtlasoWorkstationVmxBytesIfIdentityMatches `
-        -VmxPath $vmxPath `
-        -ExpectedIdentity 'test-identity' `
-        -ReplacementBytes ([System.Text.Encoding]::UTF8.GetBytes('detached candidate')) `
-        -FailureMessage 'identity mismatch'
-}} '{vmx_path}'
-""",
-        encoding="utf-8",
-    )
-
-    result = _run_script(wrapper, environment=os.environ.copy())
-
-    assert result.returncode != 0
-    assert "original VMX was restored" in result.stderr
-    assert vmx_path.read_text(encoding="utf-8") == original_content
-    assert not list(tmp_path.glob("Atlaso-Test.vmx.atlaso-backup-*.tmp"))
-
-
-def test_general_removal_matches_a_running_vmx_by_filesystem_identity(
-    tmp_path: Path,
-) -> None:
-    """A Windows path alias must still trigger the required running-VM transition.
-
-    Args:
-        tmp_path: Isolated test directory.
-    """
-    vm_directory = tmp_path / "Atlaso-Alias"
-    vmx_path = vm_directory / "Atlaso-Alias.vmx"
-    vmx_alias = tmp_path / "aliases" / "Atlaso-Alias-Link.vmx"
-    _write_vmx(vmx_path, "Atlaso-Alias")
-    vmx_alias.parent.mkdir()
-    os.link(vmx_path, vmx_alias)
-    vmrun_path, environment, log_path = _write_fake_vmrun(
-        tmp_path / "fake",
-        [vmx_alias],
-        running=True,
-        registered=False,
-    )
-
-    result = _run_script(
-        VMWARE_SCRIPT_ROOT / "remove-atlaso-vm.ps1",
-        "-VmxPath",
-        str(vmx_path),
-        "-VmrunPath",
-        str(vmrun_path),
-        "-ExpectedName",
-        "Atlaso-Alias",
-        environment=environment,
-    )
-
-    assert result.returncode == 0, result.stdout + result.stderr
-    assert not vm_directory.exists()
-    commands = [json.loads(line) for line in log_path.read_text(encoding="utf-8").splitlines()]
-    assert "stop" in [command[2] for command in commands]
-
-
-def test_general_removal_accepts_an_empty_registration_tombstone(
-    tmp_path: Path,
-) -> None:
-    """A complete empty Workstation inventory slot is not a malformed registration.
-
-    Args:
-        tmp_path: Isolated test directory.
-    """
-    vm_directory = tmp_path / "Atlaso-Empty-Registration"
-    vmx_path = vm_directory / "Atlaso-Empty-Registration.vmx"
-    _write_vmx(vmx_path, "Atlaso-Empty-Registration")
-    vmrun_path, environment, _ = _write_fake_vmrun(
-        tmp_path / "fake",
-        [vmx_path],
-        running=False,
-        registered=False,
-    )
-    inventory_path = Path(environment["ATLASO_FAKE_VMRUN_INVENTORY"])
-    inventory_path.write_text(
-        'vmlist0.config = ""\nindex.count = "0"\n',
-        encoding="utf-8",
-    )
-
-    result = _run_script(
-        VMWARE_SCRIPT_ROOT / "remove-atlaso-vm.ps1",
-        "-VmxPath",
-        str(vmx_path),
-        "-VmrunPath",
-        str(vmrun_path),
-        "-ExpectedName",
-        "Atlaso-Empty-Registration",
-        environment=environment,
-    )
-
-    assert result.returncode == 0, result.stdout + result.stderr
-    assert not vm_directory.exists()
-
-
-def test_general_removal_honors_explicit_confirmation(tmp_path: Path) -> None:
-    """Explicit confirmation cannot be suppressed by the nested cleanup helper.
-
-    Args:
-        tmp_path: Isolated test directory.
-    """
-    vm_directory = tmp_path / "Atlaso-Confirm"
-    vmx_path = vm_directory / "Atlaso-Confirm.vmx"
-    _write_vmx(vmx_path, "Atlaso-Confirm")
-    vmrun_path, environment, _ = _write_fake_vmrun(
-        tmp_path / "fake",
-        [vmx_path],
-        running=False,
-        registered=False,
-    )
-
-    result = _run_script(
-        VMWARE_SCRIPT_ROOT / "remove-atlaso-vm.ps1",
-        "-VmxPath",
-        str(vmx_path),
-        "-VmrunPath",
-        str(vmrun_path),
-        "-ExpectedName",
-        "Atlaso-Confirm",
-        "-Confirm",
-        environment=environment,
-    )
-
-    assert result.returncode != 0
-    assert "PowerShell is in NonInteractive mode" in result.stderr
-    assert vmx_path.exists()
-
-
-def test_general_removal_allows_explicit_confirmation_suppression(
-    tmp_path: Path,
-) -> None:
-    """Automation may still opt out of confirmation through the common parameter.
-
-    Args:
-        tmp_path: Isolated test directory.
-    """
-    vm_directory = tmp_path / "Atlaso-No-Confirm"
-    vmx_path = vm_directory / "Atlaso-No-Confirm.vmx"
-    _write_vmx(vmx_path, "Atlaso-No-Confirm")
-    vmrun_path, environment, _ = _write_fake_vmrun(
-        tmp_path / "fake",
-        [vmx_path],
-        running=False,
-        registered=False,
-    )
-
-    result = _run_script(
-        VMWARE_SCRIPT_ROOT / "remove-atlaso-vm.ps1",
-        "-VmxPath",
-        str(vmx_path),
-        "-VmrunPath",
-        str(vmrun_path),
-        "-ExpectedName",
-        "Atlaso-No-Confirm",
-        "-Confirm:$false",
-        environment=environment,
-    )
-
-    assert result.returncode == 0, result.stdout + result.stderr
-    assert not vm_directory.exists()
-
-
-@pytest.mark.parametrize(
-    "vmx_content",
-    [
-        'displayName = "Atlaso-Ambiguous"\ndisplayName = "Other"\n',
-        'displayName = "Atlaso-Ambiguous"\ndisplayName\n',
-        "displayName = Atlaso-Ambiguous\n",
-    ],
-)
-def test_general_removal_rejects_ambiguous_display_name_assignments(
-    tmp_path: Path,
-    vmx_content: str,
-) -> None:
-    """Cleanup must preserve a VMX whose display identity is not unambiguous.
-
-    Args:
-        tmp_path: Isolated test directory.
-        vmx_content: Duplicate or malformed VMX display-name content.
-    """
-    vm_directory = tmp_path / "Atlaso-Ambiguous"
-    vmx_path = vm_directory / "Atlaso-Ambiguous.vmx"
-    vmx_path.parent.mkdir(parents=True)
-    vmx_path.write_text(vmx_content, encoding="utf-8")
-    vmrun_path, environment, _ = _write_fake_vmrun(
-        tmp_path / "fake",
-        [vmx_path],
-        running=False,
-        registered=False,
-    )
-
-    result = _run_script(
-        VMWARE_SCRIPT_ROOT / "remove-atlaso-vm.ps1",
-        "-VmxPath",
-        str(vmx_path),
-        "-VmrunPath",
-        str(vmrun_path),
-        "-ExpectedName",
-        "Atlaso-Ambiguous",
-        "-Confirm:$false",
-        environment=environment,
-    )
-
-    assert result.returncode != 0
-    assert "Refusing VMware cleanup" in result.stderr
-    assert vmx_path.exists()
-
-
-def test_redeploy_missing_target_and_sibling_disk_fail_closed(tmp_path: Path) -> None:
-    """Redeploy and data-disk reset must preserve unproven or sibling-prefix paths.
-
-    Args:
-        tmp_path: Isolated test directory.
-    """
-    source_vmx = tmp_path / "source" / "source.vmx"
-    _write_vmx(source_vmx, "Source")
-    vmrun_path, environment, _ = _write_fake_vmrun(
+    parent = tmp_path / "image" / "vmware-workstation"
+    root = parent / "test-vms"
+    root.mkdir(parents=True)
+    stale = root / "missing.vmx"
+    malformed = f'index8.id = "{tmp_path.resolve()}\\bad\x00index.vmx"\n'
+    vmrun, environment, _, inventory = _write_fake_vmrun(
         tmp_path / "fake",
         [],
-        running=False,
-        registered=False,
+        inventory_suffix=(
+            f'vmlist7.config = "{stale.resolve()}"\n'
+            f'index7.id = "{stale.resolve()}"\n'
+            f"{malformed}"
+        ),
     )
-    output_directory = tmp_path / "vm"
-    output_directory.mkdir()
-    sentinel = output_directory / "sentinel.txt"
-    sentinel.write_text("preserve", encoding="utf-8")
 
-    redeploy = _run_script(
-        VMWARE_SCRIPT_ROOT / "create-atlaso-test-vm.ps1",
-        "-Name",
-        "MissingTarget",
-        "-ApplianceVmxPath",
-        str(source_vmx),
-        "-OutputDirectory",
-        str(output_directory),
-        "-VmrunPath",
-        str(vmrun_path),
-        "-VdiskManagerPath",
-        str(vmrun_path),
-        "-Redeploy",
-        "-SkipSshKeyProvisioning",
-        "-SkipNetworkPrepare",
-        "-NoStart",
+    result = _run_root_cleanup(
+        tmp_path,
+        removal_root=root,
+        artifact_parent=parent,
+        vmrun_path=vmrun,
         environment=environment,
     )
-    assert redeploy.returncode != 0
-    assert "expected Atlaso VMX is missing" in redeploy.stderr
-    assert sentinel.read_text(encoding="utf-8") == "preserve"
 
-    sibling_directory = tmp_path / "vm-sibling"
-    sibling_directory.mkdir()
-    sibling_disk = sibling_directory / "unrelated.vmdk"
-    sibling_disk.write_text("preserve", encoding="utf-8")
-    disk_reset = _run_script(
-        VMWARE_SCRIPT_ROOT / "create-atlaso-test-vm.ps1",
-        "-Name",
-        "SiblingDisk",
-        "-ApplianceVmxPath",
-        str(source_vmx),
-        "-OutputDirectory",
-        str(output_directory),
-        "-VmrunPath",
-        str(vmrun_path),
-        "-VdiskManagerPath",
-        str(vmrun_path),
-        "-DepotVmdkPath",
-        str(sibling_disk),
-        "-ResetDataDisks",
-        "-SkipSshKeyProvisioning",
-        "-SkipNetworkPrepare",
-        "-NoStart",
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert not root.exists()
+    assert str(stale.resolve()).encode() not in inventory.read_bytes()
+    assert b"bad\x00index.vmx" in inventory.read_bytes()
+
+
+def test_stale_repair_compacts_surviving_inventory_indexes(tmp_path: Path) -> None:
+    """Removing index0 renumbers an unrelated index1 group without losing properties.
+
+    Args:
+        tmp_path: Pytest temporary directory path.
+    """
+    parent = tmp_path / "image" / "vmware-workstation"
+    root = parent / "test-vms"
+    root.mkdir(parents=True)
+    stale = root / "missing.vmx"
+    unrelated = tmp_path / "unrelated" / "live.vmx"
+    _write_vmx(unrelated)
+    vmrun, environment, _, inventory = _write_fake_vmrun(
+        tmp_path / "fake",
+        [],
+        inventory_suffix=(
+            f'vmlist1.config = "{stale.resolve()}"\n'
+            f'vmlist2.config = "{unrelated.resolve()}"\n'
+            f'index0.id = "{stale.resolve()}"\n'
+            f'index1.id = "{unrelated.resolve()}"\n'
+            'index1.favorite = "TRUE"\n'
+            'index.count = "2"\n'
+        ),
+    )
+
+    result = _run_root_cleanup(
+        tmp_path,
+        removal_root=root,
+        artifact_parent=parent,
+        vmrun_path=vmrun,
         environment=environment,
     )
-    assert disk_reset.returncode != 0
-    assert "outside the VM output directory" in disk_reset.stderr
-    assert sibling_disk.read_text(encoding="utf-8") == "preserve"
+
+    assert result.returncode == 0, result.stdout + result.stderr
+    inventory_text = inventory.read_text(encoding="utf-8")
+    assert f'index0.id = "{unrelated.resolve()}"' in inventory_text
+    assert 'index0.favorite = "TRUE"' in inventory_text
+    assert "index1." not in inventory_text
+    assert 'index.count = "1"' in inventory_text
+
+
+def test_stale_repair_does_not_compact_without_a_removed_index(tmp_path: Path) -> None:
+    """A stale vmlist-only row does not normalize unrelated index numbering.
+
+    Args:
+        tmp_path: Pytest temporary directory path.
+    """
+    parent = tmp_path / "image" / "vmware-workstation"
+    root = parent / "test-vms"
+    root.mkdir(parents=True)
+    stale = root / "missing.vmx"
+    unrelated = tmp_path / "unrelated" / "live.vmx"
+    _write_vmx(unrelated)
+    vmrun, environment, _, inventory = _write_fake_vmrun(
+        tmp_path / "fake",
+        [],
+        inventory_suffix=(
+            f'vmlist7.config = "{stale.resolve()}"\n'
+            f'index7.id = "{unrelated.resolve()}"\n'
+            'index.count = "1"\n'
+        ),
+    )
+
+    result = _run_root_cleanup(
+        tmp_path,
+        removal_root=root,
+        artifact_parent=parent,
+        vmrun_path=vmrun,
+        environment=environment,
+    )
+
+    assert result.returncode == 0, result.stdout + result.stderr
+    inventory_text = inventory.read_text(encoding="utf-8")
+    assert f'vmlist7.config = "{stale.resolve()}"' not in inventory_text
+    assert f'index7.id = "{unrelated.resolve()}"' in inventory_text
+    assert "index0." not in inventory_text
+    assert 'index.count = "1"' in inventory_text
+
+
+def test_unrelated_oversized_inventory_index_count_does_not_block_repair(
+    tmp_path: Path,
+) -> None:
+    """Preserve an unrelated index count outside the supported integer range.
+
+    Args:
+        tmp_path: Pytest temporary directory path.
+    """
+    parent = tmp_path / "image" / "vmware-workstation"
+    root = parent / "test-vms"
+    root.mkdir(parents=True)
+    stale = root / "missing.vmx"
+    oversized_count = "999999999999999999999"
+    vmrun, environment, _, inventory = _write_fake_vmrun(
+        tmp_path / "fake",
+        [],
+        inventory_suffix=(
+            f'vmlist7.config = "{stale.resolve()}"\n'
+            f'index7.id = "{stale.resolve()}"\n'
+            f'index.count = "{oversized_count}"\n'
+        ),
+    )
+
+    result = _run_root_cleanup(
+        tmp_path,
+        removal_root=root,
+        artifact_parent=parent,
+        vmrun_path=vmrun,
+        environment=environment,
+    )
+
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert not root.exists()
+    inventory_text = inventory.read_text(encoding="utf-8")
+    assert str(stale.resolve()) not in inventory_text
+    assert f'index.count = "{oversized_count}"' in inventory_text
+
+
+def test_stale_repair_rejects_duplicate_selected_library_id(tmp_path: Path) -> None:
+    """Scoped repair never prunes an ID that also owns another config path.
+
+    Args:
+        tmp_path: Pytest temporary directory path.
+    """
+    parent = tmp_path / "image" / "vmware-workstation"
+    root = parent / "test-vms"
+    root.mkdir(parents=True)
+    sentinel = root / "sentinel.txt"
+    sentinel.write_text("keep", encoding="utf-8")
+    stale = root / "missing.vmx"
+    unrelated = tmp_path / "other" / "Unrelated.vmx"
+    _write_vmx(unrelated, "Unrelated")
+    vmrun, environment, _, inventory = _write_fake_vmrun(
+        tmp_path / "fake",
+        [],
+        inventory_suffix=(
+            f'vmlist7.config = "{stale.resolve()}"\n'
+            f'vmlist7.config = "{unrelated.resolve()}"\n'
+            f'index7.id = "{stale.resolve()}"\n'
+        ),
+    )
+
+    result = _run_root_cleanup(
+        tmp_path,
+        removal_root=root,
+        artifact_parent=parent,
+        vmrun_path=vmrun,
+        environment=environment,
+    )
+
+    assert result.returncode != 0
+    assert "selected library ID '7' to multiple config paths" in result.stderr
+    assert sentinel.read_text(encoding="utf-8") == "keep"
+    assert str(unrelated.resolve()) in inventory.read_text(encoding="utf-8")
+
+
+@pytest.mark.parametrize(
+    "malformed_owner",
+    ['vmlist7.config = relative.vmx\n', 'vmlist7.config = "relative.vmx"\n'],
+)
+def test_stale_repair_rejects_malformed_selected_library_owner(
+    tmp_path: Path, malformed_owner: str
+) -> None:
+    """Scoped repair preserves a selected ID with a malformed second owner.
+
+    Args:
+        tmp_path: Pytest temporary directory path.
+        malformed_owner: Malformed selected-ID row appended to the inventory.
+    """
+    parent = tmp_path / "image" / "vmware-workstation"
+    root = parent / "test-vms"
+    root.mkdir(parents=True)
+    sentinel = root / "sentinel.txt"
+    sentinel.write_text("keep", encoding="utf-8")
+    stale = root / "missing.vmx"
+    vmrun, environment, _, inventory = _write_fake_vmrun(
+        tmp_path / "fake",
+        [],
+        inventory_suffix=(
+            f'vmlist7.config = "{stale.resolve()}"\n'
+            f'index7.id = "{stale.resolve()}"\n'
+            f"{malformed_owner}"
+        ),
+    )
+
+    result = _run_root_cleanup(
+        tmp_path,
+        removal_root=root,
+        artifact_parent=parent,
+        vmrun_path=vmrun,
+        environment=environment,
+    )
+
+    assert result.returncode != 0
+    assert "selected library ID '7' to multiple config paths" in result.stderr
+    assert sentinel.read_text(encoding="utf-8") == "keep"
+    assert malformed_owner.strip() in inventory.read_text(encoding="utf-8")
+
+
+def test_stale_repair_preserves_ambiguously_owned_index(tmp_path: Path) -> None:
+    """Duplicate index ownership is left untouched during scoped repair.
+
+    Args:
+        tmp_path: Pytest temporary directory path.
+    """
+    parent = tmp_path / "image" / "vmware-workstation"
+    root = parent / "test-vms"
+    root.mkdir(parents=True)
+    stale = root / "missing.vmx"
+    unrelated = tmp_path / "other" / "Unrelated.vmx"
+    _write_vmx(unrelated, "Unrelated")
+    vmrun, environment, _, inventory = _write_fake_vmrun(
+        tmp_path / "fake",
+        [],
+        inventory_suffix=(
+            f'vmlist7.config = "{stale.resolve()}"\n'
+            f'index7.id = "{stale.resolve()}"\n'
+            f'index7.id = "{unrelated.resolve()}"\n'
+        ),
+    )
+
+    result = _run_root_cleanup(
+        tmp_path,
+        removal_root=root,
+        artifact_parent=parent,
+        vmrun_path=vmrun,
+        environment=environment,
+    )
+
+    assert result.returncode == 0, result.stdout + result.stderr
+    inventory_text = inventory.read_text(encoding="utf-8")
+    assert f'vmlist7.config = "{stale.resolve()}"' not in inventory_text
+    assert f'index7.id = "{stale.resolve()}"' in inventory_text
+    assert f'index7.id = "{unrelated.resolve()}"' in inventory_text
+
+
+def test_stale_repair_preserves_count_when_index_compaction_is_unsafe(
+    tmp_path: Path,
+) -> None:
+    """An unrelated malformed group keeps the declared range covering index2.
+
+    Args:
+        tmp_path: Pytest temporary directory path.
+    """
+    parent = tmp_path / "image" / "vmware-workstation"
+    root = parent / "test-vms"
+    root.mkdir(parents=True)
+    stale = root / "missing.vmx"
+    unrelated = tmp_path / "other" / "live.vmx"
+    _write_vmx(unrelated)
+    vmrun, environment, _, inventory = _write_fake_vmrun(
+        tmp_path / "fake",
+        [],
+        inventory_suffix=(
+            f'vmlist1.config = "{stale.resolve()}"\n'
+            f'index0.id = "{stale.resolve()}"\n'
+            'index1.id = relative.vmx\n'
+            f'index2.id = "{unrelated.resolve()}"\n'
+            'index.count = "3"\n'
+        ),
+    )
+
+    result = _run_root_cleanup(
+        tmp_path,
+        removal_root=root,
+        artifact_parent=parent,
+        vmrun_path=vmrun,
+        environment=environment,
+    )
+
+    assert result.returncode == 0, result.stdout + result.stderr
+    inventory_text = inventory.read_text(encoding="utf-8")
+    assert f'index0.id = "{stale.resolve()}"' not in inventory_text
+    assert "index1.id = relative.vmx" in inventory_text
+    assert f'index2.id = "{unrelated.resolve()}"' in inventory_text
+    assert 'index.count = "3"' in inventory_text
+
+
+def test_stale_repair_preserves_missing_non_vmx_in_scope_entry(tmp_path: Path) -> None:
+    """Missing non-vmx absolute entries are preserved during scoped stale repair.
+
+    Args:
+        tmp_path: Pytest temporary directory path.
+    """
+    parent = tmp_path / "image" / "vmware-workstation"
+    root = parent / "test-vms"
+    root.mkdir(parents=True)
+    vmx = root / "Atlaso.vmx"
+    _write_vmx(vmx)
+    missing_entry = root / "unused-note.txt"
+    vmrun, environment, _, inventory = _write_fake_vmrun(
+        tmp_path / "fake",
+        [],
+        inventory_suffix=(
+            f'vmlist7.config = "{missing_entry.resolve()}"\n'
+            f'index7.id = "{missing_entry.resolve()}"\n'
+            'index.count = "1"\n'
+        ),
+    )
+
+    result = _run_root_cleanup(
+        tmp_path,
+        removal_root=root,
+        artifact_parent=parent,
+        vmrun_path=vmrun,
+        environment=environment,
+    )
+
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert not root.exists()
+    inventory_text = inventory.read_text(encoding="utf-8")
+    assert f'vmlist7.config = "{missing_entry.resolve()}"' in inventory_text
+    assert f'index7.id = "{missing_entry.resolve()}"' in inventory_text
+
+
+def test_external_vmdk_is_detached_before_deletevm(tmp_path: Path) -> None:
+    """Provider deletion never follows a disk path outside the removal root.
+
+    Args:
+        tmp_path: Pytest temporary directory path.
+    """
+    root = tmp_path / "artifacts" / "vm"
+    external_disk = tmp_path / "shared" / "depot.vmdk"
+    external_disk.parent.mkdir(parents=True)
+    external_disk.write_text("shared", encoding="utf-8")
+    vmx = root / "Atlaso.vmx"
+    _write_vmx(
+        vmx,
+        "Atlaso",
+        f'scsi0:2.fileName = "{external_disk.resolve()}"',
+        'scsi0:2.present = "TRUE"',
+    )
+    vmrun, environment, _, _ = _write_fake_vmrun(
+        tmp_path / "fake", [vmx], registered=True
+    )
+
+    result = _run_root_cleanup(
+        tmp_path,
+        removal_root=root,
+        expected_root=root,
+        vmrun_path=vmrun,
+        environment=environment,
+    )
+
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert external_disk.read_text(encoding="utf-8") == "shared"
+
+
+def test_original_hard_link_started_after_detachment_is_stopped(tmp_path: Path) -> None:
+    """The final running check matches the original VMX identity after detachment.
+
+    Args:
+        tmp_path: Pytest temporary directory path.
+    """
+    root = tmp_path / "artifacts" / "vm"
+    vmx = root / "Atlaso.vmx"
+    alias = tmp_path / "aliases" / "Atlaso-alias.vmx"
+    external_disk = tmp_path / "shared" / "depot.vmdk"
+    external_disk.parent.mkdir(parents=True)
+    external_disk.write_text("shared", encoding="utf-8")
+    _write_vmx(vmx, "Atlaso", f'scsi0:2.fileName = "{external_disk.resolve()}"')
+    alias.parent.mkdir(parents=True)
+    os.link(vmx, alias)
+    vmrun, environment, log, _ = _write_fake_vmrun(
+        tmp_path / "fake",
+        [vmx],
+        registered=True,
+        run_on_list=3,
+        run_target=alias,
+    )
+
+    result = _run_root_cleanup(
+        tmp_path,
+        removal_root=root,
+        expected_root=root,
+        vmrun_path=vmrun,
+        environment=environment,
+    )
+
+    assert result.returncode == 0, result.stdout + result.stderr
+    commands = _commands(log)
+    stop = next(command for command in commands if command[2] == "stop")
+    delete = next(command for command in commands if command[2] == "deleteVM")
+    assert Path(stop[3]).resolve() == alias.resolve()
+    assert commands.index(stop) < commands.index(delete)
+    assert external_disk.read_text(encoding="utf-8") == "shared"
+
+
+def test_in_place_vmx_rewrite_after_scan_blocks_deletevm(tmp_path: Path) -> None:
+    """Content evidence is rechecked even when initial detachment was unnecessary.
+
+    Args:
+        tmp_path: Pytest temporary directory path.
+    """
+    root = tmp_path / "artifacts" / "vm"
+    vmx = root / "Atlaso.vmx"
+    external_disk = tmp_path / "shared" / "depot.vmdk"
+    external_disk.parent.mkdir(parents=True)
+    external_disk.write_text("shared", encoding="utf-8")
+    _write_vmx(vmx)
+    vmrun, environment, log, _ = _write_fake_vmrun(
+        tmp_path / "fake",
+        [vmx],
+        registered=True,
+        rewrite_on_list=3,
+        rewrite_disk=external_disk,
+    )
+
+    result = _run_root_cleanup(
+        tmp_path,
+        removal_root=root,
+        expected_root=root,
+        vmrun_path=vmrun,
+        environment=environment,
+    )
+
+    assert result.returncode != 0
+    assert "changed immediately before deleteVM" in result.stderr
+    assert external_disk.read_text(encoding="utf-8") == "shared"
+    assert "deleteVM" not in [command[2] for command in _commands(log)]
+
+
+def test_failed_deletevm_atomically_restores_external_vmdk_attachment(tmp_path: Path) -> None:
+    """A provider failure restores the complete original VMX from its backup.
+
+    Args:
+        tmp_path: Pytest temporary directory path.
+    """
+    root = tmp_path / "artifacts" / "vm"
+    external_disk = tmp_path / "shared" / "depot.vmdk"
+    external_disk.parent.mkdir(parents=True)
+    external_disk.write_text("shared", encoding="utf-8")
+    vmx = root / "Atlaso.vmx"
+    _write_vmx(vmx, "Atlaso", f'scsi0:2.fileName = "{external_disk.resolve()}"')
+    original_bytes = vmx.read_bytes()
+    vmrun, environment, _, _ = _write_fake_vmrun(
+        tmp_path / "fake", [vmx], registered=True, delete_exit=9
+    )
+
+    result = _run_root_cleanup(
+        tmp_path,
+        removal_root=root,
+        expected_root=root,
+        vmrun_path=vmrun,
+        environment=environment,
+    )
+
+    assert result.returncode != 0
+    assert "Delete VMware Workstation VM" in result.stderr
+    assert vmx.read_bytes() == original_bytes
+    assert external_disk.read_text(encoding="utf-8") == "shared"
+    assert not list(root.glob("*.atlaso-*.tmp"))
+
+
+def test_post_detachment_validation_failure_restores_original_vmx(tmp_path: Path) -> None:
+    """An exception after atomic replacement restores the retained original.
+
+    Args:
+        tmp_path: Pytest temporary directory path.
+    """
+    root = tmp_path / "artifacts" / "vm"
+    vmx = root / "Atlaso.vmx"
+    external_disk = tmp_path / "shared" / "depot.vmdk"
+    external_disk.parent.mkdir(parents=True)
+    external_disk.write_text("shared", encoding="utf-8")
+    _write_vmx(vmx, "Atlaso", f'scsi0:2.fileName = "{external_disk.resolve()}"')
+    original_bytes = vmx.read_bytes()
+    wrapper = tmp_path / "post-swap-failure.ps1"
+    module_path = VMWARE_SCRIPT_ROOT / "Atlaso.WorkstationCleanup.psm1"
+    wrapper.write_text(
+        f"""$ErrorActionPreference = 'Stop'
+$module = Import-Module '{module_path}' -Force -PassThru
+& $module {{
+    param([string]$VmxPath, [string]$RemovalRoot)
+    $script:atlasoTestHashCalls = 0
+    function script:Get-AtlasoFileSha256 {{
+        param([string]$Path)
+        $script:atlasoTestHashCalls++
+        if ($script:atlasoTestHashCalls -eq 1) {{
+            throw 'simulated post-replacement hash failure'
+        }}
+        return (Get-FileHash -LiteralPath $Path -Algorithm SHA256).Hash
+    }}
+    $identity = Get-AtlasoPathIdentity -Path $VmxPath -Description 'test VMX'
+    Disconnect-AtlasoWorkstationExternalVmdks `
+        -VmxPath $VmxPath `
+        -RemovalRoot $RemovalRoot `
+        -ExpectedIdentity $identity
+}} '{vmx}' '{root}'
+""",
+        encoding="utf-8",
+    )
+
+    result = _run_script(wrapper, environment=os.environ.copy())
+
+    assert result.returncode != 0
+    assert "simulated post-replacement hash failure" in result.stderr
+    assert vmx.read_bytes() == original_bytes
+    assert external_disk.read_text(encoding="utf-8") == "shared"
+    assert not list(root.glob("*.atlaso-*.tmp"))
+
+
+def test_concurrent_vmx_replacement_is_preserved(tmp_path: Path) -> None:
+    """A provider-time replacement blocks recursive root deletion.
+
+    Args:
+        tmp_path: Pytest temporary directory path.
+    """
+    root = tmp_path / "artifacts" / "vm"
+    vmx = root / "Atlaso.vmx"
+    _write_vmx(vmx)
+    vmrun, environment, _, _ = _write_fake_vmrun(
+        tmp_path / "fake", [vmx], registered=True, replace_after_delete=True
+    )
+
+    result = _run_root_cleanup(
+        tmp_path,
+        removal_root=root,
+        expected_root=root,
+        vmrun_path=vmrun,
+        environment=environment,
+    )
+
+    assert result.returncode != 0
+    assert "VMX remains after deleteVM succeeded" in result.stderr
+    assert "Concurrent replacement" in vmx.read_text(encoding="utf-8")
+
+
+@pytest.mark.parametrize(
+    ("running", "stop_exit", "delete_exit", "expected"),
+    [
+        (True, 9, 0, "Stop VMware Workstation VM"),
+        (False, 0, 9, "Delete VMware Workstation VM"),
+    ],
+)
+def test_vmrun_failures_preserve_artifacts(
+    tmp_path: Path,
+    running: bool,
+    stop_exit: int,
+    delete_exit: int,
+    expected: str,
+) -> None:
+    """Checked provider failures remain terminating.
+
+    Args:
+        tmp_path: Pytest temporary directory path.
+        running: Whether the VMX is marked as running.
+        stop_exit: Simulated stop exit code for the fake vmrun.
+        delete_exit: Simulated deleteVM exit code for the fake vmrun.
+        expected: Expected error substring for stderr assertions.
+    """
+    root = tmp_path / "artifacts" / "vm"
+    vmx = root / "Atlaso.vmx"
+    _write_vmx(vmx)
+    vmrun, environment, _, _ = _write_fake_vmrun(
+        tmp_path / "fake",
+        [vmx],
+        running=running,
+        registered=True,
+        stop_exit=stop_exit,
+        delete_exit=delete_exit,
+    )
+
+    result = _run_root_cleanup(
+        tmp_path,
+        removal_root=root,
+        expected_root=root,
+        vmrun_path=vmrun,
+        environment=environment,
+    )
+
+    assert result.returncode != 0
+    assert expected in result.stderr
+    assert root.exists()
+
+
+@pytest.mark.parametrize(
+    ("running", "stop_sticky", "delete_sticky", "expected"),
+    [
+        (True, True, False, "remains running after stop succeeded"),
+        (False, False, True, "VMX remains after deleteVM succeeded"),
+    ],
+)
+def test_successful_vmrun_must_complete_the_requested_transition(
+    tmp_path: Path,
+    running: bool,
+    stop_sticky: bool,
+    delete_sticky: bool,
+    expected: str,
+) -> None:
+    """A zero provider exit code does not replace post-operation verification.
+
+    Args:
+        tmp_path: Pytest temporary directory path.
+        running: Whether the VMX is marked as running.
+        stop_sticky: Simulate stop command not removing running state.
+        delete_sticky: Simulate deleteVM not removing the VMX.
+        expected: Expected error substring for stderr assertions.
+    """
+    root = tmp_path / "artifacts" / "vm"
+    vmx = root / "Atlaso.vmx"
+    _write_vmx(vmx)
+    vmrun, environment, _, _ = _write_fake_vmrun(
+        tmp_path / "fake",
+        [vmx],
+        running=running,
+        registered=True,
+        stop_sticky=stop_sticky,
+        delete_sticky=delete_sticky,
+    )
+
+    result = _run_root_cleanup(
+        tmp_path,
+        removal_root=root,
+        expected_root=root,
+        vmrun_path=vmrun,
+        environment=environment,
+    )
+
+    assert result.returncode != 0
+    assert expected in result.stderr
+    assert root.exists()
+
+
+def test_configured_root_mismatch_is_rejected(tmp_path: Path) -> None:
+    """Exact configured cleanup cannot be redirected to a sibling.
+
+    Args:
+        tmp_path: Pytest temporary directory path.
+    """
+    expected = tmp_path / "artifacts" / "expected"
+    target = tmp_path / "artifacts" / "target"
+    expected.mkdir(parents=True)
+    target.mkdir(parents=True)
+    sentinel = target / "sentinel.txt"
+    sentinel.write_text("keep", encoding="utf-8")
+    vmrun, environment, _, _ = _write_fake_vmrun(tmp_path / "fake", [])
+
+    result = _run_root_cleanup(
+        tmp_path,
+        removal_root=target,
+        expected_root=expected,
+        vmrun_path=vmrun,
+        environment=environment,
+    )
+
+    assert result.returncode != 0
+    assert "exact configured output root" in result.stderr
+    assert sentinel.read_text(encoding="utf-8") == "keep"
+
+
+def test_reparse_point_root_is_rejected(tmp_path: Path) -> None:
+    """Recursive cleanup never traverses a linked artifact root.
+
+    Args:
+        tmp_path: Pytest temporary directory path.
+    """
+    real_root = tmp_path / "real"
+    real_root.mkdir()
+    sentinel = real_root / "sentinel.txt"
+    sentinel.write_text("keep", encoding="utf-8")
+    linked_root = tmp_path / "linked"
+    try:
+        linked_root.symlink_to(real_root, target_is_directory=True)
+    except OSError as error:
+        pytest.skip(f"directory symlink creation is unavailable: {error}")
+    vmrun, environment, _, _ = _write_fake_vmrun(tmp_path / "fake", [])
+
+    result = _run_root_cleanup(
+        tmp_path,
+        removal_root=linked_root,
+        expected_root=linked_root,
+        vmrun_path=vmrun,
+        environment=environment,
+    )
+
+    assert result.returncode != 0
+    assert "reparse point" in result.stderr
+    assert sentinel.read_text(encoding="utf-8") == "keep"
+
+
+def test_unvalidated_vmx_is_rejected_by_direct_entry_point(tmp_path: Path) -> None:
+    """Callers cannot omit an in-root VMX from the validated target set.
+
+    Args:
+        tmp_path: Pytest temporary directory path.
+    """
+    root = tmp_path / "artifacts" / "vm"
+    first = root / "first.vmx"
+    second = root / "second.vmx"
+    _write_vmx(first, "First")
+    _write_vmx(second, "Second")
+    vmrun, environment, _, _ = _write_fake_vmrun(tmp_path / "fake", [])
+    wrapper = tmp_path / "direct.ps1"
+    module = VMWARE_SCRIPT_ROOT / "Atlaso.WorkstationCleanup.psm1"
+    wrapper.write_text(
+        f"""$ErrorActionPreference = 'Stop'
+Import-Module '{module}' -Force
+Remove-AtlasoWorkstationVmArtifacts `
+    -VmrunPath '{vmrun}' `
+    -VmxPaths @('{first}') `
+    -RemovalRoot '{root}' `
+    -Confirm:$false
+""",
+        encoding="utf-8",
+    )
+
+    result = _run_script(wrapper, environment=environment)
+
+    assert result.returncode != 0
+    assert "unvalidated VMX" in result.stderr
+    assert first.exists() and second.exists()
+
+
+def test_late_artifact_after_final_vmrun_list_blocks_root_removal(tmp_path: Path) -> None:
+    """The root snapshot is rechecked after the final provider-state query.
+
+    Args:
+        tmp_path: Pytest temporary directory path.
+    """
+    root = tmp_path / "artifacts" / "vm"
+    root.mkdir(parents=True)
+    sentinel = root / "sentinel.txt"
+    sentinel.write_text("keep", encoding="utf-8")
+    late = root / "late.txt"
+    vmrun, environment, _, _ = _write_fake_vmrun(
+        tmp_path / "fake", [], create_on_list=1, create_path=late
+    )
+
+    result = _run_root_cleanup(
+        tmp_path,
+        removal_root=root,
+        expected_root=root,
+        vmrun_path=vmrun,
+        environment=environment,
+    )
+
+    assert result.returncode != 0
+    assert "new VMware artifact appeared" in result.stderr
+    assert sentinel.read_text(encoding="utf-8") == "keep"
+    assert late.read_text(encoding="utf-8") == "late artifact"
 
 
 def test_test_vm_ssh_key_inputs_fail_before_cleanup(tmp_path: Path) -> None:
-    """Missing or conflicting SSH key inputs must preserve an existing test VM.
+    """Missing or conflicting SSH key inputs preserve an existing test VM.
 
     Args:
-        tmp_path: Isolated test directory.
+        tmp_path: Pytest temporary directory path.
     """
     source_vmx = tmp_path / "source" / "source.vmx"
     _write_vmx(source_vmx, "Source")
@@ -2481,60 +2098,63 @@ def test_test_vm_ssh_key_inputs_fail_before_cleanup(tmp_path: Path) -> None:
     assert sentinel.read_text(encoding="utf-8") == "preserve"
 
 
-@pytest.mark.parametrize(
-    ("running", "registered", "stop_exit", "unregister_exit"),
-    [(True, True, 9, 0), (False, True, 0, 9)],
-)
-def test_standalone_lifecycle_cleanup_preserves_artifacts_after_vmrun_failure(
-    tmp_path: Path,
-    running: bool,
-    registered: bool,
-    stop_exit: int,
-    unregister_exit: int,
-) -> None:
-    """The standalone lifecycle remover propagates vmrun failures without deleting files.
-
-    Args:
-        tmp_path: Isolated test directory.
-        running: Whether the lifecycle VM begins in the running inventory.
-        registered: Whether the lifecycle VM begins in the registration inventory.
-        stop_exit: Exit code returned by the fake stop operation.
-        unregister_exit: Exit code returned by the fake deleteVM operation.
-    """
-    copied_script_root = tmp_path / "repo" / "scripts" / "windows" / "vmware"
-    copied_script_root.mkdir(parents=True)
-    for name in ("remove-lifecycle-vms.ps1", "Atlaso.WorkstationCleanup.psm1"):
-        shutil.copy2(VMWARE_SCRIPT_ROOT / name, copied_script_root / name)
-    vm_directory = (
-        tmp_path
-        / "repo"
-        / "test-results"
-        / "vmware-workstation-lifecycle"
-        / "run"
-        / "vms"
-        / "AtlasoWorkstationLifecycle-Test"
+def test_module_keeps_inventory_work_out_of_normal_delete_path() -> None:
+    """Regression guard for the simplified root-scoped architecture."""
+    module = (VMWARE_SCRIPT_ROOT / "Atlaso.WorkstationCleanup.psm1").read_text(
+        encoding="utf-8"
     )
-    vmx_path = vm_directory / "AtlasoWorkstationLifecycle-Test.vmx"
-    sentinel = vm_directory / "sentinel.txt"
-    _write_vmx(vmx_path, "AtlasoWorkstationLifecycle-Test")
-    sentinel.write_text("preserve", encoding="utf-8")
-    vmrun_path, environment, _ = _write_fake_vmrun(
-        tmp_path / "fake",
-        [vmx_path],
-        running=running,
-        registered=registered,
-        stop_exit=stop_exit,
-        unregister_exit=unregister_exit,
-    )
+    normal_path = module.split("function Remove-AtlasoWorkstationVmArtifacts", 1)[1].split(
+        "function Remove-AtlasoWorkstationArtifactRoot", 1
+    )[0]
 
-    result = _run_script(
-        copied_script_root / "remove-lifecycle-vms.ps1",
-        "-LabName",
-        "AtlasoWorkstationLifecycle",
-        "-VmrunPath",
-        str(vmrun_path),
-        environment=environment,
+    assert "Test-AtlasoWorkstationVmxRegistered" in normal_path
+    assert "Remove-AtlasoWorkstationStaleRegistrations" in normal_path
+    assert "Start-Sleep" not in normal_path
+    assert "InventorySnapshotsEqual" not in module
+    assert "index.count" not in normal_path
+    assert normal_path.count("Confirm-AtlasoWorkstationVmInactive") >= 2
+    assert "[System.IO.File]::Replace($temporaryPath, $VmxPath, $backupPath, $true)" in module
+    assert "[System.IO.FileShare]::Read -bor [System.IO.FileShare]::Delete" in module
+    assert "Get-AtlasoScopedInventoryEntriesFromLines -Lines $lines" in module
+    assert "-ExpectedCurrentIdentity $Detachment.OriginalIdentity" in module
+    assert "-ReplacementIdentity $displacedIdentity" in module
+    assert "-PreserveCapturedOnSuccess" in module
+    assert ".atlaso-original-" in module
+    assert "$recoveryStream.Flush($true)" in module
+    assert "-Right (Read-AtlasoStreamBytes -Stream $restoredLock)" in module
+    assert "$restoredLock = [System.IO.File]::Open($VmxPath, 'Open', 'Read', 'Read')" in module
+    snapshot_index = normal_path.index("$snapshot = Get-AtlasoRootSnapshot")
+    confirmation_index = normal_path.index("$PSCmdlet.ShouldProcess")
+    post_confirmation_guard = normal_path.index(
+        "Assert-AtlasoRootSnapshotUnreplaced", confirmation_index
     )
-
-    assert result.returncode != 0
-    assert sentinel.read_text(encoding="utf-8") == "preserve"
+    assert snapshot_index < confirmation_index < post_confirmation_guard
+    wrapper_path = module.split("function Remove-AtlasoWorkstationArtifactRoot", 1)[1]
+    wrapper_snapshot = wrapper_path.index("$wrapperSnapshot = Get-AtlasoRootSnapshot")
+    wrapper_confirmation = wrapper_path.index("$PSCmdlet.ShouldProcess")
+    wrapper_guard = wrapper_path.index("Assert-AtlasoRootSnapshotUnreplaced")
+    assert wrapper_snapshot < wrapper_confirmation < wrapper_guard
+    snapshot_function = module.split("function Get-AtlasoRootSnapshot", 1)[1].split(
+        "function Assert-AtlasoRootSnapshotUnreplaced", 1
+    )[0]
+    traversal = snapshot_function.index("Get-ChildItem -LiteralPath $RemovalRoot")
+    identity_reads = [
+        match.start()
+        for match in re.finditer(
+            re.escape("Get-AtlasoPathIdentity -Path $RemovalRoot"), snapshot_function
+        )
+    ]
+    assert identity_reads[0] < traversal < identity_reads[1]
+    stale_repair = module.split(
+        "function Remove-AtlasoWorkstationStaleRegistrations", 1
+    )[1].split("function Get-AtlasoRootSnapshot", 1)[0]
+    inventory_replace = stale_repair.index(
+        "[System.IO.File]::Replace($temporaryPath, $InventoryPath, $backupPath, $true)"
+    )
+    rollback_catch = stale_repair.index("catch {", inventory_replace)
+    rollback_call = stale_repair.index(
+        "Restore-AtlasoFileAfterCasFailure -TargetPath $InventoryPath", rollback_catch
+    )
+    assert inventory_replace < rollback_catch < rollback_call
+    implementation = re.sub(r"<#.*?#>\s*", "", module, flags=re.DOTALL)
+    assert len(implementation.splitlines()) < 1_100
