@@ -1184,9 +1184,11 @@ function Remove-AtlasoWorkstationVmArtifacts {
     }
     $snapshot = Get-AtlasoRootSnapshot -RemovalRoot $resolvedRemovalRoot
     $validatedTargetIdentities = @{}
+    $validatedTargetHashes = @{}
     foreach ($resolvedVmxPath in $resolvedVmxPaths) {
         $relativeVmxPath = [System.IO.Path]::GetRelativePath($resolvedRemovalRoot, $resolvedVmxPath)
         $validatedTargetIdentities[$resolvedVmxPath] = $snapshot.Items[$relativeVmxPath]
+        $validatedTargetHashes[$resolvedVmxPath] = Get-AtlasoFileSha256 -Path $resolvedVmxPath
     }
     if (-not $PSCmdlet.ShouldProcess($resolvedRemovalRoot, 'Stop and delete VMware Workstation VM artifacts')) {
         return
@@ -1215,19 +1217,16 @@ function Remove-AtlasoWorkstationVmArtifacts {
             -RemovalRoot $resolvedRemovalRoot `
             -ExpectedIdentity $targetIdentity
         try {
-            Confirm-AtlasoWorkstationVmInactive -VmrunPath $VmrunPath -VmxPath $resolvedVmxPath
             $expectedDeleteIdentity = $detachment.ProtectedIdentity
             if ((Get-AtlasoPathIdentity -Path $resolvedVmxPath -Description 'VMware cleanup target') -ne $expectedDeleteIdentity) {
                 throw "VMware Workstation VMX was replaced immediately before deleteVM; artifacts were preserved: $resolvedVmxPath"
             }
-            if (
-                (Get-AtlasoFileSha256 -Path $resolvedVmxPath) -ne $detachment.ProtectedHash
-            ) {
-                throw "VMware Workstation VMX changed immediately before deleteVM; artifacts were preserved: $resolvedVmxPath"
-            }
             $currentKnownVmxPaths = @($resolvedVmxPaths | Where-Object { Test-Path -LiteralPath $_ -PathType Leaf } | ForEach-Object {
                     $expectedSurvivorIdentity = if (Test-AtlasoSamePath -Left $_ -Right $resolvedVmxPath) { $expectedDeleteIdentity } else { $validatedTargetIdentities[$_] }
+                    $expectedSurvivorHash = if (Test-AtlasoSamePath -Left $_ -Right $resolvedVmxPath) { $detachment.ProtectedHash } else { $validatedTargetHashes[$_] }
+                    Confirm-AtlasoWorkstationVmInactive -VmrunPath $VmrunPath -VmxPath $_
                     if ((Get-AtlasoPathIdentity -Path $_ -Description 'VMware cleanup target') -ne $expectedSurvivorIdentity) { throw "VMware Workstation VMX was replaced immediately before deleteVM; artifacts were preserved: $_" }
+                    if ((Get-AtlasoFileSha256 -Path $_) -ne $expectedSurvivorHash) { throw "VMware Workstation VMX changed immediately before deleteVM; artifacts were preserved: $_" }
                     $_
                 })
             $currentDiscoveredVmxPaths = @(

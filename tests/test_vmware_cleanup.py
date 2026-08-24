@@ -57,6 +57,8 @@ def _write_fake_vmrun(
     replace_target: Path | None = None,
     replace_with: str = 'displayName = "Concurrent replacement"\n',
     register_on_list: int = 0,
+    run_on_list: int = 0,
+    run_target: Path | None = None,
     inventory_suffix: str = "",
 ) -> tuple[Path, dict[str, str], Path, Path]:
     """Create a stateful fake vmrun command and Workstation inventory.
@@ -80,6 +82,8 @@ def _write_fake_vmrun(
         replace_target: VMX path rewritten when replace_on_list matches.
         replace_with: Replacement VMX content written by replace_on_list.
         register_on_list: Provider call count that registers a VM.
+        run_on_list: Provider list call count that starts a VM.
+        run_target: VMX path marked running when run_on_list matches.
         inventory_suffix: Extra inventory file text appended to the fixture.
     """
     directory.mkdir(parents=True)
@@ -190,6 +194,8 @@ if command == "list":
         late_target = os.environ["ATLASO_FAKE_VMRUN_REWRITE_TARGET"]
         write_paths("registered", [late_target])
         update_inventory([late_target])
+    if list_count == int(os.environ["ATLASO_FAKE_VMRUN_RUN_ON_LIST"]):
+        write_paths("running", [os.environ["ATLASO_FAKE_VMRUN_RUN_TARGET"]])
     paths = read_paths("running")
     print(f"Total running VMs: {len(paths)}")
     print("\n".join(paths))
@@ -275,6 +281,8 @@ raise SystemExit(64)
             "ATLASO_FAKE_VMRUN_REPLACE_TARGET": str(replace_target or ""),
             "ATLASO_FAKE_VMRUN_REPLACE_WITH": replace_with,
             "ATLASO_FAKE_VMRUN_REGISTER_ON_LIST": str(register_on_list),
+            "ATLASO_FAKE_VMRUN_RUN_ON_LIST": str(run_on_list),
+            "ATLASO_FAKE_VMRUN_RUN_TARGET": str(run_target or ""),
         }
     )
     return command, environment, log, inventory
@@ -688,6 +696,45 @@ def test_multi_vmx_later_registration_replaced_before_first_delete_preserves_roo
     assert first_vmx.exists()
     assert second_vmx.exists()
     assert second_vmx.read_text(encoding="utf-8") == 'displayName = "Replaced later"\n'
+    assert "deleteVM" not in [command[2] for command in _commands(log)]
+
+
+def test_multi_vmx_later_restart_before_first_delete_preserves_root(
+    tmp_path: Path,
+) -> None:
+    """Recheck every survivor when a later VM restarts before provider deletion.
+
+    Args:
+        tmp_path: Pytest temporary directory path.
+    """
+    root = tmp_path / "artifacts" / "vm"
+    first_vmx = root / "first.vmx"
+    second_vmx = root / "second.vmx"
+    _write_vmx(first_vmx, "First")
+    _write_vmx(second_vmx, "Second")
+    vmrun, environment, log, _ = _write_fake_vmrun(
+        tmp_path / "fake",
+        [first_vmx, second_vmx],
+        registered=True,
+        stop_sticky=True,
+        remove_root_after_delete=True,
+        run_on_list=7,
+        run_target=second_vmx,
+    )
+
+    result = _run_root_cleanup(
+        tmp_path,
+        removal_root=root,
+        expected_root=root,
+        vmrun_path=vmrun,
+        environment=environment,
+    )
+
+    assert result.returncode != 0
+    assert "VMware Workstation VM remains running after stop succeeded" in result.stderr
+    assert root.exists()
+    assert first_vmx.exists()
+    assert second_vmx.exists()
     assert "deleteVM" not in [command[2] for command in _commands(log)]
 
 
