@@ -167,6 +167,7 @@ UI_PATH_SCOPES = [
     ("/authentication", "read:dashboard", "read:dashboard"),
     ("/physical-interfaces", "read:interfaces", "write:interfaces"),
     ("/vlan-interfaces", "read:vlans", "write:vlans"),
+    ("/network-objects", "read:firewall", "write:firewall"),
     ("/routes-wan", "read:routes", "write:routes"),
     ("/firewall", "read:firewall", "write:firewall"),
     ("/dns", "read:dns", "write:dns"),

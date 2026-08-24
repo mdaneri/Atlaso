@@ -12,6 +12,16 @@ SOURCE_COMMIT = "0247c34bc85e+working-tree"
 ATLASO_VERSION = "0.9.21"
 
 CAPTURE_OVERRIDES = {
+    "network-objects-clean-desktop": {
+        "source_commit": "0df3b4b3f873+working-tree",
+        "atlaso_version": "0.9.195",
+        "capture_method": "codex-in-app-browser",
+    },
+    "network-objects-clean-responsive": {
+        "source_commit": "0df3b4b3f873+working-tree",
+        "atlaso_version": "0.9.195",
+        "capture_method": "codex-in-app-browser",
+    },
     "appliance-update-repository-setup-required-desktop": {
         "source_commit": "dba0a41c4b07+working-tree",
         "atlaso_version": "0.9.186",
@@ -153,6 +163,7 @@ DOCUMENTATION_PAGES = {
     "operate/backup-restore.md": ("backup-restore-",),
     "operate/automation.md": ("automation-",),
     "operate/networking.md": ("physical-interfaces-", "routes-wan-", "vlan-interfaces-"),
+    "operate/network-objects.md": ("network-objects-",),
     "operate/web-terminal.md": ("terminal-",),
     "services/dns.md": ("dns-",),
     "services/dhcp.md": ("dhcp-",),
@@ -193,6 +204,7 @@ ROUTES = {
     "login": ("/login", "Appliance sign-in"),
     "logs": ("/logs", "Logs"),
     "monitor": ("/monitor", "Monitor"),
+    "network-objects": ("/network-objects", "Network Objects"),
     "ntp": ("/ntp", "NTP and NTS"),
     "physical-interfaces": ("/physical-interfaces", "Physical Interfaces"),
     "routes-wan": ("/routes-wan", "Routes and WAN Simulation"),

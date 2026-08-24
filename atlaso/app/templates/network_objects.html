@@ -1,0 +1,94 @@
+{% extends "base.html" %}
+{% from "partials/resource_wizard.html" import resource_wizard %}
+{% block page_title %}Network Objects{% endblock %}
+{% block content %}
+<section class="panel wide-panel network-objects-panel">
+  <div class="panel-head">
+    <div>
+      <h2>Source Groups</h2>
+      <p class="muted">Define reusable address collections for Firewall rules, managed-rule assignments, and NAT source restrictions. Saving changes desired state only; enforcement remains with the Firewall and Routes &amp; WAN appliance-apply units.</p>
+    </div>
+    <span class="status-pill {{ 'good' if not network_object_validation_errors else 'warn' }}">{{ 'valid' if not network_object_validation_errors else 'needs attention' }}</span>
+  </div>
+
+  {% if network_objects_return_url %}
+  <div class="info-band network-objects-return-band">
+    <div><strong>Source Group manager</strong><span class="muted">Your unfinished {{ 'Firewall rule' if network_objects_return_token == 'firewall-rule' else 'NAT rule' }} draft is kept in this browser tab.</span></div>
+    <a class="button secondary compact-button" href="{{ network_objects_return_url }}?restore_source_group_draft={{ network_objects_return_token }}" data-network-objects-return="{{ network_objects_return_token }}">Return to wizard</a>
+  </div>
+  {% endif %}
+
+  <div id="network-objects-error" class="alert error hidden" role="alert"></div>
+  <div
+    id="network-object-source-groups-table"
+    class="tabulator-shell"
+    data-source-groups='{{ network_object_source_groups_json | tojson }}'
+    data-csrf="{{ csrf_token }}"
+    data-can-write="{{ 'true' if network_objects_can_write else 'false' }}"
+    data-fallback-id="network-object-source-groups-fallback"
+  ></div>
+  <table id="network-object-source-groups-fallback" class="data-table compact dns-fallback-table">
+    <thead><tr><th>Name</th><th>Entries</th><th>Consumers</th><th>Built in</th><th>Validation</th></tr></thead>
+    <tbody>
+      {% for group in network_object_source_groups %}
+      <tr>
+        <td>{{ group.name }}</td>
+        <td>{{ group.entries_summary }} ({{ group.entry_count }})</td>
+        <td>{{ group.usage_summary }}</td>
+        <td>{{ 'yes' if group.builtin else 'no' }}</td>
+        <td>{{ group.validation_state }}</td>
+      </tr>
+      {% else %}
+      <tr><td colspan="5" class="muted">No Source Groups are available.</td></tr>
+      {% endfor %}
+      {% if network_objects_can_write %}<tr class="new-record-row"><td colspan="5"><button class="add-row-button" type="button" data-network-object-source-group-open="add">+ Add Source Group here</button></td></tr>{% endif %}
+    </tbody>
+  </table>
+
+  {% if network_object_validation_errors %}
+  <div class="error-list" role="list">{% for error in network_object_validation_errors %}<div role="listitem">{{ error }}</div>{% endfor %}</div>
+  {% endif %}
+</section>
+
+{% if network_objects_can_write %}
+{% set source_group_steps = [
+  {"id": "identity", "label": "Identity", "summary": "Name and purpose"},
+  {"id": "entries", "label": "Entries", "summary": "Addresses and nested groups"},
+  {"id": "review", "label": "Review", "summary": "Validation and usage"}
+] %}
+{% call resource_wizard(
+  "network-object-source-group-dialog",
+  "network-object-source-group-form",
+  management_ui_path("/network-objects/source-groups"),
+  source_group_steps,
+  "Add Source Group",
+  "Name the reusable network object and explain where it is intended to be used.",
+  "Add Source Group"
+) %}
+  <input type="hidden" name="csrf" value="{{ csrf_token }}">
+  <input type="hidden" name="action" value="create">
+  <input type="hidden" name="group_id" value="">
+  <section data-atlaso-wizard-step="identity">
+    <div class="form-stack">
+      <label><span class="field-label"><span>Name</span><button class="help-icon" type="button" data-help="Unique operator-facing Source Group name. Existing consumers remain bound to the stable group identifier when this label changes.">i</button></span><input name="group_name" maxlength="120" required></label>
+      <label><span class="field-label"><span>Description</span><button class="help-icon" type="button" data-help="Operator note describing the addresses represented by this reusable network object.">i</button></span><textarea name="description" rows="3" maxlength="1000"></textarea></label>
+    </div>
+  </section>
+  <section class="hidden" data-atlaso-wizard-step="entries">
+    <label><span class="field-label"><span>Entries</span><button class="help-icon" type="button" data-help="Enter one IPv4 or IPv6 address, CIDR, any, or nested Source Group reference per line. Nested references use group:&lt;stable-id&gt;; available stable references are listed below.">i</button></span><textarea name="group_entries" rows="8" required data-network-object-source-group-entries placeholder="192.0.2.0/24"></textarea></label>
+    <div class="settings-list network-object-reference-list">
+      {% for group in network_object_source_groups if not group.builtin %}<div><span>{{ group.name }}</span><code>group:{{ group.id }}</code></div>{% else %}<div><span>Nested Source Groups</span><strong>None available yet</strong></div>{% endfor %}
+    </div>
+  </section>
+  <section class="hidden" data-atlaso-wizard-step="review">
+    <div class="settings-list">
+      <div><span>Source Group</span><strong data-network-object-review="name"></strong></div>
+      <div><span>Entries</span><code data-network-object-review="entries"></code></div>
+      <div><span>Consumers</span><strong data-network-object-review="consumers"></strong></div>
+      <div><span>Validation</span><strong data-network-object-review="validation"></strong></div>
+    </div>
+    <div class="alert warning">Saving updates shared desired state. Firewall and WAN host behavior changes only through global appliance apply.</div>
+  </section>
+{% endcall %}
+{% endif %}
+{% endblock %}

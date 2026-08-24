@@ -223,7 +223,7 @@ def managed_service_firewall_rules(
         vcf_registry_settings: Vcf registry settings supplied by the caller.
         esxi_pxe_boot: Esxi pxe boot supplied by the caller.
         interface_networks: Interface networks supplied by the caller.
-        source_groups: Firewall source groups available to the rule.
+        source_groups: Source Groups available to the rule.
         source_group_assignments: Source group assignments supplied by the caller.
         web_terminal_interfaces: Web terminal interfaces supplied by the caller.
         ldap_settings: Ldap settings supplied by the caller.
@@ -602,11 +602,11 @@ def firewall_source_group_state(
     raw_json: str,
     interface_networks: dict[str, list[str]],
 ) -> dict:
-    """Return firewall source group state.
+    """Return Source Group state retained in the Firewall settings namespace.
 
     Args:
-        raw_json: Raw json consumed by firewall source group state.
-        interface_networks: Interface networks consumed by firewall source group state.
+        raw_json: Raw JSON consumed by Source Group state.
+        interface_networks: Interface networks consumed by Source Group state.
     """
     saved: dict = {}
     if raw_json.strip():
@@ -627,7 +627,7 @@ def firewall_source_group_state(
                 group_id,
                 str(saved_group.get("name") or group_id),
                 _source_group_entries(saved_group, default_entries),
-                str(saved_group.get("description") or "Custom firewall group."),
+                str(saved_group.get("description") or "Custom source group."),
             )
         )
     assignments = saved.get("assignments", {})
@@ -641,30 +641,30 @@ def firewall_source_group_state(
 
 
 def validate_firewall_source_groups(groups: list[dict]) -> list[str]:
-    """Validate firewall source groups.
+    """Validate Source Groups retained in the Firewall settings namespace.
 
     Args:
         groups: Candidate groups to validate.
 
 
     Returns:
-        The validate firewall source groups result.
+        The Source Group validation result.
     """
     errors: list[str] = []
     groups_by_id = {str(group.get("id", "")): group for group in groups}
     names: dict[str, str] = {}
     for group in groups:
         group_id = str(group.get("id", ""))
-        label = str(group.get("name") or group_id or "Firewall group")
+        label = str(group.get("name") or group_id or "Source Group")
         normalized_name = label.strip().lower()
         if not label.strip():
-            errors.append("Firewall group name is required.")
+            errors.append("Source Group name is required.")
         elif normalized_name in names and names[normalized_name] != group_id:
-            errors.append(f"Firewall group name '{label}' is already used.")
+            errors.append(f"Source Group name '{label}' is already used.")
         names[normalized_name] = group_id
     for group in groups:
         group_id = str(group.get("id", ""))
-        label = str(group.get("name") or group_id or "Firewall group")
+        label = str(group.get("name") or group_id or "Source Group")
         entries = _source_group_entries(group, ["any"])
         if group_id == FIREWALL_ANY_SOURCE_GROUP_ID and entries != ["any"]:
             errors.append("Any is built in and must contain only 'any'.")
@@ -676,7 +676,7 @@ def validate_firewall_source_groups(groups: list[dict]) -> list[str]:
             if _source_group_reference_target(entry, groups_by_id, names):
                 continue
             if _looks_like_source_group_reference(entry):
-                errors.append(f"{label} references a firewall group that does not exist: {entry}.")
+                errors.append(f"{label} references a Source Group that does not exist: {entry}.")
         for error in _validate_address_value(label, "\n".join(address_entries)):
             errors.append(error)
         if "any" in [entry.strip().lower() for entry in entries] and len(entries) > 1:
@@ -842,7 +842,7 @@ def validate_firewall_state(
         settings: Desired or runtime settings consumed by the operation.
         rules: Rules supplied by the caller.
         generated_rules: Generated rules supplied by the caller.
-        source_groups: Firewall source groups available to the rule.
+        source_groups: Source Groups available to the rule.
         replace_atlaso_dhcp_rules: Replace atlaso dhcp rules supplied by the caller.
         replace_atlaso_dns_rules: Replace atlaso dns rules supplied by the caller.
         replace_atlaso_service_rules: Replace atlaso service rules supplied by the caller.
@@ -883,7 +883,7 @@ def render_nftables_config(
         settings: Desired or runtime settings consumed by the operation.
         rules: Rules supplied by the caller.
         generated_rules: Generated rules supplied by the caller.
-        source_groups: Firewall source groups available to the rule.
+        source_groups: Source Groups available to the rule.
         replace_atlaso_dhcp_rules: Replace atlaso dhcp rules supplied by the caller.
         replace_atlaso_dns_rules: Replace atlaso dns rules supplied by the caller.
         replace_atlaso_service_rules: Replace atlaso service rules supplied by the caller.
@@ -1449,7 +1449,7 @@ def _validate_source_group_cycles(groups: list[dict], groups_by_id: dict[str, di
         if group_id in path:
             cycle_ids = [*path[path.index(group_id):], group_id]
             cycle_names = [str(groups_by_id[item].get("name") or item) for item in cycle_ids if item in groups_by_id]
-            errors.append(f"Firewall groups cannot reference each other in a cycle: {' -> '.join(cycle_names)}.")
+            errors.append(f"Source Groups cannot reference each other in a cycle: {' -> '.join(cycle_names)}.")
             return
         group = groups_by_id.get(group_id)
         if not group:
@@ -1503,7 +1503,7 @@ def _validate_rule_address_value(label: str, value: str, source_groups_by_id: di
         group = source_groups_by_id.get(target_id)
         return _validate_address_value(label, "\n".join(_expand_source_group_entries(group, source_groups_by_id)))
     if _looks_like_source_group_reference(raw_value):
-        return [f"{label} references a firewall group that does not exist: {raw_value}."]
+        return [f"{label} references a Source Group that does not exist: {raw_value}."]
     return _validate_address_value(label, raw_value)
 
 
@@ -1525,8 +1525,8 @@ def _validate_rule_group_reference(label: str, value: str, source_groups_by_id: 
     if raw_value.lower().startswith(FIREWALL_SOURCE_GROUP_REFERENCE_PREFIX):
         if _source_group_reference_target(raw_value, source_groups_by_id):
             return ""
-        return f"{label} references a firewall group that does not exist: {raw_value}."
-    return f"{label} must use Any or a firewall group."
+        return f"{label} references a Source Group that does not exist: {raw_value}."
+    return f"{label} must use Any or a Source Group."
 
 
 def _split_address_values(value: str) -> list[str]:

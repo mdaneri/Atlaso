@@ -157,7 +157,7 @@ def build_router(dependencies: FirewallApiDependencies) -> FirewallApiRouter:
 
 
     def firewall_groups_for_api_validation(db: Session) -> list[dict[str, Any]]:
-        """Return firewall groups for api validation.
+        """Return Source Groups for API validation.
 
         Args:
             db: Active database session.

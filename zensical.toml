@@ -26,6 +26,7 @@ nav = [
     { "Appliance Apply" = "operate/appliance-apply.md" },
     { "Appliance settings" = "operate/appliance-settings.md" },
     { "Network configuration" = "operate/networking.md" },
+    { "Network Objects" = "operate/network-objects.md" },
     { "Local appliance console" = "operate/appliance-console.md" },
     { "Appliance Update" = "operate/appliance-update.md" },
     { "Backup and restore" = "operate/backup-restore.md" },

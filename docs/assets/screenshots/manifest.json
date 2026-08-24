@@ -903,6 +903,34 @@
       "sensitive_data_reviewed": true
     },
     {
+      "path": "assets/screenshots/network-objects-clean-desktop.webp",
+      "route": "/network-objects",
+      "state": "clean",
+      "viewport": "1600x1000",
+      "source_commit": "0df3b4b3f873+working-tree",
+      "atlaso_version": "0.9.195",
+      "caption": "Network Objects in the verified clean-appliance desktop state.",
+      "alt": "Atlaso Network Objects page in the clean-appliance desktop viewport.",
+      "capture_method": "codex-in-app-browser",
+      "documentation_page": "operate/network-objects.md",
+      "brand_variant": "light",
+      "sensitive_data_reviewed": true
+    },
+    {
+      "path": "assets/screenshots/network-objects-clean-responsive.webp",
+      "route": "/network-objects",
+      "state": "clean",
+      "viewport": "900x1200",
+      "source_commit": "0df3b4b3f873+working-tree",
+      "atlaso_version": "0.9.195",
+      "caption": "Network Objects in the verified clean-appliance responsive state.",
+      "alt": "Atlaso Network Objects page in the clean-appliance responsive viewport.",
+      "capture_method": "codex-in-app-browser",
+      "documentation_page": "operate/network-objects.md",
+      "brand_variant": "light",
+      "sensitive_data_reviewed": true
+    },
+    {
       "path": "assets/screenshots/ntp-clean-desktop.webp",
       "route": "/ntp",
       "state": "clean",

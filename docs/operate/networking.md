@@ -147,8 +147,10 @@ row menu to update it. The standard step rail remains beside the form on wide sc
 Each wizard retains entered values while moving backward, validates before Review, and saves only after the final
 add/update action. A saved row's **Enabled** value remains directly editable; this changes desired state only.
 
-The **NAT** wizard creates explicit IPv4 masquerade rules. Choose Any, an existing Firewall source group, or IPv4 source
-CIDRs, then select an eligible IPv4-bearing access interface or enabled VLAN. Atlaso does not infer an outbound target
+The **NAT** wizard creates explicit IPv4 masquerade rules. Choose Any, an existing Source Group, or IPv4 source CIDRs,
+then select an eligible IPv4-bearing access interface or enabled VLAN. **Manage source groups** opens
+[Network Objects](network-objects.md), preserves the tab-local NAT draft, and restores it with fresh choices on return.
+Atlaso does not infer an outbound target
 from an interface role and does not provide destination NAT, port forwarding, or IPv6 NAT in v1.
 
 The **WAN Policies** wizard groups delay/capacity settings separately from packet loss and error effects. Assigning a

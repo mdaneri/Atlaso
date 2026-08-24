@@ -32,6 +32,7 @@ MANAGEMENT_ROUTE_ROOTS = frozenset(
         "logs",
         "monitor",
         "network-boot",
+        "network-objects",
         "ntp",
         "openid-connect",
         "physical-interfaces",

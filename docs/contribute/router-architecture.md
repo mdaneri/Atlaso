@@ -138,6 +138,13 @@ Service rendering, helper, lifecycle, and global Appliance Apply tests retain th
 does not change templates, browser assets, visible copy, API operations, normalized OpenAPI, route inventory, audit
 actions, or host-mutation boundaries.
 
+Network Objects management transport lives in `atlaso/app/routers/ui/network_objects.py`, with projection and consumer
+discovery in `atlaso/app/services/network_objects.py`. It owns Source Group management while the Firewall facade retains
+compatibility exports and supplies shared state helpers to Firewall transport construction. The historical
+`firewall.managed_source_groups` key, stable group IDs, nested-reference syntax, settings archives, and Firewall/WAN
+apply inputs do not move. Independently runnable transport coverage lives in
+`tests/routers/ui/test_network_objects.py`.
+
 ## Extracted DNS/DHCP ownership
 
 DNS and DHCP management transports live in `atlaso/app/routers/ui/dns_dhcp.py`; their API v1 transports live in

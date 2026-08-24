@@ -49,6 +49,9 @@ its browser-state key. The server continues to enforce authorization for every d
 The **Review appliance changes** card is not part of a collapsible section. It remains at the bottom of the sidebar and
 stays visible whenever pending desired-state units exist.
 
+**Network Objects** appears under **Appliance Setup** for identities with `read:firewall`. Editing continues to require
+`write:firewall`, matching the access policy that applied when Source Groups were displayed on the Firewall page.
+
 ## Responsive layouts
 
 At desktop widths, sections collapse vertically inside the fixed sidebar. At the tablet breakpoint, each entire section

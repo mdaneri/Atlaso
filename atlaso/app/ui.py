@@ -169,6 +169,10 @@ from atlaso.app.routers.ui.network_boot import NetworkBootUiDependencies
 from atlaso.app.routers.ui.network_boot import (
     build_router as build_network_boot_ui_router,
 )
+from atlaso.app.routers.ui.network_objects import NetworkObjectsUiDependencies
+from atlaso.app.routers.ui.network_objects import (
+    build_router as build_network_objects_ui_router,
+)
 from atlaso.app.routers.ui.ntp import NtpUiDependencies
 from atlaso.app.routers.ui.ntp import build_router as build_ntp_ui_router
 from atlaso.app.routers.ui.operations import OperationsUiDependencies
@@ -15682,6 +15686,35 @@ appliance_apply_status_api = _appliance_apply_ui.endpoints[
 ]
 submit_appliance_apply = _appliance_apply_ui.endpoints["submit_appliance_apply"]
 
+_network_objects_ui = build_network_objects_ui_router(
+    NetworkObjectsUiDependencies(
+        require_management_ui_request=require_management_ui_request,
+        render=render,
+        verify_csrf=verify_csrf,
+        setting_value=setting_value,
+        set_setting_value=set_setting_value,
+        grid_request=grid_request,
+    )
+)
+network_objects_router = _network_objects_ui.router
+network_objects = _network_objects_ui.endpoints["network_objects"]
+network_objects_context = _network_objects_ui.endpoints["network_objects_context"]
+firewall_source_group_state_for_db = _network_objects_ui.endpoints[
+    "source_group_state_for_db"
+]
+persist_firewall_source_group_state = _network_objects_ui.endpoints[
+    "persist_source_group_state"
+]
+legacy_firewall_source_groups_page = _network_objects_ui.endpoints[
+    "legacy_source_groups_page"
+]
+update_firewall_source_groups = _network_objects_ui.endpoints[
+    "update_source_groups"
+]
+update_firewall_source_groups_legacy = _network_objects_ui.endpoints[
+    "update_source_groups_legacy"
+]
+
 _firewall_ui = build_firewall_ui_router(
     FirewallUiDependencies(
         require_management_ui_request=require_management_ui_request,
@@ -15690,8 +15723,8 @@ _firewall_ui = build_firewall_ui_router(
         appliance_apply_status=lambda *args, **kwargs: appliance_apply_status(*args, **kwargs),
         verify_csrf=verify_csrf,
         get_firewall_settings_row=get_firewall_settings_row,
-        setting_value=setting_value,
-        set_setting_value=set_setting_value,
+        source_group_state_for_db=firewall_source_group_state_for_db,
+        persist_source_group_state=persist_firewall_source_group_state,
         grid_request=grid_request,
         grid_saved_response=grid_saved_response,
     )
@@ -15699,28 +15732,6 @@ _firewall_ui = build_firewall_ui_router(
 firewall_router = _firewall_ui.router
 firewall = _firewall_ui.endpoints["firewall"]
 update_firewall_settings = _firewall_ui.endpoints["update_firewall_settings"]
-firewall_source_group_state_for_db = _firewall_ui.endpoints[
-    "firewall_source_group_state_for_db"
-]
-persist_firewall_source_group_state = _firewall_ui.endpoints[
-    "persist_firewall_source_group_state"
-]
-_source_group_entries_from_form = _firewall_ui.endpoints[
-    "_source_group_entries_from_form"
-]
-_firewall_source_group_id = _firewall_ui.endpoints["_firewall_source_group_id"]
-_normalized_firewall_source_group = _firewall_ui.endpoints[
-    "_normalized_firewall_source_group"
-]
-_strip_deleted_source_group_references = _firewall_ui.endpoints[
-    "_strip_deleted_source_group_references"
-]
-_firewall_source_group_response = _firewall_ui.endpoints[
-    "_firewall_source_group_response"
-]
-update_firewall_source_groups = _firewall_ui.endpoints[
-    "update_firewall_source_groups"
-]
 update_managed_firewall_rule_source_group = _firewall_ui.endpoints[
     "update_managed_firewall_rule_source_group"
 ]
@@ -16794,6 +16805,10 @@ UI_ROUTER_REGISTRY.register(
     (RouterContribution(plane="management", router=appliance_apply_router),),
 )
 UI_ROUTER_REGISTRY.register(
+    "network_objects",
+    (RouterContribution(plane="management", router=network_objects_router),),
+)
+UI_ROUTER_REGISTRY.register(
     "routes_wan",
     (RouterContribution(plane="management", router=routes_wan_router),),
 )
@@ -16909,6 +16924,7 @@ UI_ROUTER_REGISTRY.validate_domains(
         "automation",
         "facade_between_automation_routes_wan",
         "appliance_apply",
+        "network_objects",
         "routes_wan",
         "firewall",
         "physical_vlans",

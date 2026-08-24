@@ -2043,7 +2043,7 @@ def _validate_archive_relationships(data: dict[str, list[dict[str, Any]]]) -> No
         )["groups"]
     except (TypeError, ValueError) as exc:
         raise ValueError(
-            "The settings archive firewall source groups state is invalid."
+            "The settings archive Source Groups state is invalid."
         ) from exc
     firewall_source_group_ids = {str(group.get("id") or "") for group in firewall_source_groups}
     for name, row in vlan_interfaces.items():

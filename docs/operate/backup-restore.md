@@ -167,7 +167,7 @@ records afterward. A candidate-rendering, schema-contract, or validation failure
 
 Atlaso validates every supplied archive collection, required row field, relationship, and enabled VLAN or static-route
 target before it removes current desired state. Enabled service listener addresses must exactly match the addresses
-derived from their selected interfaces. Firewall source groups must use nonblank current-format identifiers and names,
+derived from their selected interfaces. Network Objects Source Groups must use nonblank current-format identifiers and names,
 nonempty string entry lists, unique identifiers, and assignments that resolve to `any` or a supplied group. Every
 non-comment DNS conditional-forwarder line must include a domain and one or more servers. Because password hashes remain
 outside settings archives, exported Managed LDAP users are disabled and restored archives that try to enable a user
@@ -209,7 +209,7 @@ ESX Storage resources receive canonical validation even when the optional settin
 default disabled settings applied during later state reads.
 
 Preflight also requires every canonical service-status row, limits DHCP scopes to access physical interfaces or enabled
-VLANs with a matching address family, and reserves firewall source-group ID `any` for Atlaso's built-in unrestricted
+VLANs with a matching address family, and reserves Source Group ID `any` for Atlaso's built-in unrestricted
 group. These checks prevent a successful restore from creating missing service controls, publishing DHCP on management
 networks, or widening a restricted firewall assignment.
 All nonempty DHCP reservation addresses are parsed during preflight, including disabled rows; enabled reservations alone
