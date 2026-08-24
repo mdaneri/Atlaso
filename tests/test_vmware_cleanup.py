@@ -375,6 +375,8 @@ def _commands(log: Path) -> list[list[str]]:
     Args:
         log: Path to the JSONL command log file.
     """
+    if not log.exists():
+        return []
     return [json.loads(line) for line in log.read_text(encoding="utf-8").splitlines()]
 
 
@@ -807,6 +809,44 @@ def test_multi_vmx_later_disappearance_before_first_delete_preserves_root(
     assert root.exists()
     assert first_vmx.exists()
     assert not second_vmx.exists()
+    assert "deleteVM" not in [command[2] for command in _commands(log)]
+
+
+def test_multi_vmx_later_ambiguous_registration_blocks_first_delete(
+    tmp_path: Path,
+) -> None:
+    """Preflight every target registration before a provider can remove the root.
+
+    Args:
+        tmp_path: Pytest temporary directory path.
+    """
+    root = tmp_path / "artifacts" / "vm"
+    first_vmx = root / "first.vmx"
+    second_vmx = root / "second.vmx"
+    unrelated = tmp_path / "other" / "unrelated.vmx"
+    _write_vmx(first_vmx, "First")
+    _write_vmx(second_vmx, "Second")
+    _write_vmx(unrelated, "Unrelated")
+    vmrun, environment, log, _ = _write_fake_vmrun(
+        tmp_path / "fake",
+        [first_vmx, second_vmx],
+        registered=True,
+        remove_root_after_delete=True,
+        inventory_suffix=f'vmlist2.config = "{unrelated.resolve()}"\n',
+    )
+
+    result = _run_root_cleanup(
+        tmp_path,
+        removal_root=root,
+        expected_root=root,
+        vmrun_path=vmrun,
+        environment=environment,
+    )
+
+    assert result.returncode != 0
+    assert "ambiguous library ID" in result.stderr
+    assert first_vmx.exists()
+    assert second_vmx.exists()
     assert "deleteVM" not in [command[2] for command in _commands(log)]
 
 
@@ -1490,6 +1530,48 @@ def test_stale_repair_preserves_ambiguously_owned_index(tmp_path: Path) -> None:
     assert f'vmlist7.config = "{stale.resolve()}"' not in inventory_text
     assert f'index7.id = "{stale.resolve()}"' in inventory_text
     assert f'index7.id = "{unrelated.resolve()}"' in inventory_text
+
+
+def test_stale_repair_preserves_count_when_index_compaction_is_unsafe(
+    tmp_path: Path,
+) -> None:
+    """An unrelated malformed group keeps the declared range covering index2.
+
+    Args:
+        tmp_path: Pytest temporary directory path.
+    """
+    parent = tmp_path / "image" / "vmware-workstation"
+    root = parent / "test-vms"
+    root.mkdir(parents=True)
+    stale = root / "missing.vmx"
+    unrelated = tmp_path / "other" / "live.vmx"
+    _write_vmx(unrelated)
+    vmrun, environment, _, inventory = _write_fake_vmrun(
+        tmp_path / "fake",
+        [],
+        inventory_suffix=(
+            f'vmlist1.config = "{stale.resolve()}"\n'
+            f'index0.id = "{stale.resolve()}"\n'
+            'index1.id = relative.vmx\n'
+            f'index2.id = "{unrelated.resolve()}"\n'
+            'index.count = "3"\n'
+        ),
+    )
+
+    result = _run_root_cleanup(
+        tmp_path,
+        removal_root=root,
+        artifact_parent=parent,
+        vmrun_path=vmrun,
+        environment=environment,
+    )
+
+    assert result.returncode == 0, result.stdout + result.stderr
+    inventory_text = inventory.read_text(encoding="utf-8")
+    assert f'index0.id = "{stale.resolve()}"' not in inventory_text
+    assert "index1.id = relative.vmx" in inventory_text
+    assert f'index2.id = "{unrelated.resolve()}"' in inventory_text
+    assert 'index.count = "3"' in inventory_text
 
 
 def test_stale_repair_preserves_missing_non_vmx_in_scope_entry(tmp_path: Path) -> None:

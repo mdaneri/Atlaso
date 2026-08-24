@@ -499,7 +499,6 @@ function Test-AtlasoWorkstationVmxRegistered {
     }
     return $matchingIds.Count -eq 1
 }
-
 <#
 .SYNOPSIS
 Read all bytes from the beginning of an open stream.
@@ -708,7 +707,7 @@ function Remove-AtlasoWorkstationStaleRegistrations {
         if ($line -match '^\s*index\.count\s*=\s*"(?<count>\d+)"\s*$') {
             $count = 0
             if (-not [int]::TryParse($Matches.count, [ref]$count)) { $updatedLines.Add($line); continue }
-            $updatedLines.Add("index.count = `"$(if ($null -eq $indexRenumbering) { [Math]::Max(0, $count - $targetIndexes.Count) } else { $indexRenumbering.Count })`"")
+            if ($null -eq $indexRenumbering) { $updatedLines.Add($line) } else { $updatedLines.Add("index.count = `"$($indexRenumbering.Count)`"") }
             continue
         }
         $updatedLines.Add($line)
@@ -1228,6 +1227,7 @@ function Remove-AtlasoWorkstationVmArtifacts {
     $inventoryPath = Resolve-AtlasoWorkstationInventoryPath
     foreach ($resolvedVmxPath in $resolvedVmxPaths) {
         if ((Get-AtlasoPathIdentity -Path $resolvedVmxPath -Description 'VMware cleanup target') -ne $validatedTargetIdentities[$resolvedVmxPath]) { throw "VMware Workstation VMX was replaced after root validation; artifacts were preserved: $resolvedVmxPath" }
+        Test-AtlasoWorkstationVmxRegistered -InventoryPath $inventoryPath -VmxPath $resolvedVmxPath -ScopeRoot $resolvedRemovalRoot | Out-Null
         Confirm-AtlasoWorkstationVmInactive -VmrunPath $VmrunPath -VmxPath $resolvedVmxPath
     }
     $providerRemovedRoot = $false
