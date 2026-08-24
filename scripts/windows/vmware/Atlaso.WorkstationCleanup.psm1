@@ -574,7 +574,6 @@ function Restore-AtlasoFileAfterCasFailure {
         [Parameter(Mandatory = $false)][AllowNull()][string]$ReplacementIdentity,
         [Parameter(Mandatory = $false)][switch]$PreserveCapturedOnSuccess
     )
-
     foreach ($attempt in 1..16) {
         $capturedPath = "$TargetPath.atlaso-cas-$([System.Guid]::NewGuid().ToString('N')).tmp"
         try {
@@ -629,9 +628,7 @@ function Remove-AtlasoWorkstationStaleRegistrations {
         [Parameter(Mandatory = $false)][AllowNull()][string]$InventoryPath,
         [Parameter(Mandatory = $true)][string]$ScopeRoot
     )
-    if (-not $InventoryPath) {
-        return
-    }
+    if (-not $InventoryPath) { return }
     $originalBytes = [System.IO.File]::ReadAllBytes($InventoryPath)
     $lines = @([System.Text.Encoding]::UTF8.GetString($originalBytes) -split '\r?\n')
     $staleEntries = @(
@@ -704,6 +701,13 @@ function Remove-AtlasoWorkstationStaleRegistrations {
             $targetIndexes.Add($index) | Out-Null
         }
     }
+    $indexRenumbering = @{}
+    foreach ($line in $lines) {
+        if ($line -match '^\s*index(?<index>\d+)\.' -and -not $targetIndexes.Contains($Matches.index) -and -not $indexRenumbering.ContainsKey($Matches.index)) {
+            if ($invalidIndexes.Contains($Matches.index) -or -not $indexOwners.ContainsKey($Matches.index) -or $indexOwners[$Matches.index].Count -ne 1) { $indexRenumbering = $null; break }
+            $indexRenumbering[$Matches.index] = $indexRenumbering.Count
+        }
+    }
     $updatedLines = [System.Collections.Generic.List[string]]::new()
     foreach ($line in $lines) {
         if ($line -match '^\s*vmlist(?<id>\d+)\.' -and $targetIds.Contains($Matches.id)) {
@@ -712,10 +716,13 @@ function Remove-AtlasoWorkstationStaleRegistrations {
         if ($line -match '^\s*index(?<index>\d+)\.' -and $targetIndexes.Contains($Matches.index)) {
             continue
         }
+        if ($line -match '^(?<indent>\s*)index(?<index>\d+)(?<suffix>\..*)$' -and $null -ne $indexRenumbering -and $indexRenumbering.ContainsKey($Matches.index)) {
+            $line = "$($Matches.indent)index$($indexRenumbering[$Matches.index])$($Matches.suffix)"
+        }
         if ($line -match '^\s*index\.count\s*=\s*"(?<count>\d+)"\s*$') {
             $count = 0
             if (-not [int]::TryParse($Matches.count, [ref]$count)) { $updatedLines.Add($line); continue }
-            $updatedLines.Add("index.count = `"$([Math]::Max(0, $count - $targetIndexes.Count))`"")
+            $updatedLines.Add("index.count = `"$(if ($null -eq $indexRenumbering) { [Math]::Max(0, $count - $targetIndexes.Count) } else { $indexRenumbering.Count })`"")
             continue
         }
         $updatedLines.Add($line)
@@ -784,7 +791,6 @@ Exact artifact root to snapshot.
 #>
 function Get-AtlasoRootSnapshot {
     param([Parameter(Mandatory = $true)][string]$RemovalRoot)
-
     $items = @{}
     foreach ($item in Get-ChildItem -LiteralPath $RemovalRoot -Force -Recurse -ErrorAction Stop) {
         Assert-AtlasoPathHasNoReparsePoint -Path $item.FullName
@@ -812,7 +818,6 @@ function Assert-AtlasoRootSnapshotUnreplaced {
         [Parameter(Mandatory = $true)][string]$RemovalRoot,
         [Parameter(Mandatory = $true)][psobject]$Snapshot
     )
-
     $rootIdentity = Get-AtlasoPathIdentity -Path $RemovalRoot -Description 'VMware artifact root'
     if ($rootIdentity -ne $Snapshot.RootIdentity) {
         throw "VMware artifact root was replaced during cleanup; the replacement was preserved: $RemovalRoot"
@@ -839,27 +844,25 @@ Path reported by vmrun.
 
 .PARAMETER VmxPath
 Validated cleanup target VMX.
+
+.PARAMETER TargetIdentity
+Optional earlier identity that still identifies the running target.
 #>
 function Test-AtlasoRunningPathMatchesTarget {
     param(
         [Parameter(Mandatory = $true)][string]$RunningPath,
-        [Parameter(Mandatory = $true)][string]$VmxPath
+        [Parameter(Mandatory = $true)][string]$VmxPath,
+        [Parameter(Mandatory = $false)][AllowEmptyString()][string]$TargetIdentity = ''
     )
-
-    if (-not [System.IO.Path]::IsPathFullyQualified($RunningPath)) {
-        return $false
-    }
-    if (Test-AtlasoSamePath -Left $RunningPath -Right $VmxPath) {
-        return $true
-    }
+    if (-not [System.IO.Path]::IsPathFullyQualified($RunningPath)) { return $false }
+    if (Test-AtlasoSamePath -Left $RunningPath -Right $VmxPath) { return $true }
     if (
         (Test-Path -LiteralPath $RunningPath -PathType Leaf) -and
         (Test-Path -LiteralPath $VmxPath -PathType Leaf)
     ) {
-        return (
-            (Get-AtlasoPathIdentity -Path $RunningPath -Description 'running VMware VMX') -eq
-            (Get-AtlasoPathIdentity -Path $VmxPath -Description 'VMware cleanup target')
-        )
+        $runningIdentity = Get-AtlasoPathIdentity -Path $RunningPath -Description 'running VMware VMX'
+        return ($TargetIdentity -and $runningIdentity -eq $TargetIdentity) -or
+            $runningIdentity -eq (Get-AtlasoPathIdentity -Path $VmxPath -Description 'VMware cleanup target')
     }
     return $false
 }
@@ -873,24 +876,26 @@ Path to the vmrun executable.
 
 .PARAMETER VmxPath
 Validated cleanup target VMX.
+
+.PARAMETER TargetIdentity
+Optional earlier identity that still identifies the running target.
 #>
 function Confirm-AtlasoWorkstationVmInactive {
     param(
         [Parameter(Mandatory = $true)][string]$VmrunPath,
-        [Parameter(Mandatory = $true)][string]$VmxPath
+        [Parameter(Mandatory = $true)][string]$VmxPath,
+        [Parameter(Mandatory = $false)][AllowEmptyString()][string]$TargetIdentity = ''
     )
-
     $runningPaths = @(Get-AtlasoWorkstationVmPaths -VmrunPath $VmrunPath -State running)
-    if (@($runningPaths | Where-Object { Test-AtlasoRunningPathMatchesTarget -RunningPath $_ -VmxPath $VmxPath }).Count -gt 0) {
+    $runningTargets = @($runningPaths | Where-Object { Test-AtlasoRunningPathMatchesTarget -RunningPath $_ -VmxPath $VmxPath -TargetIdentity $TargetIdentity })
+    if ($runningTargets.Count -gt 0) {
         Invoke-AtlasoVmrunChecked `
             -VmrunPath $VmrunPath `
-            -Arguments @('-T', 'ws', 'stop', $VmxPath, 'hard') `
+            -Arguments @('-T', 'ws', 'stop', $runningTargets[0], 'hard') `
             -Action "Stop VMware Workstation VM '$VmxPath'" | Out-Null
     }
     $remainingPaths = @(Get-AtlasoWorkstationVmPaths -VmrunPath $VmrunPath -State running)
-    if (@($remainingPaths | Where-Object { Test-AtlasoRunningPathMatchesTarget -RunningPath $_ -VmxPath $VmxPath }).Count -gt 0) {
-        throw "VMware Workstation VM remains running after stop succeeded: $VmxPath"
-    }
+    if (@($remainingPaths | Where-Object { Test-AtlasoRunningPathMatchesTarget -RunningPath $_ -VmxPath $VmxPath -TargetIdentity $TargetIdentity }).Count -gt 0) { throw "VMware Workstation VM remains running after stop succeeded: $VmxPath" }
 }
 
 <#
@@ -940,7 +945,6 @@ function Disconnect-AtlasoWorkstationExternalVmdks {
         [Parameter(Mandatory = $true)][string]$RemovalRoot,
         [Parameter(Mandatory = $true)][string]$ExpectedIdentity
     )
-
     if ((Get-AtlasoPathIdentity -Path $VmxPath -Description 'VMware cleanup target') -ne $ExpectedIdentity) {
         throw "VMware Workstation VMX was replaced before external-disk protection; artifacts were preserved: $VmxPath"
     }
@@ -1075,7 +1079,6 @@ function Restore-AtlasoWorkstationExternalVmdks {
         [Parameter(Mandatory = $true)][string]$VmxPath,
         [Parameter(Mandatory = $false)][AllowNull()][psobject]$Detachment
     )
-
     if ($null -eq $Detachment -or -not $Detachment.Detached) {
         return
     }
@@ -1251,7 +1254,8 @@ function Remove-AtlasoWorkstationVmArtifacts {
             $currentKnownVmxPaths = @($resolvedVmxPaths | Where-Object { -not $deletedVmxPaths.Contains($_) } | ForEach-Object {
                     $expectedSurvivorIdentity = if (Test-AtlasoSamePath -Left $_ -Right $resolvedVmxPath) { $expectedDeleteIdentity } else { $validatedTargetIdentities[$_] }
                     $expectedSurvivorHash = if (Test-AtlasoSamePath -Left $_ -Right $resolvedVmxPath) { $detachment.ProtectedHash } else { $validatedTargetHashes[$_] }
-                    Confirm-AtlasoWorkstationVmInactive -VmrunPath $VmrunPath -VmxPath $_
+                    $earlierIdentity = if ((Test-AtlasoSamePath -Left $_ -Right $resolvedVmxPath) -and $detachment.Detached) { $detachment.OriginalIdentity } else { '' }
+                    Confirm-AtlasoWorkstationVmInactive -VmrunPath $VmrunPath -VmxPath $_ -TargetIdentity $earlierIdentity
                     if ((Get-AtlasoPathIdentity -Path $_ -Description 'VMware cleanup target') -ne $expectedSurvivorIdentity) { throw "VMware Workstation VMX was replaced immediately before deleteVM; artifacts were preserved: $_" }
                     if ((Get-AtlasoFileSha256 -Path $_) -ne $expectedSurvivorHash) { throw "VMware Workstation VMX changed immediately before deleteVM; artifacts were preserved: $_" }
                     $_

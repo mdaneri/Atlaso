@@ -1257,6 +1257,47 @@ def test_unrelated_uncanonicalizable_inventory_index_does_not_block_repair(
     assert b"bad\x00index.vmx" in inventory.read_bytes()
 
 
+def test_stale_repair_compacts_surviving_inventory_indexes(tmp_path: Path) -> None:
+    """Removing index0 renumbers an unrelated index1 group without losing properties.
+
+    Args:
+        tmp_path: Pytest temporary directory path.
+    """
+    parent = tmp_path / "image" / "vmware-workstation"
+    root = parent / "test-vms"
+    root.mkdir(parents=True)
+    stale = root / "missing.vmx"
+    unrelated = tmp_path / "unrelated" / "live.vmx"
+    _write_vmx(unrelated)
+    vmrun, environment, _, inventory = _write_fake_vmrun(
+        tmp_path / "fake",
+        [],
+        inventory_suffix=(
+            f'vmlist1.config = "{stale.resolve()}"\n'
+            f'vmlist2.config = "{unrelated.resolve()}"\n'
+            f'index0.id = "{stale.resolve()}"\n'
+            f'index1.id = "{unrelated.resolve()}"\n'
+            'index1.favorite = "TRUE"\n'
+            'index.count = "2"\n'
+        ),
+    )
+
+    result = _run_root_cleanup(
+        tmp_path,
+        removal_root=root,
+        artifact_parent=parent,
+        vmrun_path=vmrun,
+        environment=environment,
+    )
+
+    assert result.returncode == 0, result.stdout + result.stderr
+    inventory_text = inventory.read_text(encoding="utf-8")
+    assert f'index0.id = "{unrelated.resolve()}"' in inventory_text
+    assert 'index0.favorite = "TRUE"' in inventory_text
+    assert "index1." not in inventory_text
+    assert 'index.count = "1"' in inventory_text
+
+
 def test_unrelated_oversized_inventory_index_count_does_not_block_repair(
     tmp_path: Path,
 ) -> None:
@@ -1480,6 +1521,46 @@ def test_external_vmdk_is_detached_before_deletevm(tmp_path: Path) -> None:
     )
 
     assert result.returncode == 0, result.stdout + result.stderr
+    assert external_disk.read_text(encoding="utf-8") == "shared"
+
+
+def test_original_hard_link_started_after_detachment_is_stopped(tmp_path: Path) -> None:
+    """The final running check matches the original VMX identity after detachment.
+
+    Args:
+        tmp_path: Pytest temporary directory path.
+    """
+    root = tmp_path / "artifacts" / "vm"
+    vmx = root / "Atlaso.vmx"
+    alias = tmp_path / "aliases" / "Atlaso-alias.vmx"
+    external_disk = tmp_path / "shared" / "depot.vmdk"
+    external_disk.parent.mkdir(parents=True)
+    external_disk.write_text("shared", encoding="utf-8")
+    _write_vmx(vmx, "Atlaso", f'scsi0:2.fileName = "{external_disk.resolve()}"')
+    alias.parent.mkdir(parents=True)
+    os.link(vmx, alias)
+    vmrun, environment, log, _ = _write_fake_vmrun(
+        tmp_path / "fake",
+        [vmx],
+        registered=True,
+        run_on_list=3,
+        run_target=alias,
+    )
+
+    result = _run_root_cleanup(
+        tmp_path,
+        removal_root=root,
+        expected_root=root,
+        vmrun_path=vmrun,
+        environment=environment,
+    )
+
+    assert result.returncode == 0, result.stdout + result.stderr
+    commands = _commands(log)
+    stop = next(command for command in commands if command[2] == "stop")
+    delete = next(command for command in commands if command[2] == "deleteVM")
+    assert Path(stop[3]).resolve() == alias.resolve()
+    assert commands.index(stop) < commands.index(delete)
     assert external_disk.read_text(encoding="utf-8") == "shared"
 
 
