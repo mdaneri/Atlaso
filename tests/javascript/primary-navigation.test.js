@@ -48,6 +48,16 @@ class FakeElement {
   setAttribute(name, value) {
     this.attributes.set(name, String(value));
   }
+
+  toggleAttribute(name, force) {
+    if (force) this.attributes.set(name, "");
+    else this.attributes.delete(name);
+    if (name === "hidden") this.hidden = force;
+  }
+
+  querySelector() {
+    return null;
+  }
 }
 
 class FakeButton extends FakeElement {
@@ -57,6 +67,13 @@ class FakeButton extends FakeElement {
 
   click() {
     this.onclick();
+  }
+}
+
+class FakeBulkButton extends FakeButton {
+  constructor() {
+    super();
+    this.dataset.primaryNavBulkAction = "collapse";
   }
 }
 
@@ -93,14 +110,30 @@ class FakeStorage {
   }
 }
 
-function navigationContext(groups, storage) {
+class FakeDocument {
+  constructor(groups, bulkControl = new FakeBulkButton()) {
+    this.groups = groups;
+    this.bulkControl = bulkControl;
+  }
+
+  querySelectorAll(selector) {
+    return selector === "[data-primary-nav-group]" ? this.groups : [];
+  }
+
+  querySelector(selector) {
+    return selector === "[data-primary-nav-bulk-toggle]" ? this.bulkControl : null;
+  }
+}
+
+function navigationContext(groups, storage, { bulkControl = new FakeBulkButton() } = {}) {
+  const document = new FakeDocument(groups, bulkControl);
   const context = vm.createContext({
     Array,
     HTMLButtonElement: FakeButton,
     HTMLElement: FakeElement,
     JSON,
     Object,
-    document: { querySelectorAll: () => groups },
+    document,
     window: { localStorage: storage },
   });
   vm.runInContext(
@@ -109,6 +142,8 @@ function navigationContext(groups, storage) {
       `${functionSource("readPrimaryNavigationState")}\n` +
       `${functionSource("writePrimaryNavigationState")}\n` +
       `${functionSource("setPrimaryNavigationGroupExpanded")}\n` +
+      `${functionSource("primaryNavigationGroupIsExpanded")}\n` +
+      `${functionSource("updatePrimaryNavigationBulkControl")}\n` +
       `${functionSource("initializePrimaryNavigation")}\n` +
       "globalThis.initializePrimaryNavigation = initializePrimaryNavigation;",
     context,
@@ -133,6 +168,23 @@ test("primary navigation starts expanded and toggles only the selected group", (
   assert.equal(overview.classList.contains("collapsed"), true);
   assert.equal(operations.toggle.getAttribute("aria-expanded"), "true");
   assert.deepEqual(storage.writes.at(-1), { version: 1, groups: { overview: false } });
+  assert.equal(context.document.bulkControl.dataset.primaryNavBulkAction, "collapse");
+});
+
+test("primary navigation persists a toggle across separate document initializations", () => {
+  const storage = new FakeStorage();
+  const firstOverview = new FakeGroup("overview");
+  const firstContext = navigationContext([firstOverview], storage);
+  firstContext.initializePrimaryNavigation(firstContext.document);
+  firstOverview.toggle.click();
+
+  const reloadedOverview = new FakeGroup("overview");
+  const reloadedContext = navigationContext([reloadedOverview], storage);
+  reloadedContext.initializePrimaryNavigation(reloadedContext.document);
+
+  assert.equal(reloadedOverview.toggle.getAttribute("aria-expanded"), "false");
+  assert.equal(reloadedOverview.links.hidden, true);
+  assert.deepEqual(JSON.parse(storage.value), { version: 1, groups: { overview: false } });
 });
 
 test("primary navigation restores inactive choices and forces the active group open", () => {
@@ -147,6 +199,95 @@ test("primary navigation restores inactive choices and forces the active group o
   assert.equal(operations.links.hidden, false);
   assert.equal(operations.toggle.getAttribute("aria-expanded"), "true");
   assert.equal(storage.writes.length, 0, "active-page override must not replace the saved user choice");
+});
+
+test("primary navigation bulk control collapses and expands every rendered group", () => {
+  const overview = new FakeGroup("overview");
+  const operations = new FakeGroup("operations");
+  const storage = new FakeStorage();
+  const context = navigationContext([overview, operations], storage);
+  const control = context.document.bulkControl;
+
+  context.initializePrimaryNavigation(context.document);
+  assert.equal(control.dataset.primaryNavBulkAction, "collapse");
+  assert.equal(control.getAttribute("aria-label"), "Collapse all navigation groups");
+  assert.equal(control.getAttribute("title"), "Collapse all navigation groups");
+  assert.equal(control.textContent, "<<");
+
+  control.click();
+  assert.equal(overview.links.hidden, true);
+  assert.equal(operations.links.hidden, true);
+  assert.deepEqual(storage.writes.at(-1), {
+    version: 1,
+    groups: { overview: false, operations: false },
+  });
+  assert.equal(control.dataset.primaryNavBulkAction, "expand");
+  assert.equal(control.getAttribute("aria-label"), "Expand all navigation groups");
+  assert.equal(control.getAttribute("title"), "Expand all navigation groups");
+  assert.equal(control.textContent, ">>");
+
+  control.click();
+  assert.equal(overview.links.hidden, false);
+  assert.equal(operations.links.hidden, false);
+  assert.deepEqual(storage.writes.at(-1), {
+    version: 1,
+    groups: { overview: true, operations: true },
+  });
+  assert.equal(control.dataset.primaryNavBulkAction, "collapse");
+});
+
+test("primary navigation bulk control collapses mixed state and tracks individual toggles", () => {
+  const overview = new FakeGroup("overview");
+  const operations = new FakeGroup("operations");
+  const storage = new FakeStorage(JSON.stringify({ version: 1, groups: { overview: false, operations: true } }));
+  const context = navigationContext([overview, operations], storage);
+  const control = context.document.bulkControl;
+
+  context.initializePrimaryNavigation(context.document);
+  assert.equal(overview.links.hidden, true);
+  assert.equal(operations.links.hidden, false);
+  assert.equal(control.dataset.primaryNavBulkAction, "collapse");
+
+  control.click();
+  assert.equal(overview.links.hidden, true);
+  assert.equal(operations.links.hidden, true);
+  assert.equal(control.dataset.primaryNavBulkAction, "expand");
+
+  overview.toggle.click();
+  assert.equal(overview.links.hidden, false);
+  assert.equal(control.dataset.primaryNavBulkAction, "collapse");
+});
+
+test("primary navigation bulk preference survives active-group overrides", () => {
+  const storage = new FakeStorage();
+  const activeOverview = new FakeGroup("overview", true);
+  const operations = new FakeGroup("operations");
+  const firstContext = navigationContext([activeOverview, operations], storage);
+  firstContext.initializePrimaryNavigation(firstContext.document);
+  firstContext.document.bulkControl.click();
+  assert.deepEqual(JSON.parse(storage.value), {
+    version: 1,
+    groups: { overview: false, operations: false },
+  });
+
+  const reloadedOverview = new FakeGroup("overview", true);
+  const reloadedOperations = new FakeGroup("operations");
+  const reloadedContext = navigationContext([reloadedOverview, reloadedOperations], storage);
+  reloadedContext.initializePrimaryNavigation(reloadedContext.document);
+  assert.equal(reloadedOverview.links.hidden, false);
+  assert.equal(reloadedOperations.links.hidden, true);
+  assert.equal(reloadedContext.document.bulkControl.dataset.primaryNavBulkAction, "collapse");
+  assert.deepEqual(JSON.parse(storage.value), {
+    version: 1,
+    groups: { overview: false, operations: false },
+  });
+
+  const laterOverview = new FakeGroup("overview");
+  const laterOperations = new FakeGroup("operations", true);
+  const laterContext = navigationContext([laterOverview, laterOperations], storage);
+  laterContext.initializePrimaryNavigation(laterContext.document);
+  assert.equal(laterOverview.links.hidden, true);
+  assert.equal(laterOperations.links.hidden, false);
 });
 
 test("primary navigation honors an active group without an authorized active link", () => {
@@ -194,6 +335,22 @@ test("primary navigation ignores obsolete values and survives unavailable storag
   assert.equal(secondGroup.links.hidden, false);
   assert.doesNotThrow(() => secondGroup.toggle.click());
   assert.equal(secondGroup.links.hidden, true);
+});
+
+test("primary navigation remains usable when storage writes fail", () => {
+  const storage = new FakeStorage();
+  storage.setItem = () => {
+    throw new Error("storage full");
+  };
+  const group = new FakeGroup("overview");
+  const context = navigationContext([group], storage);
+
+  assert.doesNotThrow(() => context.initializePrimaryNavigation(context.document));
+  assert.doesNotThrow(() => group.toggle.click());
+  assert.equal(group.links.hidden, true);
+  assert.equal(context.document.bulkControl.dataset.primaryNavBulkAction, "expand");
+  assert.doesNotThrow(() => context.document.bulkControl.click());
+  assert.equal(group.links.hidden, false);
 });
 
 test("primary navigation DOM-ready registration does not pass the event as the root", () => {

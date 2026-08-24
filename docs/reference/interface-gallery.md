@@ -151,17 +151,17 @@ Figure: Dashboard in the verified clean-appliance responsive state.
 
 Figure: Dashboard with valid pending changes and a unit needing attention.
 
-![Atlaso Dashboard with Appliance Setup, Identity and Trust, and VCF Workflows navigation sections collapsed.](../assets/screenshots/primary-navigation-collapsed-desktop.webp)
+![Atlaso Dashboard with all navigation sections collapsed and the double-right-angle expand control available.](../assets/screenshots/primary-navigation-collapsed-desktop.webp)
 
-Figure: Authenticated primary navigation with independent sections partially collapsed.
+Figure: Authenticated primary navigation with every authorized section collapsed and the shared bulk control.
 
-![Atlaso Dashboard responsive layout with independent expanded and collapsed navigation sections.](../assets/screenshots/primary-navigation-collapsed-responsive.webp)
+![Collapsed responsive navigation with expand-all.](../assets/screenshots/primary-navigation-collapsed-responsive.webp)
 
-Figure: Authenticated primary navigation with complete disclosure rows at the responsive viewport.
+Figure: Responsive navigation with all sections collapsed and expand-all above both columns.
 
-![Atlaso Dashboard with all authorized primary navigation sections expanded.](../assets/screenshots/primary-navigation-expanded-desktop.webp)
+![Atlaso Dashboard with all authorized navigation sections expanded and the double-left-angle collapse control available.](../assets/screenshots/primary-navigation-expanded-desktop.webp)
 
-Figure: Authenticated primary navigation with every authorized section expanded.
+Figure: Authenticated primary navigation with every authorized section expanded and the shared bulk control.
 
 ## Dashboard: Appliance Apply Review
 

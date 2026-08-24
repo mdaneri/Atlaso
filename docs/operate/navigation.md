@@ -16,9 +16,9 @@ route names and established sidebar width while letting you reduce vertical spac
 
 This verified appliance view provides visual orientation before you begin.
 
-![Atlaso Dashboard with all authorized primary navigation sections expanded.](../assets/screenshots/primary-navigation-expanded-desktop.webp)
+![Atlaso Dashboard with all authorized navigation sections expanded and the double-left-angle collapse control available.](../assets/screenshots/primary-navigation-expanded-desktop.webp)
 
-*Figure: Authenticated primary navigation with every authorized section expanded.*
+*Figure: Authenticated primary navigation with every authorized section expanded and the shared bulk control.*
 
 <!-- END GENERATED INTERFACE OVERVIEW -->
 
@@ -31,6 +31,18 @@ This verified appliance view provides visual orientation before you begin.
 The browser stores only expanded or collapsed choices under stable section keys. This local preference contains no
 credentials or appliance configuration. If storage is unavailable, malformed, or from an unsupported schema, Atlaso
 keeps every authorized section expanded and navigation remains usable.
+
+## Expand or collapse every section
+
+Use the compact symbol control above the section list to change every rendered section at once. Its symbol, tooltip,
+and accessible name always describe the next action:
+
+- **`<<`** collapses all while any section is expanded.
+- **`>>`** expands all when every section is collapsed.
+
+The bulk action changes only sections rendered for the signed-in identity and saves the same per-section preferences as
+the individual disclosure buttons. Collapsing all can hide the current page's section for the current visit. On the next
+navigation or reload, Atlaso temporarily reopens the new current section without discarding the saved bulk preference.
 
 ## Current-page behavior
 
@@ -65,12 +77,12 @@ These captures show responsive layouts and useful operational states referenced 
 
 ### Dashboard
 
-![Atlaso Dashboard with Appliance Setup, Identity and Trust, and VCF Workflows navigation sections collapsed.](../assets/screenshots/primary-navigation-collapsed-desktop.webp)
+![Atlaso Dashboard with all navigation sections collapsed and the double-right-angle expand control available.](../assets/screenshots/primary-navigation-collapsed-desktop.webp)
 
-*Figure: Authenticated primary navigation with independent sections partially collapsed.*
+*Figure: Authenticated primary navigation with every authorized section collapsed and the shared bulk control.*
 
-![Atlaso Dashboard responsive layout with independent expanded and collapsed navigation sections.](../assets/screenshots/primary-navigation-collapsed-responsive.webp)
+![Collapsed responsive navigation with expand-all.](../assets/screenshots/primary-navigation-collapsed-responsive.webp)
 
-*Figure: Authenticated primary navigation with complete disclosure rows at the responsive viewport.*
+*Figure: Responsive navigation with all sections collapsed and expand-all above both columns.*
 
 <!-- END GENERATED ADDITIONAL SCREENSHOTS -->

@@ -554,6 +554,23 @@ function setPrimaryNavigationGroupExpanded(group, expanded) {
   return true;
 }
 
+function primaryNavigationGroupIsExpanded(group) {
+  const toggle = group.querySelector("[data-primary-nav-toggle]");
+  return toggle instanceof HTMLButtonElement && toggle.getAttribute("aria-expanded") === "true";
+}
+
+function updatePrimaryNavigationBulkControl(control, groups) {
+  if (!(control instanceof HTMLButtonElement)) return;
+  const collapseAll = groups.some((group) => primaryNavigationGroupIsExpanded(group));
+  const action = collapseAll ? "collapse" : "expand";
+  const label = collapseAll ? "Collapse all navigation groups" : "Expand all navigation groups";
+  const visibleLabel = collapseAll ? "<<" : ">>";
+  control.dataset.primaryNavBulkAction = action;
+  control.setAttribute("aria-label", label);
+  control.setAttribute("title", label);
+  control.textContent = visibleLabel;
+}
+
 function initializePrimaryNavigation(root = document) {
   const groups = Array.from(root.querySelectorAll("[data-primary-nav-group]")).filter(
     (group) => group instanceof HTMLElement,
@@ -568,6 +585,8 @@ function initializePrimaryNavigation(root = document) {
   if (Object.keys(storedState).length !== Object.keys(persistedState).length) {
     writePrimaryNavigationState(storage, storedState);
   }
+  const bulkControl = root.querySelector("[data-primary-nav-bulk-toggle]");
+  const refreshBulkControl = () => updatePrimaryNavigationBulkControl(bulkControl, groups);
   groups.forEach((group) => {
     const key = group.dataset.navGroupKey || "";
     const toggle = group.querySelector("[data-primary-nav-toggle]");
@@ -582,8 +601,22 @@ function initializePrimaryNavigation(root = document) {
       if (!setPrimaryNavigationGroupExpanded(group, nextExpanded)) return;
       storedState[key] = nextExpanded;
       writePrimaryNavigationState(storage, storedState);
+      refreshBulkControl();
     });
   });
+  if (bulkControl instanceof HTMLButtonElement) {
+    bulkControl.addEventListener("click", () => {
+      const expanded = bulkControl.dataset.primaryNavBulkAction === "expand";
+      groups.forEach((group) => {
+        const key = group.dataset.navGroupKey || "";
+        if (!key || !setPrimaryNavigationGroupExpanded(group, expanded)) return;
+        storedState[key] = expanded;
+      });
+      writePrimaryNavigationState(storage, storedState);
+      refreshBulkControl();
+    });
+  }
+  refreshBulkControl();
 }
 
 function dnsZoneTabButtonForDomain(domain) {

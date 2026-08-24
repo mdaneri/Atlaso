@@ -199,6 +199,10 @@ the authenticated sidebar's existing typography, width, link order, active state
   unavailable storage and keep navigation usable without persistence.
 - Restore saved choices only for inactive groups. Always expand the group containing the current page on load without
   overwriting its saved choice, so navigating elsewhere can restore the operator's preference.
+- Provide one visually secondary compact symbol button for the rendered group set. When any group is expanded, its visible
+  symbol is **`<<`** and its accessible name and tooltip describe **Collapse all navigation groups**. When every group is
+  collapsed, those values change to **`>>`** and **Expand all navigation groups**. Bulk and individual changes use the
+  same per-group browser-local state.
 - Hide collapsed link containers with the native `hidden` contract so their links leave the tab order and accessibility
   tree. Native button activation owns Enter and Space behavior; do not add competing key handlers.
 - Keep the global **Review appliance changes** card outside every disclosure and visible whenever pending changes exist.
