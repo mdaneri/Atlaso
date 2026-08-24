@@ -25,7 +25,13 @@ def _pwsh_path() -> str:
 
 
 def _write_vmx(path: Path, display_name: str = "Atlaso-Test", *extra_lines: str) -> None:
-    """Write one minimal VMX file."""
+    """Write one minimal VMX file.
+
+    Args:
+        path: Destination VMX file path.
+        display_name: Optional display name written into the VMX content.
+        *extra_lines: Extra VMX lines appended before writing.
+    """
     path.parent.mkdir(parents=True, exist_ok=True)
     content = [f'displayName = "{display_name}"', *extra_lines]
     path.write_text("\n".join(content) + "\n", encoding="utf-8")
@@ -49,7 +55,25 @@ def _write_fake_vmrun(
     register_on_list: int = 0,
     inventory_suffix: str = "",
 ) -> tuple[Path, dict[str, str], Path, Path]:
-    """Create a stateful fake vmrun command and Workstation inventory."""
+    """Create a stateful fake vmrun command and Workstation inventory.
+
+    Args:
+        directory: Working directory for fake vmrun state and artifacts.
+        vmx_paths: VMX files to pre-populate as cataloged targets.
+        running: Marks those VMX paths as running.
+        registered: Marks those VMX paths as registered in inventory.
+        stop_exit: Exit code to return for stop commands.
+        delete_exit: Exit code to return for deleteVM commands.
+        stop_sticky: If true, keep a stopped VM running in fake state.
+        delete_sticky: If true, keep deleteVM from removing files.
+        replace_after_delete: If true, rewrite the VMX after deleteVM.
+        rewrite_on_list: Provider call count at which to inject a VMDK path.
+        rewrite_disk: Path written during list-based rewrite.
+        create_on_list: Provider call count that creates extra artifact.
+        create_path: Artifact path written when create_on_list matches.
+        register_on_list: Provider call count that registers a VM.
+        inventory_suffix: Extra inventory file text appended to the fixture.
+    """
     directory.mkdir(parents=True)
     state = directory / "state"
     state.mkdir()
@@ -233,7 +257,13 @@ raise SystemExit(64)
 def _run_script(
     script: Path, *arguments: str, environment: dict[str, str]
 ) -> subprocess.CompletedProcess[str]:
-    """Run one PowerShell wrapper without prompts."""
+    """Run one PowerShell wrapper without prompts.
+
+    Args:
+        script: Script path to execute.
+        *arguments: Additional positional arguments passed to the script.
+        environment: Environment variables for the subprocess.
+    """
     return subprocess.run(
         [
             _pwsh_path(),
@@ -263,7 +293,16 @@ def _run_root_cleanup(
     artifact_parent: Path | None = None,
     expected_root: Path | None = None,
 ) -> subprocess.CompletedProcess[str]:
-    """Invoke the whole-root cleanup entry point."""
+    """Invoke the whole-root cleanup entry point.
+
+    Args:
+        tmp_path: Scratch directory for test artifacts and generated wrapper.
+        removal_root: Root path to remove during cleanup.
+        vmrun_path: Fake or real vmrun executable path.
+        environment: Environment used to invoke the cleanup command.
+        artifact_parent: Optional artifact parent root for binding mode.
+        expected_root: Optional expected configured cleanup root for validation mode.
+    """
     if (artifact_parent is None) == (expected_root is None):
         raise ValueError("Select exactly one root binding")
     binding = (
@@ -289,12 +328,20 @@ Write-Host 'CLEANUP SUCCEEDED'
 
 
 def _commands(log: Path) -> list[list[str]]:
-    """Read fake vmrun invocations."""
+    """Read fake vmrun invocations.
+
+    Args:
+        log: Path to the JSONL command log file.
+    """
     return [json.loads(line) for line in log.read_text(encoding="utf-8").splitlines()]
 
 
 def test_registered_vm_uses_checked_deletevm(tmp_path: Path) -> None:
-    """An existing registered Atlaso VM is deleted through the provider."""
+    """An existing registered Atlaso VM is deleted through the provider.
+
+    Args:
+        tmp_path: Pytest temporary directory path.
+    """
     root = tmp_path / "artifacts" / "vm"
     vmx = root / "Atlaso.vmx"
     _write_vmx(vmx)
@@ -323,7 +370,11 @@ def test_registered_vm_uses_checked_deletevm(tmp_path: Path) -> None:
 
 
 def test_running_registered_vm_is_stopped_hard_before_delete(tmp_path: Path) -> None:
-    """A running target is stopped with the checked local-provider operation."""
+    """A running target is stopped with the checked local-provider operation.
+
+    Args:
+        tmp_path: Pytest temporary directory path.
+    """
     root = tmp_path / "artifacts" / "vm"
     vmx = root / "Atlaso.vmx"
     _write_vmx(vmx)
@@ -348,7 +399,11 @@ def test_running_registered_vm_is_stopped_hard_before_delete(tmp_path: Path) -> 
 
 
 def test_running_hard_link_alias_is_matched_by_filesystem_identity(tmp_path: Path) -> None:
-    """An out-of-root alias cannot conceal a running in-root target."""
+    """An out-of-root alias cannot conceal a running in-root target.
+
+    Args:
+        tmp_path: Pytest temporary directory path.
+    """
     root = tmp_path / "artifacts" / "vm"
     vmx = root / "Atlaso.vmx"
     alias = tmp_path / "aliases" / "Atlaso-alias.vmx"
@@ -377,7 +432,12 @@ def test_running_hard_link_alias_is_matched_by_filesystem_identity(tmp_path: Pat
 def test_malformed_running_inventory_path_fails_closed(
     tmp_path: Path, reported_path: str
 ) -> None:
-    """Every declared running path must be absolute and unambiguously quoted."""
+    """Every declared running path must be absolute and unambiguously quoted.
+
+    Args:
+        tmp_path: Pytest temporary directory path.
+        reported_path: Inventory path string passed through fake state.
+    """
     root = tmp_path / "artifacts" / "vm"
     vmx = root / "Atlaso.vmx"
     _write_vmx(vmx)
@@ -399,7 +459,11 @@ def test_malformed_running_inventory_path_fails_closed(
 
 
 def test_registered_hard_link_alias_uses_deletevm(tmp_path: Path) -> None:
-    """An out-of-root library alias still identifies the registered target."""
+    """An out-of-root library alias still identifies the registered target.
+
+    Args:
+        tmp_path: Pytest temporary directory path.
+    """
     root = tmp_path / "artifacts" / "vm"
     vmx = root / "Atlaso.vmx"
     alias = tmp_path / "aliases" / "Atlaso-alias.vmx"
@@ -430,7 +494,11 @@ def test_registered_hard_link_alias_uses_deletevm(tmp_path: Path) -> None:
 
 
 def test_registered_alias_with_external_vmdk_fails_closed(tmp_path: Path) -> None:
-    """Atomic detachment cannot silently strand an out-of-root registration."""
+    """Atomic detachment cannot silently strand an out-of-root registration.
+
+    Args:
+        tmp_path: Pytest temporary directory path.
+    """
     root = tmp_path / "artifacts" / "vm"
     vmx = root / "Atlaso.vmx"
     alias = tmp_path / "aliases" / "Atlaso-alias.vmx"
@@ -468,7 +536,11 @@ def test_registered_alias_with_external_vmdk_fails_closed(tmp_path: Path) -> Non
 
 
 def test_live_registration_rejects_duplicate_library_id(tmp_path: Path) -> None:
-    """A live target's selected library ID must have one config owner."""
+    """A live target's selected library ID must have one config owner.
+
+    Args:
+        tmp_path: Pytest temporary directory path.
+    """
     root = tmp_path / "artifacts" / "vm"
     vmx = root / "Atlaso.vmx"
     unrelated = tmp_path / "other" / "Unrelated.vmx"
@@ -502,7 +574,12 @@ def test_live_registration_rejects_duplicate_library_id(tmp_path: Path) -> None:
 def test_live_registration_rejects_malformed_duplicate_library_id(
     tmp_path: Path, malformed_owner: str
 ) -> None:
-    """A malformed second owner cannot make the selected library ID unique."""
+    """A malformed second owner cannot make the selected library ID unique.
+
+    Args:
+        tmp_path: Pytest temporary directory path.
+        malformed_owner: Inventory row content injected as a malformed owner.
+    """
     root = tmp_path / "artifacts" / "vm"
     vmx = root / "Atlaso.vmx"
     _write_vmx(vmx)
@@ -528,7 +605,11 @@ def test_live_registration_rejects_malformed_duplicate_library_id(
 
 
 def test_already_unregistered_vm_uses_filesystem_cleanup_only(tmp_path: Path) -> None:
-    """An existing unregistered target remains an idempotent cleanup case."""
+    """An existing unregistered target remains an idempotent cleanup case.
+
+    Args:
+        tmp_path: Pytest temporary directory path.
+    """
     root = tmp_path / "artifacts" / "vm"
     vmx = root / "Atlaso.vmx"
     _write_vmx(vmx)
@@ -548,7 +629,11 @@ def test_already_unregistered_vm_uses_filesystem_cleanup_only(tmp_path: Path) ->
 
 
 def test_registration_appearing_before_root_removal_fails_closed(tmp_path: Path) -> None:
-    """A VMX registered after its initial check prevents recursive deletion."""
+    """A VMX registered after its initial check prevents recursive deletion.
+
+    Args:
+        tmp_path: Pytest temporary directory path.
+    """
     root = tmp_path / "artifacts" / "vm"
     vmx = root / "Atlaso.vmx"
     _write_vmx(vmx)
@@ -571,7 +656,11 @@ def test_registration_appearing_before_root_removal_fails_closed(tmp_path: Path)
 
 
 def test_stale_atlaso_registration_ignores_unrelated_broken_entries(tmp_path: Path) -> None:
-    """Scoped stale repair does not validate or remove unrelated library rows."""
+    """Scoped stale repair does not validate or remove unrelated library rows.
+
+    Args:
+        tmp_path: Pytest temporary directory path.
+    """
     parent = tmp_path / "image" / "vmware-workstation"
     root = parent / "test-vms"
     root.mkdir(parents=True)
@@ -607,7 +696,11 @@ def test_stale_atlaso_registration_ignores_unrelated_broken_entries(tmp_path: Pa
 
 
 def test_stale_repair_rejects_duplicate_selected_library_id(tmp_path: Path) -> None:
-    """Scoped repair never prunes an ID that also owns another config path."""
+    """Scoped repair never prunes an ID that also owns another config path.
+
+    Args:
+        tmp_path: Pytest temporary directory path.
+    """
     parent = tmp_path / "image" / "vmware-workstation"
     root = parent / "test-vms"
     root.mkdir(parents=True)
@@ -641,7 +734,11 @@ def test_stale_repair_rejects_duplicate_selected_library_id(tmp_path: Path) -> N
 
 
 def test_stale_repair_preserves_ambiguously_owned_index(tmp_path: Path) -> None:
-    """Duplicate index ownership is left untouched during scoped repair."""
+    """Duplicate index ownership is left untouched during scoped repair.
+
+    Args:
+        tmp_path: Pytest temporary directory path.
+    """
     parent = tmp_path / "image" / "vmware-workstation"
     root = parent / "test-vms"
     root.mkdir(parents=True)
@@ -674,7 +771,11 @@ def test_stale_repair_preserves_ambiguously_owned_index(tmp_path: Path) -> None:
 
 
 def test_external_vmdk_is_detached_before_deletevm(tmp_path: Path) -> None:
-    """Provider deletion never follows a disk path outside the removal root."""
+    """Provider deletion never follows a disk path outside the removal root.
+
+    Args:
+        tmp_path: Pytest temporary directory path.
+    """
     root = tmp_path / "artifacts" / "vm"
     external_disk = tmp_path / "shared" / "depot.vmdk"
     external_disk.parent.mkdir(parents=True)
@@ -703,7 +804,11 @@ def test_external_vmdk_is_detached_before_deletevm(tmp_path: Path) -> None:
 
 
 def test_in_place_vmx_rewrite_after_scan_blocks_deletevm(tmp_path: Path) -> None:
-    """Content evidence is rechecked even when initial detachment was unnecessary."""
+    """Content evidence is rechecked even when initial detachment was unnecessary.
+
+    Args:
+        tmp_path: Pytest temporary directory path.
+    """
     root = tmp_path / "artifacts" / "vm"
     vmx = root / "Atlaso.vmx"
     external_disk = tmp_path / "shared" / "depot.vmdk"
@@ -733,7 +838,11 @@ def test_in_place_vmx_rewrite_after_scan_blocks_deletevm(tmp_path: Path) -> None
 
 
 def test_failed_deletevm_atomically_restores_external_vmdk_attachment(tmp_path: Path) -> None:
-    """A provider failure restores the complete original VMX from its backup."""
+    """A provider failure restores the complete original VMX from its backup.
+
+    Args:
+        tmp_path: Pytest temporary directory path.
+    """
     root = tmp_path / "artifacts" / "vm"
     external_disk = tmp_path / "shared" / "depot.vmdk"
     external_disk.parent.mkdir(parents=True)
@@ -761,7 +870,11 @@ def test_failed_deletevm_atomically_restores_external_vmdk_attachment(tmp_path: 
 
 
 def test_post_detachment_validation_failure_restores_original_vmx(tmp_path: Path) -> None:
-    """An exception after atomic replacement restores the retained original."""
+    """An exception after atomic replacement restores the retained original.
+
+    Args:
+        tmp_path: Pytest temporary directory path.
+    """
     root = tmp_path / "artifacts" / "vm"
     vmx = root / "Atlaso.vmx"
     external_disk = tmp_path / "shared" / "depot.vmdk"
@@ -805,7 +918,11 @@ $module = Import-Module '{module_path}' -Force -PassThru
 
 
 def test_concurrent_vmx_replacement_is_preserved(tmp_path: Path) -> None:
-    """A provider-time replacement blocks recursive root deletion."""
+    """A provider-time replacement blocks recursive root deletion.
+
+    Args:
+        tmp_path: Pytest temporary directory path.
+    """
     root = tmp_path / "artifacts" / "vm"
     vmx = root / "Atlaso.vmx"
     _write_vmx(vmx)
@@ -840,7 +957,15 @@ def test_vmrun_failures_preserve_artifacts(
     delete_exit: int,
     expected: str,
 ) -> None:
-    """Checked provider failures remain terminating."""
+    """Checked provider failures remain terminating.
+
+    Args:
+        tmp_path: Pytest temporary directory path.
+        running: Whether the VMX is marked as running.
+        stop_exit: Simulated stop exit code for the fake vmrun.
+        delete_exit: Simulated deleteVM exit code for the fake vmrun.
+        expected: Expected error substring for stderr assertions.
+    """
     root = tmp_path / "artifacts" / "vm"
     vmx = root / "Atlaso.vmx"
     _write_vmx(vmx)
@@ -880,7 +1005,15 @@ def test_successful_vmrun_must_complete_the_requested_transition(
     delete_sticky: bool,
     expected: str,
 ) -> None:
-    """A zero provider exit code does not replace post-operation verification."""
+    """A zero provider exit code does not replace post-operation verification.
+
+    Args:
+        tmp_path: Pytest temporary directory path.
+        running: Whether the VMX is marked as running.
+        stop_sticky: Simulate stop command not removing running state.
+        delete_sticky: Simulate deleteVM not removing the VMX.
+        expected: Expected error substring for stderr assertions.
+    """
     root = tmp_path / "artifacts" / "vm"
     vmx = root / "Atlaso.vmx"
     _write_vmx(vmx)
@@ -907,7 +1040,11 @@ def test_successful_vmrun_must_complete_the_requested_transition(
 
 
 def test_configured_root_mismatch_is_rejected(tmp_path: Path) -> None:
-    """Exact configured cleanup cannot be redirected to a sibling."""
+    """Exact configured cleanup cannot be redirected to a sibling.
+
+    Args:
+        tmp_path: Pytest temporary directory path.
+    """
     expected = tmp_path / "artifacts" / "expected"
     target = tmp_path / "artifacts" / "target"
     expected.mkdir(parents=True)
@@ -930,7 +1067,11 @@ def test_configured_root_mismatch_is_rejected(tmp_path: Path) -> None:
 
 
 def test_reparse_point_root_is_rejected(tmp_path: Path) -> None:
-    """Recursive cleanup never traverses a linked artifact root."""
+    """Recursive cleanup never traverses a linked artifact root.
+
+    Args:
+        tmp_path: Pytest temporary directory path.
+    """
     real_root = tmp_path / "real"
     real_root.mkdir()
     sentinel = real_root / "sentinel.txt"
@@ -956,7 +1097,11 @@ def test_reparse_point_root_is_rejected(tmp_path: Path) -> None:
 
 
 def test_unvalidated_vmx_is_rejected_by_direct_entry_point(tmp_path: Path) -> None:
-    """Callers cannot omit an in-root VMX from the validated target set."""
+    """Callers cannot omit an in-root VMX from the validated target set.
+
+    Args:
+        tmp_path: Pytest temporary directory path.
+    """
     root = tmp_path / "artifacts" / "vm"
     first = root / "first.vmx"
     second = root / "second.vmx"
@@ -985,7 +1130,11 @@ Remove-AtlasoWorkstationVmArtifacts `
 
 
 def test_late_artifact_after_final_vmrun_list_blocks_root_removal(tmp_path: Path) -> None:
-    """The root snapshot is rechecked after the final provider-state query."""
+    """The root snapshot is rechecked after the final provider-state query.
+
+    Args:
+        tmp_path: Pytest temporary directory path.
+    """
     root = tmp_path / "artifacts" / "vm"
     root.mkdir(parents=True)
     sentinel = root / "sentinel.txt"
@@ -1010,7 +1159,11 @@ def test_late_artifact_after_final_vmrun_list_blocks_root_removal(tmp_path: Path
 
 
 def test_test_vm_ssh_key_inputs_fail_before_cleanup(tmp_path: Path) -> None:
-    """Missing or conflicting SSH key inputs preserve an existing test VM."""
+    """Missing or conflicting SSH key inputs preserve an existing test VM.
+
+    Args:
+        tmp_path: Pytest temporary directory path.
+    """
     source_vmx = tmp_path / "source" / "source.vmx"
     _write_vmx(source_vmx, "Source")
     output_directory = tmp_path / "vm"
