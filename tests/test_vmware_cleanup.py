@@ -529,8 +529,8 @@ def test_missing_running_inventory_path_fails_closed(tmp_path: Path) -> None:
     assert vmx.exists()
 
 
-def test_registered_hard_link_alias_uses_deletevm(tmp_path: Path) -> None:
-    """An out-of-root library alias still identifies the registered target.
+def test_registered_hard_link_alias_fails_closed(tmp_path: Path) -> None:
+    """Provider deletion requires the exact in-root registration path.
 
     Args:
         tmp_path: Pytest temporary directory path.
@@ -560,8 +560,11 @@ def test_registered_hard_link_alias_uses_deletevm(tmp_path: Path) -> None:
         environment=environment,
     )
 
-    assert result.returncode == 0, result.stdout + result.stderr
-    assert [command[2] for command in _commands(log)].count("deleteVM") == 1
+    assert result.returncode != 0
+    assert "non-exact or out-of-scope library path" in result.stderr
+    assert vmx.exists()
+    assert alias.exists()
+    assert "deleteVM" not in [command[2] for command in _commands(log)]
 
 
 def test_registered_alias_with_external_vmdk_fails_closed(tmp_path: Path) -> None:
@@ -600,7 +603,7 @@ def test_registered_alias_with_external_vmdk_fails_closed(tmp_path: Path) -> Non
     )
 
     assert result.returncode != 0
-    assert "registration changed after VMX protection" in result.stderr
+    assert "non-exact or out-of-scope library path" in result.stderr
     assert vmx.read_bytes() == original_bytes
     assert alias.read_bytes() == original_bytes
     assert external_disk.read_text(encoding="utf-8") == "shared"
@@ -883,7 +886,7 @@ def test_live_registration_rejects_non_vmx_hardlink_inventory_entry(
     )
 
     assert result.returncode != 0
-    assert "ambiguous library ID" in result.stderr
+    assert "non-exact or out-of-scope library path" in result.stderr
     assert vmx.exists()
     assert "deleteVM" not in [command[2] for command in _commands(log)]
 

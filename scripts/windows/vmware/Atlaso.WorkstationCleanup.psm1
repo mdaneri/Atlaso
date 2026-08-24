@@ -478,12 +478,16 @@ function Test-AtlasoWorkstationVmxRegistered {
     $matchingIds = [System.Collections.Generic.HashSet[string]]::new([System.StringComparer]::OrdinalIgnoreCase)
     foreach ($id in $ownersById.Keys) {
         foreach ($canonicalPath in $ownersById[$id]) {
-            $matchesTarget = Test-AtlasoSamePath -Left $canonicalPath -Right $VmxPath
-            if (-not $matchesTarget -and (Test-Path -LiteralPath $canonicalPath -PathType Leaf)) {
+            $matchesExactPath = Test-AtlasoSamePath -Left $canonicalPath -Right $VmxPath
+            $matchesTarget = $matchesExactPath
+            if (-not $matchesExactPath -and (Test-Path -LiteralPath $canonicalPath -PathType Leaf)) {
                 $matchesTarget = (
                     (Get-AtlasoPathIdentity -Path $canonicalPath -Description 'registered VMware VMX') -eq
                     $targetIdentity
                 )
+            }
+            if ($matchesTarget -and (-not $matchesExactPath -or -not (Test-AtlasoStrictDescendantPath -ParentPath $ScopeRoot -ChildPath $canonicalPath))) {
+                throw 'VMware Workstation inventory registers the cleanup target through a non-exact or out-of-scope library path; artifacts were preserved.'
             }
             if ($matchesTarget) { $matchingIds.Add($id) | Out-Null }
         }
@@ -518,7 +522,6 @@ function Read-AtlasoStreamBytes {
         $memory.Dispose()
     }
 }
-
 <#
 .SYNOPSIS
 Restore the newest file state with bounded identity-and-content CAS retries.
@@ -596,7 +599,6 @@ function Restore-AtlasoFileAfterCasFailure {
     [System.IO.File]::Move($ReplacementPath, $recoveryPath)
     throw "$Description changed repeatedly during rollback; the newest captured state was preserved at '$recoveryPath'."
 }
-
 <#
 .SYNOPSIS
 Remove only uniquely owned stale registrations inside an Atlaso scope.
@@ -780,7 +782,6 @@ function Remove-AtlasoWorkstationStaleRegistrations {
         }
     }
 }
-
 <#
 .SYNOPSIS
 Capture filesystem identities for a validated artifact root and descendants.
@@ -803,7 +804,6 @@ function Get-AtlasoRootSnapshot {
         Items = $items
     }
 }
-
 <#
 .SYNOPSIS
 Reject new or identity-replaced entries in a captured artifact root.
