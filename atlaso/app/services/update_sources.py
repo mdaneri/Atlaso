@@ -14,6 +14,56 @@ from atlaso.app.secrets import decrypt_secret
 
 UPDATE_SOURCE_KINDS = {"photon", "powershell", "atlaso"}
 ATLASO_CHANNELS = {"stable", "preview", "development"}
+PSGALLERY_NAME = "PSGallery"
+PSGALLERY_SOURCE_URL = "https://www.powershellgallery.com/api/v2"
+
+
+def is_reserved_psgallery_name(value: str) -> bool:
+    """Return whether a source name is the PowerShellGet reserved gallery name.
+
+    Args:
+        value: Candidate PowerShell repository name.
+    """
+    return value.strip().casefold() == PSGALLERY_NAME.casefold()
+
+
+def is_canonical_psgallery_url(value: str) -> bool:
+    """Return whether a URL is the canonical PowerShell Gallery endpoint.
+
+    Args:
+        value: Candidate PowerShell repository URL.
+    """
+    parsed = urlparse(value.strip())
+    try:
+        port = parsed.port
+    except ValueError:
+        return False
+    return (
+        parsed.scheme.casefold() == "https"
+        and (parsed.hostname or "").casefold() == "www.powershellgallery.com"
+        and port is None
+        and parsed.path in {"/api/v2", "/api/v2/"}
+        and not parsed.params
+        and not parsed.query
+        and not parsed.fragment
+        and parsed.username is None
+        and parsed.password is None
+    )
+
+
+def validate_reserved_psgallery(name: str, url: str) -> list[str]:
+    """Reject a reserved PSGallery identity that targets a custom endpoint.
+
+    Args:
+        name: Candidate PowerShell repository name.
+        url: Candidate PowerShell repository URL.
+    """
+    if not is_reserved_psgallery_name(name) or is_canonical_psgallery_url(url):
+        return []
+    return [
+        f"{PSGALLERY_NAME} is reserved for the built-in PowerShell Gallery. "
+        f"Use {PSGALLERY_SOURCE_URL}, or choose a different repository name for a custom endpoint."
+    ]
 
 
 def update_source_settings(source: UpdateSource) -> dict[str, Any]:
@@ -73,6 +123,8 @@ def validate_update_source(source: UpdateSource) -> list[str]:
         return []
     required = source.kind in {"photon", "powershell"}
     errors = validate_http_url(source.url, label=f"{source.name} URL", required=required)
+    if source.kind == "powershell":
+        errors.extend(validate_reserved_psgallery(source.name, source.url))
     if source.kind == "atlaso":
         parsed = urlparse(source.url.strip())
         if source.url.strip() and parsed.scheme != "https":

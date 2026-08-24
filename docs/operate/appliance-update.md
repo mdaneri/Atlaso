@@ -148,6 +148,13 @@ message or only an aggregate step failure. It also performs a repository lookup 
 with an invalid API path fails synchronization. PowerShell checks and installations require every referenced repository
 to have a successful synchronization result; saved edits cannot silently reuse stale package-client state.
 
+`PSGallery` is PowerShellGet's reserved built-in repository name, matched without regard to letter case. It may target
+only the canonical `https://www.powershellgallery.com/api/v2` endpoint; use another source name for a mirror or custom
+repository. When the built-in gallery is absent, synchronization restores it through PowerShellGet's default-gallery
+registration path, applies the selected trusted or untrusted policy, and then requires canonical repository readback
+plus a successful module probe. Repeating synchronization is safe. A registration, readback, policy, or probe failure
+keeps the source unsynchronized and leaves actionable credential-free guidance in the task.
+
 Each source detail presents repository identity first, then its location or discovered runtime data, followed by
 read-only **Repository behavior** values. Desired-state guidance and synchronization state remain together in a
 separated footer. The accessible edit and delete icon actions stay together in the identity header.
