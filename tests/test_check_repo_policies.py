@@ -373,7 +373,7 @@ def test_agent_policy_gate_rejects_missing_spark_model_substitution_policy(
     agents_path = tmp_path / "AGENTS.md"
     agents_path.write_text(
         agents_path.read_text(encoding="utf-8").replace(
-            "do not substitute another model", ""
+            "never substitutes another model", ""
         ),
         encoding="utf-8",
     )
@@ -383,7 +383,7 @@ def test_agent_policy_gate_rejects_missing_spark_model_substitution_policy(
     assert len(findings) == 1
     assert findings[0].path == agents_path
     assert findings[0].message == (
-        "required agent policy marker is missing: do not substitute another model"
+        "required agent policy marker is missing: never substitutes another model"
     )
 
 

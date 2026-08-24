@@ -1405,8 +1405,8 @@ def test_windows_script_names_use_provider_tokens():
     assert "vmware/set-test-nics.ps1" in script_paths
 
 
-def test_windows_documentation_requires_powershell_7():
-    """Verify that windows documentation requires powershell 7."""
+def test_windows_documentation_requires_powershell_74_or_newer():
+    """Verify that Windows documentation requires PowerShell 7.4 or newer."""
     documentation_paths = [
         Path("README.md"),
         *Path("clients").rglob("*.md"),
@@ -1418,7 +1418,7 @@ def test_windows_documentation_requires_powershell_7():
         powershell_blocks = re.findall(r"```powershell\n(.*?)```", text, re.DOTALL)
         assert all("powershell.exe" not in block.lower() for block in powershell_blocks), path
 
-    support_note = "PowerShell 7.x (`pwsh`)"
+    support_note = "PowerShell 7.4 or newer (`pwsh`)"
     for path in (
         Path("image/hyperv/README.md"),
         Path("image/vmware-workstation/README.md"),
@@ -1454,6 +1454,8 @@ def test_create_atlaso_vmware_test_vm_wrapper_uses_common_helpers():
     assert "-TimeoutSec $requestTimeoutSeconds" in script
     assert "Install-ApplianceRootCa -IpAddress $ip -Name $Name -TimeoutSeconds $TimeoutSeconds" in script
     assert "Write-ConnectionSummary" in script
+    assert "Get-AtlasoWorkstationSshHostKey" in script
+    assert "ssh-keyscan" not in script
     assert "Write-SummaryRow" in script
     assert "-ForegroundColor Cyan" in script
     assert "-ForegroundColor DarkGray" in script
@@ -1470,6 +1472,8 @@ def test_create_atlaso_vmware_test_vm_wrapper_uses_common_helpers():
     assert 'Write-SummaryRow -Label "Swagger URL:" -Value "https://$IpAddress/api/docs"' in script
     assert 'Write-SummaryRow -Label "Root CA URL:" -Value "http://$IpAddress/ca/downloads/root-ca.pem"' in script
     assert 'Write-SummaryRow -Label "SSH:" -Value "ssh admin@$IpAddress"' in script
+    assert 'Write-Host "SSH host public key: $($sshHostKey.PublicKey)"' in script
+    assert 'Write-Host "SSH host key fingerprint: $($sshHostKey.Fingerprint)"' in script
     assert "test-only passwordless sudo" in script
     assert 'Write-SummaryRow -Label "Lab DNS:"' in script
     assert "Windows DNS for lab FQDNs" in script
@@ -1576,6 +1580,9 @@ def test_vmware_raw_vmx_workflows_inject_complete_first_boot_ovf_environment_bef
     test_vm = Path("scripts/windows/vmware/create-atlaso-test-vm.ps1").read_text(encoding="utf-8")
     lifecycle = Path("scripts/windows/vmware/run-lifecycle-test.ps1").read_text(encoding="utf-8")
     lifecycle_wrapper = Path("scripts/windows/vmware/invoke-lifecycle-test.ps1").read_text(encoding="utf-8")
+    customizer = Path("scripts/appliance/atlaso-vmware-ovf-customize.py").read_text(
+        encoding="utf-8"
+    )
     docs = Path("docs/reference/vmware-workstation-lifecycle-testing.md").read_text(encoding="utf-8")
 
     for key in (
@@ -1607,6 +1614,13 @@ def test_vmware_raw_vmx_workflows_inject_complete_first_boot_ovf_environment_bef
     assert "Assert-AtlasoWorkstationEd25519PublicKey" in helper
     assert "Resolve-AtlasoWorkstationAdminSshPublicKey" in helper
     assert "[System.Xml.XmlConvert]::VerifyXmlChars($normalized)" in helper
+    assert "guestinfo.atlaso.test_vm_ssh_host_ed25519_public_key" in helper
+    assert "readVariable $resolvedVmxPath runtimeConfig $guestInfoName" in helper
+    assert "ssh-keyscan" not in helper
+
+    assert 'TEST_VM_SSH_HOST_KEY_GUESTINFO = "guestinfo.atlaso.test_vm_ssh_host_ed25519_public_key"' in customizer
+    assert "def publish_test_vm_ssh_host_key()" in customizer
+    assert 'run_initialization_layer("test VM SSH host key", publish_test_vm_ssh_host_key)' in customizer
 
     assert "Atlaso.WorkstationFirstBoot.ps1" in test_vm
     assert "New-AtlasoWorkstationOvfEnvironment" in test_vm

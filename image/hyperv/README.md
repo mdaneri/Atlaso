@@ -8,7 +8,8 @@ management UI or API content.
 ## Host Prerequisites
 
 - Windows host with Hyper-V enabled.
-- PowerShell 7.x (`pwsh`). Windows PowerShell 5.1 (`powershell.exe`) is not supported.
+- PowerShell 7.4 or newer (`pwsh`). Earlier PowerShell releases and Windows PowerShell 5.1 (`powershell.exe`) are not
+  supported.
 - WSL 2 installed and initialized before provisioning the default `Atlaso-Build` image-build distribution. See
   [Windows image-build WSL environment](../../docs/contribute/windows-image-build-wsl.md).
 - Run Packer from an elevated PowerShell 7 session or as a user in the `Hyper-V Administrators` group.

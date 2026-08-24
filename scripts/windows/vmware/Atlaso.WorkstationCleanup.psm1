@@ -209,7 +209,6 @@ function Assert-AtlasoStrictDescendantPath {
         [Parameter(Mandatory = $true)][string]$ChildPath,
         [Parameter(Mandatory = $true)][string]$FailureMessage
     )
-
     if (-not (Test-AtlasoStrictDescendantPath -ParentPath $ParentPath -ChildPath $ChildPath)) {
         throw "$FailureMessage`: $ChildPath"
     }
@@ -232,7 +231,6 @@ function Get-AtlasoPathIdentity {
         [Parameter(Mandatory = $true)][string]$Path,
         [Parameter(Mandatory = $true)][string]$Description
     )
-
     if ($null -eq (Get-Item -LiteralPath $Path -Force -ErrorAction SilentlyContinue)) {
         throw "$Description no longer exists; artifacts were preserved: $Path"
     }
@@ -526,7 +524,6 @@ Readable seekable stream.
 #>
 function Read-AtlasoStreamBytes {
     param([Parameter(Mandatory = $true)][System.IO.Stream]$Stream)
-
     $Stream.Position = 0
     $memory = [System.IO.MemoryStream]::new()
     try {
@@ -716,13 +713,14 @@ function Remove-AtlasoWorkstationStaleRegistrations {
             continue
         }
         if ($line -match '^\s*index\.count\s*=\s*"(?<count>\d+)"\s*$') {
-            $updatedLines.Add("index.count = `"$([Math]::Max(0, [int]$Matches.count - $targetIndexes.Count))`"")
+            $count = 0
+            if (-not [int]::TryParse($Matches.count, [ref]$count)) { $updatedLines.Add($line); continue }
+            $updatedLines.Add("index.count = `"$([Math]::Max(0, $count - $targetIndexes.Count))`"")
             continue
         }
         $updatedLines.Add($line)
     }
     $replacementBytes = [System.Text.UTF8Encoding]::new($false).GetBytes(($updatedLines -join [Environment]::NewLine))
-
     foreach ($entry in $staleEntries) {
         if (Test-Path -LiteralPath $entry.Path -PathType Leaf) {
             throw "A stale Atlaso VMX was recreated before inventory repair; artifacts were preserved: $($entry.Path)"
@@ -731,7 +729,6 @@ function Remove-AtlasoWorkstationStaleRegistrations {
     if (-not (Test-AtlasoByteArraysEqual -Left $originalBytes -Right ([System.IO.File]::ReadAllBytes($InventoryPath)))) {
         throw 'VMware Workstation inventory changed before scoped stale-registration repair; artifacts were preserved.'
     }
-
     $temporaryPath = "$InventoryPath.atlaso-cleanup-$([System.Guid]::NewGuid().ToString('N')).tmp"
     $backupPath = "$InventoryPath.atlaso-backup-$([System.Guid]::NewGuid().ToString('N')).tmp"
     $preserveBackup = $false
@@ -1201,6 +1198,7 @@ function Remove-AtlasoWorkstationVmArtifacts {
         Confirm-AtlasoWorkstationVmInactive -VmrunPath $VmrunPath -VmxPath $resolvedVmxPath
     }
     $providerRemovedRoot = $false
+    $deletedVmxPaths = [System.Collections.Generic.HashSet[string]]::new([System.StringComparer]::OrdinalIgnoreCase)
     foreach ($resolvedVmxPath in $resolvedVmxPaths) {
         if ($providerRemovedRoot) { break }
         $targetIdentity = $validatedTargetIdentities[$resolvedVmxPath]
@@ -1222,7 +1220,7 @@ function Remove-AtlasoWorkstationVmArtifacts {
             if ((Get-AtlasoPathIdentity -Path $resolvedVmxPath -Description 'VMware cleanup target') -ne $expectedDeleteIdentity) {
                 throw "VMware Workstation VMX was replaced immediately before deleteVM; artifacts were preserved: $resolvedVmxPath"
             }
-            $currentKnownVmxPaths = @($resolvedVmxPaths | Where-Object { Test-Path -LiteralPath $_ -PathType Leaf } | ForEach-Object {
+            $currentKnownVmxPaths = @($resolvedVmxPaths | Where-Object { -not $deletedVmxPaths.Contains($_) } | ForEach-Object {
                     $expectedSurvivorIdentity = if (Test-AtlasoSamePath -Left $_ -Right $resolvedVmxPath) { $expectedDeleteIdentity } else { $validatedTargetIdentities[$_] }
                     $expectedSurvivorHash = if (Test-AtlasoSamePath -Left $_ -Right $resolvedVmxPath) { $detachment.ProtectedHash } else { $validatedTargetHashes[$_] }
                     Confirm-AtlasoWorkstationVmInactive -VmrunPath $VmrunPath -VmxPath $_
@@ -1268,6 +1266,7 @@ function Remove-AtlasoWorkstationVmArtifacts {
             Restore-AtlasoWorkstationExternalVmdks -VmxPath $resolvedVmxPath -Detachment $detachment
             throw "VMware Workstation VMX remains after deleteVM succeeded: $resolvedVmxPath"
         }
+        $deletedVmxPaths.Add($resolvedVmxPath) | Out-Null
         $providerRemovedRoot = -not (Test-Path -LiteralPath $resolvedRemovalRoot)
         if ($detachment.Detached -and (Test-Path -LiteralPath $detachment.BackupPath -PathType Leaf)) { Remove-Item -LiteralPath $detachment.BackupPath -Force -ErrorAction Stop }
     }

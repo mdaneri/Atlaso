@@ -13,6 +13,10 @@ key for the bootstrap administrator with test-only passwordless sudo. It never
 creates or reads a private key. Use -SkipSshKeyProvisioning to retain the prior
 password-backed development behavior.
 
+After the VM starts, the wrapper reads the normal test VM's Ed25519 SSH host
+public key through VMware guest-info and prints the exact key plus its SHA-256
+fingerprint for explicit known_hosts verification.
+
 .PARAMETER Name
 VMware display name and default output-folder name for the test appliance.
 
@@ -475,6 +479,15 @@ if ($resolvedSshPublicKeyPath) {
 }
 else {
     Write-Host 'Development SSH access: key provisioning skipped; password-backed sudo remains required.'
+}
+
+if (-not $SkipSshKeyProvisioning -and -not $NoStart -and -not $WhatIfPreference) {
+    $sshHostKey = Get-AtlasoWorkstationSshHostKey `
+        -VmxPath $targetVmx `
+        -VmrunPath $VmrunPath `
+        -TimeoutSeconds $TimeoutSeconds
+    Write-Host "SSH host public key: $($sshHostKey.PublicKey)"
+    Write-Host "SSH host key fingerprint: $($sshHostKey.Fingerprint)"
 }
 
 if (($WaitForIp -or $TrustRootCa) -and -not $NoStart -and -not $WhatIfPreference) {

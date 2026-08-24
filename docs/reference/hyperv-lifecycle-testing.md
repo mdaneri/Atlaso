@@ -12,7 +12,8 @@ status: current
 Atlaso lifecycle interop tests use a separate Hyper-V lab set. They must not reuse or destroy the normal `Atlaso` test
 appliance VM.
 
-Run all Windows commands in PowerShell 7.x (`pwsh`). Windows PowerShell 5.1 (`powershell.exe`) is not supported.
+Run all Windows commands in PowerShell 7.4 or newer (`pwsh`). Earlier PowerShell releases and Windows PowerShell 5.1
+(`powershell.exe`) are not supported.
 
 ## Topology
 

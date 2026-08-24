@@ -718,7 +718,10 @@ Terminal order:
   bootstrap `admin` account for SSH connections. The normal `create-atlaso-test-vm.ps1` wrapper installs the current
   Windows user's existing `.ssh/id_ed25519.pub` and a separate test-only passwordless-sudo rule unless explicitly
   skipped, so key/agent-backed privileged checks use `sudo -n`; it must not generate a key or extend this authority to
-  lifecycle or exported appliances. Root SSH remains disabled. Check SSH/service state with `systemctl status atlaso --no-pager`,
+  lifecycle or exported appliances. After startup, it reads the VM's public Ed25519 host key from test-only VMware
+  guest-info, validates and fingerprints it, and prints it for explicit `known_hosts` verification; never substitute
+  unauthenticated `ssh-keyscan` output. Root SSH remains disabled. Check SSH/service state with
+  `systemctl status atlaso --no-pager`,
   `journalctl -u atlaso -n 120 --no-pager`, and relevant real-state commands such as `nft list ruleset`,
   `resolvectl query <name>`, `getent hosts <name>`, `ip link`, `systemctl status ntpd --no-pager`, or
   `systemctl status systemd-timesyncd --no-pager`.

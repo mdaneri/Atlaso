@@ -40,6 +40,7 @@ PROPERTY_ROOT_PASSWORD = f"{PROPERTY_PREFIX}root_password"
 PROPERTY_ROOT_SSH_ENABLED = f"{PROPERTY_PREFIX}root_ssh_enabled"
 PROPERTY_DEVELOPMENT_ADMIN_SSH_PUBLIC_KEY = f"{PROPERTY_PREFIX}development_admin_ssh_public_key"
 PROPERTY_DEPLOYMENT_ID = f"{PROPERTY_PREFIX}deployment_id"
+TEST_VM_SSH_HOST_KEY_GUESTINFO = "guestinfo.atlaso.test_vm_ssh_host_ed25519_public_key"
 MINIMUM_PASSWORD_LENGTH = 12
 REQUIRED_PROPERTIES = {
     PROPERTY_FQDN,
@@ -54,6 +55,7 @@ NGINX_MANAGEMENT_PATH = Path("/etc/atlaso/nginx/sites.d/management.conf")
 FIREWALL_CONFIG_PATH = Path("/etc/atlaso/nftables.d/atlaso.nft")
 SSHD_ROOT_LOGIN_CONFIG_PATH = Path("/etc/ssh/sshd_config.d/atlaso-root-login.conf")
 DEVELOPMENT_ADMIN_SUDOERS_PATH = Path("/etc/sudoers.d/atlaso-test-vm-admin")
+SSH_HOST_ED25519_PUBLIC_KEY_PATH = Path("/etc/ssh/ssh_host_ed25519_key.pub")
 MARKER_PATH = Path("/var/lib/atlaso/vmware-ovf-customization.applied")
 PENDING_MARKER_PATH = Path("/var/lib/atlaso/vmware-ovf-customization.pending")
 NO_OVF_MARKER_PATH = Path("/var/lib/atlaso/vmware-no-ovf-initialization.applied")
@@ -190,11 +192,16 @@ def parse_boolean_property(properties: dict[str, str], key: str, *, default: boo
     raise OvfCustomizationError(f"{key} must be true or false")
 
 
-def validate_ed25519_public_key(value: str) -> str:
+def validate_ed25519_public_key(
+    value: str,
+    *,
+    field_name: str = PROPERTY_DEVELOPMENT_ADMIN_SSH_PUBLIC_KEY,
+) -> str:
     """Validate and normalize one bounded OpenSSH Ed25519 public key.
 
     Args:
         value: Candidate OpenSSH public-key line.
+        field_name: Non-secret field identifier used in validation errors.
 
     Returns:
         The normalized public-key line, or an empty string when omitted.
@@ -210,22 +217,22 @@ def validate_ed25519_public_key(value: str) -> str:
         or any(ord(character) < 32 or ord(character) == 127 for character in value)
     ):
         raise OvfCustomizationError(
-            f"{PROPERTY_DEVELOPMENT_ADMIN_SSH_PUBLIC_KEY} must be one bounded OpenSSH line"
+            f"{field_name} must be one bounded OpenSSH line"
         )
     parts = value.split(maxsplit=2)
     if len(parts) < 2 or parts[0] != "ssh-ed25519":
         raise OvfCustomizationError(
-            f"{PROPERTY_DEVELOPMENT_ADMIN_SSH_PUBLIC_KEY} must use ssh-ed25519"
+            f"{field_name} must use ssh-ed25519"
         )
     try:
         blob = base64.b64decode(parts[1], validate=True)
     except (binascii.Error, ValueError) as exc:
         raise OvfCustomizationError(
-            f"{PROPERTY_DEVELOPMENT_ADMIN_SSH_PUBLIC_KEY} payload is not valid base64"
+            f"{field_name} payload is not valid base64"
         ) from exc
     if base64.b64encode(blob).decode("ascii") != parts[1]:
         raise OvfCustomizationError(
-            f"{PROPERTY_DEVELOPMENT_ADMIN_SSH_PUBLIC_KEY} payload is not canonical base64"
+            f"{field_name} payload is not canonical base64"
         )
 
     def read_ssh_string(offset: int) -> tuple[bytes, int]:
@@ -242,14 +249,14 @@ def validate_ed25519_public_key(value: str) -> str:
         """
         if offset + 4 > len(blob):
             raise OvfCustomizationError(
-                f"{PROPERTY_DEVELOPMENT_ADMIN_SSH_PUBLIC_KEY} payload is truncated"
+                f"{field_name} payload is truncated"
             )
         length = int.from_bytes(blob[offset : offset + 4], "big")
         start = offset + 4
         end = start + length
         if end > len(blob):
             raise OvfCustomizationError(
-                f"{PROPERTY_DEVELOPMENT_ADMIN_SSH_PUBLIC_KEY} payload is truncated"
+                f"{field_name} payload is truncated"
             )
         return blob[start:end], end
 
@@ -257,12 +264,57 @@ def validate_ed25519_public_key(value: str) -> str:
     public_bytes, offset = read_ssh_string(offset)
     if algorithm != b"ssh-ed25519" or len(public_bytes) != 32 or offset != len(blob):
         raise OvfCustomizationError(
-            f"{PROPERTY_DEVELOPMENT_ADMIN_SSH_PUBLIC_KEY} payload is not one complete Ed25519 key"
+            f"{field_name} payload is not one complete Ed25519 key"
         )
     normalized = f"ssh-ed25519 {parts[1]}"
     if len(parts) == 3 and parts[2]:
         normalized += f" {parts[2]}"
     return normalized
+
+
+def publish_test_vm_ssh_host_key() -> None:
+    """Publish the normal test VM's public Ed25519 host key through VMware guest-info.
+
+    Raises:
+        OvfCustomizationError: If the host key is unavailable, invalid, or cannot be published.
+    """
+    try:
+        public_key = SSH_HOST_ED25519_PUBLIC_KEY_PATH.read_text(encoding="utf-8")
+    except OSError as exc:
+        raise OvfCustomizationError("The test VM SSH host public key is unavailable") from exc
+    # OpenSSH public-key files conventionally contain one final newline. Remove
+    # only that terminator so embedded or repeated line breaks still fail closed.
+    if public_key.endswith("\r\n"):
+        public_key = public_key[:-2]
+    elif public_key.endswith("\n"):
+        public_key = public_key[:-1]
+    normalized = validate_ed25519_public_key(
+        public_key,
+        field_name="test_vm_ssh_host_ed25519_public_key",
+    )
+    if not normalized:
+        raise OvfCustomizationError("test_vm_ssh_host_ed25519_public_key must not be empty")
+    # Comments are not part of host-key identity. Omitting them keeps the VMware
+    # RPC value canonical and avoids interpreting arbitrary ssh-keygen comments.
+    public_key_without_comment = " ".join(normalized.split(maxsplit=2)[:2])
+    rpc_argument = f'info-set {TEST_VM_SSH_HOST_KEY_GUESTINFO} "{public_key_without_comment}"'
+    commands = [
+        ["vmware-rpctool", rpc_argument],
+        ["vmtoolsd", "--cmd", rpc_argument],
+    ]
+    for command in commands:
+        executable = shutil.which(command[0])
+        if executable is None:
+            continue
+        result = subprocess.run(
+            [executable, *command[1:]],
+            check=False,
+            text=True,
+            capture_output=True,
+        )
+        if result.returncode == 0:
+            return
+    raise OvfCustomizationError("VMware Tools could not publish the test VM SSH host public key")
 
 
 def validate_non_network_properties(properties: dict[str, str]) -> dict[str, object]:
@@ -1484,6 +1536,11 @@ def apply_customization(config: dict[str, object], *, dry_run: bool = False) -> 
                 str(config["development_admin_ssh_public_key"]),
             ),
         )
+        # Despite this module's historical OVF name, it is also the guest-side
+        # first-boot customizer for raw Workstation clones. Only the normal test
+        # wrapper injects this development-key property; lifecycle and exported
+        # appliances therefore never publish this convenience-channel value.
+        run_initialization_layer("test VM SSH host key", publish_test_vm_ssh_host_key)
     run_initialization_layer(
         "appliance environment",
         lambda: write_env_file(

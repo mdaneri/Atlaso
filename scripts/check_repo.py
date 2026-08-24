@@ -133,7 +133,7 @@ REQUIRED_POLICY_MARKERS = {
         "## Sol and Spark Delegation",
         "`spark_worker`",
         "`gpt-5.3-codex-spark`",
-        "do not substitute another model",
+        "never substitutes another model",
         "## Mandatory UI Design Guide Gate",
         "CONTRIBUTING.md",
         "CODE_OF_CONDUCT.md",

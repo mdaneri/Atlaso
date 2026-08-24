@@ -773,6 +773,43 @@ def test_multi_vmx_later_restart_before_first_delete_preserves_root(
     assert "deleteVM" not in [command[2] for command in _commands(log)]
 
 
+def test_multi_vmx_later_disappearance_before_first_delete_preserves_root(
+    tmp_path: Path,
+) -> None:
+    """A later expected VMX cannot disappear during final provider checks.
+
+    Args:
+        tmp_path: Pytest temporary directory path.
+    """
+    root = tmp_path / "artifacts" / "vm"
+    first_vmx = root / "first.vmx"
+    second_vmx = root / "second.vmx"
+    _write_vmx(first_vmx, "First")
+    _write_vmx(second_vmx, "Second")
+    vmrun, environment, log, _ = _write_fake_vmrun(
+        tmp_path / "fake",
+        [first_vmx, second_vmx],
+        registered=True,
+        remove_on_list=5,
+        remove_target=second_vmx,
+    )
+
+    result = _run_root_cleanup(
+        tmp_path,
+        removal_root=root,
+        expected_root=root,
+        vmrun_path=vmrun,
+        environment=environment,
+    )
+
+    assert result.returncode != 0
+    assert "VMware cleanup target no longer exists" in result.stderr
+    assert root.exists()
+    assert first_vmx.exists()
+    assert not second_vmx.exists()
+    assert "deleteVM" not in [command[2] for command in _commands(log)]
+
+
 def test_live_registration_rejects_non_vmx_hardlink_inventory_entry(
     tmp_path: Path,
 ) -> None:
@@ -1164,6 +1201,44 @@ def test_unrelated_uncanonicalizable_inventory_index_does_not_block_repair(
     assert not root.exists()
     assert str(stale.resolve()).encode() not in inventory.read_bytes()
     assert b"bad\x00index.vmx" in inventory.read_bytes()
+
+
+def test_unrelated_oversized_inventory_index_count_does_not_block_repair(
+    tmp_path: Path,
+) -> None:
+    """Preserve an unrelated index count outside the supported integer range.
+
+    Args:
+        tmp_path: Pytest temporary directory path.
+    """
+    parent = tmp_path / "image" / "vmware-workstation"
+    root = parent / "test-vms"
+    root.mkdir(parents=True)
+    stale = root / "missing.vmx"
+    oversized_count = "999999999999999999999"
+    vmrun, environment, _, inventory = _write_fake_vmrun(
+        tmp_path / "fake",
+        [],
+        inventory_suffix=(
+            f'vmlist7.config = "{stale.resolve()}"\n'
+            f'index7.id = "{stale.resolve()}"\n'
+            f'index.count = "{oversized_count}"\n'
+        ),
+    )
+
+    result = _run_root_cleanup(
+        tmp_path,
+        removal_root=root,
+        artifact_parent=parent,
+        vmrun_path=vmrun,
+        environment=environment,
+    )
+
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert not root.exists()
+    inventory_text = inventory.read_text(encoding="utf-8")
+    assert str(stale.resolve()) not in inventory_text
+    assert f'index.count = "{oversized_count}"' in inventory_text
 
 
 def test_stale_repair_rejects_duplicate_selected_library_id(tmp_path: Path) -> None:

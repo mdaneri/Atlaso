@@ -185,6 +185,101 @@ function Resolve-AtlasoWorkstationAdminSshPublicKey {
 
 <#
 .SYNOPSIS
+Normalize and fingerprint one verified Ed25519 SSH host public key.
+
+.PARAMETER PublicKey
+The host-derived OpenSSH public-key line.
+#>
+function ConvertTo-AtlasoWorkstationSshHostKeyEvidence {
+    param(
+        [Parameter(Mandatory = $true)][string]$PublicKey
+    )
+
+    $normalized = Assert-AtlasoWorkstationEd25519PublicKey -PublicKey $PublicKey
+    $parts = @($normalized -split ' +', 3)
+    $hostPublicKey = "ssh-ed25519 $($parts[1])"
+    $blob = [System.Convert]::FromBase64String($parts[1])
+    $digest = [System.Security.Cryptography.SHA256]::HashData($blob)
+    $fingerprint = 'SHA256:' + [System.Convert]::ToBase64String($digest).TrimEnd('=')
+    return [pscustomobject]@{
+        PublicKey = $hostPublicKey
+        Fingerprint = $fingerprint
+    }
+}
+
+<#
+.SYNOPSIS
+Read and fingerprint the normal test VM's verified Ed25519 SSH host key.
+
+.DESCRIPTION
+Polls the test-only VMware runtime guest-info value written during first boot.
+The value comes through the host-controlled VM channel rather than an
+unauthenticated network scan.
+
+.PARAMETER VmxPath
+The exact running test VMX path.
+
+.PARAMETER VmrunPath
+Optional VMware vmrun executable override.
+
+.PARAMETER TimeoutSeconds
+The total time allowed for first boot to publish the host key.
+
+.PARAMETER PollSeconds
+The delay between empty guest-info reads.
+#>
+function Get-AtlasoWorkstationSshHostKey {
+    param(
+        [Parameter(Mandatory = $true)][string]$VmxPath,
+        [string]$VmrunPath = '',
+        [Parameter(Mandatory = $true)][int]$TimeoutSeconds,
+        [int]$PollSeconds = 2
+    )
+
+    $resolvedVmxPath = (Resolve-Path -LiteralPath $VmxPath).Path
+    $resolvedVmrunPath = $VmrunPath
+    if ($resolvedVmrunPath) {
+        if (-not (Test-Path -LiteralPath $resolvedVmrunPath -PathType Leaf)) {
+            throw "vmrun.exe not found: $resolvedVmrunPath"
+        }
+        $resolvedVmrunPath = (Resolve-Path -LiteralPath $resolvedVmrunPath).Path
+    }
+    else {
+        $vmrunCommand = Get-Command vmrun -ErrorAction SilentlyContinue
+        foreach ($candidate in @(
+                'C:\Program Files\VMware\VMware Workstation\vmrun.exe',
+                'C:\Program Files (x86)\VMware\VMware Workstation\vmrun.exe'
+            )) {
+            if (-not $resolvedVmrunPath -and (Test-Path -LiteralPath $candidate -PathType Leaf)) {
+                $resolvedVmrunPath = $candidate
+            }
+        }
+        if (-not $resolvedVmrunPath -and $vmrunCommand) {
+            $resolvedVmrunPath = $vmrunCommand.Source
+        }
+        if (-not $resolvedVmrunPath) {
+            throw 'vmrun.exe was not found. Install VMware Workstation Pro or pass -VmrunPath.'
+        }
+    }
+
+    $guestInfoName = 'guestinfo.atlaso.test_vm_ssh_host_ed25519_public_key'
+    $deadline = (Get-Date).AddSeconds($TimeoutSeconds)
+    do {
+        $value = (& $resolvedVmrunPath -T ws readVariable $resolvedVmxPath runtimeConfig $guestInfoName 2>$null |
+            Select-Object -First 1)
+        if ($LASTEXITCODE -eq 0 -and -not [string]::IsNullOrWhiteSpace($value)) {
+            return ConvertTo-AtlasoWorkstationSshHostKeyEvidence -PublicKey $value
+        }
+        if ((Get-Date) -lt $deadline) {
+            Start-Sleep -Seconds $PollSeconds
+        }
+    } while ((Get-Date) -lt $deadline)
+
+    throw "Timed out after $TimeoutSeconds seconds waiting for the verified test VM SSH host key. Confirm first-boot customization and VMware Tools are healthy."
+}
+
+<#
+.SYNOPSIS
 Derive a valid development FQDN from a Workstation VM name.
 
 .PARAMETER Name
