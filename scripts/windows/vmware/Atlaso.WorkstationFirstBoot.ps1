@@ -67,6 +67,7 @@ function Assert-AtlasoWorkstationEd25519PublicKey {
     elseif ($key.EndsWith("`n", [System.StringComparison]::Ordinal)) {
         $key = $key.Substring(0, $key.Length - 1)
     }
+    $key = $key.Trim('"')
     if (
         [string]::IsNullOrWhiteSpace($key) -or
         $key.Length -gt 4096 -or
@@ -178,7 +179,7 @@ function Resolve-AtlasoWorkstationAdminSshPublicKey {
     $fullPath = (Resolve-Path -LiteralPath $resolvedPath).Path
     $publicKey = Assert-AtlasoWorkstationEd25519PublicKey -PublicKey ([System.IO.File]::ReadAllText($fullPath))
     return [pscustomobject]@{
-        Path = $fullPath
+        Path      = $fullPath
         PublicKey = $publicKey
     }
 }
@@ -202,7 +203,7 @@ function ConvertTo-AtlasoWorkstationSshHostKeyEvidence {
     $digest = [System.Security.Cryptography.SHA256]::HashData($blob)
     $fingerprint = 'SHA256:' + [System.Convert]::ToBase64String($digest).TrimEnd('=')
     return [pscustomobject]@{
-        PublicKey = $hostPublicKey
+        PublicKey   = $hostPublicKey
         Fingerprint = $fingerprint
     }
 }
@@ -368,17 +369,17 @@ function New-AtlasoWorkstationOvfEnvironment {
     }
 
     $properties = [ordered]@{
-        'atlaso.deployment_id' = [guid]::NewGuid().ToString('D')
-        'atlaso.management_mode' = 'dhcp'
-        'atlaso.cidr' = ''
-        'atlaso.gateway' = ''
-        'atlaso.ipv6_enabled' = 'false'
-        'atlaso.ipv6_cidr' = ''
-        'atlaso.ipv6_gateway' = ''
-        'atlaso.dns_servers' = ''
-        'atlaso.fqdn' = $Fqdn
-        'atlaso.admin_password' = $AdminPassword
-        'atlaso.root_password' = $RootPassword
+        'atlaso.deployment_id'    = [guid]::NewGuid().ToString('D')
+        'atlaso.management_mode'  = 'dhcp'
+        'atlaso.cidr'             = ''
+        'atlaso.gateway'          = ''
+        'atlaso.ipv6_enabled'     = 'false'
+        'atlaso.ipv6_cidr'        = ''
+        'atlaso.ipv6_gateway'     = ''
+        'atlaso.dns_servers'      = ''
+        'atlaso.fqdn'             = $Fqdn
+        'atlaso.admin_password'   = $AdminPassword
+        'atlaso.root_password'    = $RootPassword
         'atlaso.root_ssh_enabled' = $RootSshEnabled.IsPresent.ToString().ToLowerInvariant()
     }
     if ($DevelopmentAdminSshPublicKey) {
@@ -416,16 +417,16 @@ function Set-AtlasoWorkstationOvfEnvironment {
     $pattern = '^\s*guestinfo\.ovfEnv\s*='
     $updated = $false
     $content = @($content | ForEach-Object {
-        if ($_ -match $pattern) {
-            if (-not $updated) {
-                $line
-                $updated = $true
+            if ($_ -match $pattern) {
+                if (-not $updated) {
+                    $line
+                    $updated = $true
+                }
             }
-        }
-        else {
-            $_
-        }
-    })
+            else {
+                $_
+            }
+        })
     if (-not $updated) {
         $content += $line
     }
