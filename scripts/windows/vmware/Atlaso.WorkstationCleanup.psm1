@@ -1311,14 +1311,17 @@ function Remove-AtlasoWorkstationVmArtifacts {
     $finalInventoryPath = Resolve-AtlasoWorkstationInventoryPath
     Remove-AtlasoWorkstationStaleRegistrations -InventoryPath $finalInventoryPath -ScopeRoot $staleScope
     foreach ($survivingVmxPath in @($resolvedVmxPaths | Where-Object { Test-Path -LiteralPath $_ -PathType Leaf })) {
-        if (Test-AtlasoWorkstationVmxRegistered `
-                -InventoryPath $finalInventoryPath `
-                -VmxPath $survivingVmxPath `
-                -ScopeRoot $resolvedRemovalRoot) {
+        if (Test-AtlasoWorkstationVmxRegistered -InventoryPath $finalInventoryPath -VmxPath $survivingVmxPath -ScopeRoot $resolvedRemovalRoot) {
             throw "A VMware Workstation VM became registered during cleanup; artifacts were preserved: $survivingVmxPath"
         }
     }
     Assert-AtlasoWorkstationNoRunningTarget -VmrunPath $VmrunPath -RemovalRoot $resolvedRemovalRoot -ValidatedTargetIdentities $validatedTargetIdentities
+    $finalInventoryPath = Resolve-AtlasoWorkstationInventoryPath
+    foreach ($survivingVmxPath in @($resolvedVmxPaths | Where-Object { Test-Path -LiteralPath $_ -PathType Leaf })) {
+        if (Test-AtlasoWorkstationVmxRegistered -InventoryPath $finalInventoryPath -VmxPath $survivingVmxPath -ScopeRoot $resolvedRemovalRoot) {
+            throw "A VMware Workstation VM became registered during cleanup; artifacts were preserved: $survivingVmxPath"
+        }
+    }
     if ($providerRemovedRoot -and (Test-Path -LiteralPath $resolvedRemovalRoot)) {
         throw "The VMware artifact root reappeared after provider deletion; artifacts were preserved: $resolvedRemovalRoot"
     }

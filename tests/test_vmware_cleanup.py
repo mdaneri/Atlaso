@@ -1091,6 +1091,33 @@ def test_vm_started_during_final_inventory_work_fails_closed(tmp_path: Path) -> 
     assert "deleteVM" not in [command[2] for command in _commands(log)]
 
 
+def test_vm_registered_during_final_running_check_fails_closed(tmp_path: Path) -> None:
+    """Repeat registration validation after the final running-state query.
+
+    Args:
+        tmp_path: Pytest temporary directory path.
+    """
+    root = tmp_path / "artifacts" / "vm"
+    vmx = root / "Atlaso.vmx"
+    _write_vmx(vmx)
+    vmrun, environment, log, _ = _write_fake_vmrun(
+        tmp_path / "fake", [vmx], register_on_list=4
+    )
+
+    result = _run_root_cleanup(
+        tmp_path,
+        removal_root=root,
+        expected_root=root,
+        vmrun_path=vmrun,
+        environment=environment,
+    )
+
+    assert result.returncode != 0
+    assert "became registered during cleanup" in result.stderr
+    assert vmx.exists()
+    assert "deleteVM" not in [command[2] for command in _commands(log)]
+
+
 def test_missing_vmx_registered_before_root_removal_is_repaired(tmp_path: Path) -> None:
     """Repair a late stale in-scope registration before removing the root.
 
