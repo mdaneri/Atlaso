@@ -32,6 +32,18 @@ The browser stores only expanded or collapsed choices under stable section keys.
 credentials or appliance configuration. If storage is unavailable, malformed, or from an unsupported schema, Atlaso
 keeps every authorized section expanded and navigation remains usable.
 
+## Expand or collapse every section
+
+Use the compact symbol control above the section list to change every rendered section at once. Its symbol, tooltip,
+and accessible name always describe the next action:
+
+- **`<<`** collapses all while any section is expanded.
+- **`>>`** expands all when every section is collapsed.
+
+The bulk action changes only sections rendered for the signed-in identity and saves the same per-section preferences as
+the individual disclosure buttons. Collapsing all can hide the current page's section for the current visit. On the next
+navigation or reload, Atlaso temporarily reopens the new current section without discarding the saved bulk preference.
+
 ## Current-page behavior
 
 On every page load, Atlaso opens the section containing the current page even when that section was previously saved as

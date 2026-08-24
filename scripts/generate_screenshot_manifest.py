@@ -23,18 +23,18 @@ CAPTURE_OVERRIDES = {
         "capture_method": "codex-in-app-browser",
     },
     "primary-navigation-expanded-desktop": {
-        "source_commit": "d3734de0+working-tree",
-        "atlaso_version": "0.9.142",
+        "source_commit": "0df3b4b3+working-tree",
+        "atlaso_version": "0.9.195",
         "capture_method": "codex-in-app-browser",
     },
     "primary-navigation-collapsed-desktop": {
-        "source_commit": "d3734de0+working-tree",
-        "atlaso_version": "0.9.142",
+        "source_commit": "0df3b4b3+working-tree",
+        "atlaso_version": "0.9.195",
         "capture_method": "codex-in-app-browser",
     },
     "primary-navigation-collapsed-responsive": {
-        "source_commit": "d3734de0+working-tree",
-        "atlaso_version": "0.9.142",
+        "source_commit": "0df3b4b3+working-tree",
+        "atlaso_version": "0.9.195",
         "capture_method": "codex-in-app-browser",
     },
     "dhcp-ip-zone-wizard-services-desktop": {
@@ -346,20 +346,20 @@ SPECIAL = {
     "primary-navigation-collapsed-desktop": (
         "/dashboard",
         "navigation-partially-collapsed",
-        "Authenticated primary navigation with independent sections partially collapsed.",
-        "Atlaso Dashboard with Appliance Setup, Identity and Trust, and VCF Workflows navigation sections collapsed.",
+        "Authenticated primary navigation with independent sections partially collapsed and the shared bulk control.",
+        "Atlaso Dashboard with several navigation sections collapsed and the double-right-angle expand control available.",
     ),
     "primary-navigation-collapsed-responsive": (
         "/dashboard",
         "navigation-partially-collapsed",
-        "Authenticated primary navigation with complete disclosure rows at the responsive viewport.",
-        "Atlaso Dashboard responsive layout with independent expanded and collapsed navigation sections.",
+        "Authenticated primary navigation and its compact bulk control at the responsive viewport.",
+        "Responsive Atlaso Dashboard with independent navigation sections and the symbol bulk control.",
     ),
     "primary-navigation-expanded-desktop": (
         "/dashboard",
         "navigation-expanded",
-        "Authenticated primary navigation with every authorized section expanded.",
-        "Atlaso Dashboard with all authorized primary navigation sections expanded.",
+        "Authenticated primary navigation with every authorized section expanded and the shared bulk control.",
+        "Atlaso Dashboard with all authorized navigation sections expanded and the double-left-angle collapse control available.",
     ),
     "managed-ldap-group-members-desktop": (
         "/ldap#groups",

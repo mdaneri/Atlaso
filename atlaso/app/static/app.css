@@ -107,6 +107,40 @@ textarea {
   align-content: start;
 }
 
+.primary-nav-controls {
+  display: flex;
+  min-width: 0;
+  justify-content: flex-end;
+  padding: 0 6px;
+}
+
+.primary-nav-bulk-toggle {
+  width: 32px;
+  min-height: 28px;
+  height: 28px;
+  border: 0;
+  padding: 0;
+  background: transparent;
+  color: #64748b;
+  font-family: ui-monospace, SFMono-Regular, Consolas, "Liberation Mono", monospace;
+  font-size: 0.8rem;
+  font-weight: 700;
+  letter-spacing: -0.12em;
+  white-space: nowrap;
+}
+
+.primary-nav-bulk-toggle:hover,
+.primary-nav-bulk-toggle:focus-visible {
+  border-color: transparent;
+  background: #e2e8f0;
+  color: #334155;
+}
+
+.primary-nav-bulk-toggle:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+
 .nav-section {
   min-width: 0;
   align-self: start;

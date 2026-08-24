@@ -303,9 +303,11 @@ The following cross-cutting boundaries always apply:
 - Authenticated primary navigation renders only non-empty groups after server-side permission filtering. Each group is
   an accessible disclosure with a native button, accurate `aria-expanded` and `aria-controls`, and a visible chevron.
   First use starts every authorized group expanded; browser-local state restores inactive-group choices, while the
-  current page's group always opens without overwriting its saved choice. Keep the global **Review appliance changes**
-  card outside the disclosures and preserve coherent groups at desktop, two-column narrow, and single-column mobile
-  widths.
+  current page's group always opens without overwriting its saved choice. One compact two-state symbol control expands or
+  collapses only the rendered groups, uses `<<` to collapse and `>>` to expand, and updates its accessible name and
+  tooltip to describe its next action. It persists through the same per-group state. Keep the global
+  **Review appliance changes** card outside the disclosures
+  and preserve coherent groups at desktop, two-column narrow, and single-column mobile widths.
 - `/ui/management/appliance-apply` is the only ordinary desired-state host-mutation workflow. The dedicated confirmed
   factory-reset transaction is the sole exception: it preflights and activates every factory apply unit, atomically
   replaces the database, records durable recovery state, invalidates sessions, and must finish with zero pending units.

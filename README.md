@@ -2,8 +2,9 @@
 
 Authenticated primary navigation is organized into accessible, independently collapsible sections. First use keeps
 every authorized section open; later visits restore browser-local choices while always reopening the section that
-contains the current page. Permission-filtered empty sections are never rendered, and the persistent **Review appliance
-changes** card remains outside the disclosures.
+contains the current page. A compact two-state control expands or collapses every rendered section through the same
+per-section preference model. Permission-filtered empty sections are never rendered, and the persistent **Review
+appliance changes** card remains outside the disclosures.
 
 Authenticated pages share a lightweight, visibility-aware Appliance Apply status projection. Apply review and
 validation continue to reconcile live host state, while idle sidebar polling never starts privileged helper work. The
