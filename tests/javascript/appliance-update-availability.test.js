@@ -735,6 +735,29 @@ test("terminal appliance update tasks refresh availability once per observed par
   assert.equal(context.calls, 2);
 });
 
+test("successful repository synchronization promptly forces one readiness refresh per task state", () => {
+  const context = vm.createContext({ calls: 0, Promise });
+  vm.runInContext(
+    `let atlasoNewTaskId = "job-sync";
+     let atlasoLastSourceSyncTaskState = "";
+     function refreshApplianceUpdateAvailability(options) {
+       if (options?.force === true) calls += 1;
+       return Promise.resolve();
+     }
+     ${functionSource("updateApplianceUpdateSourceSyncState")}
+     globalThis.run = updateApplianceUpdateSourceSyncState;`,
+    context,
+  );
+  const running = { id: "job-sync", status: "running", result: { mode: "source_sync" } };
+  const succeeded = { id: "job-sync", status: "succeeded", result: { mode: "source_sync" } };
+  context.run(running);
+  context.run(running);
+  context.run(succeeded);
+  context.run({ ...succeeded, id: "job-other" });
+  context.run({ ...succeeded, is_step: true });
+  assert.equal(context.calls, 2);
+});
+
 test("a newer forced availability response wins over an older response", async () => {
   const pending = [];
   const rendered = [];

@@ -472,3 +472,41 @@ def test_source_sync_json_submission_queues_without_page_render(client):
     assert response.json()["status"] == "pending"
     assert response.json()["mode"] == "source_sync"
     assert response.json()["job_id"].startswith("job_")
+
+
+def test_source_sync_rejects_reserved_gallery_custom_url_before_queueing(client):
+    """Reject an invalid reserved gallery definition before creating a task.
+
+    Args:
+        client: Test application HTTP client.
+    """
+    from atlaso.app.database import SessionLocal
+    from atlaso.app.models import Job, UpdateSource
+
+    login(client)
+    page = client.get("/ui/management/appliance-update")
+    csrf = _csrf_from_page(page.text)
+    with SessionLocal() as db:
+        source = db.execute(
+            select(UpdateSource).where(
+                UpdateSource.kind == "powershell",
+                UpdateSource.name == "PSGallery",
+            )
+        ).scalar_one()
+        source.name = "pSgAlLeRy"
+        source.url = "https://packages.example.test/api/v2"
+        db.add(source)
+        db.commit()
+        before = len(db.execute(select(Job)).scalars().all())
+
+    response = client.post(
+        "/ui/management/appliance-update/source-sync",
+        data={"csrf": csrf},
+        headers={"Accept": "application/json"},
+    )
+
+    assert response.status_code == 422
+    assert "PSGallery is reserved for the built-in PowerShell Gallery" in response.json()["detail"]
+    assert "choose a different repository name" in response.json()["detail"]
+    with SessionLocal() as db:
+        assert len(db.execute(select(Job)).scalars().all()) == before

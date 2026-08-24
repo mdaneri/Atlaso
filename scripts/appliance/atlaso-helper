@@ -210,6 +210,8 @@ AUTOMATION_VAULT_DIR = Path("/run/atlaso-automation-vaults")
 AUTOMATION_USER = "atlaso-automation"
 UPDATE_SOURCE_STATE_PATH = Path("/etc/atlaso/update-sources.json")
 MANAGED_PHOTON_REPO_PATH = Path("/etc/yum.repos.d/atlaso-managed.repo")
+PSGALLERY_NAME = "PSGallery"
+PSGALLERY_SOURCE_URL = "https://www.powershellgallery.com/api/v2"
 ATLASO_HOME = Path("/opt/atlaso")
 ATLASO_RELEASES_DIR = ATLASO_HOME / "releases"
 ATLASO_CURRENT_LINK = ATLASO_HOME / "current"
@@ -10783,6 +10785,105 @@ def _powershell_literal(value: str) -> str:
     return "'" + value.replace("'", "''") + "'"
 
 
+def _is_reserved_psgallery_name(value: str) -> bool:
+    """Return whether a source name is reserved by PowerShellGet.
+
+    Args:
+        value: Candidate PowerShell repository name.
+    """
+    return value.strip().casefold() == PSGALLERY_NAME.casefold()
+
+
+def _is_canonical_psgallery_url(value: str) -> bool:
+    """Return whether a URL is the canonical PowerShell Gallery endpoint.
+
+    Args:
+        value: Candidate PowerShell repository URL.
+    """
+    parsed = urlparse(value.strip())
+    try:
+        port = parsed.port
+    except ValueError:
+        return False
+    return (
+        parsed.scheme.casefold() == "https"
+        and (parsed.hostname or "").casefold() == "www.powershellgallery.com"
+        and port is None
+        and parsed.path in {"/api/v2", "/api/v2/"}
+        and not parsed.params
+        and not parsed.query
+        and not parsed.fragment
+        and parsed.username is None
+        and parsed.password is None
+    )
+
+
+def _validate_reserved_psgallery_sources(definitions: list[object]) -> None:
+    """Reject invalid reserved-gallery definitions before any host mutation.
+
+    Args:
+        definitions: Appliance Update source definitions from the staged manifest.
+
+    Raises:
+        ValueError: If PSGallery is paired with a noncanonical endpoint.
+    """
+    for source in definitions:
+        if (
+            not isinstance(source, dict)
+            or source.get("kind") != "powershell"
+            or source.get("enabled") is not True
+        ):
+            continue
+        name = str(source.get("name") or "").strip()
+        url = str(source.get("url") or "").strip()
+        if _is_reserved_psgallery_name(name) and not _is_canonical_psgallery_url(url):
+            raise ValueError(
+                f"{PSGALLERY_NAME} is reserved for the built-in PowerShell Gallery. "
+                f"Use {PSGALLERY_SOURCE_URL}, or choose a different repository name for a custom endpoint."
+            )
+
+
+def _powershell_repository_sync_script(name: str, url: str, policy: str) -> str:
+    """Return the fail-closed PowerShellGet synchronization script.
+
+    Args:
+        name: Desired repository name.
+        url: Desired repository endpoint.
+        policy: Desired PowerShellGet installation policy.
+    """
+    reserved_gallery = _is_reserved_psgallery_name(name)
+    registration = (
+        "Register-PSRepository -Default -InstallationPolicy $policy"
+        if reserved_gallery
+        else "Register-PSRepository -Name $name -SourceLocation $url -InstallationPolicy $policy"
+    )
+    reconciliation = (
+        "if (-not [string]::Equals(([string]$existing.SourceLocation).TrimEnd('/'), $url.TrimEnd('/'), [System.StringComparison]::OrdinalIgnoreCase)) { "
+        "Unregister-PSRepository -Name $existing.Name -ErrorAction Stop; "
+        "Register-PSRepository -Default -InstallationPolicy $policy "
+        "} else { Set-PSRepository -Name $existing.Name -InstallationPolicy $policy }"
+        if reserved_gallery
+        else "Set-PSRepository -Name $existing.Name -SourceLocation $url -InstallationPolicy $policy"
+    )
+    return (
+        '$ErrorActionPreference = "Stop"; '
+        f"$name = {_powershell_literal(name)}; $url = {_powershell_literal(url)}; "
+        f"$policy = {_powershell_literal(policy)}; "
+        "$credentialArgs = if ($env:LF_REPO_SECRET) { $credential = New-Object System.Management.Automation.PSCredential($env:LF_REPO_USER, (ConvertTo-SecureString $env:LF_REPO_SECRET -AsPlainText -Force)); @{Credential=$credential} } else { @{} }; "
+        "$existing = Get-PSRepository -Name $name -ErrorAction SilentlyContinue; "
+        f"if (-not $existing) {{ {registration} }} "
+        f"else {{ {reconciliation} }}; "
+        "$repository = Get-PSRepository -Name $name -ErrorAction Stop; "
+        "$actualUrl = ([string]$repository.SourceLocation).TrimEnd('/'); "
+        "$expectedUrl = $url.TrimEnd('/'); "
+        "if (-not [string]::Equals($actualUrl, $expectedUrl, [System.StringComparison]::OrdinalIgnoreCase)) { throw 'Registered repository location does not match Atlaso desired state' }; "
+        "if (-not [string]::Equals([string]$repository.InstallationPolicy, $policy, [System.StringComparison]::OrdinalIgnoreCase)) { throw 'Registered repository installation policy does not match Atlaso desired state' }; "
+        "$probe = Find-Module -Repository $repository.Name @credentialArgs -ErrorAction Stop | Select-Object -First 1; "
+        "if (-not $probe) { throw 'PowerShell repository probe returned no modules' }; "
+        "$repository | Select-Object Name,SourceLocation,InstallationPolicy,@{Name='ProbeSucceeded';Expression={$true}} | ConvertTo-Json -Compress"
+    )
+
+
 def _sync_appliance_update_sources(payload: dict, credentials: dict[str, dict[str, str]] | None = None) -> dict:
     """Perform sync appliance update sources.
 
@@ -10794,6 +10895,7 @@ def _sync_appliance_update_sources(payload: dict, credentials: dict[str, dict[st
     definitions = payload.get("source_definitions") or []
     if not isinstance(definitions, list):
         raise ValueError("source_definitions must be a list")
+    _validate_reserved_psgallery_sources(definitions)
     commands: list[dict] = []
     source_results: list[dict] = []
 
@@ -10866,24 +10968,28 @@ def _sync_appliance_update_sources(payload: dict, credentials: dict[str, dict[st
     except (OSError, json.JSONDecodeError):
         previous_state = {}
     previous_powershell_names = {
-        str(value) for value in previous_state.get("powershell_repositories", []) if str(value).strip()
-    } if isinstance(previous_state, dict) else set()
-    current_powershell_names: set[str] = set()
+        str(value).casefold(): str(value)
+        for value in previous_state.get("powershell_repositories", [])
+        if str(value).strip()
+    } if isinstance(previous_state, dict) else {}
+    current_powershell_names: dict[str, str] = {}
     for source in definitions:
         if not isinstance(source, dict) or source.get("kind") != "powershell" or source.get("enabled") is not True:
-            continue
-        if pwsh is None:
-            commands.append({"command": ["pwsh"], "returncode": 127, "success": False, "stdout": "", "stderr": "pwsh command not found"})
-            record_source_result(source, success=False)
             continue
         name = str(source.get("name") or "").strip()
         url = str(source.get("url") or "").strip()
         if not name:
             raise ValueError("PowerShell source name is required")
+        name_key = name.casefold()
+        if pwsh is None:
+            commands.append({"command": ["pwsh"], "returncode": 127, "success": False, "stdout": "", "stderr": "pwsh command not found"})
+            record_source_result(source, success=False)
+            if name_key in previous_powershell_names:
+                current_powershell_names[name_key] = previous_powershell_names[name_key]
+            continue
         parsed = urlparse(url)
         if parsed.scheme not in {"http", "https"} or not parsed.netloc:
             raise ValueError(f"PowerShell source {name} must use an HTTP(S) URL")
-        current_powershell_names.add(name)
         host = str(parsed.hostname or "").strip()
         try:
             socket.getaddrinfo(
@@ -10902,20 +11008,13 @@ def _sync_appliance_update_sources(payload: dict, credentials: dict[str, dict[st
                 }
             )
             record_source_result(source, success=False)
+            if name_key in previous_powershell_names:
+                current_powershell_names[name_key] = previous_powershell_names[name_key]
             continue
         trusted = bool((source.get("settings") or {}).get("trusted")) if isinstance(source.get("settings"), dict) else False
         policy = "Trusted" if trusted else "Untrusted"
         credential = _source_credential(source, credentials)
-        script = (
-            '$ErrorActionPreference = "Stop"; '
-            f"$name = {_powershell_literal(name)}; $url = {_powershell_literal(url)}; "
-            "$credentialArgs = if ($env:LF_REPO_SECRET) { $credential = New-Object System.Management.Automation.PSCredential($env:LF_REPO_USER, (ConvertTo-SecureString $env:LF_REPO_SECRET -AsPlainText -Force)); @{Credential=$credential} } else { @{} }; "
-            "$existing = Get-PSRepository -Name $name -ErrorAction SilentlyContinue; "
-            f"if ($existing) {{ Set-PSRepository -Name $name -SourceLocation $url -InstallationPolicy {policy} }} "
-            f"else {{ Register-PSRepository -Name $name -SourceLocation $url -InstallationPolicy {policy} }}; "
-            "$probe = Find-Module -Repository $name @credentialArgs -ErrorAction Stop | Select-Object -First 1; "
-            "Get-PSRepository -Name $name | Select-Object Name,SourceLocation,InstallationPolicy,@{Name='ProbeSucceeded';Expression={$true}} | ConvertTo-Json -Compress"
-        )
+        script = _powershell_repository_sync_script(name, url, policy)
         env = _appliance_update_powershell_environment()
         if credential:
             env.update({"LF_REPO_USER": str(credential.get("username") or ""), "LF_REPO_SECRET": str(credential["secret"])})
@@ -10924,9 +11023,18 @@ def _sync_appliance_update_sources(payload: dict, credentials: dict[str, dict[st
             env=env,
         )
         commands.append(command)
-        record_source_result(source, success=bool(command.get("success")))
+        source_succeeded = bool(command.get("success"))
+        record_source_result(source, success=source_succeeded)
+        # Once PowerShellGet runs, registration may have completed before a
+        # readback or probe failure. Retain ownership so a later disable,
+        # deletion, or reset still reconciles the possibly-created repository;
+        # source_results remains the authoritative synchronization outcome.
+        current_powershell_names[name_key] = (
+            PSGALLERY_NAME if _is_reserved_psgallery_name(name) else name
+        )
     if pwsh is not None:
-        for name in sorted(previous_powershell_names - current_powershell_names):
+        for name_key in sorted(previous_powershell_names.keys() - current_powershell_names.keys()):
+            name = previous_powershell_names[name_key]
             script = (
                 '$ErrorActionPreference = "Stop"; '
                 f"$name = {_powershell_literal(name)}; "
@@ -10940,10 +11048,19 @@ def _sync_appliance_update_sources(payload: dict, credentials: dict[str, dict[st
             )
             commands.append(command)
             if not command.get("success"):
-                current_powershell_names.add(name)
+                current_powershell_names[name_key] = name
     UPDATE_SOURCE_STATE_PATH.parent.mkdir(parents=True, exist_ok=True)
     UPDATE_SOURCE_STATE_PATH.write_text(
-        json.dumps({"powershell_repositories": sorted(current_powershell_names)}, indent=2, sort_keys=True) + "\n",
+        json.dumps(
+            {
+                "powershell_repositories": sorted(
+                    current_powershell_names.values(), key=str.casefold
+                )
+            },
+            indent=2,
+            sort_keys=True,
+        )
+        + "\n",
         encoding="utf-8",
     )
     UPDATE_SOURCE_STATE_PATH.chmod(0o600)
