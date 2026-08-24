@@ -1715,16 +1715,18 @@ def test_normal_test_vm_first_boot_publishes_host_key_without_client_key(
     assert "atlaso-test" not in str(commands)
 
 
-def test_normal_test_vm_first_boot_rejects_invalid_host_key(tmp_path):
-    """Fail test-only publication when the installed host key is invalid.
+@pytest.mark.parametrize("host_key", ["ssh-rsa invalid\n", "\n"])
+def test_normal_test_vm_first_boot_rejects_invalid_host_key(tmp_path, host_key):
+    """Fail test-only publication when the installed host key is invalid or empty.
 
     Args:
         tmp_path: Isolated filesystem root.
+        host_key: Invalid or empty installed host-key content.
     """
     customizer = load_customizer()
     customizer.SSH_HOST_ED25519_PUBLIC_KEY_PATH = tmp_path / "ssh_host_ed25519_key.pub"
     customizer.SSH_HOST_ED25519_PUBLIC_KEY_PATH.write_text(
-        "ssh-rsa invalid\n",
+        host_key,
         encoding="utf-8",
     )
 

@@ -292,6 +292,8 @@ def publish_test_vm_ssh_host_key() -> None:
         public_key,
         field_name="test_vm_ssh_host_ed25519_public_key",
     )
+    if not normalized:
+        raise OvfCustomizationError("test_vm_ssh_host_ed25519_public_key must not be empty")
     # Comments are not part of host-key identity. Omitting them keeps the VMware
     # RPC value canonical and avoids interpreting arbitrary ssh-keygen comments.
     public_key_without_comment = " ".join(normalized.split(maxsplit=2)[:2])
