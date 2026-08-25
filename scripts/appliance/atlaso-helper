@@ -8204,6 +8204,7 @@ def _wan_config_errors(path: Path) -> list[str]:
             errors.append(f"Route {destination or '<missing>'} references missing WAN policy {policy_name}.")
     for route in parsed["removed_main_defaults"]:
         destination = route.get("destination_cidr", "")
+        destination_network = None
         try:
             destination_network = ip_network(destination, strict=False)
         except ValueError:
@@ -8221,6 +8222,35 @@ def _wan_config_errors(path: Path) -> list[str]:
                 f"Removed main-table default {destination or '<missing>'} references invalid interface "
                 f"{interface_name or '<missing>'}."
             )
+        gateway = route.get("gateway", "").strip()
+        if gateway:
+            try:
+                gateway_address = ip_address(gateway)
+            except ValueError:
+                errors.append(
+                    f"Removed main-table default {destination or '<missing>'} gateway {gateway} is invalid."
+                )
+            else:
+                if (
+                    destination_network is not None
+                    and destination_network.version != gateway_address.version
+                ):
+                    errors.append(
+                        f"Removed main-table default {destination or '<missing>'} gateway family does not match."
+                    )
+        metric_value = route.get("metric", "").strip()
+        if metric_value:
+            try:
+                metric = int(metric_value)
+            except ValueError:
+                errors.append(
+                    f"Removed main-table default {destination or '<missing>'} metric is not an integer."
+                )
+            else:
+                if metric < 0:
+                    errors.append(
+                        f"Removed main-table default {destination or '<missing>'} metric cannot be negative."
+                    )
     for rule in parsed["nat_rules"]:
         name = rule.get("name", "")
         if not name:
@@ -8871,15 +8901,17 @@ def _apply_wan_routes_and_qdiscs(
                 return main_delete.returncode
         touched_qdisc_targets.add(route["interface"])
     for route in parsed["removed_main_defaults"]:
-        main_delete = _run(
-            [
-                *_route_command_prefix(route["destination_cidr"]),
-                "del",
-                route["destination_cidr"],
-                "dev",
-                route["interface"],
-            ]
-        )
+        command = [
+            *_route_command_prefix(route["destination_cidr"]),
+            "del",
+            route["destination_cidr"],
+        ]
+        if route.get("gateway"):
+            command.extend(["via", route["gateway"]])
+        command.extend(["dev", route["interface"]])
+        if route.get("metric"):
+            command.extend(["metric", str(int(route["metric"]))])
+        main_delete = _run(command)
         if main_delete.returncode not in {0, 2}:
             return main_delete.returncode
     policy_by_target: dict[str, dict[str, str]] = {}

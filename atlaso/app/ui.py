@@ -9968,18 +9968,8 @@ def wan_rollback_config_preview(
         baseline_preview,
         {"config_preview": candidate_preview},
     )
-    candidate_mirrors = {
-        (destination, interface_name)
-        for destination, interface_name, _gateway, _metric in mirrored_management_default_routes(
-            candidate_preview
-        )
-    }
-    baseline_mirrors = {
-        (destination, interface_name)
-        for destination, interface_name, _gateway, _metric in mirrored_management_default_routes(
-            baseline_preview
-        )
-    }
+    candidate_mirrors = mirrored_management_default_routes(candidate_preview)
+    baseline_mirrors = mirrored_management_default_routes(baseline_preview)
     removed_main_defaults = sorted(candidate_mirrors - baseline_mirrors)
     if not removed and not removed_main_defaults:
         return baseline_preview + "\n"
@@ -9997,11 +9987,13 @@ def wan_rollback_config_preview(
             )
     if removed_main_defaults:
         lines.extend(["", "[removed_main_defaults]"])
-        for destination, interface_name in removed_main_defaults:
+        for destination, interface_name, gateway, metric in removed_main_defaults:
             lines.extend(
                 [
                     f"route={destination}",
+                    f"gateway={gateway}",
                     f"interface={interface_name}",
+                    f"metric={metric}",
                 ]
             )
     return "\n".join(lines).lstrip("\n") + "\n"

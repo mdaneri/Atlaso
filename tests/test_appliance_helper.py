@@ -5773,6 +5773,73 @@ route=0.0.0.0/0
     assert not any("table" in command for command in commands)
 
 
+def test_wan_rollback_removes_exact_candidate_main_default_metric(tmp_path):
+    """Remove a candidate metric variant without deleting the restored baseline route.
+
+    Args:
+        tmp_path: Temporary directory used for the exact rollback config.
+    """
+    helper = load_helper_module()
+    rollback_path = tmp_path / "candidate-metric-main-default.conf"
+    rollback_path.write_text(
+        """[targets]
+target=eth0
+  kind=physical
+  role=access
+  ip_cidr=192.0.2.10/24
+  routing_domain=lab
+  route_allowed=true
+  management_ui=true
+
+[routes]
+route=0.0.0.0/0
+  gateway=192.0.2.1
+  interface=eth0
+  metric=100
+  enabled=true
+
+[removed_routes]
+
+[removed_main_defaults]
+route=0.0.0.0/0
+  gateway=192.0.2.1
+  interface=eth0
+  metric=50
+
+[routing_rules]
+[nat_rules]
+[wan_policies]
+""",
+        encoding="utf-8",
+    )
+    commands: list[list[str]] = []
+    helper.shutil.which = lambda command: (
+        f"/usr/sbin/{command}" if command in {"ip", "tc"} else None
+    )
+    helper._run = lambda command: (
+        commands.append(command)
+        or subprocess.CompletedProcess(command, 0, "", "")
+    )
+
+    assert helper._wan_config_errors(rollback_path) == []
+    assert helper._apply_wan_routes_and_qdiscs(
+        helper._parse_wan_config(rollback_path),
+        None,
+    ) == 0
+    assert [
+        "ip",
+        "route",
+        "del",
+        "0.0.0.0/0",
+        "via",
+        "192.0.2.1",
+        "dev",
+        "eth0",
+        "metric",
+        "50",
+    ] in commands
+
+
 def test_wan_helper_cleans_managed_policy_rule_windows_before_apply(tmp_path):
     """Verify that wan helper cleans managed policy rule windows before apply.
 

@@ -190,6 +190,40 @@ enabled=true
     assert "[removed_main_defaults]" in rollback
 
 
+def test_wan_rollback_removes_superseded_mirrored_default_metric():
+    """Encode the exact candidate metric variant before restoring the baseline."""
+    from atlaso.app.ui import wan_rollback_config_preview
+
+    baseline = """[targets]
+target=eth0
+role=access
+ip_cidr=192.0.2.10/24
+management_ui=true
+[routes]
+route=0.0.0.0/0
+gateway=192.0.2.1
+interface=eth0
+metric=100
+enabled=true
+[removed_routes]
+[routing_rules]
+[nat_rules]
+[wan_policies]
+"""
+    candidate = baseline.replace("metric=100", "metric=50")
+
+    rollback = wan_rollback_config_preview(
+        candidate,
+        {"config_preview": baseline},
+    )
+
+    cleanup = rollback.split("[removed_main_defaults]", 1)[1]
+    assert "route=0.0.0.0/0" in cleanup
+    assert "gateway=192.0.2.1" in cleanup
+    assert "interface=eth0" in cleanup
+    assert "metric=50" in cleanup
+
+
 def test_appliance_settings_stages_flagged_access_resolver_interface(client):
     """Bind resolver staging to the effective flagged-access listener.
 
