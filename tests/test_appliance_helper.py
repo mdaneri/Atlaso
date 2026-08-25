@@ -11348,6 +11348,68 @@ def test_management_front_door_rolls_back_failed_candidate_readiness(
     assert not any("atlaso-management-ui-restart" in command for command in commands)
 
 
+def test_management_front_door_rolls_back_when_readiness_probe_raises(
+    monkeypatch,
+    tmp_path,
+):
+    """Restore snapshots when a post-activation probe cannot execute.
+
+    Args:
+        monkeypatch: Pytest fixture used to replace helper paths and probes.
+        tmp_path: Temporary directory provided for isolated runtime files.
+    """
+    helper = load_helper_module()
+    nginx_paths = patch_appliance_settings_nginx_paths(monkeypatch, helper, tmp_path)
+    management_site = nginx_paths["management_site"]
+    management_site.parent.mkdir(parents=True, exist_ok=True)
+    management_site.write_text("previous management site\n", encoding="utf-8")
+    dropin = tmp_path / "systemd" / "atlaso.service.d" / "management-https.conf"
+    dropin.parent.mkdir(parents=True)
+    dropin.write_text("previous service drop-in\n", encoding="utf-8")
+
+    def install_candidate(_path: Path, text: str) -> int:
+        """Publish the candidate before the readiness command fails.
+
+        Args:
+            _path: Patched management site path.
+            text: Candidate nginx configuration.
+        """
+        management_site.write_text(text, encoding="utf-8")
+        return 0
+
+    monkeypatch.setattr(helper, "ATLASO_SERVICE_DROPIN_DIR", dropin.parent)
+    monkeypatch.setattr(helper, "ATLASO_SERVICE_HTTPS_DROPIN_PATH", dropin)
+    monkeypatch.setattr(helper, "_factory_reset_runtime_cleanup_is_admitted", lambda: False)
+    monkeypatch.setattr(
+        helper,
+        "_management_handoff_upstream_readiness",
+        lambda **_kwargs: {"status": "200", "stable_samples": 3},
+    )
+    monkeypatch.setattr(
+        helper,
+        "_management_handoff_readiness",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(OSError("curl unavailable")),
+    )
+    monkeypatch.setattr(helper, "_install_nginx_site", install_candidate)
+    monkeypatch.setattr(
+        helper,
+        "_run",
+        lambda command: subprocess.CompletedProcess(command, 0, "", ""),
+    )
+    monkeypatch.setattr(
+        helper,
+        "_nginx_test_command",
+        lambda: subprocess.CompletedProcess(["nginx", "-t"], 0, "", ""),
+    )
+    monkeypatch.setattr(helper, "_reload_nginx", lambda: 0)
+
+    payload = json.loads(appliance_settings_json(management_https_enabled=False))
+    assert helper._configure_atlaso_management_https(payload) == (1, None)
+
+    assert management_site.read_text(encoding="utf-8") == "previous management site\n"
+    assert dropin.read_text(encoding="utf-8") == "previous service drop-in\n"
+
+
 def test_management_front_door_rolls_back_when_nginx_activation_raises(
     monkeypatch,
     tmp_path,

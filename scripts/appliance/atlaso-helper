@@ -5983,7 +5983,7 @@ def _configure_atlaso_management_https(
                 upstream_host=upstream_host,
                 upstream_port=port,
             )
-        except (KeyError, ValueError) as exc:
+        except (KeyError, OSError, ValueError, subprocess.SubprocessError) as exc:
             rollback_errors = _restore_management_front_door_files(previous_files)
             detail = f"management front-door readiness failed: {exc}"
             if rollback_errors:

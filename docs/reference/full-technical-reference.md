@@ -704,10 +704,11 @@ PAM/pwquality during Local Users apply.
 Appliance Settings owns the appliance FQDN, OS hostname, resolver mode, resolver servers, management UI HTTPS
 preference, passwordless web-terminal preference, and root SSH login preference. NTPsec owns appliance time service
 desired state and NTP/NTS enforcement. The helper installs nginx Atlaso site config, writes a loopback-only
-`atlaso.service` override, and applies the Atlaso-owned root SSH and web-terminal CA sshd drop-ins. It daemon-reloads
-systemd without restarting the active Atlaso worker, validates nginx, and reloads nginx only after consecutive Atlaso
-loopback and management front-door readiness checks pass; any readiness failure restores the previous files and keeps
-the known-good front door active. Root SSH and the web terminal are disabled by default. The web terminal requires
+`atlaso.service` override, and applies the Atlaso-owned root SSH and web-terminal CA sshd drop-ins. It proves the Atlaso
+loopback upstream before publishing the candidate, daemon-reloads systemd without restarting the active worker, then
+validates and reloads nginx. Consecutive post-activation loopback and management front-door readiness checks must pass;
+any readiness failure restores the previous files and keeps the known-good front door active. Root SSH and the web
+terminal are disabled by default. The web terminal requires
 management HTTPS, is always bound to the management interface when
 enabled, and may be bound to additional addressed non-management interfaces selected by an administrator.
 Extra-interface nginx listeners expose only login/logout, terminal, WebSocket, and static asset routes; they do not
