@@ -4654,6 +4654,7 @@ function initializeNetworkObjectSourceGroups() {
   const scheduleValidation = () => {
     window.clearTimeout(validationTimer);
     validationTimer = window.setTimeout(() => {
+      validationTimer = 0;
       void validateNetworkObjectSourceGroupEntries(sourceGroupForm);
     }, 160);
   };
@@ -4717,6 +4718,8 @@ function initializeNetworkObjectSourceGroups() {
     },
     validateStep: async ({ form, step }) => {
       if (step.id !== "entries") return { valid: true };
+      window.clearTimeout(validationTimer);
+      validationTimer = 0;
       const result = await validateNetworkObjectSourceGroupEntries(form);
       if (result.valid) return { valid: true };
       return {

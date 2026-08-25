@@ -268,6 +268,7 @@ test("Source Group enhanced editor uses server validation and non-color tag stat
   const validator = functionSource("validateNetworkObjectSourceGroupEntries");
   const decorator = functionSource("decorateNetworkObjectSourceGroupTag");
   const mode = functionSource("syncNetworkObjectSourceGroupMode");
+  const initializer = functionSource("initializeNetworkObjectSourceGroups");
   assert.match(validator, /source-groups\/validate-entries/);
   assert.match(validator, /X-Atlaso-Grid/);
   assert.match(validator, /payload\.entries\.filter\(\(result\) => result\.state === "invalid"\)/);
@@ -277,4 +278,8 @@ test("Source Group enhanced editor uses server validation and non-color tag stat
   assert.match(decorator, /aria-label/);
   assert.match(mode, /fallback\.classList\.add\("hidden"\)/);
   assert.match(mode, /anySourceField\.classList\.remove\("hidden"\)/);
+  assert.match(
+    initializer,
+    /validateStep: async[\s\S]+window\.clearTimeout\(validationTimer\)[\s\S]+validationTimer = 0[\s\S]+await validateNetworkObjectSourceGroupEntries/,
+  );
 });
