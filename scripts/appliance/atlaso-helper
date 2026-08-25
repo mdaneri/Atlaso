@@ -19401,6 +19401,12 @@ def _handle_factory_reset(action: str, args: list[str]) -> int:
                 file=sys.stderr,
             )
             return 2
+        if _recover_management_front_door(quiet=True) != 0:
+            print(
+                "factory-reset admission blocked by incomplete management front-door recovery",
+                file=sys.stderr,
+            )
+            return 1
         return _schedule_factory_reset(args[0])
     if args:
         print(f"factory-reset {action} does not accept a path", file=sys.stderr)
@@ -19417,6 +19423,12 @@ def _handle_factory_reset(action: str, args: list[str]) -> int:
     if action == "apply-root-password":
         return _apply_factory_reset_root_password()
     if action == "resume":
+        if _recover_management_front_door(quiet=True) != 0:
+            print(
+                "factory-reset resume blocked by incomplete management front-door recovery",
+                file=sys.stderr,
+            )
+            return 1
         if not ATLASO_FACTORY_RESET_REQUEST_PATH.is_file():
             print(json.dumps(_factory_reset_state_payload(), sort_keys=True))
             return 0
@@ -19437,6 +19449,18 @@ def _apply_management_handoff(payload: dict) -> int:
     Args:
         payload: Validated handoff payload.
     """
+    if _recover_management_front_door(quiet=True) != 0:
+        print(
+            json.dumps(
+                {
+                    "management_handoff": "failed before mutation",
+                    "failing_layer": "ordinary front-door recovery",
+                },
+                sort_keys=True,
+            ),
+            file=sys.stderr,
+        )
+        return 1
     try:
         state = _snapshot_management_handoff(payload)
     except (OSError, ValueError, json.JSONDecodeError) as exc:

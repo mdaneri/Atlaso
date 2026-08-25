@@ -123,7 +123,9 @@ and the guest-local management address/public-port front door to remain healthy.
 restarted. If activation or readiness fails, the helper restores the exact prior nginx and systemd files, reloads the
 restored front door, and fails the component instead of exposing a continuing 502 response. Those snapshots and their
 marker are synced before publication; an interrupted activation is rolled back by the Atlaso service pre-start gate
-before the application can serve again. The marker is removed only after post-activation readiness succeeds.
+before the application can serve again. The marker is removed after either durable post-activation readiness or a
+completed durable rollback; it remains present only while recovery is incomplete. Protected management handoff and
+factory-reset admission recover any retained ordinary marker before their wider transactions begin.
 
 The dialog still understands the bounded **Applying management settings; Atlaso is reconnecting to task status.** state
 when following a retained task created by an older release that contains authenticated restart metadata. Current

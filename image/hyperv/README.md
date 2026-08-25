@@ -285,10 +285,11 @@ the active worker, then validates and reloads nginx. Consecutive post-activation
 readiness checks must pass; otherwise the helper restores the previous nginx and systemd files and keeps the known-good
 management front door active.
 
-Before uvicorn starts, `atlaso.service` asks the constrained helper to resume a durable
-`/var/lib/atlaso-privileged/factory-reset/request.json` marker. An interrupted complete reset therefore finishes before
-the
-management plane becomes available; an appliance without a marker takes the no-op path.
+Before uvicorn starts, `atlaso.service` first asks the constrained helper to restore any interrupted ordinary
+management-front-door activation under `/var/lib/atlaso-privileged/management-front-door`, then resumes a durable
+`/var/lib/atlaso-privileged/factory-reset/request.json` marker. An interrupted front-door activation or complete reset
+therefore reconciles before the management plane becomes available; only an appliance without either marker takes the
+no-op path.
 
 Appliance Settings also owns the root SSH login switch. The image provisions
 `/etc/ssh/sshd_config.d/atlaso-root-login.conf` with `PermitRootLogin no`; global appliance apply rewrites that

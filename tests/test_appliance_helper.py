@@ -1811,6 +1811,39 @@ def test_management_handoff_candidate_durability_gates_ack(
     assert payload["management_handoff"] == "awaiting application commit"
 
 
+def test_management_handoff_blocks_before_snapshot_when_ordinary_recovery_fails(
+    monkeypatch,
+    capsys,
+):
+    """Do not begin a wider handoff while ordinary rollback remains incomplete.
+
+    Args:
+        monkeypatch: Pytest fixture used to replace recovery and snapshot behavior.
+        capsys: Pytest fixture used to inspect the bounded failure result.
+    """
+    helper = load_helper_module()
+    events: list[str] = []
+    monkeypatch.setattr(
+        helper,
+        "_recover_management_front_door",
+        lambda *, quiet=False: events.append(f"recover:{quiet}") or 1,
+    )
+    monkeypatch.setattr(
+        helper,
+        "_snapshot_management_handoff",
+        lambda _payload: events.append("snapshot") or {},
+    )
+
+    assert helper._apply_management_handoff({}) == 1
+
+    assert events == ["recover:True"]
+    failure = json.loads(capsys.readouterr().err.splitlines()[-1])
+    assert failure == {
+        "failing_layer": "ordinary front-door recovery",
+        "management_handoff": "failed before mutation",
+    }
+
+
 def test_management_handoff_does_not_schedule_precommit_atlaso_restart(monkeypatch, tmp_path):
     """Persist the proven loopback command without restarting Atlaso pre-commit.
 
@@ -3062,6 +3095,55 @@ def test_factory_reset_helper_resume_is_idempotent(monkeypatch, tmp_path):
     )
 
     assert helper._handle_factory_reset("resume", []) == 0
+
+
+@pytest.mark.parametrize(
+    ("action", "args", "blocked_call"),
+    [
+        ("schedule", ["staged-credentials.json"], "schedule"),
+        ("resume", [], "resume"),
+    ],
+)
+def test_factory_reset_blocks_before_wider_transaction_when_front_door_recovery_fails(
+    monkeypatch,
+    capsys,
+    action,
+    args,
+    blocked_call,
+):
+    """Require ordinary rollback before factory-reset admission or resume.
+
+    Args:
+        monkeypatch: Pytest fixture used to replace recovery and reset operations.
+        capsys: Pytest fixture used to inspect the bounded failure message.
+        action: Factory-reset lifecycle action under test.
+        args: Arguments supplied to the helper action.
+        blocked_call: Wider reset operation that must remain untouched.
+    """
+    helper = load_helper_module()
+    calls: list[str] = []
+    monkeypatch.setattr(
+        helper,
+        "_recover_management_front_door",
+        lambda *, quiet=False: calls.append(f"recover:{quiet}") or 1,
+    )
+    monkeypatch.setattr(
+        helper,
+        "_schedule_factory_reset",
+        lambda _path: calls.append("schedule") or 0,
+    )
+    monkeypatch.setattr(
+        helper,
+        "_factory_reset_runner",
+        lambda *, boot_resume: calls.append("resume")
+        or subprocess.CompletedProcess(["factory-reset"], 0, "", ""),
+    )
+
+    assert helper._handle_factory_reset(action, args) == 1
+
+    assert calls == ["recover:True"]
+    assert blocked_call not in calls
+    assert "incomplete management front-door recovery" in capsys.readouterr().err
 
 
 def test_factory_reset_network_runtime_cleanup_uses_live_owned_state(monkeypatch, tmp_path, capsys):

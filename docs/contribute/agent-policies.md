@@ -926,9 +926,12 @@ Terminal order:
   service drop-in without restarting Atlaso. Persist and sync root-only backups plus a recovery marker beneath the
   root-owned `/var/lib/atlaso-privileged` boundary before candidate mutation; use no-follow descriptor-relative reads
   and reject unsafe ownership, modes, links, or file types during recovery. Sync every final candidate file and parent
-  directory before clearing the marker after readiness succeeds, and run recovery before Atlaso startup. Candidate
-  activation, readiness, interruption, or recovery failure restores the exact previous nginx site/include/main files
-  and service drop-in, then validates and reloads the restored front door; incomplete recovery blocks startup.
+  directory before clearing the marker after readiness succeeds, and run recovery before Atlaso startup. Clear the
+  marker after a completed durable rollback as well, but retain it while recovery is incomplete. Protected management
+  handoff and factory-reset admission must recover retained ordinary front-door state before their wider snapshots or
+  mutations begin. Candidate activation, readiness, interruption, or recovery failure restores the exact previous
+  nginx site/include/main files and service drop-in, then validates and reloads the restored front door; incomplete
+  recovery blocks startup.
 - The web terminal is off by default, requires management HTTPS, and always includes management when enabled. Configure
   additional addressed interfaces with the shared tag editor; keep the management tag locked and reject missing,
   disabled, trunk-only, unused, or addressless selections. Additional selected addresses receive only login/logout,

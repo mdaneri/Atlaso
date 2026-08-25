@@ -707,9 +707,11 @@ desired state and NTP/NTS enforcement. The helper installs nginx Atlaso site con
 `atlaso.service` override, and applies the Atlaso-owned root SSH and web-terminal CA sshd drop-ins. It proves the Atlaso
 loopback upstream before publishing the candidate, daemon-reloads systemd without restarting the active worker, then
 validates and reloads nginx. Consecutive post-activation loopback and management front-door readiness checks must pass;
-the previous files are durably backed up and marked before publication, and the marker is cleared only after readiness.
-Any readiness failure restores the previous files and keeps the known-good front door active; an Atlaso pre-start gate
-performs the same rollback after a reboot or helper interruption and blocks startup while recovery is incomplete. Root
+the previous files are durably backed up and marked before publication, and the marker is cleared after durable
+readiness or completed durable rollback. Any readiness failure restores the previous files and keeps the known-good
+front door active; an Atlaso pre-start gate performs the same rollback after a reboot or helper interruption and blocks
+startup while recovery is incomplete. Protected management handoff and factory reset recover retained ordinary state
+before beginning their wider front-door transactions. Root
 SSH and the web terminal are disabled by default. The web terminal requires
 management HTTPS, is always bound to the management interface when
 enabled, and may be bound to additional addressed non-management interfaces selected by an administrator.
