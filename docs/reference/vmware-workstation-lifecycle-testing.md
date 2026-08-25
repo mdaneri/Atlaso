@@ -20,6 +20,8 @@ then pass its opaque Environment ID through `-OnePasswordEnvironmentId` and the 
 `-OnePasswordAccount`. The handoff uses the supported 1Password Python SDK desktop integration and retrieves the value
 only inside the bounded Paramiko deployment child, preserves
 SSH known-host verification, and fails closed when authorization or any required Environment input is unavailable.
+Desktop authorization and Environment retrieval each use the deployment timeout, so an ignored approval prompt or a
+non-responsive SDK exits without beginning the VMware deployment.
 Key-backed Windows
 transfers keep `scp` sources and destinations separate and cross the PowerShell login shell through a secret-free
 base64 `sh -lc` wrapper. Password-backed SSH supports one password-only keyboard-interactive challenge, rejects OTP/MFA

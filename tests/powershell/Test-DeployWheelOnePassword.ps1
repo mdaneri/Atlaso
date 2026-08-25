@@ -71,6 +71,10 @@ if (-not $scriptText.Contains('len(matches) != 1 or not matches[0].masked or not
 if (-not $scriptText.Contains('1Password desktop authorization or exact Environment access failed', [System.StringComparison]::Ordinal)) {
     throw 'Authorization and Environment failures must fail closed without secret output.'
 }
+if (($scriptText.Split('await asyncio.wait_for(', [System.StringSplitOptions]::None).Count - 1) -lt 2 -or
+    ($scriptText.Split('timeout=args.timeout', [System.StringSplitOptions]::None).Count - 1) -lt 2) {
+    throw 'Desktop authorization and Environment retrieval must each use the bounded deployment timeout.'
+}
 if ($scriptText.Contains("'run', '--environment'", [System.StringComparison]::Ordinal) -or
     $scriptText.Contains('Assert-OnePasswordEnvironmentSupport', [System.StringComparison]::Ordinal)) {
     throw 'The stable bridge must not depend on the beta-only op run Environment flag.'

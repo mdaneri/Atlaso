@@ -684,12 +684,18 @@ except ImportError as exc:
 
 async def load_password():
     try:
-        onepassword = await Client.authenticate(
-            auth=DesktopAuth(account_name=args.onepassword_account),
-            integration_name="Atlaso VMware deployment",
-            integration_version="v1",
+        onepassword = await asyncio.wait_for(
+            Client.authenticate(
+                auth=DesktopAuth(account_name=args.onepassword_account),
+                integration_name="Atlaso VMware deployment",
+                integration_version="v1",
+            ),
+            timeout=args.timeout,
         )
-        response = await onepassword.environments.get_variables(args.onepassword_environment_id)
+        response = await asyncio.wait_for(
+            onepassword.environments.get_variables(args.onepassword_environment_id),
+            timeout=args.timeout,
+        )
     except Exception as exc:
         raise SystemExit(
             "1Password desktop authorization or exact Environment access failed; no deployment was attempted."

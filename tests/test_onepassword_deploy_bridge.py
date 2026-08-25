@@ -30,7 +30,9 @@ def _run_child(tmp_path: Path, mode: str) -> subprocess.CompletedProcess[str]:
     package_path.mkdir(parents=True)
     fake_secret = "unit-test-secret-sentinel"
     (package_path / "__init__.py").write_text(
-        f'''class DesktopAuth:
+        f'''import asyncio
+
+class DesktopAuth:
     def __init__(self, account_name):
         self.account_name = account_name
 
@@ -42,6 +44,8 @@ class Variable:
 
 class Environments:
     async def get_variables(self, environment_id):
+        if "{mode}" == "hang-environment":
+            await asyncio.sleep(3600)
         if environment_id != "atlaso-environment-id":
             raise RuntimeError("wrong environment")
         variables = []
@@ -54,6 +58,8 @@ class Environments:
 class Client:
     @staticmethod
     async def authenticate(**kwargs):
+        if "{mode}" == "hang-auth":
+            await asyncio.sleep(3600)
         if "{mode}" == "denied":
             raise RuntimeError("authorization denied")
         return type("Sdk", (), {{"environments": Environments()}})()
@@ -127,7 +133,7 @@ class Client:
     return subprocess.run(args, check=False, capture_output=True, text=True)
 
 
-@pytest.mark.parametrize("mode", ["denied", "wrong-environment"])
+@pytest.mark.parametrize("mode", ["denied", "wrong-environment", "hang-auth", "hang-environment"])
 def test_sdk_authorization_and_environment_fail_closed(tmp_path: Path, mode: str) -> None:
     """Reject unavailable authorization and an inaccessible Environment.
 
