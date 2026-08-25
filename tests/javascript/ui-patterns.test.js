@@ -404,6 +404,10 @@ test("createGrid applies permission state and keyboard context-menu behavior", a
   await TabulatorStub.last.emit("rowDblClick", { type: "dblclick" }, editableRow);
   assert.deepEqual(openedRow, { id: 2 });
   openedRow = null;
+  const nestedButton = new FakeElement({ tagName: "BUTTON" });
+  const nestedEnter = await editableRowElement.emit("keydown", { key: "Enter", target: nestedButton });
+  assert.equal(nestedEnter.defaultPrevented, undefined);
+  assert.equal(openedRow, null);
   await editableRowElement.emit("keydown", { key: "Enter" });
   assert.deepEqual(openedRow, { id: 2 });
   await editableRowElement.emit("keydown", { key: "F10", shiftKey: true });
@@ -414,6 +418,7 @@ test("createWizard locks future steps and supports async validation and review",
   installBrowserGlobals();
   const fixture = wizardFixture(["identity", "config", "review"]);
   let configValid = false;
+  let reviewValid = true;
   let reviewPrepared = false;
   const controller = createWizard({
     form: fixture.form,
@@ -431,6 +436,10 @@ test("createWizard locks future steps and supports async validation and review",
     },
     prepareReview: () => {
       reviewPrepared = true;
+      if (!reviewValid) {
+        return { valid: false, step: "config", message: "Review state is stale.", field: "config_field" };
+      }
+      return { valid: true };
     },
   });
 
@@ -444,6 +453,13 @@ test("createWizard locks future steps and supports async validation and review",
   assert.equal(await controller.next(), true);
   assert.equal(controller.currentStepId, "review");
   assert.equal(reviewPrepared, true);
+  assert.equal(await controller.back(), true);
+  assert.equal(await controller.back(), true);
+  reviewValid = false;
+  await fixture.nav[2].emit("click");
+  assert.equal(controller.currentStepId, "config");
+  assert.equal(fixture.error.textContent, "Review state is stale.");
+  assert.equal(fixture.controls[1].getAttribute("aria-invalid"), "true");
 });
 
 test("createWizard supports conditional next and back routing", async () => {

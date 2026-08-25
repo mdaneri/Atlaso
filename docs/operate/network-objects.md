@@ -9,9 +9,10 @@ status: current
 
 # Network Objects
 
-Open **Network Objects** under **Appliance Setup** to manage reusable Source Groups. A Source Group can contain IPv4 or
-IPv6 addresses, CIDRs, `any`, or stable references to other Source Groups. Firewall rules, managed-rule assignments,
-and NAT rules consume the same objects.
+Open **Network Objects** under **Appliance Setup** to manage reusable Source Groups. A Source Group can match every
+source, or contain explicit IPv4 or IPv6 addresses, CIDRs, and stable references to other Source Groups. Firewall
+rules, managed-rule assignments, and NAT rules consume the same objects. The collection fills the primary workspace;
+large sets scroll inside the compact grid while its heading and validation state remain visible.
 
 <!-- BEGIN GENERATED INTERFACE OVERVIEW -->
 ## Interface overview
@@ -28,9 +29,19 @@ This verified appliance view provides visual orientation before you begin.
 
 1. Select **+ Add Source Group here**, double-click an existing row, or choose **Edit Source Group** from its row menu.
 2. Enter a unique name and optional description.
-3. Enter one address, CIDR, `any`, or `group:<stable-id>` reference per line.
-4. Review the normalized entries, current consumers, and validation state before saving.
-5. Return to the Firewall or NAT wizard when Network Objects was opened from **Manage source groups**.
+3. Leave **Any source** enabled to match every IPv4 and IPv6 source, or disable it to add explicit entry tags.
+4. Add one address, CIDR, or `group:<stable-id>` reference at a time. Enter, comma, paste, or leaving the input creates
+   tags; the **+** menu lists current nested Source Groups.
+5. Resolve every **Invalid** tag before continuing. **Needs attention** identifies a non-blocking canonical
+   normalization or duplicate; the review submits the first canonical duplicate only. Every state includes text as
+   well as color, and Enter or F2 edits a focused tag.
+6. Review the canonical entries, current consumers, and validation state before saving.
+7. Return to the Firewall or NAT wizard when Network Objects was opened from **Manage source groups**.
+
+The **Any source** switch is exclusive: while enabled, explicit tags are retained in the open wizard but disabled and
+excluded from submission. Turning the switch off restores those unsaved tags. Existing API and settings-archive
+payloads continue to represent this mode as `entries: ["any"]`. Without JavaScript, the labeled Entries textarea
+continues to describe the established line-separated format, and server-side validation remains authoritative.
 
 The built-in **Any** row always remains visible and read-only. Saved identifiers remain stable when an object is
 renamed, so nested references and rule assignments do not silently change meaning.

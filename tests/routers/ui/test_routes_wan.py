@@ -63,6 +63,12 @@ def test_routes_wan_policy_form_renders(client):
     assert 'data-routes-wan-nat-source-mode' in response.text
     assert 'data-routes-wan-default-route' in response.text
     assert 'data-routes-wan-default-family' in response.text
+    assert '<span>IP family</span>' in response.text
+    assert 'type="radio" name="default_route_family" value="4"' in response.text
+    assert 'type="radio" name="default_route_family" value="6"' in response.text
+    assert "Default route family" not in response.text
+    assert 'class="form-grid route-path-choice-grid"' in response.text
+    assert ".route-family-field[hidden]" in client.get("/static/app.css").text
     assert 'name="destination_cidr" required' in response.text
     assert 'value="IPv4 masquerade" readonly' in response.text
     assert "Europe WAN" in response.text

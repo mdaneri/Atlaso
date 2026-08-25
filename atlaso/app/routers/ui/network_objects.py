@@ -31,6 +31,7 @@ from atlaso.app.services.firewall import (
 )
 from atlaso.app.services.network_objects import (
     acquire_network_objects_write_lock,
+    classify_source_group_entry,
     normalize_source_group,
     orphaned_source_group_consumer_errors,
     source_group_consumers,
@@ -396,6 +397,106 @@ def build_router(dependencies: NetworkObjectsUiDependencies) -> NetworkObjectsUi
         """
         return await _mutate_source_groups(request, identity, db)
 
+    @router.post(
+        "/network-objects/source-groups/validate-entries",
+        include_in_schema=False,
+        response_model=None,
+    )
+    async def validate_source_group_entries(
+        request: Request,
+        _identity: Identity = Depends(require_session_identity),
+        db: Session = Depends(get_db),
+    ) -> JSONResponse:
+        """Validate JavaScript tag-editor entries with server-owned rules.
+
+        Args:
+            request: Incoming browser-only validation request.
+            _identity: Authenticated identity authorizing the request.
+            db: Active database session.
+
+        Returns:
+            Per-entry canonical states plus aggregate Source Group validation.
+        """
+        form = await request.form()
+        verify_csrf(request, str(form.get("csrf", "")))
+        state = source_group_state_for_db(db)
+        groups = [normalize_source_group(group) for group in state["groups"]]
+        edited_group_id = str(form.get("group_id") or "")
+        uses_any = str(form.get("any_source") or "") == "1"
+        raw_entries = ["any"] if uses_any else [str(value) for value in form.getlist("group_entries")]
+        results = (
+            [
+                {
+                    "state": "valid",
+                    "canonical": "any",
+                    "kind": "reserved",
+                    "message": "Any source is selected.",
+                }
+            ]
+            if uses_any
+            else [
+                classify_source_group_entry(value, groups, edited_group_id=edited_group_id)
+                for value in raw_entries
+            ]
+        )
+
+        seen: set[str] = set()
+        for result in results:
+            canonical_key = result["canonical"].casefold()
+            if result["state"] == "invalid" or not canonical_key:
+                continue
+            if canonical_key in seen:
+                result["state"] = "needs_attention"
+                result["message"] = "Duplicate entry; Atlaso will submit the first canonical value only."
+            else:
+                seen.add(canonical_key)
+
+        aggregate_errors: list[str] = []
+        if results and all(result["state"] != "invalid" for result in results):
+            candidate_entries = list(dict.fromkeys(result["canonical"] for result in results))
+            candidate_name = str(form.get("group_name") or "Source Group").strip() or "Source Group"
+            if edited_group_id:
+                existing_index = next(
+                    (index for index, group in enumerate(groups) if group["id"] == edited_group_id),
+                    None,
+                )
+                if existing_index is not None:
+                    groups[existing_index] = normalize_source_group(
+                        {**groups[existing_index], "name": candidate_name, "entries": candidate_entries}
+                    )
+            else:
+                groups.append(
+                    normalize_source_group(
+                        {
+                            "id": "__candidate__",
+                            "name": candidate_name,
+                            "entries": candidate_entries,
+                            "description": "Candidate Source Group.",
+                        }
+                    )
+                )
+            aggregate_errors = validate_firewall_source_groups(groups)
+            nat_rules = db.execute(select(NatRule).order_by(NatRule.priority, NatRule.name)).scalars().all()
+            aggregate_errors.extend(
+                error
+                for nat_errors in source_group_nat_validation_errors(
+                    groups,
+                    nat_rules,
+                    include_disabled=True,
+                ).values()
+                for error in nat_errors
+            )
+
+        return JSONResponse(
+            {
+                "entries": results,
+                "valid": bool(results)
+                and all(result["state"] != "invalid" for result in results)
+                and not aggregate_errors,
+                "errors": list(dict.fromkeys(aggregate_errors)),
+            }
+        )
+
     @router.post("/firewall/source-groups", include_in_schema=False, response_model=None)
     async def update_source_groups_legacy(
         request: Request,
@@ -426,6 +527,7 @@ def build_router(dependencies: NetworkObjectsUiDependencies) -> NetworkObjectsUi
         "persist_source_group_state": persist_source_group_state,
         "legacy_source_groups_page": legacy_source_groups_page,
         "update_source_groups": update_source_groups,
+        "validate_source_group_entries": validate_source_group_entries,
         "update_source_groups_legacy": update_source_groups_legacy,
     }
     return NetworkObjectsUiRouter(router=router, endpoints=endpoints)

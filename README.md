@@ -52,8 +52,9 @@ brings infrastructure, storage, identity, networking, and lifecycle workflows in
 - [Network configuration](docs/operate/networking.md) — inspect physical interfaces, preserve and explicitly review a
   DHCP-learned management gateway during DHCP-to-static conversion, and manage each tagged VLAN as one reviewed wizard
   record using the shared management, access, route, or unused role contract before global apply.
-- [Network Objects](docs/operate/network-objects.md) — create reusable Source Groups, review their nested, Firewall,
-  managed-rule, and NAT consumers, and return to an in-progress rule wizard without losing its tab-local draft.
+- [Network Objects](docs/operate/network-objects.md) — create reusable Source Groups in a full-height compact grid,
+  choose exclusive Any-source behavior, validate explicit address/CIDR/nested-group tags individually, review their
+  Firewall, managed-rule, and NAT consumers, and return to an in-progress rule wizard without losing its tab-local draft.
 - [Use the Atlaso API](docs/operate/api.md) — create least-privilege tokens, call the versioned REST contract safely,
   and interpret responses, request IDs, locks, and apply boundaries. Typed physical-interface PATCH requests reconcile
   dependent service, ESX Storage, Web Terminal, DHCP, and Network Boot bindings in the same
@@ -75,9 +76,9 @@ brings infrastructure, storage, identity, networking, and lifecycle workflows in
   Startup rejects inconsistent success evidence and resumes only untouched update children.
 - [Services](docs/services/index.md) — configure DNS, identity, storage, network boot, and VCF integrations.
 - [Network configuration](docs/operate/networking.md) — distinguish static paths from forwarding permissions, create
-  explicit IPv4 or IPv6 default routes without entering `/0` manually, and manage Static Routes, Routing Permissions,
-  IPv4 masquerade NAT rules, and interface-level WAN Simulation through reviewed add/edit wizards before global
-  appliance apply.
+  explicit IPv4 or IPv6 default routes through native IP-family choices without entering `/0` manually, and manage
+  Static Routes, Routing Permissions, IPv4 masquerade NAT rules, and interface-level WAN Simulation through reviewed
+  add/edit wizards before global appliance apply.
 - [Public Services](docs/services/public-services.md) — use the canonical `/ui/management` and `/ui/public` browser
   planes, understand interface-aware `/` dispatch, and keep machine/protocol routes at their stable paths.
 - [DNS](docs/services/dns.md) — preserve explicit forwarders or usable resolvers from the management interface's exact

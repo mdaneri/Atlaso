@@ -1493,7 +1493,10 @@ function initializeAtlasoResourceWizard(config) {
     status: config.statusSelector,
     pattern: "wizard-backed",
     emptyMessage: config.emptyMessage,
-    onOpenRow: (data, row, event) => openResource(data, event?.currentTarget || row?.getElement?.()),
+    onOpenRow: (data, row, event) => {
+      if (data?.is_new) return;
+      openResource(data, event?.currentTarget || row?.getElement?.());
+    },
     rowActions,
     options,
   });
@@ -1525,9 +1528,9 @@ function initializeAtlasoResourceWizard(config) {
       return config.validateStep(state);
     },
     onStepChange: (state) => config.onStepChange?.(state),
-    prepareReview: () => {
+    prepareReview: async () => {
       renderAtlasoWizardReview(form, config.reviewItems);
-      config.prepareReview?.({ form });
+      return config.prepareReview?.({ form });
     },
     onSubmit: async () => {
       const body = new FormData(form);
@@ -1562,12 +1565,11 @@ function initializeAtlasoResourceWizard(config) {
       if (!(launcher instanceof HTMLButtonElement)) return;
       launcher.addEventListener("click", () => openResource(config.newRow, launcher));
     });
-  } else {
-    element.addEventListener("click", (event) => {
-      const launcher = event.target.closest("[data-atlaso-wizard-add]");
-      if (launcher instanceof HTMLButtonElement) openResource(config.newRow, launcher);
-    });
   }
+  element.addEventListener("click", (event) => {
+    const launcher = event.target.closest("[data-atlaso-wizard-add]");
+    if (launcher instanceof HTMLButtonElement) openResource(config.newRow, launcher);
+  });
   return { grid, table, wizard };
 }
 
@@ -4381,28 +4383,191 @@ function sourceGroupValidationFormatter(cell) {
 }
 
 function renderNetworkObjectSourceGroupReferences(rows) {
-  const container = document.querySelector("[data-network-object-reference-list]");
-  if (!(container instanceof HTMLElement)) return;
+  const editor = document.querySelector("[data-network-object-source-group-tag-editor]");
+  const container = editor?.querySelector("[data-tag-menu]");
+  if (!(editor instanceof HTMLElement) || !(container instanceof HTMLElement)) return;
   const references = rows.filter((row) => !row.builtin && !row.is_new);
-  if (!references.length) {
-    const item = document.createElement("div");
-    const label = document.createElement("span");
-    label.textContent = "Nested Source Groups";
-    const value = document.createElement("strong");
-    value.textContent = "None available yet";
-    item.append(label, value);
-    container.replaceChildren(item);
-    return;
-  }
   container.replaceChildren(...references.map((row) => {
-    const item = document.createElement("div");
-    const label = document.createElement("span");
+    const item = document.createElement("button");
+    item.type = "button";
+    item.setAttribute("data-tag-option", `group:${row.id}`);
+    item.setAttribute("data-tag-label", row.name || row.id);
+    const label = document.createElement("strong");
     label.textContent = row.name || row.id;
-    const value = document.createElement("code");
+    const value = document.createElement("small");
     value.textContent = `group:${row.id}`;
     item.append(label, value);
     return item;
   }));
+  editor.atlasoTagEditor?.refreshMenu?.();
+}
+
+function networkObjectSourceGroupTagEditor(form) {
+  const editor = form.querySelector("[data-network-object-source-group-tag-editor]");
+  return editor instanceof HTMLElement ? editor : null;
+}
+
+function syncNetworkObjectSourceGroupMode(form) {
+  const anySourceField = form.querySelector("[data-network-object-any-source-field]");
+  const anySource = form.querySelector("[data-network-object-any-source]");
+  const explicit = form.querySelector("[data-network-object-explicit-entries]");
+  const fallback = form.querySelector("[data-network-object-source-group-fallback]");
+  const fallbackEntries = form.querySelector("[data-network-object-source-group-entries]");
+  const editor = networkObjectSourceGroupTagEditor(form);
+  if (!(anySource instanceof HTMLInputElement) || !editor?.atlasoTagEditor) return;
+  if (anySourceField instanceof HTMLElement) {
+    anySourceField.hidden = false;
+    anySourceField.classList.remove("hidden");
+  }
+  if (fallback instanceof HTMLElement) {
+    fallback.hidden = true;
+    fallback.classList.add("hidden");
+  }
+  if (fallbackEntries instanceof HTMLTextAreaElement) fallbackEntries.disabled = true;
+  if (explicit instanceof HTMLElement) {
+    explicit.hidden = false;
+    explicit.classList.toggle("conditional-field-inactive", anySource.checked);
+  }
+  editor.atlasoTagEditor.setDisabled(anySource.checked);
+  const summary = form.querySelector("[data-network-object-entry-validation-summary]");
+  if (anySource.checked && summary instanceof HTMLElement) {
+    summary.textContent = "Any source is selected; explicit entries are inactive and will not be submitted.";
+    summary.classList.remove("warn", "error");
+  }
+}
+
+function decorateNetworkObjectSourceGroupTag(token, result, index) {
+  if (!(token instanceof HTMLElement)) return;
+  const state = String(result?.state || "invalid");
+  const canonical = String(result?.canonical || token.getAttribute("data-value") || "");
+  const message = String(result?.message || "Atlaso could not validate this entry.");
+  const stateLabels = {
+    valid: "✓ Valid",
+    needs_attention: "! Needs attention",
+    invalid: "× Invalid",
+    pending: "… Checking",
+  };
+  token.dataset.tagValidationState = state;
+  token.dataset.canonicalValue = canonical;
+  token.title = message;
+  let status = token.querySelector(".tag-token-state");
+  if (!(status instanceof HTMLElement)) {
+    status = document.createElement("span");
+    status.className = "tag-token-state";
+    token.querySelector("[data-tag-remove]")?.before(status);
+  }
+  status.textContent = stateLabels[state] || stateLabels.invalid;
+  const hidden = token.querySelector('input[type="hidden"]');
+  if (hidden instanceof HTMLInputElement) hidden.value = canonical || token.getAttribute("data-value") || "";
+  const value = token.getAttribute("data-value") || `Entry ${index + 1}`;
+  token.setAttribute("aria-label", `${value}. ${status.textContent}. ${message} Press Enter to edit this entry.`);
+}
+
+async function validateNetworkObjectSourceGroupEntries(form) {
+  const anySource = form.querySelector("[data-network-object-any-source]");
+  const editor = networkObjectSourceGroupTagEditor(form);
+  const summary = form.querySelector("[data-network-object-entry-validation-summary]");
+  if (!(anySource instanceof HTMLInputElement) || !editor?.atlasoTagEditor) {
+    return { valid: false, message: "Source Group entry controls are unavailable." };
+  }
+  const usesAny = anySource.checked;
+  if (usesAny) syncNetworkObjectSourceGroupMode(form);
+  const values = usesAny ? ["any"] : editor.atlasoTagEditor.values();
+  if (!usesAny && !values.length) {
+    if (summary instanceof HTMLElement) {
+      summary.textContent = "Add at least one explicit Source Group entry.";
+      summary.classList.add("error");
+      summary.classList.remove("warn");
+    }
+    return { valid: false, message: "Add at least one explicit Source Group entry." };
+  }
+
+  const generation = String((Number(editor.dataset.validationGeneration || "0") + 1));
+  editor.dataset.validationGeneration = generation;
+  const tokens = [...editor.querySelectorAll(".tag-token")];
+  tokens.forEach((token, index) => decorateNetworkObjectSourceGroupTag(token, {
+    state: "pending",
+    canonical: values[index],
+    message: "Atlaso is validating this entry.",
+  }, index));
+  if (summary instanceof HTMLElement) {
+    summary.textContent = `Validating ${values.length} ${values.length === 1 ? "entry" : "entries"}…`;
+    summary.classList.remove("warn", "error");
+  }
+
+  const body = new FormData();
+  body.set("csrf", form.elements.namedItem("csrf")?.value || "");
+  body.set("group_id", form.elements.namedItem("group_id")?.value || "");
+  body.set("group_name", form.elements.namedItem("group_name")?.value || "");
+  body.set("any_source", usesAny ? "1" : "0");
+  values.forEach((value) => body.append("group_entries", value));
+  let response;
+  try {
+    response = await fetch(managementUiPath("/network-objects/source-groups/validate-entries"), {
+      method: "POST",
+      body,
+      credentials: "same-origin",
+      headers: { "X-Atlaso-Grid": "1" },
+    });
+  } catch (_error) {
+    if (editor.dataset.validationGeneration !== generation) return { valid: false, stale: true };
+    if (summary instanceof HTMLElement) {
+      summary.textContent = "Entry validation is unavailable. Check appliance connectivity and retry.";
+      summary.classList.add("error");
+    }
+    return { valid: false, message: "Entry validation is unavailable. Check appliance connectivity and retry." };
+  }
+  const payload = await response.json().catch(() => ({}));
+  if (editor.dataset.validationGeneration !== generation) return { valid: false, stale: true };
+  if (!response.ok || !Array.isArray(payload.entries) || payload.entries.length !== values.length) {
+    const message = payload.detail || "Atlaso returned an invalid Source Group validation result.";
+    if (summary instanceof HTMLElement) {
+      summary.textContent = message;
+      summary.classList.add("error");
+    }
+    return { valid: false, message };
+  }
+  if (!usesAny) {
+    payload.entries.forEach((result, index) => decorateNetworkObjectSourceGroupTag(tokens[index], result, index));
+  }
+  const invalid = payload.entries.filter((result) => result.state === "invalid");
+  const warnings = payload.entries.filter((result) => result.state === "needs_attention");
+  const aggregateErrors = Array.isArray(payload.errors) ? payload.errors : [];
+  if (summary instanceof HTMLElement) {
+    if (invalid.length || aggregateErrors.length) {
+      summary.textContent = [
+        ...invalid.map((result) => `Invalid: ${result.message}`),
+        ...aggregateErrors,
+      ].join(" ");
+      summary.classList.add("error");
+      summary.classList.remove("warn");
+    } else if (usesAny) {
+      summary.textContent = "Any source is selected; explicit entries are inactive and will not be submitted.";
+      summary.classList.remove("warn", "error");
+    } else if (warnings.length) {
+      summary.textContent = warnings.map((result) => `Needs attention: ${result.message}`).join(" ");
+      summary.classList.add("warn");
+      summary.classList.remove("error");
+    } else {
+      summary.textContent = `${payload.entries.length} ${payload.entries.length === 1 ? "entry is" : "entries are"} valid.`;
+      summary.classList.remove("warn", "error");
+    }
+  }
+  return {
+    valid: Boolean(payload.valid),
+    entries: payload.entries.map((result) => result.canonical),
+    message: aggregateErrors[0] || invalid[0]?.message || "Resolve invalid Source Group entries before continuing.",
+  };
+}
+
+function networkObjectSourceGroupSubmissionEntries(form) {
+  const anySource = form.querySelector("[data-network-object-any-source]");
+  if (anySource instanceof HTMLInputElement && anySource.checked) return ["any"];
+  const editor = networkObjectSourceGroupTagEditor(form);
+  if (!editor) return [];
+  return [...editor.querySelectorAll(".tag-token")]
+    .map((token) => token.dataset.canonicalValue || token.getAttribute("data-value") || "")
+    .filter((value, index, values) => value && values.indexOf(value) === index);
 }
 
 async function deleteNetworkObjectSourceGroup(row, controller, csrf, replaceRows) {
@@ -4454,8 +4619,8 @@ function initializeNetworkObjectSourceGroups() {
     is_new: true,
   };
   const gridOptions = {
-    height: `${Math.min(Math.max((existingRows.length + (canWrite ? 1 : 0)) * 42 + 34, 120), 440)}px`,
-    rowHeight: 42,
+    height: "100%",
+    rowHeight: 28,
     layout: "fitColumns",
     columns: [
       {
@@ -4485,6 +4650,24 @@ function initializeNetworkObjectSourceGroups() {
     return;
   }
   if (!(dialog instanceof HTMLDialogElement)) return;
+  initializeTagEditors(dialog);
+  const sourceGroupForm = dialog.querySelector("[data-network-object-source-group-form]");
+  if (!(sourceGroupForm instanceof HTMLFormElement)) return;
+  const anySource = sourceGroupForm.querySelector("[data-network-object-any-source]");
+  let validationTimer = 0;
+  const scheduleValidation = () => {
+    window.clearTimeout(validationTimer);
+    validationTimer = window.setTimeout(() => {
+      validationTimer = 0;
+      void validateNetworkObjectSourceGroupEntries(sourceGroupForm);
+    }, 160);
+  };
+  sourceGroupForm.addEventListener("tag-editor:change", scheduleValidation);
+  anySource?.addEventListener("change", () => {
+    syncNetworkObjectSourceGroupMode(sourceGroupForm);
+    if (!anySource.checked) scheduleValidation();
+  });
+  syncNetworkObjectSourceGroupMode(sourceGroupForm);
   let controller = null;
   const replaceRows = async (rows, table = controller?.table) => {
     const currentRows = Array.isArray(rows) ? rows : [];
@@ -4510,7 +4693,7 @@ function initializeNetworkObjectSourceGroups() {
     emptyMessage: "No Source Groups are available.",
     actionErrorSelector: "#network-objects-error",
     addLauncherSelector: "[data-network-object-source-group-open]",
-    defaults: { action: "create", group_name: "", description: "", group_entries: "any" },
+    defaults: { action: "create", group_name: "", description: "" },
     canEdit: (data) => canWrite && !data.builtin,
     inlineEnabled: false,
     steps: [
@@ -4525,28 +4708,52 @@ function initializeNetworkObjectSourceGroups() {
       if (railTitle instanceof HTMLElement) railTitle.textContent = dialogTitle;
       if (rail instanceof HTMLElement) rail.setAttribute("aria-label", `${dialogTitle} steps`);
       form.elements.action.value = context ? "update" : "create";
+      const contextEntries = Array.isArray(context?.entries) ? context.entries : ["any"];
+      const contextUsesAny = contextEntries.length === 1 && String(contextEntries[0]).toLowerCase() === "any";
+      const anyControl = form.querySelector("[data-network-object-any-source]");
+      const editor = networkObjectSourceGroupTagEditor(form);
+      if (anyControl instanceof HTMLInputElement) anyControl.checked = contextUsesAny;
+      editor?.atlasoTagEditor?.setValues(contextUsesAny ? [] : contextEntries);
+      syncNetworkObjectSourceGroupMode(form);
       if (context) {
         form.elements.group_name.value = context.name || "";
-        form.elements.group_entries.value = (context.entries || []).join("\n");
       }
+      if (!contextUsesAny) void validateNetworkObjectSourceGroupEntries(form);
     },
-    validateStep: ({ form, step }) => {
+    validateStep: async ({ form, step }) => {
       if (step.id !== "entries") return { valid: true };
-      const entries = form.elements.group_entries;
-      if (!(entries instanceof HTMLTextAreaElement) || !entries.value.trim()) {
-        return { valid: false, field: entries, message: "Enter at least one Source Group entry." };
-      }
-      return { valid: true };
+      window.clearTimeout(validationTimer);
+      validationTimer = 0;
+      const result = await validateNetworkObjectSourceGroupEntries(form);
+      if (result.valid) return { valid: true };
+      return {
+        valid: false,
+        field: form.querySelector("[data-tag-entry]"),
+        message: result.message || "Resolve invalid Source Group entries before continuing.",
+      };
     },
-    prepareFormData: ({ body }) => {
+    prepareFormData: ({ body, form }) => {
       body.set("action", body.get("group_id") ? "update" : "create");
+      body.delete("group_entries");
+      networkObjectSourceGroupSubmissionEntries(form).forEach((entry) => body.append("group_entries", entry));
     },
-    prepareReview: ({ form }) => {
+    prepareReview: async ({ form }) => {
+      window.clearTimeout(validationTimer);
+      validationTimer = 0;
+      const validation = await validateNetworkObjectSourceGroupEntries(form);
+      if (!validation.valid) {
+        return {
+          valid: false,
+          step: "entries",
+          field: form.querySelector("[data-tag-entry]"),
+          message: validation.message || "Resolve invalid Source Group entries before reviewing.",
+        };
+      }
       const current = rowById.get(String(form.elements.group_id.value || ""));
-      const entries = String(form.elements.group_entries.value || "").split(/[\n,]+/).map((item) => item.trim()).filter(Boolean);
+      const entries = networkObjectSourceGroupSubmissionEntries(form);
       const values = {
         name: form.elements.group_name.value.trim() || "Not set",
-        entries: entries.join(", ") || "Not set",
+        entries: entries.length === 1 && entries[0] === "any" ? "Any source" : entries.join(", ") || "Not set",
         consumers: current?.usage_summary || "Not in use",
         validation: current?.validation_errors?.join(" ") || "Valid when saved",
       };
@@ -4554,6 +4761,7 @@ function initializeNetworkObjectSourceGroups() {
         const target = form.querySelector(`[data-network-object-review="${key}"]`);
         if (target instanceof HTMLElement) target.textContent = value;
       });
+      return { valid: true };
     },
     onSaved: ({ payload, table }) => replaceRows(payload.source_groups || [], table),
     extraActions: canWrite ? [
@@ -7070,18 +7278,25 @@ function syncRoutesWanDefaultRouteMode(form) {
   const defaultRoute = form.querySelector("[data-routes-wan-default-route]");
   const defaultFamilyPanel = form.querySelector("[data-routes-wan-default-family]");
   const destinationPanel = form.querySelector("[data-routes-wan-destination]");
+  const destinationHint = form.querySelector("[data-routes-wan-destination-hint]");
   const destination = routesWanField(form, "destination_cidr");
-  const family = routesWanField(form, "default_route_family");
+  const familyControls = [...form.querySelectorAll('[name="default_route_family"]')];
   const gateway = routesWanField(form, "gateway");
   if (!(defaultRoute instanceof HTMLInputElement) || !(destination instanceof HTMLInputElement)) return;
   const selected = defaultRoute.checked;
   destination.disabled = selected;
   destination.required = !selected;
-  if (destinationPanel instanceof HTMLElement) destinationPanel.hidden = selected;
-  if (family instanceof HTMLSelectElement) {
+  if (destinationPanel instanceof HTMLElement) destinationPanel.classList.toggle("conditional-field-inactive", selected);
+  if (destinationHint instanceof HTMLElement) {
+    destinationHint.textContent = selected
+      ? "Inactive while Default route is enabled; your destination value is retained."
+      : "Required when Default route is off.";
+  }
+  familyControls.forEach((family) => {
+    if (!(family instanceof HTMLInputElement)) return;
     family.disabled = !selected;
     family.required = selected;
-  }
+  });
   if (defaultFamilyPanel instanceof HTMLElement) defaultFamilyPanel.hidden = !selected;
   if (gateway instanceof HTMLInputElement) {
     gateway.required = selected;
@@ -7094,6 +7309,8 @@ function setRoutesWanField(form, name, value) {
   if (field instanceof HTMLInputElement && field.type === "checkbox") {
     field.checked = value !== false;
   } else if (field instanceof HTMLInputElement || field instanceof HTMLSelectElement || field instanceof HTMLTextAreaElement) {
+    field.value = value ?? "";
+  } else if (field && typeof field === "object" && "value" in field) {
     field.value = value ?? "";
   }
 }
@@ -15873,10 +16090,14 @@ function initializeTagEditors(root = document) {
     const menu = editor.querySelector("[data-tag-menu]");
     const name = editor.dataset.tagName || "";
     const singleValue = editor.hasAttribute("data-tag-single");
+    const allowDuplicates = editor.hasAttribute("data-tag-allow-duplicates");
+    const editable = editor.hasAttribute("data-tag-editable");
     if (!(editor instanceof HTMLElement) || !(input instanceof HTMLInputElement) || !(list instanceof HTMLElement) || !name) {
       return;
     }
     editor.dataset.tagEditorInitialized = "1";
+    let editContext = null;
+    let editorDisabled = false;
 
     const currentValues = () =>
       Array.from(list.querySelectorAll(".tag-token")).map((item) => item.getAttribute("data-value") || "");
@@ -15885,13 +16106,13 @@ function initializeTagEditors(root = document) {
       editor.dispatchEvent(new CustomEvent("tag-editor:change", { bubbles: true }));
     };
 
-    const removeToken = (token) => {
-      if (token.hasAttribute("data-tag-locked")) {
+    const removeToken = (token, { restoreFocus = true } = {}) => {
+      if (editorDisabled || token.hasAttribute("data-tag-locked")) {
         return;
       }
       token.remove();
       refreshMenu();
-      input.focus();
+      if (restoreFocus) input.focus();
       notifyChanged();
     };
 
@@ -15937,20 +16158,53 @@ function initializeTagEditors(root = document) {
       return value;
     };
 
-    const addValue = (rawValue) => {
-      const value = String(rawValue || "").trim().replace(/,$/, "");
-      if (!value || currentValues().some((item) => item.toLowerCase() === value.toLowerCase())) {
-        return;
-      }
-      if (singleValue) {
-        list.querySelectorAll(".tag-token:not([data-tag-locked])").forEach((token) => token.remove());
-      }
+    const beginEdit = (token) => {
+      if (editorDisabled || !editable || token.hasAttribute("data-tag-locked")) return;
+      editContext = {
+        value: token.getAttribute("data-value") || "",
+        before: token.nextSibling,
+      };
+      token.remove();
+      input.value = editContext.value;
+      refreshMenu();
+      input.focus();
+      input.select();
+    };
 
+    const bindToken = (token) => {
+      if (!(token instanceof HTMLElement)) return;
+      const value = token.getAttribute("data-value") || "";
+      const label = token.querySelector("span") || token.firstElementChild;
+      if (label instanceof HTMLElement) label.classList.add("tag-token-value");
+      const remove = token.querySelector("[data-tag-remove]");
+      if (remove instanceof HTMLButtonElement && remove.dataset.tagRemoveInitialized !== "1") {
+        remove.dataset.tagRemoveInitialized = "1";
+        remove.addEventListener("click", () => removeToken(token));
+      }
+      if (editable && !token.hasAttribute("data-tag-locked")) {
+        token.tabIndex = 0;
+        token.setAttribute("data-tag-editable", "");
+        token.setAttribute("aria-label", `${value}. Press Enter to edit this entry.`);
+        token.addEventListener("keydown", (event) => {
+          if (event.target !== token) return;
+          if (event.key === "Enter" || event.key === "F2") {
+            event.preventDefault();
+            beginEdit(token);
+          }
+        });
+        token.addEventListener("dblclick", (event) => {
+          if (!event.target.closest("[data-tag-remove]")) beginEdit(token);
+        });
+      }
+    };
+
+    const createToken = (value) => {
       const token = document.createElement("span");
       token.className = "tag-token";
       token.setAttribute("data-value", value);
 
       const label = document.createElement("span");
+      label.className = "tag-token-value";
       label.textContent = displayLabelForValue(value);
 
       const remove = document.createElement("button");
@@ -15958,7 +16212,6 @@ function initializeTagEditors(root = document) {
       remove.setAttribute("data-tag-remove", "");
       remove.setAttribute("aria-label", `Remove ${value}`);
       remove.textContent = "×";
-      remove.addEventListener("click", () => removeToken(token));
 
       const hidden = document.createElement("input");
       hidden.type = "hidden";
@@ -15966,28 +16219,50 @@ function initializeTagEditors(root = document) {
       hidden.value = value;
 
       token.append(label, remove, hidden);
-      list.append(token);
+      bindToken(token);
+      return token;
+    };
+
+    const addValue = (rawValue, { notify = true } = {}) => {
+      const value = String(rawValue || "").trim().replace(/,$/, "");
+      if (!value || (!allowDuplicates && currentValues().some((item) => item.toLowerCase() === value.toLowerCase()))) {
+        return;
+      }
+      if (singleValue) {
+        list.querySelectorAll(".tag-token:not([data-tag-locked])").forEach((token) => token.remove());
+      }
+      const token = createToken(value);
+      if (editContext?.before instanceof Node && editContext.before.parentNode === list) {
+        list.insertBefore(token, editContext.before);
+      } else {
+        list.append(token);
+      }
+      editContext = null;
       refreshMenu();
-      notifyChanged();
+      if (notify) notifyChanged();
+    };
+
+    const restoreEditedValue = () => {
+      if (!editContext) return;
+      const value = editContext.value;
+      input.value = "";
+      addValue(value);
     };
 
     const addInputValues = () => {
-      input.value
+      const values = input.value
         .split(/[\n,]+/)
         .map((value) => value.trim())
-        .filter(Boolean)
-        .forEach(addValue);
+        .filter(Boolean);
       input.value = "";
+      if (!values.length) {
+        restoreEditedValue();
+        return;
+      }
+      values.forEach((value) => addValue(value));
     };
 
-    list.querySelectorAll("[data-tag-remove]").forEach((button) => {
-      button.addEventListener("click", () => {
-        const token = button.closest(".tag-token");
-        if (token instanceof HTMLElement) {
-          removeToken(token);
-        }
-      });
-    });
+    list.querySelectorAll(".tag-token").forEach(bindToken);
 
     input.addEventListener("keydown", (event) => {
       if (event.key === "Enter" || event.key === "," || event.key === "Tab") {
@@ -15995,6 +16270,9 @@ function initializeTagEditors(root = document) {
           event.preventDefault();
           addInputValues();
         }
+      } else if (event.key === "Escape" && editContext) {
+        event.preventDefault();
+        restoreEditedValue();
       } else if (event.key === "Backspace" && !input.value) {
         const removableTokens = list.querySelectorAll(".tag-token:not([data-tag-locked])");
         const lastToken = removableTokens[removableTokens.length - 1];
@@ -16016,20 +16294,53 @@ function initializeTagEditors(root = document) {
         refreshMenu();
         menu.toggleAttribute("hidden");
       });
-      menu.querySelectorAll("[data-tag-option]").forEach((option) => {
-        option.addEventListener("click", (event) => {
-          event.preventDefault();
-          event.stopPropagation();
-          addValue(option.getAttribute("data-tag-option") || "");
-          menu.setAttribute("hidden", "");
-        });
+      menu.addEventListener("click", (event) => {
+        const option = event.target.closest("[data-tag-option]");
+        if (!(option instanceof HTMLButtonElement)) return;
+        event.preventDefault();
+        event.stopPropagation();
+        addValue(option.getAttribute("data-tag-option") || "");
+        menu.setAttribute("hidden", "");
       });
     }
     editor.addEventListener("click", (event) => {
-      if (!(event.target instanceof HTMLElement) || !event.target.closest("[data-tag-menu]")) {
+      if (!(event.target instanceof HTMLElement)
+        || (!event.target.closest("[data-tag-menu]") && !event.target.closest(".tag-token"))) {
         input.focus();
       }
     });
+    editor.atlasoTagEditor = {
+      values: currentValues,
+      setValues: (values) => {
+        editContext = null;
+        input.value = "";
+        list.replaceChildren();
+        (Array.isArray(values) ? values : []).forEach((value) => addValue(value, { notify: false }));
+        refreshMenu();
+        notifyChanged();
+      },
+      addValue,
+      setDisabled: (disabled) => {
+        const nextDisabled = Boolean(disabled);
+        if (nextDisabled && editContext) restoreEditedValue();
+        editorDisabled = nextDisabled;
+        input.disabled = nextDisabled;
+        if (toggle instanceof HTMLButtonElement) toggle.disabled = nextDisabled;
+        list.querySelectorAll('input[type="hidden"], button').forEach((control) => {
+          control.disabled = nextDisabled;
+        });
+        list.querySelectorAll(".tag-token[data-tag-editable]").forEach((token) => {
+          token.tabIndex = nextDisabled ? -1 : 0;
+          token.setAttribute("aria-disabled", nextDisabled ? "true" : "false");
+        });
+        menu?.querySelectorAll?.("button").forEach((control) => {
+          control.disabled = nextDisabled;
+        });
+        if (nextDisabled && menu instanceof HTMLElement) menu.hidden = true;
+        editor.setAttribute("aria-disabled", nextDisabled ? "true" : "false");
+      },
+      refreshMenu,
+    };
     refreshMenu();
   });
 }
@@ -16048,6 +16359,10 @@ function setTagEditorSingleValue(editor, value) {
   const list = editor.querySelector("[data-tag-list]");
   const name = editor.dataset.tagName || "";
   if (!(list instanceof HTMLElement) || !name) {
+    return;
+  }
+  if (editor.atlasoTagEditor?.setValues) {
+    editor.atlasoTagEditor.setValues(value ? [value] : []);
     return;
   }
   list.replaceChildren();
@@ -16087,6 +16402,10 @@ function addTagEditorValue(editor, value) {
   const list = editor.querySelector("[data-tag-list]");
   const name = editor.dataset.tagName || "";
   if (!(list instanceof HTMLElement) || !name) {
+    return;
+  }
+  if (editor.atlasoTagEditor?.addValue) {
+    editor.atlasoTagEditor.addValue(value);
     return;
   }
   const trimmedValue = String(value || "").trim();

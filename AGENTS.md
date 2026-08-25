@@ -377,6 +377,11 @@ The following cross-cutting boundaries always apply:
   Static Routes, Routing Permissions, NAT Rules, and WAN Policies are wizard-backed Tabulator collections. Add launches
   from the bottom row; edit launches from row double-click or the context menu; generated routing permissions remain
   read-only; and ordinary persisted **Enabled** state remains directly editable without host mutation.
+- Network Objects Source Groups use a full-height compact wizard-backed Tabulator. The add-row native button opens on
+  one click or native keyboard activation, while row double-click remains edit-only. The Entries step exposes an
+  exclusive **Any source** switch that persists canonical `entries: ["any"]`; explicit addresses, CIDRs, and stable
+  nested-group references use the shared tag editor with server-owned per-entry validation, non-color status text,
+  canonical submission, and a truthful line-separated textarea fallback. Keep built-in **Any** read-only.
 - Physical and VLAN interfaces share exactly `management`, `access`, `route`, and `unused` roles. Reject retired or
   unknown values on new UI, API, desired-state, and helper inputs. Upgrade and settings-archive compatibility may map
   only retired `services` and `storage` values to `access` while preserving every other interface field.
