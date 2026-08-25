@@ -7995,6 +7995,7 @@ def _parse_wan_config(path: Path) -> dict[str, list[dict[str, str]]]:
         "targets": [],
         "routes": [],
         "removed_routes": [],
+        "removed_main_defaults": [],
         "routing_rules": [],
         "nat_rules": [],
         "wan_policies": [],
@@ -8005,6 +8006,7 @@ def _parse_wan_config(path: Path) -> dict[str, list[dict[str, str]]]:
         "targets": "target",
         "routes": "route",
         "removed_routes": "route",
+        "removed_main_defaults": "route",
         "routing_rules": "routing",
         "nat_rules": "nat",
         "wan_policies": "policy",
@@ -8022,7 +8024,7 @@ def _parse_wan_config(path: Path) -> dict[str, list[dict[str, str]]]:
         key, value = [part.strip() for part in line.split("=", 1)]
         if key == record_keys[current_section]:
             name_key = "name"
-            if current_section in {"routes", "removed_routes"}:
+            if current_section in {"routes", "removed_routes", "removed_main_defaults"}:
                 name_key = "destination_cidr"
             elif current_section == "targets":
                 name_key = "name"
@@ -8200,6 +8202,25 @@ def _wan_config_errors(path: Path) -> list[str]:
         policy_name = route.get("wan_policy", "")
         if policy_name and policy_name not in policies:
             errors.append(f"Route {destination or '<missing>'} references missing WAN policy {policy_name}.")
+    for route in parsed["removed_main_defaults"]:
+        destination = route.get("destination_cidr", "")
+        try:
+            destination_network = ip_network(destination, strict=False)
+        except ValueError:
+            errors.append(
+                f"Removed main-table default {destination or '<missing>'} is not a valid destination CIDR."
+            )
+        else:
+            if destination_network.prefixlen != 0:
+                errors.append(
+                    f"Removed main-table route {destination} must be an IPv4 or IPv6 default."
+                )
+        interface_name = route.get("interface", "")
+        if not _valid_network_interface_name(interface_name):
+            errors.append(
+                f"Removed main-table default {destination or '<missing>'} references invalid interface "
+                f"{interface_name or '<missing>'}."
+            )
     for rule in parsed["nat_rules"]:
         name = rule.get("name", "")
         if not name:
@@ -8849,6 +8870,18 @@ def _apply_wan_routes_and_qdiscs(
             if main_delete.returncode not in {0, 2}:
                 return main_delete.returncode
         touched_qdisc_targets.add(route["interface"])
+    for route in parsed["removed_main_defaults"]:
+        main_delete = _run(
+            [
+                *_route_command_prefix(route["destination_cidr"]),
+                "del",
+                route["destination_cidr"],
+                "dev",
+                route["interface"],
+            ]
+        )
+        if main_delete.returncode not in {0, 2}:
+            return main_delete.returncode
     policy_by_target: dict[str, dict[str, str]] = {}
     for route in parsed["routes"]:
         if not _wan_bool(route.get("enabled", ""), default=True):
@@ -18890,9 +18923,6 @@ def _apply_management_handoff(payload: dict) -> int:
         )
         failing_layer = "network"
         _apply_management_candidate_network(Path(str(payload["network_config_path"])), state)
-        if payload.get("wan_config_path"):
-            failing_layer = "Routes & WAN"
-            _apply_management_handoff_wan(payload)
         previous_firewall = FIREWALL_CONFIG_PATH.read_text(encoding="utf-8") if FIREWALL_CONFIG_PATH.is_file() else ""
         candidate_firewall_path = Path(str(payload["firewall_config_path"]))
         candidate_firewall = candidate_firewall_path.read_text(encoding="utf-8")

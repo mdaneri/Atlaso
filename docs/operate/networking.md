@@ -137,7 +137,9 @@ recoverable handoff. Its candidate and last-applied rollback configs are validat
 the prior lab routes and the old management path together. Adding, editing, disabling, or removing a default on an
 already-applied flagged management listener also starts this handoff even when Network itself has no pending edit.
 When an operator selects another Routes & WAN change alongside a protected management change, Atlaso executes and
-commits that captured WAN snapshot inside the same transaction rather than advancing its baseline separately.
+commits that captured WAN snapshot inside the same transaction rather than advancing its baseline separately. The
+candidate WAN runtime is deferred until previous-path retirement, so candidate readiness retains the known-good
+main-table default. Rollback explicitly removes any candidate-only mirrored default before restoring prior WAN intent.
 Before that commit, fresh requests and existing sessions continue to use the last-applied Network binding paired with
 observed addresses. Unapplied access-management flags do not publish a new administrative listener, and unapplied role
 or address edits do not demote the old listener to `/ui/public`. Cancelling, reverting, or rolling back the candidate

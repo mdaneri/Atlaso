@@ -1662,7 +1662,8 @@ def test_management_handoff_candidate_durability_gates_ack(
     monkeypatch.setattr(
         helper,
         "_apply_management_handoff_wan",
-        lambda payload: wan_calls.append(str(payload["wan_config_path"])),
+        lambda payload: retirement_operations.append("wan")
+        or wan_calls.append(str(payload["wan_config_path"])),
     )
     candidate_rule = '    iifname "eth1" tcp dport { 22, 80, 443, 8443 } accept comment "mgmt-console"'
     monkeypatch.setattr(
@@ -1777,8 +1778,8 @@ def test_management_handoff_candidate_durability_gates_ack(
     assert cleared == []
     assert restored == []
     assert resolver_calls == ["eth1", "eth1"]
-    assert wan_calls == ["candidate-wan", "candidate-wan"]
-    assert retirement_operations == ["resolver", "final-network", "resolver"]
+    assert wan_calls == ["candidate-wan"]
+    assert retirement_operations == ["resolver", "final-network", "resolver", "wan"]
     assert len(applied_firewalls) == 2
     assert candidate_rule in applied_firewalls[0]
     assert 'iifname "eth0"' in applied_firewalls[0]
@@ -5691,6 +5692,52 @@ route=0.0.0.0/0
             == 0
         )
         assert ["ip", "route", "del", "0.0.0.0/0", "dev", "eth0"] in commands
+
+
+def test_wan_rollback_explicitly_removes_candidate_only_main_default(tmp_path):
+    """Remove a partially applied mirror absent from last-applied runtime state."""
+    helper = load_helper_module()
+    rollback_path = tmp_path / "candidate-only-main-default.conf"
+    rollback_path.write_text(
+        """[targets]
+target=eth0
+  kind=physical
+  role=management
+  ip_cidr=192.0.2.10/24
+  routing_domain=management
+  route_allowed=false
+  management_ui=false
+
+[routes]
+
+[removed_routes]
+
+[removed_main_defaults]
+route=0.0.0.0/0
+  interface=eth0
+
+[routing_rules]
+[nat_rules]
+[wan_policies]
+""",
+        encoding="utf-8",
+    )
+    commands: list[list[str]] = []
+    helper.shutil.which = lambda command: (
+        f"/usr/sbin/{command}" if command in {"ip", "tc"} else None
+    )
+    helper._run = lambda command: (
+        commands.append(command)
+        or subprocess.CompletedProcess(command, 0, "", "")
+    )
+
+    assert helper._wan_config_errors(rollback_path) == []
+    assert helper._apply_wan_routes_and_qdiscs(
+        helper._parse_wan_config(rollback_path),
+        None,
+    ) == 0
+    assert ["ip", "route", "del", "0.0.0.0/0", "dev", "eth0"] in commands
+    assert not any("table" in command for command in commands)
 
 
 def test_wan_helper_cleans_managed_policy_rule_windows_before_apply(tmp_path):

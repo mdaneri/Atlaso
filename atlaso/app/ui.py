@@ -9961,18 +9961,42 @@ def wan_rollback_config_preview(
         baseline_preview,
         {"config_preview": candidate_preview},
     )
-    if not removed:
-        return baseline_preview + "\n"
-    lines = [baseline_preview, "", "[removed_routes]"]
-    for route in removed:
-        lines.extend(
-            [
-                f"route={route['destination_cidr']}",
-                f"gateway={route.get('gateway', '')}",
-                f"interface={route['interface_name']}",
-                f"metric={route.get('metric', '100')}",
-            ]
+    candidate_mirrors = {
+        (destination, interface_name)
+        for destination, interface_name, _gateway, _metric in mirrored_management_default_routes(
+            candidate_preview
         )
+    }
+    baseline_mirrors = {
+        (destination, interface_name)
+        for destination, interface_name, _gateway, _metric in mirrored_management_default_routes(
+            baseline_preview
+        )
+    }
+    removed_main_defaults = sorted(candidate_mirrors - baseline_mirrors)
+    if not removed and not removed_main_defaults:
+        return baseline_preview + "\n"
+    lines = [baseline_preview]
+    if removed:
+        lines.extend(["", "[removed_routes]"])
+        for route in removed:
+            lines.extend(
+                [
+                    f"route={route['destination_cidr']}",
+                    f"gateway={route.get('gateway', '')}",
+                    f"interface={route['interface_name']}",
+                    f"metric={route.get('metric', '100')}",
+                ]
+            )
+    if removed_main_defaults:
+        lines.extend(["", "[removed_main_defaults]"])
+        for destination, interface_name in removed_main_defaults:
+            lines.extend(
+                [
+                    f"route={destination}",
+                    f"interface={interface_name}",
+                ]
+            )
     return "\n".join(lines).lstrip("\n") + "\n"
 
 

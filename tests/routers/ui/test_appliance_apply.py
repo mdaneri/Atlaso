@@ -99,6 +99,7 @@ ipv6_gateway=
 target=eth0
 role=access
 ip_cidr=192.0.2.10/24
+management_ui=false
 [routes]
 [removed_routes]
 [routing_rules]
@@ -106,6 +107,9 @@ ip_cidr=192.0.2.10/24
 [wan_policies]
 """
     candidate_wan = previous_wan.replace(
+        "management_ui=false",
+        "management_ui=true",
+    ).replace(
         "[routes]",
         "[routes]\nroute=0.0.0.0/0\ngateway=192.0.2.1\ninterface=eth0\nmetric=100\nenabled=true",
     )
@@ -141,6 +145,8 @@ ip_cidr=192.0.2.10/24
     assert "[removed_routes]" in rollback
     assert "route=0.0.0.0/0" in rollback
     assert "interface=eth0" in rollback
+    assert "[removed_main_defaults]" in rollback
+    assert "route=0.0.0.0/0" in rollback
     assert (
         management_gateway_route_migrations(
             {"raw_config_preview": candidate_network},
@@ -150,6 +156,38 @@ ip_cidr=192.0.2.10/24
         )
         == []
     )
+
+
+def test_wan_rollback_removes_new_mirror_without_removing_retained_lab_route():
+    """Encode host-only cleanup when an existing lab default becomes mirrored."""
+    from atlaso.app.ui import wan_rollback_config_preview
+
+    baseline = """[targets]
+target=eth0
+role=access
+ip_cidr=192.0.2.10/24
+management_ui=false
+[routes]
+route=0.0.0.0/0
+gateway=192.0.2.1
+interface=eth0
+metric=100
+enabled=true
+[removed_routes]
+[routing_rules]
+[nat_rules]
+[wan_policies]
+"""
+    candidate = baseline.replace("management_ui=false", "management_ui=true")
+
+    rollback = wan_rollback_config_preview(
+        candidate,
+        {"config_preview": baseline},
+    )
+
+    assert rollback.count("route=0.0.0.0/0") == 2
+    assert "[removed_routes]" in rollback
+    assert "[removed_main_defaults]" in rollback
 
 
 def test_appliance_settings_stages_flagged_access_resolver_interface(client):

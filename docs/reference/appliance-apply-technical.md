@@ -282,10 +282,11 @@ submission also initiates the handoff when it adds, edits, disables, or removes 
 flagged management listener. Any WAN unit captured with an otherwise protected management edit remains a participant
 even when its changes affect only lab routes, NAT, or simulation policy. Atlaso stages and validates the candidate WAN
 config and an inverse rollback config before mutation. The helper snapshots WAN-owned nftables, systemd,
-and sysctl files, applies the candidate after candidate networking exists, and retains the old management path during
-readiness. Final Network regeneration can replace policy routing, so the helper reapplies that same captured candidate
-WAN config after link retirement and before final readiness. Failure, interruption recovery, or another rollback
-re-applies the last-applied WAN intent, including removal
+and sysctl files while retaining the old WAN runtime and management path through candidate readiness. During
+previous-path retirement, final Network regeneration completes first and the helper then applies the captured candidate
+WAN config before final readiness. Failure, interruption recovery, or another rollback re-applies the last-applied WAN
+intent; rollback entries explicitly mark candidate-only main-table mirrors for removal even when candidate application
+failed before publishing its runtime config. This includes removal
 of candidate-only defaults, before old-path readiness may succeed. Successful application commits the exact Network and
 WAN snapshots together before the durable helper acknowledgement; unrelated pending WAN state is never inferred from a
 management gateway.
