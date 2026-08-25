@@ -31,7 +31,8 @@ The wrapper regenerates:
 - `requirements-appliance.lock`;
 - `requirements-docs.lock`;
 - `requirements-static-analysis.lock`; and
-- `requirements-release-tools.lock`.
+- `requirements-release-tools.lock`; and
+- `requirements-onepassword-deploy.lock`.
 
 Every resolver invocation includes `--uploaded-prior-to=P7D` and `--generate-hashes`. Locks that need pip's unsafe
 bootstrap tools retain `--allow-unsafe`, and the wrapper refreshes the declaration fingerprint embedded in

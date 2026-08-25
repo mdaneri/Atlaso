@@ -491,8 +491,10 @@ The following cross-cutting boundaries always apply:
   supported Windows 1Password SDK password bridge on this shared path contract, and serialize every key-backed
   remote shell argument explicitly. The bridge must bind the exact verified `Atlaso` Environment's concealed
   `DEFAULT_ADMIN_PASSWORD` variable only inside the bounded deployment child, bound desktop authorization and
-  Environment retrieval to the deployment timeout, preserve known-host verification, and fail closed for missing SDK
-  support, desktop authorization, Environment, variable, masking, or redaction. Never use a
+  Environment retrieval to the deployment timeout, stage its complete runtime from the generated seven-day
+  hash-verified deployment lock with an explicit SDK-supported CPython 3.9 through 3.13 interpreter, install it with
+  index access disabled, preserve known-host verification, and fail
+  closed for missing SDK support, desktop authorization, Environment, variable, masking, or redaction. Never use a
   password argument,
   local `.env`, caller-provided `DEFAULT_ADMIN_PASSWORD`, or the retired `ATLASO_DEPLOY_SSH_PASSWORD` fallback.
 - The normal `create-atlaso-test-vm.ps1` Workstation wrapper provisions an existing Ed25519 public key for the bootstrap

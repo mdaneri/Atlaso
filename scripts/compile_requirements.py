@@ -69,6 +69,12 @@ LOCK_TARGETS = (
         True,
         True,
     ),
+    LockTarget(
+        "requirements-onepassword-deploy.lock",
+        ("requirements-onepassword-deploy.in",),
+        False,
+        True,
+    ),
 )
 
 

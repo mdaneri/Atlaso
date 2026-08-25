@@ -1719,7 +1719,8 @@ def test_vmware_deploy_wheel_supports_secure_onepassword_password_deploy():
 
     assert "[string]$OnePasswordEnvironmentId = ''" in script
     assert "[string]$OnePasswordAccount = ''" in script
-    assert "onepassword-sdk==$script:OnePasswordSdkVersion" in script
+    assert "[string]$OnePasswordPython = ''" in script
+    assert "$script:PasswordDeployLockName = 'requirements-onepassword-deploy.lock'" in script
     assert "from onepassword import Client, DesktopAuth" in script
     assert "onepassword.environments.get_variables(args.onepassword_environment_id)" in script
     assert "DEFAULT_ADMIN_PASSWORD" in script
@@ -1728,6 +1729,9 @@ def test_vmware_deploy_wheel_supports_secure_onepassword_password_deploy():
     assert "ATLASO_DEPLOY_RUNTIME_PASSWORD" not in script
     assert "function Initialize-PasswordDeployPythonPath" in script
     assert "Preparing the isolated 1Password SDK and Paramiko deployment runtime" in script
+    assert "Stage-PasswordDeployPythonWheels" in script
+    assert "'--require-hashes'" in script
+    assert "'--no-index'" in script
     assert "'--find-links', $wheelDirectory" in script
     assert "'--target', $dependencyDirectory" in script
     assert "'-I', '-S', $pythonDeploy" in script
@@ -1790,6 +1794,7 @@ def test_vmware_deploy_wheel_supports_secure_onepassword_password_deploy():
     assert "Invoke-PasswordBackedDeploy `" in script
     assert "-OnePasswordEnvironmentId '<atlaso-environment-id>'" in readme
     assert "-OnePasswordAccount '<account-name-or-id>'" in readme
+    assert "-OnePasswordPython '<path-to-python-3.13.exe>'" in readme
     assert "temporary deployment directory" in readme
     assert "global Python" in readme
     assert "pinned 1Password SDK" in readme

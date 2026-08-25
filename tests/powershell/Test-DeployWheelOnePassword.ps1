@@ -60,6 +60,17 @@ if (-not $scriptText.Contains('from onepassword import Client, DesktopAuth', [Sy
     -not $scriptText.Contains('onepassword.environments.get_variables(args.onepassword_environment_id)', [System.StringComparison]::Ordinal)) {
     throw 'The bounded deployment child must use the supported 1Password SDK Environments API.'
 }
+if (-not $scriptText.Contains('$script:PasswordDeployLockName = ''requirements-onepassword-deploy.lock''', [System.StringComparison]::Ordinal) -or
+    -not $scriptText.Contains("'--no-index'", [System.StringComparison]::Ordinal) -or
+    -not $scriptText.Contains("'--require-hashes'", [System.StringComparison]::Ordinal) -or
+    -not $scriptText.Contains('''-r'', $lockPath', [System.StringComparison]::Ordinal)) {
+    throw 'The bounded deployment child must install the vetted SDK runtime from the hashed lock and staged wheels only.'
+}
+if (-not $scriptText.Contains('[string]$OnePasswordPython =', [System.StringComparison]::Ordinal) -or
+    -not $scriptText.Contains('$version -notmatch ''^3\.(9|1[0-3])$''', [System.StringComparison]::Ordinal) -or
+    -not $scriptText.Contains('-PythonCommand $resolvedOnePasswordPython', [System.StringComparison]::Ordinal)) {
+    throw 'Password deployment must use an explicit CPython runtime with a supported 1Password SDK Windows wheel.'
+}
 if (-not $scriptText.Contains("'-I', '-S', $pythonDeploy", [System.StringComparison]::Ordinal) -or
     -not $scriptText.Contains("'--dependency-path', $pythonDependencyPath", [System.StringComparison]::Ordinal) -or
     $scriptText.Contains('$env:PYTHONPATH', [System.StringComparison]::Ordinal)) {

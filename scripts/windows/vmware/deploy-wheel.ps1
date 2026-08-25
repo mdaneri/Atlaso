@@ -37,6 +37,8 @@ Explicit Atlaso wheel path.
 Opaque ID of the preverified Atlaso 1Password Environment.
 .PARAMETER OnePasswordAccount
 1Password account name or ID approved for desktop SDK authorization.
+.PARAMETER OnePasswordPython
+CPython 3.9 through 3.13 executable used by the supported 1Password SDK Windows wheel.
 .PARAMETER ResetVaultEntries
 Clears appliance vault entries during deployment.
 .PARAMETER SkipHostCheck
@@ -62,13 +64,14 @@ param(
     [string]$WheelPath = '',
     [string]$OnePasswordEnvironmentId = '',
     [string]$OnePasswordAccount = '',
+    [string]$OnePasswordPython = '',
     [switch]$ResetVaultEntries,
     [switch]$SkipHostCheck
 )
 
 $ErrorActionPreference = 'Stop'
 
-$script:OnePasswordSdkVersion = '0.4.1'
+$script:PasswordDeployLockName = 'requirements-onepassword-deploy.lock'
 
 <#
 .SYNOPSIS
@@ -96,6 +99,27 @@ function Assert-OnePasswordAccount {
     if ([string]::IsNullOrWhiteSpace($Account) -or $Account.Length -gt 255 -or $Account -match '[\x00-\x1f\x7f]') {
         throw 'The 1Password account name or ID is invalid.'
     }
+}
+
+<#
+.SYNOPSIS
+Resolves a Python runtime supported by the 1Password SDK Windows wheel.
+.PARAMETER PythonCommand
+Explicit CPython 3.9 through 3.13 executable or command.
+#>
+function Resolve-OnePasswordPython {
+    param([Parameter(Mandatory = $true)][string]$PythonCommand)
+
+    $command = Get-Command -Name $PythonCommand -CommandType Application -ErrorAction SilentlyContinue
+    if (-not $command) {
+        throw "The 1Password SDK Python executable was not found: $PythonCommand."
+    }
+    $resolvedCommand = $command.Source
+    $version = & $resolvedCommand -c 'import sys; print(f"{sys.version_info.major}.{sys.version_info.minor}")'
+    if ($LASTEXITCODE -ne 0 -or $version -notmatch '^3\.(9|1[0-3])$') {
+        throw 'Password-backed deployment requires a separate CPython 3.9 through 3.13 runtime supported by the 1Password SDK Windows wheel.'
+    }
+    return $resolvedCommand
 }
 
 <#
@@ -406,6 +430,37 @@ function ConvertTo-WindowsSshRemoteCommand {
 
 <#
 .SYNOPSIS
+Stages the vetted 1Password SDK deployment wheels.
+.PARAMETER PythonCommand
+Python executable.
+.PARAMETER WorkingDirectory
+Repository working directory.
+#>
+function Stage-PasswordDeployPythonWheels {
+    param(
+        [Parameter(Mandatory = $true)][string]$PythonCommand,
+        [Parameter(Mandatory = $true)][string]$WorkingDirectory
+    )
+
+    $lockPath = Join-Path $WorkingDirectory $script:PasswordDeployLockName
+    $wheelDirectory = Join-Path $WorkingDirectory 'dist'
+    if (-not (Test-Path -LiteralPath $lockPath -PathType Leaf)) {
+        throw "The vetted 1Password deployment lock is unavailable: $lockPath."
+    }
+    Write-Host 'Staging the vetted 1Password SDK and Paramiko deployment wheels...'
+    Invoke-CheckedCommand -FilePath $PythonCommand -WorkingDirectory $WorkingDirectory -Arguments @(
+        '-m', 'pip', 'download',
+        '--disable-pip-version-check',
+        '--index-url', 'https://pypi.org/simple',
+        '--require-hashes',
+        '--only-binary=:all:',
+        '--dest', $wheelDirectory,
+        '-r', $lockPath
+    ) | Out-Host
+}
+
+<#
+.SYNOPSIS
 Creates an isolated Python dependency directory for 1Password and Paramiko.
 .PARAMETER PythonCommand
 Python executable.
@@ -422,8 +477,12 @@ function Initialize-PasswordDeployPythonPath {
     )
 
     $wheelDirectory = Join-Path $WorkingDirectory 'dist'
+    $lockPath = Join-Path $WorkingDirectory $script:PasswordDeployLockName
     if (-not (Test-Path -LiteralPath $wheelDirectory -PathType Container)) {
-        throw "Paramiko is not installed and the local wheel directory does not exist: $wheelDirectory. Rerun without -SkipBuild or install the Atlaso Python dependencies."
+        throw "The vetted password-deployment wheel directory does not exist: $wheelDirectory. Rerun without -SkipBuild."
+    }
+    if (-not (Test-Path -LiteralPath $lockPath -PathType Leaf)) {
+        throw "The vetted 1Password deployment lock is unavailable: $lockPath."
     }
 
     $dependencyDirectory = Join-Path $TemporaryDirectory 'python-dependencies'
@@ -433,10 +492,11 @@ function Initialize-PasswordDeployPythonPath {
         Invoke-CheckedCommand -FilePath $PythonCommand -WorkingDirectory $WorkingDirectory -Arguments @(
             '-m', 'pip', 'install',
             '--disable-pip-version-check',
+            '--no-index',
             '--find-links', $wheelDirectory,
+            '--require-hashes',
             '--target', $dependencyDirectory,
-            "onepassword-sdk==$script:OnePasswordSdkVersion",
-            'paramiko>=3.5.0'
+            '-r', $lockPath
         ) | Out-Host
     } catch {
         throw "Unable to prepare the isolated 1Password SDK and Paramiko deployment runtime. $($_.Exception.Message)"
@@ -956,17 +1016,25 @@ $resolvedRepoRoot = Resolve-RepoRoot -Path $RepoRoot
 $RemoteDirectory = Resolve-RemoteDirectoryPath -Path $RemoteDirectory
 
 $UsePasswordDeploy = -not [string]::IsNullOrEmpty($OnePasswordEnvironmentId)
+$resolvedOnePasswordPython = ''
 if ($UsePasswordDeploy) {
     Assert-OnePasswordEnvironmentId -EnvironmentId $OnePasswordEnvironmentId
     Assert-OnePasswordAccount -Account $OnePasswordAccount
-} elseif ($OnePasswordAccount) {
-    throw '-OnePasswordAccount requires -OnePasswordEnvironmentId.'
+    if ([string]::IsNullOrWhiteSpace($OnePasswordPython)) {
+        throw '-OnePasswordPython is required with -OnePasswordEnvironmentId.'
+    }
+    $resolvedOnePasswordPython = Resolve-OnePasswordPython -PythonCommand $OnePasswordPython
+} elseif ($OnePasswordAccount -or $OnePasswordPython) {
+    throw '-OnePasswordAccount and -OnePasswordPython require -OnePasswordEnvironmentId.'
 }
 
 if (-not $SkipBuild) {
     New-Item -ItemType Directory -Force -Path (Join-Path $resolvedRepoRoot 'dist') | Out-Null
     Write-Host "Building Atlaso wheel..."
     Invoke-CheckedCommand -FilePath $Python -Arguments @('-m', 'pip', 'wheel', '.', '-w', 'dist') -WorkingDirectory $resolvedRepoRoot
+    if ($UsePasswordDeploy) {
+        Stage-PasswordDeployPythonWheels -PythonCommand $resolvedOnePasswordPython -WorkingDirectory $resolvedRepoRoot
+    }
 }
 
 $resolvedWheelPath = Get-WheelPath -Path $WheelPath -Root $resolvedRepoRoot
@@ -1446,7 +1514,7 @@ try {
     if ($UsePasswordDeploy) {
         Write-Host "Uploading deployment files to $SshUser@$IpAddress`:$RemoteDirectory with password-backed SSH"
         Invoke-PasswordBackedDeploy `
-            -PythonCommand $Python `
+            -PythonCommand $resolvedOnePasswordPython `
             -HostAddress $IpAddress `
             -UserName $SshUser `
             -LocalWheelPath $resolvedWheelPath `

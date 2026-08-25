@@ -749,8 +749,12 @@ Terminal order:
   because PowerShell will try to execute it. For password-backed Windows deployment, authenticate the local 1Password
   integration, verify exactly one `Atlaso` Environment and the concealed `DEFAULT_ADMIN_PASSWORD` variable by name,
   then pass its opaque ID with `-OnePasswordEnvironmentId` and the approved account name or ID with
-  `-OnePasswordAccount`; the script must use the supported 1Password SDK desktop integration and fail closed when SDK
-  preparation, desktop authorization, Environment access, the unique variable, or masking is unavailable. Never pass a password
+  `-OnePasswordAccount`; pass an explicit CPython 3.9 through 3.13 executable with `-OnePasswordPython` rather than
+  source-building the unsupported Python 3.14 combination. The script must use the supported 1Password SDK desktop
+  integration, stage the SDK, Paramiko,
+  and their transitive dependencies from the generated seven-day hash-verified deployment lock, install only from that
+  offline wheel set, and fail closed when SDK preparation, desktop authorization, Environment access, the unique
+  variable, or masking is unavailable. Never pass a password
   argument, create a local `.env`, set `DEFAULT_ADMIN_PASSWORD` in the caller, or use the retired
   `ATLASO_DEPLOY_SSH_PASSWORD` fallback. The parent must perform local build and input preparation without the
   credential, then invoke one bounded Python child that retrieves `DEFAULT_ADMIN_PASSWORD` through the SDK and uses it
