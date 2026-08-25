@@ -6936,9 +6936,14 @@ function showWanMessage(elementId, message) {
 async function postWanAction(url, data, csrf, options = {}) {
   const reload = options.reload ?? true;
   const body = new FormData();
+  const defaultRouteSelected = data.default_route === true
+    || ["1", "on", "true", "yes"].includes(String(data.default_route).toLowerCase());
   body.set("csrf", csrf);
   for (const [key, value] of Object.entries(data)) {
     if (["id", "is_new", "wan_policy_name"].includes(key)) {
+      continue;
+    }
+    if (key === "destination_cidr" && defaultRouteSelected) {
       continue;
     }
     if (["enabled", "default_route"].includes(key)) {

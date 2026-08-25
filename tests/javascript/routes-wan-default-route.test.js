@@ -143,5 +143,6 @@ test("inline Enabled saves submit default-route checkbox state", async () => {
   );
 
   assert.equal(submittedBody.values.get("default_route"), "on");
+  assert.equal(submittedBody.values.has("destination_cidr"), false);
   assert.equal(submittedBody.values.has("enabled"), false);
 });
