@@ -81,7 +81,7 @@ def route_to_dict(route: Route) -> dict:
     return {
         "id": route.id,
         "destination_cidr": destination,
-        "destination_label": "Default route" if family else destination,
+        "destination_label": f"Default route (IPv{family})" if family else destination,
         "default_route": family is not None,
         "default_route_family": family or "",
         "gateway": route.gateway or "",

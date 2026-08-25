@@ -135,7 +135,7 @@ def test_routes_wan_default_route_add_edit_validation_and_semantic_readback(clie
         assert route.gateway == "192.0.2.1"
 
     readback = client.get("/routes-wan")
-    assert "Default route" in readback.text
+    assert "Default route (IPv4)" in readback.text
     assert "0.0.0.0/0" in readback.text
 
     duplicate = client.post(

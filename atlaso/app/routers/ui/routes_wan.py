@@ -420,6 +420,8 @@ def build_router(dependencies: RoutesWanUiDependencies) -> RoutesWanUiRouter:
             The endpoint response.
         """
         verify_csrf(request, csrf)
+        # Serialize the default-family check and write with API and archive mutations.
+        acquire_network_objects_write_lock(db)
         parsed = validate_route_form_values(
             destination_cidr,
             gateway,
@@ -489,6 +491,7 @@ def build_router(dependencies: RoutesWanUiDependencies) -> RoutesWanUiRouter:
             HTTPException: If the request cannot be fulfilled.
         """
         verify_csrf(request, csrf)
+        acquire_network_objects_write_lock(db)
         route = db.get(Route, route_id)
         if not route:
             raise HTTPException(status_code=404, detail="Route not found")

@@ -181,6 +181,9 @@ def build_router(dependencies: RoutesWanApiDependencies) -> RoutesWanApiRouter:
             identity: Authenticated identity authorizing the operation.
             db: Active database session used by the operation.
         """
+        # The shared mutation lock also covers settings-archive restores, so the
+        # default-family check and insert remain one serialized transaction.
+        acquire_network_objects_write_lock(db)
         destination, gateway = validate_route_payload(payload, db)
         values = payload.model_dump()
         values.update(destination_cidr=destination, gateway=gateway)
@@ -223,6 +226,7 @@ def build_router(dependencies: RoutesWanApiDependencies) -> RoutesWanApiRouter:
             identity: Authenticated identity authorizing the operation.
             db: Active database session used by the operation.
         """
+        acquire_network_objects_write_lock(db)
         route = db.get(Route, route_id)
         if not route:
             raise HTTPException(status_code=404, detail="Route not found")

@@ -23,7 +23,7 @@ def test_default_route_helpers_and_renderer_use_canonical_semantics():
 
     assert canonical_route_destination(route.destination_cidr) == "0.0.0.0/0"
     assert default_route_family(route.destination_cidr) == 4
-    assert route_to_dict(route)["destination_label"] == "Default route"
+    assert route_to_dict(route)["destination_label"] == "Default route (IPv4)"
     config = render_wan_config([route])
     assert "route=0.0.0.0/0" in config
     assert "ip route replace 0.0.0.0/0 via 192.0.2.1 dev eth1 metric 90 table 200" in config
