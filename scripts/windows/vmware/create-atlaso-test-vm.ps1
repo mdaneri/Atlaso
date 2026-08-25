@@ -716,6 +716,8 @@ function Write-ConnectionSummary {
 $repoRoot = (Resolve-Path -LiteralPath (Join-Path $PSScriptRoot '..\..\..')).Path
 $developmentRootCaCertificatePath = Join-Path $repoRoot 'image\vmware-workstation\development-trust\atlaso-development-root-ca.pem'
 $developmentRootCaCertificatePem = Get-Content -LiteralPath $developmentRootCaCertificatePath -Raw
+$developmentRootCaFingerprint = Get-AtlasoDevelopmentRootCaFingerprint `
+    -CertificatePath $developmentRootCaCertificatePath
 $resolvedOpPath = ''
 if ($NoStart) {
     throw '-NoStart is not supported for normal test VMs because first boot must consume and scrub the shared development signing key.'
@@ -899,6 +901,11 @@ if (-not $WhatIfPreference) {
         Wait-AtlasoWorkstationDevelopmentRootCaPrivateKeyScrub `
             -VmxPath $targetVmx `
             -VmrunPath $resolvedVmrunPath `
+            -TimeoutSeconds $TimeoutSeconds
+        Wait-AtlasoWorkstationDevelopmentRootCaImportProof `
+            -VmxPath $targetVmx `
+            -VmrunPath $resolvedVmrunPath `
+            -ExpectedFingerprint $developmentRootCaFingerprint `
             -TimeoutSeconds $TimeoutSeconds
     }
     catch {

@@ -786,11 +786,17 @@ def test_photon_provisioning_installs_default_nginx_management_proxy():
     assert "sync_host_physical_interfaces(db)" in bootstrap
     assert bootstrap.index("sync_host_physical_interfaces(db)") < bootstrap.index("ensure_ca_state(db)")
     assert "first-boot-development-root-ca.json" in bootstrap
+    assert "first-boot-development-root-ca-imported" in bootstrap
+    assert "guestinfo.atlaso.test_vm_development_root_ca_imported" in bootstrap
     assert "import_root_ca_material(" in bootstrap
     assert 'expected_common_name="Atlaso Development Root CA"' in bootstrap
     committed_import = bootstrap.index("db.commit()")
     staged_removal = bootstrap.index("remove_staged_development_root_ca()", committed_import)
     assert committed_import < staged_removal < bootstrap.index("ensure_ca_state(db)")
+    proof_write = bootstrap.index("write_development_root_ca_import_proof(development_root_fingerprint)")
+    proof_publish = bootstrap.index("publish_development_root_ca_import_proof()", proof_write)
+    marker_write = bootstrap.index('MARKER_PATH.write_text("Atlaso first-boot HTTPS bootstrap completed.')
+    assert bootstrap.index("fix_state_permissions()") < proof_write < proof_publish < marker_write
     assert 'str(HELPER_PATH), "ca", action, str(CA_STAGED_CONFIG_PATH), "--real"' in bootstrap
     assert 'for db_file in state_path.glob("atlaso.db*")' in bootstrap
     assert 'shutil.chown(db_file, user="atlaso", group="atlaso")' in bootstrap
@@ -803,6 +809,7 @@ def test_photon_provisioning_installs_default_nginx_management_proxy():
     assert 'listen 443 ssl default_server;' in bootstrap
     assert 'ssl_certificate {cert_path};' in bootstrap
     assert 'ssl_certificate_key {key_path};' in bootstrap
+
     assert "client_max_body_size 1g;" in bootstrap
     assert "client_max_body_size 512m;" not in bootstrap
     assert "proxy_pass http://127.0.0.1:8000;" in bootstrap
@@ -854,6 +861,58 @@ def test_photon_provisioning_installs_default_nginx_management_proxy():
     assert "-PipGlobalIndexUrl" in root_docs
     assert "Leave both options empty to keep" in root_docs
     assert "standard pip behavior" in root_docs
+
+
+def test_photon_https_bootstrap_publishes_exact_development_root_import_proof(
+    tmp_path, monkeypatch
+):
+    """Publish only the durable exact fingerprint after signer import and scrub.
+
+    Args:
+        tmp_path: Isolated proof-marker directory.
+        monkeypatch: Pytest fixture used to replace VMware guest-info commands.
+    """
+    import importlib.machinery
+    import importlib.util
+    from types import SimpleNamespace
+
+    script_path = Path("scripts/appliance/atlaso-bootstrap-https")
+    loader = importlib.machinery.SourceFileLoader("atlaso_bootstrap_https_test", str(script_path))
+    spec = importlib.util.spec_from_loader(loader.name, loader)
+    bootstrap = importlib.util.module_from_spec(spec)
+    loader.exec_module(bootstrap)
+    bootstrap.DEVELOPMENT_ROOT_CA_IMPORTED_MARKER_PATH = tmp_path / "imported"
+    fingerprint = "A1" * 32
+    commands = []
+
+    def fake_run(command):
+        commands.append(command)
+        stdout = f"{fingerprint}\n" if "info-get" in command[-1] else ""
+        return SimpleNamespace(returncode=0, stdout=stdout, stderr="")
+
+    monkeypatch.setattr(
+        bootstrap.shutil,
+        "which",
+        lambda name: "/usr/bin/vmware-rpctool" if name == "vmware-rpctool" else None,
+    )
+    monkeypatch.setattr(bootstrap, "run", fake_run)
+
+    bootstrap.write_development_root_ca_import_proof(fingerprint)
+
+    assert bootstrap.publish_development_root_ca_import_proof() is True
+    assert bootstrap.DEVELOPMENT_ROOT_CA_IMPORTED_MARKER_PATH.read_text(
+        encoding="ascii"
+    ) == fingerprint
+    assert commands == [
+        [
+            "/usr/bin/vmware-rpctool",
+            f"info-set {bootstrap.DEVELOPMENT_ROOT_CA_IMPORTED_GUESTINFO} {fingerprint}",
+        ],
+        [
+            "/usr/bin/vmware-rpctool",
+            f"info-get {bootstrap.DEVELOPMENT_ROOT_CA_IMPORTED_GUESTINFO}",
+        ],
+    ]
 
 
 def test_photon_provisioning_prepares_attached_data_disks():

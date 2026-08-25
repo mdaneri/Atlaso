@@ -151,6 +151,15 @@ if ($wrapperSource -notmatch "Wait-AtlasoWorkstationDevelopmentRootCaPrivateKeyS
     $wrapperSource -notmatch "Automatic rollback also failed") {
     throw 'Unproven signing-key scrub must stop and safely roll back the new VM.'
 }
+$stageStart = $wrapperSource.IndexOf('-Action Stage', [System.StringComparison]::Ordinal)
+$importProof = $wrapperSource.IndexOf(
+    'Wait-AtlasoWorkstationDevelopmentRootCaImportProof',
+    [System.StringComparison]::Ordinal
+)
+$rollbackCatch = $wrapperSource.IndexOf("`n    catch {", $stageStart, [System.StringComparison]::Ordinal)
+if ($stageStart -lt 0 -or $importProof -lt $stageStart -or $rollbackCatch -lt $importProof) {
+    throw 'Encrypted-import proof must remain inside the automatic rollback boundary.'
+}
 foreach ($rollbackMarker in @(
         'Clear-AtlasoWorkstationDevelopmentRootCaPrivateKey',
         'Move-AtlasoRollbackDataDisksToQuarantine',

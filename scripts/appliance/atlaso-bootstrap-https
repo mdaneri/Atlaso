@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import shlex
 import shutil
 import subprocess
@@ -31,6 +32,12 @@ NGINX_MAIN_CONFIG_PATH = Path("/etc/nginx/nginx.conf")
 NGINX_MANAGEMENT_PATH = Path("/etc/atlaso/nginx/sites.d/management.conf")
 DEVELOPMENT_ROOT_CA_STAGING_PATH = Path(
     "/var/lib/atlaso/apply/ca/first-boot-development-root-ca.json"
+)
+DEVELOPMENT_ROOT_CA_IMPORTED_MARKER_PATH = Path(
+    "/var/lib/atlaso/first-boot-development-root-ca-imported"
+)
+DEVELOPMENT_ROOT_CA_IMPORTED_GUESTINFO = (
+    "guestinfo.atlaso.test_vm_development_root_ca_imported"
 )
 
 
@@ -83,6 +90,66 @@ def remove_staged_development_root_ca() -> None:
             os.fsync(descriptor)
         finally:
             os.close(descriptor)
+
+
+def write_development_root_ca_import_proof(fingerprint: str) -> None:
+    """Persist the non-secret fingerprint proving encrypted import and scrub.
+
+    Args:
+        fingerprint: Uppercase SHA-256 fingerprint of the imported development root.
+
+    Raises:
+        ValueError: If the fingerprint or an existing marker path is unsafe.
+    """
+    if not re.fullmatch(r"[0-9A-F]{64}", fingerprint):
+        raise ValueError("Development root CA import fingerprint is invalid.")
+    path = DEVELOPMENT_ROOT_CA_IMPORTED_MARKER_PATH
+    if path.exists() and (path.is_symlink() or not path.is_file()):
+        raise ValueError("Development root CA import proof path is unsafe.")
+    path.write_text(fingerprint, encoding="ascii")
+    path.chmod(0o640)
+
+
+def publish_development_root_ca_import_proof() -> bool:
+    """Publish and read back the normal-test-VM import proof through guest-info.
+
+    Returns:
+        True when no development proof applies or exact guest-info readback succeeds.
+
+    Raises:
+        ValueError: If the durable proof marker is unsafe or malformed.
+    """
+    path = DEVELOPMENT_ROOT_CA_IMPORTED_MARKER_PATH
+    if not path.exists():
+        return True
+    path_stat = path.lstat()
+    if path.is_symlink() or not path.is_file() or path_stat.st_size != 64:
+        raise ValueError("Development root CA import proof path is unsafe.")
+    fingerprint = path.read_text(encoding="ascii").strip()
+    if not re.fullmatch(r"[0-9A-F]{64}", fingerprint):
+        raise ValueError("Development root CA import proof is invalid.")
+    command_pairs = (
+        (
+            "vmware-rpctool",
+            [f"info-set {DEVELOPMENT_ROOT_CA_IMPORTED_GUESTINFO} {fingerprint}"],
+            [f"info-get {DEVELOPMENT_ROOT_CA_IMPORTED_GUESTINFO}"],
+        ),
+        (
+            "vmtoolsd",
+            ["--cmd", f"info-set {DEVELOPMENT_ROOT_CA_IMPORTED_GUESTINFO} {fingerprint}"],
+            ["--cmd", f"info-get {DEVELOPMENT_ROOT_CA_IMPORTED_GUESTINFO}"],
+        ),
+    )
+    for command_name, setter_arguments, getter_arguments in command_pairs:
+        command = shutil.which(command_name)
+        if command is None:
+            continue
+        if run([command, *setter_arguments]).returncode != 0:
+            continue
+        readback = run([command, *getter_arguments])
+        if readback.returncode == 0 and readback.stdout.strip() == fingerprint:
+            return True
+    return False
 
 
 def run(command: list[str]) -> subprocess.CompletedProcess[str]:
@@ -233,9 +300,18 @@ def main() -> int:
 
     """
     if MARKER_PATH.exists():
+        try:
+            published = publish_development_root_ca_import_proof()
+        except (OSError, UnicodeError, ValueError) as exc:
+            print(str(exc))
+            return 2
+        if not published:
+            print("Development root CA encrypted-import proof could not be published.")
+            return 2
         return 0
 
     init_db()
+    development_root_fingerprint = ""
     with SessionLocal() as db:
         seed_initial_data(db, include_examples=False, appliance_mode=True)
         sync_host_physical_interfaces(db)
@@ -255,6 +331,12 @@ def main() -> int:
             except OSError:
                 print("Development root CA staging could not be removed after encrypted import.")
                 return 2
+        if (
+            ca_settings.root_common_name == "Atlaso Development Root CA"
+            and ca_settings.root_fingerprint
+            and not DEVELOPMENT_ROOT_CA_STAGING_PATH.exists()
+        ):
+            development_root_fingerprint = ca_settings.root_fingerprint.upper()
 
         errors = ensure_ca_state(db)
         if errors:
@@ -318,6 +400,16 @@ def main() -> int:
         return validation.returncode
 
     fix_state_permissions()
+    if development_root_fingerprint:
+        try:
+            write_development_root_ca_import_proof(development_root_fingerprint)
+            published = publish_development_root_ca_import_proof()
+        except (OSError, UnicodeError, ValueError) as exc:
+            print(str(exc))
+            return 2
+        if not published:
+            print("Development root CA encrypted-import proof could not be published.")
+            return 2
     MARKER_PATH.write_text("Atlaso first-boot HTTPS bootstrap completed.\n", encoding="utf-8")
     MARKER_PATH.chmod(0o640)
     return 0

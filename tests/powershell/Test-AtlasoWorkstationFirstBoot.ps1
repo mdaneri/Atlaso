@@ -63,6 +63,22 @@ function Assert-Throws {
     throw $Message
 }
 
+<#
+.SYNOPSIS
+Return the configured guest-info import proof for wait-helper tests.
+
+.PARAMETER Arguments
+Ignored vmrun-compatible arguments accepted by the fake command.
+#>
+function Invoke-AtlasoImportProofVmrun {
+    param(
+        [Parameter(ValueFromRemainingArguments = $true)][string[]]$Arguments
+    )
+
+    $global:LASTEXITCODE = 0
+    return $script:ImportProofFingerprint
+}
+
 $validKey = 'ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIAABAgMEBQYHCAkKCwwNDg8QERITFBUWFxgZGhscHR4f atlaso&test'
 $temporaryRoot = Join-Path ([System.IO.Path]::GetTempPath()) "atlaso-workstation-key-$([guid]::NewGuid().ToString('N'))"
 New-Item -ItemType Directory -Path $temporaryRoot | Out-Null
@@ -141,6 +157,27 @@ try {
             $certificatePem,
             [System.Text.UTF8Encoding]::new($false)
         )
+        $developmentFingerprint = Get-AtlasoDevelopmentRootCaFingerprint `
+            -CertificatePath $certificatePath
+        if ($developmentFingerprint -notmatch '^[0-9A-F]{64}$') {
+            throw 'The development root helper did not return an uppercase SHA-256 fingerprint.'
+        }
+        $script:ImportProofFingerprint = $developmentFingerprint
+        Wait-AtlasoWorkstationDevelopmentRootCaImportProof `
+            -VmxPath (Join-Path $temporaryRoot 'proof.vmx') `
+            -VmrunPath 'Invoke-AtlasoImportProofVmrun' `
+            -ExpectedFingerprint $developmentFingerprint `
+            -TimeoutSeconds 2 `
+            -PollSeconds 0
+        $script:ImportProofFingerprint = '0' * 64
+        Assert-Throws {
+            Wait-AtlasoWorkstationDevelopmentRootCaImportProof `
+                -VmxPath (Join-Path $temporaryRoot 'proof.vmx') `
+                -VmrunPath 'Invoke-AtlasoImportProofVmrun' `
+                -ExpectedFingerprint $developmentFingerprint `
+                -TimeoutSeconds 0 `
+                -PollSeconds 0
+        } 'A mismatched encrypted-import proof must fail closed.'
         Assert-AtlasoDevelopmentRootCaMaterial `
             -CertificatePath $certificatePath `
             -PrivateKeyPem $privateKeyPem
@@ -172,7 +209,8 @@ try {
         $vmxPath = Join-Path $temporaryRoot 'development.vmx'
         [System.IO.File]::WriteAllText(
             $vmxPath,
-            "displayName = `"Atlaso-Test`"`n",
+            "displayName = `"Atlaso-Test`"`n" +
+                "guestinfo.atlaso.test_vm_development_root_ca_imported = `"$developmentFingerprint`"`n",
             [System.Text.UTF8Encoding]::new($false)
         )
         Set-AtlasoWorkstationDevelopmentRootCaPrivateKey `
@@ -184,6 +222,9 @@ try {
         }
         if ($vmx.Contains('BEGIN PRIVATE KEY')) {
             throw 'The signing key guest-info field must use bounded base64.'
+        }
+        if ($vmx -match 'guestinfo\.atlaso\.test_vm_development_root_ca_imported') {
+            throw 'Staging a new signer must remove stale encrypted-import proof from the VMX.'
         }
         Clear-AtlasoWorkstationDevelopmentRootCaPrivateKey -VmxPath $vmxPath
         if ([System.IO.File]::ReadAllText($vmxPath) -match 'guestinfo\.atlaso\.test_vm_development_root_ca_private_key') {

@@ -522,8 +522,14 @@ function Set-AtlasoWorkstationDevelopmentRootCaPrivateKey {
     $line = "$guestInfoName = " + (ConvertTo-AtlasoVmxString -Value $encoded)
     $content = @(Get-Content -LiteralPath $VmxPath)
     $pattern = '^\s*guestinfo\.atlaso\.test_vm_development_root_ca_private_key\s*='
+    $importProofPattern = '^\s*guestinfo\.atlaso\.test_vm_development_root_ca_imported\s*='
     $updated = $false
     $content = @($content | ForEach-Object {
+            # A prior matching proof must never satisfy this invocation before
+            # the newly staged signer has been imported and scrubbed.
+            if ($_ -match $importProofPattern) {
+                return
+            }
             if ($_ -match $pattern) {
                 if (-not $updated) {
                     $line
@@ -558,6 +564,91 @@ function Clear-AtlasoWorkstationDevelopmentRootCaPrivateKey {
     if (Select-String -LiteralPath $VmxPath -Pattern $pattern -Quiet) {
         throw 'The powered-off normal test VM still contains the development signing-key assignment.'
     }
+}
+
+<#
+.SYNOPSIS
+Return the SHA-256 fingerprint of one public development root certificate.
+
+.PARAMETER CertificatePath
+Exact checked-in PEM certificate path.
+#>
+function Get-AtlasoDevelopmentRootCaFingerprint {
+    param(
+        [Parameter(Mandatory = $true)][string]$CertificatePath
+    )
+
+    $certificate = [System.Security.Cryptography.X509Certificates.X509Certificate2]::CreateFromPem(
+        [System.IO.File]::ReadAllText($CertificatePath)
+    )
+    try {
+        return $certificate.GetCertHashString(
+            [System.Security.Cryptography.HashAlgorithmName]::SHA256
+        ).ToUpperInvariant()
+    }
+    finally {
+        $certificate.Dispose()
+    }
+}
+
+<#
+.SYNOPSIS
+Wait for proof that the guest encrypted the development signer and scrubbed staging.
+
+.PARAMETER VmxPath
+Exact running normal test VMX path.
+
+.PARAMETER VmrunPath
+Exact VMware vmrun executable path.
+
+.PARAMETER ExpectedFingerprint
+Checked-in development root SHA-256 fingerprint expected from the guest.
+
+.PARAMETER TimeoutSeconds
+Bounded time allowed for HTTPS bootstrap to import and scrub the signer.
+
+.PARAMETER PollSeconds
+Delay between guest-info reads.
+#>
+function Wait-AtlasoWorkstationDevelopmentRootCaImportProof {
+    param(
+        [Parameter(Mandatory = $true)][string]$VmxPath,
+        [Parameter(Mandatory = $true)][string]$VmrunPath,
+        [Parameter(Mandatory = $true)][string]$ExpectedFingerprint,
+        [Parameter(Mandatory = $true)][int]$TimeoutSeconds,
+        [int]$PollSeconds = 2
+    )
+
+    $normalizedExpected = $ExpectedFingerprint.Replace(':', '').ToUpperInvariant()
+    if ($normalizedExpected -notmatch '^[0-9A-F]{64}$') {
+        throw 'The expected Atlaso development root SHA-256 fingerprint is invalid.'
+    }
+    $guestInfoName = 'guestinfo.atlaso.test_vm_development_root_ca_imported'
+    $deadline = (Get-Date).AddSeconds($TimeoutSeconds)
+    $matchingReads = 0
+    do {
+        $value = (& $VmrunPath -T ws readVariable $VmxPath runtimeConfig $guestInfoName 2>$null |
+            Select-Object -First 1)
+        $normalizedValue = if ($null -ne $value) {
+            $value.Trim().Replace(':', '').ToUpperInvariant()
+        }
+        else {
+            ''
+        }
+        if ($LASTEXITCODE -eq 0 -and $normalizedValue -ceq $normalizedExpected) {
+            $matchingReads += 1
+            if ($matchingReads -ge 3) {
+                return
+            }
+        }
+        else {
+            $matchingReads = 0
+        }
+        if ((Get-Date) -lt $deadline) {
+            Start-Sleep -Seconds $PollSeconds
+        }
+    } while ((Get-Date) -lt $deadline)
+    throw 'The normal test VM did not prove encrypted development-root import and plaintext staging removal.'
 }
 
 <#
