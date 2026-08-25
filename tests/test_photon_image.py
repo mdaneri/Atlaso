@@ -1561,6 +1561,12 @@ def test_create_atlaso_vmware_test_vm_wrapper_uses_common_helpers():
     assert "scsi0:$Unit" in vm_script
     assert "set-test-nics.ps1" in vm_script
 
+    explicit_ssh_probe = "if (-not [string]::IsNullOrWhiteSpace($SshHost))"
+    static_builder_probe = "elseif ($BuilderStaticIp)"
+    assert explicit_ssh_probe in build_script
+    assert static_builder_probe in build_script
+    assert build_script.index(explicit_ssh_probe) < build_script.index(static_builder_probe)
+
     lifecycle_script = Path(
         "scripts/windows/vmware/run-lifecycle-test.ps1"
     ).read_text(encoding="utf-8")

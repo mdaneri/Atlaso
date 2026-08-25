@@ -50,7 +50,7 @@ Optional remastered ISO path.
 .PARAMETER PackerOnError
 Packer failure-handling mode.
 .PARAMETER PackerStartupTimeoutSeconds
-Maximum interval from builder power-on to SSH provisioning.
+Maximum interval from monitored Packer process start to SSH provisioning.
 .PARAMETER PackerHeartbeatSeconds
 Interval for sanitized builder startup diagnostics.
 .PARAMETER AllowExistingManagementSubnet
@@ -520,7 +520,15 @@ if (-not $ValidateOnly -and -not $PrepareIsoOnly) {
         $null = Initialize-AtlasoWorkstationGui -VmrunPath $resolvedVmrunPath
     }
 
-    $builderAddress = if ($BuilderStaticIp) { ($BuilderStaticIp -split '/', 2)[0] } else { $SshHost }
+    $builderAddress = if (-not [string]::IsNullOrWhiteSpace($SshHost)) {
+        $SshHost
+    }
+    elseif ($BuilderStaticIp) {
+        ($BuilderStaticIp -split '/', 2)[0]
+    }
+    else {
+        ''
+    }
     if ([string]::IsNullOrWhiteSpace($builderAddress)) {
         throw 'A configured builder address is required for bounded VMware startup monitoring.'
     }

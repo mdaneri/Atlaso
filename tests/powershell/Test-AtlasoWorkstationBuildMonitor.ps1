@@ -82,8 +82,12 @@ if ($safeLine.Contains($secret) -or -not $safeLine.Contains('[redacted]')) {
 
 $fakePacker = Join-Path $OutputDirectory 'fake-packer.ps1'
 $fakeScript = @'
-param([ValidateSet('stall', 'success', 'failure', 'burst')][string]$Mode)
+param([ValidateSet('prepower-stall', 'stall', 'success', 'failure', 'burst')][string]$Mode)
 Write-Output '==> builder: Password: "generated-vnc-test-secret"'
+if ($Mode -eq 'prepower-stall') {
+    Start-Sleep -Seconds 30
+    exit 0
+}
 Write-Output '==> builder: Powering on virtual machine...'
 if ($Mode -eq 'stall') {
     Start-Sleep -Seconds 30
@@ -121,6 +125,44 @@ $timeoutHandler = {
         [System.Text.UTF8Encoding]::new($false)
     )
 }.GetNewClosure()
+
+$prePowerRecord = Join-Path $OutputDirectory 'prepower-timeout.txt'
+$prePowerHandler = {
+    param($SelectedOnError, $State, $Diagnostic)
+    [System.IO.File]::WriteAllText(
+        $prePowerRecord,
+        "$SelectedOnError|$($Diagnostic.Code)",
+        [System.Text.UTF8Encoding]::new($false)
+    )
+}.GetNewClosure()
+$prePowerProbe = {
+    param($Phase, $Identity)
+    return New-TestBuilderState -VmxExists $false -IdentityMatches $false -ExactRunning $false -Tcp22Reachable $false
+}
+$prePowerError = $null
+try {
+    Invoke-AtlasoMonitoredPackerBuild `
+        -PackerPath $pwshPath `
+        -Arguments @('-NoLogo', '-NoProfile', '-NonInteractive', '-File', $fakePacker, '-Mode', 'prepower-stall') `
+        -WorkingDirectory $OutputDirectory `
+        -VmrunPath $pwshPath `
+        -VmxPath (Join-Path $OutputDirectory 'not-created.vmx') `
+        -BuilderAddress '192.0.2.30' `
+        -StartupTimeoutSeconds 2 `
+        -HeartbeatSeconds 1 `
+        -PackerOnError cleanup `
+        -TimeoutHandler $prePowerHandler `
+        -StateProbe $prePowerProbe
+}
+catch {
+    $prePowerError = $_
+}
+if ($null -eq $prePowerError -or $prePowerError.Exception.Message -notmatch 'vmx_missing') {
+    throw 'A pre-power-on Packer stall did not fail with the expected bounded diagnosis.'
+}
+if ((Get-Content -LiteralPath $prePowerRecord -Raw) -cne 'cleanup|vmx_missing') {
+    throw 'A pre-power-on Packer stall did not invoke checked failure handling.'
+}
 
 $stallLines = [System.Collections.Generic.List[string]]::new()
 $stallError = $null

@@ -366,9 +366,9 @@ Resolved VMware vmrun executable.
 .PARAMETER VmxPath
 Expected builder VMX path.
 .PARAMETER BuilderAddress
-Configured builder IP address.
+Configured Packer SSH endpoint address.
 .PARAMETER StartupTimeoutSeconds
-Maximum interval from the power-on phase to SSH provisioning.
+Maximum interval from monitored Packer process start to SSH provisioning.
 .PARAMETER HeartbeatSeconds
 Interval for safe startup phase heartbeats.
 .PARAMETER PackerOnError
@@ -411,7 +411,7 @@ function Invoke-AtlasoMonitoredPackerBuild {
     $process = [System.Diagnostics.Process]::new()
     $process.StartInfo = $startInfo
     $phase = 'preparing'
-    $powerOnStarted = $null
+    $startupStarted = $null
     $nextHeartbeat = [System.DateTimeOffset]::UtcNow.AddSeconds($HeartbeatSeconds)
     $vmxIdentity = ''
     $lastState = $null
@@ -427,6 +427,7 @@ function Invoke-AtlasoMonitoredPackerBuild {
         if (-not $processStarted) {
             throw 'Packer build process did not start.'
         }
+        $startupStarted = [System.DateTimeOffset]::UtcNow
         $stdoutTask = $process.StandardOutput.ReadLineAsync()
         $stderrTask = $process.StandardError.ReadLineAsync()
 
@@ -467,9 +468,6 @@ function Invoke-AtlasoMonitoredPackerBuild {
                 $newPhase = Get-AtlasoPackerPhaseFromLine -CurrentPhase $phase -Line $safeLine
                 if ($newPhase -ne $phase) {
                     $phase = $newPhase
-                    if ($phase -eq 'powering_on' -and $null -eq $powerOnStarted) {
-                        $powerOnStarted = [System.DateTimeOffset]::UtcNow
-                    }
                 }
             }
 
@@ -504,8 +502,8 @@ function Invoke-AtlasoMonitoredPackerBuild {
                 $nextHeartbeat = [System.DateTimeOffset]::UtcNow.AddSeconds($HeartbeatSeconds)
             }
 
-            if ($null -ne $powerOnStarted -and $phase -ne 'provisioning' -and
-                ([System.DateTimeOffset]::UtcNow - $powerOnStarted).TotalSeconds -ge $StartupTimeoutSeconds) {
+            if ($null -ne $startupStarted -and $phase -ne 'provisioning' -and
+                ([System.DateTimeOffset]::UtcNow - $startupStarted).TotalSeconds -ge $StartupTimeoutSeconds) {
                 $timedOut = $true
                 break
             }
