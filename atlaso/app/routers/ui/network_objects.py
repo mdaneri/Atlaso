@@ -464,6 +464,16 @@ def build_router(dependencies: NetworkObjectsUiDependencies) -> NetworkObjectsUi
                     )
                 )
             aggregate_errors = validate_firewall_source_groups(groups)
+            nat_rules = db.execute(select(NatRule).order_by(NatRule.priority, NatRule.name)).scalars().all()
+            aggregate_errors.extend(
+                error
+                for nat_errors in source_group_nat_validation_errors(
+                    groups,
+                    nat_rules,
+                    include_disabled=True,
+                ).values()
+                for error in nat_errors
+            )
 
         return JSONResponse(
             {
@@ -471,7 +481,7 @@ def build_router(dependencies: NetworkObjectsUiDependencies) -> NetworkObjectsUi
                 "valid": bool(results)
                 and all(result["state"] != "invalid" for result in results)
                 and not aggregate_errors,
-                "errors": aggregate_errors,
+                "errors": list(dict.fromkeys(aggregate_errors)),
             }
         )
 

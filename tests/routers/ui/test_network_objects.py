@@ -75,6 +75,8 @@ def test_network_objects_page_uses_canonical_grid_wizard_and_safe_return_tokens(
     assert ".network-objects-panel" in app_css
     assert "height: calc(100vh - 120px)" in app_css
     assert ".network-objects-fallback-shell" in app_css
+    assert ".network-objects-panel > .error-list" in app_css
+    assert "overflow-y: auto" in app_css
 
     rejected_return = client.get("/network-objects?return_to=https://example.invalid")
     assert rejected_return.status_code == 200
@@ -245,6 +247,22 @@ def test_network_objects_rejects_updates_that_invalidate_nat_consumers(client):
         )
         db.commit()
 
+    validation = client.post(
+        "/network-objects/source-groups/validate-entries",
+        data={
+            "csrf": csrf,
+            "group_id": created["id"],
+            "group_name": created["name"],
+            "group_entries": "2001:db8::/64",
+        },
+        headers={"X-Atlaso-Grid": "1"},
+    )
+
+    assert validation.status_code == 200
+    assert validation.json()["valid"] is False
+    assert "NAT rule nat-clients-egress" in validation.json()["errors"][0]
+    assert "IPv4" in validation.json()["errors"][0]
+
     response = client.post(
         "/network-objects/source-groups",
         data={
@@ -365,6 +383,7 @@ def test_network_objects_page_reports_existing_nat_consumer_validation(client):
 
     assert page.status_code == 200
     assert "needs attention" in page.text
+    assert 'aria-label="Network Object validation errors"' in page.text
     match = re.search(
         r'id="network-object-source-groups-table"[^>]+data-source-groups=\'([^\']*)\'',
         page.text,

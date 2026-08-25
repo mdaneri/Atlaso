@@ -8035,9 +8035,17 @@ dialog.has-expanded-monaco .confirm-modal-panel {
 
 .network-objects-panel > .panel-head,
 .network-objects-panel > .info-band,
-.network-objects-panel > .alert,
-.network-objects-panel > .error-list {
+.network-objects-panel > .alert {
   flex: 0 0 auto;
+}
+
+.network-objects-panel > .error-list {
+  flex: 0 1 auto;
+  min-height: 0;
+  max-height: min(30vh, 240px);
+  padding-right: 8px;
+  overflow-y: auto;
+  overscroll-behavior: contain;
 }
 
 .network-objects-grid,

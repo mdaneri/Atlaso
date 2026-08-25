@@ -48,7 +48,7 @@
   </div>
 
   {% if network_object_validation_errors %}
-  <div class="error-list" role="list">{% for error in network_object_validation_errors %}<div role="listitem">{{ error }}</div>{% endfor %}</div>
+  <div class="error-list" role="list" tabindex="0" aria-label="Network Object validation errors">{% for error in network_object_validation_errors %}<div role="listitem">{{ error }}</div>{% endfor %}</div>
   {% endif %}
 </section>
 
