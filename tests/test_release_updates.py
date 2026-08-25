@@ -959,7 +959,11 @@ def test_release_startup_guard_holds_maintenance_before_control_plane(monkeypatc
     )
     maintenance = tmp_path / "run/atlaso-update-maintenance"
     management_site = tmp_path / "management.conf"
-    management_site.write_text("server {\n  listen 443 ssl;\n}\n", encoding="utf-8")
+    management_site.write_text(
+        "server {\n  listen 80 default_server;\n}\n"
+        "server {\n  listen 443 ssl default_server;\n}\n",
+        encoding="utf-8",
+    )
     monkeypatch.setattr(helper, "ATLASO_UPDATE_FINALIZER_PATH", finalizer)
     monkeypatch.setattr(helper, "ATLASO_UPDATE_MAINTENANCE_PATH", maintenance)
     monkeypatch.setattr(helper, "NGINX_MANAGEMENT_SITE_PATH", management_site)
@@ -973,9 +977,9 @@ def test_release_startup_guard_holds_maintenance_before_control_plane(monkeypatc
 
     assert result["success"] is True
     assert maintenance.is_file()
-    assert f"if (-f {maintenance}) {{ return 503; }}" in management_site.read_text(
-        encoding="utf-8"
-    )
+    assert management_site.read_text(encoding="utf-8").count(
+        f"if (-f {maintenance}) {{ return 503; }}"
+    ) == 2
 
 
 def test_release_prestart_runs_candidate_bookkeeping_as_atlaso(monkeypatch, tmp_path):
@@ -4738,6 +4742,300 @@ def test_release_maintenance_cleanup_validates_and_reloads_nginx(monkeypatch, tm
     assert result["success"] is True
     assert not maintenance.exists()
     assert calls == [("reload", ("nginx.service",))]
+
+
+def test_release_maintenance_enable_guards_every_management_server_before_reload(
+    monkeypatch,
+    tmp_path,
+):
+    """Verify stale mixed management blocks are all closed before nginx reload.
+
+    Args:
+        monkeypatch: Pytest fixture used to replace helper dependencies.
+        tmp_path: Temporary directory provided for the management site and marker.
+    """
+    from tests.test_appliance_update import load_helper_module
+
+    helper = load_helper_module()
+    maintenance = tmp_path / "run/atlaso-update-maintenance"
+    management_site = tmp_path / "management.conf"
+    condition = f"  if (-f {maintenance}) {{ return 503; }}"
+    management_site.write_text(
+        "\n".join(
+            [
+                "server {",
+                "  listen 80 default_server;",
+                "  location / { return 308 https://$host$request_uri; }",
+                "}",
+                "server {",
+                condition,
+                "  listen 443 ssl default_server;",
+                "  location / { proxy_pass http://127.0.0.1:8000; }",
+                "}",
+                "server {",
+                "  listen 192.0.2.10:443 ssl bind;",
+                "  location / { proxy_pass http://127.0.0.1:8000; }",
+                "}",
+                "",
+            ]
+        ),
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(helper, "ATLASO_UPDATE_MAINTENANCE_PATH", maintenance)
+    monkeypatch.setattr(helper, "NGINX_MANAGEMENT_SITE_PATH", management_site)
+    monkeypatch.setattr(
+        helper,
+        "_nginx_test_command",
+        lambda: subprocess.CompletedProcess(["nginx", "-t"], 0, "valid", ""),
+    )
+    calls: list[tuple[str, tuple[str, ...]]] = []
+
+    def service_command(action, *units):
+        """Assert every block is guarded before nginx is reloaded.
+
+        Args:
+            action: Systemd action requested by maintenance activation.
+            *units: Systemd units targeted by the action.
+        """
+        text = management_site.read_text(encoding="utf-8")
+        assert text.count(f"if (-f {maintenance}) {{ return 503; }}") == 3
+        assert maintenance.is_file()
+        calls.append((action, units))
+        return {
+            "command": ["systemctl", action, *units],
+            "returncode": 0,
+            "success": True,
+            "stdout": "",
+            "stderr": "",
+        }
+
+    monkeypatch.setattr(helper, "_service_command", service_command)
+    monkeypatch.setattr(
+        helper,
+        "_verify_release_maintenance_response",
+        lambda text: {
+            "command": ["maintenance", "enable", "probe"],
+            "returncode": 0,
+            "success": condition in text,
+            "stdout": "verified",
+            "stderr": "",
+            "layer": "maintenance_probe",
+            "listener_count": 2,
+            "stable_samples": 3,
+        },
+    )
+
+    result = helper._set_release_maintenance(True)
+
+    assert result["success"] is True
+    assert result["maintenance_probe"]["stable_samples"] == 3
+    assert calls == [("reload", ("nginx.service",))]
+
+
+def test_release_maintenance_enable_rejects_missing_management_site(monkeypatch, tmp_path):
+    """Verify a missing applied site aborts before nginx reload or Atlaso shutdown.
+
+    Args:
+        monkeypatch: Pytest fixture used to replace helper dependencies.
+        tmp_path: Temporary directory provided for the missing site and marker.
+    """
+    from tests.test_appliance_update import load_helper_module
+
+    helper = load_helper_module()
+    maintenance = tmp_path / "run/atlaso-update-maintenance"
+    monkeypatch.setattr(helper, "ATLASO_UPDATE_MAINTENANCE_PATH", maintenance)
+    monkeypatch.setattr(helper, "NGINX_MANAGEMENT_SITE_PATH", tmp_path / "missing.conf")
+    monkeypatch.setattr(
+        helper,
+        "_service_command",
+        lambda *_args, **_kwargs: pytest.fail("nginx reload must not run without the management site"),
+    )
+
+    result = helper._set_release_maintenance(True)
+
+    assert result["success"] is False
+    assert result["failure_layer"] == "management_site"
+    assert "services remain running" in result["stderr"]
+    assert maintenance.is_file()
+
+
+def test_release_maintenance_enable_requires_live_503_proof(monkeypatch, tmp_path):
+    """Verify marker visibility failure aborts before the release can stop Atlaso.
+
+    Args:
+        monkeypatch: Pytest fixture used to replace helper dependencies.
+        tmp_path: Temporary directory provided for the management site and marker.
+    """
+    from tests.test_appliance_update import load_helper_module
+
+    helper = load_helper_module()
+    maintenance = tmp_path / "run/atlaso-update-maintenance"
+    management_site = tmp_path / "management.conf"
+    management_site.write_text(
+        "server {\n  listen 80 default_server;\n  location / { proxy_pass http://127.0.0.1:8000; }\n}\n",
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(helper, "ATLASO_UPDATE_MAINTENANCE_PATH", maintenance)
+    monkeypatch.setattr(helper, "NGINX_MANAGEMENT_SITE_PATH", management_site)
+    monkeypatch.setattr(
+        helper,
+        "_nginx_test_command",
+        lambda: subprocess.CompletedProcess(["nginx", "-t"], 0, "valid", ""),
+    )
+    monkeypatch.setattr(
+        helper,
+        "_service_command",
+        lambda action, *units: {
+            "command": ["systemctl", action, *units],
+            "returncode": 0,
+            "success": True,
+            "stdout": "",
+            "stderr": "",
+        },
+    )
+    monkeypatch.setattr(
+        helper,
+        "_verify_release_maintenance_response",
+        lambda _text: helper._release_maintenance_failure(
+            "maintenance_probe",
+            "The applied listener returned 200; Atlaso services remain running.",
+        ),
+    )
+
+    result = helper._set_release_maintenance(True)
+
+    assert result["success"] is False
+    assert result["failure_layer"] == "maintenance_probe"
+    assert maintenance.is_file()
+
+
+def test_release_maintenance_enable_reload_failure_skips_live_probe(monkeypatch, tmp_path):
+    """Verify a failed nginx reload cannot advance to marker-visibility proof.
+
+    Args:
+        monkeypatch: Pytest fixture used to replace helper dependencies.
+        tmp_path: Temporary directory provided for the management site and marker.
+    """
+    from tests.test_appliance_update import load_helper_module
+
+    helper = load_helper_module()
+    maintenance = tmp_path / "run/atlaso-update-maintenance"
+    management_site = tmp_path / "management.conf"
+    management_site.write_text(
+        "server {\n  listen 80 default_server;\n  location / { proxy_pass http://127.0.0.1:8000; }\n}\n",
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(helper, "ATLASO_UPDATE_MAINTENANCE_PATH", maintenance)
+    monkeypatch.setattr(helper, "NGINX_MANAGEMENT_SITE_PATH", management_site)
+    monkeypatch.setattr(
+        helper,
+        "_nginx_test_command",
+        lambda: subprocess.CompletedProcess(["nginx", "-t"], 0, "valid", ""),
+    )
+    monkeypatch.setattr(
+        helper,
+        "_service_command",
+        lambda action, *units: {
+            "command": ["systemctl", action, *units],
+            "returncode": 1,
+            "success": False,
+            "stdout": "",
+            "stderr": "injected nginx reload failure",
+        },
+    )
+    monkeypatch.setattr(
+        helper,
+        "_verify_release_maintenance_response",
+        lambda _text: pytest.fail("maintenance proof must not run after reload failure"),
+    )
+
+    result = helper._set_release_maintenance(True)
+
+    assert result["success"] is False
+    assert result["failure_layer"] == "nginx_reload"
+    assert maintenance.is_file()
+
+
+def test_release_maintenance_probe_requires_every_default_listener(monkeypatch):
+    """Verify both HTTP and HTTPS defaults return stable 503 responses.
+
+    Args:
+        monkeypatch: Pytest fixture used to replace curl discovery and responses.
+    """
+    from tests.test_appliance_update import load_helper_module
+
+    helper = load_helper_module()
+    monkeypatch.setattr(helper.shutil, "which", lambda command: "/usr/bin/curl" if command == "curl" else None)
+    observed: list[tuple[str, bool]] = []
+
+    def status(_curl, url, *, insecure=False):
+        """Record each listener proof and inject one unguarded HTTPS response.
+
+        Args:
+            _curl: Resolved curl path.
+            url: Management URL selected for proof.
+            insecure: Whether the HTTPS probe bypasses local CA trust.
+        """
+        observed.append((url, insecure))
+        return "200" if url.startswith("https://") else "503"
+
+    monkeypatch.setattr(helper, "_console_management_http_status", status)
+    site = "\n".join(
+        [
+            "server {",
+            "  listen 8080 default_server;",
+            "}",
+            "server {",
+            "  listen 8443 ssl default_server;",
+            "}",
+            "",
+        ]
+    )
+
+    result = helper._verify_release_maintenance_response(
+        site,
+        samples=1,
+        attempts=1,
+        retry_interval=0,
+    )
+
+    assert result["success"] is False
+    assert result["failure_layer"] == "maintenance_probe"
+    assert observed == [
+        ("http://127.0.0.1:8080/openapi.json", False),
+        ("https://127.0.0.1:8443/openapi.json", True),
+    ]
+
+
+def test_release_maintenance_probe_allows_bounded_nginx_convergence(monkeypatch):
+    """Verify a transient old response must converge before three stable samples.
+
+    Args:
+        monkeypatch: Pytest fixture used to replace curl discovery and responses.
+    """
+    from tests.test_appliance_update import load_helper_module
+
+    helper = load_helper_module()
+    monkeypatch.setattr(helper.shutil, "which", lambda command: "/usr/bin/curl" if command == "curl" else None)
+    statuses = iter(["200", "503", "503", "503"])
+    sleeps: list[float] = []
+    monkeypatch.setattr(
+        helper,
+        "_console_management_http_status",
+        lambda *_args, **_kwargs: next(statuses),
+    )
+    monkeypatch.setattr(helper.time, "sleep", sleeps.append)
+
+    result = helper._verify_release_maintenance_response(
+        "server {\n  listen 80 default_server;\n}\n",
+        attempts=4,
+        retry_interval=0.2,
+    )
+
+    assert result["success"] is True
+    assert result["stable_samples"] == 3
+    assert result["attempts"] == 4
+    assert sleeps == [0.2, 0.2, 0.2]
 
 
 def test_release_maintenance_cleanup_failure_keeps_nginx_in_maintenance(monkeypatch, tmp_path):

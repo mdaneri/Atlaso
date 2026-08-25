@@ -5777,7 +5777,7 @@ def _management_proxy_location(upstream_host: str, upstream_port: int, forwarded
     """
     return [
         "  client_max_body_size 1g;",
-        f"  if (-f {ATLASO_UPDATE_MAINTENANCE_PATH}) {{ return 503; }}",
+        _release_maintenance_condition(),
         "  location / {",
         f"    proxy_pass http://{upstream_host}:{upstream_port};",
         "    proxy_http_version 1.1;",
@@ -5848,6 +5848,7 @@ def _management_nginx_config(payload: dict, cert_path: Path | None = None, key_p
     lines.extend(
         [
             "server {",
+            _release_maintenance_condition(),
             f"  listen {public_http_port} default_server;",
             f"  listen [::]:{public_http_port} default_server;",
             "  server_name _;",
@@ -13850,15 +13851,22 @@ def _guard_interrupted_release_startup() -> dict:
             False,
             "The management nginx site is unavailable; maintenance remains held.",
         )
-    text = NGINX_MANAGEMENT_SITE_PATH.read_text(encoding="utf-8")
-    condition = f"  if (-f {ATLASO_UPDATE_MAINTENANCE_PATH}) {{ return 503; }}"
-    if condition not in text:
-        previous = text
-        text = text.replace("server {\n", f"server {{\n{condition}\n")
-        NGINX_MANAGEMENT_SITE_PATH.write_text(text, encoding="utf-8")
+    try:
+        previous = NGINX_MANAGEMENT_SITE_PATH.read_text(encoding="utf-8")
+        guarded = _management_site_with_release_maintenance_guards(previous)
+    except (OSError, ValueError):
+        return _release_check(
+            "release_startup_guard",
+            False,
+            "The management nginx site could not be guarded; maintenance remains held.",
+        )
+    if guarded != previous:
+        NGINX_MANAGEMENT_SITE_PATH.write_text(guarded, encoding="utf-8")
+        os.chmod(NGINX_MANAGEMENT_SITE_PATH, 0o644)
         validation = _nginx_test_command()
         if validation.returncode != 0:
             NGINX_MANAGEMENT_SITE_PATH.write_text(previous, encoding="utf-8")
+            os.chmod(NGINX_MANAGEMENT_SITE_PATH, 0o644)
             return _release_check(
                 "release_startup_guard",
                 False,
@@ -14086,20 +14094,44 @@ def _set_release_maintenance(enabled: bool) -> dict:
     if enabled:
         ATLASO_UPDATE_MAINTENANCE_PATH.parent.mkdir(parents=True, exist_ok=True)
         ATLASO_UPDATE_MAINTENANCE_PATH.touch(mode=0o644, exist_ok=True)
-        if NGINX_MANAGEMENT_SITE_PATH.is_file():
-            text = NGINX_MANAGEMENT_SITE_PATH.read_text(encoding="utf-8")
-            condition = f"  if (-f {ATLASO_UPDATE_MAINTENANCE_PATH}) {{ return 503; }}"
-            if condition not in text:
-                previous = text
-                text = text.replace("server {\n", f"server {{\n{condition}\n")
-                NGINX_MANAGEMENT_SITE_PATH.write_text(text, encoding="utf-8")
-                validation = _nginx_test_command()
-                if validation.returncode != 0:
-                    NGINX_MANAGEMENT_SITE_PATH.write_text(previous, encoding="utf-8")
-                    ATLASO_UPDATE_MAINTENANCE_PATH.unlink(missing_ok=True)
-                    return _command_payload(["nginx", "-t"])
+        if not NGINX_MANAGEMENT_SITE_PATH.is_file():
+            return _release_maintenance_failure(
+                "management_site",
+                "The applied management nginx site is unavailable; Atlaso services remain running.",
+            )
+        try:
+            previous = NGINX_MANAGEMENT_SITE_PATH.read_text(encoding="utf-8")
+            guarded = _management_site_with_release_maintenance_guards(previous)
+        except (OSError, ValueError) as exc:
+            return _release_maintenance_failure(
+                "management_site",
+                f"The applied management nginx site could not be guarded ({type(exc).__name__}); Atlaso services remain running.",
+            )
+        if guarded != previous:
+            temporary = NGINX_MANAGEMENT_SITE_PATH.with_suffix(".conf.tmp")
+            temporary.write_text(guarded, encoding="utf-8")
+            os.chmod(temporary, 0o644)
+            temporary.replace(NGINX_MANAGEMENT_SITE_PATH)
+        validation = _nginx_test_command()
+        if validation.returncode != 0:
+            if guarded != previous:
+                NGINX_MANAGEMENT_SITE_PATH.write_text(previous, encoding="utf-8")
+                os.chmod(NGINX_MANAGEMENT_SITE_PATH, 0o644)
+            return _release_maintenance_failure(
+                "nginx_validation",
+                "The guarded management nginx configuration is invalid; Atlaso services remain running.",
+                returncode=validation.returncode,
+            )
         result = _service_command("reload", "nginx.service")
         result["command"] = ["maintenance", "enable"]
+        if not result["success"]:
+            result["failure_layer"] = "nginx_reload"
+            return result
+        probe = _verify_release_maintenance_response(guarded)
+        if not probe["success"]:
+            return probe
+        result["maintenance_probe"] = probe
+        result["stdout"] = "Atlaso management maintenance response enabled, reloaded, and verified."
         return result
     ATLASO_UPDATE_MAINTENANCE_PATH.parent.mkdir(parents=True, exist_ok=True)
     ATLASO_UPDATE_MAINTENANCE_PATH.touch(mode=0o644, exist_ok=True)
@@ -14118,6 +14150,173 @@ def _set_release_maintenance(enabled: bool) -> dict:
         ATLASO_UPDATE_MAINTENANCE_PATH.unlink(missing_ok=True)
         result["stdout"] = "Atlaso management maintenance response disabled and nginx reloaded."
     return result
+
+
+def _release_maintenance_condition(*, indent: str = "  ") -> str:
+    """Return the nginx condition that closes one management server block.
+
+    Args:
+        indent: Whitespace used to indent the condition inside its server block.
+    """
+    return f"{indent}if (-f {ATLASO_UPDATE_MAINTENANCE_PATH}) {{ return 503; }}"
+
+
+def _management_site_server_ranges(text: str) -> list[tuple[re.Match[str], int]]:
+    """Return every top-level server-block range in an Atlaso management site.
+
+    Args:
+        text: Applied Atlaso management nginx configuration.
+
+    Raises:
+        ValueError: If the managed site contains no server blocks.
+    """
+    starts = list(re.finditer(r"(?m)^(?P<indent>[ \t]*)server[ \t]*\{[ \t]*(?:#.*)?$", text))
+    if not starts:
+        raise ValueError("management nginx site contains no server blocks")
+    return [
+        (match, starts[index + 1].start() if index + 1 < len(starts) else len(text))
+        for index, match in enumerate(starts)
+    ]
+
+
+def _management_site_with_release_maintenance_guards(text: str) -> str:
+    """Ensure every applied management server block observes the release marker.
+
+    Args:
+        text: Applied Atlaso management nginx configuration.
+
+    Returns:
+        The configuration with a maintenance condition in every server block.
+    """
+    condition_pattern = re.compile(
+        rf"(?m)^\s*if\s+\(-f\s+{re.escape(str(ATLASO_UPDATE_MAINTENANCE_PATH))}\)\s*"
+        r"\{\s*return\s+503;\s*\}\s*$"
+    )
+    guarded = text
+    for match, end in reversed(_management_site_server_ranges(text)):
+        block = text[match.start():end]
+        if condition_pattern.search(block):
+            continue
+        line_end = text.find("\n", match.end())
+        insertion = len(text) if line_end < 0 else line_end + 1
+        newline = "\r\n" if "\r\n" in text else "\n"
+        condition = _release_maintenance_condition(indent=f"{match.group('indent')}  ")
+        guarded = guarded[:insertion] + condition + newline + guarded[insertion:]
+    return guarded
+
+
+def _release_maintenance_probe_urls(text: str) -> tuple[tuple[str, bool], ...]:
+    """Return loopback URLs for every default management listener.
+
+    Args:
+        text: Guarded Atlaso management nginx configuration.
+
+    Raises:
+        ValueError: If the applied site has no default HTTP or HTTPS listener.
+    """
+    probes: list[tuple[str, bool]] = []
+    for match, end in _management_site_server_ranges(text):
+        block = text[match.start():end]
+        for listener in re.finditer(r"(?m)^\s*listen\s+(?P<endpoint>\S+)(?P<options>[^;]*);", block):
+            options = listener.group("options")
+            if "default_server" not in options.split():
+                continue
+            endpoint = listener.group("endpoint")
+            port_match = re.search(r"(?P<port>\d+)$", endpoint)
+            if port_match is None:
+                continue
+            port = int(port_match.group("port"))
+            insecure = "ssl" in options.split()
+            scheme = "https" if insecure else "http"
+            default_port = 443 if insecure else 80
+            authority = "127.0.0.1" if port == default_port else f"127.0.0.1:{port}"
+            probe = (f"{scheme}://{authority}/openapi.json", insecure)
+            if probe not in probes:
+                probes.append(probe)
+    if not probes:
+        raise ValueError("management nginx site contains no default listener")
+    return tuple(probes)
+
+
+def _release_maintenance_failure(layer: str, message: str, *, returncode: int = 1) -> dict:
+    """Return one sanitized maintenance-activation failure.
+
+    Args:
+        layer: Stable failing layer for operator diagnostics.
+        message: Sanitized failure detail.
+        returncode: Nonzero helper result associated with the failure.
+    """
+    return {
+        "command": ["maintenance", "enable", layer],
+        "returncode": returncode or 1,
+        "success": False,
+        "stdout": "",
+        "stderr": message,
+        "failure_layer": layer,
+    }
+
+
+def _verify_release_maintenance_response(
+    text: str,
+    *,
+    samples: int = 3,
+    attempts: int = 10,
+    retry_interval: float = 0.2,
+) -> dict:
+    """Prove nginx observes the marker before Atlaso services may stop.
+
+    Args:
+        text: Guarded Atlaso management nginx configuration.
+        samples: Consecutive 503 samples required from every default listener.
+        attempts: Maximum bounded probe rounds allowed while nginx converges.
+        retry_interval: Delay between probe rounds.
+    """
+    curl = shutil.which("curl")
+    if curl is None:
+        return _release_maintenance_failure(
+            "maintenance_probe",
+            "curl is unavailable for the nginx maintenance response proof; Atlaso services remain running.",
+        )
+    try:
+        probes = _release_maintenance_probe_urls(text)
+    except ValueError as exc:
+        return _release_maintenance_failure(
+            "maintenance_probe",
+            f"The nginx maintenance response could not be targeted ({exc}); Atlaso services remain running.",
+        )
+    statuses: dict[str, str] = {}
+    consecutive = 0
+    completed_attempts = 0
+    for attempt in range(max(samples, attempts)):
+        completed_attempts = attempt + 1
+        statuses = {
+            url: _console_management_http_status(curl, url, insecure=insecure)
+            for url, insecure in probes
+        }
+        if all(status == "503" for status in statuses.values()):
+            consecutive += 1
+            if consecutive >= samples:
+                break
+        else:
+            consecutive = 0
+        if completed_attempts < max(samples, attempts):
+            time.sleep(retry_interval)
+    if consecutive < samples:
+        return _release_maintenance_failure(
+            "maintenance_probe",
+            "The applied nginx management listeners did not all return a stable maintenance response; Atlaso services remain running.",
+        )
+    return {
+        "command": ["maintenance", "enable", "probe"],
+        "returncode": 0,
+        "success": True,
+        "stdout": "The applied nginx management listeners returned 503 before Atlaso service shutdown.",
+        "stderr": "",
+        "layer": "maintenance_probe",
+        "listener_count": len(statuses),
+        "stable_samples": consecutive,
+        "attempts": completed_attempts,
+    }
 
 
 def _write_release_finalizer(payload: dict) -> None:

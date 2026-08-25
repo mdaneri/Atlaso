@@ -269,9 +269,14 @@ The helper creates the candidate virtualenv from the ABI-specific retained wheel
 web/worker/console modules, and validates the installed entry points. `/opt/atlaso/current` points at the active
 release, while `/opt/atlaso/.venv` points through `current` to its virtual environment.
 
-Before switching, the helper enables the nginx maintenance response, pauses the web and console services, closes the
-worker's database session, and creates a consistent SQLite backup. It installs the matching privileged helper, systemd
-definitions, nginx data-disk dependency, stable disk-identity rule, and platform-specific data-disk policy. The
+Before switching, the helper creates the nginx maintenance marker, requires every applied management HTTP and HTTPS
+server block to honor it, validates and reloads nginx, and allows a bounded nginx convergence interval before requiring
+three consecutive local 503 responses from every default management listener. A missing or malformed management site,
+invalid nginx configuration, failed reload, or listener that does not observe the marker fails at the maintenance
+layer while the current Atlaso services remain running; the release transaction does not start. Only after that proof
+does the helper pause the web and console services, close the worker's database session, and create a consistent SQLite
+backup. It installs the matching privileged helper, systemd definitions, nginx data-disk dependency, stable
+disk-identity rule, and platform-specific data-disk policy. The
 transaction reloads the identity rule and runs the release-owned data-disk preflight before it atomically changes
 `current`, starts the application, and probes internal `/openapi.json`. Unknown or contradictory platform evidence,
 an unsafe disk, or a missing release-owned safety asset fails the update and restores the prior files. When upgrading
