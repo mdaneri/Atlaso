@@ -568,6 +568,42 @@ function Clear-AtlasoWorkstationDevelopmentRootCaPrivateKey {
 
 <#
 .SYNOPSIS
+Clear and verify the development signer through VMware runtime guest-info.
+
+.PARAMETER VmxPath
+Exact normal test VMX whose runtime signer value must be scrubbed.
+
+.PARAMETER VmrunPath
+Exact VMware vmrun executable path.
+
+.PARAMETER TimeoutSeconds
+Bounded time allowed for three empty runtime readbacks.
+
+.PARAMETER PollSeconds
+Delay between runtime readbacks.
+#>
+function Clear-AtlasoWorkstationDevelopmentRootCaRuntimePrivateKey {
+    param(
+        [Parameter(Mandatory = $true)][string]$VmxPath,
+        [Parameter(Mandatory = $true)][string]$VmrunPath,
+        [Parameter(Mandatory = $true)][int]$TimeoutSeconds,
+        [int]$PollSeconds = 2
+    )
+
+    $guestInfoName = 'guestinfo.atlaso.test_vm_development_root_ca_private_key'
+    & $VmrunPath -T ws writeVariable $VmxPath runtimeConfig $guestInfoName '' 2>$null | Out-Null
+    if ($LASTEXITCODE -ne 0) {
+        throw 'VMware Workstation could not clear the development signing key from runtime guest-info.'
+    }
+    Wait-AtlasoWorkstationDevelopmentRootCaPrivateKeyScrub `
+        -VmxPath $VmxPath `
+        -VmrunPath $VmrunPath `
+        -TimeoutSeconds $TimeoutSeconds `
+        -PollSeconds $PollSeconds
+}
+
+<#
+.SYNOPSIS
 Return the SHA-256 fingerprint of one public development root certificate.
 
 .PARAMETER CertificatePath

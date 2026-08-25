@@ -79,6 +79,25 @@ function Invoke-AtlasoImportProofVmrun {
     return $script:ImportProofFingerprint
 }
 
+<#
+.SYNOPSIS
+Simulate VMware runtime signer clearing and empty readback.
+
+.PARAMETER Arguments
+vmrun-compatible arguments captured for ordering assertions.
+#>
+function Invoke-AtlasoRuntimeSignerScrubVmrun {
+    param(
+        [Parameter(ValueFromRemainingArguments = $true)][string[]]$Arguments
+    )
+
+    $script:RuntimeSignerScrubCalls.Add(($Arguments -join ' '))
+    $global:LASTEXITCODE = 0
+    if ($Arguments -contains 'readVariable') {
+        return ''
+    }
+}
+
 $validKey = 'ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIAABAgMEBQYHCAkKCwwNDg8QERITFBUWFxgZGhscHR4f atlaso&test'
 $temporaryRoot = Join-Path ([System.IO.Path]::GetTempPath()) "atlaso-workstation-key-$([guid]::NewGuid().ToString('N'))"
 New-Item -ItemType Directory -Path $temporaryRoot | Out-Null
@@ -178,6 +197,18 @@ try {
                 -TimeoutSeconds 0 `
                 -PollSeconds 0
         } 'A mismatched encrypted-import proof must fail closed.'
+        $script:RuntimeSignerScrubCalls = [System.Collections.Generic.List[string]]::new()
+        Clear-AtlasoWorkstationDevelopmentRootCaRuntimePrivateKey `
+            -VmxPath (Join-Path $temporaryRoot 'runtime-scrub.vmx') `
+            -VmrunPath 'Invoke-AtlasoRuntimeSignerScrubVmrun' `
+            -TimeoutSeconds 2 `
+            -PollSeconds 0
+        if (
+            $script:RuntimeSignerScrubCalls.Count -lt 4 -or
+            $script:RuntimeSignerScrubCalls[0] -notmatch '^\-T ws writeVariable .* runtimeConfig guestinfo\.atlaso\.test_vm_development_root_ca_private_key\s*$'
+        ) {
+            throw 'Runtime rollback must clear the signer before verifying three empty reads.'
+        }
         Assert-AtlasoDevelopmentRootCaMaterial `
             -CertificatePath $certificatePath `
             -PrivateKeyPem $privateKeyPem

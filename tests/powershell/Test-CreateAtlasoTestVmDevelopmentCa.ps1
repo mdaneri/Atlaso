@@ -161,6 +161,7 @@ if ($stageStart -lt 0 -or $importProof -lt $stageStart -or $rollbackCatch -lt $i
     throw 'Encrypted-import proof must remain inside the automatic rollback boundary.'
 }
 foreach ($rollbackMarker in @(
+        'Clear-AtlasoWorkstationDevelopmentRootCaRuntimePrivateKey',
         'Clear-AtlasoWorkstationDevelopmentRootCaPrivateKey',
         'Move-AtlasoRollbackDataDisksToQuarantine',
         "'remove-atlaso-vm.ps1'"
@@ -168,6 +169,22 @@ foreach ($rollbackMarker in @(
     if ($wrapperSource.IndexOf($rollbackMarker, [System.StringComparison]::Ordinal) -lt 0) {
         throw "Normal test VM rollback is missing required safety step: $rollbackMarker"
     }
+}
+$runtimeScrub = $wrapperSource.IndexOf(
+    'Clear-AtlasoWorkstationDevelopmentRootCaRuntimePrivateKey',
+    [System.StringComparison]::Ordinal
+)
+$rollbackStop = $wrapperSource.IndexOf(
+    'Stop-AtlasoTestVmForRollback',
+    $runtimeScrub,
+    [System.StringComparison]::Ordinal
+)
+if ($runtimeScrub -lt 0 -or $rollbackStop -lt $runtimeScrub) {
+    throw 'Rollback must attempt runtime signer scrub before VM stop discovery.'
+}
+if ($wrapperSource -notmatch '\$runtimeSignerScrubError\s*=\s*\$_\.Exception\.Message' -or
+    $wrapperSource -notmatch '\$stopped\s*=\s*\$true') {
+    throw 'Runtime signer scrub and stop failures must be retained independently.'
 }
 
 $rollbackTestRoot = Join-Path ([System.IO.Path]::GetTempPath()) (

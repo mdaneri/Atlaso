@@ -913,14 +913,47 @@ if (-not $WhatIfPreference) {
         if ($createdThisInvocation -and (Test-Path -LiteralPath $targetVmx -PathType Leaf)) {
             $rollbackErrors = [System.Collections.Generic.List[string]]::new()
             $quarantineDirectory = ''
+            $runtimeSignerScrubbed = $false
+            $runtimeSignerScrubError = ''
+            $stopped = $false
+            $vmxSignerScrubError = ''
             try {
                 $rollbackVmrunPath = Resolve-TestVmVmrunPath -Path $VmrunPath
-                Stop-AtlasoTestVmForRollback `
-                    -VmxPath $targetVmx `
-                    -VmrunPath $rollbackVmrunPath
-                # Scrub the host-side assignment before preservation or cleanup;
-                # rollback failure must never strand the shared signer in a VMX.
-                Clear-AtlasoWorkstationDevelopmentRootCaPrivateKey -VmxPath $targetVmx
+                try {
+                    # Runtime scrub precedes stop discovery so a vmrun list/stop
+                    # failure cannot strand the shared signer in a running VM.
+                    Clear-AtlasoWorkstationDevelopmentRootCaRuntimePrivateKey `
+                        -VmxPath $targetVmx `
+                        -VmrunPath $rollbackVmrunPath `
+                        -TimeoutSeconds ([Math]::Min($TimeoutSeconds, 30))
+                    $runtimeSignerScrubbed = $true
+                }
+                catch {
+                    $runtimeSignerScrubError = $_.Exception.Message
+                }
+                try {
+                    Stop-AtlasoTestVmForRollback `
+                        -VmxPath $targetVmx `
+                        -VmrunPath $rollbackVmrunPath
+                    $stopped = $true
+                }
+                catch {
+                    $rollbackErrors.Add($_.Exception.Message)
+                }
+                if (-not $stopped) {
+                    if (-not $runtimeSignerScrubbed) {
+                        $rollbackErrors.Add($runtimeSignerScrubError)
+                    }
+                    throw 'The failed normal test VM could not be proven stopped; destructive rollback was skipped.'
+                }
+                try {
+                    # Powered-off VMX scrub is defense in depth after runtime
+                    # readback and remains necessary when the VM never started.
+                    Clear-AtlasoWorkstationDevelopmentRootCaPrivateKey -VmxPath $targetVmx
+                }
+                catch {
+                    $vmxSignerScrubError = $_.Exception.Message
+                }
                 if ($rollbackDataDiskStates.Count -gt 0) {
                     $quarantineDirectory = Join-Path `
                         (Split-Path -Parent $resolvedOutputDirectory) `
@@ -950,6 +983,9 @@ if (-not $WhatIfPreference) {
                     }
                 }
             }
+            if ($vmxSignerScrubError -and (Test-Path -LiteralPath $targetVmx -PathType Leaf)) {
+                $rollbackErrors.Add($vmxSignerScrubError)
+            }
             if ($rollbackErrors.Count -gt 0) {
                 $quarantineHint = if ($quarantineDirectory) {
                     " Preserved data may remain at $quarantineDirectory."
@@ -957,7 +993,7 @@ if (-not $WhatIfPreference) {
                 else {
                     ''
                 }
-                throw "$($failure.Exception.Message) Automatic rollback also failed; keep the VM powered off and inspect only $targetVmx after verifying ownership.$quarantineHint Rollback error: $($rollbackErrors -join ' | ')"
+                throw "$($failure.Exception.Message) Automatic rollback also failed; do not use the VM and retry cleanup for only $targetVmx after verifying ownership.$quarantineHint Rollback error: $($rollbackErrors -join ' | ')"
             }
         }
         throw $failure
