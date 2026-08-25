@@ -280,8 +280,9 @@ integrated CA, issue the managed `appliance:https` certificate, and start with n
 HTTPS/443 while reverse-proxying HTTPS to uvicorn on `127.0.0.1:8000`. The root CA is not baked into the reusable image.
 When HTTPS is disabled, including after the dedicated complete factory-reset transaction, nginx can serve public
 HTTP/80 as a plain reverse proxy to the same loopback upstream, but that is not the first-boot appliance posture. The
-helper reloads nginx/systemd and schedules a short delayed `atlaso.service` restart so the global apply job can finish
-before uvicorn moves behind nginx.
+helper daemon-reloads systemd without restarting the active Atlaso worker, validates nginx, and reloads nginx only
+after consecutive Atlaso loopback and management front-door readiness checks pass. If readiness fails, it restores the
+previous nginx and systemd files and keeps the known-good management front door active.
 
 Before uvicorn starts, `atlaso.service` asks the constrained helper to resume a durable
 `/var/lib/atlaso-privileged/factory-reset/request.json` marker. An interrupted complete reset therefore finishes before
