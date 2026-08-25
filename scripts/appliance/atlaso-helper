@@ -5940,7 +5940,15 @@ def _configure_atlaso_management_https(
                 )
             return daemon_reload.returncode, None
 
-    site_apply = _install_nginx_site(NGINX_MANAGEMENT_SITE_PATH, site_text)
+    try:
+        site_apply = _install_nginx_site(NGINX_MANAGEMENT_SITE_PATH, site_text)
+    except (OSError, subprocess.SubprocessError) as exc:
+        rollback_errors = _restore_management_front_door_files(previous_files)
+        detail = f"management nginx activation raised {type(exc).__name__}"
+        if rollback_errors:
+            detail += "; rollback failed: " + ", ".join(rollback_errors)
+        print(detail, file=sys.stderr)
+        return 1, None
     if site_apply != 0:
         rollback_errors = _restore_management_front_door_files(previous_files)
         if rollback_errors:
