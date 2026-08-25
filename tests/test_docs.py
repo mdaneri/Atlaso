@@ -11,6 +11,7 @@ from scripts import (
     build_docs,
     generate_embedded_screenshot_sections,
     generate_screenshot_gallery,
+    generate_screenshot_manifest,
 )
 from scripts.check_docs import (
     markdown_sources,
@@ -201,6 +202,32 @@ def test_documentation_overlay_preserves_release_repository(tmp_path: Path) -> N
 def test_checked_in_screenshot_manifest_is_valid() -> None:
     """Verify that checked in screenshot manifest is valid."""
     assert validate_screenshots() == []
+
+
+@pytest.mark.parametrize(
+    "filename, route, viewport",
+    [
+        ("ca-management-requests-clean-desktop.webp", "/ca/requests", "1600x1000"),
+        ("ca-management-requests-clean-responsive.webp", "/ca/requests", "900x1200"),
+    ],
+)
+def test_screenshot_manifest_generator_recognizes_certificate_request_captures(
+    filename: str, route: str, viewport: str
+) -> None:
+    """Verify Certificate Requests captures retain their canonical metadata.
+
+    Args:
+        filename: Reviewed screenshot filename.
+        route: Canonical route assigned to the screenshot.
+        viewport: Expected screenshot viewport.
+    """
+    entry = generate_screenshot_manifest.metadata(
+        generate_screenshot_manifest.SCREENSHOTS / filename
+    )
+
+    assert entry["route"] == route
+    assert entry["documentation_page"] == "services/certificate-authority.md"
+    assert entry["viewport"] == viewport
 
 
 def test_checked_in_markdown_uses_canonical_browser_routes() -> None:
