@@ -5,7 +5,8 @@ Create or redeploy the normal Atlaso VMware Workstation test appliance.
 .DESCRIPTION
 Clones the latest or explicitly selected Workstation appliance, attaches the fixed
 data disks and requested lab adapters, injects the complete first-boot environment,
-and optionally waits for the management address and trusts the appliance root CA.
+waits for the management address by default, and verifies the shared development
+root CA. -TrustRootCa remains the explicit opt-in for changing Windows trust.
 
 By default the wrapper validates the current Windows user's existing
 .ssh/id_ed25519.pub before any cleanup or VM mutation, then provisions that public
@@ -69,16 +70,23 @@ Explicitly include the complete lab adapter set.
 Recreate the exact managed depot and backup disks after safety validation.
 
 .PARAMETER NoStart
-Leave the cloned VM powered off after preparation.
+Unsupported for normal test VMs because first boot must consume and scrub the
+shared development signing key.
 
 .PARAMETER SkipNetworkPrepare
 Use existing VMware networks without running network preparation.
 
 .PARAMETER WaitForIp
-Wait for the started VM management address and print its connection summary.
+Wait for the started VM management address, verify its development root CA, and
+print its connection summary. Enabled by default; opt out with -WaitForIp:$false.
 
 .PARAMETER TrustRootCa
-Wait for and trust the generated appliance root CA for the current Windows user.
+Explicitly trust the checked-in development root CA for the current Windows user.
+An exact existing trust entry is reused without reimport.
+
+.PARAMETER OnePasswordEnvironmentId
+Opaque ID of the exact Atlaso 1Password Environment containing the concealed
+ATLASO_DEVELOPMENT_ROOT_CA_PRIVATE_KEY variable. Required for real creation.
 
 .PARAMETER FirstBootFqdn
 Optional first-boot appliance FQDN override.
@@ -125,8 +133,9 @@ param(
     [switch]$ResetDataDisks,
     [switch]$NoStart,
     [switch]$SkipNetworkPrepare,
-    [switch]$WaitForIp,
+    [switch]$WaitForIp = $true,
     [switch]$TrustRootCa,
+    [string]$OnePasswordEnvironmentId = '',
     [string]$FirstBootFqdn = '',
     [string]$AdminPassword = 'VMware01!Test',
     [string]$RootPassword = 'VMware01!Test',
@@ -140,6 +149,158 @@ $ErrorActionPreference = 'Stop'
 . (Join-Path $PSScriptRoot 'Atlaso.WorkstationFirstBoot.ps1')
 Import-Module (Join-Path $PSScriptRoot 'Atlaso.WorkstationCleanup.psm1') -Force
 Import-Module (Join-Path $PSScriptRoot 'Atlaso.VmwarePayload.psm1') -Force
+
+<#
+.SYNOPSIS
+Resolve the 1Password CLI used for the development-CA bridge.
+
+.PARAMETER CandidatePaths
+Optional exact fallback executable paths used when PowerShell command discovery
+does not include WinGet links.
+
+.PARAMETER PackageRoot
+Optional WinGet package root used when its executable link is unavailable.
+#>
+function Resolve-OnePasswordCliPath {
+    param(
+        [string[]]$CandidatePaths = @(
+            (Join-Path ([Environment]::GetFolderPath('LocalApplicationData')) 'Microsoft\WinGet\Links\op.exe'),
+            (Join-Path ([Environment]::GetFolderPath('ProgramFiles')) '1Password CLI\op.exe')
+        ),
+        [string]$PackageRoot = (
+            Join-Path ([Environment]::GetFolderPath('LocalApplicationData')) 'Microsoft\WinGet\Packages'
+        )
+    )
+
+    $command = Get-Command op.exe -ErrorAction SilentlyContinue
+    if (-not $command) {
+        $command = Get-Command op -ErrorAction SilentlyContinue
+    }
+    if (-not $command) {
+        foreach ($candidate in $CandidatePaths) {
+            if ($candidate -and (Test-Path -LiteralPath $candidate -PathType Leaf)) {
+                return (Resolve-Path -LiteralPath $candidate).Path
+            }
+        }
+        if ($PackageRoot -and (Test-Path -LiteralPath $PackageRoot -PathType Container)) {
+            $packageCandidates = @(Get-ChildItem -LiteralPath $PackageRoot -Directory |
+                Where-Object { $_.Name -like 'AgileBits.1Password.CLI_*' } |
+                ForEach-Object { Join-Path $_.FullName 'op.exe' } |
+                Where-Object { Test-Path -LiteralPath $_ -PathType Leaf })
+            if ($packageCandidates.Count -eq 1) {
+                return (Resolve-Path -LiteralPath $packageCandidates[0]).Path
+            }
+            if ($packageCandidates.Count -gt 1) {
+                throw 'Multiple 1Password CLI package executables were found; repair WinGet links or pass a single supported CLI on PATH.'
+            }
+        }
+        throw 'The 1Password CLI (op.exe) is required for normal VMware test VM creation.'
+    }
+    return $command.Source
+}
+
+<#
+.SYNOPSIS
+Validate the opaque 1Password Environment ID and CLI Environment support.
+
+.PARAMETER EnvironmentId
+Opaque ID copied from the exact Atlaso 1Password Environment.
+
+.PARAMETER OpPath
+Resolved 1Password CLI executable path.
+#>
+function Assert-OnePasswordDevelopmentCaBridge {
+    param(
+        [Parameter(Mandatory = $true)][string]$EnvironmentId,
+        [Parameter(Mandatory = $true)][string]$OpPath
+    )
+
+    if ($EnvironmentId -notmatch '^[A-Za-z0-9_-]{8,128}$') {
+        throw 'OnePasswordEnvironmentId is required and must be the opaque ID of the exact Atlaso Environment.'
+    }
+    if ($env:ATLASO_DEVELOPMENT_ROOT_CA_PRIVATE_KEY) {
+        throw 'ATLASO_DEVELOPMENT_ROOT_CA_PRIVATE_KEY must come only from the exact 1Password Environment bridge.'
+    }
+    $runHelp = (& $OpPath run --help 2>&1 | Out-String)
+    if ([string]::IsNullOrWhiteSpace($runHelp) -or $runHelp -notlike '*--environment*') {
+        throw 'The installed 1Password CLI does not support op run --environment. Install the Environments-enabled CLI and retry.'
+    }
+}
+
+<#
+.SYNOPSIS
+Run the bounded development-CA secret child under 1Password.
+
+.PARAMETER EnvironmentId
+Opaque ID of the exact Atlaso 1Password Environment.
+
+.PARAMETER OpPath
+Resolved 1Password CLI executable path.
+
+.PARAMETER Action
+Validate the signer or stage it in the newly created VMX.
+
+.PARAMETER CertificatePath
+Exact checked-in public development root certificate path.
+
+.PARAMETER VmxPath
+Exact new normal-test-VM VMX path for the Stage action.
+#>
+function Invoke-OnePasswordDevelopmentCaChild {
+    param(
+        [Parameter(Mandatory = $true)][string]$EnvironmentId,
+        [Parameter(Mandatory = $true)][string]$OpPath,
+        [Parameter(Mandatory = $true)][ValidateSet('Validate', 'Stage')][string]$Action,
+        [Parameter(Mandatory = $true)][string]$CertificatePath,
+        [string]$VmxPath = ''
+    )
+
+    $powerShellPath = (Get-Process -Id $PID).Path
+    $childPath = Join-Path $PSScriptRoot 'Invoke-AtlasoDevelopmentCaSecret.ps1'
+    $arguments = @(
+        'run', '--environment', $EnvironmentId, '--',
+        $powerShellPath, '-NoProfile', '-NonInteractive', '-File', $childPath,
+        '-Action', $Action, '-CertificatePath', $CertificatePath
+    )
+    if ($Action -eq 'Stage') {
+        $arguments += @('-VmxPath', $VmxPath)
+    }
+    & $OpPath @arguments
+    if ($LASTEXITCODE -ne 0) {
+        throw "The bounded 1Password development-CA $Action child failed."
+    }
+}
+
+<#
+.SYNOPSIS
+Resolve VMware vmrun for guest-info scrub verification and rollback.
+
+.PARAMETER Path
+Optional explicit vmrun executable path.
+#>
+function Resolve-TestVmVmrunPath {
+    param([string]$Path)
+
+    if ($Path) {
+        if (-not (Test-Path -LiteralPath $Path -PathType Leaf)) {
+            throw "vmrun.exe not found: $Path"
+        }
+        return (Resolve-Path -LiteralPath $Path).Path
+    }
+    foreach ($candidate in @(
+            'C:\Program Files\VMware\VMware Workstation\vmrun.exe',
+            'C:\Program Files (x86)\VMware\VMware Workstation\vmrun.exe'
+        )) {
+        if (Test-Path -LiteralPath $candidate -PathType Leaf) {
+            return $candidate
+        }
+    }
+    $command = Get-Command vmrun -ErrorAction SilentlyContinue
+    if ($command) {
+        return $command.Source
+    }
+    throw 'vmrun.exe was not found. Install VMware Workstation Pro or pass -VmrunPath.'
+}
 
 <#
 .SYNOPSIS
@@ -167,31 +328,35 @@ function Find-LatestApplianceVmx {
 
 <#
 .SYNOPSIS
-Wait for and trust the freshly generated Atlaso root CA.
+Wait for and verify the shared Atlaso development root CA.
 
 .PARAMETER IpAddress
 The running appliance management IPv4 address.
-
-.PARAMETER Name
-The test VM name used for bounded temporary filenames.
 
 .PARAMETER TimeoutSeconds
 The total readiness deadline.
 
 .PARAMETER PollSeconds
 The delay between transient readiness failures.
+
+.PARAMETER ExpectedCertificatePath
+Exact checked-in public development root certificate path.
+
+.PARAMETER TrustRootCa
+Whether to add the exact development root to current-user Windows trust.
 #>
 function Install-ApplianceRootCa {
     param(
         [Parameter(Mandatory = $true)][string]$IpAddress,
-        [Parameter(Mandatory = $true)][string]$Name,
         [Parameter(Mandatory = $true)][int]$TimeoutSeconds,
+        [Parameter(Mandatory = $true)][string]$ExpectedCertificatePath,
+        [switch]$TrustRootCa,
         [int]$PollSeconds = 5
     )
 
     $tempRoot = [System.IO.Path]::GetFullPath([System.IO.Path]::GetTempPath())
-    $rootPemPath = [System.IO.Path]::Combine($tempRoot, "atlaso-$Name-root-ca.pem")
-    $rootCerPath = [System.IO.Path]::Combine($tempRoot, "atlaso-$Name-root-ca.cer")
+    $temporaryToken = [guid]::NewGuid().ToString('N')
+    $rootPemPath = [System.IO.Path]::Combine($tempRoot, "atlaso-$temporaryToken-root-ca.pem")
     $rootUrl = "http://$IpAddress/ca/downloads/root-ca.pem"
     $deadline = (Get-Date).AddSeconds($TimeoutSeconds)
     $downloaded = $false
@@ -229,31 +394,72 @@ function Install-ApplianceRootCa {
         throw "Timed out after $TimeoutSeconds seconds waiting for the Atlaso root CA at $rootUrl. Last error: $lastError"
     }
 
-    $pem = Get-Content -LiteralPath $rootPemPath -Raw
-    $certificate = [System.Security.Cryptography.X509Certificates.X509Certificate2]::CreateFromPem($pem)
-    if ($certificate.Subject -ne $certificate.Issuer -or $certificate.Subject -notlike '*CN=Atlaso Internal Root CA*') {
-        throw "Downloaded certificate is not the expected self-signed Atlaso root CA: $($certificate.Subject)"
-    }
+    try {
+        $downloadedPem = Get-Content -LiteralPath $rootPemPath -Raw
+        $downloadedCertificate = [System.Security.Cryptography.X509Certificates.X509Certificate2]::CreateFromPem(
+            $downloadedPem
+        )
+        $expectedPem = Get-Content -LiteralPath $ExpectedCertificatePath -Raw
+        $expectedCertificate = [System.Security.Cryptography.X509Certificates.X509Certificate2]::CreateFromPem(
+            $expectedPem
+        )
+        $downloadedFingerprint = [Convert]::ToHexString(
+            [System.Security.Cryptography.SHA256]::HashData($downloadedCertificate.RawData)
+        )
+        $expectedFingerprint = [Convert]::ToHexString(
+            [System.Security.Cryptography.SHA256]::HashData($expectedCertificate.RawData)
+        )
+        if ($downloadedFingerprint -ne $expectedFingerprint) {
+            throw "The VM root CA fingerprint does not match the checked-in Atlaso development root CA. Expected $expectedFingerprint; received $downloadedFingerprint."
+        }
+        Write-Host "Verified Atlaso development root CA fingerprint: $expectedFingerprint"
 
-    [System.IO.File]::WriteAllBytes(
-        $rootCerPath,
-        $certificate.Export([System.Security.Cryptography.X509Certificates.X509ContentType]::Cert)
-    )
-    $staleRoots = @(Get-ChildItem Cert:\CurrentUser\Root | Where-Object {
-            $_.Subject -like '*CN=Atlaso Internal Root CA*' -and $_.Thumbprint -ne $certificate.Thumbprint
-        })
-    foreach ($staleRoot in $staleRoots) {
-        Write-Host "Removing stale Atlaso root CA from current user: $($staleRoot.Thumbprint)"
-        certutil.exe -user -delstore Root $staleRoot.Thumbprint | Out-Host
-        if ($LASTEXITCODE -ne 0) {
-            throw "Failed to remove stale Atlaso root CA from the current-user Trusted Root store: $($staleRoot.Thumbprint)"
+        $alreadyTrusted = [bool](Get-ChildItem Cert:\CurrentUser\Root | Where-Object {
+                [Convert]::ToHexString(
+                    [System.Security.Cryptography.SHA256]::HashData($_.RawData)
+                ) -eq $expectedFingerprint
+            } | Select-Object -First 1)
+        if ($TrustRootCa -and -not $alreadyTrusted) {
+            $rootCerPath = [System.IO.Path]::Combine($tempRoot, "atlaso-$temporaryToken-development-root-ca.cer")
+            [System.IO.File]::WriteAllBytes(
+                $rootCerPath,
+                $expectedCertificate.Export([System.Security.Cryptography.X509Certificates.X509ContentType]::Cert)
+            )
+            try {
+                certutil.exe -f -user -addstore Root $rootCerPath | Out-Host
+                if ($LASTEXITCODE -ne 0) {
+                    throw 'Failed to import the Atlaso development root CA into the current-user Trusted Root store.'
+                }
+                $alreadyTrusted = [bool](Get-ChildItem Cert:\CurrentUser\Root | Where-Object {
+                        [Convert]::ToHexString(
+                            [System.Security.Cryptography.SHA256]::HashData($_.RawData)
+                        ) -eq $expectedFingerprint
+                    } | Select-Object -First 1)
+                if (-not $alreadyTrusted) {
+                    throw 'The Atlaso development root CA import completed without an exact Trusted Root readback.'
+                }
+            }
+            finally {
+                [System.IO.File]::Delete($rootCerPath)
+            }
+        }
+        if ($TrustRootCa -and $alreadyTrusted) {
+            Write-Host "Atlaso development root CA is trusted for the current user: $($expectedCertificate.Thumbprint)"
+        }
+        return [pscustomobject]@{
+            Fingerprint = $expectedFingerprint
+            Trusted     = $alreadyTrusted
         }
     }
-    certutil.exe -f -user -addstore Root $rootCerPath | Out-Host
-    if ($LASTEXITCODE -ne 0) {
-        throw "Failed to import Atlaso root CA into the current-user Trusted Root store."
+    finally {
+        [System.IO.File]::Delete($rootPemPath)
+        if ($downloadedCertificate) {
+            $downloadedCertificate.Dispose()
+        }
+        if ($expectedCertificate) {
+            $expectedCertificate.Dispose()
+        }
     }
-    Write-Host "Trusted Atlaso root CA for current user: $($certificate.Thumbprint)"
 }
 
 <#
@@ -333,6 +539,25 @@ function Write-ConnectionSummary {
 }
 
 $repoRoot = (Resolve-Path -LiteralPath (Join-Path $PSScriptRoot '..\..\..')).Path
+$developmentRootCaCertificatePath = Join-Path $repoRoot 'image\vmware-workstation\development-trust\atlaso-development-root-ca.pem'
+$developmentRootCaCertificatePem = Get-Content -LiteralPath $developmentRootCaCertificatePath -Raw
+$resolvedOpPath = ''
+if ($NoStart) {
+    throw '-NoStart is not supported for normal test VMs because first boot must consume and scrub the shared development signing key.'
+}
+if (-not $WhatIfPreference) {
+    $resolvedOpPath = Resolve-OnePasswordCliPath
+    Assert-OnePasswordDevelopmentCaBridge `
+        -EnvironmentId $OnePasswordEnvironmentId `
+        -OpPath $resolvedOpPath
+    # The secret child validates the checked-in certificate, CA constraints,
+    # expiry, signature, and private-key match before any network or VM mutation.
+    Invoke-OnePasswordDevelopmentCaChild `
+        -EnvironmentId $OnePasswordEnvironmentId `
+        -OpPath $resolvedOpPath `
+        -Action Validate `
+        -CertificatePath $developmentRootCaCertificatePath
+}
 
 # Key input validation intentionally precedes network preparation, cleanup, disk
 # reset, and cloning so an authentication setup error preserves every existing VM.
@@ -355,15 +580,12 @@ $firstBootOvfEnvironment = New-AtlasoWorkstationOvfEnvironment `
     -AdminPassword $AdminPassword `
     -RootPassword $RootPassword `
     -RootSshEnabled:$RootSshEnabled `
-    -DevelopmentAdminSshPublicKey $developmentAdminSshPublicKey
+    -DevelopmentAdminSshPublicKey $developmentAdminSshPublicKey `
+    -DevelopmentRootCaCertificatePem $developmentRootCaCertificatePem
 
 if ($SkipLabNetworkAdapters -and $IncludeLabNetworkAdapters) {
     throw "Pass either -SkipLabNetworkAdapters or -IncludeLabNetworkAdapters, not both."
 }
-if ($TrustRootCa -and $NoStart) {
-    throw "Pass -TrustRootCa only when the VM will be started, because the script must fetch the appliance root CA from the running appliance."
-}
-
 $effectiveSkipLabNetworkAdapters = -not $IncludeLabNetworkAdapters
 if ($SkipLabNetworkAdapters) {
     $effectiveSkipLabNetworkAdapters = $true
@@ -440,6 +662,7 @@ if ($ResetDataDisks) {
     }
 }
 
+$createdThisInvocation = $false
 if ($PSCmdlet.ShouldProcess($targetVmx, "Create Atlaso Workstation test VM from $resolvedSourceVmx")) {
     & (Join-Path $PSScriptRoot 'create-atlaso-vm.ps1') `
         -Name $Name `
@@ -460,15 +683,50 @@ if ($PSCmdlet.ShouldProcess($targetVmx, "Create Atlaso Workstation test VM from 
         throw "Atlaso VMware Workstation VM creation failed."
     }
     Set-AtlasoWorkstationOvfEnvironment -VmxPath $targetVmx -OvfEnvironment $firstBootOvfEnvironment
+    $createdThisInvocation = $true
 }
 
-if (-not $NoStart -and -not $WhatIfPreference) {
-    & (Join-Path $PSScriptRoot 'start-atlaso-vm.ps1') `
-        -VmxPath $targetVmx `
-        -VmrunPath $VmrunPath `
-        -Mode gui
-    if (-not $?) {
-        throw "Atlaso VMware Workstation VM start failed."
+if (-not $createdThisInvocation -and -not $WhatIfPreference) {
+    Write-Host 'Normal test VM creation was not approved; no development signing key was staged.' -ForegroundColor Yellow
+    return
+}
+
+if (-not $WhatIfPreference) {
+    try {
+        Invoke-OnePasswordDevelopmentCaChild `
+            -EnvironmentId $OnePasswordEnvironmentId `
+            -OpPath $resolvedOpPath `
+            -Action Stage `
+            -CertificatePath $developmentRootCaCertificatePath `
+            -VmxPath $targetVmx
+        $resolvedVmrunPath = Resolve-TestVmVmrunPath -Path $VmrunPath
+        & (Join-Path $PSScriptRoot 'start-atlaso-vm.ps1') `
+            -VmxPath $targetVmx `
+            -VmrunPath $resolvedVmrunPath `
+            -Mode gui
+        if (-not $?) {
+            throw 'Atlaso VMware Workstation VM start failed.'
+        }
+        Wait-AtlasoWorkstationDevelopmentRootCaPrivateKeyScrub `
+            -VmxPath $targetVmx `
+            -VmrunPath $resolvedVmrunPath `
+            -TimeoutSeconds $TimeoutSeconds
+    }
+    catch {
+        $failure = $_
+        if ($createdThisInvocation -and (Test-Path -LiteralPath $targetVmx -PathType Leaf)) {
+            try {
+                & (Join-Path $PSScriptRoot 'remove-atlaso-vm.ps1') `
+                    -VmxPath $targetVmx `
+                    -VmrunPath $VmrunPath `
+                    -ExpectedName $Name `
+                    -Confirm:$false
+            }
+            catch {
+                throw "$($failure.Exception.Message) Automatic rollback also failed; stop the VM and remove only $targetVmx after verifying ownership. Rollback error: $($_.Exception.Message)"
+            }
+        }
+        throw $failure
     }
 }
 
@@ -481,7 +739,7 @@ else {
     Write-Host 'Development SSH access: key provisioning skipped; password-backed sudo remains required.'
 }
 
-if (-not $SkipSshKeyProvisioning -and -not $NoStart -and -not $WhatIfPreference) {
+if (-not $SkipSshKeyProvisioning -and -not $WhatIfPreference) {
     $sshHostKey = Get-AtlasoWorkstationSshHostKey `
         -VmxPath $targetVmx `
         -VmrunPath $VmrunPath `
@@ -490,7 +748,7 @@ if (-not $SkipSshKeyProvisioning -and -not $NoStart -and -not $WhatIfPreference)
     Write-Host "SSH host key fingerprint: $($sshHostKey.Fingerprint)"
 }
 
-if (($WaitForIp -or $TrustRootCa) -and -not $NoStart -and -not $WhatIfPreference) {
+if (($WaitForIp -or $TrustRootCa) -and -not $WhatIfPreference) {
     $ip = & (Join-Path $PSScriptRoot 'get-atlaso-vm-ip.ps1') `
         -VmxPath $targetVmx `
         -VmrunPath $VmrunPath `
@@ -498,16 +756,18 @@ if (($WaitForIp -or $TrustRootCa) -and -not $NoStart -and -not $WhatIfPreference
     if ($WaitForIp) {
         Write-Host "Management IP: $ip"
     }
-    if ($TrustRootCa) {
-        Install-ApplianceRootCa -IpAddress $ip -Name $Name -TimeoutSeconds $TimeoutSeconds
-    }
+    $rootCaStatus = Install-ApplianceRootCa `
+        -IpAddress $ip `
+        -TimeoutSeconds $TimeoutSeconds `
+        -ExpectedCertificatePath $developmentRootCaCertificatePath `
+        -TrustRootCa:$TrustRootCa
     Write-ConnectionSummary `
         -IpAddress $ip `
         -Name $Name `
         -VmxPath $targetVmx `
-        -RootCaTrusted ([bool]$TrustRootCa) `
+        -RootCaTrusted ([bool]$rootCaStatus.Trusted) `
         -SshKeyProvisioned (-not [bool]$SkipSshKeyProvisioning)
 }
-elseif (-not $NoStart -and -not $WhatIfPreference) {
-    Write-Host "Pass -WaitForIp to print the HTTPS console, Swagger, root certificate, and SSH connection summary." -ForegroundColor DarkGray
+elseif (-not $WhatIfPreference) {
+    Write-Host 'Management wait and development-root verification were explicitly disabled with -WaitForIp:$false.' -ForegroundColor DarkGray
 }

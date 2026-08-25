@@ -916,7 +916,13 @@ Terminal order:
   and restarts `sshd`; and management front door apply writes `/etc/nginx/conf.d/atlaso.conf`,
   `/etc/atlaso/nginx/sites.d/management.conf`, and a `atlaso.service` loopback override. Fresh appliances run
   `atlaso-bootstrap-https.service` on deployed-VM first boot to generate the integrated root CA and CA-managed
-  `appliance:https` certificate; the root CA must not be baked into reusable images. Nginx redirects public HTTP/80 to
+  `appliance:https` certificate; the root CA must not be baked into reusable images. The sole exception is the normal
+  VMware test wrapper's checked-in public `Atlaso Development Root CA`: require its matching concealed private key from
+  the exact `Atlaso` 1Password Environment, validate it before host mutation, use only the separately scrubbed
+  test-wrapper guest-info/staging path, encrypt it with each VM's unique secrets key, and issue a unique HTTPS leaf.
+  Keep lifecycle, Hyper-V, reusable-image, and exported-appliance paths outside that trust domain. Default wrapper wait
+  verifies the exact public fingerprint; Windows trust is explicit and idempotent, `-NoStart` is forbidden, and
+  certificate/key rotation is one coordinated repository-and-Environment update. Nginx redirects public HTTP/80 to
   HTTPS/443 and reverse-proxies HTTPS to uvicorn on `127.0.0.1:8000`. Appliance FQDN or management IP changes should
   reissue the managed leaf certificate automatically; root CA replacement remains an explicit rotation workflow. When
   HTTPS is disabled or the dedicated complete factory-reset transaction is applied, nginx serves public HTTP/80 as a

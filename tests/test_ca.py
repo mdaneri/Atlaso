@@ -1,5 +1,7 @@
 """Test ca behavior."""
 
+from pathlib import Path
+
 import pytest
 
 from atlaso.app.config import Settings
@@ -8,10 +10,204 @@ from atlaso.app.secrets import decrypt_secret, encrypt_secret
 from atlaso.app.services.ca import (
     ca_certificate_to_dict,
     ensure_root_ca_material,
+    import_root_ca_material,
     issue_certificate,
     render_ca_apply_payload,
     validate_ca_private_key_material,
 )
+
+
+def development_root_material():
+    """Return one valid development-style root certificate and private key."""
+    from datetime import datetime, timedelta, timezone
+
+    from cryptography import x509
+    from cryptography.hazmat.primitives import hashes, serialization
+    from cryptography.hazmat.primitives.asymmetric import rsa
+    from cryptography.x509.oid import NameOID
+
+    private_key = rsa.generate_private_key(public_exponent=65537, key_size=2048)
+    subject = x509.Name(
+        [x509.NameAttribute(NameOID.COMMON_NAME, "Atlaso Development Root CA")]
+    )
+    now = datetime.now(timezone.utc)
+    certificate = (
+        x509.CertificateBuilder()
+        .subject_name(subject)
+        .issuer_name(subject)
+        .public_key(private_key.public_key())
+        .serial_number(x509.random_serial_number())
+        .not_valid_before(now - timedelta(minutes=1))
+        .not_valid_after(now + timedelta(days=365))
+        .add_extension(x509.BasicConstraints(ca=True, path_length=None), critical=True)
+        .add_extension(
+            x509.KeyUsage(
+                digital_signature=True,
+                content_commitment=False,
+                key_encipherment=False,
+                data_encipherment=False,
+                key_agreement=False,
+                key_cert_sign=True,
+                crl_sign=True,
+                encipher_only=None,
+                decipher_only=None,
+            ),
+            critical=True,
+        )
+        .sign(private_key, hashes.SHA256())
+    )
+    return (
+        certificate.public_bytes(serialization.Encoding.PEM).decode("ascii"),
+        private_key.private_bytes(
+            serialization.Encoding.PEM,
+            serialization.PrivateFormat.PKCS8,
+            serialization.NoEncryption(),
+        ).decode("ascii"),
+    )
+
+
+def test_checked_in_vmware_development_root_ca_contract():
+    """Verify the repository contains only the required public development root."""
+    from datetime import datetime, timezone
+
+    from cryptography import x509
+    from cryptography.hazmat.primitives.asymmetric import rsa
+    from cryptography.x509.oid import NameOID
+
+    path = Path(
+        "image/vmware-workstation/development-trust/atlaso-development-root-ca.pem"
+    )
+    pem = path.read_text(encoding="ascii")
+    assert "PRIVATE KEY" not in pem
+    certificate = x509.load_pem_x509_certificate(pem.encode("ascii"))
+    assert certificate.subject == certificate.issuer
+    assert certificate.subject.get_attributes_for_oid(NameOID.COMMON_NAME)[0].value == (
+        "Atlaso Development Root CA"
+    )
+    assert certificate.extensions.get_extension_for_class(
+        x509.BasicConstraints
+    ).value.ca is True
+    usage = certificate.extensions.get_extension_for_class(x509.KeyUsage).value
+    assert usage.key_cert_sign is True
+    assert usage.crl_sign is True
+    assert isinstance(certificate.public_key(), rsa.RSAPublicKey)
+    assert certificate.public_key().key_size == 4096
+    assert certificate.signature_hash_algorithm.name == "sha256"
+    now = datetime.now(timezone.utc)
+    assert certificate.not_valid_before_utc <= now < certificate.not_valid_after_utc
+
+
+def test_shared_development_root_import_issues_unique_vm_leaf_certificates():
+    """Import one root twice while issuing unique correctly scoped VM leaves."""
+    from cryptography import x509
+
+    certificate_pem, private_key_pem = development_root_material()
+    profile = CaProfile(
+        id=41,
+        name="Service TLS",
+        certificate_type="server",
+        validity_days=30,
+        key_algorithm="RSA",
+        key_size=2048,
+        key_usage="digitalSignature,keyEncipherment",
+        extended_key_usage="serverAuth",
+        enabled=True,
+    )
+    issued = []
+    for index in (1, 2):
+        settings = CaSettings(enabled=True, storage_path="/etc/atlaso/ca")
+        import_root_ca_material(
+            settings,
+            certificate_pem,
+            private_key_pem,
+            expected_common_name="Atlaso Development Root CA",
+        )
+        leaf = CaCertificate(
+            common_name=f"test-vm-{index}.atlaso.internal",
+            subject_alt_names=f"test-vm-{index}.atlaso.internal",
+            ip_addresses=f"192.0.2.{index}",
+            profile_id=profile.id,
+            status="planned",
+            enabled=True,
+        )
+        assert issue_certificate(settings, [profile], leaf) is True
+        parsed = x509.load_pem_x509_certificate(leaf.certificate_pem.encode("ascii"))
+        san = parsed.extensions.get_extension_for_class(x509.SubjectAlternativeName).value
+        assert f"test-vm-{index}.atlaso.internal" in san.get_values_for_type(x509.DNSName)
+        assert f"192.0.2.{index}" in [str(value) for value in san.get_values_for_type(x509.IPAddress)]
+        issued.append((settings, leaf))
+
+    assert issued[0][0].root_fingerprint == issued[1][0].root_fingerprint
+    assert issued[0][1].fingerprint != issued[1][1].fingerprint
+    assert issued[0][1].serial_number != issued[1][1].serial_number
+    assert issued[0][1].private_key_encrypted != issued[1][1].private_key_encrypted
+
+
+@pytest.mark.parametrize("mutation", ["mismatch", "not_ca", "expired"])
+def test_development_root_import_rejects_invalid_material(mutation):
+    """Reject mismatched, non-CA, and expired development trust anchors.
+
+    Args:
+        mutation: Invalid material variant under test.
+    """
+    from datetime import datetime, timedelta, timezone
+
+    from cryptography import x509
+    from cryptography.hazmat.primitives import hashes, serialization
+    from cryptography.hazmat.primitives.asymmetric import rsa
+    from cryptography.x509.oid import NameOID
+
+    certificate_pem, private_key_pem = development_root_material()
+    if mutation == "mismatch":
+        _, private_key_pem = development_root_material()
+    else:
+        private_key = rsa.generate_private_key(public_exponent=65537, key_size=2048)
+        subject = x509.Name(
+            [x509.NameAttribute(NameOID.COMMON_NAME, "Atlaso Development Root CA")]
+        )
+        now = datetime.now(timezone.utc)
+        certificate = (
+            x509.CertificateBuilder()
+            .subject_name(subject)
+            .issuer_name(subject)
+            .public_key(private_key.public_key())
+            .serial_number(x509.random_serial_number())
+            .not_valid_before(now - timedelta(days=2))
+            .not_valid_after(now - timedelta(days=1) if mutation == "expired" else now + timedelta(days=30))
+            .add_extension(
+                x509.BasicConstraints(ca=mutation != "not_ca", path_length=None),
+                critical=True,
+            )
+            .add_extension(
+                x509.KeyUsage(
+                    digital_signature=True,
+                    content_commitment=False,
+                    key_encipherment=False,
+                    data_encipherment=False,
+                    key_agreement=False,
+                    key_cert_sign=mutation != "not_ca",
+                    crl_sign=mutation != "not_ca",
+                    encipher_only=None,
+                    decipher_only=None,
+                ),
+                critical=True,
+            )
+            .sign(private_key, hashes.SHA256())
+        )
+        certificate_pem = certificate.public_bytes(serialization.Encoding.PEM).decode("ascii")
+        private_key_pem = private_key.private_bytes(
+            serialization.Encoding.PEM,
+            serialization.PrivateFormat.PKCS8,
+            serialization.NoEncryption(),
+        ).decode("ascii")
+
+    with pytest.raises(ValueError):
+        import_root_ca_material(
+            CaSettings(),
+            certificate_pem,
+            private_key_pem,
+            expected_common_name="Atlaso Development Root CA",
+        )
 
 
 def test_encrypted_secret_round_trip_and_wrong_key_failure():

@@ -1,7 +1,9 @@
 """Test vmware ovf customization behavior."""
 
+import base64
 import importlib.util
 import json
+import os
 import shutil
 import subprocess
 import sys
@@ -160,6 +162,95 @@ def test_vmware_ovf_customizer_validates_optional_development_admin_key():
     assert summary["development_admin_ssh_key_set"] is True
     assert summary["development_admin_passwordless_sudo"] is True
     assert VALID_ED25519_PUBLIC_KEY not in str(summary)
+
+
+def test_vmware_ovf_customizer_stages_and_scrubs_development_root_key(
+    tmp_path, monkeypatch
+):
+    """Stage the shared signer mode 0600 without exposing it in summaries.
+
+    Args:
+        tmp_path: Isolated staging root.
+        monkeypatch: Pytest fixture used to replace VMware guest-info access.
+    """
+    customizer = load_customizer()
+    customizer.DEVELOPMENT_ROOT_CA_STAGING_PATH = tmp_path / "ca" / "development.json"
+    certificate_pem = (
+        "-----BEGIN CERTIFICATE-----\nY2VydGlmaWNhdGU=\n-----END CERTIFICATE-----\n"
+    )
+    private_key_pem = (
+        "-----BEGIN PRIVATE KEY-----\ncHJpdmF0ZS1rZXk=\n-----END PRIVATE KEY-----\n"
+    )
+    properties = customizer.parse_ovf_environment(OVF_ENV)
+    properties[customizer.PROPERTY_DEVELOPMENT_ADMIN_SSH_PUBLIC_KEY] = VALID_ED25519_PUBLIC_KEY
+    properties[customizer.PROPERTY_DEVELOPMENT_ROOT_CA_CERTIFICATE] = base64.b64encode(
+        certificate_pem.encode("ascii")
+    ).decode("ascii")
+    config = customizer.validate_properties(properties)
+    clears = []
+    monkeypatch.setattr(
+        customizer,
+        "try_read_guestinfo_value",
+        lambda name: (
+            True,
+            base64.b64encode(private_key_pem.encode("ascii")).decode("ascii"),
+        ),
+    )
+    monkeypatch.setattr(
+        customizer,
+        "clear_guestinfo_value",
+        lambda name: clears.append(name),
+    )
+
+    customizer.stage_development_root_ca(config)
+
+    staged = json.loads(
+        customizer.DEVELOPMENT_ROOT_CA_STAGING_PATH.read_text(encoding="utf-8")
+    )
+    assert staged == {
+        "certificate_pem": certificate_pem,
+        "private_key_pem": private_key_pem,
+    }
+    if os.name == "posix":
+        assert customizer.DEVELOPMENT_ROOT_CA_STAGING_PATH.stat().st_mode & 0o777 == 0o600
+    assert clears == [customizer.DEVELOPMENT_ROOT_CA_PRIVATE_KEY_GUESTINFO]
+    summary = customizer.redacted_summary(config)
+    assert summary["development_root_ca_staged"] is True
+    assert private_key_pem not in str(summary)
+
+
+def test_vmware_ovf_customizer_rejects_development_root_without_test_access():
+    """Keep the development trust field out of lifecycle and exported inputs."""
+    customizer = load_customizer()
+    properties = customizer.parse_ovf_environment(OVF_ENV)
+    properties[customizer.PROPERTY_DEVELOPMENT_ROOT_CA_CERTIFICATE] = base64.b64encode(
+        b"-----BEGIN CERTIFICATE-----\nYQ==\n-----END CERTIFICATE-----\n"
+    ).decode("ascii")
+
+    with pytest.raises(customizer.OvfCustomizationError, match="normal test wrapper"):
+        customizer.validate_properties(properties)
+
+
+def test_vmware_ovf_customizer_requires_proven_guestinfo_scrub(monkeypatch):
+    """Fail when VMware Tools accepts a clear but cannot prove the value is empty.
+
+    Args:
+        monkeypatch: Pytest fixture used to replace VMware Tools subprocesses.
+    """
+    customizer = load_customizer()
+    monkeypatch.setattr(customizer.shutil, "which", lambda command: f"/usr/bin/{command}")
+    monkeypatch.setattr(
+        customizer.subprocess,
+        "run",
+        lambda *args, **kwargs: type(
+            "Result", (), {"returncode": 0, "stdout": "still-present"}
+        )(),
+    )
+
+    with pytest.raises(customizer.OvfCustomizationError, match="could not prove"):
+        customizer.clear_guestinfo_value(
+            customizer.DEVELOPMENT_ROOT_CA_PRIVATE_KEY_GUESTINFO
+        )
 
 
 @pytest.mark.parametrize(

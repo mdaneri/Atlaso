@@ -3,6 +3,8 @@
 
 from __future__ import annotations
 
+import json
+import os
 import shlex
 import shutil
 import subprocess
@@ -13,7 +15,11 @@ from sqlalchemy import select
 from atlaso.app.database import SessionLocal, init_db
 from atlaso.app.models import ApplianceSettings, CaCertificate, CaSettings
 from atlaso.app.seed import seed_initial_data
-from atlaso.app.services.ca import CA_STAGED_CONFIG_PATH, render_ca_apply_payload
+from atlaso.app.services.ca import (
+    CA_STAGED_CONFIG_PATH,
+    import_root_ca_material,
+    render_ca_apply_payload,
+)
 from atlaso.app.services.networking import sync_host_physical_interfaces
 from atlaso.app.ui import ca_managed_certificate_paths, ensure_ca_state
 
@@ -23,6 +29,60 @@ HELPER_PATH = Path("/opt/atlaso/bin/atlaso-helper")
 NGINX_CONF_INCLUDE_PATH = Path("/etc/nginx/conf.d/atlaso.conf")
 NGINX_MAIN_CONFIG_PATH = Path("/etc/nginx/nginx.conf")
 NGINX_MANAGEMENT_PATH = Path("/etc/atlaso/nginx/sites.d/management.conf")
+DEVELOPMENT_ROOT_CA_STAGING_PATH = Path(
+    "/var/lib/atlaso/apply/ca/first-boot-development-root-ca.json"
+)
+
+
+def import_staged_development_root_ca(settings: CaSettings) -> bool:
+    """Import the normal test VM development root into encrypted database state.
+
+    Args:
+        settings: First-boot CA settings row for this unique appliance database.
+
+    Returns:
+        Whether development root material was staged for this first boot.
+
+    Raises:
+        ValueError: If the secret-bearing staging file is unsafe or invalid.
+    """
+    path = DEVELOPMENT_ROOT_CA_STAGING_PATH
+    if not path.exists():
+        return False
+    path_stat = path.lstat()
+    if (
+        path.is_symlink()
+        or not path.is_file()
+        or path_stat.st_mode & 0o777 != 0o600
+        or path_stat.st_size > 65536
+    ):
+        raise ValueError("Development root CA staging is unsafe.")
+    try:
+        payload = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, ValueError, json.JSONDecodeError) as exc:
+        raise ValueError("Development root CA staging is invalid.") from exc
+    certificate_pem = payload.get("certificate_pem")
+    private_key_pem = payload.get("private_key_pem")
+    if not isinstance(certificate_pem, str) or not isinstance(private_key_pem, str):
+        raise ValueError("Development root CA staging is incomplete.")
+    import_root_ca_material(
+        settings,
+        certificate_pem,
+        private_key_pem,
+        expected_common_name="Atlaso Development Root CA",
+    )
+    return True
+
+
+def remove_staged_development_root_ca() -> None:
+    """Durably remove development signing material after encrypted import."""
+    DEVELOPMENT_ROOT_CA_STAGING_PATH.unlink()
+    if os.name == "posix":
+        descriptor = os.open(DEVELOPMENT_ROOT_CA_STAGING_PATH.parent, os.O_RDONLY)
+        try:
+            os.fsync(descriptor)
+        finally:
+            os.close(descriptor)
 
 
 def run(command: list[str]) -> subprocess.CompletedProcess[str]:
@@ -183,7 +243,18 @@ def main() -> int:
         ca_settings = db.execute(select(CaSettings)).scalar_one()
         appliance_settings.management_https_enabled = True
         ca_settings.enabled = True
+        try:
+            development_root_imported = import_staged_development_root_ca(ca_settings)
+        except ValueError as exc:
+            print(str(exc))
+            return 2
         db.commit()
+        if development_root_imported:
+            try:
+                remove_staged_development_root_ca()
+            except OSError:
+                print("Development root CA staging could not be removed after encrypted import.")
+                return 2
 
         errors = ensure_ca_state(db)
         if errors:

@@ -500,8 +500,14 @@ The following cross-cutting boundaries always apply:
   private key. When that test-only property is present, publish only the VM's public Ed25519 SSH host key through a
   separate VMware guest-info value. Read, wire-validate, and fingerprint that host-derived value before displaying it
   for explicit `known_hosts` verification; never substitute unauthenticated `ssh-keyscan` output.
-  Keep both properties internal to this wrapper, preserve root SSH as disabled, and do not extend this development-only
-  authority to lifecycle VMs or exported OVF/OVA deployments.
+  The wrapper also owns the sole development-root exception to per-appliance CA generation: require the exact `Atlaso`
+  1Password Environment's concealed `ATLASO_DEVELOPMENT_ROOT_CA_PRIVATE_KEY`, validate it against the checked-in public
+  `Atlaso Development Root CA` before mutation, and pass it only through a separately scrubbed normal-wrapper guest-info
+  value. First boot must stage it mode `0600`, prove guest-info scrub, encrypt it with the VM-unique secrets key, remove
+  staging, and issue a unique HTTPS leaf. Default waiting must verify the exact checked-in fingerprint; Windows trust
+  remains explicit and idempotent. Reject `-NoStart`, preserve root SSH as disabled, and do not extend either development
+  authority to lifecycle VMs, Hyper-V, reusable images, or exported OVF/OVA deployments. Rotate the repository PEM and
+  concealed Environment key together after compromise of any in-scope test VM.
 - Inventory Linux reports use bounded schema v2 while accepting and normalizing legacy v1. Keep sysfs authoritative for
   device enumeration, use metadata tools only for structured enrichment/readable names, retain JSON in the existing
   report column, enforce the 256 KiB boundary, and never submit raw command output. Its five-minute local console

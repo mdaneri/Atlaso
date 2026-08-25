@@ -103,6 +103,95 @@ try {
         throw 'The test-VM public-key comment must remain XML escaped.'
     }
 
+    $rsa = [System.Security.Cryptography.RSA]::Create(4096)
+    $otherRsa = [System.Security.Cryptography.RSA]::Create(4096)
+    try {
+        $subject = [System.Security.Cryptography.X509Certificates.X500DistinguishedName]::new(
+            'CN=Atlaso Development Root CA,O=Atlaso Development'
+        )
+        $request = [System.Security.Cryptography.X509Certificates.CertificateRequest]::new(
+            $subject,
+            $rsa,
+            [System.Security.Cryptography.HashAlgorithmName]::SHA256,
+            [System.Security.Cryptography.RSASignaturePadding]::Pkcs1
+        )
+        $request.CertificateExtensions.Add(
+            [System.Security.Cryptography.X509Certificates.X509BasicConstraintsExtension]::new($true, $false, 0, $true)
+        )
+        $usage = [System.Security.Cryptography.X509Certificates.X509KeyUsageFlags]::KeyCertSign -bor
+            [System.Security.Cryptography.X509Certificates.X509KeyUsageFlags]::CrlSign
+        $request.CertificateExtensions.Add(
+            [System.Security.Cryptography.X509Certificates.X509KeyUsageExtension]::new($usage, $true)
+        )
+        $certificate = $request.CreateSelfSigned(
+            [DateTimeOffset]::UtcNow.AddMinutes(-1),
+            [DateTimeOffset]::UtcNow.AddDays(30)
+        )
+        $certificatePem = [System.Security.Cryptography.PemEncoding]::WriteString(
+            'CERTIFICATE',
+            $certificate.RawData
+        )
+        $privateKeyPem = [System.Security.Cryptography.PemEncoding]::WriteString(
+            'PRIVATE KEY',
+            $rsa.ExportPkcs8PrivateKey()
+        )
+        $certificatePath = Join-Path $temporaryRoot 'development-root-ca.pem'
+        [System.IO.File]::WriteAllText(
+            $certificatePath,
+            $certificatePem,
+            [System.Text.UTF8Encoding]::new($false)
+        )
+        Assert-AtlasoDevelopmentRootCaMaterial `
+            -CertificatePath $certificatePath `
+            -PrivateKeyPem $privateKeyPem
+        $otherPrivateKeyPem = [System.Security.Cryptography.PemEncoding]::WriteString(
+            'PRIVATE KEY',
+            $otherRsa.ExportPkcs8PrivateKey()
+        )
+        Assert-Throws {
+            Assert-AtlasoDevelopmentRootCaMaterial `
+                -CertificatePath $certificatePath `
+                -PrivateKeyPem $otherPrivateKeyPem
+        } 'A mismatched development root key must fail.'
+
+        $withDevelopmentRoot = New-AtlasoWorkstationOvfEnvironment `
+            -Fqdn 'atlaso-test.atlaso.internal' `
+            -AdminPassword 'VMware01!Test' `
+            -RootPassword 'VMware01!Test' `
+            -DevelopmentAdminSshPublicKey $validKey `
+            -DevelopmentRootCaCertificatePem $certificatePem
+        if (-not $withDevelopmentRoot.Contains("oe:key='atlaso.development_root_ca_certificate'")) {
+            throw 'The normal test wrapper OVF input must carry the public development root.'
+        }
+        if ($withDevelopmentRoot.Contains('BEGIN CERTIFICATE')) {
+            throw 'The public development root OVF property must use bounded base64.'
+        }
+
+        $vmxPath = Join-Path $temporaryRoot 'development.vmx'
+        [System.IO.File]::WriteAllText(
+            $vmxPath,
+            "displayName = `"Atlaso-Test`"`n",
+            [System.Text.UTF8Encoding]::new($false)
+        )
+        Set-AtlasoWorkstationDevelopmentRootCaPrivateKey `
+            -VmxPath $vmxPath `
+            -PrivateKeyPem $privateKeyPem
+        $vmx = [System.IO.File]::ReadAllText($vmxPath)
+        if ($vmx -notmatch 'guestinfo\.atlaso\.test_vm_development_root_ca_private_key') {
+            throw 'The dedicated normal-test-VM signing-key guest-info field was not staged.'
+        }
+        if ($vmx.Contains('BEGIN PRIVATE KEY')) {
+            throw 'The signing key guest-info field must use bounded base64.'
+        }
+    }
+    finally {
+        if ($certificate) {
+            $certificate.Dispose()
+        }
+        $rsa.Dispose()
+        $otherRsa.Dispose()
+    }
+
     Assert-Throws { Assert-AtlasoWorkstationEd25519PublicKey -PublicKey 'ssh-rsa invalid' } 'Non-Ed25519 keys must fail.'
     Assert-Throws { Assert-AtlasoWorkstationEd25519PublicKey -PublicKey "$validKey`nsecond" } 'Multiline keys must fail.'
     $xmlInvalidKey = "$validKey$([char]0xFFFE)"

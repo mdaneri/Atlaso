@@ -320,6 +320,9 @@ Whether first boot enables password-backed root SSH.
 
 .PARAMETER DevelopmentAdminSshPublicKey
 Optional validated public key used only by the normal development test wrapper.
+
+.PARAMETER DevelopmentRootCaCertificatePem
+Optional public development root certificate used only by the normal test wrapper.
 #>
 function New-AtlasoWorkstationOvfEnvironment {
     param(
@@ -335,7 +338,10 @@ function New-AtlasoWorkstationOvfEnvironment {
         [switch]$RootSshEnabled,
 
         [AllowEmptyString()]
-        [string]$DevelopmentAdminSshPublicKey = ''
+        [string]$DevelopmentAdminSshPublicKey = '',
+
+        [AllowEmptyString()]
+        [string]$DevelopmentRootCaCertificatePem = ''
     )
 
     foreach ($passwordInput in @(
@@ -367,6 +373,9 @@ function New-AtlasoWorkstationOvfEnvironment {
         # the test-wrapper resolver and inject arbitrary authorized_keys content.
         $DevelopmentAdminSshPublicKey = Assert-AtlasoWorkstationEd25519PublicKey -PublicKey $DevelopmentAdminSshPublicKey
     }
+    if ($DevelopmentRootCaCertificatePem -and -not $DevelopmentAdminSshPublicKey) {
+        throw 'The development root CA is restricted to the normal test wrapper development-access contract.'
+    }
 
     $properties = [ordered]@{
         'atlaso.deployment_id'    = [guid]::NewGuid().ToString('D')
@@ -385,12 +394,197 @@ function New-AtlasoWorkstationOvfEnvironment {
     if ($DevelopmentAdminSshPublicKey) {
         $properties['atlaso.development_admin_ssh_public_key'] = $DevelopmentAdminSshPublicKey
     }
+    if ($DevelopmentRootCaCertificatePem) {
+        $properties['atlaso.development_root_ca_certificate'] = [Convert]::ToBase64String(
+            [System.Text.Encoding]::UTF8.GetBytes($DevelopmentRootCaCertificatePem)
+        )
+    }
     $propertyXml = foreach ($entry in $properties.GetEnumerator()) {
         $key = ConvertTo-AtlasoOvfXmlValue -Value $entry.Key
         $value = ConvertTo-AtlasoOvfXmlValue -Value $entry.Value
         "<Property oe:key='$key' oe:value='$value'/>"
     }
     return "<Environment xmlns='http://schemas.dmtf.org/ovf/environment/1' xmlns:oe='http://schemas.dmtf.org/ovf/environment/1' oe:id='vm'><PlatformSection><Kind>VMware Workstation</Kind><Version>17</Version><Vendor>VMware, Inc.</Vendor><Locale>en</Locale></PlatformSection><PropertySection>$($propertyXml -join '')</PropertySection></Environment>"
+}
+
+<#
+.SYNOPSIS
+Validate the checked-in development root certificate and matching private key.
+
+.DESCRIPTION
+Validates the development-only trust anchor before any normal test VM mutation.
+The private key is accepted only in memory and is never written by this helper.
+
+.PARAMETER CertificatePath
+Exact path to the checked-in public development root certificate.
+
+.PARAMETER PrivateKeyPem
+Private-key PEM supplied by the bounded 1Password Environment child.
+#>
+function Assert-AtlasoDevelopmentRootCaMaterial {
+    param(
+        [Parameter(Mandatory = $true)][string]$CertificatePath,
+        [Parameter(Mandatory = $true)][string]$PrivateKeyPem
+    )
+
+    if (-not (Test-Path -LiteralPath $CertificatePath -PathType Leaf)) {
+        throw "Atlaso development root certificate not found: $CertificatePath"
+    }
+    if ($PrivateKeyPem.Length -gt 16384 -or $PrivateKeyPem -notmatch '^-----BEGIN (?:RSA )?PRIVATE KEY-----') {
+        throw 'ATLASO_DEVELOPMENT_ROOT_CA_PRIVATE_KEY is absent or is not one bounded PEM private key.'
+    }
+    $certificatePem = [System.IO.File]::ReadAllText((Resolve-Path -LiteralPath $CertificatePath).Path)
+    try {
+        $certificate = [System.Security.Cryptography.X509Certificates.X509Certificate2]::CreateFromPem(
+            $certificatePem,
+            $PrivateKeyPem
+        )
+    }
+    catch {
+        throw 'The Atlaso development root certificate and 1Password private key do not match.'
+    }
+    try {
+        if (-not $certificate.HasPrivateKey -or $certificate.Subject -ne $certificate.Issuer) {
+            throw 'The Atlaso development root certificate must be self-signed and match its private key.'
+        }
+        $commonName = $certificate.GetNameInfo(
+            [System.Security.Cryptography.X509Certificates.X509NameType]::SimpleName,
+            $false
+        )
+        if ($commonName -ne 'Atlaso Development Root CA') {
+            throw 'The checked-in certificate is not the Atlaso Development Root CA.'
+        }
+        if ($certificate.NotBefore.ToUniversalTime() -gt [DateTime]::UtcNow -or $certificate.NotAfter.ToUniversalTime() -le [DateTime]::UtcNow) {
+            throw 'The Atlaso development root certificate is not currently valid.'
+        }
+        if ($certificate.SignatureAlgorithm.Value -ne '1.2.840.113549.1.1.11') {
+            throw 'The Atlaso development root certificate must use RSA with SHA-256.'
+        }
+        $basicConstraints = @($certificate.Extensions | Where-Object {
+                $_ -is [System.Security.Cryptography.X509Certificates.X509BasicConstraintsExtension]
+            }) | Select-Object -First 1
+        $keyUsage = @($certificate.Extensions | Where-Object {
+                $_ -is [System.Security.Cryptography.X509Certificates.X509KeyUsageExtension]
+            }) | Select-Object -First 1
+        $requiredUsage = [System.Security.Cryptography.X509Certificates.X509KeyUsageFlags]::KeyCertSign -bor
+            [System.Security.Cryptography.X509Certificates.X509KeyUsageFlags]::CrlSign
+        if (-not $basicConstraints -or -not $basicConstraints.CertificateAuthority -or
+            -not $keyUsage -or ($keyUsage.KeyUsages -band $requiredUsage) -ne $requiredUsage) {
+            throw 'The Atlaso development root certificate is not CA-capable.'
+        }
+        $rsa = [System.Security.Cryptography.X509Certificates.RSACertificateExtensions]::GetRSAPrivateKey(
+            $certificate
+        )
+        if (-not $rsa -or $rsa.KeySize -ne 4096) {
+            throw 'The Atlaso development root certificate must use a 4096-bit RSA key.'
+        }
+        $chain = [System.Security.Cryptography.X509Certificates.X509Chain]::new()
+        try {
+            $chain.ChainPolicy.TrustMode = [System.Security.Cryptography.X509Certificates.X509ChainTrustMode]::CustomRootTrust
+            [void]$chain.ChainPolicy.CustomTrustStore.Add($certificate)
+            $chain.ChainPolicy.RevocationMode = [System.Security.Cryptography.X509Certificates.X509RevocationMode]::NoCheck
+            if (-not $chain.Build($certificate)) {
+                throw 'The Atlaso development root certificate signature could not be verified.'
+            }
+        }
+        finally {
+            $chain.Dispose()
+        }
+    }
+    finally {
+        if ($rsa) {
+            $rsa.Dispose()
+        }
+        $certificate.Dispose()
+    }
+}
+
+<#
+.SYNOPSIS
+Stage the development root private key in one powered-off normal test VM.
+
+.PARAMETER VmxPath
+Exact VMX path owned by the current normal test VM invocation.
+
+.PARAMETER PrivateKeyPem
+Validated development root private-key PEM held only by the bounded child.
+#>
+function Set-AtlasoWorkstationDevelopmentRootCaPrivateKey {
+    param(
+        [Parameter(Mandatory = $true)][string]$VmxPath,
+        [Parameter(Mandatory = $true)][string]$PrivateKeyPem
+    )
+
+    $encoded = [Convert]::ToBase64String([System.Text.Encoding]::UTF8.GetBytes($PrivateKeyPem))
+    if ($encoded.Length -gt 16384) {
+        throw 'The encoded Atlaso development root private key exceeds the bounded guest-info size.'
+    }
+    $guestInfoName = 'guestinfo.atlaso.test_vm_development_root_ca_private_key'
+    $line = "$guestInfoName = " + (ConvertTo-AtlasoVmxString -Value $encoded)
+    $content = @(Get-Content -LiteralPath $VmxPath)
+    $pattern = '^\s*guestinfo\.atlaso\.test_vm_development_root_ca_private_key\s*='
+    $updated = $false
+    $content = @($content | ForEach-Object {
+            if ($_ -match $pattern) {
+                if (-not $updated) {
+                    $line
+                    $updated = $true
+                }
+            }
+            else {
+                $_
+            }
+        })
+    if (-not $updated) {
+        $content += $line
+    }
+    [System.IO.File]::WriteAllLines($VmxPath, [string[]]$content, [System.Text.UTF8Encoding]::new($false))
+}
+
+<#
+.SYNOPSIS
+Wait until the guest proves the development signing key was scrubbed.
+
+.PARAMETER VmxPath
+Exact running normal test VMX path.
+
+.PARAMETER VmrunPath
+Exact VMware vmrun executable path.
+
+.PARAMETER TimeoutSeconds
+Bounded time allowed for guest-side staging and scrub.
+
+.PARAMETER PollSeconds
+Delay between guest-info reads.
+#>
+function Wait-AtlasoWorkstationDevelopmentRootCaPrivateKeyScrub {
+    param(
+        [Parameter(Mandatory = $true)][string]$VmxPath,
+        [Parameter(Mandatory = $true)][string]$VmrunPath,
+        [Parameter(Mandatory = $true)][int]$TimeoutSeconds,
+        [int]$PollSeconds = 2
+    )
+
+    $guestInfoName = 'guestinfo.atlaso.test_vm_development_root_ca_private_key'
+    $deadline = (Get-Date).AddSeconds($TimeoutSeconds)
+    $emptyReads = 0
+    do {
+        $value = (& $VmrunPath -T ws readVariable $VmxPath runtimeConfig $guestInfoName 2>$null |
+            Select-Object -First 1)
+        if ($LASTEXITCODE -eq 0 -and [string]::IsNullOrWhiteSpace($value)) {
+            $emptyReads += 1
+            if ($emptyReads -ge 3) {
+                return
+            }
+        }
+        else {
+            $emptyReads = 0
+        }
+        if ((Get-Date) -lt $deadline) {
+            Start-Sleep -Seconds $PollSeconds
+        }
+    } while ((Get-Date) -lt $deadline)
+    throw 'The normal test VM did not prove that its development signing key guest-info value was scrubbed.'
 }
 
 <#

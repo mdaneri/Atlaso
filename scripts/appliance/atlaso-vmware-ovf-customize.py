@@ -39,8 +39,12 @@ PROPERTY_ADMIN_PASSWORD = f"{PROPERTY_PREFIX}admin_password"
 PROPERTY_ROOT_PASSWORD = f"{PROPERTY_PREFIX}root_password"
 PROPERTY_ROOT_SSH_ENABLED = f"{PROPERTY_PREFIX}root_ssh_enabled"
 PROPERTY_DEVELOPMENT_ADMIN_SSH_PUBLIC_KEY = f"{PROPERTY_PREFIX}development_admin_ssh_public_key"
+PROPERTY_DEVELOPMENT_ROOT_CA_CERTIFICATE = f"{PROPERTY_PREFIX}development_root_ca_certificate"
 PROPERTY_DEPLOYMENT_ID = f"{PROPERTY_PREFIX}deployment_id"
 TEST_VM_SSH_HOST_KEY_GUESTINFO = "guestinfo.atlaso.test_vm_ssh_host_ed25519_public_key"
+DEVELOPMENT_ROOT_CA_PRIVATE_KEY_GUESTINFO = (
+    "guestinfo.atlaso.test_vm_development_root_ca_private_key"
+)
 MINIMUM_PASSWORD_LENGTH = 12
 REQUIRED_PROPERTIES = {
     PROPERTY_FQDN,
@@ -62,6 +66,9 @@ NO_OVF_MARKER_PATH = Path("/var/lib/atlaso/vmware-no-ovf-initialization.applied"
 INITIALIZATION_LOCK_PATH = Path("/var/lib/atlaso/vmware-ovf-initializing")
 NETWORK_REVIEW_PATH = Path("/var/lib/atlaso/vmware-ovf-network-review.json")
 NETWORK_CORRECTION_PATH = Path("/var/lib/atlaso/vmware-ovf-network-correction.json")
+DEVELOPMENT_ROOT_CA_STAGING_PATH = Path(
+    "/var/lib/atlaso/apply/ca/first-boot-development-root-ca.json"
+)
 LOG_PATH = Path("/var/log/atlaso/vmware-ovf-customize.log")
 DEFAULT_INTERFACE = "eth0"
 NETWORK_REVIEW_POLL_SECONDS = 1.0
@@ -343,14 +350,54 @@ def validate_non_network_properties(properties: dict[str, str]) -> dict[str, obj
             deployment_id = str(UUID(deployment_id))
         except ValueError as exc:
             raise OvfCustomizationError(f"{PROPERTY_DEPLOYMENT_ID} must be a UUID") from exc
+    development_admin_ssh_public_key = validate_ed25519_public_key(
+        properties.get(PROPERTY_DEVELOPMENT_ADMIN_SSH_PUBLIC_KEY, "")
+    )
+    development_root_ca_certificate = properties.get(
+        PROPERTY_DEVELOPMENT_ROOT_CA_CERTIFICATE, ""
+    ).strip()
+    if development_root_ca_certificate and not development_admin_ssh_public_key:
+        raise OvfCustomizationError(
+            f"{PROPERTY_DEVELOPMENT_ROOT_CA_CERTIFICATE} is restricted to the normal test wrapper"
+        )
+    decoded_development_root_ca_certificate = ""
+    if development_root_ca_certificate:
+        if len(development_root_ca_certificate) > 32768:
+            raise OvfCustomizationError(
+                f"{PROPERTY_DEVELOPMENT_ROOT_CA_CERTIFICATE} exceeds the bounded size"
+            )
+        try:
+            certificate_bytes = base64.b64decode(
+                development_root_ca_certificate,
+                validate=True,
+            )
+            if (
+                base64.b64encode(certificate_bytes).decode("ascii")
+                != development_root_ca_certificate
+            ):
+                raise ValueError
+            decoded_development_root_ca_certificate = certificate_bytes.decode("ascii")
+        except (binascii.Error, UnicodeDecodeError, ValueError) as exc:
+            raise OvfCustomizationError(
+                f"{PROPERTY_DEVELOPMENT_ROOT_CA_CERTIFICATE} is not canonical base64 PEM"
+            ) from exc
+        if (
+            decoded_development_root_ca_certificate.count(
+                "-----BEGIN CERTIFICATE-----"
+            )
+            != 1
+            or "PRIVATE KEY" in decoded_development_root_ca_certificate
+        ):
+            raise OvfCustomizationError(
+                f"{PROPERTY_DEVELOPMENT_ROOT_CA_CERTIFICATE} is not one public certificate"
+            )
     return {
         "fqdn": validate_fqdn(properties[PROPERTY_FQDN]),
         "admin_password": properties[PROPERTY_ADMIN_PASSWORD],
         "root_password": properties[PROPERTY_ROOT_PASSWORD],
         "root_ssh_enabled": parse_boolean_property(properties, PROPERTY_ROOT_SSH_ENABLED),
-        "development_admin_ssh_public_key": validate_ed25519_public_key(
-            properties.get(PROPERTY_DEVELOPMENT_ADMIN_SSH_PUBLIC_KEY, "")
-        ),
+        "development_admin_ssh_public_key": development_admin_ssh_public_key,
+        "development_root_ca_certificate_pem": decoded_development_root_ca_certificate,
         "deployment_id": deployment_id,
     }
 
@@ -428,6 +475,9 @@ def validate_properties(
         "root_ssh_enabled": validated_non_network["root_ssh_enabled"],
         "development_admin_ssh_public_key": validated_non_network[
             "development_admin_ssh_public_key"
+        ],
+        "development_root_ca_certificate_pem": validated_non_network[
+            "development_root_ca_certificate_pem"
         ],
         "deployment_id": validated_non_network["deployment_id"],
         "management_source_cidr": management_source_cidr,
@@ -878,6 +928,9 @@ def redacted_summary(config: dict[str, object]) -> dict[str, object]:
         "development_admin_passwordless_sudo": bool(
             config["development_admin_ssh_public_key"]
         ),
+        "development_root_ca_staged": bool(
+            config["development_root_ca_certificate_pem"]
+        ),
         "deployment_id": config["deployment_id"],
     }
 
@@ -929,6 +982,141 @@ def clear_ovf_environment() -> None:
         if result.returncode == 0:
             return
     raise OvfCustomizationError("VMware Tools could not clear the consumed OVF deployment properties")
+
+
+def try_read_guestinfo_value(name: str) -> tuple[bool, str]:
+    """Return whether VMware Tools answered and one exact guest-info value.
+
+    Args:
+        name: Fixed guest-info key selected by the caller.
+
+    Returns:
+        Whether a supported VMware Tools command answered and its value.
+    """
+    commands = [
+        ["vmware-rpctool", f"info-get {name}"],
+        ["vmtoolsd", "--cmd", f"info-get {name}"],
+    ]
+    for command in commands:
+        executable = shutil.which(command[0])
+        if executable is None:
+            continue
+        result = subprocess.run(
+            [executable, *command[1:]],
+            check=False,
+            text=True,
+            capture_output=True,
+        )
+        if result.returncode == 0:
+            value = result.stdout.strip()
+            return True, "" if value == '""' else value
+    return False, ""
+
+
+def clear_guestinfo_value(name: str) -> None:
+    """Clear and verify one fixed secret-bearing VMware guest-info value.
+
+    Args:
+        name: Fixed guest-info key selected by the caller.
+
+    Raises:
+        OvfCustomizationError: If VMware Tools cannot clear and verify the value.
+    """
+    commands = [
+        ["vmware-rpctool", f'info-set {name} ""'],
+        ["vmtoolsd", "--cmd", f'info-set {name} ""'],
+    ]
+    for command in commands:
+        executable = shutil.which(command[0])
+        if executable is None:
+            continue
+        result = subprocess.run(
+            [executable, *command[1:]],
+            check=False,
+            text=True,
+            capture_output=True,
+        )
+        if result.returncode != 0:
+            continue
+        answered, value = try_read_guestinfo_value(name)
+        if answered and not value:
+            return
+    raise OvfCustomizationError("VMware Tools could not prove a secret guest-info value was cleared")
+
+
+def stage_development_root_ca(config: dict[str, object]) -> None:
+    """Stage and scrub the normal test VM's shared development signing key.
+
+    Args:
+        config: Validated normal-test-VM configuration containing the public root.
+
+    Raises:
+        OvfCustomizationError: If staging is unsafe, incomplete, or cannot be scrubbed.
+    """
+    certificate_pem = str(config.get("development_root_ca_certificate_pem", ""))
+    if not certificate_pem:
+        return
+
+    if DEVELOPMENT_ROOT_CA_STAGING_PATH.exists():
+        try:
+            path_stat = DEVELOPMENT_ROOT_CA_STAGING_PATH.lstat()
+            if (
+                DEVELOPMENT_ROOT_CA_STAGING_PATH.is_symlink()
+                or not DEVELOPMENT_ROOT_CA_STAGING_PATH.is_file()
+                or path_stat.st_mode & 0o777 != 0o600
+                or path_stat.st_size > 65536
+            ):
+                raise ValueError
+            staged = json.loads(
+                DEVELOPMENT_ROOT_CA_STAGING_PATH.read_text(encoding="utf-8")
+            )
+            if (
+                staged.get("certificate_pem") != certificate_pem
+                or not str(staged.get("private_key_pem", "")).startswith(
+                    ("-----BEGIN PRIVATE KEY-----", "-----BEGIN RSA PRIVATE KEY-----")
+                )
+            ):
+                raise ValueError
+        except (OSError, TypeError, ValueError, json.JSONDecodeError) as exc:
+            raise OvfCustomizationError(
+                "The staged development root CA material is unsafe or inconsistent"
+            ) from exc
+    else:
+        answered, encoded_private_key = try_read_guestinfo_value(
+            DEVELOPMENT_ROOT_CA_PRIVATE_KEY_GUESTINFO
+        )
+        if not answered or not encoded_private_key or len(encoded_private_key) > 16384:
+            raise OvfCustomizationError(
+                "The normal test VM development signing key guest-info value is unavailable"
+            )
+        try:
+            private_key_bytes = base64.b64decode(encoded_private_key, validate=True)
+            if base64.b64encode(private_key_bytes).decode("ascii") != encoded_private_key:
+                raise ValueError
+            private_key_pem = private_key_bytes.decode("ascii")
+        except (binascii.Error, UnicodeDecodeError, ValueError) as exc:
+            raise OvfCustomizationError(
+                "The normal test VM development signing key guest-info value is invalid"
+            ) from exc
+        if (
+            len(private_key_pem) > 16384
+            or not private_key_pem.startswith(
+                ("-----BEGIN PRIVATE KEY-----", "-----BEGIN RSA PRIVATE KEY-----")
+            )
+        ):
+            raise OvfCustomizationError(
+                "The normal test VM development signing key PEM is invalid"
+            )
+        write_json_atomic(
+            DEVELOPMENT_ROOT_CA_STAGING_PATH,
+            {
+                "certificate_pem": certificate_pem,
+                "private_key_pem": private_key_pem,
+            },
+            mode=0o600,
+        )
+
+    clear_guestinfo_value(DEVELOPMENT_ROOT_CA_PRIVATE_KEY_GUESTINFO)
 
 
 def read_ovf_environment_source(ovf_env_file: str) -> str:
@@ -1569,6 +1757,10 @@ def apply_customization(config: dict[str, object], *, dry_run: bool = False) -> 
     run_initialization_layer(
         "appliance environment",
         lambda: write_env_file(ENV_PATH, appliance_environment_values(config)),
+    )
+    run_initialization_layer(
+        "development root CA staging and guest-info scrub",
+        lambda: stage_development_root_ca(config),
     )
     run_initialization_layer("console credential refresh", restart_console)
     run_initialization_layer("host state durability", sync_customized_host_state)
