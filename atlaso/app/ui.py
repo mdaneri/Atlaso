@@ -498,7 +498,7 @@ from atlaso.app.services.routes_wan import (
     canonical_route_destination,
     default_route_family,
     generated_route_role_rules,
-    mirrored_management_default_keys,
+    mirrored_management_default_routes,
     nat_rule_to_dict,
     render_wan_config,
     route_to_dict,
@@ -10521,8 +10521,8 @@ def appliance_apply_units(db: Session, *, reconcile: bool = True) -> list[dict[s
     )
     network_unit["management_gateway_route_migrations"] = gateway_route_migrations
     network_unit["management_default_mirror_change"] = bool(
-        mirrored_management_default_keys(wan["wan_config_preview"])
-        != mirrored_management_default_keys(
+        mirrored_management_default_routes(wan["wan_config_preview"])
+        != mirrored_management_default_routes(
             str((wan_baseline or {}).get("config_preview") or "")
         )
     )
@@ -13316,6 +13316,7 @@ def execute_management_handoff(
     job_id: str,
     adapter: SystemAdapter | None = None,
     db: Session,
+    include_wan: bool | None = None,
 ) -> tuple[dict[str, Any], list[dict[str, Any]]]:
     """Execute management-affecting apply units as one recoverable transaction.
 
@@ -13324,6 +13325,7 @@ def execute_management_handoff(
         job_id: Appliance Apply task identifier.
         adapter: System adapter used for helper execution.
         db: Active database session.
+        include_wan: Whether the captured WAN unit participates in the transaction.
 
     Returns:
         The group result and one truthful result per bundled apply unit.
@@ -13334,9 +13336,13 @@ def execute_management_handoff(
     firewall = units_by_id["firewall"]
     public_services = units_by_id["public_services"]
     ca = units_by_id["ca"]
-    wan_required = bool(
-        network.get("management_gateway_route_migrations")
-        or network.get("management_default_mirror_change")
+    wan_required = (
+        bool(include_wan)
+        if include_wan is not None
+        else bool(
+            network.get("management_gateway_route_migrations")
+            or network.get("management_default_mirror_change")
+        )
     )
     wan = units_by_id["wan"] if wan_required else None
     handoff_unit_ids = (
@@ -14968,6 +14974,7 @@ def run_appliance_apply_job(job_id: str, *, force_real: bool = False) -> None:
                         job_id=job.id,
                         adapter=handoff_adapter,
                         db=db,
+                        include_wan="wan" in handoff_unit_ids,
                     )
                     if not group_result.get("success") and group_result.get("rollback_proven"):
                         handoff_runtime_pending = False
@@ -15705,8 +15712,14 @@ def _submit_appliance_apply(
     ):
         selected_ids.add("local_users")
     management_handoff = bool(
-        selected_ids.intersection(MANAGEMENT_HANDOFF_UNIT_IDS)
-        and unit_map.get("network", {}).get("management_handoff_required")
+        (
+            selected_ids.intersection(MANAGEMENT_HANDOFF_UNIT_IDS)
+            and unit_map.get("network", {}).get("management_handoff_required")
+        )
+        or (
+            "wan" in selected_ids
+            and unit_map.get("network", {}).get("management_default_mirror_change")
+        )
     )
     if management_handoff:
         selected_ids.update(

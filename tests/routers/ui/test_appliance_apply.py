@@ -1248,6 +1248,133 @@ def test_mirror_changing_listener_edit_forces_wan_into_handoff(
     assert any(unit["unit_id"] == "wan" for unit in payload["units"])
 
 
+@pytest.mark.parametrize("route_change", ["gateway", "metric", "disable", "remove"])
+def test_standalone_mirrored_default_edit_starts_management_handoff(
+    client,
+    route_change,
+):
+    """Protect every host-default mutation submitted from Routes & WAN."""
+    from sqlalchemy import select
+
+    from atlaso.app.database import SessionLocal
+    from atlaso.app.models import Job, PhysicalInterface, Route
+    from atlaso.app.ui import appliance_apply_units, update_appliance_apply_baselines
+
+    login(client)
+    with SessionLocal() as db:
+        db.query(Route).delete()
+        interface = db.scalar(
+            select(PhysicalInterface).where(PhysicalInterface.name == "eth2")
+        )
+        assert interface is not None
+        interface.role = "access"
+        interface.mode = "access"
+        interface.admin_state = "up"
+        interface.oper_state = "up"
+        interface.ipv4_method = "static"
+        interface.ip_cidr = "192.168.50.10/24"
+        interface.access_management_ui_enabled = True
+        route = Route(
+            destination_cidr="0.0.0.0/0",
+            gateway="192.168.50.1",
+            interface_name="eth2",
+            metric=100,
+            enabled=True,
+        )
+        db.add(route)
+        db.commit()
+        units = appliance_apply_units(db)
+        update_appliance_apply_baselines(db, units, {unit["id"] for unit in units})
+        if route_change == "gateway":
+            route.gateway = "192.168.50.2"
+        elif route_change == "metric":
+            route.metric = 200
+        elif route_change == "disable":
+            route.enabled = False
+        else:
+            db.delete(route)
+        db.commit()
+
+    page = client.get("/dashboard")
+    csrf = page.text.split('name="csrf" value="', 1)[1].split('"', 1)[0]
+    response = client.post(
+        "/appliance-apply",
+        data={"csrf": csrf, "selected_units": "wan"},
+        headers={"Accept": "application/json"},
+    )
+
+    assert response.status_code == 202, response.text
+    with SessionLocal() as db:
+        job = db.get(Job, response.json()["job_id"])
+        assert job is not None
+        payload = json.loads(job.result or "{}")
+    assert payload["management_handoff"] is True
+    assert set(payload["management_handoff_units"]) == {
+        "ca",
+        "network",
+        "firewall",
+        "appliance_settings",
+        "public_services",
+        "wan",
+    }
+    assert any(unit["unit_id"] == "wan" for unit in payload["units"])
+
+
+def test_selected_wan_change_executes_inside_existing_management_handoff(client):
+    """Apply a captured non-mirror WAN edit with the protected Network change."""
+    from sqlalchemy import select
+
+    from atlaso.app.database import SessionLocal
+    from atlaso.app.models import Job, PhysicalInterface, Route
+    from atlaso.app.ui import appliance_apply_units, update_appliance_apply_baselines
+
+    login(client)
+    with SessionLocal() as db:
+        units = appliance_apply_units(db)
+        update_appliance_apply_baselines(db, units, {unit["id"] for unit in units})
+        management = db.scalar(
+            select(PhysicalInterface).where(PhysicalInterface.name == "eth0")
+        )
+        access = db.scalar(
+            select(PhysicalInterface).where(PhysicalInterface.name == "eth2")
+        )
+        assert management is not None
+        assert access is not None
+        management.ip_cidr = "192.168.49.21/24"
+        access.role = "access"
+        access.mode = "access"
+        access.admin_state = "up"
+        access.oper_state = "up"
+        access.ipv4_method = "static"
+        access.ip_cidr = "192.168.50.10/24"
+        db.add(
+            Route(
+                destination_cidr="203.0.113.0/24",
+                gateway="192.168.50.1",
+                interface_name="eth2",
+                enabled=True,
+            )
+        )
+        db.commit()
+
+    page = client.get("/dashboard")
+    csrf = page.text.split('name="csrf" value="', 1)[1].split('"', 1)[0]
+    response = client.post(
+        "/appliance-apply",
+        data={"csrf": csrf, "selected_units": ["network", "wan"]},
+        headers={"Accept": "application/json"},
+    )
+
+    assert response.status_code == 202, response.text
+    with SessionLocal() as db:
+        job = db.get(Job, response.json()["job_id"])
+        assert job is not None
+        payload = json.loads(job.result or "{}")
+    assert payload["management_handoff"] is True
+    assert "wan" in payload["management_handoff_units"]
+    assert any(unit["unit_id"] == "wan" for unit in payload["units"])
+
+
 def test_management_move_rechecks_handoff_after_ldap_dependency_expansion(client, monkeypatch):
     """Protect a Firewall unit added indirectly by the LDAP dependency closure.
 

@@ -482,8 +482,10 @@ def _nft_source_expr(source: str) -> str:
     return f"ip saddr {{ {', '.join(values)} }} "
 
 
-def mirrored_management_default_keys(config_preview: str) -> set[tuple[str, str]]:
-    """Return enabled defaults mirrored for flagged management listeners.
+def mirrored_management_default_routes(
+    config_preview: str,
+) -> set[tuple[str, str, str, str]]:
+    """Return enabled default-route state mirrored for management listeners.
 
     Args:
         config_preview: Previously rendered Routes & WAN configuration.
@@ -516,7 +518,7 @@ def mirrored_management_default_keys(config_preview: str) -> set[tuple[str, str]
         elif current_section == "routes" and current_route is not None:
             current_route[key] = value
 
-    mirrored: set[tuple[str, str]] = set()
+    mirrored: set[tuple[str, str, str, str]] = set()
     for route in routes:
         interface_name = route.get("interface", "")
         if not interface_name or not targets.get(interface_name):
@@ -528,8 +530,29 @@ def mirrored_management_default_keys(config_preview: str) -> set[tuple[str, str]
         except ValueError:
             continue
         if ip_network(destination, strict=False).prefixlen == 0:
-            mirrored.add((destination, interface_name))
+            mirrored.add(
+                (
+                    destination,
+                    interface_name,
+                    route.get("gateway", ""),
+                    route.get("metric", "100"),
+                )
+            )
     return mirrored
+
+
+def mirrored_management_default_keys(config_preview: str) -> set[tuple[str, str]]:
+    """Return identities of enabled defaults mirrored for management listeners.
+
+    Args:
+        config_preview: Previously rendered Routes & WAN configuration.
+    """
+    return {
+        (destination, interface_name)
+        for destination, interface_name, _gateway, _metric in mirrored_management_default_routes(
+            config_preview
+        )
+    }
 
 
 def render_wan_config(

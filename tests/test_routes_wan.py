@@ -4,6 +4,7 @@ from atlaso.app.models import NatRule, Route, RoutingRule
 from atlaso.app.services.routes_wan import (
     canonical_route_destination,
     default_route_family,
+    mirrored_management_default_routes,
     render_wan_config,
     route_to_dict,
     validate_nat_source,
@@ -60,6 +61,9 @@ def test_flagged_management_default_route_also_preserves_host_default():
         "ip route replace 0.0.0.0/0 via 192.0.2.1 dev eth1 metric 90"
         "  # flagged-management host default"
     ) in config
+    assert mirrored_management_default_routes(config) == {
+        ("0.0.0.0/0", "eth1", "192.0.2.1", "90")
+    }
 
 
 def test_flagged_management_default_cleanup_uses_last_applied_mirroring():

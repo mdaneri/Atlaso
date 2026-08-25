@@ -276,9 +276,12 @@ HTTP/HTTPS behavior beside the candidate listener until candidate readiness succ
 separate snapshotted certificate and key files, including when the protocol remains HTTPS while the candidate
 certificate rotates.
 
-If a management-to-access desired-state mutation introduced or enabled a default route that is absent from the
-last-applied WAN baseline, Routes & WAN Simulation becomes a sixth handoff participant. Atlaso stages and validates the
-candidate WAN config and an inverse rollback config before mutation. The helper snapshots WAN-owned nftables, systemd,
+If a management-to-access desired-state mutation introduces or enables a default route that differs from the
+last-applied WAN baseline, Routes & WAN Simulation becomes a sixth handoff participant. A standalone Routes & WAN
+submission also initiates the handoff when it adds, edits, disables, or removes a default mirrored through an effective
+flagged management listener. Any WAN unit captured with an otherwise protected management edit remains a participant
+even when its changes affect only lab routes, NAT, or simulation policy. Atlaso stages and validates the candidate WAN
+config and an inverse rollback config before mutation. The helper snapshots WAN-owned nftables, systemd,
 and sysctl files, applies the candidate after candidate networking exists, and retains the old management path during
 readiness. Final Network regeneration can replace policy routing, so the helper reapplies that same captured candidate
 WAN config after link retirement and before final readiness. Failure, interruption recovery, or another rollback
