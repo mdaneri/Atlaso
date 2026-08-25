@@ -5161,6 +5161,14 @@ session to read the current IPv4 address reported by Hyper-V.</p>
 <p>It shares Photon ISO remastering, kickstart generation, checksum validation, Packer var-file generation, and appliance
 provisioning with the Hyper-V image path. The original Photon source ISO cache is shared under <code>image/common/source</code>;
 the Workstation image installs <code>open-vm-tools</code> instead of Hyper-V guest integration packages.</p>
+<p>The supported GUI wrapper starts or reuses a responsive VMware Workstation UI in a separate process before Packer asks
+<code>vmrun</code> to power on the builder. This keeps the visible console without allowing the GUI start transition to retain
+Packer's redirected output handles after the VM is already live. Sanitized startup heartbeats bind provider inventory,
+running state, and TCP/22 reachability to the expected VMX filesystem identity until SSH provisioning begins. The
+default 2700-second start-to-provisioning timeout matches Packer's 45-minute SSH communicator allowance and performs
+checked exact-root cleanup only for
+<code>-PackerOnError cleanup</code>; other failure selections preserve the output. Raw Packer debug-log environment variables are
+excluded from the monitored child because they are outside the wrapper's redaction boundary.</p>
 <p>Build the image with:</p>
 <div class="language-powershell highlight"><pre><span></span><code><span id="__span-32-1"><a id="__codelineno-32-1" name="__codelineno-32-1" href="#__codelineno-32-1"></a><span class="n">pwsh</span> <span class="n">-ExecutionPolicy</span> <span class="n">Bypass</span> <span class="p">`</span>
 </span><span id="__span-32-2"><a id="__codelineno-32-2" name="__codelineno-32-2" href="#__codelineno-32-2"></a>  <span class="o">-File</span> <span class="n">scripts</span><span class="p">/</span><span class="n">windows</span><span class="p">/</span><span class="n">vmware</span><span class="p">/</span><span class="n">build-photon-image</span><span class="p">.</span><span class="n">ps1</span> <span class="p">`</span>
