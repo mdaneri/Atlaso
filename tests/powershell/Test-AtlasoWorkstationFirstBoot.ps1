@@ -158,8 +158,10 @@ try {
             -Fqdn 'atlaso-test.atlaso.internal' `
             -AdminPassword 'VMware01!Test' `
             -RootPassword 'VMware01!Test' `
-            -DevelopmentAdminSshPublicKey $validKey `
             -DevelopmentRootCaCertificatePem $certificatePem
+        if (-not $withDevelopmentRoot.Contains("oe:key='atlaso.development_test_vm' oe:value='true'")) {
+            throw 'The shared CA must identify the internal normal-test-wrapper path without requiring an SSH key.'
+        }
         if (-not $withDevelopmentRoot.Contains("oe:key='atlaso.development_root_ca_certificate'")) {
             throw 'The normal test wrapper OVF input must carry the public development root.'
         }

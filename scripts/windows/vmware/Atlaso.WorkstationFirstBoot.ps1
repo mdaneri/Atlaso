@@ -373,10 +373,6 @@ function New-AtlasoWorkstationOvfEnvironment {
         # the test-wrapper resolver and inject arbitrary authorized_keys content.
         $DevelopmentAdminSshPublicKey = Assert-AtlasoWorkstationEd25519PublicKey -PublicKey $DevelopmentAdminSshPublicKey
     }
-    if ($DevelopmentRootCaCertificatePem -and -not $DevelopmentAdminSshPublicKey) {
-        throw 'The development root CA is restricted to the normal test wrapper development-access contract.'
-    }
-
     $properties = [ordered]@{
         'atlaso.deployment_id'    = [guid]::NewGuid().ToString('D')
         'atlaso.management_mode'  = 'dhcp'
@@ -395,6 +391,9 @@ function New-AtlasoWorkstationOvfEnvironment {
         $properties['atlaso.development_admin_ssh_public_key'] = $DevelopmentAdminSshPublicKey
     }
     if ($DevelopmentRootCaCertificatePem) {
+        # This internal marker is emitted only by the normal test wrapper. It
+        # keeps shared-CA eligibility independent from optional SSH-key setup.
+        $properties['atlaso.development_test_vm'] = 'true'
         $properties['atlaso.development_root_ca_certificate'] = [Convert]::ToBase64String(
             [System.Text.Encoding]::UTF8.GetBytes($DevelopmentRootCaCertificatePem)
         )

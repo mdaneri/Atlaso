@@ -406,8 +406,11 @@ def import_root_ca_material(
     Raises:
         ValueError: If the material is malformed, unsafe, expired, or mismatched.
     """
-    normalized_certificate_pem = certificate_pem.strip()
-    normalized_private_key_pem = private_key_pem.strip()
+    # PowerShell reads repository text with the checkout's native line endings.
+    # Normalize before enforcing canonical PEM so an otherwise byte-identical
+    # trust anchor remains usable on Windows without weakening X.509 validation.
+    normalized_certificate_pem = certificate_pem.replace("\r\n", "\n").replace("\r", "\n").strip()
+    normalized_private_key_pem = private_key_pem.replace("\r\n", "\n").replace("\r", "\n").strip()
     if (
         normalized_certificate_pem.count("-----BEGIN CERTIFICATE-----") != 1
         or "PRIVATE KEY" in normalized_certificate_pem

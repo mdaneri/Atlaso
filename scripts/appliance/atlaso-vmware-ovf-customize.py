@@ -13,6 +13,7 @@ import secrets
 import shutil
 import subprocess
 import sys
+import tempfile
 import time
 import xml.etree.ElementTree as ET
 from collections.abc import Callable
@@ -39,6 +40,7 @@ PROPERTY_ADMIN_PASSWORD = f"{PROPERTY_PREFIX}admin_password"
 PROPERTY_ROOT_PASSWORD = f"{PROPERTY_PREFIX}root_password"
 PROPERTY_ROOT_SSH_ENABLED = f"{PROPERTY_PREFIX}root_ssh_enabled"
 PROPERTY_DEVELOPMENT_ADMIN_SSH_PUBLIC_KEY = f"{PROPERTY_PREFIX}development_admin_ssh_public_key"
+PROPERTY_DEVELOPMENT_TEST_VM = f"{PROPERTY_PREFIX}development_test_vm"
 PROPERTY_DEVELOPMENT_ROOT_CA_CERTIFICATE = f"{PROPERTY_PREFIX}development_root_ca_certificate"
 PROPERTY_DEPLOYMENT_ID = f"{PROPERTY_PREFIX}deployment_id"
 TEST_VM_SSH_HOST_KEY_GUESTINFO = "guestinfo.atlaso.test_vm_ssh_host_ed25519_public_key"
@@ -353,10 +355,11 @@ def validate_non_network_properties(properties: dict[str, str]) -> dict[str, obj
     development_admin_ssh_public_key = validate_ed25519_public_key(
         properties.get(PROPERTY_DEVELOPMENT_ADMIN_SSH_PUBLIC_KEY, "")
     )
+    development_test_vm = parse_boolean_property(properties, PROPERTY_DEVELOPMENT_TEST_VM)
     development_root_ca_certificate = properties.get(
         PROPERTY_DEVELOPMENT_ROOT_CA_CERTIFICATE, ""
     ).strip()
-    if development_root_ca_certificate and not development_admin_ssh_public_key:
+    if development_root_ca_certificate and not development_test_vm:
         raise OvfCustomizationError(
             f"{PROPERTY_DEVELOPMENT_ROOT_CA_CERTIFICATE} is restricted to the normal test wrapper"
         )
@@ -397,6 +400,7 @@ def validate_non_network_properties(properties: dict[str, str]) -> dict[str, obj
         "root_password": properties[PROPERTY_ROOT_PASSWORD],
         "root_ssh_enabled": parse_boolean_property(properties, PROPERTY_ROOT_SSH_ENABLED),
         "development_admin_ssh_public_key": development_admin_ssh_public_key,
+        "development_test_vm": development_test_vm,
         "development_root_ca_certificate_pem": decoded_development_root_ca_certificate,
         "deployment_id": deployment_id,
     }
@@ -476,6 +480,7 @@ def validate_properties(
         "development_admin_ssh_public_key": validated_non_network[
             "development_admin_ssh_public_key"
         ],
+        "development_test_vm": validated_non_network["development_test_vm"],
         "development_root_ca_certificate_pem": validated_non_network[
             "development_root_ca_certificate_pem"
         ],
@@ -547,16 +552,26 @@ def write_json_atomic(path: Path, payload: dict[str, object], *, mode: int = 0o6
         mode: Filesystem mode for the completed document.
     """
     path.parent.mkdir(parents=True, exist_ok=True)
-    temporary = path.with_name(f".{path.name}.{os.getpid()}.tmp")
+    descriptor, temporary_name = tempfile.mkstemp(
+        dir=path.parent,
+        prefix=f".{path.name}.",
+        suffix=".tmp",
+    )
+    temporary = Path(temporary_name)
     try:
-        with temporary.open("w", encoding="utf-8") as handle:
+        # mkstemp creates the inode as 0600. Set the requested final mode before
+        # any bytes are written so signer staging is never temporarily broader.
+        os.fchmod(descriptor, mode)
+        with os.fdopen(descriptor, "w", encoding="utf-8") as handle:
+            descriptor = -1
             handle.write(json.dumps(payload, indent=2, sort_keys=True) + "\n")
             handle.flush()
             os.fsync(handle.fileno())
-        os.chmod(temporary, mode)
         temporary.replace(path)
         fsync_parent_directory(path)
     finally:
+        if descriptor >= 0:
+            os.close(descriptor)
         temporary.unlink(missing_ok=True)
 
 

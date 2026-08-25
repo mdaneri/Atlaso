@@ -143,6 +143,22 @@ def test_shared_development_root_import_issues_unique_vm_leaf_certificates():
     assert issued[0][1].private_key_encrypted != issued[1][1].private_key_encrypted
 
 
+def test_development_root_import_normalizes_windows_pem_line_endings():
+    """Accept canonical root material read from a CRLF Windows checkout."""
+    certificate_pem, private_key_pem = development_root_material()
+    settings = CaSettings()
+
+    import_root_ca_material(
+        settings,
+        certificate_pem.replace("\n", "\r\n"),
+        private_key_pem.replace("\n", "\r\n"),
+        expected_common_name="Atlaso Development Root CA",
+    )
+
+    assert "\r" not in settings.root_certificate_pem
+    assert settings.root_common_name == "Atlaso Development Root CA"
+
+
 @pytest.mark.parametrize("mutation", ["mismatch", "not_ca", "expired"])
 def test_development_root_import_rejects_invalid_material(mutation):
     """Reject mismatched, non-CA, and expired development trust anchors.

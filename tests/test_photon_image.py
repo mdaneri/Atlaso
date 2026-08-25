@@ -1657,6 +1657,7 @@ def test_vmware_raw_vmx_workflows_inject_complete_first_boot_ovf_environment_bef
     ):
         assert f"'{key}'" in helper
     assert "'atlaso.development_admin_ssh_public_key'" in helper
+    assert "'atlaso.development_test_vm'" in helper
     assert "'atlaso.development_root_ca_certificate'" in helper
     assert "guestinfo.atlaso.test_vm_development_root_ca_private_key" in helper
     assert "[guid]::NewGuid().ToString('D')" in helper
@@ -1677,6 +1678,7 @@ def test_vmware_raw_vmx_workflows_inject_complete_first_boot_ovf_environment_bef
     assert "ssh-keyscan" not in helper
 
     assert 'TEST_VM_SSH_HOST_KEY_GUESTINFO = "guestinfo.atlaso.test_vm_ssh_host_ed25519_public_key"' in customizer
+    assert 'PROPERTY_DEVELOPMENT_TEST_VM = f"{PROPERTY_PREFIX}development_test_vm"' in customizer
     assert 'PROPERTY_DEVELOPMENT_ROOT_CA_CERTIFICATE = f"{PROPERTY_PREFIX}development_root_ca_certificate"' in customizer
     assert '"guestinfo.atlaso.test_vm_development_root_ca_private_key"' in customizer
     assert "def stage_development_root_ca(" in customizer

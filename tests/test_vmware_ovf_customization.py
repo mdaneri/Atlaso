@@ -182,7 +182,7 @@ def test_vmware_ovf_customizer_stages_and_scrubs_development_root_key(
         "-----BEGIN PRIVATE KEY-----\ncHJpdmF0ZS1rZXk=\n-----END PRIVATE KEY-----\n"
     )
     properties = customizer.parse_ovf_environment(OVF_ENV)
-    properties[customizer.PROPERTY_DEVELOPMENT_ADMIN_SSH_PUBLIC_KEY] = VALID_ED25519_PUBLIC_KEY
+    properties[customizer.PROPERTY_DEVELOPMENT_TEST_VM] = "true"
     properties[customizer.PROPERTY_DEVELOPMENT_ROOT_CA_CERTIFICATE] = base64.b64encode(
         certificate_pem.encode("ascii")
     ).decode("ascii")
@@ -217,6 +217,34 @@ def test_vmware_ovf_customizer_stages_and_scrubs_development_root_key(
     summary = customizer.redacted_summary(config)
     assert summary["development_root_ca_staged"] is True
     assert private_key_pem not in str(summary)
+
+
+def test_atomic_json_applies_secret_mode_before_opening_payload(tmp_path, monkeypatch):
+    """Apply the requested staging mode before a shared signer can be written.
+
+    Args:
+        tmp_path: Isolated destination directory.
+        monkeypatch: Pytest fixture used to observe descriptor setup order.
+    """
+    customizer = load_customizer()
+    destination = tmp_path / "development-root.json"
+    events = []
+    original_fchmod = customizer.os.fchmod
+    original_fdopen = customizer.os.fdopen
+
+    def record_fchmod(descriptor, mode):
+        events.append(("fchmod", mode))
+        return original_fchmod(descriptor, mode)
+
+    def record_fdopen(descriptor, *args, **kwargs):
+        events.append(("fdopen", None))
+        return original_fdopen(descriptor, *args, **kwargs)
+
+    monkeypatch.setattr(customizer.os, "fchmod", record_fchmod)
+    monkeypatch.setattr(customizer.os, "fdopen", record_fdopen)
+    customizer.write_json_atomic(destination, {"private_key_pem": "redacted"}, mode=0o600)
+
+    assert events[:2] == [("fchmod", 0o600), ("fdopen", None)]
 
 
 def test_vmware_ovf_customizer_rejects_development_root_without_test_access():
@@ -1651,18 +1679,19 @@ def test_vmware_ovf_customizer_durably_persists_atomic_marker_before_scrub(tmp_p
     customizer = load_customizer()
     destination = tmp_path / "customization.pending"
     fsync_calls = []
-    closed = []
-    directory_fd = 987
+    synchronized_parents = []
     monkeypatch.setattr(customizer.os, "fsync", fsync_calls.append)
-    monkeypatch.setattr(customizer.os, "open", lambda path, flags: directory_fd)
-    monkeypatch.setattr(customizer.os, "close", closed.append)
+    monkeypatch.setattr(
+        customizer,
+        "fsync_parent_directory",
+        lambda path: synchronized_parents.append(path.parent),
+    )
 
     customizer.write_json_atomic(destination, {"fqdn": "appliance.atlaso.internal"})
 
     assert destination.exists()
-    assert len(fsync_calls) == 2
-    assert fsync_calls[-1] == directory_fd
-    assert closed == [directory_fd]
+    assert len(fsync_calls) == 1
+    assert synchronized_parents == [destination.parent]
 
 
 def test_vmware_ovf_customizer_supports_disabled_auto_and_static_ipv6(tmp_path):
@@ -2314,6 +2343,8 @@ def test_vmware_ovf_export_and_image_plumbing_are_present():
     assert "-Key 'admin_password'" in export_script and "-Password $true -MinLength 12" in export_script
     assert "-Key 'root_password'" in export_script and "-Password $true -MinLength 12" in export_script
     assert "development_admin_ssh_public_key" not in export_script
+    assert "development_test_vm" not in export_script
+    assert "development_root_ca_certificate" not in export_script
     assert "-Name 'qualifiers' -Value \"MinLen($MinLength)\"" in export_script
     assert "Atlaso Management Network" in export_script
     assert "Atlaso Services Network" in export_script
