@@ -515,6 +515,40 @@ def test_photon_kickstart_generator_is_canonical_and_provider_specific(tmp_path)
         assert "| base64 -d | sudo -S -E sh -c" in template
 
 
+def test_vmware_workstation_build_monitor_behavior(tmp_path):
+    """Verify bounded sanitized monitoring across VMware builder startup phases.
+
+    Args:
+        tmp_path: Temporary directory provided by pytest for isolated process evidence.
+    """
+    pwsh = shutil.which("pwsh")
+    if pwsh is None:
+        pytest.skip("PowerShell 7 is not available")
+
+    result = subprocess.run(
+        [
+            pwsh,
+            "-NoLogo",
+            "-NoProfile",
+            "-NonInteractive",
+            "-File",
+            "tests/powershell/Test-AtlasoWorkstationBuildMonitor.ps1",
+            "-RepositoryRoot",
+            str(Path.cwd()),
+            "-OutputDirectory",
+            str(tmp_path / "vmware-build-monitor"),
+        ],
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert "Atlaso VMware Workstation build monitor tests passed." in result.stdout
+    assert "generated-vnc-test-secret" not in result.stdout
+    assert "generated-vnc-test-secret" not in result.stderr
+
+
 def test_hyperv_management_nat_prefix_is_validated_and_canonical():
     """Verify Hyper-V NAT CIDRs are masked and invalid input fails before mutation."""
     pwsh = shutil.which("pwsh")

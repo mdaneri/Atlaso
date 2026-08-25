@@ -529,6 +529,13 @@ The following cross-cutting boundaries always apply:
   the read-only GitHub Actions token to Packer only through `PACKER_GITHUB_API_TOKEN` on the canonical validation step
   for protected events and same-repository pull requests. Keep fork validation tokenless, checkout credentials
   unpersisted, and token material out of output, files, caches, and artifacts.
+- Default VMware Workstation GUI image builds must start or reuse a responsive Workstation UI in a process separate from
+  Packer before the synchronous `vmrun` start transition. Bind bounded sanitized startup diagnostics to the expected
+  VMX filesystem identity, provider inventory, exact running state, and configured builder TCP/22 endpoint until SSH
+  provisioning begins. Remove raw Packer debug-log environment variables from the monitored child because they bypass
+  redaction. On timeout, terminate only the Packer process tree and honor `-PackerOnError cleanup` through the checked
+  exact-root cleanup; preserve exact artifacts for other failure selections. Never print connection credentials or VMX
+  contents, and do not mask a start-handoff failure with an arbitrary delay.
 - Validate live appliance readiness through `/openapi.json`, not VMware Tools IP discovery or service color alone.
 - A successful tty1 management-network correction must explicitly apply Network and Firewall from the corrected state,
   retry unfinished first-boot HTTPS before applying Appliance Settings, validate nginx before reload, ensure nginx and

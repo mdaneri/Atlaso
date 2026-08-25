@@ -1306,6 +1306,14 @@ It shares Photon ISO remastering, kickstart generation, checksum validation, Pac
 provisioning with the Hyper-V image path. The original Photon source ISO cache is shared under `image/common/source`;
 the Workstation image installs `open-vm-tools` instead of Hyper-V guest integration packages.
 
+The supported GUI wrapper starts or reuses a responsive VMware Workstation UI in a separate process before Packer asks
+`vmrun` to power on the builder. This keeps the visible console without allowing the GUI start transition to retain
+Packer's redirected output handles after the VM is already live. Sanitized startup heartbeats bind provider inventory,
+running state, and TCP/22 reachability to the expected VMX filesystem identity until SSH provisioning begins. The
+default 900-second start-to-provisioning timeout performs checked exact-root cleanup only for
+`-PackerOnError cleanup`; other failure selections preserve the output. Raw Packer debug-log environment variables are
+excluded from the monitored child because they are outside the wrapper's redaction boundary.
+
 Build the image with:
 
 ```powershell

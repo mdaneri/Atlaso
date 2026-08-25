@@ -426,6 +426,14 @@ Terminal order:
   If checked `deleteVM` removes the complete validated artifact root, retain the scoped running and registration gates,
   require the exact root to remain absent throughout them, and allow the initiating redeploy to continue only after
   those checks succeed.
+- For the default visible VMware image build, start or reuse a responsive Workstation UI in a separate process before
+  Packer enters the synchronous `vmrun` GUI start transition. Keep startup monitoring bounded until SSH provisioning,
+  bind every diagnostic to the expected VMX filesystem identity and exact provider inventory, and distinguish VM
+  creation, provider responsiveness, running state, configured builder TCP/22, start handoff, and SSH authentication.
+  Sanitize Packer output and remove raw debug-log environment variables from the monitored child. A timeout may route
+  `-PackerOnError cleanup` only through checked exact-root cleanup; preserve the exact artifacts for other selections.
+  Never expose connection credentials or VMX contents, and never substitute an arbitrary delay for a diagnosed start
+  transition.
 - Keep VMware release images on two compacted payload VMDKs: the Photon OS disk and a required UUID-mounted
   `ATLASO_SYSTEM` disk containing `/opt/atlaso` and appliance-wide PowerShell modules. OVF export must preserve both
   payload files, add only the empty depot and backup definitions, preflight every GitHub asset below 2 GiB, and omit an

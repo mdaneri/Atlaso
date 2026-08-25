@@ -49,6 +49,10 @@ VMware Packer template directory.
 Optional remastered ISO path.
 .PARAMETER PackerOnError
 Packer failure-handling mode.
+.PARAMETER PackerStartupTimeoutSeconds
+Maximum interval from builder power-on to SSH provisioning.
+.PARAMETER PackerHeartbeatSeconds
+Interval for sanitized builder startup diagnostics.
 .PARAMETER AllowExistingManagementSubnet
 Permit an existing matching management subnet.
 .PARAMETER SkipNetworkCheck
@@ -97,6 +101,10 @@ param(
     [string]$PreparedIsoPath = '',
     [ValidateSet('cleanup', 'abort', 'ask', 'run-cleanup-provisioner')]
     [string]$PackerOnError = 'cleanup',
+    [ValidateRange(30, 3600)]
+    [int]$PackerStartupTimeoutSeconds = 900,
+    [ValidateRange(1, 300)]
+    [int]$PackerHeartbeatSeconds = 30,
     [switch]$AllowExistingManagementSubnet,
     [switch]$SkipNetworkCheck,
     [switch]$Headless,
@@ -112,6 +120,7 @@ $ErrorActionPreference = 'Stop'
 Import-Module (Join-Path $PSScriptRoot '..\common\Atlaso.PhotonImage.psm1') -Force
 Import-Module (Join-Path $PSScriptRoot 'Atlaso.WorkstationCleanup.psm1') -Force
 Import-Module (Join-Path $PSScriptRoot 'Atlaso.VmwarePayload.psm1') -Force
+Import-Module (Join-Path $PSScriptRoot 'Atlaso.WorkstationBuildMonitor.psm1') -Force
 
 <#
 .SYNOPSIS
@@ -497,13 +506,55 @@ $packerVariables = @{
     headless           = [bool]$Headless
 }
 
-if (-not $ValidateOnly -and -not $PrepareIsoOnly -and -not $KeepExistingOutput) {
+$packerBuildInvoker = $null
+if (-not $ValidateOnly -and -not $PrepareIsoOnly) {
     $resolvedVmrunPath = Resolve-WorkstationVmrunPath -Path $VmrunPath
-    Remove-AtlasoWorkstationArtifactRoot `
-        -VmrunPath $resolvedVmrunPath `
-        -ExpectedRemovalRoot $workstationOutputDirectory `
-        -RemovalRoot $workstationOutputDirectory `
-        -Confirm:$false
+    if (-not $KeepExistingOutput) {
+        Remove-AtlasoWorkstationArtifactRoot `
+            -VmrunPath $resolvedVmrunPath `
+            -ExpectedRemovalRoot $workstationOutputDirectory `
+            -RemovalRoot $workstationOutputDirectory `
+            -Confirm:$false
+    }
+    if (-not $Headless) {
+        $null = Initialize-AtlasoWorkstationGui -VmrunPath $resolvedVmrunPath
+    }
+
+    $builderAddress = if ($BuilderStaticIp) { ($BuilderStaticIp -split '/', 2)[0] } else { $SshHost }
+    if ([string]::IsNullOrWhiteSpace($builderAddress)) {
+        throw 'A configured builder address is required for bounded VMware startup monitoring.'
+    }
+    $builderVmxPath = Join-Path $workstationOutputDirectory "$VmName.vmx"
+    $timeoutHandler = {
+        param($SelectedOnError, $State, $Diagnostic)
+
+        if ($SelectedOnError -eq 'cleanup' -and (Test-Path -LiteralPath $workstationOutputDirectory)) {
+            Write-Host "Monitored Packer failure selected checked cleanup [$($Diagnostic.Code)]."
+            Remove-AtlasoWorkstationArtifactRoot `
+                -VmrunPath $resolvedVmrunPath `
+                -ExpectedRemovalRoot $workstationOutputDirectory `
+                -RemovalRoot $workstationOutputDirectory `
+                -Confirm:$false
+            return
+        }
+        Write-Warning "Monitored Packer failure preserved the exact builder artifacts because -PackerOnError is '$SelectedOnError'."
+    }.GetNewClosure()
+    $packerBuildInvoker = {
+        param($PackerArguments, $WorkingDirectory)
+
+        $packerPath = (Get-Command packer -ErrorAction Stop).Source
+        Invoke-AtlasoMonitoredPackerBuild `
+            -PackerPath $packerPath `
+            -Arguments $PackerArguments `
+            -WorkingDirectory $WorkingDirectory `
+            -VmrunPath $resolvedVmrunPath `
+            -VmxPath $builderVmxPath `
+            -BuilderAddress $builderAddress `
+            -StartupTimeoutSeconds $PackerStartupTimeoutSeconds `
+            -HeartbeatSeconds $PackerHeartbeatSeconds `
+            -PackerOnError $PackerOnError `
+            -TimeoutHandler $timeoutHandler
+    }.GetNewClosure()
 }
 
 Invoke-AtlasoPhotonImageBuild `
@@ -531,6 +582,7 @@ Invoke-AtlasoPhotonImageBuild `
     -GuestPostInstallCommands @('systemctl enable vmtoolsd || true') `
     -InstallDiskLayout 'vmware-workstation' `
     -AdditionalPackerVariables $packerVariables `
+    -PackerBuildInvoker $packerBuildInvoker `
     -KeepExistingOutput:$KeepExistingOutput `
     -EnableRealSystemAdapters:$EnableRealSystemAdapters `
     -ValidateOnly:$ValidateOnly `
