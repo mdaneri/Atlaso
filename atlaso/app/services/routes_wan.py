@@ -1,6 +1,7 @@
 """Implement routes wan service behavior."""
 
 import re
+from collections.abc import Iterable
 from ipaddress import ip_address, ip_network
 
 from atlaso.app.models import NatRule, Route, RoutingRule, WanPolicy
@@ -38,6 +39,37 @@ def default_route_family(value: str) -> int | None:
     except ValueError:
         return None
     return network.version if network.prefixlen == 0 else None
+
+
+def route_gateway_target_error(gateway: str | None, target_cidrs: Iterable[str | None]) -> str | None:
+    """Return why a route gateway cannot be reached through its selected target.
+
+    Args:
+        gateway: Validated route next-hop IP address, or no gateway for a direct route.
+        target_cidrs: Configured IPv4 and IPv6 CIDRs on the selected route target.
+    """
+    if not gateway:
+        return None
+    try:
+        gateway_address = ip_address(gateway)
+    except ValueError:
+        return f"Route gateway {gateway} is not a valid IP address."
+    networks = []
+    for raw_cidr in target_cidrs:
+        if not raw_cidr:
+            continue
+        try:
+            networks.append(ip_network(raw_cidr, strict=False))
+        except ValueError:
+            continue
+    matching_networks = [network for network in networks if network.version == gateway_address.version]
+    if not matching_networks:
+        return f"Selected route target does not have a configured IPv{gateway_address.version} CIDR for gateway {gateway_address}."
+    if gateway_address.version == 6 and gateway_address.is_link_local:
+        return None
+    if not any(gateway_address in network for network in matching_networks):
+        return f"Route gateway {gateway_address} is not on-link for the selected target's configured IPv{gateway_address.version} CIDR."
+    return None
 
 
 def has_default_route_conflict(routes: list[Route], family: int, exclude_route_id: int | None = None) -> bool:
@@ -269,6 +301,7 @@ def validate_wan_state(
     source_groups: list[dict] | None = None,
     routing_rules: list[RoutingRule] | None = None,
     routing_target_names: set[str] | None = None,
+    route_target_cidrs: dict[str, Iterable[str | None]] | None = None,
 ) -> list[str]:
     """Validate wan state.
 
@@ -281,6 +314,7 @@ def validate_wan_state(
         source_groups: Source Groups available to the rule.
         routing_rules: Routing rules supplied by the caller.
         routing_target_names: Routing target names supplied by the caller.
+        route_target_cidrs: Configured target CIDRs used to validate route next hops.
 
     Returns:
         The validate wan state result.
@@ -308,6 +342,10 @@ def validate_wan_state(
                 gateway_address = None
             if destination_network and gateway_address and gateway_address.version != destination_network.version:
                 errors.append(f"Gateway {route.gateway} for {route.destination_cidr} must use the same IP family as the destination.")
+            elif gateway_address and route_target_cidrs and route.interface_name in route_target_cidrs:
+                target_error = route_gateway_target_error(route.gateway, route_target_cidrs[route.interface_name])
+                if target_error:
+                    errors.append(f"Route {route.destination_cidr}: {target_error}")
         if route.enabled and route.interface_name not in target_names:
             errors.append(f"Route {route.destination_cidr} uses {route.interface_name}, which is not an access interface or VLAN target.")
         if route.metric < 0:

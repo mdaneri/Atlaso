@@ -106,6 +106,28 @@ test("destination mode requires a CIDR but permits a directly connected path", (
   assert.equal(manualDefault.fieldName, "default_route");
 });
 
+test("gateway family must be configured on the selected target", () => {
+  const targetMismatch = context.validatePath({
+    defaultRouteSelected: true,
+    defaultRouteFamily: "6",
+    destinationCidr: "",
+    gateway: "2001:db8:20::fe",
+    targetFamilies: ["4"],
+  });
+  assert.match(targetMismatch.message, /does not have a configured IPv6 CIDR/);
+  assert.equal(targetMismatch.fieldName, "interface_name");
+  assert.equal(
+    context.validatePath({
+      defaultRouteSelected: true,
+      defaultRouteFamily: "6",
+      destinationCidr: "",
+      gateway: "fe80::1",
+      targetFamilies: ["4", "6"],
+    }),
+    null,
+  );
+});
+
 test("default-mode synchronization owns mutual exclusion and required state", () => {
   const source = functionSource("syncRoutesWanDefaultRouteMode");
   assert.match(source, /destination\.disabled = selected/);

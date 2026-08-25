@@ -110,10 +110,18 @@ def test_api_default_route_contract_and_canonical_readback(client):
     assert mismatch.status_code == 422
     assert "family must match" in mismatch.text
 
+    off_link = client.post(
+        "/api/v1/routes",
+        headers=headers,
+        json={**base, "destination_cidr": "0.0.0.0/0", "gateway": "198.51.100.1"},
+    )
+    assert off_link.status_code == 422
+    assert "is not on-link" in off_link.text
+
     created = client.post(
         "/api/v1/routes",
         headers=headers,
-        json={**base, "destination_cidr": "192.0.2.42/0", "gateway": "192.0.2.1"},
+        json={**base, "destination_cidr": "192.0.2.42/0", "gateway": "192.168.20.254"},
     )
     assert created.status_code == 201, created.text
     route_id = created.json()["id"]
@@ -126,15 +134,33 @@ def test_api_default_route_contract_and_canonical_readback(client):
     duplicate = client.post(
         "/api/v1/routes",
         headers=headers,
-        json={**base, "destination_cidr": "0.0.0.0/0", "gateway": "198.51.100.1"},
+        json={**base, "destination_cidr": "0.0.0.0/0", "gateway": "192.168.20.253"},
     )
     assert duplicate.status_code == 422
     assert "Only one IPv4 default route" in duplicate.text
 
-    updated = client.patch(
+    target_mismatch = client.patch(
         f"/api/v1/routes/{route_id}",
         headers=headers,
         json={**base, "destination_cidr": "2001:db8::99/0", "gateway": "2001:db8::1"},
+    )
+    assert target_mismatch.status_code == 422
+    assert "does not have a configured IPv6 CIDR" in target_mismatch.text
+
+    from sqlalchemy import select
+
+    from atlaso.app.database import SessionLocal
+    from atlaso.app.models import VlanInterface
+
+    with SessionLocal() as db:
+        target = db.execute(select(VlanInterface).where(VlanInterface.name == "eth1.20")).scalar_one()
+        target.ipv6_cidr = "2001:db8:20::1/64"
+        db.commit()
+
+    updated = client.patch(
+        f"/api/v1/routes/{route_id}",
+        headers=headers,
+        json={**base, "destination_cidr": "2001:db8::99/0", "gateway": "fe80::1"},
     )
     assert updated.status_code == 200, updated.text
     assert updated.json()["destination_cidr"] == "::/0"

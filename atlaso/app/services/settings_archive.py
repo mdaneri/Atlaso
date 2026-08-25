@@ -1955,6 +1955,13 @@ def _validate_archive_relationships(data: dict[str, list[dict[str, Any]]]) -> No
         != "management"
     }
     route_target_names = set(route_target_families)
+    route_target_cidrs = {
+        name: (
+            (physical_interfaces.get(name) or vlan_interfaces[name]).get("ip_cidr"),
+            (physical_interfaces.get(name) or vlan_interfaces[name]).get("ipv6_cidr"),
+        )
+        for name in route_target_names
+    }
     service_target_names = {
         name
         for name in dhcp_target_families
@@ -2404,6 +2411,7 @@ def _validate_archive_relationships(data: dict[str, list[dict[str, Any]]]) -> No
             for row in data.get("routing_rules", [])
         ],
         routing_target_names=route_target_names,
+        route_target_cidrs=route_target_cidrs,
     )
     if wan_errors:
         raise ValueError(

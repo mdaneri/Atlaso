@@ -1700,7 +1700,8 @@ class RouteCreate(BaseModel):
         destination_cidr: Destination network CIDR. Canonical IPv4 and IPv6 /0 CIDRs represent
             default routes and remain accepted for API compatibility.
         gateway: Optional next-hop for directly connected destinations and required for a default
-            route; it must use the destination's IP family.
+            route; it must use the destination's IP family and be on-link for the selected target,
+            except that an IPv6 link-local next hop is supported.
         interface_name: Requested interface name value for this route resource.
         metric: Requested metric value for this route resource.
         enabled: Whether the resource is enabled in saved Atlaso state.
@@ -1709,7 +1710,7 @@ class RouteCreate(BaseModel):
     """
 
     destination_cidr: Annotated[str, Field(description='Destination network CIDR; 0.0.0.0/0 and ::/0 represent IPv4 and IPv6 default routes.')]
-    gateway: Annotated[str | None, Field(description='Optional same-family next-hop for an ordinary destination and required for a default route.')] = None
+    gateway: Annotated[str | None, Field(description='Optional same-family next-hop for an ordinary destination and required for a default route; it must be on-link for the selected target, except that an IPv6 link-local next hop is supported.')] = None
     interface_name: Annotated[str, Field(description='Requested interface name value for this route resource.')]
     metric: Annotated[int, Field(description='Requested metric value for this route resource.')] = Field(default=100, ge=0)
     enabled: Annotated[bool, Field(description='Whether the resource is enabled in saved Atlaso state.')] = True

@@ -8107,6 +8107,7 @@ def _wan_config_errors(path: Path) -> list[str]:
         if not route.get("gateway", ""):
             errors.append(f"Default route {canonical_destination} requires a next-hop gateway.")
 
+    desired_route_ids = {id(route) for route in parsed["routes"]}
     for route in [*parsed["routes"], *parsed["removed_routes"]]:
         destination = route.get("destination_cidr", "")
         destination_network = None
@@ -8119,6 +8120,7 @@ def _wan_config_errors(path: Path) -> list[str]:
                 errors.append(f"Route {destination} is not a valid destination CIDR.")
                 destination_network = None
         gateway = route.get("gateway", "")
+        gateway_address = None
         if gateway:
             try:
                 gateway_address = ip_address(gateway)
@@ -8135,6 +8137,27 @@ def _wan_config_errors(path: Path) -> list[str]:
             default=True,
         ):
             errors.append(f"Route {destination or '<missing>'} cannot target management routing domain {interface_name}.")
+        elif gateway_address and id(route) in desired_route_ids:
+            target_networks = []
+            for key in ("ip_cidr", "ipv6_cidr"):
+                try:
+                    target_networks.append(ip_network(targets[interface_name].get(key, ""), strict=False))
+                except ValueError:
+                    continue
+            matching_networks = [
+                network for network in target_networks if network.version == gateway_address.version
+            ]
+            if not matching_networks:
+                errors.append(
+                    f"Route {destination} gateway {gateway} uses IPv{gateway_address.version}, but WAN target "
+                    f"{interface_name} has no configured IPv{gateway_address.version} CIDR."
+                )
+            elif not (gateway_address.version == 6 and gateway_address.is_link_local) and not any(
+                gateway_address in network for network in matching_networks
+            ):
+                errors.append(
+                    f"Route {destination} gateway {gateway} is not on-link for WAN target {interface_name}."
+                )
         try:
             metric = int(route.get("metric", "100"))
         except ValueError:

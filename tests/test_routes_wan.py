@@ -66,6 +66,48 @@ def test_validate_wan_state_rejects_missing_and_duplicate_family_defaults():
     assert not any("Only one IPv6 default route" in error for error in errors)
 
 
+def test_validate_wan_state_requires_gateway_reachability_on_selected_target():
+    """Reject absent-family and off-link next hops while allowing IPv6 link-local gateways."""
+    ipv6_default = Route(
+        destination_cidr="::/0",
+        gateway="2001:db8:20::fe",
+        interface_name="eth1.20",
+        metric=100,
+        enabled=True,
+    )
+
+    absent_family_errors = validate_wan_state(
+        [ipv6_default],
+        [],
+        {"eth1.20"},
+        route_target_cidrs={"eth1.20": ("192.168.20.1/24", None)},
+    )
+    assert any("does not have a configured IPv6 CIDR" in error for error in absent_family_errors)
+
+    ipv4_default = Route(
+        destination_cidr="0.0.0.0/0",
+        gateway="198.51.100.1",
+        interface_name="eth1.20",
+        metric=100,
+        enabled=True,
+    )
+    off_link_errors = validate_wan_state(
+        [ipv4_default],
+        [],
+        {"eth1.20"},
+        route_target_cidrs={"eth1.20": ("192.168.20.1/24", None)},
+    )
+    assert any("is not on-link" in error for error in off_link_errors)
+
+    ipv6_default.gateway = "fe80::1"
+    assert validate_wan_state(
+        [ipv6_default],
+        [],
+        {"eth1.20"},
+        route_target_cidrs={"eth1.20": (None, "2001:db8:20::1/64")},
+    ) == []
+
+
 def test_render_wan_config_uses_ipv6_route_commands():
     """Verify that render wan config uses ipv6 route commands."""
     route = Route(

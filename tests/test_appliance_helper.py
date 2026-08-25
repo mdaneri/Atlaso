@@ -5250,6 +5250,33 @@ def test_wan_helper_enforces_default_route_gateway_and_family_uniqueness(tmp_pat
     )
     assert helper._wan_config_errors(ipv6_path) == []
 
+    absent_family_path = tmp_path / "absent-default-family.conf"
+    absent_family_path.write_text(
+        wan_config_text(ipv6_route=True)
+        .replace("route=2001:db8:100::/64", "route=::/0")
+        .replace("  ipv6_cidr=2001:db8:20::1/64", "  ipv6_cidr="),
+        encoding="utf-8",
+    )
+    assert any("has no configured IPv6 CIDR" in error for error in helper._wan_config_errors(absent_family_path))
+
+    off_link_path = tmp_path / "off-link-default-gateway.conf"
+    off_link_path.write_text(
+        wan_config_text()
+        .replace("route=10.20.0.0/24", "route=0.0.0.0/0")
+        .replace("  gateway=", "  gateway=198.51.100.1", 1),
+        encoding="utf-8",
+    )
+    assert any("is not on-link for WAN target" in error for error in helper._wan_config_errors(off_link_path))
+
+    link_local_path = tmp_path / "link-local-default-gateway.conf"
+    link_local_path.write_text(
+        wan_config_text(ipv6_route=True)
+        .replace("route=2001:db8:100::/64", "route=::/0")
+        .replace("  gateway=2001:db8:20::fe", "  gateway=fe80::1"),
+        encoding="utf-8",
+    )
+    assert helper._wan_config_errors(link_local_path) == []
+
 
 def test_wan_helper_rejects_bad_nat_source_and_target(tmp_path):
     """Verify that wan helper rejects bad nat source and target.

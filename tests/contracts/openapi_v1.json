@@ -6778,7 +6778,7 @@
         "type": "object"
       },
       "RouteCreate": {
-        "description": "Fields accepted when creating a route resource.\n\nAttributes:\n    destination_cidr: Destination network CIDR. Canonical IPv4 and IPv6 /0 CIDRs represent\n        default routes and remain accepted for API compatibility.\n    gateway: Optional next-hop for directly connected destinations and required for a default\n        route; it must use the destination's IP family.\n    interface_name: Requested interface name value for this route resource.\n    metric: Requested metric value for this route resource.\n    enabled: Whether the resource is enabled in saved Atlaso state.\n    wan_policy_id: Stable identifier of the related wan policy resource.\n    wan_mode: Requested wan mode value for this route resource.",
+        "description": "Fields accepted when creating a route resource.\n\nAttributes:\n    destination_cidr: Destination network CIDR. Canonical IPv4 and IPv6 /0 CIDRs represent\n        default routes and remain accepted for API compatibility.\n    gateway: Optional next-hop for directly connected destinations and required for a default\n        route; it must use the destination's IP family and be on-link for the selected target,\n        except that an IPv6 link-local next hop is supported.\n    interface_name: Requested interface name value for this route resource.\n    metric: Requested metric value for this route resource.\n    enabled: Whether the resource is enabled in saved Atlaso state.\n    wan_policy_id: Stable identifier of the related wan policy resource.\n    wan_mode: Requested wan mode value for this route resource.",
         "properties": {
           "destination_cidr": {
             "description": "Destination network CIDR; 0.0.0.0/0 and ::/0 represent IPv4 and IPv6 default routes.",
@@ -6800,7 +6800,7 @@
                 "type": "null"
               }
             ],
-            "description": "Optional same-family next-hop for an ordinary destination and required for a default route.",
+            "description": "Optional same-family next-hop for an ordinary destination and required for a default route; it must be on-link for the selected target, except that an IPv6 link-local next hop is supported.",
             "title": "Gateway"
           },
           "interface_name": {
@@ -6865,7 +6865,7 @@
                 "type": "null"
               }
             ],
-            "description": "Optional same-family next-hop for an ordinary destination and required for a default route.",
+            "description": "Optional same-family next-hop for an ordinary destination and required for a default route; it must be on-link for the selected target, except that an IPv6 link-local next hop is supported.",
             "title": "Gateway"
           },
           "id": {

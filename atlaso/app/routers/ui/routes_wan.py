@@ -21,6 +21,7 @@ from atlaso.app.services.routes_wan import (
     WAN_MODES,
     canonical_route_destination,
     has_default_route_conflict,
+    route_gateway_target_error,
     validate_nat_source,
 )
 from atlaso.app.services.routes_wan import (
@@ -249,10 +250,16 @@ def build_router(dependencies: RoutesWanUiDependencies) -> RoutesWanUiRouter:
             routes = list(db.execute(select(Route).order_by(Route.id)).scalars().all())
             if has_default_route_conflict(routes, family, exclude_route_id):
                 return Response(f"Only one IPv{family} default route can be configured.", status_code=422, media_type="text/plain")
-        target_names = {target["name"] for target in wan_route_targets(db)}
+        targets = {target["name"]: target for target in wan_route_targets(db)}
         interface_value = interface_name.strip()
-        if interface_value not in target_names:
+        if interface_value not in targets:
             return Response("Choose an access physical interface or enabled VLAN interface with an IP CIDR.", status_code=422, media_type="text/plain")
+        target = targets[interface_value]
+        if target_error := route_gateway_target_error(
+            gateway_value,
+            (target.get("ip_cidr"), target.get("ipv6_cidr")),
+        ):
+            return Response(target_error, status_code=422, media_type="text/plain")
         metric_value = parse_int_form_value(metric.strip(), "Metric", default=100, minimum=0)
         if isinstance(metric_value, Response):
             return metric_value

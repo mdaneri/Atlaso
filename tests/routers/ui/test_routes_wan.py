@@ -140,16 +140,24 @@ def test_routes_wan_default_route_add_edit_validation_and_semantic_readback(clie
     assert invalid_target.status_code == 422
     assert "Choose an access physical interface" in invalid_target.text
 
+    off_link = client.post(
+        "/routes-wan/routes",
+        data={**base, "gateway": "198.51.100.1"},
+        follow_redirects=False,
+    )
+    assert off_link.status_code == 422
+    assert "is not on-link" in off_link.text
+
     created = client.post(
         "/routes-wan/routes",
-        data={**base, "gateway": "192.0.2.1"},
+        data={**base, "gateway": "192.168.20.254"},
         follow_redirects=False,
     )
     assert created.status_code == 303
     with SessionLocal() as db:
         route = db.execute(select(Route).where(Route.destination_cidr == "0.0.0.0/0")).scalar_one()
         route_id = route.id
-        assert route.gateway == "192.0.2.1"
+        assert route.gateway == "192.168.20.254"
 
     readback = client.get("/routes-wan")
     assert "Default route (IPv4)" in readback.text
@@ -157,7 +165,7 @@ def test_routes_wan_default_route_add_edit_validation_and_semantic_readback(clie
 
     inline_disabled = client.post(
         f"/routes-wan/routes/{route_id}/edit",
-        data={**base, "default_route": "true", "gateway": "192.0.2.1", "enabled": ""},
+        data={**base, "default_route": "true", "gateway": "192.168.20.254", "enabled": ""},
         follow_redirects=False,
     )
     assert inline_disabled.status_code == 303
@@ -169,15 +177,30 @@ def test_routes_wan_default_route_add_edit_validation_and_semantic_readback(clie
 
     duplicate = client.post(
         "/routes-wan/routes",
-        data={**base, "gateway": "198.51.100.1"},
+        data={**base, "gateway": "192.168.20.253"},
         follow_redirects=False,
     )
     assert duplicate.status_code == 422
     assert "Only one IPv4 default route" in duplicate.text
 
-    updated = client.post(
+    target_mismatch = client.post(
         f"/routes-wan/routes/{route_id}/edit",
         data={**base, "default_route_family": "6", "gateway": "2001:db8::1"},
+        follow_redirects=False,
+    )
+    assert target_mismatch.status_code == 422
+    assert "does not have a configured IPv6 CIDR" in target_mismatch.text
+
+    from atlaso.app.models import VlanInterface
+
+    with SessionLocal() as db:
+        target = db.execute(select(VlanInterface).where(VlanInterface.name == "eth1.20")).scalar_one()
+        target.ipv6_cidr = "2001:db8:20::1/64"
+        db.commit()
+
+    updated = client.post(
+        f"/routes-wan/routes/{route_id}/edit",
+        data={**base, "default_route_family": "6", "gateway": "fe80::1"},
         follow_redirects=False,
     )
     assert updated.status_code == 303
@@ -185,7 +208,7 @@ def test_routes_wan_default_route_add_edit_validation_and_semantic_readback(clie
         route = db.get(Route, route_id)
         assert route is not None
         assert route.destination_cidr == "::/0"
-        assert route.gateway == "2001:db8::1"
+        assert route.gateway == "fe80::1"
 
 
 def test_routes_wan_rejects_route_wan_mode(client):

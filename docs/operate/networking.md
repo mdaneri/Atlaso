@@ -149,7 +149,8 @@ Each wizard retains entered values while moving backward, validates before Revie
 add/update action. A saved row's **Enabled** value remains directly editable; this changes desired state only.
 
 In the Static Route **Path** step, enable **Default route** and choose IPv4 or IPv6 when this path should match every
-destination in that family. Atlaso hides and excludes **Destination CIDR**, requires a same-family next-hop gateway,
+destination in that family. Atlaso hides and excludes **Destination CIDR**, requires a same-family next-hop gateway
+that is on-link for the selected target (or IPv6 link-local),
 and persists the canonical destination `0.0.0.0/0` or `::/0`. Review, edit, and table readback show **Default route
 (IPv4)** or **Default route (IPv6)** rather than making the operator work with `/0`. Only one default route per family
 may be saved; move or edit the existing default instead of creating a conflicting entry.

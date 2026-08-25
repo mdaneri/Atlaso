@@ -7033,7 +7033,7 @@ function routesWanDestinationLabel(value) {
   return family ? `Default route (IPv${family})` : String(value || "");
 }
 
-function validateRoutesWanRoutePath({ defaultRouteSelected, defaultRouteFamily, destinationCidr, gateway }) {
+function validateRoutesWanRoutePath({ defaultRouteSelected, defaultRouteFamily, destinationCidr, gateway, targetFamilies = [] }) {
   if (defaultRouteSelected && !gateway) {
     return { message: "A next-hop gateway is required for a default route.", fieldName: "gateway" };
   }
@@ -7056,6 +7056,12 @@ function validateRoutesWanRoutePath({ defaultRouteSelected, defaultRouteFamily, 
     && destinationFamily !== gatewayFamily
   ) {
     return { message: "Route gateway family must match the destination CIDR family.", fieldName: "gateway" };
+  }
+  if (gatewayFamily && targetFamilies.length && !targetFamilies.includes(gatewayFamily)) {
+    return {
+      message: `Selected route target does not have a configured IPv${gatewayFamily} CIDR for this gateway.`,
+      fieldName: "interface_name",
+    };
   }
   return null;
 }
@@ -7811,11 +7817,14 @@ function initializeRoutesWanWizards() {
         const family = routesWanField(form, "default_route_family")?.value || "";
         const destination = routesWanField(form, "destination_cidr")?.value.trim() || "";
         const gateway = routesWanField(form, "gateway")?.value.trim() || "";
+        const target = routesWanField(form, "interface_name");
+        const targetFamilies = target?.selectedOptions?.[0]?.dataset.routeFamilies?.split(",").filter(Boolean) || [];
         const pathError = validateRoutesWanRoutePath({
           defaultRouteSelected: selectedDefault,
           defaultRouteFamily: family,
           destinationCidr: destination,
           gateway,
+          targetFamilies,
         });
         if (pathError) {
           return {

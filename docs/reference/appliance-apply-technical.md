@@ -345,7 +345,8 @@ before a source address exists, and is also installed in management table 100 fo
 Static routes may target IPv4-only, IPv6-only, or dual-stack non-management access physical interfaces and enabled
 VLANs; IPv6 routes render through `ip -6 route`. Lab routes are installed in Atlaso table 200 so their gateways do not
 compete with the management default. The browser wizard derives explicit IPv4 or IPv6 defaults as canonical
-`0.0.0.0/0` or `::/0`, requires a same-family next hop, and rejects a second default of the same family. The UI/API,
+`0.0.0.0/0` or `::/0`, requires a same-family next hop that is on-link for the selected target (or IPv6 link-local),
+and rejects a second default of the same family. The UI/API,
 settings-archive, desired-state, and helper validation layers enforce that contract; canonical `/0` API payloads remain
 compatible. UI, API, and archive mutations share a transaction lock so concurrent requests cannot each pass the
 one-default-per-family check before either write commits. Destination-specific routes continue to allow a blank gateway

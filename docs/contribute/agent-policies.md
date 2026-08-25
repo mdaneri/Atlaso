@@ -1398,7 +1398,8 @@ Terminal order:
   Storage reference. Add launches from the bottom row; edit launches from row double-click or its context action;
   generated route-role permissions remain read-only; and ordinary persisted Enabled state remains directly editable.
 - Keep **Default route** mutually exclusive with **Destination CIDR** in the Static Route wizard. Default mode requires
-  an explicit IPv4 or IPv6 family and a same-family next-hop gateway, persists canonical `0.0.0.0/0` or `::/0`, and
+  an explicit IPv4 or IPv6 family and a same-family next-hop gateway that is on-link for the selected target (or IPv6
+  link-local), persists canonical `0.0.0.0/0` or `::/0`, and
   permits only one default per family. Destination-specific routes require a CIDR and may omit the gateway when directly
   connected. Preserve `/api/v1/routes` compatibility for callers that submit canonical `/0` CIDRs, and enforce the
   contract in browser validation, UI/API transports, desired-state validation, settings restore, and the WAN helper.

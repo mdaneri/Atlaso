@@ -5421,6 +5421,10 @@ def test_settings_archive_preflight_rejects_invalid_collection_row_and_required_
     duplicate_default_row["destination_cidr"] = "192.0.2.42/0"
     duplicate_default_row["gateway"] = "192.168.20.253"
     duplicate_default_route["data"]["routes"].append(duplicate_default_row)
+    default_route_target_family_mismatch = deepcopy(archive)
+    default_route_target_family_mismatch["data"]["routes"][0].update(
+        {"destination_cidr": "::/0", "gateway": "2001:db8:20::fe"}
+    )
     invalid_firewall_policy = deepcopy(archive)
     invalid_firewall_policy["data"]["firewall_settings"][0]["default_input_policy"] = "reject"
     invalid_kms_port = deepcopy(archive)
@@ -6371,6 +6375,7 @@ def test_settings_archive_preflight_rejects_invalid_collection_row_and_required_
         (invalid_route_destination, "Routes and WAN state is invalid: Route not-a-cidr is not a valid destination CIDR"),
         (missing_default_route_gateway, "Routes and WAN state is invalid: Default IPv4 route .* requires a gateway"),
         (duplicate_default_route, "Routes and WAN state is invalid: Only one IPv4 default route"),
+        (default_route_target_family_mismatch, "does not have a configured IPv6 CIDR"),
         (invalid_firewall_policy, "Firewall state is invalid: .*Default input policy"),
         (invalid_kms_port, "KMS state is invalid: KMS port must be between 1 and 65535"),
         (invalid_legacy_dhcp, "DHCP settings are invalid"),

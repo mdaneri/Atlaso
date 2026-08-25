@@ -5381,6 +5381,10 @@ def routes_wan_context(db: Session) -> dict:
         source_groups,
         routing_rules,
         {target["name"] for target in targets},
+        {
+            target["name"]: (target.get("ip_cidr"), target.get("ipv6_cidr"))
+            for target in targets
+        },
     )
     config_preview = render_wan_config(routes, policies, nat_rules, all_targets, routing_rules, source_groups=source_groups)
     return {
