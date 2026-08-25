@@ -5212,6 +5212,12 @@ runtime.</p>
   VLAN ID, at least one valid IPv4 or IPv6 CIDR, MTU from 576 through 9000, and a supported role are present. Reject a
   duplicate parent/VLAN ID pair and reject enablement when the parent is missing or not an available trunk.</li>
 <li>Keep the validation/config preview current after any network or service change that affects rendered appliance state.</li>
+<li>A static management-to-access physical-interface mutation captures valid IPv4 and IPv6 gateways before clearing
+  management-only fields and stages enabled canonical defaults for the converted access target in the same transaction.
+  Reuse equivalent routes, reject conflicting family defaults with complete rollback, warn without inventing missing
+  gateways, audit both Network and Routes &amp; WAN Simulation, and mark Appliance Settings dependent. A migrated route not
+  present in the last-applied WAN baseline selects WAN into the existing protected management handoff with a validated
+  rollback config; it does not create another host-mutation path.</li>
 </ul>
 <h2 id="public-services-front-door">Public Services Front Door<a class="headerlink" href="#public-services-front-door" title="Permanent link">&para;</a></h2>
 <ul>
@@ -5223,6 +5229,10 @@ runtime.</p>
   management role, allow multiple flagged access listeners, and reject state with neither an effective dedicated role
   nor an active flagged access listener. A management-to-access conversion enables the flag atomically; an
   access-to-management conversion clears it.</li>
+<li>Firewall generation treats dedicated and flagged access management listeners as the same administrative reachability
+  boundary for TCP/22, TCP/80, and TCP/443. Preserve the selected Source Group predicate through UI/API previews and
+  protected-handoff old, candidate, final, and rollback rules. Do not admit TCP/22 on an unflagged access network, and
+  do not couple this listener admission to the separate root-SSH policy.</li>
 <li>Non-management interface addresses dispatch <code>/</code> to an unauthenticated public service directory at <code>/ui/public</code>
   scoped to the called IP/host. The page must list only enabled public services whose desired listen addresses include
   that IP, and must show
@@ -5230,6 +5240,9 @@ runtime.</p>
 <li>When web terminal access is enabled for the called non-management interface, include a <code>Web Terminal</code> service tile
   linked to that address's HTTPS <code>/ui/public/terminal</code> route. Do not show the tile on unselected interfaces, and do not
   invent an interface DNS name for the Name/IP toggle.</li>
+<li>Resolve Web Terminal management page, ticket, and WebSocket eligibility from the last-applied Network binding,
+  including flagged access physical and VLAN listeners. Pending desired edits do not reclassify the active listener;
+  successful handoff commit moves it, rollback retains it, and explicit additional terminal listeners remain public.</li>
 <li>App-owned public pages must also be IP-scoped: CA <code>/ui/public/ca</code>, certificate requests
   <code>/ui/public/ca/requests</code>, and Web Terminal <code>/ui/public/terminal</code>. Keep CA downloads
   <code>/ca/downloads/root-ca.pem</code> and <code>/ca/downloads/ca-bundle.pem</code>, ESXi PXE <code>/pxe/esxi/</code>, VCF Offline Depot <code>/PROD/</code>,

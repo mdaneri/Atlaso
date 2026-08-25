@@ -4626,6 +4626,12 @@ source rule selects that table. This prevents same-subnet management replies fro
 clean reboot. Non-management physical interfaces and VLANs cannot set these fields. IPv4 DHCP and IPv6 Disabled or
 Automatic clear the corresponding static gateway. Lab route gateways remain owned by Routes &amp; WAN Simulation in table
 <code>200</code>, allowing management and lab traffic to use different exits.</p>
+<p>When a static physical interface changes from <code>management</code> to <code>access</code>, the shared physical-interface domain service
+captures valid IPv4 and IPv6 gateways before those management-only fields clear. In the same database transaction it
+creates enabled canonical <code>0.0.0.0/0</code> or <code>::/0</code> Route rows for the converted target, or enables and reuses an equivalent
+row. Any different saved default in that family rejects the complete mutation with no interface, route, dependency, or
+audit commit. Missing gateways create no route and produce a bounded routed-connectivity warning. The transaction marks
+Routes &amp; WAN Simulation and Appliance Settings as dependent and records both interface and route audit evidence.</p>
 <p>For the Physical Interfaces DHCP-to-static action, Atlaso reads <code>ip -j -4 route show default</code>, accepts only a usable
 IPv4 route whose protocol is DHCP and whose device matches the row, and proposes the lowest-metric result. Browser
 review preserves it only when it is on-link for the observed CIDR and differs from the interface address. Saving the
@@ -4649,6 +4655,11 @@ not published as an active management listener until the handoff succeeds and co
 cancelled, reverted, and pre-commit rolled-back attempts leave the prior applied projection unchanged. Desired public
 service eligibility remains separate, and the applied management origin is not reclassified as public during a pending
 role conversion.</p>
+<p>Web Terminal uses that same applied projection for management-plane page, ticket, and WebSocket eligibility. Applied
+flagged access physical and VLAN bindings are mandatory terminal listeners even if pending desired rows would no longer
+select them. Explicit additional listeners continue to derive from Web Terminal desired selection and remain public.
+The Network baseline moves this classification only after the protected handoff application commit, so failure,
+rollback, cancellation, and desired-state reversion retain the old terminal listener.</p>
 <h3 id="network-apply">Network apply<a class="headerlink" href="#network-apply" title="Permanent link">&para;</a></h3>
 <p>The real network apply path is Photon <code>systemd-networkd</code> backed. The <code>network</code> apply unit stages Atlaso's rendered
 network config at <code>/var/lib/atlaso/apply/network/atlaso-network.conf</code>, validates management, physical, VLAN, CIDR, and
@@ -4689,7 +4700,21 @@ addresses are never discovered or probed as management listeners. If the
 public protocol or same-protocol HTTP port changes, address-specific nginx blocks retain the old address, port, and
 HTTP/HTTPS behavior beside the candidate listener until candidate readiness succeeds. Previous HTTPS blocks always use
 separate snapshotted certificate and key files, including when the protocol remains HTTPS while the candidate
-certificate rotates.
+certificate rotates.</p>
+<p>If a management-to-access desired-state mutation introduces or enables a default route that differs from the
+last-applied WAN baseline, Routes &amp; WAN Simulation becomes a sixth handoff participant. A standalone Routes &amp; WAN
+submission also initiates the handoff when it adds, edits, disables, or removes a default mirrored through an effective
+flagged management listener. Any WAN unit captured with an otherwise protected management edit remains a participant
+even when its changes affect only lab routes, NAT, or simulation policy. Atlaso stages and validates the candidate WAN
+config and an inverse rollback config before mutation. The helper snapshots WAN-owned nftables, systemd,
+and sysctl files while retaining the old WAN runtime and management path through candidate readiness. During
+previous-path retirement, final Network regeneration completes first and the helper then applies the captured candidate
+WAN config before final readiness. Failure, interruption recovery, or another rollback re-applies the last-applied WAN
+intent; rollback entries explicitly mark candidate-only main-table mirrors for removal even when candidate application
+failed before publishing its runtime config. This includes removal
+of candidate-only defaults, before old-path readiness may succeed. Successful application commits the exact Network and
+WAN snapshots together before the durable helper acknowledgement; unrelated pending WAN state is never inferred from a
+management gateway.
 Within Appliance Settings, this transaction applies the management resolver interface, Atlaso loopback drop-in, and
 management nginx front door. The helper writes the selected static/local resolver directives into the candidate
 generated effective-listener networkd file, including the active higher-priority same-interface holdover, or reverts
@@ -4720,7 +4745,11 @@ requested DHCP or SLAAC family within the shared bounded discovery window; readi
 family when one is missing, and a retained old-path address cannot satisfy dynamic candidate acquisition. When the
 candidate disables nftables, the transitional ruleset keeps the previous filtering
 policy and adds only the candidate management admission rules, including the staged nondefault HTTP or HTTPS public
-port. A filtered-to-filtered handoff adds that port to both the transitional ruleset and the final candidate ruleset so
+port. Dedicated and flagged access physical/VLAN management listeners all retain TCP/22 for ordinary
+bootstrap-administrator SSH alongside TCP/80, TCP/443, and that configured public port. The flagged-listener rule keeps
+its rendered Source Group predicate; unflagged access networks receive no management SSH admission, and root SSH stays
+under the independent Appliance Settings policy. A filtered-to-filtered handoff adds that port to both the
+transitional ruleset and the final candidate ruleset so
 readiness and post-retirement access use the same admission contract. The added rule is derived from each exact
 candidate management rule and retains its interface plus IPv4 or IPv6 source expressions; a filtered candidate never
 receives an unconditional custom-port rule. When enabling filtering from an open state, the
@@ -4769,7 +4798,11 @@ static management IPv4 gateway is installed as the main-table default so applian
 before a source address exists, and is also installed in management table 100 for management source-policy routing.
 Static routes may target IPv4-only, IPv6-only, or dual-stack non-management access physical interfaces and enabled
 VLANs; IPv6 routes render through <code>ip -6 route</code>. Lab routes are installed in Atlaso table 200 so their gateways do not
-compete with the management default. The browser wizard derives explicit IPv4 or IPv6 defaults as canonical
+compete with the management default. A default on the effective flagged-access management listener is additionally
+installed in the main table for appliance-originated traffic. A successful apply copies the validated config to
+<code>/etc/atlaso/wan/atlaso-wan.conf</code> and enables <code>atlaso-wan.service</code>, which replays the route, rule, forwarding, NAT, and
+WAN-policy runtime after <code>network-online.target</code>; management-handoff rollback snapshots and restores both artifacts.
+The browser wizard derives explicit IPv4 or IPv6 defaults as canonical
 <code>0.0.0.0/0</code> or <code>::/0</code>, requires a same-family next hop that is on-link for the selected target (or IPv6 link-local),
 and rejects a second default of the same family. The UI/API,
 settings-archive, desired-state, and helper validation layers enforce that contract; canonical <code>/0</code> API payloads remain
@@ -4793,7 +4826,9 @@ when enabled lab routing or NAT requires forwarding, applies source policy rules
 with <code>nft</code>, applies static routes with <code>ip route replace ... table 200</code>, and applies or clears <code>tc qdisc</code> netem state on
 route targets with assigned policies. Removed route deletion is staged only when a route existed in the selected unit's
 last-applied baseline and is absent from current desired state. Management is never a route, NAT, or routing-permission
-target, and the Firewall unit generates explicit management-to-lab and lab-to-management forward drops.</p>
+target, and the Firewall unit generates explicit management-to-lab and lab-to-management forward drops.
+The same validator and apply path are reused when WAN joins a protected management handoff; this is not a second host
+mutation mechanism.</p>
 <h3 id="dnsdhcp-apply">DNS/DHCP apply<a class="headerlink" href="#dnsdhcp-apply" title="Permanent link">&para;</a></h3>
 <p>The real DNS/DHCP apply path is dnsmasq-backed. The <code>dnsmasq</code> apply unit stages Atlaso's rendered dnsmasq config at
 <code>/var/lib/atlaso/apply/dnsmasq/atlaso.conf</code>, validates it with <code>dnsmasq --test</code>, installs

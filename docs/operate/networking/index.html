@@ -3940,18 +3940,38 @@ An unaddressed or link-local-only interface cannot satisfy management lockout pr
 listener can bind to it.</p>
 <p>The default configuration remains <code>eth0</code> as the dedicated management interface with the switch disabled on all access
 interfaces. To use one network for both planes, change <code>eth0</code> from management to access; Atlaso enables its management UI
-switch as part of that conversion. You may then disable the unused second interface. Converting an access interface to
-management clears its switch because management exposure is inherent in the role.</p>
+switch as part of that conversion. Before saving, the review lists each static IPv4 or IPv6 management gateway that
+will leave the management-only fields. Atlaso stages an enabled family default under <strong>Routes &amp; WAN Simulation</strong> on the
+converted access interface, reuses an equivalent saved default without duplication, and blocks the complete edit when
+a different default already owns that family. If no prior gateway exists, the review warns that Atlaso will not invent
+one and off-subnet routing may be unavailable. The interface, route rows, dependent state, and Network and route audit
+events commit or roll back together without touching Photon. You may then disable the unused second interface.
+For a flagged management listener, Apply installs that default in both lab table <code>200</code> and the main table. The main-table
+copy lets appliance-originated traffic select the preserved gateway before Linux has selected the listener's source
+address. Atlaso also records the applied WAN config in a boot replay unit so both routes return after restart.
+Converting an access interface to management clears its switch because management exposure is inherent in the role.</p>
 <p>Atlaso permits at most one dedicated management-role physical interface. It also prevents desired state with no
 effective management browser path: when no dedicated role exists, at least one active access interface or enabled
 access VLAN must have <strong>Management UI</strong> enabled. Multiple flagged access interfaces are allowed. On a flagged access
 address, <code>/</code> prefers the management sign-in, <code>/ui/management</code> requires normal authentication, and <code>/ui/public</code> remains
 available for the same access network. The listener also preserves the complete authenticated management front door,
-including stable API, API documentation, manifest, and service-worker routes required by the management UI and PWA.</p>
+including stable API, API documentation, manifest, and service-worker routes required by the management UI and PWA.
+The same effective listener admits ordinary bootstrap-administrator SSH on TCP/22, so moving management to a flagged
+physical interface or VLAN does not remove key- or password-backed recovery access. The configured Firewall Source
+Group applies unchanged to TCP/22, TCP/80, and TCP/443. Atlaso does not open SSH on unflagged access networks, and this
+firewall admission does not enable root SSH; root login remains the separate <strong>Appliance Settings</strong> policy.</p>
 <p>When an Apply changes an effective management interface, address, gateway, or listener role, Atlaso automatically
 bundles Network with Firewall, Certificate Authority, Appliance Settings, and Public Services. The old management path
 stays active while the candidate network, policy routes, firewall, certificate/nginx configuration, Atlaso loopback
 upstream, and host-facing <code>/openapi.json</code> complete bounded readiness checks. Only then does Atlaso retire the old path.
+When the desired role conversion also staged a management-gateway default, <strong>Routes &amp; WAN Simulation</strong> joins that same
+recoverable handoff. Its candidate and last-applied rollback configs are validated before mutation; failure restores
+the prior lab routes and the old management path together. Adding, editing, disabling, or removing a default on an
+already-applied flagged management listener also starts this handoff even when Network itself has no pending edit.
+When an operator selects another Routes &amp; WAN change alongside a protected management change, Atlaso executes and
+commits that captured WAN snapshot inside the same transaction rather than advancing its baseline separately. The
+candidate WAN runtime is deferred until previous-path retirement, so candidate readiness retains the known-good
+main-table default. Rollback explicitly removes any candidate-only mirrored default before restoring prior WAN intent.
 Before that commit, fresh requests and existing sessions continue to use the last-applied Network binding paired with
 observed addresses. Unapplied access-management flags do not publish a new administrative listener, and unapplied role
 or address edits do not demote the old listener to <code>/ui/public</code>. Cancelling, reverting, or rolling back the candidate
@@ -4025,11 +4045,14 @@ route to a same-subnet host. Verify the Atlaso loopback <code>/openapi.json</cod
 <p>For a lab default route, run <code>ip route show table 200</code> and <code>ip -6 route show table 200</code> as applicable. Confirm the
 canonical default uses the reviewed gateway, target, and metric, and separately verify that table <code>100</code> still contains
 only the management policy-routing state. A successful global Apply stores that exact rendered route in the <code>wan</code>
-baseline; a later edit remains pending until the next Apply.</p>
-<p>A failed management handoff reports its non-secret failing layer and rolls back the captured network, firewall, nginx,
-certificate, and service state before the task becomes failed. Rollback also reconfigures interfaces introduced to the
-candidate and deletes candidate-only VLAN devices. If automatic rollback cannot restore access, use the local console
-network recovery action to restore a known-good management configuration, then review desired state before retrying.</p>
+baseline; a later edit remains pending until the next Apply. When the route target is the effective flagged management
+listener, also confirm <code>ip route show default</code> (or <code>ip -6 route show default</code>) names the same gateway and interface, and
+that <code>atlaso-wan.service</code> is enabled for reboot replay.</p>
+<p>A failed management handoff reports its non-secret failing layer and rolls back the captured network, coupled Routes &amp;
+WAN runtime, firewall, nginx, certificate, and service state before the task becomes failed. Rollback also reconfigures
+interfaces introduced to the candidate and deletes candidate-only VLAN devices. If automatic rollback cannot restore
+access, use the local console network recovery action to restore a known-good management configuration, then review
+desired state before retrying.</p>
 <h2 id="transport-ownership">Transport ownership<a class="headerlink" href="#transport-ownership" title="Permanent link">&para;</a></h2>
 <p>The management Routes/WAN transports and their API v1 counterparts are owned by the dedicated <code>routes_wan</code> domain
 routers. The stable UI and API facade modules continue to aggregate and export those handlers. This internal ownership

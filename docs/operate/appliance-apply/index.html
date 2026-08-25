@@ -3707,7 +3707,11 @@ before submitting it.</p>
     G --&gt; H[Verify appliance state]</code></pre>
 <p>Atlaso groups related settings into apply units. For example, DNS and DHCP share one <code>DNS/DHCP (dnsmasq)</code> unit because
 they use the same generated configuration and service reload. A change can affect several units; Web Terminal listener
-changes commonly require <strong>Appliance Settings</strong>, <strong>Public Services</strong>, and <strong>Firewall</strong> together.</p>
+changes commonly require <strong>Appliance Settings</strong>, <strong>Public Services</strong>, and <strong>Firewall</strong> together. A static
+management-to-access role conversion that migrates a gateway also selects <strong>Routes &amp; WAN Simulation</strong> with Network and
+runs both through the protected management handoff; its prior WAN config is the rollback source. A Routes &amp; WAN-only
+submission that changes a default mirrored for an effective flagged management listener starts the same protected
+handoff. Every bundled WAN unit executes from its captured snapshot before Atlaso commits its baseline.</p>
 <h2 id="review-pending-changes">Review pending changes<a class="headerlink" href="#review-pending-changes" title="Permanent link">&para;</a></h2>
 <ol>
 <li>Finish editing the desired state on the relevant service pages.</li>

@@ -3574,6 +3574,10 @@ impairment behavior only; they must not be used as an interface classification.<
   enabled assigned policy.</li>
 <li>Disabled or unassigned WAN policy targets clear only Atlaso-owned root qdisc intent.</li>
 <li>Route commands use <code>ip route replace &lt;destination&gt; [via &lt;gateway&gt;] dev &lt;interface&gt; metric &lt;metric&gt; table 200</code>.</li>
+<li>A static management-to-access conversion moves each valid management gateway into an enabled canonical family default
+  on the converted access target. Equivalent defaults are reused; conflicting family defaults reject the atomic edit.
+  When that route is not in the last-applied WAN baseline, WAN joins the existing protected management handoff and its
+  rollback config restores the prior table <code>200</code> intent.</li>
 </ul>
 <p><code>wan_mode=interface</code> is the only supported WAN impairment mode in v1. Route-specific impairment is not exposed in the UI
 or public API until it has a real helper implementation.</p>

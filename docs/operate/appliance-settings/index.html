@@ -3637,6 +3637,9 @@ management connectivity or SSH policy. Routine field changes autosave, but they 
 <li>Open <strong>Pending Appliance Changes</strong> and submit the valid Appliance Settings unit.</li>
 </ol>
 <p>The review modal may include other changed units. Unselect unrelated work before submission.</p>
+<p>The root SSH preference controls whether the root account may log in remotely; it does not control ordinary
+bootstrap-administrator SSH. Firewall admission for that administrator follows the effective management listener,
+including a flagged access physical interface or VLAN, while unflagged access networks remain closed on TCP/22.</p>
 <h2 id="verify-and-recover">Verify and recover<a class="headerlink" href="#verify-and-recover" title="Permanent link">&para;</a></h2>
 <p>After the task succeeds, confirm the expected management URL and resolver behavior. If management access is lost, use
 the <a href="../appliance-console/">local appliance console</a> to inspect networking and restore a known-good configuration.</p>
