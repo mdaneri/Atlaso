@@ -10,8 +10,76 @@ SCREENSHOTS = ROOT / "docs" / "assets" / "screenshots"
 MANIFEST = SCREENSHOTS / "manifest.json"
 SOURCE_COMMIT = "0247c34bc85e+working-tree"
 ATLASO_VERSION = "0.9.21"
+CANONICAL_BROWSER_ROOTS = {
+    "management": "/ui/management",
+    "public": "/ui/public",
+    "note": "Per-image route values preserve the URL used for the historical capture; documentation generators publish the canonical issue 287 route.",
+}
 
 CAPTURE_OVERRIDES = {
+    **{
+        stem: {
+            "source_commit": "1d5bf935b499+working-tree",
+            "atlaso_version": "0.9.84",
+            "capture_method": "codex-in-app-browser",
+        }
+        for stem in (
+            "ca-management-requests-clean-desktop",
+            "ca-management-requests-clean-responsive",
+            "ca-requests-clean-desktop",
+            "ca-requests-clean-responsive",
+            "monitor-clean-desktop",
+            "monitor-clean-responsive",
+            "monitor-detail-grids-clean-desktop",
+            "monitor-detail-grids-clean-responsive",
+            "vcf-depot-browser-clean-desktop",
+            "vcf-depot-browser-clean-responsive",
+        )
+    },
+    **{
+        stem: {
+            "source_commit": "6400eb6618fa+working-tree",
+            "atlaso_version": "0.9.115",
+            "capture_method": "codex-in-app-browser",
+        }
+        for stem in (
+            "physical-interfaces-clean-desktop",
+            "physical-interfaces-clean-responsive",
+            "routes-wan-policy-wizard-responsive",
+            "routes-wan-static-route-wizard-desktop",
+            "vlan-interfaces-clean-desktop",
+            "vlan-interfaces-clean-responsive",
+        )
+    },
+    **{
+        stem: {
+            "source_commit": "d4b407eb37f7+working-tree",
+            "atlaso_version": "0.9.88",
+            "capture_method": "codex-in-app-browser",
+        }
+        for stem in ("ntp-clean-desktop", "ntp-clean-responsive")
+    },
+    **{
+        stem: {
+            "source_commit": "48af0ffc51a6+working-tree",
+            "atlaso_version": "0.9.80",
+            "capture_method": "codex-in-app-browser",
+        }
+        for stem in (
+            "vcf-offline-depot-clean-desktop",
+            "vcf-offline-depot-clean-responsive",
+        )
+    },
+    "vcf-offline-depot-configuration-wizard": {
+        "source_commit": "01a995e62e4a+working-tree",
+        "atlaso_version": "0.9.80",
+        "capture_method": "codex-in-app-browser",
+    },
+    "vcf-offline-depot-schedule-action-desktop": {
+        "source_commit": "5673a8d9+working-tree",
+        "atlaso_version": "0.9.127",
+        "capture_method": "codex-in-app-browser",
+    },
     "network-objects-clean-desktop": {
         "source_commit": "0df3b4b3f873+working-tree",
         "atlaso_version": "0.9.195",
@@ -141,11 +209,6 @@ CAPTURE_OVERRIDES = {
         "atlaso_version": "0.9.80",
         "capture_method": "edge-browser",
     },
-    "vcf-offline-depot-schedule-action-desktop": {
-        "source_commit": "3b10df0+working-tree",
-        "atlaso_version": "0.9.80",
-        "capture_method": "edge-browser",
-    },
 }
 
 DOCUMENTATION_PAGES = {
@@ -175,11 +238,16 @@ DOCUMENTATION_PAGES = {
     "services/local-users.md": ("users-",),
     "services/managed-ldap.md": ("ldap-", "managed-ldap-"),
     "services/oidc-provider.md": ("authentication-",),
-    "services/certificate-authority.md": ("ca-public-", "ca-requests-", "certificate-authority-"),
+    "services/certificate-authority.md": (
+        "ca-management-requests-",
+        "ca-public-",
+        "ca-requests-",
+        "certificate-authority-",
+    ),
     "services/vcf-backups.md": ("vcf-backups-",),
     "services/vcf-helper.md": ("vcf-helper-",),
     "services/vaults.md": ("vaults-",),
-    "services/vcf-offline-depot.md": ("vcf-offline-depot-",),
+    "services/vcf-offline-depot.md": ("vcf-depot-browser-", "vcf-offline-depot-"),
     "services/vcf-private-registry.md": ("vcf-private-registry-",),
     "reference/api.md": ("swagger-",),
 }
@@ -264,6 +332,126 @@ SPECIAL = {
         "vcf-schedule-wizard",
         "VCF Offline Depot profile scheduling in the shared Automation wizard at the responsive viewport.",
         "Atlaso Automation schedule wizard with VCF Offline Depot profile download selected at the responsive viewport.",
+    ),
+    "ca-management-requests-clean-desktop": (
+        "/ca/requests",
+        "clean",
+        "Management certificate requests rendered through the shared read-only grid in the desktop viewport.",
+        "Atlaso management Certificate Requests page showing issued certificates in a read-only grid.",
+    ),
+    "ca-management-requests-clean-responsive": (
+        "/ca/requests",
+        "clean",
+        "Management certificate requests remain contained in the narrow viewport.",
+        "Atlaso management Certificate Requests page showing its read-only grid in the narrow viewport.",
+    ),
+    "ca-requests-clean-desktop": (
+        "/requests",
+        "clean",
+        "Public certificate requests rendered through the shared read-only grid in the desktop viewport.",
+        "Atlaso public Certificate Request Portal showing issued certificates in a read-only grid.",
+    ),
+    "ca-requests-clean-responsive": (
+        "/requests",
+        "clean",
+        "Public certificate requests remain contained in the narrow viewport.",
+        "Atlaso public Certificate Request Portal showing its read-only grid in the narrow viewport.",
+    ),
+    "monitor-clean-desktop": (
+        "/monitor",
+        "clean",
+        "Monitor summary and live charts in the verified desktop state.",
+        "Atlaso Monitor page showing live appliance metrics in the desktop viewport.",
+    ),
+    "monitor-clean-responsive": (
+        "/monitor",
+        "clean",
+        "Monitor summary and live charts in the verified narrow state.",
+        "Atlaso Monitor page showing live appliance metrics in the narrow viewport.",
+    ),
+    "monitor-detail-grids-clean-desktop": (
+        "/monitor",
+        "live-detail-grids",
+        "Network-interface and disk-device activity use read-only grids beneath their live charts.",
+        "Atlaso Monitor desktop page showing read-only network interface and disk activity detail grids.",
+    ),
+    "monitor-detail-grids-clean-responsive": (
+        "/monitor",
+        "live-detail-grids",
+        "Network-interface and disk-device grids remain readable without page overflow in the narrow viewport.",
+        "Atlaso Monitor narrow page showing read-only network interface and disk activity detail grids.",
+    ),
+    "routes-wan-policy-wizard-responsive": (
+        "/ui/management/routes-wan#policies",
+        "wan-policy-wizard",
+        "Shared WAN policy wizard in the verified responsive viewport.",
+        "Atlaso WAN policy wizard using the standard responsive rail and five reviewed configuration steps.",
+    ),
+    "routes-wan-static-route-wizard-desktop": (
+        "/ui/management/routes-wan#routes",
+        "static-route-wizard-review",
+        "Shared static route wizard review with the complete path and appliance-apply boundary.",
+        "Atlaso static route wizard using the standard rail while reviewing the destination, interface path, WAN Simulation selection, and enabled state.",
+    ),
+    "physical-interfaces-clean-desktop": (
+        "/ui/management/physical-interfaces",
+        "clean",
+        "Physical Interfaces showing the standard Atlaso false glyph for disabled IPv6 and canonical network roles.",
+        "Atlaso Physical Interfaces page showing false glyphs in the IPv6 column and canonical interface roles.",
+    ),
+    "physical-interfaces-clean-responsive": (
+        "/ui/management/physical-interfaces",
+        "clean",
+        "Physical Interfaces showing the standard Atlaso IPv6 glyphs at the responsive viewport.",
+        "Responsive Atlaso Physical Interfaces page showing false glyphs for disabled IPv6.",
+    ),
+    "vcf-depot-browser-clean-desktop": (
+        "/PROD/",
+        "published-content",
+        "The public VCF Offline Depot directory renders exact artifact paths as safe native links in a read-only grid.",
+        "Atlaso public VCF Offline Depot browser showing a directory link in the desktop read-only grid.",
+    ),
+    "vcf-depot-browser-clean-responsive": (
+        "/PROD/",
+        "published-content",
+        "The public VCF Offline Depot browser remains contained in the narrow viewport.",
+        "Atlaso public VCF Offline Depot browser showing its read-only contents grid in the narrow viewport.",
+    ),
+    "vcf-offline-depot-configuration-wizard": (
+        "/vcf-offline-depot",
+        "software-depot-id-review",
+        "VCFDT Software Depot ID generation ends at Review, which immediately dispatches a dedicated identity task.",
+        "Atlaso two-step VCFDT Software Depot ID wizard Review with a Queue Software Depot ID task action and no additional confirmation dialog.",
+    ),
+    "vcf-offline-depot-clean-desktop": (
+        "/vcf-offline-depot",
+        "staged-configuration",
+        "VCF Offline Depot with metadata first and the compact VCFDT configuration summary in the desktop settings rail.",
+        "Atlaso VCF Offline Depot desktop page showing Metadata before Binaries and ESX profiles and the combined VCFDT configuration action.",
+    ),
+    "vcf-offline-depot-clean-responsive": (
+        "/vcf-offline-depot",
+        "staged-configuration",
+        "VCF Offline Depot profile ordering and staging state in the responsive viewport.",
+        "Atlaso VCF Offline Depot responsive page showing Metadata first with the add-profile row pinned last.",
+    ),
+    "vcf-offline-depot-schedule-action-desktop": (
+        "/vcf-offline-depot",
+        "contextual-schedule-review",
+        "VCF Offline Depot review binds the selected profile in the contextual schedule flow.",
+        "VCF Offline Depot contextual Schedule wizard Review showing Schedule, Timing, State, and Review steps with Binaries fixed as the selected profile.",
+    ),
+    "vlan-interfaces-clean-desktop": (
+        "/ui/management/vlan-interfaces",
+        "clean",
+        "VLAN Interfaces shared Role step defaulting a new VLAN to the canonical access role.",
+        "Atlaso VLAN Interfaces add wizard Role step showing access as the default role with the Management UI switch.",
+    ),
+    "vlan-interfaces-clean-responsive": (
+        "/ui/management/vlan-interfaces",
+        "clean",
+        "VLAN Interfaces with canonical role data in the verified responsive state.",
+        "Responsive Atlaso VLAN Interfaces page backed by the canonical management, access, route, and unused roles.",
     ),
     "authentication-clean-desktop": (
         "/openid-connect#oidc-provider",
@@ -421,12 +609,6 @@ SPECIAL = {
         "Successful appliance apply log with captured commands and audit events.",
         "Atlaso task log showing successful dnsmasq validation, apply, and reload.",
     ),
-    "vcf-offline-depot-schedule-action-desktop": (
-        "/vcf-offline-depot",
-        "schedule-action",
-        "VCF Offline Depot profile scheduling action with the disabled-profile reason.",
-        "VCF Offline Depot profile row menu showing Schedule download disabled until the profile is enabled.",
-    ),
     "terminal-clean-desktop": (
         "/terminal",
         "enabled-connected",
@@ -521,7 +703,15 @@ def main() -> None:
     """Run the command-line entry point."""
     screenshots = [metadata(path) for path in sorted(SCREENSHOTS.glob("*.webp"))]
     MANIFEST.write_text(
-        json.dumps({"schema_version": 1, "screenshots": screenshots}, indent=2) + "\n",
+        json.dumps(
+            {
+                "schema_version": 1,
+                "canonical_browser_roots": CANONICAL_BROWSER_ROOTS,
+                "screenshots": screenshots,
+            },
+            indent=2,
+        )
+        + "\n",
         encoding="utf-8",
         newline="\n",
     )
