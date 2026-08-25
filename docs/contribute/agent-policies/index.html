@@ -5435,6 +5435,12 @@ runtime.</p>
   explicit Routing Permissions, NAT Rules, and WAN Policies as wizard-backed Tabulator collections using the ESX
   Storage reference. Add launches from the bottom row; edit launches from row double-click or its context action;
   generated route-role permissions remain read-only; and ordinary persisted Enabled state remains directly editable.</li>
+<li>Keep <strong>Default route</strong> mutually exclusive with <strong>Destination CIDR</strong> in the Static Route wizard. Default mode requires
+  an explicit IPv4 or IPv6 family and a same-family next-hop gateway that is on-link for the selected target (or IPv6
+  link-local), persists canonical <code>0.0.0.0/0</code> or <code>::/0</code>, and
+  permits only one default per family. Destination-specific routes require a CIDR and may omit the gateway when directly
+  connected. Preserve <code>/api/v1/routes</code> compatibility for callers that submit canonical <code>/0</code> CIDRs, and enforce the
+  contract in browser validation, UI/API transports, desired-state validation, settings restore, and the WAN helper.</li>
 <li>All Routing/WAN host mutation must go through the global <code>/ui/management/appliance-apply</code> <code>wan</code> unit. Do not add
   route-specific,
   NAT-specific, or WAN-policy-specific apply routes or direct helper calls from edit forms.</li>

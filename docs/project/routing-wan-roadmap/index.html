@@ -3557,6 +3557,9 @@ impairment behavior only; they must not be used as an interface classification.<
 <h2 id="current-v1-scope">Current V1 Scope<a class="headerlink" href="#current-v1-scope" title="Permanent link">&para;</a></h2>
 <ul>
 <li>Static route desired state rendered to <code>/var/lib/atlaso/apply/wan/atlaso-wan.conf</code>.</li>
+<li>Explicit IPv4 and IPv6 default-route wizard paths that persist canonical <code>0.0.0.0/0</code> and <code>::/0</code>, require a
+  same-family next-hop gateway that is on-link for the selected target (or IPv6 link-local), and allow one default per
+  family while preserving canonical <code>/0</code> API compatibility.</li>
 <li>Separate route tables for management and lab networks: management keeps its own default gateway, while non-management
   routes install into the lab route table.</li>
 <li>Routing permissions for lab forwarding. Route-role networks forward to other route-role networks by default; access
