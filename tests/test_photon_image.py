@@ -871,6 +871,7 @@ def test_photon_provisioning_prepares_attached_data_disks():
     vmware_packer = Path("image/vmware-workstation/atlaso-photon.pkr.hcl").read_text(encoding="utf-8")
 
     assert 'run_tdnf "Photon appliance package installation"' in provision
+    assert "install -d -o root -g root -m 0700 /var/lib/atlaso-privileged/management-front-door" in provision
     assert "e2fsprogs" in provision
     assert "atlaso-mount-data-disks" in provision
     assert "atlaso-data-disks.service" in provision

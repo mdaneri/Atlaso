@@ -222,7 +222,11 @@ ATLASO_NOTICE_PATH = Path("/usr/share/doc/atlaso/THIRD_PARTY_NOTICES.md")
 ATLASO_UPDATE_TRUST_DIR = Path("/etc/atlaso/update-trust.d")
 ATLASO_UPDATE_BACKUP_DIR = ATLASO_STATE_DIR / "update-backups"
 ATLASO_DATABASE_PATH = ATLASO_STATE_DIR / "atlaso.db"
-ATLASO_FACTORY_RESET_DIR = Path("/var/lib/atlaso-privileged/factory-reset")
+ATLASO_PRIVILEGED_STATE_DIR = Path("/var/lib/atlaso-privileged")
+ATLASO_FACTORY_RESET_DIR = ATLASO_PRIVILEGED_STATE_DIR / "factory-reset"
+MANAGEMENT_FRONT_DOOR_STATE_DIR = ATLASO_PRIVILEGED_STATE_DIR / "management-front-door"
+MANAGEMENT_FRONT_DOOR_STATE_PATH = MANAGEMENT_FRONT_DOOR_STATE_DIR / "state.json"
+MANAGEMENT_FRONT_DOOR_BACKUP_DIR = MANAGEMENT_FRONT_DOOR_STATE_DIR / "backup"
 ATLASO_FACTORY_RESET_REQUEST_PATH = ATLASO_FACTORY_RESET_DIR / "request.json"
 ATLASO_FACTORY_RESET_RESULT_PATH = ATLASO_FACTORY_RESET_DIR / "last-result.json"
 ATLASO_FACTORY_RESET_CREDENTIALS_PATH = ATLASO_FACTORY_RESET_DIR / "credentials.json"
@@ -363,9 +367,6 @@ NTP_NTS_COOKIE_PATH = NTP_STATE_DIR / "nts-keys"
 NTP_CERT_DIR = Path("/etc/atlaso/ntp/certs")
 NETWORK_APPLY_DIR = Path("/var/lib/atlaso/apply/network")
 MANAGEMENT_HANDOFF_APPLY_DIR = Path("/var/lib/atlaso/apply/management-handoff")
-MANAGEMENT_FRONT_DOOR_STATE_DIR = ATLASO_STATE_DIR / "management-front-door"
-MANAGEMENT_FRONT_DOOR_STATE_PATH = MANAGEMENT_FRONT_DOOR_STATE_DIR / "state.json"
-MANAGEMENT_FRONT_DOOR_BACKUP_DIR = MANAGEMENT_FRONT_DOOR_STATE_DIR / "backup"
 MANAGEMENT_HANDOFF_STATE_DIR = ATLASO_STATE_DIR / "management-handoff"
 MANAGEMENT_HANDOFF_STATE_PATH = MANAGEMENT_HANDOFF_STATE_DIR / "state.json"
 MANAGEMENT_HANDOFF_BACKUP_DIR = MANAGEMENT_HANDOFF_STATE_DIR / "backup"
@@ -5928,7 +5929,7 @@ def _configure_atlaso_management_https(
     if verify_front_door:
         try:
             _persist_management_front_door_state(tracked_paths)
-        except (OSError, shutil.Error) as exc:
+        except (OSError, ValueError, shutil.Error) as exc:
             print(
                 f"management front-door snapshot persistence failed: {type(exc).__name__}",
                 file=sys.stderr,
@@ -6031,6 +6032,7 @@ def _configure_atlaso_management_https(
 
     if verify_front_door:
         try:
+            _sync_management_front_door_candidates(tracked_paths)
             _clear_management_front_door_state()
         except OSError as exc:
             rollback_errors = _rollback_management_front_door(previous_files)
@@ -6117,14 +6119,115 @@ def _restore_management_front_door_files(
     return failures
 
 
+def _open_management_front_door_state_directory(*, create: bool) -> int | None:
+    """Open the root-owned front-door state directory without following links.
+
+    Args:
+        create: Whether to create the state directory when it is absent.
+
+    Returns:
+        A securely opened POSIX directory descriptor, or ``None`` elsewhere.
+    """
+    if os.name != "posix":
+        if MANAGEMENT_FRONT_DOOR_STATE_DIR.is_symlink():
+            raise ValueError("management front-door state directory is unsafe")
+        if create:
+            MANAGEMENT_FRONT_DOOR_STATE_DIR.mkdir(parents=True, exist_ok=True)
+        if not MANAGEMENT_FRONT_DOOR_STATE_DIR.is_dir():
+            raise FileNotFoundError(MANAGEMENT_FRONT_DOOR_STATE_DIR)
+        if MANAGEMENT_FRONT_DOOR_STATE_DIR.resolve() != MANAGEMENT_FRONT_DOOR_STATE_DIR:
+            raise ValueError("management front-door state directory is unsafe")
+        os.chmod(MANAGEMENT_FRONT_DOOR_STATE_DIR, 0o700)
+        return None
+
+    parent = MANAGEMENT_FRONT_DOOR_STATE_DIR.parent
+    flags = os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW
+    parent_descriptor = os.open(parent, flags)
+    try:
+        parent_stat = os.fstat(parent_descriptor)
+        if (
+            not stat.S_ISDIR(parent_stat.st_mode)
+            or parent_stat.st_uid != 0
+            or parent_stat.st_mode & 0o022
+        ):
+            raise ValueError("management front-door state parent is unsafe")
+        if create:
+            try:
+                os.mkdir(MANAGEMENT_FRONT_DOOR_STATE_DIR.name, 0o700, dir_fd=parent_descriptor)
+            except FileExistsError:
+                pass
+        directory_descriptor = os.open(
+            MANAGEMENT_FRONT_DOOR_STATE_DIR.name,
+            flags,
+            dir_fd=parent_descriptor,
+        )
+    finally:
+        os.close(parent_descriptor)
+    try:
+        directory_stat = os.fstat(directory_descriptor)
+        if not stat.S_ISDIR(directory_stat.st_mode) or directory_stat.st_uid != 0:
+            raise ValueError("management front-door state directory is unsafe")
+        if directory_stat.st_mode & 0o077:
+            raise ValueError("management front-door state directory must use mode 0700")
+        return directory_descriptor
+    except Exception:
+        os.close(directory_descriptor)
+        raise
+
+
+def _read_management_front_door_member(
+    directory_descriptor: int | None,
+    directory: Path,
+    name: str,
+) -> bytes:
+    """Read one root-owned regular recovery file without following links.
+
+    Args:
+        directory_descriptor: Secure POSIX descriptor for the containing directory.
+        directory: Containing path used on non-POSIX test hosts.
+        name: Single recovery filename to read.
+
+    Returns:
+        Validated file bytes.
+    """
+    if Path(name).name != name:
+        raise ValueError("management front-door recovery filename is invalid")
+    if directory_descriptor is None:
+        path = directory / name
+        metadata = path.lstat()
+        if path.is_symlink() or not stat.S_ISREG(metadata.st_mode):
+            raise ValueError("management front-door recovery file is unsafe")
+        return path.read_bytes()
+    descriptor = os.open(
+        name,
+        os.O_RDONLY | os.O_NOFOLLOW,
+        dir_fd=directory_descriptor,
+    )
+    try:
+        metadata = os.fstat(descriptor)
+        if (
+            not stat.S_ISREG(metadata.st_mode)
+            or metadata.st_uid != 0
+            or metadata.st_nlink != 1
+            or metadata.st_mode & 0o077
+            or metadata.st_size > 1024 * 1024
+        ):
+            raise ValueError("management front-door recovery file is unsafe")
+        with os.fdopen(descriptor, "rb", closefd=False) as stream:
+            return stream.read()
+    finally:
+        os.close(descriptor)
+
+
 def _persist_management_front_door_state(paths: tuple[Path, ...]) -> None:
     """Persist ordinary front-door rollback files before runtime mutation.
 
     Args:
         paths: Exact nginx and Atlaso service files owned by the transaction.
     """
-    MANAGEMENT_FRONT_DOOR_STATE_DIR.mkdir(parents=True, exist_ok=True)
-    os.chmod(MANAGEMENT_FRONT_DOOR_STATE_DIR, 0o700)
+    directory_descriptor = _open_management_front_door_state_directory(create=True)
+    if directory_descriptor is not None:
+        os.close(directory_descriptor)
     _fsync_directory(MANAGEMENT_FRONT_DOOR_STATE_DIR.parent)
     MANAGEMENT_FRONT_DOOR_BACKUP_DIR.mkdir(parents=True, exist_ok=True)
     os.chmod(MANAGEMENT_FRONT_DOOR_BACKUP_DIR, 0o700)
@@ -6196,7 +6299,17 @@ def _rollback_management_front_door(
 
 def _load_management_front_door_state() -> dict:
     """Load and constrain one ordinary front-door rollback marker."""
-    state = json.loads(MANAGEMENT_FRONT_DOOR_STATE_PATH.read_text(encoding="utf-8"))
+    directory_descriptor = _open_management_front_door_state_directory(create=False)
+    try:
+        marker = _read_management_front_door_member(
+            directory_descriptor,
+            MANAGEMENT_FRONT_DOOR_STATE_DIR,
+            MANAGEMENT_FRONT_DOOR_STATE_PATH.name,
+        )
+    finally:
+        if directory_descriptor is not None:
+            os.close(directory_descriptor)
+    state = json.loads(marker.decode("utf-8"))
     if state.get("schema") != 1 or state.get("phase") != "prepared":
         raise ValueError("management front-door rollback marker is invalid")
     snapshots = state.get("snapshots")
@@ -6215,9 +6328,84 @@ def _load_management_front_door_state() -> dict:
     for item in snapshots:
         if bool(item.get("existed")):
             backup = Path(str(item.get("backup", "")))
-            if backup.parent != MANAGEMENT_FRONT_DOOR_BACKUP_DIR or not backup.is_file():
+            if backup.parent != MANAGEMENT_FRONT_DOOR_BACKUP_DIR:
                 raise ValueError("management front-door rollback backup is invalid")
+            if os.name == "posix":
+                state_descriptor = _open_management_front_door_state_directory(create=False)
+                try:
+                    backup_descriptor = os.open(
+                        MANAGEMENT_FRONT_DOOR_BACKUP_DIR.name,
+                        os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW,
+                        dir_fd=state_descriptor,
+                    )
+                    try:
+                        backup_stat = os.fstat(backup_descriptor)
+                        if (
+                            not stat.S_ISDIR(backup_stat.st_mode)
+                            or backup_stat.st_uid != 0
+                            or backup_stat.st_mode & 0o077
+                        ):
+                            raise ValueError("management front-door backup directory is unsafe")
+                        item["backup_content"] = _read_management_front_door_member(
+                            backup_descriptor,
+                            MANAGEMENT_FRONT_DOOR_BACKUP_DIR,
+                            backup.name,
+                        )
+                    finally:
+                        os.close(backup_descriptor)
+                finally:
+                    if state_descriptor is not None:
+                        os.close(state_descriptor)
+            else:
+                item["backup_content"] = _read_management_front_door_member(
+                    None,
+                    MANAGEMENT_FRONT_DOOR_BACKUP_DIR,
+                    backup.name,
+                )
     return state
+
+
+def _restore_management_front_door_snapshot(item: dict) -> None:
+    """Restore one securely loaded durable ordinary front-door snapshot.
+
+    Args:
+        item: Validated snapshot metadata and backup bytes.
+    """
+    path = Path(str(item["path"]))
+    if not bool(item.get("existed")):
+        _durable_management_handoff_unlink(path)
+        return
+    content = item.get("backup_content")
+    if not isinstance(content, bytes):
+        raise ValueError("management front-door backup content is missing")
+    path.parent.mkdir(parents=True, exist_ok=True)
+    temporary = path.with_name(f".{path.name}.atlaso-rollback")
+    try:
+        temporary.write_bytes(content)
+        os.chmod(temporary, int(item.get("mode", 0o600)))
+        if os.name == "posix":
+            os.chown(temporary, int(item.get("uid", 0)), int(item.get("gid", 0)))
+        _fsync_file(temporary)
+        temporary.replace(path)
+        _fsync_directory(path.parent)
+    finally:
+        temporary.unlink(missing_ok=True)
+
+
+def _sync_management_front_door_candidates(paths: tuple[Path, ...]) -> None:
+    """Persist every proven candidate file before committing its marker.
+
+    Args:
+        paths: Exact nginx and Atlaso service files owned by the transaction.
+    """
+    parents: set[Path] = set()
+    for path in paths:
+        if path.is_symlink() or not path.is_file():
+            raise OSError(f"management front-door candidate is unsafe: {path.name}")
+        _fsync_file(path)
+        parents.add(path.parent)
+    for parent in sorted(parents, key=str):
+        _fsync_directory(parent)
 
 
 def _recover_management_front_door(*, quiet: bool = False) -> int:
@@ -6226,7 +6414,7 @@ def _recover_management_front_door(*, quiet: bool = False) -> int:
     Args:
         quiet: Whether to suppress the successful no-state result.
     """
-    if not MANAGEMENT_FRONT_DOOR_STATE_PATH.exists():
+    if not MANAGEMENT_FRONT_DOOR_STATE_PATH.exists() and not MANAGEMENT_FRONT_DOOR_STATE_PATH.is_symlink():
         if not quiet:
             print(json.dumps({"management_front_door": "no recovery required"}, sort_keys=True))
         return 0
@@ -6238,7 +6426,7 @@ def _recover_management_front_door(*, quiet: bool = False) -> int:
         state = {"snapshots": []}
     for index, item in enumerate(state.get("snapshots", [])):
         try:
-            _restore_management_handoff_snapshot(item)
+            _restore_management_front_door_snapshot(item)
         except (KeyError, OSError, TypeError, ValueError, shutil.Error) as exc:
             failures.append(f"snapshot {index}: {type(exc).__name__}")
     if not failures:

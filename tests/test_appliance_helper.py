@@ -10314,6 +10314,33 @@ def test_vcf_offline_depot_helper_removes_disabled_nginx_site(monkeypatch, tmp_p
     assert ["/usr/sbin/nginx", "-t"] in commands
 
 
+def patch_management_front_door_state_paths(monkeypatch, helper, tmp_path):
+    """Patch privileged front-door state onto a non-root test directory.
+
+    Args:
+        monkeypatch: Pytest fixture used to replace helper paths.
+        helper: Helper supplied to the test scenario.
+        tmp_path: Temporary directory provided for isolated filesystem state.
+    """
+    front_door_state = tmp_path / "state" / "management-front-door"
+    monkeypatch.setattr(helper, "MANAGEMENT_FRONT_DOOR_STATE_DIR", front_door_state)
+    monkeypatch.setattr(helper, "MANAGEMENT_FRONT_DOOR_STATE_PATH", front_door_state / "state.json")
+    monkeypatch.setattr(helper, "MANAGEMENT_FRONT_DOOR_BACKUP_DIR", front_door_state / "backup")
+
+    def open_test_state(*, create: bool) -> None:
+        """Model secure root-owned opening without requiring root in tests.
+
+        Args:
+            create: Whether the patched state directory may be created.
+        """
+        if create:
+            front_door_state.mkdir(parents=True, exist_ok=True)
+        if not front_door_state.is_dir():
+            raise FileNotFoundError(front_door_state)
+
+    monkeypatch.setattr(helper, "_open_management_front_door_state_directory", open_test_state)
+
+
 def patch_appliance_settings_nginx_paths(monkeypatch, helper, tmp_path):
     """Return patch appliance settings nginx paths.
 
@@ -10347,10 +10374,7 @@ def patch_appliance_settings_nginx_paths(monkeypatch, helper, tmp_path):
     monkeypatch.setattr(helper, "NGINX_MAIN_CONFIG_PATH", nginx_main)
     monkeypatch.setattr(helper, "NGINX_SITES_DIR", nginx_sites)
     monkeypatch.setattr(helper, "NGINX_MANAGEMENT_SITE_PATH", nginx_management_site)
-    front_door_state = tmp_path / "state" / "management-front-door"
-    monkeypatch.setattr(helper, "MANAGEMENT_FRONT_DOOR_STATE_DIR", front_door_state)
-    monkeypatch.setattr(helper, "MANAGEMENT_FRONT_DOOR_STATE_PATH", front_door_state / "state.json")
-    monkeypatch.setattr(helper, "MANAGEMENT_FRONT_DOOR_BACKUP_DIR", front_door_state / "backup")
+    patch_management_front_door_state_paths(monkeypatch, helper, tmp_path)
     sshd_config_dir = tmp_path / "ssh" / "sshd_config.d"
     sshd_root_login = sshd_config_dir / "atlaso-root-login.conf"
     sshd_main = tmp_path / "ssh" / "sshd_config"
@@ -11047,10 +11071,7 @@ def test_appliance_settings_helper_writes_management_nginx_proxy(monkeypatch, tm
     monkeypatch.setattr(helper, "NGINX_MAIN_CONFIG_PATH", nginx_main)
     monkeypatch.setattr(helper, "NGINX_SITES_DIR", nginx_sites)
     monkeypatch.setattr(helper, "NGINX_MANAGEMENT_SITE_PATH", nginx_management_site)
-    front_door_state = tmp_path / "state" / "management-front-door"
-    monkeypatch.setattr(helper, "MANAGEMENT_FRONT_DOOR_STATE_DIR", front_door_state)
-    monkeypatch.setattr(helper, "MANAGEMENT_FRONT_DOOR_STATE_PATH", front_door_state / "state.json")
-    monkeypatch.setattr(helper, "MANAGEMENT_FRONT_DOOR_BACKUP_DIR", front_door_state / "backup")
+    patch_management_front_door_state_paths(monkeypatch, helper, tmp_path)
     monkeypatch.setattr(helper, "SSHD_CONFIG_DIR", sshd_config_dir)
     monkeypatch.setattr(helper, "SSHD_MAIN_CONFIG_PATH", sshd_main)
     monkeypatch.setattr(helper, "SSHD_ROOT_LOGIN_CONFIG_PATH", sshd_root_login)
@@ -11686,6 +11707,70 @@ def test_management_front_door_startup_recovery_restores_interrupted_activation(
     assert not dropin.exists()
     assert not helper.MANAGEMENT_FRONT_DOOR_STATE_PATH.exists()
     assert not helper.MANAGEMENT_FRONT_DOOR_BACKUP_DIR.exists()
+
+
+def test_management_front_door_rejects_symlinked_durable_backup(monkeypatch, tmp_path):
+    """Reject a recovery backup that redirects the privileged restore read.
+
+    Args:
+        monkeypatch: Pytest fixture used to isolate privileged runtime paths.
+        tmp_path: Temporary root containing the hostile recovery fixture.
+    """
+    helper = load_helper_module()
+    nginx_paths = patch_appliance_settings_nginx_paths(monkeypatch, helper, tmp_path)
+    dropin = tmp_path / "systemd" / "atlaso.service.d" / "management-https.conf"
+    monkeypatch.setattr(helper, "ATLASO_SERVICE_HTTPS_DROPIN_PATH", dropin)
+    helper.MANAGEMENT_FRONT_DOOR_BACKUP_DIR.mkdir(parents=True)
+    outside = tmp_path / "service-owned-candidate"
+    outside.write_text("untrusted\n", encoding="utf-8")
+    linked_backup = helper.MANAGEMENT_FRONT_DOOR_BACKUP_DIR / "00.backup"
+    try:
+        linked_backup.symlink_to(outside)
+    except OSError:
+        pytest.skip("local filesystem does not permit a test symlink")
+    paths = (
+        nginx_paths["management_site"],
+        nginx_paths["include"],
+        nginx_paths["main"],
+        dropin,
+    )
+    snapshots = [
+        {
+            "path": str(path),
+            "existed": index == 0,
+            **({"backup": str(linked_backup), "mode": 0o644, "uid": 0, "gid": 0} if index == 0 else {}),
+        }
+        for index, path in enumerate(paths)
+    ]
+    helper.MANAGEMENT_FRONT_DOOR_STATE_PATH.write_text(
+        json.dumps({"schema": 1, "phase": "prepared", "snapshots": snapshots}),
+        encoding="utf-8",
+    )
+
+    with pytest.raises(ValueError, match="recovery file is unsafe"):
+        helper._load_management_front_door_state()
+
+
+def test_management_front_door_syncs_candidates_before_commit(monkeypatch, tmp_path):
+    """Flush every candidate file and parent before deleting rollback state.
+
+    Args:
+        monkeypatch: Pytest fixture used to observe durability operations.
+        tmp_path: Temporary root containing candidate runtime files.
+    """
+    helper = load_helper_module()
+    paths = tuple(tmp_path / directory / "candidate.conf" for directory in ("site", "include", "main", "systemd"))
+    for path in paths:
+        path.parent.mkdir(parents=True)
+        path.write_text("candidate\n", encoding="utf-8")
+    events: list[tuple[str, Path]] = []
+    monkeypatch.setattr(helper, "_fsync_file", lambda path: events.append(("file", path)))
+    monkeypatch.setattr(helper, "_fsync_directory", lambda path: events.append(("directory", path)))
+
+    helper._sync_management_front_door_candidates(paths)
+
+    assert events[:4] == [("file", path) for path in paths]
+    assert events[4:] == [("directory", parent) for parent in sorted({path.parent for path in paths}, key=str)]
 
 
 def test_appliance_settings_helper_applies_local_resolver_without_timesyncd(monkeypatch, tmp_path):

@@ -741,12 +741,15 @@ catch-all domain. The helper always installs `/etc/nginx/conf.d/atlaso.conf` plu
 `/etc/atlaso/nginx/sites.d/management.conf` and a loopback-only `atlaso.service` override. Before mutation it requires
 consecutive `200` responses from the configured loopback `/openapi.json`. It snapshots the management site, Atlaso nginx
 include, nginx main configuration, and service drop-in into root-only durable backups, syncing every backup and the
-transaction marker before mutation. It daemon-reloads the drop-in without restarting Atlaso, validates and reloads
-nginx, and then requires consecutive success from both the loopback upstream and the guest-local management
+transaction marker under `/var/lib/atlaso-privileged/management-front-door` before mutation. Recovery opens that
+root-owned state without following links and rejects non-root, non-regular, linked, or permissive marker/backup files.
+It daemon-reloads the drop-in without restarting Atlaso, validates and reloads nginx, and then requires consecutive
+success from both the loopback upstream and the guest-local management
 address/public-port front door. Activation or readiness failure restores the snapshots, validates and reloads nginx,
 and reloads systemd before the unit reports failure. `atlaso.service` runs `management-front-door recover` before
-startup, restoring the same snapshots after interruption and failing closed until recovery completes. The marker is
-removed only after readiness succeeds. It also writes `/etc/ssh/sshd_config.d/atlaso-root-login.conf`, validates
+startup, restoring the same snapshots after interruption and failing closed until recovery completes. Every candidate
+file and parent directory is synced before the marker is removed after readiness succeeds. It also writes
+`/etc/ssh/sshd_config.d/atlaso-root-login.conf`, validates
 `sshd`, and restarts `sshd`; root SSH
 is disabled by default and enabled only when the Appliance Settings switch is applied. When management UI HTTPS is
 enabled, the helper requires the CA-managed `appliance:https` cert/key files, redirects public HTTP/80 to HTTPS/443, and
