@@ -4856,7 +4856,9 @@ def test_release_maintenance_enable_rejects_missing_management_site(monkeypatch,
     assert result["success"] is False
     assert result["failure_layer"] == "management_site"
     assert "services remain running" in result["stderr"]
-    assert maintenance.is_file()
+    assert not maintenance.exists()
+    assert result["preflight_cleanup"]["success"] is True
+    assert result["preflight_cleanup"]["marker_removed"] is True
 
 
 def test_release_maintenance_enable_requires_live_503_proof(monkeypatch, tmp_path):
@@ -4871,10 +4873,8 @@ def test_release_maintenance_enable_requires_live_503_proof(monkeypatch, tmp_pat
     helper = load_helper_module()
     maintenance = tmp_path / "run/atlaso-update-maintenance"
     management_site = tmp_path / "management.conf"
-    management_site.write_text(
-        "server {\n  listen 80 default_server;\n  location / { proxy_pass http://127.0.0.1:8000; }\n}\n",
-        encoding="utf-8",
-    )
+    previous = "server {\n  listen 80 default_server;\n  location / { proxy_pass http://127.0.0.1:8000; }\n}\n"
+    management_site.write_text(previous, encoding="utf-8")
     monkeypatch.setattr(helper, "ATLASO_UPDATE_MAINTENANCE_PATH", maintenance)
     monkeypatch.setattr(helper, "NGINX_MANAGEMENT_SITE_PATH", management_site)
     monkeypatch.setattr(
@@ -4906,7 +4906,10 @@ def test_release_maintenance_enable_requires_live_503_proof(monkeypatch, tmp_pat
 
     assert result["success"] is False
     assert result["failure_layer"] == "maintenance_probe"
-    assert maintenance.is_file()
+    assert not maintenance.exists()
+    assert management_site.read_text(encoding="utf-8") == previous
+    assert result["preflight_cleanup"]["success"] is True
+    assert result["preflight_cleanup"]["marker_removed"] is True
 
 
 def test_release_maintenance_enable_reload_failure_skips_live_probe(monkeypatch, tmp_path):
@@ -4921,10 +4924,8 @@ def test_release_maintenance_enable_reload_failure_skips_live_probe(monkeypatch,
     helper = load_helper_module()
     maintenance = tmp_path / "run/atlaso-update-maintenance"
     management_site = tmp_path / "management.conf"
-    management_site.write_text(
-        "server {\n  listen 80 default_server;\n  location / { proxy_pass http://127.0.0.1:8000; }\n}\n",
-        encoding="utf-8",
-    )
+    previous = "server {\n  listen 80 default_server;\n  location / { proxy_pass http://127.0.0.1:8000; }\n}\n"
+    management_site.write_text(previous, encoding="utf-8")
     monkeypatch.setattr(helper, "ATLASO_UPDATE_MAINTENANCE_PATH", maintenance)
     monkeypatch.setattr(helper, "NGINX_MANAGEMENT_SITE_PATH", management_site)
     monkeypatch.setattr(
@@ -4953,7 +4954,11 @@ def test_release_maintenance_enable_reload_failure_skips_live_probe(monkeypatch,
 
     assert result["success"] is False
     assert result["failure_layer"] == "nginx_reload"
-    assert maintenance.is_file()
+    assert not maintenance.exists()
+    assert management_site.read_text(encoding="utf-8") == previous
+    assert result["preflight_cleanup"]["success"] is False
+    assert result["preflight_cleanup"]["marker_removed"] is True
+    assert result["preflight_cleanup"]["nginx_reloaded"] is False
 
 
 def test_release_maintenance_probe_requires_every_default_listener(monkeypatch):
