@@ -1,4 +1,5 @@
-const ATLASO_CACHE = "atlaso-management-pwa-v286";
+const ATLASO_CACHE_PREFIX = "atlaso-management-pwa-v";
+const ATLASO_CACHE = `${ATLASO_CACHE_PREFIX}287`;
 const ATLASO_ASSETS = [
   "/manifest.webmanifest",
   "/favicon.ico",
@@ -29,31 +30,37 @@ const ATLASO_ASSETS = [
 
 self.addEventListener("install", (event) => {
   event.waitUntil(
-    caches.open(ATLASO_CACHE).then((cache) =>
-      Promise.all(
-        ATLASO_ASSETS.map((asset) =>
-          fetch(asset, { cache: "reload" })
-            .then((response) => {
-              if (!response || !response.ok) {
-                return undefined;
-              }
-              return cache.put(asset, response);
-            })
-            .catch(() => undefined)
-        )
-      )
-    )
+    caches.open(ATLASO_CACHE)
+      .then(async (cache) => {
+        const results = await Promise.allSettled(ATLASO_ASSETS.map(async (asset) => {
+          const response = await fetch(asset, { cache: "reload" });
+          if (!response || !response.ok) {
+            throw new Error(`Required precache request failed: ${asset}`);
+          }
+          await cache.put(asset, response);
+        }));
+        const failure = results.find((result) => result.status === "rejected");
+        if (failure) throw failure.reason;
+      })
+      .then(() => self.skipWaiting())
+      .catch(async (error) => {
+        // A failed install must not leave a partial cache that a later lifecycle could mistake for complete.
+        await caches.delete(ATLASO_CACHE);
+        throw error;
+      })
   );
-  self.skipWaiting();
 });
 
 self.addEventListener("activate", (event) => {
   event.waitUntil(
     caches.keys().then((keys) =>
-      Promise.all(keys.filter((key) => key !== ATLASO_CACHE).map((key) => caches.delete(key)))
-    )
+      Promise.all(
+        keys
+          .filter((key) => key.startsWith(ATLASO_CACHE_PREFIX) && key !== ATLASO_CACHE)
+          .map((key) => caches.delete(key))
+      )
+    ).then(() => self.clients.claim())
   );
-  self.clients.claim();
 });
 
 function isCacheableAsset(url) {
