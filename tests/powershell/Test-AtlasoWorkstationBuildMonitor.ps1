@@ -82,7 +82,7 @@ if ($safeLine.Contains($secret) -or -not $safeLine.Contains('[redacted]')) {
 
 $fakePacker = Join-Path $OutputDirectory 'fake-packer.ps1'
 $fakeScript = @'
-param([ValidateSet('stall', 'success', 'failure')][string]$Mode)
+param([ValidateSet('stall', 'success', 'failure', 'burst')][string]$Mode)
 Write-Output '==> builder: Password: "generated-vnc-test-secret"'
 Write-Output '==> builder: Powering on virtual machine...'
 if ($Mode -eq 'stall') {
@@ -91,6 +91,13 @@ if ($Mode -eq 'stall') {
 }
 if ($Mode -eq 'failure') {
     exit 9
+}
+if ($Mode -eq 'burst') {
+    foreach ($lineNumber in 1..2000) {
+        Write-Output ("==> builder: burst-output-{0:D4}-{1}" -f $lineNumber, ('x' * 96))
+    }
+    Write-Output '==> builder: Provisioning with shell script: burst-complete'
+    exit 0
 }
 Write-Output '==> builder: Connecting to VNC...'
 Write-Output '==> builder: Using SSH communicator to connect: 192.0.2.30'
@@ -244,6 +251,23 @@ $successOutput = (& {
 } *>&1 | Out-String)
 if ($successOutput.Contains($secret) -or -not $successOutput.Contains('Provisioning with shell script')) {
     throw 'Successful monitored Packer progress was not sanitized or did not reach provisioning.'
+}
+
+$burstOutput = (& {
+    Invoke-AtlasoMonitoredPackerBuild `
+        -PackerPath $pwshPath `
+        -Arguments @('-NoLogo', '-NoProfile', '-NonInteractive', '-File', $fakePacker, '-Mode', 'burst') `
+        -WorkingDirectory $OutputDirectory `
+        -VmrunPath $pwshPath `
+        -VmxPath (Join-Path $OutputDirectory 'builder.vmx') `
+        -BuilderAddress '192.0.2.30' `
+        -StartupTimeoutSeconds 2 `
+        -HeartbeatSeconds 1 `
+        -StateProbe $probe
+} *>&1 | Out-String)
+if (-not $burstOutput.Contains('burst-output-2000') -or
+    -not $burstOutput.Contains('Provisioning with shell script: burst-complete')) {
+    throw 'Verbose monitored Packer output was throttled or did not drain completely.'
 }
 
 $failureError = $null

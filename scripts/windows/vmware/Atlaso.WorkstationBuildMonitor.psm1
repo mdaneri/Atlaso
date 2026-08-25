@@ -431,25 +431,35 @@ function Invoke-AtlasoMonitoredPackerBuild {
         $stderrTask = $process.StandardError.ReadLineAsync()
 
         while (-not $process.HasExited) {
-            if ($null -ne $stdoutTask -and $stdoutTask.IsCompleted) {
-                $line = $stdoutTask.GetAwaiter().GetResult()
-                if ($null -eq $line) {
-                    $stdoutTask = $null
+            $drainedOutput = $false
+            for ($drainCount = 0; $drainCount -lt 4096; $drainCount++) {
+                $readCompleted = $false
+                if ($null -ne $stdoutTask -and $stdoutTask.IsCompleted) {
+                    $line = $stdoutTask.GetAwaiter().GetResult()
+                    if ($null -eq $line) {
+                        $stdoutTask = $null
+                    }
+                    else {
+                        $pendingLines.Enqueue($line)
+                        $stdoutTask = $process.StandardOutput.ReadLineAsync()
+                    }
+                    $readCompleted = $true
                 }
-                else {
-                    $pendingLines.Enqueue($line)
-                    $stdoutTask = $process.StandardOutput.ReadLineAsync()
+                if ($null -ne $stderrTask -and $stderrTask.IsCompleted) {
+                    $line = $stderrTask.GetAwaiter().GetResult()
+                    if ($null -eq $line) {
+                        $stderrTask = $null
+                    }
+                    else {
+                        $pendingLines.Enqueue($line)
+                        $stderrTask = $process.StandardError.ReadLineAsync()
+                    }
+                    $readCompleted = $true
                 }
-            }
-            if ($null -ne $stderrTask -and $stderrTask.IsCompleted) {
-                $line = $stderrTask.GetAwaiter().GetResult()
-                if ($null -eq $line) {
-                    $stderrTask = $null
+                if (-not $readCompleted) {
+                    break
                 }
-                else {
-                    $pendingLines.Enqueue($line)
-                    $stderrTask = $process.StandardError.ReadLineAsync()
-                }
+                $drainedOutput = $true
             }
             while ($pendingLines.Count -gt 0) {
                 $safeLine = ConvertTo-AtlasoSanitizedPackerLine -Line $pendingLines.Dequeue()
@@ -499,7 +509,12 @@ function Invoke-AtlasoMonitoredPackerBuild {
                 $timedOut = $true
                 break
             }
-            Start-Sleep -Milliseconds 200
+            # Do not throttle a verbose child behind redirected pipe capacity.
+            # A full batch returns immediately to phase/timeout checks; an idle
+            # pass yields briefly until either stream completes or the child exits.
+            if (-not $drainedOutput) {
+                Start-Sleep -Milliseconds 20
+            }
         }
 
         if ($timedOut) {
@@ -549,27 +564,39 @@ function Invoke-AtlasoMonitoredPackerBuild {
         $drainDeadline = [System.DateTimeOffset]::UtcNow.AddSeconds(5)
         while (($null -ne $stdoutTask -or $null -ne $stderrTask) -and
             [System.DateTimeOffset]::UtcNow -lt $drainDeadline) {
-            if ($null -ne $stdoutTask -and $stdoutTask.IsCompleted) {
-                $line = $stdoutTask.GetAwaiter().GetResult()
-                if ($null -eq $line) {
-                    $stdoutTask = $null
+            $drainedOutput = $false
+            for ($drainCount = 0; $drainCount -lt 4096; $drainCount++) {
+                $readCompleted = $false
+                if ($null -ne $stdoutTask -and $stdoutTask.IsCompleted) {
+                    $line = $stdoutTask.GetAwaiter().GetResult()
+                    if ($null -eq $line) {
+                        $stdoutTask = $null
+                    }
+                    else {
+                        Write-Host (ConvertTo-AtlasoSanitizedPackerLine -Line $line)
+                        $stdoutTask = $process.StandardOutput.ReadLineAsync()
+                    }
+                    $readCompleted = $true
                 }
-                else {
-                    Write-Host (ConvertTo-AtlasoSanitizedPackerLine -Line $line)
-                    $stdoutTask = $process.StandardOutput.ReadLineAsync()
+                if ($null -ne $stderrTask -and $stderrTask.IsCompleted) {
+                    $line = $stderrTask.GetAwaiter().GetResult()
+                    if ($null -eq $line) {
+                        $stderrTask = $null
+                    }
+                    else {
+                        Write-Host (ConvertTo-AtlasoSanitizedPackerLine -Line $line)
+                        $stderrTask = $process.StandardError.ReadLineAsync()
+                    }
+                    $readCompleted = $true
                 }
+                if (-not $readCompleted) {
+                    break
+                }
+                $drainedOutput = $true
             }
-            if ($null -ne $stderrTask -and $stderrTask.IsCompleted) {
-                $line = $stderrTask.GetAwaiter().GetResult()
-                if ($null -eq $line) {
-                    $stderrTask = $null
-                }
-                else {
-                    Write-Host (ConvertTo-AtlasoSanitizedPackerLine -Line $line)
-                    $stderrTask = $process.StandardError.ReadLineAsync()
-                }
+            if (-not $drainedOutput) {
+                Start-Sleep -Milliseconds 20
             }
-            Start-Sleep -Milliseconds 20
         }
         if ($null -ne $stdoutTask -or $null -ne $stderrTask) {
             Write-Warning 'Packer exited before its redirected output handles closed; remaining output was discarded.'
