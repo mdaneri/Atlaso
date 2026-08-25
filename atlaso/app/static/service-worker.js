@@ -103,7 +103,9 @@ self.addEventListener("fetch", (event) => {
       return;
     }
     event.respondWith(
-      fetch(request).catch(() => caches.match("/static/offline.html"))
+      fetch(request).catch(() =>
+        caches.open(ATLASO_CACHE).then((cache) => cache.match("/static/offline.html"))
+      )
     );
     return;
   }
@@ -113,11 +115,11 @@ self.addEventListener("fetch", (event) => {
   }
 
   event.respondWith(
-    caches.match(request).then((cached) => {
+    caches.open(ATLASO_CACHE).then((cache) => cache.match(request).then((cached) => {
       const refresh = fetch(request).then((response) => {
         if (response && response.ok) {
           const copy = response.clone();
-          caches.open(ATLASO_CACHE).then((cache) => cache.put(request, copy)).catch(() => undefined);
+          cache.put(request, copy).catch(() => undefined);
         }
         return response;
       }).catch(() => undefined);
@@ -125,6 +127,6 @@ self.addEventListener("fetch", (event) => {
         return cached;
       }
       return refresh.then((response) => response || new Response("", { status: 504, statusText: "Gateway Timeout" }));
-    })
+    }))
   );
 });

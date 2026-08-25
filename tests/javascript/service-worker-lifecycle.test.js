@@ -17,10 +17,19 @@ function lifecycleScenario(failureMode = null) {
   const listeners = new Map();
   const entries = new Map([
     [previousCache, new Map([["/static/app.js", { ok: true }]])],
-    [unrelatedCache, new Map([["/operator-data", { ok: true }]])],
+    [unrelatedCache, new Map([
+      ["/operator-data", { ok: true }],
+      [requiredFailureAsset, { ok: true, source: "unrelated" }],
+      ["/static/offline.html", { ok: true, source: "unrelated" }],
+    ])],
   ]);
   let skipWaitingCalls = 0;
   let claimCalls = 0;
+  let networkUnavailable = false;
+
+  function cacheKey(request) {
+    return typeof request === "string" ? request : new URL(request.url).pathname + new URL(request.url).search;
+  }
 
   const caches = {
     async open(name) {
@@ -30,7 +39,10 @@ function lifecycleScenario(failureMode = null) {
           if (failureMode === "cache-put" && asset === requiredFailureAsset) {
             throw new Error("simulated cache write failure");
           }
-          entries.get(name).set(asset, response);
+          entries.get(name).set(cacheKey(asset), response);
+        },
+        async match(request) {
+          return entries.get(name).get(cacheKey(request));
         },
       };
     },
@@ -45,11 +57,14 @@ function lifecycleScenario(failureMode = null) {
   const context = vm.createContext({
     caches,
     fetch: async (asset) => {
+      if (networkUnavailable) throw new Error("simulated offline state");
       if (asset === requiredFailureAsset && failureMode === "network") {
         throw new Error("simulated network failure");
       }
       return {
         ok: !(asset === requiredFailureAsset && failureMode === "http"),
+        source: "network",
+        clone() { return this; },
       };
     },
     self: {
@@ -82,9 +97,23 @@ function lifecycleScenario(failureMode = null) {
     return lifecyclePromise;
   }
 
+  async function dispatchFetch(request) {
+    let responsePromise;
+    listeners.get("fetch")({
+      request,
+      respondWith(promise) {
+        responsePromise = Promise.resolve(promise);
+      },
+    });
+    assert.ok(responsePromise, "eligible fetch must register a response promise");
+    return responsePromise;
+  }
+
   return {
     dispatch,
+    dispatchFetch,
     entries,
+    setNetworkUnavailable(value) { networkUnavailable = value; },
     get skipWaitingCalls() { return skipWaitingCalls; },
     get claimCalls() { return claimCalls; },
   };
@@ -117,4 +146,27 @@ test("complete precache activates and retires only prior Atlaso management cache
   assert.equal(scenario.entries.has(currentCache), true);
   assert.equal(scenario.entries.has(previousCache), false);
   assert.equal(scenario.entries.has(unrelatedCache), true);
+});
+
+test("asset and offline fallback reads ignore overlapping unrelated cache entries", async () => {
+  const scenario = lifecycleScenario();
+  await scenario.dispatch("install");
+  await scenario.dispatch("activate");
+
+  const assetResponse = await scenario.dispatchFetch({
+    method: "GET",
+    mode: "no-cors",
+    url: `https://atlaso.example${requiredFailureAsset}`,
+    headers: { get() { return ""; } },
+  });
+  assert.equal(assetResponse.source, "network");
+
+  scenario.setNetworkUnavailable(true);
+  const offlineResponse = await scenario.dispatchFetch({
+    method: "GET",
+    mode: "navigate",
+    url: "https://atlaso.example/ui/management/dashboard",
+    headers: { get() { return "text/html"; } },
+  });
+  assert.equal(offlineResponse.source, "network");
 });
