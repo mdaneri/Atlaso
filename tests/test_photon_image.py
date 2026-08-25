@@ -1567,6 +1567,10 @@ def test_create_atlaso_vmware_test_vm_wrapper_uses_common_helpers():
     assert explicit_ssh_probe in build_script
     assert static_builder_probe in build_script
     assert build_script.index(explicit_ssh_probe) < build_script.index(static_builder_probe)
+    assert build_script.count("Initialize-AtlasoWorkstationGui -VmrunPath $resolvedVmrunPath") == 1
+    assert build_script.index("$packerBuildInvoker = {") < build_script.index(
+        "Initialize-AtlasoWorkstationGui -VmrunPath $resolvedVmrunPath"
+    ) < build_script.index("Invoke-AtlasoMonitoredPackerBuild")
 
     lifecycle_script = Path(
         "scripts/windows/vmware/run-lifecycle-test.ps1"

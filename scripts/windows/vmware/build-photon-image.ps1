@@ -516,10 +516,6 @@ if (-not $ValidateOnly -and -not $PrepareIsoOnly) {
             -RemovalRoot $workstationOutputDirectory `
             -Confirm:$false
     }
-    if (-not $Headless) {
-        $null = Initialize-AtlasoWorkstationGui -VmrunPath $resolvedVmrunPath
-    }
-
     $builderAddress = if (-not [string]::IsNullOrWhiteSpace($SshHost)) {
         $SshHost
     }
@@ -550,6 +546,11 @@ if (-not $ValidateOnly -and -not $PrepareIsoOnly) {
     $packerBuildInvoker = {
         param($PackerArguments, $WorkingDirectory)
 
+        # ISO preparation and Packer initialization can be lengthy, so prove the
+        # GUI provider is responsive at the last safe point before Packer starts.
+        if (-not $Headless) {
+            $null = Initialize-AtlasoWorkstationGui -VmrunPath $resolvedVmrunPath
+        }
         $packerPath = (Get-Command packer -ErrorAction Stop).Source
         Invoke-AtlasoMonitoredPackerBuild `
             -PackerPath $packerPath `
