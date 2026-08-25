@@ -6330,8 +6330,8 @@ def _load_management_front_door_state() -> dict:
             backup = Path(str(item.get("backup", "")))
             if backup.parent != MANAGEMENT_FRONT_DOOR_BACKUP_DIR:
                 raise ValueError("management front-door rollback backup is invalid")
-            if os.name == "posix":
-                state_descriptor = _open_management_front_door_state_directory(create=False)
+            state_descriptor = _open_management_front_door_state_directory(create=False)
+            if state_descriptor is not None:
                 try:
                     backup_descriptor = os.open(
                         MANAGEMENT_FRONT_DOOR_BACKUP_DIR.name,
@@ -6354,8 +6354,7 @@ def _load_management_front_door_state() -> dict:
                     finally:
                         os.close(backup_descriptor)
                 finally:
-                    if state_descriptor is not None:
-                        os.close(state_descriptor)
+                    os.close(state_descriptor)
             else:
                 item["backup_content"] = _read_management_front_door_member(
                     None,
