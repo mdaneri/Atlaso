@@ -40,6 +40,16 @@ appliance-apply unit.
 Atlaso always blocks management-to-lab and lab-to-management forwarding. DHCP bootstrap rules remain interface-bound
 and are not group-filtered.
 
+Generated management-listener rules admit TCP/22, TCP/80, and TCP/443 on both a dedicated management interface and an
+access physical interface or VLAN whose **Management UI** flag is applied. The listener's configured Source Group
+predicate governs all three ports. Atlaso does not add TCP/22 to unflagged access networks, and firewall admission does
+not enable root login: the separate Appliance Settings root-SSH preference remains authoritative while ordinary
+bootstrap-administrator or key-based SSH stays available on every effective management listener.
+
+During a protected management handoff, the previous listener retains its SSH rule until the candidate management path
+and front door pass readiness. A successful handoff leaves the generated TCP/22 rule on the new listener; rollback
+restores the previous rule with its original Source Group constraint.
+
 ## Verify and recover
 
 After a successful task, test the required TCP or UDP service from the intended network. On the appliance, maintainers

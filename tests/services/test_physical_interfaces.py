@@ -15,6 +15,7 @@ from atlaso.app.models import (
     DnsSettings,
     NtpSettings,
     PhysicalInterface,
+    Route,
     VlanInterface,
 )
 from atlaso.app.services.physical_interfaces import (
@@ -44,6 +45,153 @@ def _mutation_audit(action: str = "test_update_interface") -> PhysicalInterfaceM
         action: Audit action to associate with the test mutation.
     """
     return PhysicalInterfaceMutationAudit(actor="service-test", action=action)
+
+
+def _static_management_interface(db) -> PhysicalInterface:
+    """Return one dual-stack static interface configured as a management listener."""
+    interface = _physical_interface(db)
+    interface.role = "management"
+    interface.mode = "access"
+    interface.admin_state = "up"
+    interface.oper_state = "up"
+    interface.ipv4_method = "static"
+    interface.ip_cidr = "192.0.2.10/24"
+    interface.gateway = "192.0.2.1"
+    interface.ipv6_enabled = True
+    interface.ipv6_cidr = "2001:db8:50::10/64"
+    interface.ipv6_gateway = "2001:db8:50::1"
+    interface.access_management_ui_enabled = False
+    db.add(interface)
+    return interface
+
+
+def test_management_to_access_migrates_dual_stack_gateways_atomically(client):
+    """Stage both default routes, dependent units, and value-free audit in one commit."""
+    with SessionLocal() as db:
+        db.query(Route).delete()
+        interface = _static_management_interface(db)
+        db.commit()
+
+        result = mutate_physical_interface_desired_state(
+            db,
+            interface,
+            PhysicalInterfaceMutation(role="access"),
+            audit=_mutation_audit("test_management_gateway_migration"),
+        )
+
+        routes = db.execute(select(Route).order_by(Route.destination_cidr)).scalars().all()
+        assert {
+            (route.destination_cidr, route.gateway, route.interface_name, route.enabled)
+            for route in routes
+        } == {
+            ("0.0.0.0/0", "192.0.2.1", "eth2", True),
+            ("::/0", "2001:db8:50::1", "eth2", True),
+        }
+        assert result.interface.gateway is None
+        assert result.interface.ipv6_gateway is None
+        assert result.interface.access_management_ui_enabled is True
+        assert "Routes & WAN Simulation" in result.changed_dependent_units
+        assert "Appliance Settings" in result.changed_dependent_units
+        assert "Staged an IPv4 default route" in result.audit_detail
+        assert "Staged an IPv6 default route" in result.audit_detail
+        assert result.routing_audit_event is not None
+        assert result.routing_audit_event.resource_type == "route"
+        assert result.routing_audit_event.action == "preserve_management_gateway_routes"
+
+
+def test_management_to_access_reuses_equivalent_default_without_duplicate(client):
+    """Enable and reuse an equivalent family default rather than inserting a second row."""
+    with SessionLocal() as db:
+        db.query(Route).delete()
+        interface = _static_management_interface(db)
+        interface.ipv6_gateway = None
+        db.add(
+            Route(
+                destination_cidr="0.0.0.0/0",
+                gateway="192.0.2.1",
+                interface_name=interface.name,
+                metric=25,
+                enabled=False,
+            )
+        )
+        db.commit()
+
+        result = mutate_physical_interface_desired_state(
+            db,
+            interface,
+            PhysicalInterfaceMutation(role="access"),
+            audit=_mutation_audit("test_management_gateway_reuse"),
+        )
+
+        routes = db.execute(select(Route)).scalars().all()
+        assert len(routes) == 1
+        assert routes[0].enabled is True
+        assert routes[0].metric == 25
+        assert "Enabled the existing IPv4 default route" in result.audit_detail
+        assert "no IPv6 default route was staged" in result.audit_detail
+
+
+def test_management_to_access_conflicting_default_rolls_back_every_row(client):
+    """Reject a conflicting family default without clearing management or persisting audit."""
+    with SessionLocal() as db:
+        db.query(Route).delete()
+        interface = _static_management_interface(db)
+        db.add(
+            Route(
+                destination_cidr="0.0.0.0/0",
+                gateway="198.51.100.1",
+                interface_name="eth1",
+                enabled=True,
+            )
+        )
+        db.commit()
+
+        with pytest.raises(
+            PhysicalInterfaceUpdateError,
+            match="IPv4 default route already targets eth1",
+        ):
+            mutate_physical_interface_desired_state(
+                db,
+                interface,
+                PhysicalInterfaceMutation(role="access"),
+                audit=_mutation_audit("test_management_gateway_conflict"),
+            )
+
+    with SessionLocal() as db:
+        restored = _physical_interface(db)
+        assert restored.role == "management"
+        assert restored.gateway == "192.0.2.1"
+        assert restored.ipv6_gateway == "2001:db8:50::1"
+        assert db.execute(select(Route)).scalars().one().interface_name == "eth1"
+        assert (
+            db.execute(
+                select(AuditEvent).where(
+                    AuditEvent.action == "test_management_gateway_conflict"
+                )
+            ).scalar_one_or_none()
+            is None
+        )
+
+
+def test_management_to_access_missing_gateways_does_not_invent_routes(client):
+    """Record the no-gateway outcome while preserving management-listener continuity."""
+    with SessionLocal() as db:
+        db.query(Route).delete()
+        interface = _static_management_interface(db)
+        interface.gateway = None
+        interface.ipv6_gateway = None
+        db.commit()
+
+        result = mutate_physical_interface_desired_state(
+            db,
+            interface,
+            PhysicalInterfaceMutation(role="access"),
+            audit=_mutation_audit("test_management_gateway_missing"),
+        )
+
+        assert db.execute(select(Route)).scalars().all() == []
+        assert len(result.routing_warnings) == 2
+        assert result.interface.access_management_ui_enabled is True
 
 
 def test_mutation_commits_interface_dependencies_and_audit_together(client):

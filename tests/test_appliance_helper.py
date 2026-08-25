@@ -30,13 +30,91 @@ def load_helper_module():
     return module
 
 
+def test_management_handoff_applies_and_restores_coupled_wan(monkeypatch):
+    """Apply candidate WAN intent and restore its last-applied config through one helper path."""
+    helper = load_helper_module()
+    calls = []
+    monkeypatch.setattr(
+        helper,
+        "_handle_wan",
+        lambda action, args: calls.append((action, args[0])) or 0,
+    )
+
+    helper._apply_management_handoff_wan({"wan_config_path": "/candidate.conf"})
+    evidence = []
+    helper._restore_management_handoff_wan(
+        {"wan_rollback_config_path": "/rollback.conf"},
+        evidence,
+    )
+
+    assert calls == [("apply", "/candidate.conf"), ("apply", "/rollback.conf")]
+    assert evidence == [
+        {
+            "stage": "WAN rollback",
+            "command": ["atlaso-helper", "wan", "apply", "/rollback.conf"],
+            "returncode": 0,
+        }
+    ]
+
+
+def test_management_handoff_wan_failure_is_truthful(monkeypatch):
+    """Reject both candidate and rollback WAN failures at their bounded layers."""
+    helper = load_helper_module()
+    monkeypatch.setattr(helper, "_handle_wan", lambda *_args: 1)
+
+    with pytest.raises(ValueError, match="candidate Routes & WAN apply failed"):
+        helper._apply_management_handoff_wan({"wan_config_path": "/candidate.conf"})
+    with pytest.raises(ValueError, match="Routes & WAN rollback failed"):
+        helper._restore_management_handoff_wan(
+            {"wan_rollback_config_path": "/rollback.conf"},
+            [],
+        )
+
+
+def test_wan_rollback_allows_removing_route_from_restored_management_target(tmp_path):
+    """Validate candidate-only route cleanup against the prior management role."""
+    helper = load_helper_module()
+    config_path = tmp_path / "atlaso-wan-rollback.conf"
+    config_path.write_text(
+        """[targets]
+target=eth0
+  kind=physical
+  role=management
+  ip_cidr=192.0.2.10/24
+  ipv6_cidr=
+  gateway=192.0.2.1
+  ipv6_gateway=
+  ipv4_method=static
+  routing_domain=management
+  route_allowed=false
+
+[routes]
+
+[removed_routes]
+route=0.0.0.0/0
+  gateway=192.0.2.1
+  interface=eth0
+  metric=100
+
+[routing_rules]
+
+[nat_rules]
+
+[wan_policies]
+""",
+        encoding="utf-8",
+    )
+
+    assert helper._wan_config_errors(config_path) == []
+
+
 def test_management_handoff_firewall_keeps_previous_management_rules():
     """Keep old management firewall access during candidate validation."""
     helper = load_helper_module()
     previous = '''table inet atlaso {
   chain input {
     iifname "eth0" tcp dport { 22,80,443 } accept comment "mgmt-console"
-    iifname "eth2" tcp dport { 80,443 } accept comment "management-ui-eth2"
+    iifname "eth2" tcp dport { 22,80,443 } accept comment "management-ui-eth2"
   }
 }
 '''
@@ -71,7 +149,7 @@ table inet atlaso {
 flush ruleset
 # Atlaso firewall desired state is disabled.
 '''
-    candidate_rule = '    iifname "eth1" tcp dport { 80, 443, 8443 } accept comment "management-ui-eth1"'
+    candidate_rule = '    iifname "eth1" tcp dport { 22, 80, 443, 8443 } accept comment "management-ui-eth1"'
 
     transitional = helper._management_handoff_firewall_text(
         candidate,
@@ -193,8 +271,8 @@ table inet atlaso {
   chain input {
     type filter hook input priority filter; policy drop;
     iifname "eth1" ip saddr 192.0.2.0/24 tcp dport { 22, 80, 443 } accept comment "mgmt-console"
-    iifname "eth2" ip6 saddr 2001:db8:2::/64 tcp dport { 80, 443 } accept comment "management-ui-eth2"
-    iifname "eth3.20" ip saddr { 198.51.100.0/24, 203.0.113.0/24 } tcp dport { 80, 443 } accept comment "management-ui-eth3.20"
+    iifname "eth2" ip6 saddr 2001:db8:2::/64 tcp dport { 22, 80, 443 } accept comment "management-ui-eth2"
+    iifname "eth3.20" ip saddr { 198.51.100.0/24, 203.0.113.0/24 } tcp dport { 22, 80, 443 } accept comment "management-ui-eth3.20"
   }
 }
 '''
@@ -238,6 +316,53 @@ def test_management_handoff_builds_open_candidate_listener_firewall_rules(monkey
     assert rules == [
         '    iifname "eth1" tcp dport { 22, 80, 443, 8443 } accept comment "mgmt-console"'
     ]
+
+
+def test_management_handoff_builds_open_flagged_listener_firewall_rules(monkeypatch):
+    """Keep bootstrap-admin SSH on flagged physical and VLAN candidate listeners."""
+    helper = load_helper_module()
+    monkeypatch.setattr(
+        helper,
+        "_parse_network_config",
+        lambda _path: (
+            [
+                {
+                    "name": "eth1",
+                    "role": "access",
+                    "mode": "access",
+                    "admin_state": "up",
+                    "access_management_ui_enabled": "true",
+                },
+                {
+                    "name": "eth2",
+                    "role": "access",
+                    "mode": "access",
+                    "admin_state": "up",
+                    "access_management_ui_enabled": "false",
+                },
+            ],
+            [
+                {
+                    "name": "eth3.20",
+                    "role": "access",
+                    "access_management_ui_enabled": "true",
+                }
+            ],
+            [],
+        ),
+    )
+
+    rules = helper._management_handoff_candidate_firewall_rules(
+        Path("candidate"),
+        8443,
+        "flush ruleset\n# Atlaso firewall desired state is disabled.\n",
+    )
+
+    assert rules == [
+        '    iifname "eth1" tcp dport { 22, 80, 443, 8443 } accept comment "management-ui-eth1"',
+        '    iifname "eth3.20" tcp dport { 22, 80, 443, 8443 } accept comment "management-ui-eth3.20"',
+    ]
+    assert all('iifname "eth2"' not in rule for rule in rules)
 
 
 def test_management_handoff_snapshot_covers_every_nginx_side_effect():
@@ -1523,6 +1648,7 @@ def test_management_handoff_candidate_durability_gates_ack(
     nginx_suffixes: list[str] = []
     nginx_restart_options: list[bool] = []
     retirement_operations: list[str] = []
+    wan_calls: list[str] = []
     monkeypatch.setattr(helper, "_snapshot_management_handoff", lambda _payload: state)
     monkeypatch.setattr(
         helper,
@@ -1533,6 +1659,11 @@ def test_management_handoff_candidate_durability_gates_ack(
     monkeypatch.setattr(helper, "_install_management_holdovers", lambda _state, _payload: [])
     monkeypatch.setattr(helper, "_write_management_handoff_state", lambda _state, phase: phases.append(phase))
     monkeypatch.setattr(helper, "_apply_management_candidate_network", lambda *_args: None)
+    monkeypatch.setattr(
+        helper,
+        "_apply_management_handoff_wan",
+        lambda payload: wan_calls.append(str(payload["wan_config_path"])),
+    )
     candidate_rule = '    iifname "eth1" tcp dport { 22, 80, 443, 8443 } accept comment "mgmt-console"'
     monkeypatch.setattr(
         helper,
@@ -1625,6 +1756,7 @@ def test_management_handoff_candidate_durability_gates_ack(
             "firewall_config_path": str(candidate),
             "appliance_settings_config_path": "candidate-settings",
             "public_services_config_path": "candidate-public",
+            "wan_config_path": "candidate-wan",
         }
     )
 
@@ -1645,6 +1777,7 @@ def test_management_handoff_candidate_durability_gates_ack(
     assert cleared == []
     assert restored == []
     assert resolver_calls == ["eth1", "eth1"]
+    assert wan_calls == ["candidate-wan", "candidate-wan"]
     assert retirement_operations == ["resolver", "final-network", "resolver"]
     assert len(applied_firewalls) == 2
     assert candidate_rule in applied_firewalls[0]
@@ -5408,6 +5541,59 @@ def test_wan_helper_accepts_ipv6_routes_and_rejects_ipv6_only_nat_targets(tmp_pa
     assert any("outbound interface with an IPv4 CIDR" in error for error in helper._wan_config_errors(ipv6_only_nat))
 
 
+def test_wan_helper_installs_flagged_management_default_in_main_table(tmp_path):
+    """Keep locally originated appliance traffic on the migrated default route."""
+    helper = load_helper_module()
+    config_path = tmp_path / "flagged-management-default.conf"
+    config_path.write_text(
+        """[targets]
+target=eth0
+  kind=physical
+  role=access
+  ip_cidr=192.0.2.10/24
+  routing_domain=lab
+  route_allowed=true
+  management_ui=true
+
+[routes]
+route=0.0.0.0/0
+  gateway=192.0.2.1
+  interface=eth0
+  metric=100
+  enabled=true
+  wan_mode=interface
+
+[routing_rules]
+[nat_rules]
+[wan_policies]
+""",
+        encoding="utf-8",
+    )
+    parsed = helper._parse_wan_config(config_path)
+    commands: list[list[str]] = []
+    helper._run = lambda command: (
+        commands.append(command)
+        or subprocess.CompletedProcess(command, 0, "", "")
+    )
+    helper.shutil.which = lambda command: (
+        f"/usr/sbin/{command}" if command in {"ip", "tc"} else None
+    )
+
+    assert helper._apply_wan_routes_and_qdiscs(parsed) == 0
+    assert [
+        "ip",
+        "route",
+        "replace",
+        "0.0.0.0/0",
+        "via",
+        "192.0.2.1",
+        "dev",
+        "eth0",
+        "metric",
+        "100",
+    ] in commands
+
+
 def test_wan_helper_cleans_managed_policy_rule_windows_before_apply(tmp_path):
     """Verify that wan helper cleans managed policy rule windows before apply.
 
@@ -6456,6 +6642,9 @@ def test_wan_helper_apply_routes_nat_and_netem(monkeypatch, tmp_path):
     config_path.write_text(wan_config_text(), encoding="utf-8")
     nat_dir = tmp_path / "nftables.d"
     service_path = tmp_path / "atlaso-nat.service"
+    runtime_dir = tmp_path / "etc" / "atlaso" / "wan"
+    runtime_path = runtime_dir / "atlaso-wan.conf"
+    replay_service_path = tmp_path / "atlaso-wan.service"
     sysctl_path = tmp_path / "90-atlaso-routing-wan.conf"
     commands: list[list[str]] = []
     input_commands: list[tuple[list[str], str]] = []
@@ -6484,6 +6673,9 @@ def test_wan_helper_apply_routes_nat_and_netem(monkeypatch, tmp_path):
     monkeypatch.setattr(helper, "WAN_NAT_CONFIG_PATH", nat_dir / "atlaso-nat.nft")
     monkeypatch.setattr(helper, "WAN_NAT_SERVICE_PATH", service_path)
     monkeypatch.setattr(helper, "WAN_SYSCTL_PATH", sysctl_path)
+    monkeypatch.setattr(helper, "WAN_RUNTIME_CONFIG_DIR", runtime_dir)
+    monkeypatch.setattr(helper, "WAN_RUNTIME_CONFIG_PATH", runtime_path)
+    monkeypatch.setattr(helper, "WAN_SERVICE_PATH", replay_service_path)
     monkeypatch.setattr(helper.shutil, "which", lambda command: f"/usr/sbin/{command}")
     monkeypatch.setattr(helper, "_run", fake_run)
     monkeypatch.setattr(helper, "_run_with_input", fake_run_with_input)
@@ -6499,6 +6691,12 @@ def test_wan_helper_apply_routes_nat_and_netem(monkeypatch, tmp_path):
     assert ["ip", "route", "replace", "10.20.0.0/24", "dev", "eth1.20", "metric", "120", "table", "200"] in commands
     assert ["tc", "qdisc", "replace", "dev", "eth1.20", "root", "netem", "delay", "100ms", "10ms", "loss", "0.5%", "rate", "100mbit"] in commands
     assert service_path.exists()
+    assert runtime_path.read_text(encoding="utf-8") == config_path.read_text(
+        encoding="utf-8"
+    )
+    assert "wan restore --real" in replay_service_path.read_text(encoding="utf-8")
+    assert "restore" in helper.COMMANDS["wan"]
+    assert ["systemctl", "enable", "atlaso-wan.service"] in commands
     assert sysctl_path.read_text(encoding="utf-8") == "net.ipv4.ip_forward = 1\n"
 
 
@@ -10456,6 +10654,33 @@ server {
 
     assert "Public services web terminal config must not expose location = /dashboard." in errors
     assert "Public services HTTP config may serve only ESXi PXE paths." not in errors
+
+
+def test_public_services_helper_accepts_management_websocket_front_door(tmp_path):
+    """Accept WebSocket upgrade locations on an effective management listener."""
+    helper = load_helper_module()
+    config_path = tmp_path / "public-services.conf"
+    config_path.write_text(
+        """# IP-scoped public service front door for non-management interfaces.
+server {
+  # IP-scoped management HTTPS front door.
+  location = /terminal/ws {
+    proxy_set_header X-Atlaso-Listener-Address $server_addr;
+    proxy_set_header Upgrade $http_upgrade;
+    proxy_set_header Connection "upgrade";
+  }
+  location = /ui/management/terminal/ws {
+    proxy_set_header X-Atlaso-Listener-Address $server_addr;
+    proxy_set_header Upgrade $http_upgrade;
+    proxy_set_header Connection "upgrade";
+  }
+  location / { proxy_pass http://127.0.0.1:8000; }
+}
+""",
+        encoding="utf-8",
+    )
+
+    assert helper._public_services_config_errors(config_path) == []
 
 
 def test_appliance_settings_helper_rejects_invalid_json(tmp_path):

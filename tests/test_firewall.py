@@ -314,8 +314,8 @@ def test_managed_service_firewall_rules_skip_ca_portal_when_ca_disabled():
     assert {rule.name for rule in rules} == {"mgmt-console"}
 
 
-def test_access_management_ui_firewall_rule_opens_browser_ports_without_ssh():
-    """Verify a flagged access listener does not inherit dedicated-management SSH exposure."""
+def test_access_management_listener_firewall_rule_preserves_bootstrap_ssh():
+    """Verify a flagged access listener admits the complete management plane."""
     rules = managed_service_firewall_rules(
         dns_settings=DnsSettings(enabled=False),
         dhcp_settings=DhcpSettings(enabled=False),
@@ -333,7 +333,7 @@ def test_access_management_ui_firewall_rule_opens_browser_ports_without_ssh():
 
     assert len(rules) == 1
     assert rules[0].name == "management-ui-eth0"
-    assert rules[0].destination_port == "80,443"
+    assert rules[0].destination_port == "22,80,443"
 
 
 def test_dhcp_management_firewall_rule_does_not_require_a_desired_static_network():
@@ -356,7 +356,45 @@ def test_dhcp_management_firewall_rule_does_not_require_a_desired_static_network
     by_name = {rule.name: rule for rule in rules}
     assert by_name["mgmt-console"].interface_name == "eth0"
     assert by_name["mgmt-console"].destination_port == "22,80,443"
-    assert by_name["management-ui-eth1"].destination_port == "80,443"
+    assert by_name["management-ui-eth1"].destination_port == "22,80,443"
+
+
+def test_flagged_physical_and_vlan_management_listeners_preserve_source_group_and_ssh():
+    """Apply one Source Group predicate to flagged physical and VLAN management SSH."""
+    rules = managed_service_firewall_rules(
+        dns_settings=DnsSettings(enabled=False),
+        dhcp_settings=DhcpSettings(enabled=False),
+        dhcp_scopes=[],
+        ca_settings=CaSettings(enabled=False),
+        kms_settings=KmsSettings(enabled=False),
+        ntp_settings=NtpSettings(enabled=False),
+        vcf_backup_settings=VcfBackupSettings(enabled=False),
+        vcf_depot_settings=VcfOfflineDepotSettings(enabled=False),
+        vcf_registry_settings=VcfPrivateRegistrySettings(enabled=False),
+        interface_networks={
+            "eth1": "192.0.2.0/24",
+            "eth2.20": "198.51.100.0/24",
+            "eth3": "203.0.113.0/24",
+        },
+        source_groups=[
+            {"id": "any", "name": "Any", "entries": ["any"]},
+            {
+                "id": "custom:operators",
+                "name": "Operators",
+                "entries": ["10.20.0.0/16"],
+            },
+        ],
+        source_group_assignments={"management-ui": "custom:operators"},
+        management_interface="",
+        access_management_ui_interfaces=["eth1", "eth2.20"],
+    )
+
+    by_name = {rule.name: rule for rule in rules}
+    assert by_name["management-ui-eth1"].destination_port == "22,80,443"
+    assert by_name["management-ui-eth1"].source == "10.20.0.0/16"
+    assert by_name["management-ui-eth2.20"].destination_port == "22,80,443"
+    assert by_name["management-ui-eth2.20"].source == "10.20.0.0/16"
+    assert "management-ui-eth3" not in by_name
 
 
 def test_managed_service_firewall_rules_add_https_for_extra_terminal_interfaces():

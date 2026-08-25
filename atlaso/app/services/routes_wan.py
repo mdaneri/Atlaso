@@ -529,6 +529,7 @@ def render_wan_config(
                 f"  ipv4_method={target.get('ipv4_method', 'static')}",
                 f"  routing_domain={target.get('routing_domain', 'lab')}",
                 f"  route_allowed={_bool_value(bool(target.get('route_allowed', True)))}",
+                f"  management_ui={_bool_value(bool(target.get('management_ui', False)))}",
             ]
         )
 
@@ -694,14 +695,29 @@ def render_wan_config(
         destination_cidr = canonical_route_destination(route.destination_cidr)
         destination = ip_network(destination_cidr, strict=False)
         route_family = "-6 " if destination.version == 6 else ""
+        route_target = next(
+            (target for target in targets if target.get("name") == route.interface_name),
+            {},
+        )
+        management_ui_default = bool(
+            destination.prefixlen == 0 and route_target.get("management_ui")
+        )
         if not route.enabled:
             lines.append(f"ip {route_family}route del {destination_cidr} dev {route.interface_name} table {LAB_ROUTE_TABLE_ID}  # disabled desired route")
+            if management_ui_default:
+                lines.append(
+                    f"ip {route_family}route del {destination_cidr} dev {route.interface_name}"
+                    "  # disabled flagged-management default"
+                )
             continue
         command = ["ip", "-6", "route", "replace", destination_cidr] if destination.version == 6 else ["ip", "route", "replace", destination_cidr]
         if route.gateway:
             command.extend(["via", route.gateway])
         command.extend(["dev", route.interface_name, "metric", str(route.metric), "table", str(LAB_ROUTE_TABLE_ID)])
         lines.append(" ".join(command))
+        if management_ui_default:
+            main_command = command[:-2]
+            lines.append(" ".join(main_command) + "  # flagged-management host default")
         policy = policy_lookup.get(route.wan_policy_id or 0) or route.wan_policy
         if policy and policy.enabled:
             lines.append(" ".join(["tc", "qdisc", "replace", "dev", route.interface_name, "root", "netem", *netem_args(policy)]))
@@ -714,4 +730,17 @@ def render_wan_config(
             destination = None
         route_family = "-6 " if destination and destination.version == 6 else ""
         lines.append(f"ip {route_family}route del {route.get('destination_cidr', '')} dev {route.get('interface_name', '')} table {LAB_ROUTE_TABLE_ID}  # removed managed route")
+        route_target = next(
+            (
+                target
+                for target in targets
+                if target.get("name") == route.get("interface_name", "")
+            ),
+            {},
+        )
+        if destination and destination.prefixlen == 0 and route_target.get("management_ui"):
+            lines.append(
+                f"ip {route_family}route del {route.get('destination_cidr', '')} "
+                f"dev {route.get('interface_name', '')}  # removed flagged-management default"
+            )
     return "\n".join(lines).strip() + "\n"

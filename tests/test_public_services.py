@@ -179,6 +179,9 @@ def test_flagged_terminal_access_uses_management_certificate_and_complete_front_
     assert "ssl_certificate_key /management.key;" in config
     assert "ssl_certificate /terminal.crt;" not in config
     assert "location = /terminal {" in config
+    assert "location = /terminal/ws {" in config
+    assert "location = /ui/management/terminal/ws {" in config
+    assert config.count("proxy_set_header Upgrade $http_upgrade;") >= 2
     assert "location / {\n    proxy_pass http://127.0.0.1:8000;" in config
     assert "location / {\n    return 404;" not in config
 

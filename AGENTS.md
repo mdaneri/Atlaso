@@ -357,12 +357,22 @@ The following cross-cutting boundaries always apply:
   flagged-access candidate must remove a stale dedicated `00-atlaso-mgmt.network` file when that file is not part of the
   candidate configuration. Retain a flagged-management VLAN's trunk parent for link rollback without treating the
   parent's addresses as management listeners or readiness targets.
+- Every effective management listener admits ordinary bootstrap-administrator SSH on TCP/22 as well as the management
+  HTTP/HTTPS ports. This includes flagged access physical interfaces and VLANs, with the same Source Group predicate in
+  desired previews and old/candidate/final handoff rules. Never infer root SSH enablement from firewall admission, and
+  never open TCP/22 merely because an unflagged access network exists.
 - Physical-interface desired-state updates from the API and UI use one atomic domain service. Capture the previous
   IPv4 and IPv6 CIDRs before mutation, refresh dependent service, ESX Storage, Web Terminal, DHCP, and Network Boot
   bindings before one commit, include child VLAN dependencies when their parent becomes unavailable, roll back every
   row when reconciliation fails, rebase reservations and their app-owned DNS records only when one updated DHCP scope
   is unambiguous, ignore inactive legacy DHCP binding fields when real scopes exist, and audit the dependent units that
   changed.
+- When a static physical interface changes from management to access, capture valid IPv4 and IPv6 gateways before
+  clearing the management-only fields and stage enabled canonical family defaults on the converted target in the same
+  transaction. Reuse an equivalent route, reject a conflicting family default with complete rollback, never invent a
+  missing gateway, mark and audit Network, Routes & WAN Simulation, and Appliance Settings, and keep host mutation in
+  the protected handoff. If the migrated route is absent from the applied WAN baseline, select WAN into that handoff,
+  validate candidate and rollback configs, and restore prior WAN runtime before old-path recovery succeeds.
 - Converting the dedicated management interface from DHCP to static must discover a usable DHCP-protocol IPv4 default
   route on that exact interface, review its observed address/prefix and on-link gateway together, and preserve the
   gateway in desired state. An absent or intentionally cleared gateway must warn that off-subnet connectivity will be
@@ -688,6 +698,9 @@ The following cross-cutting boundaries always apply:
   UI/API, audit, job, problem, or log data. The exact pending boot protocol response may carry only its own claim.
 - Browser navigation to a globally disabled Web Terminal must render the authenticated Atlaso unavailable-state page;
   reserve JSON and protocol errors for ticket, API, and WebSocket consumers.
+- Classify Web Terminal management page, ticket, and WebSocket eligibility from the last-applied Network binding,
+  including flagged access physical and VLAN listeners. Pending desired edits must not reclassify the applied listener;
+  handoff commit moves all three surfaces, rollback retains the old listener, and explicit extra listeners stay public.
 - VCF Offline Depot login return targets must be reconstructed beneath the server-owned `/PROD` prefix after strict
   relative-path validation. Unsupported or malformed destinations fall back to `/PROD/`; never redirect a successful
   depot login to an authority, scheme, traversal path, or browser-equivalent backslash form supplied by the request.

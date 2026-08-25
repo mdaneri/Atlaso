@@ -55,7 +55,9 @@ flowchart LR
 
 Atlaso groups related settings into apply units. For example, DNS and DHCP share one `DNS/DHCP (dnsmasq)` unit because
 they use the same generated configuration and service reload. A change can affect several units; Web Terminal listener
-changes commonly require **Appliance Settings**, **Public Services**, and **Firewall** together.
+changes commonly require **Appliance Settings**, **Public Services**, and **Firewall** together. A static
+management-to-access role conversion that migrates a gateway also selects **Routes & WAN Simulation** with Network and
+runs both through the protected management handoff; its prior WAN config is the rollback source.
 
 ## Review pending changes
 

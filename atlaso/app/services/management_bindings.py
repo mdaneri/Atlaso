@@ -128,6 +128,7 @@ def applied_management_bindings(db: Session) -> list[dict[str, str]] | None:
         flagged_vlan = (
             row.get("kind") == "vlan"
             and row.get("role") == "access"
+            and row.get("enabled", "true").lower() == "true"
             and row.get("access_management_ui_enabled", "false").lower() == "true"
         )
         if not (dedicated or flagged_physical or flagged_vlan):

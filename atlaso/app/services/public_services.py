@@ -623,6 +623,18 @@ def _management_https_server_lines(
         f"  ssl_certificate_key {key_path};",
         "  client_max_body_size 1g;",
         "",
+        *_proxy_location(
+            "= /terminal/ws",
+            upstream_host,
+            upstream_port,
+            forwarded_proto="https",
+            extra_directives=[
+                "    proxy_set_header Upgrade $http_upgrade;",
+                '    proxy_set_header Connection "upgrade";',
+            ],
+        ),
+        *_management_ui_proxy_locations(upstream_host, upstream_port),
+        "",
         *_proxy_location("/", upstream_host, upstream_port, forwarded_proto="https"),
         "}",
     ]
@@ -655,6 +667,17 @@ def _management_ui_proxy_locations(upstream_host: str, upstream_port: int) -> li
     return [
         "",
         *_proxy_location("= /ui/management", upstream_host, upstream_port, forwarded_proto="https"),
+        "",
+        *_proxy_location(
+            "= /ui/management/terminal/ws",
+            upstream_host,
+            upstream_port,
+            forwarded_proto="https",
+            extra_directives=[
+                "    proxy_set_header Upgrade $http_upgrade;",
+                '    proxy_set_header Connection "upgrade";',
+            ],
+        ),
         "",
         *_proxy_location("^~ /ui/management/", upstream_host, upstream_port, forwarded_proto="https"),
     ]

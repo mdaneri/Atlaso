@@ -1,10 +1,19 @@
 """Test web terminal behavior."""
 
+import json
 from datetime import datetime, timedelta, timezone
 from types import SimpleNamespace
 
+from sqlalchemy import select
+
 from atlaso.app import web_terminal
-from atlaso.app.models import ApplianceSettings, PhysicalInterface, VlanInterface
+from atlaso.app.database import SessionLocal
+from atlaso.app.models import (
+    ApplianceSettings,
+    PhysicalInterface,
+    Setting,
+    VlanInterface,
+)
 from atlaso.app.services.appliance_settings import (
     normalized_web_terminal_interfaces,
     validate_appliance_settings,
@@ -12,6 +21,130 @@ from atlaso.app.services.appliance_settings import (
     web_terminal_interface_options,
     web_terminal_listener_interfaces,
 )
+
+
+def _set_network_baseline(db, preview: str) -> None:
+    """Persist one exact last-applied Network preview for listener tests."""
+    setting = db.execute(
+        select(Setting).where(Setting.key == "appliance_apply.baselines.v1")
+    ).scalar_one_or_none()
+    if setting is None:
+        setting = Setting(key="appliance_apply.baselines.v1", value="{}")
+    setting.value = json.dumps({"network": {"config_preview": preview}})
+    db.add(setting)
+    db.commit()
+
+
+def test_terminal_network_state_follows_applied_flagged_listener_across_handoff(client):
+    """Keep the old listener pending, move after commit, and retain explicit public listeners."""
+    dedicated_preview = """[physical_interfaces]
+interface=eth0
+role=management
+mode=access
+admin_state=up
+ipv4_method=static
+ip_cidr=192.168.167.10/24
+ipv6_enabled=false
+ipv6_cidr=
+"""
+    flagged_vlan_preview = """[physical_interfaces]
+interface=eth1
+role=unused
+mode=trunk
+admin_state=up
+ipv4_method=static
+ip_cidr=
+ipv6_enabled=false
+ipv6_cidr=
+[vlan_interfaces]
+vlan=eth1.50
+parent=eth1
+vlan_id=50
+role=access
+enabled=true
+access_management_ui_enabled=true
+ip_cidr=192.168.50.1/24
+ipv6_cidr=
+"""
+    flagged_physical_preview = """[physical_interfaces]
+interface=eth0
+role=access
+mode=access
+admin_state=up
+access_management_ui_enabled=true
+ipv4_method=static
+ip_cidr=192.168.88.10/24
+ipv6_enabled=false
+ipv6_cidr=
+"""
+    with SessionLocal() as db:
+        settings = db.execute(select(ApplianceSettings)).scalar_one()
+        settings.web_terminal_enabled = True
+        settings.web_terminal_interfaces_json = '["eth2"]'
+        eth0 = db.execute(
+            select(PhysicalInterface).where(PhysicalInterface.name == "eth0")
+        ).scalar_one()
+        eth0.role = "access"
+        eth0.access_management_ui_enabled = False
+        eth0.ip_cidr = "192.168.88.10/24"
+        eth2 = db.execute(
+            select(PhysicalInterface).where(PhysicalInterface.name == "eth2")
+        ).scalar_one()
+        eth2.role = "access"
+        eth2.mode = "access"
+        eth2.admin_state = "up"
+        eth2.oper_state = "up"
+        eth2.ip_cidr = "192.168.87.32/24"
+        db.add(
+            VlanInterface(
+                name="eth1.50",
+                parent_interface="eth1",
+                vlan_id=50,
+                role="access",
+                enabled=True,
+                access_management_ui_enabled=True,
+                ip_cidr="192.168.50.1/24",
+            )
+        )
+        db.commit()
+        _set_network_baseline(db, dedicated_preview)
+
+        _desired, selected, addresses, management_addresses = (
+            web_terminal._terminal_network_state(db)
+        )
+        assert selected == ["eth0", "eth2"]
+        assert management_addresses == ["192.168.167.10"]
+        assert addresses == ["192.168.167.10", "192.168.87.32"]
+
+        _set_network_baseline(db, flagged_physical_preview)
+        _desired, selected, addresses, management_addresses = (
+            web_terminal._terminal_network_state(db)
+        )
+        assert selected == ["eth0", "eth2"]
+        assert management_addresses == ["192.168.88.10"]
+        assert addresses == ["192.168.88.10", "192.168.87.32"]
+
+        _set_network_baseline(db, flagged_vlan_preview)
+        _desired, selected, addresses, management_addresses = (
+            web_terminal._terminal_network_state(db)
+        )
+        assert selected == ["eth1.50", "eth2"]
+        assert management_addresses == ["192.168.50.1"]
+        assert addresses == ["192.168.50.1", "192.168.87.32"]
+
+        _set_network_baseline(
+            db,
+            flagged_vlan_preview.replace("enabled=true", "enabled=false"),
+        )
+        _desired, selected, addresses, management_addresses = (
+            web_terminal._terminal_network_state(db)
+        )
+        assert selected == ["eth2"]
+        assert management_addresses == []
+        assert addresses == ["192.168.87.32"]
+
+        _set_network_baseline(db, dedicated_preview)
+        assert web_terminal._terminal_network_state(db)[3] == ["192.168.167.10"]
 
 
 def test_web_terminal_interface_options_require_addressed_non_trunk_interfaces():

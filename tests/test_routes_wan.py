@@ -29,6 +29,39 @@ def test_default_route_helpers_and_renderer_use_canonical_semantics():
     assert "ip route replace 0.0.0.0/0 via 192.0.2.1 dev eth1 metric 90 table 200" in config
 
 
+def test_flagged_management_default_route_also_preserves_host_default():
+    """Render a migrated default into both lab policy and the host main table."""
+    route = Route(
+        destination_cidr="0.0.0.0/0",
+        gateway="192.0.2.1",
+        interface_name="eth1",
+        metric=90,
+        enabled=True,
+    )
+
+    config = render_wan_config(
+        [route],
+        targets=[
+            {
+                "name": "eth1",
+                "kind": "physical",
+                "role": "access",
+                "ip_cidr": "192.0.2.10/24",
+                "routing_domain": "lab",
+                "route_allowed": True,
+                "management_ui": True,
+            }
+        ],
+    )
+
+    assert "management_ui=true" in config
+    assert "ip route replace 0.0.0.0/0 via 192.0.2.1 dev eth1 metric 90 table 200" in config
+    assert (
+        "ip route replace 0.0.0.0/0 via 192.0.2.1 dev eth1 metric 90"
+        "  # flagged-management host default"
+    ) in config
+
+
 def test_removed_route_detection_compares_canonical_destinations():
     """Keep equivalent legacy baseline destinations during global Apply."""
     from atlaso.app.ui import removed_wan_route_entries

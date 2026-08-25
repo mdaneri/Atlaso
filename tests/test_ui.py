@@ -394,7 +394,7 @@ def test_web_terminal_uses_one_use_ticket_and_bridges_websocket_input(client, mo
 
     from atlaso.app import web_terminal
     from atlaso.app.database import SessionLocal
-    from atlaso.app.models import ApplianceSettings, User
+    from atlaso.app.models import ApplianceSettings, PhysicalInterface, Setting, User
 
     class FakeChannel:
         """Represent fake channel.
@@ -466,8 +466,15 @@ def test_web_terminal_uses_one_use_ticket_and_bridges_websocket_input(client, mo
         open_count += 1
         return FakeTransport(), channel
 
+    listener_checks = []
+
+    def uses_applied_listener(_headers, _server_host, addresses):
+        """Accept only the last-applied flagged-access management address."""
+        listener_checks.append(list(addresses))
+        return "192.168.88.10" in addresses
+
     monkeypatch.setattr(web_terminal, "get_settings", lambda: SimpleNamespace(environment="appliance"))
-    monkeypatch.setattr(web_terminal, "_request_uses_selected_listener", lambda *_args: True)
+    monkeypatch.setattr(web_terminal, "_request_uses_selected_listener", uses_applied_listener)
     monkeypatch.setattr(web_terminal, "_request_is_https", lambda *_args: True)
     monkeypatch.setattr(web_terminal, "_helper_applied", lambda: True)
     monkeypatch.setattr(web_terminal, "_open_ssh_channel", open_channel)
@@ -477,7 +484,32 @@ def test_web_terminal_uses_one_use_ticket_and_bridges_websocket_input(client, mo
         settings = db.execute(select(ApplianceSettings)).scalar_one()
         settings.management_https_enabled = True
         settings.web_terminal_enabled = True
-        settings.web_terminal_interfaces_json = '["eth0"]'
+        settings.web_terminal_interfaces_json = "[]"
+        eth0 = db.execute(select(PhysicalInterface).where(PhysicalInterface.name == "eth0")).scalar_one()
+        eth0.role = "access"
+        eth0.access_management_ui_enabled = False
+        eth0.ip_cidr = "192.168.99.10/24"
+        baseline = Setting(
+            key="appliance_apply.baselines.v1",
+            value=json.dumps(
+                {
+                    "network": {
+                        "config_preview": """[physical_interfaces]
+interface=eth0
+role=access
+mode=access
+admin_state=up
+access_management_ui_enabled=true
+ipv4_method=static
+ip_cidr=192.168.88.10/24
+ipv6_enabled=false
+ipv6_cidr=
+"""
+                    }
+                }
+            ),
+        )
+        db.add(baseline)
         admin = db.execute(select(User).where(User.username == "admin")).scalar_one()
         admin.shell = "/bin/bash"
         db.commit()
@@ -540,6 +572,9 @@ def test_web_terminal_uses_one_use_ticket_and_bridges_websocket_input(client, mo
 
     assert channel.sent == [b"whoami\r"]
     assert open_count == 1
+    assert listener_checks
+    assert all("192.168.88.10" in addresses for addresses in listener_checks)
+    assert all("192.168.99.10" not in addresses for addresses in listener_checks)
     assert web_terminal._consume_ticket(ticket, 1, "admin", csrf) is None
     assert client.get("/static/brand/atlaso-icon.svg").status_code == 200
     assert client.get("/static/brand/atlaso-logo-horizontal-light.svg").status_code == 200

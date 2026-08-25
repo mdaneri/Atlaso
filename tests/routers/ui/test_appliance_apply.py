@@ -70,6 +70,88 @@ interface=eth1
     )
 
 
+def test_management_gateway_route_migration_couples_only_unapplied_default():
+    """Detect the exact default route created from a removed management gateway."""
+    from atlaso.app.ui import (
+        management_gateway_route_migrations,
+        wan_rollback_config_preview,
+    )
+
+    previous_network = """[physical_interfaces]
+interface=eth0
+role=management
+mode=access
+admin_state=up
+ipv4_method=static
+ip_cidr=192.0.2.10/24
+gateway=192.0.2.1
+ipv6_enabled=false
+ipv6_cidr=
+ipv6_gateway=
+"""
+    candidate_network = previous_network.replace(
+        "role=management", "role=access"
+    ).replace(
+        "gateway=192.0.2.1",
+        "gateway=\naccess_management_ui_enabled=true",
+    )
+    previous_wan = """[targets]
+target=eth0
+role=access
+ip_cidr=192.0.2.10/24
+[routes]
+[removed_routes]
+[routing_rules]
+[nat_rules]
+[wan_policies]
+"""
+    candidate_wan = previous_wan.replace(
+        "[routes]",
+        "[routes]\nroute=0.0.0.0/0\ngateway=192.0.2.1\ninterface=eth0\nmetric=100\nenabled=true",
+    )
+    migrations = management_gateway_route_migrations(
+        {"raw_config_preview": candidate_network},
+        {"config_preview": previous_network},
+        {"raw_config_preview": candidate_wan},
+        {"config_preview": previous_wan},
+    )
+
+    assert migrations == [
+        {
+            "family": "4",
+            "destination_cidr": "0.0.0.0/0",
+            "gateway": "192.0.2.1",
+            "interface": "eth0",
+        }
+    ]
+    assert management_gateway_route_migrations(
+        {
+            "raw_config_preview": candidate_network.replace(
+                "access_management_ui_enabled=true",
+                "access_management_ui_enabled=false",
+            )
+        },
+        {"config_preview": previous_network},
+        {"raw_config_preview": candidate_wan},
+        {"config_preview": previous_wan},
+    ) == migrations
+    rollback = wan_rollback_config_preview(
+        candidate_wan, {"config_preview": previous_wan}
+    )
+    assert "[removed_routes]" in rollback
+    assert "route=0.0.0.0/0" in rollback
+    assert "interface=eth0" in rollback
+    assert (
+        management_gateway_route_migrations(
+            {"raw_config_preview": candidate_network},
+            {"config_preview": previous_network},
+            {"raw_config_preview": candidate_wan},
+            {"config_preview": candidate_wan},
+        )
+        == []
+    )
+
+
 def test_appliance_settings_stages_flagged_access_resolver_interface(client):
     """Bind resolver staging to the effective flagged-access listener.
 
@@ -236,7 +318,7 @@ interface=eth0
 
 def test_management_handoff_detects_flagged_access_vlan_mtu_change():
     """Treat a management-listener VLAN MTU change as a handoff boundary."""
-    from atlaso.app.ui import management_handoff_required
+    from atlaso.app.ui import management_handoff_required, network_management_paths
 
     previous = """[vlan_interfaces]
 vlan=eth1.20
@@ -254,6 +336,8 @@ vlan=eth1.20
         {"raw_config_preview": candidate},
         {"config_preview": previous},
     )
+
+    assert network_management_paths(previous.replace("admin_state=up", "enabled=false")) == []
 
 
 def test_management_handoff_detects_flagged_access_vlan_parent_admin_down():

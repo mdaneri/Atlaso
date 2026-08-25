@@ -253,6 +253,11 @@ drop-in, restoring the ordinary password-backed sudo policy. Approve the applian
 wrapper's host-derived output: after startup it prints the exact Ed25519 public host key and SHA-256 fingerprint from
 test-only VMware guest-info for explicit `known_hosts` verification without trusting unauthenticated `ssh-keyscan`
 output. Subsequent Codex and Copilot tasks under the same Windows user reuse that trust and key identity.
+Changing the applied management listener from a dedicated interface to an access physical interface or VLAN with
+**Management UI** enabled must retain TCP/22 admission for this ordinary `admin` SSH workflow, under the same management
+Source Group restriction as TCP/80 and TCP/443. It does not enable root SSH and must not expose SSH on an unflagged
+access network. Validate TCP/22, authenticated `admin` SSH, and HTTPS `/openapi.json` before and after the protected
+handoff and again after reboot.
 Credential overrides must be at least 12 characters, contain no leading, trailing, tab, carriage-return, or newline
 whitespace, and contain only XML-representable characters so the OVF value round-trips unchanged.
 `-TrustRootCa` waits for the first-boot CA endpoint, removes partial downloads best-effort between retries, validates the

@@ -1174,6 +1174,12 @@ Terminal order:
   VLAN ID, at least one valid IPv4 or IPv6 CIDR, MTU from 576 through 9000, and a supported role are present. Reject a
   duplicate parent/VLAN ID pair and reject enablement when the parent is missing or not an available trunk.
 - Keep the validation/config preview current after any network or service change that affects rendered appliance state.
+- A static management-to-access physical-interface mutation captures valid IPv4 and IPv6 gateways before clearing
+  management-only fields and stages enabled canonical defaults for the converted access target in the same transaction.
+  Reuse equivalent routes, reject conflicting family defaults with complete rollback, warn without inventing missing
+  gateways, audit both Network and Routes & WAN Simulation, and mark Appliance Settings dependent. A migrated route not
+  present in the last-applied WAN baseline selects WAN into the existing protected management handoff with a validated
+  rollback config; it does not create another host-mutation path.
 
 ## Public Services Front Door
 
@@ -1185,6 +1191,10 @@ Terminal order:
   management role, allow multiple flagged access listeners, and reject state with neither an effective dedicated role
   nor an active flagged access listener. A management-to-access conversion enables the flag atomically; an
   access-to-management conversion clears it.
+- Firewall generation treats dedicated and flagged access management listeners as the same administrative reachability
+  boundary for TCP/22, TCP/80, and TCP/443. Preserve the selected Source Group predicate through UI/API previews and
+  protected-handoff old, candidate, final, and rollback rules. Do not admit TCP/22 on an unflagged access network, and
+  do not couple this listener admission to the separate root-SSH policy.
 - Non-management interface addresses dispatch `/` to an unauthenticated public service directory at `/ui/public`
   scoped to the called IP/host. The page must list only enabled public services whose desired listen addresses include
   that IP, and must show
@@ -1192,6 +1202,9 @@ Terminal order:
 - When web terminal access is enabled for the called non-management interface, include a `Web Terminal` service tile
   linked to that address's HTTPS `/ui/public/terminal` route. Do not show the tile on unselected interfaces, and do not
   invent an interface DNS name for the Name/IP toggle.
+- Resolve Web Terminal management page, ticket, and WebSocket eligibility from the last-applied Network binding,
+  including flagged access physical and VLAN listeners. Pending desired edits do not reclassify the active listener;
+  successful handoff commit moves it, rollback retains it, and explicit additional terminal listeners remain public.
 - App-owned public pages must also be IP-scoped: CA `/ui/public/ca`, certificate requests
   `/ui/public/ca/requests`, and Web Terminal `/ui/public/terminal`. Keep CA downloads
   `/ca/downloads/root-ca.pem` and `/ca/downloads/ca-bundle.pem`, ESXi PXE `/pxe/esxi/`, VCF Offline Depot `/PROD/`,

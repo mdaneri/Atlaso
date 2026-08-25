@@ -107,3 +107,60 @@ def test_firewall_api_preserves_read_write_scope_boundaries(client):
         },
     )
     assert rejected.status_code == 403
+
+
+def test_flagged_management_listener_preview_matches_ui_and_api(client):
+    """Keep flagged physical and VLAN management rules identical across previews.
+
+    Args:
+        client: HTTP test client used to initialize isolated application state.
+    """
+    from sqlalchemy import select
+
+    from atlaso.app.api.v1 import firewall_validation_payload
+    from atlaso.app.database import SessionLocal
+    from atlaso.app.models import PhysicalInterface, VlanInterface
+    from atlaso.app.ui import firewall_context
+
+    with SessionLocal() as db:
+        physical = db.execute(
+            select(PhysicalInterface).where(PhysicalInterface.name == "eth0")
+        ).scalar_one()
+        physical.role = "access"
+        physical.mode = "access"
+        physical.ip_cidr = "192.0.2.10/24"
+        physical.access_management_ui_enabled = True
+        vlan = db.execute(
+            select(VlanInterface).where(VlanInterface.name == "eth1.20")
+        ).scalar_one()
+        vlan.ip_cidr = "198.51.100.10/24"
+        vlan.role = "access"
+        vlan.enabled = True
+        vlan.access_management_ui_enabled = True
+        db.commit()
+
+        ui_preview = firewall_context(db, reconcile=False)["firewall_config_preview"]
+        _settings, _rules, api_preview, errors = firewall_validation_payload(db)
+
+    ui_management_rules = sorted(
+        line.strip()
+        for line in ui_preview.splitlines()
+        if 'comment "management-ui-' in line
+    )
+    api_management_rules = sorted(
+        line.strip()
+        for line in api_preview.splitlines()
+        if 'comment "management-ui-' in line
+    )
+    assert errors == []
+    assert ui_management_rules == api_management_rules
+    assert any(
+        'iifname "eth0" tcp dport { 22, 80, 443 } accept comment "management-ui-eth0"'
+        in line
+        for line in ui_management_rules
+    )
+    assert any(
+        'iifname "eth1.20" tcp dport { 22, 80, 443 } accept comment "management-ui-eth1.20"'
+        in line
+        for line in ui_management_rules
+    )

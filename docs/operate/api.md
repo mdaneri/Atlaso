@@ -82,6 +82,13 @@ Recognized role, mode, and IPv4-method spellings are case-insensitive. New reque
 `storage` roles; the legacy `routed` mode spelling remains supported. Atlaso rejects unsupported properties instead of
 silently ignoring them.
 
+For a static `management` to `access` role change, Atlaso captures valid saved IPv4 and IPv6 gateways before clearing
+those management-only fields. The same PATCH transaction stages or enables the equivalent family default Route on the
+converted interface. An equivalent saved default is reused; a different existing family default returns `409` and
+rolls back the interface, routes, dependencies, and audit rows. A missing gateway creates no route. Clients should warn
+operators that off-subnet routing may be unavailable, then review both Network and Routes & WAN Simulation before
+submitting global Appliance Apply. The PATCH never mutates host routes directly.
+
 Changing a physical interface's IPv4 or IPv6 CIDR automatically refreshes dependent desired-state addresses for DNS,
 NTP/NTS, Certificate Authority, KMS, LDAP, OIDC, VCF services, ESX Storage, Web Terminal, matching DHCP scopes, and
 Network Boot/PXE. Atlaso commits the interface and dependent rows as one transaction. If any dependent update fails,
@@ -97,6 +104,8 @@ Requested-interface authorization continues to use the last-applied Network mana
 after a successful PATCH. Pending role, address, or `access_management_ui_enabled` values cannot remove the current
 management origin or publish a candidate origin early. If the protected Apply fails, is cancelled, or rolls back, the
 previous binding remains authoritative and the saved desired edit remains available to correct or revert.
+Web Terminal uses this applied projection for its management page, ticket, and WebSocket eligibility, including flagged
+access physical interfaces and VLANs. Additional explicitly selected terminal listeners remain on the public plane.
 
 The internal Certificate Authority is the exception: if its last selected portal interface becomes ineligible, Atlaso
 clears the public CA portal binding and app-owned alias while leaving internal CA custody enabled.
