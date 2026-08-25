@@ -3616,9 +3616,10 @@
 
 
 <h1 id="network-objects">Network Objects<a class="headerlink" href="#network-objects" title="Permanent link">&para;</a></h1>
-<p>Open <strong>Network Objects</strong> under <strong>Appliance Setup</strong> to manage reusable Source Groups. A Source Group can contain IPv4 or
-IPv6 addresses, CIDRs, <code>any</code>, or stable references to other Source Groups. Firewall rules, managed-rule assignments,
-and NAT rules consume the same objects.</p>
+<p>Open <strong>Network Objects</strong> under <strong>Appliance Setup</strong> to manage reusable Source Groups. A Source Group can match every
+source, or contain explicit IPv4 or IPv6 addresses, CIDRs, and stable references to other Source Groups. Firewall
+rules, managed-rule assignments, and NAT rules consume the same objects. The collection fills the primary workspace;
+large sets scroll inside the compact grid while its heading and validation state remain visible.</p>
 <!-- BEGIN GENERATED INTERFACE OVERVIEW -->
 <h2 id="interface-overview">Interface overview<a class="headerlink" href="#interface-overview" title="Permanent link">&para;</a></h2>
 <p>This verified appliance view provides visual orientation before you begin.</p>
@@ -3630,10 +3631,19 @@ and NAT rules consume the same objects.</p>
 <ol>
 <li>Select <strong>+ Add Source Group here</strong>, double-click an existing row, or choose <strong>Edit Source Group</strong> from its row menu.</li>
 <li>Enter a unique name and optional description.</li>
-<li>Enter one address, CIDR, <code>any</code>, or <code>group:&lt;stable-id&gt;</code> reference per line.</li>
-<li>Review the normalized entries, current consumers, and validation state before saving.</li>
+<li>Leave <strong>Any source</strong> enabled to match every IPv4 and IPv6 source, or disable it to add explicit entry tags.</li>
+<li>Add one address, CIDR, or <code>group:&lt;stable-id&gt;</code> reference at a time. Enter, comma, paste, or leaving the input creates
+   tags; the <strong>+</strong> menu lists current nested Source Groups.</li>
+<li>Resolve every <strong>Invalid</strong> tag before continuing. <strong>Needs attention</strong> identifies a non-blocking canonical
+   normalization or duplicate; the review submits the first canonical duplicate only. Every state includes text as
+   well as color, and Enter or F2 edits a focused tag.</li>
+<li>Review the canonical entries, current consumers, and validation state before saving.</li>
 <li>Return to the Firewall or NAT wizard when Network Objects was opened from <strong>Manage source groups</strong>.</li>
 </ol>
+<p>The <strong>Any source</strong> switch is exclusive: while enabled, explicit tags are retained in the open wizard but disabled and
+excluded from submission. Turning the switch off restores those unsaved tags. Existing API and settings-archive
+payloads continue to represent this mode as <code>entries: ["any"]</code>. Without JavaScript, the labeled Entries textarea
+continues to describe the established line-separated format, and server-side validation remains authoritative.</p>
 <p>The built-in <strong>Any</strong> row always remains visible and read-only. Saved identifiers remain stable when an object is
 renamed, so nested references and rule assignments do not silently change meaning.</p>
 <p>The return link preserves the current Firewall or NAT draft only in this browser tab. Atlaso reopens the originating
