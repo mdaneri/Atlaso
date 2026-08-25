@@ -142,9 +142,12 @@ def build_router(dependencies: PhysicalVlanApiDependencies) -> PhysicalVlanApiRo
         physical-interface fields, then atomically reconciles dependent DNS, NTP/NTS, Certificate
         Authority, KMS, LDAP, VCF service, ESX Storage, Web Terminal, DHCP, and Network Boot bindings.
         If any dependent update fails, Atlaso rolls back the interface and every dependent row. The
-        operation also rejects a transition that leaves no complete desired management listener. The
-        call changes desired state only; active requested-interface eligibility stays on the
-        last-applied Network binding until the global Appliance Apply management handoff commits.
+        operation also rejects a transition that leaves no complete desired management listener. A
+        static management-to-access conversion migrates valid prior IPv4 and IPv6 gateways to enabled
+        Routes & WAN Simulation defaults in the same transaction; an existing conflicting family
+        default rejects and rolls back the edit. Missing gateways do not create route intent. The call
+        changes desired state only; active requested-interface eligibility stays on the last-applied
+        Network binding until the global Appliance Apply management handoff commits.
 
         Args:
             name: Stable name identifying the resource or operation.

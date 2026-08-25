@@ -4,6 +4,7 @@ from atlaso.app.models import NatRule, Route, RoutingRule
 from atlaso.app.services.routes_wan import (
     canonical_route_destination,
     default_route_family,
+    mirrored_management_default_routes,
     render_wan_config,
     route_to_dict,
     validate_nat_source,
@@ -27,6 +28,175 @@ def test_default_route_helpers_and_renderer_use_canonical_semantics():
     config = render_wan_config([route])
     assert "route=0.0.0.0/0" in config
     assert "ip route replace 0.0.0.0/0 via 192.0.2.1 dev eth1 metric 90 table 200" in config
+
+
+def test_flagged_management_default_route_also_preserves_host_default():
+    """Render a migrated default into both lab policy and the host main table."""
+    route = Route(
+        destination_cidr="0.0.0.0/0",
+        gateway="192.0.2.1",
+        interface_name="eth1",
+        metric=90,
+        enabled=True,
+    )
+
+    config = render_wan_config(
+        [route],
+        targets=[
+            {
+                "name": "eth1",
+                "kind": "physical",
+                "role": "access",
+                "ip_cidr": "192.0.2.10/24",
+                "routing_domain": "lab",
+                "route_allowed": True,
+                "management_ui": True,
+            }
+        ],
+    )
+
+    assert "management_ui=true" in config
+    assert "ip route replace 0.0.0.0/0 via 192.0.2.1 dev eth1 metric 90 table 200" in config
+    assert (
+        "ip route replace 0.0.0.0/0 via 192.0.2.1 dev eth1 metric 90"
+        "  # flagged-management host default"
+    ) in config
+    assert mirrored_management_default_routes(config) == {
+        ("0.0.0.0/0", "eth1", "192.0.2.1", "90")
+    }
+
+
+def test_flagged_management_default_cleanup_uses_last_applied_mirroring():
+    """Retire the host default after unflagging, disabling, or removing its route."""
+    previous_route = Route(
+        destination_cidr="0.0.0.0/0",
+        gateway="192.0.2.1",
+        interface_name="eth1",
+        metric=90,
+        enabled=True,
+    )
+    flagged_target = {
+        "name": "eth1",
+        "kind": "physical",
+        "role": "access",
+        "ip_cidr": "192.0.2.10/24",
+        "routing_domain": "lab",
+        "route_allowed": True,
+        "management_ui": True,
+    }
+    unflagged_target = {**flagged_target, "management_ui": False}
+    previous = render_wan_config([previous_route], targets=[flagged_target])
+
+    retained = render_wan_config(
+        [previous_route],
+        targets=[unflagged_target],
+        previous_config_preview=previous,
+    )
+    previous_route.enabled = False
+    disabled = render_wan_config(
+        [previous_route],
+        targets=[unflagged_target],
+        previous_config_preview=previous,
+    )
+    removed = render_wan_config(
+        [],
+        targets=[unflagged_target],
+        removed_routes=[
+            {
+                "destination_cidr": "0.0.0.0/0",
+                "gateway": "192.0.2.1",
+                "interface_name": "eth1",
+                "metric": "90",
+            }
+        ],
+        previous_config_preview=previous,
+    )
+
+    assert (
+        "ip route del 0.0.0.0/0 dev eth1"
+        "  # retired flagged-management host default"
+    ) in retained
+    assert (
+        "ip route del 0.0.0.0/0 dev eth1"
+        "  # disabled flagged-management default"
+    ) in disabled
+    assert (
+        "ip route del 0.0.0.0/0 dev eth1"
+        "  # removed flagged-management default"
+    ) in removed
+
+
+def test_admin_down_access_interface_is_not_a_management_mirror_target(client):
+    """Do not mirror a host default through an inactive physical listener.
+
+    Args:
+        client: HTTP test client providing the isolated application database.
+    """
+    from sqlalchemy import select
+
+    from atlaso.app.database import SessionLocal
+    from atlaso.app.models import PhysicalInterface
+    from atlaso.app.ui import wan_routing_targets
+
+    with SessionLocal() as db:
+        interface = db.scalar(
+            select(PhysicalInterface).where(PhysicalInterface.name == "eth2")
+        )
+        assert interface is not None
+        interface.role = "access"
+        interface.mode = "access"
+        interface.admin_state = "down"
+        interface.oper_state = "down"
+        interface.ipv4_method = "static"
+        interface.ip_cidr = "192.0.2.10/24"
+        interface.access_management_ui_enabled = True
+        db.commit()
+
+        target = next(
+            item for item in wan_routing_targets(db) if item["name"] == "eth2"
+        )
+
+    assert target["management_ui"] is False
+
+
+def test_flagged_vlan_on_inactive_parent_is_not_a_management_wan_target(client):
+    """Do not mirror a host default through a VLAN whose trunk parent is down.
+
+    Args:
+        client: HTTP test client providing the isolated application database.
+    """
+    from sqlalchemy import select
+
+    from atlaso.app.database import SessionLocal
+    from atlaso.app.models import PhysicalInterface, VlanInterface
+    from atlaso.app.ui import wan_routing_targets
+
+    with SessionLocal() as db:
+        parent = db.scalar(
+            select(PhysicalInterface).where(PhysicalInterface.name == "eth2")
+        )
+        assert parent is not None
+        parent.role = "unused"
+        parent.mode = "trunk"
+        parent.admin_state = "down"
+        parent.oper_state = "down"
+        vlan = VlanInterface(
+            name="eth2.521",
+            parent_interface="eth2",
+            vlan_id=521,
+            ip_cidr="192.0.2.10/24",
+            role="access",
+            enabled=True,
+            access_management_ui_enabled=True,
+        )
+        db.add(vlan)
+        db.commit()
+
+        target = next(
+            item for item in wan_routing_targets(db) if item["name"] == vlan.name
+        )
+
+    assert target["management_ui"] is False
 
 
 def test_removed_route_detection_compares_canonical_destinations():

@@ -26,6 +26,9 @@ the last-applied management bindings remain authoritative until that handoff com
 would leave no complete replacement management listener is rejected before it can strand the current session. Static
 dedicated-management policy routing persists both the on-link subnet and its default route in table 100 so same-subnet
 host replies and routed traffic recover together after reboot.
+Every effective management listener, including a flagged access physical interface or VLAN, retains Source
+Group-filtered TCP/22 for ordinary bootstrap-administrator recovery together with TCP/80 and TCP/443; unflagged access
+networks do not gain SSH admission, and root SSH remains a separate explicit appliance setting.
 
 ![Atlaso — Everything your virtualization lab needs](docs/assets/brand/atlaso-docs-header-dark-1600x400.png)
 
@@ -50,15 +53,16 @@ brings infrastructure, storage, identity, networking, and lifecycle workflows in
 - [Local appliance console](docs/operate/appliance-console.md) — correct management networking from `tty1` and have
   Atlaso reconcile Firewall, retry unfinished first-boot HTTPS, and verify the complete management front door.
 - [Network configuration](docs/operate/networking.md) — inspect physical interfaces, preserve and explicitly review a
-  DHCP-learned management gateway during DHCP-to-static conversion, and manage each tagged VLAN as one reviewed wizard
+  DHCP-learned management gateway during DHCP-to-static conversion, atomically migrate static management gateways to
+  Routes & WAN defaults during management-to-access conversion, and manage each tagged VLAN as one reviewed wizard
   record using the shared management, access, route, or unused role contract before global apply.
 - [Network Objects](docs/operate/network-objects.md) — create reusable Source Groups in a full-height compact grid,
   choose exclusive Any-source behavior, validate explicit address/CIDR/nested-group tags individually, review their
   Firewall, managed-rule, and NAT consumers, and return to an in-progress rule wizard without losing its tab-local draft.
 - [Use the Atlaso API](docs/operate/api.md) — create least-privilege tokens, call the versioned REST contract safely,
   and interpret responses, request IDs, locks, and apply boundaries. Typed physical-interface PATCH requests reconcile
-  dependent service, ESX Storage, Web Terminal, DHCP, and Network Boot bindings in the same
-  desired-state transaction.
+  dependent service, ESX Storage, Web Terminal, DHCP, Network Boot, and management-gateway route intent in the same
+  desired-state transaction; terminal management-plane eligibility stays on the last-applied Network binding.
 - [Appliance Update](docs/operate/appliance-update.md) — inspect configured Photon, PowerShell, and signed Atlaso
   sources in read-only repository tabs, then create or edit desired source state through the shared reviewed wizard
   before explicitly synchronizing package clients. The built-in Atlaso source follows the signed `stable` channel;

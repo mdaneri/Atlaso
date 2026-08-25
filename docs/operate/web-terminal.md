@@ -47,6 +47,13 @@ Only enabled, addressed access/route physical interfaces and enabled VLANs are v
 disabled, unused, trunk-only, or addressless interfaces fail validation. Atlaso has no WAN interface role and
 web-terminal exposure does not infer internet or WAN connectivity.
 
+The mandatory management listener may be a dedicated management physical interface, a flagged access physical
+interface, or a flagged access VLAN. Web Terminal classifies its management page, one-use ticket, and WebSocket from
+the last-applied Network binding. Pending role, address, or **Management UI** edits therefore cannot turn the current
+management terminal into a public listener or cause an immediate 404. A successful protected handoff moves all three
+surfaces to the new applied listener; a failed or rolled-back handoff keeps them on the previous listener. Explicitly
+selected additional access listeners remain on `/ui/public/terminal` and never gain management-plane eligibility.
+
 On a selected non-management address, nginx exposes only `/ui/public`, eligible legacy login/logout and terminal paths,
 and required static assets. Management and API routes remain unavailable. The Public Services directory for that
 address includes a **Web Terminal** tile linked to `https://<selected-address>/ui/public/terminal`; unselected
@@ -112,6 +119,10 @@ confirm `atlaso.service` is active, and verify the selected address separately:
 - `https://<address>/ui/public/terminal` should redirect to public-plane login or open the terminal;
 - `/ui/management/login` and `/openapi.json` must remain unavailable on an additional listener;
 - the management `/openapi.json` endpoint must remain reachable.
+
+After a management-listener handoff, verify `/ui/management/terminal`, ticket creation, and one WebSocket session on the
+new applied physical or VLAN address. Repeat after reboot. For a deliberately failed or rolled-back handoff, repeat the
+same checks on the previous address and confirm an explicitly selected additional listener still uses the public shell.
 
 When local DNS and management DHCP are in use, also verify one managed Atlaso name and one external name after the Web
 Terminal apply. This confirms the unrelated setting change did not remove effective DNS upstreams.

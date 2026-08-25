@@ -26,6 +26,7 @@ from atlaso.app.models import (
     NtpSettings,
     OidcProviderSettings,
     PhysicalInterface,
+    Route,
     Setting,
     VcfBackupSettings,
     VcfOfflineDepotSettings,
@@ -72,6 +73,11 @@ from atlaso.app.services.networking import (
     normalize_interface_mode,
     normalize_interface_role,
     normalize_ipv4_method,
+)
+from atlaso.app.services.routes_wan import (
+    DEFAULT_ROUTE_DESTINATIONS,
+    default_route_family,
+    route_gateway_target_error,
 )
 
 DependentDnsRefresher = Callable[[Session, str | None], list[str]]
@@ -136,6 +142,105 @@ class PhysicalInterfaceUpdateResult:
     interface: PhysicalInterface
     dependent_updates: tuple[str, ...]
     preserved_dhcp_dns: tuple[str, ...]
+    routing_updates: tuple[str, ...]
+    routing_warnings: tuple[str, ...]
+
+
+def _migrate_management_gateways_to_default_routes(
+    db: Session,
+    *,
+    interface_name: str,
+    old_role: str,
+    new_role: str,
+    new_ipv4_cidr: str | None,
+    old_ipv4_gateway: str | None,
+    new_ipv6_cidr: str | None,
+    old_ipv6_gateway: str | None,
+) -> tuple[list[str], list[str]]:
+    """Preserve management routing intent during a management-to-access conversion.
+
+    Args:
+        db: Active desired-state transaction.
+        interface_name: Converted physical-interface name.
+        old_role: Canonical role before the mutation.
+        new_role: Canonical role after the mutation.
+        new_ipv4_cidr: Converted access IPv4 CIDR.
+        old_ipv4_gateway: Previous management IPv4 gateway.
+        new_ipv6_cidr: Converted access IPv6 CIDR.
+        old_ipv6_gateway: Previous management IPv6 gateway.
+
+    Returns:
+        Value-free routing actions and missing-gateway warnings for audit and UI context.
+    """
+    if old_role != "management" or new_role != "access":
+        return [], []
+
+    routes = db.execute(select(Route).order_by(Route.id)).scalars().all()
+    actions: list[str] = []
+    warnings: list[str] = []
+    for family, cidr, raw_gateway in (
+        (4, new_ipv4_cidr, old_ipv4_gateway),
+        (6, new_ipv6_cidr, old_ipv6_gateway),
+    ):
+        gateway = str(raw_gateway or "").strip()
+        if not gateway:
+            warnings.append(
+                f"No prior IPv{family} management gateway was available; no IPv{family} default route was staged."
+            )
+            continue
+        gateway_error = route_gateway_target_error(gateway, [cidr])
+        if gateway_error:
+            raise PhysicalInterfaceUpdateError(
+                f"The prior IPv{family} management gateway cannot be migrated to Routes & WAN Simulation: {gateway_error}"
+            )
+        family_routes = [
+            route
+            for route in routes
+            if default_route_family(route.destination_cidr) == family
+        ]
+        equivalent = next(
+            (
+                route
+                for route in family_routes
+                if str(route.gateway or "").strip() == gateway
+                and route.interface_name == interface_name
+            ),
+            None,
+        )
+        conflicting = [route for route in family_routes if route is not equivalent]
+        if conflicting:
+            conflict = conflicting[0]
+            raise PhysicalInterfaceUpdateError(
+                f"IPv{family} default route already targets {conflict.interface_name}. "
+                f"Resolve the conflicting Routes & WAN Simulation default before converting {interface_name} to access.",
+                status_code=409,
+            )
+        if equivalent is not None:
+            if not equivalent.enabled:
+                equivalent.enabled = True
+                db.add(equivalent)
+                actions.append(
+                    f"Enabled the existing IPv{family} default route for the converted access interface."
+                )
+            else:
+                actions.append(
+                    f"Reused the existing IPv{family} default route for the converted access interface."
+                )
+            continue
+        db.add(
+            Route(
+                destination_cidr=DEFAULT_ROUTE_DESTINATIONS[family],
+                gateway=gateway,
+                interface_name=interface_name,
+                metric=100,
+                enabled=True,
+                wan_mode="interface",
+            )
+        )
+        actions.append(
+            f"Staged an IPv{family} default route for the converted access interface."
+        )
+    return actions, warnings
 
 
 def _address_from_cidr(value: str | None) -> str:
@@ -1326,6 +1431,8 @@ def update_physical_interface_desired_state(
 
         old_ip_cidr = interface.ip_cidr
         old_ipv6_cidr = interface.ipv6_cidr
+        old_ipv4_gateway = interface.gateway
+        old_ipv6_gateway = interface.ipv6_gateway
         old_ipv4_method = normalize_ipv4_method(interface.ipv4_method)
         preserved_dhcp_dns = _preserve_management_dhcp_dns_on_static_conversion(
             db,
@@ -1354,6 +1461,16 @@ def update_physical_interface_desired_state(
         interface.desired_state_source = "user"
         db.add(interface)
         db.flush()
+        routing_updates, routing_warnings = _migrate_management_gateways_to_default_routes(
+            db,
+            interface_name=interface.name,
+            old_role=old_role,
+            new_role=role_value,
+            new_ipv4_cidr=interface.ip_cidr,
+            old_ipv4_gateway=old_ipv4_gateway,
+            new_ipv6_cidr=interface.ipv6_cidr,
+            old_ipv6_gateway=old_ipv6_gateway,
+        )
         if had_management_candidate and not desired_management_candidate_exists(db):
             raise PhysicalInterfaceUpdateError(MANAGEMENT_LISTENER_REQUIRED_DETAIL)
         dependent_updates = refresh_interface_dependent_addresses(
@@ -1365,6 +1482,19 @@ def update_physical_interface_desired_state(
             actor=None,
             dns_refresher=dns_refresher,
         )
+        management_to_access = old_role == "management" and role_value == "access"
+        if management_to_access and "Routes & WAN Simulation" not in dependent_updates:
+            # The management-only gateway fields are retired by this transaction even when
+            # neither family supplied a gateway to preserve. Keep Routes & WAN selected and
+            # audited with Network throughout the protected management handoff.
+            dependent_updates.append("Routes & WAN Simulation")
+        if (
+            management_to_access
+            and "Appliance Settings" not in dependent_updates
+        ):
+            # Web Terminal and the management front door follow the applied listener. Mark the
+            # bundled settings unit even when the interface name and addresses stay unchanged.
+            dependent_updates.append("Appliance Settings")
         if commit:
             db.commit()
             db.refresh(interface)
@@ -1374,6 +1504,8 @@ def update_physical_interface_desired_state(
             interface=interface,
             dependent_updates=tuple(dependent_updates),
             preserved_dhcp_dns=tuple(preserved_dhcp_dns),
+            routing_updates=tuple(routing_updates),
+            routing_warnings=tuple(routing_warnings),
         )
     except Exception:
         db.rollback()

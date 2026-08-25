@@ -107,19 +107,26 @@ class PhysicalInterfaceMutationResult:
     interface: PhysicalInterface
     changed_dependent_units: tuple[str, ...]
     preserved_dhcp_dns: tuple[str, ...]
+    routing_updates: tuple[str, ...]
+    routing_warnings: tuple[str, ...]
     audit_event: AuditEvent
+    routing_audit_event: AuditEvent | None
     audit_detail: str
 
 
 def _audit_detail(
     changed_dependent_units: tuple[str, ...],
     preserved_dhcp_dns: tuple[str, ...],
+    routing_updates: tuple[str, ...],
+    routing_warnings: tuple[str, ...],
 ) -> str:
     """Render the established value-free physical-interface audit detail.
 
     Args:
         changed_dependent_units: Dependent units refreshed by reconciliation.
         preserved_dhcp_dns: DHCP-provided DNS values preserved in desired state.
+        routing_updates: Default-route preservation actions completed in desired state.
+        routing_warnings: Missing-gateway outcomes recorded without inventing route intent.
     """
     detail_parts: list[str] = []
     if changed_dependent_units:
@@ -132,6 +139,8 @@ def _audit_detail(
             "Preserved DHCP-provided DNS in desired state: "
             f"{', '.join(preserved_dhcp_dns)}."
         )
+    detail_parts.extend(routing_updates)
+    detail_parts.extend(routing_warnings)
     return " ".join(detail_parts)
 
 
@@ -166,6 +175,8 @@ def mutate_physical_interface_desired_state(
         audit_detail = _audit_detail(
             update_result.dependent_updates,
             update_result.preserved_dhcp_dns,
+            update_result.routing_updates,
+            update_result.routing_warnings,
         )
         audit_event = AuditEvent(
             actor=audit.actor,
@@ -176,18 +187,38 @@ def mutate_physical_interface_desired_state(
             detail=audit_detail,
         )
         db.add(audit_event)
+        routing_audit_event = None
+        if update_result.routing_updates or update_result.routing_warnings:
+            routing_audit_event = AuditEvent(
+                actor=audit.actor,
+                action="preserve_management_gateway_routes",
+                resource_type="route",
+                resource_id=update_result.interface.name,
+                success=True,
+                detail=" ".join(
+                    (*update_result.routing_updates, *update_result.routing_warnings)
+                ),
+            )
+            db.add(routing_audit_event)
         db.commit()
         db.refresh(update_result.interface)
         db.refresh(audit_event)
+        if routing_audit_event is not None:
+            db.refresh(routing_audit_event)
     except Exception:
         db.rollback()
         raise
 
     log_audit_event(audit_event)
+    if routing_audit_event is not None:
+        log_audit_event(routing_audit_event)
     return PhysicalInterfaceMutationResult(
         interface=update_result.interface,
         changed_dependent_units=update_result.dependent_updates,
         preserved_dhcp_dns=update_result.preserved_dhcp_dns,
+        routing_updates=update_result.routing_updates,
+        routing_warnings=update_result.routing_warnings,
         audit_event=audit_event,
+        routing_audit_event=routing_audit_event,
         audit_detail=audit_detail,
     )

@@ -496,7 +496,9 @@ from atlaso.app.services.routes_wan import (
     WAN_CONFIG_PATH,
     WAN_MODES,
     canonical_route_destination,
+    default_route_family,
     generated_route_role_rules,
+    mirrored_management_default_routes,
     nat_rule_to_dict,
     render_wan_config,
     route_to_dict,
@@ -679,6 +681,7 @@ KICKSTART_UPLOAD_ERROR = "Kickstart upload is invalid. Review the file, name, an
 NETWORK_STAGED_CONFIG_PATH = "/var/lib/atlaso/apply/network/atlaso-network.conf"
 MANAGEMENT_HANDOFF_STAGED_MANIFEST_PATH = "/var/lib/atlaso/apply/management-handoff/atlaso-management-handoff.json"
 MANAGEMENT_HANDOFF_UNIT_IDS = ("ca", "network", "firewall", "appliance_settings", "public_services")
+MANAGEMENT_HANDOFF_WAN_ROLLBACK_PATH = "/var/lib/atlaso/apply/wan/atlaso-wan-rollback.conf"
 MANAGEMENT_HANDOFF_APPLIANCE_SETTINGS_KEYS = {
     "resolver_mode",
     "resolver_servers",
@@ -5291,6 +5294,7 @@ def wan_routing_targets(db: Session) -> list[dict[str, str]]:
     """
     interfaces = db.execute(select(PhysicalInterface).order_by(PhysicalInterface.name)).scalars().all()
     vlans = db.execute(select(VlanInterface).order_by(VlanInterface.parent_interface, VlanInterface.vlan_id)).scalars().all()
+    interfaces_by_name = {interface.name: interface for interface in interfaces}
     targets: list[dict[str, str]] = []
     for interface in interfaces:
         if interface.oper_state == "missing":
@@ -5315,10 +5319,17 @@ def wan_routing_targets(db: Session) -> list[dict[str, str]]:
                 "addresses": addresses,
                 "routing_domain": routing_domain,
                 "route_allowed": routing_domain == "lab",
+                "management_ui": bool(
+                    role == "access"
+                    and mode == "access"
+                    and str(interface.admin_state or "").lower() == "up"
+                    and interface.access_management_ui_enabled
+                ),
                 "label": f"{interface.name} - physical / {role} / {address_label}",
             }
         )
     for vlan in vlans:
+        parent = interfaces_by_name.get(vlan.parent_interface)
         role = normalize_interface_role(vlan.role)
         addresses = interface_addresses_from_cidrs(vlan.ip_cidr, vlan.ipv6_cidr)
         if not vlan.enabled or not addresses:
@@ -5335,6 +5346,14 @@ def wan_routing_targets(db: Session) -> list[dict[str, str]]:
                 "addresses": addresses,
                 "routing_domain": routing_domain,
                 "route_allowed": routing_domain == "lab",
+                "management_ui": bool(
+                    role == "access"
+                    and vlan.access_management_ui_enabled
+                    and parent is not None
+                    and parent.oper_state != "missing"
+                    and str(parent.admin_state or "").lower() == "up"
+                    and normalize_interface_mode(parent.mode) == "trunk"
+                ),
                 "label": f"{vlan.name} - VLAN {vlan.vlan_id} on {vlan.parent_interface} / {role} / {address_label}",
             }
         )
@@ -9319,14 +9338,14 @@ def network_management_signature(config_preview: str) -> dict[str, str]:
     }
 
 
-def network_management_paths(config_preview: str) -> list[dict[str, str]]:
-    """Return every effective management browser path in a network preview.
+def network_interface_entries(config_preview: str) -> list[dict[str, str]]:
+    """Return normalized physical and VLAN rows from a network preview.
 
     Args:
         config_preview: Rendered network configuration approved for staging.
 
     Returns:
-        Normalized dedicated and flagged-access management paths.
+        Parsed physical and VLAN interface rows.
     """
     rows: list[dict[str, str]] = []
     section = ""
@@ -9350,6 +9369,19 @@ def network_management_paths(config_preview: str) -> list[dict[str, str]]:
             rows.append(current)
         elif current is not None and section in {"physical_interfaces", "vlan_interfaces"}:
             current[key] = value
+    return rows
+
+
+def network_management_paths(config_preview: str) -> list[dict[str, str]]:
+    """Return every effective management browser path in a network preview.
+
+    Args:
+        config_preview: Rendered network configuration approved for staging.
+
+    Returns:
+        Normalized dedicated and flagged-access management paths.
+    """
+    rows = network_interface_entries(config_preview)
     paths: list[dict[str, str]] = []
     physical_admin_states = {
         row.get("name", ""): row.get("admin_state", "")
@@ -9368,6 +9400,7 @@ def network_management_paths(config_preview: str) -> list[dict[str, str]]:
         flagged_vlan = (
             row.get("kind") == "vlan"
             and row.get("role") == "access"
+            and row.get("enabled", "true").lower() == "true"
             and row.get("access_management_ui_enabled", "false").lower() == "true"
         )
         if not (dedicated or flagged_physical or flagged_vlan):
@@ -9831,6 +9864,139 @@ def removed_wan_route_entries(current_preview: str, baseline: dict[str, Any] | N
                 }
             )
     return removed
+
+
+def management_gateway_route_migrations(
+    network_unit: dict[str, Any],
+    network_baseline: dict[str, Any] | None,
+    wan_unit: dict[str, Any],
+    wan_baseline: dict[str, Any] | None,
+) -> list[dict[str, str]]:
+    """Return default routes coupled to a management-to-access handoff.
+
+    Args:
+        network_unit: Current Network apply unit.
+        network_baseline: Last successfully applied Network unit.
+        wan_unit: Current Routes & WAN Simulation apply unit.
+        wan_baseline: Last successfully applied Routes & WAN Simulation unit.
+
+    Returns:
+        Current enabled default routes that preserve gateways removed from management-only fields.
+    """
+    previous_paths = network_management_paths(
+        str((network_baseline or {}).get("config_preview") or "")
+    )
+    current_paths = {
+        path.get("name", ""): path
+        for path in network_interface_entries(
+            str(
+                network_unit.get("raw_config_preview")
+                or network_unit.get("config_preview")
+                or ""
+            )
+        )
+        if path.get("kind") == "physical"
+    }
+    current_routes = wan_route_entries_from_config(
+        str(wan_unit.get("raw_config_preview") or wan_unit.get("config_preview") or "")
+    )
+    applied_routes = wan_route_entries_from_config(
+        str((wan_baseline or {}).get("config_preview") or "")
+    )
+    migrations: list[dict[str, str]] = []
+    for previous in previous_paths:
+        current = current_paths.get(str(previous.get("name") or ""))
+        if (
+            previous.get("role") != "management"
+            or not current
+            or current.get("role") != "access"
+        ):
+            continue
+        for family, destination, gateway_field in (
+            (4, "0.0.0.0/0", "gateway"),
+            (6, "::/0", "ipv6_gateway"),
+        ):
+            gateway = str(previous.get(gateway_field) or "")
+            if not gateway:
+                continue
+            expected = next(
+                (
+                    route
+                    for route in current_routes
+                    if default_route_family(route.get("destination_cidr", "")) == family
+                    and route.get("interface", "") == current.get("name", "")
+                    and route.get("gateway", "") == gateway
+                    and route.get("enabled", "true").lower() == "true"
+                ),
+                None,
+            )
+            if expected is None:
+                continue
+            already_applied = any(
+                default_route_family(route.get("destination_cidr", "")) == family
+                and route.get("interface", "") == current.get("name", "")
+                and route.get("gateway", "") == gateway
+                and route.get("enabled", "true").lower() == "true"
+                for route in applied_routes
+            )
+            if not already_applied:
+                migrations.append(
+                    {
+                        "family": str(family),
+                        "destination_cidr": destination,
+                        "gateway": gateway,
+                        "interface": str(current.get("name") or ""),
+                    }
+                )
+    return migrations
+
+
+def wan_rollback_config_preview(
+    candidate_preview: str, baseline: dict[str, Any] | None
+) -> str:
+    """Return the last-applied WAN config plus removals for candidate-only routes.
+
+    Args:
+        candidate_preview: Exact candidate WAN configuration.
+        baseline: Last successfully applied WAN unit.
+
+    Returns:
+        A helper-valid WAN configuration that restores the prior runtime intent.
+    """
+    baseline_preview = str((baseline or {}).get("config_preview") or "").rstrip()
+    removed = removed_wan_route_entries(
+        baseline_preview,
+        {"config_preview": candidate_preview},
+    )
+    candidate_mirrors = mirrored_management_default_routes(candidate_preview)
+    baseline_mirrors = mirrored_management_default_routes(baseline_preview)
+    removed_main_defaults = sorted(candidate_mirrors - baseline_mirrors)
+    if not removed and not removed_main_defaults:
+        return baseline_preview + "\n"
+    lines = [baseline_preview]
+    if removed:
+        lines.extend(["", "[removed_routes]"])
+        for route in removed:
+            lines.extend(
+                [
+                    f"route={route['destination_cidr']}",
+                    f"gateway={route.get('gateway', '')}",
+                    f"interface={route['interface_name']}",
+                    f"metric={route.get('metric', '100')}",
+                ]
+            )
+    if removed_main_defaults:
+        lines.extend(["", "[removed_main_defaults]"])
+        for destination, interface_name, gateway, metric in removed_main_defaults:
+            lines.extend(
+                [
+                    f"route={destination}",
+                    f"gateway={gateway}",
+                    f"interface={interface_name}",
+                    f"metric={metric}",
+                ]
+            )
+    return "\n".join(lines).lstrip("\n") + "\n"
 
 
 def make_appliance_apply_unit(
@@ -10341,16 +10507,16 @@ def appliance_apply_units(db: Session, *, reconcile: bool = True) -> list[dict[s
 
     wan_baseline = baselines.get("wan")
     wan_removed_routes = removed_wan_route_entries(wan["wan_config_preview"], wan_baseline)
-    if wan_removed_routes:
-        wan["wan_config_preview"] = render_wan_config(
-            wan["routes"],
-            wan["policies"],
-            wan["nat_rules"],
-            wan["wan_all_targets"],
-            wan["routing_rules"],
-            removed_routes=wan_removed_routes,
-            source_groups=wan["wan_source_groups"],
-        )
+    wan["wan_config_preview"] = render_wan_config(
+        wan["routes"],
+        wan["policies"],
+        wan["nat_rules"],
+        wan["wan_all_targets"],
+        wan["routing_rules"],
+        removed_routes=wan_removed_routes,
+        source_groups=wan["wan_source_groups"],
+        previous_config_preview=str((wan_baseline or {}).get("config_preview") or ""),
+    )
     wan_summary = [
         f"{len(wan['routes'])} routes",
         f"{len(wan['routing_rules'])} explicit routing rules",
@@ -10359,6 +10525,30 @@ def appliance_apply_units(db: Session, *, reconcile: bool = True) -> list[dict[s
     ]
     if wan_removed_routes:
         wan_summary.append(f"{len(wan_removed_routes)} route removals")
+    wan_unit = make_appliance_apply_unit(
+        unit_id="wan",
+        label="Routes & WAN Simulation",
+        page_url="/routes-wan",
+        context=wan,
+        summary=wan_summary,
+        validation_errors=wan["wan_validation_errors"],
+        config_path=wan["wan_config_path"],
+        config_preview=wan["wan_config_preview"],
+        baseline=wan_baseline,
+    )
+    gateway_route_migrations = management_gateway_route_migrations(
+        network_unit,
+        network_baseline,
+        wan_unit,
+        wan_baseline,
+    )
+    network_unit["management_gateway_route_migrations"] = gateway_route_migrations
+    network_unit["management_default_mirror_change"] = bool(
+        mirrored_management_default_routes(wan["wan_config_preview"])
+        != mirrored_management_default_routes(
+            str((wan_baseline or {}).get("config_preview") or "")
+        )
+    )
 
     units = [
         make_appliance_apply_unit(
@@ -10410,17 +10600,7 @@ def appliance_apply_units(db: Session, *, reconcile: bool = True) -> list[dict[s
             config_preview=firewall["firewall_config_preview"],
             baseline=baselines.get("firewall"),
         ),
-        make_appliance_apply_unit(
-            unit_id="wan",
-            label="Routes & WAN Simulation",
-            page_url="/routes-wan",
-            context=wan,
-            summary=wan_summary,
-            validation_errors=wan["wan_validation_errors"],
-            config_path=wan["wan_config_path"],
-            config_preview=wan["wan_config_preview"],
-            baseline=wan_baseline,
-        ),
+        wan_unit,
         make_appliance_apply_unit(
             unit_id="dnsmasq",
             label="DNS/DHCP (dnsmasq)",
@@ -13159,6 +13339,7 @@ def execute_management_handoff(
     job_id: str,
     adapter: SystemAdapter | None = None,
     db: Session,
+    include_wan: bool | None = None,
 ) -> tuple[dict[str, Any], list[dict[str, Any]]]:
     """Execute management-affecting apply units as one recoverable transaction.
 
@@ -13167,6 +13348,7 @@ def execute_management_handoff(
         job_id: Appliance Apply task identifier.
         adapter: System adapter used for helper execution.
         db: Active database session.
+        include_wan: Whether the captured WAN unit participates in the transaction.
 
     Returns:
         The group result and one truthful result per bundled apply unit.
@@ -13177,6 +13359,19 @@ def execute_management_handoff(
     firewall = units_by_id["firewall"]
     public_services = units_by_id["public_services"]
     ca = units_by_id["ca"]
+    wan_required = (
+        bool(include_wan)
+        if include_wan is not None
+        else bool(
+            network.get("management_gateway_route_migrations")
+            or network.get("management_default_mirror_change")
+        )
+    )
+    wan = units_by_id["wan"] if wan_required else None
+    handoff_unit_ids = (
+        *MANAGEMENT_HANDOFF_UNIT_IDS,
+        *(("wan",) if wan_required else ()),
+    )
     baselines = load_appliance_apply_baselines(db)
     previous_paths = list(network.get("previous_management_paths") or [])
     previous_addresses: list[str] = []
@@ -13216,6 +13411,20 @@ def execute_management_handoff(
             PUBLIC_SERVICES_STAGED_CONFIG_PATH,
             public_services["raw_config_preview"],
         )
+        wan_path = ""
+        wan_rollback_path = ""
+        if wan is not None:
+            wan_path = stage_appliance_apply_config(
+                str(wan["config_path"]),
+                str(wan["raw_config_preview"]),
+            )
+            wan_rollback_path = stage_appliance_apply_config(
+                MANAGEMENT_HANDOFF_WAN_ROLLBACK_PATH,
+                wan_rollback_config_preview(
+                    str(wan["raw_config_preview"]),
+                    baselines.get("wan"),
+                ),
+            )
         manifest_staged = False
         try:
             ca_context_value = ca["context"]
@@ -13235,6 +13444,8 @@ def execute_management_handoff(
                 "appliance_settings_config_path": settings_path,
                 "public_services_config_path": public_path,
                 "ca_config_path": ca_path,
+                "wan_config_path": wan_path,
+                "wan_rollback_config_path": wan_rollback_path,
                 "previous_management_interfaces": previous_interfaces,
                 "previous_management_parent_interfaces": previous_parent_interfaces,
                 "previous_management_addresses": list(dict.fromkeys(previous_addresses)),
@@ -13349,7 +13560,7 @@ def execute_management_handoff(
     failure_layer = str(group_result["management_handoff"].get("failing_layer") or "")
     failure_error = str(group_result["management_handoff"].get("error") or "")
     unit_results = []
-    for unit_id in MANAGEMENT_HANDOFF_UNIT_IDS:
+    for unit_id in handoff_unit_ids:
         unit = units_by_id[unit_id]
         unit_results.append(
             {
@@ -14755,10 +14966,12 @@ def run_appliance_apply_job(job_id: str, *, force_real: bool = False) -> None:
                         continue
                     bundled_units = [
                         current_by_id[unit_id]
-                        for unit_id in MANAGEMENT_HANDOFF_UNIT_IDS
+                        for unit_id in (*MANAGEMENT_HANDOFF_UNIT_IDS, "wan")
                         if unit_id in handoff_unit_ids
                     ]
-                    if {item["id"] for item in bundled_units} != set(MANAGEMENT_HANDOFF_UNIT_IDS):
+                    if not set(MANAGEMENT_HANDOFF_UNIT_IDS).issubset(
+                        {item["id"] for item in bundled_units}
+                    ):
                         raise ApplianceApplyJobError(
                             "Management handoff is missing a required Network, Firewall, Certificate Authority, "
                             "Appliance Settings, or Public Services component."
@@ -14784,6 +14997,7 @@ def run_appliance_apply_job(job_id: str, *, force_real: bool = False) -> None:
                         job_id=job.id,
                         adapter=handoff_adapter,
                         db=db,
+                        include_wan="wan" in handoff_unit_ids,
                     )
                     if not group_result.get("success") and group_result.get("rollback_proven"):
                         handoff_runtime_pending = False
@@ -14827,7 +15041,7 @@ def run_appliance_apply_job(job_id: str, *, force_real: bool = False) -> None:
                             )
                         applied = [
                             current_by_id[unit_id]
-                            for unit_id in MANAGEMENT_HANDOFF_UNIT_IDS
+                            for unit_id in (*MANAGEMENT_HANDOFF_UNIT_IDS, "wan")
                             if unit_id in handoff_unit_ids
                         ]
                         applied_ids = set(handoff_unit_ids)
@@ -15521,13 +15735,27 @@ def _submit_appliance_apply(
     ):
         selected_ids.add("local_users")
     management_handoff = bool(
-        selected_ids.intersection(MANAGEMENT_HANDOFF_UNIT_IDS)
-        and unit_map.get("network", {}).get("management_handoff_required")
+        (
+            selected_ids.intersection(MANAGEMENT_HANDOFF_UNIT_IDS)
+            and unit_map.get("network", {}).get("management_handoff_required")
+        )
+        or (
+            "wan" in selected_ids
+            and unit_map.get("network", {}).get("management_default_mirror_change")
+        )
     )
     if management_handoff:
         selected_ids.update(
             unit_id for unit_id in MANAGEMENT_HANDOFF_UNIT_IDS if unit_id in unit_map
         )
+        if (
+            (
+                unit_map.get("network", {}).get("management_gateway_route_migrations")
+                or unit_map.get("network", {}).get("management_default_mirror_change")
+            )
+            and "wan" in unit_map
+        ):
+            selected_ids.add("wan")
     if not selected_ids:
         detail = "Select at least one appliance change to submit."
         return JSONResponse({"detail": detail}, status_code=422) if wants_json else Response(detail, status_code=422, media_type="text/plain")
@@ -15588,7 +15816,7 @@ def _submit_appliance_apply(
         "management_handoff": management_handoff,
         "management_handoff_units": [
             unit_id
-            for unit_id in MANAGEMENT_HANDOFF_UNIT_IDS
+            for unit_id in (*MANAGEMENT_HANDOFF_UNIT_IDS, "wan")
             if management_handoff and unit_id in selected_ids
         ],
     }

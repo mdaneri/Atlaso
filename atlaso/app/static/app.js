@@ -8588,6 +8588,25 @@ async function confirmManagementGatewayClear(data, previousGateway, nextGateway)
   });
 }
 
+async function confirmManagementToAccessRouteMigration(data) {
+  const ipv4Gateway = String(data.gateway || "").trim();
+  const ipv6Gateway = String(data.ipv6_gateway || "").trim();
+  const detail = [
+    `IPv4 default route: ${ipv4Gateway ? `${ipv4Gateway} via ${data.name}` : "not staged - no prior gateway"}`,
+    `IPv6 default route: ${ipv6Gateway ? `${ipv6Gateway} via ${data.name}` : "not staged - no prior gateway"}`,
+    `Management UI: retained on flagged access interface ${data.name}`,
+  ].join("\n");
+  return requestConfirmation({
+    title: `Convert ${data.name} management role to access?`,
+    message: ipv4Gateway || ipv6Gateway
+      ? "Atlaso will clear the management-only gateway fields and atomically stage their routing intent as enabled Routes & WAN default routes. A conflicting family default blocks the edit. Global Appliance Apply remains the host-mutation boundary."
+      : "No management gateway is available to migrate, so no default route will be invented. Off-subnet routed connectivity may be unavailable after global Appliance Apply.",
+    detail,
+    detailLabel: "Coupled desired-state changes",
+    label: "Convert to access",
+  });
+}
+
 async function forgetPhysicalInterfaceFromMenu(row, csrf) {
   clearCaMessage("physical-interface-error");
   const data = row.getData();
@@ -8842,6 +8861,15 @@ function initializePhysicalInterfacesTable() {
           width: 125,
           cellEdited: async (cell) => {
             const previousRole = typeof cell.getOldValue === "function" ? cell.getOldValue() : "";
+            if (
+              previousRole === "management"
+              && cell.getValue() === "access"
+              && !await confirmManagementToAccessRouteMigration(cell.getRow().getData())
+            ) {
+              if (typeof cell.restoreOldValue === "function") cell.restoreOldValue();
+              cell.getRow().reformat();
+              return;
+            }
             if (cell.getValue() !== "management") {
               await cell.getRow().update({ gateway: "", ipv6_gateway: "" });
             }

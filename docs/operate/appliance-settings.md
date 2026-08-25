@@ -37,6 +37,10 @@ management connectivity or SSH policy. Routine field changes autosave, but they 
 
 The review modal may include other changed units. Unselect unrelated work before submission.
 
+The root SSH preference controls whether the root account may log in remotely; it does not control ordinary
+bootstrap-administrator SSH. Firewall admission for that administrator follows the effective management listener,
+including a flagged access physical interface or VLAN, while unflagged access networks remain closed on TCP/22.
+
 ## Verify and recover
 
 After the task succeeds, confirm the expected management URL and resolver behavior. If management access is lost, use

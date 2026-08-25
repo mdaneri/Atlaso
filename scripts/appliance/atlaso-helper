@@ -117,7 +117,7 @@ COMMANDS: dict[str, set[str]] = {
         "apply-root-password",
     },
     "console": {"disable-services", "recover-management-plane", "restore-services", "status"},
-    "wan": {"validate", "apply"},
+    "wan": {"validate", "apply", "restore"},
 }
 
 
@@ -377,6 +377,9 @@ WAN_NAT_CONFIG_DIR = Path("/etc/atlaso/nftables.d")
 WAN_NAT_CONFIG_PATH = WAN_NAT_CONFIG_DIR / "atlaso-nat.nft"
 WAN_NAT_SERVICE_PATH = Path("/etc/systemd/system/atlaso-nat.service")
 WAN_SYSCTL_PATH = Path("/etc/sysctl.d/90-atlaso-routing-wan.conf")
+WAN_RUNTIME_CONFIG_DIR = Path("/etc/atlaso/wan")
+WAN_RUNTIME_CONFIG_PATH = WAN_RUNTIME_CONFIG_DIR / "atlaso-wan.conf"
+WAN_SERVICE_PATH = Path("/etc/systemd/system/atlaso-wan.service")
 MANAGEMENT_ROUTE_TABLE_ID = 100
 LAB_ROUTE_TABLE_ID = 200
 MANAGEMENT_ROUTE_RULE_PRIORITY = 1000
@@ -5563,7 +5566,7 @@ def _public_services_config_errors(
         errors.append("Public services nginx config must not expose a broad server root.")
     if "/registry" in text:
         errors.append("Public services nginx config must not add registry proxy locations.")
-    if "location = /terminal/ws {" in text:
+    if "location = /terminal/ws {" in text and "# Terminal-only HTTPS front door." in text:
         for required in [
             "location = /login {",
             "location = /logout {",
@@ -5582,6 +5585,17 @@ def _public_services_config_errors(
         for forbidden in ["location = /dashboard", "location ^~ /api", "location /api", "location = /settings"]:
             if forbidden in text:
                 errors.append(f"Public services web terminal config must not expose {forbidden}.")
+    if "# IP-scoped management HTTPS front door." in text:
+        for required in [
+            "location = /terminal/ws {",
+            "location = /ui/management/terminal/ws {",
+            "proxy_set_header Upgrade $http_upgrade;",
+            'proxy_set_header Connection "upgrade";',
+        ]:
+            if required not in text:
+                errors.append(
+                    f"Public services management config must include {required}."
+                )
     if "OIDC HTTPS front door." in text:
         for required in [
             "location ^~ /identity/ {",
@@ -7962,8 +7976,10 @@ def _validate_wan_config_path(path_value: str) -> Path:
     path = Path(_validate_path(path_value)).resolve()
     if path.suffix != ".conf":
         raise ValueError("WAN config path must end with .conf")
-    if not path.is_relative_to(WAN_APPLY_DIR):
-        raise ValueError(f"WAN config must be staged under {WAN_APPLY_DIR}")
+    if not path.is_relative_to(WAN_APPLY_DIR) and path != WAN_RUNTIME_CONFIG_PATH:
+        raise ValueError(
+            f"WAN config must be staged under {WAN_APPLY_DIR} or use the managed runtime config"
+        )
     if not path.is_file():
         raise ValueError(f"WAN config does not exist: {path}")
     return path
@@ -7979,6 +7995,7 @@ def _parse_wan_config(path: Path) -> dict[str, list[dict[str, str]]]:
         "targets": [],
         "routes": [],
         "removed_routes": [],
+        "removed_main_defaults": [],
         "routing_rules": [],
         "nat_rules": [],
         "wan_policies": [],
@@ -7989,6 +8006,7 @@ def _parse_wan_config(path: Path) -> dict[str, list[dict[str, str]]]:
         "targets": "target",
         "routes": "route",
         "removed_routes": "route",
+        "removed_main_defaults": "route",
         "routing_rules": "routing",
         "nat_rules": "nat",
         "wan_policies": "policy",
@@ -8006,7 +8024,7 @@ def _parse_wan_config(path: Path) -> dict[str, list[dict[str, str]]]:
         key, value = [part.strip() for part in line.split("=", 1)]
         if key == record_keys[current_section]:
             name_key = "name"
-            if current_section in {"routes", "removed_routes"}:
+            if current_section in {"routes", "removed_routes", "removed_main_defaults"}:
                 name_key = "destination_cidr"
             elif current_section == "targets":
                 name_key = "name"
@@ -8109,6 +8127,7 @@ def _wan_config_errors(path: Path) -> list[str]:
 
     desired_route_ids = {id(route) for route in parsed["routes"]}
     for route in [*parsed["routes"], *parsed["removed_routes"]]:
+        desired_route = id(route) in desired_route_ids
         destination = route.get("destination_cidr", "")
         destination_network = None
         if not destination:
@@ -8130,6 +8149,16 @@ def _wan_config_errors(path: Path) -> list[str]:
             if destination_network and gateway_address and destination_network.version != gateway_address.version:
                 errors.append(f"Route {destination} gateway {gateway} must use the same IP family as the destination.")
         interface_name = route.get("interface", "")
+        if not desired_route:
+            if not _valid_network_interface_name(interface_name):
+                errors.append(
+                    f"Removed route {destination or '<missing>'} references invalid interface "
+                    f"{interface_name or '<missing>'}."
+                )
+            # Removal entries describe cleanup of candidate-only intent. They do
+            # not inherit the rollback target's role or require that target to
+            # remain configured after Network has restored the previous links.
+            continue
         if interface_name not in targets:
             errors.append(f"Route {destination or '<missing>'} references missing WAN target {interface_name or '<missing>'}.")
         elif targets[interface_name].get("routing_domain", "lab") == "management" or not _wan_bool(
@@ -8137,7 +8166,7 @@ def _wan_config_errors(path: Path) -> list[str]:
             default=True,
         ):
             errors.append(f"Route {destination or '<missing>'} cannot target management routing domain {interface_name}.")
-        elif gateway_address and id(route) in desired_route_ids:
+        elif gateway_address:
             target_networks = []
             for key in ("ip_cidr", "ipv6_cidr"):
                 try:
@@ -8173,6 +8202,55 @@ def _wan_config_errors(path: Path) -> list[str]:
         policy_name = route.get("wan_policy", "")
         if policy_name and policy_name not in policies:
             errors.append(f"Route {destination or '<missing>'} references missing WAN policy {policy_name}.")
+    for route in parsed["removed_main_defaults"]:
+        destination = route.get("destination_cidr", "")
+        destination_network = None
+        try:
+            destination_network = ip_network(destination, strict=False)
+        except ValueError:
+            errors.append(
+                f"Removed main-table default {destination or '<missing>'} is not a valid destination CIDR."
+            )
+        else:
+            if destination_network.prefixlen != 0:
+                errors.append(
+                    f"Removed main-table route {destination} must be an IPv4 or IPv6 default."
+                )
+        interface_name = route.get("interface", "")
+        if not _valid_network_interface_name(interface_name):
+            errors.append(
+                f"Removed main-table default {destination or '<missing>'} references invalid interface "
+                f"{interface_name or '<missing>'}."
+            )
+        gateway = route.get("gateway", "").strip()
+        if gateway:
+            try:
+                gateway_address = ip_address(gateway)
+            except ValueError:
+                errors.append(
+                    f"Removed main-table default {destination or '<missing>'} gateway {gateway} is invalid."
+                )
+            else:
+                if (
+                    destination_network is not None
+                    and destination_network.version != gateway_address.version
+                ):
+                    errors.append(
+                        f"Removed main-table default {destination or '<missing>'} gateway family does not match."
+                    )
+        metric_value = route.get("metric", "").strip()
+        if metric_value:
+            try:
+                metric = int(metric_value)
+            except ValueError:
+                errors.append(
+                    f"Removed main-table default {destination or '<missing>'} metric is not an integer."
+                )
+            else:
+                if metric < 0:
+                    errors.append(
+                        f"Removed main-table default {destination or '<missing>'} metric cannot be negative."
+                    )
     for rule in parsed["nat_rules"]:
         name = rule.get("name", "")
         if not name:
@@ -8685,11 +8763,44 @@ def _run_route_delete(destination: str, interface_name: str) -> int:
     return result.returncode
 
 
-def _apply_wan_routes_and_qdiscs(parsed: dict[str, list[dict[str, str]]]) -> int:
+def _mirrored_wan_default_keys(
+    parsed: dict[str, list[dict[str, str]]] | None,
+) -> set[tuple[str, str]]:
+    """Return defaults previously mirrored into the host main table.
+
+    Args:
+        parsed: Parsed last-applied Routes & WAN configuration, when available.
+    """
+    if not parsed:
+        return set()
+    targets = {target.get("name", ""): target for target in parsed["targets"]}
+    mirrored: set[tuple[str, str]] = set()
+    for route in parsed["routes"]:
+        if not _wan_bool(route.get("enabled", ""), default=True):
+            continue
+        interface_name = route.get("interface", "")
+        if not _wan_bool(
+            targets.get(interface_name, {}).get("management_ui", "false")
+        ):
+            continue
+        try:
+            destination = ip_network(route["destination_cidr"], strict=False)
+        except (KeyError, ValueError):
+            continue
+        if destination.prefixlen == 0:
+            mirrored.add((str(destination), interface_name))
+    return mirrored
+
+
+def _apply_wan_routes_and_qdiscs(
+    parsed: dict[str, list[dict[str, str]]],
+    previous_parsed: dict[str, list[dict[str, str]]] | None = None,
+) -> int:
     """Perform apply WAN routes and qdiscs.
 
     Args:
         parsed: Parsed consumed by apply WAN routes and qdiscs.
+        previous_parsed: Parsed last-applied state used to retire host defaults.
     """
     if shutil.which("ip") is None:
         print("ip command not found", file=sys.stderr)
@@ -8697,16 +8808,39 @@ def _apply_wan_routes_and_qdiscs(parsed: dict[str, list[dict[str, str]]]) -> int
     if shutil.which("tc") is None:
         print("tc command not found", file=sys.stderr)
         return 127
+    targets = {target.get("name", ""): target for target in parsed["targets"]}
+    previously_mirrored_defaults = _mirrored_wan_default_keys(previous_parsed)
     policies = {policy["name"]: policy for policy in parsed["wan_policies"]}
     touched_qdisc_targets: set[str] = set()
     for route in parsed["routes"]:
         destination = route["destination_cidr"]
         interface_name = route["interface"]
+        try:
+            destination_network = ip_network(destination, strict=False)
+        except ValueError:
+            destination_network = None
+        management_ui_default = bool(
+            destination_network is not None
+            and destination_network.prefixlen == 0
+            and _wan_bool(
+                targets.get(interface_name, {}).get("management_ui", "false")
+            )
+        )
+        previously_mirrored_default = (
+            str(destination_network),
+            interface_name,
+        ) in previously_mirrored_defaults if destination_network is not None else False
         enabled = _wan_bool(route.get("enabled", ""), default=True)
         if not enabled:
             delete_result = _run_route_delete(destination, interface_name)
             if delete_result != 0:
                 return delete_result
+            if management_ui_default or previously_mirrored_default:
+                main_delete = _run(
+                    [*_route_command_prefix(destination), "del", destination, "dev", interface_name]
+                )
+                if main_delete.returncode not in {0, 2}:
+                    return main_delete.returncode
             touched_qdisc_targets.add(interface_name)
             continue
         command = [*_route_command_prefix(destination), "replace", destination]
@@ -8718,12 +8852,68 @@ def _apply_wan_routes_and_qdiscs(parsed: dict[str, list[dict[str, str]]]) -> int
         print(result.stderr, end="", file=sys.stderr)
         if result.returncode != 0:
             return result.returncode
+        if management_ui_default:
+            main_command = command[:-2]
+            main_result = _run(main_command)
+            print(main_result.stdout, end="")
+            print(main_result.stderr, end="", file=sys.stderr)
+            if main_result.returncode != 0:
+                return main_result.returncode
+        elif previously_mirrored_default:
+            main_delete = _run(
+                [*_route_command_prefix(destination), "del", destination, "dev", interface_name]
+            )
+            if main_delete.returncode not in {0, 2}:
+                return main_delete.returncode
         touched_qdisc_targets.add(interface_name)
     for route in parsed["removed_routes"]:
         delete_result = _run_route_delete(route["destination_cidr"], route["interface"])
         if delete_result != 0:
             return delete_result
+        try:
+            removed_destination = ip_network(route["destination_cidr"], strict=False)
+        except ValueError:
+            removed_destination = None
+        removed_key = (
+            str(removed_destination),
+            route["interface"],
+        ) if removed_destination is not None else ("", "")
+        if (
+            removed_destination is not None
+            and removed_destination.prefixlen == 0
+            and (
+                _wan_bool(
+                    targets.get(route["interface"], {}).get("management_ui", "false")
+                )
+                or removed_key in previously_mirrored_defaults
+            )
+        ):
+            main_delete = _run(
+                [
+                    *_route_command_prefix(route["destination_cidr"]),
+                    "del",
+                    route["destination_cidr"],
+                    "dev",
+                    route["interface"],
+                ]
+            )
+            if main_delete.returncode not in {0, 2}:
+                return main_delete.returncode
         touched_qdisc_targets.add(route["interface"])
+    for route in parsed["removed_main_defaults"]:
+        command = [
+            *_route_command_prefix(route["destination_cidr"]),
+            "del",
+            route["destination_cidr"],
+        ]
+        if route.get("gateway"):
+            command.extend(["via", route["gateway"]])
+        command.extend(["dev", route["interface"]])
+        if route.get("metric"):
+            command.extend(["metric", str(int(route["metric"]))])
+        main_delete = _run(command)
+        if main_delete.returncode not in {0, 2}:
+            return main_delete.returncode
     policy_by_target: dict[str, dict[str, str]] = {}
     for route in parsed["routes"]:
         if not _wan_bool(route.get("enabled", ""), default=True):
@@ -8744,6 +8934,48 @@ def _apply_wan_routes_and_qdiscs(parsed: dict[str, list[dict[str, str]]]) -> int
         if result.returncode != 0 and not (command[2] == "del" and result.returncode == 2):
             return result.returncode
     return 0
+
+
+def _install_wan_runtime(config_path: Path) -> None:
+    """Persist the applied WAN intent and install its boot replay unit.
+
+    Args:
+        config_path: Validated WAN configuration that reached runtime.
+    """
+    WAN_RUNTIME_CONFIG_DIR.mkdir(parents=True, exist_ok=True)
+    runtime_temporary = WAN_RUNTIME_CONFIG_PATH.with_suffix(".conf.tmp")
+    runtime_temporary.write_text(config_path.read_text(encoding="utf-8"), encoding="utf-8")
+    os.chmod(runtime_temporary, 0o644)
+    runtime_temporary.replace(WAN_RUNTIME_CONFIG_PATH)
+    WAN_SERVICE_PATH.write_text(
+        "\n".join(
+            [
+                "[Unit]",
+                "Description=Atlaso Routes and WAN runtime",
+                "After=network-online.target",
+                "Wants=network-online.target",
+                "",
+                "[Service]",
+                "Type=oneshot",
+                f"ExecStart=/opt/atlaso/bin/atlaso-helper wan restore --real {WAN_RUNTIME_CONFIG_PATH}",
+                "RemainAfterExit=yes",
+                "",
+                "[Install]",
+                "WantedBy=multi-user.target",
+                "",
+            ]
+        ),
+        encoding="utf-8",
+    )
+    os.chmod(WAN_SERVICE_PATH, 0o644)
+    _fsync_file(WAN_RUNTIME_CONFIG_PATH)
+    _fsync_file(WAN_SERVICE_PATH)
+    _fsync_directory(WAN_RUNTIME_CONFIG_DIR)
+    _fsync_directory(WAN_SERVICE_PATH.parent)
+    _run(["systemctl", "daemon-reload"])
+    enable = _run(["systemctl", "enable", WAN_SERVICE_PATH.name])
+    if enable.returncode != 0:
+        raise ValueError("Routes & WAN boot replay service could not be enabled")
 
 
 def _install_wan_nat_service() -> None:
@@ -8868,6 +9100,11 @@ def _handle_wan(action: str, args: list[str]) -> int:
             )
         )
         return 0
+    previous_parsed = (
+        _parse_wan_config(WAN_RUNTIME_CONFIG_PATH)
+        if WAN_RUNTIME_CONFIG_PATH.is_file()
+        else None
+    )
     nat_result = _apply_wan_nat(parsed)
     if nat_result != 0:
         return nat_result
@@ -8880,9 +9117,15 @@ def _handle_wan(action: str, args: list[str]) -> int:
     rule_result = _apply_wan_policy_rules(parsed)
     if rule_result != 0:
         return rule_result
-    route_result = _apply_wan_routes_and_qdiscs(parsed)
+    route_result = _apply_wan_routes_and_qdiscs(parsed, previous_parsed)
     if route_result != 0:
         return route_result
+    if action == "apply":
+        try:
+            _install_wan_runtime(config_path)
+        except (OSError, ValueError) as exc:
+            print(str(exc), file=sys.stderr)
+            return 1
     print(
         json.dumps(
             {
@@ -16980,6 +17223,21 @@ def _load_management_handoff_manifest(path: Path) -> dict:
         if not ca_path.is_file() or not ca_path.is_relative_to(CA_APPLY_DIR):
             raise ValueError(f"management handoff ca_config_path must name a staged file under {CA_APPLY_DIR}")
         payload["ca_config_path"] = str(ca_path)
+    wan_value = str(payload.get("wan_config_path") or "")
+    wan_rollback_value = str(payload.get("wan_rollback_config_path") or "")
+    if bool(wan_value) != bool(wan_rollback_value):
+        raise ValueError("management handoff WAN candidate and rollback paths must be supplied together")
+    for field, value in (
+        ("wan_config_path", wan_value),
+        ("wan_rollback_config_path", wan_rollback_value),
+    ):
+        if not value:
+            payload[field] = ""
+            continue
+        candidate = Path(_validate_path(value)).resolve()
+        if candidate.suffix != ".conf" or not candidate.is_file() or not candidate.is_relative_to(WAN_APPLY_DIR):
+            raise ValueError(f"management handoff {field} must name a staged WAN config under {WAN_APPLY_DIR}")
+        payload[field] = str(candidate)
     payload.setdefault("previous_management_parent_interfaces", [])
     for field in (
         "previous_management_interfaces",
@@ -17064,6 +17322,19 @@ def _management_handoff_validation_errors(payload: dict) -> list[str]:
     )
     if staged_ca_path is not None:
         errors.extend(f"certificate: {error}" for error in _ca_payload_errors(staged_ca_path))
+    for label, field in (
+        ("WAN candidate", "wan_config_path"),
+        ("WAN rollback", "wan_rollback_config_path"),
+    ):
+        value = str(payload.get(field) or "")
+        if not value:
+            continue
+        wan_path = Path(value)
+        errors.extend(f"{label}: {error}" for error in _wan_config_errors(wan_path))
+        parsed_wan = _parse_wan_config(wan_path)
+        nat_validation = _validate_wan_nat_config(_render_wan_nat_config(parsed_wan["nat_rules"]))
+        if nat_validation.returncode != 0:
+            errors.append(f"{label}: {(nat_validation.stderr or nat_validation.stdout).strip()}")
     return [error for error in errors if error]
 
 
@@ -17144,6 +17415,11 @@ def _management_handoff_runtime_paths(payload: dict) -> list[Path]:
         NGINX_PUBLIC_SERVICES_SITE_PATH,
         VCF_DEPOT_HTPASSWD_PATH,
         ATLASO_SERVICE_HTTPS_DROPIN_PATH,
+        WAN_NAT_CONFIG_PATH,
+        WAN_NAT_SERVICE_PATH,
+        WAN_SYSCTL_PATH,
+        WAN_RUNTIME_CONFIG_PATH,
+        WAN_SERVICE_PATH,
         *_management_handoff_certificate_paths(payload),
         *_management_handoff_previous_certificate_paths(),
     ]
@@ -17318,6 +17594,7 @@ def _snapshot_management_handoff(payload: dict) -> dict:
         "resolver_apply_started": False,
         "previous_firewall_config_existed": previous_firewall_config_existed,
         "previous_firewall_service_existed": previous_firewall_service_existed,
+        "wan_rollback_config_path": str(payload.get("wan_rollback_config_path") or ""),
     }
     _durable_management_handoff_state_write(state, MANAGEMENT_HANDOFF_STATE_PATH)
     MANAGEMENT_HANDOFF_COMMIT_PATH.unlink(missing_ok=True)
@@ -17524,28 +17801,27 @@ def _management_handoff_candidate_firewall_rules(
     if public_port < 1 or public_port > 65535:
         raise ValueError("candidate management firewall port must be between 1 and 65535")
     physical, vlans, _removed = _parse_network_config(network_path)
-    web_ports = ", ".join(str(port) for port in sorted({80, 443, public_port}))
-    dedicated_ports = ", ".join(str(port) for port in sorted({22, 80, 443, public_port}))
+    management_ports = ", ".join(str(port) for port in sorted({22, 80, 443, public_port}))
     candidate_disabled = "Atlaso firewall desired state is disabled" in candidate_firewall
     target_rules: list[tuple[str, str, str]] = []
     for row in physical:
         name = str(row.get("name") or "")
         if row.get("role") == "management":
-            target_rules.append((name, "mgmt-console", dedicated_ports))
+            target_rules.append((name, "mgmt-console", management_ports))
         elif (
             row.get("role") == "access"
             and row.get("mode") == "access"
             and row.get("admin_state") == "up"
             and row.get("access_management_ui_enabled", "false").lower() == "true"
         ):
-            target_rules.append((name, f"management-ui-{name}", web_ports))
+            target_rules.append((name, f"management-ui-{name}", management_ports))
     for row in vlans:
         name = str(row.get("name") or "")
         if (
             row.get("role") == "access"
             and row.get("access_management_ui_enabled", "false").lower() == "true"
         ):
-            target_rules.append((name, f"management-ui-{name}", web_ports))
+            target_rules.append((name, f"management-ui-{name}", management_ports))
 
     rules: list[str] = []
     for name, marker, ports in target_rules:
@@ -18180,6 +18456,39 @@ def _restore_management_handoff_snapshot(item: dict) -> None:
         temporary.unlink(missing_ok=True)
 
 
+def _apply_management_handoff_wan(payload: dict) -> None:
+    """Apply the candidate Routes & WAN config when it joined the handoff.
+
+    Args:
+        payload: Validated management-handoff manifest.
+    """
+    wan_path = str(payload.get("wan_config_path") or "")
+    if wan_path and _handle_wan("apply", [wan_path]) != 0:
+        raise ValueError("candidate Routes & WAN apply failed")
+
+
+def _restore_management_handoff_wan(state: dict, commands: list[dict[str, object]]) -> None:
+    """Restore the last-applied Routes & WAN runtime when it joined the handoff.
+
+    Args:
+        state: Durable management-handoff transaction state.
+        commands: Bounded rollback evidence populated by the operation.
+    """
+    rollback_path = str(state.get("wan_rollback_config_path") or "")
+    if not rollback_path:
+        return
+    result = _handle_wan("apply", [rollback_path])
+    commands.append(
+        {
+            "stage": "WAN rollback",
+            "command": ["atlaso-helper", "wan", "apply", rollback_path],
+            "returncode": result,
+        }
+    )
+    if result != 0:
+        raise ValueError("Routes & WAN rollback failed")
+
+
 def _restore_management_handoff(state: dict) -> dict:
     """Restore every snapshotted management runtime artifact.
 
@@ -18240,6 +18549,11 @@ def _restore_management_handoff(state: dict) -> dict:
         attempt(f"{' '.join(command)}", run_reload)
     attempt("resolver restore", lambda: _restore_management_handoff_resolver(state, commands))
     attempt("network link restore", lambda: _restore_management_handoff_links(state, commands))
+
+    attempt(
+        "Routes & WAN rollback",
+        lambda: _restore_management_handoff_wan(state, commands),
+    )
     attempt("firewall restore", lambda: _restore_management_handoff_firewall(state, commands))
 
     def validate_nginx() -> None:
@@ -18741,6 +19055,12 @@ def _apply_management_handoff(payload: dict) -> int:
             reconfigure = _run(["networkctl", "reconfigure", str(interface)])
             if reconfigure.returncode != 0:
                 raise ValueError(f"networkd could not retire the previous path on {interface}")
+        if payload.get("wan_config_path"):
+            # The final Network regeneration intentionally replaces networkd
+            # runtime. Reapply the coupled route intent afterwards so policy
+            # rules and default routes survive retirement and reboot.
+            failing_layer = "Routes & WAN persistence"
+            _apply_management_handoff_wan(payload)
         transition_path.write_text(final_firewall, encoding="utf-8")
         os.chmod(transition_path, 0o600)
         if _handle_firewall("apply", [str(transition_path)]) != 0:

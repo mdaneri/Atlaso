@@ -106,8 +106,16 @@ listener can bind to it.
 
 The default configuration remains `eth0` as the dedicated management interface with the switch disabled on all access
 interfaces. To use one network for both planes, change `eth0` from management to access; Atlaso enables its management UI
-switch as part of that conversion. You may then disable the unused second interface. Converting an access interface to
-management clears its switch because management exposure is inherent in the role.
+switch as part of that conversion. Before saving, the review lists each static IPv4 or IPv6 management gateway that
+will leave the management-only fields. Atlaso stages an enabled family default under **Routes & WAN Simulation** on the
+converted access interface, reuses an equivalent saved default without duplication, and blocks the complete edit when
+a different default already owns that family. If no prior gateway exists, the review warns that Atlaso will not invent
+one and off-subnet routing may be unavailable. The interface, route rows, dependent state, and Network and route audit
+events commit or roll back together without touching Photon. You may then disable the unused second interface.
+For a flagged management listener, Apply installs that default in both lab table `200` and the main table. The main-table
+copy lets appliance-originated traffic select the preserved gateway before Linux has selected the listener's source
+address. Atlaso also records the applied WAN config in a boot replay unit so both routes return after restart.
+Converting an access interface to management clears its switch because management exposure is inherent in the role.
 
 Atlaso permits at most one dedicated management-role physical interface. It also prevents desired state with no
 effective management browser path: when no dedicated role exists, at least one active access interface or enabled
@@ -115,11 +123,23 @@ access VLAN must have **Management UI** enabled. Multiple flagged access interfa
 address, `/` prefers the management sign-in, `/ui/management` requires normal authentication, and `/ui/public` remains
 available for the same access network. The listener also preserves the complete authenticated management front door,
 including stable API, API documentation, manifest, and service-worker routes required by the management UI and PWA.
+The same effective listener admits ordinary bootstrap-administrator SSH on TCP/22, so moving management to a flagged
+physical interface or VLAN does not remove key- or password-backed recovery access. The configured Firewall Source
+Group applies unchanged to TCP/22, TCP/80, and TCP/443. Atlaso does not open SSH on unflagged access networks, and this
+firewall admission does not enable root SSH; root login remains the separate **Appliance Settings** policy.
 
 When an Apply changes an effective management interface, address, gateway, or listener role, Atlaso automatically
 bundles Network with Firewall, Certificate Authority, Appliance Settings, and Public Services. The old management path
 stays active while the candidate network, policy routes, firewall, certificate/nginx configuration, Atlaso loopback
 upstream, and host-facing `/openapi.json` complete bounded readiness checks. Only then does Atlaso retire the old path.
+When the desired role conversion also staged a management-gateway default, **Routes & WAN Simulation** joins that same
+recoverable handoff. Its candidate and last-applied rollback configs are validated before mutation; failure restores
+the prior lab routes and the old management path together. Adding, editing, disabling, or removing a default on an
+already-applied flagged management listener also starts this handoff even when Network itself has no pending edit.
+When an operator selects another Routes & WAN change alongside a protected management change, Atlaso executes and
+commits that captured WAN snapshot inside the same transaction rather than advancing its baseline separately. The
+candidate WAN runtime is deferred until previous-path retirement, so candidate readiness retains the known-good
+main-table default. Rollback explicitly removes any candidate-only mirrored default before restoring prior WAN intent.
 Before that commit, fresh requests and existing sessions continue to use the last-applied Network binding paired with
 observed addresses. Unapplied access-management flags do not publish a new administrative listener, and unapplied role
 or address edits do not demote the old listener to `/ui/public`. Cancelling, reverting, or rolling back the candidate
@@ -207,12 +227,15 @@ route to a same-subnet host. Verify the Atlaso loopback `/openapi.json`, the gue
 For a lab default route, run `ip route show table 200` and `ip -6 route show table 200` as applicable. Confirm the
 canonical default uses the reviewed gateway, target, and metric, and separately verify that table `100` still contains
 only the management policy-routing state. A successful global Apply stores that exact rendered route in the `wan`
-baseline; a later edit remains pending until the next Apply.
+baseline; a later edit remains pending until the next Apply. When the route target is the effective flagged management
+listener, also confirm `ip route show default` (or `ip -6 route show default`) names the same gateway and interface, and
+that `atlaso-wan.service` is enabled for reboot replay.
 
-A failed management handoff reports its non-secret failing layer and rolls back the captured network, firewall, nginx,
-certificate, and service state before the task becomes failed. Rollback also reconfigures interfaces introduced to the
-candidate and deletes candidate-only VLAN devices. If automatic rollback cannot restore access, use the local console
-network recovery action to restore a known-good management configuration, then review desired state before retrying.
+A failed management handoff reports its non-secret failing layer and rolls back the captured network, coupled Routes &
+WAN runtime, firewall, nginx, certificate, and service state before the task becomes failed. Rollback also reconfigures
+interfaces introduced to the candidate and deletes candidate-only VLAN devices. If automatic rollback cannot restore
+access, use the local console network recovery action to restore a known-good management configuration, then review
+desired state before retrying.
 
 ## Transport ownership
 

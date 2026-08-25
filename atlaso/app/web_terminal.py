@@ -54,12 +54,13 @@ from atlaso.app.security import (
     require_session_identity,
 )
 from atlaso.app.services.appliance_settings import (
-    management_interface_context,
-    normalized_web_terminal_interfaces,
+    management_ui_context,
     web_terminal_addresses,
     web_terminal_interface_options,
+    web_terminal_interfaces_from_json,
     web_terminal_listener_interfaces,
 )
+from atlaso.app.services.management_bindings import applied_management_bindings
 from atlaso.app.services.vaults import vault_entry_uris
 from atlaso.app.ui_routes import (
     MANAGEMENT_UI_ROOT,
@@ -268,15 +269,46 @@ def _terminal_network_state(db: Session) -> tuple[ApplianceSettings, list[str], 
     desired = _settings_row(db)
     interfaces = db.execute(select(PhysicalInterface).order_by(PhysicalInterface.name)).scalars().all()
     vlans = db.execute(select(VlanInterface).order_by(VlanInterface.parent_interface, VlanInterface.vlan_id)).scalars().all()
-    management = management_interface_context(interfaces)
     options = web_terminal_interface_options(interfaces, vlans)
-    selected = web_terminal_listener_interfaces(
-        normalized_web_terminal_interfaces(desired, management),
+    applied = applied_management_bindings(db)
+    if applied is None:
+        fallback = management_ui_context(interfaces, vlans)
+        applied = [fallback] if fallback.get("name") else []
+    management_names = list(
+        dict.fromkeys(
+            str(binding.get("interface") or binding.get("name") or "")
+            for binding in applied
+            if binding.get("interface") or binding.get("name")
+        )
+    )
+    explicit_selected = web_terminal_listener_interfaces(
+        web_terminal_interfaces_from_json(desired.web_terminal_interfaces_json),
         options,
     )
-    management_address = _normalized_listener(str(management.get("ip") or ""))
-    management_addresses = [management_address] if management_address else []
-    return desired, selected, web_terminal_addresses(selected, options), management_addresses
+    selected = [
+        *management_names,
+        *[name for name in explicit_selected if name not in management_names],
+    ]
+    management_addresses = list(
+        dict.fromkeys(
+            normalized
+            for binding in applied
+            if (
+                normalized := _normalized_listener(
+                    str(binding.get("address") or binding.get("ip") or "")
+                )
+            )
+        )
+    )
+    addresses = [
+        *management_addresses,
+        *[
+            address
+            for address in web_terminal_addresses(explicit_selected, options)
+            if address not in management_addresses
+        ],
+    ]
+    return desired, selected, addresses, management_addresses
 
 
 def _helper_applied() -> bool:

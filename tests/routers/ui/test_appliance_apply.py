@@ -70,6 +70,160 @@ interface=eth1
     )
 
 
+def test_management_gateway_route_migration_couples_only_unapplied_default():
+    """Detect the exact default route created from a removed management gateway."""
+    from atlaso.app.ui import (
+        management_gateway_route_migrations,
+        wan_rollback_config_preview,
+    )
+
+    previous_network = """[physical_interfaces]
+interface=eth0
+role=management
+mode=access
+admin_state=up
+ipv4_method=static
+ip_cidr=192.0.2.10/24
+gateway=192.0.2.1
+ipv6_enabled=false
+ipv6_cidr=
+ipv6_gateway=
+"""
+    candidate_network = previous_network.replace(
+        "role=management", "role=access"
+    ).replace(
+        "gateway=192.0.2.1",
+        "gateway=\naccess_management_ui_enabled=true",
+    )
+    previous_wan = """[targets]
+target=eth0
+role=access
+ip_cidr=192.0.2.10/24
+management_ui=false
+[routes]
+[removed_routes]
+[routing_rules]
+[nat_rules]
+[wan_policies]
+"""
+    candidate_wan = previous_wan.replace(
+        "management_ui=false",
+        "management_ui=true",
+    ).replace(
+        "[routes]",
+        "[routes]\nroute=0.0.0.0/0\ngateway=192.0.2.1\ninterface=eth0\nmetric=100\nenabled=true",
+    )
+    migrations = management_gateway_route_migrations(
+        {"raw_config_preview": candidate_network},
+        {"config_preview": previous_network},
+        {"raw_config_preview": candidate_wan},
+        {"config_preview": previous_wan},
+    )
+
+    assert migrations == [
+        {
+            "family": "4",
+            "destination_cidr": "0.0.0.0/0",
+            "gateway": "192.0.2.1",
+            "interface": "eth0",
+        }
+    ]
+    assert management_gateway_route_migrations(
+        {
+            "raw_config_preview": candidate_network.replace(
+                "access_management_ui_enabled=true",
+                "access_management_ui_enabled=false",
+            )
+        },
+        {"config_preview": previous_network},
+        {"raw_config_preview": candidate_wan},
+        {"config_preview": previous_wan},
+    ) == migrations
+    rollback = wan_rollback_config_preview(
+        candidate_wan, {"config_preview": previous_wan}
+    )
+    assert "[removed_routes]" in rollback
+    assert "route=0.0.0.0/0" in rollback
+    assert "interface=eth0" in rollback
+    assert "[removed_main_defaults]" in rollback
+    assert "route=0.0.0.0/0" in rollback
+    assert (
+        management_gateway_route_migrations(
+            {"raw_config_preview": candidate_network},
+            {"config_preview": previous_network},
+            {"raw_config_preview": candidate_wan},
+            {"config_preview": candidate_wan},
+        )
+        == []
+    )
+
+
+def test_wan_rollback_removes_new_mirror_without_removing_retained_lab_route():
+    """Encode host-only cleanup when an existing lab default becomes mirrored."""
+    from atlaso.app.ui import wan_rollback_config_preview
+
+    baseline = """[targets]
+target=eth0
+role=access
+ip_cidr=192.0.2.10/24
+management_ui=false
+[routes]
+route=0.0.0.0/0
+gateway=192.0.2.1
+interface=eth0
+metric=100
+enabled=true
+[removed_routes]
+[routing_rules]
+[nat_rules]
+[wan_policies]
+"""
+    candidate = baseline.replace("management_ui=false", "management_ui=true")
+
+    rollback = wan_rollback_config_preview(
+        candidate,
+        {"config_preview": baseline},
+    )
+
+    assert rollback.count("route=0.0.0.0/0") == 2
+    assert "[removed_routes]" in rollback
+    assert "[removed_main_defaults]" in rollback
+
+
+def test_wan_rollback_removes_superseded_mirrored_default_metric():
+    """Encode the exact candidate metric variant before restoring the baseline."""
+    from atlaso.app.ui import wan_rollback_config_preview
+
+    baseline = """[targets]
+target=eth0
+role=access
+ip_cidr=192.0.2.10/24
+management_ui=true
+[routes]
+route=0.0.0.0/0
+gateway=192.0.2.1
+interface=eth0
+metric=100
+enabled=true
+[removed_routes]
+[routing_rules]
+[nat_rules]
+[wan_policies]
+"""
+    candidate = baseline.replace("metric=100", "metric=50")
+
+    rollback = wan_rollback_config_preview(
+        candidate,
+        {"config_preview": baseline},
+    )
+
+    cleanup = rollback.split("[removed_main_defaults]", 1)[1]
+    assert "route=0.0.0.0/0" in cleanup
+    assert "gateway=192.0.2.1" in cleanup
+    assert "interface=eth0" in cleanup
+    assert "metric=50" in cleanup
+
+
 def test_appliance_settings_stages_flagged_access_resolver_interface(client):
     """Bind resolver staging to the effective flagged-access listener.
 
@@ -236,7 +390,7 @@ interface=eth0
 
 def test_management_handoff_detects_flagged_access_vlan_mtu_change():
     """Treat a management-listener VLAN MTU change as a handoff boundary."""
-    from atlaso.app.ui import management_handoff_required
+    from atlaso.app.ui import management_handoff_required, network_management_paths
 
     previous = """[vlan_interfaces]
 vlan=eth1.20
@@ -254,6 +408,8 @@ vlan=eth1.20
         {"raw_config_preview": candidate},
         {"config_preview": previous},
     )
+
+    assert network_management_paths(previous.replace("admin_state=up", "enabled=false")) == []
 
 
 def test_management_handoff_detects_flagged_access_vlan_parent_admin_down():
@@ -1087,6 +1243,222 @@ def test_management_move_forces_partial_dependency_selection_into_handoff(client
             unit["management_handoff"]["management_handoff"] == "committed"
             for unit in payload["units"]
         )
+
+
+@pytest.mark.parametrize("listener_change", ["unflag", "admin_down"])
+def test_mirror_changing_listener_edit_forces_wan_into_handoff(
+    client,
+    listener_change,
+):
+    """Execute host-default cleanup in every protected listener handoff.
+
+    Args:
+        client: HTTP test client used to exercise the Atlaso application.
+        listener_change: Applied-listener mutation exercised by the scenario.
+    """
+    from sqlalchemy import select
+
+    from atlaso.app.database import SessionLocal
+    from atlaso.app.models import Job, PhysicalInterface, Route
+    from atlaso.app.ui import appliance_apply_units, update_appliance_apply_baselines
+
+    login(client)
+    with SessionLocal() as db:
+        db.query(Route).delete()
+        interface = db.scalar(
+            select(PhysicalInterface).where(PhysicalInterface.name == "eth2")
+        )
+        assert interface is not None
+        interface.role = "access"
+        interface.mode = "access"
+        interface.admin_state = "up"
+        interface.oper_state = "up"
+        interface.ipv4_method = "static"
+        interface.ip_cidr = "192.168.50.10/24"
+        interface.access_management_ui_enabled = True
+        db.add(
+            Route(
+                destination_cidr="0.0.0.0/0",
+                gateway="192.168.50.1",
+                interface_name="eth2",
+                enabled=True,
+            )
+        )
+        db.commit()
+        units = appliance_apply_units(db)
+        update_appliance_apply_baselines(db, units, {unit["id"] for unit in units})
+        if listener_change == "unflag":
+            interface.access_management_ui_enabled = False
+        else:
+            interface.admin_state = "down"
+        db.commit()
+        invalid = {
+            unit["id"]: unit["validation_errors"]
+            for unit in appliance_apply_units(db)
+            if unit["validation_errors"]
+        }
+        assert invalid == {}
+
+    page = client.get("/dashboard")
+    csrf = page.text.split('name="csrf" value="', 1)[1].split('"', 1)[0]
+    response = client.post(
+        "/appliance-apply",
+        data={"csrf": csrf, "selected_units": "network"},
+        headers={"Accept": "application/json"},
+    )
+
+    assert response.status_code == 202, response.text
+    with SessionLocal() as db:
+        job = db.get(Job, response.json()["job_id"])
+        assert job is not None
+        payload = json.loads(job.result or "{}")
+    assert payload["management_handoff"] is True
+    assert set(payload["management_handoff_units"]) == {
+        "ca",
+        "network",
+        "firewall",
+        "appliance_settings",
+        "public_services",
+        "wan",
+    }
+    assert "wan" in payload["selected_units"]
+    assert any(unit["unit_id"] == "wan" for unit in payload["units"])
+
+
+@pytest.mark.parametrize("route_change", ["gateway", "metric", "disable", "remove"])
+def test_standalone_mirrored_default_edit_starts_management_handoff(
+    client,
+    route_change,
+):
+    """Protect every host-default mutation submitted from Routes & WAN.
+
+    Args:
+        client: HTTP test client used to exercise the Atlaso application.
+        route_change: Mirrored-default mutation exercised by the scenario.
+    """
+    from sqlalchemy import select
+
+    from atlaso.app.database import SessionLocal
+    from atlaso.app.models import Job, PhysicalInterface, Route
+    from atlaso.app.ui import appliance_apply_units, update_appliance_apply_baselines
+
+    login(client)
+    with SessionLocal() as db:
+        db.query(Route).delete()
+        interface = db.scalar(
+            select(PhysicalInterface).where(PhysicalInterface.name == "eth2")
+        )
+        assert interface is not None
+        interface.role = "access"
+        interface.mode = "access"
+        interface.admin_state = "up"
+        interface.oper_state = "up"
+        interface.ipv4_method = "static"
+        interface.ip_cidr = "192.168.50.10/24"
+        interface.access_management_ui_enabled = True
+        route = Route(
+            destination_cidr="0.0.0.0/0",
+            gateway="192.168.50.1",
+            interface_name="eth2",
+            metric=100,
+            enabled=True,
+        )
+        db.add(route)
+        db.commit()
+        units = appliance_apply_units(db)
+        update_appliance_apply_baselines(db, units, {unit["id"] for unit in units})
+        if route_change == "gateway":
+            route.gateway = "192.168.50.2"
+        elif route_change == "metric":
+            route.metric = 200
+        elif route_change == "disable":
+            route.enabled = False
+        else:
+            db.delete(route)
+        db.commit()
+
+    page = client.get("/dashboard")
+    csrf = page.text.split('name="csrf" value="', 1)[1].split('"', 1)[0]
+    response = client.post(
+        "/appliance-apply",
+        data={"csrf": csrf, "selected_units": "wan"},
+        headers={"Accept": "application/json"},
+    )
+
+    assert response.status_code == 202, response.text
+    with SessionLocal() as db:
+        job = db.get(Job, response.json()["job_id"])
+        assert job is not None
+        payload = json.loads(job.result or "{}")
+    assert payload["management_handoff"] is True
+    assert set(payload["management_handoff_units"]) == {
+        "ca",
+        "network",
+        "firewall",
+        "appliance_settings",
+        "public_services",
+        "wan",
+    }
+    assert any(unit["unit_id"] == "wan" for unit in payload["units"])
+
+
+def test_selected_wan_change_executes_inside_existing_management_handoff(client):
+    """Apply a captured non-mirror WAN edit with the protected Network change.
+
+    Args:
+        client: HTTP test client used to exercise the Atlaso application.
+    """
+    from sqlalchemy import select
+
+    from atlaso.app.database import SessionLocal
+    from atlaso.app.models import Job, PhysicalInterface, Route
+    from atlaso.app.ui import appliance_apply_units, update_appliance_apply_baselines
+
+    login(client)
+    with SessionLocal() as db:
+        units = appliance_apply_units(db)
+        update_appliance_apply_baselines(db, units, {unit["id"] for unit in units})
+        management = db.scalar(
+            select(PhysicalInterface).where(PhysicalInterface.name == "eth0")
+        )
+        access = db.scalar(
+            select(PhysicalInterface).where(PhysicalInterface.name == "eth2")
+        )
+        assert management is not None
+        assert access is not None
+        management.ip_cidr = "192.168.49.21/24"
+        access.role = "access"
+        access.mode = "access"
+        access.admin_state = "up"
+        access.oper_state = "up"
+        access.ipv4_method = "static"
+        access.ip_cidr = "192.168.50.10/24"
+        db.add(
+            Route(
+                destination_cidr="203.0.113.0/24",
+                gateway="192.168.50.1",
+                interface_name="eth2",
+                enabled=True,
+            )
+        )
+        db.commit()
+
+    page = client.get("/dashboard")
+    csrf = page.text.split('name="csrf" value="', 1)[1].split('"', 1)[0]
+    response = client.post(
+        "/appliance-apply",
+        data={"csrf": csrf, "selected_units": ["network", "wan"]},
+        headers={"Accept": "application/json"},
+    )
+
+    assert response.status_code == 202, response.text
+    with SessionLocal() as db:
+        job = db.get(Job, response.json()["job_id"])
+        assert job is not None
+        payload = json.loads(job.result or "{}")
+    assert payload["management_handoff"] is True
+    assert "wan" in payload["management_handoff_units"]
+    assert any(unit["unit_id"] == "wan" for unit in payload["units"])
 
 
 def test_management_move_rechecks_handoff_after_ldap_dependency_expansion(client, monkeypatch):

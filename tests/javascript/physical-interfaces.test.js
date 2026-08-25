@@ -98,3 +98,46 @@ test("clearing a configured gateway requires the routed-connectivity warning", a
   assert.match(options.message, /off-subnet HTTPS, DNS, repositories, and updates/);
   assert.match(options.detail, /IPv4 gateway: none/);
 });
+
+test("management-to-access conversion reviews both default-route migrations", async () => {
+  let options = null;
+  const context = vm.createContext({
+    requestConfirmation: async (value) => { options = value; return true; },
+  });
+  vm.runInContext(
+    `${functionSource("confirmManagementToAccessRouteMigration")}
+     globalThis.run = confirmManagementToAccessRouteMigration;`,
+    context,
+  );
+
+  const accepted = await context.run({
+    name: "eth0",
+    gateway: "192.168.167.2",
+    ipv6_gateway: "fe80::1",
+  });
+
+  assert.equal(accepted, true);
+  assert.match(options.message, /atomically stage their routing intent/);
+  assert.match(options.detail, /IPv4 default route: 192\.168\.167\.2 via eth0/);
+  assert.match(options.detail, /IPv6 default route: fe80::1 via eth0/);
+  assert.match(options.detail, /Management UI: retained on flagged access interface eth0/);
+});
+
+test("management-to-access conversion warns when no gateway can be migrated", async () => {
+  let options = null;
+  const context = vm.createContext({
+    requestConfirmation: async (value) => { options = value; return false; },
+  });
+  vm.runInContext(
+    `${functionSource("confirmManagementToAccessRouteMigration")}
+     globalThis.run = confirmManagementToAccessRouteMigration;`,
+    context,
+  );
+
+  const accepted = await context.run({ name: "eth0", gateway: "", ipv6_gateway: "" });
+
+  assert.equal(accepted, false);
+  assert.match(options.message, /no default route will be invented/i);
+  assert.match(options.detail, /IPv4 default route: not staged - no prior gateway/);
+  assert.match(options.detail, /IPv6 default route: not staged - no prior gateway/);
+});
