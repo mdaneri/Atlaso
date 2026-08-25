@@ -1496,6 +1496,31 @@ def run_finalization_layer(label: str, operation: Callable[[], None]) -> None:
         raise OvfFinalizationError(f"First-time initialization failed in the {label} layer.") from exc
 
 
+def appliance_environment_values(config: dict[str, object]) -> dict[str, object]:
+    """Return Atlaso environment values for validated management customization.
+
+    Args:
+        config: Validated OVF customization values.
+
+    Returns:
+        Environment values that seed the first Atlaso desired state.
+    """
+    return {
+        "ATLASO_BOOTSTRAP_ADMIN_PASSWORD": config["admin_password"],
+        "ATLASO_SECRET_KEY": generate_secret_key(),
+        "ATLASO_SECRETS_KEY": generate_secret_key(),
+        "ATLASO_APPLIANCE_FQDN": config["fqdn"],
+        "ATLASO_APPLIANCE_MANAGEMENT_CIDR": config["cidr"],
+        "ATLASO_APPLIANCE_MANAGEMENT_GATEWAY": config["gateway"],
+        "ATLASO_APPLIANCE_MANAGEMENT_IPV6_ENABLED": str(config["ipv6_enabled"]).lower(),
+        "ATLASO_APPLIANCE_MANAGEMENT_IPV6_CIDR": config["ipv6_cidr"],
+        "ATLASO_APPLIANCE_MANAGEMENT_IPV6_GATEWAY": config["ipv6_gateway"],
+        "ATLASO_APPLIANCE_ROOT_SSH_ENABLED": str(config["root_ssh_enabled"]).lower(),
+        "ATLASO_APPLIANCE_EXTERNAL_DNS_SERVERS": ",".join(config["dns_servers"]),
+        "ATLASO_MANAGEMENT_SOURCE_CIDR": config["management_source_cidr"],
+    }
+
+
 def apply_customization(config: dict[str, object], *, dry_run: bool = False) -> dict[str, object]:
     """Update customization.
 
@@ -1543,22 +1568,7 @@ def apply_customization(config: dict[str, object], *, dry_run: bool = False) -> 
         run_initialization_layer("test VM SSH host key", publish_test_vm_ssh_host_key)
     run_initialization_layer(
         "appliance environment",
-        lambda: write_env_file(
-            ENV_PATH,
-            {
-                "ATLASO_BOOTSTRAP_ADMIN_PASSWORD": config["admin_password"],
-                "ATLASO_SECRET_KEY": generate_secret_key(),
-                "ATLASO_SECRETS_KEY": generate_secret_key(),
-                "ATLASO_APPLIANCE_FQDN": config["fqdn"],
-                "ATLASO_APPLIANCE_MANAGEMENT_CIDR": config["cidr"],
-                "ATLASO_APPLIANCE_MANAGEMENT_IPV6_ENABLED": str(config["ipv6_enabled"]).lower(),
-                "ATLASO_APPLIANCE_MANAGEMENT_IPV6_CIDR": config["ipv6_cidr"],
-                "ATLASO_APPLIANCE_MANAGEMENT_IPV6_GATEWAY": config["ipv6_gateway"],
-                "ATLASO_APPLIANCE_ROOT_SSH_ENABLED": str(config["root_ssh_enabled"]).lower(),
-                "ATLASO_APPLIANCE_EXTERNAL_DNS_SERVERS": ",".join(config["dns_servers"]),
-                "ATLASO_MANAGEMENT_SOURCE_CIDR": config["management_source_cidr"],
-            },
-        ),
+        lambda: write_env_file(ENV_PATH, appliance_environment_values(config)),
     )
     run_initialization_layer("console credential refresh", restart_console)
     run_initialization_layer("host state durability", sync_customized_host_state)
