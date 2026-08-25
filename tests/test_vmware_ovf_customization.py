@@ -233,10 +233,23 @@ def test_atomic_json_applies_secret_mode_before_opening_payload(tmp_path, monkey
     original_fdopen = customizer.os.fdopen
 
     def record_fchmod(descriptor, mode):
+        """Record mode ordering while delegating to the real descriptor helper.
+
+        Args:
+            descriptor: Open temporary-file descriptor.
+            mode: Requested POSIX file mode.
+        """
         events.append(("fchmod", mode))
         return original_fchmod(descriptor, mode)
 
     def record_fdopen(descriptor, *args, **kwargs):
+        """Record open ordering while delegating to the real descriptor helper.
+
+        Args:
+            descriptor: Open temporary-file descriptor.
+            *args: Positional arguments forwarded to ``os.fdopen``.
+            **kwargs: Keyword arguments forwarded to ``os.fdopen``.
+        """
         events.append(("fdopen", None))
         return original_fdopen(descriptor, *args, **kwargs)
 

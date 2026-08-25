@@ -886,6 +886,11 @@ def test_photon_https_bootstrap_publishes_exact_development_root_import_proof(
     commands = []
 
     def fake_run(command):
+        """Capture VMware guest-info commands and return deterministic results.
+
+        Args:
+            command: Command and arguments issued by the bootstrap helper.
+        """
         commands.append(command)
         stdout = f"{fingerprint}\n" if "info-get" in command[-1] else ""
         return SimpleNamespace(returncode=0, stdout=stdout, stderr="")
