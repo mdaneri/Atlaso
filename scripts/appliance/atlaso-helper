@@ -6033,7 +6033,9 @@ def _configure_atlaso_management_https(
     if verify_front_door:
         try:
             _sync_management_front_door_candidates(tracked_paths)
-            _clear_management_front_door_state()
+            cleanup_failures = _clear_management_front_door_state(
+                final_phase="candidate-committed"
+            )
         except OSError as exc:
             rollback_errors = _rollback_management_front_door(previous_files)
             detail = f"management front-door commit persistence failed: {type(exc).__name__}"
@@ -6041,6 +6043,12 @@ def _configure_atlaso_management_https(
                 detail += "; rollback failed: " + ", ".join(rollback_errors)
             print(detail, file=sys.stderr)
             return 1, None
+        if cleanup_failures:
+            print(
+                "management front-door candidate committed; deferred cleanup: "
+                + ", ".join(cleanup_failures),
+                file=sys.stderr,
+            )
 
     # The shipped service already runs on the desired loopback endpoint. The
     # drop-in makes that endpoint durable for a future boot; reloading systemd
@@ -6257,23 +6265,47 @@ def _persist_management_front_door_state(paths: tuple[Path, ...]) -> None:
     )
 
 
-def _clear_management_front_door_state() -> None:
-    """Durably commit the ordinary front door and discard its backups."""
-    state_dir_exists = MANAGEMENT_FRONT_DOOR_STATE_DIR.is_dir()
-    MANAGEMENT_FRONT_DOOR_STATE_PATH.unlink(missing_ok=True)
-    if state_dir_exists:
-        _fsync_directory(MANAGEMENT_FRONT_DOOR_STATE_DIR)
+def _clear_management_front_door_state(*, final_phase: str) -> list[str]:
+    """Commit a terminal phase before best-effort rollback-state cleanup.
+
+    Args:
+        final_phase: Durable outcome that prevents any later snapshot restore.
+
+    Returns:
+        Bounded cleanup layers that remain safe to retry.
+    """
+    if final_phase not in {"candidate-committed", "rollback-complete"}:
+        raise ValueError("management front-door terminal phase is invalid")
+    _durable_management_handoff_state_write(
+        {"schema": 1, "phase": final_phase},
+        MANAGEMENT_FRONT_DOOR_STATE_PATH,
+    )
+    failures: list[str] = []
     if MANAGEMENT_FRONT_DOOR_BACKUP_DIR.is_dir():
-        shutil.rmtree(MANAGEMENT_FRONT_DOOR_BACKUP_DIR)
+        try:
+            shutil.rmtree(MANAGEMENT_FRONT_DOOR_BACKUP_DIR)
+            _fsync_directory(MANAGEMENT_FRONT_DOOR_STATE_DIR)
+        except OSError:
+            failures.append("backup cleanup")
+            return failures
+    try:
+        MANAGEMENT_FRONT_DOOR_STATE_PATH.unlink(missing_ok=True)
         _fsync_directory(MANAGEMENT_FRONT_DOOR_STATE_DIR)
-    removed = False
+    except OSError:
+        failures.append("marker cleanup")
+        return failures
+    # Once the terminal marker unlink is durable, leftover empty directories
+    # are harmless housekeeping. Do not report a retry condition that no
+    # longer has a marker proving whether restore is forbidden.
     try:
         MANAGEMENT_FRONT_DOOR_STATE_DIR.rmdir()
-        removed = True
+    except OSError:
+        return failures
+    try:
+        _fsync_directory(MANAGEMENT_FRONT_DOOR_STATE_DIR.parent)
     except OSError:
         pass
-    if removed:
-        _fsync_directory(MANAGEMENT_FRONT_DOOR_STATE_DIR.parent)
+    return failures
 
 
 def _rollback_management_front_door(
@@ -6291,9 +6323,18 @@ def _rollback_management_front_door(
     if failures:
         return failures
     try:
-        _clear_management_front_door_state()
-    except OSError:
-        failures.append("rollback state cleanup")
+        cleanup_failures = _clear_management_front_door_state(
+            final_phase="rollback-complete"
+        )
+    except (OSError, ValueError):
+        failures.append("rollback state commit")
+    else:
+        if cleanup_failures:
+            print(
+                "management front-door rollback complete; deferred cleanup: "
+                + ", ".join(cleanup_failures),
+                file=sys.stderr,
+            )
     return failures
 
 
@@ -6310,8 +6351,15 @@ def _load_management_front_door_state() -> dict:
         if directory_descriptor is not None:
             os.close(directory_descriptor)
     state = json.loads(marker.decode("utf-8"))
-    if state.get("schema") != 1 or state.get("phase") != "prepared":
+    phase = state.get("phase")
+    if state.get("schema") != 1 or phase not in {
+        "prepared",
+        "candidate-committed",
+        "rollback-complete",
+    }:
         raise ValueError("management front-door rollback marker is invalid")
+    if phase != "prepared":
+        return {"schema": 1, "phase": phase, "snapshots": []}
     snapshots = state.get("snapshots")
     allowed = {
         str(NGINX_MANAGEMENT_SITE_PATH),
@@ -6423,6 +6471,26 @@ def _recover_management_front_door(*, quiet: bool = False) -> int:
     except (OSError, ValueError, json.JSONDecodeError) as exc:
         failures.append(f"state load: {type(exc).__name__}")
         state = {"snapshots": []}
+    phase = str(state.get("phase") or "")
+    if not failures and phase in {"candidate-committed", "rollback-complete"}:
+        try:
+            cleanup_failures = _clear_management_front_door_state(final_phase=phase)
+        except (OSError, ValueError) as exc:
+            cleanup_failures = [f"state cleanup: {type(exc).__name__}"]
+        if cleanup_failures and not quiet:
+            print(
+                json.dumps(
+                    {
+                        "management_front_door": phase,
+                        "deferred_cleanup": cleanup_failures,
+                    },
+                    sort_keys=True,
+                ),
+                file=sys.stderr,
+            )
+        elif not quiet:
+            print(json.dumps({"management_front_door": phase}, sort_keys=True))
+        return 0
     for index, item in enumerate(state.get("snapshots", [])):
         try:
             _restore_management_front_door_snapshot(item)
@@ -6432,9 +6500,23 @@ def _recover_management_front_door(*, quiet: bool = False) -> int:
         failures.extend(_restore_management_front_door_files({}))
     if not failures:
         try:
-            _clear_management_front_door_state()
-        except OSError as exc:
-            failures.append(f"state cleanup: {type(exc).__name__}")
+            cleanup_failures = _clear_management_front_door_state(
+                final_phase="rollback-complete"
+            )
+        except (OSError, ValueError) as exc:
+            failures.append(f"state commit: {type(exc).__name__}")
+        else:
+            if cleanup_failures and not quiet:
+                print(
+                    json.dumps(
+                        {
+                            "management_front_door": "rollback complete",
+                            "deferred_cleanup": cleanup_failures,
+                        },
+                        sort_keys=True,
+                    ),
+                    file=sys.stderr,
+                )
     if failures:
         print(
             json.dumps(

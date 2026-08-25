@@ -11855,6 +11855,107 @@ def test_management_front_door_syncs_candidates_before_commit(monkeypatch, tmp_p
     assert events[4:] == [("directory", parent) for parent in sorted({path.parent for path in paths}, key=str)]
 
 
+def test_management_front_door_cleanup_failure_retains_terminal_marker_without_restore(
+    monkeypatch,
+    tmp_path,
+):
+    """Retry cleanup without restoring files after the candidate commits.
+
+    Args:
+        monkeypatch: Pytest fixture used to inject backup-cleanup failure.
+        tmp_path: Temporary root containing isolated durable transaction state.
+    """
+    helper = load_helper_module()
+    nginx_paths = patch_appliance_settings_nginx_paths(monkeypatch, helper, tmp_path)
+    dropin = tmp_path / "systemd" / "atlaso.service.d" / "management-https.conf"
+    dropin.parent.mkdir(parents=True)
+    dropin.write_text("previous drop-in\n", encoding="utf-8")
+    monkeypatch.setattr(helper, "ATLASO_SERVICE_HTTPS_DROPIN_PATH", dropin)
+    tracked = (
+        nginx_paths["management_site"],
+        nginx_paths["include"],
+        nginx_paths["main"],
+        dropin,
+    )
+    helper._persist_management_front_door_state(tracked)
+    monkeypatch.setattr(
+        helper.shutil,
+        "rmtree",
+        lambda _path: (_ for _ in ()).throw(OSError("cleanup unavailable")),
+    )
+    monkeypatch.setattr(
+        helper,
+        "_restore_management_front_door_snapshot",
+        lambda _item: pytest.fail("terminal state must never restore a snapshot"),
+    )
+
+    assert helper._clear_management_front_door_state(
+        final_phase="candidate-committed"
+    ) == ["backup cleanup"]
+    assert json.loads(
+        helper.MANAGEMENT_FRONT_DOOR_STATE_PATH.read_text(encoding="utf-8")
+    ) == {"phase": "candidate-committed", "schema": 1}
+    assert helper.MANAGEMENT_FRONT_DOOR_BACKUP_DIR.is_dir()
+
+    assert helper._recover_management_front_door(quiet=True) == 0
+    assert json.loads(
+        helper.MANAGEMENT_FRONT_DOOR_STATE_PATH.read_text(encoding="utf-8")
+    )["phase"] == "candidate-committed"
+
+
+def test_management_front_door_reports_post_commit_cleanup_without_rollback(
+    monkeypatch,
+    tmp_path,
+    capsys,
+):
+    """Keep the proven candidate when only terminal-state cleanup is deferred.
+
+    Args:
+        monkeypatch: Pytest fixture used to replace host mutation dependencies.
+        tmp_path: Temporary root containing isolated runtime paths.
+        capsys: Pytest fixture used to inspect the non-fatal cleanup warning.
+    """
+    helper = load_helper_module()
+    patch_appliance_settings_nginx_paths(monkeypatch, helper, tmp_path)
+    dropin = tmp_path / "systemd" / "atlaso.service.d" / "management-https.conf"
+    monkeypatch.setattr(helper, "ATLASO_SERVICE_DROPIN_DIR", dropin.parent)
+    monkeypatch.setattr(helper, "ATLASO_SERVICE_HTTPS_DROPIN_PATH", dropin)
+    monkeypatch.setattr(helper, "_factory_reset_runtime_cleanup_is_admitted", lambda: False)
+    monkeypatch.setattr(
+        helper,
+        "_management_handoff_upstream_readiness",
+        lambda **_kwargs: {"stable_samples": 3},
+    )
+    monkeypatch.setattr(
+        helper,
+        "_management_handoff_readiness",
+        lambda *_args, **_kwargs: {"stable_samples": 3},
+    )
+    monkeypatch.setattr(helper, "_persist_management_front_door_state", lambda _paths: None)
+    monkeypatch.setattr(helper, "_install_nginx_site", lambda *_args: 0)
+    monkeypatch.setattr(helper, "_sync_management_front_door_candidates", lambda _paths: None)
+    monkeypatch.setattr(
+        helper,
+        "_clear_management_front_door_state",
+        lambda *, final_phase: ["backup cleanup"],
+    )
+    monkeypatch.setattr(
+        helper,
+        "_rollback_management_front_door",
+        lambda _snapshots: pytest.fail("committed candidate must not roll back"),
+    )
+    monkeypatch.setattr(
+        helper,
+        "_run",
+        lambda command: subprocess.CompletedProcess(command, 0, "", ""),
+    )
+
+    payload = json.loads(appliance_settings_json(management_https_enabled=False))
+    assert helper._configure_atlaso_management_https(payload) == (0, None)
+
+    assert "candidate committed; deferred cleanup: backup cleanup" in capsys.readouterr().err
+
+
 def test_appliance_settings_helper_applies_local_resolver_without_timesyncd(monkeypatch, tmp_path):
     """Verify that appliance settings helper applies local resolver without timesyncd.
 

@@ -748,9 +748,11 @@ success from both the loopback upstream and the guest-local management
 address/public-port front door. Activation or readiness failure restores the snapshots, validates and reloads nginx,
 and reloads systemd before the unit reports failure. `atlaso.service` runs `management-front-door recover` before
 startup, restoring the same snapshots after interruption and failing closed until recovery completes. Every candidate
-file and parent directory is synced before the marker is removed after readiness succeeds. A completed durable rollback
-also removes the marker; an incomplete rollback retains it for retry. Protected management handoff and factory-reset
-admission run this recovery before taking their wider snapshots or mutating the front door. It also writes
+file and parent directory is synced before the marker advances to `candidate-committed`; completed rollback records
+`rollback-complete`. Cleanup removes backups before the terminal marker, and a cleanup failure retains terminal proof
+for retry without restoring an already committed candidate or completed rollback. Prepared state remains recoverable.
+Protected management handoff and factory-reset admission reconcile this state before taking their wider snapshots or
+mutating the front door. It also writes
 `/etc/ssh/sshd_config.d/atlaso-root-login.conf`, validates
 `sshd`, and restarts `sshd`; root SSH
 is disabled by default and enabled only when the Appliance Settings switch is applied. When management UI HTTPS is
