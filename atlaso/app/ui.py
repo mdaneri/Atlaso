@@ -5294,6 +5294,7 @@ def wan_routing_targets(db: Session) -> list[dict[str, str]]:
     """
     interfaces = db.execute(select(PhysicalInterface).order_by(PhysicalInterface.name)).scalars().all()
     vlans = db.execute(select(VlanInterface).order_by(VlanInterface.parent_interface, VlanInterface.vlan_id)).scalars().all()
+    interfaces_by_name = {interface.name: interface for interface in interfaces}
     targets: list[dict[str, str]] = []
     for interface in interfaces:
         if interface.oper_state == "missing":
@@ -5328,6 +5329,7 @@ def wan_routing_targets(db: Session) -> list[dict[str, str]]:
             }
         )
     for vlan in vlans:
+        parent = interfaces_by_name.get(vlan.parent_interface)
         role = normalize_interface_role(vlan.role)
         addresses = interface_addresses_from_cidrs(vlan.ip_cidr, vlan.ipv6_cidr)
         if not vlan.enabled or not addresses:
@@ -5345,7 +5347,12 @@ def wan_routing_targets(db: Session) -> list[dict[str, str]]:
                 "routing_domain": routing_domain,
                 "route_allowed": routing_domain == "lab",
                 "management_ui": bool(
-                    role == "access" and vlan.access_management_ui_enabled
+                    role == "access"
+                    and vlan.access_management_ui_enabled
+                    and parent is not None
+                    and parent.oper_state != "missing"
+                    and str(parent.admin_state or "").lower() == "up"
+                    and normalize_interface_mode(parent.mode) == "trunk"
                 ),
                 "label": f"{vlan.name} - VLAN {vlan.vlan_id} on {vlan.parent_interface} / {role} / {address_label}",
             }

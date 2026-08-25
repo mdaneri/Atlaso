@@ -1482,13 +1482,14 @@ def update_physical_interface_desired_state(
             actor=None,
             dns_refresher=dns_refresher,
         )
-        if routing_updates and "Routes & WAN Simulation" not in dependent_updates:
-            # The route rows are owned by this same transaction and must be selected with
-            # Network during the protected management handoff.
+        management_to_access = old_role == "management" and role_value == "access"
+        if management_to_access and "Routes & WAN Simulation" not in dependent_updates:
+            # The management-only gateway fields are retired by this transaction even when
+            # neither family supplied a gateway to preserve. Keep Routes & WAN selected and
+            # audited with Network throughout the protected management handoff.
             dependent_updates.append("Routes & WAN Simulation")
         if (
-            old_role == "management"
-            and role_value == "access"
+            management_to_access
             and "Appliance Settings" not in dependent_updates
         ):
             # Web Terminal and the management front door follow the applied listener. Mark the

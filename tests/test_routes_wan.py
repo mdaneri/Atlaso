@@ -159,6 +159,46 @@ def test_admin_down_access_interface_is_not_a_management_mirror_target(client):
     assert target["management_ui"] is False
 
 
+def test_flagged_vlan_on_inactive_parent_is_not_a_management_wan_target(client):
+    """Do not mirror a host default through a VLAN whose trunk parent is down.
+
+    Args:
+        client: HTTP test client providing the isolated application database.
+    """
+    from sqlalchemy import select
+
+    from atlaso.app.database import SessionLocal
+    from atlaso.app.models import PhysicalInterface, VlanInterface
+    from atlaso.app.ui import wan_routing_targets
+
+    with SessionLocal() as db:
+        parent = db.scalar(
+            select(PhysicalInterface).where(PhysicalInterface.name == "eth2")
+        )
+        assert parent is not None
+        parent.role = "unused"
+        parent.mode = "trunk"
+        parent.admin_state = "down"
+        parent.oper_state = "down"
+        vlan = VlanInterface(
+            name="eth2.521",
+            parent_interface="eth2",
+            vlan_id=521,
+            ip_cidr="192.0.2.10/24",
+            role="access",
+            enabled=True,
+            access_management_ui_enabled=True,
+        )
+        db.add(vlan)
+        db.commit()
+
+        target = next(
+            item for item in wan_routing_targets(db) if item["name"] == vlan.name
+        )
+
+    assert target["management_ui"] is False
+
+
 def test_removed_route_detection_compares_canonical_destinations():
     """Keep equivalent legacy baseline destinations during global Apply."""
     from atlaso.app.ui import removed_wan_route_entries

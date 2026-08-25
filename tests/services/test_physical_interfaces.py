@@ -245,6 +245,13 @@ def test_management_to_access_missing_gateways_does_not_invent_routes(client):
         assert db.execute(select(Route)).scalars().all() == []
         assert len(result.routing_warnings) == 2
         assert result.interface.access_management_ui_enabled is True
+        assert "Routes & WAN Simulation" in result.changed_dependent_units
+        assert "Appliance Settings" in result.changed_dependent_units
+        assert result.routing_audit_event is not None
+        assert result.routing_audit_event.resource_type == "route"
+        assert result.routing_audit_event.action == "preserve_management_gateway_routes"
+        assert "no IPv4 default route was staged" in result.routing_audit_event.detail
+        assert "no IPv6 default route was staged" in result.routing_audit_event.detail
 
 
 def test_mutation_commits_interface_dependencies_and_audit_together(client):

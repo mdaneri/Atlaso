@@ -188,14 +188,16 @@ def mutate_physical_interface_desired_state(
         )
         db.add(audit_event)
         routing_audit_event = None
-        if update_result.routing_updates:
+        if update_result.routing_updates or update_result.routing_warnings:
             routing_audit_event = AuditEvent(
                 actor=audit.actor,
                 action="preserve_management_gateway_routes",
                 resource_type="route",
                 resource_id=update_result.interface.name,
                 success=True,
-                detail=" ".join(update_result.routing_updates),
+                detail=" ".join(
+                    (*update_result.routing_updates, *update_result.routing_warnings)
+                ),
             )
             db.add(routing_audit_event)
         db.commit()
