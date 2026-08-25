@@ -1528,9 +1528,9 @@ function initializeAtlasoResourceWizard(config) {
       return config.validateStep(state);
     },
     onStepChange: (state) => config.onStepChange?.(state),
-    prepareReview: () => {
+    prepareReview: async () => {
       renderAtlasoWizardReview(form, config.reviewItems);
-      config.prepareReview?.({ form });
+      return config.prepareReview?.({ form });
     },
     onSubmit: async () => {
       const body = new FormData(form);

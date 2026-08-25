@@ -221,6 +221,7 @@ test("Source Group fallback Add control retains a wizard when Tabulator is unava
   assert.match(adapter, /if \(data\?\.is_new\) return/);
   assert.match(adapter, /if \(!table\) \{\s*window\.location\.reload\(\)/);
   assert.doesNotMatch(adapter, /return \{ grid, table: null, wizard: null \}/);
+  assert.match(adapter, /prepareReview: async[\s\S]+return config\.prepareReview\?\.\(\{ form \}\)/);
 });
 
 test("Source Group grid uses full panel height and compact shared density", () => {
