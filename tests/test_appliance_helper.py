@@ -11411,6 +11411,57 @@ def test_management_front_door_rolls_back_when_nginx_activation_raises(
     assert "management nginx activation raised OSError" in capsys.readouterr().err
 
 
+def test_management_front_door_rolls_back_when_daemon_reload_raises(
+    monkeypatch,
+    tmp_path,
+    capsys,
+):
+    """Restore snapshots when systemd execution fails after drop-in mutation.
+
+    Args:
+        monkeypatch: Pytest fixture used to replace helper paths and execution.
+        tmp_path: Temporary directory provided for isolated runtime files.
+        capsys: Pytest fixture used to capture the bounded failure detail.
+    """
+    helper = load_helper_module()
+    nginx_paths = patch_appliance_settings_nginx_paths(monkeypatch, helper, tmp_path)
+    management_site = nginx_paths["management_site"]
+    management_site.parent.mkdir(parents=True, exist_ok=True)
+    management_site.write_text("previous management site\n", encoding="utf-8")
+    dropin = tmp_path / "systemd" / "atlaso.service.d" / "management-https.conf"
+    dropin.parent.mkdir(parents=True)
+    dropin.write_text("previous service drop-in\n", encoding="utf-8")
+
+    monkeypatch.setattr(helper, "ATLASO_SERVICE_DROPIN_DIR", dropin.parent)
+    monkeypatch.setattr(helper, "ATLASO_SERVICE_HTTPS_DROPIN_PATH", dropin)
+    monkeypatch.setattr(helper, "_factory_reset_runtime_cleanup_is_admitted", lambda: False)
+    monkeypatch.setattr(
+        helper,
+        "_management_handoff_upstream_readiness",
+        lambda **_kwargs: {"status": "200", "stable_samples": 3},
+    )
+    monkeypatch.setattr(
+        helper,
+        "_run",
+        lambda _command: (_ for _ in ()).throw(OSError("systemctl unavailable")),
+    )
+    monkeypatch.setattr(
+        helper,
+        "_nginx_test_command",
+        lambda: subprocess.CompletedProcess(["nginx", "-t"], 0, "", ""),
+    )
+    monkeypatch.setattr(helper, "_reload_nginx", lambda: 0)
+
+    payload = json.loads(appliance_settings_json(management_https_enabled=False))
+    assert helper._configure_atlaso_management_https(payload) == (1, None)
+
+    assert management_site.read_text(encoding="utf-8") == "previous management site\n"
+    assert dropin.read_text(encoding="utf-8") == "previous service drop-in\n"
+    error = capsys.readouterr().err
+    assert "management systemd daemon-reload raised OSError" in error
+    assert "rollback failed: systemd daemon-reload" in error
+
+
 def test_appliance_settings_helper_applies_local_resolver_without_timesyncd(monkeypatch, tmp_path):
     """Verify that appliance settings helper applies local resolver without timesyncd.
 

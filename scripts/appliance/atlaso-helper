@@ -5927,7 +5927,15 @@ def _configure_atlaso_management_https(
         tmp_target.replace(ATLASO_SERVICE_HTTPS_DROPIN_PATH)
         changed = True
     if changed:
-        daemon_reload = _run(["systemctl", "daemon-reload"])
+        try:
+            daemon_reload = _run(["systemctl", "daemon-reload"])
+        except (OSError, subprocess.SubprocessError) as exc:
+            rollback_errors = _restore_management_front_door_files(previous_files)
+            detail = f"management systemd daemon-reload raised {type(exc).__name__}"
+            if rollback_errors:
+                detail += "; rollback failed: " + ", ".join(rollback_errors)
+            print(detail, file=sys.stderr)
+            return 1, None
         print(daemon_reload.stdout, end="")
         print(daemon_reload.stderr, end="", file=sys.stderr)
         if daemon_reload.returncode != 0:
@@ -6027,14 +6035,28 @@ def _restore_management_front_door_files(
             temporary.replace(path)
         except OSError:
             failures.append(path.name)
-    daemon_reload = _run(["systemctl", "daemon-reload"])
-    if daemon_reload.returncode != 0:
+    try:
+        daemon_reload = _run(["systemctl", "daemon-reload"])
+    except (OSError, subprocess.SubprocessError):
         failures.append("systemd daemon-reload")
-    nginx_validation = _nginx_test_command()
-    if nginx_validation.returncode != 0:
+    else:
+        if daemon_reload.returncode != 0:
+            failures.append("systemd daemon-reload")
+    try:
+        nginx_validation = _nginx_test_command()
+    except (OSError, subprocess.SubprocessError):
         failures.append("nginx validation")
-    elif _reload_nginx() != 0:
-        failures.append("nginx reload")
+    else:
+        if nginx_validation.returncode != 0:
+            failures.append("nginx validation")
+        else:
+            try:
+                reload_status = _reload_nginx()
+            except (OSError, subprocess.SubprocessError):
+                failures.append("nginx reload")
+            else:
+                if reload_status != 0:
+                    failures.append("nginx reload")
     return failures
 
 
