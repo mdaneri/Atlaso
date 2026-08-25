@@ -5869,17 +5869,16 @@ def _configure_atlaso_management_https(
     payload: dict,
     *,
     site_suffix: str = "",
-    restart_service: bool = True,
+    verify_front_door: bool = True,
 ) -> tuple[int, int | None]:
-    """Perform configure atlaso management HTTPS.
+    """Install the management front door without interrupting its upstream.
 
     Args:
         payload: Validated request or task payload consumed by the operation.
         site_suffix: Additional transitional server blocks installed in the same site.
-        restart_service: Whether a changed loopback drop-in schedules an Atlaso restart.
+        verify_front_door: Whether to prove the ordinary current-address path.
     """
     enabled = bool(payload.get("management_https_enabled"))
-    changed = False
     port = int(payload.get("management_upstream_port") or payload.get("management_http_port") or 8000)
     upstream_host = str(payload.get("management_upstream_host") or "127.0.0.1")
     cert_path: Path | None = None
@@ -5891,54 +5890,144 @@ def _configure_atlaso_management_https(
     site_text = _management_nginx_config(payload, cert_path, key_path).rstrip() + "\n"
     if site_suffix.strip():
         site_text += "\n" + site_suffix.strip() + "\n"
-    site_apply = _install_nginx_site(NGINX_MANAGEMENT_SITE_PATH, site_text)
-    if site_apply != 0:
-        return site_apply, None
+
+    if _factory_reset_runtime_cleanup_is_admitted():
+        verify_front_door = False
+
+    # Ordinary Appliance Settings apply runs inside the Atlaso worker. Restarting
+    # Atlaso from this helper waits for that active job to exit and leaves nginx
+    # with no upstream in the meantime. Prove the already-running desired
+    # upstream before publishing nginx; protected address/protocol changes use
+    # the wider management handoff and perform equivalent checks around this call.
+    if verify_front_door:
+        try:
+            _management_handoff_upstream_readiness(
+                upstream_host=upstream_host,
+                upstream_port=port,
+            )
+        except ValueError as exc:
+            print(f"management upstream preflight failed: {exc}", file=sys.stderr)
+            return 1, None
+
+    tracked_paths = (
+        NGINX_MANAGEMENT_SITE_PATH,
+        NGINX_CONF_INCLUDE_PATH,
+        NGINX_MAIN_CONFIG_PATH,
+        ATLASO_SERVICE_HTTPS_DROPIN_PATH,
+    )
+    previous_files = {path: _runtime_file_snapshot(path) for path in tracked_paths}
     next_text = _atlaso_service_loopback_dropin(upstream_host, port)
     ATLASO_SERVICE_DROPIN_DIR.mkdir(parents=True, exist_ok=True)
     current_text = ATLASO_SERVICE_HTTPS_DROPIN_PATH.read_text(encoding="utf-8") if ATLASO_SERVICE_HTTPS_DROPIN_PATH.exists() else ""
+    changed = False
     if current_text != next_text:
         tmp_target = ATLASO_SERVICE_HTTPS_DROPIN_PATH.with_suffix(".conf.tmp")
         tmp_target.write_text(next_text, encoding="utf-8")
         os.chmod(tmp_target, 0o644)
         tmp_target.replace(ATLASO_SERVICE_HTTPS_DROPIN_PATH)
         changed = True
-    if not changed:
-        return 0, None
+    if changed:
+        daemon_reload = _run(["systemctl", "daemon-reload"])
+        print(daemon_reload.stdout, end="")
+        print(daemon_reload.stderr, end="", file=sys.stderr)
+        if daemon_reload.returncode != 0:
+            rollback_errors = _restore_management_front_door_files(previous_files)
+            if rollback_errors:
+                print(
+                    "management front-door rollback failed after systemd reload error: "
+                    + ", ".join(rollback_errors),
+                    file=sys.stderr,
+                )
+            return daemon_reload.returncode, None
 
+    site_apply = _install_nginx_site(NGINX_MANAGEMENT_SITE_PATH, site_text)
+    if site_apply != 0:
+        rollback_errors = _restore_management_front_door_files(previous_files)
+        if rollback_errors:
+            print(
+                "management front-door rollback failed after nginx activation error: "
+                + ", ".join(rollback_errors),
+                file=sys.stderr,
+            )
+        return site_apply, None
+
+    if verify_front_door:
+        https_enabled = bool(payload.get("management_https_enabled"))
+        public_port = int(
+            payload.get(
+                "management_public_https_port" if https_enabled else "management_public_http_port"
+            )
+            or (443 if https_enabled else 80)
+        )
+        try:
+            _management_handoff_readiness(
+                [str(payload["management_ip"])],
+                https_enabled,
+                public_port,
+                upstream_host=upstream_host,
+                upstream_port=port,
+            )
+        except (KeyError, ValueError) as exc:
+            rollback_errors = _restore_management_front_door_files(previous_files)
+            detail = f"management front-door readiness failed: {exc}"
+            if rollback_errors:
+                detail += "; rollback failed: " + ", ".join(rollback_errors)
+            print(detail, file=sys.stderr)
+            return 1, None
+
+    # The shipped service already runs on the desired loopback endpoint. The
+    # drop-in makes that endpoint durable for a future boot; reloading systemd
+    # is sufficient and deliberately does not restart the active worker.
+    return 0, None
+
+
+def _runtime_file_snapshot(path: Path) -> tuple[bytes | None, int | None]:
+    """Capture bytes and mode for one rollback-owned runtime file.
+
+    Args:
+        path: Runtime file that may be changed by front-door activation.
+
+    Returns:
+        Previous bytes and permission mode, or two ``None`` values when absent.
+    """
+    if not path.exists():
+        return None, None
+    return path.read_bytes(), stat.S_IMODE(path.stat().st_mode)
+
+
+def _restore_management_front_door_files(
+    snapshots: dict[Path, tuple[bytes | None, int | None]],
+) -> list[str]:
+    """Restore the previous nginx and Atlaso service configuration.
+
+    Args:
+        snapshots: Runtime paths mapped to their pre-activation bytes and modes.
+
+    Returns:
+        Bounded names of rollback layers that did not complete.
+    """
+    failures: list[str] = []
+    for path, (content, mode) in snapshots.items():
+        try:
+            if content is None:
+                path.unlink(missing_ok=True)
+                continue
+            path.parent.mkdir(parents=True, exist_ok=True)
+            temporary = path.with_name(f".{path.name}.atlaso-rollback")
+            temporary.write_bytes(content)
+            os.chmod(temporary, mode if mode is not None else 0o600)
+            temporary.replace(path)
+        except OSError:
+            failures.append(path.name)
     daemon_reload = _run(["systemctl", "daemon-reload"])
-    print(daemon_reload.stdout, end="")
-    print(daemon_reload.stderr, end="", file=sys.stderr)
     if daemon_reload.returncode != 0:
-        return daemon_reload.returncode, None
-    if not restart_service:
-        return 0, None
-
-    # Factory reset already owns service quiescence and starts the complete
-    # management stack only after runtime activation and credential cleanup.
-    # A delayed restart here could launch a second reset resume runner while
-    # the first transaction still owns its durable credential plan.
-    if _factory_reset_runtime_cleanup_is_admitted():
-        return 0, None
-
-    restart_command = ["systemctl", "restart", "atlaso.service"]
-    systemd_run = shutil.which("systemd-run")
-    if systemd_run is not None:
-        command = [
-            systemd_run,
-            "--quiet",
-            "--collect",
-            "--on-active=3",
-            "--unit=atlaso-management-ui-restart",
-            *restart_command,
-        ]
-    else:
-        command = restart_command
-    result = _run(command)
-    print(result.stdout, end="")
-    print(result.stderr, end="", file=sys.stderr)
-    restart_delay_seconds = 3 if systemd_run is not None and result.returncode == 0 else None
-    return result.returncode, restart_delay_seconds
+        failures.append("systemd daemon-reload")
+    nginx_validation = _nginx_test_command()
+    if nginx_validation.returncode != 0:
+        failures.append("nginx validation")
+    elif _reload_nginx() != 0:
+        failures.append("nginx reload")
+    return failures
 
 
 def _root_ssh_config(enabled: bool) -> str:
@@ -18026,6 +18115,8 @@ def _management_handoff_readiness(
     public_port: int,
     *,
     samples: int = 3,
+    upstream_host: str = "127.0.0.1",
+    upstream_port: int = 8000,
 ) -> dict:
     """Require stable loopback and direct-address management readiness.
 
@@ -18034,6 +18125,8 @@ def _management_handoff_readiness(
         https_enabled: Whether the applied management front door uses HTTPS.
         public_port: Configured host-facing management listener port.
         samples: Required consecutive successful samples.
+        upstream_host: Atlaso application endpoint host behind nginx.
+        upstream_port: Atlaso application endpoint port behind nginx.
 
     Returns:
         Bounded readiness evidence.
@@ -18048,8 +18141,14 @@ def _management_handoff_readiness(
     deadline = time.monotonic() + 45
     consecutive = 0
     statuses: dict[str, str] = {}
+    upstream_address = f"[{upstream_host}]" if ":" in upstream_host else upstream_host
     while time.monotonic() < deadline:
-        statuses = {"Atlaso application loopback": _console_management_http_status(curl, "http://127.0.0.1:8000/openapi.json")}
+        statuses = {
+            "Atlaso application loopback": _console_management_http_status(
+                curl,
+                f"http://{upstream_address}:{upstream_port}/openapi.json",
+            )
+        }
         for address in addresses:
             host = f"[{address}]" if ":" in address else address
             scheme = "https" if https_enabled else "http"
@@ -18069,11 +18168,18 @@ def _management_handoff_readiness(
     raise ValueError(f"management readiness did not stabilize ({summary})")
 
 
-def _management_handoff_upstream_readiness(*, samples: int = 3) -> dict:
+def _management_handoff_upstream_readiness(
+    *,
+    samples: int = 3,
+    upstream_host: str = "127.0.0.1",
+    upstream_port: int = 8000,
+) -> dict:
     """Require stable Atlaso loopback readiness before nginx activation.
 
     Args:
         samples: Required consecutive successful samples.
+        upstream_host: Atlaso application endpoint host behind nginx.
+        upstream_port: Atlaso application endpoint port behind nginx.
 
     Returns:
         Bounded upstream readiness evidence.
@@ -18084,8 +18190,10 @@ def _management_handoff_upstream_readiness(*, samples: int = 3) -> dict:
     deadline = time.monotonic() + 45
     consecutive = 0
     status = "not-probed"
+    upstream_address = f"[{upstream_host}]" if ":" in upstream_host else upstream_host
+    upstream_url = f"http://{upstream_address}:{upstream_port}/openapi.json"
     while time.monotonic() < deadline:
-        status = _console_management_http_status(curl, "http://127.0.0.1:8000/openapi.json")
+        status = _console_management_http_status(curl, upstream_url)
         if status == "200":
             consecutive += 1
             if consecutive >= samples:
@@ -18997,7 +19105,7 @@ def _apply_management_handoff(payload: dict) -> int:
         management_https_result, _restart_delay_seconds = _configure_atlaso_management_https(
             settings_payload,
             site_suffix=protocol_holdover,
-            restart_service=False,
+            verify_front_door=False,
         )
         if management_https_result != 0:
             raise ValueError("candidate management nginx apply failed")
@@ -19069,7 +19177,7 @@ def _apply_management_handoff(payload: dict) -> int:
             failing_layer = "previous-protocol retirement"
             management_https_result, _restart_delay_seconds = _configure_atlaso_management_https(
                 settings_payload,
-                restart_service=False,
+                verify_front_door=False,
             )
             if management_https_result != 0:
                 raise ValueError("candidate nginx could not retire the previous protocol listener")

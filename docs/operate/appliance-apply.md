@@ -117,14 +117,15 @@ Safe cancellation does not interrupt the component already running. Every helper
 continues to completion. After the component returns, Atlaso skips the remaining components and releases the mutation
 lock when the master task becomes terminal.
 
-When a real Appliance Settings component reaches its planned management-service restart, the dialog shows **Applying
-management settings; Atlaso is reconnecting to task status.** This neutral state keeps the last known task progress and
-global lock visible. Leave the dialog open: Atlaso retries every two seconds, clears the notice when the front door
-returns, and follows the same master task to its terminal state without a page reload. The bounded reconnect interval
-uses the remaining server-owned restart window reported with each task response. A browser opened or resumed after the
-scheduled restart therefore cannot start a fresh grace interval, and clock differences between the browser and appliance
-do not change the boundary. For a settings-only apply, the completed master remains visible and keeps appliance changes
-locked only until that restart window ends.
+An ordinary real Appliance Settings component keeps the management front door online. Before nginx changes, Atlaso
+requires consecutive success from the configured loopback `/openapi.json`; after reload it requires the same upstream
+and the guest-local management address/public-port front door to remain healthy. The active Atlaso worker is not
+restarted. If activation or readiness fails, the helper restores the exact prior nginx and systemd files, reloads the
+restored front door, and fails the component instead of exposing a continuing 502 response.
+
+The dialog still understands the bounded **Applying management settings; Atlaso is reconnecting to task status.** state
+when following a retained task created by an older release that contains authenticated restart metadata. Current
+Appliance Settings tasks do not create that restart window.
 
 If that reconnect exceeds the bounded grace window, or a status failure is not part of the planned restart, the dialog
 instead shows **Live task status is temporarily unavailable** with a link-free instruction to open **Tasks** in another

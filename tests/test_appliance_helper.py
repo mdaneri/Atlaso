@@ -1109,10 +1109,13 @@ def test_management_handoff_readiness_requires_consecutive_samples(monkeypatch):
         True,
         8443,
         samples=2,
+        upstream_host="127.0.0.2",
+        upstream_port=9000,
     )
 
     assert evidence["stable_samples"] == 2
     assert evidence["statuses"]["management 198.51.100.10"] == "200"
+    assert "http://127.0.0.2:9000/openapi.json" in urls
     assert "https://198.51.100.10:8443/openapi.json" in urls
 
 
@@ -1662,7 +1665,7 @@ def test_management_handoff_candidate_durability_gates_ack(
     restored: list[bool] = []
     durability_calls: list[bool] = []
     nginx_suffixes: list[str] = []
-    nginx_restart_options: list[bool] = []
+    nginx_readiness_options: list[bool] = []
     retirement_operations: list[str] = []
     wan_calls: list[str] = []
     monkeypatch.setattr(helper, "_snapshot_management_handoff", lambda _payload: state)
@@ -1720,9 +1723,9 @@ def test_management_handoff_candidate_durability_gates_ack(
     monkeypatch.setattr(
         helper,
         "_configure_atlaso_management_https",
-        lambda _payload, *, site_suffix="", restart_service=True: (
+        lambda _payload, *, site_suffix="", verify_front_door=True: (
             nginx_suffixes.append(site_suffix)
-            or nginx_restart_options.append(restart_service)
+            or nginx_readiness_options.append(verify_front_door)
             or 0,
             None,
         ),
@@ -1803,7 +1806,7 @@ def test_management_handoff_candidate_durability_gates_ack(
     assert 'iifname "eth0"' not in applied_firewalls[1]
     assert "resolver-applying" in phases
     assert nginx_suffixes == ["old protocol listener", ""]
-    assert nginx_restart_options == [False, False]
+    assert nginx_readiness_options == [False, False]
     payload = json.loads(capsys.readouterr().out.splitlines()[-1])
     assert payload["management_handoff"] == "awaiting application commit"
 
@@ -1839,7 +1842,7 @@ def test_management_handoff_does_not_schedule_precommit_atlaso_restart(monkeypat
             "management_upstream_host": "127.0.0.1",
             "management_upstream_port": 8000,
         },
-        restart_service=False,
+        verify_front_door=False,
     )
 
     assert result == (0, None)
@@ -11047,6 +11050,16 @@ def test_appliance_settings_helper_writes_management_nginx_proxy(monkeypatch, tm
     monkeypatch.setattr(helper, "_ca_key_matches_certificate", lambda certificate_pem, private_key_pem: True)
     monkeypatch.setattr(helper, "_run", fake_run)
     monkeypatch.setattr(
+        helper,
+        "_management_handoff_upstream_readiness",
+        lambda **_kwargs: {"status": "200", "stable_samples": 3},
+    )
+    monkeypatch.setattr(
+        helper,
+        "_management_handoff_readiness",
+        lambda *_args, **_kwargs: {"stable_samples": 3},
+    )
+    monkeypatch.setattr(
         helper.shutil,
         "which",
         lambda command: {
@@ -11092,16 +11105,13 @@ def test_appliance_settings_helper_writes_management_nginx_proxy(monkeypatch, tm
     assert ["/usr/sbin/nginx", "-t"] in commands
     assert ["/usr/sbin/sshd", "-t"] in commands
     assert ["systemctl", "restart", "sshd"] in commands
-    assert any(command[:5] == ["/usr/bin/systemd-run", "--quiet", "--collect", "--on-active=3", "--unit=atlaso-management-ui-restart"] for command in commands)
+    assert not any("atlaso-management-ui-restart" in command for command in commands)
     apply_payload = next(
         json.loads(line)
         for line in reversed(capsys.readouterr().out.splitlines())
         if line.startswith("{") and "apply complete" in line
     )
-    assert apply_payload["management_status_transition"] == {
-        "kind": "planned_service_restart",
-        "restart_delay_seconds": 3,
-    }
+    assert "management_status_transition" not in apply_payload
 
     commands.clear()
     assert helper._handle_appliance_settings("apply", [str(config_path)]) == 0
@@ -11144,6 +11154,16 @@ def test_appliance_settings_helper_writes_http_management_proxy_without_https(mo
     monkeypatch.setattr(helper, "ATLASO_SERVICE_HTTPS_DROPIN_PATH", dropin_dir / "management-https.conf")
     monkeypatch.setattr(helper, "_run", fake_run)
     monkeypatch.setattr(
+        helper,
+        "_management_handoff_upstream_readiness",
+        lambda **_kwargs: {"status": "200", "stable_samples": 3},
+    )
+    monkeypatch.setattr(
+        helper,
+        "_management_handoff_readiness",
+        lambda *_args, **_kwargs: {"stable_samples": 3},
+    )
+    monkeypatch.setattr(
         helper.shutil,
         "which",
         lambda command: {
@@ -11175,7 +11195,7 @@ def test_appliance_settings_helper_writes_http_management_proxy_without_https(mo
     assert ["/usr/sbin/nginx", "-t"] in commands
     assert ["/usr/sbin/sshd", "-t"] in commands
     assert ["systemctl", "restart", "sshd"] in commands
-    assert any(command[:5] == ["/usr/bin/systemd-run", "--quiet", "--collect", "--on-active=3", "--unit=atlaso-management-ui-restart"] for command in commands)
+    assert not any("atlaso-management-ui-restart" in command for command in commands)
 
 
 def test_management_https_change_suppresses_restart_during_factory_reset(
@@ -11226,6 +11246,108 @@ def test_management_https_change_suppresses_restart_during_factory_reset(
     assert dropin.is_file()
 
 
+def test_management_front_door_rejects_unhealthy_upstream_before_mutation(
+    monkeypatch,
+    tmp_path,
+):
+    """Leave nginx and systemd untouched when the desired upstream is absent.
+
+    Args:
+        monkeypatch: Pytest fixture used to replace helper paths and probes.
+        tmp_path: Temporary directory provided for isolated runtime files.
+    """
+    helper = load_helper_module()
+    nginx_paths = patch_appliance_settings_nginx_paths(monkeypatch, helper, tmp_path)
+    dropin = tmp_path / "systemd" / "atlaso.service.d" / "management-https.conf"
+    calls: list[str] = []
+    monkeypatch.setattr(helper, "ATLASO_SERVICE_DROPIN_DIR", dropin.parent)
+    monkeypatch.setattr(helper, "ATLASO_SERVICE_HTTPS_DROPIN_PATH", dropin)
+    monkeypatch.setattr(helper, "_factory_reset_runtime_cleanup_is_admitted", lambda: False)
+    monkeypatch.setattr(
+        helper,
+        "_management_handoff_upstream_readiness",
+        lambda **_kwargs: (_ for _ in ()).throw(ValueError("status=000")),
+    )
+    monkeypatch.setattr(
+        helper,
+        "_install_nginx_site",
+        lambda *_args: calls.append("nginx mutation") or 0,
+    )
+
+    payload = json.loads(appliance_settings_json(management_https_enabled=False))
+    assert helper._configure_atlaso_management_https(payload) == (1, None)
+
+    assert calls == []
+    assert not dropin.exists()
+    assert not nginx_paths["management_site"].exists()
+
+
+def test_management_front_door_rolls_back_failed_candidate_readiness(
+    monkeypatch,
+    tmp_path,
+):
+    """Restore nginx and the service drop-in when the candidate cannot serve.
+
+    Args:
+        monkeypatch: Pytest fixture used to replace helper paths and probes.
+        tmp_path: Temporary directory provided for isolated runtime files.
+    """
+    helper = load_helper_module()
+    nginx_paths = patch_appliance_settings_nginx_paths(monkeypatch, helper, tmp_path)
+    management_site = nginx_paths["management_site"]
+    management_site.parent.mkdir(parents=True, exist_ok=True)
+    management_site.write_text("previous management site\n", encoding="utf-8")
+    dropin = tmp_path / "systemd" / "atlaso.service.d" / "management-https.conf"
+    dropin.parent.mkdir(parents=True)
+    dropin.write_text("previous service drop-in\n", encoding="utf-8")
+    commands: list[list[str]] = []
+
+    def install_candidate(_path: Path, text: str) -> int:
+        """Publish the candidate bytes like the production nginx installer.
+
+        Args:
+            _path: Patched management site path.
+            text: Candidate nginx configuration.
+        """
+        management_site.write_text(text, encoding="utf-8")
+        return 0
+
+    monkeypatch.setattr(helper, "ATLASO_SERVICE_DROPIN_DIR", dropin.parent)
+    monkeypatch.setattr(helper, "ATLASO_SERVICE_HTTPS_DROPIN_PATH", dropin)
+    monkeypatch.setattr(helper, "_factory_reset_runtime_cleanup_is_admitted", lambda: False)
+    monkeypatch.setattr(
+        helper,
+        "_management_handoff_upstream_readiness",
+        lambda **_kwargs: {"status": "200", "stable_samples": 3},
+    )
+    monkeypatch.setattr(
+        helper,
+        "_management_handoff_readiness",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(ValueError("management 192.168.49.1=502")),
+    )
+    monkeypatch.setattr(helper, "_install_nginx_site", install_candidate)
+    monkeypatch.setattr(
+        helper,
+        "_run",
+        lambda command: commands.append(command)
+        or subprocess.CompletedProcess(command, 0, "", ""),
+    )
+    monkeypatch.setattr(
+        helper,
+        "_nginx_test_command",
+        lambda: subprocess.CompletedProcess(["nginx", "-t"], 0, "", ""),
+    )
+    monkeypatch.setattr(helper, "_reload_nginx", lambda: 0)
+
+    payload = json.loads(appliance_settings_json(management_https_enabled=False))
+    assert helper._configure_atlaso_management_https(payload) == (1, None)
+
+    assert management_site.read_text(encoding="utf-8") == "previous management site\n"
+    assert dropin.read_text(encoding="utf-8") == "previous service drop-in\n"
+    assert ["systemctl", "daemon-reload"] in commands
+    assert not any("atlaso-management-ui-restart" in command for command in commands)
+
+
 def test_appliance_settings_helper_applies_local_resolver_without_timesyncd(monkeypatch, tmp_path):
     """Verify that appliance settings helper applies local resolver without timesyncd.
 
@@ -11273,6 +11395,16 @@ def test_appliance_settings_helper_applies_local_resolver_without_timesyncd(monk
     monkeypatch.setattr(helper, "ATLASO_SERVICE_DROPIN_DIR", dropin_dir)
     monkeypatch.setattr(helper, "ATLASO_SERVICE_HTTPS_DROPIN_PATH", dropin_dir / "management-https.conf")
     monkeypatch.setattr(helper, "_run", fake_run)
+    monkeypatch.setattr(
+        helper,
+        "_management_handoff_upstream_readiness",
+        lambda **_kwargs: {"status": "200", "stable_samples": 3},
+    )
+    monkeypatch.setattr(
+        helper,
+        "_management_handoff_readiness",
+        lambda *_args, **_kwargs: {"stable_samples": 3},
+    )
     monkeypatch.setattr(
         helper.shutil,
         "which",
@@ -11336,6 +11468,16 @@ def test_appliance_settings_helper_applies_external_resolver_without_catchall(mo
     monkeypatch.setattr(helper, "ATLASO_SERVICE_DROPIN_DIR", dropin_dir)
     monkeypatch.setattr(helper, "ATLASO_SERVICE_HTTPS_DROPIN_PATH", dropin_dir / "management-https.conf")
     monkeypatch.setattr(helper, "_run", fake_run)
+    monkeypatch.setattr(
+        helper,
+        "_management_handoff_upstream_readiness",
+        lambda **_kwargs: {"status": "200", "stable_samples": 3},
+    )
+    monkeypatch.setattr(
+        helper,
+        "_management_handoff_readiness",
+        lambda *_args, **_kwargs: {"stable_samples": 3},
+    )
     monkeypatch.setattr(
         helper.shutil,
         "which",
