@@ -5216,6 +5216,41 @@ def test_wan_helper_validates_routes_nat_and_netem(tmp_path):
     assert 'ip saddr 192.168.50.0/24 oifname "eth1.20" masquerade' in nat_config
 
 
+def test_wan_helper_enforces_default_route_gateway_and_family_uniqueness(tmp_path):
+    """Validate IPv4 and IPv6 default-route invariants at the privileged boundary.
+
+    Args:
+        tmp_path: Temporary directory provided by pytest for isolated filesystem state.
+    """
+    helper = load_helper_module()
+    missing_path = tmp_path / "missing-default-gateway.conf"
+    missing_path.write_text(
+        wan_config_text().replace("route=10.20.0.0/24", "route=0.0.0.0/0"),
+        encoding="utf-8",
+    )
+    assert any("Default route 0.0.0.0/0 requires a next-hop gateway" in error for error in helper._wan_config_errors(missing_path))
+
+    duplicate_path = tmp_path / "duplicate-default.conf"
+    duplicate_path.write_text(
+        wan_config_text()
+        .replace("route=10.20.0.0/24", "route=0.0.0.0/0")
+        .replace("  gateway=", "  gateway=192.168.20.254", 1)
+        .replace(
+            "  wan_mode=interface\n\n[nat_rules]",
+            "  wan_mode=interface\nroute=192.0.2.42/0\n  gateway=192.168.20.253\n  interface=eth1.20\n  metric=130\n  enabled=true\n  wan_policy=\n  wan_mode=interface\n\n[nat_rules]",
+        ),
+        encoding="utf-8",
+    )
+    assert any("Only one IPv4 default route" in error for error in helper._wan_config_errors(duplicate_path))
+
+    ipv6_path = tmp_path / "ipv6-default.conf"
+    ipv6_path.write_text(
+        wan_config_text(ipv6_route=True).replace("route=2001:db8:100::/64", "route=::/0"),
+        encoding="utf-8",
+    )
+    assert helper._wan_config_errors(ipv6_path) == []
+
+
 def test_wan_helper_rejects_bad_nat_source_and_target(tmp_path):
     """Verify that wan helper rejects bad nat source and target.
 

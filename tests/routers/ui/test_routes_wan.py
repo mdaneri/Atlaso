@@ -61,6 +61,9 @@ def test_routes_wan_policy_form_renders(client):
     assert "vcf-sddc-wizard-layout" not in routes_template
     assert "confirm-modal-head" not in routes_template
     assert 'data-routes-wan-nat-source-mode' in response.text
+    assert 'data-routes-wan-default-route' in response.text
+    assert 'data-routes-wan-default-family' in response.text
+    assert 'name="destination_cidr" required' in response.text
     assert 'value="IPv4 masquerade" readonly' in response.text
     assert "Europe WAN" in response.text
     assert "SiteA outbound WAN" in response.text
@@ -68,6 +71,92 @@ def test_routes_wan_policy_form_renders(client):
     assert "tc qdisc replace" in response.text
     assert "table ip atlaso_nat" in response.text
     assert "Review appliance changes" in response.text
+
+
+def test_routes_wan_default_route_add_edit_validation_and_semantic_readback(client):
+    """Exercise the explicit default path and its server-owned invariants."""
+    from sqlalchemy import select
+
+    from atlaso.app.database import SessionLocal
+    from atlaso.app.models import Route
+
+    login(client)
+    page = client.get("/routes-wan")
+    csrf = page.text.split('name="csrf" value="', 1)[1].split('"', 1)[0]
+    base = {
+        "destination_cidr": "",
+        "interface_name": "eth1.20",
+        "metric": "90",
+        "wan_policy_id": "",
+        "wan_mode": "interface",
+        "default_route": "on",
+        "default_route_family": "4",
+        "enabled": "on",
+        "csrf": csrf,
+    }
+
+    missing = client.post("/routes-wan/routes", data={**base, "gateway": ""}, follow_redirects=False)
+    assert missing.status_code == 422
+    assert "requires a gateway" in missing.text
+
+    mismatch = client.post(
+        "/routes-wan/routes",
+        data={**base, "gateway": "2001:db8::1"},
+        follow_redirects=False,
+    )
+    assert mismatch.status_code == 422
+    assert "family must match" in mismatch.text
+
+    conflicting_input = client.post(
+        "/routes-wan/routes",
+        data={**base, "destination_cidr": "10.0.0.0/8", "gateway": "192.0.2.1"},
+        follow_redirects=False,
+    )
+    assert conflicting_input.status_code == 422
+    assert "mutually exclusive" in conflicting_input.text
+
+    invalid_target = client.post(
+        "/routes-wan/routes",
+        data={**base, "gateway": "192.0.2.1", "interface_name": "eth0"},
+        follow_redirects=False,
+    )
+    assert invalid_target.status_code == 422
+    assert "Choose an access physical interface" in invalid_target.text
+
+    created = client.post(
+        "/routes-wan/routes",
+        data={**base, "gateway": "192.0.2.1"},
+        follow_redirects=False,
+    )
+    assert created.status_code == 303
+    with SessionLocal() as db:
+        route = db.execute(select(Route).where(Route.destination_cidr == "0.0.0.0/0")).scalar_one()
+        route_id = route.id
+        assert route.gateway == "192.0.2.1"
+
+    readback = client.get("/routes-wan")
+    assert "Default route" in readback.text
+    assert "0.0.0.0/0" in readback.text
+
+    duplicate = client.post(
+        "/routes-wan/routes",
+        data={**base, "gateway": "198.51.100.1"},
+        follow_redirects=False,
+    )
+    assert duplicate.status_code == 422
+    assert "Only one IPv4 default route" in duplicate.text
+
+    updated = client.post(
+        f"/routes-wan/routes/{route_id}/edit",
+        data={**base, "default_route_family": "6", "gateway": "2001:db8::1"},
+        follow_redirects=False,
+    )
+    assert updated.status_code == 303
+    with SessionLocal() as db:
+        route = db.get(Route, route_id)
+        assert route is not None
+        assert route.destination_cidr == "::/0"
+        assert route.gateway == "2001:db8::1"
 
 
 def test_routes_wan_rejects_route_wan_mode(client):
@@ -252,8 +341,10 @@ def test_routes_wan_autosave_endpoints_and_apply_task(client):
     route_response = client.post(
         "/routes-wan/routes",
         data={
-            "destination_cidr": "10.20.0.0/24",
-            "gateway": "",
+            "destination_cidr": "",
+            "default_route": "on",
+            "default_route_family": "4",
+            "gateway": "192.168.20.254",
             "interface_name": "eth1.20",
             "metric": "120",
             "wan_policy_id": policy_id,
@@ -312,7 +403,8 @@ def test_routes_wan_autosave_endpoints_and_apply_task(client):
     assert "Metro WAN" in refreshed.text
     assert "Metro outbound" in refreshed.text
     assert "SiteA to WAN" in refreshed.text
-    assert "10.20.0.0/24" in refreshed.text
+    assert "Default route" in refreshed.text
+    assert "0.0.0.0/0" in refreshed.text
     assert "ip saddr 192.168.50.0/24 oifname &#34;eth2&#34; masquerade" in refreshed.text
     assert "ip rule add from 192.168.50.0/24 table 200" in refreshed.text
     assert "tc qdisc replace dev eth1.20" in refreshed.text
@@ -333,4 +425,5 @@ def test_routes_wan_autosave_endpoints_and_apply_task(client):
         assert "explicit routing rules" in (job.result or "")
         assert "nft -f /etc/atlaso/nftables.d/atlaso-nat.nft" in (job.result or "")
         assert "ip rule add from 192.168.50.0/24 table 200" in (job.result or "")
+        assert "ip route replace 0.0.0.0/0 via 192.168.20.254 dev eth1.20 metric 120 table 200" in (job.result or "")
         assert "tc qdisc replace dev eth1.20" in (job.result or "")

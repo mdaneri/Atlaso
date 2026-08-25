@@ -8086,6 +8086,27 @@ def _wan_config_errors(path: Path) -> list[str]:
         domain = target.get("routing_domain", "lab")
         if domain not in {"management", "lab"}:
             errors.append(f"WAN target {name or '<missing>'} routing domain must be management or lab.")
+    default_route_destinations: dict[int, str] = {}
+    for route in parsed["routes"]:
+        destination = route.get("destination_cidr", "")
+        try:
+            destination_network = ip_network(destination, strict=False)
+        except ValueError:
+            continue
+        if destination_network.prefixlen != 0:
+            continue
+        canonical_destination = str(destination_network)
+        previous_destination = default_route_destinations.get(destination_network.version)
+        if previous_destination is not None:
+            errors.append(
+                f"Only one IPv{destination_network.version} default route may be configured; "
+                f"{canonical_destination} conflicts with {previous_destination}."
+            )
+        else:
+            default_route_destinations[destination_network.version] = canonical_destination
+        if not route.get("gateway", ""):
+            errors.append(f"Default route {canonical_destination} requires a next-hop gateway.")
+
     for route in [*parsed["routes"], *parsed["removed_routes"]]:
         destination = route.get("destination_cidr", "")
         destination_network = None

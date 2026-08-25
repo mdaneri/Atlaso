@@ -51,12 +51,12 @@
             <tr><th>Destination</th><th>Gateway</th><th>Interface</th><th>WAN Policy</th><th>Metric</th><th>Status</th><th>Actions</th></tr>
           </thead>
           <tbody>
-            {% for route in routes %}
+            {% for route in route_rows %}
               <tr>
-                <td>{{ route.destination_cidr }}</td>
+                <td>{{ route.destination_label }}</td>
                 <td>{{ route.gateway or "direct" }}</td>
                 <td>{{ route.interface_name }}</td>
-                <td>{{ route.wan_policy.name if route.wan_policy else "none" }}</td>
+                <td>{{ route.wan_policy_name or "none" }}</td>
                 <td>{{ route.metric }}</td>
                 <td><span class="status-pill {{ 'good' if route.enabled else 'muted' }}">{{ "enabled" if route.enabled else "disabled" }}</span></td>
                 <td>
@@ -64,7 +64,7 @@
                     action="{{ management_ui_root }}/routes-wan/routes/{{ route.id }}/delete"
                     method="post"
                     data-confirm-modal
-                    data-confirm-title="Delete route {{ route.destination_cidr }}?"
+                    data-confirm-title="Delete {{ route.destination_label }}?"
                     data-confirm-message="This removes the route from Atlaso desired state. It will not touch the appliance until global appliance apply runs."
                     data-confirm-label="Delete route"
                   >
@@ -287,14 +287,18 @@
   {"id": "state", "label": "State", "summary": "Enable or disable"},
   {"id": "review", "label": "Review", "summary": "Confirm desired state"}
 ] %}
-{% call resource_wizard("routes-wan-route-dialog", "routes-wan-wizard", management_ui_root ~ "/routes-wan/routes", route_steps, "Add static route", "Choose the destination, optional next hop, and non-management output target.", "Add static route", form_data_value="route") %}
+{% call resource_wizard("routes-wan-route-dialog", "routes-wan-wizard", management_ui_root ~ "/routes-wan/routes", route_steps, "Add static route", "Choose a default or destination-specific path through a non-management output target.", "Add static route", form_data_value="route") %}
     <input type="hidden" name="csrf" value="{{ csrf_token }}">
     <input type="hidden" name="wan_mode" value="interface">
-        <section class="vcf-sddc-step-page" data-atlaso-wizard-step="path"><div class="form-grid">
-          <label><span class="field-label"><span>Destination CIDR</span><button class="help-icon" type="button" data-help="IPv4 or IPv6 network reached by this static route in Atlaso lab route table 200.">i</button></span><input name="destination_cidr" required placeholder="10.20.0.0/24"></label>
-          <label><span class="field-label"><span>Gateway</span><button class="help-icon" type="button" data-help="Optional next-hop IP. Leave blank for a directly connected destination; when set, its address family must match the destination.">i</button></span><input name="gateway" placeholder="Direct"></label>
-          <label><span class="field-label"><span>Interface or VLAN</span><button class="help-icon" type="button" data-help="Non-management access physical interface or enabled VLAN used to reach the destination.">i</button></span><select name="interface_name" required>{% for target in wan_route_targets %}<option value="{{ target.name }}">{{ target.label }}</option>{% endfor %}</select></label>
-          <label><span class="field-label"><span>Metric</span><button class="help-icon" type="button" data-help="Non-negative route preference. Lower metrics are preferred when multiple routes match.">i</button></span><input type="number" name="metric" min="0" value="100" required></label>
+        <section class="vcf-sddc-step-page" data-atlaso-wizard-step="path"><div class="form-stack">
+          <label class="switch-field"><span class="field-label"><span>Default route</span><button class="help-icon" type="button" data-help="Create the single IPv4 or IPv6 default path in Atlaso lab route table 200. Default routes require a same-family next-hop gateway.">i</button></span><input class="switch-input" type="checkbox" name="default_route" data-routes-wan-default-route><span class="switch-track" aria-hidden="true"></span></label>
+          <div class="form-grid">
+            <label data-routes-wan-default-family hidden><span class="field-label"><span>Default route family</span><button class="help-icon" type="button" data-help="Choose IPv4 for 0.0.0.0/0 or IPv6 for ::/0. Atlaso persists the canonical destination automatically.">i</button></span><select name="default_route_family" disabled><option value="4">IPv4</option><option value="6">IPv6</option></select></label>
+            <label data-routes-wan-destination><span class="field-label"><span>Destination CIDR</span><button class="help-icon" type="button" data-help="Required IPv4 or IPv6 network for a destination-specific route. Leave Gateway blank only when this destination is directly connected.">i</button></span><input name="destination_cidr" required placeholder="10.20.0.0/24"></label>
+            <label><span class="field-label"><span>Gateway</span><button class="help-icon" type="button" data-help="Required same-family next-hop IP for a default route. Optional for a directly connected destination-specific route.">i</button></span><input name="gateway" placeholder="Direct" data-routes-wan-route-gateway></label>
+            <label><span class="field-label"><span>Interface or VLAN</span><button class="help-icon" type="button" data-help="Non-management access physical interface or enabled VLAN used to reach the destination.">i</button></span><select name="interface_name" required>{% for target in wan_route_targets %}<option value="{{ target.name }}">{{ target.label }}</option>{% endfor %}</select></label>
+            <label><span class="field-label"><span>Metric</span><button class="help-icon" type="button" data-help="Non-negative route preference. Lower metrics are preferred when multiple routes match.">i</button></span><input type="number" name="metric" min="0" value="100" required></label>
+          </div>
         </div></section>
         <section class="vcf-sddc-step-page hidden" data-atlaso-wizard-step="simulation"><div class="form-stack">
           <label><span class="field-label"><span>WAN policy</span><button class="help-icon" type="button" data-help="Optional tc/netem policy applied to the selected interface or VLAN. In v1 this impairs all traffic on that target, not only this destination.">i</button></span><select name="wan_policy_id"><option value="">None</option>{% for policy in policies %}<option value="{{ policy.id }}">{{ policy.name }}</option>{% endfor %}</select></label>

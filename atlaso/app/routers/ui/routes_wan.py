@@ -16,7 +16,16 @@ from atlaso.app.database import get_db
 from atlaso.app.models import NatRule, Route, RoutingRule, WanPolicy
 from atlaso.app.security import Identity, require_session_identity
 from atlaso.app.services.network_objects import acquire_network_objects_write_lock
-from atlaso.app.services.routes_wan import WAN_MODES, validate_nat_source
+from atlaso.app.services.routes_wan import (
+    DEFAULT_ROUTE_DESTINATIONS,
+    WAN_MODES,
+    canonical_route_destination,
+    has_default_route_conflict,
+    validate_nat_source,
+)
+from atlaso.app.services.routes_wan import (
+    default_route_family as route_default_family,
+)
 from atlaso.app.ui_routes import MANAGEMENT_UI_ROOT
 
 Endpoint = Callable[..., Any]
@@ -169,6 +178,10 @@ def build_router(dependencies: RoutesWanUiDependencies) -> RoutesWanUiRouter:
         wan_policy_id: str,
         wan_mode: str,
         db: Session,
+        *,
+        default_route: bool = False,
+        default_route_family: str = "4",
+        exclude_route_id: int | None = None,
     ) -> tuple[str, str | None, str, int, int | None, str] | Response:
         """Validate route form values.
 
@@ -185,13 +198,26 @@ def build_router(dependencies: RoutesWanUiDependencies) -> RoutesWanUiRouter:
             The validate route form values result.
         """
         destination = destination_cidr.strip()
-        if not destination:
-            return Response("Destination CIDR is required.", status_code=422, media_type="text/plain")
+        if default_route:
+            if destination:
+                return Response("Default route and Destination CIDR are mutually exclusive.", status_code=422, media_type="text/plain")
+            try:
+                selected_family = int(default_route_family)
+            except ValueError:
+                selected_family = 0
+            if selected_family not in DEFAULT_ROUTE_DESTINATIONS:
+                return Response("Default route family must be IPv4 or IPv6.", status_code=422, media_type="text/plain")
+            destination = DEFAULT_ROUTE_DESTINATIONS[selected_family]
+        elif not destination:
+            return Response("Destination CIDR is required unless Default route is selected.", status_code=422, media_type="text/plain")
         try:
             destination_network = ip_network(destination, strict=False)
         except ValueError:
             return Response(f"{destination} is not a valid destination CIDR.", status_code=422, media_type="text/plain")
+        destination = canonical_route_destination(destination)
         gateway_value = gateway.strip() or None
+        if destination_network.prefixlen == 0 and not gateway_value:
+            return Response(f"Default IPv{destination_network.version} route requires a gateway.", status_code=422, media_type="text/plain")
         if gateway_value:
             try:
                 gateway_address = ip_address(gateway_value)
@@ -199,6 +225,12 @@ def build_router(dependencies: RoutesWanUiDependencies) -> RoutesWanUiRouter:
                 return Response(f"{gateway_value} is not a valid gateway IP address.", status_code=422, media_type="text/plain")
             if gateway_address.version != destination_network.version:
                 return Response("Route gateway family must match the destination CIDR family.", status_code=422, media_type="text/plain")
+            gateway_value = str(gateway_address)
+        family = route_default_family(destination)
+        if family is not None:
+            routes = list(db.execute(select(Route).order_by(Route.id)).scalars().all())
+            if has_default_route_conflict(routes, family, exclude_route_id):
+                return Response(f"Only one IPv{family} default route can be configured.", status_code=422, media_type="text/plain")
         target_names = {target["name"] for target in wan_route_targets(db)}
         interface_value = interface_name.strip()
         if interface_value not in target_names:
@@ -362,6 +394,8 @@ def build_router(dependencies: RoutesWanUiDependencies) -> RoutesWanUiRouter:
         metric: str = Form("100"),
         wan_policy_id: str = Form(""),
         wan_mode: str = Form("interface"),
+        default_route: str | None = Form(None),
+        default_route_family: str = Form("4"),
         enabled: str | None = Form(None),
         csrf: str = Form(...),
         identity: Identity = Depends(require_session_identity),
@@ -386,7 +420,17 @@ def build_router(dependencies: RoutesWanUiDependencies) -> RoutesWanUiRouter:
             The endpoint response.
         """
         verify_csrf(request, csrf)
-        parsed = validate_route_form_values(destination_cidr, gateway, interface_name, metric, wan_policy_id, wan_mode, db)
+        parsed = validate_route_form_values(
+            destination_cidr,
+            gateway,
+            interface_name,
+            metric,
+            wan_policy_id,
+            wan_mode,
+            db,
+            default_route=default_route == "on",
+            default_route_family=default_route_family,
+        )
         if isinstance(parsed, Response):
             return parsed
         destination, gateway_value, interface_value, metric_value, policy_id_value, mode_value = parsed
@@ -415,6 +459,8 @@ def build_router(dependencies: RoutesWanUiDependencies) -> RoutesWanUiRouter:
         metric: str = Form("100"),
         wan_policy_id: str = Form(""),
         wan_mode: str = Form("interface"),
+        default_route: str | None = Form(None),
+        default_route_family: str = Form("4"),
         enabled: str | None = Form(None),
         csrf: str = Form(...),
         identity: Identity = Depends(require_session_identity),
@@ -446,7 +492,18 @@ def build_router(dependencies: RoutesWanUiDependencies) -> RoutesWanUiRouter:
         route = db.get(Route, route_id)
         if not route:
             raise HTTPException(status_code=404, detail="Route not found")
-        parsed = validate_route_form_values(destination_cidr, gateway, interface_name, metric, wan_policy_id, wan_mode, db)
+        parsed = validate_route_form_values(
+            destination_cidr,
+            gateway,
+            interface_name,
+            metric,
+            wan_policy_id,
+            wan_mode,
+            db,
+            default_route=default_route == "on",
+            default_route_family=default_route_family,
+            exclude_route_id=route_id,
+        )
         if isinstance(parsed, Response):
             return parsed
         destination, gateway_value, interface_value, metric_value, policy_id_value, mode_value = parsed

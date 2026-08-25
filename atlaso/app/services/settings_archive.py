@@ -170,7 +170,11 @@ from atlaso.app.services.oidc import (
     validate_persisted_client_policy,
     validate_redirect_uri_list,
 )
-from atlaso.app.services.routes_wan import validate_nat_source, validate_wan_state
+from atlaso.app.services.routes_wan import (
+    canonical_route_destination,
+    validate_nat_source,
+    validate_wan_state,
+)
 from atlaso.app.services.service_registry import SERVICE_STATE_IDS
 from atlaso.app.services.update_sources import (
     UPDATE_SOURCE_KINDS,
@@ -4277,6 +4281,7 @@ def _restore_routes(db: Session, rows: list[dict[str, Any]]) -> int:
     policies = {policy.name: policy.id for policy in db.execute(select(WanPolicy)).scalars().all()}
     for row in rows:
         payload = _model_kwargs(Route, row, exclude={"wan_policy_id"})
+        payload["destination_cidr"] = canonical_route_destination(str(payload.get("destination_cidr", "")))
         policy_name = str(row.get("wan_policy_name") or "")
         payload["wan_policy_id"] = policies.get(policy_name) if policy_name else None
         db.add(Route(**payload))

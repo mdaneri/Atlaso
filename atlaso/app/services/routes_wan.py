@@ -15,6 +15,29 @@ MANAGEMENT_ROUTE_TABLE_ID = 100
 LAB_ROUTE_TABLE_ID = 200
 MANAGEMENT_ROUTE_TABLE_NAME = "atlaso_mgmt"
 LAB_ROUTE_TABLE_NAME = "atlaso_lab"
+DEFAULT_ROUTE_DESTINATIONS = {4: "0.0.0.0/0", 6: "::/0"}
+
+
+def canonical_route_destination(value: str) -> str:
+    """Return the canonical representation of a route destination CIDR."""
+    return str(ip_network(value.strip(), strict=False))
+
+
+def default_route_family(value: str) -> int | None:
+    """Return the IP family when a destination represents a default route."""
+    try:
+        network = ip_network(value.strip(), strict=False)
+    except ValueError:
+        return None
+    return network.version if network.prefixlen == 0 else None
+
+
+def has_default_route_conflict(routes: list[Route], family: int, exclude_route_id: int | None = None) -> bool:
+    """Return whether another saved route already defines the family default."""
+    return any(
+        route.id != exclude_route_id and default_route_family(route.destination_cidr) == family
+        for route in routes
+    )
 
 
 def _bool_value(value: bool) -> str:
@@ -53,9 +76,14 @@ def route_to_dict(route: Route) -> dict:
     Args:
         route: Route consumed by route to dict.
     """
+    destination = canonical_route_destination(route.destination_cidr)
+    family = default_route_family(destination)
     return {
         "id": route.id,
-        "destination_cidr": route.destination_cidr,
+        "destination_cidr": destination,
+        "destination_label": "Default route" if family else destination,
+        "default_route": family is not None,
+        "default_route_family": family or "",
         "gateway": route.gateway or "",
         "interface_name": route.interface_name,
         "metric": route.metric,
@@ -245,12 +273,19 @@ def validate_wan_state(
     """
     errors: list[str] = []
     policy_ids = {policy.id for policy in policies}
+    default_families: set[int] = set()
     for route in routes:
         try:
             destination_network = ip_network(route.destination_cidr, strict=False)
         except ValueError:
             errors.append(f"Route {route.destination_cidr} is not a valid destination CIDR.")
             destination_network = None
+        if destination_network and destination_network.prefixlen == 0:
+            if destination_network.version in default_families:
+                errors.append(f"Only one IPv{destination_network.version} default route can be configured.")
+            default_families.add(destination_network.version)
+            if not route.gateway:
+                errors.append(f"Default IPv{destination_network.version} route {route.destination_cidr} requires a gateway.")
         if route.gateway:
             try:
                 gateway_address = ip_address(route.gateway)
@@ -452,10 +487,11 @@ def render_wan_config(
         ]
     )
     for route in routes:
+        destination_cidr = canonical_route_destination(route.destination_cidr)
         policy = policy_lookup.get(route.wan_policy_id or 0) or route.wan_policy
         lines.extend(
             [
-                f"route={route.destination_cidr}",
+                f"route={destination_cidr}",
                 f"  gateway={route.gateway or ''}",
                 f"  interface={route.interface_name}",
                 f"  metric={route.metric}",
@@ -603,12 +639,13 @@ def render_wan_config(
         lines.append("nft -f /etc/atlaso/nftables.d/atlaso-nat.nft")
 
     for route in routes:
-        destination = ip_network(route.destination_cidr, strict=False)
+        destination_cidr = canonical_route_destination(route.destination_cidr)
+        destination = ip_network(destination_cidr, strict=False)
         route_family = "-6 " if destination.version == 6 else ""
         if not route.enabled:
-            lines.append(f"ip {route_family}route del {route.destination_cidr} dev {route.interface_name} table {LAB_ROUTE_TABLE_ID}  # disabled desired route")
+            lines.append(f"ip {route_family}route del {destination_cidr} dev {route.interface_name} table {LAB_ROUTE_TABLE_ID}  # disabled desired route")
             continue
-        command = ["ip", "-6", "route", "replace", route.destination_cidr] if destination.version == 6 else ["ip", "route", "replace", route.destination_cidr]
+        command = ["ip", "-6", "route", "replace", destination_cidr] if destination.version == 6 else ["ip", "route", "replace", destination_cidr]
         if route.gateway:
             command.extend(["via", route.gateway])
         command.extend(["dev", route.interface_name, "metric", str(route.metric), "table", str(LAB_ROUTE_TABLE_ID)])

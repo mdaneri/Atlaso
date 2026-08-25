@@ -39,7 +39,12 @@ from atlaso.app.services.firewall import (
 )
 from atlaso.app.services.network_objects import acquire_network_objects_write_lock
 from atlaso.app.services.networking import normalize_interface_mode
-from atlaso.app.services.routes_wan import validate_nat_source
+from atlaso.app.services.routes_wan import (
+    canonical_route_destination,
+    default_route_family,
+    has_default_route_conflict,
+    validate_nat_source,
+)
 
 Endpoint = Callable[..., Any]
 
@@ -90,7 +95,7 @@ def build_router(dependencies: RoutesWanApiDependencies) -> RoutesWanApiRouter:
         """
         return RouteResponse(
             id=route.id,
-            destination_cidr=route.destination_cidr,
+            destination_cidr=canonical_route_destination(route.destination_cidr),
             gateway=route.gateway,
             interface_name=route.interface_name,
             metric=route.metric,
@@ -121,7 +126,12 @@ def build_router(dependencies: RoutesWanApiDependencies) -> RoutesWanApiRouter:
         return names
 
 
-    def validate_route_payload(payload: RouteCreate, db: Session) -> None:
+    def validate_route_payload(
+        payload: RouteCreate,
+        db: Session,
+        *,
+        exclude_route_id: int | None = None,
+    ) -> tuple[str, str | None]:
         """Validate route payload.
 
         Args:
@@ -135,17 +145,27 @@ def build_router(dependencies: RoutesWanApiDependencies) -> RoutesWanApiRouter:
             destination = ip_network(payload.destination_cidr, strict=False)
         except ValueError as exc:
             raise HTTPException(status_code=422, detail=f"{payload.destination_cidr} is not a valid destination CIDR.") from exc
-        if payload.gateway:
+        gateway_value = payload.gateway.strip() if payload.gateway else None
+        if destination.prefixlen == 0 and not gateway_value:
+            raise HTTPException(status_code=422, detail=f"Default IPv{destination.version} route requires a gateway.")
+        if gateway_value:
             try:
-                gateway = ip_address(payload.gateway)
+                gateway = ip_address(gateway_value)
             except ValueError as exc:
-                raise HTTPException(status_code=422, detail=f"{payload.gateway} is not a valid gateway IP address.") from exc
+                raise HTTPException(status_code=422, detail=f"{gateway_value} is not a valid gateway IP address.") from exc
             if gateway.version != destination.version:
                 raise HTTPException(status_code=422, detail="Route gateway family must match the destination CIDR family.")
+            gateway_value = str(gateway)
+        family = default_route_family(payload.destination_cidr)
+        if family is not None:
+            routes = list(db.execute(select(Route).order_by(Route.id)).scalars().all())
+            if has_default_route_conflict(routes, family, exclude_route_id):
+                raise HTTPException(status_code=422, detail=f"Only one IPv{family} default route can be configured.")
         if payload.interface_name not in route_target_names(db):
             raise HTTPException(status_code=422, detail="Choose an access physical interface or enabled VLAN interface with an IP CIDR.")
         if payload.metric < 0:
             raise HTTPException(status_code=422, detail="Route metric cannot be negative.")
+        return canonical_route_destination(payload.destination_cidr), gateway_value
 
 
     @router.post("/routes", response_model=RouteResponse, status_code=201, tags=["Routes"], operation_id="createRoute")
@@ -161,8 +181,10 @@ def build_router(dependencies: RoutesWanApiDependencies) -> RoutesWanApiRouter:
             identity: Authenticated identity authorizing the operation.
             db: Active database session used by the operation.
         """
-        validate_route_payload(payload, db)
-        route = Route(**payload.model_dump())
+        destination, gateway = validate_route_payload(payload, db)
+        values = payload.model_dump()
+        values.update(destination_cidr=destination, gateway=gateway)
+        route = Route(**values)
         db.add(route)
         db.commit()
         db.refresh(route)
@@ -204,8 +226,10 @@ def build_router(dependencies: RoutesWanApiDependencies) -> RoutesWanApiRouter:
         route = db.get(Route, route_id)
         if not route:
             raise HTTPException(status_code=404, detail="Route not found")
-        validate_route_payload(payload, db)
-        for key, value in payload.model_dump().items():
+        destination, gateway = validate_route_payload(payload, db, exclude_route_id=route_id)
+        values = payload.model_dump()
+        values.update(destination_cidr=destination, gateway=gateway)
+        for key, value in values.items():
             setattr(route, key, value)
         db.commit()
         record_audit(db, actor=identity.username, action="update_route", resource_type="route", resource_id=str(route_id))

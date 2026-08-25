@@ -23,6 +23,8 @@ impairment behavior only; they must not be used as an interface classification.
 ## Current V1 Scope
 
 - Static route desired state rendered to `/var/lib/atlaso/apply/wan/atlaso-wan.conf`.
+- Explicit IPv4 and IPv6 default-route wizard paths that persist canonical `0.0.0.0/0` and `::/0`, require a
+  same-family next-hop gateway, and allow one default per family while preserving canonical `/0` API compatibility.
 - Separate route tables for management and lab networks: management keeps its own default gateway, while non-management
   routes install into the lab route table.
 - Routing permissions for lab forwarding. Route-role networks forward to other route-role networks by default; access

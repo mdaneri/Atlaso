@@ -7007,6 +7007,77 @@ function routesWanField(form, name) {
   return form.elements.namedItem(name);
 }
 
+function routesWanAddressFamily(value) {
+  const candidate = String(value || "").trim();
+  if (candidate.includes(":")) {
+    return "6";
+  }
+  if (/^\d{1,3}(?:\.\d{1,3}){3}(?:\/\d{1,2})?$/.test(candidate)) {
+    return "4";
+  }
+  return "";
+}
+
+function routesWanDefaultFamily(value) {
+  const candidate = String(value || "").trim();
+  return candidate.endsWith("/0") ? routesWanAddressFamily(candidate) : "";
+}
+
+function routesWanDestinationLabel(value) {
+  const family = routesWanDefaultFamily(value);
+  return family ? `Default route (IPv${family})` : String(value || "");
+}
+
+function validateRoutesWanRoutePath({ defaultRouteSelected, defaultRouteFamily, destinationCidr, gateway }) {
+  if (defaultRouteSelected && !gateway) {
+    return { message: "A next-hop gateway is required for a default route.", fieldName: "gateway" };
+  }
+  if (defaultRouteSelected && routesWanAddressFamily(gateway) !== defaultRouteFamily) {
+    return { message: `Default route gateway must use IPv${defaultRouteFamily}.`, fieldName: "gateway" };
+  }
+  if (!defaultRouteSelected && !destinationCidr) {
+    return { message: "Destination CIDR is required.", fieldName: "destination_cidr" };
+  }
+  const destinationFamily = routesWanAddressFamily(destinationCidr);
+  const gatewayFamily = routesWanAddressFamily(gateway);
+  if (
+    !defaultRouteSelected
+    && gateway
+    && destinationFamily
+    && gatewayFamily
+    && destinationFamily !== gatewayFamily
+  ) {
+    return { message: "Route gateway family must match the destination CIDR family.", fieldName: "gateway" };
+  }
+  if (!defaultRouteSelected && routesWanDefaultFamily(destinationCidr) && !gateway) {
+    return { message: "A next-hop gateway is required for a default route.", fieldName: "gateway" };
+  }
+  return null;
+}
+
+function syncRoutesWanDefaultRouteMode(form) {
+  const defaultRoute = form.querySelector("[data-routes-wan-default-route]");
+  const defaultFamilyPanel = form.querySelector("[data-routes-wan-default-family]");
+  const destinationPanel = form.querySelector("[data-routes-wan-destination]");
+  const destination = routesWanField(form, "destination_cidr");
+  const family = routesWanField(form, "default_route_family");
+  const gateway = routesWanField(form, "gateway");
+  if (!(defaultRoute instanceof HTMLInputElement) || !(destination instanceof HTMLInputElement)) return;
+  const selected = defaultRoute.checked;
+  destination.disabled = selected;
+  destination.required = !selected;
+  if (destinationPanel instanceof HTMLElement) destinationPanel.hidden = selected;
+  if (family instanceof HTMLSelectElement) {
+    family.disabled = !selected;
+    family.required = selected;
+  }
+  if (defaultFamilyPanel instanceof HTMLElement) defaultFamilyPanel.hidden = !selected;
+  if (gateway instanceof HTMLInputElement) {
+    gateway.required = selected;
+    gateway.placeholder = selected ? "Required next-hop gateway" : "Direct";
+  }
+}
+
 function setRoutesWanField(form, name, value) {
   const field = routesWanField(form, name);
   if (field instanceof HTMLInputElement && field.type === "checkbox") {
@@ -7043,7 +7114,7 @@ async function deleteWanRouteFromMenu(row, csrf) {
     return;
   }
   const confirmed = await requestConfirmation({
-    title: `Delete route ${data.destination_cidr}?`,
+    title: `Delete ${routesWanDestinationLabel(data.destination_cidr)}?`,
     message: "This removes the route from Atlaso desired state. It will not touch the appliance until global appliance apply runs.",
     label: "Delete route",
   });
@@ -7408,7 +7479,7 @@ function initializeRoutesWanRoutesTable() {
           field: "destination_cidr",
           formatter: (cell) => cell.getRow().getData().is_new
             ? routesWanAddButton("route", "+ Add static route here")
-            : escapeHtml(cell.getValue()),
+            : escapeHtml(routesWanDestinationLabel(cell.getValue())),
           minWidth: 160,
         },
         {
@@ -7559,6 +7630,8 @@ function routesWanWizardErrorTarget(form, kind, message) {
   const lower = message.toLowerCase();
   const mappings = {
     route: [
+      ["default route", "default_route", "path"],
+      ["ipv4 or ipv6", "default_route_family", "path"],
       ["destination", "destination_cidr", "path"],
       ["gateway", "gateway", "path"],
       ["interface", "interface_name", "path"],
@@ -7603,7 +7676,7 @@ function initializeRoutesWanWizards() {
       editAction: (id) => managementUiPath(`/routes-wan/routes/${id}/edit`),
       tab: "routes-wan-routes-panel",
       steps: [
-        { id: "path", title: "Define the static path", description: "Choose the destination, optional next hop, and non-management output target." },
+        { id: "path", title: "Define the static path", description: "Choose a default or destination-specific path through a non-management output target." },
         { id: "simulation", title: "Choose WAN Simulation", description: "Optionally apply one interface-level impairment policy to the selected target." },
         { id: "state", title: "Choose route state", description: "Enable the route now or retain it as disabled desired state." },
         { id: "review", title: "Review the static route", description: "Confirm the complete path and global appliance-apply boundary." },
@@ -7661,6 +7734,7 @@ function initializeRoutesWanWizards() {
     const natCidrs = form.querySelector("[data-routes-wan-nat-cidrs]");
     const natGroupPanel = form.querySelector("[data-routes-wan-nat-source-group]");
     const natCidrsPanel = form.querySelector("[data-routes-wan-nat-source-cidrs]");
+    const defaultRoute = form.querySelector("[data-routes-wan-default-route]");
     const syncNatSource = () => {
       if (kind !== "nat" || !(natSourceMode instanceof HTMLSelectElement)) return;
       const mode = natSourceMode.value;
@@ -7676,13 +7750,30 @@ function initializeRoutesWanWizards() {
     natSourceMode?.addEventListener("change", syncNatSource);
     natGroup?.addEventListener("change", syncNatSource);
     natCidrs?.addEventListener("input", syncNatSource);
+    defaultRoute?.addEventListener("change", () => {
+      const destination = routesWanField(form, "destination_cidr");
+      if (
+        defaultRoute instanceof HTMLInputElement
+        && !defaultRoute.checked
+        && destination instanceof HTMLInputElement
+        && routesWanDefaultFamily(destination.value)
+      ) {
+        destination.value = "";
+      }
+      syncRoutesWanDefaultRouteMode(form);
+    });
 
     const prepareReview = () => {
       if (kind === "route") {
         const target = routesWanField(form, "interface_name");
         const policy = routesWanField(form, "wan_policy_id");
         const gateway = routesWanField(form, "gateway")?.value.trim() || "direct";
-        setRoutesWanReview(form, "route-destination", routesWanField(form, "destination_cidr")?.value);
+        const selectedDefault = routesWanField(form, "default_route")?.checked;
+        const family = routesWanField(form, "default_route_family")?.value || "4";
+        const destination = selectedDefault
+          ? `Default route (IPv${family})`
+          : routesWanDestinationLabel(routesWanField(form, "destination_cidr")?.value);
+        setRoutesWanReview(form, "route-destination", destination);
         setRoutesWanReview(form, "route-path", `${gateway} via ${target?.selectedOptions?.[0]?.textContent?.trim() || target?.value} · metric ${routesWanField(form, "metric")?.value}`);
         setRoutesWanReview(form, "route-policy", policy?.selectedOptions?.[0]?.textContent?.trim() || "None");
         setRoutesWanReview(form, "route-state", routesWanField(form, "enabled")?.checked ? "Enabled" : "Disabled");
@@ -7710,6 +7801,25 @@ function initializeRoutesWanWizards() {
       }
     };
     const validateStep = ({ step }) => {
+      if (kind === "route" && step.id === "path") {
+        const selectedDefault = routesWanField(form, "default_route")?.checked;
+        const family = routesWanField(form, "default_route_family")?.value || "";
+        const destination = routesWanField(form, "destination_cidr")?.value.trim() || "";
+        const gateway = routesWanField(form, "gateway")?.value.trim() || "";
+        const pathError = validateRoutesWanRoutePath({
+          defaultRouteSelected: selectedDefault,
+          defaultRouteFamily: family,
+          destinationCidr: destination,
+          gateway,
+        });
+        if (pathError) {
+          return {
+            valid: false,
+            message: pathError.message,
+            field: routesWanField(form, pathError.fieldName),
+          };
+        }
+      }
       if (kind === "routing" && step.id === "direction") {
         const source = routesWanField(form, "source_interface");
         const destination = routesWanField(form, "destination_interface");
@@ -7741,12 +7851,16 @@ function initializeRoutesWanWizards() {
         if (modalTitle instanceof HTMLElement) modalTitle.textContent = `${editing ? "Edit" : "Add"} ${config.noun}`;
         if (submit instanceof HTMLButtonElement) submit.textContent = `${editing ? "Update" : "Add"} ${config.noun}`;
         if (kind === "route") {
+          const defaultFamily = row?.default_route_family || routesWanDefaultFamily(row?.destination_cidr);
           setRoutesWanField(form, "destination_cidr", row?.destination_cidr || "");
+          setRoutesWanField(form, "default_route", Boolean(defaultFamily));
+          setRoutesWanField(form, "default_route_family", defaultFamily || "4");
           setRoutesWanField(form, "gateway", row?.gateway || "");
           setRoutesWanField(form, "interface_name", row?.interface_name || routesWanField(form, "interface_name")?.options?.[0]?.value || "");
           setRoutesWanField(form, "metric", row?.metric ?? 100);
           setRoutesWanField(form, "wan_policy_id", row?.wan_policy_id || "");
           setRoutesWanField(form, "enabled", row?.enabled ?? true);
+          syncRoutesWanDefaultRouteMode(form);
         } else if (kind === "routing") {
           setRoutesWanField(form, "name", row?.name || "");
           setRoutesWanField(form, "description", row?.description || "");
