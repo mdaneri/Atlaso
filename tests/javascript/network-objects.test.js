@@ -288,3 +288,14 @@ test("Source Group enhanced editor uses server validation and non-color tag stat
     /prepareReview: async[\s\S]+await validateNetworkObjectSourceGroupEntries\(form\)[\s\S]+step: "entries"/,
   );
 });
+
+test("editable tags preserve native remove activation and disable every edit path", () => {
+  const initializer = functionSource("initializeTagEditors");
+
+  assert.match(initializer, /if \(event\.target !== token\) return/);
+  assert.match(initializer, /if \(editorDisabled \|\| !editable \|\| token\.hasAttribute\("data-tag-locked"\)\) return/);
+  assert.match(initializer, /if \(nextDisabled && editContext\) restoreEditedValue\(\)/);
+  assert.match(initializer, /token\.tabIndex = nextDisabled \? -1 : 0/);
+  assert.match(initializer, /token\.setAttribute\("aria-disabled", nextDisabled \? "true" : "false"\)/);
+  assert.match(initializer, /if \(!event\.target\.closest\("\[data-tag-remove\]"\)\) beginEdit\(token\)/);
+});

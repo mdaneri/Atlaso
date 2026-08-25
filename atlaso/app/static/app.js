@@ -16097,6 +16097,7 @@ function initializeTagEditors(root = document) {
     }
     editor.dataset.tagEditorInitialized = "1";
     let editContext = null;
+    let editorDisabled = false;
 
     const currentValues = () =>
       Array.from(list.querySelectorAll(".tag-token")).map((item) => item.getAttribute("data-value") || "");
@@ -16106,7 +16107,7 @@ function initializeTagEditors(root = document) {
     };
 
     const removeToken = (token, { restoreFocus = true } = {}) => {
-      if (token.hasAttribute("data-tag-locked")) {
+      if (editorDisabled || token.hasAttribute("data-tag-locked")) {
         return;
       }
       token.remove();
@@ -16158,7 +16159,7 @@ function initializeTagEditors(root = document) {
     };
 
     const beginEdit = (token) => {
-      if (!editable || token.hasAttribute("data-tag-locked")) return;
+      if (editorDisabled || !editable || token.hasAttribute("data-tag-locked")) return;
       editContext = {
         value: token.getAttribute("data-value") || "",
         before: token.nextSibling,
@@ -16185,12 +16186,15 @@ function initializeTagEditors(root = document) {
         token.setAttribute("data-tag-editable", "");
         token.setAttribute("aria-label", `${value}. Press Enter to edit this entry.`);
         token.addEventListener("keydown", (event) => {
+          if (event.target !== token) return;
           if (event.key === "Enter" || event.key === "F2") {
             event.preventDefault();
             beginEdit(token);
           }
         });
-        token.addEventListener("dblclick", () => beginEdit(token));
+        token.addEventListener("dblclick", (event) => {
+          if (!event.target.closest("[data-tag-remove]")) beginEdit(token);
+        });
       }
     };
 
@@ -16317,16 +16321,23 @@ function initializeTagEditors(root = document) {
       },
       addValue,
       setDisabled: (disabled) => {
-        input.disabled = Boolean(disabled);
-        if (toggle instanceof HTMLButtonElement) toggle.disabled = Boolean(disabled);
+        const nextDisabled = Boolean(disabled);
+        if (nextDisabled && editContext) restoreEditedValue();
+        editorDisabled = nextDisabled;
+        input.disabled = nextDisabled;
+        if (toggle instanceof HTMLButtonElement) toggle.disabled = nextDisabled;
         list.querySelectorAll('input[type="hidden"], button').forEach((control) => {
-          control.disabled = Boolean(disabled);
+          control.disabled = nextDisabled;
+        });
+        list.querySelectorAll(".tag-token[data-tag-editable]").forEach((token) => {
+          token.tabIndex = nextDisabled ? -1 : 0;
+          token.setAttribute("aria-disabled", nextDisabled ? "true" : "false");
         });
         menu?.querySelectorAll?.("button").forEach((control) => {
-          control.disabled = Boolean(disabled);
+          control.disabled = nextDisabled;
         });
-        if (disabled && menu instanceof HTMLElement) menu.hidden = true;
-        editor.setAttribute("aria-disabled", disabled ? "true" : "false");
+        if (nextDisabled && menu instanceof HTMLElement) menu.hidden = true;
+        editor.setAttribute("aria-disabled", nextDisabled ? "true" : "false");
       },
       refreshMenu,
     };
