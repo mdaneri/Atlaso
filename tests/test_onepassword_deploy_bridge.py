@@ -19,6 +19,12 @@ def _embedded_child() -> str:
 
 
 def _run_child(tmp_path: Path, mode: str) -> subprocess.CompletedProcess[str]:
+    """Run the extracted deployment child against synthetic dependencies.
+
+    Args:
+        tmp_path: Isolated directory for the extracted child and fake packages.
+        mode: Synthetic SDK response scenario to exercise.
+    """
     dependency_path = tmp_path / "dependencies"
     package_path = dependency_path / "onepassword"
     package_path.mkdir(parents=True)
@@ -123,6 +129,12 @@ class Client:
 
 @pytest.mark.parametrize("mode", ["denied", "wrong-environment"])
 def test_sdk_authorization_and_environment_fail_closed(tmp_path: Path, mode: str) -> None:
+    """Reject unavailable authorization and an inaccessible Environment.
+
+    Args:
+        tmp_path: Isolated directory for the extracted child and fake packages.
+        mode: Synthetic SDK failure scenario to exercise.
+    """
     result = _run_child(tmp_path, mode)
     output = result.stdout + result.stderr
     assert result.returncode != 0
@@ -132,6 +144,12 @@ def test_sdk_authorization_and_environment_fail_closed(tmp_path: Path, mode: str
 
 @pytest.mark.parametrize("mode", ["missing", "unmasked"])
 def test_expected_concealed_variable_is_required(tmp_path: Path, mode: str) -> None:
+    """Require exactly one masked deployment-password variable.
+
+    Args:
+        tmp_path: Isolated directory for the extracted child and fake packages.
+        mode: Synthetic variable-contract failure scenario to exercise.
+    """
     result = _run_child(tmp_path, mode)
     output = result.stdout + result.stderr
     assert result.returncode != 0
@@ -140,6 +158,11 @@ def test_expected_concealed_variable_is_required(tmp_path: Path, mode: str) -> N
 
 
 def test_success_keeps_value_out_of_process_output(tmp_path: Path) -> None:
+    """Keep the synthetic value out of all child-process output.
+
+    Args:
+        tmp_path: Isolated directory for the extracted child and fake packages.
+    """
     result = _run_child(tmp_path, "success")
     output = result.stdout + result.stderr
     assert result.returncode != 0
