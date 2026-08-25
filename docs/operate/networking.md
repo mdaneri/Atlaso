@@ -137,7 +137,8 @@ the same intended interfaces.
 **Static Routes** and **Routing Permissions** solve different jobs:
 
 - A **Static Route** selects a path to an IPv4 or IPv6 destination through a non-management interface or VLAN. It owns
-  the destination CIDR, optional gateway, output target, metric, enabled state, and optional interface-level WAN policy.
+  either a default-route family or destination CIDR, the next-hop gateway when required, output target, metric, enabled
+  state, and optional interface-level WAN policy.
 - A **Routing Permission** authorizes forwarded traffic from one non-management interface/VLAN network to another.
   Route-role networks generate these paths automatically. Access networks remain blocked until an explicit permission
   is enabled. Management is never an eligible source or destination.
@@ -146,6 +147,18 @@ Use the bottom add row in each tab to open the shared reviewed wizard. Double-cl
 row menu to update it. The standard step rail remains beside the form on wide screens and adapts to the narrow layout.
 Each wizard retains entered values while moving backward, validates before Review, and saves only after the final
 add/update action. A saved row's **Enabled** value remains directly editable; this changes desired state only.
+
+In the Static Route **Path** step, enable **Default route** and choose IPv4 or IPv6 when this path should match every
+destination in that family. Atlaso hides and excludes **Destination CIDR**, requires a same-family next-hop gateway
+that is on-link for the selected target (or IPv6 link-local),
+and persists the canonical destination `0.0.0.0/0` or `::/0`. Review, edit, and table readback show **Default route
+(IPv4)** or **Default route (IPv6)** rather than making the operator work with `/0`. Only one default route per family
+may be saved; move or edit the existing default instead of creating a conflicting entry.
+
+Leave **Default route** off for a destination-specific path. **Destination CIDR** is then required, while **Gateway**
+may remain blank when the selected interface or VLAN reaches that network directly. A supplied gateway must use the
+same address family as the destination. API clients remain compatible with `POST` or `PATCH /api/v1/routes` requests
+that use canonical `0.0.0.0/0` or `::/0`; those payloads must also include the required same-family gateway.
 
 The **NAT** wizard creates explicit IPv4 masquerade rules. Choose Any, an existing Source Group, or IPv4 source CIDRs,
 then select an eligible IPv4-bearing access interface or enabled VLAN. **Manage source groups** opens
@@ -187,6 +200,11 @@ management prefix on the interface and the default through the configured gatewa
 for that source prefix. A retained address and a successful gateway ping prove neither firewall admission nor the reply
 route to a same-subnet host. Verify the Atlaso loopback `/openapi.json`, the guest-local management front door, and
 `/openapi.json` from the actual management host before declaring recovery.
+
+For a lab default route, run `ip route show table 200` and `ip -6 route show table 200` as applicable. Confirm the
+canonical default uses the reviewed gateway, target, and metric, and separately verify that table `100` still contains
+only the management policy-routing state. A successful global Apply stores that exact rendered route in the `wan`
+baseline; a later edit remains pending until the next Apply.
 
 A failed management handoff reports its non-secret failing layer and rolls back the captured network, firewall, nginx,
 certificate, and service state before the task becomes failed. Rollback also reconfigures interfaces introduced to the

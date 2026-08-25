@@ -914,7 +914,7 @@ def test_pwa_manifest_service_worker_and_offline_shell(client):
     assert "/static/ui-patterns.js?v=atlaso-ui-foundation-20260726-8" in service_worker.text
     assert "/static/appliance-apply-polling.js?v=issue-420-6" in service_worker.text
     assert "/static/ui-routes.js?v=issue-287-1" in service_worker.text
-    assert "/static/app.js?v=issue-337-11" in service_worker.text
+    assert "/static/app.js?v=issues-337-508-1" in service_worker.text
     assert "/static/terminal.js?v=issue-287-2" in service_worker.text
     assert "/static/pwa.js?v=issue-287-2" in service_worker.text
     assert "vcfdt-configuration-248-20260807-14" not in service_worker.text
@@ -968,8 +968,8 @@ def test_shared_ui_pattern_shell_and_wizard_contracts(client):
     base = (templates / "base.html").read_text(encoding="utf-8")
     public_base = (templates / "public_portal_base.html").read_text(encoding="utf-8")
     for shell, app_asset in (
-        (base, "/static/app.js?v=issue-337-11"),
-        (public_base, "/static/app.js?v=issue-337-11"),
+        (base, "/static/app.js?v=issues-337-508-1"),
+        (public_base, "/static/app.js?v=issues-337-508-1"),
         (base, "/static/appliance-apply-polling.js?v=issue-420-6"),
     ):
         assert shell.index("/static/vendor/tabulator/tabulator.min.js") < shell.index(
@@ -1623,7 +1623,7 @@ def test_monitor_page_renders_template_and_browser_assets(client):
     assert "swagger-link-icon" in page.text
     assert "/static/app.css?v=issues-499-500-2" in page.text
     assert "/static/ui-patterns.js?v=atlaso-ui-foundation-20260726-8" in page.text
-    assert "/static/app.js?v=issue-337-11" in page.text
+    assert "/static/app.js?v=issues-337-508-1" in page.text
     app_css = client.get("/static/app.css")
     assert app_css.status_code == 200
     assert ".split-workspace > .wide-panel" in app_css.text
@@ -5409,6 +5409,22 @@ def test_settings_archive_preflight_rejects_invalid_collection_row_and_required_
     invalid_dns_domain["data"]["dns_settings"][0]["domain"] = "bad domain"
     invalid_route_destination = deepcopy(archive)
     invalid_route_destination["data"]["routes"][0]["destination_cidr"] = "not-a-cidr"
+    missing_default_route_gateway = deepcopy(archive)
+    missing_default_route_gateway["data"]["routes"][0].update(
+        {"destination_cidr": "0.0.0.0/0", "gateway": ""}
+    )
+    duplicate_default_route = deepcopy(archive)
+    duplicate_default_route["data"]["routes"][0].update(
+        {"destination_cidr": "0.0.0.0/0", "gateway": "192.168.20.254"}
+    )
+    duplicate_default_row = deepcopy(duplicate_default_route["data"]["routes"][0])
+    duplicate_default_row["destination_cidr"] = "192.0.2.42/0"
+    duplicate_default_row["gateway"] = "192.168.20.253"
+    duplicate_default_route["data"]["routes"].append(duplicate_default_row)
+    default_route_target_family_mismatch = deepcopy(archive)
+    default_route_target_family_mismatch["data"]["routes"][0].update(
+        {"destination_cidr": "::/0", "gateway": "2001:db8:20::fe"}
+    )
     invalid_firewall_policy = deepcopy(archive)
     invalid_firewall_policy["data"]["firewall_settings"][0]["default_input_policy"] = "reject"
     invalid_kms_port = deepcopy(archive)
@@ -6357,6 +6373,9 @@ def test_settings_archive_preflight_rejects_invalid_collection_row_and_required_
         (enabled_nts_without_ca, "enables NTPsec NTS server mode without an enabled CA"),
         (invalid_dns_domain, "DNS settings are invalid: DNS domain bad domain must not contain whitespace"),
         (invalid_route_destination, "Routes and WAN state is invalid: Route not-a-cidr is not a valid destination CIDR"),
+        (missing_default_route_gateway, "Routes and WAN state is invalid: Default IPv4 route .* requires a gateway"),
+        (duplicate_default_route, "Routes and WAN state is invalid: Only one IPv4 default route"),
+        (default_route_target_family_mismatch, "does not have a configured IPv6 CIDR"),
         (invalid_firewall_policy, "Firewall state is invalid: .*Default input policy"),
         (invalid_kms_port, "KMS state is invalid: KMS port must be between 1 and 65535"),
         (invalid_legacy_dhcp, "DHCP settings are invalid"),

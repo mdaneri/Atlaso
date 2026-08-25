@@ -370,6 +370,10 @@ The following cross-cutting boundaries always apply:
 - Keep **Static Routes** separate from **Routing Permissions** in operator language. Static Routes choose destination,
   gateway, target interface/VLAN, and metric in the lab route table; Routing Permissions authorize forwarding between
   interface/VLAN networks, with route-role paths generated automatically and Access networks requiring explicit rules.
+  The Static Route wizard must make **Default route** mutually exclusive with **Destination CIDR**, require an explicit
+  IPv4 or IPv6 family plus a same-family next-hop gateway for defaults, persist canonical `0.0.0.0/0` or `::/0`, and
+  allow only one default per family. Destination-specific routes keep a required CIDR and optional gateway for directly
+  connected paths; API callers may continue to submit canonical `/0` CIDRs.
   Static Routes, Routing Permissions, NAT Rules, and WAN Policies are wizard-backed Tabulator collections. Add launches
   from the bottom row; edit launches from row double-click or the context menu; generated routing permissions remain
   read-only; and ordinary persisted **Enabled** state remains directly editable without host mutation.

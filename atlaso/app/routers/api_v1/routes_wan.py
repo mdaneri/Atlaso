@@ -39,7 +39,13 @@ from atlaso.app.services.firewall import (
 )
 from atlaso.app.services.network_objects import acquire_network_objects_write_lock
 from atlaso.app.services.networking import normalize_interface_mode
-from atlaso.app.services.routes_wan import validate_nat_source
+from atlaso.app.services.routes_wan import (
+    canonical_route_destination,
+    default_route_family,
+    has_default_route_conflict,
+    route_gateway_target_error,
+    validate_nat_source,
+)
 
 Endpoint = Callable[..., Any]
 
@@ -90,7 +96,7 @@ def build_router(dependencies: RoutesWanApiDependencies) -> RoutesWanApiRouter:
         """
         return RouteResponse(
             id=route.id,
-            destination_cidr=route.destination_cidr,
+            destination_cidr=canonical_route_destination(route.destination_cidr),
             gateway=route.gateway,
             interface_name=route.interface_name,
             metric=route.metric,
@@ -101,32 +107,55 @@ def build_router(dependencies: RoutesWanApiDependencies) -> RoutesWanApiRouter:
         )
 
 
-    def route_target_names(db: Session) -> set[str]:
-        """Return route target names.
+    def route_target_cidrs(db: Session) -> dict[str, tuple[str | None, str | None]]:
+        """Return eligible route targets and their configured CIDRs.
 
         Args:
             db: Active database session.
         """
         interfaces = db.execute(select(PhysicalInterface).order_by(PhysicalInterface.name)).scalars().all()
         vlans = db.execute(select(VlanInterface).order_by(VlanInterface.name)).scalars().all()
-        names = {
-            interface.name
+        targets = {
+            interface.name: (interface.ip_cidr, interface.ipv6_cidr)
             for interface in interfaces
             if interface.oper_state != "missing"
             and normalize_interface_mode(interface.mode) != "trunk"
             and (interface.role or "").strip().lower() != "management"
             and (interface.ip_cidr or interface.ipv6_cidr)
         }
-        names.update({vlan.name for vlan in vlans if vlan.enabled and (vlan.role or "").strip().lower() != "management" and (vlan.ip_cidr or vlan.ipv6_cidr)})
-        return names
+        targets.update(
+            {
+                vlan.name: (vlan.ip_cidr, vlan.ipv6_cidr)
+                for vlan in vlans
+                if vlan.enabled
+                and (vlan.role or "").strip().lower() != "management"
+                and (vlan.ip_cidr or vlan.ipv6_cidr)
+            }
+        )
+        return targets
 
 
-    def validate_route_payload(payload: RouteCreate, db: Session) -> None:
+    def route_target_names(db: Session) -> set[str]:
+        """Return route target names.
+
+        Args:
+            db: Active database session.
+        """
+        return set(route_target_cidrs(db))
+
+
+    def validate_route_payload(
+        payload: RouteCreate,
+        db: Session,
+        *,
+        exclude_route_id: int | None = None,
+    ) -> tuple[str, str | None]:
         """Validate route payload.
 
         Args:
             payload: Validated request or operation payload.
             db: Active database session.
+            exclude_route_id: Existing route identifier to ignore during edits.
 
         Raises:
             HTTPException: If the request cannot be fulfilled.
@@ -135,17 +164,30 @@ def build_router(dependencies: RoutesWanApiDependencies) -> RoutesWanApiRouter:
             destination = ip_network(payload.destination_cidr, strict=False)
         except ValueError as exc:
             raise HTTPException(status_code=422, detail=f"{payload.destination_cidr} is not a valid destination CIDR.") from exc
-        if payload.gateway:
+        gateway_value = payload.gateway.strip() if payload.gateway else None
+        if destination.prefixlen == 0 and not gateway_value:
+            raise HTTPException(status_code=422, detail=f"Default IPv{destination.version} route requires a gateway.")
+        if gateway_value:
             try:
-                gateway = ip_address(payload.gateway)
+                gateway = ip_address(gateway_value)
             except ValueError as exc:
-                raise HTTPException(status_code=422, detail=f"{payload.gateway} is not a valid gateway IP address.") from exc
+                raise HTTPException(status_code=422, detail=f"{gateway_value} is not a valid gateway IP address.") from exc
             if gateway.version != destination.version:
                 raise HTTPException(status_code=422, detail="Route gateway family must match the destination CIDR family.")
-        if payload.interface_name not in route_target_names(db):
+            gateway_value = str(gateway)
+        family = default_route_family(payload.destination_cidr)
+        if family is not None:
+            routes = list(db.execute(select(Route).order_by(Route.id)).scalars().all())
+            if has_default_route_conflict(routes, family, exclude_route_id):
+                raise HTTPException(status_code=422, detail=f"Only one IPv{family} default route can be configured.")
+        targets = route_target_cidrs(db)
+        if payload.interface_name not in targets:
             raise HTTPException(status_code=422, detail="Choose an access physical interface or enabled VLAN interface with an IP CIDR.")
+        if target_error := route_gateway_target_error(gateway_value, targets[payload.interface_name]):
+            raise HTTPException(status_code=422, detail=target_error)
         if payload.metric < 0:
             raise HTTPException(status_code=422, detail="Route metric cannot be negative.")
+        return canonical_route_destination(payload.destination_cidr), gateway_value
 
 
     @router.post("/routes", response_model=RouteResponse, status_code=201, tags=["Routes"], operation_id="createRoute")
@@ -161,8 +203,13 @@ def build_router(dependencies: RoutesWanApiDependencies) -> RoutesWanApiRouter:
             identity: Authenticated identity authorizing the operation.
             db: Active database session used by the operation.
         """
-        validate_route_payload(payload, db)
-        route = Route(**payload.model_dump())
+        # The shared mutation lock also covers settings-archive restores, so the
+        # default-family check and insert remain one serialized transaction.
+        acquire_network_objects_write_lock(db)
+        destination, gateway = validate_route_payload(payload, db)
+        values = payload.model_dump()
+        values.update(destination_cidr=destination, gateway=gateway)
+        route = Route(**values)
         db.add(route)
         db.commit()
         db.refresh(route)
@@ -201,11 +248,14 @@ def build_router(dependencies: RoutesWanApiDependencies) -> RoutesWanApiRouter:
             identity: Authenticated identity authorizing the operation.
             db: Active database session used by the operation.
         """
+        acquire_network_objects_write_lock(db)
         route = db.get(Route, route_id)
         if not route:
             raise HTTPException(status_code=404, detail="Route not found")
-        validate_route_payload(payload, db)
-        for key, value in payload.model_dump().items():
+        destination, gateway = validate_route_payload(payload, db, exclude_route_id=route_id)
+        values = payload.model_dump()
+        values.update(destination_cidr=destination, gateway=gateway)
+        for key, value in values.items():
             setattr(route, key, value)
         db.commit()
         record_audit(db, actor=identity.username, action="update_route", resource_type="route", resource_id=str(route_id))
@@ -615,6 +665,7 @@ def build_router(dependencies: RoutesWanApiDependencies) -> RoutesWanApiRouter:
     endpoints: dict[str, Endpoint] = {
         "list_routes": list_routes,
         "route_response": route_response,
+        "route_target_cidrs": route_target_cidrs,
         "route_target_names": route_target_names,
         "validate_route_payload": validate_route_payload,
         "create_route": create_route,

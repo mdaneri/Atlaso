@@ -8086,6 +8086,28 @@ def _wan_config_errors(path: Path) -> list[str]:
         domain = target.get("routing_domain", "lab")
         if domain not in {"management", "lab"}:
             errors.append(f"WAN target {name or '<missing>'} routing domain must be management or lab.")
+    default_route_destinations: dict[int, str] = {}
+    for route in parsed["routes"]:
+        destination = route.get("destination_cidr", "")
+        try:
+            destination_network = ip_network(destination, strict=False)
+        except ValueError:
+            continue
+        if destination_network.prefixlen != 0:
+            continue
+        canonical_destination = str(destination_network)
+        previous_destination = default_route_destinations.get(destination_network.version)
+        if previous_destination is not None:
+            errors.append(
+                f"Only one IPv{destination_network.version} default route may be configured; "
+                f"{canonical_destination} conflicts with {previous_destination}."
+            )
+        else:
+            default_route_destinations[destination_network.version] = canonical_destination
+        if not route.get("gateway", ""):
+            errors.append(f"Default route {canonical_destination} requires a next-hop gateway.")
+
+    desired_route_ids = {id(route) for route in parsed["routes"]}
     for route in [*parsed["routes"], *parsed["removed_routes"]]:
         destination = route.get("destination_cidr", "")
         destination_network = None
@@ -8098,6 +8120,7 @@ def _wan_config_errors(path: Path) -> list[str]:
                 errors.append(f"Route {destination} is not a valid destination CIDR.")
                 destination_network = None
         gateway = route.get("gateway", "")
+        gateway_address = None
         if gateway:
             try:
                 gateway_address = ip_address(gateway)
@@ -8114,6 +8137,27 @@ def _wan_config_errors(path: Path) -> list[str]:
             default=True,
         ):
             errors.append(f"Route {destination or '<missing>'} cannot target management routing domain {interface_name}.")
+        elif gateway_address and id(route) in desired_route_ids:
+            target_networks = []
+            for key in ("ip_cidr", "ipv6_cidr"):
+                try:
+                    target_networks.append(ip_network(targets[interface_name].get(key, ""), strict=False))
+                except ValueError:
+                    continue
+            matching_networks = [
+                network for network in target_networks if network.version == gateway_address.version
+            ]
+            if not matching_networks:
+                errors.append(
+                    f"Route {destination} gateway {gateway} uses IPv{gateway_address.version}, but WAN target "
+                    f"{interface_name} has no configured IPv{gateway_address.version} CIDR."
+                )
+            elif not (gateway_address.version == 6 and gateway_address.is_link_local) and not any(
+                gateway_address in network for network in matching_networks
+            ):
+                errors.append(
+                    f"Route {destination} gateway {gateway} is not on-link for WAN target {interface_name}."
+                )
         try:
             metric = int(route.get("metric", "100"))
         except ValueError:

@@ -170,7 +170,11 @@ from atlaso.app.services.oidc import (
     validate_persisted_client_policy,
     validate_redirect_uri_list,
 )
-from atlaso.app.services.routes_wan import validate_nat_source, validate_wan_state
+from atlaso.app.services.routes_wan import (
+    canonical_route_destination,
+    validate_nat_source,
+    validate_wan_state,
+)
 from atlaso.app.services.service_registry import SERVICE_STATE_IDS
 from atlaso.app.services.update_sources import (
     UPDATE_SOURCE_KINDS,
@@ -1951,6 +1955,13 @@ def _validate_archive_relationships(data: dict[str, list[dict[str, Any]]]) -> No
         != "management"
     }
     route_target_names = set(route_target_families)
+    route_target_cidrs = {
+        name: (
+            (physical_interfaces.get(name) or vlan_interfaces[name]).get("ip_cidr"),
+            (physical_interfaces.get(name) or vlan_interfaces[name]).get("ipv6_cidr"),
+        )
+        for name in route_target_names
+    }
     service_target_names = {
         name
         for name in dhcp_target_families
@@ -2400,6 +2411,7 @@ def _validate_archive_relationships(data: dict[str, list[dict[str, Any]]]) -> No
             for row in data.get("routing_rules", [])
         ],
         routing_target_names=route_target_names,
+        route_target_cidrs=route_target_cidrs,
     )
     if wan_errors:
         raise ValueError(
@@ -4277,6 +4289,7 @@ def _restore_routes(db: Session, rows: list[dict[str, Any]]) -> int:
     policies = {policy.name: policy.id for policy in db.execute(select(WanPolicy)).scalars().all()}
     for row in rows:
         payload = _model_kwargs(Route, row, exclude={"wan_policy_id"})
+        payload["destination_cidr"] = canonical_route_destination(str(payload.get("destination_cidr", "")))
         policy_name = str(row.get("wan_policy_name") or "")
         payload["wan_policy_id"] = policies.get(policy_name) if policy_name else None
         db.add(Route(**payload))

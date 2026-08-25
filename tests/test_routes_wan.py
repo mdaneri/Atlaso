@@ -2,10 +2,110 @@
 
 from atlaso.app.models import NatRule, Route, RoutingRule
 from atlaso.app.services.routes_wan import (
+    canonical_route_destination,
+    default_route_family,
     render_wan_config,
+    route_to_dict,
     validate_nat_source,
     validate_wan_state,
 )
+
+
+def test_default_route_helpers_and_renderer_use_canonical_semantics():
+    """Canonicalize /0 values and render semantic default-route readback."""
+    route = Route(
+        destination_cidr="192.0.2.42/0",
+        gateway="192.0.2.1",
+        interface_name="eth1",
+        metric=90,
+        enabled=True,
+    )
+
+    assert canonical_route_destination(route.destination_cidr) == "0.0.0.0/0"
+    assert default_route_family(route.destination_cidr) == 4
+    assert route_to_dict(route)["destination_label"] == "Default route (IPv4)"
+    config = render_wan_config([route])
+    assert "route=0.0.0.0/0" in config
+    assert "ip route replace 0.0.0.0/0 via 192.0.2.1 dev eth1 metric 90 table 200" in config
+
+
+def test_removed_route_detection_compares_canonical_destinations():
+    """Keep equivalent legacy baseline destinations during global Apply."""
+    from atlaso.app.ui import removed_wan_route_entries
+
+    current_preview = """[routes]
+route=::/0
+  gateway=2001:db8::1
+  interface=eth1
+  metric=90
+"""
+    baseline = {
+        "config_preview": """[routes]
+route=0:0:0:0:0:0:0:0/0
+  gateway=2001:db8::1
+  interface=eth1
+  metric=90
+"""
+    }
+
+    assert removed_wan_route_entries(current_preview, baseline) == []
+
+
+def test_validate_wan_state_rejects_missing_and_duplicate_family_defaults():
+    """Require next hops and permit at most one default per IP family."""
+    routes = [
+        Route(destination_cidr="0.0.0.0/0", gateway="", interface_name="eth1", metric=90, enabled=True),
+        Route(destination_cidr="192.0.2.42/0", gateway="192.0.2.1", interface_name="eth1", metric=100, enabled=True),
+        Route(destination_cidr="::/0", gateway="2001:db8::1", interface_name="eth1", metric=110, enabled=True),
+    ]
+
+    errors = validate_wan_state(routes, [], {"eth1"})
+
+    assert any("Default IPv4 route" in error and "requires a gateway" in error for error in errors)
+    assert any("Only one IPv4 default route" in error for error in errors)
+    assert not any("Only one IPv6 default route" in error for error in errors)
+
+
+def test_validate_wan_state_requires_gateway_reachability_on_selected_target():
+    """Reject absent-family and off-link next hops while allowing IPv6 link-local gateways."""
+    ipv6_default = Route(
+        destination_cidr="::/0",
+        gateway="2001:db8:20::fe",
+        interface_name="eth1.20",
+        metric=100,
+        enabled=True,
+    )
+
+    absent_family_errors = validate_wan_state(
+        [ipv6_default],
+        [],
+        {"eth1.20"},
+        route_target_cidrs={"eth1.20": ("192.168.20.1/24", None)},
+    )
+    assert any("does not have a configured IPv6 CIDR" in error for error in absent_family_errors)
+
+    ipv4_default = Route(
+        destination_cidr="0.0.0.0/0",
+        gateway="198.51.100.1",
+        interface_name="eth1.20",
+        metric=100,
+        enabled=True,
+    )
+    off_link_errors = validate_wan_state(
+        [ipv4_default],
+        [],
+        {"eth1.20"},
+        route_target_cidrs={"eth1.20": ("192.168.20.1/24", None)},
+    )
+    assert any("is not on-link" in error for error in off_link_errors)
+
+    ipv6_default.gateway = "fe80::1"
+    assert validate_wan_state(
+        [ipv6_default],
+        [],
+        {"eth1.20"},
+        route_target_cidrs={"eth1.20": (None, "2001:db8:20::1/64")},
+    ) == []
 
 
 def test_render_wan_config_uses_ipv6_route_commands():

@@ -74,9 +74,10 @@ brings infrastructure, storage, identity, networking, and lifecycle workflows in
   of discarding later operator writes, including after reboot when the volatile gate must be recreated.
   Startup rejects inconsistent success evidence and resumes only untouched update children.
 - [Services](docs/services/index.md) — configure DNS, identity, storage, network boot, and VCF integrations.
-- [Network configuration](docs/operate/networking.md) — distinguish static paths from forwarding permissions and manage
-  Static Routes, Routing Permissions, IPv4 masquerade NAT rules, and interface-level WAN Simulation through reviewed
-  add/edit wizards before global appliance apply.
+- [Network configuration](docs/operate/networking.md) — distinguish static paths from forwarding permissions, create
+  explicit IPv4 or IPv6 default routes without entering `/0` manually, and manage Static Routes, Routing Permissions,
+  IPv4 masquerade NAT rules, and interface-level WAN Simulation through reviewed add/edit wizards before global
+  appliance apply.
 - [Public Services](docs/services/public-services.md) — use the canonical `/ui/management` and `/ui/public` browser
   planes, understand interface-aware `/` dispatch, and keep machine/protocol routes at their stable paths.
 - [DNS](docs/services/dns.md) — preserve explicit forwarders or usable resolvers from the management interface's exact
