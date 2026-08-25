@@ -422,11 +422,23 @@ def build_router(dependencies: NetworkObjectsUiDependencies) -> NetworkObjectsUi
         state = source_group_state_for_db(db)
         groups = [normalize_source_group(group) for group in state["groups"]]
         edited_group_id = str(form.get("group_id") or "")
-        raw_entries = [str(value) for value in form.getlist("group_entries")]
-        results = [
-            classify_source_group_entry(value, groups, edited_group_id=edited_group_id)
-            for value in raw_entries
-        ]
+        uses_any = str(form.get("any_source") or "") == "1"
+        raw_entries = ["any"] if uses_any else [str(value) for value in form.getlist("group_entries")]
+        results = (
+            [
+                {
+                    "state": "valid",
+                    "canonical": "any",
+                    "kind": "reserved",
+                    "message": "Any source is selected.",
+                }
+            ]
+            if uses_any
+            else [
+                classify_source_group_entry(value, groups, edited_group_id=edited_group_id)
+                for value in raw_entries
+            ]
+        )
 
         seen: set[str] = set()
         for result in results:

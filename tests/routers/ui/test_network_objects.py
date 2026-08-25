@@ -140,6 +140,30 @@ def test_network_objects_entry_validation_is_authoritative_and_canonical(client)
     assert reserved.json()["entries"][0]["state"] == "invalid"
     assert "Any source switch" in reserved.json()["entries"][0]["message"]
 
+    switched_any = client.post(
+        "/network-objects/source-groups/validate-entries",
+        data={
+            "csrf": csrf,
+            "group_name": "Application clients",
+            "group_entries": "any",
+            "any_source": "1",
+        },
+        headers={"X-Atlaso-Grid": "1"},
+    )
+    assert switched_any.status_code == 200
+    assert switched_any.json()["entries"] == [
+        {
+            "state": "valid",
+            "canonical": "any",
+            "kind": "reserved",
+            "message": "Any source is selected.",
+        }
+    ]
+    assert switched_any.json()["valid"] is False
+    assert switched_any.json()["errors"] == [
+        "Source Group name 'Application clients' is already used."
+    ]
+
 
 def test_network_objects_create_update_preserves_identifier_and_shared_apply_semantics(client):
     """Keep stable IDs and the existing Firewall/WAN render behavior after edits.

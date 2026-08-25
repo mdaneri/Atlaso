@@ -4470,12 +4470,10 @@ async function validateNetworkObjectSourceGroupEntries(form) {
   if (!(anySource instanceof HTMLInputElement) || !editor?.atlasoTagEditor) {
     return { valid: false, message: "Source Group entry controls are unavailable." };
   }
-  if (anySource.checked) {
-    syncNetworkObjectSourceGroupMode(form);
-    return { valid: true, entries: ["any"] };
-  }
-  const values = editor.atlasoTagEditor.values();
-  if (!values.length) {
+  const usesAny = anySource.checked;
+  if (usesAny) syncNetworkObjectSourceGroupMode(form);
+  const values = usesAny ? ["any"] : editor.atlasoTagEditor.values();
+  if (!usesAny && !values.length) {
     if (summary instanceof HTMLElement) {
       summary.textContent = "Add at least one explicit Source Group entry.";
       summary.classList.add("error");
@@ -4501,6 +4499,7 @@ async function validateNetworkObjectSourceGroupEntries(form) {
   body.set("csrf", form.elements.namedItem("csrf")?.value || "");
   body.set("group_id", form.elements.namedItem("group_id")?.value || "");
   body.set("group_name", form.elements.namedItem("group_name")?.value || "");
+  body.set("any_source", usesAny ? "1" : "0");
   values.forEach((value) => body.append("group_entries", value));
   let response;
   try {
@@ -4520,7 +4519,7 @@ async function validateNetworkObjectSourceGroupEntries(form) {
   }
   const payload = await response.json().catch(() => ({}));
   if (editor.dataset.validationGeneration !== generation) return { valid: false, stale: true };
-  if (!response.ok || !Array.isArray(payload.entries) || payload.entries.length !== tokens.length) {
+  if (!response.ok || !Array.isArray(payload.entries) || payload.entries.length !== values.length) {
     const message = payload.detail || "Atlaso returned an invalid Source Group validation result.";
     if (summary instanceof HTMLElement) {
       summary.textContent = message;
@@ -4528,7 +4527,9 @@ async function validateNetworkObjectSourceGroupEntries(form) {
     }
     return { valid: false, message };
   }
-  payload.entries.forEach((result, index) => decorateNetworkObjectSourceGroupTag(tokens[index], result, index));
+  if (!usesAny) {
+    payload.entries.forEach((result, index) => decorateNetworkObjectSourceGroupTag(tokens[index], result, index));
+  }
   const invalid = payload.entries.filter((result) => result.state === "invalid");
   const warnings = payload.entries.filter((result) => result.state === "needs_attention");
   const aggregateErrors = Array.isArray(payload.errors) ? payload.errors : [];
@@ -4540,6 +4541,9 @@ async function validateNetworkObjectSourceGroupEntries(form) {
       ].join(" ");
       summary.classList.add("error");
       summary.classList.remove("warn");
+    } else if (usesAny) {
+      summary.textContent = "Any source is selected; explicit entries are inactive and will not be submitted.";
+      summary.classList.remove("warn", "error");
     } else if (warnings.length) {
       summary.textContent = warnings.map((result) => `Needs attention: ${result.message}`).join(" ");
       summary.classList.add("warn");
@@ -4733,7 +4737,18 @@ function initializeNetworkObjectSourceGroups() {
       body.delete("group_entries");
       networkObjectSourceGroupSubmissionEntries(form).forEach((entry) => body.append("group_entries", entry));
     },
-    prepareReview: ({ form }) => {
+    prepareReview: async ({ form }) => {
+      window.clearTimeout(validationTimer);
+      validationTimer = 0;
+      const validation = await validateNetworkObjectSourceGroupEntries(form);
+      if (!validation.valid) {
+        return {
+          valid: false,
+          step: "entries",
+          field: form.querySelector("[data-tag-entry]"),
+          message: validation.message || "Resolve invalid Source Group entries before reviewing.",
+        };
+      }
       const current = rowById.get(String(form.elements.group_id.value || ""));
       const entries = networkObjectSourceGroupSubmissionEntries(form);
       const values = {
@@ -4746,6 +4761,7 @@ function initializeNetworkObjectSourceGroups() {
         const target = form.querySelector(`[data-network-object-review="${key}"]`);
         if (target instanceof HTMLElement) target.textContent = value;
       });
+      return { valid: true };
     },
     onSaved: ({ payload, table }) => replaceRows(payload.source_groups || [], table),
     extraActions: canWrite ? [

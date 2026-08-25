@@ -380,6 +380,22 @@
       return true;
     };
 
+    const prepareReview = async (target) => {
+      if (typeof config.prepareReview !== "function") return true;
+      const index = indexFor(target);
+      const result = normalizeValidationResult(await config.prepareReview({
+        controller,
+        form,
+        dialog,
+        step: steps[index],
+        index,
+      }));
+      if (result.valid) return true;
+      if (result.step !== undefined) showStep(result.step, { force: true, unlock: true });
+      setError(result.message, result.field);
+      return false;
+    };
+
     const next = async () => {
       if (!(await validate(currentIndex))) return false;
       let target = adjacentVisibleIndex(currentIndex, 1);
@@ -397,9 +413,7 @@
         else if (result?.target !== undefined) target = indexFor(result.target);
       }
       target = Math.min(target, steps.length - 1);
-      if (target === visibleStepIndices().at(-1)) {
-        await config.prepareReview?.({ controller, form, dialog, step: steps[target], index: target });
-      }
+      if (target === visibleStepIndices().at(-1) && !(await prepareReview(target))) return false;
       return showStep(target, { unlock: true, previous: currentIndex });
     };
 
@@ -531,9 +545,7 @@
         const target = navIndex(button, buttonIndex);
         if (target > highestIndex) return;
         if (target > currentIndex && !(await validate(currentIndex))) return;
-        if (target === steps.length - 1) {
-          await config.prepareReview?.({ controller, form, dialog, step: steps[target], index: target });
-        }
+        if (target === steps.length - 1 && !(await prepareReview(target))) return;
         showStep(target, { previous: currentIndex });
       });
     });
