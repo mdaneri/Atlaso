@@ -429,7 +429,18 @@ function Assert-AtlasoDevelopmentRootCaMaterial {
     if (-not (Test-Path -LiteralPath $CertificatePath -PathType Leaf)) {
         throw "Atlaso development root certificate not found: $CertificatePath"
     }
-    if ($PrivateKeyPem.Length -gt 16384 -or $PrivateKeyPem -notmatch '^-----BEGIN (?:RSA )?PRIVATE KEY-----') {
+    $normalizedPrivateKeyPem = $PrivateKeyPem.Replace("`r`n", "`n").Replace("`r", "`n")
+    $privateKeyPattern = '\A-----BEGIN (?<label>(?:RSA )?PRIVATE KEY)-----\n' +
+        '(?<body>[A-Za-z0-9+/=]+(?:\n[A-Za-z0-9+/=]+)*)\n' +
+        '-----END \k<label>-----(?:\n)?\z'
+    if (
+        $PrivateKeyPem.Length -gt 16384 -or
+        -not [System.Text.RegularExpressions.Regex]::IsMatch(
+            $normalizedPrivateKeyPem,
+            $privateKeyPattern,
+            [System.Text.RegularExpressions.RegexOptions]::CultureInvariant
+        )
+    ) {
         throw 'ATLASO_DEVELOPMENT_ROOT_CA_PRIVATE_KEY is absent or is not one bounded PEM private key.'
     }
     $certificatePem = [System.IO.File]::ReadAllText((Resolve-Path -LiteralPath $CertificatePath).Path)

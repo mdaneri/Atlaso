@@ -221,6 +221,16 @@ try {
                 -CertificatePath $certificatePath `
                 -PrivateKeyPem $otherPrivateKeyPem
         } 'A mismatched development root key must fail.'
+        Assert-Throws {
+            Assert-AtlasoDevelopmentRootCaMaterial `
+                -CertificatePath $certificatePath `
+                -PrivateKeyPem ($privateKeyPem + "unrelated trailing data")
+        } 'Trailing data after the matching development root key must fail.'
+        Assert-Throws {
+            Assert-AtlasoDevelopmentRootCaMaterial `
+                -CertificatePath $certificatePath `
+                -PrivateKeyPem ($privateKeyPem + $otherPrivateKeyPem)
+        } 'A second PEM block after the matching development root key must fail.'
 
         $withDevelopmentRoot = New-AtlasoWorkstationOvfEnvironment `
             -Fqdn 'atlaso-test.atlaso.internal' `
