@@ -386,7 +386,7 @@ function Invoke-AtlasoMonitoredPackerBuild {
         [Parameter(Mandatory = $true)][string]$VmrunPath,
         [Parameter(Mandatory = $true)][string]$VmxPath,
         [Parameter(Mandatory = $true)][string]$BuilderAddress,
-        [ValidateRange(2, 3600)][int]$StartupTimeoutSeconds = 900,
+        [ValidateRange(2, 3600)][int]$StartupTimeoutSeconds = 2700,
         [ValidateRange(1, 300)][int]$HeartbeatSeconds = 30,
         [ValidateSet('cleanup', 'abort', 'ask', 'run-cleanup-provisioner')]
         [string]$PackerOnError = 'cleanup',

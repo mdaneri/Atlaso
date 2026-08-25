@@ -1310,7 +1310,8 @@ The supported GUI wrapper starts or reuses a responsive VMware Workstation UI in
 `vmrun` to power on the builder. This keeps the visible console without allowing the GUI start transition to retain
 Packer's redirected output handles after the VM is already live. Sanitized startup heartbeats bind provider inventory,
 running state, and TCP/22 reachability to the expected VMX filesystem identity until SSH provisioning begins. The
-default 900-second start-to-provisioning timeout performs checked exact-root cleanup only for
+default 2700-second start-to-provisioning timeout matches Packer's 45-minute SSH communicator allowance and performs
+checked exact-root cleanup only for
 `-PackerOnError cleanup`; other failure selections preserve the output. Raw Packer debug-log environment variables are
 excluded from the monitored child because they are outside the wrapper's redaction boundary.
 

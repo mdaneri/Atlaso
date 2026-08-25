@@ -102,7 +102,7 @@ param(
     [ValidateSet('cleanup', 'abort', 'ask', 'run-cleanup-provisioner')]
     [string]$PackerOnError = 'cleanup',
     [ValidateRange(30, 3600)]
-    [int]$PackerStartupTimeoutSeconds = 900,
+    [int]$PackerStartupTimeoutSeconds = 2700,
     [ValidateRange(1, 300)]
     [int]$PackerHeartbeatSeconds = 30,
     [switch]$AllowExistingManagementSubnet,

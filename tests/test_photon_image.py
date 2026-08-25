@@ -1563,6 +1563,7 @@ def test_create_atlaso_vmware_test_vm_wrapper_uses_common_helpers():
 
     explicit_ssh_probe = "if (-not [string]::IsNullOrWhiteSpace($SshHost))"
     static_builder_probe = "elseif ($BuilderStaticIp)"
+    assert "[int]$PackerStartupTimeoutSeconds = 2700" in build_script
     assert explicit_ssh_probe in build_script
     assert static_builder_probe in build_script
     assert build_script.index(explicit_ssh_probe) < build_script.index(static_builder_probe)

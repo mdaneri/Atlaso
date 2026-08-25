@@ -64,10 +64,11 @@ arbitrary delay or a raw `packer build` invocation.
 The wrapper emits sanitized startup heartbeats until Packer reaches SSH provisioning. Each heartbeat binds diagnostics
 to the expected builder VMX filesystem identity and distinguishes missing or replaced output, an unavailable provider,
 a VM that is not running, closed TCP/22, a stalled Workstation start handoff, and pending SSH authentication. The
-default `-PackerStartupTimeoutSeconds 900` bounds the interval from monitored Packer process start to SSH provisioning,
-including failures before the VMX or power-on phase exists; `-PackerHeartbeatSeconds 30` controls the heartbeat
-interval. When `-SshHost` is explicit, TCP/22 diagnostics probe that Packer communicator endpoint instead of the
-temporary static builder address. A timeout terminates only the Packer process tree and
+default `-PackerStartupTimeoutSeconds 2700` matches Packer's 45-minute SSH communicator allowance and bounds the
+interval from monitored Packer process start to SSH provisioning, including failures before the VMX or power-on phase
+exists; `-PackerHeartbeatSeconds 30` controls the heartbeat interval. When `-SshHost` is explicit, TCP/22 diagnostics
+probe that Packer communicator endpoint instead of the temporary static builder address. A timeout terminates only the
+Packer process tree and
 routes `-PackerOnError cleanup` through the checked exact-root cleanup. Other failure modes preserve the builder
 artifacts for diagnosis. Raw Packer debug-log environment variables are removed from the monitored child because those
 logs bypass output redaction. Console lines that can contain generated connection credentials are redacted before they
