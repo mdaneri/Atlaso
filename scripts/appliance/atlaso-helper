@@ -8712,11 +8712,44 @@ def _run_route_delete(destination: str, interface_name: str) -> int:
     return result.returncode
 
 
-def _apply_wan_routes_and_qdiscs(parsed: dict[str, list[dict[str, str]]]) -> int:
+def _mirrored_wan_default_keys(
+    parsed: dict[str, list[dict[str, str]]] | None,
+) -> set[tuple[str, str]]:
+    """Return defaults previously mirrored into the host main table.
+
+    Args:
+        parsed: Parsed last-applied Routes & WAN configuration, when available.
+    """
+    if not parsed:
+        return set()
+    targets = {target.get("name", ""): target for target in parsed["targets"]}
+    mirrored: set[tuple[str, str]] = set()
+    for route in parsed["routes"]:
+        if not _wan_bool(route.get("enabled", ""), default=True):
+            continue
+        interface_name = route.get("interface", "")
+        if not _wan_bool(
+            targets.get(interface_name, {}).get("management_ui", "false")
+        ):
+            continue
+        try:
+            destination = ip_network(route["destination_cidr"], strict=False)
+        except (KeyError, ValueError):
+            continue
+        if destination.prefixlen == 0:
+            mirrored.add((str(destination), interface_name))
+    return mirrored
+
+
+def _apply_wan_routes_and_qdiscs(
+    parsed: dict[str, list[dict[str, str]]],
+    previous_parsed: dict[str, list[dict[str, str]]] | None = None,
+) -> int:
     """Perform apply WAN routes and qdiscs.
 
     Args:
         parsed: Parsed consumed by apply WAN routes and qdiscs.
+        previous_parsed: Parsed last-applied state used to retire host defaults.
     """
     if shutil.which("ip") is None:
         print("ip command not found", file=sys.stderr)
@@ -8725,6 +8758,7 @@ def _apply_wan_routes_and_qdiscs(parsed: dict[str, list[dict[str, str]]]) -> int
         print("tc command not found", file=sys.stderr)
         return 127
     targets = {target.get("name", ""): target for target in parsed["targets"]}
+    previously_mirrored_defaults = _mirrored_wan_default_keys(previous_parsed)
     policies = {policy["name"]: policy for policy in parsed["wan_policies"]}
     touched_qdisc_targets: set[str] = set()
     for route in parsed["routes"]:
@@ -8741,12 +8775,16 @@ def _apply_wan_routes_and_qdiscs(parsed: dict[str, list[dict[str, str]]]) -> int
                 targets.get(interface_name, {}).get("management_ui", "false")
             )
         )
+        previously_mirrored_default = (
+            str(destination_network),
+            interface_name,
+        ) in previously_mirrored_defaults if destination_network is not None else False
         enabled = _wan_bool(route.get("enabled", ""), default=True)
         if not enabled:
             delete_result = _run_route_delete(destination, interface_name)
             if delete_result != 0:
                 return delete_result
-            if management_ui_default:
+            if management_ui_default or previously_mirrored_default:
                 main_delete = _run(
                     [*_route_command_prefix(destination), "del", destination, "dev", interface_name]
                 )
@@ -8770,6 +8808,12 @@ def _apply_wan_routes_and_qdiscs(parsed: dict[str, list[dict[str, str]]]) -> int
             print(main_result.stderr, end="", file=sys.stderr)
             if main_result.returncode != 0:
                 return main_result.returncode
+        elif previously_mirrored_default:
+            main_delete = _run(
+                [*_route_command_prefix(destination), "del", destination, "dev", interface_name]
+            )
+            if main_delete.returncode not in {0, 2}:
+                return main_delete.returncode
         touched_qdisc_targets.add(interface_name)
     for route in parsed["removed_routes"]:
         delete_result = _run_route_delete(route["destination_cidr"], route["interface"])
@@ -8779,11 +8823,18 @@ def _apply_wan_routes_and_qdiscs(parsed: dict[str, list[dict[str, str]]]) -> int
             removed_destination = ip_network(route["destination_cidr"], strict=False)
         except ValueError:
             removed_destination = None
+        removed_key = (
+            str(removed_destination),
+            route["interface"],
+        ) if removed_destination is not None else ("", "")
         if (
             removed_destination is not None
             and removed_destination.prefixlen == 0
-            and _wan_bool(
-                targets.get(route["interface"], {}).get("management_ui", "false")
+            and (
+                _wan_bool(
+                    targets.get(route["interface"], {}).get("management_ui", "false")
+                )
+                or removed_key in previously_mirrored_defaults
             )
         ):
             main_delete = _run(
@@ -8984,6 +9035,11 @@ def _handle_wan(action: str, args: list[str]) -> int:
             )
         )
         return 0
+    previous_parsed = (
+        _parse_wan_config(WAN_RUNTIME_CONFIG_PATH)
+        if WAN_RUNTIME_CONFIG_PATH.is_file()
+        else None
+    )
     nat_result = _apply_wan_nat(parsed)
     if nat_result != 0:
         return nat_result
@@ -8996,7 +9052,7 @@ def _handle_wan(action: str, args: list[str]) -> int:
     rule_result = _apply_wan_policy_rules(parsed)
     if rule_result != 0:
         return rule_result
-    route_result = _apply_wan_routes_and_qdiscs(parsed)
+    route_result = _apply_wan_routes_and_qdiscs(parsed, previous_parsed)
     if route_result != 0:
         return route_result
     if action == "apply":

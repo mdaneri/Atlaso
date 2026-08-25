@@ -482,6 +482,56 @@ def _nft_source_expr(source: str) -> str:
     return f"ip saddr {{ {', '.join(values)} }} "
 
 
+def _mirrored_management_default_keys(config_preview: str) -> set[tuple[str, str]]:
+    """Return enabled defaults mirrored for flagged management listeners.
+
+    Args:
+        config_preview: Previously rendered Routes & WAN configuration.
+    """
+    targets: dict[str, bool] = {}
+    routes: list[dict[str, str]] = []
+    current_section = ""
+    current_route: dict[str, str] | None = None
+    current_target = ""
+    for raw_line in (config_preview or "").splitlines():
+        line = raw_line.strip()
+        if not line or line.startswith("#"):
+            continue
+        if line.startswith("[") and line.endswith("]"):
+            current_section = line.strip("[]")
+            current_route = None
+            current_target = ""
+            continue
+        if "=" not in line:
+            continue
+        key, value = [part.strip() for part in line.split("=", 1)]
+        if current_section == "targets" and key == "target":
+            current_target = value
+            targets[current_target] = False
+        elif current_section == "targets" and current_target and key == "management_ui":
+            targets[current_target] = value.lower() == "true"
+        elif current_section == "routes" and key == "route":
+            current_route = {"destination_cidr": value}
+            routes.append(current_route)
+        elif current_section == "routes" and current_route is not None:
+            current_route[key] = value
+
+    mirrored: set[tuple[str, str]] = set()
+    for route in routes:
+        interface_name = route.get("interface", "")
+        if not interface_name or not targets.get(interface_name):
+            continue
+        if route.get("enabled", "true").lower() != "true":
+            continue
+        try:
+            destination = canonical_route_destination(route.get("destination_cidr", ""))
+        except ValueError:
+            continue
+        if ip_network(destination, strict=False).prefixlen == 0:
+            mirrored.add((destination, interface_name))
+    return mirrored
+
+
 def render_wan_config(
     routes: list[Route],
     policies: list[WanPolicy] | None = None,
@@ -490,6 +540,7 @@ def render_wan_config(
     routing_rules: list[RoutingRule] | None = None,
     removed_routes: list[dict[str, str]] | None = None,
     source_groups: list[dict] | None = None,
+    previous_config_preview: str = "",
 ) -> str:
     """Render wan config.
 
@@ -501,6 +552,7 @@ def render_wan_config(
         routing_rules: Routing rules supplied by the caller.
         removed_routes: Removed routes supplied by the caller.
         source_groups: Source Groups available to the rule.
+        previous_config_preview: Last-applied configuration used to retire prior host defaults.
 
     Returns:
         The rendered wan config.
@@ -510,6 +562,9 @@ def render_wan_config(
     targets = targets or []
     routing_rules = routing_rules or []
     policy_lookup = _policy_by_id(policies)
+    previously_mirrored_defaults = _mirrored_management_default_keys(
+        previous_config_preview
+    )
     lines = [
         "# Managed by Atlaso. Local changes may be overwritten.",
         "# Desired route, NAT, and WAN simulation state for Photon appliances.",
@@ -702,9 +757,13 @@ def render_wan_config(
         management_ui_default = bool(
             destination.prefixlen == 0 and route_target.get("management_ui")
         )
+        previously_mirrored_default = (
+            destination_cidr,
+            route.interface_name,
+        ) in previously_mirrored_defaults
         if not route.enabled:
             lines.append(f"ip {route_family}route del {destination_cidr} dev {route.interface_name} table {LAB_ROUTE_TABLE_ID}  # disabled desired route")
-            if management_ui_default:
+            if management_ui_default or previously_mirrored_default:
                 lines.append(
                     f"ip {route_family}route del {destination_cidr} dev {route.interface_name}"
                     "  # disabled flagged-management default"
@@ -718,6 +777,11 @@ def render_wan_config(
         if management_ui_default:
             main_command = command[:-2]
             lines.append(" ".join(main_command) + "  # flagged-management host default")
+        elif previously_mirrored_default:
+            lines.append(
+                f"ip {route_family}route del {destination_cidr} dev {route.interface_name}"
+                "  # retired flagged-management host default"
+            )
         policy = policy_lookup.get(route.wan_policy_id or 0) or route.wan_policy
         if policy and policy.enabled:
             lines.append(" ".join(["tc", "qdisc", "replace", "dev", route.interface_name, "root", "netem", *netem_args(policy)]))
@@ -738,7 +802,14 @@ def render_wan_config(
             ),
             {},
         )
-        if destination and destination.prefixlen == 0 and route_target.get("management_ui"):
+        removed_key = (
+            canonical_route_destination(str(route.get("destination_cidr", ""))),
+            str(route.get("interface_name", "")),
+        ) if destination else ("", "")
+        if destination and destination.prefixlen == 0 and (
+            route_target.get("management_ui")
+            or removed_key in previously_mirrored_defaults
+        ):
             lines.append(
                 f"ip {route_family}route del {route.get('destination_cidr', '')} "
                 f"dev {route.get('interface_name', '')}  # removed flagged-management default"

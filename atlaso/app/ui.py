@@ -10480,16 +10480,16 @@ def appliance_apply_units(db: Session, *, reconcile: bool = True) -> list[dict[s
 
     wan_baseline = baselines.get("wan")
     wan_removed_routes = removed_wan_route_entries(wan["wan_config_preview"], wan_baseline)
-    if wan_removed_routes:
-        wan["wan_config_preview"] = render_wan_config(
-            wan["routes"],
-            wan["policies"],
-            wan["nat_rules"],
-            wan["wan_all_targets"],
-            wan["routing_rules"],
-            removed_routes=wan_removed_routes,
-            source_groups=wan["wan_source_groups"],
-        )
+    wan["wan_config_preview"] = render_wan_config(
+        wan["routes"],
+        wan["policies"],
+        wan["nat_rules"],
+        wan["wan_all_targets"],
+        wan["routing_rules"],
+        removed_routes=wan_removed_routes,
+        source_groups=wan["wan_source_groups"],
+        previous_config_preview=str((wan_baseline or {}).get("config_preview") or ""),
+    )
     wan_summary = [
         f"{len(wan['routes'])} routes",
         f"{len(wan['routing_rules'])} explicit routing rules",

@@ -5594,6 +5594,105 @@ route=0.0.0.0/0
     ] in commands
 
 
+def test_wan_helper_retires_previous_flagged_management_default(tmp_path):
+    """Use last-applied mirroring to clean the main table after unflagging."""
+    helper = load_helper_module()
+    previous_path = tmp_path / "previous-flagged-management.conf"
+    previous_path.write_text(
+        """[targets]
+target=eth0
+  kind=physical
+  role=access
+  ip_cidr=192.0.2.10/24
+  routing_domain=lab
+  route_allowed=true
+  management_ui=true
+
+[routes]
+route=0.0.0.0/0
+  gateway=192.0.2.1
+  interface=eth0
+  metric=100
+  enabled=true
+  wan_mode=interface
+
+[routing_rules]
+[nat_rules]
+[wan_policies]
+""",
+        encoding="utf-8",
+    )
+    previous = helper._parse_wan_config(previous_path)
+    candidate_template = """[targets]
+target=eth0
+  kind=physical
+  role=access
+  ip_cidr=192.0.2.10/24
+  routing_domain=lab
+  route_allowed=true
+  management_ui=false
+
+{routes}
+
+[routing_rules]
+[nat_rules]
+[wan_policies]
+"""
+    cases = {
+        "retained": """[routes]
+route=0.0.0.0/0
+  gateway=192.0.2.1
+  interface=eth0
+  metric=100
+  enabled=true
+  wan_mode=interface""",
+        "disabled": """[routes]
+route=0.0.0.0/0
+  gateway=192.0.2.1
+  interface=eth0
+  metric=100
+  enabled=false
+  wan_mode=interface""",
+        "removed": """[routes]
+
+[removed_routes]
+route=0.0.0.0/0
+  gateway=192.0.2.1
+  interface=eth0
+  metric=100""",
+    }
+    helper.shutil.which = lambda command: (
+        f"/usr/sbin/{command}" if command in {"ip", "tc"} else None
+    )
+
+    for name, routes in cases.items():
+        config_path = tmp_path / f"{name}.conf"
+        config_path.write_text(
+            candidate_template.format(routes=routes),
+            encoding="utf-8",
+        )
+        commands: list[list[str]] = []
+
+        def fake_run(
+            command: list[str],
+            collected: list[list[str]] = commands,
+        ) -> subprocess.CompletedProcess[str]:
+            """Record one command for the current cleanup scenario."""
+            collected.append(command)
+            return subprocess.CompletedProcess(command, 0, "", "")
+
+        helper._run = fake_run
+
+        assert (
+            helper._apply_wan_routes_and_qdiscs(
+                helper._parse_wan_config(config_path),
+                previous,
+            )
+            == 0
+        )
+        assert ["ip", "route", "del", "0.0.0.0/0", "dev", "eth0"] in commands
+
+
 def test_wan_helper_cleans_managed_policy_rule_windows_before_apply(tmp_path):
     """Verify that wan helper cleans managed policy rule windows before apply.
 
