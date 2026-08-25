@@ -65,11 +65,78 @@ def test_network_objects_page_uses_canonical_grid_wizard_and_safe_return_tokens(
     assert "restore_source_group_draft=firewall-rule" in page.text
     assert "Any" in page.text
     assert "+ Add Source Group here" in page.text
+    assert "data-network-object-any-source" in page.text
+    assert 'data-network-object-any-source-field hidden' in page.text
+    assert "data-network-object-source-group-tag-editor" in page.text
+    assert "data-tag-editable" in page.text
+    assert "data-network-object-entry-validation-summary" in page.text
+    assert 'id="network-object-source-groups-fallback-shell"' in page.text
+    app_css = client.get("/static/app.css").text
+    assert ".network-objects-panel" in app_css
+    assert "height: calc(100vh - 120px)" in app_css
+    assert ".network-objects-fallback-shell" in app_css
 
     rejected_return = client.get("/network-objects?return_to=https://example.invalid")
     assert rejected_return.status_code == 200
     assert "example.invalid" not in rejected_return.text
     assert "data-network-objects-return" not in rejected_return.text
+
+
+def test_network_objects_entry_validation_is_authoritative_and_canonical(client):
+    """Classify every tag with server-owned Source Group validation rules.
+
+    Args:
+        client: HTTP test client used to exercise the application.
+    """
+    login(client)
+    page = client.get("/network-objects")
+    csrf = _csrf(page)
+    referenced = _create_group(client, csrf, "Application clients", "192.0.2.0/24")
+    assert referenced.status_code == 201
+    referenced_id = referenced.json()["source_group"]["id"]
+
+    response = client.post(
+        "/network-objects/source-groups/validate-entries",
+        data={
+            "csrf": csrf,
+            "group_name": "Validated clients",
+            "group_entries": [
+                "192.0.2.42",
+                "192.0.2.42/24",
+                "2001:db8::42",
+                "2001:db8::42/64",
+                f"group:{referenced_id}",
+                "192.0.2.0/24",
+                "not-an-address",
+            ],
+        },
+        headers={"X-Atlaso-Grid": "1"},
+    )
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["valid"] is False
+    assert [entry["kind"] for entry in payload["entries"][:5]] == [
+        "ipv4-address",
+        "ipv4-cidr",
+        "ipv6-address",
+        "ipv6-cidr",
+        "source-group",
+    ]
+    assert payload["entries"][1]["state"] == "needs_attention"
+    assert payload["entries"][1]["canonical"] == "192.0.2.0/24"
+    assert payload["entries"][3]["canonical"] == "2001:db8::/64"
+    assert payload["entries"][5]["state"] == "needs_attention"
+    assert "Duplicate" in payload["entries"][5]["message"]
+    assert payload["entries"][6]["state"] == "invalid"
+
+    reserved = client.post(
+        "/network-objects/source-groups/validate-entries",
+        data={"csrf": csrf, "group_name": "Reserved", "group_entries": "any"},
+    )
+    assert reserved.status_code == 200
+    assert reserved.json()["entries"][0]["state"] == "invalid"
+    assert "Any source switch" in reserved.json()["entries"][0]["message"]
 
 
 def test_network_objects_create_update_preserves_identifier_and_shared_apply_semantics(client):

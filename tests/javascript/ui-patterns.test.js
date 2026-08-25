@@ -404,6 +404,10 @@ test("createGrid applies permission state and keyboard context-menu behavior", a
   await TabulatorStub.last.emit("rowDblClick", { type: "dblclick" }, editableRow);
   assert.deepEqual(openedRow, { id: 2 });
   openedRow = null;
+  const nestedButton = new FakeElement({ tagName: "BUTTON" });
+  const nestedEnter = await editableRowElement.emit("keydown", { key: "Enter", target: nestedButton });
+  assert.equal(nestedEnter.defaultPrevented, undefined);
+  assert.equal(openedRow, null);
   await editableRowElement.emit("keydown", { key: "Enter" });
   assert.deepEqual(openedRow, { id: 2 });
   await editableRowElement.emit("keydown", { key: "F10", shiftKey: true });

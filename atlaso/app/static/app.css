@@ -3824,6 +3824,72 @@ textarea {
   gap: 6px;
 }
 
+.field-hint {
+  color: var(--muted);
+  font-size: 11px;
+  font-weight: 500;
+  line-height: 1.35;
+}
+
+.route-path-choice-grid > label {
+  min-width: 0;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 10px;
+  background: var(--surface-soft);
+}
+
+.route-path-choice-grid > label.conditional-field-inactive {
+  border-style: dashed;
+  background: #f1f5f9;
+  color: var(--muted);
+}
+
+.route-family-field {
+  min-width: 0;
+  margin: 0;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 8px 10px 10px;
+  background: var(--surface-soft);
+}
+
+.route-family-field[hidden] {
+  display: none;
+}
+
+.route-family-field > legend {
+  padding: 0 4px;
+}
+
+.native-radio-row {
+  display: flex;
+  gap: 16px;
+  align-items: center;
+  min-height: 34px;
+}
+
+.native-radio-row label {
+  display: inline-flex;
+  gap: 7px;
+  align-items: center;
+  cursor: pointer;
+  font-size: 13px;
+  font-weight: 700;
+}
+
+.native-radio-row input {
+  width: 16px;
+  height: 16px;
+  margin: 0;
+  accent-color: var(--accent);
+}
+
+.native-radio-row input:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+
 .form-grid {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
@@ -4703,6 +4769,67 @@ input[type="checkbox"] {
 
 .tag-token button:hover {
   background: rgba(255, 255, 255, 0.34);
+}
+
+.tag-token[data-tag-validation-state="pending"] {
+  background: #475569;
+}
+
+.tag-token[data-tag-validation-state="valid"] {
+  background: var(--good);
+}
+
+.tag-token[data-tag-validation-state="needs_attention"] {
+  background: var(--warn);
+}
+
+.tag-token[data-tag-validation-state="invalid"] {
+  background: var(--bad);
+}
+
+.tag-token[data-tag-editable] {
+  cursor: text;
+}
+
+.tag-token:focus-visible {
+  outline: 2px solid var(--accent-dark);
+  outline-offset: 2px;
+}
+
+.tag-token-state {
+  border-left: 1px solid rgba(255, 255, 255, 0.42);
+  padding-left: 6px;
+  font-size: 10px;
+  font-weight: 800;
+  white-space: nowrap;
+}
+
+.tag-validation-summary {
+  min-height: 18px;
+  margin: 6px 0 0;
+  font-size: 12px;
+}
+
+.tag-validation-summary.warn {
+  color: var(--warn);
+}
+
+.tag-validation-summary.error {
+  color: var(--bad);
+}
+
+.source-group-tag-editor[aria-disabled="true"] {
+  border-style: dashed;
+  background: #f1f5f9;
+  opacity: 0.68;
+}
+
+.network-object-explicit-entries.conditional-field-inactive {
+  color: var(--muted);
+}
+
+.network-object-any-source-field[hidden] {
+  display: none;
 }
 
 .tag-editor-input {
@@ -7895,6 +8022,50 @@ dialog.has-expanded-monaco .confirm-modal-panel {
   min-height: 0;
   margin-bottom: 0;
   overflow: hidden;
+}
+
+.network-objects-panel {
+  display: flex;
+  flex-direction: column;
+  height: calc(100vh - 120px);
+  min-height: 0;
+  margin-bottom: 0;
+  overflow: hidden;
+}
+
+.network-objects-panel > .panel-head,
+.network-objects-panel > .info-band,
+.network-objects-panel > .alert,
+.network-objects-panel > .error-list {
+  flex: 0 0 auto;
+}
+
+.network-objects-grid,
+.network-objects-fallback-shell {
+  flex: 1 1 0;
+  width: 100%;
+  min-width: 0;
+  min-height: 0;
+}
+
+.network-objects-grid {
+  overflow: hidden;
+}
+
+.network-objects-fallback-shell {
+  overflow: auto;
+  border: 1px solid var(--border);
+  border-radius: 7px;
+}
+
+.network-objects-fallback-shell .data-table {
+  min-width: 820px;
+  margin: 0;
+}
+
+.network-objects-grid .add-row-button {
+  min-height: 24px;
+  line-height: 1.2;
 }
 
 .audit-events-panel > .panel-head {

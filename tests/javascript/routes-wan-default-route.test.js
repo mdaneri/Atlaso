@@ -133,6 +133,9 @@ test("default-mode synchronization owns mutual exclusion and required state", ()
   assert.match(source, /destination\.disabled = selected/);
   assert.match(source, /destination\.required = !selected/);
   assert.match(source, /family\.disabled = !selected/);
+  assert.match(source, /family\.required = selected/);
+  assert.match(source, /conditional-field-inactive/);
+  assert.doesNotMatch(source, /destinationPanel\.hidden = selected/);
   assert.match(source, /gateway\.required = selected/);
 });
 

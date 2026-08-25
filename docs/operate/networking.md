@@ -148,16 +148,19 @@ row menu to update it. The standard step rail remains beside the form on wide sc
 Each wizard retains entered values while moving backward, validates before Review, and saves only after the final
 add/update action. A saved row's **Enabled** value remains directly editable; this changes desired state only.
 
-In the Static Route **Path** step, enable **Default route** and choose IPv4 or IPv6 when this path should match every
-destination in that family. Atlaso hides and excludes **Destination CIDR**, requires a same-family next-hop gateway
-that is on-link for the selected target (or IPv6 link-local),
+In the Static Route **Path** step, **Default route** and **Destination CIDR** appear as one peer choice row. Enable
+**Default route** and choose the native **IP family** IPv4 or IPv6 radio when this path should match every destination
+in that family. Atlaso disables and de-emphasizes **Destination CIDR** while retaining its unsaved value, excludes that
+inactive value from submission, requires a same-family next-hop gateway that is on-link for the selected target (or
+IPv6 link-local),
 and persists the canonical destination `0.0.0.0/0` or `::/0`. Review, edit, and table readback show **Default route
 (IPv4)** or **Default route (IPv6)** rather than making the operator work with `/0`. Only one default route per family
 may be saved; move or edit the existing default instead of creating a conflicting entry.
 
-Leave **Default route** off for a destination-specific path. **Destination CIDR** is then required, while **Gateway**
-may remain blank when the selected interface or VLAN reaches that network directly. A supplied gateway must use the
-same address family as the destination. API clients remain compatible with `POST` or `PATCH /api/v1/routes` requests
+Leave **Default route** off for a destination-specific path. The IP-family radios leave the interaction and
+**Destination CIDR** becomes active and required, while **Gateway** may remain blank when the selected interface or
+VLAN reaches that network directly. A supplied gateway must use the same address family as the destination. API
+clients remain compatible with `POST` or `PATCH /api/v1/routes` requests
 that use canonical `0.0.0.0/0` or `::/0`; those payloads must also include the required same-family gateway.
 
 The **NAT** wizard creates explicit IPv4 masquerade rules. Choose Any, an existing Source Group, or IPv4 source CIDRs,

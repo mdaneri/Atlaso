@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import re
 from collections.abc import Iterable
+from ipaddress import ip_address, ip_network
 from typing import Any
 
 from sqlalchemy import text
@@ -19,6 +20,121 @@ from atlaso.app.services.firewall import (
 from atlaso.app.services.routes_wan import validate_nat_source
 
 NETWORK_OBJECTS_WRITE_LOCK_ID = 0x4E45544F424A
+
+
+def classify_source_group_entry(
+    value: str,
+    groups: Iterable[dict[str, Any]],
+    *,
+    edited_group_id: str = "",
+) -> dict[str, str]:
+    """Classify and canonically represent one Source Group entry.
+
+    The browser tag editor uses this server-owned classifier so its immediate
+    status never becomes a second, weaker interpretation of the validation
+    accepted by Source Group persistence.
+
+    Args:
+        value: Candidate address, CIDR, or nested Source Group reference.
+        groups: Current canonical Source Groups available for references.
+        edited_group_id: Stable identifier of the group currently being edited.
+
+    Returns:
+        Bounded validation state, canonical value, kind, and operator message.
+    """
+    candidate = str(value or "").strip()
+    if not candidate:
+        return {
+            "state": "invalid",
+            "canonical": "",
+            "kind": "entry",
+            "message": "Enter an IPv4 or IPv6 address, CIDR, or nested Source Group.",
+        }
+    if candidate.lower() == "any":
+        return {
+            "state": "invalid",
+            "canonical": "any",
+            "kind": "reserved",
+            "message": "Use the Any source switch instead of entering the reserved any value.",
+        }
+
+    target_id = source_group_reference_target(candidate, groups)
+    if target_id:
+        canonical = f"{FIREWALL_SOURCE_GROUP_REFERENCE_PREFIX}{target_id}"
+        if target_id == edited_group_id:
+            return {
+                "state": "invalid",
+                "canonical": canonical,
+                "kind": "source-group",
+                "message": "A Source Group cannot contain a reference to itself.",
+            }
+        if candidate != canonical:
+            return {
+                "state": "needs_attention",
+                "canonical": canonical,
+                "kind": "source-group",
+                "message": f"Atlaso will save this nested reference as {canonical}.",
+            }
+        return {
+            "state": "valid",
+            "canonical": canonical,
+            "kind": "source-group",
+            "message": "Valid nested Source Group reference.",
+        }
+    if candidate.startswith("@") or candidate.lower().startswith(FIREWALL_SOURCE_GROUP_REFERENCE_PREFIX):
+        return {
+            "state": "invalid",
+            "canonical": candidate,
+            "kind": "source-group",
+            "message": "This nested Source Group reference does not resolve to a current stable identifier.",
+        }
+
+    try:
+        address = ip_address(candidate)
+    except ValueError:
+        address = None
+    if address is not None:
+        canonical = str(address)
+        state = "valid" if candidate == canonical else "needs_attention"
+        return {
+            "state": state,
+            "canonical": canonical,
+            "kind": f"ipv{address.version}-address",
+            "message": (
+                f"Valid IPv{address.version} address."
+                if state == "valid"
+                else f"Atlaso will normalize this IPv{address.version} address to {canonical}."
+            ),
+        }
+
+    if "/" not in candidate:
+        return {
+            "state": "invalid",
+            "canonical": candidate,
+            "kind": "address",
+            "message": "Enter a valid IPv4 or IPv6 address, or include a prefix length for a CIDR.",
+        }
+    try:
+        network = ip_network(candidate, strict=False)
+    except ValueError:
+        return {
+            "state": "invalid",
+            "canonical": candidate,
+            "kind": "cidr",
+            "message": "Enter a valid IPv4 or IPv6 CIDR with a valid prefix length.",
+        }
+    canonical = str(network)
+    state = "valid" if candidate == canonical else "needs_attention"
+    return {
+        "state": state,
+        "canonical": canonical,
+        "kind": f"ipv{network.version}-cidr",
+        "message": (
+            f"Valid IPv{network.version} CIDR."
+            if state == "valid"
+            else f"Atlaso will normalize this IPv{network.version} CIDR to {canonical}."
+        ),
+    }
 
 
 def acquire_network_objects_write_lock(db: Session) -> None:

@@ -138,6 +138,7 @@
         rowElement.dataset.atlasoKeyboardActions = "true";
         rowElement.tabIndex = 0;
         rowElement.addEventListener("keydown", (event) => {
+          if (event.target !== rowElement) return;
           if (event.key === "Enter" && openRow) {
             event.preventDefault();
             openRow(row.getData?.(), row, event);
