@@ -30,6 +30,10 @@ This verified appliance view provides visual orientation before you begin.
 3. Wait for a terminal state: succeeded, failed, skipped, or cancelled.
 4. For appliance apply, confirm that selected and skipped units match the review submission.
 
+When you open several task logs in quick succession, the last task selected owns the log dialog. Atlaso cancels the
+older request where possible and ignores any stale success or error that arrives after the newer selection or after the
+dialog was closed.
+
 Pending and running tasks are not proof that appliance state changed. Treat only a successful terminal result plus the
 service-specific verification as success.
 
