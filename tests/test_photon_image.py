@@ -871,6 +871,7 @@ def test_photon_provisioning_prepares_attached_data_disks():
     vmware_packer = Path("image/vmware-workstation/atlaso-photon.pkr.hcl").read_text(encoding="utf-8")
 
     assert 'run_tdnf "Photon appliance package installation"' in provision
+    assert "install -d -o root -g root -m 0700 /var/lib/atlaso-privileged/management-front-door" in provision
     assert "e2fsprogs" in provision
     assert "atlaso-mount-data-disks" in provision
     assert "atlaso-data-disks.service" in provision
@@ -957,6 +958,8 @@ def test_photon_provisioning_prepares_attached_data_disks():
     assert "Requires=atlaso-data-disks.service" in atlaso_dropin
     assert "bootstrap-data-disk-safety --real /opt/atlaso/current" in hyperv_unit
     assert "bootstrap-data-disk-safety --real /opt/atlaso/current" in vmware_unit
+    assert "management-front-door recover --real" in hyperv_unit
+    assert "management-front-door recover --real" in vmware_unit
     assert "factory-reset resume --real" in hyperv_unit
     assert "factory-reset resume --real" in vmware_unit
     assert "Wants=network-online.target atlaso.service" in worker_unit

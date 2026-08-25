@@ -76,12 +76,10 @@ handoff. Every bundled WAN unit executes from its captured snapshot before Atlas
 4. Expand each selected unit and inspect its summary and rendered difference.
 5. Clear the checkbox for a valid unit that should remain pending for a later run.
 
-Valid changed units are selected by default. Invalid units are not submitted. Unselected units remain in the pending
-count after the task starts.
+Valid changed units are selected by default; invalid units are not. Unselected units remain pending after submission.
 
 !!! warning
-    Review all related units together when one feature crosses service boundaries. Submitting only part of a related
-    change can leave the new behavior unavailable until the remaining units are applied.
+    Review related units together when a feature crosses service boundaries; partial application can leave behavior unavailable.
 
 ## Submit and monitor
 
@@ -89,8 +87,7 @@ count after the task starts.
 2. Choose **Submit appliance changes**.
 3. Keep the task dialog open while the master task and its component rows progress.
 4. Open a component row to inspect its bounded, redacted result.
-5. Wait for the master task to reach a terminal state. The dialog, lower-left sidebar badge, pending count, and global
-   write lock update automatically; a page reload is not required.
+5. Wait for completion; the dialog, sidebar badge, pending count, and global write lock update without a page reload.
 
 If another session starts a new Apply immediately after the current master finishes, the monitor completes the current
 task's terminal refresh before following the newer task.
@@ -117,14 +114,18 @@ Safe cancellation does not interrupt the component already running. Every helper
 continues to completion. After the component returns, Atlaso skips the remaining components and releases the mutation
 lock when the master task becomes terminal.
 
-When a real Appliance Settings component reaches its planned management-service restart, the dialog shows **Applying
-management settings; Atlaso is reconnecting to task status.** This neutral state keeps the last known task progress and
-global lock visible. Leave the dialog open: Atlaso retries every two seconds, clears the notice when the front door
-returns, and follows the same master task to its terminal state without a page reload. The bounded reconnect interval
-uses the remaining server-owned restart window reported with each task response. A browser opened or resumed after the
-scheduled restart therefore cannot start a fresh grace interval, and clock differences between the browser and appliance
-do not change the boundary. For a settings-only apply, the completed master remains visible and keeps appliance changes
-locked only until that restart window ends.
+An ordinary real Appliance Settings component keeps the management front door online. Before nginx changes, Atlaso
+requires consecutive success from the configured loopback `/openapi.json`; after reload it requires the same upstream
+and the guest-local management address/public-port front door to remain healthy. The active Atlaso worker is not
+restarted. If activation or readiness fails, the helper restores the exact prior nginx and systemd files, reloads the
+restored front door, and fails the component instead of exposing a continuing 502 response. Those snapshots and their
+marker are synced before publication; an interrupted activation is rolled back by the Atlaso service pre-start gate
+before the application can serve again. Before cleanup, the helper records durable readiness or rollback completion;
+prepared state triggers recovery, while terminal state only retries cleanup before any wider transaction begins.
+
+The dialog still understands the bounded **Applying management settings; Atlaso is reconnecting to task status.** state
+when following a retained task created by an older release that contains authenticated restart metadata. Current
+Appliance Settings tasks do not create that restart window.
 
 If that reconnect exceeds the bounded grace window, or a status failure is not part of the planned restart, the dialog
 instead shows **Live task status is temporarily unavailable** with a link-free instruction to open **Tasks** in another
@@ -158,8 +159,7 @@ the command intent; it does not prove that Photon services changed.
 
 1. Open the failed component and read its validation, error, and redacted command output.
 2. Correct the desired state on the owning service page.
-3. Review the pending units again. Units that succeeded earlier keep their updated baselines; failed and skipped units
-   remain pending when their desired state still differs.
+3. Review pending units again; successful units keep their baselines, while failed and skipped changes remain pending.
 4. Submit only the units required for the corrected run.
 
 If Atlaso restarts during an ordinary apply, startup fails the running child and master task, skips pending children,

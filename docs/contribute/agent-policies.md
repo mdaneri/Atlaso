@@ -303,15 +303,14 @@ Terminal order:
 - Apply actions should create one global job/task that captures selected units, skipped changed units, current desired
   state summaries, rendered config previews/diffs, validation results, adapter commands, dry-run status, and audit
   event.
-- Real Appliance Settings tasks must persist server-owned management-restart context only after the helper confirms that
-  it scheduled the restart. While the component is succeeded and within the helper's declared delayed-restart and recovery
-  interval, the shared monitor may use that context for one bounded neutral reconnecting window without dropping last-known
-  progress or the global lock. Measure that interval with browser-local elapsed time beginning when the confirmed context
-  is first observed; never compare independent browser and appliance wall clocks. Browser-submitted and local-console
-  forced-real tasks must carry the same confirmed context. When Appliance Settings is the last or only component, retain
-  the terminal task and server mutation lock until the confirmed restart window is consumed.
-  Recovery clears the notice automatically; missing, unexpected, pre-confirmation, or out-of-window status failures retain
-  the actionable availability warning and active retry cadence.
+- Real Appliance Settings apply must prove the configured Atlaso loopback `/openapi.json` upstream before publishing a
+  management nginx candidate, write and daemon-reload the durable loopback drop-in without restarting the active Atlaso
+  worker, then require consecutive guest-local front-door readiness on the applied management address and public port.
+  Snapshot the existing nginx site/include/main configuration and service drop-in before mutation; an activation or
+  readiness failure restores those exact files, validates and reloads nginx, reloads systemd, and reports rollback failure
+  truthfully. Current helpers do not emit management-restart context. The shared monitor may retain the bounded neutral
+  reconnecting behavior only for complete server-owned transition metadata from an older task record; missing,
+  unexpected, or out-of-window status failures retain the actionable availability warning and active retry cadence.
 - Label the global submit action around the user's intent, such as `Submit appliance changes`, and explain that the task
   validates and applies selected desired state through Atlaso adapters.
 - Fresh Photon appliance startup may initialize the factory desired-state baseline automatically when no baseline,
@@ -921,8 +920,18 @@ Terminal order:
   HTTPS/443 and reverse-proxies HTTPS to uvicorn on `127.0.0.1:8000`. Appliance FQDN or management IP changes should
   reissue the managed leaf certificate automatically; root CA replacement remains an explicit rotation workflow. When
   HTTPS is disabled or the dedicated complete factory-reset transaction is applied, nginx serves public HTTP/80 as a
-  plain reverse proxy to the same loopback upstream and does not expose a management HTTPS listener. The helper reloads
-  nginx/systemd, then schedules a short delayed `atlaso.service` restart so the apply job can be recorded.
+  plain reverse proxy to the same loopback upstream and does not expose a management HTTPS listener. Before nginx
+  activation, the helper requires consecutive success from the configured loopback `/openapi.json`; after reload it
+  requires the loopback and guest-local address/public-port front door to remain healthy. It daemon-reloads the durable
+  service drop-in without restarting Atlaso. Persist and sync root-only backups plus a recovery marker beneath the
+  root-owned `/var/lib/atlaso-privileged` boundary before candidate mutation; use no-follow descriptor-relative reads
+  and reject unsafe ownership, modes, links, or file types during recovery. Sync every final candidate file and parent
+  directory before committing readiness. Record a durable terminal phase before backup or marker cleanup after either
+  candidate readiness or completed rollback; cleanup failure must retain terminal proof and retry cleanup without
+  restoring files. Run recovery before Atlaso startup. Protected management handoff and factory-reset admission must
+  reconcile retained ordinary front-door state before their wider snapshots or mutations begin. Candidate activation,
+  readiness, or interruption failure restores the exact previous nginx site/include/main files and service drop-in,
+  then validates and reloads the restored front door; incomplete prepared-state recovery blocks startup.
 - The web terminal is off by default, requires management HTTPS, and always includes management when enabled. Configure
   additional addressed interfaces with the shared tag editor; keep the management tag locked and reject missing,
   disabled, trunk-only, unused, or addressless selections. Additional selected addresses receive only login/logout,

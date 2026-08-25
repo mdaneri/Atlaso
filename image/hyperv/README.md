@@ -280,13 +280,16 @@ integrated CA, issue the managed `appliance:https` certificate, and start with n
 HTTPS/443 while reverse-proxying HTTPS to uvicorn on `127.0.0.1:8000`. The root CA is not baked into the reusable image.
 When HTTPS is disabled, including after the dedicated complete factory-reset transaction, nginx can serve public
 HTTP/80 as a plain reverse proxy to the same loopback upstream, but that is not the first-boot appliance posture. The
-helper reloads nginx/systemd and schedules a short delayed `atlaso.service` restart so the global apply job can finish
-before uvicorn moves behind nginx.
+helper proves the Atlaso loopback upstream before publishing the candidate, daemon-reloads systemd without restarting
+the active worker, then validates and reloads nginx. Consecutive post-activation loopback and management front-door
+readiness checks must pass; otherwise the helper restores the previous nginx and systemd files and keeps the known-good
+management front door active.
 
-Before uvicorn starts, `atlaso.service` asks the constrained helper to resume a durable
-`/var/lib/atlaso-privileged/factory-reset/request.json` marker. An interrupted complete reset therefore finishes before
-the
-management plane becomes available; an appliance without a marker takes the no-op path.
+Before uvicorn starts, `atlaso.service` first asks the constrained helper to restore any interrupted ordinary
+management-front-door activation under `/var/lib/atlaso-privileged/management-front-door`, then resumes a durable
+`/var/lib/atlaso-privileged/factory-reset/request.json` marker. An interrupted front-door activation or complete reset
+therefore reconciles before the management plane becomes available; only an appliance without either marker takes the
+no-op path.
 
 Appliance Settings also owns the root SSH login switch. The image provisions
 `/etc/ssh/sshd_config.d/atlaso-root-login.conf` with `PermitRootLogin no`; global appliance apply rewrites that

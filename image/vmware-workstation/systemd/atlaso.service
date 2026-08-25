@@ -13,6 +13,7 @@ EnvironmentFile=/etc/atlaso/atlaso.env
 Environment=PYTHONDONTWRITEBYTECODE=1
 Environment=ATLASO_HELPER_USE_SYSTEMD_RUN=1
 UMask=0027
+ExecStartPre=+/opt/atlaso/bin/atlaso-helper management-front-door recover --real
 ExecStartPre=+/opt/atlaso/bin/atlaso-helper factory-reset resume --real
 ExecStartPre=+/opt/atlaso/bin/atlaso-helper appliance-update bootstrap-data-disk-safety --real /opt/atlaso/current
 ExecStart=/opt/atlaso/.venv/bin/python -m uvicorn atlaso.app.main:app --host 127.0.0.1 --port 8000

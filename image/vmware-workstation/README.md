@@ -219,8 +219,8 @@ When the IP should be resolved from VMware Tools, pass the VMX path as a named a
 Do not pipe the VMX path or put the `.vmx` path on a line by itself; PowerShell will try to run that file and report a
 pipeline/document execution error. The helper builds `python -m pip wheel . -w dist`, uploads the newest `atlaso-*.whl`
 with `scp`, installs it into `/opt/atlaso/.venv`, syncs `scripts/appliance/atlaso-helper` to
-`/opt/atlaso/bin/atlaso-helper`, installs the VMware `atlaso.service` unit with its pre-start factory-reset recovery
-hook, synchronizes every checked-in public release key from `image/common/update-trust` into
+`/opt/atlaso/bin/atlaso-helper`, installs the VMware `atlaso.service` unit with its pre-start management-front-door and
+factory-reset recovery hooks, synchronizes every checked-in public release key from `image/common/update-trust` into
 `/etc/atlaso/update-trust.d`, builds and installs the locally verified Inventory Linux package, restores virtualenv
 permissions, restarts `atlaso.service`, and verifies `/openapi.json`
 from inside the guest and from the Windows host. The helper and trust-key syncs are required because those root-owned
@@ -235,11 +235,11 @@ Atlaso Release, PowerShell Modules, and Photon OS child steps so failures and sk
 visible. The Packer build explicitly stages `image/common/update-trust` and fails when no valid public release key is
 available.
 
-The `atlaso.service` pre-start hook asks the constrained helper to resume a durable
-`/var/lib/atlaso-privileged/factory-reset/request.json` marker before uvicorn starts. A reset interrupted by power loss
-therefore
-returns to the validated factory transaction before exposing the management control plane; an appliance without a
-marker takes the no-op path.
+The `atlaso.service` pre-start hooks first ask the constrained helper to restore any interrupted ordinary
+management-front-door activation under `/var/lib/atlaso-privileged/management-front-door`, then resume a durable
+`/var/lib/atlaso-privileged/factory-reset/request.json` marker before uvicorn starts. A front-door activation or reset
+interrupted by power loss therefore returns to its validated recovery path before exposing the management control
+plane; only an appliance without either marker takes the no-op path.
 
 ## OVF / OVA Export
 

@@ -704,9 +704,17 @@ PAM/pwquality during Local Users apply.
 Appliance Settings owns the appliance FQDN, OS hostname, resolver mode, resolver servers, management UI HTTPS
 preference, passwordless web-terminal preference, and root SSH login preference. NTPsec owns appliance time service
 desired state and NTP/NTS enforcement. The helper installs nginx Atlaso site config, writes a loopback-only
-`atlaso.service` override, applies the Atlaso-owned root SSH and web-terminal CA sshd drop-ins and schedules a short
-delayed restart so the apply job can finish recording before uvicorn moves behind nginx. Root SSH and the web terminal
-are disabled by default. The web terminal requires management HTTPS, is always bound to the management interface when
+`atlaso.service` override, and applies the Atlaso-owned root SSH and web-terminal CA sshd drop-ins. It proves the Atlaso
+loopback upstream before publishing the candidate, daemon-reloads systemd without restarting the active worker, then
+validates and reloads nginx. Consecutive post-activation loopback and management front-door readiness checks must pass;
+the previous files are durably backed up and marked before publication. Durable readiness records
+`candidate-committed`, while completed rollback records `rollback-complete`; cleanup failure retains that terminal proof
+for retry without restoring files. Any readiness failure restores the previous files and keeps the known-good front
+door active; an Atlaso pre-start gate performs the same rollback after a reboot or helper interruption and blocks
+startup only while prepared-state recovery is incomplete. Protected management handoff and factory reset reconcile
+retained ordinary state before beginning their wider front-door transactions. Root
+SSH and the web terminal are disabled by default. The web terminal requires
+management HTTPS, is always bound to the management interface when
 enabled, and may be bound to additional addressed non-management interfaces selected by an administrator.
 Extra-interface nginx listeners expose only login/logout, terminal, WebSocket, and static asset routes; they do not
 expose the dashboard or API. Each local user has an explicit **Web SSH** permission, default off; access also requires

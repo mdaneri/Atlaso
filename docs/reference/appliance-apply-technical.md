@@ -47,17 +47,12 @@ The browser permits only one status request at a time, polls active work every t
 polling from ten to sixty seconds, suspends polling while hidden, and refreshes immediately after successful desired-
 state mutations, visibility return, and Apply completion. Once a master task is observed, the browser retains its ID
 until `/ui/management/tasks/<id>/status` returns a valid terminal task. A transient status or terminal-follow-up failure
-keeps the global lock visible and retries at the two-second active cadence. A real Appliance Settings helper result adds
-`management_status_transition` only after `systemd-run` accepts the delayed restart; an idempotent apply that does not
-schedule a restart carries no transition. Once that child is `succeeded` with the confirmed context, the monitor permits
-at most 15 seconds of neutral **reconnecting to task status** presentation around the helper's three-second delayed
-restart. A successful status response at or after the scheduled restart instant, or recovery after an observed outage,
-consumes that one-time window so a later unrelated failure returns to the actionable warning. Every task response derives
-the delay and total time remaining from the server's persisted settings-step completion time. The browser anchors only
-that bounded remainder to its local elapsed timer, so clock differences cannot change the duration and a late observer
-cannot create a fresh window. The same result-driven contract applies to forced-real tasks created by the local appliance
-console. It does not apply while that child is pending or running, to dry-run tasks, or to tasks without complete
-transition metadata.
+keeps the global lock visible and retries at the two-second active cadence. Current Appliance Settings helpers do not
+restart Atlaso or add `management_status_transition`: they prove the loopback upstream before nginx activation and the
+guest-local front door afterward. The monitor retains the older result-driven transition parser so a retained task made
+by an earlier release can receive at most 15 seconds of neutral **reconnecting to task status** presentation when its
+complete authenticated transition metadata confirms a delayed restart. It does not apply while that child is pending or
+running, to current or dry-run tasks, or to tasks without complete transition metadata.
 Continued failure after the grace window and every unexpected failure use the actionable availability warning.
 Successful reconciliation clears either notice and converges the modal, sidebar badge, pending count, and lock from the
 authoritative status and task responses. Terminal task state is sticky so an older in-flight `pending` or `running`
@@ -743,9 +738,23 @@ management interface/IP, management UI HTTPS preference, root SSH login preferen
 OS hostname to the appliance FQDN, local DNS mode configures the management resolver to `127.0.0.1` with `Domains=~.`,
 and external DNS mode configures the management resolver to the selected external DNS servers and removes the local
 catch-all domain. The helper always installs `/etc/nginx/conf.d/atlaso.conf` plus
-`/etc/atlaso/nginx/sites.d/management.conf`, writes a loopback-only `atlaso.service` override, reloads nginx/systemd,
-and schedules a short delayed restart of `atlaso.service` so the apply job can be recorded before uvicorn moves behind
-nginx. It also writes `/etc/ssh/sshd_config.d/atlaso-root-login.conf`, validates `sshd`, and restarts `sshd`; root SSH
+`/etc/atlaso/nginx/sites.d/management.conf` and a loopback-only `atlaso.service` override. Before mutation it requires
+consecutive `200` responses from the configured loopback `/openapi.json`. It snapshots the management site, Atlaso nginx
+include, nginx main configuration, and service drop-in into root-only durable backups, syncing every backup and the
+transaction marker under `/var/lib/atlaso-privileged/management-front-door` before mutation. Recovery opens that
+root-owned state without following links and rejects non-root, non-regular, linked, or permissive marker/backup files.
+It daemon-reloads the drop-in without restarting Atlaso, validates and reloads nginx, and then requires consecutive
+success from both the loopback upstream and the guest-local management
+address/public-port front door. Activation or readiness failure restores the snapshots, validates and reloads nginx,
+and reloads systemd before the unit reports failure. `atlaso.service` runs `management-front-door recover` before
+startup, restoring the same snapshots after interruption and failing closed until recovery completes. Every candidate
+file and parent directory is synced before the marker advances to `candidate-committed`; completed rollback records
+`rollback-complete`. Cleanup removes backups before the terminal marker, and a cleanup failure retains terminal proof
+for retry without restoring an already committed candidate or completed rollback. Prepared state remains recoverable.
+Protected management handoff and factory-reset admission reconcile this state before taking their wider snapshots or
+mutating the front door. It also writes
+`/etc/ssh/sshd_config.d/atlaso-root-login.conf`, validates
+`sshd`, and restarts `sshd`; root SSH
 is disabled by default and enabled only when the Appliance Settings switch is applied. When management UI HTTPS is
 enabled, the helper requires the CA-managed `appliance:https` cert/key files, redirects public HTTP/80 to HTTPS/443, and
 reverse-proxies HTTPS traffic to uvicorn on `127.0.0.1:8000`. Appliance FQDN or management IP changes automatically

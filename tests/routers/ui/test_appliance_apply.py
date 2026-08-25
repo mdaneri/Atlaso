@@ -68,6 +68,10 @@ interface=eth1
         {"raw_config_preview": flagged},
         {"config_preview": dedicated},
     )
+    assert not management_handoff_required(
+        {"raw_config_preview": dedicated},
+        {"config_preview": dedicated},
+    )
 
 
 def test_management_gateway_route_migration_couples_only_unapplied_default():

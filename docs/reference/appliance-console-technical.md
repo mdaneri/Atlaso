@@ -161,7 +161,11 @@ managed certificate/key and `nginx -t` succeeds. The helper validates nginx befo
 starts an inactive control plane, and requires five consecutive local readiness samples: HTTP 200 from uvicorn
 `/openapi.json` plus the applied nginx contract. HTTPS mode requires HTTP 308 and HTTPS `/openapi.json` 200; HTTP-only
 mode requires HTTP `/openapi.json` 200. Appliance Settings is then applied as the second task and the same idempotent
-readiness check runs again so its delayed Atlaso restart cannot produce a false success.
+readiness check runs again. Ordinary Appliance Settings proves the existing loopback upstream before nginx publication,
+does not restart the active Atlaso worker, and rolls back the candidate front-door files when post-activation readiness
+does not stabilize. It syncs root-only snapshots and a recovery marker before publication, records a durable terminal
+phase after readiness or completed rollback, and restores an interrupted prepared candidate through the Atlaso
+pre-start gate before serving requests. Terminal-state cleanup failure is retried without restoring files.
 
 The console rejects changes while another appliance-apply task is active. The selected helper path runs as a real local
 recovery action even when ordinary adapters use dry-run. Validation, bootstrap, nginx, service, and readiness failures
