@@ -488,10 +488,11 @@ The following cross-cutting boundaries always apply:
   development, preview, or staging channels.
 - VMware wheel deployment validates `RemoteDirectory` before build or upload as an absolute POSIX path containing only
   ASCII letters, digits, `/`, `.`, `_`, and `-`, with no `.` or `..` components. Keep key/agent authentication and the
-  supported Windows `op run --environment` password bridge on this shared path contract, and serialize every key-backed
+  supported Windows 1Password SDK password bridge on this shared path contract, and serialize every key-backed
   remote shell argument explicitly. The bridge must bind the exact verified `Atlaso` Environment's concealed
   `DEFAULT_ADMIN_PASSWORD` variable only inside the bounded deployment child, preserve known-host verification, and fail
-  closed for missing CLI capability, authorization, Environment, variable, or redaction. Never use a password argument,
+  closed for missing SDK support, desktop authorization, Environment, variable, masking, or redaction. Never use a
+  password argument,
   local `.env`, caller-provided `DEFAULT_ADMIN_PASSWORD`, or the retired `ATLASO_DEPLOY_SSH_PASSWORD` fallback.
 - The normal `create-atlaso-test-vm.ps1` Workstation wrapper provisions an existing Ed25519 public key for the bootstrap
   administrator and a separate test-only passwordless-sudo drop-in by default. Resolve the default only from the current
@@ -633,8 +634,9 @@ The following cross-cutting boundaries always apply:
 - Use the 1Password MCP and the exact `Atlaso` Environment for every user password and for every newly created
   user or key secret, including passwords, tokens, API keys, and private keys. Authenticate through the MCP, verify the
   named Environment before access, and store secret values there as concealed variables. For supported Windows
-  subprocess use, bind that exact Environment by its opaque ID through `op run --environment`; never read the value
-  into agent-visible output. Never fall back to chat, repository files, local `.env` files, shell arguments, jobs,
+  subprocess use, bind that exact Environment by its opaque ID through the supported 1Password SDK inside the bounded
+  child process; never read the value into agent-visible output. Never fall back to chat, repository files, local
+  `.env` files, shell arguments, jobs,
   audits, logs, screenshots, or documentation; if the 1Password MCP or the `Atlaso` Environment is unavailable, stop
   and request maintainer direction.
   DEFAULT_ROOT_PASSWORD contains the default root password for any new deployed environment.

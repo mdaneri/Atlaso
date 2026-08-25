@@ -16,8 +16,9 @@ command check run directly as the unprivileged appliance SSH user rather than th
 For a wheel-only deployment to the canonical test VM, use `scripts/windows/vmware/deploy-wheel.ps1` with the secure
 Windows 1Password handoff documented in the [full technical reference](full-technical-reference.md). Authenticate the
 local integration, verify the unique `Atlaso` Environment and concealed `DEFAULT_ADMIN_PASSWORD` variable by name,
-then pass only its opaque Environment ID through `-OnePasswordEnvironmentId`. The handoff requires the supported
-`op run --environment` capability and provisions the value only into the bounded Paramiko deployment child, preserves
+then pass its opaque Environment ID through `-OnePasswordEnvironmentId` and the approved account name or ID through
+`-OnePasswordAccount`. The handoff uses the supported 1Password Python SDK desktop integration and retrieves the value
+only inside the bounded Paramiko deployment child, preserves
 SSH known-host verification, and fails closed when authorization or any required Environment input is unavailable.
 Key-backed Windows
 transfers keep `scp` sources and destinations separate and cross the PowerShell login shell through a secret-free
@@ -25,11 +26,10 @@ base64 `sh -lc` wrapper. Password-backed SSH supports one password-only keyboard
 prompts, and uses a separate deployment timeout from the readiness allowance with a non-PTY
 `sudo -S` handoff. Do not pass a password argument, create a local `.env` file, or use the retired
 `ATLASO_DEPLOY_SSH_PASSWORD` fallback. The PowerShell parent performs local build and input preparation without the
-credential, then invokes the Paramiko helper directly as `op run --environment <id> -- <python> ...`; `op` supplies
-`DEFAULT_ADMIN_PASSWORD` only to that bounded child, which removes it from its process environment immediately after
-capture. The child starts Python with `-I -S` and an explicit dependency path so startup hooks and inherited
-`PYTHONPATH` cannot observe the variable. An interactive `op run` shell is not a supported substitute for the exact
-Environment handoff.
+credential, then invokes the isolated Python child directly. That child obtains `DEFAULT_ADMIN_PASSWORD` with a
+human-approved 1Password desktop authorization prompt and keeps it in process memory only. Python starts with `-I -S`
+and an explicit dependency path so startup hooks and inherited `PYTHONPATH` cannot observe the value. The beta-only
+`op run --environment` flag is not supported by the stable CLI and is not part of this workflow.
 
 Atlaso can run a VMware Workstation lifecycle lab alongside the Hyper-V lab. The Workstation path uses VMX/VMDK
 artifacts and `vmrun.exe`, then delegates appliance behavior checks to the shared Python lifecycle runner.
