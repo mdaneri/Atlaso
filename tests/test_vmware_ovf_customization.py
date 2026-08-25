@@ -82,6 +82,69 @@ def test_vmware_ovf_customizer_supports_dhcp_management_by_default():
     assert config["management_source_cidr"] == ""
 
 
+@pytest.mark.parametrize(
+    ("overrides", "removed_properties", "expected"),
+    [
+        (
+            {},
+            (),
+            {
+                "ATLASO_APPLIANCE_MANAGEMENT_CIDR": "192.168.10.10/24",
+                "ATLASO_APPLIANCE_MANAGEMENT_GATEWAY": "192.168.10.1",
+                "ATLASO_APPLIANCE_MANAGEMENT_IPV6_GATEWAY": "",
+            },
+        ),
+        (
+            {
+                "atlaso.management_mode": "dhcp",
+                "atlaso.ipv6_enabled": "true",
+                "atlaso.ipv6_cidr": "fd00:10::10/64",
+                "atlaso.ipv6_gateway": "fe80::1",
+            },
+            ("atlaso.cidr", "atlaso.gateway"),
+            {
+                "ATLASO_APPLIANCE_MANAGEMENT_CIDR": "dhcp",
+                "ATLASO_APPLIANCE_MANAGEMENT_GATEWAY": "",
+                "ATLASO_APPLIANCE_MANAGEMENT_IPV6_GATEWAY": "fe80::1",
+            },
+        ),
+        (
+            {
+                "atlaso.ipv6_enabled": "true",
+                "atlaso.ipv6_cidr": "fd00:10::10/64",
+                "atlaso.ipv6_gateway": "fe80::1",
+            },
+            (),
+            {
+                "ATLASO_APPLIANCE_MANAGEMENT_CIDR": "192.168.10.10/24",
+                "ATLASO_APPLIANCE_MANAGEMENT_GATEWAY": "192.168.10.1",
+                "ATLASO_APPLIANCE_MANAGEMENT_IPV6_GATEWAY": "fe80::1",
+            },
+        ),
+    ],
+)
+def test_vmware_ovf_customizer_preserves_management_gateway_environment_handoff(
+    overrides, removed_properties, expected
+):
+    """Preserve IPv4-only, IPv6-only, and dual-stack gateway handoff to Atlaso.
+
+    Args:
+        overrides: OVF property overrides for one address-family scenario.
+        removed_properties: Properties omitted for one address-family scenario.
+        expected: Expected non-secret management environment values.
+    """
+    customizer = load_customizer()
+    properties = customizer.parse_ovf_environment(OVF_ENV)
+    for property_name in removed_properties:
+        properties.pop(property_name)
+    properties.update(overrides)
+
+    environment = customizer.appliance_environment_values(customizer.validate_properties(properties))
+
+    for key, value in expected.items():
+        assert environment[key] == value
+
+
 def test_vmware_ovf_customizer_validates_optional_development_admin_key():
     """Accept exactly one canonical Ed25519 key without affecting ordinary OVF inputs."""
     customizer = load_customizer()
@@ -2030,6 +2093,8 @@ def test_vmware_ovf_customizer_rotates_clone_specific_env_secrets(tmp_path, monk
     )
     properties = customizer.parse_ovf_environment(OVF_ENV)
     properties["atlaso.ipv6_enabled"] = "true"
+    properties["atlaso.ipv6_cidr"] = "fd00:10::10/64"
+    properties["atlaso.ipv6_gateway"] = "fe80::1"
     properties["atlaso.root_ssh_enabled"] = "true"
     properties[customizer.PROPERTY_DEVELOPMENT_ADMIN_SSH_PUBLIC_KEY] = VALID_ED25519_PUBLIC_KEY
     config = customizer.validate_properties(properties)
@@ -2043,7 +2108,9 @@ def test_vmware_ovf_customizer_rotates_clone_specific_env_secrets(tmp_path, monk
     assert "baked-secrets-key" not in rendered
     assert "rotated-secret-key" not in str(summary)
     assert "rotated-secrets-key" not in str(summary)
+    assert 'ATLASO_APPLIANCE_MANAGEMENT_GATEWAY="192.168.10.1"' in rendered
     assert 'ATLASO_APPLIANCE_MANAGEMENT_IPV6_ENABLED="true"' in rendered
+    assert 'ATLASO_APPLIANCE_MANAGEMENT_IPV6_GATEWAY="fe80::1"' in rendered
     assert 'ATLASO_APPLIANCE_ROOT_SSH_ENABLED="true"' in rendered
     marker = json.loads(customizer.MARKER_PATH.read_text(encoding="utf-8"))
     assert console_restarted == [True]

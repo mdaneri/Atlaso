@@ -315,7 +315,10 @@ The OVF properties are intended for vSphere/ESXi import:
 
 On first boot from an OVF/OVA deployment, `atlaso-vmware-ovf-customize` reads those properties through VMware Tools
 before Atlaso starts. A blank IPv4 CIDR writes `DHCP=ipv4`; a supplied CIDR and gateway configure static IPv4. IPv6 can
-be disabled, automatic through RA/SLAAC, or static. The customizer also writes family-correct firewall access, resolver
+be disabled, automatic through RA/SLAAC, or static. Every supplied management gateway is also written to the Atlaso
+environment before the service starts, so the seeded Physical Interfaces desired state, Network preview, initial
+baseline, and later Appliance Apply retain the same IPv4 and IPv6 default-route intent. The customizer also writes
+family-correct firewall access, resolver
 overrides when supplied, hostname, root password, optional root SSH state, and bootstrap admin password once, then
 records a redacted marker under `/var/lib/atlaso`. Passwords are consumed as deployment inputs and are not printed in
 the marker or customization log. After all first-boot configuration succeeds, the customizer writes a redacted pending

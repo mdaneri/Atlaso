@@ -632,8 +632,8 @@ def test_startup_host_inventory_refreshes_appliance_seed_without_apply_job(monke
     get_settings.cache_clear()
 
 
-def test_appliance_seed_preserves_ovf_auto_ipv6_and_root_ssh(monkeypatch, tmp_path):
-    """Verify that appliance seed preserves ovf auto ipv6 and root ssh.
+def test_appliance_seed_preserves_ovf_gateways_in_network_preview_and_baseline(monkeypatch, tmp_path):
+    """Verify that appliance seed retains OVF gateways through initial Network state.
 
     Args:
         monkeypatch: Pytest fixture used to replace dependencies for the test.
@@ -644,14 +644,18 @@ def test_appliance_seed_preserves_ovf_auto_ipv6_and_root_ssh(monkeypatch, tmp_pa
     import atlaso.app.database as database
     from atlaso.app.config import get_settings
     from atlaso.app.seed import seed_initial_data
+    from atlaso.app.ui import initialize_factory_appliance_apply_baseline
 
     db_path = tmp_path / "atlaso-ovf-seed.db"
     monkeypatch.setenv("ATLASO_DATABASE_URL", f"sqlite:///{db_path}")
     monkeypatch.setenv("ATLASO_SECRET_KEY", "test-secret-key-with-enough-length")
     monkeypatch.setenv("ATLASO_BOOTSTRAP_ADMIN_PASSWORD", "atlaso-admin")
-    monkeypatch.setenv("ATLASO_APPLIANCE_MANAGEMENT_CIDR", "dhcp")
+    monkeypatch.setenv("ATLASO_ENVIRONMENT", "appliance")
+    monkeypatch.setenv("ATLASO_APPLIANCE_MANAGEMENT_CIDR", "192.168.49.10/24")
+    monkeypatch.setenv("ATLASO_APPLIANCE_MANAGEMENT_GATEWAY", "192.168.49.1")
     monkeypatch.setenv("ATLASO_APPLIANCE_MANAGEMENT_IPV6_ENABLED", "true")
-    monkeypatch.setenv("ATLASO_APPLIANCE_MANAGEMENT_IPV6_CIDR", "")
+    monkeypatch.setenv("ATLASO_APPLIANCE_MANAGEMENT_IPV6_CIDR", "fd00:49::10/64")
+    monkeypatch.setenv("ATLASO_APPLIANCE_MANAGEMENT_IPV6_GATEWAY", "fe80::1")
     monkeypatch.setenv("ATLASO_APPLIANCE_ROOT_SSH_ENABLED", "true")
     get_settings.cache_clear()
     database.engine.dispose()
@@ -663,10 +667,20 @@ def test_appliance_seed_preserves_ovf_auto_ipv6_and_root_ssh(monkeypatch, tmp_pa
         seed_initial_data(db, include_examples=False, appliance_mode=True)
         interface = db.execute(select(PhysicalInterface).where(PhysicalInterface.name == "eth0")).scalar_one()
         appliance_settings = db.execute(select(ApplianceSettings)).scalar_one()
-        assert interface.ipv4_method == "dhcp"
+        assert interface.ipv4_method == "static"
+        assert interface.gateway == "192.168.49.1"
         assert interface.ipv6_enabled is True
-        assert interface.ipv6_cidr is None
+        assert interface.ipv6_cidr == "fd00:49::10/64"
+        assert interface.ipv6_gateway == "fe80::1"
         assert appliance_settings.root_ssh_enabled is True
+        preview = render_network_config(interfaces=[interface], vlans=[])
+        assert "  gateway=192.168.49.1" in preview
+        assert "  ipv6_gateway=fe80::1" in preview
+        assert initialize_factory_appliance_apply_baseline(db) is True
+        baseline = db.execute(select(Setting).where(Setting.key == "appliance_apply.baselines.v1")).scalar_one()
+        applied_network = json.loads(baseline.value)["network"]["config_preview"]
+        assert "  gateway=192.168.49.1" in applied_network
+        assert "  ipv6_gateway=fe80::1" in applied_network
 
     get_settings.cache_clear()
 
