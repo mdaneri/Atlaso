@@ -6941,9 +6941,9 @@ async function postWanAction(url, data, csrf, options = {}) {
     if (["id", "is_new", "wan_policy_name"].includes(key)) {
       continue;
     }
-    if (key === "enabled") {
-      if (value) {
-        body.set("enabled", "on");
+    if (["enabled", "default_route"].includes(key)) {
+      if (value === true || ["1", "on", "true", "yes"].includes(String(value).toLowerCase())) {
+        body.set(key, "on");
       }
       continue;
     }

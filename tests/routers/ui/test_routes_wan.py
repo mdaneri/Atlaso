@@ -151,6 +151,18 @@ def test_routes_wan_default_route_add_edit_validation_and_semantic_readback(clie
     assert "Default route (IPv4)" in readback.text
     assert "0.0.0.0/0" in readback.text
 
+    inline_disabled = client.post(
+        f"/routes-wan/routes/{route_id}/edit",
+        data={**base, "default_route": "true", "gateway": "192.0.2.1", "enabled": ""},
+        follow_redirects=False,
+    )
+    assert inline_disabled.status_code == 303
+    with SessionLocal() as db:
+        route = db.get(Route, route_id)
+        assert route is not None
+        assert route.destination_cidr == "0.0.0.0/0"
+        assert route.enabled is False
+
     duplicate = client.post(
         "/routes-wan/routes",
         data={**base, "gateway": "198.51.100.1"},

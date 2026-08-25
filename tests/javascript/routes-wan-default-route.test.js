@@ -113,3 +113,35 @@ test("default-mode synchronization owns mutual exclusion and required state", ()
   assert.match(source, /family\.disabled = !selected/);
   assert.match(source, /gateway\.required = selected/);
 });
+
+test("inline Enabled saves submit default-route checkbox state", async () => {
+  let submittedBody = null;
+  class TestFormData {
+    constructor() {
+      this.values = new Map();
+    }
+
+    set(key, value) {
+      this.values.set(key, value);
+    }
+  }
+  const postContext = vm.createContext({
+    FormData: TestFormData,
+    fetch: async (_url, options) => {
+      submittedBody = options.body;
+      return { ok: true };
+    },
+    window: { location: { reload() {} } },
+  });
+  vm.runInContext(`async ${functionSource("postWanAction")} globalThis.postAction = postWanAction;`, postContext);
+
+  await postContext.postAction(
+    "/ui/management/routes-wan/routes/1/edit",
+    { id: 1, destination_cidr: "0.0.0.0/0", default_route: true, default_route_family: "4", enabled: false },
+    "csrf-token",
+    { reload: false },
+  );
+
+  assert.equal(submittedBody.values.get("default_route"), "on");
+  assert.equal(submittedBody.values.has("enabled"), false);
+});

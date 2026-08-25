@@ -143,6 +143,11 @@ def build_router(dependencies: RoutesWanUiDependencies) -> RoutesWanUiRouter:
         return parse_int_form_value(value, field_label, minimum=minimum or None)
 
 
+    def form_value_is_enabled(value: str | None) -> bool:
+        """Return whether a checkbox-like form value represents enabled state."""
+        return bool(value and value.strip().casefold() in {"1", "on", "true", "yes"})
+
+
     def parse_float_form_value(value: str, field_label: str, *, default: float = 0.0, minimum: float | None = None, maximum: float | None = None) -> float | Response:
         """Parse float form value.
 
@@ -436,7 +441,7 @@ def build_router(dependencies: RoutesWanUiDependencies) -> RoutesWanUiRouter:
             wan_policy_id,
             wan_mode,
             db,
-            default_route=default_route == "on",
+            default_route=form_value_is_enabled(default_route),
             default_route_family=default_route_family,
         )
         if isinstance(parsed, Response):
@@ -449,7 +454,7 @@ def build_router(dependencies: RoutesWanUiDependencies) -> RoutesWanUiRouter:
             metric=metric_value,
             wan_policy_id=policy_id_value,
             wan_mode=mode_value,
-            enabled=enabled == "on",
+            enabled=form_value_is_enabled(enabled),
         )
         db.add(route)
         db.commit()
@@ -509,7 +514,7 @@ def build_router(dependencies: RoutesWanUiDependencies) -> RoutesWanUiRouter:
             wan_policy_id,
             wan_mode,
             db,
-            default_route=default_route == "on",
+            default_route=form_value_is_enabled(default_route),
             default_route_family=default_route_family,
             exclude_route_id=route_id,
         )
@@ -522,7 +527,7 @@ def build_router(dependencies: RoutesWanUiDependencies) -> RoutesWanUiRouter:
         route.metric = metric_value
         route.wan_policy_id = policy_id_value
         route.wan_mode = mode_value
-        route.enabled = enabled == "on"
+        route.enabled = form_value_is_enabled(enabled)
         db.add(route)
         db.commit()
         record_audit(db, actor=identity.username, action="update_route", resource_type="route", resource_id=str(route.id))
