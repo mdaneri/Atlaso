@@ -31,7 +31,11 @@ def load_helper_module():
 
 
 def test_management_handoff_applies_and_restores_coupled_wan(monkeypatch):
-    """Apply candidate WAN intent and restore its last-applied config through one helper path."""
+    """Apply candidate WAN intent and restore its last-applied config through one helper path.
+
+    Args:
+        monkeypatch: Pytest fixture used to isolate helper execution.
+    """
     helper = load_helper_module()
     calls = []
     monkeypatch.setattr(
@@ -58,7 +62,11 @@ def test_management_handoff_applies_and_restores_coupled_wan(monkeypatch):
 
 
 def test_management_handoff_wan_failure_is_truthful(monkeypatch):
-    """Reject both candidate and rollback WAN failures at their bounded layers."""
+    """Reject both candidate and rollback WAN failures at their bounded layers.
+
+    Args:
+        monkeypatch: Pytest fixture used to inject helper failures.
+    """
     helper = load_helper_module()
     monkeypatch.setattr(helper, "_handle_wan", lambda *_args: 1)
 
@@ -72,7 +80,11 @@ def test_management_handoff_wan_failure_is_truthful(monkeypatch):
 
 
 def test_wan_rollback_allows_removing_route_from_restored_management_target(tmp_path):
-    """Validate candidate-only route cleanup against the prior management role."""
+    """Validate candidate-only route cleanup against the prior management role.
+
+    Args:
+        tmp_path: Temporary directory used for the rollback preview.
+    """
     helper = load_helper_module()
     config_path = tmp_path / "atlaso-wan-rollback.conf"
     config_path.write_text(
@@ -319,7 +331,11 @@ def test_management_handoff_builds_open_candidate_listener_firewall_rules(monkey
 
 
 def test_management_handoff_builds_open_flagged_listener_firewall_rules(monkeypatch):
-    """Keep bootstrap-admin SSH on flagged physical and VLAN candidate listeners."""
+    """Keep bootstrap-admin SSH on flagged physical and VLAN candidate listeners.
+
+    Args:
+        monkeypatch: Pytest fixture used to stage candidate listener state.
+    """
     helper = load_helper_module()
     monkeypatch.setattr(
         helper,
@@ -5543,7 +5559,11 @@ def test_wan_helper_accepts_ipv6_routes_and_rejects_ipv6_only_nat_targets(tmp_pa
 
 
 def test_wan_helper_installs_flagged_management_default_in_main_table(tmp_path):
-    """Keep locally originated appliance traffic on the migrated default route."""
+    """Keep locally originated appliance traffic on the migrated default route.
+
+    Args:
+        tmp_path: Temporary directory used for the candidate WAN config.
+    """
     helper = load_helper_module()
     config_path = tmp_path / "flagged-management-default.conf"
     config_path.write_text(
@@ -5596,7 +5616,11 @@ route=0.0.0.0/0
 
 
 def test_wan_helper_retires_previous_flagged_management_default(tmp_path):
-    """Use last-applied mirroring to clean the main table after unflagging."""
+    """Use last-applied mirroring to clean the main table after unflagging.
+
+    Args:
+        tmp_path: Temporary directory used for candidate and applied WAN configs.
+    """
     helper = load_helper_module()
     previous_path = tmp_path / "previous-flagged-management.conf"
     previous_path.write_text(
@@ -5678,7 +5702,12 @@ route=0.0.0.0/0
             command: list[str],
             collected: list[list[str]] = commands,
         ) -> subprocess.CompletedProcess[str]:
-            """Record one command for the current cleanup scenario."""
+            """Record one command for the current cleanup scenario.
+
+            Args:
+                command: Exact helper command being modeled.
+                collected: Scenario-owned command collection.
+            """
             collected.append(command)
             return subprocess.CompletedProcess(command, 0, "", "")
 
@@ -5695,7 +5724,11 @@ route=0.0.0.0/0
 
 
 def test_wan_rollback_explicitly_removes_candidate_only_main_default(tmp_path):
-    """Remove a partially applied mirror absent from last-applied runtime state."""
+    """Remove a partially applied mirror absent from last-applied runtime state.
+
+    Args:
+        tmp_path: Temporary directory used for the explicit rollback config.
+    """
     helper = load_helper_module()
     rollback_path = tmp_path / "candidate-only-main-default.conf"
     rollback_path.write_text(
@@ -10803,7 +10836,11 @@ server {
 
 
 def test_public_services_helper_accepts_management_websocket_front_door(tmp_path):
-    """Accept WebSocket upgrade locations on an effective management listener."""
+    """Accept WebSocket upgrade locations on an effective management listener.
+
+    Args:
+        tmp_path: Temporary directory used for the management front-door config.
+    """
     helper = load_helper_module()
     config_path = tmp_path / "public-services.conf"
     config_path.write_text(

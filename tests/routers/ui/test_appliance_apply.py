@@ -1216,7 +1216,12 @@ def test_mirror_changing_listener_edit_forces_wan_into_handoff(
     client,
     listener_change,
 ):
-    """Execute host-default cleanup in every protected listener handoff."""
+    """Execute host-default cleanup in every protected listener handoff.
+
+    Args:
+        client: HTTP test client used to exercise the Atlaso application.
+        listener_change: Applied-listener mutation exercised by the scenario.
+    """
     from sqlalchemy import select
 
     from atlaso.app.database import SessionLocal
@@ -1291,7 +1296,12 @@ def test_standalone_mirrored_default_edit_starts_management_handoff(
     client,
     route_change,
 ):
-    """Protect every host-default mutation submitted from Routes & WAN."""
+    """Protect every host-default mutation submitted from Routes & WAN.
+
+    Args:
+        client: HTTP test client used to exercise the Atlaso application.
+        route_change: Mirrored-default mutation exercised by the scenario.
+    """
     from sqlalchemy import select
 
     from atlaso.app.database import SessionLocal
@@ -1359,7 +1369,11 @@ def test_standalone_mirrored_default_edit_starts_management_handoff(
 
 
 def test_selected_wan_change_executes_inside_existing_management_handoff(client):
-    """Apply a captured non-mirror WAN edit with the protected Network change."""
+    """Apply a captured non-mirror WAN edit with the protected Network change.
+
+    Args:
+        client: HTTP test client used to exercise the Atlaso application.
+    """
     from sqlalchemy import select
 
     from atlaso.app.database import SessionLocal

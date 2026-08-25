@@ -59,8 +59,7 @@ changes commonly require **Appliance Settings**, **Public Services**, and **Fire
 management-to-access role conversion that migrates a gateway also selects **Routes & WAN Simulation** with Network and
 runs both through the protected management handoff; its prior WAN config is the rollback source. A Routes & WAN-only
 submission that changes a default mirrored for an effective flagged management listener starts the same protected
-handoff. Any WAN unit explicitly bundled with another protected management edit executes from its captured snapshot
-before Atlaso commits that unit's baseline.
+handoff. Every bundled WAN unit executes from its captured snapshot before Atlaso commits its baseline.
 
 ## Review pending changes
 

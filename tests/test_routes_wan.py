@@ -127,7 +127,11 @@ def test_flagged_management_default_cleanup_uses_last_applied_mirroring():
 
 
 def test_admin_down_access_interface_is_not_a_management_mirror_target(client):
-    """Do not mirror a host default through an inactive physical listener."""
+    """Do not mirror a host default through an inactive physical listener.
+
+    Args:
+        client: HTTP test client providing the isolated application database.
+    """
     from sqlalchemy import select
 
     from atlaso.app.database import SessionLocal

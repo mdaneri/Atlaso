@@ -24,7 +24,12 @@ from atlaso.app.services.appliance_settings import (
 
 
 def _set_network_baseline(db, preview: str) -> None:
-    """Persist one exact last-applied Network preview for listener tests."""
+    """Persist one exact last-applied Network preview for listener tests.
+
+    Args:
+        db: Active database session used to persist the baseline.
+        preview: Exact Network preview to record as last applied.
+    """
     setting = db.execute(
         select(Setting).where(Setting.key == "appliance_apply.baselines.v1")
     ).scalar_one_or_none()
@@ -36,7 +41,11 @@ def _set_network_baseline(db, preview: str) -> None:
 
 
 def test_terminal_network_state_follows_applied_flagged_listener_across_handoff(client):
-    """Keep the old listener pending, move after commit, and retain explicit public listeners."""
+    """Keep the old listener pending, move after commit, and retain explicit public listeners.
+
+    Args:
+        client: HTTP test client used to exercise management listener eligibility.
+    """
     dedicated_preview = """[physical_interfaces]
 interface=eth0
 role=management

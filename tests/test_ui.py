@@ -469,7 +469,13 @@ def test_web_terminal_uses_one_use_ticket_and_bridges_websocket_input(client, mo
     listener_checks = []
 
     def uses_applied_listener(_headers, _server_host, addresses):
-        """Accept only the last-applied flagged-access management address."""
+        """Accept only the last-applied flagged-access management address.
+
+        Args:
+            _headers: Request headers unused by the listener test double.
+            _server_host: Requested server host unused by the listener test double.
+            addresses: Last-applied listener addresses eligible for the request.
+        """
         listener_checks.append(list(addresses))
         return "192.168.88.10" in addresses
 

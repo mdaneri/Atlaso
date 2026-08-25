@@ -48,7 +48,11 @@ def _mutation_audit(action: str = "test_update_interface") -> PhysicalInterfaceM
 
 
 def _static_management_interface(db) -> PhysicalInterface:
-    """Return one dual-stack static interface configured as a management listener."""
+    """Return one dual-stack static interface configured as a management listener.
+
+    Args:
+        db: Active database session used to stage the interface.
+    """
     interface = _physical_interface(db)
     interface.role = "management"
     interface.mode = "access"
@@ -66,7 +70,11 @@ def _static_management_interface(db) -> PhysicalInterface:
 
 
 def test_management_to_access_migrates_dual_stack_gateways_atomically(client):
-    """Stage both default routes, dependent units, and value-free audit in one commit."""
+    """Stage both default routes, dependent units, and value-free audit in one commit.
+
+    Args:
+        client: HTTP test client providing the isolated application database.
+    """
     with SessionLocal() as db:
         db.query(Route).delete()
         interface = _static_management_interface(db)
@@ -100,7 +108,11 @@ def test_management_to_access_migrates_dual_stack_gateways_atomically(client):
 
 
 def test_management_to_access_reuses_equivalent_default_without_duplicate(client):
-    """Enable and reuse an equivalent family default rather than inserting a second row."""
+    """Enable and reuse an equivalent family default rather than inserting a second row.
+
+    Args:
+        client: HTTP test client providing the isolated application database.
+    """
     with SessionLocal() as db:
         db.query(Route).delete()
         interface = _static_management_interface(db)
@@ -132,7 +144,11 @@ def test_management_to_access_reuses_equivalent_default_without_duplicate(client
 
 
 def test_management_to_access_conflicting_default_rolls_back_every_row(client):
-    """Reject a conflicting family default without clearing management or persisting audit."""
+    """Reject a conflicting family default without clearing management or persisting audit.
+
+    Args:
+        client: HTTP test client providing the isolated application database.
+    """
     with SessionLocal() as db:
         db.query(Route).delete()
         interface = _static_management_interface(db)
@@ -174,7 +190,11 @@ def test_management_to_access_conflicting_default_rolls_back_every_row(client):
 
 
 def test_management_to_access_rejects_gateway_off_link_for_converted_cidr(client):
-    """Validate the preserved gateway against the access CIDR in the same edit."""
+    """Validate the preserved gateway against the access CIDR in the same edit.
+
+    Args:
+        client: HTTP test client providing the isolated application database.
+    """
     with SessionLocal() as db:
         db.query(Route).delete()
         interface = _static_management_interface(db)
@@ -203,7 +223,11 @@ def test_management_to_access_rejects_gateway_off_link_for_converted_cidr(client
 
 
 def test_management_to_access_missing_gateways_does_not_invent_routes(client):
-    """Record the no-gateway outcome while preserving management-listener continuity."""
+    """Record the no-gateway outcome while preserving management-listener continuity.
+
+    Args:
+        client: HTTP test client providing the isolated application database.
+    """
     with SessionLocal() as db:
         db.query(Route).delete()
         interface = _static_management_interface(db)
