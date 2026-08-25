@@ -304,6 +304,181 @@ function Resolve-TestVmVmrunPath {
 
 <#
 .SYNOPSIS
+Capture one pre-existing in-directory data disk for failed-creation rollback.
+
+.PARAMETER DiskPath
+Configured depot or backup VMDK path.
+
+.PARAMETER OutputDirectory
+Exact new VM artifact directory that recursive rollback may remove.
+#>
+function Get-AtlasoRollbackDataDiskState {
+    param(
+        [Parameter(Mandatory = $true)][string]$DiskPath,
+        [Parameter(Mandatory = $true)][string]$OutputDirectory
+    )
+
+    if (-not (Test-Path -LiteralPath $DiskPath -PathType Leaf)) {
+        return $null
+    }
+    $resolvedDiskPath = (Resolve-Path -LiteralPath $DiskPath).Path
+    $resolvedOutputDirectory = (Resolve-Path -LiteralPath $OutputDirectory).Path
+    if (-not (Test-AtlasoStrictDescendantPath -ParentPath $resolvedOutputDirectory -ChildPath $resolvedDiskPath)) {
+        return $null
+    }
+    Assert-AtlasoStrictDescendantPath `
+        -ParentPath $resolvedOutputDirectory `
+        -ChildPath $resolvedDiskPath `
+        -FailureMessage 'Refusing to preserve a rollback data disk outside the exact VM directory'
+    return [pscustomobject]@{
+        Path = $resolvedDiskPath
+        RelativePath = [System.IO.Path]::GetRelativePath($resolvedOutputDirectory, $resolvedDiskPath)
+        Identity = [Atlaso.WorkstationFileIdentity]::Get($resolvedDiskPath)
+        QuarantinePath = ''
+    }
+}
+
+<#
+.SYNOPSIS
+Move pre-existing data disks outside a failed VM's recursive cleanup root.
+
+.PARAMETER DataDiskStates
+Captured in-directory data-disk paths and filesystem identities.
+
+.PARAMETER QuarantineDirectory
+Fresh sibling directory used only while the new VM artifacts are removed.
+#>
+function Move-AtlasoRollbackDataDisksToQuarantine {
+    param(
+        [Parameter(Mandatory = $true)][AllowEmptyCollection()][object[]]$DataDiskStates,
+        [Parameter(Mandatory = $true)][string]$QuarantineDirectory
+    )
+
+    if ($DataDiskStates.Count -eq 0) {
+        return
+    }
+    if (Test-Path -LiteralPath $QuarantineDirectory) {
+        throw "Refusing an existing rollback quarantine directory: $QuarantineDirectory"
+    }
+    New-Item -ItemType Directory -Path $QuarantineDirectory | Out-Null
+    foreach ($state in $DataDiskStates) {
+        if ([Atlaso.WorkstationFileIdentity]::Get($state.Path) -ne $state.Identity) {
+            throw "A pre-existing VMware data disk changed identity before rollback; it was preserved in place: $($state.Path)"
+        }
+        $quarantinePath = Join-Path $QuarantineDirectory $state.RelativePath
+        New-Item -ItemType Directory -Force -Path (Split-Path -Parent $quarantinePath) | Out-Null
+        Move-Item -LiteralPath $state.Path -Destination $quarantinePath
+        $state.QuarantinePath = $quarantinePath
+        if (
+            (Test-Path -LiteralPath $state.Path) -or
+            [Atlaso.WorkstationFileIdentity]::Get($quarantinePath) -ne $state.Identity
+        ) {
+            throw "A pre-existing VMware data disk could not be proven in rollback quarantine: $($state.Path)"
+        }
+    }
+}
+
+<#
+.SYNOPSIS
+Restore pre-existing data disks after failed-VM artifact cleanup.
+
+.PARAMETER DataDiskStates
+Captured data disks whose non-empty quarantine paths must be restored.
+
+.PARAMETER QuarantineDirectory
+Exact invocation-owned sibling quarantine directory.
+#>
+function Restore-AtlasoRollbackDataDisksFromQuarantine {
+    param(
+        [Parameter(Mandatory = $true)][AllowEmptyCollection()][object[]]$DataDiskStates,
+        [Parameter(Mandatory = $true)][string]$QuarantineDirectory
+    )
+
+    foreach ($state in $DataDiskStates) {
+        if (-not $state.QuarantinePath) {
+            continue
+        }
+        if (Test-Path -LiteralPath $state.Path) {
+            throw "Refusing to overwrite a path while restoring a pre-existing VMware data disk: $($state.Path)"
+        }
+        if ([Atlaso.WorkstationFileIdentity]::Get($state.QuarantinePath) -ne $state.Identity) {
+            throw "A quarantined VMware data disk changed identity and was preserved for manual recovery: $($state.QuarantinePath)"
+        }
+        New-Item -ItemType Directory -Force -Path (Split-Path -Parent $state.Path) | Out-Null
+        Move-Item -LiteralPath $state.QuarantinePath -Destination $state.Path
+        if ([Atlaso.WorkstationFileIdentity]::Get($state.Path) -ne $state.Identity) {
+            throw "A restored VMware data disk failed identity verification: $($state.Path)"
+        }
+        $state.QuarantinePath = ''
+    }
+    if (Test-Path -LiteralPath $QuarantineDirectory) {
+        if (@(Get-ChildItem -LiteralPath $QuarantineDirectory -File -Recurse -Force).Count -gt 0) {
+            throw "Rollback quarantine still contains files and was preserved: $QuarantineDirectory"
+        }
+        Remove-Item -LiteralPath $QuarantineDirectory -Recurse -Force
+    }
+}
+
+<#
+.SYNOPSIS
+Stop the exact failed normal test VM when it is still running.
+
+.PARAMETER VmxPath
+Exact new VMX owned by the current invocation.
+
+.PARAMETER VmrunPath
+Resolved VMware vmrun executable path.
+#>
+function Stop-AtlasoTestVmForRollback {
+    param(
+        [Parameter(Mandatory = $true)][string]$VmxPath,
+        [Parameter(Mandatory = $true)][string]$VmrunPath
+    )
+
+    $resolvedVmxPath = (Resolve-Path -LiteralPath $VmxPath).Path
+    $runningOutput = @(& $VmrunPath -T ws list 2>$null)
+    if ($LASTEXITCODE -ne 0) {
+        throw 'VMware Workstation running-state discovery failed during rollback.'
+    }
+    $isRunning = @($runningOutput | Select-Object -Skip 1 | Where-Object {
+            try {
+                [System.IO.Path]::GetFullPath($_.Trim()).Equals(
+                    $resolvedVmxPath,
+                    [System.StringComparison]::OrdinalIgnoreCase
+                )
+            }
+            catch {
+                $false
+            }
+        }).Count -gt 0
+    if (-not $isRunning) {
+        return
+    }
+    & $VmrunPath -T ws stop $resolvedVmxPath hard | Out-Null
+    if ($LASTEXITCODE -ne 0) {
+        throw 'VMware Workstation could not stop the failed normal test VM during rollback.'
+    }
+    $runningOutput = @(& $VmrunPath -T ws list 2>$null)
+    if ($LASTEXITCODE -ne 0) {
+        throw 'VMware Workstation could not verify the failed normal test VM stopped during rollback.'
+    }
+    foreach ($runningPath in @($runningOutput | Select-Object -Skip 1)) {
+        try {
+            if ([System.IO.Path]::GetFullPath($runningPath.Trim()).Equals(
+                    $resolvedVmxPath,
+                    [System.StringComparison]::OrdinalIgnoreCase
+                )) {
+                throw 'The failed normal test VM remained running during rollback.'
+            }
+        }
+        catch [System.ArgumentException] {
+            continue
+        }
+    }
+}
+
+<#
+.SYNOPSIS
 Find the most recently written built Workstation appliance VMX.
 
 .PARAMETER RepoRoot
@@ -662,6 +837,20 @@ if ($ResetDataDisks) {
     }
 }
 
+$rollbackDataDiskStates = @()
+if (Test-Path -LiteralPath $resolvedOutputDirectory -PathType Container) {
+    $rollbackDataDiskStates = @(
+        foreach ($diskPath in @($resolvedDepotVmdkPath, $resolvedBackupVmdkPath)) {
+            $state = Get-AtlasoRollbackDataDiskState `
+                -DiskPath $diskPath `
+                -OutputDirectory $resolvedOutputDirectory
+            if ($null -ne $state) {
+                $state
+            }
+        }
+    )
+}
+
 $createdThisInvocation = $false
 if ($PSCmdlet.ShouldProcess($targetVmx, "Create Atlaso Workstation test VM from $resolvedSourceVmx")) {
     & (Join-Path $PSScriptRoot 'create-atlaso-vm.ps1') `
@@ -715,15 +904,53 @@ if (-not $WhatIfPreference) {
     catch {
         $failure = $_
         if ($createdThisInvocation -and (Test-Path -LiteralPath $targetVmx -PathType Leaf)) {
+            $rollbackErrors = [System.Collections.Generic.List[string]]::new()
+            $quarantineDirectory = ''
             try {
+                $rollbackVmrunPath = Resolve-TestVmVmrunPath -Path $VmrunPath
+                Stop-AtlasoTestVmForRollback `
+                    -VmxPath $targetVmx `
+                    -VmrunPath $rollbackVmrunPath
+                # Scrub the host-side assignment before preservation or cleanup;
+                # rollback failure must never strand the shared signer in a VMX.
+                Clear-AtlasoWorkstationDevelopmentRootCaPrivateKey -VmxPath $targetVmx
+                if ($rollbackDataDiskStates.Count -gt 0) {
+                    $quarantineDirectory = Join-Path `
+                        (Split-Path -Parent $resolvedOutputDirectory) `
+                        ".atlaso-test-vm-rollback-$([guid]::NewGuid().ToString('N'))"
+                    Move-AtlasoRollbackDataDisksToQuarantine `
+                        -DataDiskStates $rollbackDataDiskStates `
+                        -QuarantineDirectory $quarantineDirectory
+                }
                 & (Join-Path $PSScriptRoot 'remove-atlaso-vm.ps1') `
                     -VmxPath $targetVmx `
-                    -VmrunPath $VmrunPath `
+                    -VmrunPath $rollbackVmrunPath `
                     -ExpectedName $Name `
                     -Confirm:$false
             }
             catch {
-                throw "$($failure.Exception.Message) Automatic rollback also failed; stop the VM and remove only $targetVmx after verifying ownership. Rollback error: $($_.Exception.Message)"
+                $rollbackErrors.Add($_.Exception.Message)
+            }
+            finally {
+                if ($quarantineDirectory) {
+                    try {
+                        Restore-AtlasoRollbackDataDisksFromQuarantine `
+                            -DataDiskStates $rollbackDataDiskStates `
+                            -QuarantineDirectory $quarantineDirectory
+                    }
+                    catch {
+                        $rollbackErrors.Add($_.Exception.Message)
+                    }
+                }
+            }
+            if ($rollbackErrors.Count -gt 0) {
+                $quarantineHint = if ($quarantineDirectory) {
+                    " Preserved data may remain at $quarantineDirectory."
+                }
+                else {
+                    ''
+                }
+                throw "$($failure.Exception.Message) Automatic rollback also failed; keep the VM powered off and inspect only $targetVmx after verifying ownership.$quarantineHint Rollback error: $($rollbackErrors -join ' | ')"
             }
         }
         throw $failure

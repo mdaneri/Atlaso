@@ -11,6 +11,9 @@ param(
 )
 
 $ErrorActionPreference = 'Stop'
+Import-Module (
+    Join-Path $RepositoryRoot 'scripts\windows\vmware\Atlaso.WorkstationCleanup.psm1'
+) -Force
 
 <#
 .SYNOPSIS
@@ -147,6 +150,52 @@ if ($wrapperSource -notmatch "certutil\.exe -f -user -addstore Root" -or
 if ($wrapperSource -notmatch "Wait-AtlasoWorkstationDevelopmentRootCaPrivateKeyScrub" -or
     $wrapperSource -notmatch "Automatic rollback also failed") {
     throw 'Unproven signing-key scrub must stop and safely roll back the new VM.'
+}
+foreach ($rollbackMarker in @(
+        'Clear-AtlasoWorkstationDevelopmentRootCaPrivateKey',
+        'Move-AtlasoRollbackDataDisksToQuarantine',
+        "'remove-atlaso-vm.ps1'"
+    )) {
+    if ($wrapperSource.IndexOf($rollbackMarker, [System.StringComparison]::Ordinal) -lt 0) {
+        throw "Normal test VM rollback is missing required safety step: $rollbackMarker"
+    }
+}
+
+$rollbackTestRoot = Join-Path ([System.IO.Path]::GetTempPath()) (
+    "atlaso-rollback-test-$([guid]::NewGuid().ToString('N'))"
+)
+try {
+    $outputDirectory = Join-Path $rollbackTestRoot 'vm'
+    $dataDiskPath = Join-Path $outputDirectory 'Atlaso-Depot.vmdk'
+    $quarantineDirectory = Join-Path $rollbackTestRoot 'quarantine'
+    New-Item -ItemType Directory -Path $outputDirectory | Out-Null
+    [System.IO.File]::WriteAllText(
+        $dataDiskPath,
+        'pre-existing-data',
+        [System.Text.UTF8Encoding]::new($false)
+    )
+    $state = Get-AtlasoRollbackDataDiskState `
+        -DiskPath $dataDiskPath `
+        -OutputDirectory $outputDirectory
+    Move-AtlasoRollbackDataDisksToQuarantine `
+        -DataDiskStates @($state) `
+        -QuarantineDirectory $quarantineDirectory
+    if (Test-Path -LiteralPath $dataDiskPath) {
+        throw 'Rollback quarantine did not move the pre-existing in-directory data disk.'
+    }
+    Remove-Item -LiteralPath $outputDirectory -Recurse -Force
+    Restore-AtlasoRollbackDataDisksFromQuarantine `
+        -DataDiskStates @($state) `
+        -QuarantineDirectory $quarantineDirectory
+    if (
+        -not (Test-Path -LiteralPath $dataDiskPath -PathType Leaf) -or
+        [System.IO.File]::ReadAllText($dataDiskPath) -ne 'pre-existing-data'
+    ) {
+        throw 'Rollback did not restore the exact pre-existing in-directory data disk.'
+    }
+}
+finally {
+    Remove-Item -LiteralPath $rollbackTestRoot -Recurse -Force -ErrorAction SilentlyContinue
 }
 
 $childSource = Get-Content -LiteralPath (

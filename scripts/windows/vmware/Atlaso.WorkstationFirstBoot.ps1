@@ -542,6 +542,26 @@ function Set-AtlasoWorkstationDevelopmentRootCaPrivateKey {
 
 <#
 .SYNOPSIS
+Remove the development root private-key assignment from a powered-off VMX.
+
+.PARAMETER VmxPath
+Exact failed normal-test-VM VMX whose signer assignment must be scrubbed.
+#>
+function Clear-AtlasoWorkstationDevelopmentRootCaPrivateKey {
+    param(
+        [Parameter(Mandatory = $true)][string]$VmxPath
+    )
+
+    $pattern = '^\s*guestinfo\.atlaso\.test_vm_development_root_ca_private_key\s*='
+    $content = @(Get-Content -LiteralPath $VmxPath | Where-Object { $_ -notmatch $pattern })
+    [System.IO.File]::WriteAllLines($VmxPath, [string[]]$content, [System.Text.UTF8Encoding]::new($false))
+    if (Select-String -LiteralPath $VmxPath -Pattern $pattern -Quiet) {
+        throw 'The powered-off normal test VM still contains the development signing-key assignment.'
+    }
+}
+
+<#
+.SYNOPSIS
 Wait until the guest proves the development signing key was scrubbed.
 
 .PARAMETER VmxPath

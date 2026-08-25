@@ -185,6 +185,10 @@ try {
         if ($vmx.Contains('BEGIN PRIVATE KEY')) {
             throw 'The signing key guest-info field must use bounded base64.'
         }
+        Clear-AtlasoWorkstationDevelopmentRootCaPrivateKey -VmxPath $vmxPath
+        if ([System.IO.File]::ReadAllText($vmxPath) -match 'guestinfo\.atlaso\.test_vm_development_root_ca_private_key') {
+            throw 'Powered-off rollback must remove the development signer assignment from the VMX.'
+        }
     }
     finally {
         if ($certificate) {
