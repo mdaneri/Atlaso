@@ -71,7 +71,11 @@ def test_api_allows_nat_on_access_interface(client):
 
 
 def test_api_default_route_contract_and_canonical_readback(client):
-    """Preserve /0 API compatibility while enforcing default-route invariants."""
+    """Preserve /0 API compatibility while enforcing default-route invariants.
+
+    Args:
+        client: HTTP test client used to exercise the Atlaso application.
+    """
     token, _metadata = create_token(client, scopes=["read:routes", "write:routes"])
     headers = {"Authorization": f"Bearer {token}"}
     base = {

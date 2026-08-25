@@ -74,7 +74,11 @@ def test_routes_wan_policy_form_renders(client):
 
 
 def test_routes_wan_default_route_add_edit_validation_and_semantic_readback(client):
-    """Exercise the explicit default path and its server-owned invariants."""
+    """Exercise the explicit default path and its server-owned invariants.
+
+    Args:
+        client: HTTP test client used to exercise the Atlaso application.
+    """
     from sqlalchemy import select
 
     from atlaso.app.database import SessionLocal

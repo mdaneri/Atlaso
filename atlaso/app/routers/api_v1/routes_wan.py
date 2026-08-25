@@ -137,6 +137,7 @@ def build_router(dependencies: RoutesWanApiDependencies) -> RoutesWanApiRouter:
         Args:
             payload: Validated request or operation payload.
             db: Active database session.
+            exclude_route_id: Existing route identifier to ignore during edits.
 
         Raises:
             HTTPException: If the request cannot be fulfilled.

@@ -144,7 +144,11 @@ def build_router(dependencies: RoutesWanUiDependencies) -> RoutesWanUiRouter:
 
 
     def form_value_is_enabled(value: str | None) -> bool:
-        """Return whether a checkbox-like form value represents enabled state."""
+        """Return whether a checkbox-like form value represents enabled state.
+
+        Args:
+            value: Checkbox-like form value to interpret.
+        """
         return bool(value and value.strip().casefold() in {"1", "on", "true", "yes"})
 
 
@@ -198,6 +202,9 @@ def build_router(dependencies: RoutesWanUiDependencies) -> RoutesWanUiRouter:
             wan_policy_id: Identifier of the wan policy.
             wan_mode: Wan mode supplied by the caller.
             db: Active database session.
+            default_route: Whether the explicit default-route path is selected.
+            default_route_family: IP family selected for an explicit default route.
+            exclude_route_id: Existing route identifier to ignore during edits.
 
         Returns:
             The validate route form values result.
@@ -422,6 +429,8 @@ def build_router(dependencies: RoutesWanUiDependencies) -> RoutesWanUiRouter:
             metric: Metric supplied by the caller.
             wan_policy_id: Identifier of the wan policy.
             wan_mode: Wan mode supplied by the caller.
+            default_route: Whether the explicit default-route path is selected.
+            default_route_family: IP family selected for an explicit default route.
             enabled: Whether the requested behavior is enabled.
             csrf: Validated CSRF token authorizing the request.
             identity: Authenticated identity authorizing the request.
@@ -490,6 +499,8 @@ def build_router(dependencies: RoutesWanUiDependencies) -> RoutesWanUiRouter:
             metric: Metric supplied by the caller.
             wan_policy_id: Identifier of the wan policy.
             wan_mode: Wan mode supplied by the caller.
+            default_route: Whether the explicit default-route path is selected.
+            default_route_family: IP family selected for an explicit default route.
             enabled: Whether the requested behavior is enabled.
             csrf: Validated CSRF token authorizing the request.
             identity: Authenticated identity authorizing the request.

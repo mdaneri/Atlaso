@@ -19,12 +19,20 @@ DEFAULT_ROUTE_DESTINATIONS = {4: "0.0.0.0/0", 6: "::/0"}
 
 
 def canonical_route_destination(value: str) -> str:
-    """Return the canonical representation of a route destination CIDR."""
+    """Return the canonical representation of a route destination CIDR.
+
+    Args:
+        value: Route destination CIDR to canonicalize.
+    """
     return str(ip_network(value.strip(), strict=False))
 
 
 def default_route_family(value: str) -> int | None:
-    """Return the IP family when a destination represents a default route."""
+    """Return the IP family when a destination represents a default route.
+
+    Args:
+        value: Route destination CIDR to inspect.
+    """
     try:
         network = ip_network(value.strip(), strict=False)
     except ValueError:
@@ -33,7 +41,13 @@ def default_route_family(value: str) -> int | None:
 
 
 def has_default_route_conflict(routes: list[Route], family: int, exclude_route_id: int | None = None) -> bool:
-    """Return whether another saved route already defines the family default."""
+    """Return whether another saved route already defines the family default.
+
+    Args:
+        routes: Saved routes to inspect.
+        family: IP family whose default must be unique.
+        exclude_route_id: Existing route identifier to ignore during edits.
+    """
     return any(
         route.id != exclude_route_id and default_route_family(route.destination_cidr) == family
         for route in routes
