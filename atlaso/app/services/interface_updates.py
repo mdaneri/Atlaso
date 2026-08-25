@@ -152,9 +152,9 @@ def _migrate_management_gateways_to_default_routes(
     interface_name: str,
     old_role: str,
     new_role: str,
-    old_ipv4_cidr: str | None,
+    new_ipv4_cidr: str | None,
     old_ipv4_gateway: str | None,
-    old_ipv6_cidr: str | None,
+    new_ipv6_cidr: str | None,
     old_ipv6_gateway: str | None,
 ) -> tuple[list[str], list[str]]:
     """Preserve management routing intent during a management-to-access conversion.
@@ -164,9 +164,9 @@ def _migrate_management_gateways_to_default_routes(
         interface_name: Converted physical-interface name.
         old_role: Canonical role before the mutation.
         new_role: Canonical role after the mutation.
-        old_ipv4_cidr: Previous management IPv4 CIDR.
+        new_ipv4_cidr: Converted access IPv4 CIDR.
         old_ipv4_gateway: Previous management IPv4 gateway.
-        old_ipv6_cidr: Previous management IPv6 CIDR.
+        new_ipv6_cidr: Converted access IPv6 CIDR.
         old_ipv6_gateway: Previous management IPv6 gateway.
 
     Returns:
@@ -179,8 +179,8 @@ def _migrate_management_gateways_to_default_routes(
     actions: list[str] = []
     warnings: list[str] = []
     for family, cidr, raw_gateway in (
-        (4, old_ipv4_cidr, old_ipv4_gateway),
-        (6, old_ipv6_cidr, old_ipv6_gateway),
+        (4, new_ipv4_cidr, old_ipv4_gateway),
+        (6, new_ipv6_cidr, old_ipv6_gateway),
     ):
         gateway = str(raw_gateway or "").strip()
         if not gateway:
@@ -1466,9 +1466,9 @@ def update_physical_interface_desired_state(
             interface_name=interface.name,
             old_role=old_role,
             new_role=role_value,
-            old_ipv4_cidr=old_ip_cidr,
+            new_ipv4_cidr=interface.ip_cidr,
             old_ipv4_gateway=old_ipv4_gateway,
-            old_ipv6_cidr=old_ipv6_cidr,
+            new_ipv6_cidr=interface.ipv6_cidr,
             old_ipv6_gateway=old_ipv6_gateway,
         )
         if had_management_candidate and not desired_management_candidate_exists(db):

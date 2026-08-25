@@ -482,7 +482,7 @@ def _nft_source_expr(source: str) -> str:
     return f"ip saddr {{ {', '.join(values)} }} "
 
 
-def _mirrored_management_default_keys(config_preview: str) -> set[tuple[str, str]]:
+def mirrored_management_default_keys(config_preview: str) -> set[tuple[str, str]]:
     """Return enabled defaults mirrored for flagged management listeners.
 
     Args:
@@ -562,7 +562,7 @@ def render_wan_config(
     targets = targets or []
     routing_rules = routing_rules or []
     policy_lookup = _policy_by_id(policies)
-    previously_mirrored_defaults = _mirrored_management_default_keys(
+    previously_mirrored_defaults = mirrored_management_default_keys(
         previous_config_preview
     )
     lines = [

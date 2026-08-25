@@ -122,6 +122,35 @@ def test_flagged_management_default_cleanup_uses_last_applied_mirroring():
     ) in removed
 
 
+def test_admin_down_access_interface_is_not_a_management_mirror_target(client):
+    """Do not mirror a host default through an inactive physical listener."""
+    from sqlalchemy import select
+
+    from atlaso.app.database import SessionLocal
+    from atlaso.app.models import PhysicalInterface
+    from atlaso.app.ui import wan_routing_targets
+
+    with SessionLocal() as db:
+        interface = db.scalar(
+            select(PhysicalInterface).where(PhysicalInterface.name == "eth2")
+        )
+        assert interface is not None
+        interface.role = "access"
+        interface.mode = "access"
+        interface.admin_state = "down"
+        interface.oper_state = "down"
+        interface.ipv4_method = "static"
+        interface.ip_cidr = "192.0.2.10/24"
+        interface.access_management_ui_enabled = True
+        db.commit()
+
+        target = next(
+            item for item in wan_routing_targets(db) if item["name"] == "eth2"
+        )
+
+    assert target["management_ui"] is False
+
+
 def test_removed_route_detection_compares_canonical_destinations():
     """Keep equivalent legacy baseline destinations during global Apply."""
     from atlaso.app.ui import removed_wan_route_entries

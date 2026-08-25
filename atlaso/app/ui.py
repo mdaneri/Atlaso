@@ -498,6 +498,7 @@ from atlaso.app.services.routes_wan import (
     canonical_route_destination,
     default_route_family,
     generated_route_role_rules,
+    mirrored_management_default_keys,
     nat_rule_to_dict,
     render_wan_config,
     route_to_dict,
@@ -5318,7 +5319,10 @@ def wan_routing_targets(db: Session) -> list[dict[str, str]]:
                 "routing_domain": routing_domain,
                 "route_allowed": routing_domain == "lab",
                 "management_ui": bool(
-                    role == "access" and interface.access_management_ui_enabled
+                    role == "access"
+                    and mode == "access"
+                    and str(interface.admin_state or "").lower() == "up"
+                    and interface.access_management_ui_enabled
                 ),
                 "label": f"{interface.name} - physical / {role} / {address_label}",
             }
@@ -10516,6 +10520,12 @@ def appliance_apply_units(db: Session, *, reconcile: bool = True) -> list[dict[s
         wan_baseline,
     )
     network_unit["management_gateway_route_migrations"] = gateway_route_migrations
+    network_unit["management_default_mirror_change"] = bool(
+        mirrored_management_default_keys(wan["wan_config_preview"])
+        != mirrored_management_default_keys(
+            str((wan_baseline or {}).get("config_preview") or "")
+        )
+    )
 
     units = [
         make_appliance_apply_unit(
@@ -13324,7 +13334,10 @@ def execute_management_handoff(
     firewall = units_by_id["firewall"]
     public_services = units_by_id["public_services"]
     ca = units_by_id["ca"]
-    wan_required = bool(network.get("management_gateway_route_migrations"))
+    wan_required = bool(
+        network.get("management_gateway_route_migrations")
+        or network.get("management_default_mirror_change")
+    )
     wan = units_by_id["wan"] if wan_required else None
     handoff_unit_ids = (
         *MANAGEMENT_HANDOFF_UNIT_IDS,
@@ -15700,7 +15713,10 @@ def _submit_appliance_apply(
             unit_id for unit_id in MANAGEMENT_HANDOFF_UNIT_IDS if unit_id in unit_map
         )
         if (
-            unit_map.get("network", {}).get("management_gateway_route_migrations")
+            (
+                unit_map.get("network", {}).get("management_gateway_route_migrations")
+                or unit_map.get("network", {}).get("management_default_mirror_change")
+            )
             and "wan" in unit_map
         ):
             selected_ids.add("wan")

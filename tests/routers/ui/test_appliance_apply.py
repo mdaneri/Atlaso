@@ -1173,6 +1173,81 @@ def test_management_move_forces_partial_dependency_selection_into_handoff(client
         )
 
 
+@pytest.mark.parametrize("listener_change", ["unflag", "admin_down"])
+def test_mirror_changing_listener_edit_forces_wan_into_handoff(
+    client,
+    listener_change,
+):
+    """Execute host-default cleanup in every protected listener handoff."""
+    from sqlalchemy import select
+
+    from atlaso.app.database import SessionLocal
+    from atlaso.app.models import Job, PhysicalInterface, Route
+    from atlaso.app.ui import appliance_apply_units, update_appliance_apply_baselines
+
+    login(client)
+    with SessionLocal() as db:
+        db.query(Route).delete()
+        interface = db.scalar(
+            select(PhysicalInterface).where(PhysicalInterface.name == "eth2")
+        )
+        assert interface is not None
+        interface.role = "access"
+        interface.mode = "access"
+        interface.admin_state = "up"
+        interface.oper_state = "up"
+        interface.ipv4_method = "static"
+        interface.ip_cidr = "192.168.50.10/24"
+        interface.access_management_ui_enabled = True
+        db.add(
+            Route(
+                destination_cidr="0.0.0.0/0",
+                gateway="192.168.50.1",
+                interface_name="eth2",
+                enabled=True,
+            )
+        )
+        db.commit()
+        units = appliance_apply_units(db)
+        update_appliance_apply_baselines(db, units, {unit["id"] for unit in units})
+        if listener_change == "unflag":
+            interface.access_management_ui_enabled = False
+        else:
+            interface.admin_state = "down"
+        db.commit()
+        invalid = {
+            unit["id"]: unit["validation_errors"]
+            for unit in appliance_apply_units(db)
+            if unit["validation_errors"]
+        }
+        assert invalid == {}
+
+    page = client.get("/dashboard")
+    csrf = page.text.split('name="csrf" value="', 1)[1].split('"', 1)[0]
+    response = client.post(
+        "/appliance-apply",
+        data={"csrf": csrf, "selected_units": "network"},
+        headers={"Accept": "application/json"},
+    )
+
+    assert response.status_code == 202, response.text
+    with SessionLocal() as db:
+        job = db.get(Job, response.json()["job_id"])
+        assert job is not None
+        payload = json.loads(job.result or "{}")
+    assert payload["management_handoff"] is True
+    assert set(payload["management_handoff_units"]) == {
+        "ca",
+        "network",
+        "firewall",
+        "appliance_settings",
+        "public_services",
+        "wan",
+    }
+    assert "wan" in payload["selected_units"]
+    assert any(unit["unit_id"] == "wan" for unit in payload["units"])
+
+
 def test_management_move_rechecks_handoff_after_ldap_dependency_expansion(client, monkeypatch):
     """Protect a Firewall unit added indirectly by the LDAP dependency closure.
 

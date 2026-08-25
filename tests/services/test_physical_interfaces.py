@@ -173,6 +173,35 @@ def test_management_to_access_conflicting_default_rolls_back_every_row(client):
         )
 
 
+def test_management_to_access_rejects_gateway_off_link_for_converted_cidr(client):
+    """Validate the preserved gateway against the access CIDR in the same edit."""
+    with SessionLocal() as db:
+        db.query(Route).delete()
+        interface = _static_management_interface(db)
+        db.commit()
+
+        with pytest.raises(
+            PhysicalInterfaceUpdateError,
+            match="not on-link for the selected target",
+        ):
+            mutate_physical_interface_desired_state(
+                db,
+                interface,
+                PhysicalInterfaceMutation(
+                    role="access",
+                    ip_cidr="198.51.100.10/24",
+                ),
+                audit=_mutation_audit("test_management_gateway_new_cidr"),
+            )
+
+    with SessionLocal() as db:
+        restored = _physical_interface(db)
+        assert restored.role == "management"
+        assert restored.ip_cidr == "192.0.2.10/24"
+        assert restored.gateway == "192.0.2.1"
+        assert db.execute(select(Route)).scalars().all() == []
+
+
 def test_management_to_access_missing_gateways_does_not_invent_routes(client):
     """Record the no-gateway outcome while preserving management-listener continuity."""
     with SessionLocal() as db:
