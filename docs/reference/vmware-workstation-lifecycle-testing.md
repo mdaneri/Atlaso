@@ -17,7 +17,7 @@ For a wheel-only deployment to the canonical test VM, use `scripts/windows/vmwar
 Windows 1Password handoff documented in the [full technical reference](full-technical-reference.md). Authenticate the
 local integration, verify the unique `Atlaso` Environment and concealed `DEFAULT_ADMIN_PASSWORD` variable by name,
 then pass its opaque Environment ID through `-OnePasswordEnvironmentId` and the approved account name or ID through
-`-OnePasswordAccount`. Pass a separate CPython 3.9 through 3.13 executable through `-OnePasswordPython`, because the
+`-OnePasswordAccount`. Pass a separate CPython 3.10 through 3.13 executable through `-OnePasswordPython`, because the
 supported Windows SDK wheel does not use Atlaso's Python 3.14 application-build runtime. The handoff uses the supported
 1Password Python SDK desktop integration and retrieves the value
 only inside the bounded Paramiko deployment child, preserves

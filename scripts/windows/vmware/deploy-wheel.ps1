@@ -38,7 +38,7 @@ Opaque ID of the preverified Atlaso 1Password Environment.
 .PARAMETER OnePasswordAccount
 1Password account name or ID approved for desktop SDK authorization.
 .PARAMETER OnePasswordPython
-CPython 3.9 through 3.13 executable used by the supported 1Password SDK Windows wheel.
+CPython 3.10 through 3.13 executable used by the supported 1Password SDK Windows wheel and locked dependencies.
 .PARAMETER ResetVaultEntries
 Clears appliance vault entries during deployment.
 .PARAMETER SkipHostCheck
@@ -105,7 +105,7 @@ function Assert-OnePasswordAccount {
 .SYNOPSIS
 Resolves a Python runtime supported by the 1Password SDK Windows wheel.
 .PARAMETER PythonCommand
-Explicit CPython 3.9 through 3.13 executable or command.
+Explicit CPython 3.10 through 3.13 executable or command.
 #>
 function Resolve-OnePasswordPython {
     param([Parameter(Mandatory = $true)][string]$PythonCommand)
@@ -116,8 +116,8 @@ function Resolve-OnePasswordPython {
     }
     $resolvedCommand = $command.Source
     $version = & $resolvedCommand -c 'import sys; print(f"{sys.version_info.major}.{sys.version_info.minor}")'
-    if ($LASTEXITCODE -ne 0 -or $version -notmatch '^3\.(9|1[0-3])$') {
-        throw 'Password-backed deployment requires a separate CPython 3.9 through 3.13 runtime supported by the 1Password SDK Windows wheel.'
+    if ($LASTEXITCODE -ne 0 -or $version -notmatch '^3\.1[0-3]$') {
+        throw 'Password-backed deployment requires a separate CPython 3.10 through 3.13 runtime supported by the locked 1Password SDK Windows dependencies.'
     }
     return $resolvedCommand
 }

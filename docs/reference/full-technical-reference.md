@@ -1454,7 +1454,7 @@ using the password-backed path, authenticate the local 1Password integration, ve
 opaque Environment ID from that exact Environment and pass it with the account name or ID used by the desktop app.
 The parent performs local build and input preparation without the credential, then invokes one isolated Python child.
 Because the 1Password SDK publishes Windows wheels through CPython 3.13 while Atlaso builds with Python 3.14, pass an
-explicit CPython 3.9 through 3.13 executable with `-OnePasswordPython`; the script validates that boundary before any
+explicit CPython 3.10 through 3.13 executable with `-OnePasswordPython`; the script validates that boundary before any
 build or deployment work.
 The supported 1Password SDK prompts for desktop authorization and returns the exact concealed variable only inside that
 child, which uses it directly for Paramiko without putting it in an environment variable. Python starts with `-I -S`

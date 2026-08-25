@@ -749,7 +749,7 @@ Terminal order:
   because PowerShell will try to execute it. For password-backed Windows deployment, authenticate the local 1Password
   integration, verify exactly one `Atlaso` Environment and the concealed `DEFAULT_ADMIN_PASSWORD` variable by name,
   then pass its opaque ID with `-OnePasswordEnvironmentId` and the approved account name or ID with
-  `-OnePasswordAccount`; pass an explicit CPython 3.9 through 3.13 executable with `-OnePasswordPython` rather than
+  `-OnePasswordAccount`; pass an explicit CPython 3.10 through 3.13 executable with `-OnePasswordPython` rather than
   source-building the unsupported Python 3.14 combination. The script must use the supported 1Password SDK desktop
   integration, stage the SDK, Paramiko,
   and their transitive dependencies from the generated seven-day hash-verified deployment lock, install only from that
