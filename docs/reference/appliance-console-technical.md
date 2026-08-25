@@ -163,7 +163,8 @@ starts an inactive control plane, and requires five consecutive local readiness 
 mode requires HTTP `/openapi.json` 200. Appliance Settings is then applied as the second task and the same idempotent
 readiness check runs again. Ordinary Appliance Settings proves the existing loopback upstream before nginx publication,
 does not restart the active Atlaso worker, and rolls back the candidate front-door files when post-activation readiness
-does not stabilize.
+does not stabilize. It syncs root-only snapshots and a recovery marker before publication, clears the marker only after
+readiness succeeds, and restores an interrupted candidate through the Atlaso pre-start gate before serving requests.
 
 The console rejects changes while another appliance-apply task is active. The selected helper path runs as a real local
 recovery action even when ordinary adapters use dry-run. Validation, bootstrap, nginx, service, and readiness failures

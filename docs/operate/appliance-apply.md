@@ -121,7 +121,9 @@ An ordinary real Appliance Settings component keeps the management front door on
 requires consecutive success from the configured loopback `/openapi.json`; after reload it requires the same upstream
 and the guest-local management address/public-port front door to remain healthy. The active Atlaso worker is not
 restarted. If activation or readiness fails, the helper restores the exact prior nginx and systemd files, reloads the
-restored front door, and fails the component instead of exposing a continuing 502 response.
+restored front door, and fails the component instead of exposing a continuing 502 response. Those snapshots and their
+marker are synced before publication; an interrupted activation is rolled back by the Atlaso service pre-start gate
+before the application can serve again. The marker is removed only after post-activation readiness succeeds.
 
 The dialog still understands the bounded **Applying management settings; Atlaso is reconnecting to task status.** state
 when following a retained task created by an older release that contains authenticated restart metadata. Current

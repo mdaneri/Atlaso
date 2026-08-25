@@ -81,6 +81,7 @@ COMMANDS: dict[str, set[str]] = {
     "appliance-settings": {"validate", "preflight", "apply"},
     "web-terminal": {"status", "sign"},
     "network": {"validate", "apply", "dhcp-dns"},
+    "management-front-door": {"recover"},
     "management-handoff": {"validate", "apply", "acknowledge", "recover"},
     "firewall": {"validate", "apply"},
     "dnsmasq": {"validate", "apply", "reload", "leases", "logs"},
@@ -182,6 +183,7 @@ NO_PATH_ACTIONS = {
     ("console", "recover-management-plane"),
     ("console", "restore-services"),
     ("console", "status"),
+    ("management-front-door", "recover"),
     ("management-handoff", "recover"),
     ("vcf-offline-depot", "generate-software-depot-id"),
     ("vcf-offline-depot", "read-software-depot-id"),
@@ -361,6 +363,9 @@ NTP_NTS_COOKIE_PATH = NTP_STATE_DIR / "nts-keys"
 NTP_CERT_DIR = Path("/etc/atlaso/ntp/certs")
 NETWORK_APPLY_DIR = Path("/var/lib/atlaso/apply/network")
 MANAGEMENT_HANDOFF_APPLY_DIR = Path("/var/lib/atlaso/apply/management-handoff")
+MANAGEMENT_FRONT_DOOR_STATE_DIR = ATLASO_STATE_DIR / "management-front-door"
+MANAGEMENT_FRONT_DOOR_STATE_PATH = MANAGEMENT_FRONT_DOOR_STATE_DIR / "state.json"
+MANAGEMENT_FRONT_DOOR_BACKUP_DIR = MANAGEMENT_FRONT_DOOR_STATE_DIR / "backup"
 MANAGEMENT_HANDOFF_STATE_DIR = ATLASO_STATE_DIR / "management-handoff"
 MANAGEMENT_HANDOFF_STATE_PATH = MANAGEMENT_HANDOFF_STATE_DIR / "state.json"
 MANAGEMENT_HANDOFF_BACKUP_DIR = MANAGEMENT_HANDOFF_STATE_DIR / "backup"
@@ -5915,7 +5920,20 @@ def _configure_atlaso_management_https(
         NGINX_MAIN_CONFIG_PATH,
         ATLASO_SERVICE_HTTPS_DROPIN_PATH,
     )
+    if verify_front_door:
+        if _recover_management_front_door(quiet=True) != 0:
+            print("management front-door recovery is incomplete", file=sys.stderr)
+            return 1, None
     previous_files = {path: _runtime_file_snapshot(path) for path in tracked_paths}
+    if verify_front_door:
+        try:
+            _persist_management_front_door_state(tracked_paths)
+        except (OSError, shutil.Error) as exc:
+            print(
+                f"management front-door snapshot persistence failed: {type(exc).__name__}",
+                file=sys.stderr,
+            )
+            return 1, None
     next_text = _atlaso_service_loopback_dropin(upstream_host, port)
     ATLASO_SERVICE_DROPIN_DIR.mkdir(parents=True, exist_ok=True)
     current_text = ATLASO_SERVICE_HTTPS_DROPIN_PATH.read_text(encoding="utf-8") if ATLASO_SERVICE_HTTPS_DROPIN_PATH.exists() else ""
@@ -5930,7 +5948,11 @@ def _configure_atlaso_management_https(
         try:
             daemon_reload = _run(["systemctl", "daemon-reload"])
         except (OSError, subprocess.SubprocessError) as exc:
-            rollback_errors = _restore_management_front_door_files(previous_files)
+            rollback_errors = (
+                _rollback_management_front_door(previous_files)
+                if verify_front_door
+                else _restore_management_front_door_files(previous_files)
+            )
             detail = f"management systemd daemon-reload raised {type(exc).__name__}"
             if rollback_errors:
                 detail += "; rollback failed: " + ", ".join(rollback_errors)
@@ -5939,7 +5961,11 @@ def _configure_atlaso_management_https(
         print(daemon_reload.stdout, end="")
         print(daemon_reload.stderr, end="", file=sys.stderr)
         if daemon_reload.returncode != 0:
-            rollback_errors = _restore_management_front_door_files(previous_files)
+            rollback_errors = (
+                _rollback_management_front_door(previous_files)
+                if verify_front_door
+                else _restore_management_front_door_files(previous_files)
+            )
             if rollback_errors:
                 print(
                     "management front-door rollback failed after systemd reload error: "
@@ -5951,14 +5977,22 @@ def _configure_atlaso_management_https(
     try:
         site_apply = _install_nginx_site(NGINX_MANAGEMENT_SITE_PATH, site_text)
     except (OSError, subprocess.SubprocessError) as exc:
-        rollback_errors = _restore_management_front_door_files(previous_files)
+        rollback_errors = (
+            _rollback_management_front_door(previous_files)
+            if verify_front_door
+            else _restore_management_front_door_files(previous_files)
+        )
         detail = f"management nginx activation raised {type(exc).__name__}"
         if rollback_errors:
             detail += "; rollback failed: " + ", ".join(rollback_errors)
         print(detail, file=sys.stderr)
         return 1, None
     if site_apply != 0:
-        rollback_errors = _restore_management_front_door_files(previous_files)
+        rollback_errors = (
+            _rollback_management_front_door(previous_files)
+            if verify_front_door
+            else _restore_management_front_door_files(previous_files)
+        )
         if rollback_errors:
             print(
                 "management front-door rollback failed after nginx activation error: "
@@ -5984,8 +6018,23 @@ def _configure_atlaso_management_https(
                 upstream_port=port,
             )
         except (KeyError, OSError, ValueError, subprocess.SubprocessError) as exc:
-            rollback_errors = _restore_management_front_door_files(previous_files)
+            rollback_errors = (
+                _rollback_management_front_door(previous_files)
+                if verify_front_door
+                else _restore_management_front_door_files(previous_files)
+            )
             detail = f"management front-door readiness failed: {exc}"
+            if rollback_errors:
+                detail += "; rollback failed: " + ", ".join(rollback_errors)
+            print(detail, file=sys.stderr)
+            return 1, None
+
+    if verify_front_door:
+        try:
+            _clear_management_front_door_state()
+        except OSError as exc:
+            rollback_errors = _rollback_management_front_door(previous_files)
+            detail = f"management front-door commit persistence failed: {type(exc).__name__}"
             if rollback_errors:
                 detail += "; rollback failed: " + ", ".join(rollback_errors)
             print(detail, file=sys.stderr)
@@ -6066,6 +6115,154 @@ def _restore_management_front_door_files(
                 if reload_status != 0:
                     failures.append("nginx reload")
     return failures
+
+
+def _persist_management_front_door_state(paths: tuple[Path, ...]) -> None:
+    """Persist ordinary front-door rollback files before runtime mutation.
+
+    Args:
+        paths: Exact nginx and Atlaso service files owned by the transaction.
+    """
+    MANAGEMENT_FRONT_DOOR_STATE_DIR.mkdir(parents=True, exist_ok=True)
+    os.chmod(MANAGEMENT_FRONT_DOOR_STATE_DIR, 0o700)
+    _fsync_directory(MANAGEMENT_FRONT_DOOR_STATE_DIR.parent)
+    MANAGEMENT_FRONT_DOOR_BACKUP_DIR.mkdir(parents=True, exist_ok=True)
+    os.chmod(MANAGEMENT_FRONT_DOOR_BACKUP_DIR, 0o700)
+    _fsync_directory(MANAGEMENT_FRONT_DOOR_STATE_DIR)
+    snapshots: list[dict[str, object]] = []
+    for index, path in enumerate(paths):
+        item: dict[str, object] = {"path": str(path), "existed": path.exists()}
+        if path.exists():
+            metadata = path.stat()
+            backup = MANAGEMENT_FRONT_DOOR_BACKUP_DIR / f"{index:02d}.backup"
+            shutil.copy2(path, backup)
+            os.chmod(backup, 0o600)
+            _fsync_file(backup)
+            item.update(
+                {
+                    "backup": str(backup),
+                    "mode": stat.S_IMODE(metadata.st_mode),
+                    "uid": metadata.st_uid,
+                    "gid": metadata.st_gid,
+                }
+            )
+        snapshots.append(item)
+    _fsync_directory(MANAGEMENT_FRONT_DOOR_BACKUP_DIR)
+    _durable_management_handoff_state_write(
+        {"schema": 1, "phase": "prepared", "snapshots": snapshots},
+        MANAGEMENT_FRONT_DOOR_STATE_PATH,
+    )
+
+
+def _clear_management_front_door_state() -> None:
+    """Durably commit the ordinary front door and discard its backups."""
+    state_dir_exists = MANAGEMENT_FRONT_DOOR_STATE_DIR.is_dir()
+    MANAGEMENT_FRONT_DOOR_STATE_PATH.unlink(missing_ok=True)
+    if state_dir_exists:
+        _fsync_directory(MANAGEMENT_FRONT_DOOR_STATE_DIR)
+    if MANAGEMENT_FRONT_DOOR_BACKUP_DIR.is_dir():
+        shutil.rmtree(MANAGEMENT_FRONT_DOOR_BACKUP_DIR)
+        _fsync_directory(MANAGEMENT_FRONT_DOOR_STATE_DIR)
+    removed = False
+    try:
+        MANAGEMENT_FRONT_DOOR_STATE_DIR.rmdir()
+        removed = True
+    except OSError:
+        pass
+    if removed:
+        _fsync_directory(MANAGEMENT_FRONT_DOOR_STATE_DIR.parent)
+
+
+def _rollback_management_front_door(
+    snapshots: dict[Path, tuple[bytes | None, int | None]],
+) -> list[str]:
+    """Restore in-memory snapshots and retire durable state only on success.
+
+    Args:
+        snapshots: Runtime paths mapped to pre-activation bytes and modes.
+
+    Returns:
+        Bounded names of rollback layers that did not complete.
+    """
+    failures = _restore_management_front_door_files(snapshots)
+    if failures:
+        return failures
+    try:
+        _clear_management_front_door_state()
+    except OSError:
+        failures.append("rollback state cleanup")
+    return failures
+
+
+def _load_management_front_door_state() -> dict:
+    """Load and constrain one ordinary front-door rollback marker."""
+    state = json.loads(MANAGEMENT_FRONT_DOOR_STATE_PATH.read_text(encoding="utf-8"))
+    if state.get("schema") != 1 or state.get("phase") != "prepared":
+        raise ValueError("management front-door rollback marker is invalid")
+    snapshots = state.get("snapshots")
+    allowed = {
+        str(NGINX_MANAGEMENT_SITE_PATH),
+        str(NGINX_CONF_INCLUDE_PATH),
+        str(NGINX_MAIN_CONFIG_PATH),
+        str(ATLASO_SERVICE_HTTPS_DROPIN_PATH),
+    }
+    if not isinstance(snapshots, list) or {
+        str(item.get("path")) for item in snapshots if isinstance(item, dict)
+    } != allowed:
+        raise ValueError("management front-door rollback paths are invalid")
+    if len(snapshots) != len(allowed) or any(not isinstance(item, dict) for item in snapshots):
+        raise ValueError("management front-door rollback snapshot set is invalid")
+    for item in snapshots:
+        if bool(item.get("existed")):
+            backup = Path(str(item.get("backup", "")))
+            if backup.parent != MANAGEMENT_FRONT_DOOR_BACKUP_DIR or not backup.is_file():
+                raise ValueError("management front-door rollback backup is invalid")
+    return state
+
+
+def _recover_management_front_door(*, quiet: bool = False) -> int:
+    """Restore an interrupted ordinary front-door activation before startup.
+
+    Args:
+        quiet: Whether to suppress the successful no-state result.
+    """
+    if not MANAGEMENT_FRONT_DOOR_STATE_PATH.exists():
+        if not quiet:
+            print(json.dumps({"management_front_door": "no recovery required"}, sort_keys=True))
+        return 0
+    failures: list[str] = []
+    try:
+        state = _load_management_front_door_state()
+    except (OSError, ValueError, json.JSONDecodeError) as exc:
+        failures.append(f"state load: {type(exc).__name__}")
+        state = {"snapshots": []}
+    for index, item in enumerate(state.get("snapshots", [])):
+        try:
+            _restore_management_handoff_snapshot(item)
+        except (KeyError, OSError, TypeError, ValueError, shutil.Error) as exc:
+            failures.append(f"snapshot {index}: {type(exc).__name__}")
+    if not failures:
+        failures.extend(_restore_management_front_door_files({}))
+    if not failures:
+        try:
+            _clear_management_front_door_state()
+        except OSError as exc:
+            failures.append(f"state cleanup: {type(exc).__name__}")
+    if failures:
+        print(
+            json.dumps(
+                {
+                    "management_front_door": "rollback incomplete",
+                    "failing_layers": failures[:8],
+                },
+                sort_keys=True,
+            ),
+            file=sys.stderr,
+        )
+        return 1
+    if not quiet:
+        print(json.dumps({"management_front_door": "rollback complete"}, sort_keys=True))
+    return 0
 
 
 def _root_ssh_config(enabled: bool) -> str:
@@ -19310,6 +19507,19 @@ def _handle_management_handoff(action: str, args: list[str]) -> int:
     return _apply_management_handoff(payload)
 
 
+def _handle_management_front_door(action: str, args: list[str]) -> int:
+    """Handle startup recovery for ordinary management front-door activation.
+
+    Args:
+        action: Action consumed by the handler.
+        args: Parsed command-line options consumed by the operation.
+    """
+    if action != "recover" or args:
+        print("management-front-door recover does not accept a path", file=sys.stderr)
+        return 2
+    return _recover_management_front_door()
+
+
 def _handle_appliance_update(action: str, args: list[str]) -> int:
     """Handle appliance update.
 
@@ -19489,6 +19699,8 @@ def main(argv: list[str]) -> int:
         return _handle_firewall(action, normalized_args)
     if group == "network":
         return _handle_network(action, normalized_args)
+    if group == "management-front-door":
+        return _handle_management_front_door(action, normalized_args)
     if group == "management-handoff":
         return _handle_management_handoff(action, normalized_args)
     if group == "wan":

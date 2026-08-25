@@ -923,8 +923,10 @@ Terminal order:
   plain reverse proxy to the same loopback upstream and does not expose a management HTTPS listener. Before nginx
   activation, the helper requires consecutive success from the configured loopback `/openapi.json`; after reload it
   requires the loopback and guest-local address/public-port front door to remain healthy. It daemon-reloads the durable
-  service drop-in without restarting Atlaso. Candidate activation or readiness failure restores the exact previous
-  nginx site/include/main files and service drop-in, then validates and reloads the restored front door.
+  service drop-in without restarting Atlaso. Persist and sync root-only backups plus a recovery marker before candidate
+  mutation, clear the marker only after readiness succeeds, and run recovery before Atlaso startup. Candidate
+  activation, readiness, interruption, or recovery failure restores the exact previous nginx site/include/main files
+  and service drop-in, then validates and reloads the restored front door; incomplete recovery blocks startup.
 - The web terminal is off by default, requires management HTTPS, and always includes management when enabled. Configure
   additional addressed interfaces with the shared tag editor; keep the management tag locked and reject missing,
   disabled, trunk-only, unused, or addressless selections. Additional selected addresses receive only login/logout,

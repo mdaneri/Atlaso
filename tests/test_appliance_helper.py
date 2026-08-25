@@ -10347,6 +10347,10 @@ def patch_appliance_settings_nginx_paths(monkeypatch, helper, tmp_path):
     monkeypatch.setattr(helper, "NGINX_MAIN_CONFIG_PATH", nginx_main)
     monkeypatch.setattr(helper, "NGINX_SITES_DIR", nginx_sites)
     monkeypatch.setattr(helper, "NGINX_MANAGEMENT_SITE_PATH", nginx_management_site)
+    front_door_state = tmp_path / "state" / "management-front-door"
+    monkeypatch.setattr(helper, "MANAGEMENT_FRONT_DOOR_STATE_DIR", front_door_state)
+    monkeypatch.setattr(helper, "MANAGEMENT_FRONT_DOOR_STATE_PATH", front_door_state / "state.json")
+    monkeypatch.setattr(helper, "MANAGEMENT_FRONT_DOOR_BACKUP_DIR", front_door_state / "backup")
     sshd_config_dir = tmp_path / "ssh" / "sshd_config.d"
     sshd_root_login = sshd_config_dir / "atlaso-root-login.conf"
     sshd_main = tmp_path / "ssh" / "sshd_config"
@@ -11043,6 +11047,10 @@ def test_appliance_settings_helper_writes_management_nginx_proxy(monkeypatch, tm
     monkeypatch.setattr(helper, "NGINX_MAIN_CONFIG_PATH", nginx_main)
     monkeypatch.setattr(helper, "NGINX_SITES_DIR", nginx_sites)
     monkeypatch.setattr(helper, "NGINX_MANAGEMENT_SITE_PATH", nginx_management_site)
+    front_door_state = tmp_path / "state" / "management-front-door"
+    monkeypatch.setattr(helper, "MANAGEMENT_FRONT_DOOR_STATE_DIR", front_door_state)
+    monkeypatch.setattr(helper, "MANAGEMENT_FRONT_DOOR_STATE_PATH", front_door_state / "state.json")
+    monkeypatch.setattr(helper, "MANAGEMENT_FRONT_DOOR_BACKUP_DIR", front_door_state / "backup")
     monkeypatch.setattr(helper, "SSHD_CONFIG_DIR", sshd_config_dir)
     monkeypatch.setattr(helper, "SSHD_MAIN_CONFIG_PATH", sshd_main)
     monkeypatch.setattr(helper, "SSHD_ROOT_LOGIN_CONFIG_PATH", sshd_root_login)
@@ -11072,6 +11080,7 @@ def test_appliance_settings_helper_writes_management_nginx_proxy(monkeypatch, tm
 
     assert helper._handle_appliance_settings("apply", [str(config_path)]) == 0
 
+    assert not helper.MANAGEMENT_FRONT_DOOR_STATE_PATH.exists()
     dropin = (dropin_dir / "management-https.conf").read_text(encoding="utf-8")
     assert "--host 127.0.0.1 --port 8000" in dropin
     assert "--ssl-certfile" not in dropin
@@ -11146,6 +11155,8 @@ def test_appliance_settings_helper_writes_http_management_proxy_without_https(mo
         Args:
             command: Command and arguments to execute.
         """
+        if command == ["systemctl", "daemon-reload"]:
+            assert helper.MANAGEMENT_FRONT_DOOR_STATE_PATH.is_file()
         commands.append(command)
         return subprocess.CompletedProcess(command, 0, "", "")
 
@@ -11176,6 +11187,7 @@ def test_appliance_settings_helper_writes_http_management_proxy_without_https(mo
 
     assert helper._handle_appliance_settings("apply", [str(config_path)]) == 0
 
+    assert not helper.MANAGEMENT_FRONT_DOOR_STATE_PATH.exists()
     dropin = (dropin_dir / "management-https.conf").read_text(encoding="utf-8")
     assert "--host 127.0.0.1 --port 8000" in dropin
     management_site = nginx_paths["management_site"].read_text(encoding="utf-8")
@@ -11575,6 +11587,105 @@ def test_management_front_door_snapshot_restore_is_durable(monkeypatch, tmp_path
         ("directory", restored.parent),
         ("directory", removed.parent),
     ]
+
+
+def test_management_front_door_persists_backups_before_marker(monkeypatch, tmp_path):
+    """Sync every rollback backup before publishing the transaction marker.
+
+    Args:
+        monkeypatch: Pytest fixture used to observe durability ordering.
+        tmp_path: Temporary root containing isolated runtime files.
+    """
+    helper = load_helper_module()
+    nginx_paths = patch_appliance_settings_nginx_paths(monkeypatch, helper, tmp_path)
+    dropin = tmp_path / "systemd" / "atlaso.service.d" / "management-https.conf"
+    dropin.parent.mkdir(parents=True)
+    dropin.write_text("previous drop-in\n", encoding="utf-8")
+    monkeypatch.setattr(helper, "ATLASO_SERVICE_HTTPS_DROPIN_PATH", dropin)
+    tracked = (
+        nginx_paths["management_site"],
+        nginx_paths["include"],
+        nginx_paths["main"],
+        dropin,
+    )
+    events: list[tuple[str, Path]] = []
+    original_writer = helper._durable_management_handoff_state_write
+
+    monkeypatch.setattr(
+        helper,
+        "_fsync_file",
+        lambda path: events.append(("backup", path)),
+    )
+
+    def record_marker(state: dict, target: Path) -> None:
+        """Record marker publication after invoking the production writer.
+
+        Args:
+            state: Durable transaction payload.
+            target: Patched marker path.
+        """
+        events.append(("marker", target))
+        original_writer(state, target)
+
+    monkeypatch.setattr(helper, "_durable_management_handoff_state_write", record_marker)
+
+    helper._persist_management_front_door_state(tracked)
+
+    marker_index = events.index(("marker", helper.MANAGEMENT_FRONT_DOOR_STATE_PATH))
+    backup_events = [index for index, event in enumerate(events) if event[0] == "backup"]
+    assert backup_events
+    assert all(index < marker_index for index in backup_events)
+    state = json.loads(helper.MANAGEMENT_FRONT_DOOR_STATE_PATH.read_text(encoding="utf-8"))
+    assert state["phase"] == "prepared"
+    assert len(state["snapshots"]) == 4
+
+
+def test_management_front_door_startup_recovery_restores_interrupted_activation(
+    monkeypatch,
+    tmp_path,
+):
+    """Restore the known-good front door from durable state after interruption.
+
+    Args:
+        monkeypatch: Pytest fixture used to isolate privileged runtime behavior.
+        tmp_path: Temporary root containing isolated runtime files.
+    """
+    helper = load_helper_module()
+    nginx_paths = patch_appliance_settings_nginx_paths(monkeypatch, helper, tmp_path)
+    management_site = nginx_paths["management_site"]
+    management_site.parent.mkdir(parents=True, exist_ok=True)
+    management_site.write_text("previous site\n", encoding="utf-8")
+    dropin = tmp_path / "systemd" / "atlaso.service.d" / "management-https.conf"
+    monkeypatch.setattr(helper, "ATLASO_SERVICE_HTTPS_DROPIN_PATH", dropin)
+    tracked = (
+        management_site,
+        nginx_paths["include"],
+        nginx_paths["main"],
+        dropin,
+    )
+    helper._persist_management_front_door_state(tracked)
+    management_site.write_text("candidate site\n", encoding="utf-8")
+    dropin.parent.mkdir(parents=True)
+    dropin.write_text("candidate drop-in\n", encoding="utf-8")
+    monkeypatch.setattr(helper.os, "chown", lambda *_args: None, raising=False)
+    monkeypatch.setattr(
+        helper,
+        "_run",
+        lambda command: subprocess.CompletedProcess(command, 0, "", ""),
+    )
+    monkeypatch.setattr(
+        helper,
+        "_nginx_test_command",
+        lambda: subprocess.CompletedProcess(["nginx", "-t"], 0, "", ""),
+    )
+    monkeypatch.setattr(helper, "_reload_nginx", lambda: 0)
+
+    assert helper._recover_management_front_door() == 0
+
+    assert management_site.read_text(encoding="utf-8") == "previous site\n"
+    assert not dropin.exists()
+    assert not helper.MANAGEMENT_FRONT_DOOR_STATE_PATH.exists()
+    assert not helper.MANAGEMENT_FRONT_DOOR_BACKUP_DIR.exists()
 
 
 def test_appliance_settings_helper_applies_local_resolver_without_timesyncd(monkeypatch, tmp_path):

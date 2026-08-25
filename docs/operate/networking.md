@@ -148,7 +148,9 @@ therefore leaves the previous management browser path authoritative and the pend
 A fresh first Apply still submits all 16 initialized components, but an unchanged Network snapshot does not invoke this
 protected handoff. Its ordinary Appliance Settings step proves the existing Atlaso loopback upstream, reloads nginx
 without restarting Atlaso, and proves the guest-local front door before Network begins. A failed proof restores the
-prior nginx and systemd configuration and stops the sequential task; it is not treated as a reconnect delay.
+prior nginx and systemd configuration and stops the sequential task; it is not treated as a reconnect delay. The
+ordinary front-door snapshots are durable before nginx publication, so Atlaso startup also restores them after a reboot
+or helper interruption and refuses to start while that recovery is incomplete.
 
 Only a dedicated management role owns management DHCP, default gateways, DHCP resolver recovery, and isolated
 management policy routing. If that role is absent, flagged access interfaces retain their normal access routes. The
