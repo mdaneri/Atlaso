@@ -99,6 +99,19 @@ source ISO is not duplicated under each target. The Workstation image installs `
 the `hyper-v` package and Hyper-V guest daemons. The Workstation build wrapper opens a visible VMware console by
 default. Use `-Headless` only when an unattended build is preferred.
 
+GUI builds start or reuse a responsive VMware Workstation UI as a process separate from Packer before invoking the
+VMware builder. This preserves the visible console while preventing an already-running VM from leaving Packer blocked
+inside the synchronous `vmrun` start transition. Until SSH provisioning begins, the wrapper reports sanitized,
+exact-VMX startup heartbeats and applies a 45-minute default timeout matching Packer's SSH communicator allowance. The
+interval begins at monitored Packer process start, including pre-VMX and pre-power-on failures. Use
+`-PackerStartupTimeoutSeconds` to select a different bounded start-to-provisioning interval and
+`-PackerHeartbeatSeconds` to adjust diagnostic frequency. An explicit `-SshHost` becomes the TCP/22 diagnostic target
+so the probe matches Packer's communicator endpoint. A
+heartbeat distinguishes output identity, provider inventory, exact running state, TCP/22 reachability, Workstation
+handoff, and SSH authentication; it never reads or reports VMX contents or connection credentials. With
+`-PackerOnError cleanup`, a timeout uses the same checked exact-root cleanup as an ordinary replacement build. Other
+failure selections preserve the exact output for investigation.
+
 For Workstation, Photon installation is bound to VMware SCSI identity `0:0:0` through kickstart preinstall discovery,
 not `/dev/sda` enumeration. Provisioning then proves the complete root dependency chain reaches that disk and proves
 the blank `ATLASO_SYSTEM` target is the exact 20 GiB disk at `0:1:0` before formatting it. The completed VMX receives

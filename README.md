@@ -152,6 +152,8 @@ recovery copy if rollback cannot complete.
 If checked `deleteVM` removes the complete validated root, cleanup retains scoped registration and running-state
 verification, requires that exact root to stay absent, and lets the active redeploy continue without a second filesystem
 deletion.
+The supported VMware image wrapper starts a responsive Workstation UI in a separate process before GUI-mode Packer
+builds and reports bounded, sanitized, exact-VM startup diagnostics until SSH provisioning begins.
 Hyper-V remains
 the authoritative lifecycle interoperability environment for exact access and trunk VLAN behavior.
 Image-build download caches verify pinned checksums before reuse or durable promotion; ordinary retries replace only

@@ -56,7 +56,26 @@ GRUB auto-install entry. The original Photon source ISO is shared with the Hyper
 providers. The focused image tests invoke that generator, parse the VMware and Hyper-V JSON outputs, and validate their
 shared installer contract plus provider-specific packages and guest-service commands.
 Workstation builds show the VMware console by default so boot/install progress is visible; pass `-Headless` for
-unattended runs. The shared provisioner stages `pyproject.toml` with `scripts/version.py`, parses `[project].version` as
+unattended runs. For the default GUI build, the wrapper starts or reuses a responsive VMware Workstation UI before
+Packer invokes `vmrun`. Starting the UI as a separate process prevents the Workstation GUI start transition from
+retaining Packer's redirected output handles after the builder is already running. Do not replace this ordering with an
+arbitrary delay or a raw `packer build` invocation.
+
+The wrapper emits sanitized startup heartbeats until Packer reaches SSH provisioning. Each heartbeat binds diagnostics
+to the expected builder VMX filesystem identity and distinguishes missing or replaced output, an unavailable provider,
+a VM that is not running, closed TCP/22, a stalled Workstation start handoff, and pending SSH authentication. The
+default `-PackerStartupTimeoutSeconds 2700` matches Packer's 45-minute SSH communicator allowance and bounds the
+interval from monitored Packer process start to SSH provisioning, including failures before the VMX or power-on phase
+exists; `-PackerHeartbeatSeconds 30` controls the heartbeat interval. When `-SshHost` is explicit, TCP/22 diagnostics
+probe that Packer communicator endpoint instead of the temporary static builder address. A timeout terminates only the
+Packer process tree and
+routes `-PackerOnError cleanup` through the checked exact-root cleanup. Other failure modes preserve the builder
+artifacts for diagnosis. Raw Packer debug-log environment variables are removed from the monitored child because those
+logs bypass output redaction. Console lines that can contain generated connection credentials are redacted before they
+are displayed. Workstation may atomically rewrite the VMX during power-on; the monitor accepts a new file identity only
+when exact provider inventory proves that the expected VMX path is the running builder.
+
+The shared provisioner stages `pyproject.toml` with `scripts/version.py`, parses `[project].version` as
 TOML, and requires the repository's strict `X.Y.Z` release format before it creates
 `/opt/atlaso/releases/bootstrap-<version>`. If that metadata is missing, unreadable, malformed, or invalid, the build
 log reports the specific version-policy error. The remastered kickstart disables `sshd.socket` and enables

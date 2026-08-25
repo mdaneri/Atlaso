@@ -503,6 +503,8 @@ Provider-specific guest post-install commands.
 Provider install-disk discovery policy.
 .PARAMETER AdditionalPackerVariables
 Provider-specific Packer variables.
+.PARAMETER PackerBuildInvoker
+Optional provider-specific monitored Packer build callback.
 .PARAMETER KeepExistingOutput
 Preserve an existing artifact directory.
 .PARAMETER EnableRealSystemAdapters
@@ -540,6 +542,7 @@ function Invoke-AtlasoPhotonImageBuild {
         [ValidateSet('default', 'vmware-workstation')]
         [string]$InstallDiskLayout = 'default',
         [hashtable]$AdditionalPackerVariables = @{},
+        [scriptblock]$PackerBuildInvoker,
         [switch]$KeepExistingOutput,
         [switch]$EnableRealSystemAdapters,
         [switch]$ValidateOnly,
@@ -667,10 +670,15 @@ function Invoke-AtlasoPhotonImageBuild {
         if ($LASTEXITCODE -ne 0) {
             throw "Exact Packer plugin verification failed with exit code $LASTEXITCODE."
         }
-        & packer @packerArgs
-        if ($LASTEXITCODE -ne 0) {
-            $operation = if ($ValidateOnly) { 'validate' } else { 'build' }
-            throw "packer $operation failed with exit code $LASTEXITCODE."
+        if (-not $ValidateOnly -and $null -ne $PackerBuildInvoker) {
+            & $PackerBuildInvoker $packerArgs $packerDir
+        }
+        else {
+            & packer @packerArgs
+            if ($LASTEXITCODE -ne 0) {
+                $operation = if ($ValidateOnly) { 'validate' } else { 'build' }
+                throw "packer $operation failed with exit code $LASTEXITCODE."
+            }
         }
     } finally {
         Pop-Location
