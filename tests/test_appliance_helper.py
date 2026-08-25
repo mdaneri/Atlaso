@@ -11524,6 +11524,59 @@ def test_management_front_door_rolls_back_when_daemon_reload_raises(
     assert "rollback failed: systemd daemon-reload" in error
 
 
+def test_management_front_door_snapshot_restore_is_durable(monkeypatch, tmp_path):
+    """Sync restored bytes and replacement and deletion directory entries.
+
+    Args:
+        monkeypatch: Pytest fixture used to observe durability operations.
+        tmp_path: Temporary root containing isolated runtime files.
+    """
+    helper = load_helper_module()
+    restored = tmp_path / "nginx" / "management.conf"
+    removed = tmp_path / "systemd" / "management-https.conf"
+    restored.parent.mkdir(parents=True)
+    removed.parent.mkdir(parents=True)
+    restored.write_text("candidate\n", encoding="utf-8")
+    removed.write_text("candidate\n", encoding="utf-8")
+    events: list[tuple[str, Path]] = []
+    monkeypatch.setattr(
+        helper,
+        "_fsync_file",
+        lambda path: events.append(("file", path)),
+    )
+    monkeypatch.setattr(
+        helper,
+        "_fsync_directory",
+        lambda path: events.append(("directory", path)),
+    )
+    monkeypatch.setattr(
+        helper,
+        "_run",
+        lambda command: subprocess.CompletedProcess(command, 0, "", ""),
+    )
+    monkeypatch.setattr(
+        helper,
+        "_nginx_test_command",
+        lambda: subprocess.CompletedProcess(["nginx", "-t"], 0, "", ""),
+    )
+    monkeypatch.setattr(helper, "_reload_nginx", lambda: 0)
+
+    assert helper._restore_management_front_door_files(
+        {
+            restored: (b"previous\n", 0o640),
+            removed: (None, None),
+        }
+    ) == []
+
+    assert restored.read_text(encoding="utf-8") == "previous\n"
+    assert not removed.exists()
+    assert events == [
+        ("file", restored.with_name(f".{restored.name}.atlaso-rollback")),
+        ("directory", restored.parent),
+        ("directory", removed.parent),
+    ]
+
+
 def test_appliance_settings_helper_applies_local_resolver_without_timesyncd(monkeypatch, tmp_path):
     """Verify that appliance settings helper applies local resolver without timesyncd.
 
