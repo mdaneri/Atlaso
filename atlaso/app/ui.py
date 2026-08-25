@@ -495,6 +495,7 @@ from atlaso.app.services.public_services import (
 from atlaso.app.services.routes_wan import (
     WAN_CONFIG_PATH,
     WAN_MODES,
+    canonical_route_destination,
     generated_route_role_rules,
     nat_rule_to_dict,
     render_wan_config,
@@ -9794,13 +9795,28 @@ def removed_wan_route_entries(current_preview: str, baseline: dict[str, Any] | N
         baseline: Baseline consumed by removed WAN route entries.
     """
     baseline_preview = str((baseline or {}).get("config_preview") or "")
+
+    def route_key(entry: dict[str, str]) -> tuple[str, str]:
+        """Return a canonical destination and interface identity for a route entry.
+
+        Args:
+            entry: Parsed route entry whose identity is required.
+        """
+        destination = entry.get("destination_cidr", "")
+        if destination:
+            try:
+                destination = canonical_route_destination(destination)
+            except ValueError:
+                pass
+        return destination, entry.get("interface", "")
+
     current_keys = {
-        (entry.get("destination_cidr", ""), entry.get("interface", ""))
+        route_key(entry)
         for entry in wan_route_entries_from_config(current_preview)
     }
     removed: list[dict[str, str]] = []
     for entry in wan_route_entries_from_config(baseline_preview):
-        key = (entry.get("destination_cidr", ""), entry.get("interface", ""))
+        key = route_key(entry)
         if key[0] and key[1] and key not in current_keys:
             removed.append(
                 {

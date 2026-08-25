@@ -29,6 +29,28 @@ def test_default_route_helpers_and_renderer_use_canonical_semantics():
     assert "ip route replace 0.0.0.0/0 via 192.0.2.1 dev eth1 metric 90 table 200" in config
 
 
+def test_removed_route_detection_compares_canonical_destinations():
+    """Keep equivalent legacy baseline destinations during global Apply."""
+    from atlaso.app.ui import removed_wan_route_entries
+
+    current_preview = """[routes]
+route=::/0
+  gateway=2001:db8::1
+  interface=eth1
+  metric=90
+"""
+    baseline = {
+        "config_preview": """[routes]
+route=0:0:0:0:0:0:0:0/0
+  gateway=2001:db8::1
+  interface=eth1
+  metric=90
+"""
+    }
+
+    assert removed_wan_route_entries(current_preview, baseline) == []
+
+
 def test_validate_wan_state_rejects_missing_and_duplicate_family_defaults():
     """Require next hops and permit at most one default per IP family."""
     routes = [
