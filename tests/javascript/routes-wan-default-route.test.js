@@ -96,15 +96,14 @@ test("destination mode requires a CIDR but permits a directly connected path", (
     }).message,
     /family must match/,
   );
-  assert.match(
-    context.validatePath({
-      defaultRouteSelected: false,
-      defaultRouteFamily: "4",
-      destinationCidr: "0.0.0.0/0",
-      gateway: "",
-    }).message,
-    /next-hop gateway is required/,
-  );
+  const manualDefault = context.validatePath({
+    defaultRouteSelected: false,
+    defaultRouteFamily: "4",
+    destinationCidr: "0.0.0.0/0",
+    gateway: "192.0.2.1",
+  });
+  assert.match(manualDefault.message, /Select Default route/);
+  assert.equal(manualDefault.fieldName, "default_route");
 });
 
 test("default-mode synchronization owns mutual exclusion and required state", () => {

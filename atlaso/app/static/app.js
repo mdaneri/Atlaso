@@ -7038,6 +7038,9 @@ function validateRoutesWanRoutePath({ defaultRouteSelected, defaultRouteFamily, 
   if (!defaultRouteSelected && !destinationCidr) {
     return { message: "Destination CIDR is required.", fieldName: "destination_cidr" };
   }
+  if (!defaultRouteSelected && routesWanDefaultFamily(destinationCidr)) {
+    return { message: "Select Default route instead of entering a /0 Destination CIDR.", fieldName: "default_route" };
+  }
   const destinationFamily = routesWanAddressFamily(destinationCidr);
   const gatewayFamily = routesWanAddressFamily(gateway);
   if (
@@ -7048,9 +7051,6 @@ function validateRoutesWanRoutePath({ defaultRouteSelected, defaultRouteFamily, 
     && destinationFamily !== gatewayFamily
   ) {
     return { message: "Route gateway family must match the destination CIDR family.", fieldName: "gateway" };
-  }
-  if (!defaultRouteSelected && routesWanDefaultFamily(destinationCidr) && !gateway) {
-    return { message: "A next-hop gateway is required for a default route.", fieldName: "gateway" };
   }
   return null;
 }

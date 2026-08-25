@@ -115,6 +115,19 @@ def test_routes_wan_default_route_add_edit_validation_and_semantic_readback(clie
     assert conflicting_input.status_code == 422
     assert "mutually exclusive" in conflicting_input.text
 
+    manual_default = client.post(
+        "/routes-wan/routes",
+        data={
+            **base,
+            "default_route": "",
+            "destination_cidr": "0.0.0.0/0",
+            "gateway": "192.0.2.1",
+        },
+        follow_redirects=False,
+    )
+    assert manual_default.status_code == 422
+    assert "Select Default route" in manual_default.text
+
     invalid_target = client.post(
         "/routes-wan/routes",
         data={**base, "gateway": "192.0.2.1", "interface_name": "eth0"},

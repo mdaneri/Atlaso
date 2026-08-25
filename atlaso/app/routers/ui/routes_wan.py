@@ -214,6 +214,12 @@ def build_router(dependencies: RoutesWanUiDependencies) -> RoutesWanUiRouter:
             destination_network = ip_network(destination, strict=False)
         except ValueError:
             return Response(f"{destination} is not a valid destination CIDR.", status_code=422, media_type="text/plain")
+        if destination_network.prefixlen == 0 and not default_route:
+            return Response(
+                "Select Default route instead of entering a /0 Destination CIDR.",
+                status_code=422,
+                media_type="text/plain",
+            )
         destination = canonical_route_destination(destination)
         gateway_value = gateway.strip() or None
         if destination_network.prefixlen == 0 and not gateway_value:
