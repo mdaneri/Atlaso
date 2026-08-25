@@ -3656,7 +3656,11 @@ this removal window.</p>
 registered only from management pages, uses the same narrow scope, and serves an offline fallback only for management
 navigation. It does not intercept API, OIDC, CA download, PXE, depot, registry, or other protocol traffic. Public UI
 caching is intentionally disabled. On the first management page load after upgrading from the former root-scoped PWA,
-Atlaso unregisters the legacy <code>/</code> service-worker registration before installing the management-scoped registration.</p>
+Atlaso unregisters the legacy <code>/</code> service-worker registration before installing the management-scoped registration.
+An updated worker becomes active only after every required offline-shell asset is fetched successfully and written to
+its versioned cache. If any required fetch or cache write fails, the installation fails and the previous complete
+worker and cache remain authoritative. After a successful installation, activation retires only older
+<code>atlaso-management-pwa-v*</code> caches and preserves unrelated caches on the same origin.</p>
 <h2 id="verify-an-applied-appliance">Verify an applied appliance<a class="headerlink" href="#verify-an-applied-appliance" title="Permanent link">&para;</a></h2>
 <ol>
 <li>Confirm readiness through the management listener at <code>/openapi.json</code>.</li>
