@@ -1528,6 +1528,10 @@ function Write-ConnectionSummary {
     Write-Host ""
 }
 
+if (-not $WhatIfPreference -and [string]::IsNullOrWhiteSpace($OnePasswordEnvironmentId)) {
+    throw 'OnePasswordEnvironmentId is required for normal VMware test VM creation. Copy the opaque ID from the exact Atlaso 1Password Environment and pass it with -OnePasswordEnvironmentId.'
+}
+
 $repoRoot = (Resolve-Path -LiteralPath (Join-Path $PSScriptRoot '..\..\..')).Path
 $developmentRootCaCertificatePath = Join-Path $repoRoot 'image\vmware-workstation\development-trust\atlaso-development-root-ca.pem'
 $developmentRootCaCertificatePem = Get-Content -LiteralPath $developmentRootCaCertificatePath -Raw
