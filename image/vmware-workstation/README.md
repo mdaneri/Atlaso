@@ -433,6 +433,19 @@ Windows filesystem identity, stops through checked `vmrun` when needed, and comp
 preflights before checked `vmrun deleteVM` removes registered targets. Preflight failures preserve all artifacts;
 provider deletion or postcondition failures preserve the remaining artifacts and return failure. Stale library-row
 cleanup holds a write-excluding inventory handle through its final byte comparison and atomic replacement.
+Every started normal test clone must pass unique-address readiness before the wrapper reports it ready. The check binds
+the exact running VMX, its `ethernet0` MAC, the injected hostname, VMware Tools' IPv4 result, and the Windows neighbor
+entry for that host-facing address. It also queries every running Workstation VM; if another VM reports the same
+address, or the neighbor entry maps to another running VM's MAC, the wrapper stops before printing SSH or HTTPS
+endpoints and names the conflicting VMX, MAC, and address.
+
+For recovery, leave the failed clone running only while using its local console, then either stop the named conflicting
+VM or assign the clone a unique management address. A task-specific DHCP reservation must target the exact MAC printed
+in the failure; a static address must be changed and applied from the clone's console before retrying readiness. Re-run
+`get-atlaso-vm-ip.ps1 -VmxPath <exact-vmx> -ExpectedHostname <first-boot-fqdn>` to prove the corrected identity, or
+redeploy the normal test VM. Review and update `known_hosts` explicitly only after comparing the wrapper's published
+Ed25519 key and SHA-256 fingerprint; these scripts never change normal SSH `known_hosts` automatically.
+
 Pass `-IncludeLabNetworkAdapters` only after `VMnet2`, `VMnet3`, and `VMnet4` exist for the
 SiteA, WAN/SiteB, and trunk-like lifecycle networks. `-TrustRootCa` downloads the freshly deployed appliance root CA,
 removes stale Atlaso root CAs from the current-user Trusted Root store, and trusts the new root so Edge and the Codex
@@ -442,8 +455,9 @@ default for the first-boot CA endpoint, retrying transient connection and servic
 `-TimeoutSeconds <seconds>` to adjust both IP discovery and CA readiness waits. Partial downloads are removed
 best-effort between retries through .NET file APIs, including when the current user's temporary directory contains a
 dotted profile name or a valid DOS 8.3 short-path representation. Cleanup cannot replace the original readiness error
-or stop the retry loop. After the VM starts, the wrapper prints a connection summary with the HTTPS console URL,
-Swagger URL, OpenAPI URL, root certificate URL, `ssh admin@<appliance-ip>` command, and—when development key
+or stop the retry loop. After unique-address readiness succeeds, the wrapper prints a connection summary with the
+verified VMX, management MAC, hostname, HTTPS console URL, Swagger URL, OpenAPI URL, root certificate URL,
+`ssh admin@<appliance-ip>` command, and—when development key
 provisioning is enabled—the host-derived Ed25519 public key plus SHA-256 fingerprint.
 
 Both this wrapper and the Workstation lifecycle runner inject a complete `guestinfo.ovfEnv` document into a raw cloned

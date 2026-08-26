@@ -549,6 +549,38 @@ def test_vmware_workstation_build_monitor_behavior(tmp_path):
     assert "generated-vnc-test-secret" not in result.stderr
 
 
+def test_vmware_workstation_address_readiness_behavior(tmp_path):
+    """Verify duplicate static addresses and wrong host neighbors fail closed.
+
+    Args:
+        tmp_path: Temporary directory provided by pytest for synthetic VMX evidence.
+    """
+    pwsh = shutil.which("pwsh")
+    if pwsh is None:
+        pytest.skip("PowerShell 7 is not available")
+
+    result = subprocess.run(
+        [
+            pwsh,
+            "-NoLogo",
+            "-NoProfile",
+            "-NonInteractive",
+            "-File",
+            "tests/powershell/Test-AtlasoWorkstationReadiness.ps1",
+            "-RepositoryRoot",
+            str(Path.cwd()),
+            "-OutputDirectory",
+            str(tmp_path / "vmware-readiness"),
+        ],
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert "Atlaso VMware Workstation readiness tests passed." in result.stdout
+
+
 def test_hyperv_management_nat_prefix_is_validated_and_canonical():
     """Verify Hyper-V NAT CIDRs are masked and invalid input fails before mutation."""
     pwsh = shutil.which("pwsh")
@@ -1503,7 +1535,10 @@ def test_create_atlaso_vmware_test_vm_wrapper_uses_common_helpers():
     assert "certutil.exe -f -user -addstore Root $rootCerPath" in script
     assert "if ($TrustRootCa -and $NoStart)" in script
     assert "if (-not $NoStart -and -not $WhatIfPreference)" in script
-    assert "if (($WaitForIp -or $TrustRootCa) -and -not $NoStart -and -not $WhatIfPreference)" in script
+    assert "if (($WaitForIp -or $TrustRootCa) -and $readinessIdentity)" in script
+    assert "-ExpectedHostname $FirstBootFqdn" in script
+    assert "-PassThruIdentity" in script
+    assert "Atlaso Workstation test VM ready" in script
     assert 'Write-SummaryRow -Label "Console URL:" -Value "https://$IpAddress/"' in script
     assert 'Write-SummaryRow -Label "API URL:" -Value "https://$IpAddress/openapi.json"' in script
     assert 'Write-SummaryRow -Label "Swagger URL:" -Value "https://$IpAddress/api/docs"' in script

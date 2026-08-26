@@ -260,6 +260,18 @@ drop-in, restoring the ordinary password-backed sudo policy. Approve the applian
 wrapper's host-derived output: after startup it prints the exact Ed25519 public host key and SHA-256 fingerprint from
 test-only VMware guest-info for explicit `known_hosts` verification without trusting unauthenticated `ssh-keyscan`
 output. Subsequent Codex and Copilot tasks under the same Windows user reuse that trust and key identity.
+Before any ready message or connection endpoint, every started normal clone must prove that VMware Tools' management
+IPv4 address belongs uniquely to the exact running VMX. The proof records the VMX, its `ethernet0` MAC, the injected
+hostname, and the host-facing address; it compares all running Workstation guests and requires the Windows neighbor
+entry for that address to match the target MAC. A duplicate static address or a neighbor entry owned by another running
+VM fails closed with the conflicting VMX, MAC, and address.
+
+Recover from that failure through the exact clone's local console: stop the named conflicting VM, or give the clone a
+unique applied static address. A temporary DHCP reservation is acceptable only when it is bound to the exact target MAC
+shown by the failure. Then rerun `get-atlaso-vm-ip.ps1` with the exact VMX and the original `-ExpectedHostname`, or
+redeploy the normal test VM, before running SSH or HTTPS validation. Keep SSH trust explicit: compare the separately
+published Ed25519 key and SHA-256 fingerprint, and update `known_hosts` yourself only when intended. The wrapper never
+changes normal SSH `known_hosts` automatically.
 Changing the applied management listener from a dedicated interface to an access physical interface or VLAN with
 **Management UI** enabled must retain TCP/22 admission for this ordinary `admin` SSH workflow, under the same management
 Source Group restriction as TCP/80 and TCP/443. It does not enable root SSH and must not expose SSH on an unflagged

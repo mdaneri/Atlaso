@@ -75,7 +75,7 @@ Leave the cloned VM powered off after preparation.
 Use existing VMware networks without running network preparation.
 
 .PARAMETER WaitForIp
-Wait for the started VM management address and print its connection summary.
+Print the connection summary after mandatory unique-address readiness succeeds.
 
 .PARAMETER TrustRootCa
 Wait for and trust the generated appliance root CA for the current Windows user.
@@ -274,6 +274,12 @@ Whether this run installed the appliance root CA for the current Windows user.
 
 .PARAMETER SshKeyProvisioned
 Whether this run injected development key access and passwordless sudo.
+
+.PARAMETER MacAddress
+Verified management NIC MAC address from the exact VMX.
+
+.PARAMETER Hostname
+First-boot hostname bound into the readiness evidence.
 #>
 function Write-ConnectionSummary {
     param(
@@ -281,7 +287,9 @@ function Write-ConnectionSummary {
         [Parameter(Mandatory = $true)][string]$Name,
         [Parameter(Mandatory = $true)][string]$VmxPath,
         [Parameter(Mandatory = $true)][bool]$RootCaTrusted,
-        [Parameter(Mandatory = $true)][bool]$SshKeyProvisioned
+        [Parameter(Mandatory = $true)][bool]$SshKeyProvisioned,
+        [Parameter(Mandatory = $true)][string]$MacAddress,
+        [Parameter(Mandatory = $true)][string]$Hostname
     )
 
     <#
@@ -311,6 +319,8 @@ function Write-ConnectionSummary {
     Write-Host "Atlaso VMware appliance connection summary" -ForegroundColor Cyan
     Write-SummaryRow -Label "Name:" -Value $Name -ValueColor White
     Write-SummaryRow -Label "VMX:" -Value $VmxPath -ValueColor Gray
+    Write-SummaryRow -Label "MAC:" -Value $MacAddress -ValueColor Gray
+    Write-SummaryRow -Label "Hostname:" -Value $Hostname -ValueColor White
     Write-SummaryRow -Label "Console URL:" -Value "https://$IpAddress/"
     Write-SummaryRow -Label "API URL:" -Value "https://$IpAddress/openapi.json"
     Write-SummaryRow -Label "Swagger URL:" -Value "https://$IpAddress/api/docs"
@@ -472,7 +482,21 @@ if (-not $NoStart -and -not $WhatIfPreference) {
     }
 }
 
-Write-Host "Atlaso Workstation test VM ready: $Name"
+$readinessIdentity = $null
+if (-not $NoStart -and -not $WhatIfPreference) {
+    # Prove exact VMX, NIC, hostname, and host-facing address ownership before
+    # printing ready state or any connection endpoint.
+    $readinessIdentity = & (Join-Path $PSScriptRoot 'get-atlaso-vm-ip.ps1') `
+        -VmxPath $targetVmx `
+        -ExpectedHostname $FirstBootFqdn `
+        -VmrunPath $VmrunPath `
+        -TimeoutSeconds $TimeoutSeconds `
+        -PassThruIdentity
+    Write-Host "Atlaso Workstation test VM ready: $Name"
+}
+else {
+    Write-Host "Atlaso Workstation test VM prepared without readiness proof: $Name"
+}
 Write-Host "Appliance VMX: $targetVmx"
 if ($resolvedSshPublicKeyPath) {
     Write-Host "Development SSH access: admin key from $resolvedSshPublicKeyPath with test-only passwordless sudo"
@@ -490,11 +514,8 @@ if (-not $SkipSshKeyProvisioning -and -not $NoStart -and -not $WhatIfPreference)
     Write-Host "SSH host key fingerprint: $($sshHostKey.Fingerprint)"
 }
 
-if (($WaitForIp -or $TrustRootCa) -and -not $NoStart -and -not $WhatIfPreference) {
-    $ip = & (Join-Path $PSScriptRoot 'get-atlaso-vm-ip.ps1') `
-        -VmxPath $targetVmx `
-        -VmrunPath $VmrunPath `
-        -TimeoutSeconds $TimeoutSeconds
+if (($WaitForIp -or $TrustRootCa) -and $readinessIdentity) {
+    $ip = $readinessIdentity.IPAddress
     if ($WaitForIp) {
         Write-Host "Management IP: $ip"
     }
@@ -506,8 +527,10 @@ if (($WaitForIp -or $TrustRootCa) -and -not $NoStart -and -not $WhatIfPreference
         -Name $Name `
         -VmxPath $targetVmx `
         -RootCaTrusted ([bool]$TrustRootCa) `
-        -SshKeyProvisioned (-not [bool]$SkipSshKeyProvisioning)
+        -SshKeyProvisioned (-not [bool]$SkipSshKeyProvisioning) `
+        -MacAddress $readinessIdentity.MacAddress `
+        -Hostname $readinessIdentity.Hostname
 }
-elseif (-not $NoStart -and -not $WhatIfPreference) {
+elseif ($readinessIdentity) {
     Write-Host "Pass -WaitForIp to print the HTTPS console, Swagger, root certificate, and SSH connection summary." -ForegroundColor DarkGray
 }

@@ -1418,6 +1418,10 @@ Ed25519 host key from test-only VMware guest-info, validates its OpenSSH wire fo
 SHA-256 fingerprint for explicit `known_hosts` verification without trusting unauthenticated `ssh-keyscan` output. The
 canonical operational details and safety boundary
 are documented in [VMware Workstation Lifecycle Testing](vmware-workstation-lifecycle-testing.md#normal-test-vm).
+The wrapper reports a started clone ready only after the exact running VMX, `ethernet0` MAC, injected hostname, VMware
+Tools address, and Windows neighbor mapping agree and no other running Workstation VM reports that address. Duplicate
+static ownership fails closed before SSH or HTTPS endpoints are printed; use the linked lifecycle guide for the
+console-based stop-or-readdress recovery path and explicit `known_hosts` handling.
 
 To deploy the current repo to an existing VMware test appliance without rebuilding the image, use the wheel deploy
 helper. A normal test VM created with the default key provisioning uses the existing key/agent path without 1Password:

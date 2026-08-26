@@ -171,6 +171,10 @@ handoff. It never generates or copies a private key, and lifecycle and exported 
 password-backed sudo policy. First boot publishes only the test VM's public Ed25519 SSH host key through VMware
 guest-info; the wrapper prints the exact key and SHA-256 fingerprint for explicit `known_hosts` verification without
 trusting `ssh-keyscan`.
+Before it prints ready state or connection endpoints, the wrapper also proves one identity tuple across the exact
+running VMX, management NIC MAC, injected hostname, VMware Tools address, and Windows neighbor cache. A static address
+also claimed by another running Workstation VM fails closed with the conflicting VMX and MAC; recovery remains an
+explicit stop-or-readdress operation and never rewrites SSH `known_hosts`.
 Password-backed Windows deployment binds the concealed `DEFAULT_ADMIN_PASSWORD` variable from the verified `Atlaso`
 1Password Environment through the Windows-supported 1Password SDK desktop integration; the SDK and Paramiko run in one
 bounded child that rejects unknown SSH host keys and never accepts a password
