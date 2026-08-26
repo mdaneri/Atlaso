@@ -1422,7 +1422,8 @@ uses a bounded child and a separately scrubbed guest-info value. `-TimeoutSecond
 `op`/secret-child process-tree termination before a staging failure may enter signer scrub or VM rollback. Boot-bound
 marker phases also cover VM start and artifact removal. An unproven termination preserves the VM and VMX, or keeps
 reused disks quarantined during removal, until a Windows host restart proves that child tree is gone. Every post-staging
-VMware operation is also bounded. A durable, non-secret per-user cleanup marker makes the next
+VMware operation is also bounded. A durable, non-secret per-user cleanup marker is published through a Windows
+write-through atomic rename before signer staging and makes the next
 validated wrapper invocation retry the exact interrupted rollback before any network or VM mutation; the marker is
 removed only after encrypted-import proof or successful stopped-VM artifact cleanup. Recovery precedes 1Password
 preflight and records a stopped/scrubbed phase so restoration can resume after the artifact root has already been

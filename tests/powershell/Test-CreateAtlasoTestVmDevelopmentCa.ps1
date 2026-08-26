@@ -280,6 +280,16 @@ $markerCreation = $wrapperSource.LastIndexOf(
 if ($markerCreation -lt 0 -or $markerCreation -gt $stageStart) {
     throw 'A durable cleanup marker must be committed before development-signer staging.'
 }
+if (
+    $wrapperSource -notmatch 'MoveFileEx\(string existingPath, string newPath, uint flags\)' -or
+    $wrapperSource -notmatch '\[uint32\]\$flags = 0x00000008' -or
+    $wrapperSource.IndexOf(
+        'Move-AtlasoDurableCleanupMarkerFile',
+        [System.StringComparison]::Ordinal
+    ) -gt $stageStart
+) {
+    throw 'Cleanup-marker publication must use a Windows write-through rename before signer staging.'
+}
 if ($wrapperSource.IndexOf('Remove-AtlasoDevelopmentCaCleanupMarker', $importProof) -lt $importProof) {
     throw 'The durable cleanup marker must remain until encrypted-import proof succeeds.'
 }

@@ -611,6 +611,76 @@ function Get-AtlasoHostBootIdentity {
 
 <#
 .SYNOPSIS
+Atomically rename one cleanup-marker file with Windows write-through durability.
+
+.PARAMETER SourcePath
+Exact flushed temporary marker file.
+
+.PARAMETER DestinationPath
+Exact durable marker path in the same directory.
+
+.PARAMETER Replace
+Replace the existing destination during a validated marker-phase transition.
+#>
+function Move-AtlasoDurableCleanupMarkerFile {
+    param(
+        [Parameter(Mandatory = $true)][string]$SourcePath,
+        [Parameter(Mandatory = $true)][string]$DestinationPath,
+        [switch]$Replace
+    )
+
+    if (-not $IsWindows) {
+        throw 'Durable development-CA cleanup-marker rename requires Windows.'
+    }
+    $resolvedSourcePath = (Resolve-Path -LiteralPath $SourcePath).Path
+    $resolvedDestinationPath = [System.IO.Path]::GetFullPath($DestinationPath)
+    if (-not $resolvedSourcePath.Equals(
+            [System.IO.Path]::GetFullPath($SourcePath),
+            [System.StringComparison]::OrdinalIgnoreCase
+        )) {
+        throw "Development-CA cleanup-marker source identity is ambiguous: $SourcePath"
+    }
+    if (-not ('Atlaso.WorkstationDurableFile' -as [type])) {
+        Add-Type -TypeDefinition @'
+using System.Runtime.InteropServices;
+
+namespace Atlaso
+{
+    public static class WorkstationDurableFile
+    {
+        [DllImport("kernel32.dll", CharSet = CharSet.Unicode, SetLastError = true)]
+        public static extern bool MoveFileEx(string existingPath, string newPath, uint flags);
+    }
+}
+'@
+    }
+    # MOVEFILE_WRITE_THROUGH makes the rename wait for on-disk completion;
+    # phase replacement additionally uses MOVEFILE_REPLACE_EXISTING.
+    [uint32]$flags = 0x00000008
+    if ($Replace) {
+        $flags = $flags -bor 0x00000001
+    }
+    if (-not [Atlaso.WorkstationDurableFile]::MoveFileEx(
+            $resolvedSourcePath,
+            $resolvedDestinationPath,
+            $flags
+        )) {
+        $errorCode = [System.Runtime.InteropServices.Marshal]::GetLastWin32Error()
+        throw [System.ComponentModel.Win32Exception]::new(
+            $errorCode,
+            "Development-CA cleanup-marker write-through rename failed"
+        )
+    }
+    if (
+        (Test-Path -LiteralPath $resolvedSourcePath) -or
+        -not (Test-Path -LiteralPath $resolvedDestinationPath -PathType Leaf)
+    ) {
+        throw "Development-CA cleanup-marker write-through rename could not be proven: $resolvedDestinationPath"
+    }
+}
+
+<#
+.SYNOPSIS
 Persist rollback ownership before the shared development signer is staged.
 
 .PARAMETER VmxPath
@@ -697,7 +767,11 @@ function New-AtlasoDevelopmentCaCleanupMarker {
         finally {
             $stream.Dispose()
         }
-        Move-Item -LiteralPath $temporaryPath -Destination $markerPath
+        # The signer-bearing VMX may be flushed immediately after this returns;
+        # require the marker directory entry itself to reach disk first.
+        Move-AtlasoDurableCleanupMarkerFile `
+            -SourcePath $temporaryPath `
+            -DestinationPath $markerPath
         return $markerPath
     }
     finally {
@@ -783,7 +857,10 @@ function Set-AtlasoDevelopmentCaCleanupMarkerPhase {
         finally {
             $stream.Dispose()
         }
-        [System.IO.File]::Move($temporaryPath, $resolvedMarkerPath, $true)
+        Move-AtlasoDurableCleanupMarkerFile `
+            -SourcePath $temporaryPath `
+            -DestinationPath $resolvedMarkerPath `
+            -Replace
     }
     finally {
         Remove-Item -LiteralPath $temporaryPath -Force -ErrorAction SilentlyContinue

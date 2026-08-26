@@ -933,8 +933,9 @@ Terminal order:
   a Windows host restart proves the child tree is gone. Validate the
   key before host mutation, use only the separately scrubbed test-wrapper guest-info/staging path, encrypt it with each
   VM's unique secrets key, scrub plaintext staging when import fails, and issue a unique HTTPS leaf. Commit a durable
-  non-secret cleanup marker before staging; later normal-wrapper invocations must retry its exact identity-bound stop,
-  VMX scrub, artifact removal, and data-disk restoration before 1Password preflight or any new mutation. Persist the
+  non-secret cleanup marker through a Windows write-through atomic rename before staging; later normal-wrapper
+  invocations must retry its exact identity-bound stop, VMX scrub, artifact removal, and data-disk restoration before
+  1Password preflight or any new mutation. Persist the
   stopped/scrubbed phase before artifact removal so a retry can safely resume restoration from an absent artifact root.
   Keep lifecycle, Hyper-V, reusable-image, and exported-appliance paths outside that trust domain. Default wrapper wait
   verifies the exact public fingerprint; Windows trust is explicit and idempotent, `-NoStart` is forbidden, and
