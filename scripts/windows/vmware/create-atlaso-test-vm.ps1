@@ -84,10 +84,10 @@ Wait for and trust the generated appliance root CA for the current Windows user.
 Optional first-boot appliance FQDN override.
 
 .PARAMETER AdminPassword
-Initial Atlaso and Photon bootstrap administrator password.
+Initial Atlaso and Photon bootstrap administrator password. The wrapper prompts securely when omitted.
 
 .PARAMETER RootPassword
-Initial Photon root console password.
+Initial Photon root console password. The wrapper prompts securely when omitted.
 
 .PARAMETER RootSshEnabled
 Enable password-backed root SSH for this test VM; disabled by default.
@@ -103,7 +103,6 @@ Cannot be combined with -SshPublicKeyPath.
 .PARAMETER TimeoutSeconds
 Bounded wait used for management-address and root-CA readiness.
 #>
-[Diagnostics.CodeAnalysis.SuppressMessageAttribute('PSAvoidUsingPlainTextForPassword', '')]
 [CmdletBinding(SupportsShouldProcess = $true)]
 param(
     [string]$Name = 'Atlaso-VMware',
@@ -128,8 +127,8 @@ param(
     [switch]$WaitForIp,
     [switch]$TrustRootCa,
     [string]$FirstBootFqdn = '',
-    [string]$AdminPassword = 'VMware01!Test',
-    [string]$RootPassword = 'VMware01!Test',
+    [SecureString]$AdminPassword,
+    [SecureString]$RootPassword,
     [switch]$RootSshEnabled,
     [string]$SshPublicKeyPath = '',
     [switch]$SkipSshKeyProvisioning,
@@ -137,6 +136,16 @@ param(
 )
 
 $ErrorActionPreference = 'Stop'
+
+# Resolve credentials before any network preparation, cleanup, or VM mutation.
+# Read-Host returns SecureString without recreating a repository default.
+if ($null -eq $AdminPassword) {
+    $AdminPassword = Read-Host -Prompt 'Atlaso bootstrap administrator password' -AsSecureString
+}
+if ($null -eq $RootPassword) {
+    $RootPassword = Read-Host -Prompt 'Photon root console password' -AsSecureString
+}
+
 . (Join-Path $PSScriptRoot 'Atlaso.WorkstationFirstBoot.ps1')
 Import-Module (Join-Path $PSScriptRoot 'Atlaso.WorkstationCleanup.psm1') -Force
 Import-Module (Join-Path $PSScriptRoot 'Atlaso.VmwarePayload.psm1') -Force
@@ -217,6 +226,7 @@ function Install-ApplianceRootCa {
             }
             catch {
                 # Best-effort cleanup must never mask the CA readiness error that triggered this retry.
+                Write-Verbose "Could not remove partial root CA download: $($_.Exception.Message)"
             }
             if ((Get-Date) -lt $deadline) {
                 Write-Host "Atlaso root CA is not ready; retrying in $PollSeconds seconds." -ForegroundColor DarkGray

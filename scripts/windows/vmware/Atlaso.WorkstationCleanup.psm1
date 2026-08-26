@@ -145,6 +145,7 @@ Candidate descendant path.
 #>
 function Test-AtlasoStrictDescendantPath {
     [CmdletBinding()]
+    [OutputType([bool])]
     param(
         [Parameter(Mandatory = $true)][string]$ParentPath,
         [Parameter(Mandatory = $true)][string]$ChildPath

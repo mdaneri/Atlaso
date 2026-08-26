@@ -1,6 +1,77 @@
 #requires -Version 7.0
 
-[Diagnostics.CodeAnalysis.SuppressMessageAttribute('PSAvoidUsingPlainTextForPassword', '')]
+<#
+.SYNOPSIS
+Launch the bounded VMware Workstation lifecycle test with secure credential handoff.
+.PARAMETER LabName
+Lab Name value used to configure this workflow.
+.PARAMETER ApplianceVmxPath
+Appliance VMX Path value used to configure this workflow.
+.PARAMETER ClientVmdkPath
+Client Vmdk Path value used to configure this workflow.
+.PARAMETER VmrunPath
+Vmrun Path value used to configure this workflow.
+.PARAMETER ManagementNetwork
+Management Network value used to configure this workflow.
+.PARAMETER BridgedInterfaceAlias
+Bridged Interface Alias value used to configure this workflow.
+.PARAMETER SiteANetwork
+Site A Network value used to configure this workflow.
+.PARAMETER SiteBNetwork
+Site B Network value used to configure this workflow.
+.PARAMETER TrunkNetwork
+Trunk Network value used to configure this workflow.
+.PARAMETER ApplianceIPAddress
+Appliance IP Address value used to configure this workflow.
+.PARAMETER ApplianceUrl
+Appliance URL value used to configure this workflow.
+.PARAMETER SiteInterface
+Site Interface value used to configure this workflow.
+.PARAMETER SiteCidr
+Site Cidr value used to configure this workflow.
+.PARAMETER AdminUsername
+Admin Username value used to configure this workflow.
+.PARAMETER AdminPassword
+Secure Admin Password supplied at runtime; no repository default is used.
+.PARAMETER ApplianceSshUser
+Appliance SSH User value used to configure this workflow.
+.PARAMETER ClientSshUser
+Client SSH User value used to configure this workflow.
+.PARAMETER SshPassword
+Secure SSH Password supplied at runtime; no repository default is used.
+.PARAMETER VcfBackupPassword
+Secure VCF Backup Password supplied at runtime; no repository default is used.
+.PARAMETER EsxiPassword
+Secure Esxi Password supplied at runtime; no repository default is used.
+.PARAMETER VlanId
+VLAN Id value used to configure this workflow.
+.PARAMETER TaggedVlanCidr
+Tagged VLAN Cidr value used to configure this workflow.
+.PARAMETER WanCidr
+Wan Cidr value used to configure this workflow.
+.PARAMETER RoutingWanOnly
+Routing Wan Only value used to configure this workflow.
+.PARAMETER OidcOnly
+Oidc Only value used to configure this workflow.
+.PARAMETER FullEsxiPxeInstall
+Full Esxi PXE Install value used to configure this workflow.
+.PARAMETER PxeInstallerIsoPath
+PXE Installer Iso Path value used to configure this workflow.
+.PARAMETER KeepVms
+Keep Vms value used to configure this workflow.
+.PARAMETER SkipClientPrepare
+Skip Client Prepare value used to configure this workflow.
+.PARAMETER PrepareNetworksOnly
+Prepare Networks Only value used to configure this workflow.
+.PARAMETER CleanupVmsOnly
+Cleanup Vms Only value used to configure this workflow.
+.PARAMETER AllowDryRunApply
+Allow Dry Run Apply value used to configure this workflow.
+.PARAMETER SkipBackupRestoreTest
+Skip Backup Restore Test value used to configure this workflow.
+.PARAMETER PlanOnly
+Plan Only value used to configure this workflow.
+#>
 [CmdletBinding(DefaultParameterSetName = 'Run')]
 param(
     [Parameter(ParameterSetName = 'Run')]
@@ -68,7 +139,7 @@ param(
 
     [Parameter(ParameterSetName = 'Run')]
     [Parameter(ParameterSetName = 'Plan')]
-    [string]$AdminPassword = 'VMware01!Test',
+    [SecureString]$AdminPassword,
 
     [Parameter(ParameterSetName = 'Run')]
     [Parameter(ParameterSetName = 'Plan')]
@@ -80,11 +151,15 @@ param(
 
     [Parameter(ParameterSetName = 'Run')]
     [Parameter(ParameterSetName = 'Plan')]
-    [string]$SshPassword = 'VMware01!Test',
+    [SecureString]$SshPassword,
 
     [Parameter(ParameterSetName = 'Run')]
     [Parameter(ParameterSetName = 'Plan')]
-    [string]$VcfBackupPassword = 'VMware01!Test',
+    [SecureString]$VcfBackupPassword,
+
+    [Parameter(ParameterSetName = 'Run')]
+    [Parameter(ParameterSetName = 'Plan')]
+    [SecureString]$EsxiPassword,
 
     [Parameter(ParameterSetName = 'Run')]
     [Parameter(ParameterSetName = 'Plan')]
@@ -144,6 +219,10 @@ $ErrorActionPreference = 'Stop'
 $repoRoot = Resolve-Path -LiteralPath (Join-Path $PSScriptRoot '..\..\..')
 $applianceIpWasPassed = $PSBoundParameters.ContainsKey('ApplianceIPAddress')
 
+<#
+.SYNOPSIS
+Find-Latest Appliance VMX helper for the bounded workflow.
+#>
 function Find-LatestApplianceVmx {
     $outputRoot = Join-Path $repoRoot 'image\vmware-workstation\output'
     if (-not (Test-Path -LiteralPath $outputRoot)) {
@@ -158,6 +237,10 @@ function Find-LatestApplianceVmx {
     return $selected.FullName
 }
 
+<#
+.SYNOPSIS
+Resolve-Power Shell7 Path helper for the bounded workflow.
+#>
 function Resolve-PowerShell7Path {
     $powerShell7 = Get-Command -Name 'pwsh' -CommandType Application -ErrorAction SilentlyContinue |
         Select-Object -First 1
@@ -167,6 +250,14 @@ function Resolve-PowerShell7Path {
     return $powerShell7.Source
 }
 
+<#
+.SYNOPSIS
+Get-IPv4 Address From Subnet Offset helper for the bounded workflow.
+.PARAMETER Subnet
+Subnet value used to configure this workflow.
+.PARAMETER HostOffset
+Host Offset value used to configure this workflow.
+#>
 function Get-Ipv4AddressFromSubnetOffset {
     param(
         [Parameter(Mandatory = $true)][string]$Subnet,
@@ -187,6 +278,18 @@ function Get-Ipv4AddressFromSubnetOffset {
     return ([System.Net.IPAddress]::new($next)).ToString()
 }
 
+<#
+.SYNOPSIS
+Get-Management Network Plan helper for the bounded workflow.
+.PARAMETER NetworkName
+Network Name value used to configure this workflow.
+.PARAMETER Vmrun
+Vmrun value used to configure this workflow.
+.PARAMETER BridgeAlias
+Bridge Alias value used to configure this workflow.
+.PARAMETER AllLifecycleNetworks
+All Lifecycle Networks value used to configure this workflow.
+#>
 function Get-ManagementNetworkPlan {
     param(
         [Parameter(Mandatory = $true)][string]$NetworkName,
@@ -253,11 +356,17 @@ if ($PSCmdlet.ParameterSetName -eq 'CleanupVms') {
     return
 }
 
-if (-not $SshPassword) {
+if ($null -eq $AdminPassword) {
+    $AdminPassword = Read-Host -Prompt 'Atlaso lifecycle administrator password' -AsSecureString
+}
+if ($null -eq $SshPassword) {
     $SshPassword = $AdminPassword
 }
-if (-not $VcfBackupPassword) {
-    $VcfBackupPassword = 'VMware01!Test'
+if ($null -eq $VcfBackupPassword) {
+    $VcfBackupPassword = Read-Host -Prompt 'VCF Backup lifecycle password' -AsSecureString
+}
+if ($FullEsxiPxeInstall -and $null -eq $EsxiPassword) {
+    $EsxiPassword = Read-Host -Prompt 'ESXi root password for lifecycle probing' -AsSecureString
 }
 if (($RoutingWanOnly -and $FullEsxiPxeInstall) -or ($OidcOnly -and ($RoutingWanOnly -or $FullEsxiPxeInstall))) {
     throw "-OidcOnly, -RoutingWanOnly, and -FullEsxiPxeInstall are mutually exclusive."
@@ -299,6 +408,16 @@ if (-not $SkipClientPrepare -and -not $PlanOnly) {
 $effectiveSkipBackupRestoreTest = [bool]($SkipBackupRestoreTest -or $RoutingWanOnly -or $OidcOnly)
 $powerShell7Path = Resolve-PowerShell7Path
 
+$secretBundlePath = Join-Path ([System.IO.Path]::GetTempPath()) "atlaso-vmware-lifecycle-$([guid]::NewGuid().ToString('N')).clixml"
+# CLIXML uses the current Windows user's DPAPI protection for SecureString
+# members, avoiding plaintext password arguments across the PowerShell process boundary.
+[pscustomobject]@{
+    AdminPassword     = $AdminPassword
+    SshPassword       = $SshPassword
+    VcfBackupPassword = $VcfBackupPassword
+    EsxiPassword      = $EsxiPassword
+} | Export-Clixml -LiteralPath $secretBundlePath -Force
+
 $arguments = @(
     '-NoLogo',
     '-NoProfile',
@@ -315,11 +434,9 @@ $arguments = @(
     '-SiteInterface', $SiteInterface,
     '-SiteCidr', $SiteCidr,
     '-AdminUsername', $AdminUsername,
-    '-AdminPassword', $AdminPassword,
+    '-SecretBundlePath', $secretBundlePath,
     '-ApplianceSshUser', $ApplianceSshUser,
     '-ClientSshUser', $ClientSshUser,
-    '-SshPassword', $SshPassword,
-    '-VcfBackupPassword', $VcfBackupPassword,
     '-VlanId', "$VlanId",
     '-TaggedVlanCidr', $TaggedVlanCidr,
     '-WanCidr', $WanCidr
@@ -346,7 +463,11 @@ Write-Host ("Full ESXi PXE install: {0}" -f ([bool]$FullEsxiPxeInstall))
 Write-Host ("Backup/restore validation: {0}" -f (-not $effectiveSkipBackupRestoreTest))
 Write-Host ("Cleanup created VMs: {0}" -f (-not $KeepVms))
 
-& $powerShell7Path @arguments
-if ($LASTEXITCODE -ne 0) {
-    throw "VMware Workstation lifecycle test failed with exit code $LASTEXITCODE"
+try {
+    & $powerShell7Path @arguments
+    if ($LASTEXITCODE -ne 0) {
+        throw "VMware Workstation lifecycle test failed with exit code $LASTEXITCODE"
+    }
+} finally {
+    Remove-Item -LiteralPath $secretBundlePath -Force -ErrorAction SilentlyContinue
 }

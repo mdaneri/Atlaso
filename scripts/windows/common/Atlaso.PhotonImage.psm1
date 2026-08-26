@@ -100,8 +100,8 @@ Provider disk-discovery policy used by the installer.
 function New-AtlasoPhotonKickstart {
     param(
         [Parameter(Mandatory = $true)][string]$Path,
-        [Parameter(Mandatory = $true)][string]$RootPassword,
-        [Parameter(Mandatory = $true)][string]$BuildPassword,
+        [Parameter(Mandatory = $true)][SecureString]$RootPassword,
+        [Parameter(Mandatory = $true)][SecureString]$BuildPassword,
         [Parameter(Mandatory = $true)][string]$BuildUsername,
         [string]$StaticAddress,
         [string]$StaticNetmask,
@@ -113,7 +113,13 @@ function New-AtlasoPhotonKickstart {
         [string]$InstallDiskLayout = 'default'
     )
 
-    $network = if ($StaticAddress) {
+    # Photon kickstart JSON requires plaintext at its serialization boundary. Keep
+    # that representation local to this function instead of accepting it from callers.
+    $rootPasswordText = ConvertFrom-SecureString -SecureString $RootPassword -AsPlainText
+    $buildPasswordText = ConvertFrom-SecureString -SecureString $BuildPassword -AsPlainText
+
+    try {
+        $network = if ($StaticAddress) {
         $nameserver = if ($StaticDns.Count -gt 0) { $StaticDns[0] } else { '1.1.1.1' }
         [ordered]@{
             type       = 'static'
@@ -143,7 +149,7 @@ function New-AtlasoPhotonKickstart {
 
     # Keep the credential out of the nested shell grammar. The installer decodes
     # one complete chpasswd record directly to stdin without evaluating its bytes.
-    $buildCredentialBase64 = ConvertTo-AtlasoUtf8Base64 -Value "${BuildUsername}:$BuildPassword`n"
+    $buildCredentialBase64 = ConvertTo-AtlasoUtf8Base64 -Value "${BuildUsername}:$buildPasswordText`n"
     $postInstall = @(
         '#!/bin/sh',
         "useradd -m -G sudo -s /bin/bash $BuildUsername || true",
@@ -173,7 +179,7 @@ function New-AtlasoPhotonKickstart {
         hostname            = 'atlaso'
         password            = [ordered]@{
             crypted = $false
-            text    = $RootPassword
+            text    = $rootPasswordText
         }
         disk                = $installDisk
         partitions          = @(
@@ -194,6 +200,11 @@ function New-AtlasoPhotonKickstart {
     New-Item -ItemType Directory -Force -Path $parent | Out-Null
     $json = $kickstart | ConvertTo-Json -Depth 10
     [System.IO.File]::WriteAllText($Path, $json, [System.Text.UTF8Encoding]::new($false))
+    }
+    finally {
+        $rootPasswordText = $null
+        $buildPasswordText = $null
+    }
 }
 
 <#
@@ -519,8 +530,8 @@ function Invoke-AtlasoPhotonImageBuild {
         [Parameter(Mandatory = $true)][string]$IsoUrl,
         [Parameter(Mandatory = $true)][string]$IsoChecksum,
         [Parameter(Mandatory = $true)][string]$PackerDirectory,
-        [string]$SshPassword = 'VMware01!',
-        [string]$BootstrapAdminPassword = 'VMware01!',
+        [Parameter(Mandatory = $true)][SecureString]$SshPassword,
+        [Parameter(Mandatory = $true)][SecureString]$BootstrapAdminPassword,
         [string]$VmName = 'Atlaso-Photon-Builder',
         [string]$OutputDirectory = '',
         [string]$SshHost = '',
@@ -617,12 +628,19 @@ function Invoke-AtlasoPhotonImageBuild {
         return
     }
 
-    $packerVariables = @{
+    # Packer's HCL boundary requires strings. Convert only after all password-free
+    # preparation has completed, then remove the generated secret-bearing var file.
+    $sshPasswordText = $null
+    $bootstrapAdminPasswordText = $null
+    try {
+        $sshPasswordText = ConvertFrom-SecureString -SecureString $SshPassword -AsPlainText
+        $bootstrapAdminPasswordText = ConvertFrom-SecureString -SecureString $BootstrapAdminPassword -AsPlainText
+        $packerVariables = @{
         iso_url                  = $resolvedPreparedIsoPath
         iso_checksum             = $preparedIsoChecksum
         iso_contains_kickstart   = $true
-        ssh_password             = $SshPassword
-        bootstrap_admin_password = $BootstrapAdminPassword
+        ssh_password             = $sshPasswordText
+        bootstrap_admin_password = $bootstrapAdminPasswordText
         vm_name                  = $VmName
         builder_static_ip        = $BuilderStaticIp
         builder_static_netmask   = $BuilderStaticNetmask
@@ -659,29 +677,36 @@ function Invoke-AtlasoPhotonImageBuild {
     }
     $packerArgs += @('-var-file', $varFilePath, '.')
 
-    Push-Location $packerDir
-    try {
-        & packer init .
-        if ($LASTEXITCODE -ne 0) {
-            throw "packer init failed with exit code $LASTEXITCODE."
-        }
-        $pluginCheckScript = Join-Path $PSScriptRoot '..\..\check_packer_plugins.py'
-        & python $pluginCheckScript --packer (Get-Command packer -ErrorAction Stop).Source $packerDir
-        if ($LASTEXITCODE -ne 0) {
-            throw "Exact Packer plugin verification failed with exit code $LASTEXITCODE."
-        }
-        if (-not $ValidateOnly -and $null -ne $PackerBuildInvoker) {
-            & $PackerBuildInvoker $packerArgs $packerDir
-        }
-        else {
-            & packer @packerArgs
+        Push-Location $packerDir
+        try {
+            & packer init .
             if ($LASTEXITCODE -ne 0) {
-                $operation = if ($ValidateOnly) { 'validate' } else { 'build' }
-                throw "packer $operation failed with exit code $LASTEXITCODE."
+                throw "packer init failed with exit code $LASTEXITCODE."
             }
+            $pluginCheckScript = Join-Path $PSScriptRoot '..\..\check_packer_plugins.py'
+            & python $pluginCheckScript --packer (Get-Command packer -ErrorAction Stop).Source $packerDir
+            if ($LASTEXITCODE -ne 0) {
+                throw "Exact Packer plugin verification failed with exit code $LASTEXITCODE."
+            }
+            if (-not $ValidateOnly -and $null -ne $PackerBuildInvoker) {
+                & $PackerBuildInvoker $packerArgs $packerDir
+            }
+            else {
+                & packer @packerArgs
+                if ($LASTEXITCODE -ne 0) {
+                    $operation = if ($ValidateOnly) { 'validate' } else { 'build' }
+                    throw "packer $operation failed with exit code $LASTEXITCODE."
+                }
+            }
+        } finally {
+            Pop-Location
         }
     } finally {
-        Pop-Location
+        # The var file is needed only by the bounded Packer child and must not
+        # leave reusable plaintext credentials in the build workspace.
+        Remove-Item -LiteralPath $varFilePath -Force -ErrorAction SilentlyContinue
+        $sshPasswordText = $null
+        $bootstrapAdminPasswordText = $null
     }
 }
 

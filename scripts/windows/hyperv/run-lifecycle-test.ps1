@@ -1,4 +1,65 @@
-[Diagnostics.CodeAnalysis.SuppressMessageAttribute('PSAvoidUsingPlainTextForPassword', '')]
+<#
+.SYNOPSIS
+Run the bounded Atlaso Hyper-V lifecycle interoperability lab.
+.PARAMETER LabName
+Lab Name value used to configure this workflow.
+.PARAMETER ApplianceVhdxPath
+Appliance VHDX Path value used to configure this workflow.
+.PARAMETER ClientVhdxPath
+Client VHDX Path value used to configure this workflow.
+.PARAMETER EsxIsoPath
+ESX Iso Path value used to configure this workflow.
+.PARAMETER ClientManagementSwitch
+Client Management Switch value used to configure this workflow.
+.PARAMETER ApplianceIPAddress
+Appliance IP Address value used to configure this workflow.
+.PARAMETER ApplianceUrl
+Appliance URL value used to configure this workflow.
+.PARAMETER ApplianceMemoryStartupBytes
+Appliance Memory Startup Bytes value used to configure this workflow.
+.PARAMETER ClientMemoryStartupBytes
+Client Memory Startup Bytes value used to configure this workflow.
+.PARAMETER ApplianceProcessorCount
+Appliance Processor Count value used to configure this workflow.
+.PARAMETER ClientProcessorCount
+Client Processor Count value used to configure this workflow.
+.PARAMETER SiteInterface
+Site Interface value used to configure this workflow.
+.PARAMETER SiteCidr
+Site Cidr value used to configure this workflow.
+.PARAMETER SiteVlanId
+Site VLAN Id value used to configure this workflow.
+.PARAMETER VlanId
+VLAN Id value used to configure this workflow.
+.PARAMETER TaggedVlanCidr
+Tagged VLAN Cidr value used to configure this workflow.
+.PARAMETER WanCidr
+Wan Cidr value used to configure this workflow.
+.PARAMETER AdminUsername
+Admin Username value used to configure this workflow.
+.PARAMETER SecretBundlePath
+Path to the current-user DPAPI-protected CLIXML secret bundle.
+.PARAMETER SshUser
+SSH User value used to configure this workflow.
+.PARAMETER ApplianceSshUser
+Appliance SSH User value used to configure this workflow.
+.PARAMETER ClientSshUser
+Client SSH User value used to configure this workflow.
+.PARAMETER SshKeyPath
+SSH Key Path value used to configure this workflow.
+.PARAMETER SignedReleaseRepositoryUrl
+Signed Release Repository URL value used to configure this workflow.
+.PARAMETER AllowDryRunApply
+Allow Dry Run Apply value used to configure this workflow.
+.PARAMETER SkipBackupRestoreTest
+Skip Backup Restore Test value used to configure this workflow.
+.PARAMETER AllowExistingLifecycleLab
+Allow Existing Lifecycle Lab value used to configure this workflow.
+.PARAMETER CleanupCreatedLab
+Cleanup Created Lab value used to configure this workflow.
+.PARAMETER PlanOnly
+Plan Only value used to configure this workflow.
+#>
 [CmdletBinding(SupportsShouldProcess = $true)]
 param(
     [string]$LabName = 'AtlasoLifecycle',
@@ -21,13 +82,11 @@ param(
     [string]$WanCidr = '172.31.50.1/24',
     [string]$AdminUsername = 'admin',
     [Parameter(Mandatory = $true)]
-    [string]$AdminPassword,
+    [string]$SecretBundlePath,
     [string]$SshUser = '',
     [string]$ApplianceSshUser = 'admin',
     [string]$ClientSshUser = 'alpine',
     [string]$SshKeyPath = '',
-    [string]$SshPassword = '',
-    [string]$VcfBackupPassword = 'VMware01!Test',
     [string]$SignedReleaseRepositoryUrl = '',
     [switch]$AllowDryRunApply,
     [switch]$SkipBackupRestoreTest,
@@ -37,6 +96,41 @@ param(
 )
 
 $ErrorActionPreference = 'Stop'
+
+<#
+.SYNOPSIS
+Unwrap a SecureString at a Windows PowerShell-compatible native-tool boundary.
+.PARAMETER Value
+Secure value to unwrap for the immediate legacy tool call.
+#>
+function ConvertFrom-AtlasoSecureString {
+    param([Parameter(Mandatory = $true)][SecureString]$Value)
+
+    # Windows PowerShell 5.1 lacks ConvertFrom-SecureString -AsPlainText. The
+    # unmanaged buffer is bounded to this conversion and zeroed before return.
+    $buffer = [Runtime.InteropServices.Marshal]::SecureStringToBSTR($Value)
+    try {
+        return [Runtime.InteropServices.Marshal]::PtrToStringBSTR($buffer)
+    }
+    finally {
+        [Runtime.InteropServices.Marshal]::ZeroFreeBSTR($buffer)
+    }
+}
+
+# The launcher persists only DPAPI-protected SecureString members. Convert them
+# after import because the legacy test tools accept plaintext only at their API boundaries.
+$secretBundle = Import-Clixml -LiteralPath $SecretBundlePath
+foreach ($propertyName in @('AdminPassword', 'SshPassword', 'VcfBackupPassword')) {
+    if ($secretBundle.$propertyName -isnot [SecureString]) {
+        throw "Lifecycle secret bundle property is missing or invalid: $propertyName"
+    }
+}
+$adminPasswordSecure = $secretBundle.AdminPassword
+$sshPasswordSecure = $secretBundle.SshPassword
+$vcfBackupPasswordSecure = $secretBundle.VcfBackupPassword
+$AdminPassword = ConvertFrom-AtlasoSecureString -Value $adminPasswordSecure
+$SshPassword = ConvertFrom-AtlasoSecureString -Value $sshPasswordSecure
+$VcfBackupPassword = ConvertFrom-AtlasoSecureString -Value $vcfBackupPasswordSecure
 
 $repoRoot = Resolve-Path -LiteralPath (Join-Path $PSScriptRoot '..\..\..')
 if (-not $ApplianceUrl) {
@@ -51,6 +145,12 @@ $diskRoot = Join-Path $resultRoot 'disks'
 $seedRoot = Join-Path $resultRoot 'seed'
 $createdVms = New-Object System.Collections.Generic.List[string]
 
+<#
+.SYNOPSIS
+Assert-Safe Lifecycle Name helper for the bounded workflow.
+.PARAMETER Name
+Name input consumed by Assert-SafeLifecycleName.
+#>
 function Assert-SafeLifecycleName {
     param([string]$Name)
 
@@ -63,6 +163,14 @@ function Assert-SafeLifecycleName {
     }
 }
 
+<#
+.SYNOPSIS
+Assert-Input VHDX helper for the bounded workflow.
+.PARAMETER Path
+Path input consumed by Assert-InputVhdx.
+.PARAMETER Label
+Label input consumed by Assert-InputVhdx.
+#>
 function Assert-InputVhdx {
     param([string]$Path, [string]$Label)
 
@@ -71,6 +179,16 @@ function Assert-InputVhdx {
     }
 }
 
+<#
+.SYNOPSIS
+New-Lifecycle Differencing Disk helper for the bounded workflow.
+.PARAMETER ParentPath
+Parent Path value used to configure this workflow.
+.PARAMETER ChildPath
+Child Path value used to configure this workflow.
+.PARAMETER Label
+Label value used to configure this workflow.
+#>
 function New-LifecycleDifferencingDisk {
     [CmdletBinding(SupportsShouldProcess = $true)]
     param(
@@ -87,6 +205,20 @@ function New-LifecycleDifferencingDisk {
     }
 }
 
+<#
+.SYNOPSIS
+New-Lifecycle VM helper for the bounded workflow.
+.PARAMETER Name
+Name value used to configure this workflow.
+.PARAMETER VhdxPath
+VHDX Path value used to configure this workflow.
+.PARAMETER SwitchName
+Switch Name value used to configure this workflow.
+.PARAMETER MemoryStartupBytes
+Memory Startup Bytes value used to configure this workflow.
+.PARAMETER ProcessorCount
+Processor Count value used to configure this workflow.
+#>
 function New-LifecycleVm {
     [CmdletBinding(SupportsShouldProcess = $true)]
     param(
@@ -117,6 +249,10 @@ function New-LifecycleVm {
     }
 }
 
+<#
+.SYNOPSIS
+Ensure-Client SSH Key helper for the bounded workflow.
+#>
 function Ensure-ClientSshKey {
     if (-not $SshKeyPath) {
         if ($SshPassword) {
@@ -131,6 +267,16 @@ function Ensure-ClientSshKey {
     return (Get-Content -LiteralPath $publicPath -Raw).Trim()
 }
 
+<#
+.SYNOPSIS
+New-Cloud Init Seed Iso helper for the bounded workflow.
+.PARAMETER Path
+Path value used to configure this workflow.
+.PARAMETER HostName
+Host Name value used to configure this workflow.
+.PARAMETER PublicKey
+Public Key value used to configure this workflow.
+#>
 function New-CloudInitSeedIso {
     [CmdletBinding(SupportsShouldProcess = $true)]
     param(
@@ -171,6 +317,14 @@ function New-CloudInitSeedIso {
     }
 }
 
+<#
+.SYNOPSIS
+Ensure-Hard Disk helper for the bounded workflow.
+.PARAMETER VMName
+VM Name input consumed by Ensure-HardDisk.
+.PARAMETER Path
+Path input consumed by Ensure-HardDisk.
+#>
 function Ensure-HardDisk {
     [CmdletBinding(SupportsShouldProcess = $true)]
     param(
@@ -188,6 +342,14 @@ function Ensure-HardDisk {
     }
 }
 
+<#
+.SYNOPSIS
+Ensure-Dvd Drive helper for the bounded workflow.
+.PARAMETER VMName
+VM Name input consumed by Ensure-DvdDrive.
+.PARAMETER Path
+Path input consumed by Ensure-DvdDrive.
+#>
 function Ensure-DvdDrive {
     [CmdletBinding(SupportsShouldProcess = $true)]
     param(
@@ -212,6 +374,16 @@ function Ensure-DvdDrive {
     }
 }
 
+<#
+.SYNOPSIS
+Ensure-Network Adapter helper for the bounded workflow.
+.PARAMETER VMName
+VM Name input consumed by Ensure-NetworkAdapter.
+.PARAMETER Name
+Name input consumed by Ensure-NetworkAdapter.
+.PARAMETER SwitchName
+Switch Name input consumed by Ensure-NetworkAdapter.
+#>
 function Ensure-NetworkAdapter {
     [CmdletBinding(SupportsShouldProcess = $true)]
     param(
@@ -234,6 +406,10 @@ function Ensure-NetworkAdapter {
     }
 }
 
+<#
+.SYNOPSIS
+Set-Lifecycle Network Topology helper for the bounded workflow.
+#>
 function Set-LifecycleNetworkTopology {
     [CmdletBinding(SupportsShouldProcess = $true)]
     param()
@@ -280,6 +456,12 @@ function Set-LifecycleNetworkTopology {
     }
 }
 
+<#
+.SYNOPSIS
+Wait-VM Running helper for the bounded workflow.
+.PARAMETER Name
+Name input consumed by Wait-VMRunning.
+#>
 function Wait-VMRunning {
     param([string]$Name)
 
@@ -294,6 +476,14 @@ function Wait-VMRunning {
     throw "VM did not reach Running state: $Name"
 }
 
+<#
+.SYNOPSIS
+Get-Guest I Pv4 helper for the bounded workflow.
+.PARAMETER Name
+Name value used to configure this workflow.
+.PARAMETER AdapterName
+Adapter Name value used to configure this workflow.
+#>
 function Get-GuestIPv4 {
     param(
         [string]$Name,
@@ -306,6 +496,12 @@ function Get-GuestIPv4 {
     return $addresses | Select-Object -First 1
 }
 
+<#
+.SYNOPSIS
+Convert To-Hyphen Mac helper for the bounded workflow.
+.PARAMETER MacAddress
+Mac Address value used to configure this workflow.
+#>
 function ConvertTo-HyphenMac {
     param([string]$MacAddress)
 
@@ -317,6 +513,12 @@ function ConvertTo-HyphenMac {
     return ($pairs -join '-')
 }
 
+<#
+.SYNOPSIS
+Convert To-Colon Mac helper for the bounded workflow.
+.PARAMETER MacAddress
+Mac Address value used to configure this workflow.
+#>
 function ConvertTo-ColonMac {
     param([string]$MacAddress)
 
@@ -328,6 +530,12 @@ function ConvertTo-ColonMac {
     return ($pairs -join ':')
 }
 
+<#
+.SYNOPSIS
+Convert To-Shell Single Quoted helper for the bounded workflow.
+.PARAMETER Value
+Value value used to configure this workflow.
+#>
 function ConvertTo-ShellSingleQuoted {
     param([string]$Value)
 
@@ -335,6 +543,16 @@ function ConvertTo-ShellSingleQuoted {
     return "'$safe'"
 }
 
+<#
+.SYNOPSIS
+New-Lifecycle PXE VM helper for the bounded workflow.
+.PARAMETER Name
+Name value used to configure this workflow.
+.PARAMETER SwitchName
+Switch Name value used to configure this workflow.
+.PARAMETER DiskPath
+Disk Path value used to configure this workflow.
+#>
 function New-LifecyclePxeVm {
     [CmdletBinding(SupportsShouldProcess = $true)]
     param(
@@ -373,6 +591,12 @@ function New-LifecyclePxeVm {
     }
 }
 
+<#
+.SYNOPSIS
+Get-PXE Client Mac helper for the bounded workflow.
+.PARAMETER Name
+Name value used to configure this workflow.
+#>
 function Get-PxeClientMac {
     param([string]$Name)
 
@@ -383,6 +607,12 @@ function Get-PxeClientMac {
     return ConvertTo-ColonMac -MacAddress $adapter.MacAddress
 }
 
+<#
+.SYNOPSIS
+Copy-ESX Iso To Appliance helper for the bounded workflow.
+.PARAMETER Path
+Path input consumed by Copy-EsxIsoToAppliance.
+#>
 function Copy-EsxIsoToAppliance {
     param([string]$Path)
 
@@ -424,6 +654,16 @@ function Copy-EsxIsoToAppliance {
     return $remotePath
 }
 
+<#
+.SYNOPSIS
+Invoke-PXE Boot Smoke helper for the bounded workflow.
+.PARAMETER Name
+Name input consumed by Invoke-PxeBootSmoke.
+.PARAMETER MacAddress
+Mac Address input consumed by Invoke-PxeBootSmoke.
+.PARAMETER OutputPath
+Output Path input consumed by Invoke-PxeBootSmoke.
+#>
 function Invoke-PxeBootSmoke {
     param(
         [string]$Name,
@@ -476,6 +716,20 @@ function Invoke-PxeBootSmoke {
     Write-Host "PXE boot smoke result: $OutputPath"
 }
 
+<#
+.SYNOPSIS
+Invoke-Network Boot Inventory Proof helper for the bounded workflow.
+.PARAMETER Name
+Name input consumed by Invoke-NetworkBootInventoryProof.
+.PARAMETER MacAddress
+Mac Address input consumed by Invoke-NetworkBootInventoryProof.
+.PARAMETER CaptureHost
+Capture Host input consumed by Invoke-NetworkBootInventoryProof.
+.PARAMETER CaptureHostKey
+Capture Host Key input consumed by Invoke-NetworkBootInventoryProof.
+.PARAMETER OutputPath
+Output Path input consumed by Invoke-NetworkBootInventoryProof.
+#>
 function Invoke-NetworkBootInventoryProof {
     param(
         [string]$Name,
@@ -497,8 +751,10 @@ function Invoke-NetworkBootInventoryProof {
     }
     $captureArgs += @('-pw', $SshPassword, "$ClientSshUser@$CaptureHost", $captureCommand)
     $captureJob = Start-Job -ScriptBlock {
-        param([string[]]$PlinkArguments)
-        & plink @PlinkArguments
+        # Start-Job receives the plink vector as one array argument. Extract it
+        # inside the runspace so analyzer scope checks and native splatting agree.
+        [string[]]$plinkArguments = $args[0]
+        & plink @plinkArguments
     } -ArgumentList (,$captureArgs)
     Start-Sleep -Seconds 2
     $before = (Get-VM -Name $Name).Uptime
@@ -555,6 +811,14 @@ function Invoke-NetworkBootInventoryProof {
     throw "Inventory Linux acknowledged reboot, but Hyper-V VM uptime did not reset."
 }
 
+<#
+.SYNOPSIS
+Get-Neighbor I Pv4 For Adapter helper for the bounded workflow.
+.PARAMETER VMName
+VM Name value used to configure this workflow.
+.PARAMETER AdapterName
+Adapter Name value used to configure this workflow.
+#>
 function Get-NeighborIPv4ForAdapter {
     param(
         [string]$VMName,
@@ -577,6 +841,14 @@ function Get-NeighborIPv4ForAdapter {
     return $neighbors | Select-Object -ExpandProperty IPAddress -First 1
 }
 
+<#
+.SYNOPSIS
+Wait-Guest I Pv4 helper for the bounded workflow.
+.PARAMETER Name
+Name input consumed by Wait-GuestIPv4.
+.PARAMETER AdapterName
+Adapter Name input consumed by Wait-GuestIPv4.
+#>
 function Wait-GuestIPv4 {
     param(
         [string]$Name,
@@ -598,6 +870,16 @@ function Wait-GuestIPv4 {
     return ''
 }
 
+<#
+.SYNOPSIS
+Test-Tcp Port helper for the bounded workflow.
+.PARAMETER HostName
+Host Name input consumed by Test-TcpPort.
+.PARAMETER Port
+Port input consumed by Test-TcpPort.
+.PARAMETER TimeoutMilliseconds
+Timeout Milliseconds input consumed by Test-TcpPort.
+#>
 function Test-TcpPort {
     param(
         [string]$HostName,
@@ -622,16 +904,28 @@ function Test-TcpPort {
     }
 }
 
+<#
+.SYNOPSIS
+Get-Plink Host Key helper for the bounded workflow.
+.PARAMETER HostName
+Host Name value used to configure this workflow.
+.PARAMETER UserName
+User Name value used to configure this workflow.
+.PARAMETER Password
+Secure Password supplied at runtime; no repository default is used.
+#>
 function Get-PlinkHostKey {
     param(
         [string]$HostName,
         [string]$UserName,
-        [string]$Password
+        [SecureString]$Password
     )
 
     if (-not $HostName -or -not $Password -or -not (Get-Command plink -ErrorAction SilentlyContinue)) {
         return ''
     }
+
+    $passwordText = ConvertFrom-AtlasoSecureString -Value $Password
 
     $deadline = (Get-Date).AddMinutes(4)
     while ((Get-Date) -lt $deadline) {
@@ -643,7 +937,7 @@ function Get-PlinkHostKey {
         $previousErrorActionPreference = $ErrorActionPreference
         $ErrorActionPreference = 'Continue'
         try {
-            $output = & plink -batch -ssh -pw $Password "$UserName@$HostName" 'hostname' 2>&1
+            $output = & plink -batch -ssh -pw $passwordText "$UserName@$HostName" 'hostname' 2>&1
             $exitCode = $LASTEXITCODE
         }
         finally {
@@ -651,17 +945,29 @@ function Get-PlinkHostKey {
         }
         $text = ($output | Out-String)
         if ($text -match '(ssh-[A-Za-z0-9-]+\s+\d+\s+SHA256:[A-Za-z0-9+/=]+)') {
-            return $Matches[1]
+            $hostKey = $Matches[1]
+            $passwordText = $null
+            return $hostKey
         }
         if ($exitCode -eq 0) {
+            $passwordText = $null
             return ''
         }
         Start-Sleep -Seconds 5
     }
+    $passwordText = $null
     Write-Warning "Timed out waiting for SSH host key from $UserName@$HostName; continuing without host key pinning."
     return ''
 }
 
+<#
+.SYNOPSIS
+Resolve-Safe Child Path helper for the bounded workflow.
+.PARAMETER Path
+Path value used to configure this workflow.
+.PARAMETER Root
+Root value used to configure this workflow.
+#>
 function Resolve-SafeChildPath {
     param(
         [string]$Path,
@@ -677,6 +983,10 @@ function Resolve-SafeChildPath {
     return $pathFull
 }
 
+<#
+.SYNOPSIS
+Reset-Lifecycle Appliance VM helper for the bounded workflow.
+#>
 function Reset-LifecycleApplianceVm {
     [CmdletBinding(SupportsShouldProcess = $true)]
     param()
@@ -706,7 +1016,7 @@ function Reset-LifecycleApplianceVm {
     }
     Wait-VMRunning -Name $applianceName
     Start-Sleep -Seconds 20
-    return Get-PlinkHostKey -HostName $ApplianceIPAddress -UserName $ApplianceSshUser -Password $SshPassword
+    return Get-PlinkHostKey -HostName $ApplianceIPAddress -UserName $ApplianceSshUser -Password $sshPasswordSecure
 }
 
 $applianceName = "$LabName-Appliance"
@@ -730,10 +1040,6 @@ if ($EsxIsoPath) {
     if ([System.IO.Path]::GetExtension($EsxIsoPath).ToLowerInvariant() -ne '.iso') {
         throw "-EsxIsoPath must point to an .iso file."
     }
-}
-
-if (-not $VcfBackupPassword) {
-    $VcfBackupPassword = 'VMware01!Test'
 }
 
 if ($PlanOnly) {
@@ -828,11 +1134,11 @@ try {
     }
 
     Start-Sleep -Seconds 20
-    $applianceHostKey = Get-PlinkHostKey -HostName $ApplianceIPAddress -UserName $ApplianceSshUser -Password $SshPassword
+    $applianceHostKey = Get-PlinkHostKey -HostName $ApplianceIPAddress -UserName $ApplianceSshUser -Password $sshPasswordSecure
     $clientAHost = Wait-GuestIPv4 -Name $clientAName
     $clientBHost = Wait-GuestIPv4 -Name $clientBName
-    $clientAHostKey = Get-PlinkHostKey -HostName $clientAHost -UserName $ClientSshUser -Password $SshPassword
-    $clientBHostKey = Get-PlinkHostKey -HostName $clientBHost -UserName $ClientSshUser -Password $SshPassword
+    $clientAHostKey = Get-PlinkHostKey -HostName $clientAHost -UserName $ClientSshUser -Password $sshPasswordSecure
+    $clientBHostKey = Get-PlinkHostKey -HostName $clientBHost -UserName $ClientSshUser -Password $sshPasswordSecure
     $pxeClientMac = Get-PxeClientMac -Name $pxeClientName
     $remoteEsxIsoPath = Copy-EsxIsoToAppliance -Path $EsxIsoPath
 
@@ -862,7 +1168,23 @@ try {
         $basePythonArgs += @('--signed-release-repository-url', $SignedReleaseRepositoryUrl)
     }
 
-    function New-LifecyclePythonArgs {
+    <#
+.SYNOPSIS
+N ew L if ec yc le Py th on Ar gs.
+.PARAMETER RunResultRoot
+Run Result Root value used to configure this workflow.
+.PARAMETER CurrentApplianceHostKey
+Current Appliance Host Key value used to configure this workflow.
+.PARAMETER CurrentClientAHost
+Current Client A Host value used to configure this workflow.
+.PARAMETER CurrentClientBHost
+Current Client B Host value used to configure this workflow.
+.PARAMETER CurrentClientAHostKey
+Current Client A Host Key value used to configure this workflow.
+.PARAMETER CurrentClientBHostKey
+Current Client B Host Key value used to configure this workflow.
+#>
+function New-LifecyclePythonArgs {
         param(
             [string]$RunResultRoot,
             [string]$CurrentApplianceHostKey,
@@ -921,8 +1243,8 @@ try {
             $applianceHostKey = Reset-LifecycleApplianceVm
             $clientAHost = Wait-GuestIPv4 -Name $clientAName
             $clientBHost = Wait-GuestIPv4 -Name $clientBName
-            $clientAHostKey = Get-PlinkHostKey -HostName $clientAHost -UserName $ClientSshUser -Password $SshPassword
-            $clientBHostKey = Get-PlinkHostKey -HostName $clientBHost -UserName $ClientSshUser -Password $SshPassword
+            $clientAHostKey = Get-PlinkHostKey -HostName $clientAHost -UserName $ClientSshUser -Password $sshPasswordSecure
+            $clientBHostKey = Get-PlinkHostKey -HostName $clientBHost -UserName $ClientSshUser -Password $sshPasswordSecure
 
             $restoredPythonArgs = New-LifecyclePythonArgs `
                 -RunResultRoot $restoredResultRoot `

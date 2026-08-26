@@ -1163,9 +1163,10 @@ def test_packer_build_uses_atlaso_management_network_by_default():
     assert "-PipGlobalIndex" in docs
     assert "-PipGlobalIndexUrl" in docs
     assert "Omit both pip options for standard/default pip behavior." in docs
-    assert "[string]$SshPassword = 'PhotonBuild01!'" in wrapper
-    assert "[string]$BootstrapAdminPassword = 'VMware01!'" in wrapper
-    assert "[string]$SshPassword = 'VMware01!'" not in wrapper
+    assert "[SecureString]$SshPassword" in wrapper
+    assert "[SecureString]$BootstrapAdminPassword" in wrapper
+    assert "Read-Host -Prompt 'Temporary Photon builder SSH password' -AsSecureString" in wrapper
+    assert "Read-Host -Prompt 'Atlaso bootstrap administrator password' -AsSecureString" in wrapper
     assert "[string[]]$BuilderStaticDns = @()" in wrapper
     assert "[string]$PipGlobalIndex = ''" in wrapper
     assert "[string]$PipGlobalIndexUrl = ''" in wrapper
@@ -1292,9 +1293,10 @@ def test_vmware_builder_uses_nat_gateway_dns_by_default():
     wrapper = Path("scripts/windows/vmware/build-photon-image.ps1").read_text(encoding="utf-8")
     docs = Path("image/vmware-workstation/README.md").read_text(encoding="utf-8")
 
-    assert "[string]$SshPassword = 'PhotonBuild01!'" in wrapper
-    assert "[string]$BootstrapAdminPassword = 'VMware01!'" in wrapper
-    assert "[string]$SshPassword = 'VMware01!'" not in wrapper
+    assert "[SecureString]$SshPassword" in wrapper
+    assert "[SecureString]$BootstrapAdminPassword" in wrapper
+    assert "Read-Host -Prompt 'Temporary Photon builder SSH password' -AsSecureString" in wrapper
+    assert "Read-Host -Prompt 'Atlaso bootstrap administrator password' -AsSecureString" in wrapper
     assert "$builderDnsWasPassed = $PSBoundParameters.ContainsKey('BuilderStaticDns')" in wrapper
     assert "-not $builderDnsWasPassed -and $BuilderStaticDns.Count -eq 0 -and $management.Type -eq 'nat'" in wrapper
     assert "$BuilderStaticDns = @($managementGateway)" in wrapper
@@ -1724,12 +1726,20 @@ def test_vmware_raw_vmx_workflows_inject_complete_first_boot_ovf_environment_bef
     assert lifecycle.index("Set-AtlasoWorkstationOvfEnvironment -VmxPath $applianceVmx") < lifecycle.index(
         "Start-WorkstationVm -Path $vmx"
     )
-    assert "[string]$AdminPassword = 'VMware01!Test'" in lifecycle
+    assert "[string]$SecretBundlePath" in lifecycle
+    assert "Import-Clixml -LiteralPath $SecretBundlePath" in lifecycle
     assert "$ApplianceGuestPassword = $AdminPassword" in lifecycle
     assert "'--appliance-ssh-password', $ApplianceGuestPassword" in lifecycle
     assert "-gp $SshPassword" not in lifecycle
-    assert "[string]$AdminPassword = 'VMware01!Test'" in lifecycle_wrapper
-    assert "[string]$SshPassword = 'VMware01!Test'" in lifecycle_wrapper
+    assert "[SecureString]$AdminPassword" in lifecycle_wrapper
+    assert "[SecureString]$SshPassword" in lifecycle_wrapper
+    assert "Export-Clixml -LiteralPath $secretBundlePath -Force" in lifecycle_wrapper
+    assert "'-SecretBundlePath', $secretBundlePath" in lifecycle_wrapper
+    assert "Remove-Item -LiteralPath $secretBundlePath -Force" in lifecycle_wrapper
+    assert "[SecureString]$AdminPassword" in test_vm
+    assert "[SecureString]$RootPassword" in test_vm
+    assert "Read-Host -Prompt 'Atlaso bootstrap administrator password' -AsSecureString" in test_vm
+    assert "Read-Host -Prompt 'Photon root console password' -AsSecureString" in test_vm
     assert "complete Atlaso first-boot OVF environment" in docs
     assert "plan and result artifacts" in docs
 
@@ -1948,11 +1958,13 @@ def test_lifecycle_single_command_wrapper_prepares_runs_and_cleans_up_by_default
     assert "ParameterSetName = 'PrepareNetworks'" in script
     assert "ParameterSetName = 'CleanupNetworks'" in script
     assert "ParameterSetName = 'CleanupVms'" in script
-    assert "[string]$AdminPassword = 'VMware01!'" in script
+    assert "[SecureString]$AdminPassword" in script
     assert "[string]$ApplianceSshUser = 'admin'" in script
-    assert "[string]$SshPassword = 'VMware01!'" in script
-    assert "[string]$VcfBackupPassword = 'VMware01!Test'" in script
-    assert "'-VcfBackupPassword', $VcfBackupPassword" in script
+    assert "[SecureString]$SshPassword" in script
+    assert "[SecureString]$VcfBackupPassword" in script
+    assert "Export-Clixml -LiteralPath $secretBundlePath -Force" in script
+    assert "'-SecretBundlePath', $secretBundlePath" in script
+    assert "Remove-Item -LiteralPath $secretBundlePath -Force" in script
     assert "[string]$SiteInterface = 'eth1.12'" in script
     assert "[string]$SiteCidr = '192.168.12.1/24'" in script
     assert "[int]$SiteVlanId = 12" in script
@@ -2112,6 +2124,9 @@ def test_lifecycle_vmware_script_supports_routing_wan_only_and_esxi_pxe_install(
     assert "if ($FullEsxiPxeInstall) { $arguments += '-FullEsxiPxeInstall' }" in wrapper
     assert "if ($PxeInstallerIsoPath) { $arguments += @('-PxeInstallerIsoPath', $PxeInstallerIsoPath) }" in wrapper
     assert "-OidcOnly, -RoutingWanOnly, and -FullEsxiPxeInstall are mutually exclusive." in wrapper
+    assert "[SecureString]$EsxiPassword" in wrapper
+    assert "Read-Host -Prompt 'ESXi root password for lifecycle probing' -AsSecureString" in wrapper
+    assert "-GuestPassword $esxiPasswordSecure" in runner
 
     assert "function Get-GuestIPv4ViaGuestOps" in runner
     assert "function Invoke-VmrunBounded" in runner

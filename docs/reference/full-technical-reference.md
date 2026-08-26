@@ -1290,10 +1290,11 @@ deterministic packet-loss/recovery proof, CA apply with a ClientA CSR request an
 Backup SFTP with the `vcf-backup` OS user, client-side connectivity, and by default a backup/restore redeploy pass that
 confirms the restored ClientA certificate has the same serial number and SHA-256 fingerprint as the pre-restore
 certificate and that the restored CA archive fingerprints match the original settings backup. It prints a human-readable
-console summary, writes `result.json`, then removes the VMs it created. It defaults to the local Hyper-V lab password
-for admin and appliance/client SSH access; appliance host-state probes log in as `admin` because root SSH is disabled by
-default, then run checks through sudo. It uses a separate policy-compliant default for VCF Backup SFTP test access; pass
-`-AdminPassword`, `-SshPassword`, and `-VcfBackupPassword` to override those defaults. Pass `-SkipBackupRestoreTest`
+console summary, writes `result.json`, then removes the VMs it created. It prompts securely for the administrator and
+VCF Backup SFTP passwords and reuses the administrator `SecureString` for SSH unless a separate `-SshPassword` is
+provided; no password has a repository default. Appliance host-state probes log in as `admin` because root SSH is
+disabled by default, then run checks through sudo. The launcher hands credentials to its child only through a
+current-user DPAPI-protected temporary CLIXML bundle and removes it after the child exits. Pass `-SkipBackupRestoreTest`
 only when you need the older single-pass run, and pass `-KeepVms` only when preserving a failed lab for inspection. Use
 `-PrepareNetworksOnly` to set up the Hyper-V switches/NAT, `-CleanupVmsOnly` to remove only lifecycle VMs, and
 `-CleanupNetworksOnly` to remove Atlaso switches/NAT after all attached VMs are gone. Details live in

@@ -28,16 +28,12 @@ Interface name used for site routing in workload checks.
 Site A IPv4 CIDR used in test harness arguments.
 .PARAMETER AdminUsername
 Atlaso web admin username.
-.PARAMETER AdminPassword
-Atlaso web admin password.
+.PARAMETER SecretBundlePath
+Path to the current-user DPAPI-protected CLIXML bundle containing lifecycle passwords.
 .PARAMETER ApplianceSshUser
 SSH username for appliance interactions.
 .PARAMETER ClientSshUser
 SSH username for client guest interactions.
-.PARAMETER SshPassword
-Password for client SSH and appliance operations.
-.PARAMETER VcfBackupPassword
-Password used for VCF backup archive export/import.
 .PARAMETER VlanId
 VLAN identifier for WAN scenario traffic.
 .PARAMETER TaggedVlanCidr
@@ -67,75 +63,6 @@ Remove generated lifecycle VM artifacts when complete.
 .PARAMETER PlanOnly
 Emit and return planning JSON without executing scenarios.
 #>
-<#
-.SYNOPSIS
-Run the bounded Atlaso VMware Workstation lifecycle interoperability lab.
-.PARAMETER LabName
-Lab Name value.
-.PARAMETER ApplianceVmxPath
-Appliance Vmx Path value.
-.PARAMETER ClientVmdkPath
-Client Vmdk Path value.
-.PARAMETER VmrunPath
-Vmrun Path value.
-.PARAMETER ManagementNetwork
-Management Network value.
-.PARAMETER SiteANetwork
-Site A Network value.
-.PARAMETER SiteBNetwork
-Site B Network value.
-.PARAMETER TrunkNetwork
-Trunk Network value.
-.PARAMETER ApplianceIPAddress
-Appliance IP Address value.
-.PARAMETER ApplianceUrl
-Appliance Url value.
-.PARAMETER SiteInterface
-Site Interface value.
-.PARAMETER SiteCidr
-Site Cidr value.
-.PARAMETER AdminUsername
-Admin Username value.
-.PARAMETER AdminPassword
-Admin Password value.
-.PARAMETER ApplianceSshUser
-Appliance Ssh User value.
-.PARAMETER ClientSshUser
-Client Ssh User value.
-.PARAMETER SshPassword
-Ssh Password value.
-.PARAMETER VcfBackupPassword
-Vcf Backup Password value.
-.PARAMETER VlanId
-Vlan Id value.
-.PARAMETER TaggedVlanCidr
-Tagged Vlan Cidr value.
-.PARAMETER WanCidr
-Wan Cidr value.
-.PARAMETER AllowDryRunApply
-Allow Dry Run Apply value.
-.PARAMETER SkipBackupRestoreTest
-Skip Backup Restore Test value.
-.PARAMETER OidcOnly
-Oidc Only value.
-.PARAMETER RoutingWanOnly
-Routing Wan Only value.
-.PARAMETER FullEsxiPxeInstall
-Full Esxi Pxe Install value.
-.PARAMETER PxeInstallerIsoPath
-Pxe Installer Iso Path value.
-.PARAMETER PxeClientIPAddress
-Pxe Client IP Address value.
-.PARAMETER EsxiInstallTimeoutSeconds
-Esxi Install Timeout Seconds value.
-.PARAMETER EsxiInstallProbeDelaySeconds
-Esxi Install Probe Delay Seconds value.
-.PARAMETER CleanupCreatedLab
-Cleanup Created Lab value.
-.PARAMETER PlanOnly
-Plan Only value.
-#>
-[Diagnostics.CodeAnalysis.SuppressMessageAttribute('PSAvoidUsingPlainTextForPassword', '')]
 [CmdletBinding(SupportsShouldProcess = $true)]
 param(
     [string]$LabName = 'AtlasoWorkstationLifecycle',
@@ -153,11 +80,10 @@ param(
     [string]$SiteInterface = 'eth1',
     [string]$SiteCidr = '192.168.12.1/24',
     [string]$AdminUsername = 'admin',
-    [string]$AdminPassword = 'VMware01!Test',
+    [Parameter(Mandatory = $true)]
+    [string]$SecretBundlePath,
     [string]$ApplianceSshUser = 'admin',
     [string]$ClientSshUser = 'alpine',
-    [string]$SshPassword = '',
-    [string]$VcfBackupPassword = 'VMware01!Test',
     [int]$VlanId = 50,
     [string]$TaggedVlanCidr = '192.168.60.1/24',
     [string]$WanCidr = '172.31.50.1/24',
@@ -175,6 +101,25 @@ param(
 )
 
 $ErrorActionPreference = 'Stop'
+
+# The launcher persists only DPAPI-protected SecureString members. Convert them
+# after import because VMware guest operations and the test harness accept strings.
+$secretBundle = Import-Clixml -LiteralPath $SecretBundlePath
+foreach ($propertyName in @('AdminPassword', 'SshPassword', 'VcfBackupPassword')) {
+    if ($secretBundle.$propertyName -isnot [SecureString]) {
+        throw "Lifecycle secret bundle property is missing or invalid: $propertyName"
+    }
+}
+if ($FullEsxiPxeInstall -and $secretBundle.EsxiPassword -isnot [SecureString]) {
+    throw 'Lifecycle secret bundle property is missing or invalid: EsxiPassword'
+}
+$adminPasswordSecure = $secretBundle.AdminPassword
+$sshPasswordSecure = $secretBundle.SshPassword
+$vcfBackupPasswordSecure = $secretBundle.VcfBackupPassword
+$esxiPasswordSecure = $secretBundle.EsxiPassword
+$AdminPassword = ConvertFrom-SecureString -SecureString $adminPasswordSecure -AsPlainText
+$SshPassword = ConvertFrom-SecureString -SecureString $sshPasswordSecure -AsPlainText
+$VcfBackupPassword = ConvertFrom-SecureString -SecureString $vcfBackupPasswordSecure -AsPlainText
 . (Join-Path $PSScriptRoot 'Atlaso.WorkstationFirstBoot.ps1')
 Import-Module (Join-Path $PSScriptRoot 'Atlaso.WorkstationCleanup.psm1') -Force
 Import-Module (Join-Path $PSScriptRoot 'Atlaso.VmwarePayload.psm1') -Force
@@ -359,6 +304,7 @@ function Invoke-VmrunBounded {
         try {
             $process.Kill()
         } catch {
+            Write-Verbose "Could not terminate timed-out vmrun process: $($_.Exception.Message)"
         }
         return [pscustomobject]@{
             ExitCode = -1
@@ -1050,12 +996,14 @@ function Get-PlinkHostKey {
     param(
         [string]$HostName,
         [string]$UserName,
-        [string]$Password
+        [SecureString]$Password
     )
 
     if (-not $HostName -or -not $Password -or -not (Get-Command plink -ErrorAction SilentlyContinue)) {
         return ''
     }
+
+    $passwordText = ConvertFrom-SecureString -SecureString $Password -AsPlainText
 
     $deadline = (Get-Date).AddMinutes(4)
     while ((Get-Date) -lt $deadline) {
@@ -1067,20 +1015,24 @@ function Get-PlinkHostKey {
         $previousErrorActionPreference = $ErrorActionPreference
         $ErrorActionPreference = 'Continue'
         try {
-            $output = & plink -batch -ssh -pw $Password "$UserName@$HostName" 'hostname' 2>&1
+            $output = & plink -batch -ssh -pw $passwordText "$UserName@$HostName" 'hostname' 2>&1
             $exitCode = $LASTEXITCODE
         } finally {
             $ErrorActionPreference = $previousErrorActionPreference
         }
         $text = ($output | Out-String)
         if ($text -match '(ssh-[A-Za-z0-9-]+\s+\d+\s+SHA256:[A-Za-z0-9+/=]+)') {
-            return $Matches[1]
+            $hostKey = $Matches[1]
+            $passwordText = $null
+            return $hostKey
         }
         if ($exitCode -eq 0) {
+            $passwordText = $null
             return ''
         }
         Start-Sleep -Seconds 5
     }
+    $passwordText = $null
     Write-Warning "Timed out waiting for SSH host key from $UserName@$HostName; continuing without host key pinning."
     return ''
 }
@@ -1248,26 +1200,31 @@ function Get-GuestIPv4ViaGuestOps {
     param(
         [string]$Path,
         [string]$GuestUser,
-        [string]$GuestPassword,
+        [SecureString]$GuestPassword,
         [string]$Name
     )
 
     if (-not $GuestUser -or -not $GuestPassword) {
         return ''
     }
+    $guestPasswordText = ConvertFrom-SecureString -SecureString $GuestPassword -AsPlainText
     $safeName = ($Name -replace '[^A-Za-z0-9_.-]', '-')
     $guestOutput = "/tmp/atlaso-ipv4-$safeName.txt"
     $hostOutput = Join-Path $resultRoot "guest-ipv4-$safeName.txt"
     $script = "ip -4 -br addr > $guestOutput 2>/dev/null || /sbin/ip -4 -br addr > $guestOutput 2>/dev/null || ifconfig > $guestOutput 2>/dev/null"
-    $runResult = Invoke-VmrunBounded -Arguments @('-T', 'ws', '-gu', $GuestUser, '-gp', $GuestPassword, 'runScriptInGuest', $Path, '/bin/sh', $script) -TimeoutSeconds 15
+    $runResult = Invoke-VmrunBounded -Arguments @('-T', 'ws', '-gu', $GuestUser, '-gp', $guestPasswordText, 'runScriptInGuest', $Path, '/bin/sh', $script) -TimeoutSeconds 15
     if ($runResult.ExitCode -ne 0) {
+        $guestPasswordText = $null
         return ''
     }
-    $copyResult = Invoke-VmrunBounded -Arguments @('-T', 'ws', '-gu', $GuestUser, '-gp', $GuestPassword, 'copyFileFromGuestToHost', $Path, $guestOutput, $hostOutput) -TimeoutSeconds 15
+    $copyResult = Invoke-VmrunBounded -Arguments @('-T', 'ws', '-gu', $GuestUser, '-gp', $guestPasswordText, 'copyFileFromGuestToHost', $Path, $guestOutput, $hostOutput) -TimeoutSeconds 15
     if ($copyResult.ExitCode -ne 0 -or -not (Test-Path -LiteralPath $hostOutput)) {
+        $guestPasswordText = $null
         return ''
     }
-    return Get-GuestIPv4FromAddressText -Lines @(Get-Content -LiteralPath $hostOutput)
+    $guestAddress = Get-GuestIPv4FromAddressText -Lines @(Get-Content -LiteralPath $hostOutput)
+    $guestPasswordText = $null
+    return $guestAddress
 }
 
 <#
@@ -1304,7 +1261,7 @@ function Wait-GuestIPv4 {
         [string]$Path,
         [int]$TimeoutSeconds = 240,
         [string]$GuestUser = '',
-        [string]$GuestPassword = '',
+        [SecureString]$GuestPassword,
         [string]$Name = 'guest'
     )
 
@@ -1627,8 +1584,8 @@ if ($PlanOnly) {
 
 $firstBootOvfEnvironment = New-AtlasoWorkstationOvfEnvironment `
     -Fqdn (New-AtlasoWorkstationFqdn -Name $applianceName) `
-    -AdminPassword $AdminPassword `
-    -RootPassword $AdminPassword `
+    -AdminPassword $adminPasswordSecure `
+    -RootPassword $adminPasswordSecure `
     -RootSshEnabled:($ApplianceSshUser -eq 'root')
 
 New-Item -ItemType Directory -Force -Path $vmRoot | Out-Null
@@ -1672,7 +1629,7 @@ try {
 
     Start-Sleep -Seconds 20
     if (-not $ApplianceIPAddress) {
-        $ApplianceIPAddress = Wait-GuestIPv4 -Path $applianceVmx -TimeoutSeconds 300 -GuestUser $ApplianceSshUser -GuestPassword $ApplianceGuestPassword -Name $applianceName
+        $ApplianceIPAddress = Wait-GuestIPv4 -Path $applianceVmx -TimeoutSeconds 300 -GuestUser $ApplianceSshUser -GuestPassword $adminPasswordSecure -Name $applianceName
         if (-not $ApplianceIPAddress) {
             throw "Timed out waiting for VMware Tools to report the appliance management IPv4 address."
         }
@@ -1686,16 +1643,16 @@ try {
     } | ConvertTo-Json -Depth 3 | Set-Content -LiteralPath (Join-Path $resultRoot 'discovered-appliance.json') -Encoding UTF8
     Sync-ApplianceHelperScript -ApplianceVmx $applianceVmx
     $applianceWheelPath = Sync-ApplianceApplicationWheel -ApplianceVmx $applianceVmx
-    $applianceHostKey = Get-PlinkHostKey -HostName $ApplianceIPAddress -UserName $ApplianceSshUser -Password $ApplianceGuestPassword
+    $applianceHostKey = Get-PlinkHostKey -HostName $ApplianceIPAddress -UserName $ApplianceSshUser -Password $adminPasswordSecure
     $clientAHost = ''
     $clientBHost = ''
     $clientAHostKey = ''
     $clientBHostKey = ''
     if (-not $OidcOnly) {
-        $clientAHost = Wait-GuestIPv4 -Path $clientAVmx -GuestUser $ClientSshUser -GuestPassword $SshPassword -Name $clientAName
-        $clientBHost = Wait-GuestIPv4 -Path $clientBVmx -GuestUser $ClientSshUser -GuestPassword $SshPassword -Name $clientBName
-        $clientAHostKey = Get-PlinkHostKey -HostName $clientAHost -UserName $ClientSshUser -Password $SshPassword
-        $clientBHostKey = Get-PlinkHostKey -HostName $clientBHost -UserName $ClientSshUser -Password $SshPassword
+        $clientAHost = Wait-GuestIPv4 -Path $clientAVmx -GuestUser $ClientSshUser -GuestPassword $sshPasswordSecure -Name $clientAName
+        $clientBHost = Wait-GuestIPv4 -Path $clientBVmx -GuestUser $ClientSshUser -GuestPassword $sshPasswordSecure -Name $clientBName
+        $clientAHostKey = Get-PlinkHostKey -HostName $clientAHost -UserName $ClientSshUser -Password $sshPasswordSecure
+        $clientBHostKey = Get-PlinkHostKey -HostName $clientBHost -UserName $ClientSshUser -Password $sshPasswordSecure
     }
     $appliancePxeInstallerIsoPath = if ($FullEsxiPxeInstall) {
         Resolve-ApplianceEsxiIsoPath -ApplianceVmx $applianceVmx
@@ -1760,7 +1717,7 @@ try {
                     Write-Host "Waiting $EsxiInstallProbeDelaySeconds seconds before probing ESXi guest operations."
                     Start-Sleep -Seconds $EsxiInstallProbeDelaySeconds
                 }
-                $esxiDetectedIp = Wait-GuestIPv4 -Path $esxiVmx -TimeoutSeconds $EsxiInstallTimeoutSeconds -GuestUser 'root' -GuestPassword 'vmware01!' -Name $esxiName
+                $esxiDetectedIp = Wait-GuestIPv4 -Path $esxiVmx -TimeoutSeconds $EsxiInstallTimeoutSeconds -GuestUser 'root' -GuestPassword $esxiPasswordSecure -Name $esxiName
                 if (-not $esxiDetectedIp) {
                     throw "Timed out waiting for ESXi PXE install guest IP after $EsxiInstallTimeoutSeconds seconds."
                 }

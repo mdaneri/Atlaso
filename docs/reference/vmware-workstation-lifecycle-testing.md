@@ -133,6 +133,12 @@ pwsh -ExecutionPolicy Bypass `
   -File scripts/windows/vmware/invoke-lifecycle-test.ps1
 ```
 
+The wrapper has no password defaults. It prompts securely for the appliance administrator and VCF Backup credentials;
+client SSH reuses the administrator `SecureString` unless `-SshPassword` is supplied. `-FullEsxiPxeInstall` also
+requires the ESXi root password that matches the selected rendered Kickstart profile. The launcher sends these values to
+its child through a current-user DPAPI-protected temporary CLIXML bundle and removes that bundle after the child exits,
+so passwords never appear in the child process arguments.
+
 The wrapper selects the newest appliance VMX under `image/vmware-workstation/output`, prepares the tiny Alpine client
 VMDK when needed, creates a unique `AtlasoWorkstationLifecycle-*` lab, runs the initial lifecycle scenario, and by
 default runs the restored backup/restore pass. Pass `-SkipBackupRestoreTest` only when the older single-pass behavior is
@@ -249,8 +255,9 @@ pwsh -ExecutionPolicy Bypass `
 
 That is the Workstation counterpart to `scripts/windows/hyperv/create-atlaso-test-vm.ps1`. It defaults to the management
 vmnet only; pass `-IncludeLabNetworkAdapters` after creating the SiteA, WAN/SiteB, and trunk-like vmnets.
-The wrapper injects the same complete DHCP-first OVF environment before power-on; use `-FirstBootFqdn`,
-`-AdminPassword`, and `-RootPassword` when the default local test identity or credentials are not appropriate.
+The wrapper injects the same complete DHCP-first OVF environment before power-on. Use `-FirstBootFqdn` for the test
+identity. `-AdminPassword` and `-RootPassword` accept only `SecureString` objects; when omitted, the wrapper prompts
+securely before any network preparation, cleanup, or VM mutation. Neither credential has a repository default.
 It also resolves the current Windows user's existing `.ssh/id_ed25519.pub` before any network preparation, cleanup, or
 VM creation, installs that Ed25519 public key for `admin`, and adds a separate test-only passwordless-sudo rule. Pass
 `-SshPublicKeyPath <path>` to select another existing Ed25519 public key, or `-SkipSshKeyProvisioning` to retain

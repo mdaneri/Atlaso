@@ -17,6 +17,23 @@ param(
 Set-StrictMode -Version Latest
 $ErrorActionPreference = 'Stop'
 
+<#
+.SYNOPSIS
+Create a read-only SecureString from a non-secret test fixture.
+.PARAMETER Value
+Fixture text appended one character at a time.
+#>
+function ConvertTo-TestSecureString {
+    param([Parameter(Mandatory = $true)][string]$Value)
+
+    $secureValue = [SecureString]::new()
+    foreach ($character in $Value.ToCharArray()) {
+        $secureValue.AppendChar($character)
+    }
+    $secureValue.MakeReadOnly()
+    return $secureValue
+}
+
 $modulePath = Join-Path $RepositoryRoot 'scripts/windows/common/Atlaso.PhotonImage.psm1'
 $module = Import-Module $modulePath -Force -PassThru
 $providers = @(
@@ -61,17 +78,18 @@ New-Item -ItemType Directory -Force -Path $OutputDirectory | Out-Null
 foreach ($provider in $providers) {
     foreach ($password in $passwords) {
         $path = Join-Path $OutputDirectory "$($provider.Name)-kickstart.json"
+        $securePassword = ConvertTo-TestSecureString -Value $password
         & $module {
-            param($KickstartPath, $Credential, $AdditionalPackages, $PostInstallCommands, $InstallDiskLayout)
+            param($KickstartPath, [SecureString]$Secret, $AdditionalPackages, $PostInstallCommands, $InstallDiskLayout)
             New-AtlasoPhotonKickstart `
                 -Path $KickstartPath `
-                -RootPassword $Credential `
-                -BuildPassword $Credential `
+                -RootPassword $Secret `
+                -BuildPassword $Secret `
                 -BuildUsername 'atlaso-build' `
                 -AdditionalPackages $AdditionalPackages `
                 -PostInstallCommands $PostInstallCommands `
                 -InstallDiskLayout $InstallDiskLayout
-        } $path $password $provider.AdditionalPackages $provider.PostInstallCommands $provider.InstallDiskLayout
+        } $path $securePassword $provider.AdditionalPackages $provider.PostInstallCommands $provider.InstallDiskLayout
 
         $kickstart = Get-Content -LiteralPath $path -Raw | ConvertFrom-Json
         if ($kickstart.password.text -cne $password) {

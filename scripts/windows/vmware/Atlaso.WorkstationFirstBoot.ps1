@@ -330,10 +330,10 @@ function New-AtlasoWorkstationOvfEnvironment {
         [string]$Fqdn,
 
         [Parameter(Mandatory = $true)]
-        [string]$AdminPassword,
+        [SecureString]$AdminPassword,
 
         [Parameter(Mandatory = $true)]
-        [string]$RootPassword,
+        [SecureString]$RootPassword,
 
         [switch]$RootSshEnabled,
 
@@ -343,9 +343,14 @@ function New-AtlasoWorkstationOvfEnvironment {
         [string]$DevelopmentAdminSshPublicKey = ''
     )
 
+    # OVF properties are XML strings, so unwrap only inside the serializer that
+    # validates and emits them; callers retain SecureString boundaries.
+    $adminPasswordText = ConvertFrom-SecureString -SecureString $AdminPassword -AsPlainText
+    $rootPasswordText = ConvertFrom-SecureString -SecureString $RootPassword -AsPlainText
+
     foreach ($passwordInput in @(
-            @{ Name = 'AdminPassword'; Value = $AdminPassword },
-            @{ Name = 'RootPassword'; Value = $RootPassword }
+            @{ Name = 'AdminPassword'; Value = $adminPasswordText },
+            @{ Name = 'RootPassword'; Value = $rootPasswordText }
         )) {
         try {
             [void][System.Xml.XmlConvert]::VerifyXmlChars($passwordInput.Value)
@@ -383,8 +388,8 @@ function New-AtlasoWorkstationOvfEnvironment {
         'atlaso.ipv6_gateway'     = ''
         'atlaso.dns_servers'      = ''
         'atlaso.fqdn'             = $Fqdn
-        'atlaso.admin_password'   = $AdminPassword
-        'atlaso.root_password'    = $RootPassword
+        'atlaso.admin_password'   = $adminPasswordText
+        'atlaso.root_password'    = $rootPasswordText
         'atlaso.root_ssh_enabled' = $RootSshEnabled.IsPresent.ToString().ToLowerInvariant()
     }
     if ($NormalTestVm) {
@@ -400,7 +405,10 @@ function New-AtlasoWorkstationOvfEnvironment {
         $value = ConvertTo-AtlasoOvfXmlValue -Value $entry.Value
         "<Property oe:key='$key' oe:value='$value'/>"
     }
-    return "<Environment xmlns='http://schemas.dmtf.org/ovf/environment/1' xmlns:oe='http://schemas.dmtf.org/ovf/environment/1' oe:id='vm'><PlatformSection><Kind>VMware Workstation</Kind><Version>17</Version><Vendor>VMware, Inc.</Vendor><Locale>en</Locale></PlatformSection><PropertySection>$($propertyXml -join '')</PropertySection></Environment>"
+    $environmentXml = "<Environment xmlns='http://schemas.dmtf.org/ovf/environment/1' xmlns:oe='http://schemas.dmtf.org/ovf/environment/1' oe:id='vm'><PlatformSection><Kind>VMware Workstation</Kind><Version>17</Version><Vendor>VMware, Inc.</Vendor><Locale>en</Locale></PlatformSection><PropertySection>$($propertyXml -join '')</PropertySection></Environment>"
+    $adminPasswordText = $null
+    $rootPasswordText = $null
+    return $environmentXml
 }
 
 <#

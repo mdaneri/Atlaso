@@ -106,6 +106,11 @@ pwsh -ExecutionPolicy Bypass `
   -IsoChecksum "sha512:<checksum>"
 ```
 
+`-SshPassword` and `-BootstrapAdminPassword` accept only `SecureString` values and have no repository defaults. Omit
+them for interactive `Read-Host -AsSecureString` prompts, or collect each value securely in the current PowerShell
+process before invoking the wrapper. The shared builder unwraps them only for kickstart and Packer serialization and
+removes the temporary secret-bearing Packer variable file after the bounded child exits.
+
 The wrapper does not build or embed Inventory Linux. New templates leave it uninstalled so an administrator can use
 **Download latest** to retrieve the signed independent release when needed. Contributors building Inventory Linux
 itself use `scripts/windows/common/Build-AtlasoInventoryLinux.ps1` and its `-WslDistribution <name>` option.

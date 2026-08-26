@@ -15,6 +15,23 @@ $ErrorActionPreference = 'Stop'
 
 <#
 .SYNOPSIS
+Create a read-only SecureString from a non-secret test fixture.
+.PARAMETER Value
+Fixture text appended one character at a time.
+#>
+function ConvertTo-TestSecureString {
+    param([Parameter(Mandatory = $true)][string]$Value)
+
+    $secureValue = [SecureString]::new()
+    foreach ($character in $Value.ToCharArray()) {
+        $secureValue.AppendChar($character)
+    }
+    $secureValue.MakeReadOnly()
+    return $secureValue
+}
+
+<#
+.SYNOPSIS
 Assert that two scalar test values are equal.
 
 .PARAMETER Actual
@@ -85,8 +102,8 @@ try {
 
     $withoutKey = New-AtlasoWorkstationOvfEnvironment `
         -Fqdn 'atlaso-test.atlaso.internal' `
-        -AdminPassword 'VMware01!Test' `
-        -RootPassword 'VMware01!Test'
+        -AdminPassword (ConvertTo-TestSecureString -Value 'VMware01!Test') `
+        -RootPassword (ConvertTo-TestSecureString -Value 'VMware01!Test')
     if ($withoutKey.Contains('development_admin_ssh_public_key', [System.StringComparison]::Ordinal)) {
         throw 'Ordinary Workstation OVF input must not contain the development administrator key property.'
     }
@@ -96,8 +113,8 @@ try {
 
     $passwordOnlyTestVm = New-AtlasoWorkstationOvfEnvironment `
         -Fqdn 'atlaso-test.atlaso.internal' `
-        -AdminPassword 'VMware01!Test' `
-        -RootPassword 'VMware01!Test' `
+        -AdminPassword (ConvertTo-TestSecureString -Value 'VMware01!Test') `
+        -RootPassword (ConvertTo-TestSecureString -Value 'VMware01!Test') `
         -NormalTestVm
     if (-not $passwordOnlyTestVm.Contains("oe:key='atlaso.normal_test_vm' oe:value='true'", [System.StringComparison]::Ordinal)) {
         throw 'A password-only normal test VM must retain its explicit identity-publication marker.'
@@ -108,8 +125,8 @@ try {
 
     $withKey = New-AtlasoWorkstationOvfEnvironment `
         -Fqdn 'atlaso-test.atlaso.internal' `
-        -AdminPassword 'VMware01!Test' `
-        -RootPassword 'VMware01!Test' `
+        -AdminPassword (ConvertTo-TestSecureString -Value 'VMware01!Test') `
+        -RootPassword (ConvertTo-TestSecureString -Value 'VMware01!Test') `
         -DevelopmentAdminSshPublicKey $validKey
     if (-not $withKey.Contains("oe:key='atlaso.development_admin_ssh_public_key'", [System.StringComparison]::Ordinal)) {
         throw 'The test-VM OVF input must contain the development administrator key property.'

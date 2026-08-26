@@ -1,4 +1,65 @@
-[Diagnostics.CodeAnalysis.SuppressMessageAttribute('PSAvoidUsingPlainTextForPassword', '')]
+<#
+.SYNOPSIS
+Launch the bounded Hyper-V lifecycle test with secure credential handoff.
+.PARAMETER LabName
+Lab Name value used to configure this workflow.
+.PARAMETER ApplianceVhdxPath
+Appliance VHDX Path value used to configure this workflow.
+.PARAMETER ClientVhdxPath
+Client VHDX Path value used to configure this workflow.
+.PARAMETER EsxIsoPath
+ESX Iso Path value used to configure this workflow.
+.PARAMETER ClientManagementSwitch
+Client Management Switch value used to configure this workflow.
+.PARAMETER ApplianceIPAddress
+Appliance IP Address value used to configure this workflow.
+.PARAMETER ApplianceUrl
+Appliance URL value used to configure this workflow.
+.PARAMETER SiteInterface
+Site Interface value used to configure this workflow.
+.PARAMETER SiteCidr
+Site Cidr value used to configure this workflow.
+.PARAMETER SiteVlanId
+Site VLAN Id value used to configure this workflow.
+.PARAMETER AdminUsername
+Admin Username value used to configure this workflow.
+.PARAMETER AdminPassword
+Secure Admin Password supplied at runtime; no repository default is used.
+.PARAMETER ApplianceSshUser
+Appliance SSH User value used to configure this workflow.
+.PARAMETER ClientSshUser
+Client SSH User value used to configure this workflow.
+.PARAMETER SshPassword
+Secure SSH Password supplied at runtime; no repository default is used.
+.PARAMETER VcfBackupPassword
+Secure VCF Backup Password supplied at runtime; no repository default is used.
+.PARAMETER VlanId
+VLAN Id value used to configure this workflow.
+.PARAMETER TaggedVlanCidr
+Tagged VLAN Cidr value used to configure this workflow.
+.PARAMETER WanCidr
+Wan Cidr value used to configure this workflow.
+.PARAMETER KeepVms
+Keep Vms value used to configure this workflow.
+.PARAMETER SkipClientPrepare
+Skip Client Prepare value used to configure this workflow.
+.PARAMETER PrepareNetworksOnly
+Prepare Networks Only value used to configure this workflow.
+.PARAMETER CleanupNetworksOnly
+Cleanup Networks Only value used to configure this workflow.
+.PARAMETER CleanupVmsOnly
+Cleanup Vms Only value used to configure this workflow.
+.PARAMETER CleanupNetworksAfterTest
+Cleanup Networks After Test value used to configure this workflow.
+.PARAMETER AllowDryRunApply
+Allow Dry Run Apply value used to configure this workflow.
+.PARAMETER SkipBackupRestoreTest
+Skip Backup Restore Test value used to configure this workflow.
+.PARAMETER SignedReleaseRepositoryUrl
+Signed Release Repository URL value used to configure this workflow.
+.PARAMETER PlanOnly
+Plan Only value used to configure this workflow.
+#>
 [CmdletBinding(DefaultParameterSetName = 'Run', SupportsShouldProcess = $true)]
 param(
     [Parameter(ParameterSetName = 'Run')]
@@ -48,7 +109,7 @@ param(
 
     [Parameter(ParameterSetName = 'Run')]
     [Parameter(ParameterSetName = 'Plan')]
-    [string]$AdminPassword = 'VMware01!',
+    [SecureString]$AdminPassword,
 
     [Parameter(ParameterSetName = 'Run')]
     [Parameter(ParameterSetName = 'Plan')]
@@ -60,11 +121,11 @@ param(
 
     [Parameter(ParameterSetName = 'Run')]
     [Parameter(ParameterSetName = 'Plan')]
-    [string]$SshPassword = 'VMware01!',
+    [SecureString]$SshPassword,
 
     [Parameter(ParameterSetName = 'Run')]
     [Parameter(ParameterSetName = 'Plan')]
-    [string]$VcfBackupPassword = 'VMware01!Test',
+    [SecureString]$VcfBackupPassword,
 
     [Parameter(ParameterSetName = 'Run')]
     [Parameter(ParameterSetName = 'Plan')]
@@ -117,6 +178,10 @@ $ErrorActionPreference = 'Stop'
 
 $repoRoot = Resolve-Path -LiteralPath (Join-Path $PSScriptRoot '..\..\..')
 
+<#
+.SYNOPSIS
+Find-Latest Appliance VHDX helper for the bounded workflow.
+#>
 function Find-LatestApplianceVhdx {
     $outputRoot = Join-Path $repoRoot 'image\hyperv\output'
     if (-not (Test-Path -LiteralPath $outputRoot)) {
@@ -167,11 +232,14 @@ if ($PSCmdlet.ParameterSetName -eq 'CleanupVms') {
     return
 }
 
-if (-not $SshPassword) {
+if ($null -eq $AdminPassword) {
+    $AdminPassword = Read-Host -Prompt 'Atlaso lifecycle administrator password' -AsSecureString
+}
+if ($null -eq $SshPassword) {
     $SshPassword = $AdminPassword
 }
-if (-not $VcfBackupPassword) {
-    $VcfBackupPassword = 'VMware01!Test'
+if ($null -eq $VcfBackupPassword) {
+    $VcfBackupPassword = Read-Host -Prompt 'VCF Backup lifecycle password' -AsSecureString
 }
 if (-not $ApplianceVhdxPath) {
     $ApplianceVhdxPath = Find-LatestApplianceVhdx
@@ -194,6 +262,15 @@ if (-not $SkipClientPrepare -and -not $PlanOnly) {
     }
 }
 
+$secretBundlePath = Join-Path ([System.IO.Path]::GetTempPath()) "atlaso-hyperv-lifecycle-$([guid]::NewGuid().ToString('N')).clixml"
+# CLIXML uses the current Windows user's DPAPI protection for SecureString
+# members, avoiding plaintext password arguments across the PowerShell process boundary.
+[pscustomobject]@{
+    AdminPassword     = $AdminPassword
+    SshPassword       = $SshPassword
+    VcfBackupPassword = $VcfBackupPassword
+} | Export-Clixml -LiteralPath $secretBundlePath -Force
+
 $arguments = @(
     '-ExecutionPolicy', 'Bypass',
     '-File', (Join-Path $PSScriptRoot 'run-lifecycle-test.ps1'),
@@ -207,11 +284,9 @@ $arguments = @(
     '-SiteCidr', $SiteCidr,
     '-SiteVlanId', "$SiteVlanId",
     '-AdminUsername', $AdminUsername,
-    '-AdminPassword', $AdminPassword,
+    '-SecretBundlePath', $secretBundlePath,
     '-ApplianceSshUser', $ApplianceSshUser,
     '-ClientSshUser', $ClientSshUser,
-    '-SshPassword', $SshPassword,
-    '-VcfBackupPassword', $VcfBackupPassword,
     '-VlanId', "$VlanId",
     '-TaggedVlanCidr', $TaggedVlanCidr,
     '-WanCidr', $WanCidr
@@ -244,9 +319,13 @@ Write-Host "Signed release lifecycle repository: $SignedReleaseRepositoryUrl"
 Write-Host ("Backup/restore validation: {0}" -f (-not $SkipBackupRestoreTest))
 Write-Host ("Cleanup created VMs: {0}" -f (-not $KeepVms))
 
-& powershell.exe @arguments
-if ($LASTEXITCODE -ne 0) {
-    throw "Hyper-V lifecycle test failed with exit code $LASTEXITCODE"
+try {
+    & powershell.exe @arguments
+    if ($LASTEXITCODE -ne 0) {
+        throw "Hyper-V lifecycle test failed with exit code $LASTEXITCODE"
+    }
+} finally {
+    Remove-Item -LiteralPath $secretBundlePath -Force -ErrorAction SilentlyContinue
 }
 
 if ($CleanupNetworksAfterTest) {
