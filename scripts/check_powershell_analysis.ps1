@@ -34,23 +34,10 @@ if ($LASTEXITCODE -ne 0) {
     throw "git ls-files failed with exit code $LASTEXITCODE."
 }
 
-$broadSuppressionPattern = [regex]::new(
-    'SuppressMessageAttribute\s*\(\s*[''"]PSAvoidUsingPlainTextForPassword[''"]\s*,\s*[''"]{2}\s*\)',
-    [System.Text.RegularExpressions.RegexOptions]::IgnoreCase
-)
-$broadSuppressions = foreach ($relativePath in $relativePaths) {
-    $path = Join-Path $RepoRoot $relativePath
-    if ($broadSuppressionPattern.IsMatch((Get-Content -LiteralPath $path -Raw))) {
-        $relativePath
-    }
-}
-if ($broadSuppressions) {
-    throw "Broad PSAvoidUsingPlainTextForPassword suppressions are forbidden: $($broadSuppressions -join ', ')"
-}
-
 # Analyzer suppressions must not become an escape hatch for credential inputs.
 # OnePassword-prefixed values are SDK identifiers or executable paths, not passwords.
 # Boolean Password switches describe OVF property metadata and carry no credential.
+$broadSuppressions = [System.Collections.Generic.List[string]]::new()
 $credentialContractFailures = foreach ($relativePath in $relativePaths) {
     $tokens = $null
     $parseErrors = $null
@@ -61,6 +48,21 @@ $credentialContractFailures = foreach ($relativePath in $relativePaths) {
     )
     foreach ($parseError in $parseErrors) {
         "${relativePath}:$($parseError.Extent.StartLineNumber): PowerShell parse error: $($parseError.Message)"
+    }
+    $suppressionAttributes = $syntaxTree.FindAll({
+            param($node)
+            $node -is [System.Management.Automation.Language.AttributeAst] -and
+            $node.TypeName.FullName -match '(^|\.)SuppressMessage(Attribute)?$'
+        }, $true)
+    foreach ($suppressionAttribute in $suppressionAttributes) {
+        $arguments = $suppressionAttribute.PositionalArguments
+        if ($arguments.Count -ge 2 -and
+            $arguments[0] -is [System.Management.Automation.Language.StringConstantExpressionAst] -and
+            $arguments[0].Value -eq 'PSAvoidUsingPlainTextForPassword' -and
+            $arguments[1] -is [System.Management.Automation.Language.StringConstantExpressionAst] -and
+            [string]::IsNullOrEmpty($arguments[1].Value)) {
+            $broadSuppressions.Add("${relativePath}:$($suppressionAttribute.Extent.StartLineNumber)")
+        }
     }
     $passwordParameters = $syntaxTree.FindAll({
             param($node)
@@ -93,6 +95,9 @@ $credentialContractFailures = foreach ($relativePath in $relativePaths) {
             "${relativePath}:$($assignment.Extent.StartLineNumber): literal password assignments are forbidden."
         }
     }
+}
+if ($broadSuppressions.Count -gt 0) {
+    throw "Broad PSAvoidUsingPlainTextForPassword suppressions are forbidden: $($broadSuppressions -join ', ')"
 }
 if ($credentialContractFailures) {
     throw "PowerShell credential parameter contract failed:`n$($credentialContractFailures -join "`n")"

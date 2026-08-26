@@ -1182,6 +1182,15 @@ def test_packer_build_uses_atlaso_management_network_by_default():
     assert "Write-AtlasoPackerVarFile" in build_module
     assert "Remove-Item -LiteralPath $kickstartJson -Force" in build_module
     assert "Remove-Item -LiteralPath $ksSourceDir -Force" in build_module
+    kickstart_build = build_module.split("    New-AtlasoPhotonKickstart `", maxsplit=1)[1].split(
+        "    $preparedIso =", maxsplit=1
+    )[0]
+    assert kickstart_build.index("    try {") < kickstart_build.index(
+        "    $sourceIsoPath = Resolve-AtlasoPhotonSourceIso"
+    )
+    assert kickstart_build.index("    } finally {") > kickstart_build.index(
+        "    $sourceIsoPath = Resolve-AtlasoPhotonSourceIso"
+    )
     assert "Using Packer var-file" in build_module
     assert "[ValidateSet('cleanup', 'abort', 'ask', 'run-cleanup-provisioner')]" in wrapper
     assert "[string]$PackerOnError = 'cleanup'" in wrapper
