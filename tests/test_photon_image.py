@@ -2066,9 +2066,9 @@ def test_vmware_deploy_wheel_supports_secure_onepassword_password_deploy():
     assert "-OnePasswordAccount '<account-name-or-id>'" in image_password_docs
     assert "-OnePasswordPython '<path-to-python-3.13.exe>'" in image_password_docs
     assert "CPython 3.10 through 3.13" in image_password_docs
-    assert "requirements-onepassword-deploy.lock" in image_password_docs
-    assert "temporary deployment directory" in image_password_docs
-    assert "does not modify the global Python environment" in image_password_docs
+    assert "../../docs/reference/full-technical-reference.md#vmware-workstation-workflow" in image_password_docs
+    assert "supported 1Password Python SDK" in image_password_docs
+    assert "locked, offline SDK/Paramiko runtime" in image_password_docs
     assert "op run --environment" not in image_password_docs
     assert "concealed value in that process environment" not in image_password_docs
 

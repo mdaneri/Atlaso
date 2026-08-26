@@ -212,19 +212,12 @@ explicit CPython 3.10 through 3.13 executable for the supported Windows SDK brid
   -OnePasswordPython '<path-to-python-3.13.exe>'
 ```
 
-The parent performs local build and input preparation without the credential, then invokes one isolated Python child.
-The 1Password Python SDK prompts for desktop authorization and returns the exact concealed variable only inside that
-child, which uses it directly for Paramiko without placing it in an environment variable. The build stages the pinned
-1Password SDK, Paramiko, and their transitive dependencies from the seven-day, hash-verified
-`requirements-onepassword-deploy.lock`. The child installs that locked runtime into a temporary deployment directory
-using only the staged wheels, with index access disabled and hash verification enabled; it does not modify the global
-Python environment. The 1Password CLI is not part of this password-deployment path.
-
-The bridge fails closed when SDK preparation, desktop authorization, exact Environment access, the unique concealed
-variable, or masking is unavailable. Do not set `DEFAULT_ADMIN_PASSWORD`, pass a password argument, create a local
-`.env` file, or use the retired `ATLASO_DEPLOY_SSH_PASSWORD` fallback. Password-backed Paramiko connections load the
-user's SSH known-hosts database and reject unknown host keys; approve the VM host key through the normal verified SSH
-workflow before deployment.
+The supported 1Password Python SDK uses desktop authorization and a locked, offline SDK/Paramiko runtime. The
+[canonical VMware Workstation workflow](../../docs/reference/full-technical-reference.md#vmware-workstation-workflow)
+documents its isolation, dependency, failure, and host-trust boundaries. The 1Password CLI is not part of this
+password-deployment path, and the concealed password is not placed in the deployment process environment. Do not set
+`DEFAULT_ADMIN_PASSWORD`, pass a password argument, create a local `.env` file, or use the retired
+`ATLASO_DEPLOY_SSH_PASSWORD` fallback.
 
 When the IP should be resolved from VMware Tools, pass the VMX path as a named argument:
 
