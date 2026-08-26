@@ -53,12 +53,14 @@ try {
     New-Item -ItemType Directory -Path $missingEnvironmentIdRoot | Out-Null
     $preservedMarker = Join-Path $missingEnvironmentIdRoot 'preserve.txt'
     [System.IO.File]::WriteAllText($preservedMarker, 'preserve-before-preflight')
+    $inertVmrunPath = Join-Path $missingEnvironmentIdRoot 'must-not-invoke-vmrun.exe'
+    [System.IO.File]::WriteAllText($inertVmrunPath, '')
     $missingEnvironmentIdError = ''
     try {
         & $wrapperPath `
             -OutputDirectory $missingEnvironmentIdRoot `
             -Redeploy `
-            -VmrunPath (Join-Path $missingEnvironmentIdRoot 'must-not-resolve-vmrun.exe') `
+            -VmrunPath $inertVmrunPath `
             -OnePasswordEnvironmentId '' `
             -OnePasswordEnvironmentIdFile (Join-Path $missingEnvironmentIdRoot 'missing-environment-id')
     }
@@ -893,6 +895,21 @@ $childSource = Get-Content -LiteralPath (
 ) -Raw
 if ($wrapperSource -notmatch 'ExpectedEnvironmentIdSha256|environmentIdDigest') {
     throw 'The normal test VM bridge must pin the exact Environment ID by SHA-256.'
+}
+$pendingCleanupIndex = $wrapperSource.IndexOf(
+    'Invoke-PendingAtlasoDevelopmentCaCleanup `',
+    [System.StringComparison]::Ordinal
+)
+$environmentIdResolutionIndex = $wrapperSource.IndexOf(
+    '$OnePasswordEnvironmentId = Resolve-OnePasswordDevelopmentCaEnvironmentId `',
+    [System.StringComparison]::Ordinal
+)
+if (
+    $pendingCleanupIndex -lt 0 -or
+    $environmentIdResolutionIndex -lt 0 -or
+    $pendingCleanupIndex -ge $environmentIdResolutionIndex
+) {
+    throw 'Pending signer cleanup must precede local Environment ID resolution.'
 }
 foreach ($betaCliMarker in @(
         "@('run', '--help')",

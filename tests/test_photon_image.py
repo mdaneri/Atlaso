@@ -1648,6 +1648,9 @@ def test_create_atlaso_vmware_test_vm_wrapper_uses_common_helpers():
     assert "environmentIdDigest" in script
     assert ".atlaso-local\\onepassword-environment-id" in script
     assert "/.atlaso-local/" in Path(".gitignore").read_text(encoding="utf-8")
+    assert script.index("Invoke-PendingAtlasoDevelopmentCaCleanup `") < script.index(
+        "$OnePasswordEnvironmentId = Resolve-OnePasswordDevelopmentCaEnvironmentId `"
+    )
     assert "Install the Environments-enabled beta CLI and retry." in script
     assert script.index("'1Password CLI\\op.exe'") < script.index("'Microsoft\\WinGet\\Links\\op.exe'")
     assert "[switch]$RootSshEnabled" in script

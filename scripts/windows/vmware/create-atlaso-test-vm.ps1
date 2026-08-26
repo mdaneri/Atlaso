@@ -1576,12 +1576,6 @@ function Write-ConnectionSummary {
 }
 
 $repoRoot = (Resolve-Path -LiteralPath (Join-Path $PSScriptRoot '..\..\..')).Path
-if (-not $WhatIfPreference) {
-    $OnePasswordEnvironmentId = Resolve-OnePasswordDevelopmentCaEnvironmentId `
-        -EnvironmentId $OnePasswordEnvironmentId `
-        -EnvironmentIdFile $OnePasswordEnvironmentIdFile `
-        -RepositoryRoot $repoRoot
-}
 $developmentRootCaCertificatePath = Join-Path $repoRoot 'image\vmware-workstation\development-trust\atlaso-development-root-ca.pem'
 $developmentRootCaCertificatePem = Get-Content -LiteralPath $developmentRootCaCertificatePath -Raw
 $developmentRootCaFingerprint = Get-AtlasoDevelopmentRootCaFingerprint `
@@ -1600,6 +1594,12 @@ if ($NoStart) {
     throw '-NoStart is not supported for normal test VMs because first boot must consume and scrub the shared development signing key.'
 }
 if (-not $WhatIfPreference) {
+    # Resolve new Environment configuration only after credential-independent
+    # recovery has scrubbed any signer staging left by an interrupted prior run.
+    $OnePasswordEnvironmentId = Resolve-OnePasswordDevelopmentCaEnvironmentId `
+        -EnvironmentId $OnePasswordEnvironmentId `
+        -EnvironmentIdFile $OnePasswordEnvironmentIdFile `
+        -RepositoryRoot $repoRoot
     $resolvedOpPath = Resolve-OnePasswordCliPath
     Assert-OnePasswordDevelopmentCaBridge `
         -EnvironmentId $OnePasswordEnvironmentId `

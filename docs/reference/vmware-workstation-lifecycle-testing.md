@@ -274,11 +274,11 @@ That is the Workstation counterpart to `scripts/windows/hyperv/create-atlaso-tes
 vmnet only; pass `-IncludeLabNetworkAdapters` after creating the SiteA, WAN/SiteB, and trunk-like vmnets.
 For real creation, the wrapper prefers an explicit `-OnePasswordEnvironmentId` override and otherwise reads the exact
 single-line `.atlaso-local/onepassword-environment-id` file. The entire `.atlaso-local` directory is ignored by Git. A
-missing or malformed ID fails with an actionable preflight error before pending cleanup, network preparation, disk
-reset, cloning, or other VM mutation. The wrapper verifies its SHA-256 identity against the repository pin without
-printing the ID. Install the Environments-enabled beta 1Password CLI under `C:\Program Files\1Password CLI`; a stable
-CLI without `op run --environment` fails before Environment access. A wrong Environment ID or signer fails before VM
-mutation.
+pending signer cleanup runs first because it consumes no 1Password material. After that recovery, a missing or
+malformed ID fails with an actionable preflight error before network preparation, disk reset, cloning, or other new VM
+mutation. The wrapper verifies its SHA-256 identity against the repository pin without printing the ID. Install the
+Environments-enabled beta 1Password CLI under `C:\Program Files\1Password CLI`; a stable CLI without
+`op run --environment` fails before Environment access. A wrong Environment ID or signer fails before new VM mutation.
 The wrapper injects the same complete DHCP-first OVF environment before power-on; use `-FirstBootFqdn`,
 `-AdminPassword`, and `-RootPassword` when the default local test identity or credentials are not appropriate.
 It also resolves the current Windows user's existing `.ssh/id_ed25519.pub` before any network preparation, cleanup, or
