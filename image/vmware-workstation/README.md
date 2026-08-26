@@ -450,7 +450,11 @@ before network preparation, redeploy cleanup, or cloning. A bounded child remove
 and stages the signer only through the normal-wrapper guest-info field. `-TimeoutSeconds` bounds each `op`/secret-child
 process tree; a timeout terminates the whole tree and enters signer scrub and VM rollback. First boot writes it mode
 `0600`, proves guest-info scrub, encrypts it with that VM's unique `ATLASO_SECRETS_KEY`, and deletes the staging file.
-Failure to prove scrub stops and rolls back the new VM. `-NoStart` is rejected because a powered-off VM would retain
+Every post-staging VMware operation has its own process-tree deadline. Before staging, the wrapper durably records a
+non-secret per-user cleanup marker; an interrupted rollback blocks later normal-VM creation until the exact marked VM
+is stopped, its VMX signer value is scrubbed, its artifacts are removed, and preserved data disks are restored. First
+boot also durably scrubs plaintext staging when encrypted import fails. `-NoStart` is rejected because a powered-off VM
+would retain
 the signer before consumption. The wrapper never prints the signer or places it in arguments, logs, markers, lifecycle
 artifacts, or exports.
 

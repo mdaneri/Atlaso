@@ -923,9 +923,11 @@ Terminal order:
   `appliance:https` certificate; the root CA must not be baked into reusable images. The sole exception is the normal
   VMware test wrapper's checked-in public `Atlaso Development Root CA`: require its matching concealed private key from
   the exact `Atlaso` 1Password Environment, pin and verify that Environment ID by SHA-256 before invoking `op`, bound
-  each secret child and terminate its complete process tree on timeout, validate the key before host mutation, use only
-  the separately scrubbed test-wrapper guest-info/staging path, encrypt it with each VM's unique secrets key, and issue
-  a unique HTTPS leaf.
+  each secret child and post-staging VMware operation and terminate its complete process tree on timeout, validate the
+  key before host mutation, use only the separately scrubbed test-wrapper guest-info/staging path, encrypt it with each
+  VM's unique secrets key, scrub plaintext staging when import fails, and issue a unique HTTPS leaf. Commit a durable
+  non-secret cleanup marker before staging; later normal-wrapper invocations must retry its exact identity-bound stop,
+  VMX scrub, artifact removal, and data-disk restoration before any new mutation.
   Keep lifecycle, Hyper-V, reusable-image, and exported-appliance paths outside that trust domain. Default wrapper wait
   verifies the exact public fingerprint; Windows trust is explicit and idempotent, `-NoStart` is forbidden, and
   certificate/key rotation is one coordinated repository-and-Environment update. Nginx redirects public HTTP/80 to

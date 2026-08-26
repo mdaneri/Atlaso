@@ -14,6 +14,111 @@ omit it.
 
 <#
 .SYNOPSIS
+Run one external process with a deadline and whole-tree termination.
+
+.PARAMETER FilePath
+Exact executable to start without shell interpretation.
+
+.PARAMETER ArgumentList
+Individual process arguments added without command-line interpolation.
+
+.PARAMETER TimeoutSeconds
+Positive deadline for the external process.
+
+.PARAMETER Action
+Safe action description used in failure messages.
+#>
+function Invoke-AtlasoBoundedProcess {
+    param(
+        [Parameter(Mandatory = $true)][string]$FilePath,
+        [Parameter(Mandatory = $true)][AllowEmptyString()][string[]]$ArgumentList,
+        [Parameter(Mandatory = $true)][ValidateRange(1, 3600)][int]$TimeoutSeconds,
+        [Parameter(Mandatory = $true)][string]$Action
+    )
+
+    $startInfo = [System.Diagnostics.ProcessStartInfo]::new()
+    $startInfo.FileName = $FilePath
+    $startInfo.UseShellExecute = $false
+    $startInfo.RedirectStandardOutput = $true
+    $startInfo.RedirectStandardError = $true
+    foreach ($argument in $ArgumentList) {
+        $startInfo.ArgumentList.Add($argument)
+    }
+    $process = [System.Diagnostics.Process]::new()
+    $process.StartInfo = $startInfo
+    try {
+        if (-not $process.Start()) {
+            throw "$Action could not be started."
+        }
+        # Drain both streams asynchronously so a verbose child cannot block
+        # before the bounded wait has an opportunity to terminate its tree.
+        $standardOutput = $process.StandardOutput.ReadToEndAsync()
+        $standardError = $process.StandardError.ReadToEndAsync()
+        if (-not $process.WaitForExit($TimeoutSeconds * 1000)) {
+            try {
+                $process.Kill($true)
+                if (-not $process.WaitForExit(10000)) {
+                    throw 'The process remained active after whole-tree termination.'
+                }
+            }
+            catch {
+                throw "$Action exceeded its deadline and whole-process-tree cleanup could not be proven."
+            }
+            throw "$Action exceeded its $TimeoutSeconds-second deadline."
+        }
+        $output = $standardOutput.GetAwaiter().GetResult()
+        $null = $standardError.GetAwaiter().GetResult()
+        if ($process.ExitCode -ne 0) {
+            throw "$Action failed with exit code $($process.ExitCode)."
+        }
+        return $output
+    }
+    finally {
+        $process.Dispose()
+    }
+}
+
+<#
+.SYNOPSIS
+Run one vmrun operation through the bounded process boundary.
+
+.PARAMETER VmrunPath
+Exact vmrun executable, or a focused-test function seam.
+
+.PARAMETER ArgumentList
+Individual vmrun arguments.
+
+.PARAMETER TimeoutSeconds
+Positive per-operation deadline.
+
+.PARAMETER Action
+Safe action description used in failure messages.
+#>
+function Invoke-AtlasoBoundedVmrun {
+    param(
+        [Parameter(Mandatory = $true)][string]$VmrunPath,
+        [Parameter(Mandatory = $true)][AllowEmptyString()][string[]]$ArgumentList,
+        [Parameter(Mandatory = $true)][ValidateRange(1, 3600)][int]$TimeoutSeconds,
+        [Parameter(Mandatory = $true)][string]$Action
+    )
+
+    $command = Get-Command $VmrunPath -ErrorAction SilentlyContinue
+    if ($command -and $command.CommandType -eq [System.Management.Automation.CommandTypes]::Function) {
+        $output = @(& $VmrunPath @ArgumentList)
+        if ($LASTEXITCODE -ne 0) {
+            throw "$Action failed."
+        }
+        return ($output -join [Environment]::NewLine)
+    }
+    return Invoke-AtlasoBoundedProcess `
+        -FilePath $VmrunPath `
+        -ArgumentList $ArgumentList `
+        -TimeoutSeconds $TimeoutSeconds `
+        -Action $Action
+}
+
+<#
+.SYNOPSIS
 Escape one value for an OVF XML attribute.
 
 .PARAMETER Value
@@ -266,9 +371,13 @@ function Get-AtlasoWorkstationSshHostKey {
     $guestInfoName = 'guestinfo.atlaso.test_vm_ssh_host_ed25519_public_key'
     $deadline = (Get-Date).AddSeconds($TimeoutSeconds)
     do {
-        $value = (& $resolvedVmrunPath -T ws readVariable $resolvedVmxPath runtimeConfig $guestInfoName 2>$null |
-            Select-Object -First 1)
-        if ($LASTEXITCODE -eq 0 -and -not [string]::IsNullOrWhiteSpace($value)) {
+        $remainingSeconds = [Math]::Max(1, [int][Math]::Ceiling(($deadline - (Get-Date)).TotalSeconds))
+        $value = Invoke-AtlasoBoundedVmrun `
+            -VmrunPath $resolvedVmrunPath `
+            -ArgumentList @('-T', 'ws', 'readVariable', $resolvedVmxPath, 'runtimeConfig', $guestInfoName) `
+            -TimeoutSeconds $remainingSeconds `
+            -Action 'Read the normal test VM SSH host key guest-info value'
+        if (-not [string]::IsNullOrWhiteSpace($value)) {
             return ConvertTo-AtlasoWorkstationSshHostKeyEvidence -PublicKey $value
         }
         if ((Get-Date) -lt $deadline) {
@@ -602,10 +711,11 @@ function Clear-AtlasoWorkstationDevelopmentRootCaRuntimePrivateKey {
     )
 
     $guestInfoName = 'guestinfo.atlaso.test_vm_development_root_ca_private_key'
-    & $VmrunPath -T ws writeVariable $VmxPath runtimeConfig $guestInfoName '' 2>$null | Out-Null
-    if ($LASTEXITCODE -ne 0) {
-        throw 'VMware Workstation could not clear the development signing key from runtime guest-info.'
-    }
+    Invoke-AtlasoBoundedVmrun `
+        -VmrunPath $VmrunPath `
+        -ArgumentList @('-T', 'ws', 'writeVariable', $VmxPath, 'runtimeConfig', $guestInfoName, '') `
+        -TimeoutSeconds $TimeoutSeconds `
+        -Action 'Clear the development signing key from runtime guest-info' | Out-Null
     Wait-AtlasoWorkstationDevelopmentRootCaPrivateKeyScrub `
         -VmxPath $VmxPath `
         -VmrunPath $VmrunPath `
@@ -674,15 +784,19 @@ function Wait-AtlasoWorkstationDevelopmentRootCaImportProof {
     $deadline = (Get-Date).AddSeconds($TimeoutSeconds)
     $matchingReads = 0
     do {
-        $value = (& $VmrunPath -T ws readVariable $VmxPath runtimeConfig $guestInfoName 2>$null |
-            Select-Object -First 1)
+        $remainingSeconds = [Math]::Max(1, [int][Math]::Ceiling(($deadline - (Get-Date)).TotalSeconds))
+        $value = Invoke-AtlasoBoundedVmrun `
+            -VmrunPath $VmrunPath `
+            -ArgumentList @('-T', 'ws', 'readVariable', $VmxPath, 'runtimeConfig', $guestInfoName) `
+            -TimeoutSeconds $remainingSeconds `
+            -Action 'Read the development-root encrypted-import proof'
         $normalizedValue = if ($null -ne $value) {
             $value.Trim().Replace(':', '').ToUpperInvariant()
         }
         else {
             ''
         }
-        if ($LASTEXITCODE -eq 0 -and $normalizedValue -ceq $normalizedExpected) {
+        if ($normalizedValue -ceq $normalizedExpected) {
             $matchingReads += 1
             if ($matchingReads -ge 3) {
                 return
@@ -726,9 +840,13 @@ function Wait-AtlasoWorkstationDevelopmentRootCaPrivateKeyScrub {
     $deadline = (Get-Date).AddSeconds($TimeoutSeconds)
     $emptyReads = 0
     do {
-        $value = (& $VmrunPath -T ws readVariable $VmxPath runtimeConfig $guestInfoName 2>$null |
-            Select-Object -First 1)
-        if ($LASTEXITCODE -eq 0 -and [string]::IsNullOrWhiteSpace($value)) {
+        $remainingSeconds = [Math]::Max(1, [int][Math]::Ceiling(($deadline - (Get-Date)).TotalSeconds))
+        $value = Invoke-AtlasoBoundedVmrun `
+            -VmrunPath $VmrunPath `
+            -ArgumentList @('-T', 'ws', 'readVariable', $VmxPath, 'runtimeConfig', $guestInfoName) `
+            -TimeoutSeconds $remainingSeconds `
+            -Action 'Read the development signing-key guest-info value'
+        if ([string]::IsNullOrWhiteSpace($value)) {
             $emptyReads += 1
             if ($emptyReads -ge 3) {
                 return

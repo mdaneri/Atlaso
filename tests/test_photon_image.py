@@ -790,6 +790,11 @@ def test_photon_provisioning_installs_default_nginx_management_proxy():
     assert "guestinfo.atlaso.test_vm_development_root_ca_imported" in bootstrap
     assert "import_root_ca_material(" in bootstrap
     assert 'expected_common_name="Atlaso Development Root CA"' in bootstrap
+    import_failure = bootstrap.index("except Exception as exc:")
+    failure_scrub = bootstrap.index(
+        "scrub_staged_development_root_ca_after_failure()", import_failure
+    )
+    assert failure_scrub < bootstrap.index("return 2", failure_scrub)
     committed_import = bootstrap.index("db.commit()")
     staged_removal = bootstrap.index("remove_staged_development_root_ca()", committed_import)
     assert committed_import < staged_removal < bootstrap.index("ensure_ca_state(db)")
@@ -1738,7 +1743,7 @@ def test_vmware_raw_vmx_workflows_inject_complete_first_boot_ovf_environment_bef
     assert "Resolve-AtlasoWorkstationAdminSshPublicKey" in helper
     assert "[System.Xml.XmlConvert]::VerifyXmlChars($normalized)" in helper
     assert "guestinfo.atlaso.test_vm_ssh_host_ed25519_public_key" in helper
-    assert "readVariable $resolvedVmxPath runtimeConfig $guestInfoName" in helper
+    assert "@('-T', 'ws', 'readVariable', $resolvedVmxPath, 'runtimeConfig', $guestInfoName)" in helper
     assert "ssh-keyscan" not in helper
 
     assert 'TEST_VM_SSH_HOST_KEY_GUESTINFO = "guestinfo.atlaso.test_vm_ssh_host_ed25519_public_key"' in customizer

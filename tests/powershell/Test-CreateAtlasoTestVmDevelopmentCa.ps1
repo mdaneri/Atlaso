@@ -14,6 +14,7 @@ $ErrorActionPreference = 'Stop'
 Import-Module (
     Join-Path $RepositoryRoot 'scripts\windows\vmware\Atlaso.WorkstationCleanup.psm1'
 ) -Force
+. (Join-Path $RepositoryRoot 'scripts\windows\vmware\Atlaso.WorkstationFirstBoot.ps1')
 
 <#
 .SYNOPSIS
@@ -41,6 +42,9 @@ function Assert-Throws {
 
 $wrapperPath = Join-Path $RepositoryRoot 'scripts\windows\vmware\create-atlaso-test-vm.ps1'
 $wrapperSource = Get-Content -LiteralPath $wrapperPath -Raw
+$firstBootSource = Get-Content -LiteralPath (
+    Join-Path $RepositoryRoot 'scripts\windows\vmware\Atlaso.WorkstationFirstBoot.ps1'
+) -Raw
 $tokens = $null
 $parseErrors = $null
 $ast = [System.Management.Automation.Language.Parser]::ParseInput(
@@ -215,7 +219,7 @@ if ($wrapperSource.IndexOf('-Action Validate', [System.StringComparison]::Ordina
 }
 foreach ($mutationMarker in @("'remove-atlaso-vm.ps1'", "'create-atlaso-vm.ps1'")) {
     if ($wrapperSource.IndexOf('-Action Validate', [System.StringComparison]::Ordinal) -gt
-        $wrapperSource.IndexOf($mutationMarker, [System.StringComparison]::Ordinal)) {
+        $wrapperSource.LastIndexOf($mutationMarker, [System.StringComparison]::Ordinal)) {
         throw "Development CA validation must precede $mutationMarker."
     }
 }
@@ -258,13 +262,63 @@ $rollbackStop = $wrapperSource.IndexOf(
 if ($runtimeScrub -lt 0 -or $rollbackStop -lt $runtimeScrub) {
     throw 'Rollback must attempt runtime signer scrub before VM stop discovery.'
 }
-if ($wrapperSource -notmatch '\$process\.Kill\(\$true\)' -or
+$pendingCleanupCall = $wrapperSource.LastIndexOf(
+    'Invoke-PendingAtlasoDevelopmentCaCleanup',
+    [System.StringComparison]::Ordinal
+)
+if (
+    $pendingCleanupCall -lt $wrapperSource.IndexOf('-Action Validate', [System.StringComparison]::Ordinal) -or
+    $pendingCleanupCall -gt $wrapperSource.IndexOf("'prepare-networks.ps1'", [System.StringComparison]::Ordinal)
+) {
+    throw 'Durable cleanup retry must follow signer validation and precede every VM/network mutation.'
+}
+$markerCreation = $wrapperSource.LastIndexOf(
+    'New-AtlasoDevelopmentCaCleanupMarker',
+    [System.StringComparison]::Ordinal
+)
+if ($markerCreation -lt 0 -or $markerCreation -gt $stageStart) {
+    throw 'A durable cleanup marker must be committed before development-signer staging.'
+}
+if ($wrapperSource.IndexOf('Remove-AtlasoDevelopmentCaCleanupMarker', $importProof) -lt $importProof) {
+    throw 'The durable cleanup marker must remain until encrypted-import proof succeeds.'
+}
+if ($firstBootSource -notmatch '\$process\.Kill\(\$true\)' -or
     $wrapperSource -notmatch '-TimeoutSeconds \$TimeoutSeconds') {
     throw 'The 1Password child must enforce a deadline and terminate its complete process tree.'
 }
 if ($wrapperSource -notmatch '\$runtimeSignerScrubError\s*=\s*\$_\.Exception\.Message' -or
     $wrapperSource -notmatch '\$stopped\s*=\s*\$true') {
     throw 'Runtime signer scrub and stop failures must be retained independently.'
+}
+
+$markerTestRoot = Join-Path ([System.IO.Path]::GetTempPath()) (
+    "atlaso-development-ca-marker-$([guid]::NewGuid().ToString('N'))"
+)
+try {
+    $markerVmRoot = Join-Path $markerTestRoot 'vm'
+    $markerRoot = Join-Path $markerTestRoot 'markers'
+    New-Item -ItemType Directory -Path $markerVmRoot | Out-Null
+    $markerVmx = Join-Path $markerVmRoot 'Atlaso-Test.vmx'
+    [System.IO.File]::WriteAllText($markerVmx, 'config.version = "8"')
+    $markerPath = New-AtlasoDevelopmentCaCleanupMarker `
+        -VmxPath $markerVmx `
+        -Name 'Atlaso-Test' `
+        -OutputDirectory $markerVmRoot `
+        -DataDiskStates @() `
+        -MarkerRoot $markerRoot
+    $marker = Read-AtlasoDevelopmentCaCleanupMarker `
+        -MarkerPath $markerPath `
+        -MarkerRoot $markerRoot
+    if ($marker.VmxPath -cne (Resolve-Path -LiteralPath $markerVmx).Path) {
+        throw 'The durable cleanup marker did not bind the exact VMX path and identity.'
+    }
+    Remove-AtlasoDevelopmentCaCleanupMarker -MarkerPath $markerPath
+    if (Test-Path -LiteralPath $markerPath) {
+        throw 'The proven cleanup marker was not removed.'
+    }
+}
+finally {
+    Remove-Item -LiteralPath $markerTestRoot -Recurse -Force -ErrorAction SilentlyContinue
 }
 
 $rollbackIdentityRoot = Join-Path ([System.IO.Path]::GetTempPath()) (
@@ -275,40 +329,43 @@ try {
     $targetVmx = Join-Path $rollbackIdentityRoot 'Atlaso.vmx'
     $aliasVmx = Join-Path $rollbackIdentityRoot 'ATLASO~1.VMX'
     $vmrunState = Join-Path $rollbackIdentityRoot 'vmrun-state.txt'
-    $fakeVmrun = Join-Path $rollbackIdentityRoot 'vmrun.ps1'
     [System.IO.File]::WriteAllText($targetVmx, 'config.version = "8"')
     New-Item -ItemType HardLink -Path $aliasVmx -Target $targetVmx | Out-Null
     [System.IO.File]::WriteAllText($vmrunState, 'running')
-    $escapedAliasVmx = $aliasVmx.Replace("'", "''")
-    $escapedVmrunState = $vmrunState.Replace("'", "''")
-    [System.IO.File]::WriteAllText(
-        $fakeVmrun,
-        @"
-param([Parameter(ValueFromRemainingArguments=`$true)][string[]]`$Remaining)
-if (`$Remaining -contains 'list') {
-    if ([System.IO.File]::ReadAllText('$escapedVmrunState') -eq 'running') {
-        'Total running VMs: 1'
-        '$escapedAliasVmx'
+    <#
+    .SYNOPSIS
+    Emulate bounded vmrun list and stop operations for identity tests.
+
+    .PARAMETER Remaining
+    Positional vmrun arguments supplied by the wrapper helper.
+    #>
+    function AtlasoFakeVmrun {
+        param([Parameter(ValueFromRemainingArguments = $true)][string[]]$Remaining)
+        if ($Remaining -contains 'list') {
+            $global:LASTEXITCODE = 0
+            if ([System.IO.File]::ReadAllText($vmrunState) -eq 'running') {
+                'Total running VMs: 1'
+                $aliasVmx
+            }
+            else {
+                'Total running VMs: 0'
+            }
+            return
+        }
+        if ($Remaining -contains 'stop') {
+            [System.IO.File]::WriteAllText($vmrunState, 'stopped')
+            $global:LASTEXITCODE = 0
+            return
+        }
+        $global:LASTEXITCODE = 1
     }
-    else {
-        'Total running VMs: 0'
-    }
-    exit 0
-}
-if (`$Remaining -contains 'stop') {
-    [System.IO.File]::WriteAllText('$escapedVmrunState', 'stopped')
-    exit 0
-}
-exit 1
-"@,
-        [System.Text.UTF8Encoding]::new($false)
-    )
-    Stop-AtlasoTestVmForRollback -VmxPath $targetVmx -VmrunPath $fakeVmrun
+    Stop-AtlasoTestVmForRollback -VmxPath $targetVmx -VmrunPath AtlasoFakeVmrun
     if ([System.IO.File]::ReadAllText($vmrunState) -ne 'stopped') {
         throw 'Rollback failed to stop a running VMX reported through a filesystem alias.'
     }
 }
 finally {
+    Remove-Item Function:\AtlasoFakeVmrun -ErrorAction SilentlyContinue
     Remove-Item -LiteralPath $rollbackIdentityRoot -Recurse -Force -ErrorAction SilentlyContinue
 }
 

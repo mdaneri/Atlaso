@@ -213,12 +213,16 @@ Resolved 1Password CLI executable path.
 .PARAMETER ExpectedEnvironmentIdSha256
 Pinned SHA-256 identity of the exact Atlaso Environment. The override exists
 only so focused tests can exercise the guard without publishing the real ID.
+
+.PARAMETER TimeoutSeconds
+Positive deadline for the 1Password CLI capability probe.
 #>
 function Assert-OnePasswordDevelopmentCaBridge {
     param(
         [Parameter(Mandatory = $true)][string]$EnvironmentId,
         [Parameter(Mandatory = $true)][string]$OpPath,
-        [string]$ExpectedEnvironmentIdSha256 = '1A0524FE2054BD148983E0AA9F755CC6ED575F88985256AFA802EA9CB5D782A4'
+        [string]$ExpectedEnvironmentIdSha256 = '1A0524FE2054BD148983E0AA9F755CC6ED575F88985256AFA802EA9CB5D782A4',
+        [ValidateRange(1, 3600)][int]$TimeoutSeconds = 30
     )
 
     if ($EnvironmentId -notmatch '^[A-Za-z0-9_-]{8,128}$') {
@@ -237,68 +241,13 @@ function Assert-OnePasswordDevelopmentCaBridge {
     if ($env:ATLASO_DEVELOPMENT_ROOT_CA_PRIVATE_KEY) {
         throw 'ATLASO_DEVELOPMENT_ROOT_CA_PRIVATE_KEY must come only from the exact 1Password Environment bridge.'
     }
-    $runHelp = (& $OpPath run --help 2>&1 | Out-String)
+    $runHelp = Invoke-AtlasoBoundedProcess `
+        -FilePath $OpPath `
+        -ArgumentList @('run', '--help') `
+        -TimeoutSeconds $TimeoutSeconds `
+        -Action 'The 1Password Environment capability probe'
     if ([string]::IsNullOrWhiteSpace($runHelp) -or $runHelp -notlike '*--environment*') {
         throw 'The installed 1Password CLI does not support op run --environment. Install the Environments-enabled CLI and retry.'
-    }
-}
-
-<#
-.SYNOPSIS
-Run one external process with a deadline and whole-tree termination.
-
-.PARAMETER FilePath
-Exact executable to start without shell interpretation.
-
-.PARAMETER ArgumentList
-Individual process arguments added without command-line interpolation.
-
-.PARAMETER TimeoutSeconds
-Positive deadline for the external process.
-
-.PARAMETER Action
-Safe action description used in failure messages.
-#>
-function Invoke-AtlasoBoundedProcess {
-    param(
-        [Parameter(Mandatory = $true)][string]$FilePath,
-        [Parameter(Mandatory = $true)][string[]]$ArgumentList,
-        [Parameter(Mandatory = $true)][ValidateRange(1, 3600)][int]$TimeoutSeconds,
-        [Parameter(Mandatory = $true)][string]$Action
-    )
-
-    $startInfo = [System.Diagnostics.ProcessStartInfo]::new()
-    $startInfo.FileName = $FilePath
-    $startInfo.UseShellExecute = $false
-    foreach ($argument in $ArgumentList) {
-        $startInfo.ArgumentList.Add($argument)
-    }
-    $process = [System.Diagnostics.Process]::new()
-    $process.StartInfo = $startInfo
-    try {
-        if (-not $process.Start()) {
-            throw "$Action could not be started."
-        }
-        if (-not $process.WaitForExit($TimeoutSeconds * 1000)) {
-            try {
-                # Kill(true) is required here because op owns the secret child;
-                # terminating only op could leave that descendant staging the key.
-                $process.Kill($true)
-                if (-not $process.WaitForExit(10000)) {
-                    throw 'The process remained active after whole-tree termination.'
-                }
-            }
-            catch {
-                throw "$Action exceeded its deadline and whole-process-tree cleanup could not be proven."
-            }
-            throw "$Action exceeded its $TimeoutSeconds-second deadline."
-        }
-        if ($process.ExitCode -ne 0) {
-            throw "$Action failed with exit code $($process.ExitCode)."
-        }
-    }
-    finally {
-        $process.Dispose()
     }
 }
 
@@ -349,7 +298,7 @@ function Invoke-OnePasswordDevelopmentCaChild {
         -FilePath $OpPath `
         -ArgumentList $arguments `
         -TimeoutSeconds $TimeoutSeconds `
-        -Action "The bounded 1Password development-CA $Action child"
+        -Action "The bounded 1Password development-CA $Action child" | Out-Null
 }
 
 <#
@@ -509,19 +458,25 @@ Exact new VMX owned by the current invocation.
 
 .PARAMETER VmrunPath
 Resolved VMware vmrun executable path.
+
+.PARAMETER TimeoutSeconds
+Positive per-operation deadline for discovery, stop, and stopped-state proof.
 #>
 function Stop-AtlasoTestVmForRollback {
     param(
         [Parameter(Mandatory = $true)][string]$VmxPath,
-        [Parameter(Mandatory = $true)][string]$VmrunPath
+        [Parameter(Mandatory = $true)][string]$VmrunPath,
+        [ValidateRange(1, 3600)][int]$TimeoutSeconds = 30
     )
 
     $resolvedVmxPath = (Resolve-Path -LiteralPath $VmxPath).Path
     $targetIdentity = [Atlaso.WorkstationFileIdentity]::Get($resolvedVmxPath)
-    $runningOutput = @(& $VmrunPath -T ws list 2>$null)
-    if ($LASTEXITCODE -ne 0) {
-        throw 'VMware Workstation running-state discovery failed during rollback.'
-    }
+    $runningText = Invoke-AtlasoBoundedVmrun `
+        -VmrunPath $VmrunPath `
+        -ArgumentList @('-T', 'ws', 'list') `
+        -TimeoutSeconds $TimeoutSeconds `
+        -Action 'Discover VMware Workstation running state during rollback'
+    $runningOutput = @($runningText -split '\r?\n')
     $runningTargets = @($runningOutput | Select-Object -Skip 1 | Where-Object {
             Test-AtlasoTestVmRunningPathMatchesIdentity `
                 -RunningPath $_.Trim() `
@@ -530,14 +485,17 @@ function Stop-AtlasoTestVmForRollback {
     if ($runningTargets.Count -eq 0) {
         return
     }
-    & $VmrunPath -T ws stop $runningTargets[0] hard | Out-Null
-    if ($LASTEXITCODE -ne 0) {
-        throw 'VMware Workstation could not stop the failed normal test VM during rollback.'
-    }
-    $runningOutput = @(& $VmrunPath -T ws list 2>$null)
-    if ($LASTEXITCODE -ne 0) {
-        throw 'VMware Workstation could not verify the failed normal test VM stopped during rollback.'
-    }
+    Invoke-AtlasoBoundedVmrun `
+        -VmrunPath $VmrunPath `
+        -ArgumentList @('-T', 'ws', 'stop', $runningTargets[0], 'hard') `
+        -TimeoutSeconds $TimeoutSeconds `
+        -Action 'Stop the failed normal test VM during rollback' | Out-Null
+    $runningText = Invoke-AtlasoBoundedVmrun `
+        -VmrunPath $VmrunPath `
+        -ArgumentList @('-T', 'ws', 'list') `
+        -TimeoutSeconds $TimeoutSeconds `
+        -Action 'Verify the failed normal test VM stopped during rollback'
+    $runningOutput = @($runningText -split '\r?\n')
     foreach ($runningPath in @($runningOutput | Select-Object -Skip 1)) {
         if (Test-AtlasoTestVmRunningPathMatchesIdentity `
                 -RunningPath $runningPath.Trim() `
@@ -574,6 +532,327 @@ function Test-AtlasoTestVmRunningPathMatchesIdentity {
     }
     catch {
         throw "Running VMware VMX filesystem identity cannot be resolved during rollback: $RunningPath"
+    }
+}
+
+<#
+.SYNOPSIS
+Return the per-user durable development-CA cleanup marker directory.
+#>
+function Get-AtlasoDevelopmentCaCleanupMarkerRoot {
+    return Join-Path `
+        ([Environment]::GetFolderPath('LocalApplicationData')) `
+        'Atlaso\vmware-development-ca-cleanup'
+}
+
+<#
+.SYNOPSIS
+Persist rollback ownership before the shared development signer is staged.
+
+.PARAMETER VmxPath
+Exact invocation-owned normal-test-VM VMX path.
+
+.PARAMETER Name
+Expected VMware display name used by guarded artifact cleanup.
+
+.PARAMETER OutputDirectory
+Exact invocation-owned VM artifact directory.
+
+.PARAMETER DataDiskStates
+Pre-existing data-disk identities that destructive retry must preserve.
+
+.PARAMETER MarkerRoot
+Per-user marker directory; override only for focused tests.
+#>
+function New-AtlasoDevelopmentCaCleanupMarker {
+    param(
+        [Parameter(Mandatory = $true)][string]$VmxPath,
+        [Parameter(Mandatory = $true)][string]$Name,
+        [Parameter(Mandatory = $true)][string]$OutputDirectory,
+        [Parameter(Mandatory = $true)][AllowEmptyCollection()][object[]]$DataDiskStates,
+        [string]$MarkerRoot = (Get-AtlasoDevelopmentCaCleanupMarkerRoot)
+    )
+
+    $resolvedVmxPath = (Resolve-Path -LiteralPath $VmxPath).Path
+    $resolvedOutputDirectory = (Resolve-Path -LiteralPath $OutputDirectory).Path
+    Assert-AtlasoStrictDescendantPath `
+        -ParentPath $resolvedOutputDirectory `
+        -ChildPath $resolvedVmxPath `
+        -FailureMessage 'Refusing to record development-CA cleanup outside the exact VM directory'
+    if (-not (Test-Path -LiteralPath $MarkerRoot -PathType Container)) {
+        New-Item -ItemType Directory -Path $MarkerRoot -Force | Out-Null
+    }
+    Assert-AtlasoStrictDescendantPath `
+        -ParentPath (Split-Path -Parent $MarkerRoot) `
+        -ChildPath $MarkerRoot `
+        -FailureMessage 'Refusing a development-CA marker directory through a reparse point'
+    $markerId = [guid]::NewGuid().ToString('N')
+    $markerPath = Join-Path $MarkerRoot "$markerId.json"
+    $temporaryPath = Join-Path $MarkerRoot "$markerId.tmp"
+    $payload = [ordered]@{
+        Schema = 1
+        Name = $Name
+        VmxPath = $resolvedVmxPath
+        VmxIdentity = [Atlaso.WorkstationFileIdentity]::Get($resolvedVmxPath)
+        OutputDirectory = $resolvedOutputDirectory
+        CreatedUtc = [DateTimeOffset]::UtcNow.ToString('O')
+        DataDisks = @(
+            foreach ($state in $DataDiskStates) {
+                [ordered]@{
+                    Path = $state.Path
+                    RelativePath = $state.RelativePath
+                    Identity = $state.Identity
+                }
+            }
+        )
+    }
+    $bytes = [System.Text.UTF8Encoding]::new($false).GetBytes(
+        ($payload | ConvertTo-Json -Depth 4 -Compress)
+    )
+    try {
+        $stream = [System.IO.FileStream]::new(
+            $temporaryPath,
+            [System.IO.FileMode]::CreateNew,
+            [System.IO.FileAccess]::Write,
+            [System.IO.FileShare]::None,
+            4096,
+            [System.IO.FileOptions]::WriteThrough
+        )
+        try {
+            $stream.Write($bytes, 0, $bytes.Length)
+            $stream.Flush($true)
+        }
+        finally {
+            $stream.Dispose()
+        }
+        Move-Item -LiteralPath $temporaryPath -Destination $markerPath
+        return $markerPath
+    }
+    finally {
+        Remove-Item -LiteralPath $temporaryPath -Force -ErrorAction SilentlyContinue
+    }
+}
+
+<#
+.SYNOPSIS
+Remove an exact durable development-CA cleanup marker after cleanup proof.
+
+.PARAMETER MarkerPath
+Exact invocation marker to remove.
+#>
+function Remove-AtlasoDevelopmentCaCleanupMarker {
+    param([Parameter(Mandatory = $true)][string]$MarkerPath)
+
+    if (Test-Path -LiteralPath $MarkerPath -PathType Leaf) {
+        Remove-Item -LiteralPath $MarkerPath -Force
+    }
+    if (Test-Path -LiteralPath $MarkerPath) {
+        throw "Development-CA cleanup marker removal could not be proven: $MarkerPath"
+    }
+}
+
+<#
+.SYNOPSIS
+Load and validate one durable development-CA cleanup marker.
+
+.PARAMETER MarkerPath
+Exact marker file discovered below the per-user marker root.
+
+.PARAMETER MarkerRoot
+Expected marker parent directory.
+#>
+function Read-AtlasoDevelopmentCaCleanupMarker {
+    param(
+        [Parameter(Mandatory = $true)][string]$MarkerPath,
+        [Parameter(Mandatory = $true)][string]$MarkerRoot
+    )
+
+    Assert-AtlasoStrictDescendantPath `
+        -ParentPath $MarkerRoot `
+        -ChildPath $MarkerPath `
+        -FailureMessage 'Refusing a development-CA cleanup marker outside the exact marker root'
+    $item = Get-Item -LiteralPath $MarkerPath -Force
+    if (($item.Attributes -band [System.IO.FileAttributes]::ReparsePoint) -ne 0 -or $item.Length -gt 32768) {
+        throw "Development-CA cleanup marker is unsafe: $MarkerPath"
+    }
+    try {
+        $marker = Get-Content -LiteralPath $MarkerPath -Raw | ConvertFrom-Json
+    }
+    catch {
+        throw "Development-CA cleanup marker is invalid and blocks new VM creation: $MarkerPath"
+    }
+    if (
+        $marker.Schema -ne 1 -or
+        [string]::IsNullOrWhiteSpace([string]$marker.Name) -or
+        ([string]$marker.Name).Length -gt 128 -or
+        $marker.Name -match '[\x00-\x1F]' -or
+        -not [System.IO.Path]::IsPathFullyQualified([string]$marker.VmxPath) -or
+        -not [System.IO.Path]::IsPathFullyQualified([string]$marker.OutputDirectory) -or
+        $marker.VmxIdentity -notmatch '^[0-9A-F]{8}:[0-9A-F]{16}$'
+    ) {
+        throw "Development-CA cleanup marker fields are invalid and block new VM creation: $MarkerPath"
+    }
+    if (-not (Test-Path -LiteralPath $marker.VmxPath -PathType Leaf)) {
+        throw "The marked VMX is missing; preserve the marker and review the failed VM manually: $MarkerPath"
+    }
+    $resolvedVmxPath = (Resolve-Path -LiteralPath $marker.VmxPath).Path
+    $resolvedOutputDirectory = (Resolve-Path -LiteralPath $marker.OutputDirectory).Path
+    Assert-AtlasoStrictDescendantPath `
+        -ParentPath $resolvedOutputDirectory `
+        -ChildPath $resolvedVmxPath `
+        -FailureMessage 'Marked development-CA VMX is outside its exact artifact directory'
+    if ([Atlaso.WorkstationFileIdentity]::Get($resolvedVmxPath) -cne $marker.VmxIdentity) {
+        throw "The marked VMX changed filesystem identity; preserve it for manual review: $MarkerPath"
+    }
+    return [pscustomobject]@{
+        MarkerPath = (Resolve-Path -LiteralPath $MarkerPath).Path
+        Name = [string]$marker.Name
+        VmxPath = $resolvedVmxPath
+        OutputDirectory = $resolvedOutputDirectory
+        DataDisks = @($marker.DataDisks)
+    }
+}
+
+<#
+.SYNOPSIS
+Retry every interrupted development-CA rollback before another VM mutation.
+
+.PARAMETER VmrunPath
+Resolved VMware vmrun executable used for bounded scrub and stop proof.
+
+.PARAMETER TimeoutSeconds
+Positive per-operation deadline.
+
+.PARAMETER MarkerRoot
+Per-user marker directory; override only for focused tests.
+#>
+function Invoke-PendingAtlasoDevelopmentCaCleanup {
+    param(
+        [Parameter(Mandatory = $true)][string]$VmrunPath,
+        [Parameter(Mandatory = $true)][ValidateRange(1, 3600)][int]$TimeoutSeconds,
+        [string]$MarkerRoot = (Get-AtlasoDevelopmentCaCleanupMarkerRoot)
+    )
+
+    if (-not (Test-Path -LiteralPath $MarkerRoot -PathType Container)) {
+        return
+    }
+    Assert-AtlasoStrictDescendantPath `
+        -ParentPath (Split-Path -Parent $MarkerRoot) `
+        -ChildPath $MarkerRoot `
+        -FailureMessage 'Refusing a development-CA marker directory through a reparse point'
+    $unexpectedFiles = @(Get-ChildItem -LiteralPath $MarkerRoot -File -Force | Where-Object Extension -ne '.json')
+    if ($unexpectedFiles.Count -gt 0) {
+        throw "Unexpected development-CA cleanup state blocks new VM creation: $($unexpectedFiles[0].FullName)"
+    }
+    foreach ($markerFile in @(Get-ChildItem -LiteralPath $MarkerRoot -File -Filter '*.json' -Force)) {
+        $marker = Read-AtlasoDevelopmentCaCleanupMarker `
+            -MarkerPath $markerFile.FullName `
+            -MarkerRoot $MarkerRoot
+        $quarantineDirectory = "$($marker.MarkerPath).data"
+        $dataDiskStates = @(
+            foreach ($disk in $marker.DataDisks) {
+                if (
+                    -not [System.IO.Path]::IsPathFullyQualified([string]$disk.Path) -or
+                    [string]::IsNullOrWhiteSpace([string]$disk.RelativePath) -or
+                    [System.IO.Path]::IsPathRooted([string]$disk.RelativePath) -or
+                    ([string]$disk.RelativePath).StartsWith('..') -or
+                    $disk.Identity -notmatch '^[0-9A-F]{8}:[0-9A-F]{16}$'
+                ) {
+                    throw "Development-CA cleanup data-disk state is invalid: $($marker.MarkerPath)"
+                }
+                Assert-AtlasoStrictDescendantPath `
+                    -ParentPath $marker.OutputDirectory `
+                    -ChildPath ([string]$disk.Path) `
+                    -FailureMessage 'Marked rollback data disk is outside the exact VM directory'
+                $quarantinePath = Join-Path $quarantineDirectory ([string]$disk.RelativePath)
+                $state = [pscustomobject]@{
+                    Path = [string]$disk.Path
+                    RelativePath = [string]$disk.RelativePath
+                    Identity = [string]$disk.Identity
+                    QuarantinePath = ''
+                }
+                if (Test-Path -LiteralPath $state.Path -PathType Leaf) {
+                    if ([Atlaso.WorkstationFileIdentity]::Get($state.Path) -cne $state.Identity) {
+                        throw "A marked rollback data disk changed identity: $($state.Path)"
+                    }
+                }
+                elseif (Test-Path -LiteralPath $quarantinePath -PathType Leaf) {
+                    if ([Atlaso.WorkstationFileIdentity]::Get($quarantinePath) -cne $state.Identity) {
+                        throw "A quarantined rollback data disk changed identity: $quarantinePath"
+                    }
+                    $state.QuarantinePath = $quarantinePath
+                }
+                else {
+                    throw "A marked rollback data disk is missing from both safe locations: $($state.Path)"
+                }
+                $state
+            }
+        )
+        try {
+            Clear-AtlasoWorkstationDevelopmentRootCaRuntimePrivateKey `
+                -VmxPath $marker.VmxPath `
+                -VmrunPath $VmrunPath `
+                -TimeoutSeconds $TimeoutSeconds
+        }
+        catch {
+            # A powered-off guest rejects runtime writes. Stop proof and the
+            # powered-off VMX scrub below remain authoritative in that case.
+        }
+        Stop-AtlasoTestVmForRollback `
+            -VmxPath $marker.VmxPath `
+            -VmrunPath $VmrunPath `
+            -TimeoutSeconds $TimeoutSeconds
+        Clear-AtlasoWorkstationDevelopmentRootCaPrivateKey -VmxPath $marker.VmxPath
+        try {
+            $statesToMove = @($dataDiskStates | Where-Object { -not $_.QuarantinePath })
+            if ($statesToMove.Count -gt 0) {
+                if (-not (Test-Path -LiteralPath $quarantineDirectory -PathType Container)) {
+                    New-Item -ItemType Directory -Path $quarantineDirectory | Out-Null
+                }
+                Assert-AtlasoStrictDescendantPath `
+                    -ParentPath $MarkerRoot `
+                    -ChildPath $quarantineDirectory `
+                    -FailureMessage 'Refusing rollback quarantine through a reparse point'
+                foreach ($state in $statesToMove) {
+                    $quarantinePath = Join-Path $quarantineDirectory $state.RelativePath
+                    New-Item -ItemType Directory -Force -Path (Split-Path -Parent $quarantinePath) | Out-Null
+                    Move-Item -LiteralPath $state.Path -Destination $quarantinePath
+                    $state.QuarantinePath = $quarantinePath
+                    if ([Atlaso.WorkstationFileIdentity]::Get($quarantinePath) -cne $state.Identity) {
+                        throw "A marked rollback data disk failed quarantine identity proof: $quarantinePath"
+                    }
+                }
+            }
+            $powerShellPath = (Get-Process -Id $PID).Path
+            Invoke-AtlasoBoundedProcess `
+                -FilePath $powerShellPath `
+                -ArgumentList @(
+                    '-NoLogo', '-NoProfile', '-NonInteractive', '-File',
+                    (Join-Path $PSScriptRoot 'remove-atlaso-vm.ps1'),
+                    '-VmxPath', $marker.VmxPath,
+                    '-VmrunPath', $VmrunPath,
+                    '-ExpectedName', $marker.Name,
+                    '-Confirm:$false'
+                ) `
+                -TimeoutSeconds $TimeoutSeconds `
+                -Action 'Remove the exact failed normal test VM during persisted cleanup' | Out-Null
+            Restore-AtlasoRollbackDataDisksFromQuarantine `
+                -DataDiskStates $dataDiskStates `
+                -QuarantineDirectory $quarantineDirectory
+            Remove-AtlasoDevelopmentCaCleanupMarker -MarkerPath $marker.MarkerPath
+        }
+        catch {
+            $cleanupFailure = $_
+            try {
+                Restore-AtlasoRollbackDataDisksFromQuarantine `
+                    -DataDiskStates $dataDiskStates `
+                    -QuarantineDirectory $quarantineDirectory
+            }
+            catch {
+                throw "$($cleanupFailure.Exception.Message) Preserved data remains in $quarantineDirectory and the durable cleanup marker remains at $($marker.MarkerPath)."
+            }
+            throw "$($cleanupFailure.Exception.Message) The durable cleanup marker remains for the next bounded retry: $($marker.MarkerPath)"
+        }
     }
 }
 
@@ -819,6 +1098,7 @@ $developmentRootCaCertificatePem = Get-Content -LiteralPath $developmentRootCaCe
 $developmentRootCaFingerprint = Get-AtlasoDevelopmentRootCaFingerprint `
     -CertificatePath $developmentRootCaCertificatePath
 $resolvedOpPath = ''
+$resolvedVmrunPath = ''
 if ($NoStart) {
     throw '-NoStart is not supported for normal test VMs because first boot must consume and scrub the shared development signing key.'
 }
@@ -826,7 +1106,8 @@ if (-not $WhatIfPreference) {
     $resolvedOpPath = Resolve-OnePasswordCliPath
     Assert-OnePasswordDevelopmentCaBridge `
         -EnvironmentId $OnePasswordEnvironmentId `
-        -OpPath $resolvedOpPath
+        -OpPath $resolvedOpPath `
+        -TimeoutSeconds ([Math]::Min($TimeoutSeconds, 30))
     # The secret child validates the checked-in certificate, CA constraints,
     # expiry, signature, and private-key match before any network or VM mutation.
     Invoke-OnePasswordDevelopmentCaChild `
@@ -835,6 +1116,10 @@ if (-not $WhatIfPreference) {
         -Action Validate `
         -CertificatePath $developmentRootCaCertificatePath `
         -TimeoutSeconds $TimeoutSeconds
+    $resolvedVmrunPath = Resolve-TestVmVmrunPath -Path $VmrunPath
+    Invoke-PendingAtlasoDevelopmentCaCleanup `
+        -VmrunPath $resolvedVmrunPath `
+        -TimeoutSeconds ([Math]::Min($TimeoutSeconds, 30))
 }
 
 # Key input validation intentionally precedes network preparation, cleanup, disk
@@ -955,6 +1240,7 @@ if (Test-Path -LiteralPath $resolvedOutputDirectory -PathType Container) {
 }
 
 $createdThisInvocation = $false
+$developmentCaCleanupMarkerPath = ''
 if ($PSCmdlet.ShouldProcess($targetVmx, "Create Atlaso Workstation test VM from $resolvedSourceVmx")) {
     & (Join-Path $PSScriptRoot 'create-atlaso-vm.ps1') `
         -Name $Name `
@@ -985,6 +1271,14 @@ if (-not $createdThisInvocation -and -not $WhatIfPreference) {
 
 if (-not $WhatIfPreference) {
     try {
+        # The durable, non-secret marker is committed before the signer is
+        # staged. Any interruption thereafter blocks subsequent wrappers until
+        # the exact failed VM is stopped and its VMX signer assignment scrubbed.
+        $developmentCaCleanupMarkerPath = New-AtlasoDevelopmentCaCleanupMarker `
+            -VmxPath $targetVmx `
+            -Name $Name `
+            -OutputDirectory $resolvedOutputDirectory `
+            -DataDiskStates $rollbackDataDiskStates
         Invoke-OnePasswordDevelopmentCaChild `
             -EnvironmentId $OnePasswordEnvironmentId `
             -OpPath $resolvedOpPath `
@@ -992,14 +1286,18 @@ if (-not $WhatIfPreference) {
             -CertificatePath $developmentRootCaCertificatePath `
             -VmxPath $targetVmx `
             -TimeoutSeconds $TimeoutSeconds
-        $resolvedVmrunPath = Resolve-TestVmVmrunPath -Path $VmrunPath
-        & (Join-Path $PSScriptRoot 'start-atlaso-vm.ps1') `
-            -VmxPath $targetVmx `
-            -VmrunPath $resolvedVmrunPath `
-            -Mode gui
-        if (-not $?) {
-            throw 'Atlaso VMware Workstation VM start failed.'
-        }
+        $powerShellPath = (Get-Process -Id $PID).Path
+        Invoke-AtlasoBoundedProcess `
+            -FilePath $powerShellPath `
+            -ArgumentList @(
+                '-NoLogo', '-NoProfile', '-NonInteractive', '-File',
+                (Join-Path $PSScriptRoot 'start-atlaso-vm.ps1'),
+                '-VmxPath', $targetVmx,
+                '-VmrunPath', $resolvedVmrunPath,
+                '-Mode', 'gui'
+            ) `
+            -TimeoutSeconds $TimeoutSeconds `
+            -Action 'Start the normal test VM after development-signer staging' | Out-Null
         Wait-AtlasoWorkstationDevelopmentRootCaPrivateKeyScrub `
             -VmxPath $targetVmx `
             -VmrunPath $resolvedVmrunPath `
@@ -1009,6 +1307,9 @@ if (-not $WhatIfPreference) {
             -VmrunPath $resolvedVmrunPath `
             -ExpectedFingerprint $developmentRootCaFingerprint `
             -TimeoutSeconds $TimeoutSeconds
+        Remove-AtlasoDevelopmentCaCleanupMarker `
+            -MarkerPath $developmentCaCleanupMarkerPath
+        $developmentCaCleanupMarkerPath = ''
     }
     catch {
         $failure = $_
@@ -1036,7 +1337,8 @@ if (-not $WhatIfPreference) {
                 try {
                     Stop-AtlasoTestVmForRollback `
                         -VmxPath $targetVmx `
-                        -VmrunPath $rollbackVmrunPath
+                        -VmrunPath $rollbackVmrunPath `
+                        -TimeoutSeconds ([Math]::Min($TimeoutSeconds, 30))
                     $stopped = $true
                 }
                 catch {
@@ -1064,11 +1366,23 @@ if (-not $WhatIfPreference) {
                         -DataDiskStates $rollbackDataDiskStates `
                         -QuarantineDirectory $quarantineDirectory
                 }
-                & (Join-Path $PSScriptRoot 'remove-atlaso-vm.ps1') `
-                    -VmxPath $targetVmx `
-                    -VmrunPath $rollbackVmrunPath `
-                    -ExpectedName $Name `
-                    -Confirm:$false
+                Invoke-AtlasoBoundedProcess `
+                    -FilePath (Get-Process -Id $PID).Path `
+                    -ArgumentList @(
+                        '-NoLogo', '-NoProfile', '-NonInteractive', '-File',
+                        (Join-Path $PSScriptRoot 'remove-atlaso-vm.ps1'),
+                        '-VmxPath', $targetVmx,
+                        '-VmrunPath', $rollbackVmrunPath,
+                        '-ExpectedName', $Name,
+                        '-Confirm:$false'
+                    ) `
+                    -TimeoutSeconds $TimeoutSeconds `
+                    -Action 'Remove the exact failed normal test VM during rollback' | Out-Null
+                if ($developmentCaCleanupMarkerPath) {
+                    Remove-AtlasoDevelopmentCaCleanupMarker `
+                        -MarkerPath $developmentCaCleanupMarkerPath
+                    $developmentCaCleanupMarkerPath = ''
+                }
             }
             catch {
                 $rollbackErrors.Add($_.Exception.Message)
@@ -1121,10 +1435,21 @@ if (-not $SkipSshKeyProvisioning -and -not $WhatIfPreference) {
 }
 
 if (($WaitForIp -or $TrustRootCa) -and -not $WhatIfPreference) {
-    $ip = & (Join-Path $PSScriptRoot 'get-atlaso-vm-ip.ps1') `
-        -VmxPath $targetVmx `
-        -VmrunPath $VmrunPath `
-        -TimeoutSeconds $TimeoutSeconds
+    $ipOutput = Invoke-AtlasoBoundedProcess `
+        -FilePath (Get-Process -Id $PID).Path `
+        -ArgumentList @(
+            '-NoLogo', '-NoProfile', '-NonInteractive', '-File',
+            (Join-Path $PSScriptRoot 'get-atlaso-vm-ip.ps1'),
+            '-VmxPath', $targetVmx,
+            '-VmrunPath', $resolvedVmrunPath,
+            '-TimeoutSeconds', [string]$TimeoutSeconds
+        ) `
+        -TimeoutSeconds $TimeoutSeconds `
+        -Action 'Discover the normal test VM management address'
+    $ip = @($ipOutput -split '\r?\n' | Where-Object { $_ -match '^\d+\.\d+\.\d+\.\d+$' })[0]
+    if (-not $ip) {
+        throw 'The bounded management-address discovery returned no usable IPv4 address.'
+    }
     if ($WaitForIp) {
         Write-Host "Management IP: $ip"
     }

@@ -1419,7 +1419,10 @@ VMs, exported OVF/OVA appliances, and root SSH remain unchanged. Normal test VMs
 Environment ID for real creation, verifies its SHA-256 identity against the repository-pinned identity of that exact
 Environment before invoking `op`, validates `op run --environment` plus the certificate/key pair before mutation, and
 uses a bounded child and a separately scrubbed guest-info value. `-TimeoutSeconds` terminates the complete
-`op`/secret-child process tree on deadline so staging failures enter signer scrub and VM rollback. First boot encrypts
+`op`/secret-child process tree on deadline so staging failures enter signer scrub and VM rollback. Every post-staging
+VMware operation is also bounded. A durable, non-secret per-user cleanup marker makes the next validated wrapper
+invocation retry the exact interrupted rollback before any network or VM mutation; the marker is removed only after
+encrypted-import proof or successful stopped-VM artifact cleanup. First boot encrypts
 the signer with the VM's unique `ATLASO_SECRETS_KEY`, deletes staging, and issues a unique `appliance:https` leaf for
 that VM's FQDN/IP. Default waiting
 requires the downloaded root fingerprint to match the checked-in certificate; use `-WaitForIp:$false` to opt out.

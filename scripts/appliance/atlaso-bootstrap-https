@@ -92,6 +92,22 @@ def remove_staged_development_root_ca() -> None:
             os.close(descriptor)
 
 
+def scrub_staged_development_root_ca_after_failure() -> bool:
+    """Best-effort durable scrub when encrypted import does not complete.
+
+    Returns:
+        True when staging is absent after the scrub attempt.
+    """
+    path = DEVELOPMENT_ROOT_CA_STAGING_PATH
+    if not path.exists() and not path.is_symlink():
+        return True
+    try:
+        remove_staged_development_root_ca()
+    except OSError:
+        return False
+    return not path.exists() and not path.is_symlink()
+
+
 def write_development_root_ca_import_proof(fingerprint: str) -> None:
     """Persist the non-secret fingerprint proving encrypted import and scrub.
 
@@ -321,10 +337,15 @@ def main() -> int:
         ca_settings.enabled = True
         try:
             development_root_imported = import_staged_development_root_ca(ca_settings)
-        except ValueError as exc:
-            print(str(exc))
+            db.commit()
+        except Exception as exc:  # noqa: BLE001 - fail closed and scrub shared signer
+            if isinstance(exc, ValueError):
+                print(str(exc))
+            else:
+                print("Development root CA encrypted import failed.")
+            if not scrub_staged_development_root_ca_after_failure():
+                print("Development root CA staging could not be scrubbed after import failure.")
             return 2
-        db.commit()
         if development_root_imported:
             try:
                 remove_staged_development_root_ca()
