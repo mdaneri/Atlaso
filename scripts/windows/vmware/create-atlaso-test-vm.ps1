@@ -77,8 +77,8 @@ shared development signing key.
 Use existing VMware networks without running network preparation.
 
 .PARAMETER WaitForIp
-Wait for the started VM management address, verify its development root CA, and
-print its connection summary. Enabled by default; opt out with -WaitForIp:$false.
+Verify the development root CA and print the connection summary after mandatory
+unique-address readiness succeeds. Enabled by default; opt out with -WaitForIp:$false.
 
 .PARAMETER TrustRootCa
 Explicitly trust the checked-in development root CA for the current Windows user.
@@ -722,10 +722,21 @@ function Set-AtlasoDevelopmentCaCleanupMarkerPhase {
     param(
         [Parameter(Mandatory = $true)][string]$MarkerPath,
         [Parameter(Mandatory = $true)]
-        [ValidateSet('secret-child-active', 'staged')]
+        [ValidateSet(
+            'secret-child-active',
+            'staged',
+            'vm-start-child-active',
+            'stopped-vmx-scrubbed',
+            'removal-child-active'
+        )]
         [string]$ExpectedPhase,
         [Parameter(Mandatory = $true)]
-        [ValidateSet('staged', 'stopped-vmx-scrubbed')]
+        [ValidateSet(
+            'staged',
+            'vm-start-child-active',
+            'stopped-vmx-scrubbed',
+            'removal-child-active'
+        )]
         [string]$Phase
     )
 
@@ -740,9 +751,14 @@ function Set-AtlasoDevelopmentCaCleanupMarkerPhase {
     catch {
         throw "Development-CA cleanup marker is invalid: $resolvedMarkerPath"
     }
-    $validTransition =
-    ($ExpectedPhase -ceq 'secret-child-active' -and $Phase -cin @('staged', 'stopped-vmx-scrubbed')) -or
-    ($ExpectedPhase -ceq 'staged' -and $Phase -ceq 'stopped-vmx-scrubbed')
+    $validTransition = switch ($ExpectedPhase) {
+        'secret-child-active' { $Phase -cin @('staged', 'stopped-vmx-scrubbed') }
+        'staged' { $Phase -cin @('vm-start-child-active', 'stopped-vmx-scrubbed') }
+        'vm-start-child-active' { $Phase -cin @('staged', 'stopped-vmx-scrubbed') }
+        'stopped-vmx-scrubbed' { $Phase -ceq 'removal-child-active' }
+        'removal-child-active' { $Phase -ceq 'stopped-vmx-scrubbed' }
+        default { $false }
+    }
     if ($payload.Schema -ne 2 -or $payload.Phase -cne $ExpectedPhase -or -not $validTransition) {
         throw "Development-CA cleanup marker phase did not match the required transition: $resolvedMarkerPath"
     }
@@ -824,7 +840,13 @@ function Read-AtlasoDevelopmentCaCleanupMarker {
     }
     if (
         $marker.Schema -ne 2 -or
-        $marker.Phase -notin @('secret-child-active', 'staged', 'stopped-vmx-scrubbed') -or
+        $marker.Phase -notin @(
+            'secret-child-active',
+            'staged',
+            'vm-start-child-active',
+            'stopped-vmx-scrubbed',
+            'removal-child-active'
+        ) -or
         [string]::IsNullOrWhiteSpace([string]$marker.HostBootIdentity) -or
         [string]::IsNullOrWhiteSpace([string]$marker.Name) -or
         ([string]$marker.Name).Length -gt 128 -or
@@ -868,13 +890,13 @@ function Read-AtlasoDevelopmentCaCleanupMarker {
         -FailureMessage 'Marked development-CA VMX is outside its exact artifact directory'
     $artifactsRemoved = -not (Test-Path -LiteralPath $resolvedOutputDirectory)
     if ($artifactsRemoved) {
-        if ($marker.Phase -cne 'stopped-vmx-scrubbed') {
+        if ($marker.Phase -notin @('stopped-vmx-scrubbed', 'removal-child-active')) {
             throw "The marked VM artifacts disappeared before stopped-VM proof; preserve the marker for manual review: $MarkerPath"
         }
     }
     else {
         if (-not (Test-Path -LiteralPath $resolvedVmxPath -PathType Leaf)) {
-            if ($marker.Phase -cne 'stopped-vmx-scrubbed') {
+            if ($marker.Phase -notin @('stopped-vmx-scrubbed', 'removal-child-active')) {
                 throw "The marked VMX disappeared before stopped-VM proof; preserve the marker for manual review: $MarkerPath"
             }
             $allowedRestoredPaths = @(
@@ -949,10 +971,14 @@ function Invoke-PendingAtlasoDevelopmentCaCleanup {
             -MarkerPath $markerFile.FullName `
             -MarkerRoot $MarkerRoot
         if (
-            $marker.Phase -ceq 'secret-child-active' -and
+            $marker.Phase -in @(
+                'secret-child-active',
+                'vm-start-child-active',
+                'removal-child-active'
+            ) -and
             (Get-AtlasoHostBootIdentity) -ceq $marker.HostBootIdentity
         ) {
-            throw "Development-CA cleanup is deferred until a Windows host restart proves the unbounded secret-child tree is gone: $($marker.MarkerPath)"
+            throw "Development-CA cleanup is deferred until a Windows host restart proves the unbounded process tree is gone: $($marker.MarkerPath)"
         }
         $quarantineDirectory = $marker.QuarantineDirectory
         $dataDiskStates = @(
@@ -1010,7 +1036,7 @@ function Invoke-PendingAtlasoDevelopmentCaCleanup {
                 -VmrunPath $VmrunPath `
                 -TimeoutSeconds $TimeoutSeconds
             Clear-AtlasoWorkstationDevelopmentRootCaPrivateKey -VmxPath $marker.VmxPath
-            if ($marker.Phase -in @('secret-child-active', 'staged')) {
+            if ($marker.Phase -in @('secret-child-active', 'staged', 'vm-start-child-active')) {
                 # Publish stopped/scrubbed proof before artifact removal. A
                 # later retry may then safely resume data restoration even
                 # when the VMX and its artifact root are already absent.
@@ -1043,18 +1069,45 @@ function Invoke-PendingAtlasoDevelopmentCaCleanup {
             }
             if (-not $marker.ArtifactsRemoved) {
                 $powerShellPath = (Get-Process -Id $PID).Path
-                Invoke-AtlasoBoundedProcess `
-                    -FilePath $powerShellPath `
-                    -ArgumentList @(
-                        '-NoLogo', '-NoProfile', '-NonInteractive', '-File',
-                        (Join-Path $PSScriptRoot 'remove-atlaso-vm.ps1'),
-                        '-VmxPath', $marker.VmxPath,
-                        '-VmrunPath', $VmrunPath,
-                        '-ExpectedName', $marker.Name,
-                        '-Confirm:$false'
-                    ) `
-                    -TimeoutSeconds $TimeoutSeconds `
-                    -Action 'Remove the exact failed normal test VM during persisted cleanup' | Out-Null
+                if ($marker.Phase -ceq 'stopped-vmx-scrubbed') {
+                    # Commit the boot-bound child-active phase before launch so
+                    # an unproven removal tree can never race disk restoration.
+                    Set-AtlasoDevelopmentCaCleanupMarkerPhase `
+                        -MarkerPath $marker.MarkerPath `
+                        -ExpectedPhase stopped-vmx-scrubbed `
+                        -Phase removal-child-active
+                    $marker.Phase = 'removal-child-active'
+                }
+                try {
+                    Invoke-AtlasoBoundedProcess `
+                        -FilePath $powerShellPath `
+                        -ArgumentList @(
+                            '-NoLogo', '-NoProfile', '-NonInteractive', '-File',
+                            (Join-Path $PSScriptRoot 'remove-atlaso-vm.ps1'),
+                            '-VmxPath', $marker.VmxPath,
+                            '-VmrunPath', $VmrunPath,
+                            '-ExpectedName', $marker.Name,
+                            '-Confirm:$false'
+                        ) `
+                        -TimeoutSeconds $TimeoutSeconds `
+                        -Action 'Remove the exact failed normal test VM during persisted cleanup' | Out-Null
+                }
+                catch {
+                    if ($_.Exception.Data['AtlasoProcessTreeTerminationUnproven'] -eq $true) {
+                        throw
+                    }
+                    Set-AtlasoDevelopmentCaCleanupMarkerPhase `
+                        -MarkerPath $marker.MarkerPath `
+                        -ExpectedPhase removal-child-active `
+                        -Phase stopped-vmx-scrubbed
+                    $marker.Phase = 'stopped-vmx-scrubbed'
+                    throw
+                }
+                Set-AtlasoDevelopmentCaCleanupMarkerPhase `
+                    -MarkerPath $marker.MarkerPath `
+                    -ExpectedPhase removal-child-active `
+                    -Phase stopped-vmx-scrubbed
+                $marker.Phase = 'stopped-vmx-scrubbed'
             }
             Restore-AtlasoRollbackDataDisksFromQuarantine `
                 -DataDiskStates $dataDiskStates `
@@ -1063,6 +1116,9 @@ function Invoke-PendingAtlasoDevelopmentCaCleanup {
         }
         catch {
             $cleanupFailure = $_
+            if ($cleanupFailure.Exception.Data['AtlasoProcessTreeTerminationUnproven'] -eq $true) {
+                throw "$($cleanupFailure.Exception.Message) Preserved data remains in $quarantineDirectory and the durable cleanup marker remains at $($marker.MarkerPath); restart Windows before retrying cleanup."
+            }
             try {
                 Restore-AtlasoRollbackDataDisksFromQuarantine `
                     -DataDiskStates $dataDiskStates `
@@ -1254,6 +1310,12 @@ Whether this run installed the appliance root CA for the current Windows user.
 
 .PARAMETER SshKeyProvisioned
 Whether this run injected development key access and passwordless sudo.
+
+.PARAMETER MacAddress
+Verified management NIC MAC address from the exact VMX.
+
+.PARAMETER Hostname
+First-boot hostname bound into the readiness evidence.
 #>
 function Write-ConnectionSummary {
     param(
@@ -1261,7 +1323,9 @@ function Write-ConnectionSummary {
         [Parameter(Mandatory = $true)][string]$Name,
         [Parameter(Mandatory = $true)][string]$VmxPath,
         [Parameter(Mandatory = $true)][bool]$RootCaTrusted,
-        [Parameter(Mandatory = $true)][bool]$SshKeyProvisioned
+        [Parameter(Mandatory = $true)][bool]$SshKeyProvisioned,
+        [Parameter(Mandatory = $true)][string]$MacAddress,
+        [Parameter(Mandatory = $true)][string]$Hostname
     )
 
     <#
@@ -1291,6 +1355,8 @@ function Write-ConnectionSummary {
     Write-Host "Atlaso VMware appliance connection summary" -ForegroundColor Cyan
     Write-SummaryRow -Label "Name:" -Value $Name -ValueColor White
     Write-SummaryRow -Label "VMX:" -Value $VmxPath -ValueColor Gray
+    Write-SummaryRow -Label "MAC:" -Value $MacAddress -ValueColor Gray
+    Write-SummaryRow -Label "Hostname:" -Value $Hostname -ValueColor White
     Write-SummaryRow -Label "Console URL:" -Value "https://$IpAddress/"
     Write-SummaryRow -Label "API URL:" -Value "https://$IpAddress/openapi.json"
     Write-SummaryRow -Label "Swagger URL:" -Value "https://$IpAddress/api/docs"
@@ -1367,6 +1433,7 @@ $firstBootOvfEnvironment = New-AtlasoWorkstationOvfEnvironment `
     -AdminPassword $AdminPassword `
     -RootPassword $RootPassword `
     -RootSshEnabled:$RootSshEnabled `
+    -NormalTestVm `
     -DevelopmentAdminSshPublicKey $developmentAdminSshPublicKey `
     -DevelopmentRootCaCertificatePem $developmentRootCaCertificatePem
 
@@ -1528,17 +1595,40 @@ if (-not $WhatIfPreference) {
             -ExpectedPhase secret-child-active `
             -Phase staged
         $powerShellPath = (Get-Process -Id $PID).Path
-        Invoke-AtlasoBoundedProcess `
-            -FilePath $powerShellPath `
-            -ArgumentList @(
-                '-NoLogo', '-NoProfile', '-NonInteractive', '-File',
-                (Join-Path $PSScriptRoot 'start-atlaso-vm.ps1'),
-                '-VmxPath', $targetVmx,
-                '-VmrunPath', $resolvedVmrunPath,
-                '-Mode', 'gui'
-            ) `
-            -TimeoutSeconds $TimeoutSeconds `
-            -Action 'Start the normal test VM after development-signer staging' | Out-Null
+        # Persist the boot-bound phase before starting VMware. If bounded
+        # termination cannot be proven, rollback must not race a surviving
+        # child that can still start the signer-bearing VM.
+        Set-AtlasoDevelopmentCaCleanupMarkerPhase `
+            -MarkerPath $developmentCaCleanupMarkerPath `
+            -ExpectedPhase staged `
+            -Phase vm-start-child-active
+        try {
+            Invoke-AtlasoBoundedProcess `
+                -FilePath $powerShellPath `
+                -ArgumentList @(
+                    '-NoLogo', '-NoProfile', '-NonInteractive', '-File',
+                    (Join-Path $PSScriptRoot 'start-atlaso-vm.ps1'),
+                    '-VmxPath', $targetVmx,
+                    '-VmrunPath', $resolvedVmrunPath,
+                    '-Mode', 'gui'
+                ) `
+                -TimeoutSeconds $TimeoutSeconds `
+                -Action 'Start the normal test VM after development-signer staging' | Out-Null
+        }
+        catch {
+            $startFailure = $_
+            if ($startFailure.Exception.Data['AtlasoProcessTreeTerminationUnproven'] -ne $true) {
+                Set-AtlasoDevelopmentCaCleanupMarkerPhase `
+                    -MarkerPath $developmentCaCleanupMarkerPath `
+                    -ExpectedPhase vm-start-child-active `
+                    -Phase staged
+            }
+            throw $startFailure
+        }
+        Set-AtlasoDevelopmentCaCleanupMarkerPhase `
+            -MarkerPath $developmentCaCleanupMarkerPath `
+            -ExpectedPhase vm-start-child-active `
+            -Phase staged
         Wait-AtlasoWorkstationDevelopmentRootCaPrivateKeyScrub `
             -VmxPath $targetVmx `
             -VmrunPath $resolvedVmrunPath `
@@ -1563,8 +1653,8 @@ if (-not $WhatIfPreference) {
             catch {
                 throw "$($failure.Exception.Message) The secret-child cleanup marker could not be verified, so no VM or VMX rollback was attempted. Marker error: $($_.Exception.Message)"
             }
-            if ($cleanupMarker.Phase -ceq 'secret-child-active') {
-                throw "$($failure.Exception.Message) The durable cleanup marker remains at $developmentCaCleanupMarkerPath; no VM or VMX rollback was attempted. Restart Windows, then rerun the wrapper so the new host boot can prove the secret-child tree is gone before cleanup."
+            if ($cleanupMarker.Phase -in @('secret-child-active', 'vm-start-child-active')) {
+                throw "$($failure.Exception.Message) The durable cleanup marker remains at $developmentCaCleanupMarkerPath; no VM or VMX rollback was attempted. Restart Windows, then rerun the wrapper so the new host boot can prove the child process tree is gone before cleanup."
             }
         }
         if ($createdThisInvocation -and (Test-Path -LiteralPath $targetVmx -PathType Leaf)) {
@@ -1630,24 +1720,58 @@ if (-not $WhatIfPreference) {
                         -DataDiskStates $rollbackDataDiskStates `
                         -QuarantineDirectory $quarantineDirectory
                 }
-                Invoke-AtlasoBoundedProcess `
-                    -FilePath (Get-Process -Id $PID).Path `
-                    -ArgumentList @(
-                        '-NoLogo', '-NoProfile', '-NonInteractive', '-File',
-                        (Join-Path $PSScriptRoot 'remove-atlaso-vm.ps1'),
-                        '-VmxPath', $targetVmx,
-                        '-VmrunPath', $rollbackVmrunPath,
-                        '-ExpectedName', $Name,
-                        '-Confirm:$false'
-                    ) `
-                    -TimeoutSeconds $TimeoutSeconds `
-                    -Action 'Remove the exact failed normal test VM during rollback' | Out-Null
+                if ($developmentCaCleanupMarkerPath) {
+                    Set-AtlasoDevelopmentCaCleanupMarkerPhase `
+                        -MarkerPath $developmentCaCleanupMarkerPath `
+                        -ExpectedPhase stopped-vmx-scrubbed `
+                        -Phase removal-child-active
+                }
+                try {
+                    Invoke-AtlasoBoundedProcess `
+                        -FilePath (Get-Process -Id $PID).Path `
+                        -ArgumentList @(
+                            '-NoLogo', '-NoProfile', '-NonInteractive', '-File',
+                            (Join-Path $PSScriptRoot 'remove-atlaso-vm.ps1'),
+                            '-VmxPath', $targetVmx,
+                            '-VmrunPath', $rollbackVmrunPath,
+                            '-ExpectedName', $Name,
+                            '-Confirm:$false'
+                        ) `
+                        -TimeoutSeconds $TimeoutSeconds `
+                        -Action 'Remove the exact failed normal test VM during rollback' | Out-Null
+                }
+                catch {
+                    $removalFailure = $_
+                    if (
+                        $developmentCaCleanupMarkerPath -and
+                        $removalFailure.Exception.Data['AtlasoProcessTreeTerminationUnproven'] -ne $true
+                    ) {
+                        Set-AtlasoDevelopmentCaCleanupMarkerPhase `
+                            -MarkerPath $developmentCaCleanupMarkerPath `
+                            -ExpectedPhase removal-child-active `
+                            -Phase stopped-vmx-scrubbed
+                    }
+                    throw $removalFailure
+                }
+                if ($developmentCaCleanupMarkerPath) {
+                    Set-AtlasoDevelopmentCaCleanupMarkerPhase `
+                        -MarkerPath $developmentCaCleanupMarkerPath `
+                        -ExpectedPhase removal-child-active `
+                        -Phase stopped-vmx-scrubbed
+                }
             }
             catch {
                 $rollbackErrors.Add($_.Exception.Message)
             }
             finally {
-                if ($quarantineDirectory) {
+                $removalTreeUnproven = (
+                    $developmentCaCleanupMarkerPath -and
+                    (Test-Path -LiteralPath $developmentCaCleanupMarkerPath -PathType Leaf) -and
+                    (Read-AtlasoDevelopmentCaCleanupMarker `
+                        -MarkerPath $developmentCaCleanupMarkerPath `
+                        -MarkerRoot (Get-AtlasoDevelopmentCaCleanupMarkerRoot)).Phase -ceq 'removal-child-active'
+                )
+                if ($quarantineDirectory -and -not $removalTreeUnproven) {
                     try {
                         Restore-AtlasoRollbackDataDisksFromQuarantine `
                             -DataDiskStates $rollbackDataDiskStates `
@@ -1682,7 +1806,24 @@ if (-not $WhatIfPreference) {
     }
 }
 
-Write-Host "Atlaso Workstation test VM ready: $Name"
+$readinessIdentity = $null
+if (-not $WhatIfPreference) {
+    # Prove exact VMX, NIC, hostname, and host-facing address ownership before
+    # printing ready state or any connection endpoint.
+    $readinessIdentity = & (Join-Path $PSScriptRoot 'get-atlaso-vm-ip.ps1') `
+        -VmxPath $targetVmx `
+        -ExpectedHostname $FirstBootFqdn `
+        -VmrunPath $resolvedVmrunPath `
+        -TimeoutSeconds $TimeoutSeconds `
+        -PassThruIdentity
+    if (-not $? -or $null -eq $readinessIdentity) {
+        throw 'Normal test VM unique-address readiness did not return verified identity evidence.'
+    }
+    Write-Host "Atlaso Workstation test VM ready: $Name"
+}
+else {
+    Write-Host "Atlaso Workstation test VM prepared without readiness proof: $Name"
+}
 Write-Host "Appliance VMX: $targetVmx"
 if ($resolvedSshPublicKeyPath) {
     Write-Host "Development SSH access: admin key from $resolvedSshPublicKeyPath with test-only passwordless sudo"
@@ -1700,22 +1841,8 @@ if (-not $SkipSshKeyProvisioning -and -not $WhatIfPreference) {
     Write-Host "SSH host key fingerprint: $($sshHostKey.Fingerprint)"
 }
 
-if (($WaitForIp -or $TrustRootCa) -and -not $WhatIfPreference) {
-    $ipOutput = Invoke-AtlasoBoundedProcess `
-        -FilePath (Get-Process -Id $PID).Path `
-        -ArgumentList @(
-            '-NoLogo', '-NoProfile', '-NonInteractive', '-File',
-            (Join-Path $PSScriptRoot 'get-atlaso-vm-ip.ps1'),
-            '-VmxPath', $targetVmx,
-            '-VmrunPath', $resolvedVmrunPath,
-            '-TimeoutSeconds', [string]$TimeoutSeconds
-        ) `
-        -TimeoutSeconds $TimeoutSeconds `
-        -Action 'Discover the normal test VM management address'
-    $ip = @($ipOutput -split '\r?\n' | Where-Object { $_ -match '^\d+\.\d+\.\d+\.\d+$' })[0]
-    if (-not $ip) {
-        throw 'The bounded management-address discovery returned no usable IPv4 address.'
-    }
+if (($WaitForIp -or $TrustRootCa) -and $readinessIdentity) {
+    $ip = $readinessIdentity.IPAddress
     if ($WaitForIp) {
         Write-Host "Management IP: $ip"
     }
@@ -1729,8 +1856,10 @@ if (($WaitForIp -or $TrustRootCa) -and -not $WhatIfPreference) {
         -Name $Name `
         -VmxPath $targetVmx `
         -RootCaTrusted ([bool]$rootCaStatus.Trusted) `
-        -SshKeyProvisioned (-not [bool]$SkipSshKeyProvisioning)
+        -SshKeyProvisioned (-not [bool]$SkipSshKeyProvisioning) `
+        -MacAddress $readinessIdentity.MacAddress `
+        -Hostname $readinessIdentity.Hostname
 }
-elseif (-not $WhatIfPreference) {
+elseif ($readinessIdentity) {
     Write-Host 'Management wait and development-root verification were explicitly disabled with -WaitForIp:$false.' -ForegroundColor DarkGray
 }

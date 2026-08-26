@@ -291,7 +291,7 @@ if ($firstBootSource -notmatch "AtlasoProcessTreeTerminationUnproven") {
     throw 'Unproven process-tree termination must carry a machine-readable failure marker.'
 }
 $childActiveDeferral = $wrapperSource.IndexOf(
-    "`$cleanupMarker.Phase -ceq 'secret-child-active'",
+    "`$cleanupMarker.Phase -in @('secret-child-active', 'vm-start-child-active')",
     $rollbackCatch,
     [System.StringComparison]::Ordinal
 )
@@ -304,7 +304,39 @@ if (
     $childActiveDeferral -lt $rollbackCatch -or
     $rollbackRuntimeScrub -lt $childActiveDeferral
 ) {
-    throw 'The broad rollback handler must defer before VM mutation while the secret child may remain active.'
+    throw 'The broad rollback handler must defer before VM mutation while a staging or start child may remain active.'
+}
+$startChildPhase = $wrapperSource.IndexOf(
+    '-Phase vm-start-child-active',
+    $stageStart,
+    [System.StringComparison]::Ordinal
+)
+$boundedStart = $wrapperSource.IndexOf(
+    "'Start the normal test VM after development-signer staging'",
+    $stageStart,
+    [System.StringComparison]::Ordinal
+)
+if ($startChildPhase -lt $stageStart -or $boundedStart -lt $startChildPhase) {
+    throw 'The durable marker must enter its boot-bound active phase before the bounded VM-start child launches.'
+}
+$removalChildPhase = $wrapperSource.LastIndexOf(
+    '-Phase removal-child-active',
+    [System.StringComparison]::Ordinal
+)
+$rollbackRemoval = $wrapperSource.LastIndexOf(
+    "'Remove the exact failed normal test VM during rollback'",
+    [System.StringComparison]::Ordinal
+)
+$conditionalRestore = $wrapperSource.LastIndexOf(
+    'if ($quarantineDirectory -and -not $removalTreeUnproven)',
+    [System.StringComparison]::Ordinal
+)
+if (
+    $removalChildPhase -lt $rollbackCatch -or
+    $rollbackRemoval -lt $removalChildPhase -or
+    $conditionalRestore -lt $rollbackRemoval
+) {
+    throw 'Rollback must persist removal-child activity and withhold quarantined disks until termination is proven.'
 }
 if ($wrapperSource -notmatch '\$runtimeSignerScrubError\s*=\s*\$_\.Exception\.Message' -or
     $wrapperSource -notmatch '\$stopped\s*=\s*\$true') {
@@ -373,6 +405,105 @@ RW 524288000 SPARSE "Atlaso-Depot-s002.vmdk"
     ) {
         throw 'Same-boot retry must preserve the durable marker and VM while secret-child termination is unproven.'
     }
+
+    $startVmRoot = Join-Path $markerTestRoot 'start-child-vm'
+    $startMarkerRoot = Join-Path $markerTestRoot 'start-child-markers'
+    New-Item -ItemType Directory -Path $startVmRoot | Out-Null
+    $startVmx = Join-Path $startVmRoot 'Atlaso-Start-Child.vmx'
+    [System.IO.File]::WriteAllText($startVmx, 'config.version = "8"')
+    $startMarker = New-AtlasoDevelopmentCaCleanupMarker `
+        -VmxPath $startVmx `
+        -Name 'Atlaso-Start-Child' `
+        -OutputDirectory $startVmRoot `
+        -DataDiskStates @() `
+        -MarkerRoot $startMarkerRoot
+    Set-AtlasoDevelopmentCaCleanupMarkerPhase `
+        -MarkerPath $startMarker `
+        -ExpectedPhase secret-child-active `
+        -Phase staged
+    Set-AtlasoDevelopmentCaCleanupMarkerPhase `
+        -MarkerPath $startMarker `
+        -ExpectedPhase staged `
+        -Phase vm-start-child-active
+    $startSameBootDeferred = $false
+    try {
+        Invoke-PendingAtlasoDevelopmentCaCleanup `
+            -VmrunPath 'must-not-run-while-start-child-may-survive' `
+            -TimeoutSeconds 5 `
+            -MarkerRoot $startMarkerRoot
+    }
+    catch {
+        if ($_.Exception.Message -notlike '*deferred until a Windows host restart*') {
+            throw
+        }
+        $startSameBootDeferred = $true
+    }
+    if (
+        -not $startSameBootDeferred -or
+        -not (Test-Path -LiteralPath $startMarker -PathType Leaf) -or
+        -not (Test-Path -LiteralPath $startVmx -PathType Leaf)
+    ) {
+        throw 'Same-boot retry mutated the VM while the bounded start child could still start it.'
+    }
+
+    $removalVmRoot = Join-Path $markerTestRoot 'removal-child-vm'
+    $removalMarkerRoot = Join-Path $markerTestRoot 'removal-child-markers'
+    New-Item -ItemType Directory -Path $removalVmRoot | Out-Null
+    $removalVmx = Join-Path $removalVmRoot 'Atlaso-Removal-Child.vmx'
+    $removalDisk = Join-Path $removalVmRoot 'Atlaso-Depot.vmdk'
+    [System.IO.File]::WriteAllText($removalVmx, 'config.version = "8"')
+    [System.IO.File]::WriteAllText($removalDisk, 'removal-child-preserved-data')
+    $removalDiskState = Get-AtlasoRollbackDataDiskState `
+        -DiskPath $removalDisk `
+        -OutputDirectory $removalVmRoot
+    $removalMarker = New-AtlasoDevelopmentCaCleanupMarker `
+        -VmxPath $removalVmx `
+        -Name 'Atlaso-Removal-Child' `
+        -OutputDirectory $removalVmRoot `
+        -DataDiskStates @($removalDiskState) `
+        -MarkerRoot $removalMarkerRoot
+    $removalMarkerState = Read-AtlasoDevelopmentCaCleanupMarker `
+        -MarkerPath $removalMarker `
+        -MarkerRoot $removalMarkerRoot
+    Set-AtlasoDevelopmentCaCleanupMarkerPhase `
+        -MarkerPath $removalMarker `
+        -ExpectedPhase secret-child-active `
+        -Phase staged
+    Set-AtlasoDevelopmentCaCleanupMarkerPhase `
+        -MarkerPath $removalMarker `
+        -ExpectedPhase staged `
+        -Phase stopped-vmx-scrubbed
+    Move-AtlasoRollbackDataDisksToQuarantine `
+        -DataDiskStates @($removalDiskState) `
+        -QuarantineDirectory $removalMarkerState.QuarantineDirectory
+    Set-AtlasoDevelopmentCaCleanupMarkerPhase `
+        -MarkerPath $removalMarker `
+        -ExpectedPhase stopped-vmx-scrubbed `
+        -Phase removal-child-active
+    Remove-Item -LiteralPath $removalVmRoot -Recurse -Force
+    $removalSameBootDeferred = $false
+    try {
+        Invoke-PendingAtlasoDevelopmentCaCleanup `
+            -VmrunPath 'must-not-run-while-removal-child-may-survive' `
+            -TimeoutSeconds 5 `
+            -MarkerRoot $removalMarkerRoot
+    }
+    catch {
+        if ($_.Exception.Message -notlike '*deferred until a Windows host restart*') {
+            throw
+        }
+        $removalSameBootDeferred = $true
+    }
+    $quarantinedRemovalDisk = Join-Path $removalMarkerState.QuarantineDirectory 'Atlaso-Depot.vmdk'
+    if (
+        -not $removalSameBootDeferred -or
+        -not (Test-Path -LiteralPath $removalMarker -PathType Leaf) -or
+        -not (Test-Path -LiteralPath $quarantinedRemovalDisk -PathType Leaf) -or
+        (Test-Path -LiteralPath $removalDisk)
+    ) {
+        throw 'Same-boot retry restored a quarantined disk while the removal child could still delete it.'
+    }
+
     Set-AtlasoDevelopmentCaCleanupMarkerPhase `
         -MarkerPath $markerPath `
         -ExpectedPhase secret-child-active `

@@ -267,6 +267,22 @@ drop-in, restoring the ordinary password-backed sudo policy. Approve the applian
 wrapper's host-derived output: after startup it prints the exact Ed25519 public host key and SHA-256 fingerprint from
 test-only VMware guest-info for explicit `known_hosts` verification without trusting unauthenticated `ssh-keyscan`
 output. Subsequent Codex and Copilot tasks under the same Windows user reuse that trust and key identity.
+Before any ready message or connection endpoint, every started normal clone must prove that VMware Tools' management
+IPv4 address belongs uniquely to the exact running VMX. An explicit normal-test marker, independent of optional SSH key
+provisioning, makes first boot publish the actual applied hostname through VMware Tools. The proof records the VMX, its
+`ethernet0` MAC, the matching injected and observed hostnames, and the host-facing
+address; it requires an address answer from every running Workstation guest and requires the Windows neighbor entry for
+that address to match the target MAC. An unanswered running guest remains incomplete evidence and retries. A hostname
+mismatch, duplicate static address, or neighbor entry owned by another running VM fails closed with the relevant exact
+identity evidence. The wrapper re-lists the running inventory and rechecks the target address immediately before
+returning; a concurrent VM start, stop, or target-address change retries the complete proof.
+
+Recover from that failure through the exact clone's local console: stop the named conflicting VM, or give the clone a
+unique applied static address. A temporary DHCP reservation is acceptable only when it is bound to the exact target MAC
+shown by the failure. Then rerun `get-atlaso-vm-ip.ps1` with the exact VMX and the original `-ExpectedHostname`, or
+redeploy the normal test VM, before running SSH or HTTPS validation. Keep SSH trust explicit: compare the separately
+published Ed25519 key and SHA-256 fingerprint, and update `known_hosts` yourself only when intended. The wrapper never
+changes normal SSH `known_hosts` automatically.
 Changing the applied management listener from a dedicated interface to an access physical interface or VLAN with
 **Management UI** enabled must retain TCP/22 admission for this ordinary `admin` SSH workflow, under the same management
 Source Group restriction as TCP/80 and TCP/443. It does not enable root SSH and must not expose SSH on an unflagged
@@ -278,8 +294,9 @@ whitespace, and contain only XML-representable characters so the OVF value round
 self-signed Atlaso root CA, and imports it into the current-user Trusted Root store. The temporary-file cleanup remains
 idempotent for missing files and safely handles dotted user-profile directories and valid DOS 8.3 short paths, so a
 cleanup race or path alias cannot stop the readiness retry loop. Use `-TimeoutSeconds` to change the secret-child, IP,
-and CA deadlines; rollback scrubs the signer only after secret-child tree termination is proven. An unproven termination
-preserves the VM and marker until a Windows host restart provides that proof.
+and CA deadlines; rollback mutates the VM only after staging and start child-tree termination is proven. It also keeps
+reused disks quarantined while an artifact-removal child may survive. An unproven termination preserves the durable
+marker until a Windows host restart provides that proof.
 
 ## Fidelity Boundary
 

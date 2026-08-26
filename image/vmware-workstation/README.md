@@ -434,6 +434,23 @@ Windows filesystem identity, stops through checked `vmrun` when needed, and comp
 preflights before checked `vmrun deleteVM` removes registered targets. Preflight failures preserve all artifacts;
 provider deletion or postcondition failures preserve the remaining artifacts and return failure. Stale library-row
 cleanup holds a write-excluding inventory handle through its final byte comparison and atomic replacement.
+Every started normal test clone must pass unique-address readiness before the wrapper reports it ready. The wrapper
+injects an explicit normal-test marker independently of optional SSH key provisioning; after applying the hostname, the
+guest uses that marker to publish its actual value through VMware Tools. The check binds the exact running VMX, its
+`ethernet0` MAC, the injected and guest-published hostnames, VMware Tools' IPv4 result, and the Windows neighbor entry
+for that host-facing address. It also requires an address answer from every running Workstation VM; incomplete guest
+evidence retries rather than being treated as unique. If another VM reports the same address, the hostname differs, or
+the neighbor entry maps to another running VM's MAC, the wrapper stops before printing SSH or HTTPS endpoints and names
+the relevant conflicting identity evidence. Immediately before returning readiness, it re-lists the running inventory
+and rechecks the target address; a concurrent VM start, stop, or target-address change restarts the proof.
+
+For recovery, leave the failed clone running only while using its local console, then either stop the named conflicting
+VM or assign the clone a unique management address. A task-specific DHCP reservation must target the exact MAC printed
+in the failure; a static address must be changed and applied from the clone's console before retrying readiness. Re-run
+`get-atlaso-vm-ip.ps1 -VmxPath <exact-vmx> -ExpectedHostname <first-boot-fqdn>` to prove the corrected identity, or
+redeploy the normal test VM. Review and update `known_hosts` explicitly only after comparing the wrapper's published
+Ed25519 key and SHA-256 fingerprint; these scripts never change normal SSH `known_hosts` automatically.
+
 Pass `-IncludeLabNetworkAdapters` only after `VMnet2`, `VMnet3`, and `VMnet4` exist for the
 SiteA, WAN/SiteB, and trunk-like lifecycle networks. `-TrustRootCa` downloads the deployed root CA, requires its SHA-256
 fingerprint to match the checked-in `development-trust/atlaso-development-root-ca.pem`, and adds that exact certificate
@@ -448,28 +465,31 @@ and the installed CLI must support `op run --environment`. Before invoking `op`,
 SHA-256 identity to match the repository-pinned identity of that exact Environment, then validates the CLI and key pair
 before network preparation, redeploy cleanup, or cloning. A bounded child removes the inherited variable immediately
 and stages the signer only through the normal-wrapper guest-info field. `-TimeoutSeconds` bounds each `op`/secret-child
-process tree; a timeout enters signer scrub and VM rollback only after whole-tree termination is proven. If termination
-cannot be proven, the wrapper leaves the VM and VMX untouched and retains its durable marker until a Windows host
-restart proves the child tree is gone. First boot writes it mode
+process tree; a timeout enters signer scrub and VM rollback only after whole-tree termination is proven. Boot-bound
+marker phases also cover VM start and artifact removal. If termination cannot be proven, the wrapper leaves the VM and
+VMX untouched, or keeps reused disks quarantined during removal, until a Windows host restart proves the child tree is
+gone. First boot writes it mode
 `0600`, proves guest-info scrub, encrypts it with that VM's unique `ATLASO_SECRETS_KEY`, and deletes the staging file.
 Every post-staging VMware operation has its own process-tree deadline. Before staging, the wrapper durably records a
 non-secret per-user cleanup marker; an interrupted rollback blocks later normal-VM creation until the exact marked VM
 is stopped, its VMX signer value is scrubbed, its artifacts are removed, and preserved data disks are restored. This
 recovery runs before 1Password preflight and resumes from a durable stopped/scrubbed phase if VM removal completed
-before data-disk restoration. First
+before data-disk restoration. It never restores quarantined disks while the removal child might still delete them. First
 boot also durably scrubs plaintext staging when encrypted import fails. `-NoStart` is rejected because a powered-off VM
 would retain
 the signer before consumption. The wrapper never prints the signer or places it in arguments, logs, markers, lifecycle
 artifacts, or exports.
 
-Waiting is enabled by default and verifies the shared root before printing the management summary. Use
-`-WaitForIp:$false` only to opt out of the management wait and root verification. The wrapper waits up to five minutes
+Waiting is enabled by default and verifies the shared root before printing the management summary. Mandatory
+unique-address readiness still runs when `-WaitForIp:$false` opts out of root verification. The wrapper waits up to five
+minutes
 for the first-boot CA endpoint, retrying transient connection and service-readiness failures. Pass
 `-TimeoutSeconds <seconds>` to adjust the secret-child, IP-discovery, and CA-readiness deadlines. Partial downloads are
 removed best-effort between retries through .NET file APIs, including when the current user's temporary directory
 contains a dotted profile name or a valid DOS 8.3 short-path representation. Cleanup cannot replace the original
-readiness error or stop the retry loop. After the VM starts, the wrapper prints a connection summary with the HTTPS
-console URL, Swagger URL, OpenAPI URL, root certificate URL, `ssh admin@<appliance-ip>` command, and—when development key
+readiness error or stop the retry loop. After unique-address readiness succeeds, the wrapper prints a connection summary
+with the verified VMX, management MAC, hostname, HTTPS console URL, Swagger URL, OpenAPI URL, root certificate URL,
+`ssh admin@<appliance-ip>` command, and—when development key
 provisioning is enabled—the host-derived Ed25519 public key plus SHA-256 fingerprint.
 
 Both this wrapper and the Workstation lifecycle runner inject a complete `guestinfo.ovfEnv` document into a raw cloned

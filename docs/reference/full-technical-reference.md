@@ -1419,13 +1419,15 @@ VMs, exported OVF/OVA appliances, and root SSH remain unchanged. Normal test VMs
 Environment ID for real creation, verifies its SHA-256 identity against the repository-pinned identity of that exact
 Environment before invoking `op`, validates `op run --environment` plus the certificate/key pair before mutation, and
 uses a bounded child and a separately scrubbed guest-info value. `-TimeoutSeconds` requires proven complete
-`op`/secret-child process-tree termination before a staging failure may enter signer scrub or VM rollback. An unproven
-termination preserves the VM, VMX, and durable marker until a Windows host restart proves that child tree is gone.
-Every post-staging VMware operation is also bounded. A durable, non-secret per-user cleanup marker makes the next
+`op`/secret-child process-tree termination before a staging failure may enter signer scrub or VM rollback. Boot-bound
+marker phases also cover VM start and artifact removal. An unproven termination preserves the VM and VMX, or keeps
+reused disks quarantined during removal, until a Windows host restart proves that child tree is gone. Every post-staging
+VMware operation is also bounded. A durable, non-secret per-user cleanup marker makes the next
 validated wrapper invocation retry the exact interrupted rollback before any network or VM mutation; the marker is
 removed only after encrypted-import proof or successful stopped-VM artifact cleanup. Recovery precedes 1Password
 preflight and records a stopped/scrubbed phase so restoration can resume after the artifact root has already been
-removed. First boot encrypts the signer with the VM's unique `ATLASO_SECRETS_KEY`, deletes staging, and issues a unique
+removed without restoring data while a removal child may survive. First boot encrypts the signer with the VM's unique
+`ATLASO_SECRETS_KEY`, deletes staging, and issues a unique
 `appliance:https` leaf for that VM's FQDN/IP. Default waiting
 requires the downloaded root fingerprint to match the checked-in certificate; use `-WaitForIp:$false` to opt out.
 `-TrustRootCa` changes Windows trust only when that exact certificate is not already trusted, while `-NoStart` is
@@ -1437,6 +1439,10 @@ Ed25519 host key from test-only VMware guest-info, validates its OpenSSH wire fo
 SHA-256 fingerprint for explicit `known_hosts` verification without trusting unauthenticated `ssh-keyscan` output. The
 canonical operational details and safety boundary
 are documented in [VMware Workstation Lifecycle Testing](vmware-workstation-lifecycle-testing.md#normal-test-vm).
+The wrapper reports a started clone ready only after the exact running VMX, `ethernet0` MAC, injected hostname, VMware
+Tools address, and Windows neighbor mapping agree and no other running Workstation VM reports that address. Duplicate
+static ownership fails closed before SSH or HTTPS endpoints are printed; use the linked lifecycle guide for the
+console-based stop-or-readdress recovery path and explicit `known_hosts` handling.
 
 To deploy the current repo to an existing VMware test appliance without rebuilding the image, use the wheel deploy
 helper. A normal test VM created with the default key provisioning uses the existing key/agent path without 1Password:

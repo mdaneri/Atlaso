@@ -74,6 +74,10 @@ runtime.
 
 ## Repository Delivery Workflow
 
+- Agent-authored implementation work must run from a dedicated clean sibling worktree on its task-owned branch. Keep
+  the repository's primary checkout for synchronization, coordination, and completed-task cleanup; do not apply
+  implementation edits there. Establish the worktree and repeat the Mandatory Agent Startup Gate in its directory
+  before planning or mutation. If a safe dedicated worktree cannot be established, stop for maintainer direction.
 - [CONTRIBUTING.md](https://github.com/mdaneri/Atlaso/blob/main/CONTRIBUTING.md) is the canonical delivery workflow.
   Every repository change requires a GitHub
   issue created or linked before implementation begins, exactly one applicable type label, relevant documentation
@@ -924,8 +928,9 @@ Terminal order:
   VMware test wrapper's checked-in public `Atlaso Development Root CA`: require its matching concealed private key from
   the exact `Atlaso` 1Password Environment, pin and verify that Environment ID by SHA-256 before invoking `op`, bound
   each secret child and post-staging VMware operation and require proven complete process-tree termination before
-  mutating the VM or VMX during rollback. If termination is unproven, preserve the durable marker and all VM artifacts
-  until a Windows host restart proves the child tree is gone. Validate the
+  mutating the VM or VMX during rollback. Persist boot-bound child-active phases for staging, VM start, and artifact
+  removal. If termination is unproven, preserve the VM and VMX, or keep reused disks quarantined during removal, until
+  a Windows host restart proves the child tree is gone. Validate the
   key before host mutation, use only the separately scrubbed test-wrapper guest-info/staging path, encrypt it with each
   VM's unique secrets key, scrub plaintext staging when import fails, and issue a unique HTTPS leaf. Commit a durable
   non-secret cleanup marker before staging; later normal-wrapper invocations must retry its exact identity-bound stop,

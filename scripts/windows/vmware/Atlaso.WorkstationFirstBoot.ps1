@@ -435,6 +435,9 @@ Whether first boot enables password-backed root SSH.
 .PARAMETER DevelopmentAdminSshPublicKey
 Optional validated public key used only by the normal development test wrapper.
 
+.PARAMETER NormalTestVm
+Mark this raw clone as a normal test VM whose actual hostname may be published.
+
 .PARAMETER DevelopmentRootCaCertificatePem
 Optional public development root certificate used only by the normal test wrapper.
 #>
@@ -450,6 +453,8 @@ function New-AtlasoWorkstationOvfEnvironment {
         [string]$RootPassword,
 
         [switch]$RootSshEnabled,
+
+        [switch]$NormalTestVm,
 
         [AllowEmptyString()]
         [string]$DevelopmentAdminSshPublicKey = '',
@@ -500,6 +505,11 @@ function New-AtlasoWorkstationOvfEnvironment {
         'atlaso.admin_password'   = $AdminPassword
         'atlaso.root_password'    = $RootPassword
         'atlaso.root_ssh_enabled' = $RootSshEnabled.IsPresent.ToString().ToLowerInvariant()
+    }
+    if ($NormalTestVm) {
+        # Keep the non-secret hostname publication decision independent of optional
+        # SSH key provisioning while excluding lifecycle and exported appliances.
+        $properties['atlaso.normal_test_vm'] = 'true'
     }
     if ($DevelopmentAdminSshPublicKey) {
         $properties['atlaso.development_admin_ssh_public_key'] = $DevelopmentAdminSshPublicKey
