@@ -1425,7 +1425,9 @@ reused disks quarantined during removal, until a Windows host restart proves tha
 VMware operation is also bounded. A durable, non-secret per-user cleanup marker is published through a Windows
 write-through atomic rename before signer staging and makes the next
 validated wrapper invocation retry the exact interrupted rollback before any network or VM mutation; the marker is
-removed only after encrypted-import proof or successful stopped-VM artifact cleanup. Recovery precedes 1Password
+write-through transitioned to a non-actionable tombstone before deletion only after encrypted-import proof or successful
+stopped-VM artifact cleanup. A tombstone that reappears after a crash is retired without VM mutation. Recovery precedes
+1Password
 preflight and records a stopped/scrubbed phase so restoration can resume after the artifact root has already been
 removed without restoring data while a removal child may survive. First boot encrypts the signer with the VM's unique
 `ATLASO_SECRETS_KEY`, deletes staging, and issues a unique

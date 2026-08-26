@@ -801,7 +801,8 @@ function Set-AtlasoDevelopmentCaCleanupMarkerPhase {
             'staged',
             'vm-start-child-active',
             'stopped-vmx-scrubbed',
-            'removal-child-active'
+            'removal-child-active',
+            'retired'
         )]
         [string]$ExpectedPhase,
         [Parameter(Mandatory = $true)]
@@ -809,7 +810,8 @@ function Set-AtlasoDevelopmentCaCleanupMarkerPhase {
             'staged',
             'vm-start-child-active',
             'stopped-vmx-scrubbed',
-            'removal-child-active'
+            'removal-child-active',
+            'retired'
         )]
         [string]$Phase
     )
@@ -827,9 +829,9 @@ function Set-AtlasoDevelopmentCaCleanupMarkerPhase {
     }
     $validTransition = switch ($ExpectedPhase) {
         'secret-child-active' { $Phase -cin @('staged', 'stopped-vmx-scrubbed') }
-        'staged' { $Phase -cin @('vm-start-child-active', 'stopped-vmx-scrubbed') }
+        'staged' { $Phase -cin @('vm-start-child-active', 'stopped-vmx-scrubbed', 'retired') }
         'vm-start-child-active' { $Phase -cin @('staged', 'stopped-vmx-scrubbed') }
-        'stopped-vmx-scrubbed' { $Phase -ceq 'removal-child-active' }
+        'stopped-vmx-scrubbed' { $Phase -cin @('removal-child-active', 'retired') }
         'removal-child-active' { $Phase -ceq 'stopped-vmx-scrubbed' }
         default { $false }
     }
@@ -869,7 +871,7 @@ function Set-AtlasoDevelopmentCaCleanupMarkerPhase {
 
 <#
 .SYNOPSIS
-Remove an exact durable development-CA cleanup marker after cleanup proof.
+Durably retire and remove an exact development-CA cleanup marker.
 
 .PARAMETER MarkerPath
 Exact invocation marker to remove.
@@ -878,6 +880,20 @@ function Remove-AtlasoDevelopmentCaCleanupMarker {
     param([Parameter(Mandatory = $true)][string]$MarkerPath)
 
     if (Test-Path -LiteralPath $MarkerPath -PathType Leaf) {
+        $marker = Read-AtlasoDevelopmentCaCleanupMarker `
+            -MarkerPath $MarkerPath `
+            -MarkerRoot (Split-Path -Parent $MarkerPath)
+        if ($marker.Phase -cne 'retired') {
+            if ($marker.Phase -notin @('staged', 'stopped-vmx-scrubbed')) {
+                throw "Development-CA cleanup marker cannot be safely retired from phase $($marker.Phase): $MarkerPath"
+            }
+            # A write-through tombstone makes a post-delete resurrection
+            # non-actionable after successful import or rollback completion.
+            Set-AtlasoDevelopmentCaCleanupMarkerPhase `
+                -MarkerPath $marker.MarkerPath `
+                -ExpectedPhase $marker.Phase `
+                -Phase retired
+        }
         Remove-Item -LiteralPath $MarkerPath -Force
     }
     if (Test-Path -LiteralPath $MarkerPath) {
@@ -922,7 +938,8 @@ function Read-AtlasoDevelopmentCaCleanupMarker {
             'staged',
             'vm-start-child-active',
             'stopped-vmx-scrubbed',
-            'removal-child-active'
+            'removal-child-active',
+            'retired'
         ) -or
         [string]::IsNullOrWhiteSpace([string]$marker.HostBootIdentity) -or
         [string]::IsNullOrWhiteSpace([string]$marker.Name) -or
@@ -960,6 +977,23 @@ function Read-AtlasoDevelopmentCaCleanupMarker {
             [System.StringComparison]::OrdinalIgnoreCase
         )) {
         throw "Development-CA cleanup quarantine identity is invalid: $MarkerPath"
+    }
+    if ($marker.Phase -ceq 'retired') {
+        # The tombstone may reappear after a non-durable delete, but it must
+        # never recover the VM or data paths as an actionable cleanup record.
+        return [pscustomobject]@{
+            MarkerPath = (Resolve-Path -LiteralPath $MarkerPath).Path
+            Name = [string]$marker.Name
+            VmxPath = $resolvedVmxPath
+            OutputDirectory = $resolvedOutputDirectory
+            DataDisks = @()
+            QuarantineDirectory = $resolvedQuarantineDirectory
+            HostBootIdentity = $markerBootTicks.ToString(
+                [System.Globalization.CultureInfo]::InvariantCulture
+            )
+            Phase = 'retired'
+            ArtifactsRemoved = $false
+        }
     }
     Assert-AtlasoStrictDescendantPath `
         -ParentPath $resolvedOutputDirectory `
@@ -1047,6 +1081,10 @@ function Invoke-PendingAtlasoDevelopmentCaCleanup {
         $marker = Read-AtlasoDevelopmentCaCleanupMarker `
             -MarkerPath $markerFile.FullName `
             -MarkerRoot $MarkerRoot
+        if ($marker.Phase -ceq 'retired') {
+            Remove-AtlasoDevelopmentCaCleanupMarker -MarkerPath $marker.MarkerPath
+            continue
+        }
         if (
             $marker.Phase -in @(
                 'secret-child-active',

@@ -456,6 +456,59 @@ RW 524288000 SPARSE "Atlaso-Depot-s002.vmdk"
         throw 'Same-boot retry mutated the VM while the bounded start child could still start it.'
     }
 
+    $successVmRoot = Join-Path $markerTestRoot 'successful-vm'
+    $successMarkerRoot = Join-Path $markerTestRoot 'successful-markers'
+    New-Item -ItemType Directory -Path $successVmRoot | Out-Null
+    $successVmx = Join-Path $successVmRoot 'Atlaso-Success.vmx'
+    [System.IO.File]::WriteAllText($successVmx, 'config.version = "8"')
+    $successMarker = New-AtlasoDevelopmentCaCleanupMarker `
+        -VmxPath $successVmx `
+        -Name 'Atlaso-Success' `
+        -OutputDirectory $successVmRoot `
+        -DataDiskStates @() `
+        -MarkerRoot $successMarkerRoot
+    Set-AtlasoDevelopmentCaCleanupMarkerPhase `
+        -MarkerPath $successMarker `
+        -ExpectedPhase secret-child-active `
+        -Phase staged
+    Remove-AtlasoDevelopmentCaCleanupMarker -MarkerPath $successMarker
+    if (
+        (Test-Path -LiteralPath $successMarker) -or
+        -not (Test-Path -LiteralPath $successVmx -PathType Leaf)
+    ) {
+        throw 'Successful encrypted import did not retire its marker without mutating the healthy VM.'
+    }
+
+    $retiredVmRoot = Join-Path $markerTestRoot 'retired-vm'
+    $retiredMarkerRoot = Join-Path $markerTestRoot 'retired-markers'
+    New-Item -ItemType Directory -Path $retiredVmRoot | Out-Null
+    $retiredVmx = Join-Path $retiredVmRoot 'Atlaso-Retired.vmx'
+    [System.IO.File]::WriteAllText($retiredVmx, 'config.version = "8"')
+    $retiredMarker = New-AtlasoDevelopmentCaCleanupMarker `
+        -VmxPath $retiredVmx `
+        -Name 'Atlaso-Retired' `
+        -OutputDirectory $retiredVmRoot `
+        -DataDiskStates @() `
+        -MarkerRoot $retiredMarkerRoot
+    Set-AtlasoDevelopmentCaCleanupMarkerPhase `
+        -MarkerPath $retiredMarker `
+        -ExpectedPhase secret-child-active `
+        -Phase staged
+    Set-AtlasoDevelopmentCaCleanupMarkerPhase `
+        -MarkerPath $retiredMarker `
+        -ExpectedPhase staged `
+        -Phase retired
+    Invoke-PendingAtlasoDevelopmentCaCleanup `
+        -VmrunPath 'must-not-run-for-retired-tombstone' `
+        -TimeoutSeconds 5 `
+        -MarkerRoot $retiredMarkerRoot
+    if (
+        (Test-Path -LiteralPath $retiredMarker) -or
+        -not (Test-Path -LiteralPath $retiredVmx -PathType Leaf)
+    ) {
+        throw 'A resurrected retired marker was treated as actionable cleanup for a healthy VM.'
+    }
+
     $removalVmRoot = Join-Path $markerTestRoot 'removal-child-vm'
     $removalMarkerRoot = Join-Path $markerTestRoot 'removal-child-markers'
     New-Item -ItemType Directory -Path $removalVmRoot | Out-Null

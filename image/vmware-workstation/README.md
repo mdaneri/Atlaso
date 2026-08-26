@@ -479,7 +479,8 @@ before data-disk restoration. It never restores quarantined disks while the remo
 boot also durably scrubs plaintext staging when encrypted import fails. `-NoStart` is rejected because a powered-off VM
 would retain
 the signer before consumption. The wrapper never prints the signer or places it in arguments, logs, markers, lifecycle
-artifacts, or exports.
+artifacts, or exports. Successful import or rollback write-through transitions the marker to a non-actionable tombstone
+before deletion; a tombstone that reappears after a crash is deleted without touching its VM.
 
 Waiting is enabled by default and verifies the shared root before printing the management summary. Mandatory
 unique-address readiness still runs when `-WaitForIp:$false` opts out of root verification. The wrapper waits up to five

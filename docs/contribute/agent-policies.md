@@ -937,6 +937,8 @@ Terminal order:
   invocations must retry its exact identity-bound stop, VMX scrub, artifact removal, and data-disk restoration before
   1Password preflight or any new mutation. Persist the
   stopped/scrubbed phase before artifact removal so a retry can safely resume restoration from an absent artifact root.
+  Before deleting a completed marker, write-through transition it to a non-actionable tombstone so a post-crash
+  directory-entry resurrection cannot trigger cleanup of a successful VM.
   Keep lifecycle, Hyper-V, reusable-image, and exported-appliance paths outside that trust domain. Default wrapper wait
   verifies the exact public fingerprint; Windows trust is explicit and idempotent, `-NoStart` is forbidden, and
   certificate/key rotation is one coordinated repository-and-Environment update. Nginx redirects public HTTP/80 to

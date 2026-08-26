@@ -523,7 +523,8 @@ The following cross-cutting boundaries always apply:
   boot-bound child-active phases before staging, VM start, and artifact removal. An unproven child-tree termination must
   preserve the VM and VMX, or keep reused disks quarantined during removal, until a Windows host restart makes cleanup
   safe. Persist the stopped/scrubbed phase before artifact removal so a retry can resume restoration from an absent
-  artifact root.
+  artifact root. Before deleting a completed marker, write-through transition it to a non-actionable tombstone so a
+  post-crash directory-entry resurrection cannot trigger cleanup of a successful VM.
   Default waiting must verify the
   exact
   checked-in fingerprint; Windows trust
