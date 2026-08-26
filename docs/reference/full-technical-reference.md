@@ -1418,8 +1418,10 @@ VMs, exported OVF/OVA appliances, and root SSH remain unchanged. Normal test VMs
 `ATLASO_DEVELOPMENT_ROOT_CA_PRIVATE_KEY` from the exact `Atlaso` 1Password Environment. The wrapper requires the opaque
 Environment ID for real creation, verifies its SHA-256 identity against the repository-pinned identity of that exact
 Environment before invoking `op`, validates `op run --environment` plus the certificate/key pair before mutation, and
-uses a bounded child and a separately scrubbed guest-info value. First boot encrypts the signer with the VM's unique
-`ATLASO_SECRETS_KEY`, deletes staging, and issues a unique `appliance:https` leaf for that VM's FQDN/IP. Default waiting
+uses a bounded child and a separately scrubbed guest-info value. `-TimeoutSeconds` terminates the complete
+`op`/secret-child process tree on deadline so staging failures enter signer scrub and VM rollback. First boot encrypts
+the signer with the VM's unique `ATLASO_SECRETS_KEY`, deletes staging, and issues a unique `appliance:https` leaf for
+that VM's FQDN/IP. Default waiting
 requires the downloaded root fingerprint to match the checked-in certificate; use `-WaitForIp:$false` to opt out.
 `-TrustRootCa` changes Windows trust only when that exact certificate is not already trusted, while `-NoStart` is
 rejected so the signer cannot remain in a powered-off VMX. Rotate the development root by updating the repository PEM

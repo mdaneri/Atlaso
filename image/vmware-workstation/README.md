@@ -447,20 +447,21 @@ Environment must contain one concealed `ATLASO_DEVELOPMENT_ROOT_CA_PRIVATE_KEY` 
 and the installed CLI must support `op run --environment`. Before invoking `op`, the wrapper requires the supplied ID's
 SHA-256 identity to match the repository-pinned identity of that exact Environment, then validates the CLI and key pair
 before network preparation, redeploy cleanup, or cloning. A bounded child removes the inherited variable immediately
-and stages the signer only through the normal-wrapper guest-info field. First boot writes it mode `0600`, proves
-guest-info scrub, encrypts it with that VM's unique `ATLASO_SECRETS_KEY`, and deletes the staging file. Failure to prove
-scrub stops and rolls back the new VM. `-NoStart` is rejected because a powered-off VM would retain the signer before
-consumption. The wrapper never prints the signer or places it in arguments, logs, markers, lifecycle artifacts, or
-exports.
+and stages the signer only through the normal-wrapper guest-info field. `-TimeoutSeconds` bounds each `op`/secret-child
+process tree; a timeout terminates the whole tree and enters signer scrub and VM rollback. First boot writes it mode
+`0600`, proves guest-info scrub, encrypts it with that VM's unique `ATLASO_SECRETS_KEY`, and deletes the staging file.
+Failure to prove scrub stops and rolls back the new VM. `-NoStart` is rejected because a powered-off VM would retain
+the signer before consumption. The wrapper never prints the signer or places it in arguments, logs, markers, lifecycle
+artifacts, or exports.
 
 Waiting is enabled by default and verifies the shared root before printing the management summary. Use
 `-WaitForIp:$false` only to opt out of the management wait and root verification. The wrapper waits up to five minutes
 for the first-boot CA endpoint, retrying transient connection and service-readiness failures. Pass
-`-TimeoutSeconds <seconds>` to adjust both IP discovery and CA readiness waits. Partial downloads are removed
-best-effort between retries through .NET file APIs, including when the current user's temporary directory contains a
-dotted profile name or a valid DOS 8.3 short-path representation. Cleanup cannot replace the original readiness error
-or stop the retry loop. After the VM starts, the wrapper prints a connection summary with the HTTPS console URL,
-Swagger URL, OpenAPI URL, root certificate URL, `ssh admin@<appliance-ip>` command, and—when development key
+`-TimeoutSeconds <seconds>` to adjust the secret-child, IP-discovery, and CA-readiness deadlines. Partial downloads are
+removed best-effort between retries through .NET file APIs, including when the current user's temporary directory
+contains a dotted profile name or a valid DOS 8.3 short-path representation. Cleanup cannot replace the original
+readiness error or stop the retry loop. After the VM starts, the wrapper prints a connection summary with the HTTPS
+console URL, Swagger URL, OpenAPI URL, root certificate URL, `ssh admin@<appliance-ip>` command, and—when development key
 provisioning is enabled—the host-derived Ed25519 public key plus SHA-256 fingerprint.
 
 Both this wrapper and the Workstation lifecycle runner inject a complete `guestinfo.ovfEnv` document into a raw cloned

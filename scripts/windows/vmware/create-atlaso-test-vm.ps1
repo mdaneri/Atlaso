@@ -109,7 +109,8 @@ Skip the development administrator public key and passwordless-sudo provisioning
 Cannot be combined with -SshPublicKeyPath.
 
 .PARAMETER TimeoutSeconds
-Bounded wait used for management-address and root-CA readiness.
+Bounded wait used for the 1Password child, management-address discovery, and
+root-CA readiness.
 #>
 [Diagnostics.CodeAnalysis.SuppressMessageAttribute('PSAvoidUsingPlainTextForPassword', '')]
 [CmdletBinding(SupportsShouldProcess = $true)]
@@ -142,7 +143,7 @@ param(
     [switch]$RootSshEnabled,
     [string]$SshPublicKeyPath = '',
     [switch]$SkipSshKeyProvisioning,
-    [int]$TimeoutSeconds = 300
+    [ValidateRange(1, 3600)][int]$TimeoutSeconds = 300
 )
 
 $ErrorActionPreference = 'Stop'
@@ -244,6 +245,65 @@ function Assert-OnePasswordDevelopmentCaBridge {
 
 <#
 .SYNOPSIS
+Run one external process with a deadline and whole-tree termination.
+
+.PARAMETER FilePath
+Exact executable to start without shell interpretation.
+
+.PARAMETER ArgumentList
+Individual process arguments added without command-line interpolation.
+
+.PARAMETER TimeoutSeconds
+Positive deadline for the external process.
+
+.PARAMETER Action
+Safe action description used in failure messages.
+#>
+function Invoke-AtlasoBoundedProcess {
+    param(
+        [Parameter(Mandatory = $true)][string]$FilePath,
+        [Parameter(Mandatory = $true)][string[]]$ArgumentList,
+        [Parameter(Mandatory = $true)][ValidateRange(1, 3600)][int]$TimeoutSeconds,
+        [Parameter(Mandatory = $true)][string]$Action
+    )
+
+    $startInfo = [System.Diagnostics.ProcessStartInfo]::new()
+    $startInfo.FileName = $FilePath
+    $startInfo.UseShellExecute = $false
+    foreach ($argument in $ArgumentList) {
+        $startInfo.ArgumentList.Add($argument)
+    }
+    $process = [System.Diagnostics.Process]::new()
+    $process.StartInfo = $startInfo
+    try {
+        if (-not $process.Start()) {
+            throw "$Action could not be started."
+        }
+        if (-not $process.WaitForExit($TimeoutSeconds * 1000)) {
+            try {
+                # Kill(true) is required here because op owns the secret child;
+                # terminating only op could leave that descendant staging the key.
+                $process.Kill($true)
+                if (-not $process.WaitForExit(10000)) {
+                    throw 'The process remained active after whole-tree termination.'
+                }
+            }
+            catch {
+                throw "$Action exceeded its deadline and whole-process-tree cleanup could not be proven."
+            }
+            throw "$Action exceeded its $TimeoutSeconds-second deadline."
+        }
+        if ($process.ExitCode -ne 0) {
+            throw "$Action failed with exit code $($process.ExitCode)."
+        }
+    }
+    finally {
+        $process.Dispose()
+    }
+}
+
+<#
+.SYNOPSIS
 Run the bounded development-CA secret child under 1Password.
 
 .PARAMETER EnvironmentId
@@ -260,6 +320,10 @@ Exact checked-in public development root certificate path.
 
 .PARAMETER VmxPath
 Exact new normal-test-VM VMX path for the Stage action.
+
+.PARAMETER TimeoutSeconds
+Positive deadline after which the complete op/secret-child process tree is
+terminated so the caller can enter signer scrub and VM rollback.
 #>
 function Invoke-OnePasswordDevelopmentCaChild {
     param(
@@ -267,7 +331,8 @@ function Invoke-OnePasswordDevelopmentCaChild {
         [Parameter(Mandatory = $true)][string]$OpPath,
         [Parameter(Mandatory = $true)][ValidateSet('Validate', 'Stage')][string]$Action,
         [Parameter(Mandatory = $true)][string]$CertificatePath,
-        [string]$VmxPath = ''
+        [string]$VmxPath = '',
+        [Parameter(Mandatory = $true)][ValidateRange(1, 3600)][int]$TimeoutSeconds
     )
 
     $powerShellPath = (Get-Process -Id $PID).Path
@@ -280,10 +345,11 @@ function Invoke-OnePasswordDevelopmentCaChild {
     if ($Action -eq 'Stage') {
         $arguments += @('-VmxPath', $VmxPath)
     }
-    & $OpPath @arguments
-    if ($LASTEXITCODE -ne 0) {
-        throw "The bounded 1Password development-CA $Action child failed."
-    }
+    Invoke-AtlasoBoundedProcess `
+        -FilePath $OpPath `
+        -ArgumentList $arguments `
+        -TimeoutSeconds $TimeoutSeconds `
+        -Action "The bounded 1Password development-CA $Action child"
 }
 
 <#
@@ -767,7 +833,8 @@ if (-not $WhatIfPreference) {
         -EnvironmentId $OnePasswordEnvironmentId `
         -OpPath $resolvedOpPath `
         -Action Validate `
-        -CertificatePath $developmentRootCaCertificatePath
+        -CertificatePath $developmentRootCaCertificatePath `
+        -TimeoutSeconds $TimeoutSeconds
 }
 
 # Key input validation intentionally precedes network preparation, cleanup, disk
@@ -923,7 +990,8 @@ if (-not $WhatIfPreference) {
             -OpPath $resolvedOpPath `
             -Action Stage `
             -CertificatePath $developmentRootCaCertificatePath `
-            -VmxPath $targetVmx
+            -VmxPath $targetVmx `
+            -TimeoutSeconds $TimeoutSeconds
         $resolvedVmrunPath = Resolve-TestVmVmrunPath -Path $VmrunPath
         & (Join-Path $PSScriptRoot 'start-atlaso-vm.ps1') `
             -VmxPath $targetVmx `

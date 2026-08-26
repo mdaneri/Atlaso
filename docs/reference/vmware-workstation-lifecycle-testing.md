@@ -275,7 +275,8 @@ whitespace, and contain only XML-representable characters so the OVF value round
 `-TrustRootCa` waits for the first-boot CA endpoint, removes partial downloads best-effort between retries, validates the
 self-signed Atlaso root CA, and imports it into the current-user Trusted Root store. The temporary-file cleanup remains
 idempotent for missing files and safely handles dotted user-profile directories and valid DOS 8.3 short paths, so a
-cleanup race or path alias cannot stop the readiness retry loop. Use `-TimeoutSeconds` to change the IP and CA waits.
+cleanup race or path alias cannot stop the readiness retry loop. Use `-TimeoutSeconds` to change the secret-child, IP,
+and CA deadlines; a secret-child timeout terminates the whole process tree before rollback scrubs the signer.
 
 ## Fidelity Boundary
 

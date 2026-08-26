@@ -127,6 +127,68 @@ finally {
     Remove-Item Env:\ATLASO_DEVELOPMENT_ROOT_CA_PRIVATE_KEY -ErrorAction SilentlyContinue
 }
 
+$boundedProcessRoot = Join-Path ([System.IO.Path]::GetTempPath()) (
+    "atlaso-bounded-process-$([guid]::NewGuid().ToString('N'))"
+)
+$boundedChildPid = 0
+try {
+    New-Item -ItemType Directory -Path $boundedProcessRoot | Out-Null
+    $boundedChildPath = Join-Path $boundedProcessRoot 'child.ps1'
+    $boundedParentPath = Join-Path $boundedProcessRoot 'parent.ps1'
+    $boundedChildPidPath = Join-Path $boundedProcessRoot 'child.pid'
+    $powerShellPath = (Get-Process -Id $PID).Path
+    $escapedPowerShellPath = $powerShellPath.Replace("'", "''")
+    $escapedChildPath = $boundedChildPath.Replace("'", "''")
+    $escapedChildPidPath = $boundedChildPidPath.Replace("'", "''")
+    [System.IO.File]::WriteAllText(
+        $boundedChildPath,
+        'Start-Sleep -Seconds 30',
+        [System.Text.UTF8Encoding]::new($false)
+    )
+    [System.IO.File]::WriteAllText(
+        $boundedParentPath,
+        @"
+`$child = Start-Process -FilePath '$escapedPowerShellPath' -ArgumentList @(
+    '-NoLogo', '-NoProfile', '-NonInteractive', '-File', '$escapedChildPath'
+) -PassThru
+[System.IO.File]::WriteAllText('$escapedChildPidPath', [string]`$child.Id)
+Start-Sleep -Seconds 30
+"@,
+        [System.Text.UTF8Encoding]::new($false)
+    )
+    $deadlineObserved = $false
+    try {
+        Invoke-AtlasoBoundedProcess `
+            -FilePath $powerShellPath `
+            -ArgumentList @('-NoLogo', '-NoProfile', '-NonInteractive', '-File', $boundedParentPath) `
+            -TimeoutSeconds 2 `
+            -Action 'Bounded process regression'
+    }
+    catch {
+        if ($_.Exception.Message -notlike '*exceeded its 2-second deadline*') {
+            throw
+        }
+        $deadlineObserved = $true
+    }
+    if (-not $deadlineObserved) {
+        throw 'The bounded process helper did not enforce its deadline.'
+    }
+    if (-not (Test-Path -LiteralPath $boundedChildPidPath -PathType Leaf)) {
+        throw 'The bounded process regression did not start its descendant.'
+    }
+    $boundedChildPid = [int][System.IO.File]::ReadAllText($boundedChildPidPath)
+    Start-Sleep -Milliseconds 250
+    if (Get-Process -Id $boundedChildPid -ErrorAction SilentlyContinue) {
+        throw 'The bounded process helper left its descendant running after timeout.'
+    }
+}
+finally {
+    if ($boundedChildPid -gt 0) {
+        Stop-Process -Id $boundedChildPid -Force -ErrorAction SilentlyContinue
+    }
+    Remove-Item -LiteralPath $boundedProcessRoot -Recurse -Force -ErrorAction SilentlyContinue
+}
+
 $childPath = Join-Path $RepositoryRoot 'scripts\windows\vmware\Invoke-AtlasoDevelopmentCaSecret.ps1'
 $publicCertificatePath = Join-Path $RepositoryRoot (
     'image\vmware-workstation\development-trust\atlaso-development-root-ca.pem'
@@ -195,6 +257,10 @@ $rollbackStop = $wrapperSource.IndexOf(
 )
 if ($runtimeScrub -lt 0 -or $rollbackStop -lt $runtimeScrub) {
     throw 'Rollback must attempt runtime signer scrub before VM stop discovery.'
+}
+if ($wrapperSource -notmatch '\$process\.Kill\(\$true\)' -or
+    $wrapperSource -notmatch '-TimeoutSeconds \$TimeoutSeconds') {
+    throw 'The 1Password child must enforce a deadline and terminate its complete process tree.'
 }
 if ($wrapperSource -notmatch '\$runtimeSignerScrubError\s*=\s*\$_\.Exception\.Message' -or
     $wrapperSource -notmatch '\$stopped\s*=\s*\$true') {
