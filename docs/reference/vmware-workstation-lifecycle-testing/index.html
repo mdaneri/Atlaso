@@ -3670,7 +3670,12 @@ discovers the runtime address through VMware Tools.</p>
 the Hyper-V build wrapper. Both wrappers use <code>image/common/source</code> for the original Photon ISO download cache so the
 source ISO is not duplicated under each target. The Workstation image installs <code>open-vm-tools</code>; the Hyper-V image keeps
 the <code>hyper-v</code> package and Hyper-V guest daemons. The Workstation build wrapper opens a visible VMware console by
-default. Use <code>-Headless</code> only when an unattended build is preferred.</p>
+default. Use <code>-Headless</code> only when an unattended build is preferred.
+The shared builder removes and verifies the absence of its plaintext kickstart source, generated Packer variable file,
+and remastered credential-bearing ISO after the bounded Packer consumer exits. The cleanup covers validation, build,
+failure, and fallback ISO paths; an ACL, file-lock, or endpoint-protection cleanup failure terminates the build instead
+of reporting success with a credential-bearing artifact left behind. <code>-PrepareIsoOnly</code> is rejected because retaining
+that ISO would retain a reusable build credential.</p>
 <p>GUI builds start or reuse a responsive VMware Workstation UI as a process separate from Packer before invoking the
 VMware builder. This preserves the visible console while preventing an already-running VM from leaving Packer blocked
 inside the synchronous <code>vmrun</code> start transition. Until SSH provisioning begins, the wrapper reports sanitized,
@@ -3693,6 +3698,26 @@ by formatting or silently swapping unrelated VMDKs.</p>
 <div class="language-powershell highlight"><pre><span></span><code><span id="__span-3-1"><a id="__codelineno-3-1" name="__codelineno-3-1" href="#__codelineno-3-1"></a><span class="n">pwsh</span> <span class="n">-ExecutionPolicy</span> <span class="n">Bypass</span> <span class="p">`</span>
 </span><span id="__span-3-2"><a id="__codelineno-3-2" name="__codelineno-3-2" href="#__codelineno-3-2"></a>  <span class="o">-File</span> <span class="n">scripts</span><span class="p">/</span><span class="n">windows</span><span class="p">/</span><span class="n">vmware</span><span class="p">/</span><span class="nb">invoke-lifecycle</span><span class="n">-test</span><span class="p">.</span><span class="n">ps1</span>
 </span></code></pre></div>
+<p>The wrapper has no password defaults. It prompts securely for the appliance administrator and VCF Backup credentials;
+client SSH reuses the administrator <code>SecureString</code> unless <code>-SshPassword</code> is supplied. <code>-FullEsxiPxeInstall</code> also
+requires the ESXi root password that matches the selected rendered Kickstart profile. The launcher sends these values to
+its child through a current-user DPAPI-protected temporary CLIXML bundle and removes that bundle after the child exits.
+The runner streams the complete password set for the main lifecycle Python consumer as one JSON envelope over standard
+input, so those values do not enter that child's process arguments. Client NoCloud seed generation likewise sends its
+SSH password as one bounded standard-input line to the repository-controlled helper; the helper rejects empty,
+multiline, and oversized input before replacing an existing seed artifact. After successful lifecycle client access
+proves that cloud-init consumed each seed, the runner stops the clients, detaches and deletes both ISOs with absence
+verification, then restarts a retained lab. Failure cleanup also stops affected clients and requires verified seed absence.
+For a full ESXi PXE install, the consumer rotates
+the encrypted <code>Lifecycle ESXi</code> vault entry and persists only
+<code>{{vault.lifecycle_esxi.esx.lifecycle.root.password}}</code> in the Kickstart source; Atlaso resolves that marker for the
+authorized PXE request without storing the plaintext password in desired state. The lifecycle reuses a vault whose
+display name normalizes to <code>lifecycle_esxi</code> and fails closed if more than one vault claims that marker name. Because
+settings archives intentionally exclude vaults, the restored pass recreates this entry from the same standard-input
+secret after restore and before the
+ESXi PXE unit is applied.
+The <code>-OidcOnly</code> and <code>-RoutingWanOnly</code> paths do not prompt for or include a VCF Backup password because those focused
+scenarios neither stage VCF Backup nor run the settings backup/restore pass.</p>
 <p>The wrapper selects the newest appliance VMX under <code>image/vmware-workstation/output</code>, prepares the tiny Alpine client
 VMDK when needed, creates a unique <code>AtlasoWorkstationLifecycle-*</code> lab, runs the initial lifecycle scenario, and by
 default runs the restored backup/restore pass. Pass <code>-SkipBackupRestoreTest</code> only when the older single-pass behavior is
@@ -3731,6 +3756,8 @@ and the backup/restore pass.</p>
 </span><span id="__span-4-13"><a id="__codelineno-4-13" name="__codelineno-4-13" href="#__codelineno-4-13"></a>  <span class="o">-File</span> <span class="n">scripts</span><span class="p">/</span><span class="n">windows</span><span class="p">/</span><span class="n">vmware</span><span class="p">/</span><span class="nb">invoke-lifecycle</span><span class="n">-test</span><span class="p">.</span><span class="n">ps1</span> <span class="p">`</span>
 </span><span id="__span-4-14"><a id="__codelineno-4-14" name="__codelineno-4-14" href="#__codelineno-4-14"></a>  <span class="n">-CleanupVmsOnly</span>
 </span></code></pre></div>
+<p>The plan-only command does not prompt for passwords or create a protected credential bundle because the emitted plan
+does not consume credentials.</p>
 <h2 id="cleanup-safety">Cleanup Safety<a class="headerlink" href="#cleanup-safety" title="Permanent link">&para;</a></h2>
 <p>Workstation cleanup is authoritative only for an exact Atlaso artifact root. It rejects filesystem roots, sibling or
 parent targets, and any root or descendant containing a reparse point. Every recursively discovered VMX must be a strict
@@ -3806,13 +3833,17 @@ the checkout-local, Git-ignored configuration file. The prompt is masked and the
 vmnet only; pass <code>-IncludeLabNetworkAdapters</code> after creating the SiteA, WAN/SiteB, and trunk-like vmnets.
 For real creation, the wrapper prefers an explicit <code>-OnePasswordEnvironmentId</code> override and otherwise reads the exact
 single-line <code>.atlaso-local/onepassword-environment-id</code> file. The entire <code>.atlaso-local</code> directory is ignored by Git. A
-pending signer cleanup runs first because it consumes no 1Password material. After that recovery, a missing or
+custom file may be selected with <code>-EnvironmentIdFile</code>; the legacy <code>-OnePasswordEnvironmentIdFile</code> spelling remains an
+alias for existing automation.
+Pending signer cleanup runs first because it consumes no 1Password material. After that recovery, a missing or
 malformed ID fails with an actionable preflight error before network preparation, disk reset, cloning, or other new VM
 mutation. The wrapper verifies its SHA-256 identity against the repository pin without printing the ID. Install the
 Environments-enabled beta 1Password CLI under <code>C:\Program Files\1Password CLI</code>; a stable CLI without
 <code>op run --environment</code> fails before Environment access. A wrong Environment ID or signer fails before new VM mutation.
-The wrapper injects the same complete DHCP-first OVF environment before power-on; use <code>-FirstBootFqdn</code>,
-<code>-AdminPassword</code>, and <code>-RootPassword</code> when the default local test identity or credentials are not appropriate.
+The wrapper injects the same complete DHCP-first OVF environment before power-on. Use <code>-FirstBootFqdn</code> for the test
+identity. <code>-AdminPassword</code> and <code>-RootPassword</code> accept only <code>SecureString</code> objects; when omitted, the wrapper prompts
+securely after pending signer recovery and Environment validation, but before network preparation or new VM mutation.
+Neither credential has a repository default.
 It also resolves the current Windows user's existing <code>.ssh/id_ed25519.pub</code> before any network preparation, cleanup, or
 VM creation, installs that Ed25519 public key for <code>admin</code>, and adds a separate test-only passwordless-sudo rule. Pass
 <code>-SshPublicKeyPath &lt;path&gt;</code> to select another existing Ed25519 public key, or <code>-SkipSshKeyProvisioning</code> to retain

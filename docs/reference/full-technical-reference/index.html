@@ -4258,7 +4258,10 @@ DNS servers and uses them for both the temporary Photon builder and the finished
 public DNS only as a fallback. The wrapper writes <code>photon-ks.json</code>, embeds it into a remastered Photon ISO, replaces the
 ISO's UEFI GRUB config with a Atlaso auto-install entry, and passes that single ISO to Packer. Photon then boots with
 <code>ks=cdrom:/photon-ks.json</code> without Packer typing boot commands. Raw <code>packer build .</code> is intentionally blocked unless the
-ISO is marked as wrapper-prepared; the wrapper is the tested Windows Server 2025 path. Build runs pass Packer's <code>-force</code>
+ISO is marked as wrapper-prepared; the wrapper is the tested Windows Server 2025 path. The remastered ISO is a bounded
+sensitive artifact: the wrapper removes it and verifies its absence after Packer exits, including failure and fallback
+paths. ISO-only preparation is rejected because retaining the remastered ISO would retain a reusable build credential.
+Build runs pass Packer's <code>-force</code>
 flag by default so the fixed output directory can be rebuilt in one command. Use <code>-OutputDirectory &lt;path&gt;</code> to keep
 multiple artifacts or <code>-KeepExistingOutput</code> when you want Packer to fail instead of replacing an existing output
 directory. Use <code>-PackerOnError abort</code> to keep a failed builder VM for debugging, or <code>-PackerOnError ask</code> to choose the
@@ -5152,10 +5155,11 @@ deterministic packet-loss/recovery proof, CA apply with a ClientA CSR request an
 Backup SFTP with the <code>vcf-backup</code> OS user, client-side connectivity, and by default a backup/restore redeploy pass that
 confirms the restored ClientA certificate has the same serial number and SHA-256 fingerprint as the pre-restore
 certificate and that the restored CA archive fingerprints match the original settings backup. It prints a human-readable
-console summary, writes <code>result.json</code>, then removes the VMs it created. It defaults to the local Hyper-V lab password
-for admin and appliance/client SSH access; appliance host-state probes log in as <code>admin</code> because root SSH is disabled by
-default, then run checks through sudo. It uses a separate policy-compliant default for VCF Backup SFTP test access; pass
-<code>-AdminPassword</code>, <code>-SshPassword</code>, and <code>-VcfBackupPassword</code> to override those defaults. Pass <code>-SkipBackupRestoreTest</code>
+console summary, writes <code>result.json</code>, then removes the VMs it created. It prompts securely for the administrator and
+VCF Backup SFTP passwords and reuses the administrator <code>SecureString</code> for SSH unless a separate <code>-SshPassword</code> is
+provided; no password has a repository default. Appliance host-state probes log in as <code>admin</code> because root SSH is
+disabled by default, then run checks through sudo. The launcher hands credentials to its child only through a
+current-user DPAPI-protected temporary CLIXML bundle and removes it after the child exits. Pass <code>-SkipBackupRestoreTest</code>
 only when you need the older single-pass run, and pass <code>-KeepVms</code> only when preserving a failed lab for inspection. Use
 <code>-PrepareNetworksOnly</code> to set up the Hyper-V switches/NAT, <code>-CleanupVmsOnly</code> to remove only lifecycle VMs, and
 <code>-CleanupNetworksOnly</code> to remove Atlaso switches/NAT after all attached VMs are gone. Details live in

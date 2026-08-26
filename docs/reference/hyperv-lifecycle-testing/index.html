@@ -3644,9 +3644,10 @@ portability fails loudly when certificate identity changes. Pass <code>-SkipBack
 lifecycle run, and pass <code>-KeepVms</code> only when you want to inspect a failed lab. Default two-pass runs write
 <code>initial/result.json</code>, <code>restored/result.json</code>, <code>settings-backup.json</code>, and <code>restored/restored-settings-backup.json</code>
 under the timestamped result directory.</p>
-<p>The wrapper defaults the Atlaso admin and SSH passwords to the local Hyper-V lab password. The VCF Backup SFTP test
-password defaults to a separate policy-compliant value because Local Users enforces the appliance password policy before
-OS sync. Override them with <code>-AdminPassword</code>, <code>-SshPassword</code>, and <code>-VcfBackupPassword</code> when testing a different image.</p>
+<p>The wrapper has no password defaults. It securely prompts for <code>-AdminPassword</code> and <code>-VcfBackupPassword</code> when omitted;
+<code>-SshPassword</code> reuses the supplied admin <code>SecureString</code> unless the caller provides a separate secure value. The launcher
+exports those <code>SecureString</code> objects to a current-user DPAPI-protected temporary CLIXML bundle, gives the child only the
+bundle path, and removes the bundle after the child exits. No password is placed on the child process command line.</p>
 <p>The lifecycle web probe defaults to <code>https://&lt;ApplianceIPAddress&gt;</code>. Fresh appliance images install nginx with CA-backed
 management HTTPS/443 and redirect public HTTP/80 to HTTPS; override the probe with <code>-ApplianceUrl</code> only when testing a
 different management front door.</p>
@@ -3668,17 +3669,29 @@ different management front door.</p>
 </span></code></pre></div>
 <p>Pass <code>-CleanupNetworksAfterTest</code> to remove the switches/NAT after a successful test as well as the VMs. Network cleanup
 is intentionally opt-in because the normal <code>Atlaso</code> VM can also be attached to the shared Atlaso switches.</p>
-<p>Use <code>-PlanOnly</code> first to print the VM names, VHDX parents, and result path without creating or modifying VMs. Use
+<p>Use <code>-PlanOnly</code> first to print the VM names, VHDX parents, and result path without prompting for credentials or creating
+or modifying VMs. Use
 <code>-ApplianceVhdxPath</code> when you want a specific appliance image instead of the newest discovered VHDX.</p>
 <h2 id="low-level-run">Low-Level Run<a class="headerlink" href="#low-level-run" title="Permanent link">&para;</a></h2>
-<p>The wrapper delegates to <code>scripts/windows/hyperv/run-lifecycle-test.ps1</code>. That lower-level script is still available
-when you need explicit control over every input:</p>
-<div class="language-powershell highlight"><pre><span></span><code><span id="__span-4-1"><a id="__codelineno-4-1" name="__codelineno-4-1" href="#__codelineno-4-1"></a><span class="n">pwsh</span> <span class="n">-ExecutionPolicy</span> <span class="n">Bypass</span> <span class="p">`</span>
-</span><span id="__span-4-2"><a id="__codelineno-4-2" name="__codelineno-4-2" href="#__codelineno-4-2"></a>  <span class="o">-File</span> <span class="n">scripts</span><span class="p">/</span><span class="n">windows</span><span class="p">/</span><span class="n">hyperv</span><span class="p">/</span><span class="n">run-lifecycle-test</span><span class="p">.</span><span class="n">ps1</span> <span class="p">`</span>
-</span><span id="__span-4-3"><a id="__codelineno-4-3" name="__codelineno-4-3" href="#__codelineno-4-3"></a>  <span class="n">-ApplianceVhdxPath</span> <span class="n">image</span><span class="p">/</span><span class="n">hyperv</span><span class="p">/</span><span class="n">output</span><span class="p">/</span><span class="n">atlaso-photon-hyperv</span><span class="p">/</span><span class="s2">&quot;Virtual Hard Disks&quot;</span><span class="p">/</span><span class="n">Atlaso-Photon-Builder</span><span class="p">.</span><span class="n">vhdx</span> <span class="p">`</span>
-</span><span id="__span-4-4"><a id="__codelineno-4-4" name="__codelineno-4-4" href="#__codelineno-4-4"></a>  <span class="n">-AdminPassword</span> <span class="s1">&#39;&lt;bootstrap-admin-password&gt;&#39;</span> <span class="p">`</span>
-</span><span id="__span-4-5"><a id="__codelineno-4-5" name="__codelineno-4-5" href="#__codelineno-4-5"></a>  <span class="n">-SshPassword</span> <span class="s1">&#39;&lt;bootstrap-admin-password&gt;&#39;</span> <span class="p">`</span>
-</span><span id="__span-4-6"><a id="__codelineno-4-6" name="__codelineno-4-6" href="#__codelineno-4-6"></a>  <span class="n">-CleanupCreatedLab</span>
+<p>The wrapper delegates to <code>scripts/windows/hyperv/run-lifecycle-test.ps1</code>. Direct low-level use requires the same
+current-user DPAPI-protected CLIXML handoff:</p>
+<div class="language-powershell highlight"><pre><span></span><code><span id="__span-4-1"><a id="__codelineno-4-1" name="__codelineno-4-1" href="#__codelineno-4-1"></a><span class="nv">$secretBundlePath</span> <span class="p">=</span> <span class="nb">Join-Path</span> <span class="nv">$env:TEMP</span> <span class="s2">&quot;atlaso-lifecycle-</span><span class="p">$(</span><span class="no">[guid]</span><span class="p">::</span><span class="n">NewGuid</span><span class="p">())</span><span class="s2">.clixml&quot;</span>
+</span><span id="__span-4-2"><a id="__codelineno-4-2" name="__codelineno-4-2" href="#__codelineno-4-2"></a><span class="nv">$adminPassword</span> <span class="p">=</span> <span class="nb">Read-Host</span> <span class="s1">&#39;Atlaso administrator password&#39;</span> <span class="n">-AsSecureString</span>
+</span><span id="__span-4-3"><a id="__codelineno-4-3" name="__codelineno-4-3" href="#__codelineno-4-3"></a><span class="nv">$backupPassword</span> <span class="p">=</span> <span class="nb">Read-Host</span> <span class="s1">&#39;VCF Backup test password&#39;</span> <span class="n">-AsSecureString</span>
+</span><span id="__span-4-4"><a id="__codelineno-4-4" name="__codelineno-4-4" href="#__codelineno-4-4"></a><span class="no">[pscustomobject]</span><span class="p">@{</span>
+</span><span id="__span-4-5"><a id="__codelineno-4-5" name="__codelineno-4-5" href="#__codelineno-4-5"></a>  <span class="n">AdminPassword</span> <span class="p">=</span> <span class="nv">$adminPassword</span>
+</span><span id="__span-4-6"><a id="__codelineno-4-6" name="__codelineno-4-6" href="#__codelineno-4-6"></a>  <span class="n">SshPassword</span> <span class="p">=</span> <span class="nv">$adminPassword</span>
+</span><span id="__span-4-7"><a id="__codelineno-4-7" name="__codelineno-4-7" href="#__codelineno-4-7"></a>  <span class="n">VcfBackupPassword</span> <span class="p">=</span> <span class="nv">$backupPassword</span>
+</span><span id="__span-4-8"><a id="__codelineno-4-8" name="__codelineno-4-8" href="#__codelineno-4-8"></a><span class="p">}</span> <span class="p">|</span> <span class="nb">Export-Clixml</span> <span class="n">-LiteralPath</span> <span class="nv">$secretBundlePath</span>
+</span><span id="__span-4-9"><a id="__codelineno-4-9" name="__codelineno-4-9" href="#__codelineno-4-9"></a><span class="k">try</span> <span class="p">{</span>
+</span><span id="__span-4-10"><a id="__codelineno-4-10" name="__codelineno-4-10" href="#__codelineno-4-10"></a>  <span class="n">pwsh</span> <span class="n">-ExecutionPolicy</span> <span class="n">Bypass</span> <span class="p">`</span>
+</span><span id="__span-4-11"><a id="__codelineno-4-11" name="__codelineno-4-11" href="#__codelineno-4-11"></a>    <span class="o">-File</span> <span class="n">scripts</span><span class="p">/</span><span class="n">windows</span><span class="p">/</span><span class="n">hyperv</span><span class="p">/</span><span class="n">run-lifecycle-test</span><span class="p">.</span><span class="n">ps1</span> <span class="p">`</span>
+</span><span id="__span-4-12"><a id="__codelineno-4-12" name="__codelineno-4-12" href="#__codelineno-4-12"></a>    <span class="n">-ApplianceVhdxPath</span> <span class="n">image</span><span class="p">/</span><span class="n">hyperv</span><span class="p">/</span><span class="n">output</span><span class="p">/</span><span class="n">atlaso-photon-hyperv</span><span class="p">/</span><span class="s2">&quot;Virtual Hard Disks&quot;</span><span class="p">/</span><span class="n">Atlaso-Photon-Builder</span><span class="p">.</span><span class="n">vhdx</span> <span class="p">`</span>
+</span><span id="__span-4-13"><a id="__codelineno-4-13" name="__codelineno-4-13" href="#__codelineno-4-13"></a>    <span class="n">-SecretBundlePath</span> <span class="nv">$secretBundlePath</span> <span class="p">`</span>
+</span><span id="__span-4-14"><a id="__codelineno-4-14" name="__codelineno-4-14" href="#__codelineno-4-14"></a>    <span class="n">-CleanupCreatedLab</span>
+</span><span id="__span-4-15"><a id="__codelineno-4-15" name="__codelineno-4-15" href="#__codelineno-4-15"></a><span class="p">}</span> <span class="k">finally</span> <span class="p">{</span>
+</span><span id="__span-4-16"><a id="__codelineno-4-16" name="__codelineno-4-16" href="#__codelineno-4-16"></a>  <span class="nb">Remove-Item</span> <span class="n">-LiteralPath</span> <span class="nv">$secretBundlePath</span> <span class="n">-Force</span>
+</span><span id="__span-4-17"><a id="__codelineno-4-17" name="__codelineno-4-17" href="#__codelineno-4-17"></a><span class="p">}</span>
 </span></code></pre></div>
 <p>The default path uses password SSH for both appliance and client probes. The default appliance SSH user is <code>admin</code>
 because root SSH is disabled by default on fresh appliance images. Appliance host-state probes log in as <code>admin</code> and run

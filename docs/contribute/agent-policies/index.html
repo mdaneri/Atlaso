@@ -5589,6 +5589,10 @@ runtime.</p>
   <code>.SYNOPSIS</code> and one <code>.PARAMETER</code> entry per declared parameter. Explain non-obvious safety ordering, trust boundaries,
   and platform behavior without narrating self-evident commands. Run <code>scripts/check_powershell_help.ps1</code> against the
   base checkout; CI applies the same incremental whole-file gate to every changed PowerShell source.</li>
+<li>Pin PowerShell static analysis to PSScriptAnalyzer <code>1.25.0</code> and run <code>scripts/check_powershell_analysis.ps1</code> before
+  committing. The repository profile covers every tracked <code>.ps1</code>, <code>.psm1</code>, and <code>.psd1</code> file. Credential parameters use
+  <code>SecureString</code> or <code>PSCredential</code>, never declare defaults, and never rely on broad
+  <code>PSAvoidUsingPlainTextForPassword</code> suppressions; CI and pre-commit enforce the same contract.</li>
 <li>Before finalizing UI/backend changes, run focused tests for the touched area when available. Do not run the complete
   Python test suite locally; GitHub CI owns it. Also run <code>python -m compileall atlaso</code> after broad
   Python/template-adjacent changes.</li>
