@@ -962,8 +962,8 @@ def test_photon_https_bootstrap_sets_secret_payload_mode_before_write(tmp_path, 
 
         Args:
             descriptor: Protected temporary-file descriptor.
-            args: Positional arguments forwarded to ``os.fdopen``.
-            kwargs: Keyword arguments forwarded to ``os.fdopen``.
+            *args: Positional arguments forwarded to ``os.fdopen``.
+            **kwargs: Keyword arguments forwarded to ``os.fdopen``.
         """
         events.append(("fdopen", None))
         return original_fdopen(descriptor, *args, **kwargs)
