@@ -70,12 +70,27 @@ if ($resolvedRoot -ne $allowedRoot -and
 }
 $vmRoot = Join-Path $resolvedRoot $Name
 $vmxPath = Join-Path $vmRoot "$Name.vmx"
+$validationRoot = Join-Path $resolvedRoot ('.ova-validation-' + [guid]::NewGuid().ToString('N'))
 if (Test-Path -LiteralPath $vmRoot) {
     throw "VMware smoke-test destination already exists: $vmRoot"
 }
 New-Item -ItemType Directory -Path $vmRoot -Force | Out-Null
+New-Item -ItemType Directory -Path $validationRoot -Force | Out-Null
 $vmStarted = $false
 try {
+    $contractOutput = @(& $python `
+            (Join-Path $repoRoot 'scripts\virtualization\validate_ova.py') `
+            $sourceOva.FullName `
+            '--extract-directory' `
+            (Join-Path $validationRoot 'members') 2>&1)
+    if ($LASTEXITCODE -ne 0) {
+        throw "Canonical OVA validation failed before VMware smoke import: $($contractOutput -join [Environment]::NewLine)"
+    }
+    $contract = ($contractOutput -join "`n") | ConvertFrom-Json -ErrorAction Stop
+    $expectedHostKey = [string]$contract.ssh_host_ed25519_public_key
+    if ($expectedHostKey -notmatch '^ssh-ed25519 [A-Za-z0-9+/]+={0,2}$') {
+        throw 'Canonical OVA validation did not return its bound Ed25519 SSH host public key.'
+    }
     & $ovfTool `
         '--acceptAllEulas' `
         "--name=$Name" `
@@ -101,7 +116,7 @@ try {
         password = $Credential.GetNetworkCredential().Password
     } | ConvertTo-Json -Compress
     $secret | & $python (Join-Path $repoRoot 'scripts\virtualization\smoke_guest_ssh.py') `
-        '--host' $address '--platform' 'vmware'
+        '--host' $address '--host-key' $expectedHostKey '--platform' 'vmware'
     if ($LASTEXITCODE -ne 0) {
         throw 'VMware OVA guest validation failed.'
     }
@@ -115,6 +130,9 @@ finally {
     }
     if (Test-Path -LiteralPath $vmRoot) {
         Remove-Item -LiteralPath $vmRoot -Recurse -Force
+    }
+    if (Test-Path -LiteralPath $validationRoot) {
+        Remove-Item -LiteralPath $validationRoot -Recurse -Force
     }
 }
 

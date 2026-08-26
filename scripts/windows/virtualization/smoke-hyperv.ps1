@@ -68,6 +68,11 @@ try {
         -DestinationRoot $vmRoot `
         -Start | Out-Null
     $vmCreated = $true
+    $manifest = Get-Content -Raw -LiteralPath (Join-Path $packageRoot 'manifest.json') | ConvertFrom-Json
+    $expectedHostKey = [string]$manifest.ssh_host_ed25519_public_key
+    if ($expectedHostKey -notmatch '^ssh-ed25519 [A-Za-z0-9+/]+={0,2}$') {
+        throw 'The verified Hyper-V package did not provide its bound Ed25519 SSH host public key.'
+    }
     $deadline = [DateTimeOffset]::UtcNow.AddMinutes(15)
     $address = ''
     while ([DateTimeOffset]::UtcNow -lt $deadline -and -not $address) {
@@ -86,7 +91,7 @@ try {
         password = $Credential.GetNetworkCredential().Password
     } | ConvertTo-Json -Compress
     $secret | & $python (Join-Path $repoRoot 'scripts\virtualization\smoke_guest_ssh.py') `
-        '--host' ([string]$address) '--platform' 'hyperv'
+        '--host' ([string]$address) '--host-key' $expectedHostKey '--platform' 'hyperv'
     if ($LASTEXITCODE -ne 0) {
         throw 'Hyper-V guest validation failed.'
     }

@@ -54,7 +54,8 @@ foreach ($required in @(
         "'create', '-f', 'vhdx'",
         '536870912000',
         'Import-Atlaso.ps1',
-        'Write-AtlasoArtifactChecksums'
+        'Write-AtlasoArtifactChecksums',
+        'ssh_host_ed25519_public_key'
     )) {
     if (-not $exporter.Contains($required)) {
         throw "The Hyper-V exporter is missing required contract marker: $required"
@@ -85,6 +86,7 @@ foreach ($required in @(
         '-EnableSecureBoot Off',
         'Get-VHD -Path $destinationDisk',
         "VhdType -ne 'Dynamic'",
+        'ssh_host_ed25519_public_key',
         '-ControllerType SCSI',
         '-FirstBootDevice $drives[0]',
         'if ($vmCreated -and $null -ne $vm)',

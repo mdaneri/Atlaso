@@ -121,6 +121,11 @@ closure available for automatic retry while the Atlaso front door and applicatio
 VMware continues into OVF-property customization. Hyper-V, KVM, and Proxmox use DHCP-first defaults and do not wait for
 VMware metadata. Use the appliance console to complete initial networking when DHCP is unavailable.
 
+The trusted VMware build publishes the template's Ed25519 SSH host public key into the VMX. The OVA exporter binds that
+key into manifest-verified provenance, and the Hyper-V converter carries the same value into its checksummed manifest.
+Protected VMware and Hyper-V smoke jobs install that exact public key into the SSH client before password
+authentication and reject an unknown or changed host; they never use trust-on-first-use host-key acceptance.
+
 ## Validate and recover
 
 After first boot, verify all of the following before adopting the VM:

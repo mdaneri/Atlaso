@@ -123,6 +123,16 @@ def test_offline_guest_agent_staging_remains_root_owned_after_provisioning() -> 
     assert "rpm -qp --qf" in provision
 
 
+def test_vmware_template_publishes_artifact_bound_ssh_host_key() -> None:
+    """The trusted image build persists its Ed25519 public key into VMX provenance."""
+
+    provision = Path("image/common/scripts/provision-atlaso.sh").read_text(encoding="utf-8")
+    assert "guestinfo.atlaso.template_ssh_host_ed25519_public_key" in provision
+    assert "/etc/ssh/ssh_host_ed25519_key.pub" in provision
+    assert "struct.unpack" in provision
+    assert "published_template_ssh_host_key" in provision
+
+
 def test_guest_agent_success_marker_makes_cleanup_retryable() -> None:
     """Commit provider success before erasure and retry an interrupted cleanup."""
 

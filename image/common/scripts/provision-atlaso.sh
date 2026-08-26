@@ -716,7 +716,33 @@ systemctl enable systemd-resolved || true
 systemctl enable sshd
 if [ "$ATLASO_GUEST_PLATFORM" = "vmware" ]; then
   install -o root -g root -m 0640 /dev/null "$ATLASO_STATE/vmware-ovf-initializing"
-  systemctl enable --now vmtoolsd || true
+  systemctl enable --now vmtoolsd
+  template_ssh_host_key="$(python3 - /etc/ssh/ssh_host_ed25519_key.pub <<'PY'
+import base64
+import struct
+import sys
+from pathlib import Path
+
+fields = Path(sys.argv[1]).read_text(encoding="ascii").split()
+if len(fields) < 2 or fields[0] != "ssh-ed25519":
+    raise SystemExit("The template Ed25519 SSH host public key is missing or malformed.")
+try:
+    blob = base64.b64decode(fields[1], validate=True)
+except ValueError as exc:
+    raise SystemExit("The template Ed25519 SSH host public key has invalid base64.") from exc
+if len(blob) != 51 or struct.unpack(">I", blob[:4])[0] != 11 or blob[4:15] != b"ssh-ed25519" or struct.unpack(">I", blob[15:19])[0] != 32:
+    raise SystemExit("The template Ed25519 SSH host public key has an invalid wire format.")
+print(f"ssh-ed25519 {fields[1]}")
+PY
+)"
+  vmtoolsd --cmd "info-set guestinfo.atlaso.template_ssh_host_ed25519_public_key $template_ssh_host_key"
+  published_template_ssh_host_key="$(
+    vmtoolsd --cmd 'info-get guestinfo.atlaso.template_ssh_host_ed25519_public_key'
+  )"
+  if [ "$published_template_ssh_host_key" != "$template_ssh_host_key" ]; then
+    echo "VMware guest-info did not retain the template SSH host public key." >&2
+    exit 2
+  fi
   systemctl enable atlaso-vmware-ovf-customize.service
 fi
 systemctl enable atlaso-guest-agent-select.service

@@ -977,12 +977,15 @@ Atlaso repository containing the recorded source commit.
 Normalized OVF descriptor whose payload references are recorded.
 .PARAMETER SourceCommit
 Exact clean source commit from VMware build provenance.
+.PARAMETER SourceVmxPath
+Verified source VMX carrying the build-published Ed25519 SSH host public key.
 #>
 function Write-AtlasoOvaProvenance {
     param(
         [Parameter(Mandatory = $true)][string]$RepoRoot,
         [Parameter(Mandatory = $true)][string]$OvfPath,
-        [Parameter(Mandatory = $true)][string]$SourceCommit
+        [Parameter(Mandatory = $true)][string]$SourceCommit,
+        [Parameter(Mandatory = $true)][string]$SourceVmxPath
     )
 
     if ($SourceCommit -notmatch '^[0-9a-f]{40}$') {
@@ -995,6 +998,12 @@ function Write-AtlasoOvaProvenance {
     $versionMatch = [regex]::Match($metadata, '(?m)^version\s*=\s*"(?<version>\d+\.\d+\.\d+)"\s*$')
     if (-not $versionMatch.Success) {
         throw 'Could not resolve the synchronized product version from the VMware build source commit.'
+    }
+    $sshHostPublicKey = Get-AtlasoVmxValue `
+        -Path $SourceVmxPath `
+        -Key 'guestinfo.atlaso.template_ssh_host_ed25519_public_key'
+    if ($sshHostPublicKey -notmatch '^ssh-ed25519 [A-Za-z0-9+/]+={0,2}$') {
+        throw 'The VMware template VMX does not carry a canonical Ed25519 SSH host public key.'
     }
 
     [xml]$document = Get-Content -Raw -LiteralPath $OvfPath
@@ -1054,6 +1063,7 @@ function Write-AtlasoOvaProvenance {
         kind            = 'atlaso-vmware-ova-provenance'
         product_version = $versionMatch.Groups['version'].Value
         source_commit   = $SourceCommit
+        ssh_host_ed25519_public_key = $sshHostPublicKey
         machine         = [ordered]@{
             firmware    = 'uefi'
             secure_boot = $false
@@ -1491,7 +1501,8 @@ Assert-AtlasoOvfDiskTopology -OvfPath $ovfPath
 $provenancePath = Write-AtlasoOvaProvenance `
     -RepoRoot $repoRoot `
     -OvfPath $ovfPath `
-    -SourceCommit ([string]$buildProvenance.source_commit)
+    -SourceCommit ([string]$buildProvenance.source_commit) `
+    -SourceVmxPath $resolvedSourceVmx
 $manifestPath = Update-OvfManifest -OvfDirectory $ovfPackageDirectory
 
 $ovaPath = ''

@@ -137,6 +137,7 @@ try {
             ova_sha256    = [string]$validated.ova_sha256
             ova_validator = 1
         }
+        ssh_host_ed25519_public_key = [string]$validated.ssh_host_ed25519_public_key
         machine         = [ordered]@{
             firmware    = 'uefi'
             secure_boot = $false

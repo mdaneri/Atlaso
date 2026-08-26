@@ -3,10 +3,12 @@
 from __future__ import annotations
 
 import argparse
+import base64
 import hashlib
 import json
 import re
 import shutil
+import struct
 import tarfile
 import xml.etree.ElementTree as ET
 from pathlib import Path
@@ -272,6 +274,21 @@ def _validate_provenance(path: Path, topology: dict[int, dict[str, Any]], direct
         raise OvaValidationError("OVA provenance has an invalid product version.")
     if not COMMIT_PATTERN.fullmatch(str(provenance.get("source_commit", ""))):
         raise OvaValidationError("OVA provenance has an invalid source commit.")
+    ssh_host_key = str(provenance.get("ssh_host_ed25519_public_key", ""))
+    fields = ssh_host_key.split()
+    if len(fields) != 2 or fields[0] != "ssh-ed25519":
+        raise OvaValidationError("OVA provenance has an invalid Ed25519 SSH host public key.")
+    try:
+        key_blob = base64.b64decode(fields[1], validate=True)
+    except ValueError as exc:
+        raise OvaValidationError("OVA provenance SSH host public key is not canonical base64.") from exc
+    if (
+        len(key_blob) != 51
+        or struct.unpack(">I", key_blob[:4])[0] != 11
+        or key_blob[4:15] != b"ssh-ed25519"
+        or struct.unpack(">I", key_blob[15:19])[0] != 32
+    ):
+        raise OvaValidationError("OVA provenance SSH host public key has an invalid wire format.")
     if provenance.get("machine") != EXPECTED_MACHINE:
         raise OvaValidationError("OVA provenance machine topology does not match the Atlaso contract.")
     payloads = provenance.get("payloads")
@@ -339,6 +356,7 @@ def validate_ova(ova_path: Path, *, extraction_directory: Path) -> dict[str, Any
         "provenance": provenance_names[0],
         "product_version": provenance["product_version"],
         "source_commit": provenance["source_commit"],
+        "ssh_host_ed25519_public_key": provenance["ssh_host_ed25519_public_key"],
         "machine": EXPECTED_MACHINE,
         "payloads": provenance["payloads"],
     }

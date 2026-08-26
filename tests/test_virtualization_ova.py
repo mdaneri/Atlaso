@@ -2,8 +2,10 @@
 
 from __future__ import annotations
 
+import base64
 import hashlib
 import json
+import struct
 import tarfile
 from io import BytesIO
 from pathlib import Path
@@ -103,6 +105,8 @@ def _members(*, manifest_mismatch: bool = False, provenance_mismatch: bool = Fal
         "kind": "atlaso-vmware-ova-provenance",
         "product_version": "0.9.216",
         "source_commit": "a" * 40,
+        "ssh_host_ed25519_public_key": "ssh-ed25519 "
+        + base64.b64encode(struct.pack(">I", 11) + b"ssh-ed25519" + struct.pack(">I", 32) + b"k" * 32).decode(),
         "machine": validator.EXPECTED_MACHINE,
         "payloads": [
             {
@@ -155,6 +159,7 @@ def test_validates_and_extracts_canonical_ova(tmp_path: Path) -> None:
 
     assert result["product_version"] == "0.9.216"
     assert result["source_commit"] == "a" * 40
+    assert result["ssh_host_ed25519_public_key"].startswith("ssh-ed25519 ")
     assert result["machine"] == validator.EXPECTED_MACHINE
     assert [payload["role"] for payload in result["payloads"]] == ["photon_os", "atlaso_system"]
 
@@ -177,6 +182,24 @@ def test_rejects_checksum_or_provenance_mismatch(
     _write_ova(ova_path, members)
 
     with pytest.raises(validator.OvaValidationError, match=message):
+        validator.validate_ova(ova_path, extraction_directory=tmp_path / "extracted")
+
+
+def test_rejects_untrusted_or_malformed_provenance_host_key(tmp_path: Path) -> None:
+    """The artifact cannot authenticate smoke SSH without a valid bound Ed25519 key."""
+
+    members = _members()
+    provenance = json.loads(members["atlaso-provenance.json"])
+    provenance["ssh_host_ed25519_public_key"] = "ssh-rsa invalid"
+    members["atlaso-provenance.json"] = (json.dumps(provenance, sort_keys=True) + "\n").encode()
+    covered = {name: content for name, content in members.items() if name != "atlaso.mf"}
+    members["atlaso.mf"] = "".join(
+        f"SHA256({name})= {hashlib.sha256(content).hexdigest()}\n" for name, content in sorted(covered.items())
+    ).encode()
+    ova_path = tmp_path / "atlaso.ova"
+    _write_ova(ova_path, members)
+
+    with pytest.raises(validator.OvaValidationError, match="Ed25519 SSH host public key"):
         validator.validate_ova(ova_path, extraction_directory=tmp_path / "extracted")
 
 

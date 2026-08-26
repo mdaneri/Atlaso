@@ -2,13 +2,19 @@
 
 from __future__ import annotations
 
+import base64
 import io
+import struct
 import sys
 from pathlib import Path
 
 import pytest
 
 from scripts.virtualization import smoke_guest_ssh as smoke
+
+HOST_KEY = "ssh-ed25519 " + base64.b64encode(
+    struct.pack(">I", 11) + b"ssh-ed25519" + struct.pack(">I", 32) + b"s" * 32
+).decode()
 
 
 def test_secret_input_accepts_only_exact_stdin_schema(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -26,6 +32,16 @@ def test_secret_input_accepts_only_exact_stdin_schema(monkeypatch: pytest.Monkey
     )
     with pytest.raises(smoke.SmokeError, match="unexpected schema"):
         smoke.load_secret_input()
+
+
+def test_artifact_host_key_requires_canonical_ed25519_wire_format() -> None:
+    """SSH authentication uses only the manifest-bound Ed25519 host key."""
+
+    key_type, key_blob = smoke.parse_host_public_key(HOST_KEY)
+    assert key_type == "ssh-ed25519"
+    assert len(key_blob) == 51
+    with pytest.raises(smoke.SmokeError, match="malformed"):
+        smoke.parse_host_public_key("ssh-rsa invalid")
 
 
 @pytest.mark.parametrize(
@@ -62,5 +78,11 @@ def test_windows_smoke_wrappers_keep_credentials_out_of_child_arguments() -> Non
         source = (root / "scripts/windows/virtualization" / name).read_text(encoding="utf-8")
         assert "ConvertTo-Json -Compress" in source
         assert "smoke_guest_ssh.py" in source
+        assert "'--host-key' $expectedHostKey" in source
         assert "-pw" not in source
         assert "Remove-Item -LiteralPath" in source
+
+    helper = (root / "scripts/virtualization/smoke_guest_ssh.py").read_text(encoding="utf-8")
+    assert "paramiko.RejectPolicy()" in helper
+    assert "paramiko.AutoAddPolicy()" not in helper
+    assert "client.get_host_keys().add(host, key_type, trusted_key)" in helper

@@ -1,13 +1,15 @@
-"""Validate VMware or Hyper-V guest state over one bounded SSH trust-on-first-use session."""
+"""Validate VMware or Hyper-V guest state using the artifact-bound SSH host key."""
 
 from __future__ import annotations
 
 import argparse
+import base64
 import hashlib
 import http.client
 import json
 import socket
 import ssl
+import struct
 import sys
 import time
 from dataclasses import dataclass
@@ -42,16 +44,39 @@ def load_secret_input() -> SecretInput:
     return SecretInput(username=username, password=password)
 
 
-def _connect(host: str, secret: SecretInput, *, expected_key: bytes | None = None) -> tuple[Any, bytes]:
-    """Open a bounded SSH connection and optionally pin its first observed host key."""
+def parse_host_public_key(value: str) -> tuple[str, bytes]:
+    """Return one canonical Ed25519 SSH host public key tuple."""
+
+    fields = value.split()
+    if len(fields) != 2 or fields[0] != "ssh-ed25519":
+        raise SmokeError("The artifact SSH host public key is malformed.")
+    try:
+        blob = base64.b64decode(fields[1], validate=True)
+    except ValueError as exc:
+        raise SmokeError("The artifact SSH host public key is not canonical base64.") from exc
+    if (
+        len(blob) != 51
+        or struct.unpack(">I", blob[:4])[0] != 11
+        or blob[4:15] != b"ssh-ed25519"
+        or struct.unpack(">I", blob[15:19])[0] != 32
+    ):
+        raise SmokeError("The artifact SSH host public key has an invalid wire format.")
+    return fields[0], blob
+
+
+def _connect(host: str, secret: SecretInput, *, expected_key: tuple[str, bytes]) -> Any:
+    """Open a bounded SSH connection after installing the artifact-bound host key."""
 
     import paramiko  # type: ignore[import-untyped]  # Paramiko does not publish complete type metadata.
 
     deadline = time.monotonic() + 900
     last_error: Exception | None = None
+    key_type, key_blob = expected_key
+    trusted_key = paramiko.PKey.from_type_string(key_type, key_blob)
     while time.monotonic() < deadline:
         client = paramiko.SSHClient()
-        client.set_missing_host_key_policy(paramiko.AutoAddPolicy())
+        client.get_host_keys().add(host, key_type, trusted_key)
+        client.set_missing_host_key_policy(paramiko.RejectPolicy())
         try:
             client.connect(
                 host,
@@ -63,12 +88,7 @@ def _connect(host: str, secret: SecretInput, *, expected_key: bytes | None = Non
                 auth_timeout=15,
                 banner_timeout=15,
             )
-            transport = client.get_transport()
-            key = transport.get_remote_server_key().asbytes() if transport else b""
-            if not key or (expected_key is not None and key != expected_key):
-                client.close()
-                raise SmokeError("The guest SSH host key changed during the smoke test.")
-            return client, key
+            return client
         except (OSError, paramiko.SSHException) as exc:
             client.close()
             last_error = exc
@@ -171,11 +191,13 @@ def main(argv: list[str] | None = None) -> int:
 
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--host", required=True)
+    parser.add_argument("--host-key", required=True)
     parser.add_argument("--platform", choices=("vmware", "hyperv"), required=True)
     args = parser.parse_args(argv)
     secret = load_secret_input()
+    expected_host_key = parse_host_public_key(args.host_key)
     try:
-        client, host_key = _connect(args.host, secret)
+        client = _connect(args.host, secret, expected_key=expected_host_key)
         try:
             script = _validation_script(args.platform)
             _run_root(client, secret, script)
@@ -187,7 +209,7 @@ def main(argv: list[str] | None = None) -> int:
         finally:
             client.close()
         _wait_for_reboot(args.host)
-        client, _ = _connect(args.host, secret, expected_key=host_key)
+        client = _connect(args.host, secret, expected_key=expected_host_key)
         try:
             _run_root(client, secret, script)
         finally:
