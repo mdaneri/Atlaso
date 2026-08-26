@@ -433,8 +433,9 @@ Windows filesystem identity, stops through checked `vmrun` when needed, and comp
 preflights before checked `vmrun deleteVM` removes registered targets. Preflight failures preserve all artifacts;
 provider deletion or postcondition failures preserve the remaining artifacts and return failure. Stale library-row
 cleanup holds a write-excluding inventory handle through its final byte comparison and atomic replacement.
-Every started normal test clone must pass unique-address readiness before the wrapper reports it ready. After applying
-the hostname, the guest publishes its actual value through VMware Tools. The check binds the exact running VMX, its
+Every started normal test clone must pass unique-address readiness before the wrapper reports it ready. The wrapper
+injects an explicit normal-test marker independently of optional SSH key provisioning; after applying the hostname, the
+guest uses that marker to publish its actual value through VMware Tools. The check binds the exact running VMX, its
 `ethernet0` MAC, the injected and guest-published hostnames, VMware Tools' IPv4 result, and the Windows neighbor entry
 for that host-facing address. It also requires an address answer from every running Workstation VM; incomplete guest
 evidence retries rather than being treated as unique. If another VM reports the same address, the hostname differs, or

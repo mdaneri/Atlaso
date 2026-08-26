@@ -261,8 +261,9 @@ wrapper's host-derived output: after startup it prints the exact Ed25519 public 
 test-only VMware guest-info for explicit `known_hosts` verification without trusting unauthenticated `ssh-keyscan`
 output. Subsequent Codex and Copilot tasks under the same Windows user reuse that trust and key identity.
 Before any ready message or connection endpoint, every started normal clone must prove that VMware Tools' management
-IPv4 address belongs uniquely to the exact running VMX. First boot publishes the actual applied hostname through VMware
-Tools. The proof records the VMX, its `ethernet0` MAC, the matching injected and observed hostnames, and the host-facing
+IPv4 address belongs uniquely to the exact running VMX. An explicit normal-test marker, independent of optional SSH key
+provisioning, makes first boot publish the actual applied hostname through VMware Tools. The proof records the VMX, its
+`ethernet0` MAC, the matching injected and observed hostnames, and the host-facing
 address; it requires an address answer from every running Workstation guest and requires the Windows neighbor entry for
 that address to match the target MAC. An unanswered running guest remains incomplete evidence and retries. A hostname
 mismatch, duplicate static address, or neighbor entry owned by another running VM fails closed with the relevant exact

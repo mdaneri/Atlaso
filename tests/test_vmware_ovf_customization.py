@@ -151,12 +151,15 @@ def test_vmware_ovf_customizer_validates_optional_development_admin_key():
     properties = customizer.parse_ovf_environment(OVF_ENV)
 
     assert customizer.validate_properties(properties)["development_admin_ssh_public_key"] == ""
+    assert customizer.validate_properties(properties)["normal_test_vm"] is False
 
     properties[customizer.PROPERTY_DEVELOPMENT_ADMIN_SSH_PUBLIC_KEY] = VALID_ED25519_PUBLIC_KEY
+    properties[customizer.PROPERTY_NORMAL_TEST_VM] = "true"
     config = customizer.validate_properties(properties)
     summary = customizer.redacted_summary(config)
 
     assert config["development_admin_ssh_public_key"] == VALID_ED25519_PUBLIC_KEY
+    assert config["normal_test_vm"] is True
     assert summary["development_admin_ssh_key_set"] is True
     assert summary["development_admin_passwordless_sudo"] is True
     assert VALID_ED25519_PUBLIC_KEY not in str(summary)
@@ -2138,6 +2141,7 @@ def test_vmware_ovf_customizer_rotates_clone_specific_env_secrets(tmp_path, monk
     properties["atlaso.ipv6_gateway"] = "fe80::1"
     properties["atlaso.root_ssh_enabled"] = "true"
     properties[customizer.PROPERTY_DEVELOPMENT_ADMIN_SSH_PUBLIC_KEY] = VALID_ED25519_PUBLIC_KEY
+    properties[customizer.PROPERTY_NORMAL_TEST_VM] = "true"
     config = customizer.validate_properties(properties)
 
     summary = customizer.apply_customization(config)

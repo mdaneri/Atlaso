@@ -90,6 +90,21 @@ try {
     if ($withoutKey.Contains('development_admin_ssh_public_key', [System.StringComparison]::Ordinal)) {
         throw 'Ordinary Workstation OVF input must not contain the development administrator key property.'
     }
+    if ($withoutKey.Contains('normal_test_vm', [System.StringComparison]::Ordinal)) {
+        throw 'Ordinary Workstation OVF input must not contain the normal-test-VM marker.'
+    }
+
+    $passwordOnlyTestVm = New-AtlasoWorkstationOvfEnvironment `
+        -Fqdn 'atlaso-test.atlaso.internal' `
+        -AdminPassword 'VMware01!Test' `
+        -RootPassword 'VMware01!Test' `
+        -NormalTestVm
+    if (-not $passwordOnlyTestVm.Contains("oe:key='atlaso.normal_test_vm' oe:value='true'", [System.StringComparison]::Ordinal)) {
+        throw 'A password-only normal test VM must retain its explicit identity-publication marker.'
+    }
+    if ($passwordOnlyTestVm.Contains('development_admin_ssh_public_key', [System.StringComparison]::Ordinal)) {
+        throw 'A password-only normal test VM must not gain a development administrator key property.'
+    }
 
     $withKey = New-AtlasoWorkstationOvfEnvironment `
         -Fqdn 'atlaso-test.atlaso.internal' `

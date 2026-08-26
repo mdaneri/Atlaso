@@ -365,6 +365,7 @@ $firstBootOvfEnvironment = New-AtlasoWorkstationOvfEnvironment `
     -AdminPassword $AdminPassword `
     -RootPassword $RootPassword `
     -RootSshEnabled:$RootSshEnabled `
+    -NormalTestVm `
     -DevelopmentAdminSshPublicKey $developmentAdminSshPublicKey
 
 if ($SkipLabNetworkAdapters -and $IncludeLabNetworkAdapters) {

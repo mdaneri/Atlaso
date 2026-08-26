@@ -1704,9 +1704,12 @@ def test_vmware_raw_vmx_workflows_inject_complete_first_boot_ovf_environment_bef
     assert 'TEST_VM_SSH_HOST_KEY_GUESTINFO = "guestinfo.atlaso.test_vm_ssh_host_ed25519_public_key"' in customizer
     assert "def publish_test_vm_ssh_host_key()" in customizer
     assert 'run_initialization_layer("test VM SSH host key", publish_test_vm_ssh_host_key)' in customizer
+    assert 'if config["normal_test_vm"]:' in customizer
+    assert 'run_initialization_layer("test VM hostname", publish_test_vm_hostname)' in customizer
 
     assert "Atlaso.WorkstationFirstBoot.ps1" in test_vm
     assert "New-AtlasoWorkstationOvfEnvironment" in test_vm
+    assert "-NormalTestVm" in test_vm
     assert "Set-AtlasoWorkstationOvfEnvironment -VmxPath $targetVmx" in test_vm
     assert test_vm.index("Set-AtlasoWorkstationOvfEnvironment -VmxPath $targetVmx") < test_vm.index(
         "start-atlaso-vm.ps1"
@@ -1717,6 +1720,7 @@ def test_vmware_raw_vmx_workflows_inject_complete_first_boot_ovf_environment_bef
     assert "-RootSshEnabled:($ApplianceSshUser -eq 'root')" in lifecycle
     assert "Set-AtlasoWorkstationOvfEnvironment -VmxPath $applianceVmx" in lifecycle
     assert "DevelopmentAdminSshPublicKey" not in lifecycle
+    assert "-NormalTestVm" not in lifecycle
     assert lifecycle.index("Set-AtlasoWorkstationOvfEnvironment -VmxPath $applianceVmx") < lifecycle.index(
         "Start-WorkstationVm -Path $vmx"
     )
