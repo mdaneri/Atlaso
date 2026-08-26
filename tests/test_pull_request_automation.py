@@ -58,11 +58,11 @@ def test_packer_ci_authenticates_plugins_without_exposing_fork_tokens() -> None:
         "  python-tests:", maxsplit=1
     )[0]
     job_preamble, authenticated_step = packer_job.split(
-        "      - name: Validate both Photon Packer targets with authenticated plugin downloads",
+        "      - name: Validate the canonical Photon Packer target with authenticated plugin downloads",
         maxsplit=1,
     )
     authenticated_step, fork_step = authenticated_step.split(
-        "      - name: Validate fork Packer targets without repository credentials",
+        "      - name: Validate the fork Packer target without repository credentials",
         maxsplit=1,
     )
 

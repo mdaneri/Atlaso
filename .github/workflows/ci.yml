@@ -171,12 +171,12 @@ jobs:
       - name: Verify portable virtualization PowerShell contract
         shell: pwsh
         run: ./tests/powershell/Test-AtlasoVirtualizationArtifacts.ps1
-      - name: Validate both Photon Packer targets with authenticated plugin downloads
+      - name: Validate the canonical Photon Packer target with authenticated plugin downloads
         if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository
         env:
           PACKER_GITHUB_API_TOKEN: ${{ github.token }}
         run: python scripts/check_deployment_assets.py --mode packer
-      - name: Validate fork Packer targets without repository credentials
+      - name: Validate the fork Packer target without repository credentials
         if: github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name != github.repository
         run: python scripts/check_deployment_assets.py --mode packer
 
