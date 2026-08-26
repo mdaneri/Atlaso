@@ -74,7 +74,11 @@ def test_load_lifecycle_secrets_rejects_unexpected_schema():
 
 @pytest.mark.parametrize("focused_option", ["--oidc-only", "--routing-wan-only"])
 def test_load_lifecycle_secrets_allows_focused_runs_without_vcf_backup_password(focused_option):
-    """Verify focused modes omit the unrelated VCF Backup credential."""
+    """Verify focused modes omit the unrelated VCF Backup credential.
+
+    Args:
+        focused_option: Focused lifecycle option under test.
+    """
     lifecycle = load_lifecycle_module()
     args = lifecycle.parse_args(["--secret-stdin", focused_option])
     secret_values = {
@@ -965,7 +969,12 @@ def test_esxi_pxe_payload_uses_dhcp_lifecycle_host():
 
 
 def test_restored_esxi_lifecycle_recreates_vault_secret_before_apply(monkeypatch, tmp_path):
-    """Verify restored ESXi state rehydrates its excluded vault secret before apply."""
+    """Verify restored ESXi state rehydrates its excluded vault secret before apply.
+
+    Args:
+        monkeypatch: Pytest fixture used to replace the lifecycle step runner.
+        tmp_path: Pytest-managed temporary result directory.
+    """
     lifecycle = load_lifecycle_module()
     args = lifecycle.parse_args(
         [
@@ -983,6 +992,17 @@ def test_restored_esxi_lifecycle_recreates_vault_secret_before_apply(monkeypatch
     calls = []
 
     def fake_run_step(_results, name, operation, *operation_args):
+        """Record a lifecycle operation without executing it.
+
+        Args:
+            _results: Unused lifecycle results collection.
+            name: Lifecycle step name.
+            operation: Callable selected for the lifecycle step.
+            *operation_args: Positional arguments supplied to the operation.
+
+        Returns:
+            An empty result mapping for the simulated step.
+        """
         calls.append((name, operation, operation_args))
         return {}
 
