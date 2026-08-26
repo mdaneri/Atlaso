@@ -150,7 +150,10 @@ its child through a current-user DPAPI-protected temporary CLIXML bundle and rem
 The runner streams the complete password set for the main lifecycle Python consumer as one JSON envelope over standard
 input, so those values do not enter that child's process arguments. Client NoCloud seed generation likewise sends its
 SSH password as one bounded standard-input line to the repository-controlled helper; the helper rejects empty,
-multiline, and oversized input before replacing an existing seed artifact. For a full ESXi PXE install, the consumer rotates
+multiline, and oversized input before replacing an existing seed artifact. After successful lifecycle client access
+proves that cloud-init consumed each seed, the runner stops the clients, detaches and deletes both ISOs with absence
+verification, then restarts a retained lab. Failure cleanup also stops affected clients and requires verified seed absence.
+For a full ESXi PXE install, the consumer rotates
 the encrypted `Lifecycle ESXi` vault entry and persists only
 `{{vault.lifecycle_esxi.esx.lifecycle.root.password}}` in the Kickstart source; Atlaso resolves that marker for the
 authorized PXE request without storing the plaintext password in desired state. Because settings archives intentionally

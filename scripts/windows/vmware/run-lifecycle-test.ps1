@@ -887,6 +887,114 @@ function Start-WorkstationVm {
     }
 }
 
+<#
+.SYNOPSIS
+Report whether an exact VMware Workstation VMX is running.
+
+.PARAMETER Path
+VMX path whose running state is queried.
+#>
+function Test-WorkstationVmRunning {
+    param([string]$Path)
+
+    $listResult = Invoke-VmrunBounded -Arguments @('-T', 'ws', 'list') -TimeoutSeconds 15
+    if ($listResult.ExitCode -ne 0) {
+        throw "Failed to list running VMware Workstation VMs before seed cleanup: $($listResult.StdErr)"
+    }
+    $targetPath = [System.IO.Path]::GetFullPath($Path)
+    foreach ($line in @($listResult.StdOut -split "`r?`n")) {
+        $candidate = $line.Trim()
+        if (-not $candidate -or $candidate -match '^Total running VMs:') {
+            continue
+        }
+        try {
+            $candidatePath = [System.IO.Path]::GetFullPath($candidate)
+        } catch {
+            continue
+        }
+        if ([string]::Equals($candidatePath, $targetPath, [System.StringComparison]::OrdinalIgnoreCase)) {
+            return $true
+        }
+    }
+    return $false
+}
+
+<#
+.SYNOPSIS
+Stop one running client VM before detaching its credential-bearing seed.
+
+.PARAMETER Path
+Client VMX path to stop.
+#>
+function Stop-WorkstationVmForSeedCleanup {
+    [OutputType([bool])]
+    param([string]$Path)
+
+    if (-not (Test-Path -LiteralPath $Path -PathType Leaf) -or -not (Test-WorkstationVmRunning -Path $Path)) {
+        return $false
+    }
+    [void](Invoke-VmrunBounded -Arguments @('-T', 'ws', 'stop', $Path, 'soft') -TimeoutSeconds 45)
+    if (Test-WorkstationVmRunning -Path $Path) {
+        [void](Invoke-VmrunBounded -Arguments @('-T', 'ws', 'stop', $Path, 'hard') -TimeoutSeconds 30)
+    }
+    if (Test-WorkstationVmRunning -Path $Path) {
+        throw "Client VM remained running during credential-bearing seed cleanup: $Path"
+    }
+    return $true
+}
+
+<#
+.SYNOPSIS
+Detach and delete credential-bearing client seed ISOs with absence verification.
+
+.PARAMETER VmxPaths
+Client VMX paths that may reference the seed ISOs.
+
+.PARAMETER SeedPaths
+Exact seed ISO paths to delete.
+
+.PARAMETER Restart
+Restart client VMs that were running after all seeds are verifiably absent.
+#>
+function Remove-ClientSeedArtifacts {
+    param(
+        [string[]]$VmxPaths,
+        [string[]]$SeedPaths,
+        [switch]$Restart
+    )
+
+    $restartPaths = New-Object System.Collections.Generic.List[string]
+    foreach ($vmxPath in @($VmxPaths | Where-Object { $_ })) {
+        if (Stop-WorkstationVmForSeedCleanup -Path $vmxPath) {
+            $restartPaths.Add($vmxPath)
+        }
+        if (Test-Path -LiteralPath $vmxPath -PathType Leaf) {
+            # A stopped VM cannot retain an open seed handle. Detach before
+            # deletion so a later restart cannot reacquire the secret artifact.
+            Set-VmxValue -Path $vmxPath -Key 'sata0:1.present' -Value 'FALSE'
+            foreach ($key in @('sata0:1.fileName', 'sata0:1.deviceType', 'sata0:1.startConnected')) {
+                Remove-VmxValue -Path $vmxPath -Key $key
+            }
+        }
+    }
+    foreach ($seedPath in @($SeedPaths | Where-Object { $_ })) {
+        if (Test-Path -LiteralPath $seedPath) {
+            if ($PSCmdlet.ShouldProcess($seedPath, 'Delete credential-bearing client seed ISO')) {
+                Remove-Item -LiteralPath $seedPath -Force -ErrorAction Stop
+            }
+        }
+        if (Test-Path -LiteralPath $seedPath) {
+            throw "Credential-bearing client seed ISO remains after cleanup: $seedPath"
+        }
+    }
+    if ($Restart) {
+        foreach ($vmxPath in $restartPaths) {
+            $startParameters = @{ Path = $vmxPath }
+            Start-WorkstationVm @startParameters
+        }
+    }
+}
+
 function Test-TcpPort {
 <#
 .SYNOPSIS
@@ -1464,20 +1572,20 @@ New-Item -ItemType Directory -Force -Path $seedRoot | Out-Null
 
 $clientASeedIso = ''
 $clientBSeedIso = ''
-if (-not $OidcOnly) {
-    $clientASeedIso = Join-Path $seedRoot "$clientAName-seed.iso"
-    $clientBSeedIso = Join-Path $seedRoot "$clientBName-seed.iso"
-    New-CloudInitSeedIso -Path $clientASeedIso -HostName ($clientAName.ToLowerInvariant())
-    New-CloudInitSeedIso -Path $clientBSeedIso -HostName ($clientBName.ToLowerInvariant())
-}
-
+$clientAVmx = ''
+$clientBVmx = ''
+$seedArtifactsRetired = [bool]$OidcOnly
 $scenarioFailure = $null
 try {
+    if (-not $OidcOnly) {
+        $clientASeedIso = Join-Path $seedRoot "$clientAName-seed.iso"
+        $clientBSeedIso = Join-Path $seedRoot "$clientBName-seed.iso"
+        New-CloudInitSeedIso -Path $clientASeedIso -HostName ($clientAName.ToLowerInvariant())
+        New-CloudInitSeedIso -Path $clientBSeedIso -HostName ($clientBName.ToLowerInvariant())
+    }
     $applianceVmx = Copy-VmDirectory -SourceVmx $ApplianceVmxPath -DestinationDirectory (Join-Path $vmRoot $applianceName) -Name $applianceName
     Set-VmxNetworkAdapter -Path $applianceVmx -Index 0 -Vmnet $ManagementNetwork
     Set-AtlasoWorkstationOvfEnvironment -VmxPath $applianceVmx -OvfEnvironment $firstBootOvfEnvironment
-    $clientAVmx = ''
-    $clientBVmx = ''
     if (-not $OidcOnly) {
         Set-VmxNetworkAdapter -Path $applianceVmx -Index 1 -Vmnet $SiteANetwork
         Set-VmxNetworkAdapter -Path $applianceVmx -Index 2 -Vmnet $TrunkNetwork
@@ -1522,6 +1630,9 @@ try {
     if (-not $OidcOnly) {
         $clientAHost = Wait-GuestIPv4 -Path $clientAVmx -GuestUser $ClientSshUser -GuestPassword $sshPasswordSecure -Name $clientAName
         $clientBHost = Wait-GuestIPv4 -Path $clientBVmx -GuestUser $ClientSshUser -GuestPassword $sshPasswordSecure -Name $clientBName
+        if (-not $clientAHost -or -not $clientBHost) {
+            throw 'Client guest readiness did not return both lifecycle addresses.'
+        }
         $clientAHostKey = Get-PlinkHostKey -HostName $clientAHost -UserName $ClientSshUser -Password $sshPasswordSecure
         $clientBHostKey = Get-PlinkHostKey -HostName $clientBHost -UserName $ClientSshUser -Password $sshPasswordSecure
     }
@@ -1625,8 +1736,31 @@ try {
             }
         }
     }
+    if (-not $OidcOnly) {
+        # Successful lifecycle client access proves cloud-init consumed both
+        # seeds. Leave retained labs running only after verified deletion.
+        Remove-ClientSeedArtifacts `
+            -VmxPaths @($clientAVmx, $clientBVmx) `
+            -SeedPaths @($clientASeedIso, $clientBSeedIso) `
+            -Restart:(-not $CleanupCreatedLab)
+        $seedArtifactsRetired = $true
+    }
 } catch {
     $scenarioFailure = $_
+}
+
+$seedCleanupFailure = $null
+if (-not $seedArtifactsRetired) {
+    try {
+        # Failure cleanup intentionally leaves affected clients stopped: a
+        # restart is unsafe until every credential-bearing ISO is absent.
+        Remove-ClientSeedArtifacts `
+            -VmxPaths @($clientAVmx, $clientBVmx) `
+            -SeedPaths @($clientASeedIso, $clientBSeedIso)
+        $seedArtifactsRetired = $true
+    } catch {
+        $seedCleanupFailure = $_
+    }
 }
 
 $cleanupFailure = $null
@@ -1650,11 +1784,21 @@ if ($CleanupCreatedLab) {
 }
 
 if ($scenarioFailure) {
-    if ($cleanupFailure) {
-        $combinedMessage = "Lifecycle scenario failed: $($scenarioFailure.Exception.Message) Cleanup also failed; VM artifacts were preserved at '$vmRoot': $($cleanupFailure.Exception.Message)"
+    if ($seedCleanupFailure -or $cleanupFailure) {
+        $cleanupMessages = @(
+            $seedCleanupFailure,
+            $cleanupFailure
+        ) | Where-Object { $null -ne $_ } | ForEach-Object { $_.Exception.Message }
+        $combinedMessage = "Lifecycle scenario failed: $($scenarioFailure.Exception.Message) Cleanup also failed; VM artifacts were preserved at '$vmRoot': $($cleanupMessages -join '; ')"
         throw [System.InvalidOperationException]::new($combinedMessage, $scenarioFailure.Exception)
     }
     throw $scenarioFailure
+}
+if ($seedCleanupFailure) {
+    if ($cleanupFailure) {
+        throw "Credential-bearing seed cleanup failed: $($seedCleanupFailure.Exception.Message) VM cleanup also failed: $($cleanupFailure.Exception.Message)"
+    }
+    throw $seedCleanupFailure
 }
 if ($cleanupFailure) {
     throw $cleanupFailure

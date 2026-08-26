@@ -2439,6 +2439,14 @@ def test_lifecycle_vmware_script_supports_routing_wan_only_and_esxi_pxe_install(
     assert "Add-LifecycleResultStep -ResultDirectory $initialResultRoot -Name 'esxi-pxe-install-check' -Status 'passed'" in runner
     assert "--password-stdin" in runner
     assert "--password $SshPassword" not in runner
+    assert "function Remove-ClientSeedArtifacts" in runner
+    assert "Remove-Item -LiteralPath $seedPath -Force -ErrorAction Stop" in runner
+    assert "Credential-bearing client seed ISO remains after cleanup" in runner
+    assert runner.index("Remove-ClientSeedArtifacts `") > runner.index(
+        "Invoke-LifecyclePython -Arguments $initialPythonArgs"
+    )
+    assert runner.count("Remove-ClientSeedArtifacts `") == 2
+    assert "$seedCleanupFailure" in runner
 
 
 def test_lifecycle_hyperv_script_seeds_alpine_clients_for_ssh():
