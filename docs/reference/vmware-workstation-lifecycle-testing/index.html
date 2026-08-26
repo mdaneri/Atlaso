@@ -3785,10 +3785,15 @@ descendants of the selected VM output, so sibling-prefix and reparse-point paths
 </span><span id="__span-5-3"><a id="__codelineno-5-3" name="__codelineno-5-3" href="#__codelineno-5-3"></a>  <span class="n">-Redeploy</span> <span class="p">`</span>
 </span><span id="__span-5-4"><a id="__codelineno-5-4" name="__codelineno-5-4" href="#__codelineno-5-4"></a>  <span class="n">-ResetDataDisks</span> <span class="p">`</span>
 </span><span id="__span-5-5"><a id="__codelineno-5-5" name="__codelineno-5-5" href="#__codelineno-5-5"></a>  <span class="n">-WaitForIp</span> <span class="p">`</span>
-</span><span id="__span-5-6"><a id="__codelineno-5-6" name="__codelineno-5-6" href="#__codelineno-5-6"></a>  <span class="n">-TrustRootCa</span>
+</span><span id="__span-5-6"><a id="__codelineno-5-6" name="__codelineno-5-6" href="#__codelineno-5-6"></a>  <span class="n">-OnePasswordEnvironmentId</span> <span class="s1">&#39;&lt;atlaso-environment-id&gt;&#39;</span> <span class="p">`</span>
+</span><span id="__span-5-7"><a id="__codelineno-5-7" name="__codelineno-5-7" href="#__codelineno-5-7"></a>  <span class="n">-TrustRootCa</span>
 </span></code></pre></div>
 <p>That is the Workstation counterpart to <code>scripts/windows/hyperv/create-atlaso-test-vm.ps1</code>. It defaults to the management
 vmnet only; pass <code>-IncludeLabNetworkAdapters</code> after creating the SiteA, WAN/SiteB, and trunk-like vmnets.
+For real creation, copy the opaque Environment ID from the exact <code>Atlaso</code> 1Password Environment and pass it through
+<code>-OnePasswordEnvironmentId</code>. An absent ID fails with an actionable preflight error before pending cleanup, network
+preparation, disk reset, cloning, or other VM mutation. The wrapper does not print the ID or any secret from that
+Environment.
 The wrapper injects the same complete DHCP-first OVF environment before power-on; use <code>-FirstBootFqdn</code>,
 <code>-AdminPassword</code>, and <code>-RootPassword</code> when the default local test identity or credentials are not appropriate.
 It also resolves the current Windows user's existing <code>.ssh/id_ed25519.pub</code> before any network preparation, cleanup, or
