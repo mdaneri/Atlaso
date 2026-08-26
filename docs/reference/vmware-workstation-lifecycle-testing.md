@@ -216,6 +216,8 @@ continues the same registration and identity-aware running-inventory postconditi
 absent through the final gate. It does not enumerate or recursively remove the missing directory, so the same
 `create-atlaso-test-vm.ps1 -Redeploy` invocation can proceed to a fresh clone. A recreated root or changed target
 inventory remains an ambiguous state that fails closed and preserves the new path.
+Focused regression coverage exercises that complete redeploy wrapper with a synthetic schema-v2, role-bound source
+payload and separately proves that missing-target cleanup and sibling-prefix data-disk resets still fail closed.
 
 The read-only Workstation registration inventory may reside beneath a redirected `%APPDATA%` junction or symbolic link.
 The non-reparse-point requirement remains enforced on the Atlaso artifact root that cleanup recursively deletes, not on
