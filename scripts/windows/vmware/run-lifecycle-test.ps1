@@ -1692,7 +1692,10 @@ try {
     if ($FullEsxiPxeInstall) {
         $basePythonArgs += @(
             '--pxe-client-mac', $esxiMacAddress,
-            '--pxe-installer-iso-path', $appliancePxeInstallerIsoPath
+            '--pxe-installer-iso-path', $appliancePxeInstallerIsoPath,
+            # Python is the native kickstart-rendering boundary. Unwrap the
+            # protected bundle value only for the child process that consumes it.
+            '--esxi-password', (ConvertFrom-SecureString -SecureString $esxiPasswordSecure -AsPlainText)
         )
         if ($PxeClientIPAddress) {
             $basePythonArgs += @('--pxe-client-ip', $PxeClientIPAddress)

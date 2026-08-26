@@ -8,7 +8,7 @@ Expected Photon ISO checksum.
 .PARAMETER SshPassword
 Temporary Packer SSH password. The wrapper prompts securely when omitted.
 .PARAMETER BootstrapAdminPassword
-Initial appliance administrator password. The wrapper prompts securely when omitted.
+Initial appliance administrator password. The wrapper prompts securely when omitted outside ISO-only preparation.
 .PARAMETER VmName
 Builder virtual-machine name.
 .PARAMETER OutputDirectory
@@ -120,7 +120,7 @@ $ErrorActionPreference = 'Stop'
 if ($null -eq $SshPassword) {
     $SshPassword = Read-Host -Prompt 'Temporary Photon builder SSH password' -AsSecureString
 }
-if ($null -eq $BootstrapAdminPassword) {
+if (-not $PrepareIsoOnly -and $null -eq $BootstrapAdminPassword) {
     $BootstrapAdminPassword = Read-Host -Prompt 'Atlaso bootstrap administrator password' -AsSecureString
 }
 

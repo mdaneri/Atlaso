@@ -151,6 +151,11 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser.add_argument("--pxe-client-mac", default="")
     parser.add_argument("--pxe-client-ip", default="")
     parser.add_argument("--pxe-installer-iso-path", default="")
+    parser.add_argument(
+        "--esxi-password",
+        default="",
+        help="ESXi root password used only to render the lifecycle kickstart.",
+    )
     parser.add_argument("--esx-storage-test", action="store_true", help="Configure and apply one dual-stack ESX NFS datastore.")
     parser.add_argument("--esx-storage-device-id", default="", help="Exact eligible /dev/disk/by-id identity; required when inventory has multiple blank disks.")
     parser.add_argument("--esx-storage-ipv4-client", default="192.168.50.210/32")
@@ -1071,7 +1076,7 @@ def configure_esxi_pxe(client: HttpClient, args: argparse.Namespace) -> dict[str
     if args.pxe_test_mode == "esxi":
         if not args.pxe_installer_iso_path:
             raise LifecycleError("--pxe-installer-iso-path is required when --pxe-test-mode esxi is used.")
-        kickstart = ensure_lifecycle_esxi_kickstart(client)
+        kickstart = ensure_lifecycle_esxi_kickstart(client, args.esxi_password)
         kickstart_id = kickstart["id"]
 
     host_payload = {
@@ -1138,12 +1143,24 @@ def configure_esxi_pxe(client: HttpClient, args: argparse.Namespace) -> dict[str
     }
 
 
-def lifecycle_esxi_kickstart_content() -> str:
-    """Return lifecycle esxi kickstart content."""
-    return """#
+def lifecycle_esxi_kickstart_content(esxi_password: str) -> str:
+    """Return lifecycle ESXi kickstart content using the probe credential.
+
+    Args:
+        esxi_password: Root password installed into the lifecycle ESXi guest.
+
+    Returns:
+        Rendered ESXi kickstart content.
+
+    Raises:
+        LifecycleError: If the password cannot be represented as one kickstart token.
+    """
+    if not esxi_password or any(character.isspace() for character in esxi_password):
+        raise LifecycleError("--esxi-password must be non-empty and contain no whitespace.")
+    return f"""#
 # Atlaso lifecycle ESXi scripted install.
 vmaccepteula
-rootpw vmware01!
+rootpw {esxi_password}
 install --firstdisk --overwritevmfs
 network --bootproto=dhcp --device=vmnic0 --hostname=pxe-client.atlaso.internal
 reboot
@@ -1155,11 +1172,12 @@ esxcli network firewall ruleset set -e true -r sshServer
 """
 
 
-def ensure_lifecycle_esxi_kickstart(client: HttpClient) -> dict[str, Any]:
+def ensure_lifecycle_esxi_kickstart(client: HttpClient, esxi_password: str) -> dict[str, Any]:
     """Ensure lifecycle esxi kickstart.
 
     Args:
         client: Client consumed by ensure lifecycle ESXi kickstart.
+        esxi_password: Root password installed into the lifecycle ESXi guest.
 
 
     Returns:
@@ -1169,7 +1187,7 @@ def ensure_lifecycle_esxi_kickstart(client: HttpClient) -> dict[str, Any]:
     payload = {
         "name": name,
         "description": "Created by the Atlaso lifecycle ESXi PXE install check.",
-        "content": lifecycle_esxi_kickstart_content(),
+        "content": lifecycle_esxi_kickstart_content(esxi_password),
         "enabled": True,
     }
     kickstarts = client.json_request("GET", "/api/v1/esxi-pxe/kickstarts")

@@ -1182,14 +1182,14 @@ def test_packer_build_uses_atlaso_management_network_by_default():
     assert "Write-AtlasoPackerVarFile" in build_module
     assert "Remove-Item -LiteralPath $kickstartJson -Force" in build_module
     assert "Remove-Item -LiteralPath $ksSourceDir -Force" in build_module
-    kickstart_build = build_module.split("    New-AtlasoPhotonKickstart `", maxsplit=1)[1].split(
+    kickstart_build = build_module.split("    $kickstartJson =", maxsplit=1)[1].split(
         "    $preparedIso =", maxsplit=1
     )[0]
-    assert kickstart_build.index("    try {") < kickstart_build.index(
-        "    $sourceIsoPath = Resolve-AtlasoPhotonSourceIso"
-    )
+    cleanup_start = kickstart_build.index("    try {")
+    assert cleanup_start < kickstart_build.index("        New-AtlasoPhotonKickstart `")
+    assert cleanup_start < kickstart_build.index("        $sourceIsoPath = Resolve-AtlasoPhotonSourceIso")
     assert kickstart_build.index("    } finally {") > kickstart_build.index(
-        "    $sourceIsoPath = Resolve-AtlasoPhotonSourceIso"
+        "        $sourceIsoPath = Resolve-AtlasoPhotonSourceIso"
     )
     assert "Using Packer var-file" in build_module
     assert "[ValidateSet('cleanup', 'abort', 'ask', 'run-cleanup-provisioner')]" in wrapper
@@ -1306,6 +1306,7 @@ def test_vmware_builder_uses_nat_gateway_dns_by_default():
 
     assert "[SecureString]$SshPassword" in wrapper
     assert "[SecureString]$BootstrapAdminPassword" in wrapper
+    assert "if (-not $PrepareIsoOnly -and $null -eq $BootstrapAdminPassword)" in wrapper
     assert "Read-Host -Prompt 'Temporary Photon builder SSH password' -AsSecureString" in wrapper
     assert "Read-Host -Prompt 'Atlaso bootstrap administrator password' -AsSecureString" in wrapper
     assert "$builderDnsWasPassed = $PSBoundParameters.ContainsKey('BuilderStaticDns')" in wrapper
@@ -2138,6 +2139,7 @@ def test_lifecycle_vmware_script_supports_routing_wan_only_and_esxi_pxe_install(
     assert "[SecureString]$EsxiPassword" in wrapper
     assert "Read-Host -Prompt 'ESXi root password for lifecycle probing' -AsSecureString" in wrapper
     assert "-GuestPassword $esxiPasswordSecure" in runner
+    assert "'--esxi-password', (ConvertFrom-SecureString -SecureString $esxiPasswordSecure -AsPlainText)" in runner
 
     assert "function Get-GuestIPv4ViaGuestOps" in runner
     assert "function Invoke-VmrunBounded" in runner

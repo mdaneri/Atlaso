@@ -883,11 +883,16 @@ def test_esxi_pxe_payload_uses_dhcp_lifecycle_host():
     args = lifecycle.parse_args(["--password", "test", "--pxe-test-mode", "esxi", "--pxe-client-mac", "00:50:56:20:01:02"])
 
     assert lifecycle.pxe_client_ip(args) == "192.168.50.210"
-    content = lifecycle.lifecycle_esxi_kickstart_content()
+    content = lifecycle.lifecycle_esxi_kickstart_content("LifecycleEsxi01!")
 
     assert "network --bootproto=dhcp" in content
+    assert "rootpw LifecycleEsxi01!" in content
+    assert "rootpw vmware01!" not in content
     assert "{{" not in content
     assert "vim-cmd hostsvc/start_ssh" in content
+
+    with pytest.raises(lifecycle.LifecycleError, match="contain no whitespace"):
+        lifecycle.lifecycle_esxi_kickstart_content("invalid password")
 
 
 def test_configure_esxi_pxe_selects_dhcp_scope_and_proves_reservation():
@@ -903,6 +908,8 @@ def test_configure_esxi_pxe_selects_dhcp_scope_and_proves_reservation():
             "00:50:56:20:01:02",
             "--pxe-installer-iso-path",
             "/mnt/atlaso-vcf-offline-depot/PROD/COMP/ESX_HOST/esxi.iso",
+            "--esxi-password",
+            "LifecycleEsxi01!",
         ]
     )
 

@@ -475,7 +475,7 @@ Provider Packer template directory.
 .PARAMETER SshPassword
 Temporary Packer SSH password.
 .PARAMETER BootstrapAdminPassword
-Initial appliance administrator password.
+Initial appliance administrator password. Required for Packer validation and builds; unused for ISO-only preparation.
 .PARAMETER VmName
 Builder virtual-machine name.
 .PARAMETER OutputDirectory
@@ -531,7 +531,7 @@ function Invoke-AtlasoPhotonImageBuild {
         [Parameter(Mandatory = $true)][string]$IsoChecksum,
         [Parameter(Mandatory = $true)][string]$PackerDirectory,
         [Parameter(Mandatory = $true)][SecureString]$SshPassword,
-        [Parameter(Mandatory = $true)][SecureString]$BootstrapAdminPassword,
+        [SecureString]$BootstrapAdminPassword,
         [string]$VmName = 'Atlaso-Photon-Builder',
         [string]$OutputDirectory = '',
         [string]$SshHost = '',
@@ -591,22 +591,22 @@ function Invoke-AtlasoPhotonImageBuild {
     $resolvedPreparedIsoPath = $ExecutionContext.SessionState.Path.GetUnresolvedProviderPathFromPSPath($PreparedIsoPath)
     $resolvedPreparedIsoPath = Resolve-AtlasoPreparedIsoPath -Path $resolvedPreparedIsoPath
 
-    Remove-Item -LiteralPath $ksSourceDir -Recurse -Force -ErrorAction SilentlyContinue
-    New-Item -ItemType Directory -Force -Path $ksSourceDir | Out-Null
-    New-AtlasoPhotonKickstart `
-        -Path $kickstartJson `
-        -RootPassword $SshPassword `
-        -BuildPassword $SshPassword `
-        -BuildUsername 'atlaso-build' `
-        -StaticAddress (Get-AtlasoBuilderAddress -Cidr $BuilderStaticIp) `
-        -StaticNetmask $BuilderStaticNetmask `
-        -StaticGateway $BuilderStaticGateway `
-        -StaticDns $BuilderStaticDns `
-        -AdditionalPackages $GuestPackages `
-        -PostInstallCommands $GuestPostInstallCommands `
-        -InstallDiskLayout $InstallDiskLayout
-
     try {
+        Remove-Item -LiteralPath $ksSourceDir -Recurse -Force -ErrorAction SilentlyContinue
+        New-Item -ItemType Directory -Force -Path $ksSourceDir | Out-Null
+        New-AtlasoPhotonKickstart `
+            -Path $kickstartJson `
+            -RootPassword $SshPassword `
+            -BuildPassword $SshPassword `
+            -BuildUsername 'atlaso-build' `
+            -StaticAddress (Get-AtlasoBuilderAddress -Cidr $BuilderStaticIp) `
+            -StaticNetmask $BuilderStaticNetmask `
+            -StaticGateway $BuilderStaticGateway `
+            -StaticDns $BuilderStaticDns `
+            -AdditionalPackages $GuestPackages `
+            -PostInstallCommands $GuestPostInstallCommands `
+            -InstallDiskLayout $InstallDiskLayout
+
         $sourceIsoPath = Resolve-AtlasoPhotonSourceIso -UrlOrPath $IsoUrl -Checksum $IsoChecksum -BuildDirectory $buildDir -PackerDirectory $packerDir -SharedSourceDirectory $sharedSourceDir
         try {
             New-AtlasoRemasteredPhotonIso -SourceIso $sourceIsoPath -KickstartJson $kickstartJson -OutputIso $resolvedPreparedIsoPath
@@ -637,6 +637,9 @@ function Invoke-AtlasoPhotonImageBuild {
 
     # Packer's HCL boundary requires strings. Convert only after all password-free
     # preparation has completed, then remove the generated secret-bearing var file.
+    if ($null -eq $BootstrapAdminPassword) {
+        throw 'BootstrapAdminPassword is required unless PrepareIsoOnly is set.'
+    }
     $sshPasswordText = $null
     $bootstrapAdminPasswordText = $null
     try {
