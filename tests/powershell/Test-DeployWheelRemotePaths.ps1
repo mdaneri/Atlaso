@@ -2,7 +2,7 @@
 .SYNOPSIS
 Verify deploy-wheel remote-path validation and command serialization.
 .PARAMETER RepositoryRoot
-Repository Root value used to configure this workflow.
+Atlaso checkout containing the deploy-wheel script under test.
 #>
 [CmdletBinding()]
 param(
@@ -13,7 +13,7 @@ $ErrorActionPreference = 'Stop'
 
 <#
 .SYNOPSIS
-Assert-Equal helper for the bounded workflow.
+Assert that two scalar fixture values are exactly equal.
 .PARAMETER Actual
 Actual input consumed by Assert-Equal.
 .PARAMETER Expected
@@ -111,7 +111,7 @@ foreach ($invalidPath in $invalidPaths) {
 $capturedCommands = [System.Collections.Generic.List[object]]::new()
 <#
 .SYNOPSIS
-Invoke-Checked Command helper for the bounded workflow.
+Invoke a fixture command and fail when it returns a nonzero exit code.
 .PARAMETER FilePath
 File Path input consumed by Invoke-CheckedCommand.
 .PARAMETER Arguments
@@ -133,9 +133,9 @@ function Invoke-CheckedCommand {
 }
 <#
 .SYNOPSIS
-Get-SSH Connection Arguments helper for the bounded workflow.
+Build the strict SSH connection arguments used by the deployment fixture.
 .PARAMETER ControlPath
-Control Path value used to configure this workflow.
+Validated SSH control-socket path supplied to the fixture.
 #>
 function Get-SshConnectionArguments {
     param([string]$ControlPath)

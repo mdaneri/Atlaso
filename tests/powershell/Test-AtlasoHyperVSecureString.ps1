@@ -15,7 +15,7 @@ $ErrorActionPreference = 'Stop'
 $runnerPath = Join-Path $RepositoryRoot 'scripts\windows\hyperv\run-lifecycle-test.ps1'
 $runnerSource = Get-Content -LiteralPath $runnerPath -Raw
 $functionMarker = 'function ConvertFrom-AtlasoSecureString'
-$boundaryMarker = '# The launcher persists'
+$boundaryMarker = '# Plan-only execution consumes no credentials.'
 $functionStart = $runnerSource.IndexOf($functionMarker, [StringComparison]::Ordinal)
 $functionEnd = $runnerSource.IndexOf($boundaryMarker, $functionStart, [StringComparison]::Ordinal)
 if ($functionStart -lt 0 -or $functionEnd -le $functionStart) {
@@ -32,6 +32,28 @@ foreach ($character in 'fixture-value'.ToCharArray()) {
 $fixture.MakeReadOnly()
 if ((ConvertFrom-AtlasoSecureString -Value $fixture) -cne 'fixture-value') {
     throw 'The Windows PowerShell-compatible SecureString conversion returned the wrong value.'
+}
+
+# Planning must remain credential-free in both launchers and runners. These
+# source contracts avoid importing Hyper-V or VMware modules on CI hosts.
+foreach ($provider in @('hyperv', 'vmware')) {
+    $launcherSource = Get-Content -LiteralPath (
+        Join-Path $RepositoryRoot "scripts\windows\$provider\invoke-lifecycle-test.ps1"
+    ) -Raw
+    if ($launcherSource -notmatch '(?s)if \(-not \$PlanOnly\) \{\s+if \(\$null -eq \$AdminPassword\).*?Read-Host') {
+        throw "$provider lifecycle planning is not guarded from password prompting."
+    }
+    if ($launcherSource -notmatch '(?s)\$secretBundlePath = ['']{2}\s+if \(-not \$PlanOnly\).*?Export-Clixml') {
+        throw "$provider lifecycle planning is not guarded from secret-bundle creation."
+    }
+
+    $providerRunnerSource = Get-Content -LiteralPath (
+        Join-Path $RepositoryRoot "scripts\windows\$provider\run-lifecycle-test.ps1"
+    ) -Raw
+    if ($providerRunnerSource -notmatch "\[string\]\`$SecretBundlePath = ''" -or
+        $providerRunnerSource -notmatch '(?s)if \(-not \$PlanOnly\).*?Import-Clixml -LiteralPath \$SecretBundlePath') {
+        throw "$provider lifecycle runner still requires a secret bundle for plan-only execution."
+    }
 }
 
 Write-Host 'Hyper-V lifecycle SecureString compatibility test passed.'

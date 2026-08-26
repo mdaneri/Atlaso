@@ -184,6 +184,9 @@ pwsh -ExecutionPolicy Bypass `
   -CleanupVmsOnly
 ```
 
+The plan-only command does not prompt for passwords or create a protected credential bundle because the emitted plan
+does not consume credentials.
+
 ## Cleanup Safety
 
 Workstation cleanup is authoritative only for an exact Atlaso artifact root. It rejects filesystem roots, sibling or

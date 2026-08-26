@@ -29,7 +29,7 @@ Site A IPv4 CIDR used in test harness arguments.
 .PARAMETER AdminUsername
 Atlaso web admin username.
 .PARAMETER SecretBundlePath
-Path to the current-user DPAPI-protected CLIXML bundle containing lifecycle passwords.
+Path to the current-user DPAPI-protected CLIXML bundle; required unless PlanOnly is set.
 .PARAMETER ApplianceSshUser
 SSH username for appliance interactions.
 .PARAMETER ClientSshUser
@@ -80,8 +80,7 @@ param(
     [string]$SiteInterface = 'eth1',
     [string]$SiteCidr = '192.168.12.1/24',
     [string]$AdminUsername = 'admin',
-    [Parameter(Mandatory = $true)]
-    [string]$SecretBundlePath,
+    [string]$SecretBundlePath = '',
     [string]$ApplianceSshUser = 'admin',
     [string]$ClientSshUser = 'alpine',
     [int]$VlanId = 50,
@@ -102,24 +101,36 @@ param(
 
 $ErrorActionPreference = 'Stop'
 
-# The launcher persists only DPAPI-protected SecureString members. Convert them
-# after import because VMware guest operations and the test harness accept strings.
-$secretBundle = Import-Clixml -LiteralPath $SecretBundlePath
-foreach ($propertyName in @('AdminPassword', 'SshPassword', 'VcfBackupPassword')) {
-    if ($secretBundle.$propertyName -isnot [SecureString]) {
-        throw "Lifecycle secret bundle property is missing or invalid: $propertyName"
+# Plan-only execution consumes no credentials. Runtime execution imports the
+# current-user-protected bundle before VMware or the harness needs plaintext.
+$adminPasswordSecure = $null
+$sshPasswordSecure = $null
+$vcfBackupPasswordSecure = $null
+$esxiPasswordSecure = $null
+$AdminPassword = ''
+$SshPassword = ''
+$VcfBackupPassword = ''
+if (-not $PlanOnly) {
+    if ([string]::IsNullOrWhiteSpace($SecretBundlePath)) {
+        throw 'SecretBundlePath is required unless PlanOnly is set.'
     }
+    $secretBundle = Import-Clixml -LiteralPath $SecretBundlePath
+    foreach ($propertyName in @('AdminPassword', 'SshPassword', 'VcfBackupPassword')) {
+        if ($secretBundle.$propertyName -isnot [SecureString]) {
+            throw "Lifecycle secret bundle property is missing or invalid: $propertyName"
+        }
+    }
+    if ($FullEsxiPxeInstall -and $secretBundle.EsxiPassword -isnot [SecureString]) {
+        throw 'Lifecycle secret bundle property is missing or invalid: EsxiPassword'
+    }
+    $adminPasswordSecure = $secretBundle.AdminPassword
+    $sshPasswordSecure = $secretBundle.SshPassword
+    $vcfBackupPasswordSecure = $secretBundle.VcfBackupPassword
+    $esxiPasswordSecure = $secretBundle.EsxiPassword
+    $AdminPassword = ConvertFrom-SecureString -SecureString $adminPasswordSecure -AsPlainText
+    $SshPassword = ConvertFrom-SecureString -SecureString $sshPasswordSecure -AsPlainText
+    $VcfBackupPassword = ConvertFrom-SecureString -SecureString $vcfBackupPasswordSecure -AsPlainText
 }
-if ($FullEsxiPxeInstall -and $secretBundle.EsxiPassword -isnot [SecureString]) {
-    throw 'Lifecycle secret bundle property is missing or invalid: EsxiPassword'
-}
-$adminPasswordSecure = $secretBundle.AdminPassword
-$sshPasswordSecure = $secretBundle.SshPassword
-$vcfBackupPasswordSecure = $secretBundle.VcfBackupPassword
-$esxiPasswordSecure = $secretBundle.EsxiPassword
-$AdminPassword = ConvertFrom-SecureString -SecureString $adminPasswordSecure -AsPlainText
-$SshPassword = ConvertFrom-SecureString -SecureString $sshPasswordSecure -AsPlainText
-$VcfBackupPassword = ConvertFrom-SecureString -SecureString $vcfBackupPasswordSecure -AsPlainText
 . (Join-Path $PSScriptRoot 'Atlaso.WorkstationFirstBoot.ps1')
 Import-Module (Join-Path $PSScriptRoot 'Atlaso.WorkstationCleanup.psm1') -Force
 Import-Module (Join-Path $PSScriptRoot 'Atlaso.VmwarePayload.psm1') -Force
@@ -151,7 +162,7 @@ Optional vmrun.exe path or install directory.
 #>
 <#
 .SYNOPSIS
-Resolve Vmrun Path.
+Resolve vmrun from an override or supported installation location.
 #>
 function Resolve-VmrunPath {
     if ($VmrunPath) {
@@ -177,7 +188,7 @@ function Resolve-VmrunPath {
 
 <#
 .SYNOPSIS
-Resolve Vdisk Manager Path.
+Resolve vmware-vdiskmanager from supported installation locations.
 #>
 function Resolve-VdiskManagerPath {
     $vmrunDirectory = Split-Path -Parent $resolvedVmrun
@@ -209,7 +220,7 @@ VM name to validate.
 #>
 <#
 .SYNOPSIS
-Validate Safe Lifecycle Name.
+Reject lifecycle names that collide with protected VMware VMs.
 .PARAMETER Name
 Name value.
 #>
@@ -234,7 +245,7 @@ String value to escape.
 #>
 <#
 .SYNOPSIS
-Convert Guest Shell Single Quote.
+Escape a literal for a POSIX single-quoted guest command.
 .PARAMETER Value
 Value value.
 #>
@@ -252,7 +263,7 @@ Input string to escape.
 #>
 <#
 .SYNOPSIS
-Convert Native Argument.
+Quote one argument for safe native Windows process invocation.
 .PARAMETER Value
 Value value.
 #>
@@ -279,7 +290,7 @@ Bounded timeout in seconds.
 #>
 <#
 .SYNOPSIS
-Invoke Vmrun Bounded.
+Invoke vmrun within a fixed timeout and return its output.
 .PARAMETER Arguments
 Arguments value.
 .PARAMETER TimeoutSeconds
@@ -327,7 +338,7 @@ Generate a randomized static MAC in VMware OUI space.
 #>
 <#
 .SYNOPSIS
-Create Static Vmware Mac.
+Generate a randomized static MAC in VMware OUI space.
 #>
 function New-StaticVmwareMac {
     $bytes = [guid]::NewGuid().ToByteArray()
@@ -343,7 +354,7 @@ Raw string value.
 #>
 <#
 .SYNOPSIS
-Convert Vmx String.
+Escape a literal value for a VMX assignment.
 .PARAMETER Value
 Value value.
 #>
@@ -354,7 +365,7 @@ function ConvertTo-VmxString {
 
 <#
 .SYNOPSIS
-Set Vmx Value.
+Set one VMX key while preserving unrelated configuration.
 .PARAMETER Path
 Path value.
 .PARAMETER Key
@@ -402,7 +413,7 @@ VMX key name to remove.
 #>
 <#
 .SYNOPSIS
-Remove Vmx Value.
+Remove one VMX key while preserving unrelated configuration.
 .PARAMETER Path
 Path value.
 .PARAMETER Key
@@ -431,7 +442,7 @@ Segment name used as input entropy.
 #>
 <#
 .SYNOPSIS
-Create Lan Segment Id.
+Create deterministic SCSI-compatible identifiers for a LAN segment.
 .PARAMETER Name
 Name value.
 #>
@@ -460,7 +471,7 @@ LAN segment name to resolve.
 #>
 <#
 .SYNOPSIS
-Resolve Lan Segment Id.
+Resolve or create the identifier for a named VMware LAN segment.
 .PARAMETER Name
 Name value.
 #>
@@ -577,7 +588,7 @@ VMXNET device type.
 #>
 <#
 .SYNOPSIS
-Set Vmx Network Adapter.
+Apply a validated VMX ethernet adapter configuration.
 .PARAMETER Path
 Path value.
 .PARAMETER Index
@@ -635,7 +646,7 @@ Lifecycle VM name.
 #>
 <#
 .SYNOPSIS
-Copy Vm Directory.
+Clone an appliance VMX into an isolated lifecycle directory.
 .PARAMETER SourceVmx
 Source Vmx value.
 .PARAMETER DestinationDirectory
@@ -689,7 +700,7 @@ VM adapter target networks by index.
 #>
 <#
 .SYNOPSIS
-Create Client Vm.
+Create a lifecycle client VM from its base disk and seed ISO.
 .PARAMETER Name
 Name value.
 .PARAMETER Directory
@@ -759,7 +770,7 @@ Optional static MAC address.
 #>
 <#
 .SYNOPSIS
-Create Esxi Pxe Vm.
+Create the isolated VMware VM used for ESXi PXE installation.
 .PARAMETER Name
 Name value.
 .PARAMETER Directory
@@ -838,7 +849,7 @@ Client hostname for cloud-init metadata.
 #>
 <#
 .SYNOPSIS
-Create Cloud Init Seed Iso.
+Create a NoCloud seed ISO for a lifecycle client.
 .PARAMETER Path
 Path value.
 .PARAMETER HostName
@@ -872,7 +883,7 @@ vmrun arguments.
 #>
 <#
 .SYNOPSIS
-Invoke Vmrun.
+Invoke vmrun and fail on any nonzero provider result.
 .PARAMETER Arguments
 Arguments value.
 #>
@@ -893,7 +904,7 @@ VMX path to register.
 #>
 <#
 .SYNOPSIS
-Register Workstation Vm.
+Register a VMware Workstation VM when registration is supported.
 .PARAMETER Path
 Path value.
 #>
@@ -916,7 +927,7 @@ VMX path to start.
 #>
 <#
 .SYNOPSIS
-Start Workstation Vm.
+Start and validate a VMware Workstation lifecycle VM.
 .PARAMETER Path
 Path value.
 #>
@@ -930,7 +941,7 @@ function Start-WorkstationVm {
 
 <#
 .SYNOPSIS
-Test Tcp Port.
+Return whether a TCP endpoint accepts a bounded connection.
 .PARAMETER HostName
 Host Name value.
 .PARAMETER Port
@@ -984,7 +995,7 @@ SSH password.
 #>
 <#
 .SYNOPSIS
-Return Plink Host Key.
+Probe and return the SSH host-key fingerprint reported by Plink.
 .PARAMETER HostName
 Host Name value.
 .PARAMETER UserName
@@ -1046,7 +1057,7 @@ Text lines to scan.
 #>
 <#
 .SYNOPSIS
-Return Guest I Pv4 From Address Text.
+Parse and return the first valid guest IPv4 address from provider output.
 .PARAMETER Lines
 Lines value.
 #>
@@ -1079,7 +1090,7 @@ MAC address input.
 #>
 <#
 .SYNOPSIS
-Convert Hyphen Mac.
+Normalize a MAC address to uppercase hyphen-separated form.
 .PARAMETER MacAddress
 Mac Address value.
 #>
@@ -1100,7 +1111,7 @@ Ethernet adapter index.
 #>
 <#
 .SYNOPSIS
-Return Vmx Ethernet Mac Address.
+Read and normalize a VMX ethernet adapter MAC address.
 .PARAMETER Path
 Path value.
 .PARAMETER Index
@@ -1138,7 +1149,7 @@ Ethernet adapter index.
 #>
 <#
 .SYNOPSIS
-Return Guest I Pv4 From Host Neighbor.
+Resolve a guest IPv4 address from host neighbor evidence.
 .PARAMETER Path
 Path value.
 .PARAMETER Index
@@ -1186,7 +1197,7 @@ VM-friendly name for temporary host output names.
 #>
 <#
 .SYNOPSIS
-Return Guest I Pv4 Via Guest Ops.
+Resolve a guest IPv4 address through VMware guest operations.
 .PARAMETER Path
 Path value.
 .PARAMETER GuestUser
@@ -1244,7 +1255,7 @@ VM name used for temporary artifacts.
 #>
 <#
 .SYNOPSIS
-Wait Guest I Pv4.
+Wait for a guest IPv4 address using bounded provider methods.
 .PARAMETER Path
 Path value.
 .PARAMETER TimeoutSeconds
@@ -1298,7 +1309,7 @@ Shell script content.
 #>
 <#
 .SYNOPSIS
-Invoke Appliance Guest Script.
+Execute a checked shell command inside the appliance guest.
 .PARAMETER ApplianceVmx
 Appliance Vmx value.
 .PARAMETER Script
@@ -1325,7 +1336,7 @@ OpenAPI URL to probe.
 #>
 <#
 .SYNOPSIS
-Test Appliance Open Api.
+Validate the appliance OpenAPI endpoint over HTTPS.
 .PARAMETER Url
 Url value.
 #>
@@ -1359,7 +1370,7 @@ function Test-ApplianceOpenApi {
 
 <#
 .SYNOPSIS
-Synchronize Appliance Helper Script.
+Upload the lifecycle helper script to the appliance guest.
 .PARAMETER ApplianceVmx
 Appliance Vmx value.
 #>
@@ -1385,7 +1396,7 @@ function Sync-ApplianceHelperScript {
 
 <#
 .SYNOPSIS
-Synchronize Appliance Application Wheel.
+Upload and install the lifecycle application wheel in the appliance guest.
 .PARAMETER ApplianceVmx
 Appliance Vmx value.
 #>
@@ -1433,7 +1444,7 @@ function Sync-ApplianceApplicationWheel {
 
 <#
 .SYNOPSIS
-Find Appliance Esxi Iso Path.
+Find an ESXi installer ISO already stored on the appliance.
 .PARAMETER ApplianceVmx
 Appliance Vmx value.
 #>
@@ -1456,7 +1467,7 @@ function Find-ApplianceEsxiIsoPath {
 
 <#
 .SYNOPSIS
-Resolve Appliance Esxi Iso Path.
+Resolve or upload the ESXi ISO required by the PXE scenario.
 .PARAMETER ApplianceVmx
 Appliance Vmx value.
 #>
@@ -1496,7 +1507,7 @@ function Resolve-ApplianceEsxiIsoPath {
 
 <#
 .SYNOPSIS
-Add Lifecycle Result Step.
+Append one timestamped validation step to the lifecycle result.
 .PARAMETER ResultDirectory
 Result Directory value.
 .PARAMETER Name

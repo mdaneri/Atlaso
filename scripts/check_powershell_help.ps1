@@ -4,9 +4,9 @@ Enforce comment-based help on every new or changed PowerShell file.
 
 .DESCRIPTION
 Compares tracked PowerShell files with a base checkout. Every added or changed
-script, module, and function must provide comment-based help with a synopsis and a
-parameter entry for each declared parameter. Unchanged legacy files remain outside
-the incremental gate until they are edited.
+script, module, and function must provide comment-based help with a meaningful
+synopsis and a non-placeholder parameter description for each declared parameter.
+Unchanged legacy files remain outside the incremental gate until they are edited.
 
 .PARAMETER Root
 Candidate Atlaso repository root to validate.
@@ -91,6 +91,11 @@ function Get-PowerShellScopeHelpFinding {
         $findings.Add("$DisplayName has no comment-based .SYNOPSIS header.")
         return $findings
     }
+    $synopsis = $help.Synopsis.Trim()
+    if ($synopsis -match '(?i)helper for the bounded workflow' -or
+        $synopsis -match '(?i)^[A-Za-z](?:\s+[A-Za-z]){4,}[.]?$') {
+        $findings.Add("$DisplayName has placeholder or token-split .SYNOPSIS text: '$synopsis'")
+    }
 
     $parameters = @()
     if ($Scope -is [System.Management.Automation.Language.ScriptBlockAst]) {
@@ -113,6 +118,15 @@ function Get-PowerShellScopeHelpFinding {
         $name = $parameter.Name.VariablePath.UserPath
         if ($name.ToUpperInvariant() -notin $documented) {
             $findings.Add("$DisplayName parameter '$name' has no .PARAMETER entry.")
+            continue
+        }
+        $description = [string]$help.Parameters[$name]
+        if ([string]::IsNullOrWhiteSpace($description)) {
+            $description = [string]$help.Parameters[$name.ToUpperInvariant()]
+        }
+        if ([string]::IsNullOrWhiteSpace($description) -or
+            $description -match '(?i)value used to configure this workflow') {
+            $findings.Add("$DisplayName parameter '$name' has empty or placeholder .PARAMETER text.")
         }
     }
     return $findings

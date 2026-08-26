@@ -2,63 +2,63 @@
 .SYNOPSIS
 Launch the bounded Hyper-V lifecycle test with secure credential handoff.
 .PARAMETER LabName
-Lab Name value used to configure this workflow.
+Name prefix used to isolate generated lifecycle resources.
 .PARAMETER ApplianceVhdxPath
-Appliance VHDX Path value used to configure this workflow.
+Path to the source appliance VHDX used for the lifecycle VM.
 .PARAMETER ClientVhdxPath
-Client VHDX Path value used to configure this workflow.
+Path to the prepared client VHDX used by lifecycle guests.
 .PARAMETER EsxIsoPath
-ESX Iso Path value used to configure this workflow.
+Optional path to an ESXi installer ISO used by PXE coverage.
 .PARAMETER ClientManagementSwitch
-Client Management Switch value used to configure this workflow.
+Hyper-V switch that connects lifecycle client management adapters.
 .PARAMETER ApplianceIPAddress
-Appliance IP Address value used to configure this workflow.
+Management IPv4 address assigned to or expected from the appliance.
 .PARAMETER ApplianceUrl
-Appliance URL value used to configure this workflow.
+HTTPS URL used for appliance API validation.
 .PARAMETER SiteInterface
-Site Interface value used to configure this workflow.
+Appliance interface used for the site-network scenario.
 .PARAMETER SiteCidr
-Site Cidr value used to configure this workflow.
+IPv4 CIDR assigned to the site-network scenario.
 .PARAMETER SiteVlanId
-Site VLAN Id value used to configure this workflow.
+VLAN identifier used by the site-network scenario.
 .PARAMETER AdminUsername
-Admin Username value used to configure this workflow.
+Atlaso administrator account used by the lifecycle harness.
 .PARAMETER AdminPassword
 Secure Admin Password supplied at runtime; no repository default is used.
 .PARAMETER ApplianceSshUser
-Appliance SSH User value used to configure this workflow.
+SSH account used for appliance guest operations.
 .PARAMETER ClientSshUser
-Client SSH User value used to configure this workflow.
+SSH account used for lifecycle client guests.
 .PARAMETER SshPassword
 Secure SSH Password supplied at runtime; no repository default is used.
 .PARAMETER VcfBackupPassword
 Secure VCF Backup Password supplied at runtime; no repository default is used.
 .PARAMETER VlanId
-VLAN Id value used to configure this workflow.
+VLAN identifier used by the tagged-network scenario.
 .PARAMETER TaggedVlanCidr
-Tagged VLAN Cidr value used to configure this workflow.
+IPv4 CIDR used by the tagged-network scenario.
 .PARAMETER WanCidr
-Wan Cidr value used to configure this workflow.
+IPv4 CIDR used by the simulated WAN scenario.
 .PARAMETER KeepVms
-Keep Vms value used to configure this workflow.
+Retain generated lifecycle VMs after the run completes.
 .PARAMETER SkipClientPrepare
-Skip Client Prepare value used to configure this workflow.
+Reuse the existing client image instead of rebuilding it.
 .PARAMETER PrepareNetworksOnly
-Prepare Networks Only value used to configure this workflow.
+Prepare required lifecycle networks and exit without creating VMs.
 .PARAMETER CleanupNetworksOnly
-Cleanup Networks Only value used to configure this workflow.
+Remove lifecycle networks and exit without running scenarios.
 .PARAMETER CleanupVmsOnly
-Cleanup Vms Only value used to configure this workflow.
+Remove VMs for the selected lifecycle lab and exit.
 .PARAMETER CleanupNetworksAfterTest
-Cleanup Networks After Test value used to configure this workflow.
+Remove lifecycle networks after a successful or failed run.
 .PARAMETER AllowDryRunApply
-Allow Dry Run Apply value used to configure this workflow.
+Allow the harness to exercise the appliance dry-run apply path.
 .PARAMETER SkipBackupRestoreTest
-Skip Backup Restore Test value used to configure this workflow.
+Skip the backup and restore lifecycle phase.
 .PARAMETER SignedReleaseRepositoryUrl
-Signed Release Repository URL value used to configure this workflow.
+Signed release repository URL used by update lifecycle validation.
 .PARAMETER PlanOnly
-Plan Only value used to configure this workflow.
+Emit the resolved lifecycle plan without prompting for secrets or mutating the host.
 #>
 [CmdletBinding(DefaultParameterSetName = 'Run', SupportsShouldProcess = $true)]
 param(
@@ -180,7 +180,7 @@ $repoRoot = Resolve-Path -LiteralPath (Join-Path $PSScriptRoot '..\..\..')
 
 <#
 .SYNOPSIS
-Find-Latest Appliance VHDX helper for the bounded workflow.
+Return the newest eligible appliance VHDX from the Hyper-V build output.
 #>
 function Find-LatestApplianceVhdx {
     $outputRoot = Join-Path $repoRoot 'image\hyperv\output'
@@ -232,14 +232,16 @@ if ($PSCmdlet.ParameterSetName -eq 'CleanupVms') {
     return
 }
 
-if ($null -eq $AdminPassword) {
-    $AdminPassword = Read-Host -Prompt 'Atlaso lifecycle administrator password' -AsSecureString
-}
-if ($null -eq $SshPassword) {
-    $SshPassword = $AdminPassword
-}
-if ($null -eq $VcfBackupPassword) {
-    $VcfBackupPassword = Read-Host -Prompt 'VCF Backup lifecycle password' -AsSecureString
+if (-not $PlanOnly) {
+    if ($null -eq $AdminPassword) {
+        $AdminPassword = Read-Host -Prompt 'Atlaso lifecycle administrator password' -AsSecureString
+    }
+    if ($null -eq $SshPassword) {
+        $SshPassword = $AdminPassword
+    }
+    if ($null -eq $VcfBackupPassword) {
+        $VcfBackupPassword = Read-Host -Prompt 'VCF Backup lifecycle password' -AsSecureString
+    }
 }
 if (-not $ApplianceVhdxPath) {
     $ApplianceVhdxPath = Find-LatestApplianceVhdx
@@ -262,14 +264,17 @@ if (-not $SkipClientPrepare -and -not $PlanOnly) {
     }
 }
 
-$secretBundlePath = Join-Path ([System.IO.Path]::GetTempPath()) "atlaso-hyperv-lifecycle-$([guid]::NewGuid().ToString('N')).clixml"
-# CLIXML uses the current Windows user's DPAPI protection for SecureString
-# members, avoiding plaintext password arguments across the PowerShell process boundary.
-[pscustomobject]@{
-    AdminPassword     = $AdminPassword
-    SshPassword       = $SshPassword
-    VcfBackupPassword = $VcfBackupPassword
-} | Export-Clixml -LiteralPath $secretBundlePath -Force
+$secretBundlePath = ''
+if (-not $PlanOnly) {
+    $secretBundlePath = Join-Path ([System.IO.Path]::GetTempPath()) "atlaso-hyperv-lifecycle-$([guid]::NewGuid().ToString('N')).clixml"
+    # CLIXML uses the current Windows user's DPAPI protection for SecureString
+    # members, avoiding plaintext password arguments across the PowerShell process boundary.
+    [pscustomobject]@{
+        AdminPassword     = $AdminPassword
+        SshPassword       = $SshPassword
+        VcfBackupPassword = $VcfBackupPassword
+    } | Export-Clixml -LiteralPath $secretBundlePath -Force
+}
 
 $arguments = @(
     '-ExecutionPolicy', 'Bypass',
@@ -284,13 +289,15 @@ $arguments = @(
     '-SiteCidr', $SiteCidr,
     '-SiteVlanId', "$SiteVlanId",
     '-AdminUsername', $AdminUsername,
-    '-SecretBundlePath', $secretBundlePath,
     '-ApplianceSshUser', $ApplianceSshUser,
     '-ClientSshUser', $ClientSshUser,
     '-VlanId', "$VlanId",
     '-TaggedVlanCidr', $TaggedVlanCidr,
     '-WanCidr', $WanCidr
 )
+if (-not $PlanOnly) {
+    $arguments += @('-SecretBundlePath', $secretBundlePath)
+}
 if ($EsxIsoPath) {
     $arguments += @('-EsxIsoPath', $EsxIsoPath)
 }
@@ -325,7 +332,9 @@ try {
         throw "Hyper-V lifecycle test failed with exit code $LASTEXITCODE"
     }
 } finally {
-    Remove-Item -LiteralPath $secretBundlePath -Force -ErrorAction SilentlyContinue
+    if ($secretBundlePath) {
+        Remove-Item -LiteralPath $secretBundlePath -Force -ErrorAction SilentlyContinue
+    }
 }
 
 if ($CleanupNetworksAfterTest) {

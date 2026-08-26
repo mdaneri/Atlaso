@@ -2,63 +2,63 @@
 .SYNOPSIS
 Run the bounded Atlaso Hyper-V lifecycle interoperability lab.
 .PARAMETER LabName
-Lab Name value used to configure this workflow.
+Name prefix used to isolate generated lifecycle resources.
 .PARAMETER ApplianceVhdxPath
-Appliance VHDX Path value used to configure this workflow.
+Path to the source appliance VHDX used for the lifecycle VM.
 .PARAMETER ClientVhdxPath
-Client VHDX Path value used to configure this workflow.
+Path to the prepared client VHDX used by lifecycle guests.
 .PARAMETER EsxIsoPath
-ESX Iso Path value used to configure this workflow.
+Optional path to an ESXi installer ISO used by PXE coverage.
 .PARAMETER ClientManagementSwitch
-Client Management Switch value used to configure this workflow.
+Hyper-V switch that connects lifecycle client management adapters.
 .PARAMETER ApplianceIPAddress
-Appliance IP Address value used to configure this workflow.
+Management IPv4 address assigned to or expected from the appliance.
 .PARAMETER ApplianceUrl
-Appliance URL value used to configure this workflow.
+HTTPS URL used for appliance API validation.
 .PARAMETER ApplianceMemoryStartupBytes
-Appliance Memory Startup Bytes value used to configure this workflow.
+Startup memory assigned to the appliance VM.
 .PARAMETER ClientMemoryStartupBytes
-Client Memory Startup Bytes value used to configure this workflow.
+Startup memory assigned to each client VM.
 .PARAMETER ApplianceProcessorCount
-Appliance Processor Count value used to configure this workflow.
+Virtual processor count assigned to the appliance VM.
 .PARAMETER ClientProcessorCount
-Client Processor Count value used to configure this workflow.
+Virtual processor count assigned to each client VM.
 .PARAMETER SiteInterface
-Site Interface value used to configure this workflow.
+Appliance interface used for the site-network scenario.
 .PARAMETER SiteCidr
-Site Cidr value used to configure this workflow.
+IPv4 CIDR assigned to the site-network scenario.
 .PARAMETER SiteVlanId
-Site VLAN Id value used to configure this workflow.
+VLAN identifier used by the site-network scenario.
 .PARAMETER VlanId
-VLAN Id value used to configure this workflow.
+VLAN identifier used by the tagged-network scenario.
 .PARAMETER TaggedVlanCidr
-Tagged VLAN Cidr value used to configure this workflow.
+IPv4 CIDR used by the tagged-network scenario.
 .PARAMETER WanCidr
-Wan Cidr value used to configure this workflow.
+IPv4 CIDR used by the simulated WAN scenario.
 .PARAMETER AdminUsername
-Admin Username value used to configure this workflow.
+Atlaso administrator account used by the lifecycle harness.
 .PARAMETER SecretBundlePath
-Path to the current-user DPAPI-protected CLIXML secret bundle.
+Path to the current-user DPAPI-protected CLIXML secret bundle; required unless PlanOnly is set.
 .PARAMETER SshUser
-SSH User value used to configure this workflow.
+Deprecated shared SSH account override retained for compatibility.
 .PARAMETER ApplianceSshUser
-Appliance SSH User value used to configure this workflow.
+SSH account used for appliance guest operations.
 .PARAMETER ClientSshUser
-Client SSH User value used to configure this workflow.
+SSH account used for lifecycle client guests.
 .PARAMETER SshKeyPath
-SSH Key Path value used to configure this workflow.
+Path to the SSH private key used for client access.
 .PARAMETER SignedReleaseRepositoryUrl
-Signed Release Repository URL value used to configure this workflow.
+Signed release repository URL used by update lifecycle validation.
 .PARAMETER AllowDryRunApply
-Allow Dry Run Apply value used to configure this workflow.
+Allow the harness to exercise the appliance dry-run apply path.
 .PARAMETER SkipBackupRestoreTest
-Skip Backup Restore Test value used to configure this workflow.
+Skip the backup and restore lifecycle phase.
 .PARAMETER AllowExistingLifecycleLab
-Allow Existing Lifecycle Lab value used to configure this workflow.
+Permit reuse of lifecycle VMs that already exist.
 .PARAMETER CleanupCreatedLab
-Cleanup Created Lab value used to configure this workflow.
+Remove resources created by this lifecycle run.
 .PARAMETER PlanOnly
-Plan Only value used to configure this workflow.
+Emit the resolved lifecycle plan without prompting for secrets or mutating the host.
 #>
 [CmdletBinding(SupportsShouldProcess = $true)]
 param(
@@ -81,8 +81,7 @@ param(
     [string]$TaggedVlanCidr = '192.168.60.1/24',
     [string]$WanCidr = '172.31.50.1/24',
     [string]$AdminUsername = 'admin',
-    [Parameter(Mandatory = $true)]
-    [string]$SecretBundlePath,
+    [string]$SecretBundlePath = '',
     [string]$SshUser = '',
     [string]$ApplianceSshUser = 'admin',
     [string]$ClientSshUser = 'alpine',
@@ -117,20 +116,31 @@ function ConvertFrom-AtlasoSecureString {
     }
 }
 
-# The launcher persists only DPAPI-protected SecureString members. Convert them
-# after import because the legacy test tools accept plaintext only at their API boundaries.
-$secretBundle = Import-Clixml -LiteralPath $SecretBundlePath
-foreach ($propertyName in @('AdminPassword', 'SshPassword', 'VcfBackupPassword')) {
-    if ($secretBundle.$propertyName -isnot [SecureString]) {
-        throw "Lifecycle secret bundle property is missing or invalid: $propertyName"
+# Plan-only execution consumes no credentials. Runtime execution imports the
+# current-user-protected bundle before any native-tool boundary needs plaintext.
+$adminPasswordSecure = $null
+$sshPasswordSecure = $null
+$vcfBackupPasswordSecure = $null
+$AdminPassword = ''
+$SshPassword = ''
+$VcfBackupPassword = ''
+if (-not $PlanOnly) {
+    if ([string]::IsNullOrWhiteSpace($SecretBundlePath)) {
+        throw 'SecretBundlePath is required unless PlanOnly is set.'
     }
+    $secretBundle = Import-Clixml -LiteralPath $SecretBundlePath
+    foreach ($propertyName in @('AdminPassword', 'SshPassword', 'VcfBackupPassword')) {
+        if ($secretBundle.$propertyName -isnot [SecureString]) {
+            throw "Lifecycle secret bundle property is missing or invalid: $propertyName"
+        }
+    }
+    $adminPasswordSecure = $secretBundle.AdminPassword
+    $sshPasswordSecure = $secretBundle.SshPassword
+    $vcfBackupPasswordSecure = $secretBundle.VcfBackupPassword
+    $AdminPassword = ConvertFrom-AtlasoSecureString -Value $adminPasswordSecure
+    $SshPassword = ConvertFrom-AtlasoSecureString -Value $sshPasswordSecure
+    $VcfBackupPassword = ConvertFrom-AtlasoSecureString -Value $vcfBackupPasswordSecure
 }
-$adminPasswordSecure = $secretBundle.AdminPassword
-$sshPasswordSecure = $secretBundle.SshPassword
-$vcfBackupPasswordSecure = $secretBundle.VcfBackupPassword
-$AdminPassword = ConvertFrom-AtlasoSecureString -Value $adminPasswordSecure
-$SshPassword = ConvertFrom-AtlasoSecureString -Value $sshPasswordSecure
-$VcfBackupPassword = ConvertFrom-AtlasoSecureString -Value $vcfBackupPasswordSecure
 
 $repoRoot = Resolve-Path -LiteralPath (Join-Path $PSScriptRoot '..\..\..')
 if (-not $ApplianceUrl) {
@@ -147,7 +157,7 @@ $createdVms = New-Object System.Collections.Generic.List[string]
 
 <#
 .SYNOPSIS
-Assert-Safe Lifecycle Name helper for the bounded workflow.
+Reject lifecycle VM names that could target protected or unrelated resources.
 .PARAMETER Name
 Name input consumed by Assert-SafeLifecycleName.
 #>
@@ -165,7 +175,7 @@ function Assert-SafeLifecycleName {
 
 <#
 .SYNOPSIS
-Assert-Input VHDX helper for the bounded workflow.
+Require an existing VHDX input with the expected file type.
 .PARAMETER Path
 Path input consumed by Assert-InputVhdx.
 .PARAMETER Label
@@ -181,13 +191,13 @@ function Assert-InputVhdx {
 
 <#
 .SYNOPSIS
-New-Lifecycle Differencing Disk helper for the bounded workflow.
+Create and validate a lifecycle differencing disk from an immutable parent.
 .PARAMETER ParentPath
-Parent Path value used to configure this workflow.
+Path to the immutable parent VHDX.
 .PARAMETER ChildPath
-Child Path value used to configure this workflow.
+Destination path for the differencing VHDX.
 .PARAMETER Label
-Label value used to configure this workflow.
+Operator-facing disk label included in validation errors.
 #>
 function New-LifecycleDifferencingDisk {
     [CmdletBinding(SupportsShouldProcess = $true)]
@@ -207,17 +217,17 @@ function New-LifecycleDifferencingDisk {
 
 <#
 .SYNOPSIS
-New-Lifecycle VM helper for the bounded workflow.
+Create a lifecycle VM with bounded compute, disk, and network settings.
 .PARAMETER Name
-Name value used to configure this workflow.
+Name of the VM or lifecycle resource being operated on.
 .PARAMETER VhdxPath
-VHDX Path value used to configure this workflow.
+Path to the VHDX attached to the new VM.
 .PARAMETER SwitchName
-Switch Name value used to configure this workflow.
+Hyper-V switch connected to the VM network adapter.
 .PARAMETER MemoryStartupBytes
-Memory Startup Bytes value used to configure this workflow.
+Startup memory assigned to the VM.
 .PARAMETER ProcessorCount
-Processor Count value used to configure this workflow.
+Virtual processor count assigned to the VM.
 #>
 function New-LifecycleVm {
     [CmdletBinding(SupportsShouldProcess = $true)]
@@ -251,7 +261,7 @@ function New-LifecycleVm {
 
 <#
 .SYNOPSIS
-Ensure-Client SSH Key helper for the bounded workflow.
+Resolve an existing client SSH key or create an isolated lifecycle key pair.
 #>
 function Ensure-ClientSshKey {
     if (-not $SshKeyPath) {
@@ -269,13 +279,13 @@ function Ensure-ClientSshKey {
 
 <#
 .SYNOPSIS
-New-Cloud Init Seed Iso helper for the bounded workflow.
+Create a NoCloud seed ISO for a lifecycle client guest.
 .PARAMETER Path
-Path value used to configure this workflow.
+Filesystem path consumed or produced by the helper.
 .PARAMETER HostName
-Host Name value used to configure this workflow.
+Guest hostname or remote host queried by the helper.
 .PARAMETER PublicKey
-Public Key value used to configure this workflow.
+OpenSSH public key installed in the generated guest seed.
 #>
 function New-CloudInitSeedIso {
     [CmdletBinding(SupportsShouldProcess = $true)]
@@ -319,7 +329,7 @@ function New-CloudInitSeedIso {
 
 <#
 .SYNOPSIS
-Ensure-Hard Disk helper for the bounded workflow.
+Attach the expected VHDX to a Hyper-V VM when it is absent.
 .PARAMETER VMName
 VM Name input consumed by Ensure-HardDisk.
 .PARAMETER Path
@@ -344,7 +354,7 @@ function Ensure-HardDisk {
 
 <#
 .SYNOPSIS
-Ensure-Dvd Drive helper for the bounded workflow.
+Attach or update the expected ISO-backed DVD drive.
 .PARAMETER VMName
 VM Name input consumed by Ensure-DvdDrive.
 .PARAMETER Path
@@ -376,7 +386,7 @@ function Ensure-DvdDrive {
 
 <#
 .SYNOPSIS
-Ensure-Network Adapter helper for the bounded workflow.
+Create or update a named Hyper-V network adapter.
 .PARAMETER VMName
 VM Name input consumed by Ensure-NetworkAdapter.
 .PARAMETER Name
@@ -408,7 +418,7 @@ function Ensure-NetworkAdapter {
 
 <#
 .SYNOPSIS
-Set-Lifecycle Network Topology helper for the bounded workflow.
+Apply the required management, site, and trunk adapters to lifecycle VMs.
 #>
 function Set-LifecycleNetworkTopology {
     [CmdletBinding(SupportsShouldProcess = $true)]
@@ -458,7 +468,7 @@ function Set-LifecycleNetworkTopology {
 
 <#
 .SYNOPSIS
-Wait-VM Running helper for the bounded workflow.
+Wait until a Hyper-V VM reaches the running state.
 .PARAMETER Name
 Name input consumed by Wait-VMRunning.
 #>
@@ -478,11 +488,11 @@ function Wait-VMRunning {
 
 <#
 .SYNOPSIS
-Get-Guest I Pv4 helper for the bounded workflow.
+Return a guest IPv4 address reported by Hyper-V integration services.
 .PARAMETER Name
-Name value used to configure this workflow.
+Name of the VM or lifecycle resource being operated on.
 .PARAMETER AdapterName
-Adapter Name value used to configure this workflow.
+Hyper-V network adapter name used for address discovery.
 #>
 function Get-GuestIPv4 {
     param(
@@ -498,9 +508,9 @@ function Get-GuestIPv4 {
 
 <#
 .SYNOPSIS
-Convert To-Hyphen Mac helper for the bounded workflow.
+Normalize a MAC address to uppercase hyphen-separated form.
 .PARAMETER MacAddress
-Mac Address value used to configure this workflow.
+MAC address to normalize for the target transport.
 #>
 function ConvertTo-HyphenMac {
     param([string]$MacAddress)
@@ -515,9 +525,9 @@ function ConvertTo-HyphenMac {
 
 <#
 .SYNOPSIS
-Convert To-Colon Mac helper for the bounded workflow.
+Normalize a MAC address to lowercase colon-separated form.
 .PARAMETER MacAddress
-Mac Address value used to configure this workflow.
+MAC address to normalize for the target transport.
 #>
 function ConvertTo-ColonMac {
     param([string]$MacAddress)
@@ -532,9 +542,9 @@ function ConvertTo-ColonMac {
 
 <#
 .SYNOPSIS
-Convert To-Shell Single Quoted helper for the bounded workflow.
+Escape a literal value for one POSIX single-quoted shell argument.
 .PARAMETER Value
-Value value used to configure this workflow.
+Literal value escaped for safe shell use.
 #>
 function ConvertTo-ShellSingleQuoted {
     param([string]$Value)
@@ -545,13 +555,13 @@ function ConvertTo-ShellSingleQuoted {
 
 <#
 .SYNOPSIS
-New-Lifecycle PXE VM helper for the bounded workflow.
+Create the isolated Hyper-V client used for PXE boot validation.
 .PARAMETER Name
-Name value used to configure this workflow.
+Name of the VM or lifecycle resource being operated on.
 .PARAMETER SwitchName
-Switch Name value used to configure this workflow.
+Hyper-V switch connected to the VM network adapter.
 .PARAMETER DiskPath
-Disk Path value used to configure this workflow.
+Path to the VM disk attached to the PXE client.
 #>
 function New-LifecyclePxeVm {
     [CmdletBinding(SupportsShouldProcess = $true)]
@@ -593,9 +603,9 @@ function New-LifecyclePxeVm {
 
 <#
 .SYNOPSIS
-Get-PXE Client Mac helper for the bounded workflow.
+Return the normalized MAC address of the PXE client adapter.
 .PARAMETER Name
-Name value used to configure this workflow.
+Name of the VM or lifecycle resource being operated on.
 #>
 function Get-PxeClientMac {
     param([string]$Name)
@@ -609,7 +619,7 @@ function Get-PxeClientMac {
 
 <#
 .SYNOPSIS
-Copy-ESX Iso To Appliance helper for the bounded workflow.
+Upload an ESXi installer ISO to the appliance PXE media directory.
 .PARAMETER Path
 Path input consumed by Copy-EsxIsoToAppliance.
 #>
@@ -656,7 +666,7 @@ function Copy-EsxIsoToAppliance {
 
 <#
 .SYNOPSIS
-Invoke-PXE Boot Smoke helper for the bounded workflow.
+Boot the PXE client and verify that network boot reaches the expected media.
 .PARAMETER Name
 Name input consumed by Invoke-PxeBootSmoke.
 .PARAMETER MacAddress
@@ -718,7 +728,7 @@ function Invoke-PxeBootSmoke {
 
 <#
 .SYNOPSIS
-Invoke-Network Boot Inventory Proof helper for the bounded workflow.
+Capture traffic and inventory evidence for the network-boot workflow.
 .PARAMETER Name
 Name input consumed by Invoke-NetworkBootInventoryProof.
 .PARAMETER MacAddress
@@ -813,11 +823,11 @@ function Invoke-NetworkBootInventoryProof {
 
 <#
 .SYNOPSIS
-Get-Neighbor I Pv4 For Adapter helper for the bounded workflow.
+Resolve a guest IPv4 address from the host neighbor cache and adapter MAC.
 .PARAMETER VMName
-VM Name value used to configure this workflow.
+Hyper-V VM whose neighbor address is queried.
 .PARAMETER AdapterName
-Adapter Name value used to configure this workflow.
+Hyper-V network adapter name used for address discovery.
 #>
 function Get-NeighborIPv4ForAdapter {
     param(
@@ -843,7 +853,7 @@ function Get-NeighborIPv4ForAdapter {
 
 <#
 .SYNOPSIS
-Wait-Guest I Pv4 helper for the bounded workflow.
+Wait for a guest IPv4 address using integration and neighbor evidence.
 .PARAMETER Name
 Name input consumed by Wait-GuestIPv4.
 .PARAMETER AdapterName
@@ -872,7 +882,7 @@ function Wait-GuestIPv4 {
 
 <#
 .SYNOPSIS
-Test-Tcp Port helper for the bounded workflow.
+Return whether a TCP endpoint accepts a connection within the timeout.
 .PARAMETER HostName
 Host Name input consumed by Test-TcpPort.
 .PARAMETER Port
@@ -906,11 +916,11 @@ function Test-TcpPort {
 
 <#
 .SYNOPSIS
-Get-Plink Host Key helper for the bounded workflow.
+Probe and return the SSH host-key fingerprint reported by Plink.
 .PARAMETER HostName
-Host Name value used to configure this workflow.
+Guest hostname or remote host queried by the helper.
 .PARAMETER UserName
-User Name value used to configure this workflow.
+SSH account used for the remote host-key probe.
 .PARAMETER Password
 Secure Password supplied at runtime; no repository default is used.
 #>
@@ -962,11 +972,11 @@ function Get-PlinkHostKey {
 
 <#
 .SYNOPSIS
-Resolve-Safe Child Path helper for the bounded workflow.
+Require a child path to remain within an approved lifecycle root.
 .PARAMETER Path
-Path value used to configure this workflow.
+Filesystem path consumed or produced by the helper.
 .PARAMETER Root
-Root value used to configure this workflow.
+Validated parent directory that must contain the child path.
 #>
 function Resolve-SafeChildPath {
     param(
@@ -985,7 +995,7 @@ function Resolve-SafeChildPath {
 
 <#
 .SYNOPSIS
-Reset-Lifecycle Appliance VM helper for the bounded workflow.
+Restore the lifecycle appliance VM to its clean differencing-disk state.
 #>
 function Reset-LifecycleApplianceVm {
     [CmdletBinding(SupportsShouldProcess = $true)]
@@ -1170,19 +1180,19 @@ try {
 
     <#
 .SYNOPSIS
-N ew L if ec yc le Py th on Ar gs.
+Build the Python harness arguments for one lifecycle validation phase.
 .PARAMETER RunResultRoot
-Run Result Root value used to configure this workflow.
+Directory that stores artifacts for the current lifecycle phase.
 .PARAMETER CurrentApplianceHostKey
-Current Appliance Host Key value used to configure this workflow.
+Verified appliance SSH host-key fingerprint for the current phase.
 .PARAMETER CurrentClientAHost
-Current Client A Host value used to configure this workflow.
+Resolved IPv4 address of lifecycle client A.
 .PARAMETER CurrentClientBHost
-Current Client B Host value used to configure this workflow.
+Resolved IPv4 address of lifecycle client B.
 .PARAMETER CurrentClientAHostKey
-Current Client A Host Key value used to configure this workflow.
+Verified SSH host-key fingerprint for lifecycle client A.
 .PARAMETER CurrentClientBHostKey
-Current Client B Host Key value used to configure this workflow.
+Verified SSH host-key fingerprint for lifecycle client B.
 #>
 function New-LifecyclePythonArgs {
         param(

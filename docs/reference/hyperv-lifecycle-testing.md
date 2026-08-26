@@ -112,7 +112,8 @@ pwsh -ExecutionPolicy Bypass `
 Pass `-CleanupNetworksAfterTest` to remove the switches/NAT after a successful test as well as the VMs. Network cleanup
 is intentionally opt-in because the normal `Atlaso` VM can also be attached to the shared Atlaso switches.
 
-Use `-PlanOnly` first to print the VM names, VHDX parents, and result path without creating or modifying VMs. Use
+Use `-PlanOnly` first to print the VM names, VHDX parents, and result path without prompting for credentials or creating
+or modifying VMs. Use
 `-ApplianceVhdxPath` when you want a specific appliance image instead of the newest discovered VHDX.
 
 ## Low-Level Run

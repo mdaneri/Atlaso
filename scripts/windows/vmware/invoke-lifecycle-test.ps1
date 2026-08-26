@@ -4,39 +4,39 @@
 .SYNOPSIS
 Launch the bounded VMware Workstation lifecycle test with secure credential handoff.
 .PARAMETER LabName
-Lab Name value used to configure this workflow.
+Name prefix used to isolate generated lifecycle resources.
 .PARAMETER ApplianceVmxPath
-Appliance VMX Path value used to configure this workflow.
+Path to the source appliance VMX used for the lifecycle VM.
 .PARAMETER ClientVmdkPath
-Client Vmdk Path value used to configure this workflow.
+Path to the base client VMDK used by generated lifecycle guests.
 .PARAMETER VmrunPath
-Vmrun Path value used to configure this workflow.
+Optional explicit path to the VMware vmrun executable.
 .PARAMETER ManagementNetwork
-Management Network value used to configure this workflow.
+VMware network used for appliance management traffic.
 .PARAMETER BridgedInterfaceAlias
-Bridged Interface Alias value used to configure this workflow.
+Host adapter alias bridged to the management network.
 .PARAMETER SiteANetwork
-Site A Network value used to configure this workflow.
+VMware network used for site A traffic.
 .PARAMETER SiteBNetwork
-Site B Network value used to configure this workflow.
+VMware network used for site B traffic.
 .PARAMETER TrunkNetwork
-Trunk Network value used to configure this workflow.
+VMware network used for tagged trunk traffic.
 .PARAMETER ApplianceIPAddress
-Appliance IP Address value used to configure this workflow.
+Management IPv4 address assigned to or expected from the appliance.
 .PARAMETER ApplianceUrl
-Appliance URL value used to configure this workflow.
+HTTPS URL used for appliance API validation.
 .PARAMETER SiteInterface
-Site Interface value used to configure this workflow.
+Appliance interface used for the site-network scenario.
 .PARAMETER SiteCidr
-Site Cidr value used to configure this workflow.
+IPv4 CIDR assigned to the site-network scenario.
 .PARAMETER AdminUsername
-Admin Username value used to configure this workflow.
+Atlaso administrator account used by the lifecycle harness.
 .PARAMETER AdminPassword
 Secure Admin Password supplied at runtime; no repository default is used.
 .PARAMETER ApplianceSshUser
-Appliance SSH User value used to configure this workflow.
+SSH account used for appliance guest operations.
 .PARAMETER ClientSshUser
-Client SSH User value used to configure this workflow.
+SSH account used for lifecycle client guests.
 .PARAMETER SshPassword
 Secure SSH Password supplied at runtime; no repository default is used.
 .PARAMETER VcfBackupPassword
@@ -44,33 +44,33 @@ Secure VCF Backup Password supplied at runtime; no repository default is used.
 .PARAMETER EsxiPassword
 Secure Esxi Password supplied at runtime; no repository default is used.
 .PARAMETER VlanId
-VLAN Id value used to configure this workflow.
+VLAN identifier used by the tagged-network scenario.
 .PARAMETER TaggedVlanCidr
-Tagged VLAN Cidr value used to configure this workflow.
+IPv4 CIDR used by the tagged-network scenario.
 .PARAMETER WanCidr
-Wan Cidr value used to configure this workflow.
+IPv4 CIDR used by the simulated WAN scenario.
 .PARAMETER RoutingWanOnly
-Routing Wan Only value used to configure this workflow.
+Run only the routing and WAN lifecycle scenario.
 .PARAMETER OidcOnly
-Oidc Only value used to configure this workflow.
+Run only the OIDC lifecycle scenario.
 .PARAMETER FullEsxiPxeInstall
-Full Esxi PXE Install value used to configure this workflow.
+Include the full ESXi PXE installation scenario.
 .PARAMETER PxeInstallerIsoPath
-PXE Installer Iso Path value used to configure this workflow.
+Path to the ESXi installer ISO used for PXE publication.
 .PARAMETER KeepVms
-Keep Vms value used to configure this workflow.
+Retain generated lifecycle VMs after the run completes.
 .PARAMETER SkipClientPrepare
-Skip Client Prepare value used to configure this workflow.
+Reuse the existing client image instead of rebuilding it.
 .PARAMETER PrepareNetworksOnly
-Prepare Networks Only value used to configure this workflow.
+Prepare required lifecycle networks and exit without creating VMs.
 .PARAMETER CleanupVmsOnly
-Cleanup Vms Only value used to configure this workflow.
+Remove VMs for the selected lifecycle lab and exit.
 .PARAMETER AllowDryRunApply
-Allow Dry Run Apply value used to configure this workflow.
+Allow the harness to exercise the appliance dry-run apply path.
 .PARAMETER SkipBackupRestoreTest
-Skip Backup Restore Test value used to configure this workflow.
+Skip the backup and restore lifecycle phase.
 .PARAMETER PlanOnly
-Plan Only value used to configure this workflow.
+Emit the resolved lifecycle plan without prompting for secrets or mutating the host.
 #>
 [CmdletBinding(DefaultParameterSetName = 'Run')]
 param(
@@ -221,7 +221,7 @@ $applianceIpWasPassed = $PSBoundParameters.ContainsKey('ApplianceIPAddress')
 
 <#
 .SYNOPSIS
-Find-Latest Appliance VMX helper for the bounded workflow.
+Return the newest eligible appliance VMX from VMware build output.
 #>
 function Find-LatestApplianceVmx {
     $outputRoot = Join-Path $repoRoot 'image\vmware-workstation\output'
@@ -239,7 +239,7 @@ function Find-LatestApplianceVmx {
 
 <#
 .SYNOPSIS
-Resolve-Power Shell7 Path helper for the bounded workflow.
+Resolve the PowerShell 7 executable required by the VMware lifecycle runner.
 #>
 function Resolve-PowerShell7Path {
     $powerShell7 = Get-Command -Name 'pwsh' -CommandType Application -ErrorAction SilentlyContinue |
@@ -252,11 +252,11 @@ function Resolve-PowerShell7Path {
 
 <#
 .SYNOPSIS
-Get-IPv4 Address From Subnet Offset helper for the bounded workflow.
+Return the IPv4 host address at a deterministic subnet offset.
 .PARAMETER Subnet
-Subnet value used to configure this workflow.
+Base IPv4 address of the subnet used for deterministic host allocation.
 .PARAMETER HostOffset
-Host Offset value used to configure this workflow.
+Host-number offset added to the subnet base address.
 #>
 function Get-Ipv4AddressFromSubnetOffset {
     param(
@@ -280,15 +280,15 @@ function Get-Ipv4AddressFromSubnetOffset {
 
 <#
 .SYNOPSIS
-Get-Management Network Plan helper for the bounded workflow.
+Return the validated VMware network plan used by lifecycle execution.
 .PARAMETER NetworkName
-Network Name value used to configure this workflow.
+VMware management network whose readiness plan is requested.
 .PARAMETER Vmrun
-Vmrun value used to configure this workflow.
+Optional vmrun executable passed to network discovery.
 .PARAMETER BridgeAlias
-Bridge Alias value used to configure this workflow.
+Optional host adapter alias used for bridged network discovery.
 .PARAMETER AllLifecycleNetworks
-All Lifecycle Networks value used to configure this workflow.
+Include site and trunk networks in addition to management.
 #>
 function Get-ManagementNetworkPlan {
     param(
@@ -356,17 +356,19 @@ if ($PSCmdlet.ParameterSetName -eq 'CleanupVms') {
     return
 }
 
-if ($null -eq $AdminPassword) {
-    $AdminPassword = Read-Host -Prompt 'Atlaso lifecycle administrator password' -AsSecureString
-}
-if ($null -eq $SshPassword) {
-    $SshPassword = $AdminPassword
-}
-if ($null -eq $VcfBackupPassword) {
-    $VcfBackupPassword = Read-Host -Prompt 'VCF Backup lifecycle password' -AsSecureString
-}
-if ($FullEsxiPxeInstall -and $null -eq $EsxiPassword) {
-    $EsxiPassword = Read-Host -Prompt 'ESXi root password for lifecycle probing' -AsSecureString
+if (-not $PlanOnly) {
+    if ($null -eq $AdminPassword) {
+        $AdminPassword = Read-Host -Prompt 'Atlaso lifecycle administrator password' -AsSecureString
+    }
+    if ($null -eq $SshPassword) {
+        $SshPassword = $AdminPassword
+    }
+    if ($null -eq $VcfBackupPassword) {
+        $VcfBackupPassword = Read-Host -Prompt 'VCF Backup lifecycle password' -AsSecureString
+    }
+    if ($FullEsxiPxeInstall -and $null -eq $EsxiPassword) {
+        $EsxiPassword = Read-Host -Prompt 'ESXi root password for lifecycle probing' -AsSecureString
+    }
 }
 if (($RoutingWanOnly -and $FullEsxiPxeInstall) -or ($OidcOnly -and ($RoutingWanOnly -or $FullEsxiPxeInstall))) {
     throw "-OidcOnly, -RoutingWanOnly, and -FullEsxiPxeInstall are mutually exclusive."
@@ -408,15 +410,18 @@ if (-not $SkipClientPrepare -and -not $PlanOnly) {
 $effectiveSkipBackupRestoreTest = [bool]($SkipBackupRestoreTest -or $RoutingWanOnly -or $OidcOnly)
 $powerShell7Path = Resolve-PowerShell7Path
 
-$secretBundlePath = Join-Path ([System.IO.Path]::GetTempPath()) "atlaso-vmware-lifecycle-$([guid]::NewGuid().ToString('N')).clixml"
-# CLIXML uses the current Windows user's DPAPI protection for SecureString
-# members, avoiding plaintext password arguments across the PowerShell process boundary.
-[pscustomobject]@{
-    AdminPassword     = $AdminPassword
-    SshPassword       = $SshPassword
-    VcfBackupPassword = $VcfBackupPassword
-    EsxiPassword      = $EsxiPassword
-} | Export-Clixml -LiteralPath $secretBundlePath -Force
+$secretBundlePath = ''
+if (-not $PlanOnly) {
+    $secretBundlePath = Join-Path ([System.IO.Path]::GetTempPath()) "atlaso-vmware-lifecycle-$([guid]::NewGuid().ToString('N')).clixml"
+    # CLIXML uses the current Windows user's DPAPI protection for SecureString
+    # members, avoiding plaintext password arguments across the PowerShell process boundary.
+    [pscustomobject]@{
+        AdminPassword     = $AdminPassword
+        SshPassword       = $SshPassword
+        VcfBackupPassword = $VcfBackupPassword
+        EsxiPassword      = $EsxiPassword
+    } | Export-Clixml -LiteralPath $secretBundlePath -Force
+}
 
 $arguments = @(
     '-NoLogo',
@@ -434,13 +439,13 @@ $arguments = @(
     '-SiteInterface', $SiteInterface,
     '-SiteCidr', $SiteCidr,
     '-AdminUsername', $AdminUsername,
-    '-SecretBundlePath', $secretBundlePath,
     '-ApplianceSshUser', $ApplianceSshUser,
     '-ClientSshUser', $ClientSshUser,
     '-VlanId', "$VlanId",
     '-TaggedVlanCidr', $TaggedVlanCidr,
     '-WanCidr', $WanCidr
 )
+if (-not $PlanOnly) { $arguments += @('-SecretBundlePath', $secretBundlePath) }
 if ($ApplianceIPAddress) { $arguments += @('-ApplianceIPAddress', $ApplianceIPAddress) }
 if ($effectiveApplianceUrl) { $arguments += @('-ApplianceUrl', $effectiveApplianceUrl) }
 if ($VmrunPath) { $arguments += @('-VmrunPath', $VmrunPath) }
@@ -469,5 +474,7 @@ try {
         throw "VMware Workstation lifecycle test failed with exit code $LASTEXITCODE"
     }
 } finally {
-    Remove-Item -LiteralPath $secretBundlePath -Force -ErrorAction SilentlyContinue
+    if ($secretBundlePath) {
+        Remove-Item -LiteralPath $secretBundlePath -Force -ErrorAction SilentlyContinue
+    }
 }
