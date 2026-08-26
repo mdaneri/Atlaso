@@ -59,12 +59,13 @@ try {
             -OutputDirectory $missingEnvironmentIdRoot `
             -Redeploy `
             -VmrunPath (Join-Path $missingEnvironmentIdRoot 'must-not-resolve-vmrun.exe') `
-            -OnePasswordEnvironmentId ''
+            -OnePasswordEnvironmentId '' `
+            -OnePasswordEnvironmentIdFile (Join-Path $missingEnvironmentIdRoot 'missing-environment-id')
     }
     catch {
         $missingEnvironmentIdError = $_.Exception.Message
     }
-    $expectedMissingEnvironmentIdError = 'OnePasswordEnvironmentId is required for normal VMware test VM creation. Copy the opaque ID from the exact Atlaso 1Password Environment and pass it with -OnePasswordEnvironmentId.'
+    $expectedMissingEnvironmentIdError = 'OnePasswordEnvironmentId is required for normal VMware test VM creation. Pass it explicitly or store it as the only line in .atlaso-local\onepassword-environment-id.'
     if ($missingEnvironmentIdError -cne $expectedMissingEnvironmentIdError) {
         throw "Missing Environment ID did not produce the intentional preflight error: $missingEnvironmentIdError"
     }
@@ -119,9 +120,50 @@ Assert-Throws {
 Remove-Item Function:\Get-Command
 
 $testEnvironmentId = 'atlaso-test-environment-id-01'
+$testEnvironmentIdSha256 = [Convert]::ToHexString(
+    [System.Security.Cryptography.SHA256]::HashData(
+        [System.Text.Encoding]::UTF8.GetBytes($testEnvironmentId)
+    )
+)
+$environmentIdFileRoot = Join-Path ([System.IO.Path]::GetTempPath()) (
+    "atlaso-environment-id-file-$([guid]::NewGuid().ToString('N'))"
+)
+try {
+    New-Item -ItemType Directory -Path $environmentIdFileRoot | Out-Null
+    $environmentIdFile = Join-Path $environmentIdFileRoot 'onepassword-environment-id'
+    [System.IO.File]::WriteAllText($environmentIdFile, $testEnvironmentId)
+    $resolvedEnvironmentId = Resolve-OnePasswordDevelopmentCaEnvironmentId `
+        -EnvironmentIdFile $environmentIdFile `
+        -RepositoryRoot $environmentIdFileRoot
+    if ($resolvedEnvironmentId -cne $testEnvironmentId) {
+        throw 'The local Environment ID file did not resolve its exact single-line value.'
+    }
+    $explicitEnvironmentId = Resolve-OnePasswordDevelopmentCaEnvironmentId `
+        -EnvironmentId $testEnvironmentId `
+        -EnvironmentIdFile (Join-Path $environmentIdFileRoot 'missing') `
+        -RepositoryRoot $environmentIdFileRoot
+    if ($explicitEnvironmentId -cne $testEnvironmentId) {
+        throw 'The explicit Environment ID must take precedence over the local file.'
+    }
+    [System.IO.File]::WriteAllLines($environmentIdFile, @($testEnvironmentId, 'second-line'))
+    Assert-Throws {
+        Resolve-OnePasswordDevelopmentCaEnvironmentId `
+            -EnvironmentIdFile $environmentIdFile `
+            -RepositoryRoot $environmentIdFileRoot
+    } 'A multiline Environment ID file must fail closed.'
+}
+finally {
+    Remove-Item -LiteralPath $environmentIdFileRoot -Recurse -Force -ErrorAction SilentlyContinue
+}
 Assert-Throws {
     Assert-OnePasswordDevelopmentCaBridge -EnvironmentId 'unsafe id' -OpPath 'ignored'
 } 'Unsafe Environment IDs must fail closed.'
+Assert-Throws {
+    Assert-OnePasswordDevelopmentCaBridge `
+        -EnvironmentId 'different-test-environment-id' `
+        -OpPath 'ignored' `
+        -ExpectedEnvironmentIdSha256 $testEnvironmentIdSha256
+} 'A different well-formed Environment ID must fail before invoking op.'
 
 <#
 .SYNOPSIS
@@ -153,12 +195,14 @@ Assert-Throws {
     Assert-OnePasswordDevelopmentCaBridge `
         -EnvironmentId $testEnvironmentId `
         -OpPath 'stable-op' `
+        -ExpectedEnvironmentIdSha256 $testEnvironmentIdSha256 `
         -TimeoutSeconds 1
 } 'A stable CLI without op run --environment must fail closed.'
 $script:fakeRunHelp = '--environment strings'
 Assert-OnePasswordDevelopmentCaBridge `
     -EnvironmentId $testEnvironmentId `
     -OpPath 'beta-op' `
+    -ExpectedEnvironmentIdSha256 $testEnvironmentIdSha256 `
     -TimeoutSeconds 1
 
 $env:ATLASO_DEVELOPMENT_ROOT_CA_PRIVATE_KEY = 'caller-secret'
@@ -167,6 +211,7 @@ try {
         Assert-OnePasswordDevelopmentCaBridge `
             -EnvironmentId $testEnvironmentId `
             -OpPath 'beta-op' `
+            -ExpectedEnvironmentIdSha256 $testEnvironmentIdSha256 `
             -TimeoutSeconds 1
     } 'A caller-provided development signer must fail closed.'
 }
@@ -846,13 +891,14 @@ finally {
 $childSource = Get-Content -LiteralPath (
     Join-Path $RepositoryRoot 'scripts\windows\vmware\Invoke-AtlasoDevelopmentCaSecret.ps1'
 ) -Raw
-if ($wrapperSource -match 'ExpectedEnvironmentIdSha256|environmentIdDigest') {
-    throw 'The normal test VM bridge must not retain the stale Environment-ID digest pin.'
+if ($wrapperSource -notmatch 'ExpectedEnvironmentIdSha256|environmentIdDigest') {
+    throw 'The normal test VM bridge must pin the exact Environment ID by SHA-256.'
 }
 foreach ($betaCliMarker in @(
         "@('run', '--help')",
         "'run', '--environment', `$EnvironmentId, '--'",
-        'Install the Environments-enabled beta CLI and retry.'
+        'Install the Environments-enabled beta CLI and retry.',
+        '.atlaso-local\onepassword-environment-id'
     )) {
     if (-not $wrapperSource.Contains($betaCliMarker, [System.StringComparison]::Ordinal)) {
         throw "The normal test VM wrapper is missing its beta CLI contract: $betaCliMarker"

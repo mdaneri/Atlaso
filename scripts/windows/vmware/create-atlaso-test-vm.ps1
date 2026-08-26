@@ -86,7 +86,12 @@ An exact existing trust entry is reused without reimport.
 
 .PARAMETER OnePasswordEnvironmentId
 Opaque ID of the exact Atlaso 1Password Environment containing the concealed
-ATLASO_DEVELOPMENT_ROOT_CA_PRIVATE_KEY variable. Required for real creation.
+ATLASO_DEVELOPMENT_ROOT_CA_PRIVATE_KEY variable. When omitted, the wrapper reads
+the single-line .atlaso-local\onepassword-environment-id file from the checkout.
+
+.PARAMETER OnePasswordEnvironmentIdFile
+Optional path to a single-line local Environment ID file. The checkout-local,
+Git-ignored .atlaso-local\onepassword-environment-id file is the default.
 
 .PARAMETER FirstBootFqdn
 Optional first-boot appliance FQDN override.
@@ -137,6 +142,7 @@ param(
     [switch]$WaitForIp = $true,
     [switch]$TrustRootCa,
     [string]$OnePasswordEnvironmentId = '',
+    [string]$OnePasswordEnvironmentIdFile = '',
     [string]$FirstBootFqdn = '',
     [string]$AdminPassword = 'VMware01!Test',
     [string]$RootPassword = 'VMware01!Test',
@@ -204,6 +210,43 @@ function Resolve-OnePasswordCliPath {
 
 <#
 .SYNOPSIS
+Resolve the exact Atlaso 1Password Environment ID without printing it.
+
+.PARAMETER EnvironmentId
+Optional explicit opaque Environment ID supplied by the operator.
+
+.PARAMETER EnvironmentIdFile
+Optional path to the single-line local Environment ID file.
+
+.PARAMETER RepositoryRoot
+Atlaso checkout root containing the default .atlaso-local configuration.
+#>
+function Resolve-OnePasswordDevelopmentCaEnvironmentId {
+    param(
+        [string]$EnvironmentId = '',
+        [string]$EnvironmentIdFile = '',
+        [Parameter(Mandatory = $true)][string]$RepositoryRoot
+    )
+
+    if (-not [string]::IsNullOrWhiteSpace($EnvironmentId)) {
+        return $EnvironmentId
+    }
+    $resolvedEnvironmentIdFile = $EnvironmentIdFile
+    if ([string]::IsNullOrWhiteSpace($resolvedEnvironmentIdFile)) {
+        $resolvedEnvironmentIdFile = Join-Path $RepositoryRoot '.atlaso-local\onepassword-environment-id'
+    }
+    if (-not (Test-Path -LiteralPath $resolvedEnvironmentIdFile -PathType Leaf)) {
+        throw 'OnePasswordEnvironmentId is required for normal VMware test VM creation. Pass it explicitly or store it as the only line in .atlaso-local\onepassword-environment-id.'
+    }
+    $environmentIdLines = [System.IO.File]::ReadAllLines($resolvedEnvironmentIdFile)
+    if ($environmentIdLines.Count -ne 1 -or [string]::IsNullOrWhiteSpace($environmentIdLines[0])) {
+        throw 'The local 1Password Environment ID file must contain exactly one non-empty line.'
+    }
+    return $environmentIdLines[0].Trim()
+}
+
+<#
+.SYNOPSIS
 Validate the opaque Environment ID and require an Environments-enabled beta CLI.
 
 .PARAMETER EnvironmentId
@@ -212,6 +255,10 @@ Opaque ID copied from the exact Atlaso 1Password Environment.
 .PARAMETER OpPath
 Resolved 1Password CLI executable path.
 
+.PARAMETER ExpectedEnvironmentIdSha256
+Pinned SHA-256 identity of the exact Atlaso Environment. The override exists
+only so focused tests can exercise the guard without publishing the real ID.
+
 .PARAMETER TimeoutSeconds
 Positive deadline for the CLI capability probe.
 #>
@@ -219,11 +266,24 @@ function Assert-OnePasswordDevelopmentCaBridge {
     param(
         [Parameter(Mandatory = $true)][string]$EnvironmentId,
         [Parameter(Mandatory = $true)][string]$OpPath,
+        [string]$ExpectedEnvironmentIdSha256 = 'FE14B62FB2D23460202299784CB1080B9E0FCF202ED5D75B4843202CD68BDF06',
         [ValidateRange(1, 3600)][int]$TimeoutSeconds = 30
     )
 
     if ($EnvironmentId -notmatch '^[A-Za-z0-9_-]{8,128}$') {
         throw 'OnePasswordEnvironmentId is required and must be the opaque ID of the exact Atlaso Environment.'
+    }
+    # Verify the non-secret repository pin before invoking op so a different
+    # Environment cannot become trusted merely by copying the signer variable.
+    $environmentIdDigest = [System.Security.Cryptography.SHA256]::HashData(
+        [System.Text.Encoding]::UTF8.GetBytes($EnvironmentId)
+    )
+    $expectedEnvironmentIdDigest = [Convert]::FromHexString($ExpectedEnvironmentIdSha256)
+    if (-not [System.Security.Cryptography.CryptographicOperations]::FixedTimeEquals(
+            $environmentIdDigest,
+            $expectedEnvironmentIdDigest
+        )) {
+        throw 'OnePasswordEnvironmentId does not identify the exact Atlaso Environment.'
     }
     if ($env:ATLASO_DEVELOPMENT_ROOT_CA_PRIVATE_KEY) {
         throw 'ATLASO_DEVELOPMENT_ROOT_CA_PRIVATE_KEY must come only from the exact 1Password Environment bridge.'
@@ -1515,11 +1575,13 @@ function Write-ConnectionSummary {
     Write-Host ""
 }
 
-if (-not $WhatIfPreference -and [string]::IsNullOrWhiteSpace($OnePasswordEnvironmentId)) {
-    throw 'OnePasswordEnvironmentId is required for normal VMware test VM creation. Copy the opaque ID from the exact Atlaso 1Password Environment and pass it with -OnePasswordEnvironmentId.'
-}
-
 $repoRoot = (Resolve-Path -LiteralPath (Join-Path $PSScriptRoot '..\..\..')).Path
+if (-not $WhatIfPreference) {
+    $OnePasswordEnvironmentId = Resolve-OnePasswordDevelopmentCaEnvironmentId `
+        -EnvironmentId $OnePasswordEnvironmentId `
+        -EnvironmentIdFile $OnePasswordEnvironmentIdFile `
+        -RepositoryRoot $repoRoot
+}
 $developmentRootCaCertificatePath = Join-Path $repoRoot 'image\vmware-workstation\development-trust\atlaso-development-root-ca.pem'
 $developmentRootCaCertificatePem = Get-Content -LiteralPath $developmentRootCaCertificatePath -Raw
 $developmentRootCaFingerprint = Get-AtlasoDevelopmentRootCaFingerprint `

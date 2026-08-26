@@ -1399,14 +1399,31 @@ terminating and print their success message only after every target is absent.
 An existing canonical target that is not a directory is an error and blocks that success message instead of being
 silently skipped.
 
-For a normal Workstation test appliance on the management vmnet:
+For a normal Workstation test appliance on the management vmnet, first store the exact `Atlaso` Environment ID in the
+checkout-local, Git-ignored configuration file. Input is masked and is never printed:
+
+```powershell
+$atlasoLocal = Join-Path (git rev-parse --show-toplevel) '.atlaso-local'
+New-Item -ItemType Directory -Path $atlasoLocal -Force | Out-Null
+$atlasoEnvironmentId = Read-Host 'Paste the Atlaso Environment ID' -MaskInput
+try {
+    [System.IO.File]::WriteAllText(
+        (Join-Path $atlasoLocal 'onepassword-environment-id'),
+        $atlasoEnvironmentId
+    )
+}
+finally {
+    Remove-Variable atlasoEnvironmentId -ErrorAction SilentlyContinue
+}
+```
+
+Then run:
 
 ```powershell
 pwsh -ExecutionPolicy Bypass `
   -File scripts/windows/vmware/create-atlaso-test-vm.ps1 `
   -Redeploy `
-  -ResetDataDisks `
-  -OnePasswordEnvironmentId '<atlaso-environment-id>'
+  -ResetDataDisks
 ```
 
 The normal wrapper resolves the current Windows user's existing `.ssh/id_ed25519.pub` before any cleanup or VM
@@ -1416,7 +1433,9 @@ separate test-only passwordless-sudo rule. Use `-SshPublicKeyPath <path>` for an
 VMs, exported OVF/OVA appliances, and root SSH remain unchanged. Normal test VMs use the checked-in public
 `Atlaso Development Root CA` and the matching concealed
 `ATLASO_DEVELOPMENT_ROOT_CA_PRIVATE_KEY` from the exact `Atlaso` 1Password Environment. The wrapper requires the opaque
-Environment ID for real creation, requires the Environments-enabled beta CLI installed under
+Environment ID for real creation, preferring an explicit `-OnePasswordEnvironmentId` override and otherwise reading the
+single-line `.atlaso-local/onepassword-environment-id` file ignored by Git. It verifies the ID against the non-secret
+repository SHA-256 pin before invoking `op`, requires the Environments-enabled beta CLI installed under
 `C:\Program Files\1Password CLI`, validates `op run --environment`, and cryptographically verifies the retrieved
 certificate/key pair before mutation. It uses a bounded child and a separately scrubbed guest-info value.
 `-TimeoutSeconds` requires proven complete
