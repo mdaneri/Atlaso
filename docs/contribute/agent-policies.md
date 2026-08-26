@@ -74,6 +74,10 @@ runtime.
 
 ## Repository Delivery Workflow
 
+- Agent-authored implementation work must run from a dedicated clean sibling worktree on its task-owned branch. Keep
+  the repository's primary checkout for synchronization, coordination, and completed-task cleanup; do not apply
+  implementation edits there. Establish the worktree and repeat the Mandatory Agent Startup Gate in its directory
+  before planning or mutation. If a safe dedicated worktree cannot be established, stop for maintainer direction.
 - [CONTRIBUTING.md](https://github.com/mdaneri/Atlaso/blob/main/CONTRIBUTING.md) is the canonical delivery workflow.
   Every repository change requires a GitHub
   issue created or linked before implementation begins, exactly one applicable type label, relevant documentation

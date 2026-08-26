@@ -80,6 +80,12 @@ constructors outside the shared foundation are forbidden.
 label, documentation in the same change, the next patch version, validation, and a pull request containing
 `Closes #<issue>`. Never commit directly to `main`.
 
+Agent-authored implementation work must use a dedicated clean sibling worktree on its task-owned branch. Do not make
+implementation edits in the repository's primary checkout; reserve that checkout for synchronization, coordination,
+and completed-task cleanup. Create or select the task worktree before applying implementation changes, and repeat the
+Mandatory Agent Startup Gate there before planning or mutation. If a safe dedicated worktree cannot be established,
+stop for maintainer direction instead of continuing in the primary checkout.
+
 ### Unrelated issue discoveries
 
 Keep each pull request limited to its linked issue scope. When work reveals a reproducible or otherwise evidence-backed
@@ -506,6 +512,11 @@ The following cross-cutting boundaries always apply:
   for explicit `known_hosts` verification; never substitute unauthenticated `ssh-keyscan` output.
   Keep both properties internal to this wrapper, preserve root SSH as disabled, and do not extend this development-only
   authority to lifecycle VMs or exported OVF/OVA deployments.
+  Before reporting a started clone ready or printing connection endpoints, bind VMware Tools' management IPv4 result to
+  the exact running VMX, its `ethernet0` MAC, the injected hostname, and a Windows neighbor entry for that MAC. Compare
+  the address with every running Workstation VM and fail closed with the conflicting VMX, MAC, and address when another
+  guest reports it or the host-facing neighbor maps elsewhere. Never continue SSH or HTTPS validation through an
+  ambiguous address and never modify the user's SSH `known_hosts` automatically during recovery.
 - Inventory Linux reports use bounded schema v2 while accepting and normalizing legacy v1. Keep sysfs authoritative for
   device enumeration, use metadata tools only for structured enrichment/readable names, retain JSON in the existing
   report column, enforce the 256 KiB boundary, and never submit raw command output. Its five-minute local console

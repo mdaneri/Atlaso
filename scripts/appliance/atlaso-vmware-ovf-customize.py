@@ -11,6 +11,7 @@ import os
 import re
 import secrets
 import shutil
+import socket
 import subprocess
 import sys
 import time
@@ -40,7 +41,9 @@ PROPERTY_ROOT_PASSWORD = f"{PROPERTY_PREFIX}root_password"
 PROPERTY_ROOT_SSH_ENABLED = f"{PROPERTY_PREFIX}root_ssh_enabled"
 PROPERTY_DEVELOPMENT_ADMIN_SSH_PUBLIC_KEY = f"{PROPERTY_PREFIX}development_admin_ssh_public_key"
 PROPERTY_DEPLOYMENT_ID = f"{PROPERTY_PREFIX}deployment_id"
+PROPERTY_NORMAL_TEST_VM = f"{PROPERTY_PREFIX}normal_test_vm"
 TEST_VM_SSH_HOST_KEY_GUESTINFO = "guestinfo.atlaso.test_vm_ssh_host_ed25519_public_key"
+TEST_VM_HOSTNAME_GUESTINFO = "guestinfo.atlaso.test_vm_hostname"
 MINIMUM_PASSWORD_LENGTH = 12
 REQUIRED_PROPERTIES = {
     PROPERTY_FQDN,
@@ -317,6 +320,33 @@ def publish_test_vm_ssh_host_key() -> None:
     raise OvfCustomizationError("VMware Tools could not publish the test VM SSH host public key")
 
 
+def publish_test_vm_hostname() -> None:
+    """Publish the normal test VM's actual first-boot hostname through VMware guest-info.
+
+    Raises:
+        OvfCustomizationError: If the hostname is invalid or cannot be published.
+    """
+    hostname = validate_fqdn(socket.gethostname())
+    rpc_argument = f'info-set {TEST_VM_HOSTNAME_GUESTINFO} "{hostname}"'
+    commands = [
+        ["vmware-rpctool", rpc_argument],
+        ["vmtoolsd", "--cmd", rpc_argument],
+    ]
+    for command in commands:
+        executable = shutil.which(command[0])
+        if executable is None:
+            continue
+        result = subprocess.run(
+            [executable, *command[1:]],
+            check=False,
+            text=True,
+            capture_output=True,
+        )
+        if result.returncode == 0:
+            return
+    raise OvfCustomizationError("VMware Tools could not publish the test VM hostname")
+
+
 def validate_non_network_properties(properties: dict[str, str]) -> dict[str, object]:
     """Validate OVF fields that the network-only console flow cannot correct.
 
@@ -351,6 +381,7 @@ def validate_non_network_properties(properties: dict[str, str]) -> dict[str, obj
         "development_admin_ssh_public_key": validate_ed25519_public_key(
             properties.get(PROPERTY_DEVELOPMENT_ADMIN_SSH_PUBLIC_KEY, "")
         ),
+        "normal_test_vm": parse_boolean_property(properties, PROPERTY_NORMAL_TEST_VM),
         "deployment_id": deployment_id,
     }
 
@@ -429,6 +460,7 @@ def validate_properties(
         "development_admin_ssh_public_key": validated_non_network[
             "development_admin_ssh_public_key"
         ],
+        "normal_test_vm": validated_non_network["normal_test_vm"],
         "deployment_id": validated_non_network["deployment_id"],
         "management_source_cidr": management_source_cidr,
         "management_source_ipv6_cidr": management_source_ipv6_cidr,
@@ -878,6 +910,7 @@ def redacted_summary(config: dict[str, object]) -> dict[str, object]:
         "development_admin_passwordless_sudo": bool(
             config["development_admin_ssh_public_key"]
         ),
+        "normal_test_vm": bool(config["normal_test_vm"]),
         "deployment_id": config["deployment_id"],
     }
 
@@ -1566,6 +1599,10 @@ def apply_customization(config: dict[str, object], *, dry_run: bool = False) -> 
         # wrapper injects this development-key property; lifecycle and exported
         # appliances therefore never publish this convenience-channel value.
         run_initialization_layer("test VM SSH host key", publish_test_vm_ssh_host_key)
+    if config["normal_test_vm"]:
+        # The explicit normal-test marker survives password-only clone creation;
+        # do not infer this trust boundary from optional SSH key provisioning.
+        run_initialization_layer("test VM hostname", publish_test_vm_hostname)
     run_initialization_layer(
         "appliance environment",
         lambda: write_env_file(ENV_PATH, appliance_environment_values(config)),

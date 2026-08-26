@@ -549,6 +549,38 @@ def test_vmware_workstation_build_monitor_behavior(tmp_path):
     assert "generated-vnc-test-secret" not in result.stderr
 
 
+def test_vmware_workstation_address_readiness_behavior(tmp_path):
+    """Verify duplicate static addresses and wrong host neighbors fail closed.
+
+    Args:
+        tmp_path: Temporary directory provided by pytest for synthetic VMX evidence.
+    """
+    pwsh = shutil.which("pwsh")
+    if pwsh is None:
+        pytest.skip("PowerShell 7 is not available")
+
+    result = subprocess.run(
+        [
+            pwsh,
+            "-NoLogo",
+            "-NoProfile",
+            "-NonInteractive",
+            "-File",
+            "tests/powershell/Test-AtlasoWorkstationReadiness.ps1",
+            "-RepositoryRoot",
+            str(Path.cwd()),
+            "-OutputDirectory",
+            str(tmp_path / "vmware-readiness"),
+        ],
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert "Atlaso VMware Workstation readiness tests passed." in result.stdout
+
+
 def test_hyperv_management_nat_prefix_is_validated_and_canonical():
     """Verify Hyper-V NAT CIDRs are masked and invalid input fails before mutation."""
     pwsh = shutil.which("pwsh")
@@ -1503,7 +1535,10 @@ def test_create_atlaso_vmware_test_vm_wrapper_uses_common_helpers():
     assert "certutil.exe -f -user -addstore Root $rootCerPath" in script
     assert "if ($TrustRootCa -and $NoStart)" in script
     assert "if (-not $NoStart -and -not $WhatIfPreference)" in script
-    assert "if (($WaitForIp -or $TrustRootCa) -and -not $NoStart -and -not $WhatIfPreference)" in script
+    assert "if (($WaitForIp -or $TrustRootCa) -and $readinessIdentity)" in script
+    assert "-ExpectedHostname $FirstBootFqdn" in script
+    assert "-PassThruIdentity" in script
+    assert "Atlaso Workstation test VM ready" in script
     assert 'Write-SummaryRow -Label "Console URL:" -Value "https://$IpAddress/"' in script
     assert 'Write-SummaryRow -Label "API URL:" -Value "https://$IpAddress/openapi.json"' in script
     assert 'Write-SummaryRow -Label "Swagger URL:" -Value "https://$IpAddress/api/docs"' in script
@@ -1669,9 +1704,12 @@ def test_vmware_raw_vmx_workflows_inject_complete_first_boot_ovf_environment_bef
     assert 'TEST_VM_SSH_HOST_KEY_GUESTINFO = "guestinfo.atlaso.test_vm_ssh_host_ed25519_public_key"' in customizer
     assert "def publish_test_vm_ssh_host_key()" in customizer
     assert 'run_initialization_layer("test VM SSH host key", publish_test_vm_ssh_host_key)' in customizer
+    assert 'if config["normal_test_vm"]:' in customizer
+    assert 'run_initialization_layer("test VM hostname", publish_test_vm_hostname)' in customizer
 
     assert "Atlaso.WorkstationFirstBoot.ps1" in test_vm
     assert "New-AtlasoWorkstationOvfEnvironment" in test_vm
+    assert "-NormalTestVm" in test_vm
     assert "Set-AtlasoWorkstationOvfEnvironment -VmxPath $targetVmx" in test_vm
     assert test_vm.index("Set-AtlasoWorkstationOvfEnvironment -VmxPath $targetVmx") < test_vm.index(
         "start-atlaso-vm.ps1"
@@ -1682,6 +1720,7 @@ def test_vmware_raw_vmx_workflows_inject_complete_first_boot_ovf_environment_bef
     assert "-RootSshEnabled:($ApplianceSshUser -eq 'root')" in lifecycle
     assert "Set-AtlasoWorkstationOvfEnvironment -VmxPath $applianceVmx" in lifecycle
     assert "DevelopmentAdminSshPublicKey" not in lifecycle
+    assert "-NormalTestVm" not in lifecycle
     assert lifecycle.index("Set-AtlasoWorkstationOvfEnvironment -VmxPath $applianceVmx") < lifecycle.index(
         "Start-WorkstationVm -Path $vmx"
     )
