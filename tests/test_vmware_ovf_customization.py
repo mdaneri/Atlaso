@@ -31,7 +31,12 @@ def load_customizer():
 
 @pytest.mark.parametrize("platform", ("vmware", "qemu", "hyperv", "baremetal"))
 def test_portable_first_boot_uses_verified_guest_agent_platform_marker(tmp_path: Path, platform: str) -> None:
-    """The OVF handoff consumes the prerequisite provider-neutral platform result."""
+    """The OVF handoff consumes the prerequisite provider-neutral platform result.
+
+    Args:
+        tmp_path: Temporary directory provided by pytest.
+        platform: Verified guest-agent platform marker value.
+    """
 
     customizer = load_customizer()
     marker = tmp_path / "guest-agent.applied"
@@ -42,7 +47,11 @@ def test_portable_first_boot_uses_verified_guest_agent_platform_marker(tmp_path:
 
 
 def test_portable_first_boot_rejects_invalid_guest_agent_platform_marker(tmp_path: Path) -> None:
-    """Unknown or malformed prerequisite state cannot fall through to OVF polling."""
+    """Unknown or malformed prerequisite state cannot fall through to OVF polling.
+
+    Args:
+        tmp_path: Temporary directory provided by pytest.
+    """
 
     customizer = load_customizer()
     marker = tmp_path / "guest-agent.applied"

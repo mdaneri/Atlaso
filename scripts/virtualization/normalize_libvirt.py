@@ -13,7 +13,13 @@ class LibvirtContractError(ValueError):
 
 
 def _require(parent: ET.Element | None, path: str, message: str) -> ET.Element:
-    """Return one required child element."""
+    """Return one required child element.
+
+    Args:
+        parent: XML element to search.
+        path: Relative ElementTree selector.
+        message: Failure message when the child is absent.
+    """
 
     if parent is None:
         raise LibvirtContractError(message)
@@ -24,7 +30,13 @@ def _require(parent: ET.Element | None, path: str, message: str) -> ET.Element:
 
 
 def normalize_domain(root: ET.Element, *, management_network: str, service_network: str) -> ET.Element:
-    """Return the exact four-disk, two-NIC Atlaso libvirt definition."""
+    """Return the exact four-disk, two-NIC Atlaso libvirt definition.
+
+    Args:
+        root: Libvirt domain XML root.
+        management_network: Management libvirt network name.
+        service_network: Service libvirt network name.
+    """
 
     normalized = deepcopy(root)
     if normalized.tag != "domain":
@@ -109,7 +121,13 @@ def normalize_domain(root: ET.Element, *, management_network: str, service_netwo
 
 
 def assert_normalized(root: ET.Element, *, management_network: str, service_network: str) -> None:
-    """Require an input definition to already equal the normalized contract."""
+    """Require an input definition to already equal the normalized contract.
+
+    Args:
+        root: Libvirt domain XML root.
+        management_network: Expected management network name.
+        service_network: Expected service network name.
+    """
 
     normalized = normalize_domain(root, management_network=management_network, service_network=service_network)
     if ET.tostring(root, encoding="unicode") != ET.tostring(normalized, encoding="unicode"):
@@ -117,7 +135,11 @@ def assert_normalized(root: ET.Element, *, management_network: str, service_netw
 
 
 def disk_source_paths(root: ET.Element) -> list[str]:
-    """Return the four ordered local disk paths from a libvirt definition."""
+    """Return the four ordered local disk paths from a libvirt definition.
+
+    Args:
+        root: Libvirt domain XML root.
+    """
 
     devices = _require(root, "devices", "Libvirt domain has no device collection.")
     disks = [disk for disk in devices.findall("disk") if disk.get("device") == "disk"]
@@ -134,7 +156,11 @@ def disk_source_paths(root: ET.Element) -> list[str]:
 
 
 def main(argv: list[str] | None = None) -> int:
-    """Run the libvirt normalizer command-line interface."""
+    """Run the libvirt normalizer command-line interface.
+
+    Args:
+        argv: Optional command-line argument sequence.
+    """
 
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("input", type=Path, help="Input libvirt domain XML.")

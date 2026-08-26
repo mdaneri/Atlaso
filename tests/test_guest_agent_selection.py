@@ -17,14 +17,26 @@ pytestmark = pytest.mark.skipif(os.name == "nt", reason="The selector runs insid
 
 
 def _write_executable(path: Path, content: str) -> None:
-    """Write one executable test double."""
+    """Write one executable test double.
+
+    Args:
+        path: Test-double destination.
+        content: Shell script content.
+    """
 
     path.write_text(content, encoding="utf-8")
     path.chmod(0o755)
 
 
 def _prepare_runtime(tmp_path: Path, *, platform: str, dmi: str, packages: tuple[str, ...]) -> dict[str, str]:
-    """Prepare an isolated command and filesystem boundary for the selector."""
+    """Prepare an isolated command and filesystem boundary for the selector.
+
+    Args:
+        tmp_path: Temporary directory provided by pytest.
+        platform: Simulated systemd virtualization value.
+        dmi: Simulated DMI vendor evidence.
+        packages: Initially installed package names.
+    """
 
     command_dir = tmp_path / "bin"
     command_dir.mkdir()
@@ -139,7 +151,11 @@ esac
 
 
 def _run_selector(environment: dict[str, str]) -> subprocess.CompletedProcess[str]:
-    """Run the selector inside its isolated test boundary."""
+    """Run the selector inside its isolated test boundary.
+
+    Args:
+        environment: Isolated selector environment.
+    """
 
     return subprocess.run(
         ["sh", str(SELECTOR)],
@@ -173,7 +189,16 @@ def test_selects_one_provider_and_erases_staging(
     expected: set[str],
     service: str,
 ) -> None:
-    """Each supported platform retains exactly its intended guest agent."""
+    """Each supported platform retains exactly its intended guest agent.
+
+    Args:
+        tmp_path: Temporary directory provided by pytest.
+        detected: Simulated systemd virtualization value.
+        dmi: Simulated DMI vendor evidence.
+        initial: Initially installed package names.
+        expected: Expected final package set.
+        service: Expected active guest-agent service.
+    """
 
     environment = _prepare_runtime(tmp_path, platform=detected, dmi=dmi, packages=initial)
     result = _run_selector(environment)
@@ -204,7 +229,14 @@ def test_unknown_or_contradictory_evidence_blocks_and_retains_payload(
     dmi: str,
     message: str,
 ) -> None:
-    """Unsafe evidence preserves the offline closure and leaves no success marker."""
+    """Unsafe evidence preserves the offline closure and leaves no success marker.
+
+    Args:
+        tmp_path: Temporary directory provided by pytest.
+        detected: Simulated unsupported or conflicting platform.
+        dmi: Simulated DMI vendor evidence.
+        message: Expected fail-closed diagnostic.
+    """
 
     environment = _prepare_runtime(tmp_path, platform=detected, dmi=dmi, packages=("open-vm-tools",))
     result = _run_selector(environment)
@@ -216,7 +248,11 @@ def test_unknown_or_contradictory_evidence_blocks_and_retains_payload(
 
 
 def test_checksum_failure_is_retryable_without_network_access(tmp_path: Path) -> None:
-    """A damaged payload is retained, then succeeds after an operator restores it."""
+    """A damaged payload is retained, then succeeds after an operator restores it.
+
+    Args:
+        tmp_path: Temporary directory provided by pytest.
+    """
 
     environment = _prepare_runtime(tmp_path, platform="kvm", dmi="QEMU", packages=("open-vm-tools",))
     qemu_rpm = Path(environment["ATLASO_GUEST_AGENT_STAGING"]) / "qemu" / "qemu.rpm"
@@ -235,7 +271,11 @@ def test_checksum_failure_is_retryable_without_network_access(tmp_path: Path) ->
 
 
 def test_unlisted_rpm_is_rejected_without_package_mutation(tmp_path: Path) -> None:
-    """The manifest must cover the exact closure, not merely a valid subset."""
+    """The manifest must cover the exact closure, not merely a valid subset.
+
+    Args:
+        tmp_path: Temporary directory provided by pytest.
+    """
 
     environment = _prepare_runtime(tmp_path, platform="kvm", dmi="QEMU", packages=("open-vm-tools",))
     extra = Path(environment["ATLASO_GUEST_AGENT_STAGING"]) / "qemu" / "unlisted.rpm"
@@ -251,7 +291,11 @@ def test_unlisted_rpm_is_rejected_without_package_mutation(tmp_path: Path) -> No
 
 
 def test_success_marker_is_revalidated_against_current_platform(tmp_path: Path) -> None:
-    """A stale or unsafe marker cannot bypass provider detection on a cloned appliance."""
+    """A stale or unsafe marker cannot bypass provider detection on a cloned appliance.
+
+    Args:
+        tmp_path: Temporary directory provided by pytest.
+    """
 
     environment = _prepare_runtime(tmp_path, platform="kvm", dmi="QEMU", packages=("open-vm-tools",))
     result = _run_selector(environment)

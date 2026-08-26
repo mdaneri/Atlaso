@@ -18,7 +18,11 @@ HOST_KEY = "ssh-ed25519 " + base64.b64encode(
 
 
 def test_secret_input_accepts_only_exact_stdin_schema(monkeypatch: pytest.MonkeyPatch) -> None:
-    """Credentials are accepted only from the exact standard-input envelope."""
+    """Credentials are accepted only from the exact standard-input envelope.
+
+    Args:
+        monkeypatch: Pytest fixture used to replace standard input.
+    """
 
     monkeypatch.setattr(sys, "stdin", io.StringIO('{"username":"admin","password":"fixture"}'))
     secret = smoke.load_secret_input()
@@ -56,7 +60,13 @@ def test_validation_script_proves_agent_disks_services_and_front_door(
     expected: str,
     foreign: str,
 ) -> None:
-    """Each Windows-hosted smoke validates the complete guest contract."""
+    """Each Windows-hosted smoke validates the complete guest contract.
+
+    Args:
+        platform: Guest virtualization provider.
+        expected: Provider package assertion expected in the script.
+        foreign: Foreign-package absence assertion expected in the script.
+    """
 
     script = smoke._validation_script(platform)
     assert expected in script

@@ -2586,7 +2586,11 @@ def check_xmlish_svg(path: Path, text: str) -> list[Finding]:
 
 
 def check_virtualization_legacy(root: Path) -> list[Finding]:
-    """Reject retired Hyper-V development and standalone QCOW2 release surfaces."""
+    """Reject retired Hyper-V development and standalone QCOW2 release surfaces.
+
+    Args:
+        root: Repository root to inspect.
+    """
 
     findings: list[Finding] = []
     forbidden_paths = (

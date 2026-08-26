@@ -13,7 +13,11 @@ from tests.test_virtualization_ova import _members, _write_ova
 
 
 def _ova_package(path: Path) -> Path:
-    """Write one valid extracted package and matching canonical OVA."""
+    """Write one valid extracted package and matching canonical OVA.
+
+    Args:
+        path: Package directory destination.
+    """
 
     path.mkdir()
     members = _members()
@@ -25,7 +29,11 @@ def _ova_package(path: Path) -> Path:
 
 
 def test_stages_validated_ova_hyperv_and_flat_helpers_idempotently(tmp_path: Path) -> None:
-    """The publication directory receives one exact, repeatable virtualization set."""
+    """The publication directory receives one exact, repeatable virtualization set.
+
+    Args:
+        tmp_path: Temporary directory provided by pytest.
+    """
 
     ova_root = tmp_path / "ova"
     _ova_package(ova_root)
@@ -57,7 +65,11 @@ def test_stages_validated_ova_hyperv_and_flat_helpers_idempotently(tmp_path: Pat
 
 
 def test_refuses_mismatched_release_identity_or_existing_destination(tmp_path: Path) -> None:
-    """Version/commit mismatches and non-idempotent replacement fail before publication."""
+    """Version/commit mismatches and non-idempotent replacement fail before publication.
+
+    Args:
+        tmp_path: Temporary directory provided by pytest.
+    """
 
     ova_root = tmp_path / "ova"
     _ova_package(ova_root)
@@ -93,7 +105,11 @@ def test_refuses_mismatched_release_identity_or_existing_destination(tmp_path: P
 
 
 def test_refuses_stale_or_unrelated_staging_assets(tmp_path: Path) -> None:
-    """The signed virtualization set cannot inherit an unrelated file from an older run."""
+    """The signed virtualization set cannot inherit an unrelated file from an older run.
+
+    Args:
+        tmp_path: Temporary directory provided by pytest.
+    """
 
     ova_root = tmp_path / "ova"
     _ova_package(ova_root)

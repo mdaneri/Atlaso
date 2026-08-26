@@ -18,6 +18,14 @@ fail() {
   exit 2
 }
 
+case "$EXPECTED_STAGING_IDENTITY" in
+  *:*:700) ;;
+  *) fail "Offline guest-agent staging identity must end in mode 700." ;;
+esac
+expected_owner=${EXPECTED_STAGING_IDENTITY%%:*}
+expected_group_and_mode=${EXPECTED_STAGING_IDENTITY#*:}
+expected_group=${expected_group_and_mode%%:*}
+
 for managed_path in "$STAGING_DIRECTORY" "$RUNTIME_DIRECTORY" "$SUCCESS_MARKER" "$DMI_ROOT" "$PACKAGE_CACHE_DIRECTORY"; do
   case "$managed_path" in
     /*) ;;
@@ -104,9 +112,6 @@ verify_staging() {
   [ ! -L "$STAGING_DIRECTORY" ] || fail "Offline guest-agent staging cannot be a symlink."
   [ "$(stat -c '%U:%G:%a' "$STAGING_DIRECTORY")" = "$EXPECTED_STAGING_IDENTITY" ] ||
     fail "Offline guest-agent staging ownership or mode is unsafe."
-  expected_owner=${EXPECTED_STAGING_IDENTITY%%:*}
-  expected_group_and_mode=${EXPECTED_STAGING_IDENTITY#*:}
-  expected_group=${expected_group_and_mode%%:*}
   [ -f "$MANIFEST_PATH" ] || fail "Offline guest-agent checksum manifest is missing."
   [ ! -L "$MANIFEST_PATH" ] || fail "Offline guest-agent checksum manifest cannot be a symlink."
   if awk 'NF != 2 || $2 ~ /^\*/ || $2 ~ /^\// || $2 ~ /(^|\/)\.\.($|\/)/ { exit 1 }' "$MANIFEST_PATH"; then
@@ -171,7 +176,7 @@ cleanup_staging() {
 
 if [ -f "$SUCCESS_MARKER" ]; then
   [ ! -L "$SUCCESS_MARKER" ] || fail "Guest-agent success marker cannot be a symlink."
-  [ "$(stat -c '%U:%G:%a' "$SUCCESS_MARKER")" = "root:root:600" ] ||
+  [ "$(stat -c '%U:%G:%a' "$SUCCESS_MARKER")" = "$expected_owner:$expected_group:600" ] ||
     fail "Guest-agent success marker ownership or mode is unsafe."
   marker_platform=$(sed -n 's/^platform=//p' "$SUCCESS_MARKER")
   [ "$(wc -l <"$SUCCESS_MARKER")" -eq 1 ] || fail "Guest-agent success marker is malformed."
@@ -186,7 +191,10 @@ if [ -f "$SUCCESS_MARKER" ]; then
   exit 0
 fi
 
-install -d -o root -g root -m 0700 "$RUNTIME_DIRECTORY"
+# The runtime scratch directory follows the same trusted identity contract as
+# the persistent closure. Production fixes that identity at root:root; the
+# override exists only for the unprivileged, isolated selector test boundary.
+install -d -o "$expected_owner" -g "$expected_group" -m 0700 "$RUNTIME_DIRECTORY"
 verify_staging
 platform="$(detect_platform)"
 log "Detected platform: $platform"
@@ -256,7 +264,7 @@ esac
 marker_tmp=$(mktemp "${SUCCESS_MARKER}.new.XXXXXX")
 trap 'rm -f -- "$marker_tmp"' EXIT HUP INT TERM
 printf 'platform=%s\n' "$platform" >"$marker_tmp"
-chown root:root "$marker_tmp"
+chown "$expected_owner:$expected_group" "$marker_tmp"
 chmod 0600 "$marker_tmp"
 sync
 mv -f -- "$marker_tmp" "$SUCCESS_MARKER"

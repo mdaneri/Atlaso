@@ -11,7 +11,12 @@ from scripts.virtualization import normalize_libvirt as normalizer
 
 
 def _domain(tmp_path: Path, *, disk_count: int = 4) -> ET.Element:
-    """Return a representative inactive virt-v2v domain definition."""
+    """Return a representative inactive virt-v2v domain definition.
+
+    Args:
+        tmp_path: Temporary directory provided by pytest.
+        disk_count: Number of imported payload/data disks to model.
+    """
 
     disks = "".join(
         f"""
@@ -46,7 +51,11 @@ def _domain(tmp_path: Path, *, disk_count: int = 4) -> ET.Element:
 
 
 def test_normalizes_exact_machine_network_disk_and_agent_contract(tmp_path: Path) -> None:
-    """Normalization produces an idempotent four-disk UEFI libvirt definition."""
+    """Normalization produces an idempotent four-disk UEFI libvirt definition.
+
+    Args:
+        tmp_path: Temporary directory provided by pytest.
+    """
 
     root = normalizer.normalize_domain(
         _domain(tmp_path),
@@ -82,7 +91,11 @@ def test_normalizes_exact_machine_network_disk_and_agent_contract(tmp_path: Path
 
 
 def test_rejects_secure_boot_ovmf_loader(tmp_path: Path) -> None:
-    """A secure-code OVMF path cannot be normalized by changing only XML metadata."""
+    """A secure-code OVMF path cannot be normalized by changing only XML metadata.
+
+    Args:
+        tmp_path: Temporary directory provided by pytest.
+    """
 
     root = _domain(tmp_path)
     loader = root.find("os/loader")
@@ -107,7 +120,13 @@ def test_rejects_unsafe_or_conflicting_virt_v2v_output(
     mutation: str,
     message: str,
 ) -> None:
-    """Contradictory firmware and topology cannot be silently normalized."""
+    """Contradictory firmware and topology cannot be silently normalized.
+
+    Args:
+        tmp_path: Temporary directory provided by pytest.
+        mutation: Unsafe imported-domain mutation to apply.
+        message: Expected rejection diagnostic.
+    """
 
     root = _domain(tmp_path, disk_count=3 if mutation == "wrong_disk_count" else 4)
     if mutation == "missing_loader":
@@ -125,7 +144,11 @@ def test_rejects_unsafe_or_conflicting_virt_v2v_output(
 
 
 def test_rejects_duplicate_guest_agent_channel(tmp_path: Path) -> None:
-    """Only one well-known QEMU guest-agent channel may be present."""
+    """Only one well-known QEMU guest-agent channel may be present.
+
+    Args:
+        tmp_path: Temporary directory provided by pytest.
+    """
 
     root = _domain(tmp_path)
     devices = root.find("devices")

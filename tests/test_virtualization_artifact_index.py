@@ -17,7 +17,11 @@ from scripts import verify_virtualization_artifact_index as verifier
 
 
 def _key(path: Path) -> Ed25519PrivateKey:
-    """Write and return one test-only Ed25519 signing key."""
+    """Write and return one test-only Ed25519 signing key.
+
+    Args:
+        path: Private-key destination.
+    """
 
     key = Ed25519PrivateKey.generate()
     path.write_bytes(
@@ -31,7 +35,12 @@ def _key(path: Path) -> Ed25519PrivateKey:
 
 
 def _assets(path: Path, version: str = "0.9.217") -> None:
-    """Write the complete minimum named artifact set."""
+    """Write the complete minimum named artifact set.
+
+    Args:
+        path: Asset-set directory.
+        version: Atlaso semantic version used in asset names.
+    """
 
     path.mkdir()
     for name in (
@@ -52,7 +61,11 @@ def _assets(path: Path, version: str = "0.9.217") -> None:
 
 
 def test_builds_verifiable_index_covering_complete_release_set(tmp_path: Path) -> None:
-    """Every release asset is hashed and the canonical JSON is signed."""
+    """Every release asset is hashed and the canonical JSON is signed.
+
+    Args:
+        tmp_path: Temporary directory provided by pytest.
+    """
 
     assets = tmp_path / "assets"
     _assets(assets)
@@ -120,7 +133,12 @@ def test_builds_verifiable_index_covering_complete_release_set(tmp_path: Path) -
 
 
 def test_publisher_verifies_signed_exact_coverage_index(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    """Publication trusts only an exact, signed artifact set for the expected release identity."""
+    """Publication trusts only an exact, signed artifact set for the expected release identity.
+
+    Args:
+        tmp_path: Temporary directory provided by pytest.
+        monkeypatch: Pytest fixture used to replace repository trust roots.
+    """
 
     root = tmp_path / "root"
     assets = root / "assets"
@@ -176,7 +194,12 @@ def test_publisher_verifies_signed_exact_coverage_index(tmp_path: Path, monkeypa
 
 
 def test_refuses_incomplete_or_oversized_artifact_set(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    """A missing helper or asset at the GitHub limit blocks index publication."""
+    """A missing helper or asset at the GitHub limit blocks index publication.
+
+    Args:
+        tmp_path: Temporary directory provided by pytest.
+        monkeypatch: Pytest fixture used to simulate an oversized asset.
+    """
 
     assets = tmp_path / "assets"
     _assets(assets)
@@ -202,6 +225,13 @@ def test_refuses_incomplete_or_oversized_artifact_set(tmp_path: Path, monkeypatc
     real_stat = Path.stat
 
     def fake_stat(path: Path, *, follow_symlinks: bool = True) -> os.stat_result:
+        """Return a synthetic oversized stat for the OVA.
+
+        Args:
+            path: File being inspected.
+            follow_symlinks: Whether the underlying stat follows symlinks.
+        """
+
         result = real_stat(path, follow_symlinks=follow_symlinks)
         if path == ova:
             values = list(result)

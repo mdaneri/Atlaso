@@ -16,7 +16,12 @@ from scripts.virtualization import validate_ova as validator
 
 
 def _item(resource_type: str, **values: str) -> str:
-    """Return one compact OVF hardware item."""
+    """Return one compact OVF hardware item.
+
+    Args:
+        resource_type: RASD resource type value.
+        **values: Additional RASD child values.
+    """
 
     children = [f"<rasd:ResourceType>{resource_type}</rasd:ResourceType>"]
     children.extend(f"<rasd:{name}>{value}</rasd:{name}>" for name, value in values.items())
@@ -93,7 +98,12 @@ def _ovf() -> bytes:
 
 
 def _members(*, manifest_mismatch: bool = False, provenance_mismatch: bool = False) -> dict[str, bytes]:
-    """Return one valid canonical OVA member set with optional corruption."""
+    """Return one valid canonical OVA member set with optional corruption.
+
+    Args:
+        manifest_mismatch: Whether to corrupt one manifest hash.
+        provenance_mismatch: Whether to corrupt one provenance payload hash.
+    """
 
     members = {
         "atlaso.ovf": _ovf(),
@@ -137,7 +147,12 @@ def _members(*, manifest_mismatch: bool = False, provenance_mismatch: bool = Fal
 
 
 def _write_ova(path: Path, members: dict[str, bytes]) -> None:
-    """Write one deterministic flat OVA fixture."""
+    """Write one deterministic flat OVA fixture.
+
+    Args:
+        path: OVA fixture destination.
+        members: Flat archive members by name.
+    """
 
     with tarfile.open(path, mode="w") as archive:
         for name in ("atlaso.ovf", "atlaso.mf", "atlaso-provenance.json", "photon.vmdk", "system.vmdk"):
@@ -150,7 +165,11 @@ def _write_ova(path: Path, members: dict[str, bytes]) -> None:
 
 
 def test_validates_and_extracts_canonical_ova(tmp_path: Path) -> None:
-    """A valid OVA returns the source, version, machine, and payload role contract."""
+    """A valid OVA returns the source, version, machine, and payload role contract.
+
+    Args:
+        tmp_path: Temporary directory provided by pytest.
+    """
 
     ova_path = tmp_path / "atlaso.ova"
     _write_ova(ova_path, _members())
@@ -176,7 +195,13 @@ def test_rejects_checksum_or_provenance_mismatch(
     members: dict[str, bytes],
     message: str,
 ) -> None:
-    """Manifest and provenance hashes are independent fail-closed boundaries."""
+    """Manifest and provenance hashes are independent fail-closed boundaries.
+
+    Args:
+        tmp_path: Temporary directory provided by pytest.
+        members: Corrupted OVA member set.
+        message: Expected rejection diagnostic.
+    """
 
     ova_path = tmp_path / "atlaso.ova"
     _write_ova(ova_path, members)
@@ -186,7 +211,11 @@ def test_rejects_checksum_or_provenance_mismatch(
 
 
 def test_rejects_untrusted_or_malformed_provenance_host_key(tmp_path: Path) -> None:
-    """The artifact cannot authenticate smoke SSH without a valid bound Ed25519 key."""
+    """The artifact cannot authenticate smoke SSH without a valid bound Ed25519 key.
+
+    Args:
+        tmp_path: Temporary directory provided by pytest.
+    """
 
     members = _members()
     provenance = json.loads(members["atlaso-provenance.json"])
@@ -204,7 +233,11 @@ def test_rejects_untrusted_or_malformed_provenance_host_key(tmp_path: Path) -> N
 
 
 def test_rejects_reordered_disk_role(tmp_path: Path) -> None:
-    """A payload moved away from its fixed SCSI role cannot be converted."""
+    """A payload moved away from its fixed SCSI role cannot be converted.
+
+    Args:
+        tmp_path: Temporary directory provided by pytest.
+    """
 
     members = _members()
     members["atlaso.ovf"] = members["atlaso.ovf"].replace(
@@ -226,7 +259,11 @@ def test_rejects_reordered_disk_role(tmp_path: Path) -> None:
 
 
 def test_rejects_reordered_or_ambiguous_network_roles(tmp_path: Path) -> None:
-    """The two imported NICs must retain management then services identity."""
+    """The two imported NICs must retain management then services identity.
+
+    Args:
+        tmp_path: Temporary directory provided by pytest.
+    """
 
     members = _members()
     members["atlaso.ovf"] = members["atlaso.ovf"].replace(
@@ -271,7 +308,14 @@ def test_rejects_duplicate_or_external_ovf_identifiers(
     new: bytes,
     message: str,
 ) -> None:
-    """OVF identifiers cannot hide duplicates or refer outside the verified archive."""
+    """OVF identifiers cannot hide duplicates or refer outside the verified archive.
+
+    Args:
+        tmp_path: Temporary directory provided by pytest.
+        old: Fixture bytes to replace.
+        new: Unsafe replacement bytes.
+        message: Expected rejection diagnostic.
+    """
 
     members = _members()
     members["atlaso.ovf"] = members["atlaso.ovf"].replace(old, new, 1)
@@ -287,7 +331,11 @@ def test_rejects_duplicate_or_external_ovf_identifiers(
 
 
 def test_rejects_payload_reference_not_carried_by_ova(tmp_path: Path) -> None:
-    """Every payload role must resolve to one of the two manifest-verified VMDKs."""
+    """Every payload role must resolve to one of the two manifest-verified VMDKs.
+
+    Args:
+        tmp_path: Temporary directory provided by pytest.
+    """
 
     members = _members()
     members["atlaso.ovf"] = members["atlaso.ovf"].replace(
@@ -307,7 +355,11 @@ def test_rejects_payload_reference_not_carried_by_ova(tmp_path: Path) -> None:
 
 
 def test_rejects_archive_traversal_without_writing_outside_destination(tmp_path: Path) -> None:
-    """Flat-member validation rejects traversal before any escaped write occurs."""
+    """Flat-member validation rejects traversal before any escaped write occurs.
+
+    Args:
+        tmp_path: Temporary directory provided by pytest.
+    """
 
     ova_path = tmp_path / "atlaso.ova"
     with tarfile.open(ova_path, mode="w") as archive:
@@ -347,7 +399,14 @@ def test_rejects_implicit_or_conflicting_machine_topology(
     new: bytes,
     message: str,
 ) -> None:
-    """Firmware, memory units, and disk controller bindings are explicit parts of the contract."""
+    """Firmware, memory units, and disk controller bindings are explicit parts of the contract.
+
+    Args:
+        tmp_path: Temporary directory provided by pytest.
+        old: Fixture bytes to replace.
+        new: Unsafe replacement bytes.
+        message: Expected rejection diagnostic.
+    """
 
     members = _members()
     members["atlaso.ovf"] = members["atlaso.ovf"].replace(old, new, 1)
@@ -363,7 +422,11 @@ def test_rejects_implicit_or_conflicting_machine_topology(
 
 
 def test_rejects_symlinked_ova_before_extraction(tmp_path: Path) -> None:
-    """Consumers cannot redirect the validated OVA source through a symbolic link."""
+    """Consumers cannot redirect the validated OVA source through a symbolic link.
+
+    Args:
+        tmp_path: Temporary directory provided by pytest.
+    """
 
     source = tmp_path / "source.ova"
     _write_ova(source, _members())

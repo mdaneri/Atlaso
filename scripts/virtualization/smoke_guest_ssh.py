@@ -45,7 +45,11 @@ def load_secret_input() -> SecretInput:
 
 
 def parse_host_public_key(value: str) -> tuple[str, bytes]:
-    """Return one canonical Ed25519 SSH host public key tuple."""
+    """Return one canonical Ed25519 SSH host public key tuple.
+
+    Args:
+        value: OpenSSH public-key text.
+    """
 
     fields = value.split()
     if len(fields) != 2 or fields[0] != "ssh-ed25519":
@@ -65,7 +69,13 @@ def parse_host_public_key(value: str) -> tuple[str, bytes]:
 
 
 def _connect(host: str, secret: SecretInput, *, expected_key: tuple[str, bytes]) -> Any:
-    """Open a bounded SSH connection after installing the artifact-bound host key."""
+    """Open a bounded SSH connection after installing the artifact-bound host key.
+
+    Args:
+        host: Guest address.
+        secret: Standard-input credential envelope.
+        expected_key: Parsed provenance-bound host key.
+    """
 
     import paramiko  # type: ignore[import-untyped]  # Paramiko does not publish complete type metadata.
 
@@ -97,7 +107,13 @@ def _connect(host: str, secret: SecretInput, *, expected_key: tuple[str, bytes])
 
 
 def _run_root(client: Any, secret: SecretInput, script: str) -> None:
-    """Run one fixed root validation script without placing credentials in arguments."""
+    """Run one fixed root validation script without placing credentials in arguments.
+
+    Args:
+        client: Connected SSH client.
+        secret: Credential used only through standard input.
+        script: Root validation script body.
+    """
 
     command = "sudo -S -p '' sh -s"
     _stdin, stdout, stderr = client.exec_command(command, timeout=180)
@@ -113,7 +129,11 @@ def _run_root(client: Any, secret: SecretInput, script: str) -> None:
 
 
 def _validation_script(platform: str) -> str:
-    """Return the fixed non-secret guest validation script for one platform."""
+    """Return the fixed non-secret guest validation script for one platform.
+
+    Args:
+        platform: Expected virtualization provider.
+    """
 
     common = r"""
 set -eu
@@ -154,7 +174,11 @@ done
 
 
 def _front_door_fingerprint(host: str) -> str:
-    """Require host-facing OpenAPI readiness and return the observed TLS certificate hash."""
+    """Require host-facing OpenAPI readiness and return the observed TLS certificate hash.
+
+    Args:
+        host: Guest address exposing the front door.
+    """
 
     context = ssl.create_default_context()
     context.check_hostname = False
@@ -173,7 +197,11 @@ def _front_door_fingerprint(host: str) -> str:
 
 
 def _wait_for_reboot(host: str) -> None:
-    """Require the guest SSH port to disappear before accepting reboot recovery."""
+    """Require the guest SSH port to disappear before accepting reboot recovery.
+
+    Args:
+        host: Guest address expected to reboot.
+    """
 
     deadline = time.monotonic() + 180
     while time.monotonic() < deadline:
@@ -187,7 +215,11 @@ def _wait_for_reboot(host: str) -> None:
 
 
 def main(argv: list[str] | None = None) -> int:
-    """Run guest validation, reboot, and repeat validation with pinned identities."""
+    """Run guest validation, reboot, and repeat validation with pinned identities.
+
+    Args:
+        argv: Optional command-line argument sequence.
+    """
 
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--host", required=True)

@@ -21,13 +21,22 @@ KEY_ID_PATTERN = re.compile(r"^[A-Za-z0-9_.-]+$")
 
 
 def _canonical_json(value: Any) -> bytes:
-    """Return the canonical UTF-8 JSON representation used by the signer."""
+    """Return the canonical UTF-8 JSON representation used by the signer.
+
+    Args:
+        value: JSON-compatible value to serialize.
+    """
 
     return (json.dumps(value, sort_keys=True, separators=(",", ":"), ensure_ascii=True) + "\n").encode()
 
 
 def _ordinary_file(path: Path, label: str) -> Path:
-    """Resolve one required ordinary file without following a symlink input."""
+    """Resolve one required ordinary file without following a symlink input.
+
+    Args:
+        path: Candidate file path.
+        label: Human-readable file role for failures.
+    """
 
     if path.is_symlink() or not path.is_file():
         raise SystemExit(f"{label} must be an ordinary file, not a symlink: {path}")
@@ -35,7 +44,11 @@ def _ordinary_file(path: Path, label: str) -> Path:
 
 
 def _sha256(path: Path) -> str:
-    """Return the SHA-256 digest of one indexed asset."""
+    """Return the SHA-256 digest of one indexed asset.
+
+    Args:
+        path: Indexed asset path.
+    """
 
     digest = hashlib.sha256()
     with path.open("rb") as handle:
@@ -53,7 +66,16 @@ def verify(
     expected_version: str = "",
     expected_commit: str = "",
 ) -> dict[str, Any]:
-    """Verify the detached signature, release identity, and every indexed asset."""
+    """Verify the detached signature, release identity, and every indexed asset.
+
+    Args:
+        index_path: Canonical artifact-index path.
+        signature_path: Detached signature metadata path.
+        trust_key_path: Trusted Ed25519 public-key path.
+        asset_directory: Directory containing every indexed asset.
+        expected_version: Optional expected Atlaso version.
+        expected_commit: Optional expected full source commit.
+    """
 
     index_file = _ordinary_file(index_path, "artifact index")
     signature_file = _ordinary_file(signature_path, "artifact-index signature")
@@ -142,7 +164,11 @@ def verify(
 
 
 def main(argv: list[str] | None = None) -> int:
-    """Run the artifact-index verification command-line interface."""
+    """Run the artifact-index verification command-line interface.
+
+    Args:
+        argv: Optional command-line argument sequence.
+    """
 
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--index", type=Path, required=True)

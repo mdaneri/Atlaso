@@ -262,7 +262,11 @@ def test_deployment_assets_are_checkable_text() -> None:
 
 
 def test_virtualization_legacy_gate_rejects_retired_paths_and_qcow2_exporter(tmp_path: Path) -> None:
-    """Repository checks fail closed on each retired virtualization surface."""
+    """Repository checks fail closed on each retired virtualization surface.
+
+    Args:
+        tmp_path: Temporary directory provided by pytest.
+    """
 
     retired = tmp_path / "image/hyperv"
     retired.mkdir(parents=True)

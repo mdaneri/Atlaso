@@ -33,7 +33,11 @@ RELEASE_HELPERS = (
 
 
 def _sha256(path: Path) -> str:
-    """Return one file's SHA-256 digest."""
+    """Return one file's SHA-256 digest.
+
+    Args:
+        path: File to hash.
+    """
 
     digest = hashlib.sha256()
     with path.open("rb") as handle:
@@ -43,7 +47,12 @@ def _sha256(path: Path) -> str:
 
 
 def _ordinary_asset(path: Path, label: str) -> Path:
-    """Return a bounded ordinary release asset path."""
+    """Return a bounded ordinary release asset path.
+
+    Args:
+        path: Candidate asset path.
+        label: Human-readable asset role for failures.
+    """
 
     if not path.is_file() or path.is_symlink():
         raise SystemExit(f"{label} must be an ordinary file, not a symlink: {path}")
@@ -54,7 +63,12 @@ def _ordinary_asset(path: Path, label: str) -> Path:
 
 
 def _copy_exact(source: Path, destination: Path) -> None:
-    """Copy one asset without replacing different existing bytes."""
+    """Copy one asset without replacing different existing bytes.
+
+    Args:
+        source: Verified source asset.
+        destination: Flat staging destination.
+    """
 
     if destination.exists() or destination.is_symlink():
         if not destination.is_file() or destination.is_symlink() or _sha256(source) != _sha256(destination):
@@ -73,7 +87,15 @@ def stage(
     version: str,
     commit: str,
 ) -> list[str]:
-    """Validate and stage the complete virtualization release asset set."""
+    """Validate and stage the complete virtualization release asset set.
+
+    Args:
+        ova_directory: Canonical OVA package directory.
+        hyperv_zip: Converted Hyper-V package.
+        output: Exact release staging directory.
+        version: Atlaso semantic version.
+        commit: Full source commit.
+    """
 
     if SEMVER_PATTERN.fullmatch(version) is None or COMMIT_PATTERN.fullmatch(commit) is None:
         raise SystemExit("version or source commit has an invalid release identity")
@@ -119,13 +141,21 @@ def stage(
 
 
 def _ordinary_sources(paths: list[Path]) -> list[Path]:
-    """Validate and return an ordered collection of ordinary source assets."""
+    """Validate and return an ordered collection of ordinary source assets.
+
+    Args:
+        paths: Candidate VMware package assets.
+    """
 
     return [_ordinary_asset(path, "VMware OVA package asset") for path in paths]
 
 
 def main(argv: list[str] | None = None) -> int:
-    """Run the staging command-line interface."""
+    """Run the staging command-line interface.
+
+    Args:
+        argv: Optional command-line argument sequence.
+    """
 
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--ova-directory", type=Path, required=True)

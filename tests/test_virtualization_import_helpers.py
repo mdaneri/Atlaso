@@ -16,7 +16,11 @@ LINUX_SMOKE = ROOT / "scripts/virtualization/smoke-ova-linux.sh"
 
 @pytest.mark.parametrize("path", (KVM_HELPER, PROXMOX_HELPER, LINUX_SMOKE))
 def test_import_helpers_are_valid_posix_shell(path: Path) -> None:
-    """Both versioned release helpers remain parseable without executing host mutation."""
+    """Both versioned release helpers remain parseable without executing host mutation.
+
+    Args:
+        path: Helper script selected by parametrization.
+    """
 
     bash = shutil.which("bash")
     if bash is None:

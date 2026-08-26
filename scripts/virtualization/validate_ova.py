@@ -45,7 +45,11 @@ class OvaValidationError(ValueError):
 
 
 def _sha256(path: Path) -> str:
-    """Return the SHA-256 digest of one file without loading it into memory."""
+    """Return the SHA-256 digest of one file without loading it into memory.
+
+    Args:
+        path: File to hash.
+    """
 
     digest = hashlib.sha256()
     with path.open("rb") as stream:
@@ -55,7 +59,11 @@ def _sha256(path: Path) -> str:
 
 
 def _validate_member(member: tarfile.TarInfo) -> None:
-    """Reject archive entries that could escape or mutate an extraction root."""
+    """Reject archive entries that could escape or mutate an extraction root.
+
+    Args:
+        member: Candidate tar member.
+    """
 
     if not member.isfile():
         raise OvaValidationError(f"OVA member is not a regular file: {member.name}")
@@ -64,7 +72,12 @@ def _validate_member(member: tarfile.TarInfo) -> None:
 
 
 def _extract_members(ova_path: Path, destination: Path) -> list[str]:
-    """Safely copy flat regular OVA members into an empty destination."""
+    """Safely copy flat regular OVA members into an empty destination.
+
+    Args:
+        ova_path: Canonical OVA archive.
+        destination: Empty extraction directory.
+    """
 
     if destination.exists():
         if destination.is_symlink() or not destination.is_dir() or any(destination.iterdir()):
@@ -92,7 +105,11 @@ def _extract_members(ova_path: Path, destination: Path) -> list[str]:
 
 
 def _read_manifest(path: Path) -> dict[str, str]:
-    """Parse the strict SHA-256 OVF manifest format."""
+    """Parse the strict SHA-256 OVF manifest format.
+
+    Args:
+        path: OVF manifest path.
+    """
 
     entries: dict[str, str] = {}
     for line in path.read_text(encoding="utf-8").splitlines():
@@ -104,13 +121,22 @@ def _read_manifest(path: Path) -> dict[str, str]:
 
 
 def _child_text(item: ET.Element, name: str) -> str:
-    """Return one trimmed RASD child value."""
+    """Return one trimmed RASD child value.
+
+    Args:
+        item: OVF hardware item.
+        name: RASD child element name.
+    """
 
     return (item.findtext(f"{{{RASD}}}{name}") or "").strip()
 
 
 def _capacity_bytes(disk: ET.Element) -> int:
-    """Normalize one OVF capacity declaration to bytes."""
+    """Normalize one OVF capacity declaration to bytes.
+
+    Args:
+        disk: OVF disk definition.
+    """
 
     capacity = disk.get(f"{{{OVF}}}capacity", "")
     try:
@@ -126,7 +152,12 @@ def _capacity_bytes(disk: ET.Element) -> int:
 
 
 def _validate_machine(items: list[ET.Element], root: ET.Element) -> None:
-    """Validate firmware, CPU, memory, NIC, and SCSI-controller topology."""
+    """Validate firmware, CPU, memory, NIC, and SCSI-controller topology.
+
+    Args:
+        items: OVF virtual hardware items.
+        root: Parsed OVF document root.
+    """
 
     resources: dict[str, list[ET.Element]] = {}
     for item in items:
@@ -170,7 +201,11 @@ def _validate_machine(items: list[ET.Element], root: ET.Element) -> None:
 
 
 def _validate_topology(ovf_path: Path) -> dict[int, dict[str, Any]]:
-    """Validate the complete four-disk Atlaso OVF topology."""
+    """Validate the complete four-disk Atlaso OVF topology.
+
+    Args:
+        ovf_path: Extracted OVF descriptor.
+    """
 
     try:
         root = ET.parse(ovf_path).getroot()
@@ -260,7 +295,13 @@ def _validate_topology(ovf_path: Path) -> dict[int, dict[str, Any]]:
 
 
 def _validate_provenance(path: Path, topology: dict[int, dict[str, Any]], directory: Path) -> dict[str, Any]:
-    """Validate provenance against the extracted payload bytes and OVF roles."""
+    """Validate provenance against the extracted payload bytes and OVF roles.
+
+    Args:
+        path: Extracted provenance JSON path.
+        topology: Validated disk topology by SCSI slot.
+        directory: Extracted OVA member directory.
+    """
 
     try:
         provenance = json.loads(path.read_text(encoding="utf-8"))
@@ -314,7 +355,12 @@ def _validate_provenance(path: Path, topology: dict[int, dict[str, Any]], direct
 
 
 def validate_ova(ova_path: Path, *, extraction_directory: Path) -> dict[str, Any]:
-    """Validate one OVA and return its normalized immutable contract."""
+    """Validate one OVA and return its normalized immutable contract.
+
+    Args:
+        ova_path: Canonical OVA archive.
+        extraction_directory: Empty verified-member destination.
+    """
 
     if ova_path.is_symlink() or not ova_path.is_file():
         raise OvaValidationError("OVA source must be an existing ordinary file, not a symlink.")
@@ -363,7 +409,11 @@ def validate_ova(ova_path: Path, *, extraction_directory: Path) -> dict[str, Any
 
 
 def main(argv: list[str] | None = None) -> int:
-    """Run the OVA validator command-line interface."""
+    """Run the OVA validator command-line interface.
+
+    Args:
+        argv: Optional command-line argument sequence.
+    """
 
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("ova", type=Path, help="Canonical Atlaso OVA to verify.")

@@ -22,7 +22,11 @@ SEMVER_PATTERN = re.compile(r"^[0-9]+\.[0-9]+\.[0-9]+$")
 
 
 def _sha256(path: Path) -> str:
-    """Return the SHA-256 digest of one release asset."""
+    """Return the SHA-256 digest of one release asset.
+
+    Args:
+        path: Release asset to hash.
+    """
 
     digest = hashlib.sha256()
     with path.open("rb") as handle:
@@ -32,13 +36,21 @@ def _sha256(path: Path) -> str:
 
 
 def _canonical_json(value: Any) -> bytes:
-    """Return deterministic UTF-8 JSON with one trailing newline."""
+    """Return deterministic UTF-8 JSON with one trailing newline.
+
+    Args:
+        value: JSON-compatible value to serialize.
+    """
 
     return (json.dumps(value, sort_keys=True, separators=(",", ":"), ensure_ascii=True) + "\n").encode()
 
 
 def _load_signing_key(path: Path) -> Ed25519PrivateKey:
-    """Load one unencrypted Ed25519 release signing key."""
+    """Load one unencrypted Ed25519 release signing key.
+
+    Args:
+        path: PEM private-key path.
+    """
 
     key = serialization.load_pem_private_key(path.read_bytes(), password=None)
     if not isinstance(key, Ed25519PrivateKey):
@@ -47,7 +59,11 @@ def _load_signing_key(path: Path) -> Ed25519PrivateKey:
 
 
 def _asset_role(name: str) -> str:
-    """Return the stable release role for one indexed asset name."""
+    """Return the stable release role for one indexed asset name.
+
+    Args:
+        name: Flat release asset name.
+    """
 
     lower = name.lower()
     if lower.endswith("-hyperv-x86_64.zip"):
@@ -76,7 +92,12 @@ def _asset_role(name: str) -> str:
 
 
 def _require_virtualization_set(names: set[str], version: str) -> None:
-    """Require every canonical and target-specific virtualization asset."""
+    """Require every canonical and target-specific virtualization asset.
+
+    Args:
+        names: Exact flat asset-name set.
+        version: Atlaso semantic version embedded in versioned names.
+    """
 
     requirements = {
         "canonical OVA": [name for name in names if name.lower().endswith(".ova")],
@@ -109,7 +130,11 @@ def _require_virtualization_set(names: set[str], version: str) -> None:
 
 
 def main(argv: list[str] | None = None) -> int:
-    """Build and sign the artifact index command-line entry point."""
+    """Build and sign the artifact index command-line entry point.
+
+    Args:
+        argv: Optional command-line argument sequence.
+    """
 
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--assets", type=Path, required=True)

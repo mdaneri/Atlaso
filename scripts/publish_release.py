@@ -161,7 +161,8 @@ def verify_vmware_release_assets(
     Args:
         directory: Filesystem path associated with directory.
         names: Names consumed by verify vmware release assets.
-
+        expected_version: Optional strict portable-artifact version contract.
+        expected_commit: Optional strict portable-artifact provenance commit.
 
     Raises:
         SystemExit: If the operation encounters an invalid state.
@@ -172,13 +173,17 @@ def verify_vmware_release_assets(
     archives = sorted(name for name in names if name.lower().endswith(".ova"))
     provenance = sorted(name for name in names if name.lower().endswith("-provenance.json"))
     allowed = set(manifests + descriptors + disks + archives + provenance)
+    strict_identity = expected_version is not None or expected_commit is not None
+    if strict_identity and (expected_version is None or expected_commit is None):
+        raise SystemExit("strict VMware release verification requires both version and commit")
     if (
         names != allowed
         or len(manifests) != 1
         or len(descriptors) != 1
         or len(disks) != 2
-        or len(archives) != 1
-        or len(provenance) != 1
+        or len(archives) > 1
+        or len(provenance) > 1
+        or (strict_identity and (len(archives) != 1 or len(provenance) != 1))
     ):
         raise SystemExit(f"release contains an invalid VMware appliance asset set: {sorted(names)}")
 
@@ -201,40 +206,42 @@ def verify_vmware_release_assets(
         raise SystemExit(f"VMware release assets failed manifest verification: {', '.join(sorted(mismatches))}")
     verify_vmware_ovf_topology(directory / descriptors[0], names)
     expected_members = set(manifests + descriptors + disks + provenance)
-    try:
-        with tarfile.open(directory / archives[0], mode="r:") as archive:
-            members = [member for member in archive.getmembers() if member.isfile()]
-            member_names = {member.name for member in members}
-            if member_names != expected_members or len(members) != len(expected_members):
-                raise SystemExit("VMware OVA does not contain exactly the OVF package assets")
-            for member in members:
-                stream = archive.extractfile(member)
-                digest = hashlib.sha256()
-                if stream is not None:
-                    while block := stream.read(1024 * 1024):
-                        digest.update(block)
-                if stream is None or digest.hexdigest() != sha256(directory / member.name):
-                    raise SystemExit(f"VMware OVA contains different bytes for {member.name}")
-    except tarfile.TarError as exc:
-        raise SystemExit(f"VMware OVA is not a valid tar archive: {exc}") from exc
-    with tempfile.TemporaryDirectory(prefix="atlaso-ova-release-") as extraction_value:
+    if archives:
         try:
-            result = run(
-                [
-                    "python",
-                    "scripts/virtualization/validate_ova.py",
-                    str(directory / archives[0]),
-                    "--extract-directory",
-                    str(Path(extraction_value) / "members"),
-                ]
-            )
-            contract = json.loads(result.stdout)
-        except (json.JSONDecodeError, SystemExit) as exc:
-            raise SystemExit(f"VMware OVA failed the portable machine contract: {exc}") from exc
-    if expected_version is not None and contract["product_version"] != expected_version:
-        raise SystemExit("VMware OVA provenance version does not match the release version")
-    if expected_commit is not None and contract["source_commit"] != expected_commit:
-        raise SystemExit("VMware OVA provenance commit does not match the release commit")
+            with tarfile.open(directory / archives[0], mode="r:") as archive:
+                members = [member for member in archive.getmembers() if member.isfile()]
+                member_names = {member.name for member in members}
+                if member_names != expected_members or len(members) != len(expected_members):
+                    raise SystemExit("VMware OVA does not contain exactly the OVF package assets")
+                for member in members:
+                    stream = archive.extractfile(member)
+                    digest = hashlib.sha256()
+                    if stream is not None:
+                        while block := stream.read(1024 * 1024):
+                            digest.update(block)
+                    if stream is None or digest.hexdigest() != sha256(directory / member.name):
+                        raise SystemExit(f"VMware OVA contains different bytes for {member.name}")
+        except tarfile.TarError as exc:
+            raise SystemExit(f"VMware OVA is not a valid tar archive: {exc}") from exc
+    if strict_identity:
+        with tempfile.TemporaryDirectory(prefix="atlaso-ova-release-") as extraction_value:
+            try:
+                result = run(
+                    [
+                        "python",
+                        "scripts/virtualization/validate_ova.py",
+                        str(directory / archives[0]),
+                        "--extract-directory",
+                        str(Path(extraction_value) / "members"),
+                    ]
+                )
+                contract = json.loads(result.stdout)
+            except (json.JSONDecodeError, SystemExit) as exc:
+                raise SystemExit(f"VMware OVA failed the portable machine contract: {exc}") from exc
+        if contract["product_version"] != expected_version:
+            raise SystemExit("VMware OVA provenance version does not match the release version")
+        if contract["source_commit"] != expected_commit:
+            raise SystemExit("VMware OVA provenance commit does not match the release commit")
 
 
 def verify_virtualization_artifact_index(
