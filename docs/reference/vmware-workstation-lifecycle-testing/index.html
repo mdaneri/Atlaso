@@ -3596,20 +3596,27 @@ command check run directly as the unprivileged appliance SSH user rather than th
 <p>For a wheel-only deployment to the canonical test VM, use <code>scripts/windows/vmware/deploy-wheel.ps1</code> with the secure
 Windows 1Password handoff documented in the <a href="../full-technical-reference/">full technical reference</a>. Authenticate the
 local integration, verify the unique <code>Atlaso</code> Environment and concealed <code>DEFAULT_ADMIN_PASSWORD</code> variable by name,
-then pass only its opaque Environment ID through <code>-OnePasswordEnvironmentId</code>. The handoff requires the supported
-<code>op run --environment</code> capability and provisions the value only into the bounded Paramiko deployment child, preserves
+then pass its opaque Environment ID through <code>-OnePasswordEnvironmentId</code> and the approved account name or ID through
+<code>-OnePasswordAccount</code>. Pass a separate CPython 3.10 through 3.13 executable through <code>-OnePasswordPython</code>, because the
+supported Windows SDK wheel does not use Atlaso's Python 3.14 application-build runtime. The handoff uses the supported
+1Password Python SDK desktop integration and retrieves the value
+only inside the bounded Paramiko deployment child, preserves
 SSH known-host verification, and fails closed when authorization or any required Environment input is unavailable.
+Desktop authorization and Environment retrieval each use the deployment timeout, so an ignored approval prompt or a
+non-responsive SDK exits without beginning the VMware deployment.
+The build stages the SDK, Paramiko, and their transitive wheels from the hash-verified
+<code>requirements-onepassword-deploy.lock</code>; the bounded child installs only from that local wheel set with index access
+disabled. <code>-SkipBuild</code> therefore fails closed unless the complete vetted set is already present in <code>dist</code>.
 Key-backed Windows
 transfers keep <code>scp</code> sources and destinations separate and cross the PowerShell login shell through a secret-free
 base64 <code>sh -lc</code> wrapper. Password-backed SSH supports one password-only keyboard-interactive challenge, rejects OTP/MFA
 prompts, and uses a separate deployment timeout from the readiness allowance with a non-PTY
 <code>sudo -S</code> handoff. Do not pass a password argument, create a local <code>.env</code> file, or use the retired
 <code>ATLASO_DEPLOY_SSH_PASSWORD</code> fallback. The PowerShell parent performs local build and input preparation without the
-credential, then invokes the Paramiko helper directly as <code>op run --environment &lt;id&gt; -- &lt;python&gt; ...</code>; <code>op</code> supplies
-<code>DEFAULT_ADMIN_PASSWORD</code> only to that bounded child, which removes it from its process environment immediately after
-capture. The child starts Python with <code>-I -S</code> and an explicit dependency path so startup hooks and inherited
-<code>PYTHONPATH</code> cannot observe the variable. An interactive <code>op run</code> shell is not a supported substitute for the exact
-Environment handoff.</p>
+credential, then invokes the isolated Python child directly. That child obtains <code>DEFAULT_ADMIN_PASSWORD</code> with a
+human-approved 1Password desktop authorization prompt and keeps it in process memory only. Python starts with <code>-I -S</code>
+and an explicit dependency path so startup hooks and inherited <code>PYTHONPATH</code> cannot observe the value. The beta-only
+<code>op run --environment</code> flag is not supported by the stable CLI and is not part of this workflow.</p>
 <p>Atlaso can run a VMware Workstation lifecycle lab alongside the Hyper-V lab. The Workstation path uses VMX/VMDK
 artifacts and <code>vmrun.exe</code>, then delegates appliance behavior checks to the shared Python lifecycle runner.</p>
 <p>Run all Windows commands in PowerShell 7.4 or newer (<code>pwsh</code>). Earlier PowerShell releases and Windows PowerShell 5.1

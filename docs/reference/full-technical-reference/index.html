@@ -5262,38 +5262,47 @@ helper. A normal test VM created with the default key provisioning uses the exis
 <div class="language-powershell highlight"><pre><span></span><code><span id="__span-35-1"><a id="__codelineno-35-1" name="__codelineno-35-1" href="#__codelineno-35-1"></a><span class="p">.\</span><span class="n">scripts</span><span class="p">\</span><span class="n">windows</span><span class="p">\</span><span class="n">vmware</span><span class="p">\</span><span class="n">deploy-wheel</span><span class="p">.</span><span class="n">ps1</span> <span class="n">-IpAddress</span> <span class="n">192</span><span class="p">.</span><span class="n">168</span><span class="p">.</span><span class="n">167</span><span class="p">.</span><span class="n">10</span>
 </span></code></pre></div>
 <p>For an appliance created with <code>-SkipSshKeyProvisioning</code>, or another appliance that retains password-backed sudo, pass
-the exact 1Password Environment ID:</p>
+the exact 1Password Environment ID and approved 1Password account name or ID:</p>
 <div class="language-powershell highlight"><pre><span></span><code><span id="__span-36-1"><a id="__codelineno-36-1" name="__codelineno-36-1" href="#__codelineno-36-1"></a><span class="p">.\</span><span class="n">scripts</span><span class="p">\</span><span class="n">windows</span><span class="p">\</span><span class="n">vmware</span><span class="p">\</span><span class="n">deploy-wheel</span><span class="p">.</span><span class="n">ps1</span> <span class="p">`</span>
 </span><span id="__span-36-2"><a id="__codelineno-36-2" name="__codelineno-36-2" href="#__codelineno-36-2"></a>  <span class="n">-IpAddress</span> <span class="n">192</span><span class="p">.</span><span class="n">168</span><span class="p">.</span><span class="n">167</span><span class="p">.</span><span class="n">10</span> <span class="p">`</span>
-</span><span id="__span-36-3"><a id="__codelineno-36-3" name="__codelineno-36-3" href="#__codelineno-36-3"></a>  <span class="n">-OnePasswordEnvironmentId</span> <span class="s1">&#39;&lt;atlaso-environment-id&gt;&#39;</span>
+</span><span id="__span-36-3"><a id="__codelineno-36-3" name="__codelineno-36-3" href="#__codelineno-36-3"></a>  <span class="n">-OnePasswordEnvironmentId</span> <span class="s1">&#39;&lt;atlaso-environment-id&gt;&#39;</span> <span class="p">`</span>
+</span><span id="__span-36-4"><a id="__codelineno-36-4" name="__codelineno-36-4" href="#__codelineno-36-4"></a>  <span class="n">-OnePasswordAccount</span> <span class="s1">&#39;&lt;account-name-or-id&gt;&#39;</span> <span class="p">`</span>
+</span><span id="__span-36-5"><a id="__codelineno-36-5" name="__codelineno-36-5" href="#__codelineno-36-5"></a>  <span class="n">-OnePasswordPython</span> <span class="s1">&#39;&lt;path-to-python-3.13.exe&gt;&#39;</span>
 </span></code></pre></div>
 <p>If you want that password-backed helper to resolve the guest IP from VMware Tools, pass the VMX path as the <code>-VmxPath</code>
 argument:</p>
 <div class="language-powershell highlight"><pre><span></span><code><span id="__span-37-1"><a id="__codelineno-37-1" name="__codelineno-37-1" href="#__codelineno-37-1"></a><span class="p">.\</span><span class="n">scripts</span><span class="p">\</span><span class="n">windows</span><span class="p">\</span><span class="n">vmware</span><span class="p">\</span><span class="n">deploy-wheel</span><span class="p">.</span><span class="n">ps1</span> <span class="p">`</span>
 </span><span id="__span-37-2"><a id="__codelineno-37-2" name="__codelineno-37-2" href="#__codelineno-37-2"></a>  <span class="n">-VmxPath</span> <span class="s2">&quot;image\vmware-workstation\test-vms\Atlaso-VMware\Atlaso-VMware.vmx&quot;</span> <span class="p">`</span>
-</span><span id="__span-37-3"><a id="__codelineno-37-3" name="__codelineno-37-3" href="#__codelineno-37-3"></a>  <span class="n">-OnePasswordEnvironmentId</span> <span class="s1">&#39;&lt;atlaso-environment-id&gt;&#39;</span>
+</span><span id="__span-37-3"><a id="__codelineno-37-3" name="__codelineno-37-3" href="#__codelineno-37-3"></a>  <span class="n">-OnePasswordEnvironmentId</span> <span class="s1">&#39;&lt;atlaso-environment-id&gt;&#39;</span> <span class="p">`</span>
+</span><span id="__span-37-4"><a id="__codelineno-37-4" name="__codelineno-37-4" href="#__codelineno-37-4"></a>  <span class="n">-OnePasswordAccount</span> <span class="s1">&#39;&lt;account-name-or-id&gt;&#39;</span> <span class="p">`</span>
+</span><span id="__span-37-5"><a id="__codelineno-37-5" name="__codelineno-37-5" href="#__codelineno-37-5"></a>  <span class="n">-OnePasswordPython</span> <span class="s1">&#39;&lt;path-to-python-3.13.exe&gt;&#39;</span>
 </span></code></pre></div>
 <p>Do not pipe the VMX path or put it on a separate line by itself; PowerShell will try to execute the <code>.vmx</code> file. Before
 using the password-backed path, authenticate the local 1Password integration, verify that exactly one Environment named
 <code>Atlaso</code> exists, and confirm that <code>DEFAULT_ADMIN_PASSWORD</code> is present and concealed without reading its value. Copy the
-opaque Environment ID from that exact Environment and pass only the ID above. The parent performs local build and input
-preparation without the credential, then invokes the bounded Paramiko helper directly as
-<code>op run --environment &lt;id&gt; -- &lt;python&gt; ...</code>; 1Password provisions <code>DEFAULT_ADMIN_PASSWORD</code> only into that child
-deployment process. The child removes the variable from its process environment immediately after capture, then starts
-Python with <code>-I -S</code> and prepends only its explicit dependency directory, so <code>sitecustomize</code>, <code>usercustomize</code>, executable
-<code>.pth</code> hooks, and inherited <code>PYTHONPATH</code> cannot observe the variable. The helper fails closed when the CLI capability,
-authorization, Environment, or variable is missing. It never accepts a password argument, local <code>.env</code> file, or the
-retired <code>ATLASO_DEPLOY_SSH_PASSWORD</code> fallback. An interactive <code>op run</code> shell is not a supported substitute for the
-exact Environment handoff.</p>
+opaque Environment ID from that exact Environment and pass it with the account name or ID used by the desktop app.
+The parent performs local build and input preparation without the credential, then invokes one isolated Python child.
+Because the 1Password SDK publishes Windows wheels through CPython 3.13 while Atlaso builds with Python 3.14, pass an
+explicit CPython 3.10 through 3.13 executable with <code>-OnePasswordPython</code>; the script validates that boundary before any
+build or deployment work.
+The supported 1Password SDK prompts for desktop authorization and returns the exact concealed variable only inside that
+child, which uses it directly for Paramiko without putting it in an environment variable. Python starts with <code>-I -S</code>
+and prepends only its explicit dependency directory, so <code>sitecustomize</code>, <code>usercustomize</code>, executable <code>.pth</code> hooks, and
+inherited <code>PYTHONPATH</code> cannot observe the value. The helper fails closed when SDK preparation, authorization,
+Environment access, the unique variable, or masking is unavailable. It never accepts a password argument, local <code>.env</code>
+file, or the retired <code>ATLASO_DEPLOY_SSH_PASSWORD</code> fallback. Stable <code>op run</code> does not support the beta-only Environment
+flag and is not used by this workflow.</p>
 <p>The child uses the local Python runtime and Paramiko so SSH and sudo do not prompt interactively. Paramiko loads the
 user's SSH known-hosts database and rejects unknown host keys; use the normal test wrapper's host-derived key and
 fingerprint to update trust explicitly before running the deployment. It drains non-PTY stdout and stderr concurrently
 so a verbose remote failure cannot block on one
 channel and enforces the separate <code>-DeploymentTimeoutSeconds</code> remote-command deadline; the remote readiness retry keeps
-its independent <code>-ReadinessTimeoutSeconds</code> allowance. If the selected Python cannot already import Paramiko, the
-helper installs it and its dependencies into
-a temporary deployment directory from the wheels downloaded under <code>dist</code>; it does not modify the global Python
-environment. Without <code>-OnePasswordEnvironmentId</code>, the helper preserves the original <code>scp</code>/<code>ssh</code> key or agent workflow.
+its independent <code>-ReadinessTimeoutSeconds</code> allowance. Desktop authorization and exact Environment retrieval each use
+the deployment deadline too. The build downloads Paramiko, the pinned 1Password SDK, and every transitive dependency
+from the seven-day, hash-verified <code>requirements-onepassword-deploy.lock</code>. The child installs that runtime into a
+temporary deployment directory using only the staged wheels, <code>--no-index</code>, and hash verification; it does not modify
+the global Python environment. <code>-SkipBuild</code> fails closed if the complete locked wheel set is not already in <code>dist</code>.
+Without <code>-OnePasswordEnvironmentId</code>, the helper preserves the original <code>scp</code>/<code>ssh</code> key or agent workflow.
 Helper sync matters because the privileged helper is installed outside the Python virtualenv and is not replaced by
 <code>pip install</code>. If the app takes longer to import after reinstalling the wheel, increase the readiness wait with
 <code>-ReadinessTimeoutSeconds 120</code>. Use <code>-SkipInventoryLinuxSync</code> only when deliberately leaving the appliance's existing
