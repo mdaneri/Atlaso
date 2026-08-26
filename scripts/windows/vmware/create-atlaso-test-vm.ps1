@@ -138,7 +138,7 @@ param(
     [switch]$ResetDataDisks,
     [switch]$NoStart,
     [switch]$SkipNetworkPrepare,
-    [bool]$WaitForIp = $true,
+    [switch]$WaitForIp,
     [switch]$TrustRootCa,
     [string]$OnePasswordEnvironmentId = '',
     [string]$FirstBootFqdn = '',
@@ -151,6 +151,14 @@ param(
 )
 
 $ErrorActionPreference = 'Stop'
+
+# Preserve the established default-enabled and bare-switch interface without a
+# default-true switch declaration, which PowerShell cannot distinguish safely.
+$waitForIpEnabled = if ($PSBoundParameters.ContainsKey('WaitForIp')) {
+    [bool]$WaitForIp
+} else {
+    $true
+}
 
 # Resolve credentials before any network preparation, cleanup, or VM mutation.
 # Read-Host returns SecureString without recreating a repository default.
@@ -2010,9 +2018,9 @@ if (-not $SkipSshKeyProvisioning -and -not $WhatIfPreference) {
     Write-Host "SSH host key fingerprint: $($sshHostKey.Fingerprint)"
 }
 
-if (($WaitForIp -or $TrustRootCa) -and $readinessIdentity) {
+if (($waitForIpEnabled -or $TrustRootCa) -and $readinessIdentity) {
     $ip = $readinessIdentity.IPAddress
-    if ($WaitForIp) {
+    if ($waitForIpEnabled) {
         Write-Host "Management IP: $ip"
     }
     $rootCaStatus = Install-ApplianceRootCa `

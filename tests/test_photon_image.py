@@ -1520,7 +1520,7 @@ def test_create_atlaso_test_vm_wrapper_is_safe_and_simple():
     assert "[switch]$SkipLabNetworkAdapters" in script
     assert "[int]$SiteVlanId = 12" in script
     assert "[int]$TaggedVlanId = 50" in script
-    assert "[bool]$WaitForIp" in script
+    assert "[switch]$WaitForIp" in script
     assert "Find-LatestApplianceVhdx" in script
     assert "Remove-ExistingDataDisks" in script
     assert "Atlaso-Depot.vhdx" in script
@@ -1654,7 +1654,9 @@ def test_create_atlaso_vmware_test_vm_wrapper_uses_common_helpers():
     assert "[switch]$SkipLabNetworkAdapters" in script
     assert "[switch]$IncludeLabNetworkAdapters" in script
     assert "[switch]$ResetDataDisks" in script
-    assert "[bool]$WaitForIp = $true" in script
+    assert "[switch]$WaitForIp" in script
+    assert "$PSBoundParameters.ContainsKey('WaitForIp')" in script
+    assert "$waitForIpEnabled = if" in script
     assert "[switch]$TrustRootCa" in script
     assert "[string]$OnePasswordEnvironmentId = ''" in script
     assert "[switch]$RootSshEnabled" in script
@@ -1681,7 +1683,7 @@ def test_create_atlaso_vmware_test_vm_wrapper_uses_common_helpers():
     assert "certutil.exe -user -delstore Root" not in script
     assert "certutil.exe -f -user -addstore Root $rootCerPath" in script
     assert "-NoStart is not supported for normal test VMs" in script
-    assert "if (($WaitForIp -or $TrustRootCa) -and $readinessIdentity)" in script
+    assert "if (($waitForIpEnabled -or $TrustRootCa) -and $readinessIdentity)" in script
     assert "-ExpectedHostname $FirstBootFqdn" in script
     assert "-PassThruIdentity" in script
     assert "Atlaso Workstation test VM ready" in script

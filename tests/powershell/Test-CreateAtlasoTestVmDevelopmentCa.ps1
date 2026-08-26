@@ -192,8 +192,10 @@ if (($childOutput | Out-String) -match 'BEGIN PRIVATE KEY') {
     throw 'The bounded child failure must not expose private-key material.'
 }
 
-if ($wrapperSource -notmatch '\[bool\]\$WaitForIp = \$true') {
-    throw 'Normal VMware test VM waiting must default to enabled.'
+if ($wrapperSource -notmatch '\[switch\]\$WaitForIp' -or
+    $wrapperSource -notmatch "ContainsKey\('WaitForIp'\)" -or
+    $wrapperSource -notmatch '\$waitForIpEnabled = if') {
+    throw 'Normal VMware test VM waiting must preserve default-enabled switch compatibility.'
 }
 if ($wrapperSource -match '\[switch\]\$RootSshEnabled\s*=\s*\$true') {
     throw 'Root SSH must remain disabled by default.'
