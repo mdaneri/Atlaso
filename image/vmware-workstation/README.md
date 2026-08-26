@@ -452,7 +452,9 @@ process tree; a timeout terminates the whole tree and enters signer scrub and VM
 `0600`, proves guest-info scrub, encrypts it with that VM's unique `ATLASO_SECRETS_KEY`, and deletes the staging file.
 Every post-staging VMware operation has its own process-tree deadline. Before staging, the wrapper durably records a
 non-secret per-user cleanup marker; an interrupted rollback blocks later normal-VM creation until the exact marked VM
-is stopped, its VMX signer value is scrubbed, its artifacts are removed, and preserved data disks are restored. First
+is stopped, its VMX signer value is scrubbed, its artifacts are removed, and preserved data disks are restored. This
+recovery runs before 1Password preflight and resumes from a durable stopped/scrubbed phase if VM removal completed
+before data-disk restoration. First
 boot also durably scrubs plaintext staging when encrypted import fails. `-NoStart` is rejected because a powered-off VM
 would retain
 the signer before consumption. The wrapper never prints the signer or places it in arguments, logs, markers, lifecycle

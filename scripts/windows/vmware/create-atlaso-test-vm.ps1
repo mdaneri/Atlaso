@@ -589,12 +589,19 @@ function New-AtlasoDevelopmentCaCleanupMarker {
     $markerId = [guid]::NewGuid().ToString('N')
     $markerPath = Join-Path $MarkerRoot "$markerId.json"
     $temporaryPath = Join-Path $MarkerRoot "$markerId.tmp"
+    # Keep preserved data on the VM artifact volume so quarantine uses a
+    # same-volume rename and retains the recorded filesystem identity.
+    $quarantineDirectory = Join-Path `
+        (Split-Path -Parent $resolvedOutputDirectory) `
+        ".atlaso-development-ca-cleanup-$markerId"
     $payload = [ordered]@{
         Schema = 1
+        Phase = 'staged'
         Name = $Name
         VmxPath = $resolvedVmxPath
         VmxIdentity = [Atlaso.WorkstationFileIdentity]::Get($resolvedVmxPath)
         OutputDirectory = $resolvedOutputDirectory
+        QuarantineDirectory = $quarantineDirectory
         CreatedUtc = [DateTimeOffset]::UtcNow.ToString('O')
         DataDisks = @(
             foreach ($state in $DataDiskStates) {
@@ -627,6 +634,68 @@ function New-AtlasoDevelopmentCaCleanupMarker {
         }
         Move-Item -LiteralPath $temporaryPath -Destination $markerPath
         return $markerPath
+    }
+    finally {
+        Remove-Item -LiteralPath $temporaryPath -Force -ErrorAction SilentlyContinue
+    }
+}
+
+<#
+.SYNOPSIS
+Durably advance one development-CA cleanup marker phase.
+
+.PARAMETER MarkerPath
+Exact invocation marker whose phase must advance.
+
+.PARAMETER ExpectedPhase
+Current phase required before replacement.
+
+.PARAMETER Phase
+Next cleanup phase proven by the caller.
+#>
+function Set-AtlasoDevelopmentCaCleanupMarkerPhase {
+    param(
+        [Parameter(Mandatory = $true)][string]$MarkerPath,
+        [Parameter(Mandatory = $true)][ValidateSet('staged')][string]$ExpectedPhase,
+        [Parameter(Mandatory = $true)][ValidateSet('stopped-vmx-scrubbed')][string]$Phase
+    )
+
+    $resolvedMarkerPath = (Resolve-Path -LiteralPath $MarkerPath).Path
+    $item = Get-Item -LiteralPath $resolvedMarkerPath -Force
+    if (($item.Attributes -band [System.IO.FileAttributes]::ReparsePoint) -ne 0 -or $item.Length -gt 32768) {
+        throw "Development-CA cleanup marker is unsafe: $resolvedMarkerPath"
+    }
+    try {
+        $payload = Get-Content -LiteralPath $resolvedMarkerPath -Raw | ConvertFrom-Json
+    }
+    catch {
+        throw "Development-CA cleanup marker is invalid: $resolvedMarkerPath"
+    }
+    if ($payload.Schema -ne 1 -or $payload.Phase -cne $ExpectedPhase) {
+        throw "Development-CA cleanup marker phase did not match the required transition: $resolvedMarkerPath"
+    }
+    $payload.Phase = $Phase
+    $temporaryPath = "$resolvedMarkerPath.$([guid]::NewGuid().ToString('N')).tmp"
+    $bytes = [System.Text.UTF8Encoding]::new($false).GetBytes(
+        ($payload | ConvertTo-Json -Depth 4 -Compress)
+    )
+    try {
+        $stream = [System.IO.FileStream]::new(
+            $temporaryPath,
+            [System.IO.FileMode]::CreateNew,
+            [System.IO.FileAccess]::Write,
+            [System.IO.FileShare]::None,
+            4096,
+            [System.IO.FileOptions]::WriteThrough
+        )
+        try {
+            $stream.Write($bytes, 0, $bytes.Length)
+            $stream.Flush($true)
+        }
+        finally {
+            $stream.Dispose()
+        }
+        [System.IO.File]::Move($temporaryPath, $resolvedMarkerPath, $true)
     }
     finally {
         Remove-Item -LiteralPath $temporaryPath -Force -ErrorAction SilentlyContinue
@@ -683,26 +752,65 @@ function Read-AtlasoDevelopmentCaCleanupMarker {
     }
     if (
         $marker.Schema -ne 1 -or
+        $marker.Phase -notin @('staged', 'stopped-vmx-scrubbed') -or
         [string]::IsNullOrWhiteSpace([string]$marker.Name) -or
         ([string]$marker.Name).Length -gt 128 -or
         $marker.Name -match '[\x00-\x1F]' -or
         -not [System.IO.Path]::IsPathFullyQualified([string]$marker.VmxPath) -or
         -not [System.IO.Path]::IsPathFullyQualified([string]$marker.OutputDirectory) -or
+        -not [System.IO.Path]::IsPathFullyQualified([string]$marker.QuarantineDirectory) -or
         $marker.VmxIdentity -notmatch '^[0-9A-F]{8}:[0-9A-F]{16}$'
     ) {
         throw "Development-CA cleanup marker fields are invalid and block new VM creation: $MarkerPath"
     }
-    if (-not (Test-Path -LiteralPath $marker.VmxPath -PathType Leaf)) {
-        throw "The marked VMX is missing; preserve the marker and review the failed VM manually: $MarkerPath"
+    $resolvedVmxPath = [System.IO.Path]::GetFullPath([string]$marker.VmxPath)
+    $resolvedOutputDirectory = [System.IO.Path]::GetFullPath([string]$marker.OutputDirectory)
+    $resolvedQuarantineDirectory = [System.IO.Path]::GetFullPath([string]$marker.QuarantineDirectory)
+    $markerId = [System.IO.Path]::GetFileNameWithoutExtension($MarkerPath)
+    $expectedQuarantineDirectory = Join-Path `
+        (Split-Path -Parent $resolvedOutputDirectory) `
+        ".atlaso-development-ca-cleanup-$markerId"
+    if (-not $resolvedQuarantineDirectory.Equals(
+            [System.IO.Path]::GetFullPath($expectedQuarantineDirectory),
+            [System.StringComparison]::OrdinalIgnoreCase
+        )) {
+        throw "Development-CA cleanup quarantine identity is invalid: $MarkerPath"
     }
-    $resolvedVmxPath = (Resolve-Path -LiteralPath $marker.VmxPath).Path
-    $resolvedOutputDirectory = (Resolve-Path -LiteralPath $marker.OutputDirectory).Path
     Assert-AtlasoStrictDescendantPath `
         -ParentPath $resolvedOutputDirectory `
         -ChildPath $resolvedVmxPath `
         -FailureMessage 'Marked development-CA VMX is outside its exact artifact directory'
-    if ([Atlaso.WorkstationFileIdentity]::Get($resolvedVmxPath) -cne $marker.VmxIdentity) {
-        throw "The marked VMX changed filesystem identity; preserve it for manual review: $MarkerPath"
+    $artifactsRemoved = -not (Test-Path -LiteralPath $resolvedOutputDirectory)
+    if ($artifactsRemoved) {
+        if ($marker.Phase -cne 'stopped-vmx-scrubbed') {
+            throw "The marked VM artifacts disappeared before stopped-VM proof; preserve the marker for manual review: $MarkerPath"
+        }
+    }
+    else {
+        if (-not (Test-Path -LiteralPath $resolvedVmxPath -PathType Leaf)) {
+            if ($marker.Phase -cne 'stopped-vmx-scrubbed') {
+                throw "The marked VMX disappeared before stopped-VM proof; preserve the marker for manual review: $MarkerPath"
+            }
+            $allowedRestoredPaths = @(
+                foreach ($disk in @($marker.DataDisks)) {
+                    if (-not [System.IO.Path]::IsPathFullyQualified([string]$disk.Path)) {
+                        throw "Development-CA cleanup data-disk path is invalid: $MarkerPath"
+                    }
+                    [System.IO.Path]::GetFullPath([string]$disk.Path)
+                }
+            )
+            foreach ($remainingFile in @(Get-ChildItem -LiteralPath $resolvedOutputDirectory -File -Recurse -Force)) {
+                if (-not ($allowedRestoredPaths | Where-Object {
+                            $_.Equals($remainingFile.FullName, [System.StringComparison]::OrdinalIgnoreCase)
+                        })) {
+                    throw "Unexpected files remain after marked VM removal; preserve the marker for manual review: $($remainingFile.FullName)"
+                }
+            }
+            $artifactsRemoved = $true
+        }
+        elseif ([Atlaso.WorkstationFileIdentity]::Get($resolvedVmxPath) -cne $marker.VmxIdentity) {
+            throw "The marked VMX changed filesystem identity; preserve it for manual review: $MarkerPath"
+        }
     }
     return [pscustomobject]@{
         MarkerPath = (Resolve-Path -LiteralPath $MarkerPath).Path
@@ -710,6 +818,9 @@ function Read-AtlasoDevelopmentCaCleanupMarker {
         VmxPath = $resolvedVmxPath
         OutputDirectory = $resolvedOutputDirectory
         DataDisks = @($marker.DataDisks)
+        QuarantineDirectory = $resolvedQuarantineDirectory
+        Phase = [string]$marker.Phase
+        ArtifactsRemoved = $artifactsRemoved
     }
 }
 
@@ -748,7 +859,7 @@ function Invoke-PendingAtlasoDevelopmentCaCleanup {
         $marker = Read-AtlasoDevelopmentCaCleanupMarker `
             -MarkerPath $markerFile.FullName `
             -MarkerRoot $MarkerRoot
-        $quarantineDirectory = "$($marker.MarkerPath).data"
+        $quarantineDirectory = $marker.QuarantineDirectory
         $dataDiskStates = @(
             foreach ($disk in $marker.DataDisks) {
                 if (
@@ -788,21 +899,33 @@ function Invoke-PendingAtlasoDevelopmentCaCleanup {
                 $state
             }
         )
-        try {
-            Clear-AtlasoWorkstationDevelopmentRootCaRuntimePrivateKey `
+        if (-not $marker.ArtifactsRemoved) {
+            try {
+                Clear-AtlasoWorkstationDevelopmentRootCaRuntimePrivateKey `
+                    -VmxPath $marker.VmxPath `
+                    -VmrunPath $VmrunPath `
+                    -TimeoutSeconds $TimeoutSeconds
+            }
+            catch {
+                # A powered-off guest rejects runtime writes. Stop proof and the
+                # powered-off VMX scrub below remain authoritative in that case.
+            }
+            Stop-AtlasoTestVmForRollback `
                 -VmxPath $marker.VmxPath `
                 -VmrunPath $VmrunPath `
                 -TimeoutSeconds $TimeoutSeconds
+            Clear-AtlasoWorkstationDevelopmentRootCaPrivateKey -VmxPath $marker.VmxPath
+            if ($marker.Phase -eq 'staged') {
+                # Publish stopped/scrubbed proof before artifact removal. A
+                # later retry may then safely resume data restoration even
+                # when the VMX and its artifact root are already absent.
+                Set-AtlasoDevelopmentCaCleanupMarkerPhase `
+                    -MarkerPath $marker.MarkerPath `
+                    -ExpectedPhase staged `
+                    -Phase stopped-vmx-scrubbed
+                $marker.Phase = 'stopped-vmx-scrubbed'
+            }
         }
-        catch {
-            # A powered-off guest rejects runtime writes. Stop proof and the
-            # powered-off VMX scrub below remain authoritative in that case.
-        }
-        Stop-AtlasoTestVmForRollback `
-            -VmxPath $marker.VmxPath `
-            -VmrunPath $VmrunPath `
-            -TimeoutSeconds $TimeoutSeconds
-        Clear-AtlasoWorkstationDevelopmentRootCaPrivateKey -VmxPath $marker.VmxPath
         try {
             $statesToMove = @($dataDiskStates | Where-Object { -not $_.QuarantinePath })
             if ($statesToMove.Count -gt 0) {
@@ -823,19 +946,21 @@ function Invoke-PendingAtlasoDevelopmentCaCleanup {
                     }
                 }
             }
-            $powerShellPath = (Get-Process -Id $PID).Path
-            Invoke-AtlasoBoundedProcess `
-                -FilePath $powerShellPath `
-                -ArgumentList @(
-                    '-NoLogo', '-NoProfile', '-NonInteractive', '-File',
-                    (Join-Path $PSScriptRoot 'remove-atlaso-vm.ps1'),
-                    '-VmxPath', $marker.VmxPath,
-                    '-VmrunPath', $VmrunPath,
-                    '-ExpectedName', $marker.Name,
-                    '-Confirm:$false'
-                ) `
-                -TimeoutSeconds $TimeoutSeconds `
-                -Action 'Remove the exact failed normal test VM during persisted cleanup' | Out-Null
+            if (-not $marker.ArtifactsRemoved) {
+                $powerShellPath = (Get-Process -Id $PID).Path
+                Invoke-AtlasoBoundedProcess `
+                    -FilePath $powerShellPath `
+                    -ArgumentList @(
+                        '-NoLogo', '-NoProfile', '-NonInteractive', '-File',
+                        (Join-Path $PSScriptRoot 'remove-atlaso-vm.ps1'),
+                        '-VmxPath', $marker.VmxPath,
+                        '-VmrunPath', $VmrunPath,
+                        '-ExpectedName', $marker.Name,
+                        '-Confirm:$false'
+                    ) `
+                    -TimeoutSeconds $TimeoutSeconds `
+                    -Action 'Remove the exact failed normal test VM during persisted cleanup' | Out-Null
+            }
             Restore-AtlasoRollbackDataDisksFromQuarantine `
                 -DataDiskStates $dataDiskStates `
                 -QuarantineDirectory $quarantineDirectory
@@ -1099,6 +1224,14 @@ $developmentRootCaFingerprint = Get-AtlasoDevelopmentRootCaFingerprint `
     -CertificatePath $developmentRootCaCertificatePath
 $resolvedOpPath = ''
 $resolvedVmrunPath = ''
+if (-not $WhatIfPreference) {
+    # Recovery consumes no 1Password material. Run it first so revoked or
+    # rotated credentials cannot strand an earlier plaintext-staging failure.
+    $resolvedVmrunPath = Resolve-TestVmVmrunPath -Path $VmrunPath
+    Invoke-PendingAtlasoDevelopmentCaCleanup `
+        -VmrunPath $resolvedVmrunPath `
+        -TimeoutSeconds ([Math]::Min($TimeoutSeconds, 30))
+}
 if ($NoStart) {
     throw '-NoStart is not supported for normal test VMs because first boot must consume and scrub the shared development signing key.'
 }
@@ -1116,10 +1249,6 @@ if (-not $WhatIfPreference) {
         -Action Validate `
         -CertificatePath $developmentRootCaCertificatePath `
         -TimeoutSeconds $TimeoutSeconds
-    $resolvedVmrunPath = Resolve-TestVmVmrunPath -Path $VmrunPath
-    Invoke-PendingAtlasoDevelopmentCaCleanup `
-        -VmrunPath $resolvedVmrunPath `
-        -TimeoutSeconds ([Math]::Min($TimeoutSeconds, 30))
 }
 
 # Key input validation intentionally precedes network preparation, cleanup, disk
@@ -1358,10 +1487,20 @@ if (-not $WhatIfPreference) {
                 catch {
                     $vmxSignerScrubError = $_.Exception.Message
                 }
+                if ($vmxSignerScrubError) {
+                    $rollbackErrors.Add($vmxSignerScrubError)
+                    throw 'The powered-off development signer could not be proven scrubbed; destructive rollback was deferred.'
+                }
+                if ($developmentCaCleanupMarkerPath) {
+                    Set-AtlasoDevelopmentCaCleanupMarkerPhase `
+                        -MarkerPath $developmentCaCleanupMarkerPath `
+                        -ExpectedPhase staged `
+                        -Phase stopped-vmx-scrubbed
+                }
                 if ($rollbackDataDiskStates.Count -gt 0) {
                     $quarantineDirectory = Join-Path `
                         (Split-Path -Parent $resolvedOutputDirectory) `
-                        ".atlaso-test-vm-rollback-$([guid]::NewGuid().ToString('N'))"
+                        ".atlaso-development-ca-cleanup-$([System.IO.Path]::GetFileNameWithoutExtension($developmentCaCleanupMarkerPath))"
                     Move-AtlasoRollbackDataDisksToQuarantine `
                         -DataDiskStates $rollbackDataDiskStates `
                         -QuarantineDirectory $quarantineDirectory
@@ -1378,11 +1517,6 @@ if (-not $WhatIfPreference) {
                     ) `
                     -TimeoutSeconds $TimeoutSeconds `
                     -Action 'Remove the exact failed normal test VM during rollback' | Out-Null
-                if ($developmentCaCleanupMarkerPath) {
-                    Remove-AtlasoDevelopmentCaCleanupMarker `
-                        -MarkerPath $developmentCaCleanupMarkerPath
-                    $developmentCaCleanupMarkerPath = ''
-                }
             }
             catch {
                 $rollbackErrors.Add($_.Exception.Message)
@@ -1399,8 +1533,15 @@ if (-not $WhatIfPreference) {
                     }
                 }
             }
-            if ($vmxSignerScrubError -and (Test-Path -LiteralPath $targetVmx -PathType Leaf)) {
-                $rollbackErrors.Add($vmxSignerScrubError)
+            if ($rollbackErrors.Count -eq 0 -and $developmentCaCleanupMarkerPath) {
+                try {
+                    Remove-AtlasoDevelopmentCaCleanupMarker `
+                        -MarkerPath $developmentCaCleanupMarkerPath
+                    $developmentCaCleanupMarkerPath = ''
+                }
+                catch {
+                    $rollbackErrors.Add($_.Exception.Message)
+                }
             }
             if ($rollbackErrors.Count -gt 0) {
                 $quarantineHint = if ($quarantineDirectory) {

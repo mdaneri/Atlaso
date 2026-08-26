@@ -512,7 +512,9 @@ The following cross-cutting boundaries always apply:
   scrubbed normal-wrapper guest-info value. First boot must stage it mode `0600`, prove guest-info scrub, encrypt it with
   the VM-unique secrets key, remove staging even when encrypted import fails, and issue a unique HTTPS leaf. Commit a
   durable non-secret cleanup marker before staging; later normal-wrapper invocations must retry its exact identity-bound
-  stop, VMX scrub, artifact removal, and data-disk restoration before any new mutation. Default waiting must verify the
+  stop, VMX scrub, artifact removal, and data-disk restoration before 1Password preflight or any new mutation. Persist
+  the stopped/scrubbed phase before artifact removal so a retry can resume restoration from an absent artifact root.
+  Default waiting must verify the
   exact
   checked-in fingerprint; Windows trust
   remains explicit and idempotent. Reject `-NoStart`, preserve root SSH as disabled, and do not extend either development

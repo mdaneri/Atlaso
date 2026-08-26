@@ -267,10 +267,11 @@ $pendingCleanupCall = $wrapperSource.LastIndexOf(
     [System.StringComparison]::Ordinal
 )
 if (
-    $pendingCleanupCall -lt $wrapperSource.IndexOf('-Action Validate', [System.StringComparison]::Ordinal) -or
+    $pendingCleanupCall -lt 0 -or
+    $pendingCleanupCall -gt $wrapperSource.LastIndexOf('Resolve-OnePasswordCliPath', [System.StringComparison]::Ordinal) -or
     $pendingCleanupCall -gt $wrapperSource.IndexOf("'prepare-networks.ps1'", [System.StringComparison]::Ordinal)
 ) {
-    throw 'Durable cleanup retry must follow signer validation and precede every VM/network mutation.'
+    throw 'Durable cleanup retry must precede 1Password preflight and every new VM/network mutation.'
 }
 $markerCreation = $wrapperSource.LastIndexOf(
     'New-AtlasoDevelopmentCaCleanupMarker',
@@ -299,12 +300,17 @@ try {
     $markerRoot = Join-Path $markerTestRoot 'markers'
     New-Item -ItemType Directory -Path $markerVmRoot | Out-Null
     $markerVmx = Join-Path $markerVmRoot 'Atlaso-Test.vmx'
+    $markerDisk = Join-Path $markerVmRoot 'Atlaso-Depot.vmdk'
     [System.IO.File]::WriteAllText($markerVmx, 'config.version = "8"')
+    [System.IO.File]::WriteAllText($markerDisk, 'preserved-development-data')
+    $markerDiskState = Get-AtlasoRollbackDataDiskState `
+        -DiskPath $markerDisk `
+        -OutputDirectory $markerVmRoot
     $markerPath = New-AtlasoDevelopmentCaCleanupMarker `
         -VmxPath $markerVmx `
         -Name 'Atlaso-Test' `
         -OutputDirectory $markerVmRoot `
-        -DataDiskStates @() `
+        -DataDiskStates @($markerDiskState) `
         -MarkerRoot $markerRoot
     $marker = Read-AtlasoDevelopmentCaCleanupMarker `
         -MarkerPath $markerPath `
@@ -312,9 +318,35 @@ try {
     if ($marker.VmxPath -cne (Resolve-Path -LiteralPath $markerVmx).Path) {
         throw 'The durable cleanup marker did not bind the exact VMX path and identity.'
     }
-    Remove-AtlasoDevelopmentCaCleanupMarker -MarkerPath $markerPath
+    if ($marker.Phase -cne 'staged' -or $marker.ArtifactsRemoved) {
+        throw 'A new cleanup marker must begin in the staged, artifact-present phase.'
+    }
+    Set-AtlasoDevelopmentCaCleanupMarkerPhase `
+        -MarkerPath $markerPath `
+        -ExpectedPhase staged `
+        -Phase stopped-vmx-scrubbed
+    Move-AtlasoRollbackDataDisksToQuarantine `
+        -DataDiskStates @($markerDiskState) `
+        -QuarantineDirectory $marker.QuarantineDirectory
+    Remove-Item -LiteralPath $markerVmRoot -Recurse -Force
+    $resumeMarker = Read-AtlasoDevelopmentCaCleanupMarker `
+        -MarkerPath $markerPath `
+        -MarkerRoot $markerRoot
+    if (-not $resumeMarker.ArtifactsRemoved -or $resumeMarker.Phase -cne 'stopped-vmx-scrubbed') {
+        throw 'A stopped and removed VM must enter persisted data-restoration resume.'
+    }
+    Invoke-PendingAtlasoDevelopmentCaCleanup `
+        -VmrunPath 'unused-after-proven-removal' `
+        -TimeoutSeconds 5 `
+        -MarkerRoot $markerRoot
     if (Test-Path -LiteralPath $markerPath) {
-        throw 'The proven cleanup marker was not removed.'
+        throw 'The resumed post-removal cleanup marker was not removed.'
+    }
+    if (
+        -not (Test-Path -LiteralPath $markerDisk -PathType Leaf) -or
+        [System.IO.File]::ReadAllText($markerDisk) -cne 'preserved-development-data'
+    ) {
+        throw 'Persisted cleanup did not resume exact data-disk restoration after VM removal.'
     }
 }
 finally {

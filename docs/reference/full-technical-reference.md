@@ -1422,7 +1422,8 @@ uses a bounded child and a separately scrubbed guest-info value. `-TimeoutSecond
 `op`/secret-child process tree on deadline so staging failures enter signer scrub and VM rollback. Every post-staging
 VMware operation is also bounded. A durable, non-secret per-user cleanup marker makes the next validated wrapper
 invocation retry the exact interrupted rollback before any network or VM mutation; the marker is removed only after
-encrypted-import proof or successful stopped-VM artifact cleanup. First boot encrypts
+encrypted-import proof or successful stopped-VM artifact cleanup. Recovery precedes 1Password preflight and records a
+stopped/scrubbed phase so restoration can resume after the artifact root has already been removed. First boot encrypts
 the signer with the VM's unique `ATLASO_SECRETS_KEY`, deletes staging, and issues a unique `appliance:https` leaf for
 that VM's FQDN/IP. Default waiting
 requires the downloaded root fingerprint to match the checked-in certificate; use `-WaitForIp:$false` to opt out.
