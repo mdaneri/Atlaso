@@ -1180,6 +1180,8 @@ def test_packer_build_uses_atlaso_management_network_by_default():
     assert "Using remastered Photon ISO" in build_module
     assert "Packer will boot a single DVD with embedded photon-ks.json and a GRUB auto-install entry." in build_module
     assert "Write-AtlasoPackerVarFile" in build_module
+    assert "Remove-Item -LiteralPath $kickstartJson -Force" in build_module
+    assert "Remove-Item -LiteralPath $ksSourceDir -Force" in build_module
     assert "Using Packer var-file" in build_module
     assert "[ValidateSet('cleanup', 'abort', 'ask', 'run-cleanup-provisioner')]" in wrapper
     assert "[string]$PackerOnError = 'cleanup'" in wrapper

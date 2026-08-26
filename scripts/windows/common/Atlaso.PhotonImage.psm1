@@ -608,12 +608,19 @@ function Invoke-AtlasoPhotonImageBuild {
 
     $sourceIsoPath = Resolve-AtlasoPhotonSourceIso -UrlOrPath $IsoUrl -Checksum $IsoChecksum -BuildDirectory $buildDir -PackerDirectory $packerDir -SharedSourceDirectory $sharedSourceDir
     try {
-        New-AtlasoRemasteredPhotonIso -SourceIso $sourceIsoPath -KickstartJson $kickstartJson -OutputIso $resolvedPreparedIsoPath
-    } catch {
-        $fallbackPreparedIsoPath = New-AtlasoFallbackPreparedIsoPath -Path $resolvedPreparedIsoPath
-        Write-Warning "Could not replace prepared ISO at $resolvedPreparedIsoPath; retrying this run with $fallbackPreparedIsoPath"
-        $resolvedPreparedIsoPath = $fallbackPreparedIsoPath
-        New-AtlasoRemasteredPhotonIso -SourceIso $sourceIsoPath -KickstartJson $kickstartJson -OutputIso $resolvedPreparedIsoPath
+        try {
+            New-AtlasoRemasteredPhotonIso -SourceIso $sourceIsoPath -KickstartJson $kickstartJson -OutputIso $resolvedPreparedIsoPath
+        } catch {
+            $fallbackPreparedIsoPath = New-AtlasoFallbackPreparedIsoPath -Path $resolvedPreparedIsoPath
+            Write-Warning "Could not replace prepared ISO at $resolvedPreparedIsoPath; retrying this run with $fallbackPreparedIsoPath"
+            $resolvedPreparedIsoPath = $fallbackPreparedIsoPath
+            New-AtlasoRemasteredPhotonIso -SourceIso $sourceIsoPath -KickstartJson $kickstartJson -OutputIso $resolvedPreparedIsoPath
+        }
+    } finally {
+        # The remastered ISO owns the consumed kickstart payload. Do not retain
+        # its plaintext build password in the ignored repository workspace.
+        Remove-Item -LiteralPath $kickstartJson -Force -ErrorAction SilentlyContinue
+        Remove-Item -LiteralPath $ksSourceDir -Force -ErrorAction SilentlyContinue
     }
     $preparedIso = Get-Item -LiteralPath $resolvedPreparedIsoPath -ErrorAction Stop
     if ($preparedIso.Length -le 0) {
