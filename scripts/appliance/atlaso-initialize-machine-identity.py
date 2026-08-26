@@ -97,7 +97,8 @@ def _publish_hyperv_access(payload: str) -> None:
     temporary = KVP_POOL_PATH.with_name(f".{KVP_POOL_PATH.name}.{secrets.token_hex(8)}.tmp")
     # This is the Hyper-V guest-to-host KVP transport, not appliance storage.
     # The selector removes Atlaso's record on the first reboot.
-    temporary.write_bytes(b"".join(records))  # lgtm[py/clear-text-storage-sensitive-data]
+    # codeql[py/clear-text-storage-sensitive-data]
+    temporary.write_bytes(b"".join(records))
     os.chmod(temporary, 0o600)
     os.replace(temporary, KVP_POOL_PATH)
 
@@ -195,16 +196,16 @@ def initialize(platform: str) -> None:
         )
         ACCESS_PATH.parent.mkdir(parents=True, exist_ok=True)
         # /run is tmpfs and this root-only envelope is erased on first reboot.
-        ACCESS_PATH.write_text(access + "\n", encoding="utf-8")  # lgtm[py/clear-text-storage-sensitive-data]
+        # codeql[py/clear-text-storage-sensitive-data]
+        ACCESS_PATH.write_text(access + "\n", encoding="utf-8")
         os.chmod(ACCESS_PATH, 0o600)
         if platform == "hyperv":
             _publish_hyperv_access(access)
         try:
             with Path("/dev/tty1").open("a", encoding="utf-8") as console:
                 # tty1 is a transient console transport, not persistent storage.
-                console.write(  # lgtm[py/clear-text-storage-sensitive-data]
-                    f"Atlaso one-time first-boot access: {access}\n"
-                )
+                # codeql[py/clear-text-storage-sensitive-data]
+                console.write(f"Atlaso one-time first-boot access: {access}\n")
         except OSError:
             pass
     _write_marker_atomic(platform)
