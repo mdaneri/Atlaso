@@ -55,6 +55,11 @@ LOCK_POLICIES = (
         ("requirements-release-tools.in",),
         True,
     ),
+    LockPolicy(
+        "requirements-onepassword-deploy.lock",
+        ("requirements-onepassword-deploy.in",),
+        False,
+    ),
 )
 
 

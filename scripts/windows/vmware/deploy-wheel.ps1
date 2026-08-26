@@ -1,3 +1,49 @@
+<#
+.SYNOPSIS
+Deploys the current Atlaso wheel and deployment assets to a VMware test appliance.
+.PARAMETER RepoRoot
+Repository checkout used for build and deployment inputs.
+.PARAMETER IpAddress
+Explicit appliance IP address.
+.PARAMETER VmxPath
+VMX path used for VMware guest discovery.
+.PARAMETER VmrunPath
+Explicit VMware vmrun executable path.
+.PARAMETER SshUser
+Remote bootstrap SSH account.
+.PARAMETER RemoteDirectory
+Validated POSIX staging directory on the appliance.
+.PARAMETER Python
+Python executable used for build and the isolated deployment child.
+.PARAMETER ReadinessTimeoutSeconds
+Maximum post-restart readiness wait.
+.PARAMETER DeploymentTimeoutSeconds
+Maximum remote deployment-command wait.
+.PARAMETER ReadinessPollSeconds
+Readiness polling interval.
+.PARAMETER SkipBuild
+Uses existing local wheel artifacts.
+.PARAMETER SkipHelperSync
+Leaves the installed privileged helper unchanged.
+.PARAMETER SkipConsoleAssetSync
+Leaves console assets unchanged.
+.PARAMETER SkipBootBrandingSync
+Leaves boot-branding assets unchanged.
+.PARAMETER SkipInventoryLinuxSync
+Leaves Inventory Linux unchanged.
+.PARAMETER WheelPath
+Explicit Atlaso wheel path.
+.PARAMETER OnePasswordEnvironmentId
+Opaque ID of the preverified Atlaso 1Password Environment.
+.PARAMETER OnePasswordAccount
+1Password account name or ID approved for desktop SDK authorization.
+.PARAMETER OnePasswordPython
+CPython 3.10 through 3.13 executable used by the supported 1Password SDK Windows wheel and locked dependencies.
+.PARAMETER ResetVaultEntries
+Clears appliance vault entries during deployment.
+.PARAMETER SkipHostCheck
+Skips the final host-facing OpenAPI probe.
+#>
 [CmdletBinding()]
 param(
     [string]$RepoRoot = '',
@@ -17,25 +63,22 @@ param(
     [switch]$SkipInventoryLinuxSync,
     [string]$WheelPath = '',
     [string]$OnePasswordEnvironmentId = '',
+    [string]$OnePasswordAccount = '',
+    [string]$OnePasswordPython = '',
     [switch]$ResetVaultEntries,
     [switch]$SkipHostCheck
 )
 
 $ErrorActionPreference = 'Stop'
 
-$script:OnePasswordPasswordVariable = 'DEFAULT_ADMIN_PASSWORD'
+$script:PasswordDeployLockName = 'requirements-onepassword-deploy.lock'
 
-function Resolve-OnePasswordCliPath {
-    $command = Get-Command op.exe -ErrorAction SilentlyContinue
-    if (-not $command) {
-        $command = Get-Command op -ErrorAction SilentlyContinue
-    }
-    if (-not $command) {
-        throw 'The 1Password CLI (op.exe) is required for the 1Password Environment credential bridge.'
-    }
-    return $command.Source
-}
-
+<#
+.SYNOPSIS
+Validates an opaque 1Password Environment ID before SDK access.
+.PARAMETER EnvironmentId
+Environment identifier copied from the exact Atlaso Environment.
+#>
 function Assert-OnePasswordEnvironmentId {
     param([Parameter(Mandatory = $true)][string]$EnvironmentId)
 
@@ -44,33 +87,47 @@ function Assert-OnePasswordEnvironmentId {
     }
 }
 
-function Assert-OnePasswordEnvironmentSupport {
-    param([Parameter(Mandatory = $true)][string]$RunHelp)
+<#
+.SYNOPSIS
+Validates the non-secret 1Password account selector used by desktop authorization.
+.PARAMETER Account
+1Password account name or ID.
+#>
+function Assert-OnePasswordAccount {
+    param([Parameter(Mandatory = $true)][string]$Account)
 
-    if ([string]::IsNullOrWhiteSpace($RunHelp) -or $RunHelp -notlike '*--environment*') {
-        throw 'The installed 1Password CLI does not support Environment subprocess loading. Install the supported beta CLI and retry.'
+    if ([string]::IsNullOrWhiteSpace($Account) -or $Account.Length -gt 255 -or $Account -match '[\x00-\x1f\x7f]') {
+        throw 'The 1Password account name or ID is invalid.'
     }
 }
 
-function Invoke-OnePasswordBoundedCommand {
-    param(
-        [Parameter(Mandatory = $true)][string]$EnvironmentId,
-        [Parameter(Mandatory = $true)][string]$CommandPath,
-        [Parameter(Mandatory = $true)][AllowEmptyString()][string[]]$Arguments,
-        [string]$WorkingDirectory = ''
-    )
+<#
+.SYNOPSIS
+Resolves a Python runtime supported by the 1Password SDK Windows wheel.
+.PARAMETER PythonCommand
+Explicit CPython 3.10 through 3.13 executable or command.
+#>
+function Resolve-OnePasswordPython {
+    param([Parameter(Mandatory = $true)][string]$PythonCommand)
 
-    Assert-OnePasswordEnvironmentId -EnvironmentId $EnvironmentId
-    if ($env:DEFAULT_ADMIN_PASSWORD) {
-        throw 'DEFAULT_ADMIN_PASSWORD must not be supplied by the caller; use the exact Atlaso 1Password Environment bridge.'
+    $command = Get-Command -Name $PythonCommand -CommandType Application -ErrorAction SilentlyContinue
+    if (-not $command) {
+        throw "The 1Password SDK Python executable was not found: $PythonCommand."
     }
-    $opPath = Resolve-OnePasswordCliPath
-    $runHelp = (& $opPath run --help 2>&1 | Out-String)
-    Assert-OnePasswordEnvironmentSupport -RunHelp $runHelp
-    $opArguments = @('run', '--environment', $EnvironmentId, '--', $CommandPath) + $Arguments
-    Invoke-CheckedCommand -FilePath $opPath -WorkingDirectory $WorkingDirectory -Arguments $opArguments
+    $resolvedCommand = $command.Source
+    $version = & $resolvedCommand -c 'import sys; print(f"{sys.version_info.major}.{sys.version_info.minor}")'
+    if ($LASTEXITCODE -ne 0 -or $version -notmatch '^3\.1[0-3]$') {
+        throw 'Password-backed deployment requires a separate CPython 3.10 through 3.13 runtime supported by the locked 1Password SDK Windows dependencies.'
+    }
+    return $resolvedCommand
 }
 
+<#
+.SYNOPSIS
+Resolves the VMware Workstation vmrun executable.
+.PARAMETER Path
+Optional explicit executable path.
+#>
 function Resolve-VmrunPath {
     param([string]$Path)
 
@@ -97,6 +154,12 @@ function Resolve-VmrunPath {
     throw 'vmrun.exe was not found. Install VMware Workstation Pro, pass -IpAddress, or pass -VmrunPath.'
 }
 
+<#
+.SYNOPSIS
+Resolves the repository root used for deployment inputs.
+.PARAMETER Path
+Optional explicit repository path.
+#>
 function Resolve-RepoRoot {
     param([string]$Path)
 
@@ -106,6 +169,16 @@ function Resolve-RepoRoot {
     return (Resolve-Path -LiteralPath (Join-Path $PSScriptRoot '..\..\..')).Path
 }
 
+<#
+.SYNOPSIS
+Runs a native command and fails on a nonzero exit code.
+.PARAMETER FilePath
+Executable path.
+.PARAMETER Arguments
+Separate native command arguments.
+.PARAMETER WorkingDirectory
+Optional command working directory.
+#>
 function Invoke-CheckedCommand {
     param(
         [Parameter(Mandatory = $true)][string]$FilePath,
@@ -127,6 +200,12 @@ function Invoke-CheckedCommand {
     }
 }
 
+<#
+.SYNOPSIS
+Returns the exact running VMX entries reported by vmrun.
+.PARAMETER ResolvedVmrun
+Resolved vmrun executable path.
+#>
 function Get-AtlasoRunningVmx {
     param([string]$ResolvedVmrun)
 
@@ -147,6 +226,14 @@ function Get-AtlasoRunningVmx {
     throw 'No running Atlaso VMware VM was found. Pass -IpAddress or -VmxPath.'
 }
 
+<#
+.SYNOPSIS
+Gets the guest IP address for the selected VMX.
+.PARAMETER ResolvedVmrun
+Resolved vmrun executable path.
+.PARAMETER ResolvedVmxPath
+Resolved VMX path.
+#>
 function Get-GuestIpAddress {
     param(
         [string]$ResolvedVmrun,
@@ -160,6 +247,14 @@ function Get-GuestIpAddress {
     return $ip
 }
 
+<#
+.SYNOPSIS
+Selects and validates the Atlaso wheel to deploy.
+.PARAMETER Path
+Optional explicit wheel path.
+.PARAMETER Root
+Repository root containing generated wheels.
+#>
 function Get-WheelPath {
     param(
         [string]$Path,
@@ -181,6 +276,12 @@ function Get-WheelPath {
     return $wheel.FullName
 }
 
+<#
+.SYNOPSIS
+Requires a native command to be available.
+.PARAMETER Name
+Command name.
+#>
 function Test-RequiredCommand {
     param([string]$Name)
 
@@ -191,6 +292,12 @@ function Test-RequiredCommand {
     return $command.Source
 }
 
+<#
+.SYNOPSIS
+Validates the host-facing appliance OpenAPI endpoint.
+.PARAMETER HostAddress
+Appliance address to probe.
+#>
 function Invoke-HostOpenApiCheck {
     param([string]$HostAddress)
 
@@ -217,6 +324,12 @@ function Invoke-HostOpenApiCheck {
     }
 }
 
+<#
+.SYNOPSIS
+Builds the shared strict SSH connection arguments.
+.PARAMETER ControlPath
+Optional SSH control-socket path.
+#>
 function Get-SshConnectionArguments {
     param([string]$ControlPath)
 
@@ -231,6 +344,12 @@ function Get-SshConnectionArguments {
     )
 }
 
+<#
+.SYNOPSIS
+Validates and canonicalizes the remote POSIX staging directory.
+.PARAMETER Path
+Remote directory candidate.
+#>
 function Resolve-RemoteDirectoryPath {
     param([Parameter(Mandatory = $true)][string]$Path)
 
@@ -257,6 +376,14 @@ function Resolve-RemoteDirectoryPath {
     return $normalized
 }
 
+<#
+.SYNOPSIS
+Joins a validated remote directory and leaf name.
+.PARAMETER Directory
+Canonical remote directory.
+.PARAMETER Leaf
+Remote leaf name.
+#>
 function Join-RemotePath {
     param(
         [Parameter(Mandatory = $true)][string]$Directory,
@@ -269,6 +396,12 @@ function Join-RemotePath {
     return "$Directory/$Leaf"
 }
 
+<#
+.SYNOPSIS
+Quotes one value as a literal POSIX shell argument.
+.PARAMETER Value
+Argument value.
+#>
 function ConvertTo-PosixShellArgument {
     param([Parameter(Mandatory = $true)][AllowEmptyString()][string]$Value)
 
@@ -278,6 +411,12 @@ function ConvertTo-PosixShellArgument {
     return "$apostrophe$($Value.Replace("$apostrophe", $escapedApostrophe))$apostrophe"
 }
 
+<#
+.SYNOPSIS
+Encodes a secret-free remote command for Windows OpenSSH transport.
+.PARAMETER Command
+Remote shell command.
+#>
 function ConvertTo-WindowsSshRemoteCommand {
     param([Parameter(Mandatory = $true)][string]$Command)
 
@@ -289,6 +428,47 @@ function ConvertTo-WindowsSshRemoteCommand {
     return "sh -lc `"printf '%s' $encodedCommand | base64 -d | sh`""
 }
 
+<#
+.SYNOPSIS
+Stages the vetted 1Password SDK deployment wheels.
+.PARAMETER PythonCommand
+Python executable.
+.PARAMETER WorkingDirectory
+Repository working directory.
+#>
+function Stage-PasswordDeployPythonWheels {
+    param(
+        [Parameter(Mandatory = $true)][string]$PythonCommand,
+        [Parameter(Mandatory = $true)][string]$WorkingDirectory
+    )
+
+    $lockPath = Join-Path $WorkingDirectory $script:PasswordDeployLockName
+    $wheelDirectory = Join-Path $WorkingDirectory 'dist'
+    if (-not (Test-Path -LiteralPath $lockPath -PathType Leaf)) {
+        throw "The vetted 1Password deployment lock is unavailable: $lockPath."
+    }
+    Write-Host 'Staging the vetted 1Password SDK and Paramiko deployment wheels...'
+    Invoke-CheckedCommand -FilePath $PythonCommand -WorkingDirectory $WorkingDirectory -Arguments @(
+        '-m', 'pip', 'download',
+        '--disable-pip-version-check',
+        '--index-url', 'https://pypi.org/simple',
+        '--require-hashes',
+        '--only-binary=:all:',
+        '--dest', $wheelDirectory,
+        '-r', $lockPath
+    ) | Out-Host
+}
+
+<#
+.SYNOPSIS
+Creates an isolated Python dependency directory for 1Password and Paramiko.
+.PARAMETER PythonCommand
+Python executable.
+.PARAMETER WorkingDirectory
+Repository working directory.
+.PARAMETER TemporaryDirectory
+Private temporary deployment directory.
+#>
 function Initialize-PasswordDeployPythonPath {
     param(
         [Parameter(Mandatory = $true)][string]$PythonCommand,
@@ -296,46 +476,116 @@ function Initialize-PasswordDeployPythonPath {
         [Parameter(Mandatory = $true)][string]$TemporaryDirectory
     )
 
-    $pythonLibraryPath = ''
-    try {
-        $pythonLibraryPath = (& $PythonCommand -I -S -c 'import sysconfig; print(sysconfig.get_paths()["purelib"])' 2>$null | Out-String).Trim()
-    } catch {
-        $pythonLibraryPath = ''
-    }
-    if ($LASTEXITCODE -eq 0 -and $pythonLibraryPath -and (Test-Path -LiteralPath $pythonLibraryPath -PathType Container)) {
-        try {
-            & $PythonCommand -I -S -c 'import sys, sysconfig; sys.path.insert(0, sysconfig.get_paths()["purelib"]); import paramiko' 2>$null
-            if ($LASTEXITCODE -eq 0) {
-                return $pythonLibraryPath
-            }
-        } catch {
-            # Fall through to the isolated temporary dependency path.
-        }
-    }
-
     $wheelDirectory = Join-Path $WorkingDirectory 'dist'
+    $lockPath = Join-Path $WorkingDirectory $script:PasswordDeployLockName
     if (-not (Test-Path -LiteralPath $wheelDirectory -PathType Container)) {
-        throw "Paramiko is not installed and the local wheel directory does not exist: $wheelDirectory. Rerun without -SkipBuild or install the Atlaso Python dependencies."
+        throw "The vetted password-deployment wheel directory does not exist: $wheelDirectory. Rerun without -SkipBuild."
+    }
+    if (-not (Test-Path -LiteralPath $lockPath -PathType Leaf)) {
+        throw "The vetted 1Password deployment lock is unavailable: $lockPath."
     }
 
     $dependencyDirectory = Join-Path $TemporaryDirectory 'python-dependencies'
     New-Item -ItemType Directory -Force -Path $dependencyDirectory | Out-Null
-    Write-Host 'Preparing temporary Paramiko runtime from local deployment wheels...'
+    Write-Host 'Preparing the isolated 1Password SDK and Paramiko deployment runtime...'
     try {
         Invoke-CheckedCommand -FilePath $PythonCommand -WorkingDirectory $WorkingDirectory -Arguments @(
             '-m', 'pip', 'install',
             '--disable-pip-version-check',
             '--no-index',
             '--find-links', $wheelDirectory,
+            '--require-hashes',
             '--target', $dependencyDirectory,
-            'paramiko>=3.5.0'
+            '-r', $lockPath
         ) | Out-Host
     } catch {
-        throw "Unable to prepare the temporary Paramiko runtime from $wheelDirectory. Rerun without -SkipBuild so dependency wheels are downloaded, or install the Atlaso Python dependencies. $($_.Exception.Message)"
+        throw "Unable to prepare the isolated 1Password SDK and Paramiko deployment runtime. $($_.Exception.Message)"
     }
     return $dependencyDirectory
 }
 
+<#
+.SYNOPSIS
+Runs the bounded 1Password SDK and Paramiko password-backed deployment child.
+.PARAMETER PythonCommand
+Python executable used for the isolated child.
+.PARAMETER HostAddress
+Appliance SSH address.
+.PARAMETER UserName
+Remote bootstrap account.
+.PARAMETER LocalWheelPath
+Local Atlaso wheel path.
+.PARAMETER LocalRuntimeDependencyPaths
+Local runtime dependency wheel paths.
+.PARAMETER LocalHelperPath
+Optional local privileged helper path.
+.PARAMETER LocalConsoleManagerPath
+Optional local console-manager path.
+.PARAMETER LocalBootInstallerPath
+Optional local boot installer path.
+.PARAMETER LocalBootThemePath
+Optional local boot-theme path.
+.PARAMETER LocalBootBackgroundPath
+Optional local boot-background path.
+.PARAMETER LocalInventoryLinuxPackagePath
+Optional local Inventory Linux package path.
+.PARAMETER LocalTrustKeyPaths
+Local public release trust-key paths.
+.PARAMETER LocalAtlasoServicePath
+Local Atlaso systemd unit path.
+.PARAMETER LocalWorkerServicePath
+Local worker systemd unit path.
+.PARAMETER LocalAtlasoServiceDropInPath
+Local Atlaso data-disk dependency drop-in path.
+.PARAMETER LocalNginxServiceDropInPath
+Local nginx data-disk dependency drop-in path.
+.PARAMETER LocalScriptPath
+Local deployment script path.
+.PARAMETER RemoteDirectoryPath
+Validated remote staging directory.
+.PARAMETER RemoteWheel
+Remote Atlaso wheel path.
+.PARAMETER RemoteRuntimeDependencies
+Remote runtime dependency wheel paths.
+.PARAMETER RemoteHelper
+Optional remote privileged helper path.
+.PARAMETER RemoteConsoleManager
+Optional remote console-manager path.
+.PARAMETER RemoteBootInstaller
+Optional remote boot installer path.
+.PARAMETER RemoteBootTheme
+Optional remote boot-theme path.
+.PARAMETER RemoteBootBackground
+Optional remote boot-background path.
+.PARAMETER RemoteInventoryLinuxPackage
+Optional remote Inventory Linux package path.
+.PARAMETER RemoteTrustKeys
+Remote public release trust-key paths.
+.PARAMETER RemoteAtlasoService
+Remote Atlaso systemd unit path.
+.PARAMETER RemoteWorkerService
+Remote worker systemd unit path.
+.PARAMETER RemoteAtlasoServiceDropIn
+Remote Atlaso data-disk dependency drop-in path.
+.PARAMETER RemoteNginxServiceDropIn
+Remote nginx data-disk dependency drop-in path.
+.PARAMETER RemoteScript
+Remote deployment script path.
+.PARAMETER ResetVaultEntryTable
+Whether deployment clears vault entries.
+.PARAMETER ReadinessTimeoutSeconds
+Post-restart readiness timeout.
+.PARAMETER DeploymentTimeoutSeconds
+Remote command timeout.
+.PARAMETER PollSeconds
+Readiness polling interval.
+.PARAMETER WorkingDirectory
+Repository working directory.
+.PARAMETER OnePasswordEnvironmentId
+Opaque ID of the verified Atlaso Environment.
+.PARAMETER OnePasswordAccount
+Account name or ID used for desktop authorization.
+#>
 function Invoke-PasswordBackedDeploy {
     param(
         [Parameter(Mandatory = $true)][string]$PythonCommand,
@@ -375,7 +625,8 @@ function Invoke-PasswordBackedDeploy {
         [Parameter(Mandatory = $true)][int]$DeploymentTimeoutSeconds,
         [Parameter(Mandatory = $true)][int]$PollSeconds,
         [Parameter(Mandatory = $true)][string]$WorkingDirectory,
-        [Parameter(Mandatory = $true)][string]$OnePasswordEnvironmentId
+        [Parameter(Mandatory = $true)][string]$OnePasswordEnvironmentId,
+        [Parameter(Mandatory = $true)][string]$OnePasswordAccount
     )
 
     $passwordDeployDirectory = Join-Path ([System.IO.Path]::GetTempPath()) "atlaso-password-deploy-$([guid]::NewGuid().ToString('N'))"
@@ -383,6 +634,7 @@ function Invoke-PasswordBackedDeploy {
     $pythonDeploy = Join-Path $passwordDeployDirectory 'atlaso-paramiko-deploy.py'
     $pythonDeploySource = @'
 import argparse
+import asyncio
 import os
 import pathlib
 import re
@@ -467,6 +719,8 @@ parser.add_argument("--remote-atlaso-service-drop-in", required=True)
 parser.add_argument("--remote-nginx-service-drop-in", required=True)
 parser.add_argument("--remote-script", required=True)
 parser.add_argument("--dependency-path", required=True)
+parser.add_argument("--onepassword-account", required=True)
+parser.add_argument("--onepassword-environment-id", required=True)
 parser.add_argument("--reset-vault-entries", action="store_true")
 parser.add_argument("--timeout", type=int, required=True)
 parser.add_argument("--readiness-timeout", type=int, required=True)
@@ -478,18 +732,46 @@ if not args.local_trust_key or len(args.local_trust_key) != len(args.remote_trus
 if not args.local_runtime_dependency or len(args.local_runtime_dependency) != len(args.remote_runtime_dependency):
     raise SystemExit("Matched local and remote runtime dependency wheels are required.")
 
-password = os.environ.pop("DEFAULT_ADMIN_PASSWORD", "")
-if not password:
-    raise SystemExit("The exact 1Password Environment did not provide DEFAULT_ADMIN_PASSWORD.")
-
 sys.path.insert(0, args.dependency_path)
 try:
     import paramiko
+    from onepassword import Client, DesktopAuth
 except ImportError as exc:
     raise SystemExit(
-        "Paramiko could not be loaded for password-backed deployment after isolated dependency preparation. "
-        "Rerun without -SkipBuild or install the Atlaso Python dependencies."
+        "The isolated 1Password SDK and Paramiko deployment runtime could not be loaded."
     ) from exc
+
+
+async def load_password():
+    try:
+        onepassword = await asyncio.wait_for(
+            Client.authenticate(
+                auth=DesktopAuth(account_name=args.onepassword_account),
+                integration_name="Atlaso VMware deployment",
+                integration_version="v1",
+            ),
+            timeout=args.timeout,
+        )
+        response = await asyncio.wait_for(
+            onepassword.environments.get_variables(args.onepassword_environment_id),
+            timeout=args.timeout,
+        )
+    except Exception as exc:
+        raise SystemExit(
+            "1Password desktop authorization or exact Environment access failed; no deployment was attempted."
+        ) from None
+    matches = [variable for variable in response.variables if variable.name == "DEFAULT_ADMIN_PASSWORD"]
+    if len(matches) != 1 or not matches[0].masked or not matches[0].value:
+        raise SystemExit(
+            "The exact Atlaso 1Password Environment must contain one concealed DEFAULT_ADMIN_PASSWORD variable."
+        )
+    selected_password = matches[0].value
+    del matches
+    del response
+    return selected_password
+
+
+password = asyncio.run(load_password())
 
 uploads = [
     (pathlib.Path(args.local_wheel), args.remote_wheel),
@@ -659,6 +941,8 @@ finally:
         $deployArguments = @(
             '-I', '-S', $pythonDeploy,
             '--dependency-path', $pythonDependencyPath,
+            '--onepassword-account', $OnePasswordAccount,
+            '--onepassword-environment-id', $OnePasswordEnvironmentId,
             '--host', $HostAddress,
             '--user', $UserName,
             '--local-wheel', $LocalWheelPath,
@@ -718,11 +1002,7 @@ finally:
             '--local-nginx-service-drop-in', $LocalNginxServiceDropInPath,
             '--remote-nginx-service-drop-in', $RemoteNginxServiceDropIn
         )
-        Invoke-OnePasswordBoundedCommand `
-            -EnvironmentId $OnePasswordEnvironmentId `
-            -CommandPath $PythonCommand `
-            -Arguments $deployArguments `
-            -WorkingDirectory $WorkingDirectory
+        Invoke-CheckedCommand -FilePath $PythonCommand -Arguments $deployArguments -WorkingDirectory $WorkingDirectory
     } finally {
         Remove-Item -LiteralPath $passwordDeployDirectory -Recurse -Force -ErrorAction SilentlyContinue
     }
@@ -732,15 +1012,29 @@ if ($env:DEFAULT_ADMIN_PASSWORD) {
     throw 'DEFAULT_ADMIN_PASSWORD must not be supplied by the caller; use the exact Atlaso 1Password Environment bridge.'
 }
 
-$UsePasswordDeploy = -not [string]::IsNullOrEmpty($OnePasswordEnvironmentId)
-
 $resolvedRepoRoot = Resolve-RepoRoot -Path $RepoRoot
 $RemoteDirectory = Resolve-RemoteDirectoryPath -Path $RemoteDirectory
+
+$UsePasswordDeploy = -not [string]::IsNullOrEmpty($OnePasswordEnvironmentId)
+$resolvedOnePasswordPython = ''
+if ($UsePasswordDeploy) {
+    Assert-OnePasswordEnvironmentId -EnvironmentId $OnePasswordEnvironmentId
+    Assert-OnePasswordAccount -Account $OnePasswordAccount
+    if ([string]::IsNullOrWhiteSpace($OnePasswordPython)) {
+        throw '-OnePasswordPython is required with -OnePasswordEnvironmentId.'
+    }
+    $resolvedOnePasswordPython = Resolve-OnePasswordPython -PythonCommand $OnePasswordPython
+} elseif ($OnePasswordAccount -or $OnePasswordPython) {
+    throw '-OnePasswordAccount and -OnePasswordPython require -OnePasswordEnvironmentId.'
+}
 
 if (-not $SkipBuild) {
     New-Item -ItemType Directory -Force -Path (Join-Path $resolvedRepoRoot 'dist') | Out-Null
     Write-Host "Building Atlaso wheel..."
     Invoke-CheckedCommand -FilePath $Python -Arguments @('-m', 'pip', 'wheel', '.', '-w', 'dist') -WorkingDirectory $resolvedRepoRoot
+    if ($UsePasswordDeploy) {
+        Stage-PasswordDeployPythonWheels -PythonCommand $resolvedOnePasswordPython -WorkingDirectory $resolvedRepoRoot
+    }
 }
 
 $resolvedWheelPath = Get-WheelPath -Path $WheelPath -Root $resolvedRepoRoot
@@ -1220,7 +1514,7 @@ try {
     if ($UsePasswordDeploy) {
         Write-Host "Uploading deployment files to $SshUser@$IpAddress`:$RemoteDirectory with password-backed SSH"
         Invoke-PasswordBackedDeploy `
-            -PythonCommand $Python `
+            -PythonCommand $resolvedOnePasswordPython `
             -HostAddress $IpAddress `
             -UserName $SshUser `
             -LocalWheelPath $resolvedWheelPath `
@@ -1257,7 +1551,8 @@ try {
             -DeploymentTimeoutSeconds $DeploymentTimeoutSeconds `
             -PollSeconds $ReadinessPollSeconds `
             -WorkingDirectory $resolvedRepoRoot `
-            -OnePasswordEnvironmentId $OnePasswordEnvironmentId
+            -OnePasswordEnvironmentId $OnePasswordEnvironmentId `
+            -OnePasswordAccount $OnePasswordAccount
     } else {
         Write-Host "Uploading deployment files to $SshUser@$IpAddress`:$RemoteDirectory"
         Invoke-CheckedCommand -FilePath 'scp' -Arguments @($sshConnectionArguments + $uploadPaths + "${SshUser}@${IpAddress}:$RemoteDirectory/")
