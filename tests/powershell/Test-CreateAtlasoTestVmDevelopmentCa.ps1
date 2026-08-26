@@ -118,52 +118,63 @@ Assert-Throws {
 } 'A missing 1Password CLI must fail closed.'
 Remove-Item Function:\Get-Command
 
+$testEnvironmentId = 'atlaso-test-environment-id-01'
 Assert-Throws {
     Assert-OnePasswordDevelopmentCaBridge -EnvironmentId 'unsafe id' -OpPath 'ignored'
 } 'Unsafe Environment IDs must fail closed.'
 
-$testEnvironmentId = 'atlaso-test-environment-id-01'
-$testEnvironmentIdSha256 = [Convert]::ToHexString(
-    [System.Security.Cryptography.SHA256]::HashData(
-        [System.Text.Encoding]::UTF8.GetBytes($testEnvironmentId)
+<#
+.SYNOPSIS
+Return synthetic beta-CLI capability help for bridge validation tests.
+
+.PARAMETER FilePath
+Ignored executable path accepted for signature compatibility.
+
+.PARAMETER ArgumentList
+Ignored CLI arguments accepted for signature compatibility.
+
+.PARAMETER TimeoutSeconds
+Ignored bounded deadline accepted for signature compatibility.
+
+.PARAMETER Action
+Ignored action text accepted for signature compatibility.
+#>
+function Invoke-AtlasoBoundedProcess {
+    param(
+        [string]$FilePath,
+        [string[]]$ArgumentList,
+        [int]$TimeoutSeconds,
+        [string]$Action
     )
-)
+    return $script:fakeRunHelp
+}
+$script:fakeRunHelp = '--env-file only'
 Assert-Throws {
     Assert-OnePasswordDevelopmentCaBridge `
         -EnvironmentId $testEnvironmentId `
-        -OpPath 'ignored'
-} 'A well-formed ID for any Environment other than the exact Atlaso Environment must fail closed.'
-
-$fakeOp = Join-Path ([System.IO.Path]::GetTempPath()) "atlaso-fake-op-$([guid]::NewGuid().ToString('N')).ps1"
-try {
-    [System.IO.File]::WriteAllText(
-        $fakeOp,
-        "param([Parameter(ValueFromRemainingArguments=`$true)][string[]]`$Remaining)`n'--env-file only'",
-        [System.Text.UTF8Encoding]::new($false)
-    )
-    Assert-Throws {
-        Assert-OnePasswordDevelopmentCaBridge `
-            -EnvironmentId $testEnvironmentId `
-            -OpPath $fakeOp `
-            -ExpectedEnvironmentIdSha256 $testEnvironmentIdSha256
-    } 'A CLI without op run --environment support must fail closed.'
-}
-finally {
-    Remove-Item -LiteralPath $fakeOp -Force -ErrorAction SilentlyContinue
-}
+        -OpPath 'stable-op' `
+        -TimeoutSeconds 1
+} 'A stable CLI without op run --environment must fail closed.'
+$script:fakeRunHelp = '--environment strings'
+Assert-OnePasswordDevelopmentCaBridge `
+    -EnvironmentId $testEnvironmentId `
+    -OpPath 'beta-op' `
+    -TimeoutSeconds 1
 
 $env:ATLASO_DEVELOPMENT_ROOT_CA_PRIVATE_KEY = 'caller-secret'
 try {
     Assert-Throws {
         Assert-OnePasswordDevelopmentCaBridge `
             -EnvironmentId $testEnvironmentId `
-            -OpPath 'ignored' `
-            -ExpectedEnvironmentIdSha256 $testEnvironmentIdSha256
+            -OpPath 'beta-op' `
+            -TimeoutSeconds 1
     } 'A caller-provided development signer must fail closed.'
 }
 finally {
     Remove-Item Env:\ATLASO_DEVELOPMENT_ROOT_CA_PRIVATE_KEY -ErrorAction SilentlyContinue
 }
+Remove-Item Function:\Invoke-AtlasoBoundedProcess
+. (Join-Path $RepositoryRoot 'scripts\windows\vmware\Atlaso.WorkstationFirstBoot.ps1')
 
 $boundedProcessRoot = Join-Path ([System.IO.Path]::GetTempPath()) (
     "atlaso-bounded-process-$([guid]::NewGuid().ToString('N'))"
@@ -835,6 +846,18 @@ finally {
 $childSource = Get-Content -LiteralPath (
     Join-Path $RepositoryRoot 'scripts\windows\vmware\Invoke-AtlasoDevelopmentCaSecret.ps1'
 ) -Raw
+if ($wrapperSource -match 'ExpectedEnvironmentIdSha256|environmentIdDigest') {
+    throw 'The normal test VM bridge must not retain the stale Environment-ID digest pin.'
+}
+foreach ($betaCliMarker in @(
+        "@('run', '--help')",
+        "'run', '--environment', `$EnvironmentId, '--'",
+        'Install the Environments-enabled beta CLI and retry.'
+    )) {
+    if (-not $wrapperSource.Contains($betaCliMarker, [System.StringComparison]::Ordinal)) {
+        throw "The normal test VM wrapper is missing its beta CLI contract: $betaCliMarker"
+    }
+}
 if ($childSource.IndexOf(
         "SetEnvironmentVariable('ATLASO_DEVELOPMENT_ROOT_CA_PRIVATE_KEY', `$null)",
         [System.StringComparison]::Ordinal

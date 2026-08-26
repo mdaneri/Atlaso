@@ -461,10 +461,11 @@ exported OVF/OVA appliances continue to generate their own roots and never recei
 
 Real normal-test-VM creation requires `-OnePasswordEnvironmentId` for the exact `Atlaso` 1Password Environment. That
 Environment must contain one concealed `ATLASO_DEVELOPMENT_ROOT_CA_PRIVATE_KEY` matching the checked-in certificate,
-and the installed CLI must support `op run --environment`. Before invoking `op`, the wrapper requires the supplied ID's
-SHA-256 identity to match the repository-pinned identity of that exact Environment, then validates the CLI and key pair
-before network preparation, redeploy cleanup, or cloning. A bounded child removes the inherited variable immediately
-and stages the signer only through the normal-wrapper guest-info field. `-TimeoutSeconds` bounds each `op`/secret-child
+and the Environments-enabled beta CLI under `C:\Program Files\1Password CLI` must support `op run --environment`.
+The wrapper validates that capability and cryptographically verifies the retrieved key against the checked-in
+certificate before network preparation, redeploy cleanup, or cloning. A bounded child removes the inherited variable
+immediately and stages the signer only through the normal-wrapper guest-info field. `-TimeoutSeconds` bounds each
+`op`/secret-child
 process tree; a timeout enters signer scrub and VM rollback only after whole-tree termination is proven. Boot-bound
 marker phases also cover VM start and artifact removal. If termination cannot be proven, the wrapper leaves the VM and
 VMX untouched, or keeps reused disks quarantined during removal, until a Windows host restart proves the child tree is

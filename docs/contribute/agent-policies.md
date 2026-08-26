@@ -926,7 +926,8 @@ Terminal order:
   `atlaso-bootstrap-https.service` on deployed-VM first boot to generate the integrated root CA and CA-managed
   `appliance:https` certificate; the root CA must not be baked into reusable images. The sole exception is the normal
   VMware test wrapper's checked-in public `Atlaso Development Root CA`: require its matching concealed private key from
-  the exact `Atlaso` 1Password Environment, pin and verify that Environment ID by SHA-256 before invoking `op`, bound
+  the exact `Atlaso` 1Password Environment, require an Environments-enabled beta CLI before invoking `op`, and
+  cryptographically verify the retrieved signer against the checked-in certificate before mutation. Bound
   each secret child and post-staging VMware operation and require proven complete process-tree termination before
   mutating the VM or VMX during rollback. Persist boot-bound child-active phases for staging, VM start, and artifact
   removal. If termination is unproven, preserve the VM and VMX, or keep reused disks quarantined during removal, until
