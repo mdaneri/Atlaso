@@ -525,8 +525,8 @@ function Stop-AtlasoTestVmForRollback {
         -ArgumentList @('-T', 'ws', 'list') `
         -TimeoutSeconds $TimeoutSeconds `
         -Action 'Discover VMware Workstation running state during rollback'
-    $runningOutput = @($runningText -split '\r?\n')
-    $runningTargets = @($runningOutput | Select-Object -Skip 1 | Where-Object {
+    $runningPaths = @(ConvertFrom-AtlasoVmrunListOutput -Output @($runningText -split '\r?\n'))
+    $runningTargets = @($runningPaths | Where-Object {
             Test-AtlasoTestVmRunningPathMatchesIdentity `
                 -RunningPath $_.Trim() `
                 -TargetIdentity $targetIdentity
@@ -544,8 +544,8 @@ function Stop-AtlasoTestVmForRollback {
         -ArgumentList @('-T', 'ws', 'list') `
         -TimeoutSeconds $TimeoutSeconds `
         -Action 'Verify the failed normal test VM stopped during rollback'
-    $runningOutput = @($runningText -split '\r?\n')
-    foreach ($runningPath in @($runningOutput | Select-Object -Skip 1)) {
+    $runningPaths = @(ConvertFrom-AtlasoVmrunListOutput -Output @($runningText -split '\r?\n'))
+    foreach ($runningPath in $runningPaths) {
         if (Test-AtlasoTestVmRunningPathMatchesIdentity `
                 -RunningPath $runningPath.Trim() `
                 -TargetIdentity $targetIdentity) {

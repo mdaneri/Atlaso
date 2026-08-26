@@ -442,9 +442,36 @@ try {
     if ([System.IO.File]::ReadAllText($vmrunState) -ne 'stopped') {
         throw 'Rollback failed to stop a running VMX reported through a filesystem alias.'
     }
+
+    <#
+    .SYNOPSIS
+    Return a successful but truncated vmrun running-VM inventory.
+
+    .PARAMETER Remaining
+    Positional vmrun arguments supplied by the wrapper helper.
+    #>
+    function AtlasoMalformedVmrun {
+        param([Parameter(ValueFromRemainingArguments = $true)][string[]]$Remaining)
+        if ($Remaining -contains 'list') {
+            $global:LASTEXITCODE = 0
+            'Total running VMs: 1'
+            return
+        }
+        throw 'Rollback must not issue stop after malformed running-state output.'
+    }
+    try {
+        Stop-AtlasoTestVmForRollback -VmxPath $targetVmx -VmrunPath AtlasoMalformedVmrun
+        throw 'Rollback accepted a truncated vmrun list as stopped-state proof.'
+    }
+    catch {
+        if ($_.Exception.Message -notlike '*reported 1 VMs but returned 0 paths*') {
+            throw
+        }
+    }
 }
 finally {
     Remove-Item Function:\AtlasoFakeVmrun -ErrorAction SilentlyContinue
+    Remove-Item Function:\AtlasoMalformedVmrun -ErrorAction SilentlyContinue
     Remove-Item -LiteralPath $rollbackIdentityRoot -Recurse -Force -ErrorAction SilentlyContinue
 }
 
