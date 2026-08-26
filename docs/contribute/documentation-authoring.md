@@ -51,6 +51,9 @@ RFC 1918 addresses, reserved example domains, and non-secret sample identities.
 - Store optimized WebP images under `docs/assets/screenshots/`.
 - Provide descriptive alt text and a caption that adds context instead of repeating the alt text.
 - Record every image in `docs/assets/screenshots/manifest.json`.
+- Regenerate `manifest.json` and the verified interface gallery after adding or
+  replacing a capture. Use each generator's `--check` mode in validation so a
+  stale generated file fails without modifying the checkout.
 - Assign every image to the canonical page that explains it and run
   `python scripts/generate_embedded_screenshot_sections.py`. The generated **Interface overview** section stays near
   the page introduction; responsive and state-transition captures remain in **Additional verified states**.
@@ -104,6 +107,8 @@ Run these commands before opening a pull request:
 npm ci
 npm run lint:markdown
 .\.venv-docs\Scripts\python.exe -m pip install --require-hashes -r requirements-docs.lock
+.\.venv-docs\Scripts\python.exe scripts/generate_screenshot_manifest.py --check
+.\.venv-docs\Scripts\python.exe scripts/generate_screenshot_gallery.py --check
 .\.venv-docs\Scripts\python.exe scripts/build_docs.py
 .\.venv-docs\Scripts\python.exe scripts/check_docs.py
 python scripts/check_repo.py

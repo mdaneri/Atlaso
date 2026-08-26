@@ -2,8 +2,10 @@
 
 from __future__ import annotations
 
+import argparse
 import json
 from pathlib import Path
+from typing import Iterable
 
 ROOT = Path(__file__).resolve().parents[1]
 SCREENSHOTS = ROOT / "docs" / "assets" / "screenshots"
@@ -650,9 +652,14 @@ def clean_entry(stem: str) -> tuple[str, str, str, str]:
     Args:
         stem: Stem consumed by clean entry.
     """
-    suffix = "-clean-responsive" if stem.endswith("-clean-responsive") else "-clean-desktop"
+    suffix = (
+        "-clean-responsive" if stem.endswith("-clean-responsive") else "-clean-desktop"
+    )
     slug = stem.removesuffix(suffix)
-    route, title = ROUTES[slug]
+    route_metadata = ROUTES.get(slug)
+    if route_metadata is None:
+        raise ValueError(f"unknown screenshot slug: {stem}")
+    route, title = route_metadata
     viewport_name = "responsive" if suffix.endswith("responsive") else "desktop"
     caption = f"{title} in the verified clean-appliance {viewport_name} state."
     alt = f"Atlaso {title} page in the clean-appliance {viewport_name} viewport."
@@ -699,10 +706,15 @@ def metadata(path: Path) -> dict[str, object]:
     return entry
 
 
-def main() -> None:
-    """Run the command-line entry point."""
-    screenshots = [metadata(path) for path in sorted(SCREENSHOTS.glob("*.webp"))]
-    MANIFEST.write_text(
+def render_manifest(paths: Iterable[Path] | None = None) -> str:
+    """Render the canonical screenshot manifest without changing the checkout.
+
+    Args:
+        paths: Optional screenshot paths used instead of the checked-in captures.
+    """
+    screenshot_paths = paths if paths is not None else SCREENSHOTS.glob("*.webp")
+    screenshots = [metadata(path) for path in sorted(screenshot_paths)]
+    return (
         json.dumps(
             {
                 "schema_version": 1,
@@ -711,12 +723,40 @@ def main() -> None:
             },
             indent=2,
         )
-        + "\n",
-        encoding="utf-8",
-        newline="\n",
+        + "\n"
     )
-    print(f"Wrote {len(screenshots)} screenshot records to {MANIFEST.relative_to(ROOT)}")
+
+
+def main(argv: list[str] | None = None) -> int:
+    """Run the command-line entry point.
+
+    Args:
+        argv: Optional command-line arguments for tests and embedded callers.
+    """
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument(
+        "--check",
+        action="store_true",
+        help="fail without writing when the checked-in manifest is stale",
+    )
+    args = parser.parse_args(argv)
+    rendered = render_manifest()
+    if args.check:
+        if not MANIFEST.exists() or MANIFEST.read_text(encoding="utf-8") != rendered:
+            parser.error(
+                "screenshot manifest is out of date; run "
+                "python scripts/generate_screenshot_manifest.py"
+            )
+        print(f"Verified {MANIFEST.relative_to(ROOT)}")
+        return 0
+
+    MANIFEST.write_text(rendered, encoding="utf-8", newline="\n")
+    screenshot_count = sum(1 for _ in SCREENSHOTS.glob("*.webp"))
+    print(
+        f"Wrote {screenshot_count} screenshot records to {MANIFEST.relative_to(ROOT)}"
+    )
+    return 0
 
 
 if __name__ == "__main__":
-    main()
+    raise SystemExit(main())
