@@ -477,8 +477,10 @@ The following cross-cutting boundaries always apply:
   empty 500 GiB depot and backup disks. Preserve `/opt/atlaso` and appliance-wide PowerShell modules on the UUID-mounted
   system-content disk, size-gate individual OVF release assets below 2 GiB, and publish the aggregate OVA only when it
   independently fits that limit. OVF export may recursively replace only a strict, non-reparse-point descendant of the
-  repository OVF output root. `-Release` provides implicit replacement only for the canonical derived destination; an
-  explicitly supplied existing destination still requires `-Force`, which never widens the approved deletion boundary.
+  repository OVF output root. `-Release` and `-Prerelease` provide implicit replacement only for the canonical derived
+  destination; an explicitly supplied existing destination still requires `-Force`, which never widens the approved
+  deletion boundary. Prerelease publication requires exactly one annotated `vX.Y.Z-<prerelease>` tag at the clean
+  checkout commit and an existing published non-draft GitHub prerelease; the exporter never creates or reclassifies it.
 - First-boot depot and backup initialization requires the root-owned image policy, exact platform SCSI identities,
   topology-derived `atlaso-path-*` links, and exact 500 GiB capacities. Complete an all-disk preflight before `mkfs` and
   fail closed for missing, extra, reordered, ambiguous, read-only, in-use, or identity/capacity-mismatched disks.
