@@ -334,7 +334,7 @@ function Resolve-TestVmVmrunPath {
 
 <#
 .SYNOPSIS
-Capture one pre-existing in-directory data disk for failed-creation rollback.
+Capture every in-directory file in one pre-existing data VMDK for rollback.
 
 .PARAMETER DiskPath
 Configured depot or backup VMDK path.
@@ -360,11 +360,60 @@ function Get-AtlasoRollbackDataDiskState {
         -ParentPath $resolvedOutputDirectory `
         -ChildPath $resolvedDiskPath `
         -FailureMessage 'Refusing to preserve a rollback data disk outside the exact VM directory'
-    return [pscustomobject]@{
-        Path = $resolvedDiskPath
-        RelativePath = [System.IO.Path]::GetRelativePath($resolvedOutputDirectory, $resolvedDiskPath)
-        Identity = [Atlaso.WorkstationFileIdentity]::Get($resolvedDiskPath)
-        QuarantinePath = ''
+
+    $componentPaths = [System.Collections.Generic.HashSet[string]]::new(
+        [System.StringComparer]::OrdinalIgnoreCase
+    )
+    $null = $componentPaths.Add($resolvedDiskPath)
+    $stream = [System.IO.File]::OpenRead($resolvedDiskPath)
+    try {
+        $buffer = [byte[]]::new([Math]::Min([int64]1MB, $stream.Length))
+        $bytesRead = $stream.Read($buffer, 0, $buffer.Length)
+    }
+    finally {
+        $stream.Dispose()
+    }
+    $descriptor = [System.Text.Encoding]::ASCII.GetString($buffer, 0, $bytesRead)
+    $extentMatches = [regex]::Matches(
+        $descriptor,
+        '(?im)(?:^|[\r\n\x00])\s*RW\s+\d+\s+\S+(?:\s+"(?<file>[^"\r\n\x00]+)")?'
+    )
+    foreach ($extentMatch in $extentMatches) {
+        $extentFile = $extentMatch.Groups['file'].Value
+        if ([string]::IsNullOrWhiteSpace($extentFile)) {
+            continue
+        }
+        $extentPath = if ([System.IO.Path]::IsPathFullyQualified($extentFile)) {
+            [System.IO.Path]::GetFullPath($extentFile)
+        }
+        else {
+            [System.IO.Path]::GetFullPath((Join-Path (Split-Path -Parent $resolvedDiskPath) $extentFile))
+        }
+        # External extents are outside the recursive VM-artifact deletion and
+        # must remain untouched. Every referenced in-directory extent is
+        # identity-bound and moved with its descriptor.
+        if (-not (Test-AtlasoStrictDescendantPath `
+                    -ParentPath $resolvedOutputDirectory `
+                    -ChildPath $extentPath)) {
+            continue
+        }
+        Assert-AtlasoStrictDescendantPath `
+            -ParentPath $resolvedOutputDirectory `
+            -ChildPath $extentPath `
+            -FailureMessage 'Refusing to preserve a rollback VMDK extent through an unsafe path'
+        if (-not (Test-Path -LiteralPath $extentPath -PathType Leaf)) {
+            throw "A reused in-directory VMware data-disk extent is missing: $extentPath"
+        }
+        $null = $componentPaths.Add((Resolve-Path -LiteralPath $extentPath).Path)
+    }
+
+    foreach ($componentPath in $componentPaths) {
+        [pscustomobject]@{
+            Path = $componentPath
+            RelativePath = [System.IO.Path]::GetRelativePath($resolvedOutputDirectory, $componentPath)
+            Identity = [Atlaso.WorkstationFileIdentity]::Get($componentPath)
+            QuarantinePath = ''
+        }
     }
 }
 
@@ -373,7 +422,7 @@ function Get-AtlasoRollbackDataDiskState {
 Move pre-existing data disks outside a failed VM's recursive cleanup root.
 
 .PARAMETER DataDiskStates
-Captured in-directory data-disk paths and filesystem identities.
+Captured in-directory VMDK component paths and filesystem identities.
 
 .PARAMETER QuarantineDirectory
 Fresh sibling directory used only while the new VM artifacts are removed.
@@ -413,7 +462,7 @@ function Move-AtlasoRollbackDataDisksToQuarantine {
 Restore pre-existing data disks after failed-VM artifact cleanup.
 
 .PARAMETER DataDiskStates
-Captured data disks whose non-empty quarantine paths must be restored.
+Captured VMDK components whose non-empty quarantine paths must be restored.
 
 .PARAMETER QuarantineDirectory
 Exact invocation-owned sibling quarantine directory.

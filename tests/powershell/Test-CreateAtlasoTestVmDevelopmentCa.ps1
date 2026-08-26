@@ -301,16 +301,29 @@ try {
     New-Item -ItemType Directory -Path $markerVmRoot | Out-Null
     $markerVmx = Join-Path $markerVmRoot 'Atlaso-Test.vmx'
     $markerDisk = Join-Path $markerVmRoot 'Atlaso-Depot.vmdk'
+    $markerDiskExtentOne = Join-Path $markerVmRoot 'Atlaso-Depot-s001.vmdk'
+    $markerDiskExtentTwo = Join-Path $markerVmRoot 'Atlaso-Depot-s002.vmdk'
     [System.IO.File]::WriteAllText($markerVmx, 'config.version = "8"')
-    [System.IO.File]::WriteAllText($markerDisk, 'preserved-development-data')
-    $markerDiskState = Get-AtlasoRollbackDataDiskState `
-        -DiskPath $markerDisk `
-        -OutputDirectory $markerVmRoot
+    [System.IO.File]::WriteAllText(
+        $markerDisk,
+        @'
+# Disk DescriptorFile
+version=1
+RW 524288000 SPARSE "Atlaso-Depot-s001.vmdk"
+RW 524288000 SPARSE "Atlaso-Depot-s002.vmdk"
+'@,
+        [System.Text.UTF8Encoding]::new($false)
+    )
+    [System.IO.File]::WriteAllText($markerDiskExtentOne, 'preserved-development-extent-one')
+    [System.IO.File]::WriteAllText($markerDiskExtentTwo, 'preserved-development-extent-two')
+    $markerDiskState = @(Get-AtlasoRollbackDataDiskState `
+            -DiskPath $markerDisk `
+            -OutputDirectory $markerVmRoot)
     $markerPath = New-AtlasoDevelopmentCaCleanupMarker `
         -VmxPath $markerVmx `
         -Name 'Atlaso-Test' `
         -OutputDirectory $markerVmRoot `
-        -DataDiskStates @($markerDiskState) `
+        -DataDiskStates $markerDiskState `
         -MarkerRoot $markerRoot
     $marker = Read-AtlasoDevelopmentCaCleanupMarker `
         -MarkerPath $markerPath `
@@ -318,7 +331,7 @@ try {
     if ($marker.VmxPath -cne (Resolve-Path -LiteralPath $markerVmx).Path) {
         throw 'The durable cleanup marker did not bind the exact VMX path and identity.'
     }
-    if ($marker.Phase -cne 'staged' -or $marker.ArtifactsRemoved) {
+    if ($marker.Phase -cne 'staged' -or $marker.ArtifactsRemoved -or $marker.DataDisks.Count -ne 3) {
         throw 'A new cleanup marker must begin in the staged, artifact-present phase.'
     }
     Set-AtlasoDevelopmentCaCleanupMarkerPhase `
@@ -326,7 +339,7 @@ try {
         -ExpectedPhase staged `
         -Phase stopped-vmx-scrubbed
     Move-AtlasoRollbackDataDisksToQuarantine `
-        -DataDiskStates @($markerDiskState) `
+        -DataDiskStates $markerDiskState `
         -QuarantineDirectory $marker.QuarantineDirectory
     Remove-Item -LiteralPath $markerVmRoot -Recurse -Force
     $resumeMarker = Read-AtlasoDevelopmentCaCleanupMarker `
@@ -344,9 +357,12 @@ try {
     }
     if (
         -not (Test-Path -LiteralPath $markerDisk -PathType Leaf) -or
-        [System.IO.File]::ReadAllText($markerDisk) -cne 'preserved-development-data'
+        -not (Test-Path -LiteralPath $markerDiskExtentOne -PathType Leaf) -or
+        -not (Test-Path -LiteralPath $markerDiskExtentTwo -PathType Leaf) -or
+        [System.IO.File]::ReadAllText($markerDiskExtentOne) -cne 'preserved-development-extent-one' -or
+        [System.IO.File]::ReadAllText($markerDiskExtentTwo) -cne 'preserved-development-extent-two'
     ) {
-        throw 'Persisted cleanup did not resume exact data-disk restoration after VM removal.'
+        throw 'Persisted cleanup did not resume exact VMDK component restoration after VM removal.'
     }
 
     $preQuarantineVmRoot = Join-Path $markerTestRoot 'pre-quarantine-vm'
@@ -438,31 +454,50 @@ $rollbackTestRoot = Join-Path ([System.IO.Path]::GetTempPath()) (
 try {
     $outputDirectory = Join-Path $rollbackTestRoot 'vm'
     $dataDiskPath = Join-Path $outputDirectory 'Atlaso-Depot.vmdk'
+    $dataDiskExtentOne = Join-Path $outputDirectory 'Atlaso-Depot-s001.vmdk'
+    $dataDiskExtentTwo = Join-Path $outputDirectory 'Atlaso-Depot-s002.vmdk'
     $quarantineDirectory = Join-Path $rollbackTestRoot 'quarantine'
     New-Item -ItemType Directory -Path $outputDirectory | Out-Null
     [System.IO.File]::WriteAllText(
         $dataDiskPath,
-        'pre-existing-data',
+        @'
+# Disk DescriptorFile
+version=1
+RW 524288000 SPARSE "Atlaso-Depot-s001.vmdk"
+RW 524288000 SPARSE "Atlaso-Depot-s002.vmdk"
+'@,
         [System.Text.UTF8Encoding]::new($false)
     )
-    $state = Get-AtlasoRollbackDataDiskState `
-        -DiskPath $dataDiskPath `
-        -OutputDirectory $outputDirectory
+    [System.IO.File]::WriteAllText($dataDiskExtentOne, 'pre-existing-extent-one')
+    [System.IO.File]::WriteAllText($dataDiskExtentTwo, 'pre-existing-extent-two')
+    $states = @(Get-AtlasoRollbackDataDiskState `
+            -DiskPath $dataDiskPath `
+            -OutputDirectory $outputDirectory)
+    if ($states.Count -ne 3) {
+        throw 'Rollback state did not capture the reused VMDK descriptor and every referenced extent.'
+    }
     Move-AtlasoRollbackDataDisksToQuarantine `
-        -DataDiskStates @($state) `
+        -DataDiskStates $states `
         -QuarantineDirectory $quarantineDirectory
-    if (Test-Path -LiteralPath $dataDiskPath) {
-        throw 'Rollback quarantine did not move the pre-existing in-directory data disk.'
+    if (
+        (Test-Path -LiteralPath $dataDiskPath) -or
+        (Test-Path -LiteralPath $dataDiskExtentOne) -or
+        (Test-Path -LiteralPath $dataDiskExtentTwo)
+    ) {
+        throw 'Rollback quarantine did not move every pre-existing in-directory VMDK component.'
     }
     Remove-Item -LiteralPath $outputDirectory -Recurse -Force
     Restore-AtlasoRollbackDataDisksFromQuarantine `
-        -DataDiskStates @($state) `
+        -DataDiskStates $states `
         -QuarantineDirectory $quarantineDirectory
     if (
         -not (Test-Path -LiteralPath $dataDiskPath -PathType Leaf) -or
-        [System.IO.File]::ReadAllText($dataDiskPath) -ne 'pre-existing-data'
+        -not (Test-Path -LiteralPath $dataDiskExtentOne -PathType Leaf) -or
+        -not (Test-Path -LiteralPath $dataDiskExtentTwo -PathType Leaf) -or
+        [System.IO.File]::ReadAllText($dataDiskExtentOne) -ne 'pre-existing-extent-one' -or
+        [System.IO.File]::ReadAllText($dataDiskExtentTwo) -ne 'pre-existing-extent-two'
     ) {
-        throw 'Rollback did not restore the exact pre-existing in-directory data disk.'
+        throw 'Rollback did not restore the exact reused VMDK descriptor and extents.'
     }
 }
 finally {
