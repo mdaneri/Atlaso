@@ -1643,6 +1643,16 @@ def test_create_atlaso_vmware_test_vm_wrapper_uses_common_helpers():
     assert "[switch]$WaitForIp = $true" in script
     assert "[switch]$TrustRootCa" in script
     assert "[string]$OnePasswordEnvironmentId = ''" in script
+    assert "[string]$OnePasswordEnvironmentIdFile = ''" in script
+    assert "ExpectedEnvironmentIdSha256" in script
+    assert "environmentIdDigest" in script
+    assert ".atlaso-local\\onepassword-environment-id" in script
+    assert "/.atlaso-local/" in Path(".gitignore").read_text(encoding="utf-8")
+    assert script.index("Invoke-PendingAtlasoDevelopmentCaCleanup `") < script.index(
+        "$OnePasswordEnvironmentId = Resolve-OnePasswordDevelopmentCaEnvironmentId `"
+    )
+    assert "Install the Environments-enabled beta CLI and retry." in script
+    assert script.index("'1Password CLI\\op.exe'") < script.index("'Microsoft\\WinGet\\Links\\op.exe'")
     assert "[switch]$RootSshEnabled" in script
     assert "[string]$SshPublicKeyPath = ''" in script
     assert "[switch]$SkipSshKeyProvisioning" in script
@@ -1876,7 +1886,9 @@ def test_vmware_raw_vmx_workflows_inject_complete_first_boot_ovf_environment_bef
     assert "complete Atlaso first-boot OVF environment" in docs
     assert "plan and result artifacts" in docs
     normal_test_vm_docs = docs.split("## Normal Test VM", 1)[1].split("## Fidelity Boundary", 1)[0]
-    assert "-OnePasswordEnvironmentId '<atlaso-environment-id>'" in normal_test_vm_docs
+    assert ".atlaso-local/onepassword-environment-id" in normal_test_vm_docs
+    assert "-OnePasswordEnvironmentId` override" in normal_test_vm_docs
+    assert "Environments-enabled beta 1Password CLI" in normal_test_vm_docs
 
 
 def test_create_atlaso_vmware_test_vm_root_ca_retry_cleanup_is_idempotent():

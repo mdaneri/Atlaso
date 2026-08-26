@@ -38,10 +38,10 @@ human-approved 1Password desktop authorization prompt and keeps it in process me
 and an explicit dependency path so startup hooks and inherited `PYTHONPATH` cannot observe the value. The beta-only
 `op run --environment` flag is not supported by the stable CLI and is not part of this workflow.
 
-Normal test VM creation uses a separate development-CA handoff. It checks the supplied ID against the
-repository-pinned SHA-256 identity of the exact `Atlaso` Environment before invoking `op`, then requires an
-Environments-enabled CLI with `op run --environment`; the stable SDK-backed wheel deployment above does not change
-that normal-test-wrapper-only trust path.
+Normal test VM creation uses a separate development-CA handoff. It requires the Environments-enabled beta CLI at
+`C:\Program Files\1Password CLI\op.exe` with `op run --environment`, retrieves the selected Environment only through
+that bounded child, and cryptographically verifies its concealed signer against the checked-in development root before
+VM mutation. The stable SDK-backed wheel deployment above does not change this normal-test-wrapper-only trust path.
 
 Atlaso can run a VMware Workstation lifecycle lab alongside the Hyper-V lab. The Workstation path uses VMX/VMDK
 artifacts and `vmrun.exe`, then delegates appliance behavior checks to the shared Python lifecycle runner.
@@ -241,7 +241,25 @@ descendants of the selected VM output, so sibling-prefix and reparse-point paths
 
 ## Normal Test VM
 
-For a normal Workstation appliance VM, separate from the lifecycle lab, use:
+For a normal Workstation appliance VM, separate from the lifecycle lab, store the exact `Atlaso` Environment ID once in
+the checkout-local, Git-ignored configuration file. The prompt is masked and the command does not print the ID:
+
+```powershell
+$atlasoLocal = Join-Path (git rev-parse --show-toplevel) '.atlaso-local'
+New-Item -ItemType Directory -Path $atlasoLocal -Force | Out-Null
+$atlasoEnvironmentId = Read-Host 'Paste the Atlaso Environment ID' -MaskInput
+try {
+    [System.IO.File]::WriteAllText(
+        (Join-Path $atlasoLocal 'onepassword-environment-id'),
+        $atlasoEnvironmentId
+    )
+}
+finally {
+    Remove-Variable atlasoEnvironmentId -ErrorAction SilentlyContinue
+}
+```
+
+Then use the ordinary command without an ID argument:
 
 ```powershell
 pwsh -ExecutionPolicy Bypass `
@@ -249,16 +267,18 @@ pwsh -ExecutionPolicy Bypass `
   -Redeploy `
   -ResetDataDisks `
   -WaitForIp `
-  -OnePasswordEnvironmentId '<atlaso-environment-id>' `
   -TrustRootCa
 ```
 
 That is the Workstation counterpart to `scripts/windows/hyperv/create-atlaso-test-vm.ps1`. It defaults to the management
 vmnet only; pass `-IncludeLabNetworkAdapters` after creating the SiteA, WAN/SiteB, and trunk-like vmnets.
-For real creation, copy the opaque Environment ID from the exact `Atlaso` 1Password Environment and pass it through
-`-OnePasswordEnvironmentId`. An absent ID fails with an actionable preflight error before pending cleanup, network
-preparation, disk reset, cloning, or other VM mutation. The wrapper does not print the ID or any secret from that
-Environment.
+For real creation, the wrapper prefers an explicit `-OnePasswordEnvironmentId` override and otherwise reads the exact
+single-line `.atlaso-local/onepassword-environment-id` file. The entire `.atlaso-local` directory is ignored by Git. A
+pending signer cleanup runs first because it consumes no 1Password material. After that recovery, a missing or
+malformed ID fails with an actionable preflight error before network preparation, disk reset, cloning, or other new VM
+mutation. The wrapper verifies its SHA-256 identity against the repository pin without printing the ID. Install the
+Environments-enabled beta 1Password CLI under `C:\Program Files\1Password CLI`; a stable CLI without
+`op run --environment` fails before Environment access. A wrong Environment ID or signer fails before new VM mutation.
 The wrapper injects the same complete DHCP-first OVF environment before power-on; use `-FirstBootFqdn`,
 `-AdminPassword`, and `-RootPassword` when the default local test identity or credentials are not appropriate.
 It also resolves the current Windows user's existing `.ssh/id_ed25519.pub` before any network preparation, cleanup, or
