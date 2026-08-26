@@ -933,7 +933,7 @@ function Invoke-PendingAtlasoDevelopmentCaCleanup {
                     New-Item -ItemType Directory -Path $quarantineDirectory | Out-Null
                 }
                 Assert-AtlasoStrictDescendantPath `
-                    -ParentPath $MarkerRoot `
+                    -ParentPath (Split-Path -Parent $marker.OutputDirectory) `
                     -ChildPath $quarantineDirectory `
                     -FailureMessage 'Refusing rollback quarantine through a reparse point'
                 foreach ($state in $statesToMove) {

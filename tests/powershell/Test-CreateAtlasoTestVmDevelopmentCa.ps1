@@ -348,6 +348,37 @@ try {
     ) {
         throw 'Persisted cleanup did not resume exact data-disk restoration after VM removal.'
     }
+
+    $preQuarantineVmRoot = Join-Path $markerTestRoot 'pre-quarantine-vm'
+    New-Item -ItemType Directory -Path $preQuarantineVmRoot | Out-Null
+    $preQuarantineVmx = Join-Path $preQuarantineVmRoot 'Atlaso-Pre-Quarantine.vmx'
+    $preQuarantineDisk = Join-Path $preQuarantineVmRoot 'Atlaso-Depot.vmdk'
+    [System.IO.File]::WriteAllText($preQuarantineVmx, 'config.version = "8"')
+    [System.IO.File]::WriteAllText($preQuarantineDisk, 'pre-quarantine-data')
+    $preQuarantineDiskState = Get-AtlasoRollbackDataDiskState `
+        -DiskPath $preQuarantineDisk `
+        -OutputDirectory $preQuarantineVmRoot
+    $preQuarantineMarker = New-AtlasoDevelopmentCaCleanupMarker `
+        -VmxPath $preQuarantineVmx `
+        -Name 'Atlaso-Pre-Quarantine' `
+        -OutputDirectory $preQuarantineVmRoot `
+        -DataDiskStates @($preQuarantineDiskState) `
+        -MarkerRoot $markerRoot
+    Set-AtlasoDevelopmentCaCleanupMarkerPhase `
+        -MarkerPath $preQuarantineMarker `
+        -ExpectedPhase staged `
+        -Phase stopped-vmx-scrubbed
+    Remove-Item -LiteralPath $preQuarantineVmx -Force
+    Invoke-PendingAtlasoDevelopmentCaCleanup `
+        -VmrunPath 'unused-after-proven-removal' `
+        -TimeoutSeconds 5 `
+        -MarkerRoot $markerRoot
+    if (
+        (Test-Path -LiteralPath $preQuarantineMarker) -or
+        [System.IO.File]::ReadAllText($preQuarantineDisk) -cne 'pre-quarantine-data'
+    ) {
+        throw 'Persisted cleanup did not resume across the output-parent quarantine boundary.'
+    }
 }
 finally {
     Remove-Item -LiteralPath $markerTestRoot -Recurse -Force -ErrorAction SilentlyContinue
