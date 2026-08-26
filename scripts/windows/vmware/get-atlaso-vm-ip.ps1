@@ -101,7 +101,7 @@ function Get-VmwareGuestHostname {
         [Parameter(Mandatory = $true)][string]$VmxPath
     )
     $arguments = @(
-        '-T', 'ws', 'readVariable', $VmxPath, 'guestVar',
+        '-T', 'ws', 'readVariable', $VmxPath, 'runtimeConfig',
         'guestinfo.atlaso.test_vm_hostname'
     )
     $output = @(& $VmrunPath @arguments 2>$null)

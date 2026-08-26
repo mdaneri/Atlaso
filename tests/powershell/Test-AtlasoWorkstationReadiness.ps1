@@ -38,7 +38,7 @@ $concurrentVmx = Join-Path $OutputDirectory 'Concurrent-Clone.vmx'
 $fakeVmrun = Join-Path $OutputDirectory 'fake-vmrun.cmd'
 [System.IO.File]::WriteAllText(
     $fakeVmrun,
-    "@echo off`r`nif /I `"%3`"==`"getGuestIPAddress`" (`r`n  echo 192.168.167.134`r`n  exit /b 0`r`n)`r`nif /I `"%3`"==`"readVariable`" (`r`n  echo issue-535.atlaso.internal`r`n  exit /b 0`r`n)`r`nif /I `"%3`"==`"list`" (`r`n  echo Total running VMs: 2`r`n  echo `"$targetVmx`"`r`n  echo `"$sourceVmx`"`r`n  exit /b 0`r`n)`r`nexit /b 9`r`n",
+    "@echo off`r`nif /I `"%3`"==`"getGuestIPAddress`" (`r`n  echo 192.168.167.134`r`n  exit /b 0`r`n)`r`nif /I `"%3`"==`"readVariable`" (`r`n  if /I not `"%5`"==`"runtimeConfig`" exit /b 8`r`n  echo issue-535.atlaso.internal`r`n  exit /b 0`r`n)`r`nif /I `"%3`"==`"list`" (`r`n  echo Total running VMs: 2`r`n  echo `"$targetVmx`"`r`n  echo `"$sourceVmx`"`r`n  exit /b 0`r`n)`r`nexit /b 9`r`n",
     [System.Text.UTF8Encoding]::new($false)
 )
 $runningPaths = @(Get-AtlasoWorkstationRunningVmxPath -VmrunPath $fakeVmrun)
