@@ -118,3 +118,21 @@ def test_machine_identity_marker_is_committed_atomically(monkeypatch, tmp_path: 
 
     assert marker.read_text(encoding="utf-8") == "platform=qemu\n"
     assert not list(marker.parent.glob(".machine-identity.applied.*.tmp"))
+
+
+def test_console_access_uses_transient_device_io(monkeypatch) -> None:
+    """Console publication uses a character-device descriptor, not file storage.
+
+    Args:
+        monkeypatch: Pytest fixture used to replace OS device operations.
+    """
+
+    module = _load_module()
+    writes: list[tuple[int, bytes]] = []
+    monkeypatch.setattr(module.os, "open", lambda path, flags: 17)
+    monkeypatch.setattr(module.os, "write", lambda descriptor, payload: writes.append((descriptor, payload)))
+    monkeypatch.setattr(module.os, "close", lambda descriptor: None)
+
+    module._publish_console_access('{"username":"admin"}')
+
+    assert writes == [(17, b'Atlaso one-time first-boot access: {"username":"admin"}\n')]

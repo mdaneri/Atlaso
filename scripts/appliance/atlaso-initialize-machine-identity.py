@@ -159,6 +159,23 @@ def _write_marker_atomic(platform: str) -> None:
         temporary.unlink(missing_ok=True)
 
 
+def _publish_console_access(payload: str) -> None:
+    """Write the one-time envelope directly to the transient tty1 device.
+
+    Args:
+        payload: Compact JSON credential and host-key envelope.
+    """
+
+    no_controlling_terminal = getattr(os, "O_NOCTTY", 0)
+    descriptor = os.open("/dev/tty1", os.O_WRONLY | os.O_APPEND | no_controlling_terminal)
+    try:
+        # tty1 is a character-device transport rather than persistent storage.
+        # codeql[py/clear-text-storage-sensitive-data]
+        os.write(descriptor, f"Atlaso one-time first-boot access: {payload}\n".encode())
+    finally:
+        os.close(descriptor)
+
+
 def initialize(platform: str) -> None:
     """Initialize one cloned appliance before any network service starts.
 
@@ -202,10 +219,7 @@ def initialize(platform: str) -> None:
         if platform == "hyperv":
             _publish_hyperv_access(access)
         try:
-            with Path("/dev/tty1").open("a", encoding="utf-8") as console:
-                # tty1 is a transient console transport, not persistent storage.
-                # codeql[py/clear-text-storage-sensitive-data]
-                console.write(f"Atlaso one-time first-boot access: {access}\n")
+            _publish_console_access(access)
         except OSError:
             pass
     _write_marker_atomic(platform)
