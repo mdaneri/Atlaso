@@ -1903,6 +1903,8 @@ def test_vmware_raw_vmx_workflows_inject_complete_first_boot_ovf_environment_bef
     assert "Read-Host -Prompt 'Photon root console password' -AsSecureString" in test_vm
     assert "complete Atlaso first-boot OVF environment" in docs
     assert "plan and result artifacts" in docs
+    normal_test_vm_docs = docs.split("## Normal Test VM", 1)[1].split("## Fidelity Boundary", 1)[0]
+    assert "-OnePasswordEnvironmentId '<atlaso-environment-id>'" in normal_test_vm_docs
 
 
 def test_create_atlaso_vmware_test_vm_root_ca_retry_cleanup_is_idempotent():

@@ -160,6 +160,12 @@ $waitForIpEnabled = if ($PSBoundParameters.ContainsKey('WaitForIp')) {
     $true
 }
 
+# Fail before prompting for credentials because the 1Password Environment ID
+# is a prerequisite for every real normal-test-VM mutation.
+if (-not $WhatIfPreference -and [string]::IsNullOrWhiteSpace($OnePasswordEnvironmentId)) {
+    throw 'OnePasswordEnvironmentId is required for normal VMware test VM creation. Copy the opaque ID from the exact Atlaso 1Password Environment and pass it with -OnePasswordEnvironmentId.'
+}
+
 # Resolve credentials before any network preparation, cleanup, or VM mutation.
 # Read-Host returns SecureString without recreating a repository default.
 if ($null -eq $AdminPassword) {

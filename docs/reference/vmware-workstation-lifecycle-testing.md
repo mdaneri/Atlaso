@@ -262,11 +262,16 @@ pwsh -ExecutionPolicy Bypass `
   -Redeploy `
   -ResetDataDisks `
   -WaitForIp `
+  -OnePasswordEnvironmentId '<atlaso-environment-id>' `
   -TrustRootCa
 ```
 
 That is the Workstation counterpart to `scripts/windows/hyperv/create-atlaso-test-vm.ps1`. It defaults to the management
 vmnet only; pass `-IncludeLabNetworkAdapters` after creating the SiteA, WAN/SiteB, and trunk-like vmnets.
+For real creation, copy the opaque Environment ID from the exact `Atlaso` 1Password Environment and pass it through
+`-OnePasswordEnvironmentId`. An absent ID fails with an actionable preflight error before pending cleanup, network
+preparation, disk reset, cloning, or other VM mutation. The wrapper does not print the ID or any secret from that
+Environment.
 The wrapper injects the same complete DHCP-first OVF environment before power-on. Use `-FirstBootFqdn` for the test
 identity. `-AdminPassword` and `-RootPassword` accept only `SecureString` objects; when omitted, the wrapper prompts
 securely before any network preparation, cleanup, or VM mutation. Neither credential has a repository default.
