@@ -74,3 +74,27 @@ def test_hyperv_access_publication_rejects_malformed_or_duplicate_pool(monkeypat
     pool.write_bytes(duplicate)
     with pytest.raises(RuntimeError, match="duplicate Atlaso access records"):
         module._publish_hyperv_access("{}")
+
+
+def test_access_cleanup_removes_only_atlaso_transport(monkeypatch, tmp_path: Path) -> None:
+    """First-reboot cleanup preserves unrelated KVP data and removes runtime access.
+
+    Args:
+        monkeypatch: Pytest fixture used to replace fixed guest paths.
+        tmp_path: Temporary directory provided by pytest.
+    """
+
+    module = _load_module()
+    pool = tmp_path / ".kvp_pool_1"
+    access = tmp_path / "run/atlaso/first-boot-access.json"
+    access.parent.mkdir(parents=True)
+    access.write_text("one-time\n", encoding="utf-8")
+    unrelated = _record(b"unrelated.key", b"retained")
+    pool.write_bytes(unrelated + _record(b"atlaso.first_boot_access", b"remove"))
+    monkeypatch.setattr(module, "KVP_POOL_PATH", pool)
+    monkeypatch.setattr(module, "ACCESS_PATH", access)
+
+    module.clear_access("hyperv")
+
+    assert not access.exists()
+    assert pool.read_bytes() == unrelated

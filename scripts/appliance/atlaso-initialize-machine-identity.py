@@ -13,7 +13,7 @@ from pathlib import Path
 
 ENV_PATH = Path("/etc/atlaso/atlaso.env")
 MARKER_PATH = Path("/var/lib/atlaso/machine-identity.applied")
-ACCESS_PATH = Path("/var/lib/atlaso/first-boot-access.json")
+ACCESS_PATH = Path("/run/atlaso/first-boot-access.json")
 SSH_DIRECTORY = Path("/etc/ssh")
 KVP_POOL_PATH = Path("/var/lib/hyperv/.kvp_pool_1")
 KVP_KEY_BYTES = 512
@@ -95,9 +95,42 @@ def _publish_hyperv_access(payload: str) -> None:
     else:
         records.append(record)
     temporary = KVP_POOL_PATH.with_name(f".{KVP_POOL_PATH.name}.{secrets.token_hex(8)}.tmp")
-    temporary.write_bytes(b"".join(records))
+    # This is the Hyper-V guest-to-host KVP transport, not appliance storage.
+    # The selector removes Atlaso's record on the first reboot.
+    temporary.write_bytes(b"".join(records))  # lgtm[py/clear-text-storage-sensitive-data]
     os.chmod(temporary, 0o600)
     os.replace(temporary, KVP_POOL_PATH)
+
+
+def _clear_hyperv_access() -> None:
+    """Remove only Atlaso's record from the Hyper-V guest KVP transport."""
+
+    if not KVP_POOL_PATH.is_file():
+        return
+    existing = KVP_POOL_PATH.read_bytes()
+    if len(existing) % KVP_RECORD_BYTES:
+        raise RuntimeError("Hyper-V guest KVP pool has a malformed record boundary")
+    key = b"atlaso.first_boot_access"
+    records = [existing[index : index + KVP_RECORD_BYTES] for index in range(0, len(existing), KVP_RECORD_BYTES)]
+    retained = [item for item in records if item[:KVP_KEY_BYTES].rstrip(b"\0") != key]
+    if len(retained) == len(records):
+        return
+    temporary = KVP_POOL_PATH.with_name(f".{KVP_POOL_PATH.name}.{secrets.token_hex(8)}.tmp")
+    temporary.write_bytes(b"".join(retained))
+    os.chmod(temporary, 0o600)
+    os.replace(temporary, KVP_POOL_PATH)
+
+
+def clear_access(platform: str) -> None:
+    """Erase the one-time access transport after the first reboot.
+
+    Args:
+        platform: Verified guest-agent platform identifier.
+    """
+
+    ACCESS_PATH.unlink(missing_ok=True)
+    if platform == "hyperv":
+        _clear_hyperv_access()
 
 
 def initialize(platform: str) -> None:
@@ -135,13 +168,18 @@ def initialize(platform: str) -> None:
             sort_keys=True,
             separators=(",", ":"),
         )
-        ACCESS_PATH.write_text(access + "\n", encoding="utf-8")
+        ACCESS_PATH.parent.mkdir(parents=True, exist_ok=True)
+        # /run is tmpfs and this root-only envelope is erased on first reboot.
+        ACCESS_PATH.write_text(access + "\n", encoding="utf-8")  # lgtm[py/clear-text-storage-sensitive-data]
         os.chmod(ACCESS_PATH, 0o600)
         if platform == "hyperv":
             _publish_hyperv_access(access)
         try:
             with Path("/dev/tty1").open("a", encoding="utf-8") as console:
-                console.write(f"Atlaso one-time first-boot access: {access}\n")
+                # tty1 is a transient console transport, not persistent storage.
+                console.write(  # lgtm[py/clear-text-storage-sensitive-data]
+                    f"Atlaso one-time first-boot access: {access}\n"
+                )
         except OSError:
             pass
     MARKER_PATH.write_text(f"platform={platform}\n", encoding="utf-8")
@@ -160,8 +198,12 @@ def main(argv: list[str] | None = None) -> int:
     os.umask(0o077)
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--platform", choices=("vmware", "qemu", "hyperv", "baremetal"), required=True)
+    parser.add_argument("--clear-access", action="store_true", help="Erase the one-time access transport.")
     args = parser.parse_args(argv)
-    initialize(args.platform)
+    if args.clear_access:
+        clear_access(args.platform)
+    else:
+        initialize(args.platform)
     return 0
 
 

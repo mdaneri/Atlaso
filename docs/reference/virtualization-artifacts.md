@@ -154,10 +154,11 @@ VMware metadata. Use the appliance console to complete initial networking when D
 Before networking, every cloned appliance generates a new machine ID, OpenSSH host-key set, application secrets, and
 high-entropy administrator and root passwords. VMware replaces the generated passwords with its required OVF values
 and publishes the regenerated Ed25519 public host key through VMware guest-info for authenticated automation. KVM and
-Proxmox expose a root-only one-time envelope at `/var/lib/atlaso/first-boot-access.json`, readable through the QEMU
+Proxmox expose a root-only one-time envelope on tmpfs at `/run/atlaso/first-boot-access.json`, readable through the QEMU
 guest agent or from the console. Hyper-V publishes the same envelope under KVP key `atlaso.first_boot_access`; it is
 also printed on the local console. Retrieve this envelope only from the authenticated hypervisor control plane, pin
-its SSH host key before connecting, rotate both passwords immediately, and securely remove the one-time access file.
+its SSH host key before connecting and rotate both passwords immediately. The first reboot removes the runtime file and
+Atlaso's Hyper-V KVP record while preserving unrelated KVP data.
 
 Signed appliance updates preserve the disk policy already proven for the installed generation. Portable artifacts use
 the shared four-disk policy recorded by the verified first-boot provider marker. Older VMware appliances retain their
