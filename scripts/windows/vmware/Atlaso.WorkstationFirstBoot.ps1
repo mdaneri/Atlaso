@@ -62,7 +62,12 @@ function Invoke-AtlasoBoundedProcess {
                 }
             }
             catch {
-                throw "$Action exceeded its deadline and whole-process-tree cleanup could not be proven."
+                $terminationFailure = [System.TimeoutException]::new(
+                    "$Action exceeded its deadline and whole-process-tree cleanup could not be proven.",
+                    $_.Exception
+                )
+                $terminationFailure.Data['AtlasoProcessTreeTerminationUnproven'] = $true
+                throw $terminationFailure
             }
             throw "$Action exceeded its $TimeoutSeconds-second deadline."
         }

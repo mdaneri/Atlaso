@@ -923,7 +923,9 @@ Terminal order:
   `appliance:https` certificate; the root CA must not be baked into reusable images. The sole exception is the normal
   VMware test wrapper's checked-in public `Atlaso Development Root CA`: require its matching concealed private key from
   the exact `Atlaso` 1Password Environment, pin and verify that Environment ID by SHA-256 before invoking `op`, bound
-  each secret child and post-staging VMware operation and terminate its complete process tree on timeout, validate the
+  each secret child and post-staging VMware operation and require proven complete process-tree termination before
+  mutating the VM or VMX during rollback. If termination is unproven, preserve the durable marker and all VM artifacts
+  until a Windows host restart proves the child tree is gone. Validate the
   key before host mutation, use only the separately scrubbed test-wrapper guest-info/staging path, encrypt it with each
   VM's unique secrets key, scrub plaintext staging when import fails, and issue a unique HTTPS leaf. Commit a durable
   non-secret cleanup marker before staging; later normal-wrapper invocations must retry its exact identity-bound stop,

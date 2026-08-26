@@ -448,7 +448,9 @@ and the installed CLI must support `op run --environment`. Before invoking `op`,
 SHA-256 identity to match the repository-pinned identity of that exact Environment, then validates the CLI and key pair
 before network preparation, redeploy cleanup, or cloning. A bounded child removes the inherited variable immediately
 and stages the signer only through the normal-wrapper guest-info field. `-TimeoutSeconds` bounds each `op`/secret-child
-process tree; a timeout terminates the whole tree and enters signer scrub and VM rollback. First boot writes it mode
+process tree; a timeout enters signer scrub and VM rollback only after whole-tree termination is proven. If termination
+cannot be proven, the wrapper leaves the VM and VMX untouched and retains its durable marker until a Windows host
+restart proves the child tree is gone. First boot writes it mode
 `0600`, proves guest-info scrub, encrypts it with that VM's unique `ATLASO_SECRETS_KEY`, and deletes the staging file.
 Every post-staging VMware operation has its own process-tree deadline. Before staging, the wrapper durably records a
 non-secret per-user cleanup marker; an interrupted rollback blocks later normal-VM creation until the exact marked VM

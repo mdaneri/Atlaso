@@ -596,6 +596,21 @@ function Get-AtlasoDevelopmentCaCleanupMarkerRoot {
 
 <#
 .SYNOPSIS
+Return a stable identity for the current Windows host boot.
+#>
+function Get-AtlasoHostBootIdentity {
+    $operatingSystem = Get-CimInstance -ClassName Win32_OperatingSystem -ErrorAction Stop |
+    Select-Object -First 1
+    if ($null -eq $operatingSystem -or $null -eq $operatingSystem.LastBootUpTime) {
+        throw 'The Windows host boot identity could not be determined.'
+    }
+    return ([DateTimeOffset]$operatingSystem.LastBootUpTime).ToUniversalTime().Ticks.ToString(
+        [System.Globalization.CultureInfo]::InvariantCulture
+    )
+}
+
+<#
+.SYNOPSIS
 Persist rollback ownership before the shared development signer is staged.
 
 .PARAMETER VmxPath
@@ -644,8 +659,9 @@ function New-AtlasoDevelopmentCaCleanupMarker {
         (Split-Path -Parent $resolvedOutputDirectory) `
         ".atlaso-development-ca-cleanup-$markerId"
     $payload = [ordered]@{
-        Schema = 1
-        Phase = 'staged'
+        Schema = 2
+        Phase = 'secret-child-active'
+        HostBootIdentity = (Get-AtlasoHostBootIdentity)
         Name = $Name
         VmxPath = $resolvedVmxPath
         VmxIdentity = [Atlaso.WorkstationFileIdentity]::Get($resolvedVmxPath)
@@ -705,8 +721,12 @@ Next cleanup phase proven by the caller.
 function Set-AtlasoDevelopmentCaCleanupMarkerPhase {
     param(
         [Parameter(Mandatory = $true)][string]$MarkerPath,
-        [Parameter(Mandatory = $true)][ValidateSet('staged')][string]$ExpectedPhase,
-        [Parameter(Mandatory = $true)][ValidateSet('stopped-vmx-scrubbed')][string]$Phase
+        [Parameter(Mandatory = $true)]
+        [ValidateSet('secret-child-active', 'staged')]
+        [string]$ExpectedPhase,
+        [Parameter(Mandatory = $true)]
+        [ValidateSet('staged', 'stopped-vmx-scrubbed')]
+        [string]$Phase
     )
 
     $resolvedMarkerPath = (Resolve-Path -LiteralPath $MarkerPath).Path
@@ -720,7 +740,10 @@ function Set-AtlasoDevelopmentCaCleanupMarkerPhase {
     catch {
         throw "Development-CA cleanup marker is invalid: $resolvedMarkerPath"
     }
-    if ($payload.Schema -ne 1 -or $payload.Phase -cne $ExpectedPhase) {
+    $validTransition =
+    ($ExpectedPhase -ceq 'secret-child-active' -and $Phase -cin @('staged', 'stopped-vmx-scrubbed')) -or
+    ($ExpectedPhase -ceq 'staged' -and $Phase -ceq 'stopped-vmx-scrubbed')
+    if ($payload.Schema -ne 2 -or $payload.Phase -cne $ExpectedPhase -or -not $validTransition) {
         throw "Development-CA cleanup marker phase did not match the required transition: $resolvedMarkerPath"
     }
     $payload.Phase = $Phase
@@ -800,8 +823,9 @@ function Read-AtlasoDevelopmentCaCleanupMarker {
         throw "Development-CA cleanup marker is invalid and blocks new VM creation: $MarkerPath"
     }
     if (
-        $marker.Schema -ne 1 -or
-        $marker.Phase -notin @('staged', 'stopped-vmx-scrubbed') -or
+        $marker.Schema -ne 2 -or
+        $marker.Phase -notin @('secret-child-active', 'staged', 'stopped-vmx-scrubbed') -or
+        [string]::IsNullOrWhiteSpace([string]$marker.HostBootIdentity) -or
         [string]::IsNullOrWhiteSpace([string]$marker.Name) -or
         ([string]$marker.Name).Length -gt 128 -or
         $marker.Name -match '[\x00-\x1F]' -or
@@ -811,6 +835,19 @@ function Read-AtlasoDevelopmentCaCleanupMarker {
         $marker.VmxIdentity -notmatch '^[0-9A-F]{8}:[0-9A-F]{16}$'
     ) {
         throw "Development-CA cleanup marker fields are invalid and block new VM creation: $MarkerPath"
+    }
+    [long]$markerBootTicks = 0
+    if (
+        $marker.HostBootIdentity -notmatch '^[0-9]{1,19}$' -or
+        -not [long]::TryParse(
+            [string]$marker.HostBootIdentity,
+            [System.Globalization.NumberStyles]::None,
+            [System.Globalization.CultureInfo]::InvariantCulture,
+            [ref]$markerBootTicks
+        ) -or
+        $markerBootTicks -le 0
+    ) {
+        throw "Development-CA cleanup marker host boot identity is invalid: $MarkerPath"
     }
     $resolvedVmxPath = [System.IO.Path]::GetFullPath([string]$marker.VmxPath)
     $resolvedOutputDirectory = [System.IO.Path]::GetFullPath([string]$marker.OutputDirectory)
@@ -868,6 +905,9 @@ function Read-AtlasoDevelopmentCaCleanupMarker {
         OutputDirectory = $resolvedOutputDirectory
         DataDisks = @($marker.DataDisks)
         QuarantineDirectory = $resolvedQuarantineDirectory
+        HostBootIdentity = $markerBootTicks.ToString(
+            [System.Globalization.CultureInfo]::InvariantCulture
+        )
         Phase = [string]$marker.Phase
         ArtifactsRemoved = $artifactsRemoved
     }
@@ -908,6 +948,12 @@ function Invoke-PendingAtlasoDevelopmentCaCleanup {
         $marker = Read-AtlasoDevelopmentCaCleanupMarker `
             -MarkerPath $markerFile.FullName `
             -MarkerRoot $MarkerRoot
+        if (
+            $marker.Phase -ceq 'secret-child-active' -and
+            (Get-AtlasoHostBootIdentity) -ceq $marker.HostBootIdentity
+        ) {
+            throw "Development-CA cleanup is deferred until a Windows host restart proves the unbounded secret-child tree is gone: $($marker.MarkerPath)"
+        }
         $quarantineDirectory = $marker.QuarantineDirectory
         $dataDiskStates = @(
             foreach ($disk in $marker.DataDisks) {
@@ -964,13 +1010,13 @@ function Invoke-PendingAtlasoDevelopmentCaCleanup {
                 -VmrunPath $VmrunPath `
                 -TimeoutSeconds $TimeoutSeconds
             Clear-AtlasoWorkstationDevelopmentRootCaPrivateKey -VmxPath $marker.VmxPath
-            if ($marker.Phase -eq 'staged') {
+            if ($marker.Phase -in @('secret-child-active', 'staged')) {
                 # Publish stopped/scrubbed proof before artifact removal. A
                 # later retry may then safely resume data restoration even
                 # when the VMX and its artifact root are already absent.
                 Set-AtlasoDevelopmentCaCleanupMarkerPhase `
                     -MarkerPath $marker.MarkerPath `
-                    -ExpectedPhase staged `
+                    -ExpectedPhase $marker.Phase `
                     -Phase stopped-vmx-scrubbed
                 $marker.Phase = 'stopped-vmx-scrubbed'
             }
@@ -1457,13 +1503,30 @@ if (-not $WhatIfPreference) {
             -Name $Name `
             -OutputDirectory $resolvedOutputDirectory `
             -DataDiskStates $rollbackDataDiskStates
-        Invoke-OnePasswordDevelopmentCaChild `
-            -EnvironmentId $OnePasswordEnvironmentId `
-            -OpPath $resolvedOpPath `
-            -Action Stage `
-            -CertificatePath $developmentRootCaCertificatePath `
-            -VmxPath $targetVmx `
-            -TimeoutSeconds $TimeoutSeconds
+        try {
+            Invoke-OnePasswordDevelopmentCaChild `
+                -EnvironmentId $OnePasswordEnvironmentId `
+                -OpPath $resolvedOpPath `
+                -Action Stage `
+                -CertificatePath $developmentRootCaCertificatePath `
+                -VmxPath $targetVmx `
+                -TimeoutSeconds $TimeoutSeconds
+        }
+        catch {
+            $stageFailure = $_
+            if ($stageFailure.Exception.Data['AtlasoProcessTreeTerminationUnproven'] -ne $true) {
+                Set-AtlasoDevelopmentCaCleanupMarkerPhase `
+                    -MarkerPath $developmentCaCleanupMarkerPath `
+                    -ExpectedPhase secret-child-active `
+                    -Phase staged
+            }
+            throw $stageFailure
+        }
+        # Only a returned child proves that it can no longer rewrite the VMX.
+        Set-AtlasoDevelopmentCaCleanupMarkerPhase `
+            -MarkerPath $developmentCaCleanupMarkerPath `
+            -ExpectedPhase secret-child-active `
+            -Phase staged
         $powerShellPath = (Get-Process -Id $PID).Path
         Invoke-AtlasoBoundedProcess `
             -FilePath $powerShellPath `
@@ -1491,6 +1554,19 @@ if (-not $WhatIfPreference) {
     }
     catch {
         $failure = $_
+        if ($developmentCaCleanupMarkerPath) {
+            try {
+                $cleanupMarker = Read-AtlasoDevelopmentCaCleanupMarker `
+                    -MarkerPath $developmentCaCleanupMarkerPath `
+                    -MarkerRoot (Get-AtlasoDevelopmentCaCleanupMarkerRoot)
+            }
+            catch {
+                throw "$($failure.Exception.Message) The secret-child cleanup marker could not be verified, so no VM or VMX rollback was attempted. Marker error: $($_.Exception.Message)"
+            }
+            if ($cleanupMarker.Phase -ceq 'secret-child-active') {
+                throw "$($failure.Exception.Message) The durable cleanup marker remains at $developmentCaCleanupMarkerPath; no VM or VMX rollback was attempted. Restart Windows, then rerun the wrapper so the new host boot can prove the secret-child tree is gone before cleanup."
+            }
+        }
         if ($createdThisInvocation -and (Test-Path -LiteralPath $targetVmx -PathType Leaf)) {
             $rollbackErrors = [System.Collections.Generic.List[string]]::new()
             $quarantineDirectory = ''

@@ -287,6 +287,25 @@ if ($firstBootSource -notmatch '\$process\.Kill\(\$true\)' -or
     $wrapperSource -notmatch '-TimeoutSeconds \$TimeoutSeconds') {
     throw 'The 1Password child must enforce a deadline and terminate its complete process tree.'
 }
+if ($firstBootSource -notmatch "AtlasoProcessTreeTerminationUnproven") {
+    throw 'Unproven process-tree termination must carry a machine-readable failure marker.'
+}
+$childActiveDeferral = $wrapperSource.IndexOf(
+    "`$cleanupMarker.Phase -ceq 'secret-child-active'",
+    $rollbackCatch,
+    [System.StringComparison]::Ordinal
+)
+$rollbackRuntimeScrub = $wrapperSource.IndexOf(
+    'Clear-AtlasoWorkstationDevelopmentRootCaRuntimePrivateKey',
+    $rollbackCatch,
+    [System.StringComparison]::Ordinal
+)
+if (
+    $childActiveDeferral -lt $rollbackCatch -or
+    $rollbackRuntimeScrub -lt $childActiveDeferral
+) {
+    throw 'The broad rollback handler must defer before VM mutation while the secret child may remain active.'
+}
 if ($wrapperSource -notmatch '\$runtimeSignerScrubError\s*=\s*\$_\.Exception\.Message' -or
     $wrapperSource -notmatch '\$stopped\s*=\s*\$true') {
     throw 'Runtime signer scrub and stop failures must be retained independently.'
@@ -331,9 +350,33 @@ RW 524288000 SPARSE "Atlaso-Depot-s002.vmdk"
     if ($marker.VmxPath -cne (Resolve-Path -LiteralPath $markerVmx).Path) {
         throw 'The durable cleanup marker did not bind the exact VMX path and identity.'
     }
-    if ($marker.Phase -cne 'staged' -or $marker.ArtifactsRemoved -or $marker.DataDisks.Count -ne 3) {
-        throw 'A new cleanup marker must begin in the staged, artifact-present phase.'
+    if ($marker.Phase -cne 'secret-child-active' -or $marker.ArtifactsRemoved -or $marker.DataDisks.Count -ne 3) {
+        throw 'A new cleanup marker must conservatively begin in the secret-child-active phase.'
     }
+    $sameBootDeferred = $false
+    try {
+        Invoke-PendingAtlasoDevelopmentCaCleanup `
+            -VmrunPath 'must-not-run-before-host-restart' `
+            -TimeoutSeconds 5 `
+            -MarkerRoot $markerRoot
+    }
+    catch {
+        if ($_.Exception.Message -notlike '*deferred until a Windows host restart*') {
+            throw
+        }
+        $sameBootDeferred = $true
+    }
+    if (
+        -not $sameBootDeferred -or
+        -not (Test-Path -LiteralPath $markerPath -PathType Leaf) -or
+        -not (Test-Path -LiteralPath $markerVmx -PathType Leaf)
+    ) {
+        throw 'Same-boot retry must preserve the durable marker and VM while secret-child termination is unproven.'
+    }
+    Set-AtlasoDevelopmentCaCleanupMarkerPhase `
+        -MarkerPath $markerPath `
+        -ExpectedPhase secret-child-active `
+        -Phase staged
     Set-AtlasoDevelopmentCaCleanupMarkerPhase `
         -MarkerPath $markerPath `
         -ExpectedPhase staged `
@@ -380,6 +423,10 @@ RW 524288000 SPARSE "Atlaso-Depot-s002.vmdk"
         -OutputDirectory $preQuarantineVmRoot `
         -DataDiskStates @($preQuarantineDiskState) `
         -MarkerRoot $markerRoot
+    Set-AtlasoDevelopmentCaCleanupMarkerPhase `
+        -MarkerPath $preQuarantineMarker `
+        -ExpectedPhase secret-child-active `
+        -Phase staged
     Set-AtlasoDevelopmentCaCleanupMarkerPhase `
         -MarkerPath $preQuarantineMarker `
         -ExpectedPhase staged `

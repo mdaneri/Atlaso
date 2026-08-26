@@ -278,7 +278,8 @@ whitespace, and contain only XML-representable characters so the OVF value round
 self-signed Atlaso root CA, and imports it into the current-user Trusted Root store. The temporary-file cleanup remains
 idempotent for missing files and safely handles dotted user-profile directories and valid DOS 8.3 short paths, so a
 cleanup race or path alias cannot stop the readiness retry loop. Use `-TimeoutSeconds` to change the secret-child, IP,
-and CA deadlines; a secret-child timeout terminates the whole process tree before rollback scrubs the signer.
+and CA deadlines; rollback scrubs the signer only after secret-child tree termination is proven. An unproven termination
+preserves the VM and marker until a Windows host restart provides that proof.
 
 ## Fidelity Boundary
 
