@@ -180,7 +180,9 @@ Assert-AtlasoWorkstationStableObservation `
     -InitialVmxPaths @($targetVmx, $sourceVmx) `
     -ConfirmedVmxPaths @($sourceVmx, $targetVmx) `
     -InitialTargetIPAddress '192.168.167.135' `
-    -ConfirmedTargetIPAddress '192.168.167.135'
+    -ConfirmedTargetIPAddress '192.168.167.135' `
+    -InitialRunningGuests $uniqueGuests `
+    -ConfirmedRunningGuests @($uniqueGuests[1], $uniqueGuests[0])
 try {
     Assert-AtlasoWorkstationStableObservation `
         -InitialVmxPaths @($targetVmx, $sourceVmx) `
@@ -191,6 +193,23 @@ try {
 } catch {
     if ($_.Exception.Message -eq 'A concurrent running VM was accepted.' -or
         $_.Exception.Message -notlike '*inventory or target address changed*') { throw }
+}
+$changedPeerGuests = @(
+    [pscustomobject]@{ Path = $targetVmx; MacAddress = $targetMac; IPAddress = '192.168.167.135' },
+    [pscustomobject]@{ Path = $sourceVmx; MacAddress = '00-0c-29-aa-bb-cc'; IPAddress = '192.168.167.135' }
+)
+try {
+    Assert-AtlasoWorkstationStableObservation `
+        -InitialVmxPaths @($targetVmx, $sourceVmx) `
+        -ConfirmedVmxPaths @($targetVmx, $sourceVmx) `
+        -InitialTargetIPAddress '192.168.167.135' `
+        -ConfirmedTargetIPAddress '192.168.167.135' `
+        -InitialRunningGuests $uniqueGuests `
+        -ConfirmedRunningGuests $changedPeerGuests
+    throw 'A peer address change was accepted.'
+} catch {
+    if ($_.Exception.Message -eq 'A peer address change was accepted.' -or
+        $_.Exception.Message -notlike '*identity evidence changed*') { throw }
 }
 try {
     Assert-AtlasoWorkstationStableObservation `

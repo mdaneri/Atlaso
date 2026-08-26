@@ -229,13 +229,21 @@ Target address used for the identity and neighbor proof.
 
 .PARAMETER ConfirmedTargetIPAddress
 Target address re-read immediately before readiness returns.
+
+.PARAMETER InitialRunningGuests
+VMX, MAC, and address observations captured during the initial identity proof.
+
+.PARAMETER ConfirmedRunningGuests
+VMX, MAC, and address observations re-read during the confirmation proof.
 #>
 function Assert-AtlasoWorkstationStableObservation {
     param(
         [Parameter(Mandatory = $true)][AllowEmptyCollection()][string[]]$InitialVmxPaths,
         [Parameter(Mandatory = $true)][AllowEmptyCollection()][string[]]$ConfirmedVmxPaths,
         [Parameter(Mandatory = $true)][string]$InitialTargetIPAddress,
-        [Parameter(Mandatory = $true)][AllowEmptyString()][string]$ConfirmedTargetIPAddress
+        [Parameter(Mandatory = $true)][AllowEmptyString()][string]$ConfirmedTargetIPAddress,
+        [AllowEmptyCollection()][object[]]$InitialRunningGuests = @(),
+        [AllowEmptyCollection()][object[]]$ConfirmedRunningGuests = @()
     )
 
     $initialKey = @(
@@ -250,6 +258,29 @@ function Assert-AtlasoWorkstationStableObservation {
     ) -join "`n"
     if ($confirmedKey -cne $initialKey -or $ConfirmedTargetIPAddress -ne $InitialTargetIPAddress) {
         throw 'Running VMware guest inventory or target address changed during the readiness proof.'
+    }
+    if ($InitialRunningGuests.Count -gt 0 -or $ConfirmedRunningGuests.Count -gt 0) {
+        $initialGuestKey = @(
+            $InitialRunningGuests |
+                ForEach-Object {
+                    $path = (Resolve-Path -LiteralPath $_.Path -ErrorAction Stop).Path.ToLowerInvariant()
+                    $mac = ConvertTo-AtlasoWorkstationMacAddress -MacAddress $_.MacAddress
+                    "$path|$mac|$($_.IPAddress)"
+                } |
+                Sort-Object
+        ) -join "`n"
+        $confirmedGuestKey = @(
+            $ConfirmedRunningGuests |
+                ForEach-Object {
+                    $path = (Resolve-Path -LiteralPath $_.Path -ErrorAction Stop).Path.ToLowerInvariant()
+                    $mac = ConvertTo-AtlasoWorkstationMacAddress -MacAddress $_.MacAddress
+                    "$path|$mac|$($_.IPAddress)"
+                } |
+                Sort-Object
+        ) -join "`n"
+        if ($confirmedGuestKey -cne $initialGuestKey) {
+            throw 'Running VMware guest identity evidence changed during the readiness proof.'
+        }
     }
 }
 

@@ -160,31 +160,57 @@ do {
                 }
             )
             $targetMacAddress = Get-AtlasoWorkstationVmxMacAddress -VmxPath $resolvedVmxPath
-            $identity = Assert-AtlasoWorkstationAddressIdentity `
+            Assert-AtlasoWorkstationAddressIdentity `
                 -TargetVmxPath $resolvedVmxPath `
                 -TargetMacAddress $targetMacAddress `
                 -TargetIPAddress $ipAddress `
                 -ExpectedHostname $ExpectedHostname `
                 -ObservedHostname $observedHostname `
                 -RunningGuests $runningGuests `
-                -NeighborMacAddresses @(Get-HostNeighborMacAddress -IPAddress $ipAddress)
+                -NeighborMacAddresses @(Get-HostNeighborMacAddress -IPAddress $ipAddress) | Out-Null
             # Close the concurrent-start window after the slower per-guest and
             # neighbor observations. Readiness is returned only from a stable
             # running set whose target still reports the proven address.
             $confirmedPaths = @(Get-AtlasoWorkstationRunningVmxPath -VmrunPath $resolvedVmrun)
-            $confirmedIpAddress = Get-VmwareGuestIPv4Address `
-                -VmrunPath $resolvedVmrun `
-                -VmxPath $resolvedVmxPath
+            $confirmedGuests = @(
+                foreach ($confirmedPath in $confirmedPaths) {
+                    [pscustomobject]@{
+                        Path       = $confirmedPath
+                        MacAddress = Get-AtlasoWorkstationVmxMacAddress -VmxPath $confirmedPath
+                        IPAddress  = Get-VmwareGuestIPv4Address `
+                            -VmrunPath $resolvedVmrun `
+                            -VmxPath $confirmedPath
+                    }
+                }
+            )
+            $confirmedTarget = @($confirmedGuests | Where-Object {
+                    $_.Path.Equals($resolvedVmxPath, [System.StringComparison]::OrdinalIgnoreCase)
+                })
+            $confirmedIpAddress = if ($confirmedTarget.Count -eq 1) {
+                $confirmedTarget[0].IPAddress
+            } else { '' }
             Assert-AtlasoWorkstationStableObservation `
                 -InitialVmxPaths $runningPaths `
                 -ConfirmedVmxPaths $confirmedPaths `
                 -InitialTargetIPAddress $ipAddress `
-                -ConfirmedTargetIPAddress $confirmedIpAddress
+                -ConfirmedTargetIPAddress $confirmedIpAddress `
+                -InitialRunningGuests $runningGuests `
+                -ConfirmedRunningGuests $confirmedGuests
+            $confirmedIdentity = Assert-AtlasoWorkstationAddressIdentity `
+                -TargetVmxPath $resolvedVmxPath `
+                -TargetMacAddress $targetMacAddress `
+                -TargetIPAddress $confirmedIpAddress `
+                -ExpectedHostname $ExpectedHostname `
+                -ObservedHostname (Get-VmwareGuestHostname `
+                    -VmrunPath $resolvedVmrun `
+                    -VmxPath $resolvedVmxPath) `
+                -RunningGuests $confirmedGuests `
+                -NeighborMacAddresses @(Get-HostNeighborMacAddress -IPAddress $confirmedIpAddress)
             Write-Information `
-                "Verified VMware readiness: VMX='$($identity.VmxPath)'; MAC=$($identity.MacAddress); hostname=$($identity.Hostname); host address=$($identity.IPAddress)" `
+                "Verified VMware readiness: VMX='$($confirmedIdentity.VmxPath)'; MAC=$($confirmedIdentity.MacAddress); hostname=$($confirmedIdentity.Hostname); host address=$($confirmedIdentity.IPAddress)" `
                 -InformationAction Continue
-            if ($PassThruIdentity) { return $identity }
-            return $identity.IPAddress
+            if ($PassThruIdentity) { return $confirmedIdentity }
+            return $confirmedIdentity.IPAddress
         } catch {
             $lastReadinessError = $_.Exception.Message
             if ($lastReadinessError -like 'Duplicate VMware management address*' -or
