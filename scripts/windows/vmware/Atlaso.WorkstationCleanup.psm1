@@ -339,6 +339,29 @@ function ConvertFrom-AtlasoVmrunInventoryPath {
 }
 <#
 .SYNOPSIS
+Parse and validate the complete output from VMware Workstation vmrun list.
+
+.PARAMETER Output
+Complete line-oriented stdout from one successful vmrun list invocation.
+#>
+function ConvertFrom-AtlasoVmrunListOutput {
+    param([Parameter(Mandatory = $true)][AllowEmptyCollection()][AllowEmptyString()][string[]]$Output)
+    if ($Output.Count -lt 1 -or $Output[0].ToString() -notmatch '^Total running VMs:\s*(\d+)\s*$') {
+        throw 'vmrun list returned an unrecognized running-VM inventory; artifacts were preserved.'
+    }
+    $declaredCount = [int]$Matches[1]
+    $reportedPaths = @($Output | Select-Object -Skip 1 | ForEach-Object { ConvertFrom-AtlasoVmrunInventoryPath -InventoryLine $_.ToString() } | Where-Object { $_ })
+    if ($reportedPaths.Count -ne $declaredCount) { throw "vmrun list reported $declaredCount VMs but returned $($reportedPaths.Count) paths; artifacts were preserved." }
+    if (@($reportedPaths | Where-Object {
+                -not [System.IO.Path]::IsPathFullyQualified($_) -or $_.Contains('"')
+            }).Count -gt 0) {
+        throw 'vmrun list returned a non-absolute or malformed VMX path; artifacts were preserved.'
+    }
+    if (@($reportedPaths | Where-Object { [System.IO.Path]::GetExtension($_) -ine '.vmx' -or -not (Test-Path -LiteralPath $_ -PathType Leaf) }).Count -gt 0) { throw 'vmrun list returned a missing or non-VMX running path; artifacts were preserved.' }
+    return $reportedPaths
+}
+<#
+.SYNOPSIS
 Return the checked VMware Workstation running-VM paths.
 
 .PARAMETER VmrunPath
@@ -358,25 +381,7 @@ function Get-AtlasoWorkstationVmPaths {
             -VmrunPath $VmrunPath `
             -Arguments @('-T', 'ws', 'list') `
             -Action 'List running VMware Workstation VMs')
-    if ($output.Count -lt 1 -or $output[0].ToString() -notmatch '^Total running VMs:\s*(\d+)\s*$') {
-        throw 'vmrun list returned an unrecognized running-VM inventory; artifacts were preserved.'
-    }
-    $declaredCount = [int]$Matches[1]
-    $reportedPaths = @(
-        $output | Select-Object -Skip 1 | ForEach-Object {
-            ConvertFrom-AtlasoVmrunInventoryPath -InventoryLine $_.ToString()
-        } | Where-Object { $_ }
-    )
-    if ($reportedPaths.Count -ne $declaredCount) {
-        throw "vmrun list reported $declaredCount VMs but returned $($reportedPaths.Count) paths; artifacts were preserved."
-    }
-    if (@($reportedPaths | Where-Object {
-                -not [System.IO.Path]::IsPathFullyQualified($_) -or $_.Contains('"')
-            }).Count -gt 0) {
-        throw 'vmrun list returned a non-absolute or malformed VMX path; artifacts were preserved.'
-    }
-    if (@($reportedPaths | Where-Object { [System.IO.Path]::GetExtension($_) -ine '.vmx' -or -not (Test-Path -LiteralPath $_ -PathType Leaf) }).Count -gt 0) { throw 'vmrun list returned a missing or non-VMX running path; artifacts were preserved.' }
-    return $reportedPaths
+    return @(ConvertFrom-AtlasoVmrunListOutput -Output $output)
 }
 <#
 .SYNOPSIS
@@ -1403,6 +1408,7 @@ function Remove-AtlasoWorkstationArtifactRoot {
 
 Export-ModuleMember -Function @(
     'Assert-AtlasoStrictDescendantPath',
+    'ConvertFrom-AtlasoVmrunListOutput',
     'Get-AtlasoVmxDisplayName',
     'Remove-AtlasoWorkstationArtifactRoot',
     'Remove-AtlasoWorkstationVmArtifacts',

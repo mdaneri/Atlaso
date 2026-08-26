@@ -38,6 +38,11 @@ human-approved 1Password desktop authorization prompt and keeps it in process me
 and an explicit dependency path so startup hooks and inherited `PYTHONPATH` cannot observe the value. The beta-only
 `op run --environment` flag is not supported by the stable CLI and is not part of this workflow.
 
+Normal test VM creation uses a separate development-CA handoff. It checks the supplied ID against the
+repository-pinned SHA-256 identity of the exact `Atlaso` Environment before invoking `op`, then requires an
+Environments-enabled CLI with `op run --environment`; the stable SDK-backed wheel deployment above does not change
+that normal-test-wrapper-only trust path.
+
 Atlaso can run a VMware Workstation lifecycle lab alongside the Hyper-V lab. The Workstation path uses VMX/VMDK
 artifacts and `vmrun.exe`, then delegates appliance behavior checks to the shared Python lifecycle runner.
 
@@ -288,7 +293,10 @@ whitespace, and contain only XML-representable characters so the OVF value round
 `-TrustRootCa` waits for the first-boot CA endpoint, removes partial downloads best-effort between retries, validates the
 self-signed Atlaso root CA, and imports it into the current-user Trusted Root store. The temporary-file cleanup remains
 idempotent for missing files and safely handles dotted user-profile directories and valid DOS 8.3 short paths, so a
-cleanup race or path alias cannot stop the readiness retry loop. Use `-TimeoutSeconds` to change the IP and CA waits.
+cleanup race or path alias cannot stop the readiness retry loop. Use `-TimeoutSeconds` to change the secret-child, IP,
+and CA deadlines; rollback mutates the VM only after staging and start child-tree termination is proven. It also keeps
+reused disks quarantined while an artifact-removal child may survive. An unproven termination preserves the durable
+marker until a Windows host restart provides that proof.
 
 ## Fidelity Boundary
 

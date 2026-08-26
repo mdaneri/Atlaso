@@ -510,8 +510,29 @@ The following cross-cutting boundaries always apply:
   private key. When that test-only property is present, publish only the VM's public Ed25519 SSH host key through a
   separate VMware guest-info value. Read, wire-validate, and fingerprint that host-derived value before displaying it
   for explicit `known_hosts` verification; never substitute unauthenticated `ssh-keyscan` output.
-  Keep both properties internal to this wrapper, preserve root SSH as disabled, and do not extend this development-only
-  authority to lifecycle VMs or exported OVF/OVA deployments.
+  The wrapper also owns the sole development-root exception to per-appliance CA generation: require the exact `Atlaso`
+  1Password Environment's concealed `ATLASO_DEVELOPMENT_ROOT_CA_PRIVATE_KEY`, validate it against the checked-in public
+  `Atlaso Development Root CA` before mutation, pin and verify the exact Environment ID by SHA-256 before invoking `op`,
+  bound and whole-tree-terminate every `op`/secret-child invocation and every post-staging VMware operation, and pass
+  the signer only through a separately
+  scrubbed normal-wrapper guest-info value. First boot must stage it mode `0600`, prove guest-info scrub, encrypt it with
+  the VM-unique secrets key, remove staging even when encrypted import fails, and issue a unique HTTPS leaf. Commit a
+  durable non-secret cleanup marker through a Windows write-through atomic rename before staging; later normal-wrapper
+  invocations must retry its exact identity-bound stop, VMX scrub, artifact removal, and data-disk restoration before
+  1Password preflight or any new mutation. Persist
+  boot-bound child-active phases before staging, VM start, and artifact removal. An unproven child-tree termination must
+  preserve the VM and VMX, or keep reused disks quarantined during removal, until a Windows host restart makes cleanup
+  safe. Persist the stopped/scrubbed phase before artifact removal so a retry can resume restoration from an absent
+  artifact root. Before persisting rollback state, reject configured data disks that repeat the same descriptor,
+  hard-linked alias, or shared extent by filesystem identity. Before deleting a completed marker, write-through
+  transition it to a non-actionable tombstone so a
+  post-crash directory-entry resurrection cannot trigger cleanup of a successful VM.
+  Default waiting must verify the
+  exact
+  checked-in fingerprint; Windows trust
+  remains explicit and idempotent. Reject `-NoStart`, preserve root SSH as disabled, and do not extend either development
+  authority to lifecycle VMs, Hyper-V, reusable images, or exported OVF/OVA deployments. Rotate the repository PEM and
+  concealed Environment key together after compromise of any in-scope test VM.
   Before reporting a started clone ready or printing connection endpoints, bind VMware Tools' management IPv4 result to
   the exact running VMX, its `ethernet0` MAC, the injected hostname, and a Windows neighbor entry for that MAC. Compare
   the address with every running Workstation VM and fail closed with the conflicting VMX, MAC, and address when another

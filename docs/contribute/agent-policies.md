@@ -924,7 +924,26 @@ Terminal order:
   and restarts `sshd`; and management front door apply writes `/etc/nginx/conf.d/atlaso.conf`,
   `/etc/atlaso/nginx/sites.d/management.conf`, and a `atlaso.service` loopback override. Fresh appliances run
   `atlaso-bootstrap-https.service` on deployed-VM first boot to generate the integrated root CA and CA-managed
-  `appliance:https` certificate; the root CA must not be baked into reusable images. Nginx redirects public HTTP/80 to
+  `appliance:https` certificate; the root CA must not be baked into reusable images. The sole exception is the normal
+  VMware test wrapper's checked-in public `Atlaso Development Root CA`: require its matching concealed private key from
+  the exact `Atlaso` 1Password Environment, pin and verify that Environment ID by SHA-256 before invoking `op`, bound
+  each secret child and post-staging VMware operation and require proven complete process-tree termination before
+  mutating the VM or VMX during rollback. Persist boot-bound child-active phases for staging, VM start, and artifact
+  removal. If termination is unproven, preserve the VM and VMX, or keep reused disks quarantined during removal, until
+  a Windows host restart proves the child tree is gone. Validate the
+  key before host mutation, use only the separately scrubbed test-wrapper guest-info/staging path, encrypt it with each
+  VM's unique secrets key, scrub plaintext staging when import fails, and issue a unique HTTPS leaf. Commit a durable
+  non-secret cleanup marker through a Windows write-through atomic rename before staging; later normal-wrapper
+  invocations must retry its exact identity-bound stop, VMX scrub, artifact removal, and data-disk restoration before
+  1Password preflight or any new mutation. Persist the
+  stopped/scrubbed phase before artifact removal so a retry can safely resume restoration from an absent artifact root.
+  Before persisting rollback state, reject configured data disks that repeat the same descriptor, hard-linked alias, or
+  shared extent by filesystem identity. Before deleting a completed marker, write-through transition it to a
+  non-actionable tombstone so a post-crash
+  directory-entry resurrection cannot trigger cleanup of a successful VM.
+  Keep lifecycle, Hyper-V, reusable-image, and exported-appliance paths outside that trust domain. Default wrapper wait
+  verifies the exact public fingerprint; Windows trust is explicit and idempotent, `-NoStart` is forbidden, and
+  certificate/key rotation is one coordinated repository-and-Environment update. Nginx redirects public HTTP/80 to
   HTTPS/443 and reverse-proxies HTTPS to uvicorn on `127.0.0.1:8000`. Appliance FQDN or management IP changes should
   reissue the managed leaf certificate automatically; root CA replacement remains an explicit rotation workflow. When
   HTTPS is disabled or the dedicated complete factory-reset transaction is applied, nginx serves public HTTP/80 as a
