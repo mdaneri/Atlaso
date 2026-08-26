@@ -1,7 +1,13 @@
-[Diagnostics.CodeAnalysis.SuppressMessageAttribute('PSAvoidUsingPlainTextForPassword', '')]
+<#
+.SYNOPSIS
+Deploy the lab SDDC Manager appliance with the checked-in VMware Workstation topology.
+.PARAMETER Password
+Appliance root and local-user password. The script prompts securely when omitted.
+#>
+[CmdletBinding()]
 param(
     [Parameter(Mandatory = $false)]
-    [string]$Password
+    [SecureString]$Password
 )
 $ErrorActionPreference = 'Stop'
 
@@ -31,24 +37,29 @@ if (-not (Test-Path -LiteralPath $SourceOva)) {
     throw "OVA file was not found at: $SourceOva"
 }
 
-New-Item -ItemType Directory -Path $VmDirectory -Force | Out-Null
-
 if (-not $Password) {
-    $SecurePassword = Read-Host `
+    $Password = Read-Host `
         'Enter the password for root, admin@local, and vcf SSH users' `
         -AsSecureString
-    $Password = ConvertFrom-SecureString -SecureString $SecurePassword -AsPlainText
 }
 
-$Arguments = @(
+# OVF Tool accepts property values only as strings. Keep the plaintext form
+# local to this bounded deployment process instead of accepting it as input.
+$passwordText = ConvertFrom-SecureString -SecureString $Password -AsPlainText
+
+try {
+    # Resolve credentials before creating the destination directory or invoking
+    # OVF Tool so a cancelled prompt cannot leave partial deployment state.
+    New-Item -ItemType Directory -Path $VmDirectory -Force | Out-Null
+    $Arguments = @(
     '--acceptAllEulas'
     '--overwrite'
     '--powerOffTarget'
     "--name=$VmName"
     "--net:Network 1=$Network"
 
-    "--prop:ROOT_PASSWORD=$Password"
-    "--prop:LOCAL_USER_PASSWORD=$Password"
+    "--prop:ROOT_PASSWORD=$passwordText"
+    "--prop:LOCAL_USER_PASSWORD=$passwordText"
 
     "--prop:vami.hostname=$Hostname"
     "--prop:guestinfo.ntp=$NtpServer"
@@ -118,6 +129,16 @@ Set-Content `
     -Encoding UTF8
 
 
+<#
+.SYNOPSIS
+Set one VMX key while preserving unrelated configuration lines.
+.PARAMETER Content
+Existing VMX content to update.
+.PARAMETER Key
+VMX key to replace or append.
+.PARAMETER Value
+Value to serialize for the VMX key.
+#>
 function Set-VmxValue {
     param(
         [Parameter(Mandatory)]
@@ -154,6 +175,12 @@ function Set-VmxValue {
     return $Updated
 }
 
+<#
+.SYNOPSIS
+Escape a value before embedding it in OVF XML.
+.PARAMETER Value
+Potentially empty value that must be XML escaped.
+#>
 function ConvertTo-OvfXmlValue {
     param(
         [AllowEmptyString()]
@@ -163,8 +190,8 @@ function ConvertTo-OvfXmlValue {
     return [System.Security.SecurityElement]::Escape($Value)
 }
 
-$RootPasswordXml = ConvertTo-OvfXmlValue $Password
-$LocalPasswordXml = ConvertTo-OvfXmlValue $Password
+$RootPasswordXml = ConvertTo-OvfXmlValue $passwordText
+$LocalPasswordXml = ConvertTo-OvfXmlValue $passwordText
 $HostnameXml = ConvertTo-OvfXmlValue $Hostname
 $NtpServerXml = ConvertTo-OvfXmlValue $NtpServer
 $IpAddressXml = ConvertTo-OvfXmlValue $IpAddress
@@ -221,8 +248,12 @@ $VmxContent = Set-VmxValue `
 # Write UTF-8 without BOM.
 $Utf8NoBom = [System.Text.UTF8Encoding]::new($false)
 
-[System.IO.File]::WriteAllLines(
-    $DestinationVmx,
-    $VmxContent,
-    $Utf8NoBom
-)
+    [System.IO.File]::WriteAllLines(
+        $DestinationVmx,
+        $VmxContent,
+        $Utf8NoBom
+    )
+}
+finally {
+    $passwordText = $null
+}

@@ -1551,6 +1551,10 @@ Terminal order:
   `.SYNOPSIS` and one `.PARAMETER` entry per declared parameter. Explain non-obvious safety ordering, trust boundaries,
   and platform behavior without narrating self-evident commands. Run `scripts/check_powershell_help.ps1` against the
   base checkout; CI applies the same incremental whole-file gate to every changed PowerShell source.
+- Pin PowerShell static analysis to PSScriptAnalyzer `1.25.0` and run `scripts/check_powershell_analysis.ps1` before
+  committing. The repository profile covers every tracked `.ps1`, `.psm1`, and `.psd1` file. Credential parameters use
+  `SecureString` or `PSCredential`, never declare defaults, and never rely on broad
+  `PSAvoidUsingPlainTextForPassword` suppressions; CI and pre-commit enforce the same contract.
 - Before finalizing UI/backend changes, run focused tests for the touched area when available. Do not run the complete
   Python test suite locally; GitHub CI owns it. Also run `python -m compileall atlaso` after broad
   Python/template-adjacent changes.

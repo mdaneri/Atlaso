@@ -21,7 +21,36 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--user", default="alpine")
     parser.add_argument("--public-key", default="")
     parser.add_argument("--password", default="")
+    parser.add_argument(
+        "--password-stdin",
+        action="store_true",
+        help="Read the client password from standard input instead of argv.",
+    )
     return parser.parse_args()
+
+
+def load_password_from_stdin(args: argparse.Namespace, stream: io.TextIOBase) -> None:
+    """Load one bounded client password from standard input when requested.
+
+    Args:
+        args: Parsed command-line options updated with the supplied password.
+        stream: Text stream containing exactly one password line.
+
+    Raises:
+        ValueError: If stdin password input is empty, multiline, or oversized.
+    """
+    if not args.password_stdin:
+        return
+    if args.password:
+        raise ValueError("--password and --password-stdin cannot be used together.")
+
+    password_input = stream.read(4097)
+    if len(password_input) > 4096:
+        raise ValueError("The stdin password exceeds the 4096-character limit.")
+    password = password_input.removesuffix("\n").removesuffix("\r")
+    if not password or "\n" in password or "\r" in password:
+        raise ValueError("--password-stdin requires exactly one non-empty password line.")
+    args.password = password
 
 
 def cloud_init_files(args: argparse.Namespace) -> dict[str, str]:
@@ -134,6 +163,9 @@ def main() -> int:
         return 2
 
     args = parse_args()
+    # Resolve stdin before creating or deleting the output so invalid secret
+    # transport cannot disturb an existing seed artifact.
+    load_password_from_stdin(args, sys.stdin)
     output = Path(args.output)
     output.parent.mkdir(parents=True, exist_ok=True)
     if output.exists():

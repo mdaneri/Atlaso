@@ -110,6 +110,11 @@ the Hyper-V build wrapper. Both wrappers use `image/common/source` for the origi
 source ISO is not duplicated under each target. The Workstation image installs `open-vm-tools`; the Hyper-V image keeps
 the `hyper-v` package and Hyper-V guest daemons. The Workstation build wrapper opens a visible VMware console by
 default. Use `-Headless` only when an unattended build is preferred.
+The shared builder removes and verifies the absence of its plaintext kickstart source, generated Packer variable file,
+and remastered credential-bearing ISO after the bounded Packer consumer exits. The cleanup covers validation, build,
+failure, and fallback ISO paths; an ACL, file-lock, or endpoint-protection cleanup failure terminates the build instead
+of reporting success with a credential-bearing artifact left behind. `-PrepareIsoOnly` is rejected because retaining
+that ISO would retain a reusable build credential.
 
 GUI builds start or reuse a responsive VMware Workstation UI as a process separate from Packer before invoking the
 VMware builder. This preserves the visible console while preventing an already-running VM from leaving Packer blocked
@@ -137,6 +142,27 @@ by formatting or silently swapping unrelated VMDKs.
 pwsh -ExecutionPolicy Bypass `
   -File scripts/windows/vmware/invoke-lifecycle-test.ps1
 ```
+
+The wrapper has no password defaults. It prompts securely for the appliance administrator and VCF Backup credentials;
+client SSH reuses the administrator `SecureString` unless `-SshPassword` is supplied. `-FullEsxiPxeInstall` also
+requires the ESXi root password that matches the selected rendered Kickstart profile. The launcher sends these values to
+its child through a current-user DPAPI-protected temporary CLIXML bundle and removes that bundle after the child exits.
+The runner streams the complete password set for the main lifecycle Python consumer as one JSON envelope over standard
+input, so those values do not enter that child's process arguments. Client NoCloud seed generation likewise sends its
+SSH password as one bounded standard-input line to the repository-controlled helper; the helper rejects empty,
+multiline, and oversized input before replacing an existing seed artifact. After successful lifecycle client access
+proves that cloud-init consumed each seed, the runner stops the clients, detaches and deletes both ISOs with absence
+verification, then restarts a retained lab. Failure cleanup also stops affected clients and requires verified seed absence.
+For a full ESXi PXE install, the consumer rotates
+the encrypted `Lifecycle ESXi` vault entry and persists only
+`{{vault.lifecycle_esxi.esx.lifecycle.root.password}}` in the Kickstart source; Atlaso resolves that marker for the
+authorized PXE request without storing the plaintext password in desired state. The lifecycle reuses a vault whose
+display name normalizes to `lifecycle_esxi` and fails closed if more than one vault claims that marker name. Because
+settings archives intentionally exclude vaults, the restored pass recreates this entry from the same standard-input
+secret after restore and before the
+ESXi PXE unit is applied.
+The `-OidcOnly` and `-RoutingWanOnly` paths do not prompt for or include a VCF Backup password because those focused
+scenarios neither stage VCF Backup nor run the settings backup/restore pass.
 
 The wrapper selects the newest appliance VMX under `image/vmware-workstation/output`, prepares the tiny Alpine client
 VMDK when needed, creates a unique `AtlasoWorkstationLifecycle-*` lab, runs the initial lifecycle scenario, and by
@@ -182,6 +208,9 @@ pwsh -ExecutionPolicy Bypass `
   -File scripts/windows/vmware/invoke-lifecycle-test.ps1 `
   -CleanupVmsOnly
 ```
+
+The plan-only command does not prompt for passwords or create a protected credential bundle because the emitted plan
+does not consume credentials.
 
 ## Cleanup Safety
 
@@ -274,13 +303,17 @@ That is the Workstation counterpart to `scripts/windows/hyperv/create-atlaso-tes
 vmnet only; pass `-IncludeLabNetworkAdapters` after creating the SiteA, WAN/SiteB, and trunk-like vmnets.
 For real creation, the wrapper prefers an explicit `-OnePasswordEnvironmentId` override and otherwise reads the exact
 single-line `.atlaso-local/onepassword-environment-id` file. The entire `.atlaso-local` directory is ignored by Git. A
-pending signer cleanup runs first because it consumes no 1Password material. After that recovery, a missing or
+custom file may be selected with `-EnvironmentIdFile`; the legacy `-OnePasswordEnvironmentIdFile` spelling remains an
+alias for existing automation.
+Pending signer cleanup runs first because it consumes no 1Password material. After that recovery, a missing or
 malformed ID fails with an actionable preflight error before network preparation, disk reset, cloning, or other new VM
 mutation. The wrapper verifies its SHA-256 identity against the repository pin without printing the ID. Install the
 Environments-enabled beta 1Password CLI under `C:\Program Files\1Password CLI`; a stable CLI without
 `op run --environment` fails before Environment access. A wrong Environment ID or signer fails before new VM mutation.
-The wrapper injects the same complete DHCP-first OVF environment before power-on; use `-FirstBootFqdn`,
-`-AdminPassword`, and `-RootPassword` when the default local test identity or credentials are not appropriate.
+The wrapper injects the same complete DHCP-first OVF environment before power-on. Use `-FirstBootFqdn` for the test
+identity. `-AdminPassword` and `-RootPassword` accept only `SecureString` objects; when omitted, the wrapper prompts
+securely after pending signer recovery and Environment validation, but before network preparation or new VM mutation.
+Neither credential has a repository default.
 It also resolves the current Windows user's existing `.ssh/id_ed25519.pub` before any network preparation, cleanup, or
 VM creation, installs that Ed25519 public key for `admin`, and adds a separate test-only passwordless-sudo rule. Pass
 `-SshPublicKeyPath <path>` to select another existing Ed25519 public key, or `-SkipSshKeyProvisioning` to retain

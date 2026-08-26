@@ -40,7 +40,7 @@ $executionIndex = $deploySource.IndexOf($executionMarker, [System.StringComparis
 if ($executionIndex -lt 0) {
     throw 'Unable to locate the deploy-wheel execution boundary.'
 }
-Invoke-Expression $deploySource.Substring(0, $executionIndex)
+Invoke-Command -ScriptBlock ([scriptblock]::Create($deploySource.Substring(0, $executionIndex))) -NoNewScope
 
 Assert-OnePasswordEnvironmentId -EnvironmentId 'blgexucrwfr2dtsxe2q4uu7dp4'
 Assert-OnePasswordAccount -Account 'example.1password.com'

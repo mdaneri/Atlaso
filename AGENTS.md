@@ -274,7 +274,10 @@ Every new or changed PowerShell script or module must provide comment-based help
 function, including nested helpers. Include a concise `.SYNOPSIS`, document every declared parameter with `.PARAMETER`,
 and add rationale comments for non-obvious safety ordering, trust boundaries, and platform behavior. Run
 `scripts/check_powershell_help.ps1` against the base checkout; the incremental gate requires complete compliance for
-each touched PowerShell file without forcing unrelated legacy rewrites.
+each touched PowerShell file without forcing unrelated legacy rewrites. Install PSScriptAnalyzer `1.25.0` and run
+`scripts/check_powershell_analysis.ps1`; every tracked PowerShell source must pass the repository profile. Real password
+parameters must use `SecureString` or `PSCredential`, declare no default, and never use a broad
+`PSAvoidUsingPlainTextForPassword` suppression.
 
 Every new or changed `/api/v1` operation must follow the
 [API authoring standard](docs/contribute/api-authoring.md), including operation, authorization, parameter,

@@ -51,7 +51,9 @@ and Hyper-V templates. Canonical CI runs the same protected inventory on its Win
 
 Use the wrapper instead of raw `packer build`; it creates the remastered Photon ISO with `photon-ks.json` and the Atlaso
 GRUB auto-install entry. The original Photon source ISO is shared with the Hyper-V image path under
-`image/common/source`; only the target-specific remastered kickstart ISO is written under this image directory.
+`image/common/source`; the target-specific remastered kickstart ISO is a temporary sensitive artifact under this image
+directory. The wrapper removes it and verifies its absence after the bounded Packer validation or build exits, including
+failure paths. `-PrepareIsoOnly` is rejected because retaining that ISO would retain a reusable build credential.
 `New-AtlasoPhotonKickstart` in `scripts/windows/common/Atlaso.PhotonImage.psm1` is the only kickstart source for both
 providers. The focused image tests invoke that generator, parse the VMware and Hyper-V JSON outputs, and validate their
 shared installer contract plus provider-specific packages and guest-service commands.
@@ -105,6 +107,11 @@ pwsh -ExecutionPolicy Bypass `
   -IsoUrl "https://packages.vmware.com/photon/5.0/GA/iso/photon-5.0-dde71ec57.x86_64.iso" `
   -IsoChecksum "sha512:<checksum>"
 ```
+
+`-SshPassword` and `-BootstrapAdminPassword` accept only `SecureString` values and have no repository defaults. Omit
+them for interactive `Read-Host -AsSecureString` prompts, or collect each value securely in the current PowerShell
+process before invoking the wrapper. The shared builder unwraps them only for kickstart and Packer serialization and
+removes the temporary secret-bearing Packer variable file after the bounded child exits.
 
 The wrapper does not build or embed Inventory Linux. New templates leave it uninstalled so an administrator can use
 **Download latest** to retrieve the signed independent release when needed. Contributors building Inventory Linux

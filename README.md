@@ -117,7 +117,8 @@ brings infrastructure, storage, identity, networking, and lifecycle workflows in
 - [Technical reference](docs/reference/index.md) — API, image building, lifecycle testing, and detailed behavior.
 - [Contributing](CONTRIBUTING.md) — issue, version, focused local validation, full-suite GitHub CI, exact-head review
   follow-through, protected trusted-CI status handoff, multi-entry GitHub Pages publication serialization,
-  incremental comment-based-help enforcement for changed PowerShell files,
+  incremental comment-based-help enforcement for changed PowerShell files, pinned repository-wide PSScriptAnalyzer
+  enforcement, and default-free `SecureString` credential parameters,
   pull-request, capability-aware completed-task lease-guarded remote/local-branch, worktree, and title cleanup with
   guarded resumable restoration,
   and seven-day Python dependency-age requirements.

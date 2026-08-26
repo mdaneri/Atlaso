@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import argparse
 import importlib.util
+import io
 import json
 import sys
 from pathlib import Path
@@ -31,6 +32,79 @@ def load_network_boot_lifecycle_module():
     sys.modules[spec.name] = module
     spec.loader.exec_module(module)
     return module
+
+
+def test_load_lifecycle_secrets_populates_passwords_from_stdin_envelope():
+    """Verify that lifecycle secrets are validated and loaded without argv values."""
+    lifecycle = load_lifecycle_module()
+    args = lifecycle.parse_args(["--secret-stdin"])
+    secret_values = {
+        "password": "AdminSecret!",
+        "appliance_ssh_password": "ApplianceSecret!",
+        "ssh_password": "ClientSecret!",
+        "vcf_backup_password": "BackupSecret!",
+        "esxi_password": "EsxiSecret!",
+    }
+
+    lifecycle.load_lifecycle_secrets(args, io.StringIO(json.dumps(secret_values)))
+
+    assert args.password == secret_values["password"]
+    assert args.appliance_ssh_password == secret_values["appliance_ssh_password"]
+    assert args.ssh_password == secret_values["ssh_password"]
+    assert args.vcf_backup_password == secret_values["vcf_backup_password"]
+    assert args.esxi_password == secret_values["esxi_password"]
+
+
+def test_load_lifecycle_secrets_rejects_unexpected_schema():
+    """Verify that stdin secret envelopes fail closed on unexpected fields."""
+    lifecycle = load_lifecycle_module()
+    args = lifecycle.parse_args(["--secret-stdin"])
+    secret_values = {
+        "password": "AdminSecret!",
+        "appliance_ssh_password": "ApplianceSecret!",
+        "ssh_password": "ClientSecret!",
+        "vcf_backup_password": "BackupSecret!",
+        "esxi_password": "",
+        "unexpected": "value",
+    }
+
+    with pytest.raises(lifecycle.LifecycleError, match="required schema"):
+        lifecycle.load_lifecycle_secrets(args, io.StringIO(json.dumps(secret_values)))
+
+
+@pytest.mark.parametrize("focused_option", ["--oidc-only", "--routing-wan-only"])
+def test_load_lifecycle_secrets_allows_focused_runs_without_vcf_backup_password(focused_option):
+    """Verify focused modes omit the unrelated VCF Backup credential.
+
+    Args:
+        focused_option: Focused lifecycle option under test.
+    """
+    lifecycle = load_lifecycle_module()
+    args = lifecycle.parse_args(["--secret-stdin", focused_option])
+    secret_values = {
+        "password": "AdminSecret!",
+        "appliance_ssh_password": "ApplianceSecret!",
+        "ssh_password": "ClientSecret!",
+    }
+
+    lifecycle.load_lifecycle_secrets(args, io.StringIO(json.dumps(secret_values)))
+
+    assert args.vcf_backup_password == ""
+    assert args.esxi_password == ""
+
+
+def test_load_lifecycle_secrets_requires_vcf_backup_password_for_full_run():
+    """Verify the full lifecycle still requires its VCF Backup credential."""
+    lifecycle = load_lifecycle_module()
+    args = lifecycle.parse_args(["--secret-stdin"])
+    secret_values = {
+        "password": "AdminSecret!",
+        "appliance_ssh_password": "ApplianceSecret!",
+        "ssh_password": "ClientSecret!",
+    }
+
+    with pytest.raises(lifecycle.LifecycleError, match="requires a VCF Backup password"):
+        lifecycle.load_lifecycle_secrets(args, io.StringIO(json.dumps(secret_values)))
 
 
 def test_network_boot_lifecycle_extracts_csrf_without_password_query_login():
@@ -886,8 +960,88 @@ def test_esxi_pxe_payload_uses_dhcp_lifecycle_host():
     content = lifecycle.lifecycle_esxi_kickstart_content()
 
     assert "network --bootproto=dhcp" in content
-    assert "{{" not in content
+    assert "rootpw {{vault.lifecycle_esxi.esx.lifecycle.root.password}}" in content
+    assert "rootpw vmware01!" not in content
     assert "vim-cmd hostsvc/start_ssh" in content
+
+    with pytest.raises(lifecycle.LifecycleError, match="vault marker is invalid"):
+        lifecycle.lifecycle_esxi_kickstart_content("vault.somewhere.else.password")
+
+
+def test_lifecycle_esxi_vault_inventory_reuses_normalized_marker_name():
+    """Verify a normalized-equivalent lifecycle vault is reused."""
+    lifecycle = load_lifecycle_module()
+    body = (
+        '<section data-vault-id="7" data-vault-name="Lifecycle-ESXi">'
+        '<script type="application/json" id="vault-entries-data-7">'
+        '[{"id": 9, "key": "esx.lifecycle.root"}]</script>'
+    )
+
+    vault_id, entries = lifecycle._lifecycle_esxi_vault_inventory(body)
+
+    assert vault_id == 7
+    assert entries == [{"id": 9, "key": "esx.lifecycle.root"}]
+
+
+def test_lifecycle_esxi_vault_inventory_rejects_ambiguous_marker_names():
+    """Verify normalized lifecycle vault collisions fail before creation."""
+    lifecycle = load_lifecycle_module()
+    body = (
+        '<section data-vault-id="7" data-vault-name="Lifecycle ESXi">'
+        '<section data-vault-id="8" data-vault-name="Lifecycle-ESXi">'
+    )
+
+    with pytest.raises(lifecycle.LifecycleError, match="marker name is ambiguous"):
+        lifecycle._lifecycle_esxi_vault_inventory(body)
+
+
+def test_restored_esxi_lifecycle_recreates_vault_secret_before_apply(monkeypatch, tmp_path):
+    """Verify restored ESXi state rehydrates its excluded vault secret before apply.
+
+    Args:
+        monkeypatch: Pytest fixture used to replace the lifecycle step runner.
+        tmp_path: Pytest-managed temporary result directory.
+    """
+    lifecycle = load_lifecycle_module()
+    args = lifecycle.parse_args(
+        [
+            "--secret-stdin",
+            "--restore-settings-backup",
+            str(tmp_path / "settings-backup.json"),
+            "--pxe-test-mode",
+            "esxi",
+            "--result-dir",
+            str(tmp_path),
+        ]
+    )
+    args.esxi_password = "LifecycleEsxi01!"
+    client = object()
+    calls = []
+
+    def fake_run_step(_results, name, operation, *operation_args):
+        """Record a lifecycle operation without executing it.
+
+        Args:
+            _results: Unused lifecycle results collection.
+            name: Lifecycle step name.
+            operation: Callable selected for the lifecycle step.
+            *operation_args: Positional arguments supplied to the operation.
+
+        Returns:
+            An empty result mapping for the simulated step.
+        """
+        calls.append((name, operation, operation_args))
+        return {}
+
+    monkeypatch.setattr(lifecycle, "run_step", fake_run_step)
+    lifecycle.run_restored_lifecycle([], client, args)
+
+    call_names = [name for name, _operation, _arguments in calls]
+    stage_index = call_names.index("stage-esxi-vault-secret")
+    assert call_names.index("restore-settings-backup") < stage_index
+    assert stage_index < call_names.index("apply-connectivity-units")
+    assert calls[stage_index][1] is lifecycle.ensure_lifecycle_esxi_vault_secret
+    assert calls[stage_index][2] == (client, args.esxi_password)
 
 
 def test_configure_esxi_pxe_selects_dhcp_scope_and_proves_reservation():
@@ -903,8 +1057,10 @@ def test_configure_esxi_pxe_selects_dhcp_scope_and_proves_reservation():
             "00:50:56:20:01:02",
             "--pxe-installer-iso-path",
             "/mnt/atlaso-vcf-offline-depot/PROD/COMP/ESX_HOST/esxi.iso",
+            "--secret-stdin",
         ]
     )
+    args.esxi_password = "LifecycleEsxi01!"
 
     class FakeClient:
         """Represent fake client.
@@ -917,6 +1073,8 @@ def test_configure_esxi_pxe_selects_dhcp_scope_and_proves_reservation():
             """Initialize the fake client."""
             self.boot_form = []
             self.host_payload = {}
+            self.kickstart_payload = {}
+            self.vault_form = {}
 
         def request(self, method, path, **kwargs):
             """Return request.
@@ -931,6 +1089,17 @@ def test_configure_esxi_pxe_selects_dhcp_scope_and_proves_reservation():
             """
             if method == "GET" and path == "/esxi-pxe":
                 return 200, '<input type="hidden" name="csrf" value="token">', {}
+            if method == "GET" and path == "/ui/management/vaults":
+                return (
+                    200,
+                    '<input type="hidden" name="csrf" value="token">'
+                    '<section data-vault-id="12" data-vault-name="Lifecycle ESXi">'
+                    '<script type="application/json" id="vault-entries-data-12">[]</script>',
+                    {},
+                )
+            if method == "POST" and path == "/ui/management/vaults/12/entries":
+                self.vault_form = kwargs["form"]
+                return 303, "", {"Location": "/vaults#vault-panel-12"}
             if method == "POST" and path == "/esxi-pxe/boot-settings":
                 self.boot_form = kwargs["form"]
                 return 200, '{"validation_errors": [], "dns_record_action": "created"}', {}
@@ -966,6 +1135,7 @@ def test_configure_esxi_pxe_selects_dhcp_scope_and_proves_reservation():
             if method == "GET" and path == "/api/v1/esxi-pxe/kickstarts":
                 return []
             if method == "POST" and path == "/api/v1/esxi-pxe/kickstarts":
+                self.kickstart_payload = json_body
                 return {"id": 7, **json_body}
             if method == "GET" and path == "/api/v1/esxi-pxe/hosts":
                 return []
@@ -990,6 +1160,10 @@ def test_configure_esxi_pxe_selects_dhcp_scope_and_proves_reservation():
     assert ("dhcp_scope_ids", "42") in fake.boot_form
     assert fake.host_payload["kickstart_id"] == 7
     assert fake.host_payload["ip_address"] == "192.168.50.210"
+    assert fake.vault_form["value"] == "LifecycleEsxi01!"
+    assert fake.vault_form["key"] == "esx.lifecycle.root"
+    assert "LifecycleEsxi01!" not in json.dumps(fake.kickstart_payload)
+    assert "{{vault.lifecycle_esxi.esx.lifecycle.root.password}}" in fake.kickstart_payload["content"]
     assert evidence["dhcp_scope_id"] == 42
     assert evidence["dhcp_reservation_id"] == 11
     assert evidence["menu_default"] == "esxi_assigned"

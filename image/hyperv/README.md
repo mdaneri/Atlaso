@@ -65,10 +65,10 @@ instead of replacing an existing output directory. By default, failed builds sti
 To keep the temporary builder VM for debugging, add `-PackerOnError abort`; to choose at failure time, use
 `-PackerOnError ask`.
 
-The wrapper treats `-SshPassword` as opaque credential data. Apostrophes and common PowerShell or POSIX shell
-metacharacters are encoded before the generated kickstart and Packer shell boundaries, decoded directly to standard
-input, and never evaluated as shell syntax. Quote the PowerShell argument for the caller's shell as usual; Atlaso does
-not add character exclusions for those printable password values.
+The wrapper accepts `-SshPassword` and `-BootstrapAdminPassword` only as `SecureString` values and has no checked-in
+password defaults. When either parameter is omitted, the wrapper prompts with `Read-Host -AsSecureString`. It unwraps
+each value only at the kickstart or Packer serialization boundary, removes the temporary secret-bearing Packer variable
+file after the bounded child exits, and never evaluates password bytes as shell syntax.
 
 The wrapper does not build or embed Inventory Linux. New templates leave it uninstalled so an administrator can use
 **Download latest** to retrieve the signed independent release when needed. Contributors building Inventory Linux
@@ -104,11 +104,16 @@ The wrapper keeps `ATLASO_DRY_RUN_SYSTEM_ADAPTERS=true` by default so a first-bo
 intent instead of changing Photon services. For a disposable demo or lifecycle image that should really apply nginx,
 dnsmasq, nftables, networkd, and other host changes, add `-EnableRealSystemAdapters` to the build command.
 
-Use single quotes around passwords that contain PowerShell metacharacters:
+For an explicit non-interactive invocation, collect the values securely in the current PowerShell process and pass the
+resulting objects:
 
 ```powershell
--var 'ssh_password=<one-time-build-root-password>'
--var 'bootstrap_admin_password=<initial-atlaso-admin-password>'
+$sshPassword = Read-Host 'Temporary builder SSH password' -AsSecureString
+$adminPassword = Read-Host 'Initial Atlaso administrator password' -AsSecureString
+pwsh -ExecutionPolicy Bypass `
+  -File scripts/windows/hyperv/build-photon-image.ps1 `
+  -SshPassword $sshPassword `
+  -BootstrapAdminPassword $adminPassword
 ```
 
 `ssh_password` is for the temporary installer/root credentials used during the image build. `bootstrap_admin_password`

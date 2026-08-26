@@ -21,3 +21,9 @@ repos:
         language: system
         pass_filenames: false
         files: '(\.py$|^pyproject\.toml$|^requirements-static-analysis\.(in|lock)$|^scripts/check_python_static_analysis\.py$|^scripts/appliance/atlaso-(bootstrap-https|helper)$)'
+      - id: atlaso-powershell-analysis
+        name: Atlaso PowerShell static analysis
+        entry: pwsh -NoProfile -File scripts/check_powershell_analysis.ps1
+        language: system
+        pass_filenames: false
+        files: '(\.(ps1|psm1|psd1)$|^PSScriptAnalyzerSettings\.psd1$)'

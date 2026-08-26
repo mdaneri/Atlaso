@@ -249,6 +249,13 @@ Run `pwsh -NoProfile -File scripts/check_powershell_help.ps1 -BaseRoot <base-che
 changes. CI compares the candidate with the exact pull-request base, so untouched legacy files remain valid until their
 next edit and every edited PowerShell file adopts the complete standard at once.
 
+Install the exact repository analyzer with
+`Install-PSResource PSScriptAnalyzer -Version 1.25.0 -TrustRepository`, then run
+`pwsh -NoProfile -File scripts/check_powershell_analysis.ps1`. The pinned profile analyzes every tracked `.ps1`,
+`.psm1`, and `.psd1` file. Credential parameters must use `SecureString` or `PSCredential`, must not declare default
+values, and must not rely on broad `PSAvoidUsingPlainTextForPassword` suppressions. CI and pre-commit run the same
+checker so the local and pull-request requirements remain identical.
+
 ## API contributions
 
 Every new or changed `/api/v1` operation must follow the [API authoring standard](docs/contribute/api-authoring.md).

@@ -44,6 +44,21 @@ Clears appliance vault entries during deployment.
 .PARAMETER SkipHostCheck
 Skips the final host-facing OpenAPI probe.
 #>
+[Diagnostics.CodeAnalysis.SuppressMessageAttribute(
+    'PSAvoidUsingPlainTextForPassword',
+    'OnePasswordEnvironmentId',
+    Justification = 'Opaque Environment identifier; the SDK child retrieves the concealed password.'
+)]
+[Diagnostics.CodeAnalysis.SuppressMessageAttribute(
+    'PSAvoidUsingPlainTextForPassword',
+    'OnePasswordAccount',
+    Justification = 'Desktop authorization account identifier, not an account password.'
+)]
+[Diagnostics.CodeAnalysis.SuppressMessageAttribute(
+    'PSAvoidUsingPlainTextForPassword',
+    'OnePasswordPython',
+    Justification = 'Path to the approved Python interpreter, not a password.'
+)]
 [CmdletBinding()]
 param(
     [string]$RepoRoot = '',
@@ -400,7 +415,7 @@ function Join-RemotePath {
 .SYNOPSIS
 Quotes one value as a literal POSIX shell argument.
 .PARAMETER Value
-Argument value.
+Untrusted command argument to quote as one literal shell token.
 #>
 function ConvertTo-PosixShellArgument {
     param([Parameter(Mandatory = $true)][AllowEmptyString()][string]$Value)
@@ -581,9 +596,9 @@ Remote command timeout.
 Readiness polling interval.
 .PARAMETER WorkingDirectory
 Repository working directory.
-.PARAMETER OnePasswordEnvironmentId
+.PARAMETER EnvironmentId
 Opaque ID of the verified Atlaso Environment.
-.PARAMETER OnePasswordAccount
+.PARAMETER Account
 Account name or ID used for desktop authorization.
 #>
 function Invoke-PasswordBackedDeploy {
@@ -625,8 +640,8 @@ function Invoke-PasswordBackedDeploy {
         [Parameter(Mandatory = $true)][int]$DeploymentTimeoutSeconds,
         [Parameter(Mandatory = $true)][int]$PollSeconds,
         [Parameter(Mandatory = $true)][string]$WorkingDirectory,
-        [Parameter(Mandatory = $true)][string]$OnePasswordEnvironmentId,
-        [Parameter(Mandatory = $true)][string]$OnePasswordAccount
+        [Parameter(Mandatory = $true)][string]$EnvironmentId,
+        [Parameter(Mandatory = $true)][string]$Account
     )
 
     $passwordDeployDirectory = Join-Path ([System.IO.Path]::GetTempPath()) "atlaso-password-deploy-$([guid]::NewGuid().ToString('N'))"
@@ -941,8 +956,8 @@ finally:
         $deployArguments = @(
             '-I', '-S', $pythonDeploy,
             '--dependency-path', $pythonDependencyPath,
-            '--onepassword-account', $OnePasswordAccount,
-            '--onepassword-environment-id', $OnePasswordEnvironmentId,
+            '--onepassword-account', $Account,
+            '--onepassword-environment-id', $EnvironmentId,
             '--host', $HostAddress,
             '--user', $UserName,
             '--local-wheel', $LocalWheelPath,
@@ -1551,8 +1566,8 @@ try {
             -DeploymentTimeoutSeconds $DeploymentTimeoutSeconds `
             -PollSeconds $ReadinessPollSeconds `
             -WorkingDirectory $resolvedRepoRoot `
-            -OnePasswordEnvironmentId $OnePasswordEnvironmentId `
-            -OnePasswordAccount $OnePasswordAccount
+            -EnvironmentId $OnePasswordEnvironmentId `
+            -Account $OnePasswordAccount
     } else {
         Write-Host "Uploading deployment files to $SshUser@$IpAddress`:$RemoteDirectory"
         Invoke-CheckedCommand -FilePath 'scp' -Arguments @($sshConnectionArguments + $uploadPaths + "${SshUser}@${IpAddress}:$RemoteDirectory/")

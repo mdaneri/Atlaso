@@ -89,18 +89,19 @@ Opaque ID of the exact Atlaso 1Password Environment containing the concealed
 ATLASO_DEVELOPMENT_ROOT_CA_PRIVATE_KEY variable. When omitted, the wrapper reads
 the single-line .atlaso-local\onepassword-environment-id file from the checkout.
 
-.PARAMETER OnePasswordEnvironmentIdFile
+.PARAMETER EnvironmentIdFile
 Optional path to a single-line local Environment ID file. The checkout-local,
-Git-ignored .atlaso-local\onepassword-environment-id file is the default.
+Git-ignored .atlaso-local\onepassword-environment-id file is the default. The
+legacy OnePasswordEnvironmentIdFile name remains available as an alias.
 
 .PARAMETER FirstBootFqdn
 Optional first-boot appliance FQDN override.
 
 .PARAMETER AdminPassword
-Initial Atlaso and Photon bootstrap administrator password.
+Initial Atlaso and Photon bootstrap administrator password. The wrapper prompts securely when omitted.
 
 .PARAMETER RootPassword
-Initial Photon root console password.
+Initial Photon root console password. The wrapper prompts securely when omitted.
 
 .PARAMETER RootSshEnabled
 Enable password-backed root SSH for this test VM; disabled by default.
@@ -117,7 +118,11 @@ Cannot be combined with -SshPublicKeyPath.
 Bounded wait used for the 1Password child, management-address discovery, and
 root-CA readiness.
 #>
-[Diagnostics.CodeAnalysis.SuppressMessageAttribute('PSAvoidUsingPlainTextForPassword', '')]
+[Diagnostics.CodeAnalysis.SuppressMessageAttribute(
+    'PSAvoidUsingPlainTextForPassword',
+    'OnePasswordEnvironmentId',
+    Justification = 'Opaque Environment identifier; the bounded child retrieves the concealed signing key.'
+)]
 [CmdletBinding(SupportsShouldProcess = $true)]
 param(
     [string]$Name = 'Atlaso-VMware',
@@ -139,13 +144,14 @@ param(
     [switch]$ResetDataDisks,
     [switch]$NoStart,
     [switch]$SkipNetworkPrepare,
-    [switch]$WaitForIp = $true,
+    [switch]$WaitForIp,
     [switch]$TrustRootCa,
     [string]$OnePasswordEnvironmentId = '',
-    [string]$OnePasswordEnvironmentIdFile = '',
+    [Alias('OnePasswordEnvironmentIdFile')]
+    [string]$EnvironmentIdFile = '',
     [string]$FirstBootFqdn = '',
-    [string]$AdminPassword = 'VMware01!Test',
-    [string]$RootPassword = 'VMware01!Test',
+    [SecureString]$AdminPassword,
+    [SecureString]$RootPassword,
     [switch]$RootSshEnabled,
     [string]$SshPublicKeyPath = '',
     [switch]$SkipSshKeyProvisioning,
@@ -153,6 +159,15 @@ param(
 )
 
 $ErrorActionPreference = 'Stop'
+
+# Preserve the established default-enabled and bare-switch interface without a
+# default-true switch declaration, which PowerShell cannot distinguish safely.
+$waitForIpEnabled = if ($PSBoundParameters.ContainsKey('WaitForIp')) {
+    [bool]$WaitForIp
+} else {
+    $true
+}
+
 . (Join-Path $PSScriptRoot 'Atlaso.WorkstationFirstBoot.ps1')
 Import-Module (Join-Path $PSScriptRoot 'Atlaso.WorkstationCleanup.psm1') -Force
 Import-Module (Join-Path $PSScriptRoot 'Atlaso.VmwarePayload.psm1') -Force
@@ -167,6 +182,10 @@ does not include WinGet links.
 
 .PARAMETER PackageRoot
 Optional WinGet package root used when its executable link is unavailable.
+
+.PARAMETER CommandResolver
+Command-discovery callback. Tests may replace discovery without overriding the
+built-in Get-Command cmdlet.
 #>
 function Resolve-OnePasswordCliPath {
     param(
@@ -176,7 +195,11 @@ function Resolve-OnePasswordCliPath {
         ),
         [string]$PackageRoot = (
             Join-Path ([Environment]::GetFolderPath('LocalApplicationData')) 'Microsoft\WinGet\Packages'
-        )
+        ),
+        [scriptblock]$CommandResolver = {
+            param($Name)
+            Get-Command $Name -ErrorAction SilentlyContinue
+        }
     )
 
     # Prefer the explicit beta installation because a stable CLI earlier on
@@ -186,9 +209,9 @@ function Resolve-OnePasswordCliPath {
             return (Resolve-Path -LiteralPath $candidate).Path
         }
     }
-    $command = Get-Command op.exe -ErrorAction SilentlyContinue
+    $command = & $CommandResolver 'op.exe'
     if (-not $command) {
-        $command = Get-Command op -ErrorAction SilentlyContinue
+        $command = & $CommandResolver 'op'
     }
     if (-not $command) {
         if ($PackageRoot -and (Test-Path -LiteralPath $PackageRoot -PathType Container)) {
@@ -1227,6 +1250,7 @@ function Invoke-PendingAtlasoDevelopmentCaCleanup {
             catch {
                 # A powered-off guest rejects runtime writes. Stop proof and the
                 # powered-off VMX scrub below remain authoritative in that case.
+                Write-Verbose "Runtime signing-key scrub was unavailable before powered-off VMX cleanup: $($_.Exception.Message)"
             }
             Stop-AtlasoTestVmForRollback `
                 -VmxPath $marker.VmxPath `
@@ -1409,6 +1433,7 @@ function Install-ApplianceRootCa {
             }
             catch {
                 # Best-effort cleanup must never mask the CA readiness error that triggered this retry.
+                Write-Verbose "Could not remove partial root CA download: $($_.Exception.Message)"
             }
             if ((Get-Date) -lt $deadline) {
                 Write-Host "Atlaso root CA is not ready; retrying in $PollSeconds seconds." -ForegroundColor DarkGray
@@ -1533,10 +1558,10 @@ function Write-ConnectionSummary {
     The operator-facing row label.
 
     .PARAMETER Value
-    The row value.
+    Operator-facing connection detail rendered beside the label.
 
     .PARAMETER ValueColor
-    The console color used for the value.
+    Console foreground color used to distinguish the connection detail.
     #>
     function Write-SummaryRow {
         param(
@@ -1598,7 +1623,7 @@ if (-not $WhatIfPreference) {
     # recovery has scrubbed any signer staging left by an interrupted prior run.
     $OnePasswordEnvironmentId = Resolve-OnePasswordDevelopmentCaEnvironmentId `
         -EnvironmentId $OnePasswordEnvironmentId `
-        -EnvironmentIdFile $OnePasswordEnvironmentIdFile `
+        -EnvironmentIdFile $EnvironmentIdFile `
         -RepositoryRoot $repoRoot
     $resolvedOpPath = Resolve-OnePasswordCliPath
     Assert-OnePasswordDevelopmentCaBridge `
@@ -1613,6 +1638,18 @@ if (-not $WhatIfPreference) {
         -Action Validate `
         -CertificatePath $developmentRootCaCertificatePath `
         -TimeoutSeconds $TimeoutSeconds
+}
+
+# Ask for VM credentials only after credential-independent recovery and the
+# Environment preflight succeed, but before network preparation or VM mutation.
+# Read-Host returns SecureString without recreating a repository default.
+if (-not $WhatIfPreference) {
+    if ($null -eq $AdminPassword) {
+        $AdminPassword = Read-Host -Prompt 'Atlaso bootstrap administrator password' -AsSecureString
+    }
+    if ($null -eq $RootPassword) {
+        $RootPassword = Read-Host -Prompt 'Photon root console password' -AsSecureString
+    }
 }
 
 # Key input validation intentionally precedes network preparation, cleanup, disk
@@ -1631,14 +1668,19 @@ if (-not $SkipSshKeyProvisioning) {
 if (-not $FirstBootFqdn) {
     $FirstBootFqdn = New-AtlasoWorkstationFqdn -Name $Name
 }
-$firstBootOvfEnvironment = New-AtlasoWorkstationOvfEnvironment `
-    -Fqdn $FirstBootFqdn `
-    -AdminPassword $AdminPassword `
-    -RootPassword $RootPassword `
-    -RootSshEnabled:$RootSshEnabled `
-    -NormalTestVm `
-    -DevelopmentAdminSshPublicKey $developmentAdminSshPublicKey `
-    -DevelopmentRootCaCertificatePem $developmentRootCaCertificatePem
+$firstBootOvfEnvironment = ''
+if (-not $WhatIfPreference) {
+    # OVF serialization is itself a plaintext boundary, so preview execution
+    # must remain credential-free instead of fabricating unused values.
+    $firstBootOvfEnvironment = New-AtlasoWorkstationOvfEnvironment `
+        -Fqdn $FirstBootFqdn `
+        -AdminPassword $AdminPassword `
+        -RootPassword $RootPassword `
+        -RootSshEnabled:$RootSshEnabled `
+        -NormalTestVm `
+        -DevelopmentAdminSshPublicKey $developmentAdminSshPublicKey `
+        -DevelopmentRootCaCertificatePem $developmentRootCaCertificatePem
+}
 
 if ($SkipLabNetworkAdapters -and $IncludeLabNetworkAdapters) {
     throw "Pass either -SkipLabNetworkAdapters or -IncludeLabNetworkAdapters, not both."
@@ -2039,9 +2081,9 @@ if (-not $SkipSshKeyProvisioning -and -not $WhatIfPreference) {
     Write-Host "SSH host key fingerprint: $($sshHostKey.Fingerprint)"
 }
 
-if (($WaitForIp -or $TrustRootCa) -and $readinessIdentity) {
+if (($waitForIpEnabled -or $TrustRootCa) -and $readinessIdentity) {
     $ip = $readinessIdentity.IPAddress
-    if ($WaitForIp) {
+    if ($waitForIpEnabled) {
         Write-Host "Management IP: $ip"
     }
     $rootCaStatus = Install-ApplianceRootCa `

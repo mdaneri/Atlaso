@@ -62,7 +62,7 @@ try {
             -Redeploy `
             -VmrunPath $inertVmrunPath `
             -OnePasswordEnvironmentId '' `
-            -OnePasswordEnvironmentIdFile (Join-Path $missingEnvironmentIdRoot 'missing-environment-id')
+            -EnvironmentIdFile (Join-Path $missingEnvironmentIdRoot 'missing-environment-id')
     }
     catch {
         $missingEnvironmentIdError = $_.Exception.Message
@@ -96,30 +96,15 @@ foreach ($functionAst in $ast.FindAll({
             param($node)
             $node -is [System.Management.Automation.Language.FunctionDefinitionAst]
         }, $true)) {
-    Invoke-Expression $functionAst.Extent.Text
+    # Compile each parsed function into the isolated test scope without using
+    # Invoke-Expression, whose ambient command resolution is unnecessarily broad.
+    $functionDefinition = [scriptblock]::Create($functionAst.Extent.Text)
+    . $functionDefinition
 }
 
-<#
-.SYNOPSIS
-Hide the installed 1Password CLI for the missing-command test.
-
-.PARAMETER Name
-Command name requested by the helper under test.
-
-.PARAMETER ErrorAction
-Error preference accepted by the Get-Command compatibility signature.
-#>
-function Get-Command {
-    param(
-        [Parameter(Position = 0)][string]$Name,
-        [System.Management.Automation.ActionPreference]$ErrorAction
-    )
-    return $null
-}
 Assert-Throws {
-    Resolve-OnePasswordCliPath -CandidatePaths @() -PackageRoot ''
+    Resolve-OnePasswordCliPath -CandidatePaths @() -PackageRoot '' -CommandResolver { return $null }
 } 'A missing 1Password CLI must fail closed.'
-Remove-Item Function:\Get-Command
 
 $testEnvironmentId = 'atlaso-test-environment-id-01'
 $testEnvironmentIdSha256 = [Convert]::ToHexString(
@@ -299,8 +284,10 @@ if (($childOutput | Out-String) -match 'BEGIN PRIVATE KEY') {
     throw 'The bounded child failure must not expose private-key material.'
 }
 
-if ($wrapperSource -notmatch '\[switch\]\$WaitForIp = \$true') {
-    throw 'Normal VMware test VM waiting must default to enabled.'
+if ($wrapperSource -notmatch '\[switch\]\$WaitForIp' -or
+    $wrapperSource -notmatch "ContainsKey\('WaitForIp'\)" -or
+    $wrapperSource -notmatch '\$waitForIpEnabled = if') {
+    throw 'Normal VMware test VM waiting must preserve default-enabled switch compatibility.'
 }
 if ($wrapperSource -match '\[switch\]\$RootSshEnabled\s*=\s*\$true') {
     throw 'Root SSH must remain disabled by default.'

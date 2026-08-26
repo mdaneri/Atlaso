@@ -135,6 +135,12 @@ jobs:
       - run: python scripts/check_repo.py
       - name: Enforce Python static-analysis baseline
         run: python scripts/check_python_static_analysis.py
+      - name: Install pinned PSScriptAnalyzer
+        shell: pwsh
+        run: Install-PSResource -Name PSScriptAnalyzer -Version 1.25.0 -Repository PSGallery -Scope CurrentUser -TrustRepository -Quiet
+      - name: Enforce PowerShell static analysis
+        shell: pwsh
+        run: ./scripts/check_powershell_analysis.ps1
       - name: Validate systemd and sudoers assets
         run: python scripts/check_deployment_assets.py --mode linux
       - name: Check out repository-check base
@@ -162,6 +168,9 @@ jobs:
       - uses: actions/setup-python@v7
         with:
           python-version: '3.14'
+      - name: Verify Hyper-V SecureString compatibility
+        shell: powershell
+        run: ./tests/powershell/Test-AtlasoHyperVSecureString.ps1
       - name: Validate both Photon Packer targets with authenticated plugin downloads
         if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository
         env:
