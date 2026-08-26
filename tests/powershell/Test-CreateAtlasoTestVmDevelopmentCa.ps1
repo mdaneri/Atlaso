@@ -45,6 +45,40 @@ $wrapperSource = Get-Content -LiteralPath $wrapperPath -Raw
 $firstBootSource = Get-Content -LiteralPath (
     Join-Path $RepositoryRoot 'scripts\windows\vmware\Atlaso.WorkstationFirstBoot.ps1'
 ) -Raw
+
+$missingEnvironmentIdRoot = Join-Path ([System.IO.Path]::GetTempPath()) (
+    "atlaso-missing-environment-id-$([guid]::NewGuid().ToString('N'))"
+)
+try {
+    New-Item -ItemType Directory -Path $missingEnvironmentIdRoot | Out-Null
+    $preservedMarker = Join-Path $missingEnvironmentIdRoot 'preserve.txt'
+    [System.IO.File]::WriteAllText($preservedMarker, 'preserve-before-preflight')
+    $missingEnvironmentIdError = ''
+    try {
+        & $wrapperPath `
+            -OutputDirectory $missingEnvironmentIdRoot `
+            -Redeploy `
+            -VmrunPath (Join-Path $missingEnvironmentIdRoot 'must-not-resolve-vmrun.exe') `
+            -OnePasswordEnvironmentId ''
+    }
+    catch {
+        $missingEnvironmentIdError = $_.Exception.Message
+    }
+    $expectedMissingEnvironmentIdError = 'OnePasswordEnvironmentId is required for normal VMware test VM creation. Copy the opaque ID from the exact Atlaso 1Password Environment and pass it with -OnePasswordEnvironmentId.'
+    if ($missingEnvironmentIdError -cne $expectedMissingEnvironmentIdError) {
+        throw "Missing Environment ID did not produce the intentional preflight error: $missingEnvironmentIdError"
+    }
+    if (
+        -not (Test-Path -LiteralPath $preservedMarker -PathType Leaf) -or
+        [System.IO.File]::ReadAllText($preservedMarker) -cne 'preserve-before-preflight'
+    ) {
+        throw 'Missing Environment ID preflight mutated the requested VM output before failing.'
+    }
+}
+finally {
+    Remove-Item -LiteralPath $missingEnvironmentIdRoot -Recurse -Force -ErrorAction SilentlyContinue
+}
+
 $tokens = $null
 $parseErrors = $null
 $ast = [System.Management.Automation.Language.Parser]::ParseInput(
