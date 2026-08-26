@@ -280,12 +280,6 @@ Reject reserved VM names to avoid clobbering protected environments.
 .PARAMETER Name
 VM name to validate.
 #>
-<#
-.SYNOPSIS
-Reject lifecycle names that collide with protected VMware VMs.
-.PARAMETER Name
-Name value.
-#>
 function Assert-SafeLifecycleName {
     param([string]$Name)
 
@@ -305,12 +299,6 @@ Escape a value for single-quoted shell expansion.
 .PARAMETER Value
 String value to escape.
 #>
-<#
-.SYNOPSIS
-Escape a literal for a POSIX single-quoted guest command.
-.PARAMETER Value
-Value value.
-#>
 function ConvertTo-GuestShellSingleQuote {
     param([string]$Value)
     return "'" + ($Value -replace "'", "'\''") + "'"
@@ -322,12 +310,6 @@ Escape an argument for native command execution.
 
 .PARAMETER Value
 Input string to escape.
-#>
-<#
-.SYNOPSIS
-Quote one argument for safe native Windows process invocation.
-.PARAMETER Value
-Value value.
 #>
 function ConvertTo-NativeArgument {
     param([string]$Value)
@@ -349,14 +331,6 @@ Run vmrun through .NET process execution with bounded timeout.
 Argument list for vmrun.
 .PARAMETER TimeoutSeconds
 Bounded timeout in seconds.
-#>
-<#
-.SYNOPSIS
-Invoke vmrun within a fixed timeout and return its output.
-.PARAMETER Arguments
-Arguments value.
-.PARAMETER TimeoutSeconds
-Timeout Seconds value.
 #>
 function Invoke-VmrunBounded {
     param(
@@ -466,14 +440,6 @@ Path to VMX file.
 .PARAMETER Key
 VMX key name to remove.
 #>
-<#
-.SYNOPSIS
-Remove one VMX key while preserving unrelated configuration.
-.PARAMETER Path
-Path value.
-.PARAMETER Key
-Key value.
-#>
 function Remove-VmxValue {
     param(
         [string]$Path,
@@ -494,12 +460,6 @@ Create deterministic SCSI-compatible IDs for LAN segments.
 
 .PARAMETER Name
 Segment name used as input entropy.
-#>
-<#
-.SYNOPSIS
-Create deterministic SCSI-compatible identifiers for a LAN segment.
-.PARAMETER Name
-Name value.
 #>
 function New-LanSegmentId {
     param([string]$Name)
@@ -523,12 +483,6 @@ Resolve or create a VMware LAN segment ID for a named segment.
 
 .PARAMETER Name
 LAN segment name to resolve.
-#>
-<#
-.SYNOPSIS
-Resolve or create the identifier for a named VMware LAN segment.
-.PARAMETER Name
-Name value.
 #>
 function Resolve-LanSegmentId {
     param([string]$Name)
@@ -641,20 +595,6 @@ Optional static MAC address.
 .PARAMETER VirtualDev
 VMXNET device type.
 #>
-<#
-.SYNOPSIS
-Apply a validated VMX ethernet adapter configuration.
-.PARAMETER Path
-Path value.
-.PARAMETER Index
-Index value.
-.PARAMETER Vmnet
-Vmnet value.
-.PARAMETER StaticMac
-Static Mac value.
-.PARAMETER VirtualDev
-Virtual Dev value.
-#>
 function Set-VmxNetworkAdapter {
     param(
         [string]$Path,
@@ -699,16 +639,6 @@ Destination directory for the copied appliance.
 .PARAMETER Name
 Lifecycle VM name.
 #>
-<#
-.SYNOPSIS
-Clone an appliance VMX into an isolated lifecycle directory.
-.PARAMETER SourceVmx
-Source Vmx value.
-.PARAMETER DestinationDirectory
-Destination Directory value.
-.PARAMETER Name
-Name value.
-#>
 function Copy-VmDirectory {
     param(
         [string]$SourceVmx,
@@ -752,20 +682,6 @@ Base client VMDK path.
 NoCloud seed ISO path.
 .PARAMETER Networks
 VM adapter target networks by index.
-#>
-<#
-.SYNOPSIS
-Create a lifecycle client VM from its base disk and seed ISO.
-.PARAMETER Name
-Name value.
-.PARAMETER Directory
-Directory value.
-.PARAMETER DiskPath
-Disk Path value.
-.PARAMETER SeedIso
-Seed Iso value.
-.PARAMETER Networks
-Networks value.
 #>
 function New-ClientVm {
     param(
@@ -822,18 +738,6 @@ VM directory.
 Initial network attachment.
 .PARAMETER MacAddress
 Optional static MAC address.
-#>
-<#
-.SYNOPSIS
-Create the isolated VMware VM used for ESXi PXE installation.
-.PARAMETER Name
-Name value.
-.PARAMETER Directory
-Directory value.
-.PARAMETER Network
-Network value.
-.PARAMETER MacAddress
-Mac Address value.
 #>
 function New-EsxiPxeVm {
     param(
@@ -902,14 +806,6 @@ Seed ISO output path.
 .PARAMETER HostName
 Client hostname for cloud-init metadata.
 #>
-<#
-.SYNOPSIS
-Create a NoCloud seed ISO for a lifecycle client.
-.PARAMETER Path
-Path value.
-.PARAMETER HostName
-Host Name value.
-#>
 function New-CloudInitSeedIso {
     param(
         [string]$Path,
@@ -936,12 +832,6 @@ Invoke vmrun with fail-fast behavior.
 .PARAMETER Arguments
 vmrun arguments.
 #>
-<#
-.SYNOPSIS
-Invoke vmrun and fail on any nonzero provider result.
-.PARAMETER Arguments
-Arguments value.
-#>
 function Invoke-Vmrun {
     param([string[]]$Arguments)
     & $resolvedVmrun @Arguments
@@ -956,12 +846,6 @@ Register a Workstation VM if possible.
 
 .PARAMETER Path
 VMX path to register.
-#>
-<#
-.SYNOPSIS
-Register a VMware Workstation VM when registration is supported.
-.PARAMETER Path
-Path value.
 #>
 function Register-WorkstationVm {
     param([string]$Path)
@@ -979,12 +863,6 @@ Start a Workstation VM with bounded registration workflow.
 
 .PARAMETER Path
 VMX path to start.
-#>
-<#
-.SYNOPSIS
-Start and validate a VMware Workstation lifecycle VM.
-.PARAMETER Path
-Path value.
 #>
 function Start-WorkstationVm {
     param([string]$Path)
@@ -1038,16 +916,6 @@ SSH username.
 .PARAMETER Password
 SSH password.
 #>
-<#
-.SYNOPSIS
-Probe and return the SSH host-key fingerprint reported by Plink.
-.PARAMETER HostName
-Host Name value.
-.PARAMETER UserName
-User Name value.
-.PARAMETER Password
-Password value.
-#>
 function Get-PlinkHostKey {
     param(
         [string]$HostName,
@@ -1100,12 +968,6 @@ Parse IPv4 addresses from text lines.
 .PARAMETER Lines
 Text lines to scan.
 #>
-<#
-.SYNOPSIS
-Parse and return the first valid guest IPv4 address from provider output.
-.PARAMETER Lines
-Lines value.
-#>
 function Get-GuestIPv4FromAddressText {
     param([string[]]$Lines)
 
@@ -1133,12 +995,6 @@ Normalize MAC addresses to hyphen format.
 .PARAMETER MacAddress
 MAC address input.
 #>
-<#
-.SYNOPSIS
-Normalize a MAC address to uppercase hyphen-separated form.
-.PARAMETER MacAddress
-Mac Address value.
-#>
 function ConvertTo-HyphenMac {
     param([string]$MacAddress)
 
@@ -1153,14 +1009,6 @@ Read a VMX ethernet MAC address by adapter index.
 VMX path.
 .PARAMETER Index
 Ethernet adapter index.
-#>
-<#
-.SYNOPSIS
-Read and normalize a VMX ethernet adapter MAC address.
-.PARAMETER Path
-Path value.
-.PARAMETER Index
-Index value.
 #>
 function Get-VmxEthernetMacAddress {
     param(
@@ -1191,14 +1039,6 @@ Resolve a guest IPv4 address from neighbor cache by MAC.
 VMX path.
 .PARAMETER Index
 Ethernet adapter index.
-#>
-<#
-.SYNOPSIS
-Resolve a guest IPv4 address from host neighbor evidence.
-.PARAMETER Path
-Path value.
-.PARAMETER Index
-Index value.
 #>
 function Get-GuestIPv4FromHostNeighbor {
     param(
@@ -1239,18 +1079,6 @@ Guest username.
 Guest password.
 .PARAMETER Name
 VM-friendly name for temporary host output names.
-#>
-<#
-.SYNOPSIS
-Resolve a guest IPv4 address through VMware guest operations.
-.PARAMETER Path
-Path value.
-.PARAMETER GuestUser
-Guest User value.
-.PARAMETER GuestPassword
-Guest Password value.
-.PARAMETER Name
-Name value.
 #>
 function Get-GuestIPv4ViaGuestOps {
     param(
@@ -1298,20 +1126,6 @@ Guest password used for guest-ops probing.
 .PARAMETER Name
 VM name used for temporary artifacts.
 #>
-<#
-.SYNOPSIS
-Wait for a guest IPv4 address using bounded provider methods.
-.PARAMETER Path
-Path value.
-.PARAMETER TimeoutSeconds
-Timeout Seconds value.
-.PARAMETER GuestUser
-Guest User value.
-.PARAMETER GuestPassword
-Guest Password value.
-.PARAMETER Name
-Name value.
-#>
 function Wait-GuestIPv4 {
     param(
         [string]$Path,
@@ -1352,14 +1166,6 @@ Appliance VMX path.
 .PARAMETER Script
 Shell script content.
 #>
-<#
-.SYNOPSIS
-Execute a checked shell command inside the appliance guest.
-.PARAMETER ApplianceVmx
-Appliance Vmx value.
-.PARAMETER Script
-Script value.
-#>
 function Invoke-ApplianceGuestScript {
     param(
         [string]$ApplianceVmx,
@@ -1378,12 +1184,6 @@ Probe a URL for successful openapi endpoint response.
 
 .PARAMETER Url
 OpenAPI URL to probe.
-#>
-<#
-.SYNOPSIS
-Validate the appliance OpenAPI endpoint over HTTPS.
-.PARAMETER Url
-Url value.
 #>
 function Test-ApplianceOpenApi {
     param([string]$Url)
