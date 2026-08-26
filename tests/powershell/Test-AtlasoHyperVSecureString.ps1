@@ -43,8 +43,12 @@ foreach ($provider in @('hyperv', 'vmware')) {
     if ($launcherSource -notmatch '(?s)if \(-not \$PlanOnly\) \{\s+if \(\$null -eq \$AdminPassword\).*?Read-Host') {
         throw "$provider lifecycle planning is not guarded from password prompting."
     }
-    if ($launcherSource -notmatch '(?s)\$secretBundlePath = ['']{2}\s+if \(-not \$PlanOnly\).*?Export-Clixml') {
+    if ($launcherSource -notmatch '(?s)\$secretBundlePath = ['']{2}\s+(?:try \{\s+)?if \(-not \$PlanOnly\).*?Export-Clixml') {
         throw "$provider lifecycle planning is not guarded from secret-bundle creation."
+    }
+    if ($provider -eq 'vmware' -and
+        $launcherSource -notmatch '(?s)\$secretBundlePath = ['']{2}\s+try \{.*?Export-Clixml.*?finally \{.*?Remove-Item -LiteralPath \$secretBundlePath') {
+        throw 'VMware lifecycle secret-bundle serialization is not enclosed by cleanup.'
     }
 
     $providerRunnerSource = Get-Content -LiteralPath (
