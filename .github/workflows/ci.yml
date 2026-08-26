@@ -126,6 +126,8 @@ jobs:
       - run: npm run lint:markdown
       - run: python scripts/build_docs.py
       - run: python scripts/check_docs.py
+      - run: python scripts/generate_screenshot_manifest.py --check
+      - run: python scripts/generate_screenshot_gallery.py --check
       - run: python scripts/generate_embedded_screenshot_sections.py
       - run: git diff --exit-code
       - name: Enforce the exact appliance dependency lock

@@ -230,6 +230,55 @@ def test_screenshot_manifest_generator_recognizes_certificate_request_captures(
     assert entry["viewport"] == viewport
 
 
+def test_screenshot_manifest_generator_rejects_unknown_slugs() -> None:
+    """Verify unreviewed screenshot names fail with an actionable error."""
+    with pytest.raises(ValueError, match="unknown screenshot slug: unknown-capture"):
+        generate_screenshot_manifest.metadata(Path("unknown-capture.webp"))
+
+
+def test_checked_in_screenshot_generators_are_byte_identical() -> None:
+    """Verify the manifest and gallery match their canonical renderers."""
+    manifest_text = generate_screenshot_manifest.MANIFEST.read_text(encoding="utf-8")
+    payload = json.loads(manifest_text)
+
+    assert generate_screenshot_manifest.render_manifest() == manifest_text
+    assert generate_screenshot_gallery.render_gallery(payload) == (
+        generate_screenshot_gallery.GALLERY.read_text(encoding="utf-8")
+    )
+
+
+@pytest.mark.parametrize(
+    ("generator", "output_attribute"),
+    [
+        (generate_screenshot_manifest, "MANIFEST"),
+        (generate_screenshot_gallery, "GALLERY"),
+    ],
+)
+def test_screenshot_generator_check_mode_rejects_drift(
+    tmp_path: Path,
+    monkeypatch,
+    generator,
+    output_attribute: str,
+) -> None:
+    """Verify check mode detects stale output without rewriting it.
+
+    Args:
+        tmp_path: Temporary directory provided by pytest for isolated filesystem state.
+        monkeypatch: Pytest fixture used to replace dependencies for the test.
+        generator: Screenshot generator module under test.
+        output_attribute: Module output-path constant to replace.
+    """
+    stale_output = tmp_path / "stale-output"
+    stale_output.write_text("stale\n", encoding="utf-8")
+    monkeypatch.setattr(generator, output_attribute, stale_output)
+
+    with pytest.raises(SystemExit) as exc_info:
+        generator.main(["--check"])
+
+    assert exc_info.value.code == 2
+    assert stale_output.read_text(encoding="utf-8") == "stale\n"
+
+
 def test_checked_in_markdown_uses_canonical_browser_routes() -> None:
     """Verify current guidance does not promote temporary root-level browser paths."""
     assert validate_legacy_browser_routes() == []
