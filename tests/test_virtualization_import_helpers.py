@@ -88,6 +88,10 @@ def test_linux_smoke_imports_reboots_validates_and_bounds_cleanup() -> None:
     assert 'qm status "$identifier"' in script
     assert 'virsh dominfo "$identifier"' in script
     assert 'owned=1' in script
+    kvm_import = script.index('"$template_root/import-atlaso-kvm.sh"')
+    kvm_owned = script.index("owned=1", kvm_import)
+    disk_inventory = script.index('virsh domblklist "$identifier"', kvm_import)
+    assert kvm_import < kvm_owned < disk_inventory
     assert 'qm destroy "$identifier" --purge 1 --destroy-unreferenced-disks 1' in script
     assert 'virsh vol-delete --pool "$storage" "$volume"' in script
     assert 'grep -qx "platform=qemu" /var/lib/atlaso/guest-agent.applied' in script

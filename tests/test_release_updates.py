@@ -1731,7 +1731,9 @@ def test_release_bundle_carries_transactional_data_disk_safety_assets():
     destinations = {destination.as_posix() for _source, destination in module.RELEASE_OWNED_ASSETS}
     assert {
         "bin/atlaso-mount-data-disks",
+        "data-disks/hyperv.conf",
         "data-disks/virtualization.conf",
+        "data-disks/vmware.conf",
         "systemd/atlaso-bootstrap-https.service",
         "systemd/atlaso-data-disks.service",
         "systemd/atlaso.service.d/atlaso-data-disks.conf",
@@ -1770,6 +1772,13 @@ def test_image_bootstrap_release_skips_previous_updater_compatibility_gate(monke
     monkeypatch.setattr(helper, "ATLASO_CURRENT_LINK", current)
     marker = tmp_path / "etc/atlaso/data-disk-safety-bootstrap.json"
     monkeypatch.setattr(helper, "ATLASO_DATA_DISK_BOOTSTRAP_MARKER_PATH", marker)
+    monkeypatch.setattr(
+        helper,
+        "_release_data_disk_platform",
+        lambda: (_ for _ in ()).throw(
+            AssertionError("fresh image must not enter candidate compatibility bootstrap")
+        ),
+    )
     assert helper._bootstrap_release_data_disk_safety(release_root) == []
     assert json.loads(marker.read_text(encoding="utf-8")) == {"schema_version": 1, "status": "complete"}
     if os.name == "posix":
@@ -1819,6 +1828,7 @@ def test_previous_updater_service_bootstraps_every_new_data_disk_safety_asset(mo
     monkeypatch.setattr(helper, "ATLASO_UPDATE_BACKUP_DIR", tmp_path / "backups")
     marker = tmp_path / "host/etc/atlaso/data-disk-safety-bootstrap.json"
     monkeypatch.setattr(helper, "ATLASO_DATA_DISK_BOOTSTRAP_MARKER_PATH", marker)
+    monkeypatch.setattr(helper, "_release_data_disk_platform", lambda: "virtualization")
     for name, destination in destinations.items():
         monkeypatch.setattr(helper, name, destination)
     commands: list[list[str]] = []
@@ -1907,10 +1917,11 @@ def test_previous_updater_bootstrap_restores_assets_claims_and_database(monkeypa
     marker = tmp_path / "host/data-disk-safety-bootstrap.json"
     monkeypatch.setattr(helper, "ATLASO_DATA_DISK_BOOTSTRAP_MARKER_PATH", marker)
     monkeypatch.setattr(helper, "ATLASO_DATABASE_PATH", database)
+    monkeypatch.setattr(helper, "_release_data_disk_platform", lambda: "virtualization")
     monkeypatch.setattr(
         helper,
         "_release_data_disk_owned_files",
-        lambda _release_root: [
+        lambda _release_root, _platform: [
             (source, destination, 0o644),
             (new_source, new_destination, 0o644),
         ],
@@ -1984,6 +1995,92 @@ def test_previous_updater_bootstrap_restores_assets_claims_and_database(monkeypa
         connection.close()
     assert events == ["migration", "preflight", "rollback-refresh"]
     assert not any((tmp_path / "backups").iterdir())
+
+
+@pytest.mark.parametrize(
+    ("vendor", "product", "expected"),
+    [
+        ("Microsoft Corporation", "Virtual Machine", "hyperv"),
+        ("VMware, Inc.", "VMware Virtual Platform", "vmware"),
+    ],
+)
+def test_release_data_disk_platform_preserves_legacy_topology(
+    monkeypatch,
+    tmp_path,
+    vendor,
+    product,
+    expected,
+):
+    """Select the matching signed legacy policy when no first-boot marker exists.
+
+    Args:
+        monkeypatch: Pytest fixture used to replace dependencies for the test.
+        tmp_path: Temporary directory provided by pytest for isolated filesystem state.
+        vendor: DMI system vendor supplied to the test scenario.
+        product: DMI product name supplied to the test scenario.
+        expected: Expected legacy policy name.
+    """
+    from tests.test_appliance_update import load_helper_module
+
+    helper = load_helper_module()
+    vendor_path = tmp_path / "sys_vendor"
+    product_path = tmp_path / "product_name"
+    vendor_path.write_text(vendor, encoding="utf-8")
+    product_path.write_text(product, encoding="utf-8")
+    monkeypatch.setattr(helper, "ATLASO_GUEST_AGENT_MARKER_PATH", tmp_path / "missing-marker")
+    monkeypatch.setattr(helper, "ATLASO_DMI_SYS_VENDOR_PATH", vendor_path)
+    monkeypatch.setattr(helper, "ATLASO_DMI_PRODUCT_NAME_PATH", product_path)
+    monkeypatch.setattr(helper, "ATLASO_DATA_DISK_POLICY_PATH", tmp_path / "missing-policy")
+    monkeypatch.setattr(helper, "ATLASO_VMWARE_OVF_UNIT_PATH", tmp_path / "missing-vmware-unit")
+    monkeypatch.setattr(helper, "ATLASO_HYPERV_GENERATOR_PATH", tmp_path / "missing-generator")
+
+    assert helper._release_data_disk_platform() == expected
+
+
+@pytest.mark.parametrize("platform", ["vmware", "qemu", "hyperv"])
+def test_release_data_disk_platform_uses_portable_artifact_marker(monkeypatch, tmp_path, platform):
+    """Use the shared four-disk policy for every verified portable artifact.
+
+    Args:
+        monkeypatch: Pytest fixture used to replace dependencies for the test.
+        tmp_path: Temporary directory provided by pytest for isolated filesystem state.
+        platform: Verified provider recorded by first boot.
+    """
+    from tests.test_appliance_update import load_helper_module
+
+    helper = load_helper_module()
+    marker = tmp_path / "guest-agent.applied"
+    marker.write_text(f"platform={platform}\n", encoding="utf-8")
+    monkeypatch.setattr(helper, "ATLASO_GUEST_AGENT_MARKER_PATH", marker)
+
+    assert helper._release_data_disk_platform() == "virtualization"
+
+
+def test_release_data_disk_platform_rejects_conflicting_legacy_evidence(monkeypatch, tmp_path):
+    """Fail closed instead of replacing an installed policy under contradictory evidence.
+
+    Args:
+        monkeypatch: Pytest fixture used to replace dependencies for the test.
+        tmp_path: Temporary directory provided by pytest for isolated filesystem state.
+    """
+    from tests.test_appliance_update import load_helper_module
+
+    helper = load_helper_module()
+    vendor_path = tmp_path / "sys_vendor"
+    product_path = tmp_path / "product_name"
+    vmware_unit = tmp_path / "atlaso-vmware-ovf-customize.service"
+    vendor_path.write_text("Microsoft Corporation", encoding="utf-8")
+    product_path.write_text("Virtual Machine", encoding="utf-8")
+    vmware_unit.write_text("[Unit]\n", encoding="utf-8")
+    monkeypatch.setattr(helper, "ATLASO_GUEST_AGENT_MARKER_PATH", tmp_path / "missing-marker")
+    monkeypatch.setattr(helper, "ATLASO_DMI_SYS_VENDOR_PATH", vendor_path)
+    monkeypatch.setattr(helper, "ATLASO_DMI_PRODUCT_NAME_PATH", product_path)
+    monkeypatch.setattr(helper, "ATLASO_DATA_DISK_POLICY_PATH", tmp_path / "missing-policy")
+    monkeypatch.setattr(helper, "ATLASO_VMWARE_OVF_UNIT_PATH", vmware_unit)
+    monkeypatch.setattr(helper, "ATLASO_HYPERV_GENERATOR_PATH", tmp_path / "missing-generator")
+
+    with pytest.raises(ValueError, match="hyperv, vmware"):
+        helper._release_data_disk_platform()
 
 
 def test_release_data_disk_refresh_settles_before_preflight(monkeypatch):

@@ -55,6 +55,8 @@ RELEASE_OWNED_ASSETS = (
         Path("udev/99-atlaso-disk-identity.rules"),
     ),
     (ROOT / "image/common/data-disks.conf", Path("data-disks/virtualization.conf")),
+    (ROOT / "image/common/data-disks/legacy-hyperv.conf", Path("data-disks/hyperv.conf")),
+    (ROOT / "image/common/data-disks/legacy-vmware.conf", Path("data-disks/vmware.conf")),
 )
 
 

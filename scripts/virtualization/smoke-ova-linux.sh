@@ -209,12 +209,15 @@ case "$provider" in
     }
     "$template_root/import-atlaso-kvm.sh" \
       "$ova_path" "$identifier" "$storage" "$management_network" "$service_network" >/dev/null
+    # The importer returned success, so this invocation now owns the absent domain.
+    # Volume cleanup remains limited to names verified below in the selected pool.
+    owned=1
+    : >"$disk_volume_list"
     virsh domblklist "$identifier" --details | awk '$2 == "disk" { print $4 }' >"$work_root/kvm-disk-paths"
     [ "$(wc -l <"$work_root/kvm-disk-paths")" -eq 4 ] || {
       echo "The normalized KVM domain does not own exactly four disks." >&2
       exit 2
     }
-    : >"$disk_volume_list"
     while IFS= read -r disk_path; do
       [ "$(virsh vol-pool "$disk_path")" = "$storage" ] || {
         echo "A KVM disk is outside the selected smoke-test storage pool: $disk_path" >&2
@@ -226,7 +229,6 @@ case "$provider" in
       echo "The normalized KVM domain does not own four distinct volumes." >&2
       exit 2
     }
-    owned=1
     virsh start "$identifier" >/dev/null
     ;;
 esac
