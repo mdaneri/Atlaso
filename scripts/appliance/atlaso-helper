@@ -14098,7 +14098,12 @@ def _set_release_maintenance(
     """
     if enabled:
         def abort_enable(result: dict, previous: str | None) -> dict:
-            """Attach cleanup only at the initial pre-shutdown admission boundary."""
+            """Attach cleanup only at the initial pre-shutdown admission boundary.
+
+            Args:
+                result: Maintenance enablement failure payload to return.
+                previous: Applied management nginx site content to restore, when available.
+            """
             if cleanup_preflight_failure:
                 result["preflight_cleanup"] = _restore_release_maintenance_preflight(previous)
             return result
