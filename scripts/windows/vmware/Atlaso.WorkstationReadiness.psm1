@@ -118,6 +118,9 @@ IPv4 address reported by VMware Tools for the target.
 .PARAMETER ExpectedHostname
 Hostname injected into the target's first-boot environment.
 
+.PARAMETER ObservedHostname
+Actual hostname published by the target through VMware Tools after first boot.
+
 .PARAMETER RunningGuests
 Running VMware guests with Path, MacAddress, and IPAddress properties.
 
@@ -130,6 +133,7 @@ function Assert-AtlasoWorkstationAddressIdentity {
         [Parameter(Mandatory = $true)][string]$TargetMacAddress,
         [Parameter(Mandatory = $true)][string]$TargetIPAddress,
         [Parameter(Mandatory = $true)][string]$ExpectedHostname,
+        [Parameter(Mandatory = $true)][AllowEmptyString()][string]$ObservedHostname,
         [Parameter(Mandatory = $true)][AllowEmptyCollection()][object[]]$RunningGuests,
         [Parameter(Mandatory = $true)][AllowEmptyCollection()][string[]]$NeighborMacAddresses
     )
@@ -150,6 +154,12 @@ function Assert-AtlasoWorkstationAddressIdentity {
         throw "Readiness inventory evidence does not match target VMX '$resolvedTargetVmxPath', MAC $normalizedTargetMac, and address $TargetIPAddress."
     }
 
+    $incompleteGuests = @($RunningGuests | Where-Object { [string]::IsNullOrWhiteSpace($_.IPAddress) })
+    if ($incompleteGuests.Count -gt 0) {
+        $incompletePath = (Resolve-Path -LiteralPath $incompleteGuests[0].Path -ErrorAction Stop).Path
+        throw "Running VMware guest inventory is incomplete because VMX '$incompletePath' did not report a usable IPv4 address."
+    }
+
     $conflicts = @($RunningGuests | Where-Object {
             $_.Path -and
             -not (Resolve-Path -LiteralPath $_.Path -ErrorAction Stop).Path.Equals(
@@ -163,6 +173,18 @@ function Assert-AtlasoWorkstationAddressIdentity {
         $conflictPath = (Resolve-Path -LiteralPath $conflict.Path -ErrorAction Stop).Path
         $conflictMac = ConvertTo-AtlasoWorkstationMacAddress -MacAddress $conflict.MacAddress
         throw "Duplicate VMware management address $TargetIPAddress`: target VMX '$resolvedTargetVmxPath' uses MAC $normalizedTargetMac, but running VMX '$conflictPath' uses MAC $conflictMac and reports the same address. Stop or readdress the conflicting VM before retrying."
+    }
+
+    $normalizedExpectedHostname = $ExpectedHostname.Trim().TrimEnd('.').ToLowerInvariant()
+    $normalizedObservedHostname = $ObservedHostname.Trim().TrimEnd('.').ToLowerInvariant()
+    if (-not $normalizedExpectedHostname) {
+        throw "Expected VMware guest hostname is empty for target VMX '$resolvedTargetVmxPath'."
+    }
+    if (-not $normalizedObservedHostname) {
+        throw "VMware guest hostname evidence is incomplete for target VMX '$resolvedTargetVmxPath'."
+    }
+    if ($normalizedObservedHostname -ne $normalizedExpectedHostname) {
+        throw "VMware guest hostname mismatch for target VMX '$resolvedTargetVmxPath': expected '$normalizedExpectedHostname', but VMware Tools reported '$normalizedObservedHostname'."
     }
 
     $normalizedNeighborMacs = @(
@@ -187,7 +209,7 @@ function Assert-AtlasoWorkstationAddressIdentity {
     return [pscustomobject]@{
         VmxPath    = $resolvedTargetVmxPath
         MacAddress = $normalizedTargetMac
-        Hostname   = $ExpectedHostname
+        Hostname   = $normalizedObservedHostname
         IPAddress  = $TargetIPAddress
     }
 }

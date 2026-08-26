@@ -5,8 +5,9 @@ Wait for a uniquely bound VMware Workstation test-appliance IPv4 address.
 .DESCRIPTION
 Reads the address reported by VMware Tools for the exact target VMX, compares it
 with every running VMware guest, and requires the Windows neighbor entry for the
-host-facing address to match the target management NIC MAC. A duplicate static
-address or ambiguous neighbor mapping fails closed before readiness is returned.
+host-facing address to match the target management NIC MAC. It also requires the
+guest-published hostname to match the injected hostname. A duplicate static address
+or ambiguous or incomplete identity observation fails closed before readiness is returned.
 
 .PARAMETER VmxPath
 Exact running VMX expected to own the management address.
@@ -88,6 +89,30 @@ function Get-VmwareGuestIPv4Address {
 
 <#
 .SYNOPSIS
+Read the actual first-boot hostname published through VMware Tools.
+.PARAMETER VmrunPath
+Resolved vmrun executable.
+.PARAMETER VmxPath
+Exact running VMX to query.
+#>
+function Get-VmwareGuestHostname {
+    param(
+        [Parameter(Mandatory = $true)][string]$VmrunPath,
+        [Parameter(Mandatory = $true)][string]$VmxPath
+    )
+    $arguments = @(
+        '-T', 'ws', 'readVariable', $VmxPath, 'guestVar',
+        'guestinfo.atlaso.test_vm_hostname'
+    )
+    $output = @(& $VmrunPath @arguments 2>$null)
+    $exitCode = $LASTEXITCODE
+    $reported = $output | Select-Object -First 1
+    if ($exitCode -ne 0 -or [string]::IsNullOrWhiteSpace($reported)) { return '' }
+    return $reported.Trim()
+}
+
+<#
+.SYNOPSIS
 Return usable Windows neighbor MAC evidence for an IPv4 address.
 .PARAMETER IPAddress
 Host-facing IPv4 address to populate and inspect.
@@ -115,6 +140,7 @@ do {
     $ipAddress = Get-VmwareGuestIPv4Address -VmrunPath $resolvedVmrun -VmxPath $resolvedVmxPath
     if ($ipAddress) {
         try {
+            $observedHostname = Get-VmwareGuestHostname -VmrunPath $resolvedVmrun -VmxPath $resolvedVmxPath
             $runningPaths = @(Get-AtlasoWorkstationRunningVmxPath -VmrunPath $resolvedVmrun)
             $runningGuests = @(
                 foreach ($runningPath in $runningPaths) {
@@ -139,6 +165,7 @@ do {
                 -TargetMacAddress $targetMacAddress `
                 -TargetIPAddress $ipAddress `
                 -ExpectedHostname $ExpectedHostname `
+                -ObservedHostname $observedHostname `
                 -RunningGuests $runningGuests `
                 -NeighborMacAddresses @(Get-HostNeighborMacAddress -IPAddress $ipAddress)
             Write-Information `
@@ -149,6 +176,7 @@ do {
         } catch {
             $lastReadinessError = $_.Exception.Message
             if ($lastReadinessError -like 'Duplicate VMware management address*' -or
+                $lastReadinessError -like 'VMware guest hostname mismatch*' -or
                 ($lastReadinessError -like 'Host-facing address*' -and
                     $lastReadinessError -notlike '*Windows neighbor evidence is <none>*')) { throw }
         }

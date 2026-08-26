@@ -261,10 +261,12 @@ wrapper's host-derived output: after startup it prints the exact Ed25519 public 
 test-only VMware guest-info for explicit `known_hosts` verification without trusting unauthenticated `ssh-keyscan`
 output. Subsequent Codex and Copilot tasks under the same Windows user reuse that trust and key identity.
 Before any ready message or connection endpoint, every started normal clone must prove that VMware Tools' management
-IPv4 address belongs uniquely to the exact running VMX. The proof records the VMX, its `ethernet0` MAC, the injected
-hostname, and the host-facing address; it compares all running Workstation guests and requires the Windows neighbor
-entry for that address to match the target MAC. A duplicate static address or a neighbor entry owned by another running
-VM fails closed with the conflicting VMX, MAC, and address.
+IPv4 address belongs uniquely to the exact running VMX. First boot publishes the actual applied hostname through VMware
+Tools. The proof records the VMX, its `ethernet0` MAC, the matching injected and observed hostnames, and the host-facing
+address; it requires an address answer from every running Workstation guest and requires the Windows neighbor entry for
+that address to match the target MAC. An unanswered running guest remains incomplete evidence and retries. A hostname
+mismatch, duplicate static address, or neighbor entry owned by another running VM fails closed with the relevant exact
+identity evidence.
 
 Recover from that failure through the exact clone's local console: stop the named conflicting VM, or give the clone a
 unique applied static address. A temporary DHCP reservation is acceptable only when it is bound to the exact target MAC

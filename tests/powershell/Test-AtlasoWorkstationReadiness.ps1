@@ -32,7 +32,7 @@ $sourceVmx = Join-Path $OutputDirectory 'Existing-Static-Source.vmx'
 $fakeVmrun = Join-Path $OutputDirectory 'fake-vmrun.cmd'
 [System.IO.File]::WriteAllText(
     $fakeVmrun,
-    "@echo off`r`nif /I `"%3`"==`"getGuestIPAddress`" (`r`n  echo 192.168.167.134`r`n  exit /b 0`r`n)`r`nif /I `"%3`"==`"list`" (`r`n  echo Total running VMs: 2`r`n  echo `"$targetVmx`"`r`n  echo `"$sourceVmx`"`r`n  exit /b 0`r`n)`r`nexit /b 9`r`n",
+    "@echo off`r`nif /I `"%3`"==`"getGuestIPAddress`" (`r`n  echo 192.168.167.134`r`n  exit /b 0`r`n)`r`nif /I `"%3`"==`"readVariable`" (`r`n  echo issue-535.atlaso.internal`r`n  exit /b 0`r`n)`r`nif /I `"%3`"==`"list`" (`r`n  echo Total running VMs: 2`r`n  echo `"$targetVmx`"`r`n  echo `"$sourceVmx`"`r`n  exit /b 0`r`n)`r`nexit /b 9`r`n",
     [System.Text.UTF8Encoding]::new($false)
 )
 $runningPaths = @(Get-AtlasoWorkstationRunningVmxPath -VmrunPath $fakeVmrun)
@@ -76,6 +76,7 @@ try {
         -TargetMacAddress $targetMac `
         -TargetIPAddress '192.168.167.134' `
         -ExpectedHostname 'issue-535.atlaso.internal' `
+        -ObservedHostname 'issue-535.atlaso.internal' `
         -RunningGuests $duplicateGuests `
         -NeighborMacAddresses @($targetMac) | Out-Null
 } catch { $duplicateError = $_ }
@@ -95,6 +96,7 @@ $identity = Assert-AtlasoWorkstationAddressIdentity `
     -TargetMacAddress $targetMac `
     -TargetIPAddress '192.168.167.135' `
     -ExpectedHostname 'issue-535.atlaso.internal' `
+    -ObservedHostname 'ISSUE-535.ATLASO.INTERNAL.' `
     -RunningGuests $uniqueGuests `
     -NeighborMacAddresses @($targetMac)
 if ($identity.VmxPath -cne (Resolve-Path -LiteralPath $targetVmx).Path -or
@@ -111,11 +113,61 @@ try {
         -TargetMacAddress $targetMac `
         -TargetIPAddress '192.168.167.135' `
         -ExpectedHostname 'issue-535.atlaso.internal' `
+        -ObservedHostname 'issue-535.atlaso.internal' `
         -RunningGuests $uniqueGuests `
         -NeighborMacAddresses @('00-0c-29-aa-bb-cc') | Out-Null
 } catch { $neighborError = $_ }
 if ($null -eq $neighborError -or $neighborError.Exception.Message -notlike '*Existing-Static-Source.vmx*') {
     throw 'A host-facing neighbor mapping to another running VMX did not fail closed with exact owner evidence.'
+}
+
+$incompleteGuests = @(
+    [pscustomobject]@{ Path = $targetVmx; MacAddress = $targetMac; IPAddress = '192.168.167.135' },
+    [pscustomobject]@{ Path = $sourceVmx; MacAddress = '00-0c-29-aa-bb-cc'; IPAddress = '' }
+)
+try {
+    Assert-AtlasoWorkstationAddressIdentity `
+        -TargetVmxPath $targetVmx `
+        -TargetMacAddress $targetMac `
+        -TargetIPAddress '192.168.167.135' `
+        -ExpectedHostname 'issue-535.atlaso.internal' `
+        -ObservedHostname 'issue-535.atlaso.internal' `
+        -RunningGuests $incompleteGuests `
+        -NeighborMacAddresses @($targetMac) | Out-Null
+    throw 'Incomplete running-guest evidence was accepted.'
+} catch {
+    if ($_.Exception.Message -eq 'Incomplete running-guest evidence was accepted.' -or
+        $_.Exception.Message -notlike '*Existing-Static-Source.vmx*') { throw }
+}
+
+try {
+    Assert-AtlasoWorkstationAddressIdentity `
+        -TargetVmxPath $targetVmx `
+        -TargetMacAddress $targetMac `
+        -TargetIPAddress '192.168.167.135' `
+        -ExpectedHostname 'issue-535.atlaso.internal' `
+        -ObservedHostname 'wrong.atlaso.internal' `
+        -RunningGuests $uniqueGuests `
+        -NeighborMacAddresses @($targetMac) | Out-Null
+    throw 'Mismatched guest hostname evidence was accepted.'
+} catch {
+    if ($_.Exception.Message -eq 'Mismatched guest hostname evidence was accepted.' -or
+        $_.Exception.Message -notlike '*wrong.atlaso.internal*') { throw }
+}
+
+try {
+    Assert-AtlasoWorkstationAddressIdentity `
+        -TargetVmxPath $targetVmx `
+        -TargetMacAddress $targetMac `
+        -TargetIPAddress '192.168.167.135' `
+        -ExpectedHostname 'issue-535.atlaso.internal' `
+        -ObservedHostname '' `
+        -RunningGuests $uniqueGuests `
+        -NeighborMacAddresses @($targetMac) | Out-Null
+    throw 'Missing guest hostname evidence was accepted.'
+} catch {
+    if ($_.Exception.Message -eq 'Missing guest hostname evidence was accepted.' -or
+        $_.Exception.Message -notlike '*hostname evidence is incomplete*') { throw }
 }
 
 Write-Output 'Atlaso VMware Workstation readiness tests passed.'

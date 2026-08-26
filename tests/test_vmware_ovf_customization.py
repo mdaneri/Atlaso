@@ -1778,6 +1778,45 @@ def test_normal_test_vm_first_boot_publishes_host_key_without_client_key(
     assert "atlaso-test" not in str(commands)
 
 
+def test_normal_test_vm_first_boot_publishes_actual_hostname(monkeypatch):
+    """Publish the hostname observed inside the guest through guest-info.
+
+    Args:
+        monkeypatch: Pytest fixture used to replace VMware Tools and hostname evidence.
+    """
+    customizer = load_customizer()
+    commands = []
+
+    def fake_run(command, **kwargs):
+        """Record one VMware guest-info publication.
+
+        Args:
+            command: Command and arguments to execute.
+            **kwargs: Additional subprocess options.
+
+        Returns:
+            A successful bounded command result.
+        """
+        commands.append((command, kwargs))
+        return type("Result", (), {"returncode": 0})()
+
+    monkeypatch.setattr(customizer.socket, "gethostname", lambda: "issue-535.atlaso.internal")
+    monkeypatch.setattr(customizer.shutil, "which", lambda command: f"/usr/bin/{command}")
+    monkeypatch.setattr(customizer.subprocess, "run", fake_run)
+
+    customizer.publish_test_vm_hostname()
+
+    assert commands == [
+        (
+            [
+                "/usr/bin/vmware-rpctool",
+                f'info-set {customizer.TEST_VM_HOSTNAME_GUESTINFO} "issue-535.atlaso.internal"',
+            ],
+            {"check": False, "text": True, "capture_output": True},
+        )
+    ]
+
+
 @pytest.mark.parametrize("host_key", ["ssh-rsa invalid\n", "\n"])
 def test_normal_test_vm_first_boot_rejects_invalid_host_key(tmp_path, host_key):
     """Fail test-only publication when the installed host key is invalid or empty.
@@ -2070,6 +2109,8 @@ def test_vmware_ovf_customizer_rotates_clone_specific_env_secrets(tmp_path, monk
     )
     published_host_keys = []
     customizer.publish_test_vm_ssh_host_key = lambda: published_host_keys.append(True)
+    published_hostnames = []
+    customizer.publish_test_vm_hostname = lambda: published_hostnames.append(True)
     scrubbed = []
 
     def clear_ovf_environment():
@@ -2118,6 +2159,7 @@ def test_vmware_ovf_customizer_rotates_clone_specific_env_secrets(tmp_path, monk
     assert scrubbed == [True]
     assert development_ssh == [("admin", VALID_ED25519_PUBLIC_KEY)]
     assert published_host_keys == [True]
+    assert published_hostnames == [True]
     assert marker["cidr"] == "192.168.10.10/24"
     assert "admin-secret" not in str(marker)
     assert "root-secret1" not in str(marker)

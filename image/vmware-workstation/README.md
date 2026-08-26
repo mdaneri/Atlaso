@@ -433,11 +433,13 @@ Windows filesystem identity, stops through checked `vmrun` when needed, and comp
 preflights before checked `vmrun deleteVM` removes registered targets. Preflight failures preserve all artifacts;
 provider deletion or postcondition failures preserve the remaining artifacts and return failure. Stale library-row
 cleanup holds a write-excluding inventory handle through its final byte comparison and atomic replacement.
-Every started normal test clone must pass unique-address readiness before the wrapper reports it ready. The check binds
-the exact running VMX, its `ethernet0` MAC, the injected hostname, VMware Tools' IPv4 result, and the Windows neighbor
-entry for that host-facing address. It also queries every running Workstation VM; if another VM reports the same
-address, or the neighbor entry maps to another running VM's MAC, the wrapper stops before printing SSH or HTTPS
-endpoints and names the conflicting VMX, MAC, and address.
+Every started normal test clone must pass unique-address readiness before the wrapper reports it ready. After applying
+the hostname, the guest publishes its actual value through VMware Tools. The check binds the exact running VMX, its
+`ethernet0` MAC, the injected and guest-published hostnames, VMware Tools' IPv4 result, and the Windows neighbor entry
+for that host-facing address. It also requires an address answer from every running Workstation VM; incomplete guest
+evidence retries rather than being treated as unique. If another VM reports the same address, the hostname differs, or
+the neighbor entry maps to another running VM's MAC, the wrapper stops before printing SSH or HTTPS endpoints and names
+the relevant conflicting identity evidence.
 
 For recovery, leave the failed clone running only while using its local console, then either stop the named conflicting
 VM or assign the clone a unique management address. A task-specific DHCP reservation must target the exact MAC printed
