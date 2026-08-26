@@ -2390,8 +2390,8 @@ def test_vmware_ovf_export_and_image_plumbing_are_present():
     assert "@('fileRef', 'parentRef', 'populatedSize')" in export_script
     assert "Write-AtlasoOvaProvenance" in export_script
     assert "atlaso-provenance.json" in export_script
-    assert "guestinfo.atlaso.template_ssh_host_ed25519_public_key" in export_script
-    assert "ssh_host_ed25519_public_key" in export_script
+    assert "guestinfo.atlaso.template_ssh_host_ed25519_public_key" not in export_script
+    assert "ssh_host_ed25519_public_key" not in export_script
     assert "Assert-AtlasoCanonicalOva" in export_script
     assert "Atlaso.OvfExport.psm1" in export_script
     assert "Clear-AtlasoOvfOutputDirectory" in export_script

@@ -73,7 +73,8 @@ def test_proxmox_imports_the_unchanged_ova_and_rejects_conflicting_disks() -> No
     assert 'ovf_path="$validation_root/extracted/$ovf_name"' in script
     assert "--bios ovmf" in script
     assert "pre-enrolled-keys=0" in script
-    assert "--scsihw virtio-scsi-single" in script
+    assert "--scsihw virtio-scsi-pci" in script
+    assert "iothread=1" not in script
     assert "--agent enabled=1" in script
     assert 'if [ "$disk_count" -lt 3 ]' in script
     assert 'if [ "$disk_count" -lt 4 ]' in script

@@ -29,6 +29,7 @@ SYSTEMD_ASSETS = (
     Path("image/common/systemd/atlaso-bootstrap-https.service"),
     Path("image/common/systemd/atlaso-console-manager.conf"),
     Path("image/common/systemd/atlaso-console.service"),
+    Path("image/common/systemd/atlaso-data-disks-legacy.service"),
     Path("image/common/systemd/atlaso-data-disks.service"),
     Path("image/common/systemd/atlaso-guest-agent-select.service"),
     Path("image/common/systemd/atlaso-require-data-disks.conf"),

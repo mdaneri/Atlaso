@@ -1817,6 +1817,9 @@ def apply_customization(config: dict[str, object], *, dry_run: bool = False) -> 
         "bootstrap administrator password",
         lambda: set_password(bootstrap_user, str(config["admin_password"])),
     )
+    # Every imported appliance regenerated its host identity before networking;
+    # publish that exact public key for authenticated deployment automation.
+    run_initialization_layer("SSH host key", publish_test_vm_ssh_host_key)
     if config["development_admin_ssh_public_key"]:
         run_initialization_layer(
             "development administrator SSH",
@@ -1829,7 +1832,6 @@ def apply_customization(config: dict[str, object], *, dry_run: bool = False) -> 
         # first-boot customizer for raw Workstation clones. Only the normal test
         # wrapper injects this development-key property; lifecycle and exported
         # appliances therefore never publish this convenience-channel value.
-        run_initialization_layer("test VM SSH host key", publish_test_vm_ssh_host_key)
     if config["normal_test_vm"]:
         # The explicit normal-test marker survives password-only clone creation;
         # do not infer this trust boundary from optional SSH key provisioning.

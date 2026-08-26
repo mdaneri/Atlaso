@@ -24,12 +24,18 @@ for value in "$name" "$pool" "$management_network" "$service_network"; do
       ;;
   esac
 done
-for command in python3 virt-v2v virsh qemu-img jq mktemp realpath awk grep; do
+for command in python3 virt-v2v virsh qemu-img jq mktemp realpath awk grep flock; do
   command -v "$command" >/dev/null 2>&1 || {
     echo "$command is required on the KVM host." >&2
     exit 2
   }
 done
+lock_path="/run/lock/atlaso-kvm-import-${pool}-${name}.lock"
+exec 9>"$lock_path"
+flock -n 9 || {
+  echo "Another Atlaso KVM import owns the $pool/$name namespace." >&2
+  exit 2
+}
 for helper in "$validator" "$normalizer"; do
   [ -f "$helper" ] && [ ! -L "$helper" ] || {
     echo "The OVA validator and libvirt normalizer must be ordinary files beside this helper." >&2
@@ -93,6 +99,15 @@ cleanup() {
     else
       echo "Rollback preserved $name because an attached disk is outside the invocation-owned storage namespace." >&2
     fi
+  fi
+  if [ "$created" -eq 1 ] && ! virsh dominfo "$name" >/dev/null 2>&1; then
+    # The locked name/pool namespace was empty before ownership began. Any
+    # matching partial volume is therefore owned by this failed virt-v2v run.
+    virsh vol-list "$pool" --name | while IFS= read -r volume_name; do
+      case "$volume_name" in
+        "$name"-*) virsh vol-delete --pool "$pool" "$volume_name" >/dev/null 2>&1 || true ;;
+      esac
+    done
   fi
   if [ "$depot_volume_created" -eq 1 ]; then
     virsh vol-delete --pool "$pool" "$name-vcf-offline-depot.qcow2" >/dev/null 2>&1 || true

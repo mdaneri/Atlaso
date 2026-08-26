@@ -1736,10 +1736,26 @@ def test_release_bundle_carries_transactional_data_disk_safety_assets():
         "data-disks/vmware.conf",
         "systemd/atlaso-bootstrap-https.service",
         "systemd/atlaso-data-disks.service",
+        "systemd/atlaso-data-disks-legacy.service",
         "systemd/atlaso.service.d/atlaso-data-disks.conf",
         "systemd/nginx.service.d/atlaso-data-disks.conf",
         "udev/99-atlaso-disk-identity.rules",
     } <= destinations
+
+
+def test_legacy_release_uses_data_disk_unit_without_new_selector_dependency(tmp_path):
+    """An older appliance can install the disk boundary without unavailable selector assets.
+
+    Args:
+        tmp_path: Temporary directory provided by pytest for isolated filesystem state.
+    """
+
+    from tests.test_appliance_update import load_helper_module
+
+    helper = load_helper_module()
+    owned = helper._release_data_disk_owned_files(tmp_path, "vmware")
+    unit_sources = [source for source, destination, _mode in owned if destination == helper.ATLASO_DATA_DISK_UNIT_PATH]
+    assert unit_sources == [tmp_path / "systemd/atlaso-data-disks-legacy.service"]
 
 
 def test_image_bootstrap_release_skips_previous_updater_compatibility_gate(monkeypatch, tmp_path):

@@ -63,7 +63,7 @@ qm set "$vmid" \
   --machine q35 \
   --bios ovmf \
   --efidisk0 "$storage:1,efitype=4m,pre-enrolled-keys=0" \
-  --scsihw virtio-scsi-single \
+  --scsihw virtio-scsi-pci \
   --agent enabled=1 \
   --net0 "virtio,bridge=$management_bridge" \
   --net1 "virtio,bridge=$service_bridge"
@@ -105,21 +105,21 @@ index=0
 printf '%s\n' "$disk_records" | while IFS='|' read -r _key value; do
   [ -n "$value" ] || continue
   volume=${value%%,*}
-  qm set "$vmid" "--scsi$index" "$volume,discard=on,iothread=1,ssd=1"
+  qm set "$vmid" "--scsi$index" "$volume,discard=on,ssd=1"
   index=$((index + 1))
 done
 
 if [ "$disk_count" -lt 3 ]; then
-  qm set "$vmid" --scsi2 "$storage:500,discard=on,iothread=1,ssd=1"
+  qm set "$vmid" --scsi2 "$storage:500,discard=on,ssd=1"
 fi
 if [ "$disk_count" -lt 4 ]; then
-  qm set "$vmid" --scsi3 "$storage:500,discard=on,iothread=1,ssd=1"
+  qm set "$vmid" --scsi3 "$storage:500,discard=on,ssd=1"
 fi
 qm set "$vmid" --boot order=scsi0
 
 config=$(qm config "$vmid")
 for required in '^bios: ovmf$' '^cores: 4$' '^memory: 4096$' '^machine: q35' '^agent: enabled=1' \
-  '^scsihw: virtio-scsi-single$' '^scsi0:' '^scsi1:' '^scsi2:' '^scsi3:' '^net0:' '^net1:' '^boot: order=scsi0'; do
+  '^scsihw: virtio-scsi-pci$' '^scsi0:' '^scsi1:' '^scsi2:' '^scsi3:' '^net0:' '^net1:' '^boot: order=scsi0'; do
   printf '%s\n' "$config" | grep -Eq "$required" || {
     echo "Normalized Proxmox configuration is missing required contract: $required" >&2
     exit 2

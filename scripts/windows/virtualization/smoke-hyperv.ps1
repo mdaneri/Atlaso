@@ -3,8 +3,6 @@
 Import, boot, validate, reboot, and remove one Atlaso Hyper-V ZIP.
 .PARAMETER ZipPath
 Versioned Atlaso Hyper-V ZIP to extract and import.
-.PARAMETER Credential
-Temporary appliance credential used only through the smoke helper standard-input envelope.
 .PARAMETER Name
 Unique smoke-test VM name.
 .PARAMETER ManagementSwitch
@@ -19,7 +17,6 @@ Optional Python executable with Paramiko installed.
 [CmdletBinding()]
 param(
     [Parameter(Mandatory = $true)][string]$ZipPath,
-    [Parameter(Mandatory = $true)][PSCredential]$Credential,
     [string]$Name = 'Atlaso-HyperV-Smoke',
     [Parameter(Mandatory = $true)][string]$ManagementSwitch,
     [Parameter(Mandatory = $true)][string]$ServiceSwitch,
@@ -29,6 +26,38 @@ param(
 
 $ErrorActionPreference = 'Stop'
 Set-StrictMode -Version Latest
+
+<#
+.SYNOPSIS
+Read the first-boot access envelope published by one Hyper-V guest.
+.PARAMETER VmId
+Exact identifier of the invocation-owned virtual machine.
+#>
+function Get-AtlasoHyperVFirstBootAccess {
+    param([Parameter(Mandatory = $true)][Guid]$VmId)
+
+    $component = @(Get-CimInstance -Namespace 'root/virtualization/v2' -ClassName 'Msvm_KvpExchangeComponent' `
+            -ErrorAction Stop | Where-Object { [string]$_.SystemName -eq $VmId.ToString() })
+    if ($component.Count -ne 1) {
+        return $null
+    }
+    foreach ($item in @($component[0].GuestIntrinsicExchangeItems)) {
+        try {
+            [xml]$record = $item
+            $nameNode = $record.SelectSingleNode("//PROPERTY[@NAME='Name']/VALUE")
+            $dataNode = $record.SelectSingleNode("//PROPERTY[@NAME='Data']/VALUE")
+            if ($null -ne $nameNode -and $null -ne $dataNode -and
+                [string]$nameNode.InnerText -eq 'atlaso.first_boot_access') {
+                return ([string]$dataNode.InnerText | ConvertFrom-Json -ErrorAction Stop)
+            }
+        }
+        catch {
+            continue
+        }
+    }
+    return $null
+}
+
 $repoRoot = (Resolve-Path -LiteralPath (Join-Path $PSScriptRoot '..\..\..')).Path
 $sourceZip = Get-Item -LiteralPath $ZipPath -Force -ErrorAction Stop
 if ($sourceZip.PSIsContainer -or
@@ -80,27 +109,30 @@ try {
         throw 'The Hyper-V smoke importer did not create exactly one expected virtual machine.'
     }
     $createdVm = $createdVmMatches[0]
-    $manifest = Get-Content -Raw -LiteralPath (Join-Path $packageRoot 'manifest.json') | ConvertFrom-Json
-    $expectedHostKey = [string]$manifest.ssh_host_ed25519_public_key
-    if ($expectedHostKey -notmatch '^ssh-ed25519 [A-Za-z0-9+/]+={0,2}$') {
-        throw 'The verified Hyper-V package did not provide its bound Ed25519 SSH host public key.'
-    }
     $deadline = [DateTimeOffset]::UtcNow.AddMinutes(15)
     $address = ''
-    while ([DateTimeOffset]::UtcNow -lt $deadline -and -not $address) {
+    $access = $null
+    while ([DateTimeOffset]::UtcNow -lt $deadline -and (-not $address -or $null -eq $access)) {
         $address = @(Get-VMNetworkAdapter -VMName $Name | ForEach-Object IPAddresses |
                 Where-Object { $_ -match '^\d{1,3}(?:\.\d{1,3}){3}$' -and $_ -notlike '169.254.*' } |
                 Select-Object -First 1)
-        if (-not $address) {
+        $access = Get-AtlasoHyperVFirstBootAccess -VmId $createdVm.Id
+        if (-not $address -or $null -eq $access) {
             Start-Sleep -Seconds 5
         }
     }
-    if (-not $address) {
-        throw 'Hyper-V KVP did not report a usable management IPv4 address within 15 minutes.'
+    if (-not $address -or $null -eq $access) {
+        throw 'Hyper-V KVP did not report both management IPv4 and one-time access within 15 minutes.'
+    }
+    $expectedHostKey = [string]$access.ssh_host_key
+    if ([string]$access.username -notmatch '^[a-z_][a-z0-9_-]*$' -or
+        [string]$access.password -notmatch '^.{12,}$' -or
+        $expectedHostKey -notmatch '^ssh-ed25519 [A-Za-z0-9+/]+={0,2}$') {
+        throw 'Hyper-V KVP returned a malformed one-time access envelope.'
     }
     $secret = @{
-        username = $Credential.UserName
-        password = $Credential.GetNetworkCredential().Password
+        username = [string]$access.username
+        password = [string]$access.password
     } | ConvertTo-Json -Compress
     $secret | & $python (Join-Path $repoRoot 'scripts\virtualization\smoke_guest_ssh.py') `
         '--host' ([string]$address) '--host-key' $expectedHostKey '--platform' 'hyperv'

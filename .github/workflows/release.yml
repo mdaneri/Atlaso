@@ -128,7 +128,6 @@ jobs:
     needs:
       - prepare
     runs-on: [self-hosted, Windows, X64, atlaso-vmware]
-    environment: appliance-release
     steps:
       - name: Check out the successful main commit
         uses: actions/checkout@v7
@@ -147,20 +146,22 @@ jobs:
           if ($LASTEXITCODE -ne 0) { throw 'Release commit is no longer reachable from origin/main.' }
       - name: Build the canonical VMware template
         shell: pwsh
-        env:
-          PACKER_SSH_PASSWORD: ${{ secrets.ATLASO_PACKER_SSH_PASSWORD }}
-          BOOTSTRAP_ADMIN_PASSWORD: ${{ secrets.ATLASO_BOOTSTRAP_ADMIN_PASSWORD }}
         run: |
-          if (-not $env:PACKER_SSH_PASSWORD -or -not $env:BOOTSTRAP_ADMIN_PASSWORD) {
-            throw 'Protected release build credentials are unavailable.'
+          $sshText = 'A!a1' + [Convert]::ToBase64String([Security.Cryptography.RandomNumberGenerator]::GetBytes(32))
+          $adminText = 'A!a1' + [Convert]::ToBase64String([Security.Cryptography.RandomNumberGenerator]::GetBytes(32))
+          try {
+            $ssh = ConvertTo-SecureString $sshText -AsPlainText -Force
+            $admin = ConvertTo-SecureString $adminText -AsPlainText -Force
+            & scripts/windows/vmware/build-photon-image.ps1 `
+              -SshPassword $ssh `
+              -BootstrapAdminPassword $admin `
+              -Headless `
+              -EnableRealSystemAdapters
           }
-          $ssh = ConvertTo-SecureString $env:PACKER_SSH_PASSWORD -AsPlainText -Force
-          $admin = ConvertTo-SecureString $env:BOOTSTRAP_ADMIN_PASSWORD -AsPlainText -Force
-          & scripts/windows/vmware/build-photon-image.ps1 `
-            -SshPassword $ssh `
-            -BootstrapAdminPassword $admin `
-            -Headless `
-            -EnableRealSystemAdapters
+          finally {
+            $sshText = $null
+            $adminText = $null
+          }
       - name: Export and independently validate the canonical OVA
         shell: pwsh
         env:
@@ -403,18 +404,13 @@ jobs:
       - name: Import, boot, reboot, and validate Hyper-V
         shell: pwsh
         env:
-          SMOKE_USERNAME: ${{ vars.ATLASO_VIRTUALIZATION_SMOKE_USERNAME }}
-          SMOKE_PASSWORD: ${{ secrets.ATLASO_BOOTSTRAP_ADMIN_PASSWORD }}
           MANAGEMENT_SWITCH: ${{ vars.ATLASO_HYPERV_MANAGEMENT_SWITCH }}
           SERVICE_SWITCH: ${{ vars.ATLASO_HYPERV_SERVICE_SWITCH }}
         run: |
-          $password = ConvertTo-SecureString $env:SMOKE_PASSWORD -AsPlainText -Force
-          $credential = [PSCredential]::new($env:SMOKE_USERNAME, $password)
           $zip = @(Get-ChildItem artifacts/incoming/hyperv -Filter '*-hyperv-x86_64.zip' -File)
           if ($zip.Count -ne 1) { throw 'Expected exactly one Hyper-V ZIP artifact.' }
           & scripts/windows/virtualization/smoke-hyperv.ps1 `
             -ZipPath $zip[0].FullName `
-            -Credential $credential `
             -ManagementSwitch $env:MANAGEMENT_SWITCH `
             -ServiceSwitch $env:SERVICE_SWITCH
 

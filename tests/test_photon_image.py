@@ -123,14 +123,14 @@ def test_offline_guest_agent_staging_remains_root_owned_after_provisioning() -> 
     assert "rpm -qp --qf" in provision
 
 
-def test_vmware_template_publishes_artifact_bound_ssh_host_key() -> None:
-    """The trusted image build persists its Ed25519 public key into VMX provenance."""
+def test_vmware_template_scrubs_credentials_and_host_identity() -> None:
+    """The exported template cannot retain deployment credentials or SSH identity."""
 
     provision = Path("image/common/scripts/provision-atlaso.sh").read_text(encoding="utf-8")
-    assert "guestinfo.atlaso.template_ssh_host_ed25519_public_key" in provision
-    assert "/etc/ssh/ssh_host_ed25519_key.pub" in provision
-    assert "struct.unpack" in provision
-    assert "published_template_ssh_host_key" in provision
+    assert '"ATLASO_SECRET_KEY": "INITIALIZATION_REQUIRED"' in provision
+    assert 'usermod --password \'!\' "$BOOTSTRAP_USERNAME"' in provision
+    assert "rm -f /etc/ssh/ssh_host_* /etc/machine-id" in provision
+    assert "guestinfo.atlaso.template_ssh_host_ed25519_public_key" not in provision
 
 
 def test_guest_agent_success_marker_makes_cleanup_retryable() -> None:
@@ -544,7 +544,7 @@ def test_photon_kickstart_generator_is_canonical_and_provider_specific(tmp_path)
         assert 'ssh_password_stdin_base64    = base64encode("${var.ssh_password}\\n")' in template
         assert template.count("${local.ssh_password_stdin_base64}") == 2
         assert "echo '${var.ssh_password}'" not in template
-        assert "| base64 -d | sudo -S systemctl poweroff" in template
+        assert "userdel -r ${var.ssh_username}; systemctl poweroff" in template
         assert "| base64 -d | sudo -S -E sh -c" in template
 
 
@@ -1621,7 +1621,7 @@ def test_vmware_raw_vmx_workflows_inject_complete_first_boot_ovf_environment_bef
     assert '"guestinfo.atlaso.test_vm_development_root_ca_private_key"' in customizer
     assert "def stage_development_root_ca(" in customizer
     assert "def publish_test_vm_ssh_host_key()" in customizer
-    assert 'run_initialization_layer("test VM SSH host key", publish_test_vm_ssh_host_key)' in customizer
+    assert 'run_initialization_layer("SSH host key", publish_test_vm_ssh_host_key)' in customizer
     assert 'if config["normal_test_vm"]:' in customizer
     assert 'run_initialization_layer("test VM hostname", publish_test_vm_hostname)' in customizer
 

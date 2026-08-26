@@ -37,6 +37,7 @@ DISK_IDENTITY_RULE_SOURCE="$ATLASO_SRC/image/common/udev/99-atlaso-disk-identity
 DATA_DISK_POLICY_SOURCE="$ATLASO_SRC/image/common/data-disks.conf"
 QEMU_GUEST_AGENT_BUILDER="$ATLASO_SRC/image/common/scripts/build-qemu-guest-agent-rpm.sh"
 GUEST_AGENT_SELECTOR_SOURCE="$ATLASO_SRC/scripts/appliance/atlaso-select-guest-agent"
+MACHINE_IDENTITY_INITIALIZER_SOURCE="$ATLASO_SRC/scripts/appliance/atlaso-initialize-machine-identity.py"
 GUEST_AGENT_UNIT_SOURCE="$ATLASO_SRC/image/common/systemd/atlaso-guest-agent-select.service"
 GUEST_AGENT_STAGING="$ATLASO_STATE/first-boot-packages"
 
@@ -249,6 +250,7 @@ if [ ! -r "$DATA_DISK_POLICY_SOURCE" ]; then
   exit 2
 fi
 if [ ! -r "$QEMU_GUEST_AGENT_BUILDER" ] || [ ! -r "$GUEST_AGENT_SELECTOR_SOURCE" ] ||
+  [ ! -r "$MACHINE_IDENTITY_INITIALIZER_SOURCE" ] ||
   [ ! -r "$GUEST_AGENT_UNIT_SOURCE" ]; then
   echo "Provider-neutral guest-agent build or first-boot assets are missing from staged Atlaso sources." >&2
   exit 2
@@ -577,6 +579,7 @@ install -o root -g root -m 0755 "$ATLASO_HOME/scripts/appliance/atlaso-helper" "
 install -o root -g root -m 0755 "$ATLASO_HOME/scripts/appliance/atlaso-install-boot-branding" "$ATLASO_HOME/bin/atlaso-install-boot-branding"
 install -o root -g root -m 0755 "$ATLASO_HOME/scripts/appliance/atlaso-mount-data-disks" "$ATLASO_HOME/bin/atlaso-mount-data-disks"
 install -o root -g root -m 0755 "$GUEST_AGENT_SELECTOR_SOURCE" "$ATLASO_HOME/bin/atlaso-select-guest-agent"
+install -o root -g root -m 0755 "$MACHINE_IDENTITY_INITIALIZER_SOURCE" "$ATLASO_HOME/bin/atlaso-initialize-machine-identity.py"
 install -o root -g root -m 0755 "$ATLASO_HOME/scripts/appliance/atlaso-bootstrap-https" "$ATLASO_HOME/bin/atlaso-bootstrap-https"
 trust_source_dir="$ATLASO_HOME/image/common/update-trust"
 if [ ! -d "$trust_source_dir" ]; then
@@ -610,7 +613,7 @@ if [ "$ATLASO_GUEST_PLATFORM" = "vmware" ]; then
   install -o root -g root -m 0644 "$ATLASO_HOME/$ATLASO_IMAGE_ASSET_DIR/systemd/atlaso-vmware-ovf-customize.service" /etc/systemd/system/atlaso-vmware-ovf-customize.service
 fi
 install -o root -g root -m 0440 "$ATLASO_HOME/image/common/sudoers.d/atlaso-helper" /etc/sudoers.d/atlaso-helper
-sed -i 's/\r$//' /etc/systemd/system/atlaso.service /etc/systemd/system/atlaso-worker.service /etc/systemd/system/atlaso-console.service /etc/systemd/system/atlaso-guest-agent-select.service /etc/systemd/system.conf.d/atlaso-console.conf "$ATLASO_HOME/bin/atlaso-helper" "$ATLASO_HOME/bin/atlaso-install-boot-branding" "$ATLASO_HOME/bin/atlaso-mount-data-disks" "$ATLASO_HOME/bin/atlaso-select-guest-agent" "$ATLASO_HOME/bin/atlaso-bootstrap-https" /etc/sudoers.d/atlaso-helper
+sed -i 's/\r$//' /etc/systemd/system/atlaso.service /etc/systemd/system/atlaso-worker.service /etc/systemd/system/atlaso-console.service /etc/systemd/system/atlaso-guest-agent-select.service /etc/systemd/system.conf.d/atlaso-console.conf "$ATLASO_HOME/bin/atlaso-helper" "$ATLASO_HOME/bin/atlaso-install-boot-branding" "$ATLASO_HOME/bin/atlaso-mount-data-disks" "$ATLASO_HOME/bin/atlaso-select-guest-agent" "$ATLASO_HOME/bin/atlaso-initialize-machine-identity.py" "$ATLASO_HOME/bin/atlaso-bootstrap-https" /etc/sudoers.d/atlaso-helper
 if [ "$ATLASO_GUEST_PLATFORM" = "vmware" ]; then
   sed -i 's/\r$//' "$ATLASO_HOME/bin/atlaso-vmware-ovf-customize.py" /etc/systemd/system/atlaso-vmware-ovf-customize.service
 fi
@@ -717,32 +720,6 @@ systemctl enable sshd
 if [ "$ATLASO_GUEST_PLATFORM" = "vmware" ]; then
   install -o root -g root -m 0640 /dev/null "$ATLASO_STATE/vmware-ovf-initializing"
   systemctl enable --now vmtoolsd
-  template_ssh_host_key="$(python3 - /etc/ssh/ssh_host_ed25519_key.pub <<'PY'
-import base64
-import struct
-import sys
-from pathlib import Path
-
-fields = Path(sys.argv[1]).read_text(encoding="ascii").split()
-if len(fields) < 2 or fields[0] != "ssh-ed25519":
-    raise SystemExit("The template Ed25519 SSH host public key is missing or malformed.")
-try:
-    blob = base64.b64decode(fields[1], validate=True)
-except ValueError as exc:
-    raise SystemExit("The template Ed25519 SSH host public key has invalid base64.") from exc
-if len(blob) != 51 or struct.unpack(">I", blob[:4])[0] != 11 or blob[4:15] != b"ssh-ed25519" or struct.unpack(">I", blob[15:19])[0] != 32:
-    raise SystemExit("The template Ed25519 SSH host public key has an invalid wire format.")
-print(f"ssh-ed25519 {fields[1]}")
-PY
-)"
-  vmtoolsd --cmd "info-set guestinfo.atlaso.template_ssh_host_ed25519_public_key $template_ssh_host_key"
-  published_template_ssh_host_key="$(
-    vmtoolsd --cmd 'info-get guestinfo.atlaso.template_ssh_host_ed25519_public_key'
-  )"
-  if [ "$published_template_ssh_host_key" != "$template_ssh_host_key" ]; then
-    echo "VMware guest-info did not retain the template SSH host public key." >&2
-    exit 2
-  fi
   systemctl enable atlaso-vmware-ovf-customize.service
 fi
 systemctl enable atlaso-guest-agent-select.service
@@ -834,6 +811,31 @@ log_step "running Photon compatibility check"
 "$ATLASO_HOME/.venv/bin/python" "$ATLASO_HOME/scripts/check_photon_compatibility.py"
 
 report_image_footprint "pre-cleanup"
+
+log_step "scrubbing template credentials and machine identity"
+python3 - /etc/atlaso/atlaso.env <<'PY'
+import os
+import sys
+from pathlib import Path
+
+path = Path(sys.argv[1])
+replacements = {
+    "ATLASO_SECRET_KEY": "INITIALIZATION_REQUIRED",
+    "ATLASO_SECRETS_KEY": "INITIALIZATION_REQUIRED",
+    "ATLASO_BOOTSTRAP_ADMIN_PASSWORD": "INITIALIZATION_REQUIRED",
+}
+lines = []
+for line in path.read_text(encoding="utf-8").splitlines():
+    key = line.partition("=")[0]
+    lines.append(f"{key}={replacements[key]}" if key in replacements else line)
+path.write_text("\n".join(lines) + "\n", encoding="utf-8")
+os.chmod(path, 0o640)
+PY
+usermod --password '!' "$BOOTSTRAP_USERNAME"
+usermod --password '!' root
+rm -f /etc/ssh/ssh_host_* /etc/machine-id /var/lib/dbus/machine-id
+rm -f /root/.bash_history "/home/$BOOTSTRAP_USERNAME/.bash_history"
+sync
 
 log_step "removing build-only packages and caches"
 run_tdnf "Build-only package removal" remove python3-devel python3-setuptools rpm-build gcc gcc-c++ make glib-devel systemd-devel ninja-build pkg-config

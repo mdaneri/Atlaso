@@ -8,6 +8,7 @@ SUCCESS_MARKER="${ATLASO_GUEST_AGENT_MARKER:-/var/lib/atlaso/guest-agent.applied
 DMI_ROOT="${ATLASO_DMI_ROOT:-/sys/class/dmi/id}"
 EXPECTED_STAGING_IDENTITY="${ATLASO_GUEST_AGENT_STAGING_IDENTITY:-root:root:700}"
 PACKAGE_CACHE_DIRECTORY="${ATLASO_GUEST_AGENT_PACKAGE_CACHE:-/var/cache/tdnf}"
+MACHINE_IDENTITY_INITIALIZER="${ATLASO_MACHINE_IDENTITY_INITIALIZER:-/opt/atlaso/bin/atlaso-initialize-machine-identity.py}"
 
 log() {
   printf 'atlaso-select-guest-agent: %s\n' "$1"
@@ -260,6 +261,10 @@ case "$platform" in
     fail "Internal platform selection error: $platform"
     ;;
 esac
+
+[ -f "$MACHINE_IDENTITY_INITIALIZER" ] && [ ! -L "$MACHINE_IDENTITY_INITIALIZER" ] ||
+  fail "Machine-identity initializer is missing or unsafe."
+"$MACHINE_IDENTITY_INITIALIZER" --platform "$platform"
 
 marker_tmp=$(mktemp "${SUCCESS_MARKER}.new.XXXXXX")
 trap 'rm -f -- "$marker_tmp"' EXIT HUP INT TERM

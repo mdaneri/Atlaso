@@ -63,9 +63,6 @@ if ([string]$manifest.source.kind -ne 'atlaso-validated-ova' -or
     [int]$manifest.source.ova_validator -ne 1) {
     throw 'The package manifest does not bind a validated canonical OVA source.'
 }
-if ([string]$manifest.ssh_host_ed25519_public_key -notmatch '^ssh-ed25519 [A-Za-z0-9+/]+={0,2}$') {
-    throw 'The package manifest does not bind the template Ed25519 SSH host public key.'
-}
 if ([string]$manifest.machine.firmware -ne 'uefi' -or
     [bool]$manifest.machine.secure_boot -or
     [int]$manifest.machine.cpu_count -ne 4 -or

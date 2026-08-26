@@ -691,6 +691,11 @@ Terminal order:
   when converting the canonical OVA payload disks into the portable Hyper-V ZIP. KVM and Proxmox VE consume the
   unchanged OVA and use their native target storage formats during import. Record the applicable host prerequisites in
   artifact handoff notes.
+- Release image builds must generate disposable credentials inside the protected job, scrub every credential hash,
+  application secret, machine ID, and SSH host key before export, and remove the build account before shutdown. Every
+  deployment regenerates identity before networking. Never bind a template SSH host key into OVA or converted-artifact
+  provenance; retrieve the regenerated public key and one-time credential only through the authenticated hypervisor
+  metadata channel or local console.
 - Pin every Photon image Packer plugin to one reviewed exact `X.Y.Z` version. The supported Windows wrapper must run
   `packer init` and `scripts/check_packer_plugins.py` before validation or build, and canonical Packer CI must perform
   the same resolution check between initialization and validation. A range constraint or a selected binary whose

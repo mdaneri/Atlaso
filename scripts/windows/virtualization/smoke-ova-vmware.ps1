@@ -87,15 +87,16 @@ try {
         throw "Canonical OVA validation failed before VMware smoke import: $($contractOutput -join [Environment]::NewLine)"
     }
     $contract = ($contractOutput -join "`n") | ConvertFrom-Json -ErrorAction Stop
-    $expectedHostKey = [string]$contract.ssh_host_ed25519_public_key
-    if ($expectedHostKey -notmatch '^ssh-ed25519 [A-Za-z0-9+/]+={0,2}$') {
-        throw 'Canonical OVA validation did not return its bound Ed25519 SSH host public key.'
-    }
+    $passwordText = $Credential.GetNetworkCredential().Password
+    $fqdn = ($Name.ToLowerInvariant() -replace '[^a-z0-9-]', '-') + '.smoke.atlaso.internal'
     & $ovfTool `
         '--acceptAllEulas' `
         "--name=$Name" `
         "--net:Atlaso Management Network=$ManagementVmnet" `
         "--net:Atlaso Services Network=$ServiceVmnet" `
+        "--prop:atlaso.fqdn=$fqdn" `
+        "--prop:atlaso.admin_password=$passwordText" `
+        "--prop:atlaso.root_password=$passwordText" `
         $sourceOva.FullName `
         $vmxPath
     if ($LASTEXITCODE -ne 0 -or -not (Test-Path -LiteralPath $vmxPath -PathType Leaf)) {
@@ -106,6 +107,20 @@ try {
         throw 'vmrun could not start the imported OVA.'
     }
     $vmStarted = $true
+    $hostKeyDeadline = [DateTimeOffset]::UtcNow.AddMinutes(15)
+    $expectedHostKey = ''
+    while ([DateTimeOffset]::UtcNow -lt $hostKeyDeadline -and
+        $expectedHostKey -notmatch '^ssh-ed25519 [A-Za-z0-9+/]+={0,2}$') {
+        $expectedHostKey = [string](& $vmrun -T ws readVariable $vmxPath guestVar `
+                guestinfo.atlaso.test_vm_ssh_host_ed25519_public_key 2>$null)
+        $expectedHostKey = $expectedHostKey.Trim()
+        if ($expectedHostKey -notmatch '^ssh-ed25519 [A-Za-z0-9+/]+={0,2}$') {
+            Start-Sleep -Seconds 5
+        }
+    }
+    if ($expectedHostKey -notmatch '^ssh-ed25519 [A-Za-z0-9+/]+={0,2}$') {
+        throw 'VMware guest-info did not publish the regenerated Ed25519 SSH host key.'
+    }
     $address = [string](& $vmrun -T ws getGuestIPAddress $vmxPath -wait)
     $address = $address.Trim()
     if ($LASTEXITCODE -ne 0 -or $address -notmatch '^\d{1,3}(?:\.\d{1,3}){3}$') {

@@ -510,8 +510,8 @@ Both this wrapper and the Workstation lifecycle runner inject a complete `guesti
 VMX before power-on. The default document selects IPv4 DHCP, leaves resolver overrides blank, keeps IPv6 and root SSH
 disabled, and supplies the required appliance identity and first-boot credentials. The normal test wrapper alone adds
 the internal development administrator public-key and public development-root properties; the lifecycle runner omits
-both. The signing key uses a separate test-wrapper-only guest-info value and is not an OVF property. When the
-administrator property is present, the customizer publishes the VM's public Ed25519 SSH host key through the separate
+both. The signing key uses a separate test-wrapper-only guest-info value and is not an OVF property. After regenerating
+machine identity, the customizer publishes the VM's public Ed25519 SSH host key through the separate
 `guestinfo.atlaso.test_vm_ssh_host_ed25519_public_key` value after wire-format validation. This gives raw Workstation
 clones the same fail-closed initialization contract as an OVA deployment instead of leaving the customizer waiting for
 properties

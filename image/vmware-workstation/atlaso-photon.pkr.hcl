@@ -50,6 +50,11 @@ variable "iso_checksum" {
 variable "ssh_username" {
   type    = string
   default = "atlaso-build"
+
+  validation {
+    condition     = can(regex("^[a-z_][a-z0-9_-]*$", var.ssh_username))
+    error_message = "SSH username must be one safe Linux account name."
+  }
 }
 
 variable "ssh_password" {
@@ -174,7 +179,7 @@ source "vmware-iso" "photon" {
   ssh_username         = var.ssh_username
   ssh_password         = var.ssh_password
   ssh_timeout          = "45m"
-  shutdown_command     = "printf '%s' '${local.ssh_password_stdin_base64}' | base64 -d | sudo -S systemctl poweroff"
+  shutdown_command     = "printf '%s' '${local.ssh_password_stdin_base64}' | base64 -d | sudo -S sh -c 'userdel -r ${var.ssh_username}; systemctl poweroff'"
 
   vmx_data = {
     "firmware"                 = "efi"

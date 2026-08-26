@@ -107,6 +107,11 @@ esac
 """,
     )
     _write_executable(command_dir / "tdnf", "#!/bin/sh\nexit 91\n")
+    initializer = tmp_path / "atlaso-initialize-machine-identity"
+    _write_executable(
+        initializer,
+        "#!/bin/sh\nprintf '%s\\n' \"$*\" >\"$FAKE_MACHINE_IDENTITY_LOG\"\n",
+    )
 
     staging = tmp_path / "first-boot-packages"
     for profile in ("hyperv", "qemu"):
@@ -147,6 +152,8 @@ esac
         "ATLASO_DMI_ROOT": str(dmi_root),
         "ATLASO_GUEST_AGENT_STAGING_IDENTITY": f"{owner}:{group}:700",
         "ATLASO_GUEST_AGENT_PACKAGE_CACHE": str(package_cache),
+        "ATLASO_MACHINE_IDENTITY_INITIALIZER": str(initializer),
+        "FAKE_MACHINE_IDENTITY_LOG": str(tmp_path / "machine-identity.log"),
     }
 
 
@@ -211,6 +218,8 @@ def test_selects_one_provider_and_erases_staging(
     assert not Path(environment["ATLASO_GUEST_AGENT_STAGING"]).exists()
     assert not any(Path(environment["ATLASO_GUEST_AGENT_PACKAGE_CACHE"]).iterdir())
     assert service in Path(environment["FAKE_SYSTEMCTL_LOG"]).read_text(encoding="utf-8")
+    expected_platform = "qemu" if detected == "kvm" else "hyperv" if detected == "microsoft" else "baremetal" if detected == "none" else detected
+    assert Path(environment["FAKE_MACHINE_IDENTITY_LOG"]).read_text(encoding="utf-8") == f"--platform {expected_platform}\n"
     if detected in {"kvm", "microsoft"}:
         rpm_log = Path(environment["FAKE_RPM_LOG"]).read_text(encoding="utf-8")
         assert rpm_log.index("-e open-vm-tools") < rpm_log.index("-Uvh")

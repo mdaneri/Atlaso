@@ -12884,9 +12884,10 @@ def _release_data_disk_owned_files(release_root: Path, platform: str) -> list[tu
         release_root: Verified extracted release root.
         platform: Exact signed policy name selected from installed-appliance evidence.
     """
+    unit_name = "atlaso-data-disks.service" if platform == "virtualization" else "atlaso-data-disks-legacy.service"
     return [
         (release_root / "bin/atlaso-mount-data-disks", ATLASO_MOUNT_DATA_DISKS_PATH, 0o755),
-        (release_root / "systemd/atlaso-data-disks.service", ATLASO_DATA_DISK_UNIT_PATH, 0o644),
+        (release_root / f"systemd/{unit_name}", ATLASO_DATA_DISK_UNIT_PATH, 0o644),
         (
             release_root / "systemd/atlaso.service.d/atlaso-data-disks.conf",
             ATLASO_SERVICE_DATA_DISK_DROPIN_PATH,

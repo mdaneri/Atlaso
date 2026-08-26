@@ -69,6 +69,8 @@ capacities.
 
 VMware deployment continues through OVF-property customization. The first-boot selector retains `open-vm-tools`,
 discards the unused offline QEMU and Hyper-V RPM payloads, and records success before Atlaso services start.
+Supply a unique FQDN, Atlaso administrator password, and root password in the OVF deployment properties. The release
+image contains no usable build or deployment credential and no reusable SSH host key.
 
 ## Import on Proxmox VE
 
@@ -82,7 +84,8 @@ chmod 0755 import-atlaso-proxmox.sh
 
 Arguments are the OVA, an unused VM ID, destination storage, management bridge, and optional services bridge. The
 helper uses the platform OVF/OVA importer, then enforces q35, OVMF without pre-enrolled Secure Boot keys, four CPUs,
-4096 MiB RAM, virtio SCSI, two NICs, QEMU guest-agent support, boot from SCSI slot 0, and the four-disk contract. It
+4096 MiB RAM, one shared virtio SCSI controller, two NICs, QEMU guest-agent support, boot from SCSI slot 0, and the
+four-disk contract. It
 extracts the manifest-verified OVF member into a private temporary directory for `qm importovf`; the downloaded OVA is
 never rewritten.
 
@@ -104,8 +107,9 @@ Arguments are the OVA, an unused domain name, active storage pool, management ne
 The helper imports with `virt-v2v -i ova`, creates only missing 500 GiB data volumes, verifies the resulting disk order
 and capacities, and normalizes the inactive libvirt definition. The resulting domain remains shut off for inspection.
 
-The helper rejects an existing domain or matching storage namespace. Rollback can remove only the domain and volumes
-created by that invocation.
+The helper serializes each pool/domain namespace and rejects an existing domain or matching storage namespace.
+Rollback removes only the domain and matching volumes created after that locked preflight, including partial
+`virt-v2v` volumes left before a domain definition exists.
 
 ## Import on Hyper-V
 
@@ -147,16 +151,23 @@ closure available for automatic retry while the Atlaso front door and applicatio
 VMware continues into OVF-property customization. Hyper-V, KVM, and Proxmox use DHCP-first defaults and do not wait for
 VMware metadata. Use the appliance console to complete initial networking when DHCP is unavailable.
 
+Before networking, every cloned appliance generates a new machine ID, OpenSSH host-key set, application secrets, and
+high-entropy administrator and root passwords. VMware replaces the generated passwords with its required OVF values
+and publishes the regenerated Ed25519 public host key through VMware guest-info for authenticated automation. KVM and
+Proxmox expose a root-only one-time envelope at `/var/lib/atlaso/first-boot-access.json`, readable through the QEMU
+guest agent or from the console. Hyper-V publishes the same envelope under KVP key `atlaso.first_boot_access`; it is
+also printed on the local console. Retrieve this envelope only from the authenticated hypervisor control plane, pin
+its SSH host key before connecting, rotate both passwords immediately, and securely remove the one-time access file.
+
 Signed appliance updates preserve the disk policy already proven for the installed generation. Portable artifacts use
 the shared four-disk policy recorded by the verified first-boot provider marker. Older VMware appliances retain their
 existing four-disk controller identities, while older three-disk Hyper-V appliances retain their Depot and Backups
 slots and are never reinterpreted as the new four-disk layout. These compatibility policies support updates only; the
 retired Hyper-V template-build and lifecycle environment is not restored.
 
-The trusted VMware build publishes the template's Ed25519 SSH host public key into the VMX. The OVA exporter binds that
-key into manifest-verified provenance, and the Hyper-V converter carries the same value into its checksummed manifest.
-Protected VMware and Hyper-V smoke jobs install that exact public key into the SSH client before password
-authentication and reject an unknown or changed host; they never use trust-on-first-use host-key acceptance.
+The protected smoke jobs retrieve each booted VM's regenerated Ed25519 public host key and unique credential through
+its authenticated hypervisor metadata channel before SSH authentication. They reject an unknown or changed host and
+never use trust-on-first-use host-key acceptance. Artifact provenance intentionally contains no reusable host identity.
 
 ## Validate and recover
 
@@ -180,10 +191,11 @@ and storage owned by that import attempt, correct the host prerequisite, and run
 
 Virtualization release jobs run only for the exact protected-main commit selected by the release workflow. The runner
 fleet must provide the dedicated `atlaso-vmware`, `atlaso-proxmox`, `atlaso-kvm`, and `atlaso-hyperv` labels; do not
-attach those labels to general-purpose or fork-accessible runners. Configure the `appliance-release` environment with
-the protected build and smoke credentials, and define the repository variables named by `.github/workflows/release.yml`
-for VMware vmnets, Proxmox storage and bridges, KVM storage and networks, Hyper-V switches, smoke identities, and
-bounded test destinations.
+attach those labels to general-purpose or fork-accessible runners. Build credentials are disposable values generated
+inside the protected build job and are scrubbed before export. Configure only the deployment-specific VMware smoke
+credential in the `appliance-release` environment, and define the repository variables named by
+`.github/workflows/release.yml` for VMware vmnets, Proxmox storage and bridges, KVM storage and networks, Hyper-V
+switches, and bounded test destinations.
 
 The VMware build runner requires Workstation, Packer, OVF Tool, and the existing Photon build prerequisites. The
 Proxmox and KVM runners require the same host tools listed in their import sections. The Hyper-V runner requires
