@@ -2317,7 +2317,7 @@ def test_lifecycle_vmware_script_supports_routing_wan_only_and_esxi_pxe_install(
     assert wrapper.index("Export-Clixml") < wrapper.index("Remove-Item -LiteralPath $secretBundlePath -Force")
     assert "-GuestPassword $esxiPasswordSecure" in runner
     assert "'--secret-stdin'" in runner
-    assert "$secretPayload | & python @Arguments" in runner
+    assert "$secretPayload | & python @Arguments | Out-Host" in runner
     assert "'--esxi-password'," not in runner
 
     assert "function Get-GuestIPv4ViaGuestOps" in runner

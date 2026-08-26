@@ -197,7 +197,9 @@ function Invoke-LifecyclePython {
             vcf_backup_password    = $vcfBackupPasswordText
             esxi_password          = $esxiPasswordText
         } | ConvertTo-Json -Compress
-        $secretPayload | & python @Arguments
+        # Keep the child's progress output visible without adding it to this
+        # function's success stream, which is reserved for the exit code.
+        $secretPayload | & python @Arguments | Out-Host
         return $LASTEXITCODE
     }
     finally {
