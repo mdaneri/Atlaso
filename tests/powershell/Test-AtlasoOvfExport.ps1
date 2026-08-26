@@ -1,3 +1,10 @@
+<#
+.SYNOPSIS
+Validates bounded VMware OVF output-directory replacement behavior.
+
+.PARAMETER RepositoryRoot
+The Atlaso repository root containing the module under test.
+#>
 [CmdletBinding()]
 param(
     [Parameter(Mandatory = $true)][string]$RepositoryRoot
@@ -9,6 +16,16 @@ $ErrorActionPreference = 'Stop'
 $modulePath = Join-Path $RepositoryRoot 'scripts\windows\vmware\Atlaso.OvfExport.psm1'
 Import-Module $modulePath -Force
 
+<#
+.SYNOPSIS
+Asserts that an action terminates with the expected message pattern.
+
+.PARAMETER Action
+The PowerShell action expected to terminate.
+
+.PARAMETER Pattern
+The wildcard pattern required in the terminating error message.
+#>
 function Assert-ThrowsLike {
     param(
         [Parameter(Mandatory = $true)][scriptblock]$Action,
@@ -27,6 +44,13 @@ function Assert-ThrowsLike {
     throw "Expected error like '$Pattern', but the command succeeded."
 }
 
+<#
+.SYNOPSIS
+Creates a test directory containing a retention marker.
+
+.PARAMETER Path
+The exact test directory to create.
+#>
 function New-MarkerDirectory {
     param([Parameter(Mandatory = $true)][string]$Path)
 
@@ -45,10 +69,10 @@ try {
         -OutputDirectory '' `
         -Name 'Atlaso-Photon'
     New-MarkerDirectory -Path $canonicalPlan.OutputDirectory
-    Clear-AtlasoOvfOutputDirectory -OutputPlan $canonicalPlan -Release
-    if (Test-Path -LiteralPath $canonicalPlan.OutputDirectory) {
-        throw 'Release mode did not replace the canonical repository-derived OVF output.'
-    }
+    Assert-ThrowsLike -Action {
+        Clear-AtlasoOvfOutputDirectory -OutputPlan $canonicalPlan
+    } -Pattern '*Pass -Force to replace it*'
+    Clear-AtlasoOvfOutputDirectory -OutputPlan $canonicalPlan -Force
 
     New-MarkerDirectory -Path $canonicalPlan.OutputDirectory
     $explicitCanonicalPlan = Resolve-AtlasoOvfOutputPlan `
@@ -57,7 +81,7 @@ try {
         -Name 'Atlaso-Photon' `
         -CallerSpecifiedOutputDirectory
     Assert-ThrowsLike -Action {
-        Clear-AtlasoOvfOutputDirectory -OutputPlan $explicitCanonicalPlan -Release
+        Clear-AtlasoOvfOutputDirectory -OutputPlan $explicitCanonicalPlan
     } -Pattern '*Pass -Force to replace it*'
     if (-not (Test-Path -LiteralPath (Join-Path $explicitCanonicalPlan.OutputDirectory 'retain.marker'))) {
         throw 'Release mode removed an explicitly supplied canonical output directory without -Force.'
@@ -71,7 +95,7 @@ try {
         -Name 'Atlaso-Photon' `
         -CallerSpecifiedOutputDirectory
     Assert-ThrowsLike -Action {
-        Clear-AtlasoOvfOutputDirectory -OutputPlan $alternatePlan -Release
+        Clear-AtlasoOvfOutputDirectory -OutputPlan $alternatePlan
     } -Pattern '*Pass -Force to replace it*'
     if (-not (Test-Path -LiteralPath (Join-Path $alternatePath 'retain.marker'))) {
         throw 'Release mode removed an alternate output directory without -Force.'
@@ -101,7 +125,7 @@ try {
         -Name '..\..\escaped-release'
     New-MarkerDirectory -Path $escapedPlan.OutputDirectory
     Assert-ThrowsLike -Action {
-        Clear-AtlasoOvfOutputDirectory -OutputPlan $escapedPlan -Release
+        Clear-AtlasoOvfOutputDirectory -OutputPlan $escapedPlan -Force
     } -Pattern '*outside the approved root*'
     if (-not (Test-Path -LiteralPath (Join-Path $escapedPlan.OutputDirectory 'retain.marker'))) {
         throw 'A traversal-shaped release name escaped the approved output boundary.'

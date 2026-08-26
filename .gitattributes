@@ -12,12 +12,11 @@ image/inventory-linux/external/** text eol=lf
 image/inventory-linux/external/overlay/usr/share/atlaso/*.png binary
 image/inventory-linux/external/overlay/usr/share/atlaso/*.ppm binary
 
-image/hyperv/sudoers.d/* text eol=lf
-image/hyperv/systemd/* text eol=lf
+image/common/sudoers.d/* text eol=lf
+image/common/systemd/* text eol=lf
 
 # First boot sources these platform policies as shell input.
-image/hyperv/data-disks.conf text eol=lf
-image/vmware-workstation/data-disks.conf text eol=lf
+image/common/data-disks.conf text eol=lf
 image/vmware-workstation/development-trust/*.pem text eol=lf
 
 scripts/appliance/atlaso-helper text eol=lf

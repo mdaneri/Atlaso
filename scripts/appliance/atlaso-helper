@@ -254,7 +254,6 @@ ATLASO_BOOTSTRAP_HTTPS_UNIT_PATH = Path("/etc/systemd/system/atlaso-bootstrap-ht
 ATLASO_NGINX_DATA_DISK_DROPIN_PATH = Path("/etc/systemd/system/nginx.service.d/atlaso-data-disks.conf")
 ATLASO_DISK_IDENTITY_UDEV_PATH = Path("/etc/udev/rules.d/99-atlaso-disk-identity.rules")
 ATLASO_VMWARE_OVF_UNIT_PATH = Path("/etc/systemd/system/atlaso-vmware-ovf-customize.service")
-ATLASO_HYPERV_GENERATOR_PATH = Path("/etc/systemd/system-generators/systemd-ssh-generator")
 ATLASO_DMI_SYS_VENDOR_PATH = Path("/sys/class/dmi/id/sys_vendor")
 ATLASO_DMI_PRODUCT_NAME_PATH = Path("/sys/class/dmi/id/product_name")
 SUPPORTED_RELEASE_PYTHON_ABIS = {"cp314"}
@@ -12748,50 +12747,6 @@ def _wait_for_atlaso_health(timeout_seconds: int = 60) -> dict:
     }
 
 
-def _release_data_disk_platform() -> str:
-    """Return the existing appliance platform for its signed data-disk policy.
-
-    Raises:
-        ValueError: If the appliance platform is unknown or contradictory.
-    """
-    evidence: set[str] = set()
-    if ATLASO_VMWARE_OVF_UNIT_PATH.is_file():
-        evidence.add("vmware")
-    if ATLASO_HYPERV_GENERATOR_PATH.is_symlink():
-        try:
-            if os.readlink(ATLASO_HYPERV_GENERATOR_PATH) == "/dev/null":
-                evidence.add("hyperv")
-        except OSError:
-            pass
-
-    if ATLASO_DATA_DISK_POLICY_PATH.is_file():
-        policy = ATLASO_DATA_DISK_POLICY_PATH.read_text(encoding="utf-8")
-        if "ATLASO_DEPOT_SCSI_TUPLE=0:2:0" in policy and "ATLASO_BACKUP_SCSI_TUPLE=0:3:0" in policy:
-            evidence.add("vmware")
-        if "ATLASO_DEPOT_SCSI_TUPLE=0:0:1" in policy and "ATLASO_BACKUP_SCSI_TUPLE=0:0:2" in policy:
-            evidence.add("hyperv")
-
-    vendor = (
-        ATLASO_DMI_SYS_VENDOR_PATH.read_text(encoding="utf-8").strip().casefold()
-        if ATLASO_DMI_SYS_VENDOR_PATH.is_file()
-        else ""
-    )
-    product = (
-        ATLASO_DMI_PRODUCT_NAME_PATH.read_text(encoding="utf-8").strip().casefold()
-        if ATLASO_DMI_PRODUCT_NAME_PATH.is_file()
-        else ""
-    )
-    if "vmware" in vendor or "vmware" in product:
-        evidence.add("vmware")
-    if "microsoft" in vendor and product == "virtual machine":
-        evidence.add("hyperv")
-
-    if len(evidence) != 1:
-        detail = ", ".join(sorted(evidence)) or "none"
-        raise ValueError(f"Atlaso release cannot select a platform data-disk policy from evidence: {detail}")
-    return evidence.pop()
-
-
 def _install_release_owned_files(
     release_root: Path,
     backup_root: Path,
@@ -12805,14 +12760,13 @@ def _install_release_owned_files(
         backup_root: Filesystem path associated with backup root.
         before_install: Durable checkpoint callback invoked after backup and before mutation.
     """
-    data_disk_platform = _release_data_disk_platform()
     owned = [
         (release_root / "bin/atlaso-helper", Path("/opt/atlaso/bin/atlaso-helper"), 0o755),
         (release_root / "THIRD_PARTY_NOTICES.md", ATLASO_NOTICE_PATH, 0o644),
         (release_root / "systemd/atlaso.service", Path("/etc/systemd/system/atlaso.service"), 0o644),
         (release_root / "systemd/atlaso-worker.service", Path("/etc/systemd/system/atlaso-worker.service"), 0o644),
         (release_root / "systemd/atlaso-console.service", Path("/etc/systemd/system/atlaso-console.service"), 0o644),
-        *_release_data_disk_owned_files(release_root, data_disk_platform),
+        *_release_data_disk_owned_files(release_root),
     ]
     trust = release_root / "trust"
     if trust.is_dir():
@@ -12854,12 +12808,11 @@ def _install_release_owned_files(
     return backups
 
 
-def _release_data_disk_owned_files(release_root: Path, platform: str) -> list[tuple[Path, Path, int]]:
+def _release_data_disk_owned_files(release_root: Path) -> list[tuple[Path, Path, int]]:
     """Return every release asset required by the data-disk safety boundary.
 
     Args:
         release_root: Verified extracted release root.
-        platform: Exact signed data-disk policy platform name.
     """
     return [
         (release_root / "bin/atlaso-mount-data-disks", ATLASO_MOUNT_DATA_DISKS_PATH, 0o755),
@@ -12876,7 +12829,7 @@ def _release_data_disk_owned_files(release_root: Path, platform: str) -> list[tu
             0o644,
         ),
         (release_root / "udev/99-atlaso-disk-identity.rules", ATLASO_DISK_IDENTITY_UDEV_PATH, 0o644),
-        (release_root / f"data-disks/{platform}.conf", ATLASO_DATA_DISK_POLICY_PATH, 0o644),
+        (release_root / "data-disks/virtualization.conf", ATLASO_DATA_DISK_POLICY_PATH, 0o644),
     ]
 
 
@@ -12937,7 +12890,7 @@ def _bootstrap_release_data_disk_safety(release_root: Path) -> list[dict]:
             # The pre-start hook exists only to bridge signed candidates through an older updater.
             _record_data_disk_safety_bootstrap_complete()
             return []
-    assets = _release_data_disk_owned_files(resolved_release, _release_data_disk_platform())
+    assets = _release_data_disk_owned_files(resolved_release)
     for source, _destination, _mode in assets:
         if not source.is_file():
             raise ValueError(f"Atlaso release is missing {source.relative_to(resolved_release)}")

@@ -199,7 +199,7 @@ build {
 
   provisioner "shell" {
     inline = [
-      "mkdir -p /tmp/atlaso-src/scripts /tmp/atlaso-src/image/common /tmp/atlaso-src/image/vmware-workstation /tmp/atlaso-src/image/inventory-linux /tmp/atlaso-src/third_party"
+      "mkdir -p /tmp/atlaso-src/scripts /tmp/atlaso-src/image/common/scripts /tmp/atlaso-src/image/common/guest-agents /tmp/atlaso-src/image/vmware-workstation /tmp/atlaso-src/image/inventory-linux /tmp/atlaso-src/third_party"
     ]
   }
 
@@ -274,13 +274,28 @@ build {
   }
 
   provisioner "file" {
+    source      = "../common/scripts"
+    destination = "/tmp/atlaso-src/image/common/scripts"
+  }
+
+  provisioner "file" {
+    source      = "../common/guest-agents"
+    destination = "/tmp/atlaso-src/image/common/guest-agents"
+  }
+
+  provisioner "file" {
     source      = "../common/udev"
     destination = "/tmp/atlaso-src/image/common/udev"
   }
 
   provisioner "file" {
-    source      = "data-disks.conf"
-    destination = "/tmp/atlaso-src/image/vmware-workstation/data-disks.conf"
+    source      = "../common/data-disks.conf"
+    destination = "/tmp/atlaso-src/image/common/data-disks.conf"
+  }
+
+  provisioner "file" {
+    source      = "../common/sudoers.d"
+    destination = "/tmp/atlaso-src/image/common/sudoers.d"
   }
 
   provisioner "file" {
@@ -296,11 +311,6 @@ build {
   provisioner "file" {
     source      = "../common/powershell"
     destination = "/tmp/atlaso-src/image/common/powershell"
-  }
-
-  provisioner "file" {
-    source      = "sudoers.d"
-    destination = "/tmp/atlaso-src/image/vmware-workstation/sudoers.d"
   }
 
   provisioner "shell" {

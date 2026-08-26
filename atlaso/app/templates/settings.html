@@ -60,7 +60,7 @@
         </datalist>
       </div>
       <label class="switch-field">
-        <span class="field-label"><span>Root SSH login</span><button class="help-icon" type="button" data-help="Allows direct SSH login as root for local appliance debugging after global appliance apply. Keep disabled unless a controlled Hyper-V or break-glass workflow needs it; disabling applies Atlaso's root-login sshd drop-in off state.">i</button></span>
+        <span class="field-label"><span>Root SSH login</span><button class="help-icon" type="button" data-help="Allows direct SSH login as root for local appliance debugging after global appliance apply. Keep disabled unless a controlled console or break-glass workflow needs it; disabling applies Atlaso's root-login sshd drop-in off state.">i</button></span>
         <input class="switch-input" type="checkbox" name="root_ssh_enabled" {{ "checked" if appliance_settings.root_ssh_enabled else "" }}>
         <span class="switch-track" aria-hidden="true"></span>
       </label>

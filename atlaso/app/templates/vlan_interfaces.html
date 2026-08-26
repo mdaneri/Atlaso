@@ -12,7 +12,7 @@
       <span class="status-pill muted" data-vlan-interface-count>{{ vlan_interfaces|length }} VLAN{{ '' if vlan_interfaces|length == 1 else 's' }}</span>
     </div>
     <div class="inline-help-row">
-      <span class="field-label"><span>Trunk parents</span><button class="help-icon" type="button" data-help="Only physical NICs marked as trunk are available here. On the Photon appliance, use the Hyper-V trunk NIC for tagged lab networks.">i</button></span>
+      <span class="field-label"><span>Trunk parents</span><button class="help-icon" type="button" data-help="Only physical NICs marked as trunk are available here. On the Photon appliance, attach the selected physical NIC to a tagged trunk network.">i</button></span>
       <span class="field-label"><span>Desired VLAN state</span><button class="help-icon" type="button" data-help="Creating or editing a VLAN stores desired state and updates validation previews. The host is changed only by the global appliance apply workflow.">i</button></span>
       <span class="field-label"><span>Management UI</span><button class="help-icon" type="button" data-help="An enabled access VLAN can expose the authenticated management UI while remaining an ordinary access network for routing and services.">i</button></span>
     </div>

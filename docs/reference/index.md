@@ -17,7 +17,7 @@ status: current
 - [vSphere Key Provider protocol contract](vsphere-key-provider-protocol.md)
 - [vSphere Key Provider security architecture](vsphere-key-provider-security.md)
 - [Full technical reference](full-technical-reference.md)
-- [Hyper-V lifecycle testing](hyperv-lifecycle-testing.md)
+- [Portable virtualization artifacts](virtualization-artifacts.md)
 - [VMware Workstation lifecycle testing](vmware-workstation-lifecycle-testing.md)
 - [OpenAPI schema](https://mdaneri.github.io/Atlaso/docs/) is available from a running appliance at `/openapi.json`.
 

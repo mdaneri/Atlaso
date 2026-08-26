@@ -51,24 +51,24 @@ bundled component; the same release-specific notice file is published with the s
 software retains its own license terms, including the bundled iPXE bootloaders.
 
 The MVP is a safe runnable scaffold. It provides the FastAPI control plane, appliance-style web UI, local
-authentication, JWT bearer API tokens, audit logging, OpenAPI 3.1, dry-run system adapters, and Windows/Hyper-V script
-scaffolding. It does not apply real host networking, firewall, service, SFTP, registry, repository, DNS, DHCP, CA, or
+authentication, JWT bearer API tokens, audit logging, OpenAPI 3.1, dry-run system adapters, and Windows image/artifact
+automation. It does not apply real host networking, firewall, service, SFTP, registry, repository, DNS, DHCP, CA, or
 KMS changes by default.
 
 ## Photon OS Appliance Image
 
-The first real OS appliance target is Photon OS 5.0 on Hyper-V. The image builder lives in
-[`image/hyperv/`](https://github.com/mdaneri/Atlaso/tree/main/image/hyperv) and provisions:
+The canonical OS appliance target is Photon OS 5.0 on VMware Workstation. The image builder lives in
+[`image/vmware-workstation/`](https://github.com/mdaneri/Atlaso/tree/main/image/vmware-workstation) and provisions:
 
-- a Photon OS 5.0 Generation 2 Hyper-V VM with Secure Boot off;
+- a Photon OS 5.0 VMware VM with UEFI firmware and Secure Boot off;
 - updated Photon packages from the configured Photon 5.0 repositories, with a second update pass after appliance
   packages are installed;
 - the `atlaso` system user;
 - `/opt/atlaso` for the installed application;
 - `/etc/atlaso/atlaso.env` for appliance environment settings;
 - `/etc/atlaso/build-info` for build/update provenance;
-- masked `systemd-ssh-generator` so Photon does not attempt automatic SSH-over-AF_VSOCK sockets on Hyper-V while normal
-  TCP SSH remains available;
+- masked `systemd-ssh-generator` so portable conversions cannot activate an unintended SSH-over-AF_VSOCK listener while
+  normal TCP SSH remains available;
 - `/var/lib/atlaso` for durable state;
 - `/var/log/atlaso` for local logs;
 - fixed appliance mount points under `/mnt/atlaso-vcf-*`;
@@ -84,8 +84,9 @@ The first real OS appliance target is Photon OS 5.0 on Hyper-V. The image builde
   first boot can also use its bounded non-secret network-review state before network and data-disk initialization; and
 - `/opt/atlaso/bin/atlaso-helper` and a constrained sudoers template.
 
-Finished Hyper-V appliance VMs and VMware OVF/OVA appliances also attach two durable expandable data disks: one for the
-VCF Offline Depot at `/mnt/atlaso-vcf-offline-depot` and one for VCF Backups at `/mnt/atlaso-vcf-backups`. VMware images
+Finished VMware OVF/OVA appliances and portable Hyper-V, KVM, and Proxmox artifacts also attach two durable expandable
+data disks: one for the VCF Offline Depot at `/mnt/atlaso-vcf-offline-depot` and one for VCF Backups at
+`/mnt/atlaso-vcf-backups`. VMware images
 precede those disks with file-backed Photon OS and Atlaso system-content VMDKs; the latter holds `/opt/atlaso` and the
 appliance-wide PowerShell modules through required UUID-backed mounts. Keep depot and backup workloads off both payload
 disks. The root-owned image policy binds `ATLASO_DEPOT` and `ATLASO_BKUP` to the platform's fixed SCSI locations, a
@@ -116,21 +117,21 @@ this previous-updater compatibility step; image provisioning installs and valida
 The bridge records root-owned one-time completion under `/etc/atlaso`; later control-plane starts use the permanent
 data-disk systemd dependency without repeating asset backup, identity reload, migration, or direct preparation.
 
-The Hyper-V and VMware `data-disks.conf` policies are shell-sourced build inputs. Atlaso declares both files as LF-only
+The shared `image/common/data-disks.conf` policy is a shell-sourced build input. Atlaso declares it as LF-only
 in `.gitattributes`, including for supported Windows checkouts with `core.autocrlf=true`, and repository tests
 materialize that checkout mode before passing each copied policy through the first-boot parser. Verify the checkout
 contract from PowerShell with:
 
 ```powershell
-git check-attr text eol -- image/hyperv/data-disks.conf image/vmware-workstation/data-disks.conf
-git ls-files --eol -- image/hyperv/data-disks.conf image/vmware-workstation/data-disks.conf
+git check-attr text eol -- image/common/data-disks.conf
+git ls-files --eol -- image/common/data-disks.conf
 ```
 
-Both paths must report `text: set`, `eol: lf`, and `w/lf`. Do not normalize values inside the runtime parser: its strict
+The path must report `text: set`, `eol: lf`, and `w/lf`. Do not normalize values inside the runtime parser: its strict
 capacity and SCSI-identity rejection remains the fail-closed boundary for malformed installed policy.
 
-Both Packer templates upload the shared udev rule and their platform `data-disks.conf` into `/tmp/atlaso-src`. The
-shared image provisioner validates and installs those inputs directly from that staged source tree before the later
+The canonical Packer template uploads the shared udev rule and virtualization policy into `/tmp/atlaso-src`. The shared
+image provisioner validates and installs those inputs directly from that staged source tree before the later
 application sync populates `/opt/atlaso`; pre-sync disk-policy installation must not read from `/opt/atlaso`.
 
 Atlaso writes operational events to `/var/log/atlaso/atlaso.log`. Audit events, desired-state edits, and appliance apply
@@ -182,8 +183,7 @@ python3 scripts/check_photon_compatibility.py
 ```
 
 Atlaso Windows automation supports PowerShell 7.4 or newer (`pwsh`). Earlier PowerShell releases and Windows PowerShell
-5.1 (`powershell.exe`) are not supported. Run every documented Windows command from `pwsh`, including elevated Hyper-V
-operations.
+5.1 (`powershell.exe`) are not supported. Run every documented Windows command from `pwsh`.
 
 The Windows Inventory Linux wrapper requires an already functional WSL 2 installation and uses the explicitly
 provisioned `Atlaso-Build` distribution by default. It does not install WSL or silently create a missing
@@ -194,41 +194,26 @@ in force for every distribution. A checkout-wide Windows mutex protects shared f
 [Windows image-build WSL environment](../contribute/windows-image-build-wsl.md) for the pinned setup, safety boundary,
 storage, recovery, and removal procedures.
 
-Build inputs are the current Photon OS 5.0 ISO URL and checksum. On Hyper-V, use the Windows wrapper so the Photon
-kickstart is attached as a local single remastered ISO instead of depending on early installer networking:
+Build inputs are the current Photon OS 5.0 ISO URL and checksum. Use the VMware Windows wrapper so the Photon kickstart
+is attached as a local remastered ISO instead of depending on early installer networking:
 
 ```powershell
 pwsh -ExecutionPolicy Bypass `
-  -File scripts/windows/hyperv/build-photon-image.ps1 `
+  -File scripts/windows/vmware/build-photon-image.ps1 `
   -IsoUrl "https://packages.broadcom.com/photon/5.0/GA/iso/photon-5.0-dde71ec57.x86_64.iso" `
   -IsoChecksum "sha512:6a7a258399a258da742032987c043ab25503698d35edafaf1ae000f12127da1a161d8b84caa17fd8f23d129e81e1faa7ab087c20ab9229772a643f8f9475305f" `
   -SshPassword "<one-time-build-root-password>" `
   -BootstrapAdminPassword "<initial-atlaso-admin-password>"
 ```
 
-The supported Hyper-V and VMware Workstation wrappers treat the Photon build password as opaque data. They encode the
+The supported VMware Workstation wrapper treats the Photon build password as opaque data. It encodes the
 credential before inserting it into generated kickstart or Packer shell commands, then decode it directly to standard
 input. Printable passwords containing apostrophes and common PowerShell or POSIX shell metacharacters therefore retain
 their exact credential bytes without becoming shell syntax. Caller-side PowerShell quoting still applies.
 
-Run Packer from an elevated PowerShell 7 session or as a user in the `Hyper-V Administrators` group. Prepare the Atlaso
-Hyper-V management network before building:
-
-```powershell
-pwsh -ExecutionPolicy Bypass -File scripts/windows/hyperv/create-switches.ps1
-```
-
-Custom management networks use `-MgmtHostIPAddress` with `-MgmtPrefixLength`. The switch script accepts only a
-canonical dotted-decimal IPv4 address and a prefix length from 0 through 32, and validates both before it queries or
-changes Hyper-V or host-network state. It applies the complete 32-bit prefix mask when deriving the NAT network, so
-`10.20.30.129/25` creates `10.20.30.128/25` rather than `10.20.30.0/25`.
-
-The Packer build VM uses the `Atlaso-Mgmt` switch by default with temporary static address `192.168.49.30/24` and
-gateway `192.168.49.254`. This avoids fragile `Default Switch` host-IP detection while still giving the builder NAT
-internet access for `tdnf update`. Unless `-BuilderStaticDns` is supplied, the wrapper discovers the host's active IPv4
-DNS servers and uses them for both the temporary Photon builder and the finished appliance management interface, with
-public DNS only as a fallback. The wrapper writes `photon-ks.json`, embeds it into a remastered Photon ISO, replaces the
-ISO's UEFI GRUB config with a Atlaso auto-install entry, and passes that single ISO to Packer. Photon then boots with
+Run the wrapper from PowerShell 7 with VMware Workstation installed. It resolves the selected VMware management network
+before changing build output. The wrapper writes `photon-ks.json`, embeds it into a remastered Photon ISO, replaces the
+ISO's UEFI GRUB config with an Atlaso auto-install entry, and passes that single ISO to Packer. Photon then boots with
 `ks=cdrom:/photon-ks.json` without Packer typing boot commands. Raw `packer build .` is intentionally blocked unless the
 ISO is marked as wrapper-prepared; the wrapper is the tested Windows Server 2025 path. The remastered ISO is a bounded
 sensitive artifact: the wrapper removes it and verifies its absence after Packer exits, including failure and fallback
@@ -240,7 +225,7 @@ directory. Use `-PackerOnError abort` to keep a failed builder VM for debugging,
 failure action interactively. During provisioning, the shared Photon path reads `[project].version` from the staged
 `pyproject.toml` with Python's TOML parser and validates the repository's strict `X.Y.Z` release format before creating
 the bootstrap release directory. Missing, unreadable, malformed, or invalid version metadata fails the build with the
-specific version-policy error instead of an ambiguous shell match failure. Both Photon Packer targets stage
+specific version-policy error instead of an ambiguous shell match failure. The Photon Packer target stages
 `requirements-appliance.lock` with the application source so bootstrap dependency installation can retain
 `--require-hashes`; a missing staged lock fails the image rather than falling back to unpinned dependencies. They also
 stage the third-party notice generator, its vendored-component inventory, and the referenced Inventory Linux README so
@@ -260,7 +245,7 @@ application install starts. Leave both options empty to keep standard pip behavi
 
 ```powershell
 pwsh -ExecutionPolicy Bypass `
-  -File scripts/windows/hyperv/build-photon-image.ps1 `
+  -File scripts/windows/vmware/build-photon-image.ps1 `
   -IsoUrl "<photon-5.0-iso-url>" `
   -IsoChecksum "<packer-checksum>" `
   -PipGlobalIndex "https://packages.vcfd.broadcom.net/artifactory/api/pypi/upstream-pypi-virtual/pypi" `
@@ -307,18 +292,14 @@ provenance-only legacy descriptions, preflights the complete selected range, and
 assets remain unchanged after each body edit. See [Appliance Update](../operate/appliance-update.md) and
 [Automation](../operate/automation.md).
 
-The exported Hyper-V appliance resets to `192.168.49.1/24` on `Atlaso-Mgmt`; the Windows host side should be
-`192.168.49.254/24`. `scripts/windows/hyperv/create-switches.ps1` configures that address and a NAT for the management
-network so Photon package checks work when the host has internet access.
-
 ## Development
 
 Primary workflow:
 
 1. Develop inside WSL2 on Windows 11.
 2. Run unit and API tests in WSL2.
-3. Build the Photon OS Hyper-V appliance image with Packer.
-4. Test the appliance in Hyper-V with PowerShell automation.
+3. Build the Photon OS VMware Workstation template with Packer.
+4. Test the appliance through the VMware Workstation lifecycle automation.
 
 UI work must follow the mandatory [Atlaso UI Design Guide](../contribute/ui-design-guide.md). Classify each affected
 interaction as direct-edit Tabulator, wizard-backed Tabulator, read-only Tabulator, non-grid settings, or approval-only
@@ -365,10 +346,10 @@ python scripts/check_deployment_assets.py --mode auto
 ```
 
 Auto mode validates selected assets with locally available tools and is used by pre-commit. Canonical CI is stricter:
-Ubuntu requires `systemd-analyze` and `visudo` for both platform unit sets and every sudoers fragment, while the Windows
-Packer runner performs `packer init`, exact selected-plugin verification, formatting checks, and full `packer validate`
-for both Photon templates. Hyper-V pins `github.com/hashicorp/hyperv` to `1.1.5`; VMware Workstation pins
-`github.com/vmware/vmware` to `2.1.5`. `scripts/check_packer_plugins.py` rejects a range constraint, missing selected
+Ubuntu requires `systemd-analyze` and `visudo` for the shared and VMware unit sets and every sudoers fragment, while the
+Windows Packer runner performs `packer init`, exact selected-plugin verification, formatting checks, and full
+`packer validate` for the canonical Photon template. VMware Workstation pins `github.com/vmware/vmware` to `2.1.5`.
+`scripts/check_packer_plugins.py` rejects a range constraint, missing selected
 binary, or selected filename that does not encode the exact required version. The supported Windows wrappers perform
 the same initialization and resolution check before validation or build, so warm and empty plugin caches select the
 same code for one Atlaso commit. Packer validation supplies the same required ISO variables and
@@ -1019,7 +1000,7 @@ The MVP follows these boundaries:
 - VCF backup volume mount: `/mnt/atlaso-vcf-backups`
 - VCF backup SFTP remote directory: `/backups`
 - System adapters default to dry-run mode.
-- On appliance startup, Physical Interfaces automatically refresh read-only Linux NIC inventory from Photon/Hyper-V and
+- On appliance startup, Physical Interfaces automatically refresh read-only Linux NIC inventory from Photon and
   persist the observed host facts. Operators can also refresh inventory manually; observed host facts are separate from
   desired interface state and do not create an appliance apply job. Host NIC reconciliation matches by MAC address
   before Linux interface name so removing a NIC and rebooting cannot move desired state to a different adapter; removed
@@ -1239,72 +1220,16 @@ admin:all
 Role checks and scope checks are both enforced. A viewer cannot mint admin scopes, and a network-admin cannot mint CA or
 repository administration scopes.
 
-## Hyper-V Workflow
+## Portable virtualization artifacts
 
-Windows-side automation lives in `scripts/windows/`, with shared helpers under `scripts/windows/common/` and
-provider-specific entry points under `scripts/windows/hyperv/` and `scripts/windows/vmware/`.
+The canonical VMware OVA is the release artifact for VMware, KVM, and Proxmox VE. Small import helpers verify its
+manifest, provenance, payload roles, source commit, version, disk capacities, and complete two-NIC, four-SCSI-disk
+machine contract before normalizing one target VM. The Hyper-V exporter consumes that exact validated OVA and publishes
+one versioned ZIP containing its converted VHDX disks and safe importer. Build and import commands are in [Portable
+virtualization artifacts](virtualization-artifacts.md).
 
-From WSL2:
-
-```bash
-pwsh -ExecutionPolicy Bypass -File scripts/windows/hyperv/create-switches.ps1
-```
-
-The scaffold uses these switch names:
-
-- `Atlaso-Mgmt`
-- `Atlaso-Services`
-- `Atlaso-SiteA`
-- `Atlaso-SiteB`
-- `Atlaso-Trunk`
-
-The primary appliance image target remains Hyper-V VHDX. VMware Workstation VMX/VMDK is also available for local desktop
-parity work; ESXi/vSphere OVA and KVM/Proxmox QCOW2 are future packaging targets.
-
-The Photon image build scaffold lives in:
-
-```text
-image/hyperv/
-```
-
-Use the existing scripts to create switches, create a VM from the Packer VHDX, start the VM, attach test NICs, and run
-smoke checks. The first appliance smoke pass should verify SSH, `systemctl status atlaso`, web UI login,
-`/openapi.json`, `/api/v1/dashboard`, reboot persistence, and dry-run `/ui/management/appliance-apply` job output.
-
-For a normal Hyper-V test appliance, use the explicit Hyper-V wrapper:
-
-```powershell
-pwsh -ExecutionPolicy Bypass `
-  -File scripts/windows/hyperv/create-atlaso-test-vm.ps1 `
-  -WaitForIp
-```
-
-Lifecycle interop testing uses a separate Hyper-V VM set and must not reuse or destroy the normal `Atlaso` test VM. The
-simple entry point is:
-
-```powershell
-pwsh -ExecutionPolicy Bypass `
-  -File scripts/windows/hyperv/invoke-lifecycle-test.ps1
-```
-
-The wrapper prepares the tiny Alpine client VHDX, selects the newest appliance VHDX under `image/hyperv/output`, creates
-a unique `AtlasoLifecycle-*` lab, validates DNS, DHCP, firewall, routing, NAT, WAN netem simulation, CA apply with
-deterministic packet-loss/recovery proof, CA apply with a ClientA CSR request and issued-certificate verification, VCF
-Backup SFTP with the `vcf-backup` OS user, client-side connectivity, and by default a backup/restore redeploy pass that
-confirms the restored ClientA certificate has the same serial number and SHA-256 fingerprint as the pre-restore
-certificate and that the restored CA archive fingerprints match the original settings backup. It prints a human-readable
-console summary, writes `result.json`, then removes the VMs it created. It prompts securely for the administrator and
-VCF Backup SFTP passwords and reuses the administrator `SecureString` for SSH unless a separate `-SshPassword` is
-provided; no password has a repository default. Appliance host-state probes log in as `admin` because root SSH is
-disabled by default, then run checks through sudo. The launcher hands credentials to its child only through a
-current-user DPAPI-protected temporary CLIXML bundle and removes it after the child exits. Pass `-SkipBackupRestoreTest`
-only when you need the older single-pass run, and pass `-KeepVms` only when preserving a failed lab for inspection. Use
-`-PrepareNetworksOnly` to set up the Hyper-V switches/NAT, `-CleanupVmsOnly` to remove only lifecycle VMs, and
-`-CleanupNetworksOnly` to remove Atlaso switches/NAT after all attached VMs are gone. Details live in
-[Hyper-V Lifecycle Testing](hyperv-lifecycle-testing.md).
-
-When troubleshooting a Hyper-V builder VM, use `scripts/windows/hyperv/get-atlaso-vm-ip.ps1` from an elevated PowerShell
-session to read the current IPv4 address reported by Hyper-V.
+These packages are distribution compatibility targets, not independent image-build or lifecycle environments. Keep
+deployed-behavior development and canonical lifecycle evidence on VMware Workstation.
 
 ## VMware Workstation Workflow
 
@@ -1314,9 +1239,10 @@ The Workstation image target lives in:
 image/vmware-workstation/
 ```
 
-It shares Photon ISO remastering, kickstart generation, checksum validation, Packer var-file generation, and appliance
-provisioning with the Hyper-V image path. The original Photon source ISO cache is shared under `image/common/source`;
-the Workstation image installs `open-vm-tools` instead of Hyper-V guest integration packages.
+It uses shared Photon ISO remastering, kickstart generation, checksum validation, Packer var-file generation, and
+appliance provisioning. The original Photon source ISO cache is under `image/common/source`. The canonical image
+installs VMware Tools and stages locked offline RPM closures for the QEMU and Hyper-V guest agents. A provider-neutral
+first-boot service verifies the closure and retains or replaces VMware Tools only after identifying the runtime platform.
 
 The supported GUI wrapper starts or reuses a responsive VMware Workstation UI in a separate process before Packer asks
 `vmrun` to power on the builder. This keeps the visible console without allowing the GUI start transition to retain
@@ -1351,11 +1277,11 @@ The remastered kickstart disables Photon's socket-activated SSH unit and enables
 Photon root/build password remains separate from the Atlaso web bootstrap administrator password.
 
 The Workstation Packer template creates a 40 GiB OS disk and a sparse 20 GiB `ATLASO_SYSTEM` disk. Final provisioning
-removes the build-only `python3-devel` package, clears package/download caches and staged sources, trims the filesystems,
+removes build-only compiler packages, clears package/download caches and staged sources, trims the filesystems,
 and leaves Packer compaction enabled. OVF export preserves both payload VMDKs and adds empty 500 GiB depot and backup
-definitions at SCSI units 2 and 3. `export-ovf.ps1 -Release` derives the exact tag and destination repository from the
-clean tagged checkout, then preflights and uploads the OVF assets with GitHub CLI. It uploads the combined OVA only when
-that archive independently remains below the configured asset limit. Release mode implicitly replaces only the canonical
+definitions at SCSI units 2 and 3. Export also writes a manifest-covered provenance record binding both payloads to the
+exact version and source commit. Release publication accepts the combined OVA only when it remains below the configured
+GitHub asset limit; exceeding the limit blocks publication. Replacement is limited to the canonical
 repository-derived OVF output. Any explicitly supplied existing output requires `-Force`, while every recursive
 replacement remains limited to a strict, non-reparse-point descendant of `image/vmware-workstation/ovf`; filesystem,
 repository, image, output, and external roots are refused. On deployed-VM first boot, OVF IPv4, IPv6,
@@ -1376,8 +1302,7 @@ pwsh -ExecutionPolicy Bypass `
 ```
 
 Results are written under `test-results/vmware-workstation-lifecycle/<timestamp>`. Workstation vmnets provide isolated
-layer-2 segments, but they do not model Hyper-V access/trunk VLAN port controls exactly; keep Hyper-V lifecycle evidence
-authoritative for that VLAN-specific behavior. Details live in
+layer-2 segments; tagged-trunk checks require a compatible upstream virtual-network configuration. Details live in
 [VMware Workstation Lifecycle Testing](vmware-workstation-lifecycle-testing.md).
 
 Workstation test-VM and lifecycle cleanup fails closed around the exact recursive-removal target. Redeploy requires the
@@ -1390,16 +1315,10 @@ When checked provider deletion removes the complete validated root, cleanup keep
 postconditions, requires that exact root to remain absent, and lets the active redeploy continue without enumerating the
 missing directory.
 
-The standalone VMware and Hyper-V `clean-artifacts.ps1` helpers apply the same fail-closed rule to their canonical
-`output`, `test-vms`, and provider-specific export roots. VMware cleanup reconciles `vmrun` and Workstation registration
-state. Hyper-V cleanup identifies VMs from their configuration, attached-disk paths, and each attached differencing
-disk's complete parent chain; it verifies that each matching VM is off and
-removed, revalidates refreshed configuration and disk paths before and after stopping each VM, then rechecks the
-inventory before filesystem deletion. Hyper-V resolves every existing inventory path to its final filesystem location
-before excluding it, so junction, symbolic-link, and short-path aliases cannot conceal an in-root dependency; lexical
-in-root paths that resolve outward fail closed. Both helpers reject reparse points and out-of-root
-targets, including dangling canonical directory links whose targets no longer exist; they make recursive deletion errors
-terminating and print their success message only after every target is absent.
+The standalone VMware `clean-artifacts.ps1` helper applies the same fail-closed rule to canonical `output`, `test-vms`,
+and OVF roots. It reconciles `vmrun` and Workstation registration state, rejects reparse points and out-of-root targets,
+makes recursive deletion errors terminating, and prints success only after every target is absent. Portable artifact
+replacement is separately limited to an exact repository-owned version/target directory and rejects any reparse point.
 An existing canonical target that is not a directory is an error and blocks that success message instead of being
 silently skipped.
 

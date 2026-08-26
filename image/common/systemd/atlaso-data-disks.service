@@ -1,7 +1,8 @@
 [Unit]
 Description=Prepare Atlaso data disks
-After=systemd-udev-settle.service
+After=systemd-udev-settle.service atlaso-guest-agent-select.service
 Wants=systemd-udev-settle.service
+Requires=atlaso-guest-agent-select.service
 Before=atlaso-bootstrap-https.service atlaso.service
 
 [Service]

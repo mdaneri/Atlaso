@@ -10,10 +10,10 @@ Before a PSGallery install, the shared provisioner expands Photon's build-time `
 dependency extraction does not exhaust the default memory-backed temporary filesystem. The deployed appliance returns
 to Photon's normal `/tmp` sizing after reboot.
 
-This target builds a Photon OS 5.0 VMware Workstation VMX/VMDK appliance with the same Atlaso control plane provisioning
-used by the Hyper-V image. Fresh appliances enable the integrated CA on deployed-VM first boot, serve the management
-console/API over CA-backed HTTPS/443, and keep management HTTP/80 redirect-only. Network Boot remains the only served HTTP
-payload.
+This target builds the canonical Photon OS 5.0 VMware Workstation VMX/VMDK appliance. Its validated payload is also the
+source for the unchanged KVM and Proxmox VE OVA import and the converted Hyper-V ZIP. Fresh appliances enable the
+integrated CA on deployed-VM first boot, serve the management console/API over CA-backed HTTPS/443, and keep
+management HTTP/80 redirect-only. Network Boot remains the only served HTTP payload.
 
 ## Prerequisites
 
@@ -25,7 +25,7 @@ payload.
 - VMware Workstation's bundled OVF Tool with `ovftool.exe` available under
   `C:\Program Files\VMware\VMware Workstation\OVFTool` when exporting OVF/OVA artifacts.
 - Packer `>= 1.10`.
-- `qemu-img` when preparing the tiny Alpine lifecycle client VMDK.
+- `qemu-img` when preparing the tiny Alpine lifecycle client VMDK or exporting portable virtualization artifacts.
 - Photon OS 5.0 ISO URL and checksum.
 - At least 70 GiB free on the filesystem holding the Packer output. Final zero-filling temporarily expands both sparse
   payload VMDKs before compaction reclaims the zeroed blocks.
@@ -44,19 +44,18 @@ template check from this directory, run `packer init .` and then
 reviewing a plugin update.
 
 From the repository root, `python scripts/check_deployment_assets.py --mode packer` performs that initialization plus
-exact selected-binary verification, formatting, and full wrapper-equivalent validation for both the VMware Workstation
-and Hyper-V templates. Canonical CI runs the same protected inventory on its Windows Packer runner.
+exact selected-binary verification, formatting, and full wrapper-equivalent validation for the VMware Workstation
+template. Canonical CI runs the same protected inventory on its Windows Packer runner.
 
 ## Build
 
 Use the wrapper instead of raw `packer build`; it creates the remastered Photon ISO with `photon-ks.json` and the Atlaso
-GRUB auto-install entry. The original Photon source ISO is shared with the Hyper-V image path under
-`image/common/source`; the target-specific remastered kickstart ISO is a temporary sensitive artifact under this image
-directory. The wrapper removes it and verifies its absence after the bounded Packer validation or build exits, including
-failure paths. `-PrepareIsoOnly` is rejected because retaining that ISO would retain a reusable build credential.
-`New-AtlasoPhotonKickstart` in `scripts/windows/common/Atlaso.PhotonImage.psm1` is the only kickstart source for both
-providers. The focused image tests invoke that generator, parse the VMware and Hyper-V JSON outputs, and validate their
-shared installer contract plus provider-specific packages and guest-service commands.
+GRUB auto-install entry. The original Photon source ISO is cached under `image/common/source`; only the remastered
+kickstart ISO is written under this image directory as a temporary sensitive artifact. The wrapper removes it and
+verifies its absence after the bounded Packer validation or build exits, including failure paths. `-PrepareIsoOnly` is
+rejected because retaining that ISO would retain a reusable build credential. `New-AtlasoPhotonKickstart` in
+`scripts/windows/common/Atlaso.PhotonImage.psm1` is the only kickstart source. Focused image tests parse its VMware JSON
+output and validate the installer, package, and guest-service contract.
 Workstation builds show the VMware console by default so boot/install progress is visible; pass `-Headless` for
 unattended runs. For the default GUI build, the wrapper starts or reuses a responsive VMware Workstation UI before
 Packer invokes `vmrun`. Starting the UI as a separate process prevents the Workstation GUI start transition from
@@ -97,7 +96,7 @@ emit compact 30-second heartbeats with elapsed time and cache size instead of st
 through Packer. Successful operations report their duration, while failures retain the TDNF exit status and replay a
 normalized, bounded output tail.
 
-Packer also stages the shared udev disk-identity rule and the VMware data-disk policy. The shared provisioner validates
+Packer also stages the shared udev disk-identity rule and virtualization data-disk policy. The shared provisioner validates
 and installs both from the staged source tree before the application sync populates `/opt/atlaso`, so this early
 disk-safety setup never depends on files that have not been copied yet.
 
@@ -176,8 +175,7 @@ pwsh -ExecutionPolicy Bypass `
   -PlanOnly
 ```
 
-The Workstation management subnet intentionally stays separate from the Hyper-V lab subnet. The build wrapper reads the
-selected VMware network before rendering Packer variables. For NAT/host-only vmnets it uses
+The build wrapper reads the selected VMware network before rendering Packer variables. For NAT/host-only vmnets it uses
 `vmrun -T ws listHostNetworks`; for bridged `vmnet0` it falls back to the active Windows IPv4 interface, or the
 interface named by `-BridgedInterfaceAlias`. Unless overridden, it chooses host offset `.30` for the temporary Photon
 builder SSH address and uses DHCP for the final appliance management address. For NAT vmnets, the wrapper points the
@@ -280,30 +278,15 @@ vSphere/ESXi import: `Atlaso Management Network` for the first adapter, which re
 `Atlaso Services Network` for the second adapter used by DNS, DHCP, CA, depot, PXE, KMS, and other Atlaso-managed
 services.
 
-To upload the deployable OVF package to an existing GitHub Release, authenticate GitHub CLI and pass the release tag:
+The exporter creates and validates local OVF, manifest, provenance, VMDK, and OVA assets only. Existing output always
+requires explicit `-Force`; recursive replacement remains limited to a strict descendant of
+`image/vmware-workstation/ovf`. Filesystem, repository, image, VMware image, OVF-root, external, and reparse-point
+targets are refused even with `-Force`.
 
-```powershell
-pwsh -ExecutionPolicy Bypass `
-  -File scripts/windows/vmware/export-ovf.ps1 `
-  -Release
-```
-
-Release mode derives `v<version>` from the synchronized repository metadata, requires that tag to identify the clean
-checked-out commit, resolves the destination GitHub repository from the current checkout, and replaces the generated
-local OVF output before publishing. That implicit replacement applies only when `-OutputDirectory` is omitted and the
-target is the canonical `image/vmware-workstation/ovf/<Name>` destination. An explicitly supplied existing destination,
-including that same canonical path, requires `-Force`. Recursive replacement is always limited to a strict descendant
-of `image/vmware-workstation/ovf`; filesystem, repository, image, VMware image, OVF-root, external, and reparse-point
-targets are refused even with `-Force`. A new external destination may receive an export because no existing tree is
-removed, but rerunning against it requires choosing a repository-owned output destination instead.
-
-Every OVF asset is checked against GitHub's less-than-2-GiB per-asset boundary before upload. The descriptor, manifest,
-and both payload VMDKs are uploaded as one set. A retry verifies every existing asset byte-for-byte and refuses partial
-or different assets instead of overwriting them. The OVA is also uploaded when it fits; an oversized OVA is omitted
-with a warning because it combines both otherwise deployable VMDKs into one archive. Publication also requires a clean
-checkout whose `HEAD` is the locally available annotated release tag, a byte-matching build provenance record, and a
-destination-repository tag resolving to the same commit. Release recovery parses the OVF and revalidates the two
-file-backed payload disks plus the two empty 500 GiB data disks before accepting existing assets.
+GitHub publication is owned by the protected release workflow. It accepts the canonical OVA only after VMware,
+Proxmox, KVM, and Hyper-V smoke jobs pass for the exact protected-main commit, stages the versioned import helpers and
+Hyper-V ZIP, enforces the existing less-than-2-GiB per-asset limit, and publishes the signed artifact index with the
+complete release set.
 
 The OVF properties are intended for vSphere/ESXi import:
 
@@ -393,7 +376,7 @@ pwsh -ExecutionPolicy Bypass `
 
 The wrapper writes evidence under `test-results/vmware-workstation-lifecycle/<timestamp>`. Unless `-ApplianceIPAddress`
 is passed, it waits for VMware Tools to report the DHCP management address and records it in `discovered-appliance.json`
-before running HTTP and SSH probes. It keeps the Python appliance assertions shared with the Hyper-V lifecycle runner.
+before running HTTP and SSH probes. It keeps the Python appliance assertions provider-neutral.
 
 Pass `-PlanOnly` to print the selected VMX, client VMDK, vmnets, and result path without creating VMs.
 
@@ -602,7 +585,5 @@ Disk-preflight failure blocks nginx, the HTTPS bootstrap, Atlaso control plane, 
 ## Fidelity Notes
 
 Workstation vmnets are isolated layer-2 segments. They are useful for appliance management, SiteA, WAN, and trunk-like
-separation, but they do not expose the same explicit Hyper-V access/trunk port VLAN controls. Treat the Workstation
-lifecycle as parity for appliance behavior and host/client integration where the vmnet topology can represent it; keep
-Hyper-V as the authoritative VLAN access/trunk acceptance path until a Workstation VLAN-specific client strategy is
-validated.
+separation. Tagged-trunk acceptance requires a compatible upstream virtual-network configuration; record that topology
+with the lifecycle evidence instead of treating a portable target as a second canonical lab.

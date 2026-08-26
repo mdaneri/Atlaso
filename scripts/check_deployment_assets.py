@@ -19,12 +19,10 @@ else:
 
 ROOT = Path(__file__).resolve().parents[1]
 PACKER_TEMPLATES = (
-    Path("image/hyperv/atlaso-photon.pkr.hcl"),
     Path("image/vmware-workstation/atlaso-photon.pkr.hcl"),
 )
 SYSTEMD_DIRECTORIES = (
     Path("image/common/systemd"),
-    Path("image/hyperv/systemd"),
     Path("image/vmware-workstation/systemd"),
 )
 SYSTEMD_ASSETS = (
@@ -32,20 +30,18 @@ SYSTEMD_ASSETS = (
     Path("image/common/systemd/atlaso-console-manager.conf"),
     Path("image/common/systemd/atlaso-console.service"),
     Path("image/common/systemd/atlaso-data-disks.service"),
+    Path("image/common/systemd/atlaso-guest-agent-select.service"),
     Path("image/common/systemd/atlaso-require-data-disks.conf"),
     Path("image/common/systemd/atlaso-worker.service"),
     Path("image/common/systemd/nginx-atlaso-data-disks.conf"),
-    Path("image/hyperv/systemd/atlaso.service"),
+    Path("image/common/systemd/atlaso.service"),
     Path("image/vmware-workstation/systemd/atlaso-vmware-ovf-customize.service"),
-    Path("image/vmware-workstation/systemd/atlaso.service"),
 )
 SUDOERS_DIRECTORIES = (
-    Path("image/hyperv/sudoers.d"),
-    Path("image/vmware-workstation/sudoers.d"),
+    Path("image/common/sudoers.d"),
 )
 SUDOERS_FRAGMENTS = (
-    Path("image/hyperv/sudoers.d/atlaso-helper"),
-    Path("image/vmware-workstation/sudoers.d/atlaso-helper"),
+    Path("image/common/sudoers.d/atlaso-helper"),
 )
 SYSTEMD_SUFFIXES = {".conf", ".service"}
 NGINX_DATA_DISK_DROPIN = Path("image/common/systemd/nginx-atlaso-data-disks.conf")
@@ -533,7 +529,7 @@ def validate_manager_dropins(assets: tuple[Path, ...]) -> list[Finding]:
 
 
 def validate_systemd(systemd_analyze: str, repository: Path) -> list[Finding]:
-    """Verify both platform unit sets and manager drop-ins in isolated roots.
+    """Verify the canonical unit set and manager drop-ins in an isolated root.
 
     Args:
         systemd_analyze: Resolved systemd-analyze executable path.
@@ -548,7 +544,7 @@ def validate_systemd(systemd_analyze: str, repository: Path) -> list[Finding]:
         )
     )
     findings = validate_manager_dropins(manager_assets)
-    for platform in ("hyperv", "vmware-workstation"):
+    for platform in ("vmware-workstation",):
         with tempfile.TemporaryDirectory(prefix=f"atlaso-systemd-{platform}-") as temporary:
             validation_root = Path(temporary)
             units = _prepare_systemd_root(validation_root, platform, repository)

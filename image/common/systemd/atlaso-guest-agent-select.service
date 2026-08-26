@@ -1,0 +1,16 @@
+[Unit]
+Description=Select the Atlaso guest integration agent
+DefaultDependencies=no
+After=local-fs.target systemd-udev-trigger.service
+Wants=systemd-udev-trigger.service
+Before=network-pre.target systemd-networkd.service atlaso-vmware-ovf-customize.service atlaso-data-disks.service atlaso-bootstrap-https.service nginx.service atlaso.service atlaso-worker.service
+
+[Service]
+Type=oneshot
+ExecStart=/opt/atlaso/bin/atlaso-select-guest-agent
+RemainAfterExit=yes
+TimeoutStartSec=15min
+
+[Install]
+WantedBy=multi-user.target
+RequiredBy=systemd-networkd.service

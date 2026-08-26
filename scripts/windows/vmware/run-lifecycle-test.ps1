@@ -1551,7 +1551,7 @@ $plan = [ordered]@{
     esxi_probe_delay_seconds = $EsxiInstallProbeDelaySeconds
     esxi_pxe_vm           = if ($FullEsxiPxeInstall) { $esxiName } else { '' }
     esxi_pxe_mac          = $esxiMacAddress
-    workstation_fidelity  = 'Workstation vmnets are isolated layer-2 segments; Hyper-V access/trunk VLAN port behavior is approximated by separate vmnets.'
+    workstation_fidelity  = 'Workstation vmnets are isolated layer-2 segments; tagged trunk behavior requires a compatible upstream virtual-network configuration.'
 }
 
 if ($PlanOnly) {

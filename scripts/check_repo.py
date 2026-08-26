@@ -2585,6 +2585,82 @@ def check_xmlish_svg(path: Path, text: str) -> list[Finding]:
     return []
 
 
+def check_virtualization_legacy(root: Path) -> list[Finding]:
+    """Reject retired Hyper-V development and standalone QCOW2 release surfaces."""
+
+    findings: list[Finding] = []
+    forbidden_paths = (
+        Path("image/hyperv"),
+        Path("scripts/windows/hyperv"),
+        Path("docs/hyperv-lifecycle-testing.md"),
+        Path("docs/reference/hyperv-lifecycle-testing.md"),
+        Path("hyperv-admin-check.txt"),
+        Path("hyperv-prereq-check.txt"),
+    )
+    for relative in forbidden_paths:
+        if (root / relative).exists():
+            findings.append(Finding(root / relative, "retired Hyper-V development or lifecycle path remains"))
+
+    stale_markers = (
+        "image/hyperv/",
+        "image\\hyperv\\",
+        "scripts/windows/hyperv/",
+        "scripts\\windows\\hyperv\\",
+        "hyperv-lifecycle-testing.md",
+        "retired_hyperv_",
+    )
+    for relative_root in (Path("docs"), Path("tests"), Path(".github")):
+        directory = root / relative_root
+        for path in directory.rglob("*") if directory.exists() else ():
+            if not path.is_file() or path.is_symlink():
+                continue
+            text, error = read_text(path)
+            if error is not None or text is None:
+                continue
+            for marker in stale_markers:
+                offset = text.find(marker)
+                if offset >= 0:
+                    findings.append(
+                        Finding(path, f"retired virtualization reference remains: {marker}", line_for_offset(text, offset))
+                    )
+
+    exporter_roots = (
+        root / "scripts/windows/virtualization",
+        root / "docs/reference/virtualization-artifacts.md",
+    )
+    standalone_markers = ("photon-os.qcow2", "atlaso-system.qcow2", "-Target Kvm", "-Target Proxmox")
+    for candidate in exporter_roots:
+        paths = candidate.rglob("*") if candidate.is_dir() else (candidate,)
+        for path in paths:
+            if not path.is_file() or path.is_symlink():
+                continue
+            text, error = read_text(path)
+            if error is not None or text is None:
+                continue
+            for marker in standalone_markers:
+                offset = text.find(marker)
+                if offset >= 0:
+                    findings.append(
+                        Finding(path, f"standalone QCOW2 release marker remains: {marker}", line_for_offset(text, offset))
+                    )
+    exporter_directory = root / "scripts/windows/virtualization"
+    for path in (
+        sorted(exporter_directory.glob("*.ps1")) + sorted(exporter_directory.glob("*.psm1"))
+        if exporter_directory.exists()
+        else []
+    ):
+        text, error = read_text(path)
+        if error is not None or text is None:
+            continue
+        for marker in ("AllowedTargetNames", "'Kvm', 'Proxmox'", "'qcow2'"):
+            offset = text.find(marker)
+            if offset >= 0:
+                findings.append(
+                    Finding(path, f"standalone multi-target exporter marker remains: {marker}", line_for_offset(text, offset))
+                )
+    return findings
+
+
 def main(argv: list[str] | None = None) -> int:
     """Run the command-line entry point.
 
@@ -2606,6 +2682,7 @@ def main(argv: list[str] | None = None) -> int:
     findings.extend(check_agent_policy_gate(ROOT))
     findings.extend(check_spark_worker_agent(ROOT))
     findings.extend(check_ui_pattern_foundation(ROOT))
+    findings.extend(check_virtualization_legacy(ROOT))
 
     if findings:
         print(f"Repository checks failed with {len(findings)} issue(s):", file=sys.stderr)

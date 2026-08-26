@@ -66,6 +66,7 @@ def _run_mount_script(
     policy_source: Path | None = None,
     root_source: Path | None = None,
     root_disks: list[Path] | None = None,
+    virtualization_provider: str = "",
 ) -> tuple[subprocess.CompletedProcess[str], list[list[str]]]:
     """Execute the appliance mount script against fake block-device commands.
 
@@ -82,6 +83,7 @@ def _run_mount_script(
         policy_source: Optional checked-in platform policy copied verbatim for validation.
         root_source: Optional root-filesystem source exposed by ``findmnt``.
         root_disks: Optional physical disks exposed as ancestors of the root source.
+        virtualization_provider: Optional fixed provider used with the shared checked-in policy.
 
     Returns:
         Completed shell process and recorded ``mkfs.ext4`` argument lists.
@@ -336,7 +338,7 @@ def _run_mount_script(
                     f"ATLASO_DATA_DISK_SIZE_BYTES={EXPECTED_SIZE}",
                     f"ATLASO_DEPOT_SCSI_TUPLE={depot_tuple}",
                     f"ATLASO_BACKUP_SCSI_TUPLE={backup_tuple}",
-                    f"ATLASO_SYSTEM_SCSI_TUPLE={'0:1:0' if depot_tuple == '0:2:0' else ''}",
+                    f"ATLASO_SYSTEM_SCSI_TUPLE={'0:1:0' if depot_tuple == '0:2:0' else '0:0:1' if depot_tuple == '0:0:2' else ''}",
                     "",
                 ]
             ),
@@ -366,6 +368,8 @@ def _run_mount_script(
             "ATLASO_TEST_MKFS_LOG": str(mkfs_log),
         }
     )
+    if virtualization_provider:
+        env["ATLASO_VIRTUALIZATION_PROVIDER"] = virtualization_provider
     open_handles = [Path(str(disk["path"])).open("rb") for disk in disks if disk.get("open_raw")]
     open_handles.extend(
         Path(str(disk["scsi_generic_path"])).open("rb") for disk in disks if disk.get("open_scsi_generic")
@@ -474,22 +478,23 @@ def test_hyperv_first_boot_uses_fixed_controller_locations(tmp_path: Path):
     dev = tmp_path / "dev"
     disks = [
         _disk(dev / "sda", "0:0:0", size=64 * 1024**3, filesystem="ext4", label="PHOTON_ROOT"),
-        _disk(dev / "sdb", "0:0:1"),
+        _disk(dev / "sdb", "0:0:1", size=20 * 1024**3, filesystem="ext4", label="ATLASO_SYSTEM"),
         _disk(dev / "sdc", "0:0:2"),
+        _disk(dev / "sdd", "0:0:3"),
     ]
 
     completed, calls = _run_mount_script(
         tmp_path,
         disks,
-        depot_tuple="0:0:1",
-        backup_tuple="0:0:2",
+        depot_tuple="0:0:2",
+        backup_tuple="0:0:3",
     )
 
     assert completed.returncode == 0, completed.stdout + completed.stderr
     assert len(calls) == 2
 
 
-@pytest.mark.parametrize("platform", ("hyperv", "vmware-workstation"))
+@pytest.mark.parametrize("platform", ("hyperv", "vmware", "qemu"))
 def test_checked_in_platform_policy_passes_first_boot_validation(
     tmp_path: Path, platform: str
 ) -> None:
@@ -499,7 +504,7 @@ def test_checked_in_platform_policy_passes_first_boot_validation(
         tmp_path: Pytest-provided isolated filesystem root.
         platform: Supported image platform whose policy is under test.
     """
-    if platform == "hyperv":
+    if platform in {"hyperv", "qemu"}:
         dev = tmp_path / "dev"
         disks = [
             _disk(
@@ -509,11 +514,12 @@ def test_checked_in_platform_policy_passes_first_boot_validation(
                 filesystem="ext4",
                 label="PHOTON_ROOT",
             ),
-            _disk(dev / "sdb", "0:0:1"),
+            _disk(dev / "sdb", "0:0:1", size=20 * 1024**3, filesystem="ext4", label="ATLASO_SYSTEM"),
             _disk(dev / "sdc", "0:0:2"),
+            _disk(dev / "sdd", "0:0:3"),
         ]
-        depot_tuple = "0:0:1"
-        backup_tuple = "0:0:2"
+        depot_tuple = "0:0:2"
+        backup_tuple = "0:0:3"
     else:
         disks = _vmware_disks(tmp_path)
         depot_tuple = "0:2:0"
@@ -524,7 +530,8 @@ def test_checked_in_platform_policy_passes_first_boot_validation(
         disks,
         depot_tuple=depot_tuple,
         backup_tuple=backup_tuple,
-        policy_source=Path(f"image/{platform}/data-disks.conf").resolve(),
+        policy_source=Path("image/common/data-disks.conf").resolve(),
+        virtualization_provider=platform,
     )
 
     assert completed.returncode == 0, completed.stdout + completed.stderr

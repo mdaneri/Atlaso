@@ -37,7 +37,7 @@ SUPPORTED_ABIS = ("cp314",)
 RELEASE_OWNED_ASSETS = (
     (ROOT / "scripts/appliance/atlaso-helper", Path("bin/atlaso-helper")),
     (ROOT / "scripts/appliance/atlaso-mount-data-disks", Path("bin/atlaso-mount-data-disks")),
-    (ROOT / "image/hyperv/systemd/atlaso.service", Path("systemd/atlaso.service")),
+    (ROOT / "image/common/systemd/atlaso.service", Path("systemd/atlaso.service")),
     (ROOT / "image/common/systemd/atlaso-worker.service", Path("systemd/atlaso-worker.service")),
     (ROOT / "image/common/systemd/atlaso-console.service", Path("systemd/atlaso-console.service")),
     (ROOT / "image/common/systemd/atlaso-data-disks.service", Path("systemd/atlaso-data-disks.service")),
@@ -54,8 +54,7 @@ RELEASE_OWNED_ASSETS = (
         ROOT / "image/common/udev/99-atlaso-disk-identity.rules",
         Path("udev/99-atlaso-disk-identity.rules"),
     ),
-    (ROOT / "image/hyperv/data-disks.conf", Path("data-disks/hyperv.conf")),
-    (ROOT / "image/vmware-workstation/data-disks.conf", Path("data-disks/vmware.conf")),
+    (ROOT / "image/common/data-disks.conf", Path("data-disks/virtualization.conf")),
 )
 
 

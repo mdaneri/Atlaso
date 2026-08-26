@@ -1,3 +1,0 @@
-Defaults:atlaso !requiretty
-Defaults:atlaso env_keep += "ATLASO_HELPER_USE_SYSTEMD_RUN"
-atlaso ALL=(root) NOPASSWD: /opt/atlaso/bin/atlaso-helper *

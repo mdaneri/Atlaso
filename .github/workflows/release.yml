@@ -123,11 +123,378 @@ jobs:
           if-no-files-found: error
           retention-days: 7
 
+  vmware_ova_build:
+    name: Build canonical VMware OVA
+    needs:
+      - prepare
+    runs-on: [self-hosted, Windows, X64, atlaso-vmware]
+    environment: appliance-release
+    steps:
+      - name: Check out the successful main commit
+        uses: actions/checkout@v7
+        with:
+          ref: ${{ needs.prepare.outputs.release_sha }}
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Revalidate the exact protected commit
+        shell: pwsh
+        env:
+          RELEASE_SHA: ${{ needs.prepare.outputs.release_sha }}
+        run: |
+          git fetch origin main --no-tags
+          if ((git rev-parse HEAD) -ne $env:RELEASE_SHA) { throw 'Checkout is not the requested release commit.' }
+          git merge-base --is-ancestor $env:RELEASE_SHA origin/main
+          if ($LASTEXITCODE -ne 0) { throw 'Release commit is no longer reachable from origin/main.' }
+      - name: Build the canonical VMware template
+        shell: pwsh
+        env:
+          PACKER_SSH_PASSWORD: ${{ secrets.ATLASO_PACKER_SSH_PASSWORD }}
+          BOOTSTRAP_ADMIN_PASSWORD: ${{ secrets.ATLASO_BOOTSTRAP_ADMIN_PASSWORD }}
+        run: |
+          if (-not $env:PACKER_SSH_PASSWORD -or -not $env:BOOTSTRAP_ADMIN_PASSWORD) {
+            throw 'Protected release build credentials are unavailable.'
+          }
+          $ssh = ConvertTo-SecureString $env:PACKER_SSH_PASSWORD -AsPlainText -Force
+          $admin = ConvertTo-SecureString $env:BOOTSTRAP_ADMIN_PASSWORD -AsPlainText -Force
+          & scripts/windows/vmware/build-photon-image.ps1 `
+            -SshPassword $ssh `
+            -BootstrapAdminPassword $admin `
+            -Headless `
+            -EnableRealSystemAdapters
+      - name: Export and independently validate the canonical OVA
+        shell: pwsh
+        env:
+          RELEASE_SHA: ${{ needs.prepare.outputs.release_sha }}
+        run: |
+          $version = python scripts/version.py get
+          $name = "atlaso-v$version"
+          & scripts/windows/vmware/export-ovf.ps1 -Name $name -Force
+          $package = Get-Item -LiteralPath "image/vmware-workstation/ovf/$name" -ErrorAction Stop
+          $ova = Get-Item -LiteralPath "image/vmware-workstation/ovf/$name.ova" -ErrorAction Stop
+          $staging = 'artifacts/virtualization/ova'
+          New-Item -ItemType Directory -Path $staging -Force | Out-Null
+          Get-ChildItem -LiteralPath $package.FullName -File | ForEach-Object {
+            Copy-Item -LiteralPath $_.FullName -Destination $staging
+          }
+          Copy-Item -LiteralPath $ova.FullName -Destination $staging
+          $extract = Join-Path $env:RUNNER_TEMP ('ova-validation-' + [guid]::NewGuid().ToString('N'))
+          New-Item -ItemType Directory -Path $extract | Out-Null
+          try {
+            $contract = python scripts/virtualization/validate_ova.py `
+              (Join-Path $staging $ova.Name) --extract-directory $extract | ConvertFrom-Json
+            if ($contract.source_commit -ne $env:RELEASE_SHA) {
+              throw 'The exported OVA provenance does not identify the exact release commit.'
+            }
+          }
+          finally {
+            Remove-Item -LiteralPath $extract -Recurse -Force -ErrorAction SilentlyContinue
+          }
+      - name: Upload canonical OVA package
+        uses: actions/upload-artifact@v7
+        with:
+          name: virtualization-ova
+          path: artifacts/virtualization/ova
+          if-no-files-found: error
+          retention-days: 7
+
+  vmware_ova_smoke:
+    name: Smoke canonical OVA on VMware
+    needs:
+      - prepare
+      - vmware_ova_build
+    runs-on: [self-hosted, Windows, X64, atlaso-vmware]
+    environment: appliance-release
+    steps:
+      - name: Check out the successful main commit
+        uses: actions/checkout@v7
+        with:
+          ref: ${{ needs.prepare.outputs.release_sha }}
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Revalidate the exact protected commit
+        shell: pwsh
+        env:
+          RELEASE_SHA: ${{ needs.prepare.outputs.release_sha }}
+        run: |
+          git fetch origin main --no-tags
+          if ((git rev-parse HEAD) -ne $env:RELEASE_SHA) { throw 'Checkout is not the requested release commit.' }
+          git merge-base --is-ancestor $env:RELEASE_SHA origin/main
+          if ($LASTEXITCODE -ne 0) { throw 'Release commit is no longer reachable from origin/main.' }
+      - name: Set up Python
+        uses: actions/setup-python@v7
+        with:
+          python-version: '3.14'
+      - name: Install locked SSH smoke dependency
+        shell: pwsh
+        run: python -m pip install --require-hashes --requirement requirements-deployment.lock
+      - name: Download canonical OVA package
+        uses: actions/download-artifact@v8
+        with:
+          name: virtualization-ova
+          path: artifacts/incoming/ova
+      - name: Import, boot, reboot, and validate VMware
+        shell: pwsh
+        env:
+          SMOKE_USERNAME: ${{ vars.ATLASO_VIRTUALIZATION_SMOKE_USERNAME }}
+          SMOKE_PASSWORD: ${{ secrets.ATLASO_BOOTSTRAP_ADMIN_PASSWORD }}
+          MANAGEMENT_VMNET: ${{ vars.ATLASO_VMWARE_MANAGEMENT_VMNET }}
+          SERVICE_VMNET: ${{ vars.ATLASO_VMWARE_SERVICE_VMNET }}
+        run: |
+          $password = ConvertTo-SecureString $env:SMOKE_PASSWORD -AsPlainText -Force
+          $credential = [PSCredential]::new($env:SMOKE_USERNAME, $password)
+          $ova = @(Get-ChildItem artifacts/incoming/ova -Filter '*.ova' -File)
+          if ($ova.Count -ne 1) { throw 'Expected exactly one canonical OVA artifact.' }
+          & scripts/windows/virtualization/smoke-ova-vmware.ps1 `
+            -OvaPath $ova[0].FullName `
+            -Credential $credential `
+            -ManagementVmnet $env:MANAGEMENT_VMNET `
+            -ServiceVmnet $env:SERVICE_VMNET
+
+  proxmox_ova_smoke:
+    name: Smoke canonical OVA on Proxmox VE
+    needs:
+      - prepare
+      - vmware_ova_build
+    runs-on: [self-hosted, Linux, X64, atlaso-proxmox]
+    steps:
+      - name: Check out the successful main commit
+        uses: actions/checkout@v7
+        with:
+          ref: ${{ needs.prepare.outputs.release_sha }}
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Revalidate the exact protected commit
+        env:
+          RELEASE_SHA: ${{ needs.prepare.outputs.release_sha }}
+        run: |
+          git fetch origin main --no-tags
+          test "$(git rev-parse HEAD)" = "$RELEASE_SHA"
+          git merge-base --is-ancestor "$RELEASE_SHA" origin/main
+      - name: Download canonical OVA package
+        uses: actions/download-artifact@v8
+        with:
+          name: virtualization-ova
+          path: artifacts/incoming/ova
+      - name: Import, boot, reboot, and validate Proxmox VE
+        env:
+          VM_ID: ${{ vars.ATLASO_PROXMOX_SMOKE_VMID }}
+          STORAGE: ${{ vars.ATLASO_PROXMOX_STORAGE }}
+          MANAGEMENT_BRIDGE: ${{ vars.ATLASO_PROXMOX_MANAGEMENT_BRIDGE }}
+          SERVICE_BRIDGE: ${{ vars.ATLASO_PROXMOX_SERVICE_BRIDGE }}
+        run: |
+          OVA="$(find artifacts/incoming/ova -maxdepth 1 -type f -name '*.ova' -print)"
+          test -n "$OVA"
+          scripts/virtualization/smoke-ova-linux.sh \
+            proxmox "$OVA" "$VM_ID" "$STORAGE" "$MANAGEMENT_BRIDGE" "$SERVICE_BRIDGE"
+
+  kvm_ova_smoke:
+    name: Smoke canonical OVA on KVM
+    needs:
+      - prepare
+      - vmware_ova_build
+    runs-on: [self-hosted, Linux, X64, atlaso-kvm]
+    steps:
+      - name: Check out the successful main commit
+        uses: actions/checkout@v7
+        with:
+          ref: ${{ needs.prepare.outputs.release_sha }}
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Revalidate the exact protected commit
+        env:
+          RELEASE_SHA: ${{ needs.prepare.outputs.release_sha }}
+        run: |
+          git fetch origin main --no-tags
+          test "$(git rev-parse HEAD)" = "$RELEASE_SHA"
+          git merge-base --is-ancestor "$RELEASE_SHA" origin/main
+      - name: Download canonical OVA package
+        uses: actions/download-artifact@v8
+        with:
+          name: virtualization-ova
+          path: artifacts/incoming/ova
+      - name: Import, boot, reboot, and validate KVM
+        env:
+          DOMAIN: ${{ vars.ATLASO_KVM_SMOKE_DOMAIN }}
+          POOL: ${{ vars.ATLASO_KVM_STORAGE_POOL }}
+          MANAGEMENT_NETWORK: ${{ vars.ATLASO_KVM_MANAGEMENT_NETWORK }}
+          SERVICE_NETWORK: ${{ vars.ATLASO_KVM_SERVICE_NETWORK }}
+        run: |
+          OVA="$(find artifacts/incoming/ova -maxdepth 1 -type f -name '*.ova' -print)"
+          test -n "$OVA"
+          scripts/virtualization/smoke-ova-linux.sh \
+            kvm "$OVA" "$DOMAIN" "$POOL" "$MANAGEMENT_NETWORK" "$SERVICE_NETWORK"
+
+  hyperv_package:
+    name: Convert canonical OVA to Hyper-V ZIP
+    needs:
+      - prepare
+      - vmware_ova_build
+    runs-on: [self-hosted, Windows, X64, atlaso-hyperv]
+    steps:
+      - name: Check out the successful main commit
+        uses: actions/checkout@v7
+        with:
+          ref: ${{ needs.prepare.outputs.release_sha }}
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Revalidate the exact protected commit
+        shell: pwsh
+        env:
+          RELEASE_SHA: ${{ needs.prepare.outputs.release_sha }}
+        run: |
+          git fetch origin main --no-tags
+          if ((git rev-parse HEAD) -ne $env:RELEASE_SHA) { throw 'Checkout is not the requested release commit.' }
+          git merge-base --is-ancestor $env:RELEASE_SHA origin/main
+          if ($LASTEXITCODE -ne 0) { throw 'Release commit is no longer reachable from origin/main.' }
+      - name: Download canonical OVA package
+        uses: actions/download-artifact@v8
+        with:
+          name: virtualization-ova
+          path: artifacts/incoming/ova
+      - name: Convert the exact OVA payload
+        shell: pwsh
+        run: |
+          $ova = @(Get-ChildItem artifacts/incoming/ova -Filter '*.ova' -File)
+          if ($ova.Count -ne 1) { throw 'Expected exactly one canonical OVA artifact.' }
+          & scripts/windows/virtualization/export-artifacts.ps1 -OvaPath $ova[0].FullName
+      - name: Upload Hyper-V ZIP
+        uses: actions/upload-artifact@v7
+        with:
+          name: virtualization-hyperv
+          path: artifacts/virtualization/*-hyperv-x86_64.zip
+          if-no-files-found: error
+          retention-days: 7
+
+  hyperv_smoke:
+    name: Smoke converted ZIP on Hyper-V
+    needs:
+      - prepare
+      - hyperv_package
+    runs-on: [self-hosted, Windows, X64, atlaso-hyperv]
+    environment: appliance-release
+    steps:
+      - name: Check out the successful main commit
+        uses: actions/checkout@v7
+        with:
+          ref: ${{ needs.prepare.outputs.release_sha }}
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Revalidate the exact protected commit
+        shell: pwsh
+        env:
+          RELEASE_SHA: ${{ needs.prepare.outputs.release_sha }}
+        run: |
+          git fetch origin main --no-tags
+          if ((git rev-parse HEAD) -ne $env:RELEASE_SHA) { throw 'Checkout is not the requested release commit.' }
+          git merge-base --is-ancestor $env:RELEASE_SHA origin/main
+          if ($LASTEXITCODE -ne 0) { throw 'Release commit is no longer reachable from origin/main.' }
+      - name: Set up Python
+        uses: actions/setup-python@v7
+        with:
+          python-version: '3.14'
+      - name: Install locked SSH smoke dependency
+        shell: pwsh
+        run: python -m pip install --require-hashes --requirement requirements-deployment.lock
+      - name: Download Hyper-V ZIP
+        uses: actions/download-artifact@v8
+        with:
+          name: virtualization-hyperv
+          path: artifacts/incoming/hyperv
+      - name: Import, boot, reboot, and validate Hyper-V
+        shell: pwsh
+        env:
+          SMOKE_USERNAME: ${{ vars.ATLASO_VIRTUALIZATION_SMOKE_USERNAME }}
+          SMOKE_PASSWORD: ${{ secrets.ATLASO_BOOTSTRAP_ADMIN_PASSWORD }}
+          MANAGEMENT_SWITCH: ${{ vars.ATLASO_HYPERV_MANAGEMENT_SWITCH }}
+          SERVICE_SWITCH: ${{ vars.ATLASO_HYPERV_SERVICE_SWITCH }}
+        run: |
+          $password = ConvertTo-SecureString $env:SMOKE_PASSWORD -AsPlainText -Force
+          $credential = [PSCredential]::new($env:SMOKE_USERNAME, $password)
+          $zip = @(Get-ChildItem artifacts/incoming/hyperv -Filter '*-hyperv-x86_64.zip' -File)
+          if ($zip.Count -ne 1) { throw 'Expected exactly one Hyper-V ZIP artifact.' }
+          & scripts/windows/virtualization/smoke-hyperv.ps1 `
+            -ZipPath $zip[0].FullName `
+            -Credential $credential `
+            -ManagementSwitch $env:MANAGEMENT_SWITCH `
+            -ServiceSwitch $env:SERVICE_SWITCH
+
+  virtualization_release:
+    name: Sign validated virtualization artifacts
+    needs:
+      - prepare
+      - vmware_ova_build
+      - vmware_ova_smoke
+      - proxmox_ova_smoke
+      - kvm_ova_smoke
+      - hyperv_package
+      - hyperv_smoke
+    runs-on: ubuntu-latest
+    environment: appliance-release
+    steps:
+      - name: Check out the successful main commit
+        uses: actions/checkout@v7
+        with:
+          ref: ${{ needs.prepare.outputs.release_sha }}
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Download canonical OVA package
+        uses: actions/download-artifact@v8
+        with:
+          name: virtualization-ova
+          path: artifacts/incoming/ova
+      - name: Download Hyper-V ZIP
+        uses: actions/download-artifact@v8
+        with:
+          name: virtualization-hyperv
+          path: artifacts/incoming/hyperv
+      - name: Set up Python
+        uses: actions/setup-python@v7
+        with:
+          python-version: '3.14'
+          cache: pip
+      - name: Install locked release tooling
+        env:
+          PIP_CONFIG_FILE: /dev/null
+        run: python -m pip install --require-hashes --requirement requirements-release-tools.lock
+      - name: Stage and sign the exact virtualization set
+        env:
+          RELEASE_SHA: ${{ needs.prepare.outputs.release_sha }}
+          RELEASE_KEY_ID: atlaso-release-2026-01
+          RELEASE_SIGNING_PRIVATE_KEY: ${{ secrets.RELEASE_SIGNING_PRIVATE_KEY }}
+        run: |
+          VERSION="$(python scripts/version.py get)"
+          HYPERV_ZIP="$(find artifacts/incoming/hyperv -maxdepth 1 -type f -name '*-hyperv-x86_64.zip' -print)"
+          test -n "$HYPERV_ZIP"
+          umask 077
+          printf '%s\n' "$RELEASE_SIGNING_PRIVATE_KEY" > "$RUNNER_TEMP/release-signing-key.pem"
+          python scripts/stage_virtualization_release.py \
+            --ova-directory artifacts/incoming/ova \
+            --hyperv-zip "$HYPERV_ZIP" \
+            --output dist/virtualization-release \
+            --version "$VERSION" \
+            --commit "$RELEASE_SHA"
+          BUILT_AT="$(git show -s --format=%cI "$RELEASE_SHA")"
+          python scripts/build_virtualization_artifact_index.py \
+            --assets dist/virtualization-release \
+            --version "$VERSION" \
+            --commit "$RELEASE_SHA" \
+            --built-at "$BUILT_AT" \
+            --signing-key "$RUNNER_TEMP/release-signing-key.pem" \
+            --signing-key-id "$RELEASE_KEY_ID"
+      - name: Upload signed virtualization release set
+        uses: actions/upload-artifact@v7
+        with:
+          name: virtualization-release
+          path: dist/virtualization-release
+          if-no-files-found: error
+          retention-days: 7
+
   publish:
     name: Sign and publish release
     needs:
       - prepare
       - wheelhouse
+      - virtualization_release
     runs-on: ubuntu-latest
     concurrency:
       group: atlaso-github-pages
@@ -182,6 +549,11 @@ jobs:
             --signing-key-id "$RELEASE_KEY_ID" \
             --commit "$RELEASE_SHA" \
             --built-at "$BUILT_AT"
+      - name: Download the signed virtualization release set
+        uses: actions/download-artifact@v8
+        with:
+          name: virtualization-release
+          path: dist/release
       - name: Publish the idempotent tag and GitHub Release
         env:
           GH_TOKEN: ${{ github.token }}
@@ -189,7 +561,10 @@ jobs:
         run: |
           git config user.name github-actions[bot]
           git config user.email 41898282+github-actions[bot]@users.noreply.github.com
-          python scripts/publish_release.py --commit "$RELEASE_SHA" --assets dist/release
+          python scripts/publish_release.py \
+            --commit "$RELEASE_SHA" \
+            --assets dist/release \
+            --require-virtualization-assets
       - name: Advance the signed development channel
         env:
           RELEASE_KEY_ID: atlaso-release-2026-01

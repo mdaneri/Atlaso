@@ -1,6 +1,6 @@
 <#
 .SYNOPSIS
-Export a VMware VMX into an Atlaso OVF/OVA package and optionally publish release assets.
+Export a VMware VMX into a validated Atlaso OVF/OVA package.
 
 .PARAMETER SourceVmxPath
 Path to the source VMX used for ovftool export.
@@ -12,14 +12,10 @@ Base name for exported assets.
 Optional path to ovftool or an ovftool installation directory.
 .PARAMETER TarPath
 Optional path to tar used when creating OVA archives.
-.PARAMETER Release
-Publish generated assets to the checked-out GitHub release.
-.PARAMETER MaximumReleaseAssetBytes
-Maximum asset size for uploaded release assets.
 .PARAMETER NoOva
 Skip OVA creation and emit OVF only.
 .PARAMETER Force
-Allow destructive output cleanup during release export.
+Allow replacement of the exact approved output directory.
 #>
 <#
 .SYNOPSIS
@@ -34,10 +30,6 @@ Name value.
 Ovf Tool Path value.
 .PARAMETER TarPath
 Tar Path value.
-.PARAMETER Release
-Release value.
-.PARAMETER MaximumReleaseAssetBytes
-Maximum Release Asset Bytes value.
 .PARAMETER NoOva
 No Ova value.
 .PARAMETER Force
@@ -50,9 +42,6 @@ param(
     [string]$Name = 'Atlaso-Photon',
     [string]$OvfToolPath = '',
     [string]$TarPath = '',
-    [switch]$Release,
-    [ValidateRange(1, 2147483647)]
-    [long]$MaximumReleaseAssetBytes = 2147483647,
     [switch]$NoOva,
     [switch]$Force
 )
@@ -151,244 +140,6 @@ function Resolve-TarPath {
 
 <#
 .SYNOPSIS
-Resolve the GitHub CLI executable path.
-#>
-<#
-.SYNOPSIS
-Resolve Gh Path.
-#>
-function Resolve-GhPath {
-    $command = Get-Command gh -ErrorAction SilentlyContinue
-    if (-not $command) {
-        throw 'gh was not found. Install GitHub CLI before using -Release.'
-    }
-    return $command.Source
-}
-
-<#
-.SYNOPSIS
-Resolve the current release tag from repository version metadata.
-
-.PARAMETER RepoRoot
-Repository root used to resolve the synchronized version.
-#>
-<#
-.SYNOPSIS
-Resolve Atlaso Release Tag.
-.PARAMETER RepoRoot
-Repo Root value.
-#>
-function Resolve-AtlasoReleaseTag {
-    param([string]$RepoRoot)
-
-    $python = Get-Command python -ErrorAction SilentlyContinue
-    if (-not $python) {
-        throw 'python was not found. Release publication requires the checked-out Atlaso version metadata.'
-    }
-    $versionScript = Join-Path $RepoRoot 'scripts\version.py'
-    $version = [string](& $python.Source $versionScript get --root $RepoRoot)
-    $version = $version.Trim()
-    if ($LASTEXITCODE -ne 0 -or $version -notmatch '^\d+\.\d+\.\d+$') {
-        throw 'Could not resolve the synchronized Atlaso release version from the checked-out repository metadata.'
-    }
-
-    $tag = "v$version"
-    $headCommit = [string](& git -C $RepoRoot rev-parse HEAD)
-    $headCommit = $headCommit.Trim()
-    $tagCommit = [string](& git -C $RepoRoot rev-parse "$tag^{}" 2>$null)
-    $tagCommit = $tagCommit.Trim()
-    if ($LASTEXITCODE -ne 0 -or [string]::IsNullOrWhiteSpace($tagCommit)) {
-        throw "Release publication requires the local release tag $tag derived from repository metadata."
-    }
-    if ($tagCommit -ne $headCommit) {
-        throw "Release tag $tag identifies $tagCommit, but the checked-out commit is $headCommit."
-    }
-    return $tag
-}
-
-<#
-.SYNOPSIS
-Validate repository state and VMX provenance against the current release tag.
-
-.PARAMETER RepoRoot
-Repository root used for provenance validation.
-.PARAMETER Tag
-Release tag expected to match the exported VMX.
-.PARAMETER SourceVmxPath
-VMX path whose provenance is validated.
-#>
-<#
-.SYNOPSIS
-Validate Atlaso Release Provenance.
-.PARAMETER RepoRoot
-Repo Root value.
-.PARAMETER Tag
-Tag value.
-.PARAMETER SourceVmxPath
-Source Vmx Path value.
-#>
-function Assert-AtlasoReleaseProvenance {
-    param(
-        [string]$RepoRoot,
-        [string]$Tag,
-        [string]$SourceVmxPath
-    )
-
-    if (-not (Get-Command git -ErrorAction SilentlyContinue)) {
-        throw 'git was not found. Release publication requires an exact clean tag checkout.'
-    }
-    $dirtyPaths = @(& git -C $RepoRoot status --porcelain --untracked-files=no)
-    if ($LASTEXITCODE -ne 0 -or $dirtyPaths.Count -ne 0) {
-        throw 'Release publication requires a clean tracked worktree.'
-    }
-    $headCommit = [string](& git -C $RepoRoot rev-parse HEAD)
-    if ($LASTEXITCODE -ne 0) {
-        throw 'Could not resolve the current repository commit.'
-    }
-    $headCommit = $headCommit.Trim()
-    $tagCommit = [string](& git -C $RepoRoot rev-parse "$Tag^{}" 2>$null)
-    $tagCommit = $tagCommit.Trim()
-    if ($LASTEXITCODE -ne 0 -or [string]::IsNullOrWhiteSpace($tagCommit)) {
-        throw "Release tag $Tag is not available locally. Fetch the exact tag before publishing."
-    }
-    if ($tagCommit -ne $headCommit) {
-        throw "Release tag $Tag identifies $tagCommit, but the exported image checkout is $headCommit."
-    }
-
-    $provenance = Assert-AtlasoVmwarePayloadProvenance -VmxPath $SourceVmxPath
-    if ($provenance.source_commit -ne $headCommit -or
-        [bool]$provenance.tracked_source_dirty) {
-        throw 'VMware build provenance does not identify this exact clean release commit.'
-    }
-    return $provenance
-}
-
-<#
-.SYNOPSIS
-Publish OVF release assets to GitHub after validation.
-
-.PARAMETER GhPath
-Path to the GitHub CLI binary.
-.PARAMETER Tag
-Release tag receiving the exported artifacts.
-.PARAMETER OvfDirectory
-Directory with generated OVF descriptor and companion files.
-.PARAMETER OvaPath
-Optional OVA file path to upload when present.
-.PARAMETER ExpectedCommit
-Expected source commit hash for provenance checks.
-.PARAMETER MaximumBytes
-Per-file byte limit for uploaded release assets.
-#>
-<#
-.SYNOPSIS
-Publish Atlaso Release Assets.
-.PARAMETER GhPath
-Gh Path value.
-.PARAMETER Tag
-Tag value.
-.PARAMETER OvfDirectory
-Ovf Directory value.
-.PARAMETER OvaPath
-Ova Path value.
-.PARAMETER ExpectedCommit
-Expected Commit value.
-.PARAMETER MaximumBytes
-Maximum Bytes value.
-#>
-function Publish-AtlasoReleaseAssets {
-    param(
-        [string]$GhPath,
-        [string]$Tag,
-        [string]$OvfDirectory,
-        [string]$OvaPath,
-        [string]$ExpectedCommit,
-        [long]$MaximumBytes
-    )
-
-    $effectiveRepository = [string](& $GhPath repo view --json nameWithOwner --jq '.nameWithOwner')
-    $effectiveRepository = $effectiveRepository.Trim()
-    if ($LASTEXITCODE -ne 0 -or [string]::IsNullOrWhiteSpace($effectiveRepository)) {
-        throw 'Could not resolve the destination GitHub repository from the current checkout.'
-    }
-    $repositoryArguments = @('--repo', $effectiveRepository)
-    $remoteTagCommit = [string](& $GhPath api "repos/$effectiveRepository/commits/$Tag" --jq '.sha')
-    $remoteTagCommit = $remoteTagCommit.Trim()
-    if ($LASTEXITCODE -ne 0 -or $remoteTagCommit -notmatch '^[0-9a-f]{40}$') {
-        throw "Could not resolve release tag $Tag in destination repository $effectiveRepository."
-    }
-    if ($remoteTagCommit -ne $ExpectedCommit) {
-        throw "Destination release tag $Tag identifies $remoteTagCommit, not exported image commit $ExpectedCommit."
-    }
-    $existingAssetNames = @(& $GhPath release view $Tag --json assets --jq '.assets[].name' @repositoryArguments)
-    if ($LASTEXITCODE -ne 0) {
-        throw "GitHub Release $Tag was not found or is not accessible."
-    }
-
-    $ovfAssets = @(Get-ChildItem -LiteralPath $OvfDirectory -File | Sort-Object Name)
-    if ($ovfAssets.Count -eq 0) {
-        throw "No OVF release assets were found under $OvfDirectory."
-    }
-    foreach ($asset in $ovfAssets) {
-        if ($asset.Length -gt $MaximumBytes) {
-            throw "OVF release asset $($asset.Name) is $($asset.Length) bytes, exceeding the $MaximumBytes-byte GitHub asset limit."
-        }
-    }
-
-    $uploadAssets = @($ovfAssets.FullName)
-    if (-not [string]::IsNullOrWhiteSpace($OvaPath) -and (Test-Path -LiteralPath $OvaPath -PathType Leaf)) {
-        $ova = Get-Item -LiteralPath $OvaPath
-        if ($ova.Length -le $MaximumBytes) {
-            $uploadAssets += $ova.FullName
-        }
-        else {
-            Write-Warning "Skipping OVA release asset $($ova.Name): $($ova.Length) bytes exceeds the $MaximumBytes-byte GitHub asset limit. The OVF package remains directly deployable."
-        }
-    }
-
-    $uploadAssetNames = @($uploadAssets | ForEach-Object { [System.IO.Path]::GetFileName($_) })
-    $existingUploadAssets = @($uploadAssetNames | Where-Object { $_ -in $existingAssetNames })
-    if ($existingUploadAssets.Count -ne 0) {
-        if ($existingUploadAssets.Count -ne $uploadAssetNames.Count) {
-            throw "GitHub Release $Tag contains only part of the Atlaso OVF asset set; refusing a non-idempotent upload."
-        }
-        $verificationDirectory = Join-Path ([System.IO.Path]::GetTempPath()) "atlaso-ovf-release-$([guid]::NewGuid().ToString('N'))"
-        New-Item -ItemType Directory -Path $verificationDirectory | Out-Null
-        try {
-            foreach ($assetName in $uploadAssetNames) {
-                & $GhPath release download $Tag --pattern $assetName --dir $verificationDirectory @repositoryArguments
-                if ($LASTEXITCODE -ne 0) {
-                    throw "Could not download existing GitHub release asset $assetName for byte verification."
-                }
-            }
-            foreach ($assetPath in $uploadAssets) {
-                $assetName = [System.IO.Path]::GetFileName($assetPath)
-                $existingPath = Join-Path $verificationDirectory $assetName
-                if (-not (Test-Path -LiteralPath $existingPath -PathType Leaf) -or
-                    (Get-FileHash -LiteralPath $assetPath -Algorithm SHA256).Hash -ne (Get-FileHash -LiteralPath $existingPath -Algorithm SHA256).Hash) {
-                    throw "GitHub Release $Tag already contains different bytes for $assetName."
-                }
-            }
-        }
-        finally {
-            Remove-Item -LiteralPath $verificationDirectory -Recurse -Force -ErrorAction SilentlyContinue
-        }
-        Write-Host "GitHub Release $Tag already contains the identical Atlaso OVF asset set."
-        return
-    }
-
-    & $GhPath release upload $Tag @uploadAssets @repositoryArguments
-    if ($LASTEXITCODE -ne 0) {
-        throw "GitHub release asset upload failed with exit code $LASTEXITCODE."
-    }
-    foreach ($assetPath in $uploadAssets) {
-        $asset = Get-Item -LiteralPath $assetPath
-        Write-Host "Uploaded GitHub release asset: $($asset.Name) ($($asset.Length) bytes)"
-    }
-}
-
-<#
-.SYNOPSIS
 Create a new OVF namespace attribute on an XML element.
 
 .PARAMETER Document
@@ -396,7 +147,7 @@ XML document owning the created attribute.
 .PARAMETER Name
 Attribute local name.
 .PARAMETER Value
-Attribute value.
+Text serialized into the created OVF attribute.
 #>
 <#
 .SYNOPSIS
@@ -406,7 +157,7 @@ Document value.
 .PARAMETER Name
 Name value.
 .PARAMETER Value
-Value value.
+Text assigned to the new OVF attribute.
 #>
 function New-OvfAttribute {
     param(
@@ -431,7 +182,7 @@ XML element receiving the attribute.
 .PARAMETER Name
 Attribute local name.
 .PARAMETER Value
-Attribute value.
+Text serialized into the OVF attribute.
 #>
 <#
 .SYNOPSIS
@@ -443,7 +194,7 @@ Element value.
 .PARAMETER Name
 Name value.
 .PARAMETER Value
-Value value.
+Text assigned to the OVF attribute.
 #>
 function Set-OvfAttribute {
     param(
@@ -472,7 +223,7 @@ XML element receiving the attribute.
 .PARAMETER Name
 Attribute local name.
 .PARAMETER Value
-Attribute value.
+Text serialized into the VMware namespaced attribute.
 #>
 <#
 .SYNOPSIS
@@ -484,7 +235,7 @@ Element value.
 .PARAMETER Name
 Name value.
 .PARAMETER Value
-Value value.
+Text assigned to the VMware namespaced attribute.
 #>
 function Set-VmwAttribute {
     param(
@@ -515,7 +266,7 @@ Parent element for the new node.
 .PARAMETER LocalName
 Local element name.
 .PARAMETER Value
-Inner text value.
+Text serialized inside the new child element.
 #>
 <#
 .SYNOPSIS
@@ -527,7 +278,7 @@ Parent value.
 .PARAMETER LocalName
 Local Name value.
 .PARAMETER Value
-Value value.
+Inner text assigned to the new child element.
 #>
 function Add-TextElement {
     param(
@@ -1219,6 +970,146 @@ function Assert-AtlasoOvfDiskTopology {
 
 <#
 .SYNOPSIS
+Write byte-bound OVA provenance for the two verified payload disks.
+.PARAMETER RepoRoot
+Atlaso repository containing the recorded source commit.
+.PARAMETER OvfPath
+Normalized OVF descriptor whose payload references are recorded.
+.PARAMETER SourceCommit
+Exact clean source commit from VMware build provenance.
+#>
+function Write-AtlasoOvaProvenance {
+    param(
+        [Parameter(Mandatory = $true)][string]$RepoRoot,
+        [Parameter(Mandatory = $true)][string]$OvfPath,
+        [Parameter(Mandatory = $true)][string]$SourceCommit
+    )
+
+    if ($SourceCommit -notmatch '^[0-9a-f]{40}$') {
+        throw 'VMware build provenance contains an invalid source commit.'
+    }
+    $metadata = @(& git -C $RepoRoot show "${SourceCommit}:pyproject.toml" 2>$null) -join "`n"
+    if ($LASTEXITCODE -ne 0) {
+        throw "The VMware build source commit is unavailable: $SourceCommit"
+    }
+    $versionMatch = [regex]::Match($metadata, '(?m)^version\s*=\s*"(?<version>\d+\.\d+\.\d+)"\s*$')
+    if (-not $versionMatch.Success) {
+        throw 'Could not resolve the synchronized product version from the VMware build source commit.'
+    }
+
+    [xml]$document = Get-Content -Raw -LiteralPath $OvfPath
+    $manager = New-Object System.Xml.XmlNamespaceManager($document.NameTable)
+    $manager.AddNamespace('ovf', $ovfNamespace)
+    $manager.AddNamespace('rasd', $rasdNamespace)
+    $hardwareDisks = @($document.SelectNodes(
+            '//ovf:VirtualSystem/ovf:VirtualHardwareSection/ovf:Item[rasd:ResourceType="17"]',
+            $manager
+        ))
+    $references = @($document.SelectNodes('/ovf:Envelope/ovf:References/ovf:File', $manager))
+    $payloadContracts = @(
+        @{ Slot = 0; Role = 'photon_os'; Capacity = 42949672960 },
+        @{ Slot = 1; Role = 'atlaso_system'; Capacity = 21474836480 }
+    )
+    $payloads = foreach ($contract in $payloadContracts) {
+        $hardware = @($hardwareDisks | Where-Object {
+                (Get-RasdValue -Item $_ -LocalName 'AddressOnParent') -eq [string]$contract.Slot
+            })
+        if ($hardware.Count -ne 1) {
+            throw "OVF provenance requires exactly one payload disk at SCSI slot $($contract.Slot)."
+        }
+        $hostResource = Get-RasdValue -Item $hardware[0] -LocalName 'HostResource'
+        $diskMatch = [regex]::Match($hostResource, '^ovf:/disk/(?<id>[^/]+)$')
+        if (-not $diskMatch.Success) {
+            throw "OVF payload at SCSI slot $($contract.Slot) has an invalid disk reference."
+        }
+        $disk = $document.SelectSingleNode(
+            "/ovf:Envelope/ovf:DiskSection/ovf:Disk[@ovf:diskId='$($diskMatch.Groups['id'].Value)']",
+            $manager
+        )
+        $fileId = if ($disk) { $disk.GetAttribute('fileRef', $ovfNamespace) } else { '' }
+        $file = @($references | Where-Object { $_.GetAttribute('id', $ovfNamespace) -eq $fileId })
+        if ($file.Count -ne 1) {
+            throw "OVF payload at SCSI slot $($contract.Slot) does not resolve to exactly one file."
+        }
+        $fileName = $file[0].GetAttribute('href', $ovfNamespace)
+        if ([System.IO.Path]::GetFileName($fileName) -ne $fileName) {
+            throw 'OVF payload provenance requires flat, safe VMDK file names.'
+        }
+        $filePath = Join-Path (Split-Path -Parent $OvfPath) $fileName
+        $fileItem = Get-Item -LiteralPath $filePath -ErrorAction Stop
+        if ($fileItem.Length -le 0 -or
+            ($fileItem.Attributes -band [System.IO.FileAttributes]::ReparsePoint) -ne 0) {
+            throw "OVF payload is missing, empty, or a reparse point: $fileName"
+        }
+        [ordered]@{
+            role               = $contract.Role
+            scsi_slot          = $contract.Slot
+            file               = $fileName
+            virtual_size_bytes = $contract.Capacity
+            sha256             = (Get-FileHash -LiteralPath $fileItem.FullName -Algorithm SHA256).Hash.ToLowerInvariant()
+        }
+    }
+    $provenance = [ordered]@{
+        schema_version  = 1
+        kind            = 'atlaso-vmware-ova-provenance'
+        product_version = $versionMatch.Groups['version'].Value
+        source_commit   = $SourceCommit
+        machine         = [ordered]@{
+            firmware    = 'uefi'
+            secure_boot = $false
+            cpu_count   = 4
+            memory_mib  = 4096
+            nic_count   = 2
+            disk_bus    = 'scsi'
+        }
+        payloads        = @($payloads)
+    }
+    $path = Join-Path (Split-Path -Parent $OvfPath) 'atlaso-provenance.json'
+    [System.IO.File]::WriteAllText(
+        $path,
+        (($provenance | ConvertTo-Json -Depth 8) + "`n"),
+        [System.Text.UTF8Encoding]::new($false)
+    )
+    return $path
+}
+
+<#
+.SYNOPSIS
+Validate the final OVA through the provider-neutral Python contract.
+.PARAMETER RepoRoot
+Atlaso repository containing the validator.
+.PARAMETER OvaPath
+Final OVA archive to validate.
+#>
+function Assert-AtlasoCanonicalOva {
+    param(
+        [Parameter(Mandatory = $true)][string]$RepoRoot,
+        [Parameter(Mandatory = $true)][string]$OvaPath
+    )
+
+    $python = Get-Command python -ErrorAction SilentlyContinue
+    if (-not $python) {
+        throw 'python was not found. Canonical OVA validation is mandatory.'
+    }
+    $validationRoot = Join-Path (Split-Path -Parent $OvaPath) ('.ova-validation-' + [guid]::NewGuid().ToString('N'))
+    New-Item -ItemType Directory -Path $validationRoot | Out-Null
+    try {
+        $output = @(& $python.Source (Join-Path $RepoRoot 'scripts\virtualization\validate_ova.py') `
+                $OvaPath '--extract-directory' $validationRoot 2>&1)
+        if ($LASTEXITCODE -ne 0) {
+            $tail = @($output | Select-Object -Last 20) -join [Environment]::NewLine
+            throw "Final OVA validation failed.$([Environment]::NewLine)$tail"
+        }
+    }
+    finally {
+        if (Test-Path -LiteralPath $validationRoot) {
+            Remove-Item -LiteralPath $validationRoot -Recurse -Force
+        }
+    }
+}
+
+<#
+.SYNOPSIS
 Find an existing product property by key.
 
 .PARAMETER ProductSection
@@ -1301,7 +1192,7 @@ Whether the property uses password input semantics.
 .PARAMETER Boolean
 Whether the property uses boolean input semantics.
 .PARAMETER DefaultValue
-Optional default value.
+Optional text serialized as the OVF property default.
 .PARAMETER MinLength
 Minimum permitted string length for password-like strings.
 #>
@@ -1325,7 +1216,7 @@ Password value.
 .PARAMETER Boolean
 Boolean value.
 .PARAMETER DefaultValue
-Default Value value.
+Optional OVF property default serialized when the property declares one.
 .PARAMETER MinLength
 Min Length value.
 #>
@@ -1574,15 +1465,7 @@ function Get-OvfDescriptorPath {
 
 $repoRoot = (Resolve-Path -LiteralPath (Join-Path $PSScriptRoot '..\..\..')).Path
 $resolvedSourceVmx = (Resolve-Path -LiteralPath $SourceVmxPath).Path
-$releaseTag = ''
-$releaseProvenance = $null
-if ($Release) {
-    $releaseTag = Resolve-AtlasoReleaseTag -RepoRoot $repoRoot
-    $releaseProvenance = Assert-AtlasoReleaseProvenance -RepoRoot $repoRoot -Tag $releaseTag -SourceVmxPath $resolvedSourceVmx
-}
-else {
-    $releaseProvenance = Assert-AtlasoVmwarePayloadProvenance -VmxPath $resolvedSourceVmx
-}
+$buildProvenance = Assert-AtlasoVmwarePayloadProvenance -VmxPath $resolvedSourceVmx
 $callerSpecifiedOutputDirectory = $PSBoundParameters.ContainsKey('OutputDirectory')
 $outputPlan = Resolve-AtlasoOvfOutputPlan `
     -RepoRoot $repoRoot `
@@ -1593,7 +1476,7 @@ $resolvedOutputDirectory = $outputPlan.OutputDirectory
 $resolvedOvfTool = Resolve-OvfToolPath -Path $OvfToolPath
 $resolvedTar = if ($NoOva) { '' } else { Resolve-TarPath -Path $TarPath }
 
-Clear-AtlasoOvfOutputDirectory -OutputPlan $outputPlan -Release:$Release -Force:$Force
+Clear-AtlasoOvfOutputDirectory -OutputPlan $outputPlan -Force:$Force
 New-Item -ItemType Directory -Force -Path $resolvedOutputDirectory | Out-Null
 
 & $resolvedOvfTool --acceptAllEulas $resolvedSourceVmx $resolvedOutputDirectory
@@ -1605,12 +1488,17 @@ $ovfPath = Get-OvfDescriptorPath -OutputDirectory $resolvedOutputDirectory
 $ovfPackageDirectory = Split-Path -Parent $ovfPath
 Add-AtlasoOvfProperties -OvfPath $ovfPath
 Assert-AtlasoOvfDiskTopology -OvfPath $ovfPath
+$provenancePath = Write-AtlasoOvaProvenance `
+    -RepoRoot $repoRoot `
+    -OvfPath $ovfPath `
+    -SourceCommit ([string]$buildProvenance.source_commit)
 $manifestPath = Update-OvfManifest -OvfDirectory $ovfPackageDirectory
 
 $ovaPath = ''
 if (-not $NoOva) {
     $ovaPath = Join-Path (Split-Path -Parent $resolvedOutputDirectory) "$Name.ova"
     New-OvaArchive -OvfDirectory $ovfPackageDirectory -OvaPath $ovaPath -ResolvedTarPath $resolvedTar
+    Assert-AtlasoCanonicalOva -RepoRoot $repoRoot -OvaPath $ovaPath
 }
 
 foreach ($asset in @(Get-ChildItem -LiteralPath $ovfPackageDirectory -File | Sort-Object Name)) {
@@ -1621,20 +1509,10 @@ if ($ovaPath) {
     Write-Host "Atlaso OVA archive size: $($ovaAsset.Length) bytes"
 }
 
-if ($Release) {
-    $resolvedGh = Resolve-GhPath
-    Publish-AtlasoReleaseAssets `
-        -GhPath $resolvedGh `
-        -Tag $releaseTag `
-        -OvfDirectory $ovfPackageDirectory `
-        -OvaPath $ovaPath `
-        -ExpectedCommit $releaseProvenance.source_commit `
-        -MaximumBytes $MaximumReleaseAssetBytes
-}
-
 Write-Host "Atlaso OVF export root: $resolvedOutputDirectory"
 Write-Host "Atlaso OVF folder: $ovfPackageDirectory"
 Write-Host "Atlaso OVF descriptor: $ovfPath"
+Write-Host "Atlaso OVA provenance: $provenancePath"
 Write-Host "Atlaso OVF manifest: $manifestPath"
 if ($ovaPath) {
     Write-Host "Atlaso OVA archive: $ovaPath"
