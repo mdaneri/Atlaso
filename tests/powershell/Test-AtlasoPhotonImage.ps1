@@ -36,6 +36,28 @@ function ConvertTo-TestSecureString {
 
 $modulePath = Join-Path $RepositoryRoot 'scripts/windows/common/Atlaso.PhotonImage.psm1'
 $module = Import-Module $modulePath -Force -PassThru
+$rejectedPreparedIsoPath = Join-Path $OutputDirectory 'rejected-credential-bearing.iso'
+$rejectedSecurePassword = ConvertTo-TestSecureString -Value 'non-secret-test-credential'
+try {
+    Invoke-AtlasoPhotonImageBuild `
+        -IsoUrl 'unused-for-rejected-iso-only-mode' `
+        -IsoChecksum 'none' `
+        -PackerDirectory (Join-Path $RepositoryRoot 'image\vmware-workstation') `
+        -SshPassword $rejectedSecurePassword `
+        -BuilderStaticIp '' `
+        -PreparedIsoPath $rejectedPreparedIsoPath `
+        -PrepareIsoOnly
+    throw 'PrepareIsoOnly unexpectedly retained a credential-bearing remastered ISO.'
+}
+catch {
+    if ($_.Exception.Message -notlike 'PrepareIsoOnly is not supported because a retained remastered ISO*') {
+        throw
+    }
+}
+if (Test-Path -LiteralPath $rejectedPreparedIsoPath) {
+    throw 'Rejected ISO-only preparation created a credential-bearing artifact.'
+}
+
 $sensitiveArtifactRoot = Join-Path $OutputDirectory 'sensitive-artifact-cleanup'
 New-Item -ItemType Directory -Force -Path $sensitiveArtifactRoot | Out-Null
 [System.IO.File]::WriteAllText(

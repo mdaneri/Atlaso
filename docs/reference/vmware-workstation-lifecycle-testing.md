@@ -110,9 +110,11 @@ the Hyper-V build wrapper. Both wrappers use `image/common/source` for the origi
 source ISO is not duplicated under each target. The Workstation image installs `open-vm-tools`; the Hyper-V image keeps
 the `hyper-v` package and Hyper-V guest daemons. The Workstation build wrapper opens a visible VMware console by
 default. Use `-Headless` only when an unattended build is preferred.
-The shared builder removes and verifies the absence of its plaintext kickstart source and generated Packer variable file;
-an ACL, file-lock, or endpoint-protection cleanup failure terminates the build instead of reporting success with a
-credential-bearing artifact left behind.
+The shared builder removes and verifies the absence of its plaintext kickstart source, generated Packer variable file,
+and remastered credential-bearing ISO after the bounded Packer consumer exits. The cleanup covers validation, build,
+failure, and fallback ISO paths; an ACL, file-lock, or endpoint-protection cleanup failure terminates the build instead
+of reporting success with a credential-bearing artifact left behind. `-PrepareIsoOnly` is rejected because retaining
+that ISO would retain a reusable build credential.
 
 GUI builds start or reuse a responsive VMware Workstation UI as a process separate from Packer before invoking the
 VMware builder. This preserves the visible console while preventing an already-running VM from leaving Packer blocked

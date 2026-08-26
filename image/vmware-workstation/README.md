@@ -51,7 +51,9 @@ and Hyper-V templates. Canonical CI runs the same protected inventory on its Win
 
 Use the wrapper instead of raw `packer build`; it creates the remastered Photon ISO with `photon-ks.json` and the Atlaso
 GRUB auto-install entry. The original Photon source ISO is shared with the Hyper-V image path under
-`image/common/source`; only the target-specific remastered kickstart ISO is written under this image directory.
+`image/common/source`; the target-specific remastered kickstart ISO is a temporary sensitive artifact under this image
+directory. The wrapper removes it and verifies its absence after the bounded Packer validation or build exits, including
+failure paths. `-PrepareIsoOnly` is rejected because retaining that ISO would retain a reusable build credential.
 `New-AtlasoPhotonKickstart` in `scripts/windows/common/Atlaso.PhotonImage.psm1` is the only kickstart source for both
 providers. The focused image tests invoke that generator, parse the VMware and Hyper-V JSON outputs, and validate their
 shared installer contract plus provider-specific packages and guest-service commands.

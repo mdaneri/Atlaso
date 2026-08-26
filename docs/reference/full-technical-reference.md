@@ -230,7 +230,10 @@ DNS servers and uses them for both the temporary Photon builder and the finished
 public DNS only as a fallback. The wrapper writes `photon-ks.json`, embeds it into a remastered Photon ISO, replaces the
 ISO's UEFI GRUB config with a Atlaso auto-install entry, and passes that single ISO to Packer. Photon then boots with
 `ks=cdrom:/photon-ks.json` without Packer typing boot commands. Raw `packer build .` is intentionally blocked unless the
-ISO is marked as wrapper-prepared; the wrapper is the tested Windows Server 2025 path. Build runs pass Packer's `-force`
+ISO is marked as wrapper-prepared; the wrapper is the tested Windows Server 2025 path. The remastered ISO is a bounded
+sensitive artifact: the wrapper removes it and verifies its absence after Packer exits, including failure and fallback
+paths. ISO-only preparation is rejected because retaining the remastered ISO would retain a reusable build credential.
+Build runs pass Packer's `-force`
 flag by default so the fixed output directory can be rebuilt in one command. Use `-OutputDirectory <path>` to keep
 multiple artifacts or `-KeepExistingOutput` when you want Packer to fail instead of replacing an existing output
 directory. Use `-PackerOnError abort` to keep a failed builder VM for debugging, or `-PackerOnError ask` to choose the

@@ -8,7 +8,7 @@ Expected Photon ISO checksum.
 .PARAMETER SshPassword
 Temporary Packer SSH password. The wrapper prompts securely when omitted.
 .PARAMETER BootstrapAdminPassword
-Initial appliance administrator password. The wrapper prompts securely when omitted outside ISO-only preparation.
+Initial appliance administrator password. The wrapper prompts securely when omitted.
 .PARAMETER VmName
 Builder virtual-machine name.
 .PARAMETER OutputDirectory
@@ -66,7 +66,7 @@ Enable real system adapters in the image.
 .PARAMETER ValidateOnly
 Validate Packer inputs without building.
 .PARAMETER PrepareIsoOnly
-Stop after preparing the remastered ISO.
+Reject ISO-only preparation because the retained ISO would contain reusable credentials.
 #>
 [CmdletBinding()]
 param(
@@ -116,11 +116,15 @@ param(
 Set-StrictMode -Version Latest
 $ErrorActionPreference = 'Stop'
 
+if ($PrepareIsoOnly) {
+    throw 'PrepareIsoOnly is not supported because a retained remastered ISO would contain reusable build credentials. Run Packer validation or a build so the ISO can be deleted after the bounded consumer exits.'
+}
+
 # Passwords have no repository defaults; resolve them before network or build mutation.
 if ($null -eq $SshPassword) {
     $SshPassword = Read-Host -Prompt 'Temporary Photon builder SSH password' -AsSecureString
 }
-if (-not $PrepareIsoOnly -and $null -eq $BootstrapAdminPassword) {
+if ($null -eq $BootstrapAdminPassword) {
     $BootstrapAdminPassword = Read-Host -Prompt 'Atlaso bootstrap administrator password' -AsSecureString
 }
 

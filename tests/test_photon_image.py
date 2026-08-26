@@ -1316,6 +1316,11 @@ def test_packer_build_uses_atlaso_management_network_by_default():
     assert "Remove-AtlasoSensitiveBuildArtifact -Path $kickstartJson" in build_module
     assert "Remove-AtlasoSensitiveBuildArtifact -Path $ksSourceDir" in build_module
     assert "Remove-AtlasoSensitiveBuildArtifact -Path $varFilePath" in build_module
+    assert "$preparedIsoCleanupPaths.Add($resolvedPreparedIsoPath)" in build_module
+    assert "$preparedIsoCleanupPaths.Add($fallbackPreparedIsoPath)" in build_module
+    assert "Remove-AtlasoSensitiveBuildArtifact -Path $candidatePath" in build_module
+    assert "Remastered Photon ISO credential cleanup failed" in build_module
+    assert "PrepareIsoOnly is not supported because a retained remastered ISO" in build_module
     kickstart_build = build_module.split("    $kickstartJson =", maxsplit=1)[1].split(
         "    $preparedIso =", maxsplit=1
     )[0]
@@ -1440,7 +1445,8 @@ def test_vmware_builder_uses_nat_gateway_dns_by_default():
 
     assert "[SecureString]$SshPassword" in wrapper
     assert "[SecureString]$BootstrapAdminPassword" in wrapper
-    assert "if (-not $PrepareIsoOnly -and $null -eq $BootstrapAdminPassword)" in wrapper
+    assert "if ($null -eq $BootstrapAdminPassword)" in wrapper
+    assert "PrepareIsoOnly is not supported because a retained remastered ISO" in wrapper
     assert "Read-Host -Prompt 'Temporary Photon builder SSH password' -AsSecureString" in wrapper
     assert "Read-Host -Prompt 'Atlaso bootstrap administrator password' -AsSecureString" in wrapper
     assert "$builderDnsWasPassed = $PSBoundParameters.ContainsKey('BuilderStaticDns')" in wrapper
