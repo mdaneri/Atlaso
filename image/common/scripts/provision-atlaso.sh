@@ -38,6 +38,7 @@ DATA_DISK_POLICY_SOURCE="$ATLASO_SRC/image/common/data-disks.conf"
 QEMU_GUEST_AGENT_BUILDER="$ATLASO_SRC/image/common/scripts/build-qemu-guest-agent-rpm.sh"
 GUEST_AGENT_SELECTOR_SOURCE="$ATLASO_SRC/scripts/appliance/atlaso-select-guest-agent"
 MACHINE_IDENTITY_INITIALIZER_SOURCE="$ATLASO_SRC/scripts/appliance/atlaso-initialize-machine-identity.py"
+IMAGE_BUILD_FINALIZER_SOURCE="$ATLASO_SRC/image/common/scripts/finalize-image-build.sh"
 GUEST_AGENT_UNIT_SOURCE="$ATLASO_SRC/image/common/systemd/atlaso-guest-agent-select.service"
 GUEST_AGENT_STAGING="$ATLASO_STATE/first-boot-packages"
 
@@ -250,7 +251,7 @@ if [ ! -r "$DATA_DISK_POLICY_SOURCE" ]; then
   exit 2
 fi
 if [ ! -r "$QEMU_GUEST_AGENT_BUILDER" ] || [ ! -r "$GUEST_AGENT_SELECTOR_SOURCE" ] ||
-  [ ! -r "$MACHINE_IDENTITY_INITIALIZER_SOURCE" ] ||
+  [ ! -r "$MACHINE_IDENTITY_INITIALIZER_SOURCE" ] || [ ! -r "$IMAGE_BUILD_FINALIZER_SOURCE" ] ||
   [ ! -r "$GUEST_AGENT_UNIT_SOURCE" ]; then
   echo "Provider-neutral guest-agent build or first-boot assets are missing from staged Atlaso sources." >&2
   exit 2
@@ -580,6 +581,7 @@ install -o root -g root -m 0755 "$ATLASO_HOME/scripts/appliance/atlaso-install-b
 install -o root -g root -m 0755 "$ATLASO_HOME/scripts/appliance/atlaso-mount-data-disks" "$ATLASO_HOME/bin/atlaso-mount-data-disks"
 install -o root -g root -m 0755 "$GUEST_AGENT_SELECTOR_SOURCE" "$ATLASO_HOME/bin/atlaso-select-guest-agent"
 install -o root -g root -m 0755 "$MACHINE_IDENTITY_INITIALIZER_SOURCE" "$ATLASO_HOME/bin/atlaso-initialize-machine-identity.py"
+install -o root -g root -m 0700 "$IMAGE_BUILD_FINALIZER_SOURCE" /usr/local/sbin/atlaso-finalize-image-build
 install -o root -g root -m 0755 "$ATLASO_HOME/scripts/appliance/atlaso-bootstrap-https" "$ATLASO_HOME/bin/atlaso-bootstrap-https"
 trust_source_dir="$ATLASO_HOME/image/common/update-trust"
 if [ ! -d "$trust_source_dir" ]; then

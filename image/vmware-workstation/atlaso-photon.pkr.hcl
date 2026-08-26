@@ -179,7 +179,7 @@ source "vmware-iso" "photon" {
   ssh_username         = var.ssh_username
   ssh_password         = var.ssh_password
   ssh_timeout          = "45m"
-  shutdown_command     = "printf '%s' '${local.ssh_password_stdin_base64}' | base64 -d | sudo -S sh -c 'userdel -r ${var.ssh_username}; systemctl poweroff'"
+  shutdown_command     = "printf '%s' '${local.ssh_password_stdin_base64}' | base64 -d | sudo -S systemd-run --quiet --unit=atlaso-image-build-finalize --on-active=1s --property=Type=oneshot /usr/local/sbin/atlaso-finalize-image-build ${var.ssh_username}"
 
   vmx_data = {
     "firmware"                 = "efi"

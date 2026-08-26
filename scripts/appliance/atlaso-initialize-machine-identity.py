@@ -12,7 +12,6 @@ import subprocess
 from pathlib import Path
 
 ENV_PATH = Path("/etc/atlaso/atlaso.env")
-MARKER_PATH = Path("/var/lib/atlaso/machine-identity.applied")
 ACCESS_PATH = Path("/run/atlaso/first-boot-access.json")
 SSH_DIRECTORY = Path("/etc/ssh")
 KVP_POOL_PATH = Path("/var/lib/hyperv/.kvp_pool_1")
@@ -134,31 +133,6 @@ def clear_access(platform: str) -> None:
         _clear_hyperv_access()
 
 
-def _write_marker_atomic(platform: str) -> None:
-    """Commit the machine-identity completion marker durably and atomically.
-
-    Args:
-        platform: Verified guest-agent platform identifier.
-    """
-
-    MARKER_PATH.parent.mkdir(parents=True, exist_ok=True)
-    temporary = MARKER_PATH.with_name(f".{MARKER_PATH.name}.{secrets.token_hex(8)}.tmp")
-    descriptor = os.open(temporary, os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW, 0o600)
-    try:
-        with os.fdopen(descriptor, "w", encoding="utf-8") as handle:
-            handle.write(f"platform={platform}\n")
-            handle.flush()
-            os.fsync(handle.fileno())
-        os.replace(temporary, MARKER_PATH)
-        directory_descriptor = os.open(MARKER_PATH.parent, os.O_RDONLY | os.O_DIRECTORY)
-        try:
-            os.fsync(directory_descriptor)
-        finally:
-            os.close(directory_descriptor)
-    finally:
-        temporary.unlink(missing_ok=True)
-
-
 def _publish_console_access(payload: str) -> None:
     """Write the one-time envelope directly to the transient tty1 device.
 
@@ -183,12 +157,6 @@ def initialize(platform: str) -> None:
         platform: Verified guest-agent platform identifier.
     """
 
-    if MARKER_PATH.is_file():
-        if MARKER_PATH.read_text(encoding="utf-8") != f"platform={platform}\n":
-            raise RuntimeError("machine-identity marker conflicts with the detected platform")
-        return
-    if MARKER_PATH.exists() or MARKER_PATH.is_symlink():
-        raise RuntimeError("machine-identity marker is not an ordinary file")
     admin_password = _password()
     root_password = _password()
     username = _replace_environment(
@@ -222,7 +190,6 @@ def initialize(platform: str) -> None:
             _publish_console_access(access)
         except OSError:
             pass
-    _write_marker_atomic(platform)
 
 
 def main(argv: list[str] | None = None) -> int:

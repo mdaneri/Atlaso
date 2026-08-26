@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import importlib.util
 import json
-import os
 from pathlib import Path
 
 import pytest
@@ -101,23 +100,41 @@ def test_access_cleanup_removes_only_atlaso_transport(monkeypatch, tmp_path: Pat
     assert pool.read_bytes() == unrelated
 
 
-@pytest.mark.skipif(os.name == "nt", reason="The marker is committed by the Photon Linux guest.")
-def test_machine_identity_marker_is_committed_atomically(monkeypatch, tmp_path: Path) -> None:
-    """A durable marker is complete and leaves no partial sibling behind.
+def test_identity_retry_republishes_matching_access(monkeypatch, tmp_path: Path) -> None:
+    """A pre-commit retry replaces lost runtime access with fresh credentials.
 
     Args:
-        monkeypatch: Pytest fixture used to replace the fixed marker path.
+        monkeypatch: Pytest fixture used to replace identity operations.
         tmp_path: Temporary directory provided by pytest.
     """
 
     module = _load_module()
-    marker = tmp_path / "state/machine-identity.applied"
-    monkeypatch.setattr(module, "MARKER_PATH", marker)
+    passwords = iter(("first-admin", "first-root", "second-admin", "second-root"))
+    access = tmp_path / "run/atlaso/first-boot-access.json"
+    password_updates: list[str] = []
+    monkeypatch.setattr(module, "ACCESS_PATH", access)
+    monkeypatch.setattr(module, "_password", lambda: next(passwords))
+    monkeypatch.setattr(module, "_replace_environment", lambda values: "admin")
+    monkeypatch.setattr(module, "_regenerate_host_identity", lambda: "ssh-ed25519 host-key")
+    monkeypatch.setattr(module, "_publish_console_access", lambda payload: None)
+    monkeypatch.setattr(
+        module.subprocess,
+        "run",
+        lambda command, **kwargs: password_updates.append(kwargs["input"]),
+    )
 
-    module._write_marker_atomic("qemu")
+    module.initialize("qemu")
+    first_payload = json.loads(access.read_text(encoding="utf-8"))
+    access.unlink()
+    module.initialize("qemu")
+    second_payload = json.loads(access.read_text(encoding="utf-8"))
 
-    assert marker.read_text(encoding="utf-8") == "platform=qemu\n"
-    assert not list(marker.parent.glob(".machine-identity.applied.*.tmp"))
+    assert first_payload["password"] == "first-admin"
+    assert second_payload["password"] == "second-admin"
+    assert password_updates == [
+        "admin:first-admin\nroot:first-root\n",
+        "admin:second-admin\nroot:second-root\n",
+    ]
 
 
 def test_console_access_uses_transient_device_io(monkeypatch) -> None:

@@ -89,6 +89,9 @@ VMware deployment continues through OVF-property customization. The first-boot s
 discards the unused offline QEMU and Hyper-V RPM payloads, and records success before Atlaso services start.
 Supply a unique FQDN, Atlaso administrator password, and root password in the OVF deployment properties. The release
 image contains no usable build or deployment credential and no reusable SSH host key.
+Packer schedules final build-account removal in a detached root-owned unit so the SSH communicator exits first. That
+unit verifies the build account, home directory, passwordless sudo authorization, and build-only helper are absent;
+any failed verification leaves the VM powered on and blocks export.
 
 ## Import on Proxmox VE
 
@@ -165,6 +168,9 @@ repository.
 Successful selection proves that only the expected agent is installed, then securely removes the RPM staging tree,
 checksum manifest, package-manager cache, and runtime scratch directory. Failure leaves the verified persistent RPM
 closure available for automatic retry while the Atlaso front door and application remain stopped.
+The selector's success marker is the only first-boot transaction commit. An interruption before that commit reruns
+identity initialization, generates a fresh credential set, and republishes its matching one-time envelope before
+networking. The retry never exposes a password whose corresponding host state was replaced.
 
 VMware continues into OVF-property customization. Hyper-V, KVM, and Proxmox use DHCP-first defaults and do not wait for
 VMware metadata. Use the appliance console to complete initial networking when DHCP is unavailable.
