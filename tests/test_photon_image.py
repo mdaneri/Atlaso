@@ -2139,7 +2139,9 @@ def test_lifecycle_vmware_script_supports_routing_wan_only_and_esxi_pxe_install(
     assert "[SecureString]$EsxiPassword" in wrapper
     assert "Read-Host -Prompt 'ESXi root password for lifecycle probing' -AsSecureString" in wrapper
     assert "-GuestPassword $esxiPasswordSecure" in runner
-    assert "'--esxi-password', (ConvertFrom-SecureString -SecureString $esxiPasswordSecure -AsPlainText)" in runner
+    assert "'--esxi-password-stdin'" in runner
+    assert "$passwordText | & python @Arguments" in runner
+    assert "'--esxi-password'," not in runner
 
     assert "function Get-GuestIPv4ViaGuestOps" in runner
     assert "function Invoke-VmrunBounded" in runner

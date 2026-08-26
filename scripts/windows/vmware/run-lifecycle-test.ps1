@@ -147,6 +147,39 @@ if ($OidcOnly) {
     $SkipBackupRestoreTest = $true
 }
 
+<#
+.SYNOPSIS
+Run the Python lifecycle consumer and provide an optional ESXi secret through standard input.
+
+.PARAMETER Arguments
+Literal Python arguments that contain no ESXi password.
+
+.PARAMETER EsxiPassword
+Protected ESXi password written only to the child process standard-input stream.
+#>
+function Invoke-LifecyclePython {
+    [OutputType([int])]
+    param(
+        [Parameter(Mandatory = $true)][string[]]$Arguments,
+        [SecureString]$EsxiPassword
+    )
+
+    if ($null -eq $EsxiPassword) {
+        & python @Arguments
+        return $LASTEXITCODE
+    }
+
+    $passwordText = ConvertFrom-SecureString -SecureString $EsxiPassword -AsPlainText
+    try {
+        # Standard input avoids exposing the credential in the child command line.
+        $passwordText | & python @Arguments
+        return $LASTEXITCODE
+    }
+    finally {
+        $passwordText = $null
+    }
+}
+
 $resultStamp = Get-Date -Format 'yyyyMMdd-HHmmss'
 $resultRoot = Join-Path $repoRoot "test-results\vmware-workstation-lifecycle\$resultStamp"
 $vmRoot = Join-Path $resultRoot 'vms'
@@ -1693,9 +1726,7 @@ try {
         $basePythonArgs += @(
             '--pxe-client-mac', $esxiMacAddress,
             '--pxe-installer-iso-path', $appliancePxeInstallerIsoPath,
-            # Python is the native kickstart-rendering boundary. Unwrap the
-            # protected bundle value only for the child process that consumes it.
-            '--esxi-password', (ConvertFrom-SecureString -SecureString $esxiPasswordSecure -AsPlainText)
+            '--esxi-password-stdin'
         )
         if ($PxeClientIPAddress) {
             $basePythonArgs += @('--pxe-client-ip', $PxeClientIPAddress)
@@ -1720,9 +1751,9 @@ try {
     }
 
     if ($PSCmdlet.ShouldProcess($LabName, 'Run Workstation lifecycle interop scenario')) {
-        python @initialPythonArgs
-        if ($LASTEXITCODE -ne 0) {
-            throw "Lifecycle interop runner failed with exit code $LASTEXITCODE"
+        $pythonExitCode = Invoke-LifecyclePython -Arguments $initialPythonArgs -EsxiPassword $esxiPasswordSecure
+        if ($pythonExitCode -ne 0) {
+            throw "Lifecycle interop runner failed with exit code $pythonExitCode"
         }
         if ($FullEsxiPxeInstall) {
             try {
@@ -1757,9 +1788,9 @@ try {
                 '--restored-state-run',
                 '--certificate-baseline-result', (Join-Path $initialResultRoot 'result.json')
             ))
-            python @restoredPythonArgs
-            if ($LASTEXITCODE -ne 0) {
-                throw "Restored lifecycle interop runner failed with exit code $LASTEXITCODE"
+            $pythonExitCode = Invoke-LifecyclePython -Arguments $restoredPythonArgs -EsxiPassword $esxiPasswordSecure
+            if ($pythonExitCode -ne 0) {
+                throw "Restored lifecycle interop runner failed with exit code $pythonExitCode"
             }
         }
     }

@@ -137,7 +137,10 @@ The wrapper has no password defaults. It prompts securely for the appliance admi
 client SSH reuses the administrator `SecureString` unless `-SshPassword` is supplied. `-FullEsxiPxeInstall` also
 requires the ESXi root password that matches the selected rendered Kickstart profile. The launcher sends these values to
 its child through a current-user DPAPI-protected temporary CLIXML bundle and removes that bundle after the child exits,
-so passwords never appear in the child process arguments.
+so passwords never appear in the child process arguments. For a full ESXi PXE install, the runner streams the protected
+ESXi value to the Python consumer over standard input. The consumer rotates the encrypted `Lifecycle ESXi` vault entry
+and persists only `{{vault.lifecycle_esxi.esx.lifecycle.root.password}}` in the Kickstart source; Atlaso resolves that
+marker for the authorized PXE request without storing the plaintext password in desired state.
 
 The wrapper selects the newest appliance VMX under `image/vmware-workstation/output`, prepares the tiny Alpine client
 VMDK when needed, creates a unique `AtlasoWorkstationLifecycle-*` lab, runs the initial lifecycle scenario, and by

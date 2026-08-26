@@ -152,10 +152,11 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser.add_argument("--pxe-client-ip", default="")
     parser.add_argument("--pxe-installer-iso-path", default="")
     parser.add_argument(
-        "--esxi-password",
-        default="",
-        help="ESXi root password used only to render the lifecycle kickstart.",
+        "--esxi-password-stdin",
+        action="store_true",
+        help="Read the ESXi lifecycle vault password from standard input instead of argv.",
     )
+    parser.set_defaults(esxi_password="")
     parser.add_argument("--esx-storage-test", action="store_true", help="Configure and apply one dual-stack ESX NFS datastore.")
     parser.add_argument("--esx-storage-device-id", default="", help="Exact eligible /dev/disk/by-id identity; required when inventory has multiple blank disks.")
     parser.add_argument("--esx-storage-ipv4-client", default="192.168.50.210/32")
@@ -1076,7 +1077,8 @@ def configure_esxi_pxe(client: HttpClient, args: argparse.Namespace) -> dict[str
     if args.pxe_test_mode == "esxi":
         if not args.pxe_installer_iso_path:
             raise LifecycleError("--pxe-installer-iso-path is required when --pxe-test-mode esxi is used.")
-        kickstart = ensure_lifecycle_esxi_kickstart(client, args.esxi_password)
+        vault_marker = ensure_lifecycle_esxi_vault_secret(client, args.esxi_password)
+        kickstart = ensure_lifecycle_esxi_kickstart(client, vault_marker)
         kickstart_id = kickstart["id"]
 
     host_payload = {
@@ -1143,24 +1145,29 @@ def configure_esxi_pxe(client: HttpClient, args: argparse.Namespace) -> dict[str
     }
 
 
-def lifecycle_esxi_kickstart_content(esxi_password: str) -> str:
-    """Return lifecycle ESXi kickstart content using the probe credential.
+LIFECYCLE_ESXI_VAULT_NAME = "Lifecycle ESXi"
+LIFECYCLE_ESXI_VAULT_KEY = "esx.lifecycle.root"
+LIFECYCLE_ESXI_VAULT_MARKER = "vault.lifecycle_esxi.esx.lifecycle.root.password"
+
+
+def lifecycle_esxi_kickstart_content(vault_marker: str = LIFECYCLE_ESXI_VAULT_MARKER) -> str:
+    """Return lifecycle ESXi kickstart content using a protected vault marker.
 
     Args:
-        esxi_password: Root password installed into the lifecycle ESXi guest.
+        vault_marker: Dynamic vault marker resolved only for the requested PXE boot.
 
     Returns:
         Rendered ESXi kickstart content.
 
     Raises:
-        LifecycleError: If the password cannot be represented as one kickstart token.
+        LifecycleError: If the marker is not the dedicated lifecycle ESXi vault marker.
     """
-    if not esxi_password or any(character.isspace() for character in esxi_password):
-        raise LifecycleError("--esxi-password must be non-empty and contain no whitespace.")
+    if vault_marker != LIFECYCLE_ESXI_VAULT_MARKER:
+        raise LifecycleError("The lifecycle ESXi vault marker is invalid.")
     return f"""#
 # Atlaso lifecycle ESXi scripted install.
 vmaccepteula
-rootpw {esxi_password}
+rootpw {{{{{vault_marker}}}}}
 install --firstdisk --overwritevmfs
 network --bootproto=dhcp --device=vmnic0 --hostname=pxe-client.atlaso.internal
 reboot
@@ -1172,12 +1179,111 @@ esxcli network firewall ruleset set -e true -r sshServer
 """
 
 
-def ensure_lifecycle_esxi_kickstart(client: HttpClient, esxi_password: str) -> dict[str, Any]:
+def _lifecycle_esxi_vault_inventory(body: str) -> tuple[int | None, list[dict[str, Any]]]:
+    """Return the dedicated lifecycle vault identifier and redacted entry metadata.
+
+    Args:
+        body: Canonical Vaults page HTML.
+
+    Returns:
+        Vault identifier and its redacted entry metadata, when present.
+    """
+    vault_id = None
+    for identifier, name in re.findall(
+        r'data-vault-id="(\d+)"\s+data-vault-name="([^"]+)"', body
+    ):
+        if html.unescape(name) == LIFECYCLE_ESXI_VAULT_NAME:
+            vault_id = int(identifier)
+            break
+    if vault_id is None:
+        return None, []
+    match = re.search(
+        rf'<script type="application/json" id="vault-entries-data-{vault_id}">(.*?)</script>',
+        body,
+        flags=re.DOTALL,
+    )
+    if match is None:
+        return vault_id, []
+    entries = json.loads(html.unescape(match.group(1)))
+    return vault_id, entries if isinstance(entries, list) else []
+
+
+def ensure_lifecycle_esxi_vault_secret(client: HttpClient, esxi_password: str) -> str:
+    """Encrypt the lifecycle ESXi password in Atlaso's existing vault.
+
+    Args:
+        client: Authenticated lifecycle client with an administrator session.
+        esxi_password: ESXi root password received through standard input.
+
+    Returns:
+        Non-secret dynamic Kickstart vault marker.
+
+    Raises:
+        LifecycleError: If the password or vault operation is invalid.
+    """
+    if not esxi_password or any(character.isspace() for character in esxi_password):
+        raise LifecycleError("The ESXi password must be non-empty and contain no whitespace.")
+    status, body, _headers = client.request("GET", "/ui/management/vaults")
+    if status >= 400:
+        raise LifecycleError(f"Vault inventory failed with HTTP {status}.")
+    csrf = extract_csrf(body)
+    vault_id, entries = _lifecycle_esxi_vault_inventory(body)
+    if vault_id is None:
+        status, _response_body, headers = client.request(
+            "POST",
+            "/ui/management/vaults",
+            form={
+                "csrf": csrf,
+                "name": LIFECYCLE_ESXI_VAULT_NAME,
+                "description": "Encrypted credential for the VMware lifecycle ESXi PXE probe.",
+            },
+            follow_redirects=False,
+        )
+        if status != 303:
+            raise LifecycleError(f"Lifecycle ESXi vault creation failed with HTTP {status}.")
+        location = header_value(headers, "Location")
+        match = re.search(r"vault-panel-(\d+)", location)
+        if match is None:
+            raise LifecycleError("Lifecycle ESXi vault creation returned no vault identity.")
+        vault_id = int(match.group(1))
+        status, body, _headers = client.request("GET", "/ui/management/vaults")
+        if status >= 400:
+            raise LifecycleError(f"Vault inventory refresh failed with HTTP {status}.")
+        csrf = extract_csrf(body)
+        _resolved_vault_id, entries = _lifecycle_esxi_vault_inventory(body)
+
+    existing = next(
+        (entry for entry in entries if entry.get("key") == LIFECYCLE_ESXI_VAULT_KEY),
+        None,
+    )
+    path = f"/ui/management/vaults/{vault_id}/entries"
+    if existing is not None:
+        path += f"/{int(existing['id'])}/edit"
+    status, _response_body, _headers = client.request(
+        "POST",
+        path,
+        form={
+            "csrf": csrf,
+            "key": LIFECYCLE_ESXI_VAULT_KEY,
+            "value": esxi_password,
+            "description": "VMware lifecycle ESXi PXE root password.",
+            "username": "root",
+            "resource_name": "lifecycle-esxi",
+            "uris_json": "[]",
+        },
+        follow_redirects=False,
+    )
+    if status != 303:
+        raise LifecycleError(f"Lifecycle ESXi vault update failed with HTTP {status}.")
+    return LIFECYCLE_ESXI_VAULT_MARKER
+
+
+def ensure_lifecycle_esxi_kickstart(client: HttpClient, vault_marker: str) -> dict[str, Any]:
     """Ensure lifecycle esxi kickstart.
 
     Args:
         client: Client consumed by ensure lifecycle ESXi kickstart.
-        esxi_password: Root password installed into the lifecycle ESXi guest.
+        vault_marker: Protected marker resolved dynamically during the PXE request.
 
 
     Returns:
@@ -1187,7 +1293,7 @@ def ensure_lifecycle_esxi_kickstart(client: HttpClient, esxi_password: str) -> d
     payload = {
         "name": name,
         "description": "Created by the Atlaso lifecycle ESXi PXE install check.",
-        "content": lifecycle_esxi_kickstart_content(esxi_password),
+        "content": lifecycle_esxi_kickstart_content(vault_marker),
         "enabled": True,
     }
     kickstarts = client.json_request("GET", "/api/v1/esxi-pxe/kickstarts")
@@ -4836,6 +4942,10 @@ def main() -> int:
 
     client = HttpClient(args.appliance_url)
     try:
+        if args.pxe_test_mode == "esxi":
+            if not args.esxi_password_stdin:
+                raise LifecycleError("--esxi-password-stdin is required for an ESXi PXE lifecycle run.")
+            args.esxi_password = sys.stdin.readline().rstrip("\r\n")
         if args.oidc_only:
             run_oidc_lifecycle(results, client, args)
         elif args.routing_wan_only:

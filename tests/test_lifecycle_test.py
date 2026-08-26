@@ -883,16 +883,15 @@ def test_esxi_pxe_payload_uses_dhcp_lifecycle_host():
     args = lifecycle.parse_args(["--password", "test", "--pxe-test-mode", "esxi", "--pxe-client-mac", "00:50:56:20:01:02"])
 
     assert lifecycle.pxe_client_ip(args) == "192.168.50.210"
-    content = lifecycle.lifecycle_esxi_kickstart_content("LifecycleEsxi01!")
+    content = lifecycle.lifecycle_esxi_kickstart_content()
 
     assert "network --bootproto=dhcp" in content
-    assert "rootpw LifecycleEsxi01!" in content
+    assert "rootpw {{vault.lifecycle_esxi.esx.lifecycle.root.password}}" in content
     assert "rootpw vmware01!" not in content
-    assert "{{" not in content
     assert "vim-cmd hostsvc/start_ssh" in content
 
-    with pytest.raises(lifecycle.LifecycleError, match="contain no whitespace"):
-        lifecycle.lifecycle_esxi_kickstart_content("invalid password")
+    with pytest.raises(lifecycle.LifecycleError, match="vault marker is invalid"):
+        lifecycle.lifecycle_esxi_kickstart_content("vault.somewhere.else.password")
 
 
 def test_configure_esxi_pxe_selects_dhcp_scope_and_proves_reservation():
@@ -908,10 +907,10 @@ def test_configure_esxi_pxe_selects_dhcp_scope_and_proves_reservation():
             "00:50:56:20:01:02",
             "--pxe-installer-iso-path",
             "/mnt/atlaso-vcf-offline-depot/PROD/COMP/ESX_HOST/esxi.iso",
-            "--esxi-password",
-            "LifecycleEsxi01!",
+            "--esxi-password-stdin",
         ]
     )
+    args.esxi_password = "LifecycleEsxi01!"
 
     class FakeClient:
         """Represent fake client.
@@ -924,6 +923,8 @@ def test_configure_esxi_pxe_selects_dhcp_scope_and_proves_reservation():
             """Initialize the fake client."""
             self.boot_form = []
             self.host_payload = {}
+            self.kickstart_payload = {}
+            self.vault_form = {}
 
         def request(self, method, path, **kwargs):
             """Return request.
@@ -938,6 +939,17 @@ def test_configure_esxi_pxe_selects_dhcp_scope_and_proves_reservation():
             """
             if method == "GET" and path == "/esxi-pxe":
                 return 200, '<input type="hidden" name="csrf" value="token">', {}
+            if method == "GET" and path == "/ui/management/vaults":
+                return (
+                    200,
+                    '<input type="hidden" name="csrf" value="token">'
+                    '<section data-vault-id="12" data-vault-name="Lifecycle ESXi">'
+                    '<script type="application/json" id="vault-entries-data-12">[]</script>',
+                    {},
+                )
+            if method == "POST" and path == "/ui/management/vaults/12/entries":
+                self.vault_form = kwargs["form"]
+                return 303, "", {"Location": "/vaults#vault-panel-12"}
             if method == "POST" and path == "/esxi-pxe/boot-settings":
                 self.boot_form = kwargs["form"]
                 return 200, '{"validation_errors": [], "dns_record_action": "created"}', {}
@@ -973,6 +985,7 @@ def test_configure_esxi_pxe_selects_dhcp_scope_and_proves_reservation():
             if method == "GET" and path == "/api/v1/esxi-pxe/kickstarts":
                 return []
             if method == "POST" and path == "/api/v1/esxi-pxe/kickstarts":
+                self.kickstart_payload = json_body
                 return {"id": 7, **json_body}
             if method == "GET" and path == "/api/v1/esxi-pxe/hosts":
                 return []
@@ -997,6 +1010,10 @@ def test_configure_esxi_pxe_selects_dhcp_scope_and_proves_reservation():
     assert ("dhcp_scope_ids", "42") in fake.boot_form
     assert fake.host_payload["kickstart_id"] == 7
     assert fake.host_payload["ip_address"] == "192.168.50.210"
+    assert fake.vault_form["value"] == "LifecycleEsxi01!"
+    assert fake.vault_form["key"] == "esx.lifecycle.root"
+    assert "LifecycleEsxi01!" not in json.dumps(fake.kickstart_payload)
+    assert "{{vault.lifecycle_esxi.esx.lifecycle.root.password}}" in fake.kickstart_payload["content"]
     assert evidence["dhcp_scope_id"] == 42
     assert evidence["dhcp_reservation_id"] == 11
     assert evidence["menu_default"] == "esxi_assigned"
