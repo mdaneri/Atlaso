@@ -1429,7 +1429,9 @@ write-through transitioned to a non-actionable tombstone before deletion only af
 stopped-VM artifact cleanup. A tombstone that reappears after a crash is retired without VM mutation. Recovery precedes
 1Password
 preflight and records a stopped/scrubbed phase so restoration can resume after the artifact root has already been
-removed without restoring data while a removal child may survive. First boot encrypts the signer with the VM's unique
+removed without restoring data while a removal child may survive. Rollback preflight rejects configured disks that
+repeat the same descriptor, hard-linked alias, or shared extent by filesystem identity before persisting the marker.
+First boot encrypts the signer with the VM's unique
 `ATLASO_SECRETS_KEY`, deletes staging, and issues a unique
 `appliance:https` leaf for that VM's FQDN/IP. Default waiting
 requires the downloaded root fingerprint to match the checked-in certificate; use `-WaitForIp:$false` to opt out.

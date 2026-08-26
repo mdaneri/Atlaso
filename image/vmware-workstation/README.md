@@ -475,7 +475,9 @@ per-user cleanup marker through a Windows write-through atomic rename, so the ma
 assignment. An interrupted rollback blocks later normal-VM creation until the exact marked VM is stopped, its VMX signer
 value is scrubbed, its artifacts are removed, and preserved data disks are restored. This
 recovery runs before 1Password preflight and resumes from a durable stopped/scrubbed phase if VM removal completed
-before data-disk restoration. It never restores quarantined disks while the removal child might still delete them. First
+before data-disk restoration. It never restores quarantined disks while the removal child might still delete them. The
+rollback preflight rejects configured data disks that repeat the same descriptor, hard-linked alias, or shared extent
+by filesystem identity, before persisting a plan that could move one file twice. First
 boot also durably scrubs plaintext staging when encrypted import fails. `-NoStart` is rejected because a powered-off VM
 would retain
 the signer before consumption. The wrapper never prints the signer or places it in arguments, logs, markers, lifecycle

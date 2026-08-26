@@ -419,6 +419,41 @@ function Get-AtlasoRollbackDataDiskState {
 
 <#
 .SYNOPSIS
+Capture non-overlapping rollback state for every configured VMware data disk.
+
+.PARAMETER DiskPaths
+Configured depot and backup VMDK paths.
+
+.PARAMETER OutputDirectory
+Exact new VM artifact directory that recursive rollback may remove.
+#>
+function Get-AtlasoRollbackDataDiskStates {
+    param(
+        [Parameter(Mandatory = $true)][AllowEmptyCollection()][string[]]$DiskPaths,
+        [Parameter(Mandatory = $true)][string]$OutputDirectory
+    )
+
+    $states = [System.Collections.Generic.List[object]]::new()
+    $identityOwners = [System.Collections.Generic.Dictionary[string, string]]::new(
+        [System.StringComparer]::Ordinal
+    )
+    foreach ($diskPath in $DiskPaths) {
+        foreach ($state in @(Get-AtlasoRollbackDataDiskState `
+                    -DiskPath $diskPath `
+                    -OutputDirectory $OutputDirectory)) {
+            $existingPath = ''
+            if ($identityOwners.TryGetValue($state.Identity, [ref]$existingPath)) {
+                throw "Configured VMware rollback data disks overlap at one filesystem object: $($state.Path) and $existingPath"
+            }
+            $identityOwners.Add($state.Identity, $state.Path)
+            $states.Add($state)
+        }
+    }
+    return $states.ToArray()
+}
+
+<#
+.SYNOPSIS
 Move pre-existing data disks outside a failed VM's recursive cleanup root.
 
 .PARAMETER DataDiskStates
@@ -1633,16 +1668,11 @@ if ($ResetDataDisks) {
 
 $rollbackDataDiskStates = @()
 if (Test-Path -LiteralPath $resolvedOutputDirectory -PathType Container) {
-    $rollbackDataDiskStates = @(
-        foreach ($diskPath in @($resolvedDepotVmdkPath, $resolvedBackupVmdkPath)) {
-            $state = Get-AtlasoRollbackDataDiskState `
-                -DiskPath $diskPath `
-                -OutputDirectory $resolvedOutputDirectory
-            if ($null -ne $state) {
-                $state
-            }
-        }
-    )
+    # Reject the same descriptor, a hard-linked alias, or any shared extent
+    # before the marker can persist a rollback plan that moves a file twice.
+    $rollbackDataDiskStates = @(Get-AtlasoRollbackDataDiskStates `
+            -DiskPaths @($resolvedDepotVmdkPath, $resolvedBackupVmdkPath) `
+            -OutputDirectory $resolvedOutputDirectory)
 }
 
 $createdThisInvocation = $false

@@ -722,6 +722,7 @@ $rollbackTestRoot = Join-Path ([System.IO.Path]::GetTempPath()) (
 try {
     $outputDirectory = Join-Path $rollbackTestRoot 'vm'
     $dataDiskPath = Join-Path $outputDirectory 'Atlaso-Depot.vmdk'
+    $backupDiskPath = Join-Path $outputDirectory 'Atlaso-Backups.vmdk'
     $dataDiskExtentOne = Join-Path $outputDirectory 'Atlaso-Depot-s001.vmdk'
     $dataDiskExtentTwo = Join-Path $outputDirectory 'Atlaso-Depot-s002.vmdk'
     $quarantineDirectory = Join-Path $rollbackTestRoot 'quarantine'
@@ -738,6 +739,31 @@ RW 524288000 SPARSE "Atlaso-Depot-s002.vmdk"
     )
     [System.IO.File]::WriteAllText($dataDiskExtentOne, 'pre-existing-extent-one')
     [System.IO.File]::WriteAllText($dataDiskExtentTwo, 'pre-existing-extent-two')
+    [System.IO.File]::WriteAllText(
+        $backupDiskPath,
+        @'
+# Disk DescriptorFile
+version=1
+RW 524288000 SPARSE "Atlaso-Depot-s001.vmdk"
+'@,
+        [System.Text.UTF8Encoding]::new($false)
+    )
+    $overlapRejected = $false
+    try {
+        Get-AtlasoRollbackDataDiskStates `
+            -DiskPaths @($dataDiskPath, $backupDiskPath) `
+            -OutputDirectory $outputDirectory
+    }
+    catch {
+        if ($_.Exception.Message -notlike '*overlap at one filesystem object*') {
+            throw
+        }
+        $overlapRejected = $true
+    }
+    if (-not $overlapRejected) {
+        throw 'Rollback state accepted two configured VMDKs that share one extent.'
+    }
+    Remove-Item -LiteralPath $backupDiskPath -Force
     $states = @(Get-AtlasoRollbackDataDiskState `
             -DiskPath $dataDiskPath `
             -OutputDirectory $outputDirectory)
