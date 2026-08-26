@@ -41,11 +41,32 @@ $fakeVmrun = Join-Path $OutputDirectory 'fake-vmrun.cmd'
     "@echo off`r`nif /I `"%3`"==`"getGuestIPAddress`" (`r`n  echo 192.168.167.134`r`n  exit /b 0`r`n)`r`nif /I `"%3`"==`"readVariable`" (`r`n  if /I not `"%5`"==`"runtimeConfig`" exit /b 8`r`n  echo issue-535.atlaso.internal`r`n  exit /b 0`r`n)`r`nif /I `"%3`"==`"list`" (`r`n  echo Total running VMs: 2`r`n  echo `"$targetVmx`"`r`n  echo `"$sourceVmx`"`r`n  exit /b 0`r`n)`r`nexit /b 9`r`n",
     [System.Text.UTF8Encoding]::new($false)
 )
-$runningPaths = @(Get-AtlasoWorkstationRunningVmxPath -VmrunPath $fakeVmrun)
+$runningPaths = @(
+    Get-AtlasoWorkstationRunningVmxPath -VmrunPath $fakeVmrun -Deadline (Get-Date).AddSeconds(2)
+)
 if ($runningPaths.Count -ne 2 -or
     $runningPaths[0] -cne (Resolve-Path -LiteralPath $targetVmx).Path -or
     $runningPaths[1] -cne (Resolve-Path -LiteralPath $sourceVmx).Path) {
     throw 'Checked vmrun inventory did not retain the exact running VMX paths.'
+}
+$slowVmrun = Join-Path $OutputDirectory 'slow-vmrun.cmd'
+[System.IO.File]::WriteAllText(
+    $slowVmrun,
+    "@echo off`r`nping -n 6 127.0.0.1 >nul`r`necho Total running VMs: 0`r`n",
+    [System.Text.UTF8Encoding]::new($false)
+)
+$boundedStart = Get-Date
+try {
+    Get-AtlasoWorkstationRunningVmxPath `
+        -VmrunPath $slowVmrun `
+        -Deadline (Get-Date).AddMilliseconds(250) | Out-Null
+    throw 'A stalled vmrun inventory query exceeded its readiness deadline.'
+} catch {
+    if ($_.Exception.Message -eq 'A stalled vmrun inventory query exceeded its readiness deadline.' -or
+        $_.Exception.Message -notlike '*exceeded the readiness deadline*') { throw }
+}
+if (((Get-Date) - $boundedStart).TotalSeconds -ge 2) {
+    throw 'The bounded vmrun timeout did not stop the stalled provider query promptly.'
 }
 $workflowError = $null
 try {

@@ -60,19 +60,89 @@ function Get-AtlasoWorkstationVmxMacAddress {
 
 <#
 .SYNOPSIS
+Run one vmrun command within the shared readiness deadline.
+
+.PARAMETER VmrunPath
+Resolved vmrun executable.
+
+.PARAMETER Arguments
+Exact vmrun argument list.
+
+.PARAMETER Deadline
+Absolute readiness deadline that bounds this provider call.
+#>
+function Invoke-AtlasoWorkstationVmrunBounded {
+    param(
+        [Parameter(Mandatory = $true)][string]$VmrunPath,
+        [Parameter(Mandatory = $true)][string[]]$Arguments,
+        [Parameter(Mandatory = $true)][datetime]$Deadline
+    )
+
+    $remainingMilliseconds = [int][Math]::Floor(($Deadline - (Get-Date)).TotalMilliseconds)
+    if ($remainingMilliseconds -le 0) {
+        return [pscustomobject]@{ ExitCode = -1; TimedOut = $true; StdOut = ''; StdErr = '' }
+    }
+    $startInfo = [System.Diagnostics.ProcessStartInfo]::new()
+    $startInfo.FileName = $VmrunPath
+    $startInfo.UseShellExecute = $false
+    $startInfo.RedirectStandardOutput = $true
+    $startInfo.RedirectStandardError = $true
+    foreach ($argument in $Arguments) { [void]$startInfo.ArgumentList.Add($argument) }
+    $process = [System.Diagnostics.Process]::new()
+    $process.StartInfo = $startInfo
+    try {
+        [void]$process.Start()
+        $stdoutTask = $process.StandardOutput.ReadToEndAsync()
+        $stderrTask = $process.StandardError.ReadToEndAsync()
+        if (-not $process.WaitForExit($remainingMilliseconds)) {
+            try {
+                $process.Kill($true)
+                [void]$process.WaitForExit(1000)
+            }
+            catch {
+                Write-Verbose 'Unable to confirm termination of the timed-out vmrun process.'
+            }
+            return [pscustomobject]@{ ExitCode = -1; TimedOut = $true; StdOut = ''; StdErr = '' }
+        }
+        return [pscustomobject]@{
+            ExitCode = $process.ExitCode
+            TimedOut = $false
+            StdOut   = $stdoutTask.GetAwaiter().GetResult()
+            StdErr   = $stderrTask.GetAwaiter().GetResult()
+        }
+    }
+    finally {
+        $process.Dispose()
+    }
+}
+
+<#
+.SYNOPSIS
 Return the checked running VMware Workstation VMX paths.
 
 .PARAMETER VmrunPath
 Resolved vmrun executable used for the provider inventory.
+
+.PARAMETER Deadline
+Absolute readiness deadline that bounds the inventory query.
 #>
 function Get-AtlasoWorkstationRunningVmxPath {
-    param([Parameter(Mandatory = $true)][string]$VmrunPath)
+    param(
+        [Parameter(Mandatory = $true)][string]$VmrunPath,
+        [Parameter(Mandatory = $true)][datetime]$Deadline
+    )
 
-    $output = @(& $VmrunPath -T ws list 2>&1)
-    $exitCode = $LASTEXITCODE
-    if ($exitCode -ne 0) {
-        throw "List running VMware Workstation VMs failed with exit code $exitCode."
+    $result = Invoke-AtlasoWorkstationVmrunBounded `
+        -VmrunPath $VmrunPath `
+        -Arguments @('-T', 'ws', 'list') `
+        -Deadline $Deadline
+    if ($result.TimedOut) {
+        throw 'List running VMware Workstation VMs exceeded the readiness deadline.'
     }
+    if ($result.ExitCode -ne 0) {
+        throw "List running VMware Workstation VMs failed with exit code $($result.ExitCode)."
+    }
+    $output = @($result.StdOut -split '\r?\n' | Where-Object { $_ -ne '' })
     if ($output.Count -lt 1 -or $output[0].ToString() -notmatch '^Total running VMs:\s*(?<count>\d+)\s*$') {
         throw 'vmrun list returned an unrecognized running-VM inventory.'
     }
@@ -289,5 +359,6 @@ Export-ModuleMember -Function @(
     'Assert-AtlasoWorkstationStableObservation',
     'ConvertTo-AtlasoWorkstationMacAddress',
     'Get-AtlasoWorkstationRunningVmxPath',
-    'Get-AtlasoWorkstationVmxMacAddress'
+    'Get-AtlasoWorkstationVmxMacAddress',
+    'Invoke-AtlasoWorkstationVmrunBounded'
 )

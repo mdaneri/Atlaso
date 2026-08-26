@@ -65,19 +65,20 @@ Read one usable IPv4 address reported by VMware Tools.
 Resolved vmrun executable.
 .PARAMETER VmxPath
 Exact running VMX to query.
+.PARAMETER Deadline
+Absolute readiness deadline that bounds the provider query.
 #>
 function Get-VmwareGuestIPv4Address {
     param(
         [Parameter(Mandatory = $true)][string]$VmrunPath,
-        [Parameter(Mandatory = $true)][string]$VmxPath
+        [Parameter(Mandatory = $true)][string]$VmxPath,
+        [Parameter(Mandatory = $true)][datetime]$Deadline
     )
     $arguments = @('-T', 'ws', 'getGuestIPAddress', $VmxPath)
-    # Capture the native status before applying a PowerShell pipeline; a native
-    # command nested directly in Select-Object can leave LASTEXITCODE unset.
-    $output = @(& $VmrunPath @arguments 2>$null)
-    $exitCode = $LASTEXITCODE
-    $reported = $output | Select-Object -First 1
-    if ($exitCode -ne 0 -or [string]::IsNullOrWhiteSpace($reported)) { return '' }
+    $result = Invoke-AtlasoWorkstationVmrunBounded `
+        -VmrunPath $VmrunPath -Arguments $arguments -Deadline $Deadline
+    $reported = @($result.StdOut -split '\r?\n' | Where-Object { $_ }) | Select-Object -First 1
+    if ($result.TimedOut -or $result.ExitCode -ne 0 -or [string]::IsNullOrWhiteSpace($reported)) { return '' }
     $parsed = $null
     if (-not [System.Net.IPAddress]::TryParse($reported.Trim(), [ref]$parsed) -or
         $parsed.AddressFamily -ne [System.Net.Sockets.AddressFamily]::InterNetwork -or
@@ -94,20 +95,23 @@ Read the actual first-boot hostname published through VMware Tools.
 Resolved vmrun executable.
 .PARAMETER VmxPath
 Exact running VMX to query.
+.PARAMETER Deadline
+Absolute readiness deadline that bounds the provider query.
 #>
 function Get-VmwareGuestHostname {
     param(
         [Parameter(Mandatory = $true)][string]$VmrunPath,
-        [Parameter(Mandatory = $true)][string]$VmxPath
+        [Parameter(Mandatory = $true)][string]$VmxPath,
+        [Parameter(Mandatory = $true)][datetime]$Deadline
     )
     $arguments = @(
         '-T', 'ws', 'readVariable', $VmxPath, 'runtimeConfig',
         'guestinfo.atlaso.test_vm_hostname'
     )
-    $output = @(& $VmrunPath @arguments 2>$null)
-    $exitCode = $LASTEXITCODE
-    $reported = $output | Select-Object -First 1
-    if ($exitCode -ne 0 -or [string]::IsNullOrWhiteSpace($reported)) { return '' }
+    $result = Invoke-AtlasoWorkstationVmrunBounded `
+        -VmrunPath $VmrunPath -Arguments $arguments -Deadline $Deadline
+    $reported = @($result.StdOut -split '\r?\n' | Where-Object { $_ }) | Select-Object -First 1
+    if ($result.TimedOut -or $result.ExitCode -ne 0 -or [string]::IsNullOrWhiteSpace($reported)) { return '' }
     return $reported.Trim()
 }
 
@@ -137,11 +141,15 @@ $resolvedVmrun = Resolve-VmrunPath -Path $VmrunPath
 $deadline = (Get-Date).AddSeconds($TimeoutSeconds)
 $lastReadinessError = ''
 do {
-    $ipAddress = Get-VmwareGuestIPv4Address -VmrunPath $resolvedVmrun -VmxPath $resolvedVmxPath
+    $ipAddress = Get-VmwareGuestIPv4Address `
+        -VmrunPath $resolvedVmrun -VmxPath $resolvedVmxPath -Deadline $deadline
     if ($ipAddress) {
         try {
-            $observedHostname = Get-VmwareGuestHostname -VmrunPath $resolvedVmrun -VmxPath $resolvedVmxPath
-            $runningPaths = @(Get-AtlasoWorkstationRunningVmxPath -VmrunPath $resolvedVmrun)
+            $observedHostname = Get-VmwareGuestHostname `
+                -VmrunPath $resolvedVmrun -VmxPath $resolvedVmxPath -Deadline $deadline
+            $runningPaths = @(
+                Get-AtlasoWorkstationRunningVmxPath -VmrunPath $resolvedVmrun -Deadline $deadline
+            )
             $runningGuests = @(
                 foreach ($runningPath in $runningPaths) {
                     $runningIpAddress = if ($runningPath.Equals(
@@ -150,7 +158,8 @@ do {
                         )) {
                         $ipAddress
                     } else {
-                        Get-VmwareGuestIPv4Address -VmrunPath $resolvedVmrun -VmxPath $runningPath
+                        Get-VmwareGuestIPv4Address `
+                            -VmrunPath $resolvedVmrun -VmxPath $runningPath -Deadline $deadline
                     }
                     [pscustomobject]@{
                         Path       = $runningPath
@@ -171,7 +180,9 @@ do {
             # Close the concurrent-start window after the slower per-guest and
             # neighbor observations. Readiness is returned only from a stable
             # running set whose target still reports the proven address.
-            $confirmedPaths = @(Get-AtlasoWorkstationRunningVmxPath -VmrunPath $resolvedVmrun)
+            $confirmedPaths = @(
+                Get-AtlasoWorkstationRunningVmxPath -VmrunPath $resolvedVmrun -Deadline $deadline
+            )
             $confirmedGuests = @(
                 foreach ($confirmedPath in $confirmedPaths) {
                     [pscustomobject]@{
@@ -179,7 +190,8 @@ do {
                         MacAddress = Get-AtlasoWorkstationVmxMacAddress -VmxPath $confirmedPath
                         IPAddress  = Get-VmwareGuestIPv4Address `
                             -VmrunPath $resolvedVmrun `
-                            -VmxPath $confirmedPath
+                            -VmxPath $confirmedPath `
+                            -Deadline $deadline
                     }
                 }
             )
@@ -203,7 +215,8 @@ do {
                 -ExpectedHostname $ExpectedHostname `
                 -ObservedHostname (Get-VmwareGuestHostname `
                     -VmrunPath $resolvedVmrun `
-                    -VmxPath $resolvedVmxPath) `
+                    -VmxPath $resolvedVmxPath `
+                    -Deadline $deadline) `
                 -RunningGuests $confirmedGuests `
                 -NeighborMacAddresses @(Get-HostNeighborMacAddress -IPAddress $confirmedIpAddress)
             Write-Information `
