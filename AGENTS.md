@@ -502,8 +502,9 @@ The following cross-cutting boundaries always apply:
   for explicit `known_hosts` verification; never substitute unauthenticated `ssh-keyscan` output.
   The wrapper also owns the sole development-root exception to per-appliance CA generation: require the exact `Atlaso`
   1Password Environment's concealed `ATLASO_DEVELOPMENT_ROOT_CA_PRIVATE_KEY`, validate it against the checked-in public
-  `Atlaso Development Root CA` before mutation, and pass it only through a separately scrubbed normal-wrapper guest-info
-  value. First boot must stage it mode `0600`, prove guest-info scrub, encrypt it with the VM-unique secrets key, remove
+  `Atlaso Development Root CA` before mutation, pin and verify the exact Environment ID by SHA-256 before invoking `op`,
+  and pass the signer only through a separately scrubbed normal-wrapper guest-info value. First boot must stage it mode
+  `0600`, prove guest-info scrub, encrypt it with the VM-unique secrets key, remove
   staging, and issue a unique HTTPS leaf. Default waiting must verify the exact checked-in fingerprint; Windows trust
   remains explicit and idempotent. Reject `-NoStart`, preserve root SSH as disabled, and do not extend either development
   authority to lifecycle VMs, Hyper-V, reusable images, or exported OVF/OVA deployments. Rotate the repository PEM and

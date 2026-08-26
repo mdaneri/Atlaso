@@ -84,6 +84,18 @@ Assert-Throws {
     Assert-OnePasswordDevelopmentCaBridge -EnvironmentId 'unsafe id' -OpPath 'ignored'
 } 'Unsafe Environment IDs must fail closed.'
 
+$testEnvironmentId = 'atlaso-test-environment-id-01'
+$testEnvironmentIdSha256 = [Convert]::ToHexString(
+    [System.Security.Cryptography.SHA256]::HashData(
+        [System.Text.Encoding]::UTF8.GetBytes($testEnvironmentId)
+    )
+)
+Assert-Throws {
+    Assert-OnePasswordDevelopmentCaBridge `
+        -EnvironmentId $testEnvironmentId `
+        -OpPath 'ignored'
+} 'A well-formed ID for any Environment other than the exact Atlaso Environment must fail closed.'
+
 $fakeOp = Join-Path ([System.IO.Path]::GetTempPath()) "atlaso-fake-op-$([guid]::NewGuid().ToString('N')).ps1"
 try {
     [System.IO.File]::WriteAllText(
@@ -93,8 +105,9 @@ try {
     )
     Assert-Throws {
         Assert-OnePasswordDevelopmentCaBridge `
-            -EnvironmentId 'blgexucrwfr2dtsxe2q4uu7dp4' `
-            -OpPath $fakeOp
+            -EnvironmentId $testEnvironmentId `
+            -OpPath $fakeOp `
+            -ExpectedEnvironmentIdSha256 $testEnvironmentIdSha256
     } 'A CLI without op run --environment support must fail closed.'
 }
 finally {
@@ -105,8 +118,9 @@ $env:ATLASO_DEVELOPMENT_ROOT_CA_PRIVATE_KEY = 'caller-secret'
 try {
     Assert-Throws {
         Assert-OnePasswordDevelopmentCaBridge `
-            -EnvironmentId 'blgexucrwfr2dtsxe2q4uu7dp4' `
-            -OpPath 'ignored'
+            -EnvironmentId $testEnvironmentId `
+            -OpPath 'ignored' `
+            -ExpectedEnvironmentIdSha256 $testEnvironmentIdSha256
     } 'A caller-provided development signer must fail closed.'
 }
 finally {
@@ -185,6 +199,51 @@ if ($runtimeScrub -lt 0 -or $rollbackStop -lt $runtimeScrub) {
 if ($wrapperSource -notmatch '\$runtimeSignerScrubError\s*=\s*\$_\.Exception\.Message' -or
     $wrapperSource -notmatch '\$stopped\s*=\s*\$true') {
     throw 'Runtime signer scrub and stop failures must be retained independently.'
+}
+
+$rollbackIdentityRoot = Join-Path ([System.IO.Path]::GetTempPath()) (
+    "atlaso-rollback-identity-$([guid]::NewGuid().ToString('N'))"
+)
+try {
+    New-Item -ItemType Directory -Path $rollbackIdentityRoot | Out-Null
+    $targetVmx = Join-Path $rollbackIdentityRoot 'Atlaso.vmx'
+    $aliasVmx = Join-Path $rollbackIdentityRoot 'ATLASO~1.VMX'
+    $vmrunState = Join-Path $rollbackIdentityRoot 'vmrun-state.txt'
+    $fakeVmrun = Join-Path $rollbackIdentityRoot 'vmrun.ps1'
+    [System.IO.File]::WriteAllText($targetVmx, 'config.version = "8"')
+    New-Item -ItemType HardLink -Path $aliasVmx -Target $targetVmx | Out-Null
+    [System.IO.File]::WriteAllText($vmrunState, 'running')
+    $escapedAliasVmx = $aliasVmx.Replace("'", "''")
+    $escapedVmrunState = $vmrunState.Replace("'", "''")
+    [System.IO.File]::WriteAllText(
+        $fakeVmrun,
+        @"
+param([Parameter(ValueFromRemainingArguments=`$true)][string[]]`$Remaining)
+if (`$Remaining -contains 'list') {
+    if ([System.IO.File]::ReadAllText('$escapedVmrunState') -eq 'running') {
+        'Total running VMs: 1'
+        '$escapedAliasVmx'
+    }
+    else {
+        'Total running VMs: 0'
+    }
+    exit 0
+}
+if (`$Remaining -contains 'stop') {
+    [System.IO.File]::WriteAllText('$escapedVmrunState', 'stopped')
+    exit 0
+}
+exit 1
+"@,
+        [System.Text.UTF8Encoding]::new($false)
+    )
+    Stop-AtlasoTestVmForRollback -VmxPath $targetVmx -VmrunPath $fakeVmrun
+    if ([System.IO.File]::ReadAllText($vmrunState) -ne 'stopped') {
+        throw 'Rollback failed to stop a running VMX reported through a filesystem alias.'
+    }
+}
+finally {
+    Remove-Item -LiteralPath $rollbackIdentityRoot -Recurse -Force -ErrorAction SilentlyContinue
 }
 
 $rollbackTestRoot = Join-Path ([System.IO.Path]::GetTempPath()) (

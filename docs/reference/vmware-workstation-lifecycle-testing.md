@@ -16,8 +16,10 @@ command check run directly as the unprivileged appliance SSH user rather than th
 For a wheel-only deployment to the canonical test VM, use `scripts/windows/vmware/deploy-wheel.ps1` with the secure
 Windows 1Password handoff documented in the [full technical reference](full-technical-reference.md). Authenticate the
 local integration, verify the unique `Atlaso` Environment and concealed `DEFAULT_ADMIN_PASSWORD` variable by name,
-then pass only its opaque Environment ID through `-OnePasswordEnvironmentId`. The handoff requires the supported
-`op run --environment` capability and provisions the value only into the bounded Paramiko deployment child, preserves
+then pass only its opaque Environment ID through `-OnePasswordEnvironmentId`. Normal test VM creation additionally
+checks the supplied ID against the repository-pinned SHA-256 identity of the exact `Atlaso` Environment before invoking
+`op`. The handoff requires the supported `op run --environment` capability and provisions the value only into the
+bounded Paramiko deployment child, preserves
 SSH known-host verification, and fails closed when authorization or any required Environment input is unavailable.
 Key-backed Windows
 transfers keep `scp` sources and destinations separate and cross the PowerShell login shell through a secret-free

@@ -208,15 +208,30 @@ Opaque ID copied from the exact Atlaso 1Password Environment.
 
 .PARAMETER OpPath
 Resolved 1Password CLI executable path.
+
+.PARAMETER ExpectedEnvironmentIdSha256
+Pinned SHA-256 identity of the exact Atlaso Environment. The override exists
+only so focused tests can exercise the guard without publishing the real ID.
 #>
 function Assert-OnePasswordDevelopmentCaBridge {
     param(
         [Parameter(Mandatory = $true)][string]$EnvironmentId,
-        [Parameter(Mandatory = $true)][string]$OpPath
+        [Parameter(Mandatory = $true)][string]$OpPath,
+        [string]$ExpectedEnvironmentIdSha256 = '1A0524FE2054BD148983E0AA9F755CC6ED575F88985256AFA802EA9CB5D782A4'
     )
 
     if ($EnvironmentId -notmatch '^[A-Za-z0-9_-]{8,128}$') {
         throw 'OnePasswordEnvironmentId is required and must be the opaque ID of the exact Atlaso Environment.'
+    }
+    $environmentIdDigest = [System.Security.Cryptography.SHA256]::HashData(
+        [System.Text.Encoding]::UTF8.GetBytes($EnvironmentId)
+    )
+    $expectedEnvironmentIdDigest = [Convert]::FromHexString($ExpectedEnvironmentIdSha256)
+    if (-not [System.Security.Cryptography.CryptographicOperations]::FixedTimeEquals(
+            $environmentIdDigest,
+            $expectedEnvironmentIdDigest
+        )) {
+        throw 'OnePasswordEnvironmentId does not identify the exact Atlaso Environment.'
     }
     if ($env:ATLASO_DEVELOPMENT_ROOT_CA_PRIVATE_KEY) {
         throw 'ATLASO_DEVELOPMENT_ROOT_CA_PRIVATE_KEY must come only from the exact 1Password Environment bridge.'
@@ -436,25 +451,20 @@ function Stop-AtlasoTestVmForRollback {
     )
 
     $resolvedVmxPath = (Resolve-Path -LiteralPath $VmxPath).Path
+    $targetIdentity = [Atlaso.WorkstationFileIdentity]::Get($resolvedVmxPath)
     $runningOutput = @(& $VmrunPath -T ws list 2>$null)
     if ($LASTEXITCODE -ne 0) {
         throw 'VMware Workstation running-state discovery failed during rollback.'
     }
-    $isRunning = @($runningOutput | Select-Object -Skip 1 | Where-Object {
-            try {
-                [System.IO.Path]::GetFullPath($_.Trim()).Equals(
-                    $resolvedVmxPath,
-                    [System.StringComparison]::OrdinalIgnoreCase
-                )
-            }
-            catch {
-                $false
-            }
-        }).Count -gt 0
-    if (-not $isRunning) {
+    $runningTargets = @($runningOutput | Select-Object -Skip 1 | Where-Object {
+            Test-AtlasoTestVmRunningPathMatchesIdentity `
+                -RunningPath $_.Trim() `
+                -TargetIdentity $targetIdentity
+        })
+    if ($runningTargets.Count -eq 0) {
         return
     }
-    & $VmrunPath -T ws stop $resolvedVmxPath hard | Out-Null
+    & $VmrunPath -T ws stop $runningTargets[0] hard | Out-Null
     if ($LASTEXITCODE -ne 0) {
         throw 'VMware Workstation could not stop the failed normal test VM during rollback.'
     }
@@ -463,17 +473,41 @@ function Stop-AtlasoTestVmForRollback {
         throw 'VMware Workstation could not verify the failed normal test VM stopped during rollback.'
     }
     foreach ($runningPath in @($runningOutput | Select-Object -Skip 1)) {
-        try {
-            if ([System.IO.Path]::GetFullPath($runningPath.Trim()).Equals(
-                    $resolvedVmxPath,
-                    [System.StringComparison]::OrdinalIgnoreCase
-                )) {
-                throw 'The failed normal test VM remained running during rollback.'
-            }
+        if (Test-AtlasoTestVmRunningPathMatchesIdentity `
+                -RunningPath $runningPath.Trim() `
+                -TargetIdentity $targetIdentity) {
+            throw 'The failed normal test VM remained running during rollback.'
         }
-        catch [System.ArgumentException] {
-            continue
-        }
+    }
+}
+
+<#
+.SYNOPSIS
+Match one running VMware VMX path to the rollback target by file identity.
+
+.PARAMETER RunningPath
+Fully qualified VMX path reported by VMware Workstation.
+
+.PARAMETER TargetIdentity
+Stable filesystem identity captured from the invocation-owned VMX.
+#>
+function Test-AtlasoTestVmRunningPathMatchesIdentity {
+    param(
+        [Parameter(Mandatory = $true)][string]$RunningPath,
+        [Parameter(Mandatory = $true)][string]$TargetIdentity
+    )
+
+    if (-not [System.IO.Path]::IsPathFullyQualified($RunningPath)) {
+        return $false
+    }
+    if (-not (Test-Path -LiteralPath $RunningPath -PathType Leaf)) {
+        return $false
+    }
+    try {
+        return [Atlaso.WorkstationFileIdentity]::Get($RunningPath) -eq $TargetIdentity
+    }
+    catch {
+        throw "Running VMware VMX filesystem identity cannot be resolved during rollback: $RunningPath"
     }
 }
 
