@@ -5241,12 +5241,26 @@ targets, including dangling canonical directory links whose targets no longer ex
 terminating and print their success message only after every target is absent.
 An existing canonical target that is not a directory is an error and blocks that success message instead of being
 silently skipped.</p>
-<p>For a normal Workstation test appliance on the management vmnet:</p>
-<div class="language-powershell highlight"><pre><span></span><code><span id="__span-34-1"><a id="__codelineno-34-1" name="__codelineno-34-1" href="#__codelineno-34-1"></a><span class="n">pwsh</span> <span class="n">-ExecutionPolicy</span> <span class="n">Bypass</span> <span class="p">`</span>
-</span><span id="__span-34-2"><a id="__codelineno-34-2" name="__codelineno-34-2" href="#__codelineno-34-2"></a>  <span class="o">-File</span> <span class="n">scripts</span><span class="p">/</span><span class="n">windows</span><span class="p">/</span><span class="n">vmware</span><span class="p">/</span><span class="n">create-atlaso-test-vm</span><span class="p">.</span><span class="n">ps1</span> <span class="p">`</span>
-</span><span id="__span-34-3"><a id="__codelineno-34-3" name="__codelineno-34-3" href="#__codelineno-34-3"></a>  <span class="n">-Redeploy</span> <span class="p">`</span>
-</span><span id="__span-34-4"><a id="__codelineno-34-4" name="__codelineno-34-4" href="#__codelineno-34-4"></a>  <span class="n">-ResetDataDisks</span> <span class="p">`</span>
-</span><span id="__span-34-5"><a id="__codelineno-34-5" name="__codelineno-34-5" href="#__codelineno-34-5"></a>  <span class="n">-OnePasswordEnvironmentId</span> <span class="s1">&#39;&lt;atlaso-environment-id&gt;&#39;</span>
+<p>For a normal Workstation test appliance on the management vmnet, first store the exact <code>Atlaso</code> Environment ID in the
+checkout-local, Git-ignored configuration file. Input is masked and is never printed:</p>
+<div class="language-powershell highlight"><pre><span></span><code><span id="__span-34-1"><a id="__codelineno-34-1" name="__codelineno-34-1" href="#__codelineno-34-1"></a><span class="nv">$atlasoLocal</span> <span class="p">=</span> <span class="nb">Join-Path</span> <span class="p">(</span><span class="n">git</span> <span class="n">rev-parse</span> <span class="p">-</span><span class="n">-show-toplevel</span><span class="p">)</span> <span class="s1">&#39;.atlaso-local&#39;</span>
+</span><span id="__span-34-2"><a id="__codelineno-34-2" name="__codelineno-34-2" href="#__codelineno-34-2"></a><span class="nb">New-Item</span> <span class="n">-ItemType</span> <span class="n">Directory</span> <span class="n">-Path</span> <span class="nv">$atlasoLocal</span> <span class="n">-Force</span> <span class="p">|</span> <span class="nb">Out-Null</span>
+</span><span id="__span-34-3"><a id="__codelineno-34-3" name="__codelineno-34-3" href="#__codelineno-34-3"></a><span class="nv">$atlasoEnvironmentId</span> <span class="p">=</span> <span class="nb">Read-Host</span> <span class="s1">&#39;Paste the Atlaso Environment ID&#39;</span> <span class="n">-MaskInput</span>
+</span><span id="__span-34-4"><a id="__codelineno-34-4" name="__codelineno-34-4" href="#__codelineno-34-4"></a><span class="k">try</span> <span class="p">{</span>
+</span><span id="__span-34-5"><a id="__codelineno-34-5" name="__codelineno-34-5" href="#__codelineno-34-5"></a>    <span class="no">[System.IO.File]</span><span class="p">::</span><span class="n">WriteAllText</span><span class="p">(</span>
+</span><span id="__span-34-6"><a id="__codelineno-34-6" name="__codelineno-34-6" href="#__codelineno-34-6"></a>        <span class="p">(</span><span class="nb">Join-Path</span> <span class="nv">$atlasoLocal</span> <span class="s1">&#39;onepassword-environment-id&#39;</span><span class="p">),</span>
+</span><span id="__span-34-7"><a id="__codelineno-34-7" name="__codelineno-34-7" href="#__codelineno-34-7"></a>        <span class="nv">$atlasoEnvironmentId</span>
+</span><span id="__span-34-8"><a id="__codelineno-34-8" name="__codelineno-34-8" href="#__codelineno-34-8"></a>    <span class="p">)</span>
+</span><span id="__span-34-9"><a id="__codelineno-34-9" name="__codelineno-34-9" href="#__codelineno-34-9"></a><span class="p">}</span>
+</span><span id="__span-34-10"><a id="__codelineno-34-10" name="__codelineno-34-10" href="#__codelineno-34-10"></a><span class="k">finally</span> <span class="p">{</span>
+</span><span id="__span-34-11"><a id="__codelineno-34-11" name="__codelineno-34-11" href="#__codelineno-34-11"></a>    <span class="nb">Remove-Variable</span> <span class="n">atlasoEnvironmentId</span> <span class="n">-ErrorAction</span> <span class="n">SilentlyContinue</span>
+</span><span id="__span-34-12"><a id="__codelineno-34-12" name="__codelineno-34-12" href="#__codelineno-34-12"></a><span class="p">}</span>
+</span></code></pre></div>
+<p>Then run:</p>
+<div class="language-powershell highlight"><pre><span></span><code><span id="__span-35-1"><a id="__codelineno-35-1" name="__codelineno-35-1" href="#__codelineno-35-1"></a><span class="n">pwsh</span> <span class="n">-ExecutionPolicy</span> <span class="n">Bypass</span> <span class="p">`</span>
+</span><span id="__span-35-2"><a id="__codelineno-35-2" name="__codelineno-35-2" href="#__codelineno-35-2"></a>  <span class="o">-File</span> <span class="n">scripts</span><span class="p">/</span><span class="n">windows</span><span class="p">/</span><span class="n">vmware</span><span class="p">/</span><span class="n">create-atlaso-test-vm</span><span class="p">.</span><span class="n">ps1</span> <span class="p">`</span>
+</span><span id="__span-35-3"><a id="__codelineno-35-3" name="__codelineno-35-3" href="#__codelineno-35-3"></a>  <span class="n">-Redeploy</span> <span class="p">`</span>
+</span><span id="__span-35-4"><a id="__codelineno-35-4" name="__codelineno-35-4" href="#__codelineno-35-4"></a>  <span class="n">-ResetDataDisks</span>
 </span></code></pre></div>
 <p>The normal wrapper resolves the current Windows user's existing <code>.ssh/id_ed25519.pub</code> before any cleanup or VM
 creation, validates it as one canonical Ed25519 public key, and provisions it for the bootstrap <code>admin</code> account with a
@@ -5255,9 +5269,12 @@ separate test-only passwordless-sudo rule. Use <code>-SshPublicKeyPath &lt;path&
 VMs, exported OVF/OVA appliances, and root SSH remain unchanged. Normal test VMs use the checked-in public
 <code>Atlaso Development Root CA</code> and the matching concealed
 <code>ATLASO_DEVELOPMENT_ROOT_CA_PRIVATE_KEY</code> from the exact <code>Atlaso</code> 1Password Environment. The wrapper requires the opaque
-Environment ID for real creation, verifies its SHA-256 identity against the repository-pinned identity of that exact
-Environment before invoking <code>op</code>, validates <code>op run --environment</code> plus the certificate/key pair before mutation, and
-uses a bounded child and a separately scrubbed guest-info value. <code>-TimeoutSeconds</code> requires proven complete
+Environment ID for real creation, preferring an explicit <code>-OnePasswordEnvironmentId</code> override and otherwise reading the
+single-line <code>.atlaso-local/onepassword-environment-id</code> file ignored by Git. It verifies the ID against the non-secret
+repository SHA-256 pin before invoking <code>op</code>, requires the Environments-enabled beta CLI installed under
+<code>C:\Program Files\1Password CLI</code>, validates <code>op run --environment</code>, and cryptographically verifies the retrieved
+certificate/key pair before mutation. It uses a bounded child and a separately scrubbed guest-info value.
+<code>-TimeoutSeconds</code> requires proven complete
 <code>op</code>/secret-child process-tree termination before a staging failure may enter signer scrub or VM rollback. Boot-bound
 marker phases also cover VM start and artifact removal. An unproven termination preserves the VM and VMX, or keeps
 reused disks quarantined during removal, until a Windows host restart proves that child tree is gone. Every post-staging
@@ -5288,23 +5305,23 @@ static ownership fails closed before SSH or HTTPS endpoints are printed; use the
 console-based stop-or-readdress recovery path and explicit <code>known_hosts</code> handling.</p>
 <p>To deploy the current repo to an existing VMware test appliance without rebuilding the image, use the wheel deploy
 helper. A normal test VM created with the default key provisioning uses the existing key/agent path without 1Password:</p>
-<div class="language-powershell highlight"><pre><span></span><code><span id="__span-35-1"><a id="__codelineno-35-1" name="__codelineno-35-1" href="#__codelineno-35-1"></a><span class="p">.\</span><span class="n">scripts</span><span class="p">\</span><span class="n">windows</span><span class="p">\</span><span class="n">vmware</span><span class="p">\</span><span class="n">deploy-wheel</span><span class="p">.</span><span class="n">ps1</span> <span class="n">-IpAddress</span> <span class="n">192</span><span class="p">.</span><span class="n">168</span><span class="p">.</span><span class="n">167</span><span class="p">.</span><span class="n">10</span>
+<div class="language-powershell highlight"><pre><span></span><code><span id="__span-36-1"><a id="__codelineno-36-1" name="__codelineno-36-1" href="#__codelineno-36-1"></a><span class="p">.\</span><span class="n">scripts</span><span class="p">\</span><span class="n">windows</span><span class="p">\</span><span class="n">vmware</span><span class="p">\</span><span class="n">deploy-wheel</span><span class="p">.</span><span class="n">ps1</span> <span class="n">-IpAddress</span> <span class="n">192</span><span class="p">.</span><span class="n">168</span><span class="p">.</span><span class="n">167</span><span class="p">.</span><span class="n">10</span>
 </span></code></pre></div>
 <p>For an appliance created with <code>-SkipSshKeyProvisioning</code>, or another appliance that retains password-backed sudo, pass
 the exact 1Password Environment ID and approved 1Password account name or ID:</p>
-<div class="language-powershell highlight"><pre><span></span><code><span id="__span-36-1"><a id="__codelineno-36-1" name="__codelineno-36-1" href="#__codelineno-36-1"></a><span class="p">.\</span><span class="n">scripts</span><span class="p">\</span><span class="n">windows</span><span class="p">\</span><span class="n">vmware</span><span class="p">\</span><span class="n">deploy-wheel</span><span class="p">.</span><span class="n">ps1</span> <span class="p">`</span>
-</span><span id="__span-36-2"><a id="__codelineno-36-2" name="__codelineno-36-2" href="#__codelineno-36-2"></a>  <span class="n">-IpAddress</span> <span class="n">192</span><span class="p">.</span><span class="n">168</span><span class="p">.</span><span class="n">167</span><span class="p">.</span><span class="n">10</span> <span class="p">`</span>
-</span><span id="__span-36-3"><a id="__codelineno-36-3" name="__codelineno-36-3" href="#__codelineno-36-3"></a>  <span class="n">-OnePasswordEnvironmentId</span> <span class="s1">&#39;&lt;atlaso-environment-id&gt;&#39;</span> <span class="p">`</span>
-</span><span id="__span-36-4"><a id="__codelineno-36-4" name="__codelineno-36-4" href="#__codelineno-36-4"></a>  <span class="n">-OnePasswordAccount</span> <span class="s1">&#39;&lt;account-name-or-id&gt;&#39;</span> <span class="p">`</span>
-</span><span id="__span-36-5"><a id="__codelineno-36-5" name="__codelineno-36-5" href="#__codelineno-36-5"></a>  <span class="n">-OnePasswordPython</span> <span class="s1">&#39;&lt;path-to-python-3.13.exe&gt;&#39;</span>
-</span></code></pre></div>
-<p>If you want that password-backed helper to resolve the guest IP from VMware Tools, pass the VMX path as the <code>-VmxPath</code>
-argument:</p>
 <div class="language-powershell highlight"><pre><span></span><code><span id="__span-37-1"><a id="__codelineno-37-1" name="__codelineno-37-1" href="#__codelineno-37-1"></a><span class="p">.\</span><span class="n">scripts</span><span class="p">\</span><span class="n">windows</span><span class="p">\</span><span class="n">vmware</span><span class="p">\</span><span class="n">deploy-wheel</span><span class="p">.</span><span class="n">ps1</span> <span class="p">`</span>
-</span><span id="__span-37-2"><a id="__codelineno-37-2" name="__codelineno-37-2" href="#__codelineno-37-2"></a>  <span class="n">-VmxPath</span> <span class="s2">&quot;image\vmware-workstation\test-vms\Atlaso-VMware\Atlaso-VMware.vmx&quot;</span> <span class="p">`</span>
+</span><span id="__span-37-2"><a id="__codelineno-37-2" name="__codelineno-37-2" href="#__codelineno-37-2"></a>  <span class="n">-IpAddress</span> <span class="n">192</span><span class="p">.</span><span class="n">168</span><span class="p">.</span><span class="n">167</span><span class="p">.</span><span class="n">10</span> <span class="p">`</span>
 </span><span id="__span-37-3"><a id="__codelineno-37-3" name="__codelineno-37-3" href="#__codelineno-37-3"></a>  <span class="n">-OnePasswordEnvironmentId</span> <span class="s1">&#39;&lt;atlaso-environment-id&gt;&#39;</span> <span class="p">`</span>
 </span><span id="__span-37-4"><a id="__codelineno-37-4" name="__codelineno-37-4" href="#__codelineno-37-4"></a>  <span class="n">-OnePasswordAccount</span> <span class="s1">&#39;&lt;account-name-or-id&gt;&#39;</span> <span class="p">`</span>
 </span><span id="__span-37-5"><a id="__codelineno-37-5" name="__codelineno-37-5" href="#__codelineno-37-5"></a>  <span class="n">-OnePasswordPython</span> <span class="s1">&#39;&lt;path-to-python-3.13.exe&gt;&#39;</span>
+</span></code></pre></div>
+<p>If you want that password-backed helper to resolve the guest IP from VMware Tools, pass the VMX path as the <code>-VmxPath</code>
+argument:</p>
+<div class="language-powershell highlight"><pre><span></span><code><span id="__span-38-1"><a id="__codelineno-38-1" name="__codelineno-38-1" href="#__codelineno-38-1"></a><span class="p">.\</span><span class="n">scripts</span><span class="p">\</span><span class="n">windows</span><span class="p">\</span><span class="n">vmware</span><span class="p">\</span><span class="n">deploy-wheel</span><span class="p">.</span><span class="n">ps1</span> <span class="p">`</span>
+</span><span id="__span-38-2"><a id="__codelineno-38-2" name="__codelineno-38-2" href="#__codelineno-38-2"></a>  <span class="n">-VmxPath</span> <span class="s2">&quot;image\vmware-workstation\test-vms\Atlaso-VMware\Atlaso-VMware.vmx&quot;</span> <span class="p">`</span>
+</span><span id="__span-38-3"><a id="__codelineno-38-3" name="__codelineno-38-3" href="#__codelineno-38-3"></a>  <span class="n">-OnePasswordEnvironmentId</span> <span class="s1">&#39;&lt;atlaso-environment-id&gt;&#39;</span> <span class="p">`</span>
+</span><span id="__span-38-4"><a id="__codelineno-38-4" name="__codelineno-38-4" href="#__codelineno-38-4"></a>  <span class="n">-OnePasswordAccount</span> <span class="s1">&#39;&lt;account-name-or-id&gt;&#39;</span> <span class="p">`</span>
+</span><span id="__span-38-5"><a id="__codelineno-38-5" name="__codelineno-38-5" href="#__codelineno-38-5"></a>  <span class="n">-OnePasswordPython</span> <span class="s1">&#39;&lt;path-to-python-3.13.exe&gt;&#39;</span>
 </span></code></pre></div>
 <p>Do not pipe the VMX path or put it on a separate line by itself; PowerShell will try to execute the <code>.vmx</code> file. Before
 using the password-backed path, authenticate the local 1Password integration, verify that exactly one Environment named
@@ -5350,20 +5367,20 @@ the sudo password over a non-PTY stdin handoff with <code>sudo -S -p ''</code>.<
 <p>Pass <code>-IncludeLabNetworkAdapters</code> only after <code>VMnet2</code>, <code>VMnet3</code>, and <code>VMnet4</code> exist for the SiteA, WAN/SiteB, and
 trunk-like validation networks.</p>
 <p>Discover the running Workstation appliance address with:</p>
-<div class="language-powershell highlight"><pre><span></span><code><span id="__span-38-1"><a id="__codelineno-38-1" name="__codelineno-38-1" href="#__codelineno-38-1"></a><span class="n">pwsh</span> <span class="n">-ExecutionPolicy</span> <span class="n">Bypass</span> <span class="p">`</span>
-</span><span id="__span-38-2"><a id="__codelineno-38-2" name="__codelineno-38-2" href="#__codelineno-38-2"></a>  <span class="o">-File</span> <span class="n">scripts</span><span class="p">/</span><span class="n">windows</span><span class="p">/</span><span class="n">vmware</span><span class="p">/</span><span class="nb">get-atlaso</span><span class="n">-vm-ip</span><span class="p">.</span><span class="n">ps1</span>
+<div class="language-powershell highlight"><pre><span></span><code><span id="__span-39-1"><a id="__codelineno-39-1" name="__codelineno-39-1" href="#__codelineno-39-1"></a><span class="n">pwsh</span> <span class="n">-ExecutionPolicy</span> <span class="n">Bypass</span> <span class="p">`</span>
+</span><span id="__span-39-2"><a id="__codelineno-39-2" name="__codelineno-39-2" href="#__codelineno-39-2"></a>  <span class="o">-File</span> <span class="n">scripts</span><span class="p">/</span><span class="n">windows</span><span class="p">/</span><span class="n">vmware</span><span class="p">/</span><span class="nb">get-atlaso</span><span class="n">-vm-ip</span><span class="p">.</span><span class="n">ps1</span>
 </span></code></pre></div>
 <h2 id="powershell-roadmap">PowerShell Roadmap<a class="headerlink" href="#powershell-roadmap" title="Permanent link">&para;</a></h2>
 <p>The future PowerShell module scaffold lives in:</p>
-<div class="language-text highlight"><pre><span></span><code><span id="__span-39-1"><a id="__codelineno-39-1" name="__codelineno-39-1" href="#__codelineno-39-1"></a>clients/powershell/Atlaso/
+<div class="language-text highlight"><pre><span></span><code><span id="__span-40-1"><a id="__codelineno-40-1" name="__codelineno-40-1" href="#__codelineno-40-1"></a>clients/powershell/Atlaso/
 </span></code></pre></div>
 <p>The first generated or hand-wrapped cmdlets should map cleanly to the OpenAPI operation IDs. Token authentication should
 be preferred for automation. <code>-SkipCertificateCheck</code> may be added for lab testing only and must not be the default.</p>
 <h2 id="tests">Tests<a class="headerlink" href="#tests" title="Permanent link">&para;</a></h2>
 <p>Run the focused pytest files or node selectors for the changed behavior. Then run the applicable broader non-suite
 checks:</p>
-<div class="language-bash highlight"><pre><span></span><code><span id="__span-40-1"><a id="__codelineno-40-1" name="__codelineno-40-1" href="#__codelineno-40-1"></a>python<span class="w"> </span>-m<span class="w"> </span>compileall<span class="w"> </span>atlaso
-</span><span id="__span-40-2"><a id="__codelineno-40-2" name="__codelineno-40-2" href="#__codelineno-40-2"></a>python<span class="w"> </span>scripts/check_photon_compatibility.py
+<div class="language-bash highlight"><pre><span></span><code><span id="__span-41-1"><a id="__codelineno-41-1" name="__codelineno-41-1" href="#__codelineno-41-1"></a>python<span class="w"> </span>-m<span class="w"> </span>compileall<span class="w"> </span>atlaso
+</span><span id="__span-41-2"><a id="__codelineno-41-2" name="__codelineno-41-2" href="#__codelineno-41-2"></a>python<span class="w"> </span>scripts/check_photon_compatibility.py
 </span></code></pre></div>
 <p>Do not run the complete Python test suite locally. GitHub CI's canonical <code>Python tests</code> context owns the complete suite,
 which covers auth, token revocation, scope enforcement, audit records, UI smoke rendering, and OpenAPI contract checks.</p>

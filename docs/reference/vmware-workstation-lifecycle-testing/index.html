@@ -3617,10 +3617,10 @@ credential, then invokes the isolated Python child directly. That child obtains 
 human-approved 1Password desktop authorization prompt and keeps it in process memory only. Python starts with <code>-I -S</code>
 and an explicit dependency path so startup hooks and inherited <code>PYTHONPATH</code> cannot observe the value. The beta-only
 <code>op run --environment</code> flag is not supported by the stable CLI and is not part of this workflow.</p>
-<p>Normal test VM creation uses a separate development-CA handoff. It checks the supplied ID against the
-repository-pinned SHA-256 identity of the exact <code>Atlaso</code> Environment before invoking <code>op</code>, then requires an
-Environments-enabled CLI with <code>op run --environment</code>; the stable SDK-backed wheel deployment above does not change
-that normal-test-wrapper-only trust path.</p>
+<p>Normal test VM creation uses a separate development-CA handoff. It requires the Environments-enabled beta CLI at
+<code>C:\Program Files\1Password CLI\op.exe</code> with <code>op run --environment</code>, retrieves the selected Environment only through
+that bounded child, and cryptographically verifies its concealed signer against the checked-in development root before
+VM mutation. The stable SDK-backed wheel deployment above does not change this normal-test-wrapper-only trust path.</p>
 <p>Atlaso can run a VMware Workstation lifecycle lab alongside the Hyper-V lab. The Workstation path uses VMX/VMDK
 artifacts and <code>vmrun.exe</code>, then delegates appliance behavior checks to the shared Python lifecycle runner.</p>
 <p>Run all Windows commands in PowerShell 7.4 or newer (<code>pwsh</code>). Earlier PowerShell releases and Windows PowerShell 5.1
@@ -3779,21 +3779,38 @@ exact configured path and will not accept a sibling or parent path instead.</p>
 <code>-ResetDataDisks</code> accepts only strict canonical
 descendants of the selected VM output, so sibling-prefix and reparse-point paths are refused.</p>
 <h2 id="normal-test-vm">Normal Test VM<a class="headerlink" href="#normal-test-vm" title="Permanent link">&para;</a></h2>
-<p>For a normal Workstation appliance VM, separate from the lifecycle lab, use:</p>
-<div class="language-powershell highlight"><pre><span></span><code><span id="__span-5-1"><a id="__codelineno-5-1" name="__codelineno-5-1" href="#__codelineno-5-1"></a><span class="n">pwsh</span> <span class="n">-ExecutionPolicy</span> <span class="n">Bypass</span> <span class="p">`</span>
-</span><span id="__span-5-2"><a id="__codelineno-5-2" name="__codelineno-5-2" href="#__codelineno-5-2"></a>  <span class="o">-File</span> <span class="n">scripts</span><span class="p">/</span><span class="n">windows</span><span class="p">/</span><span class="n">vmware</span><span class="p">/</span><span class="n">create-atlaso-test-vm</span><span class="p">.</span><span class="n">ps1</span> <span class="p">`</span>
-</span><span id="__span-5-3"><a id="__codelineno-5-3" name="__codelineno-5-3" href="#__codelineno-5-3"></a>  <span class="n">-Redeploy</span> <span class="p">`</span>
-</span><span id="__span-5-4"><a id="__codelineno-5-4" name="__codelineno-5-4" href="#__codelineno-5-4"></a>  <span class="n">-ResetDataDisks</span> <span class="p">`</span>
-</span><span id="__span-5-5"><a id="__codelineno-5-5" name="__codelineno-5-5" href="#__codelineno-5-5"></a>  <span class="n">-WaitForIp</span> <span class="p">`</span>
-</span><span id="__span-5-6"><a id="__codelineno-5-6" name="__codelineno-5-6" href="#__codelineno-5-6"></a>  <span class="n">-OnePasswordEnvironmentId</span> <span class="s1">&#39;&lt;atlaso-environment-id&gt;&#39;</span> <span class="p">`</span>
-</span><span id="__span-5-7"><a id="__codelineno-5-7" name="__codelineno-5-7" href="#__codelineno-5-7"></a>  <span class="n">-TrustRootCa</span>
+<p>For a normal Workstation appliance VM, separate from the lifecycle lab, store the exact <code>Atlaso</code> Environment ID once in
+the checkout-local, Git-ignored configuration file. The prompt is masked and the command does not print the ID:</p>
+<div class="language-powershell highlight"><pre><span></span><code><span id="__span-5-1"><a id="__codelineno-5-1" name="__codelineno-5-1" href="#__codelineno-5-1"></a><span class="nv">$atlasoLocal</span> <span class="p">=</span> <span class="nb">Join-Path</span> <span class="p">(</span><span class="n">git</span> <span class="n">rev-parse</span> <span class="p">-</span><span class="n">-show-toplevel</span><span class="p">)</span> <span class="s1">&#39;.atlaso-local&#39;</span>
+</span><span id="__span-5-2"><a id="__codelineno-5-2" name="__codelineno-5-2" href="#__codelineno-5-2"></a><span class="nb">New-Item</span> <span class="n">-ItemType</span> <span class="n">Directory</span> <span class="n">-Path</span> <span class="nv">$atlasoLocal</span> <span class="n">-Force</span> <span class="p">|</span> <span class="nb">Out-Null</span>
+</span><span id="__span-5-3"><a id="__codelineno-5-3" name="__codelineno-5-3" href="#__codelineno-5-3"></a><span class="nv">$atlasoEnvironmentId</span> <span class="p">=</span> <span class="nb">Read-Host</span> <span class="s1">&#39;Paste the Atlaso Environment ID&#39;</span> <span class="n">-MaskInput</span>
+</span><span id="__span-5-4"><a id="__codelineno-5-4" name="__codelineno-5-4" href="#__codelineno-5-4"></a><span class="k">try</span> <span class="p">{</span>
+</span><span id="__span-5-5"><a id="__codelineno-5-5" name="__codelineno-5-5" href="#__codelineno-5-5"></a>    <span class="no">[System.IO.File]</span><span class="p">::</span><span class="n">WriteAllText</span><span class="p">(</span>
+</span><span id="__span-5-6"><a id="__codelineno-5-6" name="__codelineno-5-6" href="#__codelineno-5-6"></a>        <span class="p">(</span><span class="nb">Join-Path</span> <span class="nv">$atlasoLocal</span> <span class="s1">&#39;onepassword-environment-id&#39;</span><span class="p">),</span>
+</span><span id="__span-5-7"><a id="__codelineno-5-7" name="__codelineno-5-7" href="#__codelineno-5-7"></a>        <span class="nv">$atlasoEnvironmentId</span>
+</span><span id="__span-5-8"><a id="__codelineno-5-8" name="__codelineno-5-8" href="#__codelineno-5-8"></a>    <span class="p">)</span>
+</span><span id="__span-5-9"><a id="__codelineno-5-9" name="__codelineno-5-9" href="#__codelineno-5-9"></a><span class="p">}</span>
+</span><span id="__span-5-10"><a id="__codelineno-5-10" name="__codelineno-5-10" href="#__codelineno-5-10"></a><span class="k">finally</span> <span class="p">{</span>
+</span><span id="__span-5-11"><a id="__codelineno-5-11" name="__codelineno-5-11" href="#__codelineno-5-11"></a>    <span class="nb">Remove-Variable</span> <span class="n">atlasoEnvironmentId</span> <span class="n">-ErrorAction</span> <span class="n">SilentlyContinue</span>
+</span><span id="__span-5-12"><a id="__codelineno-5-12" name="__codelineno-5-12" href="#__codelineno-5-12"></a><span class="p">}</span>
+</span></code></pre></div>
+<p>Then use the ordinary command without an ID argument:</p>
+<div class="language-powershell highlight"><pre><span></span><code><span id="__span-6-1"><a id="__codelineno-6-1" name="__codelineno-6-1" href="#__codelineno-6-1"></a><span class="n">pwsh</span> <span class="n">-ExecutionPolicy</span> <span class="n">Bypass</span> <span class="p">`</span>
+</span><span id="__span-6-2"><a id="__codelineno-6-2" name="__codelineno-6-2" href="#__codelineno-6-2"></a>  <span class="o">-File</span> <span class="n">scripts</span><span class="p">/</span><span class="n">windows</span><span class="p">/</span><span class="n">vmware</span><span class="p">/</span><span class="n">create-atlaso-test-vm</span><span class="p">.</span><span class="n">ps1</span> <span class="p">`</span>
+</span><span id="__span-6-3"><a id="__codelineno-6-3" name="__codelineno-6-3" href="#__codelineno-6-3"></a>  <span class="n">-Redeploy</span> <span class="p">`</span>
+</span><span id="__span-6-4"><a id="__codelineno-6-4" name="__codelineno-6-4" href="#__codelineno-6-4"></a>  <span class="n">-ResetDataDisks</span> <span class="p">`</span>
+</span><span id="__span-6-5"><a id="__codelineno-6-5" name="__codelineno-6-5" href="#__codelineno-6-5"></a>  <span class="n">-WaitForIp</span> <span class="p">`</span>
+</span><span id="__span-6-6"><a id="__codelineno-6-6" name="__codelineno-6-6" href="#__codelineno-6-6"></a>  <span class="n">-TrustRootCa</span>
 </span></code></pre></div>
 <p>That is the Workstation counterpart to <code>scripts/windows/hyperv/create-atlaso-test-vm.ps1</code>. It defaults to the management
 vmnet only; pass <code>-IncludeLabNetworkAdapters</code> after creating the SiteA, WAN/SiteB, and trunk-like vmnets.
-For real creation, copy the opaque Environment ID from the exact <code>Atlaso</code> 1Password Environment and pass it through
-<code>-OnePasswordEnvironmentId</code>. An absent ID fails with an actionable preflight error before pending cleanup, network
-preparation, disk reset, cloning, or other VM mutation. The wrapper does not print the ID or any secret from that
-Environment.
+For real creation, the wrapper prefers an explicit <code>-OnePasswordEnvironmentId</code> override and otherwise reads the exact
+single-line <code>.atlaso-local/onepassword-environment-id</code> file. The entire <code>.atlaso-local</code> directory is ignored by Git. A
+pending signer cleanup runs first because it consumes no 1Password material. After that recovery, a missing or
+malformed ID fails with an actionable preflight error before network preparation, disk reset, cloning, or other new VM
+mutation. The wrapper verifies its SHA-256 identity against the repository pin without printing the ID. Install the
+Environments-enabled beta 1Password CLI under <code>C:\Program Files\1Password CLI</code>; a stable CLI without
+<code>op run --environment</code> fails before Environment access. A wrong Environment ID or signer fails before new VM mutation.
 The wrapper injects the same complete DHCP-first OVF environment before power-on; use <code>-FirstBootFqdn</code>,
 <code>-AdminPassword</code>, and <code>-RootPassword</code> when the default local test identity or credentials are not appropriate.
 It also resolves the current Windows user's existing <code>.ssh/id_ed25519.pub</code> before any network preparation, cleanup, or
