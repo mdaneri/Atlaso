@@ -3617,6 +3617,10 @@ credential, then invokes the isolated Python child directly. That child obtains 
 human-approved 1Password desktop authorization prompt and keeps it in process memory only. Python starts with <code>-I -S</code>
 and an explicit dependency path so startup hooks and inherited <code>PYTHONPATH</code> cannot observe the value. The beta-only
 <code>op run --environment</code> flag is not supported by the stable CLI and is not part of this workflow.</p>
+<p>Normal test VM creation uses a separate development-CA handoff. It checks the supplied ID against the
+repository-pinned SHA-256 identity of the exact <code>Atlaso</code> Environment before invoking <code>op</code>, then requires an
+Environments-enabled CLI with <code>op run --environment</code>; the stable SDK-backed wheel deployment above does not change
+that normal-test-wrapper-only trust path.</p>
 <p>Atlaso can run a VMware Workstation lifecycle lab alongside the Hyper-V lab. The Workstation path uses VMX/VMDK
 artifacts and <code>vmrun.exe</code>, then delegates appliance behavior checks to the shared Python lifecycle runner.</p>
 <p>Run all Windows commands in PowerShell 7.4 or newer (<code>pwsh</code>). Earlier PowerShell releases and Windows PowerShell 5.1
@@ -3823,7 +3827,10 @@ whitespace, and contain only XML-representable characters so the OVF value round
 <code>-TrustRootCa</code> waits for the first-boot CA endpoint, removes partial downloads best-effort between retries, validates the
 self-signed Atlaso root CA, and imports it into the current-user Trusted Root store. The temporary-file cleanup remains
 idempotent for missing files and safely handles dotted user-profile directories and valid DOS 8.3 short paths, so a
-cleanup race or path alias cannot stop the readiness retry loop. Use <code>-TimeoutSeconds</code> to change the IP and CA waits.</p>
+cleanup race or path alias cannot stop the readiness retry loop. Use <code>-TimeoutSeconds</code> to change the secret-child, IP,
+and CA deadlines; rollback mutates the VM only after staging and start child-tree termination is proven. It also keeps
+reused disks quarantined while an artifact-removal child may survive. An unproven termination preserves the durable
+marker until a Windows host restart provides that proof.</p>
 <h2 id="fidelity-boundary">Fidelity Boundary<a class="headerlink" href="#fidelity-boundary" title="Permanent link">&para;</a></h2>
 <p>For ESX Storage appliance acceptance, attach an extra blank VMDK to the normal Workstation test appliance, initialize it
 only through global <code>esx_storage</code> apply, and apply the matching DNS/DHCP and Firewall units. Record the job ID,
