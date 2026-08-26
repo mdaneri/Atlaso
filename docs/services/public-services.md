@@ -70,6 +70,10 @@ registered only from management pages, uses the same narrow scope, and serves an
 navigation. It does not intercept API, OIDC, CA download, PXE, depot, registry, or other protocol traffic. Public UI
 caching is intentionally disabled. On the first management page load after upgrading from the former root-scoped PWA,
 Atlaso unregisters the legacy `/` service-worker registration before installing the management-scoped registration.
+An updated worker becomes active only after every required offline-shell asset is fetched successfully and written to
+its versioned cache. If any required fetch or cache write fails, the installation fails and the previous complete
+worker and cache remain authoritative. After a successful installation, activation retires only older
+`atlaso-management-pwa-v*` caches and preserves unrelated caches on the same origin.
 
 ## Verify an applied appliance
 
