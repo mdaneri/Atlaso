@@ -70,6 +70,8 @@ def _asset_role(name: str) -> str:
         return "ova_validator"
     if lower == "normalize_libvirt.py":
         return "libvirt_normalizer"
+    if lower == "verify_virtualization_artifact_index.py":
+        return "artifact_index_verifier"
     return "release_asset"
 
 
@@ -100,6 +102,7 @@ def _require_virtualization_set(names: set[str], version: str) -> None:
         "import-atlaso-kvm.sh",
         "validate_ova.py",
         "normalize_libvirt.py",
+        "verify_virtualization_artifact_index.py",
     ):
         if helper not in names:
             raise SystemExit(f"virtualization release is missing {helper}")

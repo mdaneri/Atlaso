@@ -13,6 +13,7 @@ from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
 
 from scripts import build_virtualization_artifact_index as builder
 from scripts import publish_release
+from scripts import verify_virtualization_artifact_index as verifier
 
 
 def _key(path: Path) -> Ed25519PrivateKey:
@@ -45,6 +46,7 @@ def _assets(path: Path, version: str = "0.9.217") -> None:
         "import-atlaso-kvm.sh",
         "validate_ova.py",
         "normalize_libvirt.py",
+        "verify_virtualization_artifact_index.py",
     ):
         (path / name).write_bytes(f"asset:{name}\n".encode())
 
@@ -81,13 +83,40 @@ def test_builds_verifiable_index_covering_complete_release_set(tmp_path: Path) -
     signature = json.loads((assets / builder.SIGNATURE_NAME).read_text(encoding="utf-8"))
     key.public_key().verify(base64.b64decode(signature["signature"], validate=True), index_bytes)
     assert index["source_commit"] == "a" * 40
-    assert len(index["assets"]) == 11
+    assert len(index["assets"]) == 12
     assert {record["role"] for record in index["assets"]} >= {
         "canonical_ova",
         "hyperv_package",
         "proxmox_import_helper",
         "kvm_import_helper",
+        "artifact_index_verifier",
     }
+
+    trust_key = tmp_path / "test-key.pem"
+    trust_key.write_bytes(
+        key.public_key().public_bytes(
+            encoding=serialization.Encoding.PEM,
+            format=serialization.PublicFormat.SubjectPublicKeyInfo,
+        )
+    )
+    result = verifier.verify(
+        index_path=assets / builder.INDEX_NAME,
+        signature_path=assets / builder.SIGNATURE_NAME,
+        trust_key_path=trust_key,
+        asset_directory=assets,
+        expected_version="0.9.217",
+        expected_commit="a" * 40,
+    )
+    assert result["assets_verified"] == 12
+
+    (assets / "import-atlaso-kvm.sh").write_bytes(b"tampered")
+    with pytest.raises(SystemExit, match="size, hash, or role"):
+        verifier.verify(
+            index_path=assets / builder.INDEX_NAME,
+            signature_path=assets / builder.SIGNATURE_NAME,
+            trust_key_path=trust_key,
+            asset_directory=assets,
+        )
 
 
 def test_publisher_verifies_signed_exact_coverage_index(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:

@@ -315,6 +315,7 @@ def verify_virtualization_artifact_index(
         "import-atlaso-kvm.sh",
         "validate_ova.py",
         "normalize_libvirt.py",
+        "verify_virtualization_artifact_index.py",
     }
     for record in records:
         if not isinstance(record, dict) or set(record) != {"name", "role", "size", "sha256"}:
@@ -475,7 +476,15 @@ def main(argv: list[str] | None = None) -> int:
             f"Atlaso {tag}",
             "--generate-notes",
             "--notes",
-            f"Signed appliance release built from `{args.commit}`.",
+            (
+                f"Signed appliance release built from `{args.commit}`.\n\n"
+                "Virtualization assets are covered by `virtualization-artifact-index.json` and its detached Ed25519 "
+                "signature. Verify them with `verify_virtualization_artifact_index.py` and the "
+                "`atlaso-release-2026-01` public key (SHA-256 "
+                "`b0bb5614342c4f432a01c53fc4c9aae54c1eeffb12806539a92babbcda74b58e`) before import; "
+                f"the [portable virtualization artifact guide](https://github.com/mdaneri/Atlaso/blob/{tag}/docs/"
+                "reference/virtualization-artifacts.md) contains the exact command sequence."
+            ),
         ]
     )
     print(json.dumps({"tag": tag, "commit": args.commit, "result": "published"}, sort_keys=True))

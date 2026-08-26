@@ -49,10 +49,11 @@ def test_stages_validated_ova_hyperv_and_flat_helpers_idempotently(tmp_path: Pat
     )
 
     assert first == second
-    assert len(first) == 11
+    assert len(first) == 12
     assert {path.name for path in output.iterdir()} == set(first)
     assert "import-atlaso-proxmox.sh" in first
     assert "import-atlaso-kvm.sh" in first
+    assert "verify_virtualization_artifact_index.py" in first
 
 
 def test_refuses_mismatched_release_identity_or_existing_destination(tmp_path: Path) -> None:

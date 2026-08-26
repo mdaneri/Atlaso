@@ -28,6 +28,7 @@ RELEASE_HELPERS = (
     ROOT / "scripts" / "virtualization" / "templates" / "import-atlaso-kvm.sh",
     ROOT / "scripts" / "virtualization" / "validate_ova.py",
     ROOT / "scripts" / "virtualization" / "normalize_libvirt.py",
+    ROOT / "scripts" / "verify_virtualization_artifact_index.py",
 )
 
 

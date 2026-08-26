@@ -15,6 +15,8 @@ $ErrorActionPreference = 'Stop'
 $modulePath = Join-Path $RepositoryRoot 'scripts\windows\virtualization\Atlaso.VirtualizationArtifacts.psm1'
 $exporterPath = Join-Path $RepositoryRoot 'scripts\windows\virtualization\export-artifacts.ps1'
 $importerPath = Join-Path $RepositoryRoot 'scripts\windows\virtualization\templates\Import-Atlaso.ps1'
+$hyperVSmokePath = Join-Path $RepositoryRoot 'scripts\windows\virtualization\smoke-hyperv.ps1'
+$vmwareSmokePath = Join-Path $RepositoryRoot 'scripts\windows\virtualization\smoke-ova-vmware.ps1'
 $ovaExporterPath = Join-Path $RepositoryRoot 'scripts\windows\vmware\export-ovf.ps1'
 Import-Module $modulePath -Force
 
@@ -46,6 +48,8 @@ $exporter = Get-Content -Raw -LiteralPath $exporterPath
 $importer = Get-Content -Raw -LiteralPath $importerPath
 $module = Get-Content -Raw -LiteralPath $modulePath
 $ovaExporter = Get-Content -Raw -LiteralPath $ovaExporterPath
+$hyperVSmoke = Get-Content -Raw -LiteralPath $hyperVSmokePath
+$vmwareSmoke = Get-Content -Raw -LiteralPath $vmwareSmokePath
 foreach ($required in @(
         'Invoke-AtlasoOvaValidation',
         'Get-AtlasoTemplateVersion',
@@ -91,11 +95,37 @@ foreach ($required in @(
         '-FirstBootDevice $drives[0]',
         'if ($vmCreated -and $null -ne $vm)',
         'Remove-VM -VM $vm',
+        '$vmRemovalVerified',
+        'Get-VM -ErrorAction Stop | Where-Object Id -eq $vm.Id',
         'if ($vmRootCreated'
     )) {
     if (-not $importer.Contains($required)) {
         throw "The Hyper-V importer is missing required topology or rollback marker: $required"
     }
+}
+foreach ($required in @(
+        'listRegisteredVM',
+        '$vmRootSafeToRemove',
+        '$cleanupFailure',
+        'its files were preserved'
+    )) {
+    if (-not $vmwareSmoke.Contains($required)) {
+        throw "The VMware smoke cleanup is missing fail-closed marker: $required"
+    }
+}
+foreach ($required in @(
+        'Remove-VM -VM $createdVm -Force -ErrorAction Stop',
+        'Get-VM -ErrorAction Stop | Where-Object Id -eq $createdVm.Id',
+        '$operationRootSafeToRemove',
+        'its files were preserved'
+    )) {
+    if (-not $hyperVSmoke.Contains($required)) {
+        throw "The Hyper-V smoke cleanup is missing fail-closed marker: $required"
+    }
+}
+if ($importer.Contains('Remove-VM -VM $vm -Force -ErrorAction Continue') -or
+    $hyperVSmoke.Contains('Remove-VM -Name $Name -Force -ErrorAction Continue')) {
+    throw 'A Hyper-V cleanup still ignores VM removal failure.'
 }
 
 Write-Host 'Hyper-V virtualization artifact contract test passed.'

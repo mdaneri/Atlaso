@@ -33,7 +33,8 @@ if ($Name -notmatch '^[A-Za-z0-9][A-Za-z0-9_. -]*$' -or $Name -in @('.', '..')) 
     throw 'Name must be a simple Hyper-V virtual-machine name without path separators.'
 }
 $serviceSwitchName = if ($ServiceSwitch) { $ServiceSwitch } else { $ManagementSwitch }
-if (Get-VM -Name $Name -ErrorAction SilentlyContinue) {
+$existingVm = @(Get-VM -ErrorAction Stop | Where-Object Name -eq $Name)
+if ($existingVm.Count -ne 0) {
     throw "A Hyper-V virtual machine named $Name already exists."
 }
 foreach ($switchName in @($ManagementSwitch, $serviceSwitchName) | Select-Object -Unique) {
@@ -223,12 +224,25 @@ try {
     Get-VM -Name $Name
 }
 catch {
+    $importFailure = $_
+    $vmRemovalVerified = -not $vmCreated
     # Never remove a VM that New-VM did not return to this invocation, even if a concurrent actor used the same name.
     if ($vmCreated -and $null -ne $vm) {
-        Remove-VM -VM $vm -Force -ErrorAction Continue
+        try {
+            Remove-VM -VM $vm -Force -ErrorAction Stop
+            $matchingVm = @(Get-VM -ErrorAction Stop | Where-Object Id -eq $vm.Id)
+            if ($matchingVm.Count -ne 0) {
+                throw 'The exact created Hyper-V virtual machine remains registered after Remove-VM.'
+            }
+            $vmRemovalVerified = $true
+        }
+        catch {
+            throw "Hyper-V import failed and its exact created VM could not be removed; files were preserved. " +
+                "Cleanup error: $($_.Exception.Message) Original error: $($importFailure.Exception.Message)"
+        }
     }
-    if ($vmRootCreated -and (Test-Path -LiteralPath $vmRoot)) {
+    if ($vmRootCreated -and $vmRemovalVerified -and (Test-Path -LiteralPath $vmRoot)) {
         Remove-Item -LiteralPath $vmRoot -Recurse -Force
     }
-    throw
+    throw $importFailure
 }

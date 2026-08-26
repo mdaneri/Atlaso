@@ -27,9 +27,35 @@ conflicting disks.
 
 ## Verify release assets
 
-Download the OVA, its manifest, the signed artifact index, and the import helper for the target platform from the same
-release. Verify the signed index according to the release instructions before importing an appliance. Keep the OVA
-immutable and available until deployment validation succeeds.
+Download the release into a new directory, then obtain the verifier and trusted public key from the same immutable
+source tag. The release key ID is `atlaso-release-2026-01`; its SHA-256 fingerprint is
+`b0bb5614342c4f432a01c53fc4c9aae54c1eeffb12806539a92babbcda74b58e`. This example verifies the detached Ed25519
+signature, expected version, and every indexed asset before import:
+
+```bash
+TAG=vX.Y.Z
+ASSET_ROOT="atlaso-$TAG"
+mkdir -- "$ASSET_ROOT"
+gh release download "$TAG" --repo mdaneri/Atlaso --dir "$ASSET_ROOT"
+curl --fail --location --output "$ASSET_ROOT/verify-from-source.py" \
+  "https://raw.githubusercontent.com/mdaneri/Atlaso/$TAG/scripts/verify_virtualization_artifact_index.py"
+curl --fail --location --output "$ASSET_ROOT/atlaso-release-2026-01.pem" \
+  "https://raw.githubusercontent.com/mdaneri/Atlaso/$TAG/image/common/update-trust/atlaso-release-2026-01.pem"
+printf '%s  %s\n' \
+  'b0bb5614342c4f432a01c53fc4c9aae54c1eeffb12806539a92babbcda74b58e' \
+  "$ASSET_ROOT/atlaso-release-2026-01.pem" | sha256sum --check --strict
+python "$ASSET_ROOT/verify-from-source.py" \
+  --index "$ASSET_ROOT/virtualization-artifact-index.json" \
+  --signature "$ASSET_ROOT/virtualization-artifact-index.json.sig" \
+  --trust-key "$ASSET_ROOT/atlaso-release-2026-01.pem" \
+  --asset-directory "$ASSET_ROOT" \
+  --expected-version "${TAG#v}"
+```
+
+Run the verification from a trusted administrative workstation with Python and the locked release-tool dependencies
+installed. A successful command prints the verified source commit, key ID, version, and asset count. Keep the verified
+OVA immutable and available until deployment validation succeeds. Do not import any asset if key fingerprint,
+signature, version, or asset verification fails.
 
 Every helper runs `validate_ova.py` before changing hypervisor state. Validation requires the manifest, source commit,
 version, payload hashes and roles, fixed capacities, and complete machine topology to agree. An unexpected archive

@@ -122,17 +122,46 @@ try {
     }
 }
 finally {
+    $vmRootSafeToRemove = $true
+    $cleanupFailure = ''
     if ($vmStarted) {
         & $vmrun -T ws stop $vmxPath hard 2>$null | Out-Null
+        if ($LASTEXITCODE -ne 0) {
+            $vmRootSafeToRemove = $false
+            $cleanupFailure = 'vmrun could not stop the disposable VMware smoke VM; its files were preserved.'
+        }
     }
-    if (Test-Path -LiteralPath $vmxPath) {
+    if ($vmRootSafeToRemove -and (Test-Path -LiteralPath $vmxPath)) {
+        $runningVmPaths = @(& $vmrun -T ws list 2>$null)
+        if ($LASTEXITCODE -ne 0 -or @($runningVmPaths | Where-Object { $_.Trim() -ieq $vmxPath }).Count -ne 0) {
+            $vmRootSafeToRemove = $false
+            $cleanupFailure = 'vmrun could not prove the disposable VMware smoke VM was stopped; its files were preserved.'
+        }
+    }
+    if ($vmRootSafeToRemove -and (Test-Path -LiteralPath $vmxPath)) {
         & $vmrun -T ws deleteVM $vmxPath 2>$null | Out-Null
+        if ($LASTEXITCODE -ne 0) {
+            $vmRootSafeToRemove = $false
+            $cleanupFailure = 'vmrun could not delete the disposable VMware smoke VM; its files were preserved.'
+        }
     }
-    if (Test-Path -LiteralPath $vmRoot) {
+    if ($vmRootSafeToRemove) {
+        $registeredVmPaths = @(& $vmrun -T ws listRegisteredVM 2>$null)
+        if ($LASTEXITCODE -ne 0 -or
+            (Test-Path -LiteralPath $vmxPath) -or
+            @($registeredVmPaths | Where-Object { $_.Trim() -ieq $vmxPath }).Count -ne 0) {
+            $vmRootSafeToRemove = $false
+            $cleanupFailure = 'vmrun could not prove the disposable VMware smoke VM was deleted; its files were preserved.'
+        }
+    }
+    if ($vmRootSafeToRemove -and (Test-Path -LiteralPath $vmRoot)) {
         Remove-Item -LiteralPath $vmRoot -Recurse -Force
     }
     if (Test-Path -LiteralPath $validationRoot) {
         Remove-Item -LiteralPath $validationRoot -Recurse -Force
+    }
+    if ($cleanupFailure) {
+        throw $cleanupFailure
     }
 }
 
