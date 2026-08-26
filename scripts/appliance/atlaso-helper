@@ -14085,13 +14085,24 @@ def _esx_storage_resolved_by_id_device(value: str) -> Path:
     return identity.resolve(strict=True)
 
 
-def _set_release_maintenance(enabled: bool) -> dict:
+def _set_release_maintenance(
+    enabled: bool,
+    *,
+    cleanup_preflight_failure: bool = False,
+) -> dict:
     """Perform set release maintenance.
 
     Args:
         enabled: Whether the associated resource or behavior is enabled.
+        cleanup_preflight_failure: Restore the prior front door when initial admission fails before services stop.
     """
     if enabled:
+        def abort_enable(result: dict, previous: str | None) -> dict:
+            """Attach cleanup only at the initial pre-shutdown admission boundary."""
+            if cleanup_preflight_failure:
+                result["preflight_cleanup"] = _restore_release_maintenance_preflight(previous)
+            return result
+
         ATLASO_UPDATE_MAINTENANCE_PATH.parent.mkdir(parents=True, exist_ok=True)
         ATLASO_UPDATE_MAINTENANCE_PATH.touch(mode=0o644, exist_ok=True)
         if not NGINX_MANAGEMENT_SITE_PATH.is_file():
@@ -14099,8 +14110,7 @@ def _set_release_maintenance(enabled: bool) -> dict:
                 "management_site",
                 "The applied management nginx site is unavailable; Atlaso services remain running.",
             )
-            failure["preflight_cleanup"] = _restore_release_maintenance_preflight(None)
-            return failure
+            return abort_enable(failure, None)
         try:
             previous = NGINX_MANAGEMENT_SITE_PATH.read_text(encoding="utf-8")
         except OSError as exc:
@@ -14108,8 +14118,7 @@ def _set_release_maintenance(enabled: bool) -> dict:
                 "management_site",
                 f"The applied management nginx site could not be read ({type(exc).__name__}); Atlaso services remain running.",
             )
-            failure["preflight_cleanup"] = _restore_release_maintenance_preflight(None)
-            return failure
+            return abort_enable(failure, None)
         try:
             guarded = _management_site_with_release_maintenance_guards(previous)
         except ValueError as exc:
@@ -14117,8 +14126,7 @@ def _set_release_maintenance(enabled: bool) -> dict:
                 "management_site",
                 f"The applied management nginx site could not be guarded ({type(exc).__name__}); Atlaso services remain running.",
             )
-            failure["preflight_cleanup"] = _restore_release_maintenance_preflight(previous)
-            return failure
+            return abort_enable(failure, previous)
         if guarded != previous:
             temporary = NGINX_MANAGEMENT_SITE_PATH.with_suffix(".conf.tmp")
             try:
@@ -14130,8 +14138,7 @@ def _set_release_maintenance(enabled: bool) -> dict:
                     "management_site",
                     f"The guarded management nginx site could not be installed ({type(exc).__name__}); Atlaso services remain running.",
                 )
-                failure["preflight_cleanup"] = _restore_release_maintenance_preflight(previous)
-                return failure
+                return abort_enable(failure, previous)
         validation = _nginx_test_command()
         if validation.returncode != 0:
             failure = _release_maintenance_failure(
@@ -14139,18 +14146,15 @@ def _set_release_maintenance(enabled: bool) -> dict:
                 "The guarded management nginx configuration is invalid; Atlaso services remain running.",
                 returncode=validation.returncode,
             )
-            failure["preflight_cleanup"] = _restore_release_maintenance_preflight(previous)
-            return failure
+            return abort_enable(failure, previous)
         result = _service_command("reload", "nginx.service")
         result["command"] = ["maintenance", "enable"]
         if not result["success"]:
             result["failure_layer"] = "nginx_reload"
-            result["preflight_cleanup"] = _restore_release_maintenance_preflight(previous)
-            return result
+            return abort_enable(result, previous)
         probe = _verify_release_maintenance_response(guarded)
         if not probe["success"]:
-            probe["preflight_cleanup"] = _restore_release_maintenance_preflight(previous)
-            return probe
+            return abort_enable(probe, previous)
         result["maintenance_probe"] = probe
         result["stdout"] = "Atlaso management maintenance response enabled, reloaded, and verified."
         return result
@@ -15033,7 +15037,7 @@ def _apply_atlaso_release(
     backup_root.mkdir(parents=True, exist_ok=True)
     file_backups: list[tuple[Path | None, Path]] = []
     transaction_recovery: dict[str, object] = {}
-    maintenance = _set_release_maintenance(True)
+    maintenance = _set_release_maintenance(True, cleanup_preflight_failure=True)
     commands.append(maintenance)
     if not maintenance["success"]:
         raise ValueError("Could not enter the nginx maintenance response before release transaction")

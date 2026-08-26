@@ -4121,11 +4121,12 @@ def test_failed_candidate_restores_previous_release_and_database(
     maintenance_states: list[bool] = []
     rollback_sequence: list[str] = []
 
-    def maintenance(enabled):
+    def maintenance(enabled, *, cleanup_preflight_failure=False):
         """Inject one failure while removing candidate maintenance mode.
 
         Args:
             enabled: Whether nginx maintenance mode should remain active.
+            cleanup_preflight_failure: Whether initial admission may restore the live front door on failure.
         """
         nonlocal maintenance_disables
         maintenance_states.append(enabled)
@@ -4825,7 +4826,7 @@ def test_release_maintenance_enable_guards_every_management_server_before_reload
         },
     )
 
-    result = helper._set_release_maintenance(True)
+    result = helper._set_release_maintenance(True, cleanup_preflight_failure=True)
 
     assert result["success"] is True
     assert result["maintenance_probe"]["stable_samples"] == 3
@@ -4851,7 +4852,7 @@ def test_release_maintenance_enable_rejects_missing_management_site(monkeypatch,
         lambda *_args, **_kwargs: pytest.fail("nginx reload must not run without the management site"),
     )
 
-    result = helper._set_release_maintenance(True)
+    result = helper._set_release_maintenance(True, cleanup_preflight_failure=True)
 
     assert result["success"] is False
     assert result["failure_layer"] == "management_site"
@@ -4902,7 +4903,7 @@ def test_release_maintenance_enable_requires_live_503_proof(monkeypatch, tmp_pat
         ),
     )
 
-    result = helper._set_release_maintenance(True)
+    result = helper._set_release_maintenance(True, cleanup_preflight_failure=True)
 
     assert result["success"] is False
     assert result["failure_layer"] == "maintenance_probe"
@@ -4910,6 +4911,56 @@ def test_release_maintenance_enable_requires_live_503_proof(monkeypatch, tmp_pat
     assert management_site.read_text(encoding="utf-8") == previous
     assert result["preflight_cleanup"]["success"] is True
     assert result["preflight_cleanup"]["marker_removed"] is True
+
+
+def test_release_maintenance_recovery_failure_retains_marker(monkeypatch, tmp_path):
+    """Verify recovery cannot remove an existing fail-closed maintenance hold.
+
+    Args:
+        monkeypatch: Pytest fixture used to replace helper dependencies.
+        tmp_path: Temporary directory provided for the management site and marker.
+    """
+    from tests.test_appliance_update import load_helper_module
+
+    helper = load_helper_module()
+    maintenance = tmp_path / "run/atlaso-update-maintenance"
+    management_site = tmp_path / "management.conf"
+    previous = "server {\n  listen 80 default_server;\n  location / { proxy_pass http://127.0.0.1:8000; }\n}\n"
+    management_site.write_text(previous, encoding="utf-8")
+    monkeypatch.setattr(helper, "ATLASO_UPDATE_MAINTENANCE_PATH", maintenance)
+    monkeypatch.setattr(helper, "NGINX_MANAGEMENT_SITE_PATH", management_site)
+    monkeypatch.setattr(
+        helper,
+        "_nginx_test_command",
+        lambda: subprocess.CompletedProcess(["nginx", "-t"], 0, "valid", ""),
+    )
+    monkeypatch.setattr(
+        helper,
+        "_service_command",
+        lambda action, *units: {
+            "command": ["systemctl", action, *units],
+            "returncode": 0,
+            "success": True,
+            "stdout": "",
+            "stderr": "",
+        },
+    )
+    monkeypatch.setattr(
+        helper,
+        "_verify_release_maintenance_response",
+        lambda _text: helper._release_maintenance_failure(
+            "maintenance_probe",
+            "The recovery listener did not prove maintenance.",
+        ),
+    )
+
+    result = helper._set_release_maintenance(True)
+
+    assert result["success"] is False
+    assert result["failure_layer"] == "maintenance_probe"
+    assert maintenance.is_file()
+    assert f"if (-f {maintenance}) {{ return 503; }}" in management_site.read_text(encoding="utf-8")
+    assert "preflight_cleanup" not in result
 
 
 def test_release_maintenance_enable_reload_failure_skips_live_probe(monkeypatch, tmp_path):
@@ -4950,7 +5001,7 @@ def test_release_maintenance_enable_reload_failure_skips_live_probe(monkeypatch,
         lambda _text: pytest.fail("maintenance proof must not run after reload failure"),
     )
 
-    result = helper._set_release_maintenance(True)
+    result = helper._set_release_maintenance(True, cleanup_preflight_failure=True)
 
     assert result["success"] is False
     assert result["failure_layer"] == "nginx_reload"
