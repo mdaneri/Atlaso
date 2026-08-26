@@ -148,7 +148,9 @@ client SSH reuses the administrator `SecureString` unless `-SshPassword` is supp
 requires the ESXi root password that matches the selected rendered Kickstart profile. The launcher sends these values to
 its child through a current-user DPAPI-protected temporary CLIXML bundle and removes that bundle after the child exits.
 The runner streams the complete password set for the main lifecycle Python consumer as one JSON envelope over standard
-input, so those values do not enter that child's process arguments. For a full ESXi PXE install, the consumer rotates
+input, so those values do not enter that child's process arguments. Client NoCloud seed generation likewise sends its
+SSH password as one bounded standard-input line to the repository-controlled helper; the helper rejects empty,
+multiline, and oversized input before replacing an existing seed artifact. For a full ESXi PXE install, the consumer rotates
 the encrypted `Lifecycle ESXi` vault entry and persists only
 `{{vault.lifecycle_esxi.esx.lifecycle.root.password}}` in the Kickstart source; Atlaso resolves that marker for the
 authorized PXE request without storing the plaintext password in desired state. Because settings archives intentionally
@@ -296,7 +298,9 @@ That is the Workstation counterpart to `scripts/windows/hyperv/create-atlaso-tes
 vmnet only; pass `-IncludeLabNetworkAdapters` after creating the SiteA, WAN/SiteB, and trunk-like vmnets.
 For real creation, the wrapper prefers an explicit `-OnePasswordEnvironmentId` override and otherwise reads the exact
 single-line `.atlaso-local/onepassword-environment-id` file. The entire `.atlaso-local` directory is ignored by Git. A
-pending signer cleanup runs first because it consumes no 1Password material. After that recovery, a missing or
+custom file may be selected with `-EnvironmentIdFile`; the legacy `-OnePasswordEnvironmentIdFile` spelling remains an
+alias for existing automation.
+Pending signer cleanup runs first because it consumes no 1Password material. After that recovery, a missing or
 malformed ID fails with an actionable preflight error before network preparation, disk reset, cloning, or other new VM
 mutation. The wrapper verifies its SHA-256 identity against the repository pin without printing the ID. Install the
 Environments-enabled beta 1Password CLI under `C:\Program Files\1Password CLI`; a stable CLI without

@@ -2,6 +2,7 @@
 
 import hashlib
 import importlib.util
+import io
 import json
 import os
 import re
@@ -22,6 +23,16 @@ def load_lifecycle_runner():
     assert spec and spec.loader
     module = importlib.util.module_from_spec(spec)
     sys.modules["lifecycle_test"] = module
+    spec.loader.exec_module(module)
+    return module
+
+
+def load_nocloud_seed_helper():
+    """Return the NoCloud seed helper module."""
+    path = Path("scripts/interop/create_nocloud_seed_iso.py")
+    spec = importlib.util.spec_from_file_location("create_nocloud_seed_iso", path)
+    assert spec and spec.loader
+    module = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(module)
     return module
 
@@ -1670,6 +1681,7 @@ def test_create_atlaso_vmware_test_vm_wrapper_uses_common_helpers():
     assert "[switch]$TrustRootCa" in script
     assert "[string]$OnePasswordEnvironmentId = ''" in script
     assert "[string]$EnvironmentIdFile = ''" in script
+    assert "[Alias('OnePasswordEnvironmentIdFile')]" in script
     assert "ExpectedEnvironmentIdSha256" in script
     assert "environmentIdDigest" in script
     assert ".atlaso-local\\onepassword-environment-id" in script
@@ -2425,6 +2437,8 @@ def test_lifecycle_vmware_script_supports_routing_wan_only_and_esxi_pxe_install(
     assert "'--routing-wan-only'" in runner
     assert "'--pxe-test-mode', $(if ($FullEsxiPxeInstall) { 'esxi' } else { 'linux' })" in runner
     assert "Add-LifecycleResultStep -ResultDirectory $initialResultRoot -Name 'esxi-pxe-install-check' -Status 'passed'" in runner
+    assert "--password-stdin" in runner
+    assert "--password $SshPassword" not in runner
 
 
 def test_lifecycle_hyperv_script_seeds_alpine_clients_for_ssh():
@@ -2447,12 +2461,38 @@ def test_nocloud_seed_helper_writes_client_cloud_init_contract():
     assert 'vol_ident="cidata"' in script
     assert "ssh_authorized_keys:" in script
     assert 'parser.add_argument("--public-key", default="")' in script
+    assert '"--password-stdin"' in script
+    assert "load_password_from_stdin(args, sys.stdin)" in script
     assert "Either --public-key or --password is required" in script
     assert "openssl" in script
     assert "sshpass" in script
     assert "chrony-nts" in script
     assert "atlaso-refresh-test-dhcp" in script
     assert "joliet_path=f\"/{name}\"" in script
+
+
+def test_nocloud_seed_helper_reads_client_password_from_stdin():
+    """Verify the seed helper loads a client password without argv exposure."""
+    helper = load_nocloud_seed_helper()
+    args = helper.argparse.Namespace(password="", password_stdin=True)
+
+    helper.load_password_from_stdin(args, io.StringIO("ClientSecret!\n"))
+
+    assert args.password == "ClientSecret!"
+
+
+@pytest.mark.parametrize("stdin_value", ["", "\n", "first\nsecond\n", "x" * 4097])
+def test_nocloud_seed_helper_rejects_invalid_stdin_password(stdin_value):
+    """Verify malformed stdin password payloads fail closed.
+
+    Args:
+        stdin_value: Empty, multiline, or oversized password payload under test.
+    """
+    helper = load_nocloud_seed_helper()
+    args = helper.argparse.Namespace(password="", password_stdin=True)
+
+    with pytest.raises(ValueError):
+        helper.load_password_from_stdin(args, io.StringIO(stdin_value))
 
 
 def test_prepare_tiny_linux_client_downloads_verifies_and_converts_alpine():

@@ -831,7 +831,9 @@ function New-CloudInitSeedIso {
             python -m pip install pycdlib
         }
         $helper = Join-Path $repoRoot 'scripts\interop\create_nocloud_seed_iso.py'
-        python $helper --output $Path --hostname $HostName --user $ClientSshUser --password $SshPassword | Out-Host
+        # The repository-controlled seed helper reads one password line from
+        # stdin so the client credential never appears in process arguments.
+        $SshPassword | & python $helper --output $Path --hostname $HostName --user $ClientSshUser --password-stdin | Out-Host
         if ($LASTEXITCODE -ne 0) {
             throw "Failed to create NoCloud seed ISO for $HostName"
         }

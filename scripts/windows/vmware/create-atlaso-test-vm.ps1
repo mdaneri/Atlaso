@@ -91,7 +91,8 @@ the single-line .atlaso-local\onepassword-environment-id file from the checkout.
 
 .PARAMETER EnvironmentIdFile
 Optional path to a single-line local Environment ID file. The checkout-local,
-Git-ignored .atlaso-local\onepassword-environment-id file is the default.
+Git-ignored .atlaso-local\onepassword-environment-id file is the default. The
+legacy OnePasswordEnvironmentIdFile name remains available as an alias.
 
 .PARAMETER FirstBootFqdn
 Optional first-boot appliance FQDN override.
@@ -146,6 +147,7 @@ param(
     [switch]$WaitForIp,
     [switch]$TrustRootCa,
     [string]$OnePasswordEnvironmentId = '',
+    [Alias('OnePasswordEnvironmentIdFile')]
     [string]$EnvironmentIdFile = '',
     [string]$FirstBootFqdn = '',
     [SecureString]$AdminPassword,
