@@ -399,14 +399,31 @@ Pass `-PlanOnly` to print the selected VMX, client VMDK, vmnets, and result path
 
 ## Boot A Test Appliance
 
-Create and start a normal Workstation test appliance from the latest built VMX:
+Store the exact `Atlaso` Environment ID once in the checkout-local configuration file. The `.atlaso-local` directory is
+ignored by Git, the prompt is masked, and the command does not print the ID:
+
+```powershell
+$atlasoLocal = Join-Path (git rev-parse --show-toplevel) '.atlaso-local'
+New-Item -ItemType Directory -Path $atlasoLocal -Force | Out-Null
+$atlasoEnvironmentId = Read-Host 'Paste the Atlaso Environment ID' -MaskInput
+try {
+    [System.IO.File]::WriteAllText(
+        (Join-Path $atlasoLocal 'onepassword-environment-id'),
+        $atlasoEnvironmentId
+    )
+}
+finally {
+    Remove-Variable atlasoEnvironmentId -ErrorAction SilentlyContinue
+}
+```
+
+Create and start a normal Workstation test appliance from the latest built VMX without passing the ID each time:
 
 ```powershell
 pwsh -ExecutionPolicy Bypass `
   -File scripts/windows/vmware/create-atlaso-test-vm.ps1 `
   -Redeploy `
   -ResetDataDisks `
-  -OnePasswordEnvironmentId '<atlaso-environment-id>' `
   -TrustRootCa
 ```
 
@@ -466,12 +483,15 @@ their subject. Normal VMware test VMs share this development-only root, but each
 `appliance:https` key, serial, certificate, and FQDN/IP SAN set. Lifecycle VMs, Hyper-V VMs, reusable image output, and
 exported OVF/OVA appliances continue to generate their own roots and never receive this development signer.
 
-Real normal-test-VM creation requires `-OnePasswordEnvironmentId` for the exact `Atlaso` 1Password Environment. That
-Environment must contain one concealed `ATLASO_DEVELOPMENT_ROOT_CA_PRIVATE_KEY` matching the checked-in certificate,
-and the installed CLI must support `op run --environment`. Before invoking `op`, the wrapper requires the supplied ID's
-SHA-256 identity to match the repository-pinned identity of that exact Environment, then validates the CLI and key pair
-before network preparation, redeploy cleanup, or cloning. A bounded child removes the inherited variable immediately
-and stages the signer only through the normal-wrapper guest-info field. `-TimeoutSeconds` bounds each `op`/secret-child
+Real normal-test-VM creation requires the exact `Atlaso` 1Password Environment ID. The wrapper prefers an explicit
+`-OnePasswordEnvironmentId` override and otherwise reads `.atlaso-local/onepassword-environment-id`, which Git ignores.
+It verifies the ID against the repository's non-secret SHA-256 pin before invoking `op`. That Environment must contain
+one concealed `ATLASO_DEVELOPMENT_ROOT_CA_PRIVATE_KEY` matching the checked-in certificate, and the Environments-enabled
+beta CLI under `C:\Program Files\1Password CLI` must support `op run --environment`. The wrapper validates that
+capability and cryptographically verifies the retrieved key against the checked-in certificate before network
+preparation, redeploy cleanup, or cloning. A bounded child removes the inherited variable
+immediately and stages the signer only through the normal-wrapper guest-info field. `-TimeoutSeconds` bounds each
+`op`/secret-child
 process tree; a timeout enters signer scrub and VM rollback only after whole-tree termination is proven. Boot-bound
 marker phases also cover VM start and artifact removal. If termination cannot be proven, the wrapper leaves the VM and
 VMX untouched, or keeps reused disks quarantined during removal, until a Windows host restart proves the child tree is
