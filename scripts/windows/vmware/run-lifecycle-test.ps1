@@ -149,34 +149,63 @@ if ($OidcOnly) {
 
 <#
 .SYNOPSIS
-Run the Python lifecycle consumer and provide an optional ESXi secret through standard input.
+Run the Python lifecycle consumer with a secret envelope supplied through standard input.
 
 .PARAMETER Arguments
-Literal Python arguments that contain no ESXi password.
+Literal Python arguments that contain no lifecycle passwords.
+
+.PARAMETER AdminPassword
+Protected Atlaso administrator password written only to the child process standard-input stream.
+
+.PARAMETER SshPassword
+Protected client SSH password written only to the child process standard-input stream.
+
+.PARAMETER VcfBackupPassword
+Protected VCF Backup password written only to the child process standard-input stream.
 
 .PARAMETER EsxiPassword
-Protected ESXi password written only to the child process standard-input stream.
+Optional protected ESXi password written only to the child process standard-input stream.
 #>
 function Invoke-LifecyclePython {
     [OutputType([int])]
     param(
         [Parameter(Mandatory = $true)][string[]]$Arguments,
+        [Parameter(Mandatory = $true)][SecureString]$AdminPassword,
+        [Parameter(Mandatory = $true)][SecureString]$SshPassword,
+        [Parameter(Mandatory = $true)][SecureString]$VcfBackupPassword,
         [SecureString]$EsxiPassword
     )
 
-    if ($null -eq $EsxiPassword) {
-        & python @Arguments
-        return $LASTEXITCODE
-    }
-
-    $passwordText = ConvertFrom-SecureString -SecureString $EsxiPassword -AsPlainText
+    $adminPasswordText = ''
+    $sshPasswordText = ''
+    $vcfBackupPasswordText = ''
+    $esxiPasswordText = ''
+    $secretPayload = ''
     try {
-        # Standard input avoids exposing the credential in the child command line.
-        $passwordText | & python @Arguments
+        $adminPasswordText = ConvertFrom-SecureString -SecureString $AdminPassword -AsPlainText
+        $sshPasswordText = ConvertFrom-SecureString -SecureString $SshPassword -AsPlainText
+        $vcfBackupPasswordText = ConvertFrom-SecureString -SecureString $VcfBackupPassword -AsPlainText
+        if ($null -ne $EsxiPassword) {
+            $esxiPasswordText = ConvertFrom-SecureString -SecureString $EsxiPassword -AsPlainText
+        }
+        # One compressed JSON line keeps every lifecycle credential out of the
+        # child command line without creating another plaintext file boundary.
+        $secretPayload = [pscustomobject]@{
+            password               = $adminPasswordText
+            appliance_ssh_password = $adminPasswordText
+            ssh_password           = $sshPasswordText
+            vcf_backup_password    = $vcfBackupPasswordText
+            esxi_password          = $esxiPasswordText
+        } | ConvertTo-Json -Compress
+        $secretPayload | & python @Arguments
         return $LASTEXITCODE
     }
     finally {
-        $passwordText = $null
+        $adminPasswordText = $null
+        $sshPasswordText = $null
+        $vcfBackupPasswordText = $null
+        $esxiPasswordText = $null
+        $secretPayload = $null
     }
 }
 
@@ -1709,12 +1738,9 @@ try {
         '--appliance-url', $ApplianceUrl,
         '--appliance-ssh-host', $ApplianceIPAddress,
         '--username', $AdminUsername,
-        '--password', $AdminPassword,
         '--appliance-ssh-user', $ApplianceSshUser,
         '--client-ssh-user', $ClientSshUser,
-        '--appliance-ssh-password', $ApplianceGuestPassword,
-        '--ssh-password', $SshPassword,
-        '--vcf-backup-password', $VcfBackupPassword,
+        '--secret-stdin',
         '--site-interface', $SiteInterface,
         '--site-cidr', $SiteCidr,
         '--vlan-id', "$VlanId",
@@ -1725,8 +1751,7 @@ try {
     if ($FullEsxiPxeInstall) {
         $basePythonArgs += @(
             '--pxe-client-mac', $esxiMacAddress,
-            '--pxe-installer-iso-path', $appliancePxeInstallerIsoPath,
-            '--esxi-password-stdin'
+            '--pxe-installer-iso-path', $appliancePxeInstallerIsoPath
         )
         if ($PxeClientIPAddress) {
             $basePythonArgs += @('--pxe-client-ip', $PxeClientIPAddress)
@@ -1751,7 +1776,11 @@ try {
     }
 
     if ($PSCmdlet.ShouldProcess($LabName, 'Run Workstation lifecycle interop scenario')) {
-        $pythonExitCode = Invoke-LifecyclePython -Arguments $initialPythonArgs -EsxiPassword $esxiPasswordSecure
+        $pythonExitCode = Invoke-LifecyclePython -Arguments $initialPythonArgs `
+            -AdminPassword $adminPasswordSecure `
+            -SshPassword $sshPasswordSecure `
+            -VcfBackupPassword $vcfBackupPasswordSecure `
+            -EsxiPassword $esxiPasswordSecure
         if ($pythonExitCode -ne 0) {
             throw "Lifecycle interop runner failed with exit code $pythonExitCode"
         }
@@ -1788,7 +1817,11 @@ try {
                 '--restored-state-run',
                 '--certificate-baseline-result', (Join-Path $initialResultRoot 'result.json')
             ))
-            $pythonExitCode = Invoke-LifecyclePython -Arguments $restoredPythonArgs -EsxiPassword $esxiPasswordSecure
+            $pythonExitCode = Invoke-LifecyclePython -Arguments $restoredPythonArgs `
+                -AdminPassword $adminPasswordSecure `
+                -SshPassword $sshPasswordSecure `
+                -VcfBackupPassword $vcfBackupPasswordSecure `
+                -EsxiPassword $esxiPasswordSecure
             if ($pythonExitCode -ne 0) {
                 throw "Restored lifecycle interop runner failed with exit code $pythonExitCode"
             }

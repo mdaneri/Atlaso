@@ -26,7 +26,7 @@ from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from ipaddress import ip_address, ip_interface
 from pathlib import Path
-from typing import Any
+from typing import Any, TextIO
 
 try:
     from cryptography import x509
@@ -131,7 +131,7 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Run Atlaso appliance lifecycle interop checks.")
     parser.add_argument("--appliance-url", default="https://192.168.49.1")
     parser.add_argument("--username", default="admin")
-    parser.add_argument("--password", required=True)
+    parser.add_argument("--password", default="")
     parser.add_argument("--result-dir", default="test-results/hyperv-lifecycle/latest")
     parser.add_argument("--site-interface", default="eth1")
     parser.add_argument("--trunk-interface", default="eth2")
@@ -152,9 +152,9 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser.add_argument("--pxe-client-ip", default="")
     parser.add_argument("--pxe-installer-iso-path", default="")
     parser.add_argument(
-        "--esxi-password-stdin",
+        "--secret-stdin",
         action="store_true",
-        help="Read the ESXi lifecycle vault password from standard input instead of argv.",
+        help="Read the lifecycle password envelope from standard input instead of argv.",
     )
     parser.set_defaults(esxi_password="")
     parser.add_argument("--esx-storage-test", action="store_true", help="Configure and apply one dual-stack ESX NFS datastore.")
@@ -197,6 +197,40 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     if args.oidc_only and (args.routing_wan_only or args.restored_state_run):
         parser.error("--oidc-only cannot be combined with --routing-wan-only or --restored-state-run.")
     return args
+
+
+def load_lifecycle_secrets(args: argparse.Namespace, stream: TextIO) -> None:
+    """Load the validated lifecycle password envelope from a text stream.
+
+    Args:
+        args: Parsed lifecycle arguments to populate.
+        stream: Standard-input-compatible text stream containing one JSON object.
+
+    Raises:
+        LifecycleError: If the envelope is missing, malformed, or has an invalid schema.
+    """
+    payload_text = stream.readline(65537)
+    if not payload_text or len(payload_text) > 65536:
+        raise LifecycleError("Lifecycle secret input is missing or exceeds the size limit.")
+    try:
+        payload = json.loads(payload_text)
+    except json.JSONDecodeError as exc:
+        raise LifecycleError("Lifecycle secret input is not valid JSON.") from exc
+
+    required_keys = {"password", "appliance_ssh_password", "ssh_password", "vcf_backup_password"}
+    allowed_keys = required_keys | {"esxi_password"}
+    if not isinstance(payload, dict) or set(payload) != allowed_keys:
+        raise LifecycleError("Lifecycle secret input does not match the required schema.")
+    if any(not isinstance(payload[key], str) or not payload[key] for key in required_keys):
+        raise LifecycleError("Lifecycle secret input contains an invalid required password.")
+    if not isinstance(payload["esxi_password"], str):
+        raise LifecycleError("Lifecycle secret input contains an invalid ESXi password.")
+
+    args.password = payload["password"]
+    args.appliance_ssh_password = payload["appliance_ssh_password"]
+    args.ssh_password = payload["ssh_password"]
+    args.vcf_backup_password = payload["vcf_backup_password"]
+    args.esxi_password = payload["esxi_password"]
 
 
 class HttpClient:
@@ -4940,12 +4974,15 @@ def main() -> int:
         print(json.dumps(result["plan"], indent=2))
         return 0
 
-    client = HttpClient(args.appliance_url)
     try:
+        if args.secret_stdin:
+            load_lifecycle_secrets(args, sys.stdin)
+        elif not args.password:
+            raise LifecycleError("--password or --secret-stdin is required for a lifecycle run.")
         if args.pxe_test_mode == "esxi":
-            if not args.esxi_password_stdin:
-                raise LifecycleError("--esxi-password-stdin is required for an ESXi PXE lifecycle run.")
-            args.esxi_password = sys.stdin.readline().rstrip("\r\n")
+            if not args.esxi_password:
+                raise LifecycleError("The lifecycle secret input must include an ESXi password for an ESXi PXE run.")
+        client = HttpClient(args.appliance_url)
         if args.oidc_only:
             run_oidc_lifecycle(results, client, args)
         elif args.routing_wan_only:

@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import argparse
 import importlib.util
+import io
 import json
 import sys
 from pathlib import Path
@@ -31,6 +32,44 @@ def load_network_boot_lifecycle_module():
     sys.modules[spec.name] = module
     spec.loader.exec_module(module)
     return module
+
+
+def test_load_lifecycle_secrets_populates_passwords_from_stdin_envelope():
+    """Verify that lifecycle secrets are validated and loaded without argv values."""
+    lifecycle = load_lifecycle_module()
+    args = lifecycle.parse_args(["--secret-stdin"])
+    secret_values = {
+        "password": "AdminSecret!",
+        "appliance_ssh_password": "ApplianceSecret!",
+        "ssh_password": "ClientSecret!",
+        "vcf_backup_password": "BackupSecret!",
+        "esxi_password": "EsxiSecret!",
+    }
+
+    lifecycle.load_lifecycle_secrets(args, io.StringIO(json.dumps(secret_values)))
+
+    assert args.password == secret_values["password"]
+    assert args.appliance_ssh_password == secret_values["appliance_ssh_password"]
+    assert args.ssh_password == secret_values["ssh_password"]
+    assert args.vcf_backup_password == secret_values["vcf_backup_password"]
+    assert args.esxi_password == secret_values["esxi_password"]
+
+
+def test_load_lifecycle_secrets_rejects_unexpected_schema():
+    """Verify that stdin secret envelopes fail closed on unexpected fields."""
+    lifecycle = load_lifecycle_module()
+    args = lifecycle.parse_args(["--secret-stdin"])
+    secret_values = {
+        "password": "AdminSecret!",
+        "appliance_ssh_password": "ApplianceSecret!",
+        "ssh_password": "ClientSecret!",
+        "vcf_backup_password": "BackupSecret!",
+        "esxi_password": "",
+        "unexpected": "value",
+    }
+
+    with pytest.raises(lifecycle.LifecycleError, match="required schema"):
+        lifecycle.load_lifecycle_secrets(args, io.StringIO(json.dumps(secret_values)))
 
 
 def test_network_boot_lifecycle_extracts_csrf_without_password_query_login():
@@ -907,7 +946,7 @@ def test_configure_esxi_pxe_selects_dhcp_scope_and_proves_reservation():
             "00:50:56:20:01:02",
             "--pxe-installer-iso-path",
             "/mnt/atlaso-vcf-offline-depot/PROD/COMP/ESX_HOST/esxi.iso",
-            "--esxi-password-stdin",
+            "--secret-stdin",
         ]
     )
     args.esxi_password = "LifecycleEsxi01!"

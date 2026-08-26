@@ -1741,7 +1741,11 @@ def test_vmware_raw_vmx_workflows_inject_complete_first_boot_ovf_environment_bef
     assert "[string]$SecretBundlePath" in lifecycle
     assert "Import-Clixml -LiteralPath $SecretBundlePath" in lifecycle
     assert "$ApplianceGuestPassword = $AdminPassword" in lifecycle
-    assert "'--appliance-ssh-password', $ApplianceGuestPassword" in lifecycle
+    assert "'--secret-stdin'" in lifecycle
+    assert "'--password', $AdminPassword" not in lifecycle
+    assert "'--appliance-ssh-password', $ApplianceGuestPassword" not in lifecycle
+    assert "'--ssh-password', $SshPassword" not in lifecycle
+    assert "'--vcf-backup-password', $VcfBackupPassword" not in lifecycle
     assert "-gp $SshPassword" not in lifecycle
     assert "[SecureString]$AdminPassword" in lifecycle_wrapper
     assert "[SecureString]$SshPassword" in lifecycle_wrapper
@@ -2139,8 +2143,8 @@ def test_lifecycle_vmware_script_supports_routing_wan_only_and_esxi_pxe_install(
     assert "[SecureString]$EsxiPassword" in wrapper
     assert "Read-Host -Prompt 'ESXi root password for lifecycle probing' -AsSecureString" in wrapper
     assert "-GuestPassword $esxiPasswordSecure" in runner
-    assert "'--esxi-password-stdin'" in runner
-    assert "$passwordText | & python @Arguments" in runner
+    assert "'--secret-stdin'" in runner
+    assert "$secretPayload | & python @Arguments" in runner
     assert "'--esxi-password'," not in runner
 
     assert "function Get-GuestIPv4ViaGuestOps" in runner
