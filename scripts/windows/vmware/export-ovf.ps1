@@ -203,7 +203,7 @@ function Select-AtlasoReleaseTag {
     else {
         "^v$escapedVersion$"
     }
-    $matchingTags = @($TagRecords | Where-Object { [string]$_.Name -match $tagPattern })
+    $matchingTags = @($TagRecords | Where-Object { [string]$_.Name -cmatch $tagPattern })
     $modeName = if ($Prerelease) { 'prerelease' } else { 'stable release' }
     if ($matchingTags.Count -eq 0) {
         $expected = if ($Prerelease) { "v$Version-<prerelease>" } else { "v$Version" }

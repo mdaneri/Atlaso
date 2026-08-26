@@ -140,6 +140,31 @@ Assert-ThrowsLike -Action {
         -HeadCommit $headCommit `
         -TagRecords @(
             [pscustomobject]@{
+                Name       = 'V0.9.219'
+                ObjectType = 'tag'
+                Commit     = $headCommit
+            }
+        )
+} -Pattern '*exactly one annotated stable release tag*'
+Assert-ThrowsLike -Action {
+    Select-AtlasoReleaseTag `
+        -Version '0.9.219' `
+        -HeadCommit $headCommit `
+        -TagRecords @(
+            [pscustomobject]@{
+                Name       = 'V0.9.219-RC.1'
+                ObjectType = 'tag'
+                Commit     = $headCommit
+            }
+        ) `
+        -Prerelease
+} -Pattern '*exactly one annotated prerelease tag*'
+Assert-ThrowsLike -Action {
+    Select-AtlasoReleaseTag `
+        -Version '0.9.219' `
+        -HeadCommit $headCommit `
+        -TagRecords @(
+            [pscustomobject]@{
                 Name       = 'v0.9.219-01'
                 ObjectType = 'tag'
                 Commit     = $headCommit
