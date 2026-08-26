@@ -146,7 +146,9 @@ The runner streams the complete password set for the main lifecycle Python consu
 input, so those values do not enter that child's process arguments. For a full ESXi PXE install, the consumer rotates
 the encrypted `Lifecycle ESXi` vault entry and persists only
 `{{vault.lifecycle_esxi.esx.lifecycle.root.password}}` in the Kickstart source; Atlaso resolves that marker for the
-authorized PXE request without storing the plaintext password in desired state.
+authorized PXE request without storing the plaintext password in desired state. Because settings archives intentionally
+exclude vaults, the restored pass recreates this entry from the same standard-input secret after restore and before the
+ESXi PXE unit is applied.
 
 The wrapper selects the newest appliance VMX under `image/vmware-workstation/output`, prepares the tiny Alpine client
 VMDK when needed, creates a unique `AtlasoWorkstationLifecycle-*` lab, runs the initial lifecycle scenario, and by

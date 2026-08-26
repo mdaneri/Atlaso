@@ -933,6 +933,39 @@ def test_esxi_pxe_payload_uses_dhcp_lifecycle_host():
         lifecycle.lifecycle_esxi_kickstart_content("vault.somewhere.else.password")
 
 
+def test_restored_esxi_lifecycle_recreates_vault_secret_before_apply(monkeypatch, tmp_path):
+    """Verify restored ESXi state rehydrates its excluded vault secret before apply."""
+    lifecycle = load_lifecycle_module()
+    args = lifecycle.parse_args(
+        [
+            "--secret-stdin",
+            "--restore-settings-backup",
+            str(tmp_path / "settings-backup.json"),
+            "--pxe-test-mode",
+            "esxi",
+            "--result-dir",
+            str(tmp_path),
+        ]
+    )
+    args.esxi_password = "LifecycleEsxi01!"
+    client = object()
+    calls = []
+
+    def fake_run_step(_results, name, operation, *operation_args):
+        calls.append((name, operation, operation_args))
+        return {}
+
+    monkeypatch.setattr(lifecycle, "run_step", fake_run_step)
+    lifecycle.run_restored_lifecycle([], client, args)
+
+    call_names = [name for name, _operation, _arguments in calls]
+    stage_index = call_names.index("stage-esxi-vault-secret")
+    assert call_names.index("restore-settings-backup") < stage_index
+    assert stage_index < call_names.index("apply-connectivity-units")
+    assert calls[stage_index][1] is lifecycle.ensure_lifecycle_esxi_vault_secret
+    assert calls[stage_index][2] == (client, args.esxi_password)
+
+
 def test_configure_esxi_pxe_selects_dhcp_scope_and_proves_reservation():
     """Verify that configure esxi pxe selects dhcp scope and proves reservation."""
     lifecycle = load_lifecycle_module()

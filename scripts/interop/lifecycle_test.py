@@ -4808,6 +4808,16 @@ def run_restored_lifecycle(results: list[StepResult], client: HttpClient, args: 
         raise LifecycleError("--restored-state-run requires --restore-settings-backup.")
     run_step(results, "appliance-health", appliance_health, client, args)
     run_step(results, "restore-settings-backup", restore_settings_backup, client, args)
+    if args.pxe_test_mode == "esxi":
+        # Settings restore intentionally excludes vaults, so recreate the
+        # runtime secret before the restored Kickstart marker is validated.
+        run_step(
+            results,
+            "stage-esxi-vault-secret",
+            ensure_lifecycle_esxi_vault_secret,
+            client,
+            args.esxi_password,
+        )
     run_step(results, "configure-ldap", configure_ldap, client, args)
     run_step(results, "configure-esx-storage", configure_esx_storage, client, args)
     run_step(results, "stage-vcf-backup-password", stage_vcf_backup_password, client, args)
