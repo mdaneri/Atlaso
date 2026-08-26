@@ -5256,7 +5256,11 @@ VMs, exported OVF/OVA appliances, and root SSH remain unchanged. After startup, 
 Ed25519 host key from test-only VMware guest-info, validates its OpenSSH wire format, and prints the exact public key and
 SHA-256 fingerprint for explicit <code>known_hosts</code> verification without trusting unauthenticated <code>ssh-keyscan</code> output. The
 canonical operational details and safety boundary
-are documented in <a href="../vmware-workstation-lifecycle-testing/#normal-test-vm">VMware Workstation Lifecycle Testing</a>.</p>
+are documented in <a href="../vmware-workstation-lifecycle-testing/#normal-test-vm">VMware Workstation Lifecycle Testing</a>.
+The wrapper reports a started clone ready only after the exact running VMX, <code>ethernet0</code> MAC, injected hostname, VMware
+Tools address, and Windows neighbor mapping agree and no other running Workstation VM reports that address. Duplicate
+static ownership fails closed before SSH or HTTPS endpoints are printed; use the linked lifecycle guide for the
+console-based stop-or-readdress recovery path and explicit <code>known_hosts</code> handling.</p>
 <p>To deploy the current repo to an existing VMware test appliance without rebuilding the image, use the wheel deploy
 helper. A normal test VM created with the default key provisioning uses the existing key/agent path without 1Password:</p>
 <div class="language-powershell highlight"><pre><span></span><code><span id="__span-35-1"><a id="__codelineno-35-1" name="__codelineno-35-1" href="#__codelineno-35-1"></a><span class="p">.\</span><span class="n">scripts</span><span class="p">\</span><span class="n">windows</span><span class="p">\</span><span class="n">vmware</span><span class="p">\</span><span class="n">deploy-wheel</span><span class="p">.</span><span class="n">ps1</span> <span class="n">-IpAddress</span> <span class="n">192</span><span class="p">.</span><span class="n">168</span><span class="p">.</span><span class="n">167</span><span class="p">.</span><span class="n">10</span>
