@@ -9,6 +9,7 @@ import re
 import shlex
 import shutil
 import subprocess
+import tempfile
 from pathlib import Path
 
 from sqlalchemy import select
@@ -39,6 +40,42 @@ DEVELOPMENT_ROOT_CA_IMPORTED_MARKER_PATH = Path(
 DEVELOPMENT_ROOT_CA_IMPORTED_GUESTINFO = (
     "guestinfo.atlaso.test_vm_development_root_ca_imported"
 )
+
+
+def write_secret_text_atomic(path: Path, payload: str) -> None:
+    """Atomically persist secret text without a broader intermediate mode.
+
+    Args:
+        path: Destination for the secret-bearing payload.
+        payload: UTF-8 text to persist.
+    """
+    path.parent.mkdir(parents=True, exist_ok=True)
+    descriptor, temporary_name = tempfile.mkstemp(
+        dir=path.parent,
+        prefix=f".{path.name}.",
+        suffix=".tmp",
+    )
+    temporary = Path(temporary_name)
+    try:
+        # The apply payload contains decrypted CA private keys. Establish its
+        # final mode before opening the descriptor as text or writing bytes.
+        os.fchmod(descriptor, 0o600)
+        with os.fdopen(descriptor, "w", encoding="utf-8") as handle:
+            descriptor = -1
+            handle.write(payload)
+            handle.flush()
+            os.fsync(handle.fileno())
+        temporary.replace(path)
+        if os.name == "posix":
+            parent_descriptor = os.open(path.parent, os.O_RDONLY)
+            try:
+                os.fsync(parent_descriptor)
+            finally:
+                os.close(parent_descriptor)
+    finally:
+        if descriptor >= 0:
+            os.close(descriptor)
+        temporary.unlink(missing_ok=True)
 
 
 def import_staged_development_root_ca(settings: CaSettings) -> bool:
@@ -368,9 +405,10 @@ def main() -> int:
         ca_settings = db.execute(select(CaSettings)).scalar_one()
         certificates = db.execute(select(CaCertificate).order_by(CaCertificate.common_name)).scalars().all()
         config_path = Path(CA_STAGED_CONFIG_PATH)
-        config_path.parent.mkdir(parents=True, exist_ok=True)
-        config_path.write_text(render_ca_apply_payload(ca_settings, certificates, include_private_keys=True), encoding="utf-8")
-        config_path.chmod(0o600)
+        write_secret_text_atomic(
+            config_path,
+            render_ca_apply_payload(ca_settings, certificates, include_private_keys=True),
+        )
 
         cert_path, key_path, _chain_path = ca_managed_certificate_paths(db, "appliance:https")
         if not cert_path or not key_path:

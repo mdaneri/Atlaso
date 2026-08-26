@@ -925,6 +925,60 @@ def test_photon_https_bootstrap_publishes_exact_development_root_import_proof(
     ]
 
 
+def test_photon_https_bootstrap_sets_secret_payload_mode_before_write(tmp_path, monkeypatch):
+    """Protect decrypted CA keys before opening their apply payload for writing.
+
+    Args:
+        tmp_path: Isolated destination directory.
+        monkeypatch: Pytest fixture used to record descriptor operations.
+    """
+    import importlib.machinery
+    import importlib.util
+
+    script_path = Path("scripts/appliance/atlaso-bootstrap-https")
+    loader = importlib.machinery.SourceFileLoader(
+        "atlaso_bootstrap_https_secret_write_test", str(script_path)
+    )
+    spec = importlib.util.spec_from_loader(loader.name, loader)
+    bootstrap = importlib.util.module_from_spec(spec)
+    loader.exec_module(bootstrap)
+    destination = tmp_path / "apply" / "ca" / "atlaso-ca.json"
+    events = []
+    original_fchmod = bootstrap.os.fchmod
+    original_fdopen = bootstrap.os.fdopen
+
+    def record_fchmod(descriptor, mode):
+        """Record and apply the descriptor mode.
+
+        Args:
+            descriptor: Open temporary-file descriptor.
+            mode: Requested filesystem mode.
+        """
+        events.append(("fchmod", mode))
+        return original_fchmod(descriptor, mode)
+
+    def record_fdopen(descriptor, *args, **kwargs):
+        """Record conversion of the protected descriptor to a text handle.
+
+        Args:
+            descriptor: Protected temporary-file descriptor.
+            args: Positional arguments forwarded to ``os.fdopen``.
+            kwargs: Keyword arguments forwarded to ``os.fdopen``.
+        """
+        events.append(("fdopen", None))
+        return original_fdopen(descriptor, *args, **kwargs)
+
+    monkeypatch.setattr(bootstrap.os, "fchmod", record_fchmod)
+    monkeypatch.setattr(bootstrap.os, "fdopen", record_fdopen)
+
+    bootstrap.write_secret_text_atomic(destination, "private-key-payload")
+
+    assert events[:2] == [("fchmod", 0o600), ("fdopen", None)]
+    assert destination.read_text(encoding="utf-8") == "private-key-payload"
+    if os.name == "posix":
+        assert destination.stat().st_mode & 0o777 == 0o600
+
+
 def test_photon_provisioning_prepares_attached_data_disks():
     """Verify that photon provisioning prepares attached data disks."""
     provision = Path("image/common/scripts/provision-atlaso.sh").read_text(encoding="utf-8")
