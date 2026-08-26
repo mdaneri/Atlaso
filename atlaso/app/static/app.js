@@ -13425,6 +13425,8 @@ let atlasoSelectedTaskId = "";
 let atlasoNewTaskId = "";
 let atlasoTasksRefreshTimer = 0;
 let atlasoTasksReopenSelected = false;
+let atlasoTaskLogRequest = null;
+let atlasoTaskLogRequestSequence = 0;
 let atlasoUpdateAvailability = { available: false, affected_stream_count: 0, streams: [] };
 let atlasoUpdateAvailabilityTimer = 0;
 let atlasoUpdateAvailabilityRequest = null;
@@ -14262,6 +14264,11 @@ async function openTaskLog(taskOrId) {
   if (!(modal instanceof HTMLDialogElement) || !(content instanceof HTMLElement)) {
     return;
   }
+  atlasoTaskLogRequest?.controller.abort();
+  const controller = new AbortController();
+  const requestId = ++atlasoTaskLogRequestSequence;
+  atlasoTaskLogRequest = { controller, requestId };
+  const ownsModal = () => atlasoTaskLogRequest?.requestId === requestId && modal.open;
   content.textContent = "Loading task log…";
   highlightConfigPreviewElement(content);
   if (title instanceof HTMLElement) {
@@ -14277,8 +14284,12 @@ async function openTaskLog(taskOrId) {
     const response = await fetch(logUrl, {
       credentials: "same-origin",
       headers: { "X-Atlaso-Task-Log": "1" },
+      signal: controller.signal,
     });
     const payload = await response.json();
+    if (!ownsModal()) {
+      return;
+    }
     if (!response.ok) {
       throw new Error(payload.detail || "Unable to load task log.");
     }
@@ -14291,8 +14302,24 @@ async function openTaskLog(taskOrId) {
     content.textContent = payload.text || "No task log is available.";
     highlightConfigPreviewElement(content);
   } catch (error) {
+    if (!ownsModal()) {
+      return;
+    }
     content.textContent = error instanceof Error ? error.message : "Unable to load task log.";
     highlightConfigPreviewElement(content);
+  } finally {
+    if (atlasoTaskLogRequest?.requestId === requestId) {
+      atlasoTaskLogRequest = null;
+    }
+  }
+}
+
+function closeTaskLogModal() {
+  atlasoTaskLogRequest?.controller.abort();
+  atlasoTaskLogRequest = null;
+  const modal = document.getElementById("task-log-modal");
+  if (modal instanceof HTMLDialogElement && modal.open) {
+    modal.close();
   }
 }
 
@@ -14471,7 +14498,18 @@ function initializeTasksPage() {
     atlasoTasksTable?.on("rowDblClick", (_event, row) => openTaskDetail(row.getData()));
   }
   document.querySelector("[data-task-detail-close]")?.addEventListener("click", () => document.getElementById("task-detail-modal")?.close());
-  document.querySelector("[data-task-log-close]")?.addEventListener("click", () => document.getElementById("task-log-modal")?.close());
+  const taskLogModal = document.getElementById("task-log-modal");
+  document.querySelector("[data-task-log-close]")?.addEventListener("click", closeTaskLogModal);
+  taskLogModal?.addEventListener("cancel", () => {
+    atlasoTaskLogRequest?.controller.abort();
+    atlasoTaskLogRequest = null;
+  });
+  taskLogModal?.addEventListener("close", () => {
+    if (!taskLogModal.open) {
+      atlasoTaskLogRequest?.controller.abort();
+      atlasoTaskLogRequest = null;
+    }
+  });
   document.querySelector("[data-task-detail-log]")?.addEventListener("click", () => {
     if (atlasoSelectedTaskId) {
       openTaskLog(taskById(atlasoSelectedTaskId) || atlasoSelectedTaskId);
