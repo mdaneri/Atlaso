@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import hashlib
 import json
 import os
 import re
@@ -35,6 +36,118 @@ def _write_vmx(path: Path, display_name: str = "Atlaso-Test", *extra_lines: str)
     path.parent.mkdir(parents=True, exist_ok=True)
     content = [f'displayName = "{display_name}"', *extra_lines]
     path.write_text("\n".join(content) + "\n", encoding="utf-8")
+
+
+def _write_vmware_payload_fixture(directory: Path) -> Path:
+    """Write one minimal schema-v2 VMware source payload.
+
+    Args:
+        directory: Destination directory for the VMX, VMDKs, and provenance.
+
+    Returns:
+        Path to the provenance-bound source VMX.
+    """
+    source_vmx = directory / "source.vmx"
+    photon_disk = directory / "photon.vmdk"
+    system_disk = directory / "atlaso-system.vmdk"
+    photon_disk.parent.mkdir(parents=True, exist_ok=True)
+    photon_disk.write_text('RW 83886080 SPARSE "photon-flat.vmdk"\n', encoding="ascii")
+    system_disk.write_text(
+        'RW 41943040 SPARSE "atlaso-system-flat.vmdk"\n', encoding="ascii"
+    )
+    _write_vmx(
+        source_vmx,
+        "Source",
+        'scsi0.virtualDev = "pvscsi"',
+        'scsi0:0.present = "TRUE"',
+        'scsi0:0.fileName = "photon.vmdk"',
+        'scsi0:1.present = "TRUE"',
+        'scsi0:1.fileName = "atlaso-system.vmdk"',
+    )
+
+    def _artifact_record(
+        path: Path, *, role: str, unit: int, capacity: int
+    ) -> dict[str, object]:
+        """Describe one provenance-bound payload disk.
+
+        Args:
+            path: Payload VMDK path.
+            role: Canonical payload role.
+            unit: PVSCSI unit number.
+            capacity: Expected virtual capacity in bytes.
+
+        Returns:
+            JSON-compatible payload provenance record.
+        """
+        return {
+            "role": role,
+            "scsi_unit": unit,
+            "name": path.name,
+            "capacity_bytes": capacity,
+            "bytes": path.stat().st_size,
+            "sha256": hashlib.sha256(path.read_bytes()).hexdigest(),
+        }
+
+    provenance = {
+        "schema_version": 2,
+        "source_commit": "a" * 40,
+        "tracked_source_dirty": False,
+        "vmx": {
+            "name": source_vmx.name,
+            "bytes": source_vmx.stat().st_size,
+            "sha256": hashlib.sha256(source_vmx.read_bytes()).hexdigest(),
+        },
+        "payload_disks": [
+            _artifact_record(
+                photon_disk, role="photon_os", unit=0, capacity=40 * 1024**3
+            ),
+            _artifact_record(
+                system_disk,
+                role="atlaso_system",
+                unit=1,
+                capacity=20 * 1024**3,
+            ),
+        ],
+    }
+    source_vmx.with_suffix(".provenance.json").write_text(
+        json.dumps(provenance, indent=2) + "\n", encoding="utf-8"
+    )
+    return source_vmx
+
+
+def _write_fake_vdisk_manager(directory: Path) -> Path:
+    """Create a fake virtual-disk manager that writes a 500 GiB descriptor.
+
+    Args:
+        directory: Destination directory for the fake executable.
+
+    Returns:
+        Path to the fake virtual-disk manager command.
+    """
+    directory.mkdir(parents=True)
+    fake = directory / "fake_vdisk_manager.py"
+    fake.write_text(
+        """from pathlib import Path
+import sys
+
+target = Path(sys.argv[-1])
+target.parent.mkdir(parents=True, exist_ok=True)
+target.write_text('RW 1048576000 SPARSE "data-flat.vmdk"\\n', encoding='ascii')
+""",
+        encoding="utf-8",
+    )
+    if os.name == "nt":
+        command = directory / "vmware-vdiskmanager.cmd"
+        command.write_text(
+            f'@echo off\r\n"{sys.executable}" "{fake}" %*\r\n', encoding="utf-8"
+        )
+    else:
+        command = directory / "vmware-vdiskmanager"
+        command.write_text(
+            f'#!/bin/sh\nexec "{sys.executable}" "{fake}" "$@"\n', encoding="utf-8"
+        )
+        command.chmod(0o755)
+    return command
 
 
 def _write_fake_vmrun(
@@ -209,6 +322,14 @@ if command == "list":
 
 if len(arguments) < 4:
     raise SystemExit(64)
+if command == "clone":
+    if len(arguments) < 5:
+        raise SystemExit(64)
+    source = Path(arguments[3]).resolve()
+    destination = Path(arguments[4]).resolve()
+    shutil.copytree(source.parent, destination.parent)
+    (destination.parent / source.name).replace(destination)
+    raise SystemExit(0)
 target = str(Path(arguments[3]).resolve())
 if command == "stop":
     exit_code = int(os.environ["ATLASO_FAKE_VMRUN_STOP_EXIT"])
@@ -1012,6 +1133,52 @@ def test_provider_delete_may_remove_the_complete_validated_root(tmp_path: Path) 
     assert result.returncode == 0, result.stdout + result.stderr
     assert not root.exists()
     assert "deleteVM" in [command[2] for command in _commands(log)]
+
+
+def test_redeploy_continues_after_provider_removes_artifact_root(
+    tmp_path: Path,
+) -> None:
+    """The original redeploy invocation recreates the VM after verified root absence.
+
+    Args:
+        tmp_path: Pytest temporary directory path.
+    """
+    source_vmx = _write_vmware_payload_fixture(tmp_path / "source")
+    vm_directory = tmp_path / "redeploy"
+    vmx = vm_directory / "Atlaso-Redeploy.vmx"
+    _write_vmx(vmx, "Atlaso-Redeploy")
+    vmrun, environment, log, _ = _write_fake_vmrun(
+        tmp_path / "fake-redeploy",
+        [vmx],
+        registered=True,
+        remove_root_after_delete=True,
+    )
+    vdisk_manager = _write_fake_vdisk_manager(tmp_path / "fake-vdisk-manager")
+
+    result = _run_script(
+        VMWARE_SCRIPT_ROOT / "create-atlaso-test-vm.ps1",
+        "-Name",
+        "Atlaso-Redeploy",
+        "-ApplianceVmxPath",
+        str(source_vmx),
+        "-OutputDirectory",
+        str(vm_directory),
+        "-VmrunPath",
+        str(vmrun),
+        "-VdiskManagerPath",
+        str(vdisk_manager),
+        "-Redeploy",
+        "-SkipSshKeyProvisioning",
+        "-SkipNetworkPrepare",
+        "-NoStart",
+        environment=environment,
+    )
+
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert vmx.exists()
+    assert 'displayName = "Atlaso-Redeploy"' in vmx.read_text(encoding="utf-8")
+    command_names = [command[2] for command in _commands(log)]
+    assert command_names.index("deleteVM") < command_names.index("clone")
 
 
 def test_provider_delete_rejects_a_late_non_vmx_artifact(tmp_path: Path) -> None:
@@ -2040,6 +2207,70 @@ def test_late_artifact_after_final_vmrun_list_blocks_root_removal(tmp_path: Path
     assert "new VMware artifact appeared" in result.stderr
     assert sentinel.read_text(encoding="utf-8") == "keep"
     assert late.read_text(encoding="utf-8") == "late artifact"
+
+
+def test_redeploy_missing_target_and_sibling_disk_fail_closed(tmp_path: Path) -> None:
+    """Redeploy and data-disk reset preserve unproven or sibling-prefix paths.
+
+    Args:
+        tmp_path: Pytest temporary directory path.
+    """
+    source_vmx = _write_vmware_payload_fixture(tmp_path / "source")
+    vmrun, environment, _, _ = _write_fake_vmrun(tmp_path / "fake", [])
+    output_directory = tmp_path / "vm"
+    output_directory.mkdir()
+    sentinel = output_directory / "sentinel.txt"
+    sentinel.write_text("preserve", encoding="utf-8")
+
+    redeploy = _run_script(
+        VMWARE_SCRIPT_ROOT / "create-atlaso-test-vm.ps1",
+        "-Name",
+        "MissingTarget",
+        "-ApplianceVmxPath",
+        str(source_vmx),
+        "-OutputDirectory",
+        str(output_directory),
+        "-VmrunPath",
+        str(vmrun),
+        "-VdiskManagerPath",
+        str(vmrun),
+        "-Redeploy",
+        "-SkipSshKeyProvisioning",
+        "-SkipNetworkPrepare",
+        "-NoStart",
+        environment=environment,
+    )
+    assert redeploy.returncode != 0
+    assert "expected Atlaso VMX is missing" in redeploy.stderr
+    assert sentinel.read_text(encoding="utf-8") == "preserve"
+
+    sibling_directory = tmp_path / "vm-sibling"
+    sibling_directory.mkdir()
+    sibling_disk = sibling_directory / "unrelated.vmdk"
+    sibling_disk.write_text("preserve", encoding="utf-8")
+    disk_reset = _run_script(
+        VMWARE_SCRIPT_ROOT / "create-atlaso-test-vm.ps1",
+        "-Name",
+        "SiblingDisk",
+        "-ApplianceVmxPath",
+        str(source_vmx),
+        "-OutputDirectory",
+        str(output_directory),
+        "-VmrunPath",
+        str(vmrun),
+        "-VdiskManagerPath",
+        str(vmrun),
+        "-DepotVmdkPath",
+        str(sibling_disk),
+        "-ResetDataDisks",
+        "-SkipSshKeyProvisioning",
+        "-SkipNetworkPrepare",
+        "-NoStart",
+        environment=environment,
+    )
+    assert disk_reset.returncode != 0
+    assert "outside the VM output directory" in disk_reset.stderr
+    assert sibling_disk.read_text(encoding="utf-8") == "preserve"
 
 
 def test_test_vm_ssh_key_inputs_fail_before_cleanup(tmp_path: Path) -> None:

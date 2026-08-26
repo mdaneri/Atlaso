@@ -78,11 +78,15 @@ def write_secret_text_atomic(path: Path, payload: str) -> None:
         temporary.unlink(missing_ok=True)
 
 
-def import_staged_development_root_ca(settings: CaSettings) -> bool:
+def import_staged_development_root_ca(
+    settings: CaSettings,
+    certificates: list[CaCertificate],
+) -> bool:
     """Import the normal test VM development root into encrypted database state.
 
     Args:
         settings: First-boot CA settings row for this unique appliance database.
+        certificates: Managed leaf rows that must follow the imported root.
 
     Returns:
         Whether development root material was staged for this first boot.
@@ -114,6 +118,7 @@ def import_staged_development_root_ca(settings: CaSettings) -> bool:
         certificate_pem,
         private_key_pem,
         expected_common_name="Atlaso Development Root CA",
+        certificates=certificates,
     )
     return True
 
@@ -372,8 +377,16 @@ def main() -> int:
         ca_settings = db.execute(select(CaSettings)).scalar_one()
         appliance_settings.management_https_enabled = True
         ca_settings.enabled = True
+        managed_certificates = (
+            db.execute(select(CaCertificate).where(CaCertificate.managed_owner != ""))
+            .scalars()
+            .all()
+        )
         try:
-            development_root_imported = import_staged_development_root_ca(ca_settings)
+            development_root_imported = import_staged_development_root_ca(
+                ca_settings,
+                managed_certificates,
+            )
             db.commit()
         except Exception as exc:  # noqa: BLE001 - fail closed and scrub shared signer
             if isinstance(exc, ValueError):

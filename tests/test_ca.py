@@ -159,6 +159,65 @@ def test_development_root_import_normalizes_windows_pem_line_endings():
     assert settings.root_common_name == "Atlaso Development Root CA"
 
 
+def test_development_root_import_reissues_managed_leaf_from_replaced_root():
+    """Reissue a managed leaf whenever the imported root fingerprint changes."""
+    from cryptography import x509
+
+    settings = CaSettings(
+        enabled=True,
+        root_common_name="Generated Atlaso Root",
+        organization="Atlaso",
+        key_algorithm="RSA",
+        key_size=2048,
+        digest_algorithm="sha256",
+        root_valid_days=3650,
+        storage_path="/etc/atlaso/ca",
+    )
+    assert ensure_root_ca_material(settings) is True
+    profile = CaProfile(
+        id=42,
+        name="Service TLS",
+        certificate_type="server",
+        validity_days=30,
+        key_algorithm="RSA",
+        key_size=2048,
+        key_usage="digitalSignature,keyEncipherment",
+        extended_key_usage="serverAuth",
+        enabled=True,
+    )
+    leaf = CaCertificate(
+        common_name="retry.atlaso.internal",
+        subject_alt_names="retry.atlaso.internal",
+        profile_id=profile.id,
+        status="planned",
+        managed_owner="appliance:https",
+        enabled=True,
+    )
+    assert issue_certificate(settings, [profile], leaf) is True
+    retired_leaf_fingerprint = leaf.fingerprint
+    retired_root_fingerprint = settings.root_fingerprint
+
+    certificate_pem, private_key_pem = development_root_material()
+    import_root_ca_material(
+        settings,
+        certificate_pem,
+        private_key_pem,
+        expected_common_name="Atlaso Development Root CA",
+        certificates=[leaf],
+    )
+
+    assert settings.root_fingerprint != retired_root_fingerprint
+    assert leaf.status == "planned"
+    assert issue_certificate(settings, [profile], leaf) is True
+    assert leaf.fingerprint != retired_leaf_fingerprint
+    root = x509.load_pem_x509_certificate(
+        settings.root_certificate_pem.encode("ascii")
+    )
+    reissued = x509.load_pem_x509_certificate(leaf.certificate_pem.encode("ascii"))
+    assert reissued.issuer == root.subject
+    assert leaf.chain_pem.endswith(settings.root_certificate_pem)
+
+
 @pytest.mark.parametrize("mutation", ["mismatch", "not_ca", "expired"])
 def test_development_root_import_rejects_invalid_material(mutation):
     """Reject mismatched, non-CA, and expired development trust anchors.

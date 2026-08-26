@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import re
+from collections.abc import Iterable
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from ipaddress import ip_address
@@ -394,6 +395,7 @@ def import_root_ca_material(
     private_key_pem: str,
     *,
     expected_common_name: str = "",
+    certificates: Iterable[CaCertificate] = (),
 ) -> None:
     """Validate and import externally supplied root CA material.
 
@@ -402,6 +404,7 @@ def import_root_ca_material(
         certificate_pem: One canonical self-signed CA certificate PEM.
         private_key_pem: Matching unencrypted private-key PEM held in memory.
         expected_common_name: Optional exact root common name required by the caller.
+        certificates: Managed certificate rows to invalidate when the root changes.
 
     Raises:
         ValueError: If the material is malformed, unsafe, expired, or mismatched.
@@ -482,6 +485,15 @@ def import_root_ca_material(
     if certificate_public != private_public:
         raise ValueError("Development root CA certificate and private key do not match.")
 
+    imported_fingerprint = _fingerprint(certificate)
+    root_changed = (settings.root_fingerprint or "").strip().upper() != imported_fingerprint
+    if root_changed:
+        # An issued managed leaf must never survive a root replacement: doing so
+        # would publish one trust anchor while deploying a leaf under another.
+        for managed_certificate in certificates:
+            if managed_certificate.managed_owner and managed_certificate.status == "issued":
+                managed_certificate.status = "planned"
+
     settings.root_common_name = common_name
     organizations = certificate.subject.get_attributes_for_oid(NameOID.ORGANIZATION_NAME)
     settings.organization = organizations[0].value if organizations else ""
@@ -493,7 +505,7 @@ def import_root_ca_material(
         _pem_private_key(private_key)
     )
     settings.root_serial_number = format(certificate.serial_number, "x")
-    settings.root_fingerprint = _fingerprint(certificate)
+    settings.root_fingerprint = imported_fingerprint
     settings.root_issued_at = certificate.not_valid_before_utc
     settings.root_expires_at = certificate.not_valid_after_utc
     settings.updated_at = utcnow()

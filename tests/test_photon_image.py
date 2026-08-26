@@ -790,6 +790,7 @@ def test_photon_provisioning_installs_default_nginx_management_proxy():
     assert "guestinfo.atlaso.test_vm_development_root_ca_imported" in bootstrap
     assert "import_root_ca_material(" in bootstrap
     assert 'expected_common_name="Atlaso Development Root CA"' in bootstrap
+    assert "certificates=certificates" in bootstrap
     import_failure = bootstrap.index("except Exception as exc:")
     failure_scrub = bootstrap.index(
         "scrub_staged_development_root_ca_after_failure()", import_failure
