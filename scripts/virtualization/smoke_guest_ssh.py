@@ -45,7 +45,7 @@ def load_secret_input() -> SecretInput:
 def _connect(host: str, secret: SecretInput, *, expected_key: bytes | None = None) -> tuple[Any, bytes]:
     """Open a bounded SSH connection and optionally pin its first observed host key."""
 
-    import paramiko  # type: ignore[import-untyped]
+    import paramiko  # type: ignore[import-untyped]  # Paramiko does not publish complete type metadata.
 
     deadline = time.monotonic() + 900
     last_error: Exception | None = None

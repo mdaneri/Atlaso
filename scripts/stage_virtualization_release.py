@@ -15,7 +15,7 @@ ROOT = Path(__file__).resolve().parents[1]
 if not __package__:
     sys.path.insert(0, str(ROOT))
 
-from scripts.publish_release import (  # noqa: E402
+from scripts.publish_release import (  # noqa: E402 - Script path bootstrap must precede the local import.
     MAXIMUM_GITHUB_ASSET_BYTES,
     verify_vmware_release_assets,
 )

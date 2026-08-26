@@ -1251,6 +1251,9 @@ def test_release_workflows_use_successful_main_sha_and_promote_without_rebuildin
         "virtualization_release",
     ):
         assert f"  {job}:" in publication
+    ci_packer = ci.split("  deployment-packer:", 1)[1].split("  python-tests:", 1)[0]
+    assert "Test-AtlasoVirtualizationArtifacts.ps1" in ci_packer
+    assert "Test-AtlasoHyperVSecureString.ps1" not in ci_packer
     signed_virtualization = publication.split("  virtualization_release:", 1)[1].split(
         "  publish:", 1
     )[0]

@@ -59,25 +59,25 @@ def test_normalizes_exact_machine_network_disk_and_agent_contract(tmp_path: Path
         management_network="atlaso-management",
         service_network="atlaso-services",
     )
-    assert root.find("memory").text == "4194304"  # type: ignore[union-attr]
-    assert root.find("vcpu").text == "4"  # type: ignore[union-attr]
-    assert root.find("os/loader").get("secure") == "no"  # type: ignore[union-attr]
+    assert root.find("memory").text == "4194304"  # type: ignore[union-attr]  # Normalizer guarantees this element.
+    assert root.find("vcpu").text == "4"  # type: ignore[union-attr]  # Normalizer guarantees this element.
+    assert root.find("os/loader").get("secure") == "no"  # type: ignore[union-attr]  # Normalizer guarantees this element.
     assert [element.get("dev") for element in root.findall("os/boot")] == ["hd"]
-    assert [disk.find("target").get("dev") for disk in root.findall("devices/disk")] == [  # type: ignore[union-attr]
+    assert [disk.find("target").get("dev") for disk in root.findall("devices/disk")] == [  # type: ignore[union-attr]  # Normalizer guarantees disk targets.
         "sda",
         "sdb",
         "sdc",
         "sdd",
     ]
-    assert [disk.find("address").attrib for disk in root.findall("devices/disk")] == [  # type: ignore[union-attr]
+    assert [disk.find("address").attrib for disk in root.findall("devices/disk")] == [  # type: ignore[union-attr]  # Normalizer guarantees disk addresses.
         {"type": "drive", "controller": "0", "bus": "0", "target": "0", "unit": str(index)}
         for index in range(4)
     ]
-    assert [interface.find("source").get("network") for interface in root.findall("devices/interface")] == [  # type: ignore[union-attr]
+    assert [interface.find("source").get("network") for interface in root.findall("devices/interface")] == [  # type: ignore[union-attr]  # Normalizer guarantees interface sources.
         "atlaso-management",
         "atlaso-services",
     ]
-    assert root.find("devices/channel/target").get("name") == "org.qemu.guest_agent.0"  # type: ignore[union-attr]
+    assert root.find("devices/channel/target").get("name") == "org.qemu.guest_agent.0"  # type: ignore[union-attr]  # Normalizer guarantees the channel target.
     assert normalizer.disk_source_paths(root) == [str(tmp_path / f"disk-{index}.qcow2") for index in range(4)]
 
 
@@ -116,9 +116,9 @@ def test_rejects_unsafe_or_conflicting_virt_v2v_output(
         assert os_element is not None and loader is not None
         os_element.remove(loader)
     elif mutation == "wrong_machine":
-        root.find("os/type").set("machine", "pc-i440fx-9.2")  # type: ignore[union-attr]
+        root.find("os/type").set("machine", "pc-i440fx-9.2")  # type: ignore[union-attr]  # The fixture always contains os/type.
     elif mutation == "duplicate_controller":
-        ET.SubElement(root.find("devices"), "controller", {"type": "scsi"})  # type: ignore[arg-type]
+        ET.SubElement(root.find("devices"), "controller", {"type": "scsi"})  # type: ignore[arg-type]  # The fixture always contains devices.
 
     with pytest.raises(normalizer.LibvirtContractError, match=message):
         normalizer.normalize_domain(root, management_network="management", service_network="services")
@@ -130,7 +130,7 @@ def test_rejects_duplicate_guest_agent_channel(tmp_path: Path) -> None:
     root = _domain(tmp_path)
     devices = root.find("devices")
     for _ in range(2):
-        channel = ET.SubElement(devices, "channel", {"type": "unix"})  # type: ignore[arg-type]
+        channel = ET.SubElement(devices, "channel", {"type": "unix"})  # type: ignore[arg-type]  # The fixture always contains devices.
         ET.SubElement(channel, "target", {"type": "virtio", "name": "org.qemu.guest_agent.0"})
 
     with pytest.raises(normalizer.LibvirtContractError, match="duplicate QEMU guest-agent"):

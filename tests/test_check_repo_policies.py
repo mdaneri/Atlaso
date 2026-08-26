@@ -274,6 +274,9 @@ def test_virtualization_legacy_gate_rejects_retired_paths_and_qcow2_exporter(tmp
     exporter.mkdir(parents=True)
     (exporter / "legacy.txt").write_text("photon-os.qcow2\n", encoding="utf-8")
     (exporter / "legacy.ps1").write_text("$script:AllowedTargetNames = @('hyperv', 'kvm')\n", encoding="utf-8")
+    workflow = tmp_path / ".github/workflows/ci.yml"
+    workflow.parent.mkdir(parents=True)
+    workflow.write_text("run: ./tests/powershell/Test-AtlasoHyperVSecureString.ps1\n", encoding="utf-8")
 
     findings = check_virtualization_legacy(tmp_path)
 
@@ -281,6 +284,7 @@ def test_virtualization_legacy_gate_rejects_retired_paths_and_qcow2_exporter(tmp
     assert any("retired virtualization reference" in finding.message for finding in findings)
     assert any("standalone QCOW2 release marker" in finding.message for finding in findings)
     assert any("standalone multi-target exporter marker" in finding.message for finding in findings)
+    assert any("retired virtualization test command" in finding.message for finding in findings)
 
 
 def write_policy_files(root: Path) -> None:

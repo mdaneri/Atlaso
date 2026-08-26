@@ -2624,6 +2624,26 @@ def check_virtualization_legacy(root: Path) -> list[Finding]:
                         Finding(path, f"retired virtualization reference remains: {marker}", line_for_offset(text, offset))
                     )
 
+    workflow_directory = root / ".github"
+    workflow_markers = (
+        "Test-AtlasoHyperVSecureString.ps1",
+        "Test-CreateHypervSwitches.ps1",
+        "test_hyperv_cleanup.py",
+        "test_tiny_client_preparation.py",
+    )
+    for path in workflow_directory.rglob("*") if workflow_directory.exists() else ():
+        if not path.is_file() or path.is_symlink():
+            continue
+        text, error = read_text(path)
+        if error is not None or text is None:
+            continue
+        for marker in workflow_markers:
+            offset = text.find(marker)
+            if offset >= 0:
+                findings.append(
+                    Finding(path, f"retired virtualization test command remains: {marker}", line_for_offset(text, offset))
+                )
+
     exporter_roots = (
         root / "scripts/windows/virtualization",
         root / "docs/reference/virtualization-artifacts.md",
