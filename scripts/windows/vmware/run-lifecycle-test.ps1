@@ -409,16 +409,9 @@ function New-StaticVmwareMac {
 
 <#
 .SYNOPSIS
-Escape a VMX value for literal writing.
-
-.PARAMETER Value
-Raw string value.
-#>
-<#
-.SYNOPSIS
 Escape a literal value for a VMX assignment.
 .PARAMETER Value
-Value value.
+Unquoted VMX property text to escape and quote.
 #>
 function ConvertTo-VmxString {
     param([string]$Value)
@@ -429,11 +422,11 @@ function ConvertTo-VmxString {
 .SYNOPSIS
 Set one VMX key while preserving unrelated configuration.
 .PARAMETER Path
-Path value.
+VMX file whose exact key assignment is updated.
 .PARAMETER Key
-Key value.
+VMX property name to replace or append.
 .PARAMETER Value
-Value value.
+Unquoted VMX property value to serialize.
 #>
 function Set-VmxValue {
     param(
@@ -1001,16 +994,6 @@ function Start-WorkstationVm {
     }
 }
 
-<#
-.SYNOPSIS
-Return whether a TCP endpoint accepts a bounded connection.
-.PARAMETER HostName
-Host Name value.
-.PARAMETER Port
-Port value.
-.PARAMETER TimeoutMilliseconds
-Timeout Milliseconds value.
-#>
 function Test-TcpPort {
 <#
 .SYNOPSIS
@@ -1434,7 +1417,7 @@ function Test-ApplianceOpenApi {
 .SYNOPSIS
 Upload the lifecycle helper script to the appliance guest.
 .PARAMETER ApplianceVmx
-Appliance Vmx value.
+VMX path identifying the appliance guest that receives the helper.
 #>
 function Sync-ApplianceHelperScript {
     param([string]$ApplianceVmx)
@@ -1460,7 +1443,7 @@ function Sync-ApplianceHelperScript {
 .SYNOPSIS
 Upload and install the lifecycle application wheel in the appliance guest.
 .PARAMETER ApplianceVmx
-Appliance Vmx value.
+VMX path identifying the appliance guest where the wheel is installed.
 #>
 function Sync-ApplianceApplicationWheel {
     param([string]$ApplianceVmx)
@@ -1508,7 +1491,7 @@ function Sync-ApplianceApplicationWheel {
 .SYNOPSIS
 Find an ESXi installer ISO already stored on the appliance.
 .PARAMETER ApplianceVmx
-Appliance Vmx value.
+VMX path identifying the appliance guest whose depot is searched.
 #>
 function Find-ApplianceEsxiIsoPath {
     param([string]$ApplianceVmx)
@@ -1531,7 +1514,7 @@ function Find-ApplianceEsxiIsoPath {
 .SYNOPSIS
 Resolve or upload the ESXi ISO required by the PXE scenario.
 .PARAMETER ApplianceVmx
-Appliance Vmx value.
+VMX path identifying the appliance guest that owns the ESXi depot.
 #>
 function Resolve-ApplianceEsxiIsoPath {
     param([string]$ApplianceVmx)
@@ -1571,15 +1554,15 @@ function Resolve-ApplianceEsxiIsoPath {
 .SYNOPSIS
 Append one timestamped validation step to the lifecycle result.
 .PARAMETER ResultDirectory
-Result Directory value.
+Directory containing the lifecycle result JSON to update.
 .PARAMETER Name
-Name value.
+Stable result-step name recorded for the validation.
 .PARAMETER Status
-Status value.
+Validation outcome written to the step and aggregate result.
 .PARAMETER Evidence
-Evidence value.
+Non-secret structured evidence captured for the validation.
 .PARAMETER ErrorMessage
-Error Message value.
+Optional sanitized failure context for an unsuccessful step.
 #>
 function Add-LifecycleResultStep {
     param(

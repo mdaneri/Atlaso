@@ -125,7 +125,8 @@ function Get-PowerShellScopeHelpFinding {
             $description = [string]$help.Parameters[$name.ToUpperInvariant()]
         }
         if ([string]::IsNullOrWhiteSpace($description) -or
-            $description -match '(?i)value used to configure this workflow') {
+            $description -match '(?i)value used to configure this workflow' -or
+            $description -match '(?i)^\s*[A-Za-z][A-Za-z0-9_-]*(?:\s+[A-Za-z][A-Za-z0-9_-]*)*\s+value[.]?\s*$') {
             $findings.Add("$DisplayName parameter '$name' has empty or placeholder .PARAMETER text.")
         }
     }

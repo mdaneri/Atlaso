@@ -38,7 +38,7 @@ Assert that two scalar test values are equal.
 Value produced by the helper under test.
 
 .PARAMETER Expected
-Required value.
+Reference result required by the test assertion.
 
 .PARAMETER Message
 Failure context shown when the values differ.
@@ -266,8 +266,8 @@ try {
 
         $withDevelopmentRoot = New-AtlasoWorkstationOvfEnvironment `
             -Fqdn 'atlaso-test.atlaso.internal' `
-            -AdminPassword 'VMware01!Test' `
-            -RootPassword 'VMware01!Test' `
+            -AdminPassword (ConvertTo-TestSecureString -Value 'VMware01!Test') `
+            -RootPassword (ConvertTo-TestSecureString -Value 'VMware01!Test') `
             -DevelopmentRootCaCertificatePem $certificatePem
         if (-not $withDevelopmentRoot.Contains("oe:key='atlaso.development_test_vm' oe:value='true'")) {
             throw 'The shared CA must identify the internal normal-test-wrapper path without requiring an SSH key.'

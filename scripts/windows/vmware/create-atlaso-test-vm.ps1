@@ -1510,10 +1510,10 @@ function Write-ConnectionSummary {
     The operator-facing row label.
 
     .PARAMETER Value
-    The row value.
+    Operator-facing connection detail rendered beside the label.
 
     .PARAMETER ValueColor
-    The console color used for the value.
+    Console foreground color used to distinguish the connection detail.
     #>
     function Write-SummaryRow {
         param(

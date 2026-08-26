@@ -2311,6 +2311,8 @@ def test_lifecycle_vmware_script_supports_routing_wan_only_and_esxi_pxe_install(
     assert "-OidcOnly, -RoutingWanOnly, and -FullEsxiPxeInstall are mutually exclusive." in wrapper
     assert "[SecureString]$EsxiPassword" in wrapper
     assert "Read-Host -Prompt 'ESXi root password for lifecycle probing' -AsSecureString" in wrapper
+    assert wrapper.index("$secretBundlePath = ''\ntry {") < wrapper.index("Export-Clixml")
+    assert wrapper.index("Export-Clixml") < wrapper.index("Remove-Item -LiteralPath $secretBundlePath -Force")
     assert "-GuestPassword $esxiPasswordSecure" in runner
     assert "'--secret-stdin'" in runner
     assert "$secretPayload | & python @Arguments" in runner

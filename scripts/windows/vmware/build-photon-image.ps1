@@ -169,7 +169,7 @@ function ConvertTo-Ipv4Integer {
 .SYNOPSIS
 Convert an integer to an IPv4 address.
 .PARAMETER Address
-Integer address value.
+Unsigned 32-bit network-order address to render in dotted-decimal form.
 #>
 function ConvertFrom-Ipv4Integer {
     param([Parameter(Mandatory = $true)][uint32]$Address)

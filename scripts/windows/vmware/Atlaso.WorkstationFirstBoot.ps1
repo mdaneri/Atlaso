@@ -143,7 +143,7 @@ function ConvertTo-AtlasoOvfXmlValue {
 Quote one string for a VMX assignment.
 
 .PARAMETER Value
-The unquoted VMX value.
+Unquoted VMX property text to escape and surround with quotes.
 #>
 function ConvertTo-AtlasoVmxString {
     param([string]$Value)

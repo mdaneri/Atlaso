@@ -415,7 +415,7 @@ function Join-RemotePath {
 .SYNOPSIS
 Quotes one value as a literal POSIX shell argument.
 .PARAMETER Value
-Argument value.
+Untrusted command argument to quote as one literal shell token.
 #>
 function ConvertTo-PosixShellArgument {
     param([Parameter(Mandatory = $true)][AllowEmptyString()][string]$Value)

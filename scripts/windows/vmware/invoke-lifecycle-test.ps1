@@ -411,17 +411,18 @@ $effectiveSkipBackupRestoreTest = [bool]($SkipBackupRestoreTest -or $RoutingWanO
 $powerShell7Path = Resolve-PowerShell7Path
 
 $secretBundlePath = ''
-if (-not $PlanOnly) {
-    $secretBundlePath = Join-Path ([System.IO.Path]::GetTempPath()) "atlaso-vmware-lifecycle-$([guid]::NewGuid().ToString('N')).clixml"
-    # CLIXML uses the current Windows user's DPAPI protection for SecureString
-    # members, avoiding plaintext password arguments across the PowerShell process boundary.
-    [pscustomobject]@{
-        AdminPassword     = $AdminPassword
-        SshPassword       = $SshPassword
-        VcfBackupPassword = $VcfBackupPassword
-        EsxiPassword      = $EsxiPassword
-    } | Export-Clixml -LiteralPath $secretBundlePath -Force
-}
+try {
+    if (-not $PlanOnly) {
+        $secretBundlePath = Join-Path ([System.IO.Path]::GetTempPath()) "atlaso-vmware-lifecycle-$([guid]::NewGuid().ToString('N')).clixml"
+        # Enter the cleanup scope before serialization because Export-Clixml
+        # can leave a partial current-user-decryptable file when it fails.
+        [pscustomobject]@{
+            AdminPassword     = $AdminPassword
+            SshPassword       = $SshPassword
+            VcfBackupPassword = $VcfBackupPassword
+            EsxiPassword      = $EsxiPassword
+        } | Export-Clixml -LiteralPath $secretBundlePath -Force
+    }
 
 $arguments = @(
     '-NoLogo',
@@ -468,7 +469,6 @@ Write-Host ("Full ESXi PXE install: {0}" -f ([bool]$FullEsxiPxeInstall))
 Write-Host ("Backup/restore validation: {0}" -f (-not $effectiveSkipBackupRestoreTest))
 Write-Host ("Cleanup created VMs: {0}" -f (-not $KeepVms))
 
-try {
     & $powerShell7Path @arguments
     if ($LASTEXITCODE -ne 0) {
         throw "VMware Workstation lifecycle test failed with exit code $LASTEXITCODE"
