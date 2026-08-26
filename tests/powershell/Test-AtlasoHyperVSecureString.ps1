@@ -50,6 +50,14 @@ foreach ($provider in @('hyperv', 'vmware')) {
         $launcherSource -notmatch '(?s)\$secretBundlePath = ['']{2}\s+try \{.*?Export-Clixml.*?finally \{.*?Remove-Item -LiteralPath \$secretBundlePath') {
         throw 'VMware lifecycle secret-bundle serialization is not enclosed by cleanup.'
     }
+    if ($provider -eq 'vmware' -and
+        $launcherSource -notmatch 'if \(-not \(\$OidcOnly -or \$RoutingWanOnly\) -and \$null -eq \$VcfBackupPassword\)') {
+        throw 'Focused VMware lifecycle runs still prompt for the unrelated VCF Backup credential.'
+    }
+    if ($provider -eq 'vmware' -and
+        $launcherSource -notmatch 'Remove-Item -LiteralPath \$secretBundlePath -Force -ErrorAction Stop') {
+        throw 'VMware lifecycle secret-bundle cleanup is not terminating.'
+    }
 
     $providerRunnerSource = Get-Content -LiteralPath (
         Join-Path $RepositoryRoot "scripts\windows\$provider\run-lifecycle-test.ps1"

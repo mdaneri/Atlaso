@@ -172,7 +172,7 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser.add_argument("--appliance-ssh-hostkey", default="")
     parser.add_argument("--client-a-hostkey", default="")
     parser.add_argument("--client-b-hostkey", default="")
-    parser.add_argument("--vcf-backup-password", default="VMware01!Test")
+    parser.add_argument("--vcf-backup-password", default="")
     parser.add_argument("--vcf-depot-password", default="VMware01!Depot")
     parser.add_argument("--vcf-depot-new-password", default="VMware02!Depot")
     parser.add_argument("--allow-dry-run", action="store_true", help="Allow apply units to report dry-run instead of failing.")
@@ -217,20 +217,30 @@ def load_lifecycle_secrets(args: argparse.Namespace, stream: TextIO) -> None:
     except json.JSONDecodeError as exc:
         raise LifecycleError("Lifecycle secret input is not valid JSON.") from exc
 
-    required_keys = {"password", "appliance_ssh_password", "ssh_password", "vcf_backup_password"}
-    allowed_keys = required_keys | {"esxi_password"}
-    if not isinstance(payload, dict) or set(payload) != allowed_keys:
+    required_keys = {"password", "appliance_ssh_password", "ssh_password"}
+    allowed_keys = required_keys | {"vcf_backup_password", "esxi_password"}
+    if (
+        not isinstance(payload, dict)
+        or not required_keys.issubset(payload)
+        or not set(payload).issubset(allowed_keys)
+    ):
         raise LifecycleError("Lifecycle secret input does not match the required schema.")
     if any(not isinstance(payload[key], str) or not payload[key] for key in required_keys):
         raise LifecycleError("Lifecycle secret input contains an invalid required password.")
-    if not isinstance(payload["esxi_password"], str):
+    vcf_backup_password = payload.get("vcf_backup_password", "")
+    esxi_password = payload.get("esxi_password", "")
+    if not isinstance(vcf_backup_password, str):
+        raise LifecycleError("Lifecycle secret input contains an invalid VCF Backup password.")
+    if not (args.oidc_only or args.routing_wan_only) and not vcf_backup_password:
+        raise LifecycleError("Lifecycle secret input requires a VCF Backup password for the full lifecycle.")
+    if not isinstance(esxi_password, str):
         raise LifecycleError("Lifecycle secret input contains an invalid ESXi password.")
 
     args.password = payload["password"]
     args.appliance_ssh_password = payload["appliance_ssh_password"]
     args.ssh_password = payload["ssh_password"]
-    args.vcf_backup_password = payload["vcf_backup_password"]
-    args.esxi_password = payload["esxi_password"]
+    args.vcf_backup_password = vcf_backup_password
+    args.esxi_password = esxi_password
 
 
 class HttpClient:

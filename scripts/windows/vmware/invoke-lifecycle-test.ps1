@@ -40,7 +40,7 @@ SSH account used for lifecycle client guests.
 .PARAMETER SshPassword
 Secure SSH Password supplied at runtime; no repository default is used.
 .PARAMETER VcfBackupPassword
-Secure VCF Backup Password supplied at runtime; no repository default is used.
+Secure VCF Backup Password supplied for the full lifecycle; focused OIDC and WAN-routing runs do not require it.
 .PARAMETER EsxiPassword
 Secure Esxi Password supplied at runtime; no repository default is used.
 .PARAMETER VlanId
@@ -363,7 +363,7 @@ if (-not $PlanOnly) {
     if ($null -eq $SshPassword) {
         $SshPassword = $AdminPassword
     }
-    if ($null -eq $VcfBackupPassword) {
+    if (-not ($OidcOnly -or $RoutingWanOnly) -and $null -eq $VcfBackupPassword) {
         $VcfBackupPassword = Read-Host -Prompt 'VCF Backup lifecycle password' -AsSecureString
     }
     if ($FullEsxiPxeInstall -and $null -eq $EsxiPassword) {
@@ -474,7 +474,10 @@ Write-Host ("Cleanup created VMs: {0}" -f (-not $KeepVms))
         throw "VMware Workstation lifecycle test failed with exit code $LASTEXITCODE"
     }
 } finally {
-    if ($secretBundlePath) {
-        Remove-Item -LiteralPath $secretBundlePath -Force -ErrorAction SilentlyContinue
+    if ($secretBundlePath -and (Test-Path -LiteralPath $secretBundlePath)) {
+        Remove-Item -LiteralPath $secretBundlePath -Force -ErrorAction Stop
+    }
+    if ($secretBundlePath -and (Test-Path -LiteralPath $secretBundlePath)) {
+        throw "Lifecycle secret bundle cleanup did not complete: $secretBundlePath"
     }
 }

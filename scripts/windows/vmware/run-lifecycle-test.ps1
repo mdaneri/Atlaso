@@ -115,10 +115,17 @@ if (-not $PlanOnly) {
         throw 'SecretBundlePath is required unless PlanOnly is set.'
     }
     $secretBundle = Import-Clixml -LiteralPath $SecretBundlePath
-    foreach ($propertyName in @('AdminPassword', 'SshPassword', 'VcfBackupPassword')) {
+    foreach ($propertyName in @('AdminPassword', 'SshPassword')) {
         if ($secretBundle.$propertyName -isnot [SecureString]) {
             throw "Lifecycle secret bundle property is missing or invalid: $propertyName"
         }
+    }
+    $focusedRun = $OidcOnly -or $RoutingWanOnly
+    if (-not $focusedRun -and $secretBundle.VcfBackupPassword -isnot [SecureString]) {
+        throw 'Lifecycle secret bundle property is missing or invalid: VcfBackupPassword'
+    }
+    if ($focusedRun -and $null -ne $secretBundle.VcfBackupPassword -and $secretBundle.VcfBackupPassword -isnot [SecureString]) {
+        throw 'Lifecycle secret bundle property is invalid: VcfBackupPassword'
     }
     if ($FullEsxiPxeInstall -and $secretBundle.EsxiPassword -isnot [SecureString]) {
         throw 'Lifecycle secret bundle property is missing or invalid: EsxiPassword'
@@ -129,7 +136,9 @@ if (-not $PlanOnly) {
     $esxiPasswordSecure = $secretBundle.EsxiPassword
     $AdminPassword = ConvertFrom-SecureString -SecureString $adminPasswordSecure -AsPlainText
     $SshPassword = ConvertFrom-SecureString -SecureString $sshPasswordSecure -AsPlainText
-    $VcfBackupPassword = ConvertFrom-SecureString -SecureString $vcfBackupPasswordSecure -AsPlainText
+    if ($null -ne $vcfBackupPasswordSecure) {
+        $VcfBackupPassword = ConvertFrom-SecureString -SecureString $vcfBackupPasswordSecure -AsPlainText
+    }
 }
 . (Join-Path $PSScriptRoot 'Atlaso.WorkstationFirstBoot.ps1')
 Import-Module (Join-Path $PSScriptRoot 'Atlaso.WorkstationCleanup.psm1') -Force
@@ -161,7 +170,7 @@ Protected Atlaso administrator password written only to the child process standa
 Protected client SSH password written only to the child process standard-input stream.
 
 .PARAMETER VcfBackupPassword
-Protected VCF Backup password written only to the child process standard-input stream.
+Optional protected VCF Backup password written only to the child process standard-input stream.
 
 .PARAMETER EsxiPassword
 Optional protected ESXi password written only to the child process standard-input stream.
@@ -172,7 +181,7 @@ function Invoke-LifecyclePython {
         [Parameter(Mandatory = $true)][string[]]$Arguments,
         [Parameter(Mandatory = $true)][SecureString]$AdminPassword,
         [Parameter(Mandatory = $true)][SecureString]$SshPassword,
-        [Parameter(Mandatory = $true)][SecureString]$VcfBackupPassword,
+        [SecureString]$VcfBackupPassword,
         [SecureString]$EsxiPassword
     )
 
@@ -184,7 +193,9 @@ function Invoke-LifecyclePython {
     try {
         $adminPasswordText = ConvertFrom-SecureString -SecureString $AdminPassword -AsPlainText
         $sshPasswordText = ConvertFrom-SecureString -SecureString $SshPassword -AsPlainText
-        $vcfBackupPasswordText = ConvertFrom-SecureString -SecureString $VcfBackupPassword -AsPlainText
+        if ($null -ne $VcfBackupPassword) {
+            $vcfBackupPasswordText = ConvertFrom-SecureString -SecureString $VcfBackupPassword -AsPlainText
+        }
         if ($null -ne $EsxiPassword) {
             $esxiPasswordText = ConvertFrom-SecureString -SecureString $EsxiPassword -AsPlainText
         }

@@ -1310,8 +1310,12 @@ def test_packer_build_uses_atlaso_management_network_by_default():
     assert "Using remastered Photon ISO" in build_module
     assert "Packer will boot a single DVD with embedded photon-ks.json and a GRUB auto-install entry." in build_module
     assert "Write-AtlasoPackerVarFile" in build_module
-    assert "Remove-Item -LiteralPath $kickstartJson -Force" in build_module
-    assert "Remove-Item -LiteralPath $ksSourceDir -Force" in build_module
+    assert "function Remove-AtlasoSensitiveBuildArtifact" in build_module
+    assert "Remove-Item -LiteralPath $Path -Force -ErrorAction Stop" in build_module
+    assert "Plaintext credential artifact cleanup did not complete" in build_module
+    assert "Remove-AtlasoSensitiveBuildArtifact -Path $kickstartJson" in build_module
+    assert "Remove-AtlasoSensitiveBuildArtifact -Path $ksSourceDir" in build_module
+    assert "Remove-AtlasoSensitiveBuildArtifact -Path $varFilePath" in build_module
     kickstart_build = build_module.split("    $kickstartJson =", maxsplit=1)[1].split(
         "    $preparedIso =", maxsplit=1
     )[0]
@@ -2315,8 +2319,10 @@ def test_lifecycle_vmware_script_supports_routing_wan_only_and_esxi_pxe_install(
     assert "-OidcOnly, -RoutingWanOnly, and -FullEsxiPxeInstall are mutually exclusive." in wrapper
     assert "[SecureString]$EsxiPassword" in wrapper
     assert "Read-Host -Prompt 'ESXi root password for lifecycle probing' -AsSecureString" in wrapper
+    assert "if (-not ($OidcOnly -or $RoutingWanOnly) -and $null -eq $VcfBackupPassword)" in wrapper
     assert wrapper.index("$secretBundlePath = ''\ntry {") < wrapper.index("Export-Clixml")
     assert wrapper.index("Export-Clixml") < wrapper.index("Remove-Item -LiteralPath $secretBundlePath -Force")
+    assert "Remove-Item -LiteralPath $secretBundlePath -Force -ErrorAction Stop" in wrapper
     assert "-GuestPassword $esxiPasswordSecure" in runner
     assert "'--secret-stdin'" in runner
     assert "$secretPayload | & python @Arguments | Out-Host" in runner

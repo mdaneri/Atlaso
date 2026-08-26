@@ -110,6 +110,9 @@ the Hyper-V build wrapper. Both wrappers use `image/common/source` for the origi
 source ISO is not duplicated under each target. The Workstation image installs `open-vm-tools`; the Hyper-V image keeps
 the `hyper-v` package and Hyper-V guest daemons. The Workstation build wrapper opens a visible VMware console by
 default. Use `-Headless` only when an unattended build is preferred.
+The shared builder removes and verifies the absence of its plaintext kickstart source and generated Packer variable file;
+an ACL, file-lock, or endpoint-protection cleanup failure terminates the build instead of reporting success with a
+credential-bearing artifact left behind.
 
 GUI builds start or reuse a responsive VMware Workstation UI as a process separate from Packer before invoking the
 VMware builder. This preserves the visible console while preventing an already-running VM from leaving Packer blocked
@@ -149,6 +152,8 @@ the encrypted `Lifecycle ESXi` vault entry and persists only
 authorized PXE request without storing the plaintext password in desired state. Because settings archives intentionally
 exclude vaults, the restored pass recreates this entry from the same standard-input secret after restore and before the
 ESXi PXE unit is applied.
+The `-OidcOnly` and `-RoutingWanOnly` paths do not prompt for or include a VCF Backup password because those focused
+scenarios neither stage VCF Backup nor run the settings backup/restore pass.
 
 The wrapper selects the newest appliance VMX under `image/vmware-workstation/output`, prepares the tiny Alpine client
 VMDK when needed, creates a unique `AtlasoWorkstationLifecycle-*` lab, runs the initial lifecycle scenario, and by

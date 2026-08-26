@@ -36,6 +36,20 @@ function ConvertTo-TestSecureString {
 
 $modulePath = Join-Path $RepositoryRoot 'scripts/windows/common/Atlaso.PhotonImage.psm1'
 $module = Import-Module $modulePath -Force -PassThru
+$sensitiveArtifactRoot = Join-Path $OutputDirectory 'sensitive-artifact-cleanup'
+New-Item -ItemType Directory -Force -Path $sensitiveArtifactRoot | Out-Null
+[System.IO.File]::WriteAllText(
+    (Join-Path $sensitiveArtifactRoot 'credential.txt'),
+    'non-secret-test-credential'
+)
+& $module {
+    param([string]$Path)
+    Remove-AtlasoSensitiveBuildArtifact -Path $Path
+} $sensitiveArtifactRoot
+if (Test-Path -LiteralPath $sensitiveArtifactRoot) {
+    throw 'Sensitive Photon build artifact cleanup did not prove directory absence.'
+}
+
 $providers = @(
     [pscustomobject]@{
         Name                = 'hyperv'

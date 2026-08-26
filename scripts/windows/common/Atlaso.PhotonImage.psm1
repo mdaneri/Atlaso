@@ -465,6 +465,29 @@ function New-AtlasoFallbackPreparedIsoPath {
 
 <#
 .SYNOPSIS
+Remove a plaintext credential artifact and prove that it is absent.
+.PARAMETER Path
+Exact file or directory path whose failed cleanup must terminate the build.
+#>
+function Remove-AtlasoSensitiveBuildArtifact {
+    param([Parameter(Mandatory = $true)][string]$Path)
+
+    if (Test-Path -LiteralPath $Path -ErrorAction Stop) {
+        $artifact = Get-Item -LiteralPath $Path -Force -ErrorAction Stop
+        if ($artifact.PSIsContainer) {
+            Remove-Item -LiteralPath $Path -Recurse -Force -ErrorAction Stop
+        }
+        else {
+            Remove-Item -LiteralPath $Path -Force -ErrorAction Stop
+        }
+    }
+    if (Test-Path -LiteralPath $Path -ErrorAction Stop) {
+        throw "Plaintext credential artifact cleanup did not complete: $Path"
+    }
+}
+
+<#
+.SYNOPSIS
 Build or validate a supported Atlaso Photon image with Packer.
 .PARAMETER IsoUrl
 Pinned Photon source URL or path.
@@ -592,7 +615,7 @@ function Invoke-AtlasoPhotonImageBuild {
     $resolvedPreparedIsoPath = Resolve-AtlasoPreparedIsoPath -Path $resolvedPreparedIsoPath
 
     try {
-        Remove-Item -LiteralPath $ksSourceDir -Recurse -Force -ErrorAction SilentlyContinue
+        Remove-AtlasoSensitiveBuildArtifact -Path $ksSourceDir
         New-Item -ItemType Directory -Force -Path $ksSourceDir | Out-Null
         New-AtlasoPhotonKickstart `
             -Path $kickstartJson `
@@ -619,8 +642,8 @@ function Invoke-AtlasoPhotonImageBuild {
     } finally {
         # The remastered ISO owns the consumed kickstart payload. Do not retain
         # its plaintext build password in the ignored repository workspace.
-        Remove-Item -LiteralPath $kickstartJson -Force -ErrorAction SilentlyContinue
-        Remove-Item -LiteralPath $ksSourceDir -Force -ErrorAction SilentlyContinue
+        Remove-AtlasoSensitiveBuildArtifact -Path $kickstartJson
+        Remove-AtlasoSensitiveBuildArtifact -Path $ksSourceDir
     }
     $preparedIso = Get-Item -LiteralPath $resolvedPreparedIsoPath -ErrorAction Stop
     if ($preparedIso.Length -le 0) {
@@ -712,11 +735,15 @@ function Invoke-AtlasoPhotonImageBuild {
             Pop-Location
         }
     } finally {
-        # The var file is needed only by the bounded Packer child and must not
-        # leave reusable plaintext credentials in the build workspace.
-        Remove-Item -LiteralPath $varFilePath -Force -ErrorAction SilentlyContinue
-        $sshPasswordText = $null
-        $bootstrapAdminPasswordText = $null
+        try {
+            # The var file is needed only by the bounded Packer child and must
+            # not leave reusable plaintext credentials in the build workspace.
+            Remove-AtlasoSensitiveBuildArtifact -Path $varFilePath
+        }
+        finally {
+            $sshPasswordText = $null
+            $bootstrapAdminPasswordText = $null
+        }
     }
 }
 

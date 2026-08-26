@@ -72,6 +72,37 @@ def test_load_lifecycle_secrets_rejects_unexpected_schema():
         lifecycle.load_lifecycle_secrets(args, io.StringIO(json.dumps(secret_values)))
 
 
+@pytest.mark.parametrize("focused_option", ["--oidc-only", "--routing-wan-only"])
+def test_load_lifecycle_secrets_allows_focused_runs_without_vcf_backup_password(focused_option):
+    """Verify focused modes omit the unrelated VCF Backup credential."""
+    lifecycle = load_lifecycle_module()
+    args = lifecycle.parse_args(["--secret-stdin", focused_option])
+    secret_values = {
+        "password": "AdminSecret!",
+        "appliance_ssh_password": "ApplianceSecret!",
+        "ssh_password": "ClientSecret!",
+    }
+
+    lifecycle.load_lifecycle_secrets(args, io.StringIO(json.dumps(secret_values)))
+
+    assert args.vcf_backup_password == ""
+    assert args.esxi_password == ""
+
+
+def test_load_lifecycle_secrets_requires_vcf_backup_password_for_full_run():
+    """Verify the full lifecycle still requires its VCF Backup credential."""
+    lifecycle = load_lifecycle_module()
+    args = lifecycle.parse_args(["--secret-stdin"])
+    secret_values = {
+        "password": "AdminSecret!",
+        "appliance_ssh_password": "ApplianceSecret!",
+        "ssh_password": "ClientSecret!",
+    }
+
+    with pytest.raises(lifecycle.LifecycleError, match="requires a VCF Backup password"):
+        lifecycle.load_lifecycle_secrets(args, io.StringIO(json.dumps(secret_values)))
+
+
 def test_network_boot_lifecycle_extracts_csrf_without_password_query_login():
     """Verify that network boot lifecycle extracts csrf without password query login."""
     lifecycle = load_network_boot_lifecycle_module()
