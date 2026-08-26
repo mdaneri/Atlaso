@@ -440,7 +440,8 @@ guest uses that marker to publish its actual value through VMware Tools. The che
 for that host-facing address. It also requires an address answer from every running Workstation VM; incomplete guest
 evidence retries rather than being treated as unique. If another VM reports the same address, the hostname differs, or
 the neighbor entry maps to another running VM's MAC, the wrapper stops before printing SSH or HTTPS endpoints and names
-the relevant conflicting identity evidence.
+the relevant conflicting identity evidence. Immediately before returning readiness, it re-lists the running inventory
+and rechecks the target address; a concurrent VM start, stop, or target-address change restarts the proof.
 
 For recovery, leave the failed clone running only while using its local console, then either stop the named conflicting
 VM or assign the clone a unique management address. A task-specific DHCP reservation must target the exact MAC printed

@@ -168,6 +168,18 @@ do {
                 -ObservedHostname $observedHostname `
                 -RunningGuests $runningGuests `
                 -NeighborMacAddresses @(Get-HostNeighborMacAddress -IPAddress $ipAddress)
+            # Close the concurrent-start window after the slower per-guest and
+            # neighbor observations. Readiness is returned only from a stable
+            # running set whose target still reports the proven address.
+            $confirmedPaths = @(Get-AtlasoWorkstationRunningVmxPath -VmrunPath $resolvedVmrun)
+            $confirmedIpAddress = Get-VmwareGuestIPv4Address `
+                -VmrunPath $resolvedVmrun `
+                -VmxPath $resolvedVmxPath
+            Assert-AtlasoWorkstationStableObservation `
+                -InitialVmxPaths $runningPaths `
+                -ConfirmedVmxPaths $confirmedPaths `
+                -InitialTargetIPAddress $ipAddress `
+                -ConfirmedTargetIPAddress $confirmedIpAddress
             Write-Information `
                 "Verified VMware readiness: VMX='$($identity.VmxPath)'; MAC=$($identity.MacAddress); hostname=$($identity.Hostname); host address=$($identity.IPAddress)" `
                 -InformationAction Continue

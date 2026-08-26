@@ -214,8 +214,48 @@ function Assert-AtlasoWorkstationAddressIdentity {
     }
 }
 
+<#
+.SYNOPSIS
+Require a stable running inventory and target address across a readiness proof.
+
+.PARAMETER InitialVmxPaths
+Exact running VMX paths captured before per-guest observations.
+
+.PARAMETER ConfirmedVmxPaths
+Exact running VMX paths captured immediately before readiness returns.
+
+.PARAMETER InitialTargetIPAddress
+Target address used for the identity and neighbor proof.
+
+.PARAMETER ConfirmedTargetIPAddress
+Target address re-read immediately before readiness returns.
+#>
+function Assert-AtlasoWorkstationStableObservation {
+    param(
+        [Parameter(Mandatory = $true)][AllowEmptyCollection()][string[]]$InitialVmxPaths,
+        [Parameter(Mandatory = $true)][AllowEmptyCollection()][string[]]$ConfirmedVmxPaths,
+        [Parameter(Mandatory = $true)][string]$InitialTargetIPAddress,
+        [Parameter(Mandatory = $true)][AllowEmptyString()][string]$ConfirmedTargetIPAddress
+    )
+
+    $initialKey = @(
+        $InitialVmxPaths |
+            ForEach-Object { (Resolve-Path -LiteralPath $_ -ErrorAction Stop).Path.ToLowerInvariant() } |
+            Sort-Object
+    ) -join "`n"
+    $confirmedKey = @(
+        $ConfirmedVmxPaths |
+            ForEach-Object { (Resolve-Path -LiteralPath $_ -ErrorAction Stop).Path.ToLowerInvariant() } |
+            Sort-Object
+    ) -join "`n"
+    if ($confirmedKey -cne $initialKey -or $ConfirmedTargetIPAddress -ne $InitialTargetIPAddress) {
+        throw 'Running VMware guest inventory or target address changed during the readiness proof.'
+    }
+}
+
 Export-ModuleMember -Function @(
     'Assert-AtlasoWorkstationAddressIdentity',
+    'Assert-AtlasoWorkstationStableObservation',
     'ConvertTo-AtlasoWorkstationMacAddress',
     'Get-AtlasoWorkstationRunningVmxPath',
     'Get-AtlasoWorkstationVmxMacAddress'

@@ -19,6 +19,7 @@ Import-Module (Join-Path $RepositoryRoot 'scripts/windows/vmware/Atlaso.Workstat
 [System.IO.Directory]::CreateDirectory($OutputDirectory) | Out-Null
 $targetVmx = Join-Path $OutputDirectory 'Issue-535.vmx'
 $sourceVmx = Join-Path $OutputDirectory 'Existing-Static-Source.vmx'
+$concurrentVmx = Join-Path $OutputDirectory 'Concurrent-Clone.vmx'
 [System.IO.File]::WriteAllText(
     $targetVmx,
     "displayName = `"Issue-535`"`nethernet0.generatedAddress = `"00:0c:29:11:22:33`"`n",
@@ -27,6 +28,11 @@ $sourceVmx = Join-Path $OutputDirectory 'Existing-Static-Source.vmx'
 [System.IO.File]::WriteAllText(
     $sourceVmx,
     "displayName = `"Existing-Static-Source`"`nethernet0.generatedAddress = `"00:0c:29:aa:bb:cc`"`n",
+    [System.Text.UTF8Encoding]::new($false)
+)
+[System.IO.File]::WriteAllText(
+    $concurrentVmx,
+    "displayName = `"Concurrent-Clone`"`nethernet0.generatedAddress = `"00:0c:29:44:55:66`"`n",
     [System.Text.UTF8Encoding]::new($false)
 )
 $fakeVmrun = Join-Path $OutputDirectory 'fake-vmrun.cmd'
@@ -168,6 +174,34 @@ try {
 } catch {
     if ($_.Exception.Message -eq 'Missing guest hostname evidence was accepted.' -or
         $_.Exception.Message -notlike '*hostname evidence is incomplete*') { throw }
+}
+
+Assert-AtlasoWorkstationStableObservation `
+    -InitialVmxPaths @($targetVmx, $sourceVmx) `
+    -ConfirmedVmxPaths @($sourceVmx, $targetVmx) `
+    -InitialTargetIPAddress '192.168.167.135' `
+    -ConfirmedTargetIPAddress '192.168.167.135'
+try {
+    Assert-AtlasoWorkstationStableObservation `
+        -InitialVmxPaths @($targetVmx, $sourceVmx) `
+        -ConfirmedVmxPaths @($targetVmx, $sourceVmx, $concurrentVmx) `
+        -InitialTargetIPAddress '192.168.167.135' `
+        -ConfirmedTargetIPAddress '192.168.167.135'
+    throw 'A concurrent running VM was accepted.'
+} catch {
+    if ($_.Exception.Message -eq 'A concurrent running VM was accepted.' -or
+        $_.Exception.Message -notlike '*inventory or target address changed*') { throw }
+}
+try {
+    Assert-AtlasoWorkstationStableObservation `
+        -InitialVmxPaths @($targetVmx, $sourceVmx) `
+        -ConfirmedVmxPaths @($targetVmx, $sourceVmx) `
+        -InitialTargetIPAddress '192.168.167.135' `
+        -ConfirmedTargetIPAddress '192.168.167.136'
+    throw 'A changing target address was accepted.'
+} catch {
+    if ($_.Exception.Message -eq 'A changing target address was accepted.' -or
+        $_.Exception.Message -notlike '*inventory or target address changed*') { throw }
 }
 
 Write-Output 'Atlaso VMware Workstation readiness tests passed.'

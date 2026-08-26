@@ -267,7 +267,8 @@ provisioning, makes first boot publish the actual applied hostname through VMwar
 address; it requires an address answer from every running Workstation guest and requires the Windows neighbor entry for
 that address to match the target MAC. An unanswered running guest remains incomplete evidence and retries. A hostname
 mismatch, duplicate static address, or neighbor entry owned by another running VM fails closed with the relevant exact
-identity evidence.
+identity evidence. The wrapper re-lists the running inventory and rechecks the target address immediately before
+returning; a concurrent VM start, stop, or target-address change retries the complete proof.
 
 Recover from that failure through the exact clone's local console: stop the named conflicting VM, or give the clone a
 unique applied static address. A temporary DHCP reservation is acceptable only when it is bound to the exact target MAC

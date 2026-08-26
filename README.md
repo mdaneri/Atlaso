@@ -174,8 +174,9 @@ trusting `ssh-keyscan`.
 Before it prints ready state or connection endpoints, the wrapper also proves one identity tuple across the exact
 running VMX, management NIC MAC, injected hostname, guest-published actual hostname, VMware Tools address, and Windows
 neighbor cache. Every running guest must answer the address inventory query. A static address also claimed by another
-running Workstation VM fails closed with the conflicting VMX and MAC; recovery remains an explicit stop-or-readdress
-operation and never rewrites SSH `known_hosts`.
+running Workstation VM fails closed with the conflicting VMX and MAC. The wrapper re-lists the running inventory and
+rechecks the target address immediately before returning, retrying when either changes. Recovery remains an explicit
+stop-or-readdress operation and never rewrites SSH `known_hosts`.
 Password-backed Windows deployment binds the concealed `DEFAULT_ADMIN_PASSWORD` variable from the verified `Atlaso`
 1Password Environment through the Windows-supported 1Password SDK desktop integration; the SDK and Paramiko run in one
 bounded child that rejects unknown SSH host keys and never accepts a password
