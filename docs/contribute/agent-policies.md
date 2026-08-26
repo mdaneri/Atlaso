@@ -748,15 +748,19 @@ Terminal order:
   `-VmxPath "<path-to-vmx>"` for VMware discovery; do not pipe the VMX path or put the `.vmx` path on a separate line
   because PowerShell will try to execute it. For password-backed Windows deployment, authenticate the local 1Password
   integration, verify exactly one `Atlaso` Environment and the concealed `DEFAULT_ADMIN_PASSWORD` variable by name,
-  then pass only its opaque ID with `-OnePasswordEnvironmentId`; the script must use `op run --environment` and fail
-  closed when its CLI capability, authorization, Environment, or variable is unavailable. Never pass a password
+  then pass its opaque ID with `-OnePasswordEnvironmentId` and the approved account name or ID with
+  `-OnePasswordAccount`; pass an explicit CPython 3.10 through 3.13 executable with `-OnePasswordPython` rather than
+  source-building the unsupported Python 3.14 combination. The script must use the supported 1Password SDK desktop
+  integration, stage the SDK, Paramiko,
+  and their transitive dependencies from the generated seven-day hash-verified deployment lock, install only from that
+  offline wheel set, and fail closed when SDK preparation, desktop authorization, Environment access, the unique
+  variable, or masking is unavailable. Never pass a password
   argument, create a local `.env`, set `DEFAULT_ADMIN_PASSWORD` in the caller, or use the retired
   `ATLASO_DEPLOY_SSH_PASSWORD` fallback. The parent must perform local build and input preparation without the
-  credential, then invoke the bounded Paramiko helper directly as `op run --environment <id> -- <python> ...` so the
-  exact Environment supplies `DEFAULT_ADMIN_PASSWORD` only to that subprocess. The child must remove the variable
-  immediately after capture, start Python with `-I -S`, and prepend only its explicit dependency path; caller-controlled
-  child command-line values, startup hooks, inherited `PYTHONPATH`, or an interactive `op run` shell must not observe
-  or authorize password consumption. Password-backed Paramiko
+  credential, then invoke one bounded Python child that retrieves `DEFAULT_ADMIN_PASSWORD` through the SDK and uses it
+  directly for Paramiko without placing it in the environment. Start Python with `-I -S` and prepend only its explicit
+  dependency path; caller-controlled child command-line values, startup hooks, and inherited `PYTHONPATH` must not
+  observe or authorize password consumption. Password-backed Paramiko
   must load system known hosts and reject unknown keys; accept only one non-echoing account-password prompt and reject
   OTP/MFA or verification-code wording. Keep the password-backed remote-command timeout separate from the readiness
   timeout so a long but progressing deployment is not cut off by the post-restart readiness allowance.

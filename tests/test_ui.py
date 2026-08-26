@@ -937,12 +937,16 @@ def test_pwa_manifest_service_worker_and_offline_shell(client):
     assert service_worker.headers["cache-control"] == "no-cache"
     assert service_worker.headers["service-worker-allowed"] == "/ui/management/"
     assert "ATLASO_CACHE" in service_worker.text
-    assert "atlaso-management-pwa-v286" in service_worker.text
+    assert "atlaso-management-pwa-v" in service_worker.text
+    assert "ATLASO_CACHE_PREFIX" in service_worker.text
+    assert 'const ATLASO_CACHE = `${ATLASO_CACHE_PREFIX}287`;' in service_worker.text
     assert 'fetch(asset, { cache: "reload" })' in service_worker.text
-    assert ".catch(() => undefined)" in service_worker.text
+    assert "Required precache request failed" in service_worker.text
+    assert "key.startsWith(ATLASO_CACHE_PREFIX)" in service_worker.text
     assert 'request.mode === "navigate"' in service_worker.text
     assert 'url.pathname.startsWith("/ui/management/")' in service_worker.text
-    assert 'caches.match("/static/offline.html")' in service_worker.text
+    assert 'cache.match("/static/offline.html")' in service_worker.text
+    assert "caches.match(" not in service_worker.text
     assert 'request.method !== "GET"' in service_worker.text
     assert 'url.pathname.startsWith("/ca/downloads/")' in service_worker.text
     assert 'url.pathname.startsWith("/certificate-authority/downloads/")' in service_worker.text

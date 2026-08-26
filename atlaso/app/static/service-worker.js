@@ -1,4 +1,5 @@
-const ATLASO_CACHE = "atlaso-management-pwa-v286";
+const ATLASO_CACHE_PREFIX = "atlaso-management-pwa-v";
+const ATLASO_CACHE = `${ATLASO_CACHE_PREFIX}287`;
 const ATLASO_ASSETS = [
   "/manifest.webmanifest",
   "/favicon.ico",
@@ -29,31 +30,37 @@ const ATLASO_ASSETS = [
 
 self.addEventListener("install", (event) => {
   event.waitUntil(
-    caches.open(ATLASO_CACHE).then((cache) =>
-      Promise.all(
-        ATLASO_ASSETS.map((asset) =>
-          fetch(asset, { cache: "reload" })
-            .then((response) => {
-              if (!response || !response.ok) {
-                return undefined;
-              }
-              return cache.put(asset, response);
-            })
-            .catch(() => undefined)
-        )
-      )
-    )
+    caches.open(ATLASO_CACHE)
+      .then(async (cache) => {
+        const results = await Promise.allSettled(ATLASO_ASSETS.map(async (asset) => {
+          const response = await fetch(asset, { cache: "reload" });
+          if (!response || !response.ok) {
+            throw new Error(`Required precache request failed: ${asset}`);
+          }
+          await cache.put(asset, response);
+        }));
+        const failure = results.find((result) => result.status === "rejected");
+        if (failure) throw failure.reason;
+      })
+      .then(() => self.skipWaiting())
+      .catch(async (error) => {
+        // A failed install must not leave a partial cache that a later lifecycle could mistake for complete.
+        await caches.delete(ATLASO_CACHE);
+        throw error;
+      })
   );
-  self.skipWaiting();
 });
 
 self.addEventListener("activate", (event) => {
   event.waitUntil(
     caches.keys().then((keys) =>
-      Promise.all(keys.filter((key) => key !== ATLASO_CACHE).map((key) => caches.delete(key)))
-    )
+      Promise.all(
+        keys
+          .filter((key) => key.startsWith(ATLASO_CACHE_PREFIX) && key !== ATLASO_CACHE)
+          .map((key) => caches.delete(key))
+      )
+    ).then(() => self.clients.claim())
   );
-  self.clients.claim();
 });
 
 function isCacheableAsset(url) {
@@ -96,7 +103,9 @@ self.addEventListener("fetch", (event) => {
       return;
     }
     event.respondWith(
-      fetch(request).catch(() => caches.match("/static/offline.html"))
+      fetch(request).catch(() =>
+        caches.open(ATLASO_CACHE).then((cache) => cache.match("/static/offline.html"))
+      )
     );
     return;
   }
@@ -106,11 +115,11 @@ self.addEventListener("fetch", (event) => {
   }
 
   event.respondWith(
-    caches.match(request).then((cached) => {
+    caches.open(ATLASO_CACHE).then((cache) => cache.match(request).then((cached) => {
       const refresh = fetch(request).then((response) => {
         if (response && response.ok) {
           const copy = response.clone();
-          caches.open(ATLASO_CACHE).then((cache) => cache.put(request, copy)).catch(() => undefined);
+          cache.put(request, copy).catch(() => undefined);
         }
         return response;
       }).catch(() => undefined);
@@ -118,6 +127,6 @@ self.addEventListener("fetch", (event) => {
         return cached;
       }
       return refresh.then((response) => response || new Response("", { status: 504, statusText: "Gateway Timeout" }));
-    })
+    }))
   );
 });

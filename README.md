@@ -172,7 +172,8 @@ password-backed sudo policy. First boot publishes only the test VM's public Ed25
 guest-info; the wrapper prints the exact key and SHA-256 fingerprint for explicit `known_hosts` verification without
 trusting `ssh-keyscan`.
 Password-backed Windows deployment binds the concealed `DEFAULT_ADMIN_PASSWORD` variable from the verified `Atlaso`
-1Password Environment through `op run --environment`; it rejects unknown SSH host keys and never accepts a password
+1Password Environment through the Windows-supported 1Password SDK desktop integration; the SDK and Paramiko run in one
+bounded child that rejects unknown SSH host keys and never accepts a password
 argument, local `.env`, or the retired `ATLASO_DEPLOY_SSH_PASSWORD` fallback. See the
 [VMware Workstation deployment reference](docs/reference/full-technical-reference.md#vmware-workstation-workflow).
 
