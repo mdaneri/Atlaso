@@ -16,6 +16,15 @@ from scripts import publish_release
 from scripts import verify_virtualization_artifact_index as verifier
 
 
+def test_operator_verification_bootstraps_with_standard_tools() -> None:
+    """The operator guide authenticates the index without executing fetched code."""
+
+    guide = Path("docs/reference/virtualization-artifacts.md").read_text(encoding="utf-8")
+    assert "verify-from-source.py" not in guide
+    assert "openssl pkeyutl -verify -pubin -rawin" in guide
+    assert guide.index("sha256sum --check --strict") < guide.index("openssl pkeyutl -verify")
+
+
 def _key(path: Path) -> Ed25519PrivateKey:
     """Write and return one test-only Ed25519 signing key.
 

@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import importlib.util
 import json
+import os
 from pathlib import Path
 
 import pytest
@@ -98,3 +99,22 @@ def test_access_cleanup_removes_only_atlaso_transport(monkeypatch, tmp_path: Pat
 
     assert not access.exists()
     assert pool.read_bytes() == unrelated
+
+
+@pytest.mark.skipif(os.name == "nt", reason="The marker is committed by the Photon Linux guest.")
+def test_machine_identity_marker_is_committed_atomically(monkeypatch, tmp_path: Path) -> None:
+    """A durable marker is complete and leaves no partial sibling behind.
+
+    Args:
+        monkeypatch: Pytest fixture used to replace the fixed marker path.
+        tmp_path: Temporary directory provided by pytest.
+    """
+
+    module = _load_module()
+    marker = tmp_path / "state/machine-identity.applied"
+    monkeypatch.setattr(module, "MARKER_PATH", marker)
+
+    module._write_marker_atomic("qemu")
+
+    assert marker.read_text(encoding="utf-8") == "platform=qemu\n"
+    assert not list(marker.parent.glob(".machine-identity.applied.*.tmp"))

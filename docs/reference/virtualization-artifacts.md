@@ -27,8 +27,8 @@ conflicting disks.
 
 ## Verify release assets
 
-Download the release into a new directory, then obtain the verifier and trusted public key from the same immutable
-source tag. The release key ID is `atlaso-release-2026-01`; its SHA-256 fingerprint is
+Download the release into a new directory, then obtain the trusted public key from the immutable source tag. The
+release key ID is `atlaso-release-2026-01`; its SHA-256 fingerprint is
 `b0bb5614342c4f432a01c53fc4c9aae54c1eeffb12806539a92babbcda74b58e`. This example verifies the detached Ed25519
 signature, expected version, and every indexed asset before import:
 
@@ -37,25 +37,43 @@ TAG=vX.Y.Z
 ASSET_ROOT="atlaso-$TAG"
 mkdir -- "$ASSET_ROOT"
 gh release download "$TAG" --repo mdaneri/Atlaso --dir "$ASSET_ROOT"
-curl --fail --location --output "$ASSET_ROOT/verify-from-source.py" \
-  "https://raw.githubusercontent.com/mdaneri/Atlaso/$TAG/scripts/verify_virtualization_artifact_index.py"
 curl --fail --location --output "$ASSET_ROOT/atlaso-release-2026-01.pem" \
   "https://raw.githubusercontent.com/mdaneri/Atlaso/$TAG/image/common/update-trust/atlaso-release-2026-01.pem"
 printf '%s  %s\n' \
   'b0bb5614342c4f432a01c53fc4c9aae54c1eeffb12806539a92babbcda74b58e' \
   "$ASSET_ROOT/atlaso-release-2026-01.pem" | sha256sum --check --strict
-python "$ASSET_ROOT/verify-from-source.py" \
-  --index "$ASSET_ROOT/virtualization-artifact-index.json" \
-  --signature "$ASSET_ROOT/virtualization-artifact-index.json.sig" \
-  --trust-key "$ASSET_ROOT/atlaso-release-2026-01.pem" \
-  --asset-directory "$ASSET_ROOT" \
-  --expected-version "${TAG#v}"
+jq -e --arg version "${TAG#v}" '
+  .schema_version == 1 and .kind == "atlaso-virtualization-artifacts" and
+  .version == $version and .signing_key_id == "atlaso-release-2026-01" and
+  (.source_commit | test("^[0-9a-f]{40}$")) and
+  (.assets | type == "array" and length > 0 and
+    all(.[]; (.name | test("^[A-Za-z0-9][A-Za-z0-9._-]*$")) and
+      (.size | type == "number") and (.sha256 | test("^[0-9a-f]{64}$"))) and
+    ([.[].name] | length == (unique | length)))
+' "$ASSET_ROOT/virtualization-artifact-index.json" >/dev/null
+jq -e '
+  .schema_version == 1 and .algorithm == "ed25519" and
+  .key_id == "atlaso-release-2026-01" and (.signature | type == "string")
+' "$ASSET_ROOT/virtualization-artifact-index.json.sig" >/dev/null
+jq -r .signature "$ASSET_ROOT/virtualization-artifact-index.json.sig" |
+  base64 --decode >"$ASSET_ROOT/virtualization-artifact-index.raw.sig"
+openssl pkeyutl -verify -pubin -rawin \
+  -inkey "$ASSET_ROOT/atlaso-release-2026-01.pem" \
+  -in "$ASSET_ROOT/virtualization-artifact-index.json" \
+  -sigfile "$ASSET_ROOT/virtualization-artifact-index.raw.sig"
+while IFS=$'\t' read -r digest size name; do
+  test "$(stat --format='%s' "$ASSET_ROOT/$name")" -eq "$size"
+  printf '%s  %s\n' "$digest" "$name"
+done < <(jq -r '.assets[] | [.sha256, .size, .name] | @tsv' \
+  "$ASSET_ROOT/virtualization-artifact-index.json") |
+  (cd "$ASSET_ROOT" && sha256sum --check --strict)
+rm -- "$ASSET_ROOT/virtualization-artifact-index.raw.sig"
 ```
 
-Run the verification from a trusted administrative workstation with Python and the locked release-tool dependencies
-installed. A successful command prints the verified source commit, key ID, version, and asset count. Keep the verified
-OVA immutable and available until deployment validation succeeds. Do not import any asset if key fingerprint,
-signature, version, or asset verification fails.
+Run the verification from a trusted administrative workstation with OpenSSL 3, `jq`, GNU coreutils, and GitHub CLI.
+The standard tools authenticate the signed index before trusting its asset records; no downloaded verifier executes
+before that trust boundary. Keep the verified OVA immutable and available until deployment validation succeeds. Do not
+import any asset if key fingerprint, signature, version, size, or asset hash verification fails.
 
 Every helper runs `validate_ova.py` before changing hypervisor state. Validation requires the manifest, source commit,
 version, payload hashes and roles, fixed capacities, and complete machine topology to agree. An unexpected archive

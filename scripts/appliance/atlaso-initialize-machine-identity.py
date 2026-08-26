@@ -133,6 +133,31 @@ def clear_access(platform: str) -> None:
         _clear_hyperv_access()
 
 
+def _write_marker_atomic(platform: str) -> None:
+    """Commit the machine-identity completion marker durably and atomically.
+
+    Args:
+        platform: Verified guest-agent platform identifier.
+    """
+
+    MARKER_PATH.parent.mkdir(parents=True, exist_ok=True)
+    temporary = MARKER_PATH.with_name(f".{MARKER_PATH.name}.{secrets.token_hex(8)}.tmp")
+    descriptor = os.open(temporary, os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW, 0o600)
+    try:
+        with os.fdopen(descriptor, "w", encoding="utf-8") as handle:
+            handle.write(f"platform={platform}\n")
+            handle.flush()
+            os.fsync(handle.fileno())
+        os.replace(temporary, MARKER_PATH)
+        directory_descriptor = os.open(MARKER_PATH.parent, os.O_RDONLY | os.O_DIRECTORY)
+        try:
+            os.fsync(directory_descriptor)
+        finally:
+            os.close(directory_descriptor)
+    finally:
+        temporary.unlink(missing_ok=True)
+
+
 def initialize(platform: str) -> None:
     """Initialize one cloned appliance before any network service starts.
 
@@ -182,8 +207,7 @@ def initialize(platform: str) -> None:
                 )
         except OSError:
             pass
-    MARKER_PATH.write_text(f"platform={platform}\n", encoding="utf-8")
-    os.chmod(MARKER_PATH, 0o600)
+    _write_marker_atomic(platform)
 
 
 def main(argv: list[str] | None = None) -> int:
