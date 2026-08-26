@@ -1327,8 +1327,9 @@ def test_packer_build_uses_atlaso_management_network_by_default():
     assert "Remove-AtlasoSensitiveBuildArtifact -Path $kickstartJson" in build_module
     assert "Remove-AtlasoSensitiveBuildArtifact -Path $ksSourceDir" in build_module
     assert "Remove-AtlasoSensitiveBuildArtifact -Path $varFilePath" in build_module
-    assert "$preparedIsoCleanupPaths.Add($resolvedPreparedIsoPath)" in build_module
-    assert "$preparedIsoCleanupPaths.Add($fallbackPreparedIsoPath)" in build_module
+    assert "$CleanupPaths.Add($attemptIsoPath)" in build_module
+    assert "$CleanupPaths.Add($OutputIso)" in build_module
+    assert "Move-Item -LiteralPath $attemptIsoPath -Destination $OutputIso" in build_module
     assert "Remove-AtlasoSensitiveBuildArtifact -Path $candidatePath" in build_module
     assert "Remastered Photon ISO credential cleanup failed" in build_module
     assert "PrepareIsoOnly is not supported because a retained remastered ISO" in build_module

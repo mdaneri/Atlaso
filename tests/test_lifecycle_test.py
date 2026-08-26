@@ -968,6 +968,33 @@ def test_esxi_pxe_payload_uses_dhcp_lifecycle_host():
         lifecycle.lifecycle_esxi_kickstart_content("vault.somewhere.else.password")
 
 
+def test_lifecycle_esxi_vault_inventory_reuses_normalized_marker_name():
+    """Verify a normalized-equivalent lifecycle vault is reused."""
+    lifecycle = load_lifecycle_module()
+    body = (
+        '<section data-vault-id="7" data-vault-name="Lifecycle-ESXi">'
+        '<script type="application/json" id="vault-entries-data-7">'
+        '[{"id": 9, "key": "esx.lifecycle.root"}]</script>'
+    )
+
+    vault_id, entries = lifecycle._lifecycle_esxi_vault_inventory(body)
+
+    assert vault_id == 7
+    assert entries == [{"id": 9, "key": "esx.lifecycle.root"}]
+
+
+def test_lifecycle_esxi_vault_inventory_rejects_ambiguous_marker_names():
+    """Verify normalized lifecycle vault collisions fail before creation."""
+    lifecycle = load_lifecycle_module()
+    body = (
+        '<section data-vault-id="7" data-vault-name="Lifecycle ESXi">'
+        '<section data-vault-id="8" data-vault-name="Lifecycle-ESXi">'
+    )
+
+    with pytest.raises(lifecycle.LifecycleError, match="marker name is ambiguous"):
+        lifecycle._lifecycle_esxi_vault_inventory(body)
+
+
 def test_restored_esxi_lifecycle_recreates_vault_secret_before_apply(monkeypatch, tmp_path):
     """Verify restored ESXi state rehydrates its excluded vault secret before apply.
 

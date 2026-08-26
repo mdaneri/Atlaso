@@ -1194,6 +1194,21 @@ LIFECYCLE_ESXI_VAULT_KEY = "esx.lifecycle.root"
 LIFECYCLE_ESXI_VAULT_MARKER = "vault.lifecycle_esxi.esx.lifecycle.root.password"
 
 
+def _lifecycle_vault_marker_name(value: str) -> str:
+    """Return the canonical marker segment for a lifecycle vault display name.
+
+    Args:
+        value: Vault display name from the canonical inventory.
+
+    Returns:
+        Normalized marker segment using the appliance vault contract.
+    """
+    marker = re.sub(r"[^a-z0-9_]+", "_", value.strip().lower()).strip("_")
+    if marker and marker[0].isdigit():
+        marker = f"vault_{marker}"
+    return marker
+
+
 def lifecycle_esxi_kickstart_content(vault_marker: str = LIFECYCLE_ESXI_VAULT_MARKER) -> str:
     """Return lifecycle ESXi kickstart content using a protected vault marker.
 
@@ -1232,15 +1247,17 @@ def _lifecycle_esxi_vault_inventory(body: str) -> tuple[int | None, list[dict[st
     Returns:
         Vault identifier and its redacted entry metadata, when present.
     """
-    vault_id = None
+    matching_vault_ids = []
     for identifier, name in re.findall(
         r'data-vault-id="(\d+)"\s+data-vault-name="([^"]+)"', body
     ):
-        if html.unescape(name) == LIFECYCLE_ESXI_VAULT_NAME:
-            vault_id = int(identifier)
-            break
-    if vault_id is None:
+        if _lifecycle_vault_marker_name(html.unescape(name)) == "lifecycle_esxi":
+            matching_vault_ids.append(int(identifier))
+    if len(matching_vault_ids) > 1:
+        raise LifecycleError("Lifecycle ESXi vault marker name is ambiguous.")
+    if not matching_vault_ids:
         return None, []
+    vault_id = matching_vault_ids[0]
     match = re.search(
         rf'<script type="application/json" id="vault-entries-data-{vault_id}">(.*?)</script>',
         body,

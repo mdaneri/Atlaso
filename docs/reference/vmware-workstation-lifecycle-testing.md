@@ -156,8 +156,10 @@ verification, then restarts a retained lab. Failure cleanup also stops affected 
 For a full ESXi PXE install, the consumer rotates
 the encrypted `Lifecycle ESXi` vault entry and persists only
 `{{vault.lifecycle_esxi.esx.lifecycle.root.password}}` in the Kickstart source; Atlaso resolves that marker for the
-authorized PXE request without storing the plaintext password in desired state. Because settings archives intentionally
-exclude vaults, the restored pass recreates this entry from the same standard-input secret after restore and before the
+authorized PXE request without storing the plaintext password in desired state. The lifecycle reuses a vault whose
+display name normalizes to `lifecycle_esxi` and fails closed if more than one vault claims that marker name. Because
+settings archives intentionally exclude vaults, the restored pass recreates this entry from the same standard-input
+secret after restore and before the
 ESXi PXE unit is applied.
 The `-OidcOnly` and `-RoutingWanOnly` paths do not prompt for or include a VCF Backup password because those focused
 scenarios neither stage VCF Backup nor run the settings backup/restore pass.

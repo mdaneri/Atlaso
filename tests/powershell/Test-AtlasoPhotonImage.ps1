@@ -58,6 +58,35 @@ if (Test-Path -LiteralPath $rejectedPreparedIsoPath) {
     throw 'Rejected ISO-only preparation created a credential-bearing artifact.'
 }
 
+New-Item -ItemType Directory -Force -Path $OutputDirectory | Out-Null
+$preservedPreparedIsoPath = Join-Path $OutputDirectory 'caller-owned-prepared.iso'
+$preservedPreparedIsoBytes = [System.Text.UTF8Encoding]::new($false).GetBytes('caller-owned-iso-fixture')
+[System.IO.File]::WriteAllBytes($preservedPreparedIsoPath, $preservedPreparedIsoBytes)
+try {
+    Invoke-AtlasoPhotonImageBuild `
+        -IsoUrl (Join-Path $OutputDirectory 'missing-source.iso') `
+        -IsoChecksum 'sha512:00000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000' `
+        -PackerDirectory (Join-Path $RepositoryRoot 'image\vmware-workstation') `
+        -SshPassword $rejectedSecurePassword `
+        -BuilderStaticIp '' `
+        -PreparedIsoPath $preservedPreparedIsoPath `
+        -ValidateOnly
+    throw 'Missing source ISO unexpectedly reached Photon remastering.'
+}
+catch {
+    if ($_.Exception.Message -eq 'Missing source ISO unexpectedly reached Photon remastering.') {
+        throw
+    }
+}
+if (-not (Test-Path -LiteralPath $preservedPreparedIsoPath -PathType Leaf)) {
+    throw 'Pre-remaster failure deleted the caller-owned prepared ISO.'
+}
+$actualPreservedPreparedIsoBytes = [System.IO.File]::ReadAllBytes($preservedPreparedIsoPath)
+if (-not [System.Linq.Enumerable]::SequenceEqual[byte]($actualPreservedPreparedIsoBytes, $preservedPreparedIsoBytes)) {
+    throw 'Pre-remaster failure modified the caller-owned prepared ISO.'
+}
+Remove-Item -LiteralPath $preservedPreparedIsoPath -Force
+
 $sensitiveArtifactRoot = Join-Path $OutputDirectory 'sensitive-artifact-cleanup'
 New-Item -ItemType Directory -Force -Path $sensitiveArtifactRoot | Out-Null
 [System.IO.File]::WriteAllText(

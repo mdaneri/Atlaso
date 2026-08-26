@@ -353,12 +353,15 @@ Verified Photon source ISO.
 Generated Photon kickstart document.
 .PARAMETER OutputIso
 Destination remastered ISO.
+.PARAMETER CleanupPaths
+Mutable list that records only task-owned partial or replaced ISO paths.
 #>
 function New-AtlasoRemasteredPhotonIso {
     param(
         [Parameter(Mandatory = $true)][string]$SourceIso,
         [Parameter(Mandatory = $true)][string]$KickstartJson,
-        [Parameter(Mandatory = $true)][string]$OutputIso
+        [Parameter(Mandatory = $true)][string]$OutputIso,
+        [Parameter(Mandatory = $true)][System.Collections.Generic.List[string]]$CleanupPaths
     )
 
     $repoRoot = Resolve-Path -LiteralPath (Join-Path $PSScriptRoot '..\..\..')
@@ -366,9 +369,30 @@ function New-AtlasoRemasteredPhotonIso {
     if (-not (Test-Path -LiteralPath $script)) {
         throw "Photon ISO remaster helper not found: $script"
     }
-    & python $script --source-iso $SourceIso --kickstart $KickstartJson --output $OutputIso
+    $pythonPath = (Get-Command python -ErrorAction Stop).Source
+    $outputDirectory = Split-Path -Parent $OutputIso
+    $outputLeaf = [System.IO.Path]::GetFileNameWithoutExtension($OutputIso)
+    $outputExtension = [System.IO.Path]::GetExtension($OutputIso)
+    $attemptIsoPath = Join-Path $outputDirectory ".$outputLeaf.$([guid]::NewGuid().ToString('N')).partial$outputExtension"
+    # The unique attempt path is task-owned before the helper can write a
+    # credential-bearing byte. A caller-selected target is not task-owned yet.
+    $CleanupPaths.Add($attemptIsoPath)
+    & $pythonPath $script --source-iso $SourceIso --kickstart $KickstartJson --output $attemptIsoPath
     if ($LASTEXITCODE -ne 0) {
         throw "Failed to create remastered Photon ISO."
+    }
+    if (Test-Path -LiteralPath $OutputIso) {
+        Remove-Item -LiteralPath $OutputIso -Force -ErrorAction Stop
+        if (Test-Path -LiteralPath $OutputIso) {
+            throw "Could not replace prepared Photon ISO: $OutputIso"
+        }
+    }
+    # Only after successful remastering and target replacement preflight does
+    # the final path become task-owned and eligible for credential cleanup.
+    $CleanupPaths.Add($OutputIso)
+    Move-Item -LiteralPath $attemptIsoPath -Destination $OutputIso -Force -ErrorAction Stop
+    if (Test-Path -LiteralPath $attemptIsoPath -or -not (Test-Path -LiteralPath $OutputIso -PathType Leaf)) {
+        throw "Remastered Photon ISO promotion did not complete: $OutputIso"
     }
 }
 
@@ -619,7 +643,6 @@ function Invoke-AtlasoPhotonImageBuild {
     }
 
     $preparedIsoCleanupPaths = [System.Collections.Generic.List[string]]::new()
-    $preparedIsoCleanupPaths.Add($resolvedPreparedIsoPath)
     try {
         try {
             Remove-AtlasoSensitiveBuildArtifact -Path $ksSourceDir
@@ -639,13 +662,20 @@ function Invoke-AtlasoPhotonImageBuild {
 
             $sourceIsoPath = Resolve-AtlasoPhotonSourceIso -UrlOrPath $IsoUrl -Checksum $IsoChecksum -BuildDirectory $buildDir -PackerDirectory $packerDir -SharedSourceDirectory $sharedSourceDir
             try {
-                New-AtlasoRemasteredPhotonIso -SourceIso $sourceIsoPath -KickstartJson $kickstartJson -OutputIso $resolvedPreparedIsoPath
+                New-AtlasoRemasteredPhotonIso `
+                    -SourceIso $sourceIsoPath `
+                    -KickstartJson $kickstartJson `
+                    -OutputIso $resolvedPreparedIsoPath `
+                    -CleanupPaths $preparedIsoCleanupPaths
             } catch {
                 $fallbackPreparedIsoPath = New-AtlasoFallbackPreparedIsoPath -Path $resolvedPreparedIsoPath
-                $preparedIsoCleanupPaths.Add($fallbackPreparedIsoPath)
                 Write-Warning "Could not replace prepared ISO at $resolvedPreparedIsoPath; retrying this run with $fallbackPreparedIsoPath"
                 $resolvedPreparedIsoPath = $fallbackPreparedIsoPath
-                New-AtlasoRemasteredPhotonIso -SourceIso $sourceIsoPath -KickstartJson $kickstartJson -OutputIso $resolvedPreparedIsoPath
+                New-AtlasoRemasteredPhotonIso `
+                    -SourceIso $sourceIsoPath `
+                    -KickstartJson $kickstartJson `
+                    -OutputIso $resolvedPreparedIsoPath `
+                    -CleanupPaths $preparedIsoCleanupPaths
             }
         } finally {
             # The remastered ISO owns the consumed kickstart payload. Do not retain
