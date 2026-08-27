@@ -293,6 +293,8 @@ Then use the ordinary command without an ID argument:
 ```powershell
 pwsh -ExecutionPolicy Bypass `
   -File scripts/windows/vmware/create-atlaso-test-vm.ps1 `
+  -OnePasswordAccount '<account-name-or-id>' `
+  -OnePasswordPython '<path-to-python-3.13.exe>' `
   -Redeploy `
   -ResetDataDisks `
   -WaitForIp `
@@ -315,9 +317,20 @@ replace the VMX during power-on. After first boot proves encrypted import and VM
 sentinel, the wrapper stops the exact VM, removes and verifies the powered-off signing-key assignment, restarts it, and
 requires three empty runtime readbacks before retiring the marker.
 The wrapper injects the same complete DHCP-first OVF environment before power-on. Use `-FirstBootFqdn` for the test
-identity. `-AdminPassword` and `-RootPassword` accept only `SecureString` objects; when omitted, the wrapper prompts
-securely after pending signer recovery and Environment validation, but before network preparation or new VM mutation.
-Neither credential has a repository default.
+identity. Pass the approved 1Password account name or ID through `-OnePasswordAccount` and an SDK-supported CPython
+3.10 through 3.13 executable through `-OnePasswordPython`. `-AdminPassword` and `-RootPassword` accept only
+`SecureString` objects. When either parameter is omitted, the wrapper retrieves only that credential's exact concealed
+`DEFAULT_ADMIN_PASSWORD` or `DEFAULT_ROOT_PASSWORD` from the already verified Environment through the supported
+1Password SDK desktop integration. Each explicit parameter remains independently authoritative; there are no password
+prompts, caller-environment fallbacks, repository defaults, or local `.env` inputs.
+
+The SDK runtime is built from the hash-locked deployment wheel set and invoked only after credential-independent signer
+recovery, exact Environment verification, and local input validation. It returns only current-user DPAPI ciphertext to
+the PowerShell parent. A second bounded child stages the DPAPI-protected OVF environment into the exact new VMX.
+Authorization, Environment, variable uniqueness, concealment, value validation, runtime, or timeout failure stops
+before network preparation, redeploy cleanup, data-disk reset, or cloning. `-WhatIf` does not prepare the SDK, authorize
+1Password, or retrieve either credential. Password plaintext never enters parent memory, process arguments,
+caller-controlled environment, logs, output, markers, evidence, documentation, or GitHub surfaces.
 It also resolves the current Windows user's existing `.ssh/id_ed25519.pub` before any network preparation, cleanup, or
 VM creation, installs that Ed25519 public key for `admin`, and adds a separate test-only passwordless-sudo rule. Pass
 `-SshPublicKeyPath <path>` to select another existing Ed25519 public key, or `-SkipSshKeyProvisioning` to retain

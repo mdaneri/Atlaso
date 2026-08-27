@@ -930,7 +930,13 @@ Terminal order:
   Environment configuration, load an omitted ID only from the checkout-local, Git-ignored
   `.atlaso-local/onepassword-environment-id` file, pin and verify that ID by SHA-256, require an Environments-enabled beta
   CLI before invoking `op`, and cryptographically verify the retrieved signer against the checked-in certificate before
-  mutation. Bound
+  mutation. For each omitted normal-wrapper `-AdminPassword` or `-RootPassword`, use the supported bounded Windows
+  1Password SDK pattern to retrieve only the corresponding exact, unique, concealed `DEFAULT_ADMIN_PASSWORD` or
+  `DEFAULT_ROOT_PASSWORD` from that same verified Environment. Preserve each explicit `SecureString` independently.
+  Keep plaintext out of the PowerShell parent, arguments, caller-controlled environment, logs, output, markers,
+  evidence, documentation, and GitHub surfaces by exchanging only current-user DPAPI ciphertext between bounded
+  children. Never accept caller environment variables, repository defaults, local `.env` files, or interactive password
+  prompts. Fail before network preparation, cleanup, disk reset, or cloning, and keep `-WhatIf` credential-free. Bound
   each secret child and post-staging VMware operation and require proven complete process-tree termination before
   mutating the VM or VMX during rollback. Persist boot-bound child-active phases for staging, VM start, and artifact
   removal. If termination is unproven, preserve the VM and VMX, or keep reused disks quarantined during removal, until

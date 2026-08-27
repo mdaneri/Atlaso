@@ -1295,4 +1295,228 @@ if ($childSource -match 'Write-Host|Write-Output' -or
     throw 'The bounded child must not print or pass the signer through arguments.'
 }
 
+$credentialHelperPath = Join-Path $RepositoryRoot 'scripts\windows\vmware\Invoke-AtlasoTestVmCredentials.ps1'
+$credentialHelperSource = Get-Content -LiteralPath $credentialHelperPath -Raw
+foreach ($credentialMarker in @(
+        'DEFAULT_ADMIN_PASSWORD',
+        'DEFAULT_ROOT_PASSWORD',
+        'len(matches) != 1',
+        'not matches[0].masked',
+        'os.environ.pop("DEFAULT_ADMIN_PASSWORD", None)',
+        'os.environ.pop("DEFAULT_ROOT_PASSWORD", None)',
+        "'-I', '-S', `$pythonChildPath",
+        'ConvertFrom-SecureString -SecureString $ovfSecureString'
+    )) {
+    if (-not $credentialHelperSource.Contains($credentialMarker, [System.StringComparison]::Ordinal)) {
+        throw "The bounded credential helper is missing its isolation contract: $credentialMarker"
+    }
+}
+if (
+    $credentialHelperSource -match 'Read-Host' -or
+    $wrapperSource -match "Read-Host\s+-Prompt\s+'(?:Atlaso bootstrap administrator|Photon root console) password'"
+) {
+    throw 'Normal test-VM credentials must not fall back to an interactive password prompt.'
+}
+$credentialPreparationIndex = $wrapperSource.IndexOf(
+    '$credentialBridgeState = New-AtlasoTestVmCredentialBridgeState `',
+    [System.StringComparison]::Ordinal
+)
+$networkPreparationIndex = $wrapperSource.IndexOf(
+    "& (Join-Path `$PSScriptRoot 'prepare-networks.ps1')",
+    [System.StringComparison]::Ordinal
+)
+$redeployCleanupIndex = $wrapperSource.IndexOf(
+    "& (Join-Path `$PSScriptRoot 'remove-atlaso-vm.ps1')",
+    [System.StringComparison]::Ordinal
+)
+$dataDiskResetIndex = $wrapperSource.IndexOf(
+    "Remove-Item -LiteralPath `$resolvedDiskPath -Force",
+    [System.StringComparison]::Ordinal
+)
+if (
+    $credentialPreparationIndex -lt 0 -or
+    $networkPreparationIndex -lt 0 -or
+    $redeployCleanupIndex -lt 0 -or
+    $dataDiskResetIndex -lt 0 -or
+    $credentialPreparationIndex -ge $networkPreparationIndex -or
+    $credentialPreparationIndex -ge $redeployCleanupIndex -or
+    $credentialPreparationIndex -ge $dataDiskResetIndex
+) {
+    throw 'Credential retrieval and validation must precede network preparation, cleanup, and data-disk reset.'
+}
+$whatIfGuardIndex = $wrapperSource.LastIndexOf(
+    'if (-not $WhatIfPreference) {',
+    $credentialPreparationIndex,
+    [System.StringComparison]::Ordinal
+)
+if ($whatIfGuardIndex -lt 0 -or $whatIfGuardIndex -ge $credentialPreparationIndex) {
+    throw 'Credential preparation must remain disabled for WhatIf execution.'
+}
+
+$credentialTestRoot = Join-Path ([System.IO.Path]::GetTempPath()) (
+    "atlaso-test-vm-credential-helper-$([guid]::NewGuid().ToString('N'))"
+)
+try {
+    New-Item -ItemType Directory -Path $credentialTestRoot | Out-Null
+    $fakeDependencyPath = Join-Path $credentialTestRoot 'fake-sdk'
+    $fakePackagePath = Join-Path $fakeDependencyPath 'onepassword'
+    [void][System.IO.Directory]::CreateDirectory($fakePackagePath)
+    [System.IO.File]::WriteAllText(
+        (Join-Path $fakePackagePath '__init__.py'),
+        @'
+class DesktopAuth:
+    def __init__(self, account_name):
+        self.account_name = account_name
+
+
+class Variable:
+    def __init__(self, name, value):
+        self.name = name
+        self.value = value
+        self.masked = True
+
+
+class Environments:
+    async def get_variables(self, environment_id):
+        return type("Response", (), {"variables": [
+            Variable("DEFAULT_ADMIN_PASSWORD", "SyntheticDefaultAdmin01!"),
+            Variable("DEFAULT_ROOT_PASSWORD", "SyntheticDefaultRoot001!"),
+        ]})()
+
+
+class Client:
+    @staticmethod
+    async def authenticate(**kwargs):
+        return type("Sdk", (), {"environments": Environments()})()
+'@,
+        [System.Text.UTF8Encoding]::new($false)
+    )
+    $omittedRequestPath = Join-Path $credentialTestRoot 'omitted-request.json'
+    $omittedStatusPath = Join-Path $credentialTestRoot 'omitted-status.json'
+    $omittedOvfBundlePath = Join-Path $credentialTestRoot 'omitted-first-boot-ovf.dpapi'
+    $omittedRequest = [ordered]@{
+        AdminPasswordCiphertext         = ''
+        RootPasswordCiphertext          = ''
+        Fqdn                            = 'issue558-defaults.atlaso.internal'
+        RootSshEnabled                  = $false
+        DevelopmentAdminSshPublicKey    = ''
+        DevelopmentRootCaCertificatePem = [System.IO.File]::ReadAllText((
+                Join-Path $RepositoryRoot 'image\vmware-workstation\development-trust\atlaso-development-root-ca.pem'
+            ))
+    }
+    [System.IO.File]::WriteAllText($omittedRequestPath, ($omittedRequest | ConvertTo-Json -Compress))
+    $credentialPython = (Get-Command python -CommandType Application | Select-Object -First 1).Source
+    & $credentialHelperPath `
+        -Action Prepare `
+        -RequestPath $omittedRequestPath `
+        -StatusPath $omittedStatusPath `
+        -OvfBundlePath $omittedOvfBundlePath `
+        -PythonCommand $credentialPython `
+        -DependencyPath $fakeDependencyPath `
+        -OnePasswordAccount 'atlaso-test-account' `
+        -EnvironmentId 'atlaso-test-environment' `
+        -TimeoutSeconds 5
+    $omittedStatus = [System.IO.File]::ReadAllText($omittedStatusPath) | ConvertFrom-Json
+    if (-not [bool]$omittedStatus.Success -or $omittedStatus.Code -cne 'prepared') {
+        throw "Omitted credential preparation failed safely: $($omittedStatus.Code)"
+    }
+    $omittedVmxPath = Join-Path $credentialTestRoot 'issue558-defaults.vmx'
+    [System.IO.File]::WriteAllText($omittedVmxPath, 'displayName = "issue558-defaults"')
+    $omittedStageStatusPath = Join-Path $credentialTestRoot 'omitted-stage-status.json'
+    & $credentialHelperPath `
+        -Action Stage `
+        -StatusPath $omittedStageStatusPath `
+        -OvfBundlePath $omittedOvfBundlePath `
+        -VmxPath $omittedVmxPath
+    $omittedStageStatus = [System.IO.File]::ReadAllText($omittedStageStatusPath) | ConvertFrom-Json
+    $omittedVmxText = [System.IO.File]::ReadAllText($omittedVmxPath)
+    if (
+        -not [bool]$omittedStageStatus.Success -or
+        $omittedStageStatus.Code -cne 'staged' -or
+        $omittedVmxText -notmatch 'atlaso\.admin_password' -or
+        $omittedVmxText -notmatch 'atlaso\.root_password'
+    ) {
+        throw 'The Windows DPAPI bridge did not stage both omitted SDK defaults into the synthetic VMX.'
+    }
+
+    $syntheticAdmin = [SecureString]::new()
+    foreach ($character in 'SyntheticAdmin01!'.ToCharArray()) {
+        $syntheticAdmin.AppendChar($character)
+    }
+    $syntheticRoot = [SecureString]::new()
+    foreach ($character in 'SyntheticRoot001!'.ToCharArray()) {
+        $syntheticRoot.AppendChar($character)
+    }
+    $requestPath = Join-Path $credentialTestRoot 'request.json'
+    $statusPath = Join-Path $credentialTestRoot 'status.json'
+    $ovfBundlePath = Join-Path $credentialTestRoot 'first-boot-ovf.dpapi'
+    $request = [ordered]@{
+        AdminPasswordCiphertext         = ConvertFrom-SecureString -SecureString $syntheticAdmin
+        RootPasswordCiphertext          = ConvertFrom-SecureString -SecureString $syntheticRoot
+        Fqdn                            = 'issue558.atlaso.internal'
+        RootSshEnabled                  = $false
+        DevelopmentAdminSshPublicKey    = ''
+        DevelopmentRootCaCertificatePem = [System.IO.File]::ReadAllText((
+                Join-Path $RepositoryRoot 'image\vmware-workstation\development-trust\atlaso-development-root-ca.pem'
+            ))
+    }
+    [System.IO.File]::WriteAllText($requestPath, ($request | ConvertTo-Json -Compress))
+    & $credentialHelperPath `
+        -Action Prepare `
+        -RequestPath $requestPath `
+        -StatusPath $statusPath `
+        -OvfBundlePath $ovfBundlePath
+    $prepareStatus = [System.IO.File]::ReadAllText($statusPath) | ConvertFrom-Json
+    if (-not [bool]$prepareStatus.Success -or $prepareStatus.Code -cne 'prepared') {
+        throw "Explicit SecureString credential preparation failed safely: $($prepareStatus.Code)"
+    }
+    $testVmxPath = Join-Path $credentialTestRoot 'issue558.vmx'
+    [System.IO.File]::WriteAllText($testVmxPath, 'displayName = "issue558"')
+    $stageStatusPath = Join-Path $credentialTestRoot 'stage-status.json'
+    & $credentialHelperPath `
+        -Action Stage `
+        -StatusPath $stageStatusPath `
+        -OvfBundlePath $ovfBundlePath `
+        -VmxPath $testVmxPath
+    $stageStatus = [System.IO.File]::ReadAllText($stageStatusPath) | ConvertFrom-Json
+    $testVmxText = [System.IO.File]::ReadAllText($testVmxPath)
+    if (
+        -not [bool]$stageStatus.Success -or
+        $stageStatus.Code -cne 'staged' -or
+        $testVmxText -notmatch 'guestinfo\.ovfEnv' -or
+        $testVmxText -notmatch 'atlaso\.admin_password' -or
+        $testVmxText -notmatch 'atlaso\.root_password'
+    ) {
+        throw 'The bounded child did not stage both explicit SecureString overrides into the synthetic VMX.'
+    }
+
+    $invalidRequest = [ordered]@{}
+    foreach ($requestKey in $request.Keys) {
+        $invalidRequest[$requestKey] = $request[$requestKey]
+    }
+    $invalidAdmin = [SecureString]::new()
+    foreach ($character in 'too-short'.ToCharArray()) {
+        $invalidAdmin.AppendChar($character)
+    }
+    $invalidRequest.AdminPasswordCiphertext = ConvertFrom-SecureString -SecureString $invalidAdmin
+    [System.IO.File]::WriteAllText($requestPath, ($invalidRequest | ConvertTo-Json -Compress))
+    [System.IO.File]::Delete($statusPath)
+    [System.IO.File]::Delete($ovfBundlePath)
+    & $credentialHelperPath `
+        -Action Prepare `
+        -RequestPath $requestPath `
+        -StatusPath $statusPath `
+        -OvfBundlePath $ovfBundlePath
+    $invalidStatus = [System.IO.File]::ReadAllText($statusPath) | ConvertFrom-Json
+    if ([bool]$invalidStatus.Success -or $invalidStatus.Code -cne 'admin_password_invalid') {
+        throw 'An invalid explicit administrator password did not fail in credential preflight.'
+    }
+    if (Test-Path -LiteralPath $ovfBundlePath) {
+        throw 'Invalid credential preflight left a protected OVF bundle behind.'
+    }
+}
+finally {
+    Remove-Item -LiteralPath $credentialTestRoot -Recurse -Force -ErrorAction SilentlyContinue
+}
+
 Write-Host 'Atlaso normal VMware test VM development-CA bridge tests passed.'

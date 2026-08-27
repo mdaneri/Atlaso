@@ -441,6 +441,8 @@ Create and start a normal Workstation test appliance from the latest built VMX w
 ```powershell
 pwsh -ExecutionPolicy Bypass `
   -File scripts/windows/vmware/create-atlaso-test-vm.ps1 `
+  -OnePasswordAccount '<account-name-or-id>' `
+  -OnePasswordPython '<path-to-python-3.13.exe>' `
   -Redeploy `
   -ResetDataDisks `
   -TrustRootCa
@@ -505,10 +507,11 @@ exported OVF/OVA appliances continue to generate their own roots and never recei
 Real normal-test-VM creation requires the exact `Atlaso` 1Password Environment ID. The wrapper prefers an explicit
 `-OnePasswordEnvironmentId` override and otherwise reads `.atlaso-local/onepassword-environment-id`, which Git ignores.
 It verifies the ID against the repository's non-secret SHA-256 pin before invoking `op`. That Environment must contain
-one concealed `ATLASO_DEVELOPMENT_ROOT_CA_PRIVATE_KEY` matching the checked-in certificate, and the Environments-enabled
-beta CLI under `C:\Program Files\1Password CLI` must support `op run --environment`. The wrapper validates that
-capability and cryptographically verifies the retrieved key against the checked-in certificate before network
-preparation, redeploy cleanup, or cloning. A bounded child removes the inherited variable
+one concealed `ATLASO_DEVELOPMENT_ROOT_CA_PRIVATE_KEY` matching the checked-in certificate plus exactly one concealed
+`DEFAULT_ADMIN_PASSWORD` and `DEFAULT_ROOT_PASSWORD`. The Environments-enabled beta CLI under
+`C:\Program Files\1Password CLI` must support `op run --environment`. The wrapper validates that capability and
+cryptographically verifies the retrieved key against the checked-in certificate before network preparation, redeploy
+cleanup, or cloning. A bounded child removes the inherited signer variable
 immediately and stages the signer only through the normal-wrapper guest-info field. `-TimeoutSeconds` bounds each
 `op`/secret-child
 process tree; a timeout enters signer scrub and VM rollback only after whole-tree termination is proven. Boot-bound
@@ -552,11 +555,22 @@ machine identity, the customizer publishes the VM's public Ed25519 SSH host key 
 clones the same fail-closed initialization contract as an OVA deployment instead of leaving the customizer waiting for
 properties
 that only an OVF deployment normally supplies. A generated non-secret deployment identifier distinguishes each raw
-clone attempt during pending-marker crash recovery. Use `-FirstBootFqdn`, `-AdminPassword`, and `-RootPassword` to
-override the normal test-VM values; the lifecycle wrapper uses its existing admin-password input. Password values are
-written only to the guestinfo-backed VMX setting until successful first-boot consumption clears it; they are never
-printed in plan, result, or connection-summary output. Raw-clone credential overrides must be at least 12 characters
-and cannot contain leading, trailing, XML control, or non-XML characters that would change during OVF attribute parsing.
+clone attempt during pending-marker crash recovery. For ordinary creation, pass the approved 1Password account name or
+ID through `-OnePasswordAccount` and an SDK-supported CPython 3.10 through 3.13 executable through
+`-OnePasswordPython`. When `-AdminPassword` or `-RootPassword` is omitted, the wrapper independently retrieves only that
+credential's exact concealed default through the supported 1Password SDK desktop integration. An explicitly supplied
+`SecureString` remains authoritative for that credential, so either password can be overridden without changing the
+other. SDK preparation, authorization, Environment access, uniqueness, concealment, or validation failure stops before
+network preparation, redeploy cleanup, disk reset, or cloning. `-WhatIf` does not prepare the SDK, authorize 1Password,
+or retrieve credentials. Caller environment variables, repository defaults, local `.env` files, and interactive
+password prompts are never credential sources.
+
+Plaintext exists only inside bounded credential children. The parent receives current-user DPAPI ciphertext, stages a
+DPAPI-protected complete OVF bundle into the exact newly created VMX through a second bounded child, and removes the
+temporary isolated runtime. Passwords are never placed in process arguments, caller-controlled environment, logs,
+output, markers, test evidence, documentation, or GitHub surfaces. The guestinfo-backed VMX setting remains only until
+successful first-boot consumption clears it. Raw-clone credentials must be at least 12 characters and cannot contain
+leading, trailing, XML control, or non-XML characters that would change during OVF attribute parsing.
 
 ### Development root CA rotation
 
