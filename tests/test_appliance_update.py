@@ -1622,9 +1622,12 @@ def test_restart_scheduling_failure_logs_terminal_update_result(
             job_id=job.id,
         )
         ui.complete_appliance_update_task(db, job=job, update_result=result)
+        persisted_result = json.loads(job.result or "{}")
 
     assert failures == [(job.id, "failed")]
     assert submissions == [(job.id, "failed")]
+    assert persisted_result["restart_after_commit"] is True
+    assert persisted_result["restart_scheduled"] is False
 
 
 def test_appliance_update_page_and_dry_run_job(client):

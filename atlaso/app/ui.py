@@ -12431,8 +12431,6 @@ def complete_appliance_update_task(db: Session, *, job: Job, update_result: dict
         restart_result = SystemAdapter().restart_appliance_after_update(str(update_result["config_path"]))
         update_result["commands"].append(adapter_result_to_payload(restart_result))
         update_result["restart_scheduled"] = restart_result.returncode == 0
-        if restart_result.returncode != 0:
-            update_result["restart_after_commit"] = False
         update_result["success"] = bool(update_result["success"]) and restart_result.returncode == 0
         update_result["status"] = JobStatus.SUCCEEDED.value if update_result["success"] else JobStatus.FAILED.value
         job.status = update_result["status"]
