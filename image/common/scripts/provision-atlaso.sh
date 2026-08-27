@@ -279,7 +279,7 @@ case "$ATLASO_GUEST_PLATFORM" in
     ;;
 esac
 run_tdnf "Photon appliance package installation" \
-  install python3 python3-pip python3-devel python3-setuptools python3-virtualenv python3-curses python3-ntp sudo openssh-server curl rsync tar gzip xz shadow e2fsprogs sqlite procps-ng gnupg rpm-build gcc gcc-c++ make glib-devel systemd-devel ninja-build pkg-config $GUEST_INTEGRATION_PACKAGES nftables dnsmasq ntpsec nfs-utils rpcbind openldap openldap-servers ipxe syslinux nginx powershell
+  install python3 python3-pip python3-devel python3-setuptools python3-virtualenv python3-curses python3-ntp sudo openssh-server curl rsync tar gzip xz shadow e2fsprogs sqlite procps-ng gnupg rpm-build gcc binutils make glib-devel systemd-devel ninja-build pkg-config $GUEST_INTEGRATION_PACKAGES nftables dnsmasq ntpsec nfs-utils rpcbind openldap openldap-servers ipxe syslinux nginx powershell
 
 log_step "building and staging verified offline guest-agent RPM closures"
 rm -rf "$GUEST_AGENT_STAGING"
@@ -841,7 +841,7 @@ rm -f /root/.bash_history "/home/$BOOTSTRAP_USERNAME/.bash_history"
 sync
 
 log_step "removing build-only packages and caches"
-run_tdnf "Build-only package removal" remove python3-devel python3-setuptools rpm-build gcc gcc-c++ make glib-devel systemd-devel ninja-build pkg-config
+run_tdnf "Build-only package removal" remove python3-devel python3-setuptools rpm-build gcc binutils make glib-devel systemd-devel ninja-build pkg-config
 command -v python3 >/dev/null
 command -v pwsh >/dev/null
 command -v vmtoolsd >/dev/null 2>&1 || [ "$ATLASO_GUEST_PLATFORM" != "vmware" ]
