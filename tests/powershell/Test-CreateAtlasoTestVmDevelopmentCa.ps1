@@ -379,6 +379,186 @@ if (
 ) {
     throw 'Cleanup-marker publication must use a Windows write-through rename before signer staging.'
 }
+$cleanupIdentityWriter = $wrapperSource.IndexOf(
+    'function Set-AtlasoTestVmCleanupIdentity',
+    [System.StringComparison]::Ordinal
+)
+$cleanupIdentityLock = $wrapperSource.IndexOf(
+    '[System.IO.FileShare]::Read',
+    $cleanupIdentityWriter,
+    [System.StringComparison]::Ordinal
+)
+$cleanupIdentityVerification = $wrapperSource.IndexOf(
+    '[Atlaso.WorkstationFileIdentity]::Get($resolvedVmxPath) -cne $ExpectedVmxIdentity',
+    $cleanupIdentityLock,
+    [System.StringComparison]::Ordinal
+)
+$cleanupIdentityAppend = $wrapperSource.IndexOf(
+    '$stream.Write($bytes, 0, $bytes.Length)',
+    $cleanupIdentityVerification,
+    [System.StringComparison]::Ordinal
+)
+$cleanupIdentityFlush = $wrapperSource.IndexOf(
+    '$stream.Flush($true)',
+    $cleanupIdentityAppend,
+    [System.StringComparison]::Ordinal
+)
+$cleanupIdentityFunctionEnd = $wrapperSource.IndexOf(
+    'function Get-AtlasoTestVmCleanupIdentityHash',
+    $cleanupIdentityWriter,
+    [System.StringComparison]::Ordinal
+)
+if (
+    $cleanupIdentityWriter -lt 0 -or
+    $cleanupIdentityLock -lt $cleanupIdentityWriter -or
+    $cleanupIdentityVerification -lt $cleanupIdentityLock -or
+    $cleanupIdentityAppend -lt $cleanupIdentityVerification -or
+    $cleanupIdentityFlush -lt $cleanupIdentityAppend -or
+    $cleanupIdentityFlush -gt $markerCreation
+) {
+    throw 'Cleanup identity publication must be identity-bound, locked, and durably flushed before marker publication.'
+}
+if (
+    $cleanupIdentityFunctionEnd -lt $cleanupIdentityWriter -or
+    $wrapperSource.Substring(
+        $cleanupIdentityWriter,
+        $cleanupIdentityFunctionEnd - $cleanupIdentityWriter
+    ) -match 'Write-AtlasoWorkstationDurableVmxLines|MoveFileEx'
+) {
+    throw 'Pre-marker cleanup identity publication must preserve the original VMX file object.'
+}
+$cleanupIdentityRoot = Join-Path ([System.IO.Path]::GetTempPath()) (
+    "atlaso-cleanup-identity-lock-$([guid]::NewGuid().ToString('N'))"
+)
+try {
+    New-Item -ItemType Directory -Path $cleanupIdentityRoot | Out-Null
+    $cleanupIdentityVmx = Join-Path $cleanupIdentityRoot 'Atlaso-Cleanup-Identity.vmx'
+    [System.IO.File]::WriteAllText(
+        $cleanupIdentityVmx,
+        'displayName = "Atlaso Cleanup Identity"',
+        [System.Text.UTF8Encoding]::new($false)
+    )
+    $cleanupVmxIdentity = [Atlaso.WorkstationFileIdentity]::Get($cleanupIdentityVmx)
+    $cleanupOriginal = [System.IO.File]::ReadAllText($cleanupIdentityVmx)
+    $cleanupMismatch = '00000000:0000000000000000'
+    if ($cleanupVmxIdentity -ceq $cleanupMismatch) {
+        $cleanupMismatch = 'FFFFFFFF:FFFFFFFFFFFFFFFF'
+    }
+    Assert-Throws {
+        Set-AtlasoTestVmCleanupIdentity `
+            -VmxPath $cleanupIdentityVmx `
+            -Identity ('a' * 32) `
+            -ExpectedVmxIdentity $cleanupMismatch
+    } 'A caller-bound filesystem identity mismatch must fail closed.'
+    if ([System.IO.File]::ReadAllText($cleanupIdentityVmx) -cne $cleanupOriginal) {
+        throw 'A rejected cleanup identity publication changed the caller-bound VMX.'
+    }
+    Set-AtlasoTestVmCleanupIdentity `
+        -VmxPath $cleanupIdentityVmx `
+        -Identity ('b' * 32) `
+        -ExpectedVmxIdentity $cleanupVmxIdentity
+    if (
+        [Atlaso.WorkstationFileIdentity]::Get($cleanupIdentityVmx) -cne $cleanupVmxIdentity -or
+        (Get-AtlasoTestVmCleanupIdentityHash -VmxPath $cleanupIdentityVmx) -cne
+        (Get-AtlasoCleanupIdentityHash -Value ('b' * 32)) -or
+        -not ([System.IO.File]::ReadAllText($cleanupIdentityVmx).StartsWith($cleanupOriginal))
+    ) {
+        throw 'Cleanup identity publication did not retain every original byte on the caller-bound VMX.'
+    }
+    [System.IO.File]::AppendAllText(
+        $cleanupIdentityVmx,
+        "guestinfo.atlaso.test_vm_cleanup_identity = malformed`r`n",
+        [System.Text.UTF8Encoding]::new($false)
+    )
+    Assert-Throws {
+        Get-AtlasoTestVmCleanupIdentityHash -VmxPath $cleanupIdentityVmx
+    } 'A malformed duplicate cleanup identity must remain ambiguous.'
+
+    $legacyUpgradeVmx = Join-Path $cleanupIdentityRoot 'Atlaso-Legacy-Upgrade.vmx'
+    $legacyUpgradeMarker = Join-Path $cleanupIdentityRoot 'legacy-upgrade.json'
+    [System.IO.File]::WriteAllText(
+        $legacyUpgradeVmx,
+        'displayName = "Atlaso Legacy Upgrade"',
+        [System.Text.UTF8Encoding]::new($false)
+    )
+    $legacyUpgradeIdentity = [Atlaso.WorkstationFileIdentity]::Get($legacyUpgradeVmx)
+    [System.IO.File]::WriteAllText(
+        $legacyUpgradeMarker,
+        (([ordered]@{
+                    Schema = 2
+                    Phase = 'vm-stop-child-active'
+                    VmxIdentity = $legacyUpgradeIdentity
+                }) | ConvertTo-Json -Compress),
+        [System.Text.UTF8Encoding]::new($false)
+    )
+    $legacyUpgradeState = [pscustomobject]@{
+        MarkerPath = $legacyUpgradeMarker
+        VmxPath = $legacyUpgradeVmx
+        Schema = 2
+        Phase = 'vm-stop-child-active'
+        VmxIdentity = $legacyUpgradeIdentity
+        CleanupIdentityHash = ''
+    }
+    Upgrade-AtlasoLegacyDevelopmentCaCleanupMarker -Marker $legacyUpgradeState
+    $legacyUpgradePayload = Get-Content -LiteralPath $legacyUpgradeMarker -Raw | ConvertFrom-Json
+    if (
+        [Atlaso.WorkstationFileIdentity]::Get($legacyUpgradeVmx) -cne $legacyUpgradeIdentity -or
+        $legacyUpgradePayload.Schema -ne 3 -or
+        $legacyUpgradePayload.Phase -cne 'import-proven-stopped-vmx-scrubbed' -or
+        $legacyUpgradePayload.VmxIdentity -cne $legacyUpgradeIdentity -or
+        $legacyUpgradeState.Schema -ne 3 -or
+        $legacyUpgradeState.Phase -cne 'import-proven-stopped-vmx-scrubbed' -or
+        $legacyUpgradeState.CleanupIdentityHash -cnotmatch '^[0-9A-F]{64}$'
+    ) {
+        throw 'Legacy cleanup-marker upgrade did not retain and bind the exact stopped VMX identity.'
+    }
+
+    $legacyRetryVmx = Join-Path $cleanupIdentityRoot 'Atlaso-Legacy-Retry.vmx'
+    $legacyRetryMarker = Join-Path $cleanupIdentityRoot 'legacy-retry.json'
+    $legacyRetryCleanupIdentity = 'c' * 32
+    [System.IO.File]::WriteAllText(
+        $legacyRetryVmx,
+        "displayName = `"Atlaso Legacy Retry`"`r`n" +
+        "guestinfo.atlaso.test_vm_cleanup_identity = `"$legacyRetryCleanupIdentity`"`r`n",
+        [System.Text.UTF8Encoding]::new($false)
+    )
+    $legacyRetryIdentity = [Atlaso.WorkstationFileIdentity]::Get($legacyRetryVmx)
+    [System.IO.File]::WriteAllText(
+        $legacyRetryMarker,
+        (([ordered]@{
+                    Schema = 2
+                    Phase = 'vm-stop-child-active'
+                    VmxIdentity = $legacyRetryIdentity
+                }) | ConvertTo-Json -Compress),
+        [System.Text.UTF8Encoding]::new($false)
+    )
+    $legacyRetryState = [pscustomobject]@{
+        MarkerPath = $legacyRetryMarker
+        VmxPath = $legacyRetryVmx
+        Schema = 2
+        Phase = 'vm-stop-child-active'
+        VmxIdentity = $legacyRetryIdentity
+        CleanupIdentityHash = ''
+    }
+    Upgrade-AtlasoLegacyDevelopmentCaCleanupMarker -Marker $legacyRetryState
+    $legacyRetryPayload = Get-Content -LiteralPath $legacyRetryMarker -Raw | ConvertFrom-Json
+    $legacyRetryAssignments = @(
+        Get-Content -LiteralPath $legacyRetryVmx |
+            Where-Object { $_ -match '^\s*guestinfo\.atlaso\.test_vm_cleanup_identity\s*=' }
+    )
+    if (
+        $legacyRetryAssignments.Count -ne 1 -or
+        [Atlaso.WorkstationFileIdentity]::Get($legacyRetryVmx) -cne $legacyRetryIdentity -or
+        $legacyRetryPayload.Schema -ne 3 -or
+        $legacyRetryPayload.CleanupIdentityHash -cne
+        (Get-AtlasoCleanupIdentityHash -Value $legacyRetryCleanupIdentity)
+    ) {
+        throw 'Legacy cleanup-marker retry did not reuse the sole durable VMX cleanup identity.'
+    }
+}
+finally {
+    Remove-Item -LiteralPath $cleanupIdentityRoot -Recurse -Force -ErrorAction SilentlyContinue
+}
 if (
     $firstBootSource -notmatch 'function Write-AtlasoWorkstationDurableVmxLines' -or
     $firstBootSource -notmatch '\[System\.IO\.FileOptions\]::WriteThrough' -or
@@ -474,6 +654,33 @@ try {
     $markerDisk = Join-Path $markerVmRoot 'Atlaso-Depot.vmdk'
     $markerDiskExtentOne = Join-Path $markerVmRoot 'Atlaso-Depot-s001.vmdk'
     $markerDiskExtentTwo = Join-Path $markerVmRoot 'Atlaso-Depot-s002.vmdk'
+    $blockedMarkerVmx = Join-Path $markerVmRoot 'Atlaso-Blocked-Marker.vmx'
+    [System.IO.File]::WriteAllText(
+        $blockedMarkerVmx,
+        "displayName = `"Atlaso Blocked Marker`"`r`n" +
+        "guestinfo.atlaso.test_vm_cleanup_identity = `"$('d' * 32)`"`r`n",
+        [System.Text.UTF8Encoding]::new($false)
+    )
+    $blockedMarkerPath = ''
+    Assert-Throws {
+        New-AtlasoDevelopmentCaCleanupMarker `
+            -VmxPath $blockedMarkerVmx `
+            -Name 'Atlaso-Blocked-Marker' `
+            -OutputDirectory $markerVmRoot `
+            -DataDiskStates @() `
+            -MarkerRoot $markerRoot `
+            -MarkerPathReference ([ref]$blockedMarkerPath)
+    } 'A pre-existing VMX cleanup identity must block marker publication.'
+    if (
+        [string]::IsNullOrWhiteSpace($blockedMarkerPath) -or
+        (Test-Path -LiteralPath $blockedMarkerPath) -or
+        -not ([System.IO.Path]::GetDirectoryName($blockedMarkerPath)).Equals(
+            [System.IO.Path]::GetFullPath($markerRoot),
+            [System.StringComparison]::OrdinalIgnoreCase
+        )
+    ) {
+        throw 'A marker-publication failure did not preserve its unbound path for fail-closed rollback.'
+    }
     [System.IO.File]::WriteAllText($markerVmx, 'config.version = "8"')
     [System.IO.File]::WriteAllText(
         $markerDisk,
@@ -1367,7 +1574,7 @@ $credentialStageCallIndex = $wrapperSource.LastIndexOf(
     [System.StringComparison]::Ordinal
 )
 $credentialStageMarkerIndex = $wrapperSource.LastIndexOf(
-    '$developmentCaCleanupMarkerPath = New-AtlasoDevelopmentCaCleanupMarker `',
+    'New-AtlasoDevelopmentCaCleanupMarker `',
     $credentialStageCallIndex,
     [System.StringComparison]::Ordinal
 )
