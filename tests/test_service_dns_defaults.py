@@ -99,6 +99,7 @@ def test_reconcile_factory_identities_preserves_operator_state_and_dns_conflicts
         CA_PORTAL_DNS_DESCRIPTION,
         ESX_STORAGE_DNS_DESCRIPTION,
         ESXI_PXE_DNS_DESCRIPTION,
+        KMS_DNS_DESCRIPTION,
         VCF_DEPOT_DNS_DESCRIPTION,
         reconcile_factory_service_identities,
     )
@@ -196,6 +197,18 @@ def test_reconcile_factory_identities_preserves_operator_state_and_dns_conflicts
                     record_type="A",
                     address="192.0.2.36",
                     description="Operator-owned record",
+                ),
+                DnsRecord(
+                    hostname="kms.atlaso.internal",
+                    record_type="CNAME",
+                    address="kms-eth2.atlaso.internal",
+                    description=KMS_DNS_DESCRIPTION,
+                ),
+                DnsRecord(
+                    hostname="kms.atlaso.internal",
+                    record_type="CNAME",
+                    address="kms-eth3.atlaso.internal",
+                    description=KMS_DNS_DESCRIPTION,
                 ),
                 DnsRecord(
                     hostname="nfs.atlaso.internal",
@@ -298,6 +311,18 @@ def test_reconcile_factory_identities_preserves_operator_state_and_dns_conflicts
             and row.description == "Operator-owned record"
             for row in records
         )
+        migrated_kms_aliases = [
+            row
+            for row in records
+            if row.hostname == "kms.lab.internal"
+            and row.record_type == "CNAME"
+            and row.description == KMS_DNS_DESCRIPTION
+        ]
+        assert len(migrated_kms_aliases) == 1
+        assert migrated_kms_aliases[0].address in {
+            "kms-eth2.lab.internal",
+            "kms-eth3.lab.internal",
+        }
         assert any(row.hostname == "nfs.lab.internal" for row in records)
         assert not any(
             row.hostname == "nfs.lab.internal"

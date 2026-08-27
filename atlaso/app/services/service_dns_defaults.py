@@ -299,6 +299,9 @@ def _migrate_owned_dns_records(
         record.hostname = renamed_hostname
         record.address = renamed_address
         changed += 1
+        # This session disables autoflush, so publish each rename before the next
+        # destination lookup to consolidate duplicate source-side CNAMEs safely.
+        db.flush()
     return changed, conflicts
 
 
