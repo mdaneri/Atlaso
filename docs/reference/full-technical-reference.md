@@ -221,6 +221,9 @@ child unwraps values for kickstart and Packer serialization. All plaintext kicks
 variable artifacts live under that exact task-owned root, allowing the parent to remove and verify them even when the
 deadline force-terminates the child before its own cleanup runs. The default six-hour deadline is configurable through
 `-ImageBuildTimeoutSeconds`.
+An unproven whole-tree termination retains that root and a non-secret checkout-local ownership marker. Same-boot
+invocations fail closed; after Windows restarts, the changed boot identity proves the prior tree inactive and recovery
+removes the exact root followed by its marker before new credential or image work.
 
 The supported VMware Workstation wrapper treats the Photon build password as opaque data. It encodes the
 credential before inserting it into generated kickstart or Packer shell commands, then decode it directly to standard

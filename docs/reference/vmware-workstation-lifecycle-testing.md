@@ -121,6 +121,10 @@ kickstart and Packer serialization. Every plaintext kickstart, remastered ISO, a
 the same exact task-owned temporary root. If the whole-child deadline force-terminates the process tree before child
 cleanup can run, the parent removes that root and verifies its absence before returning.
 `-ImageBuildTimeoutSeconds` selects the deadline and defaults to six hours.
+If whole-tree termination itself cannot be proven, the wrapper retains the root and a non-secret
+`.atlaso-local/photon-image-build-cleanup.json` ownership marker and blocks further work. Restart Windows and rerun the
+wrapper; only a changed boot identity permits the recovery path to remove and verify the exact root and then its marker
+before new credential access or image mutation.
 
 The wrapper uses the shared Photon ISO remastering, kickstart rendering, checksum validation, and Packer var-file
 generation. `image/common/source` holds the original Photon ISO download cache. The canonical image installs

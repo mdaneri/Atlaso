@@ -82,6 +82,14 @@ def test_photon_wrapper_preflights_credentials_before_image_mutation() -> None:
     assert "'SensitiveBuildDirectory', 'PreparedIsoPath'" in wrapper
     assert "-SensitiveBuildDirectory $SensitiveBuildDirectory" in wrapper
     assert "[System.IO.Directory]::Delete($resolvedCredentialRoot, $true)" in wrapper
+    assert "photon-image-build-cleanup.json" in wrapper
+    assert "Get-AtlasoPhotonWindowsBootIdentity" in wrapper
+    assert "AtlasoProcessTreeTerminationUnproven" in wrapper
+    assert "if (-not $processTreeTerminationUnproven)" in wrapper
+    assert "Restart Windows, then rerun this wrapper" in wrapper
+    assert wrapper.index("[System.IO.Directory]::Delete($resolvedCredentialRoot, $true)") < wrapper.index(
+        "Remove-Item -LiteralPath $cleanupMarkerPath"
+    )
     assert "Join-Path $sensitiveBuildDir 'packer-vars\\atlaso-photon.auto.pkrvars.hcl'" in build_module
     assert "Join-Path $sensitiveBuildDir 'kickstart-src'" in build_module
     assert "-Action 'The isolated VMware Photon image build'" in wrapper
