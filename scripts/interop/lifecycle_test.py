@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
-"""Atlaso Hyper-V lifecycle interop runner.
+"""Atlaso virtualization lifecycle interop runner.
 
-The Windows Hyper-V script owns VM topology. This runner owns appliance and
+The host-side lifecycle script owns VM topology. This runner owns appliance and
 guest assertions so failures produce reusable evidence instead of console fog.
 """
 
@@ -132,7 +132,7 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser.add_argument("--appliance-url", default="https://192.168.49.1")
     parser.add_argument("--username", default="admin")
     parser.add_argument("--password", default="")
-    parser.add_argument("--result-dir", default="test-results/hyperv-lifecycle/latest")
+    parser.add_argument("--result-dir", default="test-results/virtualization-lifecycle/latest")
     parser.add_argument("--site-interface", default="eth1")
     parser.add_argument("--trunk-interface", default="eth2")
     parser.add_argument("--wan-interface", default="eth3")
@@ -770,7 +770,7 @@ def lifecycle_plan(args: argparse.Namespace) -> dict[str, Any]:
             "Managed LDAP desired state, two isolated organization suffixes, duplicate uid support, nested groups, configurable LDAP/LDAPS listeners, management-interface exclusion, and CA hostname verification",
             "VCF Backup desired state, local user sync, SFTP listener, and client probe",
             "VCF Offline Depot browser login, curl/wget Basic auth, and Local Users password rotation",
-            "ESXi PXE desired state, DHCP boot options, TFTP artifacts, and Hyper-V PXE VM smoke",
+            "ESXi PXE desired state, DHCP boot options, TFTP artifacts, and PXE VM smoke",
             "ESX NFS 3 and 4.1 desired state, blank-disk initialization, equal IPv4/IPv6 DNS targets, exports, sockets, firewall rules, and persistence evidence",
             "passwordless admin web terminal on management and one selected extra interface",
             oidc_check,
@@ -825,7 +825,7 @@ def api_login(client: HttpClient, args: argparse.Namespace) -> str:
         args: Parsed command-line options consumed by the operation.
     """
     path = f"/api/v1/auth/login?{urllib.parse.urlencode({'username': args.username, 'password': args.password})}"
-    payload = {"name": "hyperv lifecycle interop", "scopes": ALL_SCOPES}
+    payload = {"name": "virtualization lifecycle interop", "scopes": ALL_SCOPES}
     token = client.json_request("POST", path, json_body=payload)["raw_token"]
     client.bearer_token = token
     return token
@@ -1005,7 +1005,7 @@ def configure_dns_dhcp(client: HttpClient, args: argparse.Namespace) -> dict[str
         "hostname": f"interop-appliance.{args.domain}",
         "record_type": "A",
         "address": site_ip,
-        "description": "Hyper-V lifecycle interop record",
+        "description": "Virtualization lifecycle interop record",
         "enabled": True,
     }
     existing_record = next((row for row in records if row.get("hostname") == record_payload["hostname"]), None)
@@ -1043,7 +1043,7 @@ def configure_dns_dhcp(client: HttpClient, args: argparse.Namespace) -> dict[str
         "dns_server": site_ip,
         "ntp_server": "",
         "enabled": True,
-        "description": "Hyper-V lifecycle interop scope",
+        "description": "Virtualization lifecycle interop scope",
     }
     existing_scope = next((row for row in scopes if row.get("name") == scope_payload["name"]), None)
     if existing_scope:
@@ -1455,7 +1455,7 @@ def configure_routes_nat(client: HttpClient, args: argparse.Namespace, policy: d
         "outbound_interface": args.wan_interface,
         "masquerade": True,
         "priority": 100,
-        "description": "Hyper-V lifecycle interop NAT",
+        "description": "Virtualization lifecycle interop NAT",
     }
     nat_rules = client.json_request("GET", "/api/v1/nat/rules")
     existing_nat = next((row for row in nat_rules if row.get("name") == nat_payload["name"]), None)
@@ -1542,7 +1542,7 @@ def wan_policy_payload(*, packet_loss_percent: float) -> dict[str, Any]:
     """
     return {
         "name": "Lifecycle WAN",
-        "description": "Hyper-V lifecycle interop WAN policy",
+        "description": "Virtualization lifecycle interop WAN policy",
         "enabled": True,
         "latency_ms": 25,
         "jitter_ms": 5,
@@ -2236,7 +2236,7 @@ def ca_client_certificate_request(client: HttpClient, args: argparse.Namespace) 
         "--data-urlencode ip_addresses= "
         "--data-urlencode status=csr-staged "
         "--data-urlencode serial_number= "
-        "--data-urlencode description='Hyper-V lifecycle client CSR request' "
+        "--data-urlencode description='Virtualization lifecycle client CSR request' "
         f"--data-urlencode csr_text={shell_single_quote(csr_text.strip())} "
         "--data-urlencode enabled=on "
         f"{ca_request_url}/certificate-authority/certificates); "
@@ -2282,7 +2282,7 @@ def ca_generated_certificate_request_check(client: HttpClient, args: argparse.Na
         "profile_id": profile_id,
         "subject_alt_names": f"{common_name}\n{alternate_name}",
         "ip_addresses": ip_san,
-        "description": "Hyper-V lifecycle generated certificate request",
+        "description": "Virtualization lifecycle generated certificate request",
         "enabled": "on",
     }
     status, response_body, _headers = client.request(

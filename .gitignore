@@ -43,10 +43,7 @@ playwright-report/
 # Appliance runtime, Packer, and VM artifacts
 data/
 /vcfDownloadTool
-/image/hyperv/build
-/image/hyperv/packer_cache
-/image/hyperv/output
-/image/hyperv/clients
+/artifacts/virtualization
 /image/common/source
 /image/vmware-workstation/build
 /image/vmware-workstation/packer_cache

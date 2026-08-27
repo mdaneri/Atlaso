@@ -25,6 +25,7 @@ from scripts.check_repo import (
     check_agent_policy_gate,
     check_spark_worker_agent,
     check_ui_pattern_foundation,
+    check_virtualization_legacy,
     collect_files,
     is_checkable,
 )
@@ -249,15 +250,45 @@ def test_spark_worker_agent_rejects_any_unsupported_key(tmp_path: Path) -> None:
 def test_deployment_assets_are_checkable_text() -> None:
     """Verify that every protected deployment asset class enters repository checks."""
     paths = (
-        Path("image/hyperv/atlaso-photon.pkr.hcl"),
+        Path("image/vmware-workstation/atlaso-photon.pkr.hcl"),
         Path("image/common/systemd/atlaso-worker.service"),
         Path("image/common/systemd/atlaso-console-manager.conf"),
         Path("image/common/systemd/nginx-atlaso-data-disks.conf"),
-        Path("image/vmware-workstation/sudoers.d/atlaso-helper"),
+        Path("image/common/sudoers.d/atlaso-helper"),
     )
 
     assert all(is_checkable(path) for path in paths)
     assert all(len(collect_files([str(path)])) == 1 for path in paths)
+
+
+def test_virtualization_legacy_gate_rejects_retired_paths_and_qcow2_exporter(tmp_path: Path) -> None:
+    """Repository checks fail closed on each retired virtualization surface.
+
+    Args:
+        tmp_path: Temporary directory provided by pytest.
+    """
+
+    retired = tmp_path / "image/hyperv"
+    retired.mkdir(parents=True)
+    docs = tmp_path / "docs"
+    docs.mkdir()
+    retired_reference = "scripts/windows" + "/hyperv/run-smoke-test.ps1"
+    (docs / "stale.md").write_text(f"See {retired_reference}.\n", encoding="utf-8")
+    exporter = tmp_path / "scripts/windows/virtualization"
+    exporter.mkdir(parents=True)
+    (exporter / "legacy.txt").write_text("photon-os.qcow2\n", encoding="utf-8")
+    (exporter / "legacy.ps1").write_text("$script:AllowedTargetNames = @('hyperv', 'kvm')\n", encoding="utf-8")
+    workflow = tmp_path / ".github/workflows/ci.yml"
+    workflow.parent.mkdir(parents=True)
+    workflow.write_text("run: ./tests/powershell/Test-AtlasoHyperVSecureString.ps1\n", encoding="utf-8")
+
+    findings = check_virtualization_legacy(tmp_path)
+
+    assert any("retired Hyper-V development" in finding.message for finding in findings)
+    assert any("retired virtualization reference" in finding.message for finding in findings)
+    assert any("standalone QCOW2 release marker" in finding.message for finding in findings)
+    assert any("standalone multi-target exporter marker" in finding.message for finding in findings)
+    assert any("retired virtualization test command" in finding.message for finding in findings)
 
 
 def write_policy_files(root: Path) -> None:

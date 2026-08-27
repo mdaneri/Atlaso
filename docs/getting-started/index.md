@@ -8,8 +8,10 @@ status: current
 
 # Getting started
 
-Atlaso is delivered as a Photon OS 5.0 appliance. VMware Workstation is the default live-test and documentation target;
-Hyper-V provides the authoritative lifecycle environment for exact access and trunk VLAN behavior.
+Atlaso is delivered as a Photon OS 5.0 appliance. VMware Workstation is the canonical image-build, live-test, and
+documentation target. KVM and Proxmox VE import the unchanged canonical OVA, while Hyper-V receives a portable ZIP
+whose payload disks are converted from that same validated OVA; see
+[Portable virtualization artifacts](../reference/virtualization-artifacts.md).
 
 <!-- BEGIN GENERATED INTERFACE OVERVIEW -->
 ## Interface overview

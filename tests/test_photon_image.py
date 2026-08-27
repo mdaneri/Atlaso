@@ -52,10 +52,7 @@ def test_data_disk_policies_remain_lf_in_windows_checkouts(tmp_path: Path) -> No
     Args:
         tmp_path: Pytest-provided isolated checkout destination.
     """
-    policies = (
-        Path("image/hyperv/data-disks.conf"),
-        Path("image/vmware-workstation/data-disks.conf"),
-    )
+    policies = (Path("image/common/data-disks.conf"),)
     checkout = tmp_path / "checkout"
     checkout.mkdir()
     completed = subprocess.run(
@@ -103,6 +100,60 @@ def test_photon_image_installs_fixed_size_atlaso_grub_branding():
     assert "/opt/atlaso/bin/atlaso-install-boot-branding" in deploy
     assert '"${SshUser}@${IpAddress}:$remoteBootThemePath"' in deploy
     assert '"${SshUser}@${IpAddress}:$remoteBootBackgroundPath"' in deploy
+
+
+def test_offline_guest_agent_staging_remains_root_owned_after_provisioning() -> None:
+    """The final state ownership pass must prune the persistent RPM trust boundary."""
+
+    provision = Path("image/common/scripts/provision-atlaso.sh").read_text(encoding="utf-8")
+    staging = provision.index('GUEST_AGENT_STAGING="$ATLASO_STATE/first-boot-packages"')
+    root_ownership = provision.index(
+        'find "$GUEST_AGENT_STAGING" -type d -exec chown root:root {} + -exec chmod 0700 {} +'
+    )
+    pruned_state_ownership = provision.index(
+        'find "$ATLASO_STATE" -path "$GUEST_AGENT_STAGING" -prune -o -exec chown atlaso:atlaso {} +'
+    )
+    assert staging < root_ownership < pruned_state_ownership
+    assert 'chown -R atlaso:atlaso "$ATLASO_STATE"' not in provision
+    notice_inventory = provision.index(
+        'find "$GUEST_AGENT_STAGING" -type f -name \'*.rpm\' | LC_ALL=C sort'
+    )
+    notice_generation = provision.index('"$ATLASO_HOME/scripts/generate_third_party_notices.py"')
+    assert root_ownership < notice_inventory < notice_generation
+    assert "rpm -qp --qf" in provision
+
+
+def test_vmware_template_scrubs_credentials_and_host_identity() -> None:
+    """The exported template cannot retain deployment credentials or SSH identity."""
+
+    provision = Path("image/common/scripts/provision-atlaso.sh").read_text(encoding="utf-8")
+    assert '"ATLASO_SECRET_KEY": "INITIALIZATION_REQUIRED"' in provision
+    assert 'usermod --password \'!\' "$BOOTSTRAP_USERNAME"' in provision
+    assert "rm -f /etc/ssh/ssh_host_* /etc/machine-id" in provision
+    assert "guestinfo.atlaso.template_ssh_host_ed25519_public_key" not in provision
+
+
+def test_guest_agent_success_marker_makes_cleanup_retryable() -> None:
+    """Commit provider success before erasure and retry an interrupted cleanup."""
+
+    selector = Path("scripts/appliance/atlaso-select-guest-agent").read_text(encoding="utf-8")
+    provision = Path("image/common/scripts/provision-atlaso.sh").read_text(encoding="utf-8")
+    existing_marker = selector.index('if [ -f "$SUCCESS_MARKER" ]; then')
+    retry_cleanup = selector.index("cleanup_staging", existing_marker)
+    already_completed = selector.index('log "Guest-agent selection already completed."', existing_marker)
+    publish_marker = selector.rindex('mv -f -- "$marker_tmp" "$SUCCESS_MARKER"')
+    assert 'stat -c \'%U:%G:%a\' "$marker_parent"' in selector
+    assert "success marker parent ownership or mode is unsafe" in selector
+    assert (
+        "install -d -o root -g root -m 0700 "
+        "/var/lib/atlaso-privileged/guest-agent"
+    ) in provision
+    final_cleanup = selector.rindex("cleanup_staging")
+
+    assert retry_cleanup < already_completed
+    assert publish_marker < final_cleanup
+    assert 'PACKAGE_CACHE_DIRECTORY="${ATLASO_GUEST_AGENT_PACKAGE_CACHE:-/var/cache/tdnf}"' in selector
+    assert 'if [ "$cleanup_required" -eq 1 ]; then' in selector
 
 
 def test_inventory_linux_release_package_is_reproducible_and_deployable(tmp_path):
@@ -404,7 +455,7 @@ def test_wsl_build_module_behavior():
 
 
 def test_photon_kickstart_generator_is_canonical_and_provider_specific(tmp_path):
-    """Verify the generated Photon kickstart contract for both providers.
+    """Verify the canonical portable Photon kickstart contract.
 
     Args:
         tmp_path: Temporary directory provided by pytest for isolated filesystem state.
@@ -435,10 +486,9 @@ def test_photon_kickstart_generator_is_canonical_and_provider_specific(tmp_path)
 
     output_dir = tmp_path / "photon-kickstart"
     generated = {
-        provider: json.loads(
-            (output_dir / f"{provider}-kickstart.json").read_text(encoding="utf-8")
+        "vmware-workstation": json.loads(
+            (output_dir / "vmware-workstation-kickstart.json").read_text(encoding="utf-8")
         )
-        for provider in ("hyperv", "vmware-workstation")
     }
     for kickstart in generated.values():
         assert kickstart["bootmode"] == "efi"
@@ -465,28 +515,20 @@ def test_photon_kickstart_generator_is_canonical_and_provider_specific(tmp_path)
         ) in postinstall
         assert "chmod 0440 /etc/sudoers.d/90-atlaso-build" in postinstall
 
-    hyperv = generated["hyperv"]
     vmware = generated["vmware-workstation"]
-    assert hyperv["disk"] == "/dev/sda"
-    assert hyperv["preinstall"] == []
     assert vmware["disk"] == "$ATLASO_PHOTON_INSTALL_DISK"
     vmware_preinstall = "\n".join(vmware["preinstall"])
     assert "scsi-0:0:0:0" in vmware_preinstall
     assert '"$disk_count" -ne 1' in vmware_preinstall
     assert "/dev/sda" not in vmware_preinstall
-    assert "hyper-v" in hyperv["additional_packages"]
-    assert "open-vm-tools" not in hyperv["additional_packages"]
-    assert "systemctl enable hv_kvp_daemon || true" in hyperv["postinstall"]
-    assert "systemctl enable hv_fcopy_daemon || true" in hyperv["postinstall"]
-    assert "systemctl enable hv_vss_daemon || true" in hyperv["postinstall"]
     assert "open-vm-tools" in vmware["additional_packages"]
-    assert "hyper-v" not in vmware["additional_packages"]
+    assert "hyper-v" in vmware["additional_packages"]
     assert "systemctl enable vmtoolsd || true" in vmware["postinstall"]
+    assert "systemctl enable hv_kvp_daemon || true" in vmware["postinstall"]
 
     module = Path("scripts/windows/common/Atlaso.PhotonImage.psm1").read_text(
         encoding="utf-8"
     )
-    assert not Path("image/hyperv/http/photon-ks.json.pkrtpl").exists()
     assert "New-AtlasoPhotonKickstart" in module
     assert "-AdditionalPackages $GuestPackages" in module
     assert "-PostInstallCommands $GuestPostInstallCommands" in module
@@ -495,35 +537,39 @@ def test_photon_kickstart_generator_is_canonical_and_provider_specific(tmp_path)
     assert '"printf \'%s:%s\\n\' \'$BuildUsername\' \'$BuildPassword\' | chpasswd"' not in module
 
     wrappers = {
-        provider: Path(path).read_text(encoding="utf-8")
-        for provider, path in {
-            "hyperv": "scripts/windows/hyperv/build-photon-image.ps1",
-            "vmware-workstation": "scripts/windows/vmware/build-photon-image.ps1",
-        }.items()
+        "vmware-workstation": Path("scripts/windows/vmware/build-photon-image.ps1").read_text(encoding="utf-8")
     }
     for wrapper in wrappers.values():
         assert "Invoke-AtlasoPhotonImageBuild" in wrapper
         assert "-SshPassword $SshPassword" in wrapper
-    assert "-GuestPackages @('hyper-v')" in wrappers["hyperv"]
-    assert "systemctl enable hv_kvp_daemon || true" in wrappers["hyperv"]
-    assert "systemctl enable hv_fcopy_daemon || true" in wrappers["hyperv"]
-    assert "systemctl enable hv_vss_daemon || true" in wrappers["hyperv"]
-    assert "-GuestPackages @('open-vm-tools')" in wrappers["vmware-workstation"]
-    assert "-GuestPostInstallCommands @('systemctl enable vmtoolsd || true')" in wrappers[
-        "vmware-workstation"
-    ]
+    assert "-GuestPackages @('open-vm-tools', 'hyper-v')" in wrappers["vmware-workstation"]
+    assert "systemctl enable hv_kvp_daemon || true" in wrappers["vmware-workstation"]
 
-    for template_path in (
-        Path("image/hyperv/atlaso-photon.pkr.hcl"),
-        Path("image/vmware-workstation/atlaso-photon.pkr.hcl"),
-    ):
+    for template_path in (Path("image/vmware-workstation/atlaso-photon.pkr.hcl"),):
         template = template_path.read_text(encoding="utf-8")
         assert "templatefile(" not in template
         assert 'ssh_password_stdin_base64    = base64encode("${var.ssh_password}\\n")' in template
         assert template.count("${local.ssh_password_stdin_base64}") == 2
         assert "echo '${var.ssh_password}'" not in template
-        assert "| base64 -d | sudo -S systemctl poweroff" in template
+        assert "systemd-run --quiet --unit=atlaso-image-build-finalize" in template
+        assert "/usr/local/sbin/atlaso-finalize-image-build ${var.ssh_username}" in template
+        assert "userdel -r ${var.ssh_username}" not in template
         assert "| base64 -d | sudo -S -E sh -c" in template
+
+    finalizer = Path("image/common/scripts/finalize-image-build.sh").read_text(encoding="utf-8")
+    process_wait = finalizer.index('while pgrep -u "$build_user"')
+    user_deletion = finalizer.index('userdel -r "$build_user"')
+    account_verification = finalizer.index('if getent passwd "$build_user"', user_deletion)
+    home_verification = finalizer.index('[ ! -e "$build_home" ]', account_verification)
+    sudoers_verification = finalizer.index("[ ! -e /etc/sudoers.d/90-atlaso-build ]", home_verification)
+    helper_removal = finalizer.index("rm -f -- /opt/atlaso/image/common/scripts/finalize-image-build.sh")
+    poweroff = finalizer.index("systemctl poweroff")
+    assert process_wait < user_deletion < account_verification < home_verification < sudoers_verification
+    assert sudoers_verification < helper_removal < poweroff
+    assert "[ \"$attempt\" -le 120 ]" in finalizer
+
+    provision = Path("image/common/scripts/provision-atlaso.sh").read_text(encoding="utf-8")
+    assert 'install -o root -g root -m 0700 "$IMAGE_BUILD_FINALIZER_SOURCE"' in provision
 
 
 def test_vmware_workstation_build_monitor_behavior(tmp_path):
@@ -592,32 +638,6 @@ def test_vmware_workstation_address_readiness_behavior(tmp_path):
     assert "Atlaso VMware Workstation readiness tests passed." in result.stdout
 
 
-def test_hyperv_management_nat_prefix_is_validated_and_canonical():
-    """Verify Hyper-V NAT CIDRs are masked and invalid input fails before mutation."""
-    pwsh = shutil.which("pwsh")
-    if pwsh is None:
-        pytest.skip("PowerShell 7 is not available")
-
-    result = subprocess.run(
-        [
-            pwsh,
-            "-NoLogo",
-            "-NoProfile",
-            "-NonInteractive",
-            "-File",
-            "tests/powershell/Test-CreateHypervSwitches.ps1",
-            "-RepositoryRoot",
-            str(Path.cwd()),
-        ],
-        check=False,
-        capture_output=True,
-        text=True,
-    )
-
-    assert result.returncode == 0, result.stdout + result.stderr
-    assert "Hyper-V management NAT prefix tests passed." in result.stdout
-
-
 def test_wsl_build_contract_and_setup_are_pinned_idempotent_and_non_destructive():
     """Verify that wsl build contract and setup are pinned idempotent and non destructive."""
     contract = json.loads(
@@ -672,10 +692,7 @@ def test_wsl_build_contract_and_setup_are_pinned_idempotent_and_non_destructive(
 
 def test_photon_wrappers_do_not_build_inventory_linux():
     """Verify that photon wrappers do not build inventory linux."""
-    for path in (
-        "scripts/windows/hyperv/build-photon-image.ps1",
-        "scripts/windows/vmware/build-photon-image.ps1",
-    ):
+    for path in ("scripts/windows/vmware/build-photon-image.ps1",):
         wrapper = Path(path).read_text(encoding="utf-8")
         assert "WslDistribution" not in wrapper
         assert "Build-AtlasoInventoryLinux.ps1" not in wrapper
@@ -746,12 +763,12 @@ def test_photon_provisioning_installs_default_nginx_management_proxy():
     """Verify that photon provisioning installs default nginx management proxy."""
     script = Path("image/common/scripts/provision-atlaso.sh").read_text(encoding="utf-8")
     bootstrap = Path("scripts/appliance/atlaso-bootstrap-https").read_text(encoding="utf-8")
-    systemd_unit = Path("image/hyperv/systemd/atlaso.service").read_text(encoding="utf-8")
+    systemd_unit = Path("image/common/systemd/atlaso.service").read_text(encoding="utf-8")
     worker_unit = Path("image/common/systemd/atlaso-worker.service").read_text(encoding="utf-8")
     bootstrap_unit = Path("image/common/systemd/atlaso-bootstrap-https.service").read_text(encoding="utf-8")
     disk_identity_rule = Path("image/common/udev/99-atlaso-disk-identity.rules").read_text(encoding="utf-8")
-    sudoers = Path("image/hyperv/sudoers.d/atlaso-helper").read_text(encoding="utf-8")
-    docs = Path("image/hyperv/README.md").read_text(encoding="utf-8")
+    sudoers = Path("image/common/sudoers.d/atlaso-helper").read_text(encoding="utf-8")
+    docs = Path("image/vmware-workstation/README.md").read_text(encoding="utf-8")
     root_docs = Path("docs/reference/full-technical-reference.md").read_text(encoding="utf-8")
 
     assert 'run_tdnf "Photon appliance package installation"' in script
@@ -888,7 +905,7 @@ def test_photon_provisioning_installs_default_nginx_management_proxy():
     assert 'ATLASO_MGMT_ACCESS_RULE="    ip saddr $ATLASO_MGMT_SOURCE_CIDR tcp dport { 22, 80, 443 } accept comment \\"Atlaso management access\\""' in script
     assert 'ATLASO_MGMT_ACCESS_RULE="    iifname \\"$ATLASO_MGMT_INTERFACE\\" tcp dport { 22, 80, 443 } accept comment \\"Atlaso management access\\""' in script
     assert "$ATLASO_MGMT_ACCESS_RULE" in script
-    assert 'install -o root -g root -m 0440 "$ATLASO_HOME/$ATLASO_IMAGE_ASSET_DIR/sudoers.d/atlaso-helper" /etc/sudoers.d/atlaso-helper' in script
+    assert 'install -o root -g root -m 0440 "$ATLASO_HOME/image/common/sudoers.d/atlaso-helper" /etc/sudoers.d/atlaso-helper' in script
     assert 'sed -i \'s/\\r$//\'' in script
     assert '"$ATLASO_HOME/bin/atlaso-install-boot-branding"' in script
     assert "/etc/systemd/system/atlaso-worker.service" in script
@@ -900,7 +917,7 @@ def test_photon_provisioning_installs_default_nginx_management_proxy():
     assert "atlaso-root-login.conf" in script
     assert "PermitRootLogin no" in script
     assert "HTTPS/443" in docs
-    assert "HTTP/80 redirects to HTTPS" in docs
+    assert "management HTTP/80 redirect-only" in docs
     assert "proxying HTTPS/443 to" in root_docs
     assert (
         "ExecStartPre=+/opt/atlaso/bin/atlaso-helper appliance-update recover-release --real"
@@ -1027,20 +1044,16 @@ def test_photon_provisioning_prepares_attached_data_disks():
     """Verify that photon provisioning prepares attached data disks."""
     provision = Path("image/common/scripts/provision-atlaso.sh").read_text(encoding="utf-8")
     mount_script = Path("scripts/appliance/atlaso-mount-data-disks").read_text(encoding="utf-8")
-    hyperv_unit = Path("image/hyperv/systemd/atlaso.service").read_text(encoding="utf-8")
-    vmware_unit = Path("image/vmware-workstation/systemd/atlaso.service").read_text(encoding="utf-8")
+    atlaso_unit = Path("image/common/systemd/atlaso.service").read_text(encoding="utf-8")
     worker_unit = Path("image/common/systemd/atlaso-worker.service").read_text(encoding="utf-8")
     data_disks_unit = Path("image/common/systemd/atlaso-data-disks.service").read_text(encoding="utf-8")
     bootstrap_unit = Path("image/common/systemd/atlaso-bootstrap-https.service").read_text(encoding="utf-8")
     nginx_dropin = Path("image/common/systemd/nginx-atlaso-data-disks.conf").read_text(encoding="utf-8")
     atlaso_dropin = Path("image/common/systemd/atlaso-require-data-disks.conf").read_text(encoding="utf-8")
     disk_identity_rule = Path("image/common/udev/99-atlaso-disk-identity.rules").read_text(encoding="utf-8")
-    hyperv_policy = Path("image/hyperv/data-disks.conf").read_text(encoding="utf-8")
-    vmware_policy = Path("image/vmware-workstation/data-disks.conf").read_text(encoding="utf-8")
-    hyperv_docs = Path("image/hyperv/README.md").read_text(encoding="utf-8")
+    virtualization_policy = Path("image/common/data-disks.conf").read_text(encoding="utf-8")
     vmware_docs = Path("image/vmware-workstation/README.md").read_text(encoding="utf-8")
     root_docs = Path("docs/reference/full-technical-reference.md").read_text(encoding="utf-8")
-    hyperv_packer = Path("image/hyperv/atlaso-photon.pkr.hcl").read_text(encoding="utf-8")
     vmware_packer = Path("image/vmware-workstation/atlaso-photon.pkr.hcl").read_text(encoding="utf-8")
 
     assert 'run_tdnf "Photon appliance package installation"' in provision
@@ -1060,7 +1073,7 @@ def test_photon_provisioning_prepares_attached_data_disks():
     assert "UUID=%s %s ext4 defaults,nofail,x-systemd.device-timeout=30s 0 2" in mount_script
     assert "findmnt -n -o SOURCE /" in mount_script
     assert 'DISK_IDENTITY_RULE_SOURCE="$ATLASO_SRC/image/common/udev/99-atlaso-disk-identity.rules"' in provision
-    assert 'DATA_DISK_POLICY_SOURCE="$ATLASO_SRC/$ATLASO_IMAGE_ASSET_DIR/data-disks.conf"' in provision
+    assert 'DATA_DISK_POLICY_SOURCE="$ATLASO_SRC/image/common/data-disks.conf"' in provision
     assert '"$DISK_IDENTITY_RULE_SOURCE" /etc/udev/rules.d/99-atlaso-disk-identity.rules' in provision
     assert '"$DATA_DISK_POLICY_SOURCE" /etc/atlaso/data-disks.conf' in provision
     assert provision.index('if [ ! -r "$DISK_IDENTITY_RULE_SOURCE" ]') < provision.index(
@@ -1076,22 +1089,15 @@ def test_photon_provisioning_prepares_attached_data_disks():
         'log_step "syncing Atlaso application files"'
     )
     assert 'SYMLINK+="disk/by-id/atlaso-path-$env{ID_PATH_TAG}"' in disk_identity_rule
-    assert 'source      = "../common/udev"' in hyperv_packer
-    assert 'destination = "/tmp/atlaso-src/image/common/udev"' in hyperv_packer
-    assert 'source      = "data-disks.conf"' in hyperv_packer
-    assert 'destination = "/tmp/atlaso-src/image/hyperv/data-disks.conf"' in hyperv_packer
     assert 'source      = "../common/udev"' in vmware_packer
     assert 'destination = "/tmp/atlaso-src/image/common/udev"' in vmware_packer
-    assert 'source      = "data-disks.conf"' in vmware_packer
-    assert 'destination = "/tmp/atlaso-src/image/vmware-workstation/data-disks.conf"' in vmware_packer
-    assert "ATLASO_DATA_DISK_SIZE_BYTES=536870912000" in hyperv_policy
-    assert "ATLASO_DEPOT_SCSI_TUPLE=0:0:1" in hyperv_policy
-    assert "ATLASO_BACKUP_SCSI_TUPLE=0:0:2" in hyperv_policy
-    assert "ATLASO_SYSTEM_SCSI_TUPLE=" in hyperv_policy
-    assert "ATLASO_DATA_DISK_SIZE_BYTES=536870912000" in vmware_policy
-    assert "ATLASO_DEPOT_SCSI_TUPLE=0:2:0" in vmware_policy
-    assert "ATLASO_BACKUP_SCSI_TUPLE=0:3:0" in vmware_policy
-    assert "ATLASO_SYSTEM_SCSI_TUPLE=0:1:0" in vmware_policy
+    assert 'source      = "../common/data-disks.conf"' in vmware_packer
+    assert 'destination = "/tmp/atlaso-src/image/common/data-disks.conf"' in vmware_packer
+    assert "ATLASO_DATA_DISK_SIZE_BYTES=536870912000" in virtualization_policy
+    assert "ATLASO_VMWARE_DEPOT_SCSI_TUPLE=0:2:0" in virtualization_policy
+    assert "ATLASO_HYPERV_DEPOT_SCSI_TUPLE=0:0:2" in virtualization_policy
+    assert "ATLASO_KVM_DEPOT_SCSI_TUPLE=0:0:2" in virtualization_policy
+    assert "ATLASO_BAREMETAL_DEPOT_SCSI_TUPLE=0:2:0" in virtualization_policy
     assert "validate_exact_disk_set" in mount_script
     assert "is_managed_esx_storage_disk" in mount_script
     assert "# BEGIN ATLASO ESX STORAGE" in mount_script
@@ -1124,17 +1130,12 @@ def test_photon_provisioning_prepares_attached_data_disks():
     assert 'of="$zero_file" bs=1048576 count="$zero_count_mib" conv=fsync status=progress' in provision
     assert "fstrim -av" in provision
 
-    assert "After=network-online.target atlaso-data-disks.service atlaso-bootstrap-https.service" in hyperv_unit
-    assert "Requires=atlaso-bootstrap-https.service" in hyperv_unit
-    assert "After=network-online.target atlaso-data-disks.service atlaso-bootstrap-https.service" in vmware_unit
-    assert "Requires=atlaso-bootstrap-https.service" in vmware_unit
+    assert "After=network-online.target atlaso-data-disks.service atlaso-bootstrap-https.service" in atlaso_unit
+    assert "Requires=atlaso-bootstrap-https.service" in atlaso_unit
     assert "Requires=atlaso-data-disks.service" in atlaso_dropin
-    assert "bootstrap-data-disk-safety --real /opt/atlaso/current" in hyperv_unit
-    assert "bootstrap-data-disk-safety --real /opt/atlaso/current" in vmware_unit
-    assert "management-front-door recover --real" in hyperv_unit
-    assert "management-front-door recover --real" in vmware_unit
-    assert "factory-reset resume --real" in hyperv_unit
-    assert "factory-reset resume --real" in vmware_unit
+    assert "bootstrap-data-disk-safety --real /opt/atlaso/current" in atlaso_unit
+    assert "management-front-door recover --real" in atlaso_unit
+    assert "factory-reset resume --real" in atlaso_unit
     assert "Wants=network-online.target atlaso.service" in worker_unit
     assert "Requires=atlaso-data-disks.service\n" in worker_unit
     assert "Requires=atlaso-data-disks.service atlaso.service" not in worker_unit
@@ -1154,9 +1155,7 @@ def test_photon_provisioning_prepares_attached_data_disks():
     )
 
     assert "atlaso-data-disks.service" in root_docs
-    assert "atlaso-data-disks.service" in hyperv_docs
     assert "atlaso-data-disks.service" in vmware_docs
-    assert "Format and mount" not in hyperv_docs
 
 
 def test_bundled_ipxe_bootloaders_have_provenance_and_expected_hashes():
@@ -1181,10 +1180,7 @@ def test_bundled_ipxe_bootloaders_have_provenance_and_expected_hashes():
 
 def test_packer_templates_stage_shared_appliance_assets():
     """Verify that packer templates stage shared appliance assets."""
-    for template_path in (
-        Path("image/hyperv/atlaso-photon.pkr.hcl"),
-        Path("image/vmware-workstation/atlaso-photon.pkr.hcl"),
-    ):
+    for template_path in (Path("image/vmware-workstation/atlaso-photon.pkr.hcl"),):
         template = template_path.read_text(encoding="utf-8")
 
         assert 'source      = "../common/boot"' in template
@@ -1261,124 +1257,11 @@ def test_photon_kickstart_uses_deterministic_build_time_sshd_service():
     assert build_module.index(disable_socket) < build_module.index(enable_service)
 
 
-def test_packer_build_uses_atlaso_management_network_by_default():
-    """Verify that packer build uses atlaso management network by default."""
-    template = Path("image/hyperv/atlaso-photon.pkr.hcl").read_text(encoding="utf-8")
-    docs = Path("image/hyperv/README.md").read_text(encoding="utf-8")
-    root_docs = Path("docs/reference/full-technical-reference.md").read_text(encoding="utf-8")
-    wrapper = Path("scripts/windows/hyperv/build-photon-image.ps1").read_text(encoding="utf-8")
-    build_module = Path("scripts/windows/common/Atlaso.PhotonImage.psm1").read_text(encoding="utf-8")
-    gitignore = Path(".gitignore").read_text(encoding="utf-8")
-
-    assert 'default = "Atlaso-Mgmt"' in template
-    assert 'default     = "192.168.49.30/24"' in template
-    assert 'default     = "255.255.255.0"' in template
-    assert 'default     = "192.168.49.254"' in template
-    assert 'variable "iso_contains_kickstart"' in template
-    assert 'variable "dry_run_system_adapters"' in template
-    assert 'variable "pip_global_index"' in template
-    assert 'description = "Optional pip global.index value. Empty keeps default pip behavior."' in template
-    assert 'variable "pip_global_index_url"' in template
-    assert 'description = "Optional pip global.index-url value. Empty keeps default pip behavior."' in template
-    assert 'builder_static_dns_text      = join(" ", var.builder_static_dns)' in template
-    assert 'dry_run_system_adapters_text = var.dry_run_system_adapters ? "true" : "false"' in template
-    assert '"ATLASO_DRY_RUN_SYSTEM_ADAPTERS=${local.dry_run_system_adapters_text}"' in template
-    assert '"ATLASO_MGMT_DNS=${local.builder_static_dns_text}"' in template
-    assert '"ATLASO_PIP_GLOBAL_INDEX=${var.pip_global_index}"' in template
-    assert '"ATLASO_PIP_GLOBAL_INDEX_URL=${var.pip_global_index_url}"' in template
-    assert "Iso_contains_kickstart must be true" in template
-    assert "secondary_iso_images" not in template
-    assert "boot_command" not in template
-    assert "boot_keygroup_interval" not in template
-    assert "Packer should not race" in template
-    assert "http_content" not in template
-    assert "http_port_min" not in template
-    assert 'default = "Default Switch"' not in template
-    assert "build-photon-image.ps1" in root_docs
-    assert "create-switches.ps1" in docs
-    assert "builder_static_ip=192.168.49.30/24" in docs
-    assert "discovers the host's active IPv4 DNS" in docs
-    assert "atlaso-photon-with-kickstart.iso" in docs
-    assert "Using remastered Photon ISO" in docs
-    assert "without Packer typing boot commands" in docs
-    assert "-PipGlobalIndex" in docs
-    assert "-PipGlobalIndexUrl" in docs
-    assert "Omit both pip options for standard/default pip behavior." in docs
-    assert "[SecureString]$SshPassword" in wrapper
-    assert "[SecureString]$BootstrapAdminPassword" in wrapper
-    assert "Read-Host -Prompt 'Temporary Photon builder SSH password' -AsSecureString" in wrapper
-    assert "Read-Host -Prompt 'Atlaso bootstrap administrator password' -AsSecureString" in wrapper
-    assert "[string[]]$BuilderStaticDns = @()" in wrapper
-    assert "[string]$PipGlobalIndex = ''" in wrapper
-    assert "[string]$PipGlobalIndexUrl = ''" in wrapper
-    assert "Join-Path $PSScriptRoot '..\\common\\Atlaso.PhotonImage.psm1'" in wrapper
-    assert "Join-Path $PSScriptRoot '..\\..\\..\\image\\hyperv'" in wrapper
-    assert "function Get-AtlasoHostIpv4DnsServers" in build_module
-    assert "Get-DnsClientServerAddress -AddressFamily IPv4" in build_module
-    assert "Using host IPv4 DNS for Photon builder/appliance" in build_module
-    assert "falling back to public DNS" in build_module
-    assert "create_photon_kickstart_iso.py" in build_module
-    assert "Using remastered Photon ISO" in build_module
-    assert "Packer will boot a single DVD with embedded photon-ks.json and a GRUB auto-install entry." in build_module
-    assert "Write-AtlasoPackerVarFile" in build_module
-    assert "function Remove-AtlasoSensitiveBuildArtifact" in build_module
-    assert "Remove-Item -LiteralPath $Path -Force -ErrorAction Stop" in build_module
-    assert "Plaintext credential artifact cleanup did not complete" in build_module
-    assert "Remove-AtlasoSensitiveBuildArtifact -Path $kickstartJson" in build_module
-    assert "Remove-AtlasoSensitiveBuildArtifact -Path $ksSourceDir" in build_module
-    assert "Remove-AtlasoSensitiveBuildArtifact -Path $varFilePath" in build_module
-    assert "$CleanupPaths.Add($attemptIsoPath)" in build_module
-    assert "$CleanupPaths.Add($OutputIso)" in build_module
-    assert "Move-Item -LiteralPath $attemptIsoPath -Destination $OutputIso" in build_module
-    assert "Remove-AtlasoSensitiveBuildArtifact -Path $candidatePath" in build_module
-    assert "Remastered Photon ISO credential cleanup failed" in build_module
-    assert "PrepareIsoOnly is not supported because a retained remastered ISO" in build_module
-    kickstart_build = build_module.split("    $kickstartJson =", maxsplit=1)[1].split(
-        "    $preparedIso =", maxsplit=1
-    )[0]
-    cleanup_start = kickstart_build.index("    try {")
-    assert cleanup_start < kickstart_build.index("        New-AtlasoPhotonKickstart `")
-    assert cleanup_start < kickstart_build.index("        $sourceIsoPath = Resolve-AtlasoPhotonSourceIso")
-    assert kickstart_build.index("    } finally {") > kickstart_build.index(
-        "        $sourceIsoPath = Resolve-AtlasoPhotonSourceIso"
-    )
-    assert "Using Packer var-file" in build_module
-    assert "[ValidateSet('cleanup', 'abort', 'ask', 'run-cleanup-provisioner')]" in wrapper
-    assert "[string]$PackerOnError = 'cleanup'" in wrapper
-    assert "[switch]$KeepExistingOutput" in wrapper
-    assert "[switch]$EnableRealSystemAdapters" in wrapper
-    assert "Packer build will replace any existing output directory for this build." in build_module
-    assert "$packerArgs += '-force'" in build_module
-    assert '$packerArgs += "-on-error=$PackerOnError"' in build_module
-    assert "'-var-file', $varFilePath" in build_module
-    assert "builder_static_dns       = $BuilderStaticDns" in build_module
-    assert "pip_global_index         = $PipGlobalIndex" in build_module
-    assert "pip_global_index_url     = $PipGlobalIndexUrl" in build_module
-    assert "dry_run_system_adapters  = -not $EnableRealSystemAdapters" in build_module
-    assert "UseHttpKickstartFallback" not in wrapper
-    assert "/image/hyperv/build" in gitignore
-    remaster_helper = Path("scripts/interop/create_photon_kickstart_iso.py").read_text(encoding="utf-8")
-    assert "iso.add_file" in remaster_helper
-    assert 'rr_name="photon-ks.json"' in remaster_helper
-    assert "GRUB_BOOT_CONFIG" in remaster_helper
-    assert "GRUB_CONFIG_TARGETS" in remaster_helper
-    assert '"/BOOT/GRUB2/GRUB.CFG;1"' in remaster_helper
-    assert "ks=cdrom:/photon-ks.json" in remaster_helper
-    assert "photon.media=cdrom" in remaster_helper
-    assert '"/EFI/BOOT/GRUB.CFG;1"' in remaster_helper
-    assert '"/BOOT/GRUB2/GRUB.CFG;1", "grub.cfg"' in remaster_helper
-    assert '"/EFI/BOOT/GRUB.CFG;1", "grub.cfg"' in remaster_helper
-    assert "iso.add_fp" in remaster_helper
-    assert "iso.rm_file" in remaster_helper
-    assert "Could not embed Atlaso GRUB config" in remaster_helper
-
-
 def test_photon_image_optional_pip_global_index_configuration():
     """Verify that photon image optional pip global index configuration."""
-    wrapper = Path("scripts/windows/hyperv/build-photon-image.ps1").read_text(encoding="utf-8")
+    wrapper = Path("scripts/windows/vmware/build-photon-image.ps1").read_text(encoding="utf-8")
     build_module = Path("scripts/windows/common/Atlaso.PhotonImage.psm1").read_text(encoding="utf-8")
-    template = Path("image/hyperv/atlaso-photon.pkr.hcl").read_text(encoding="utf-8")
-    vmware_template = Path("image/vmware-workstation/atlaso-photon.pkr.hcl").read_text(encoding="utf-8")
+    template = Path("image/vmware-workstation/atlaso-photon.pkr.hcl").read_text(encoding="utf-8")
     script = Path("image/common/scripts/provision-atlaso.sh").read_text(encoding="utf-8")
 
     assert "[string[]]$BuilderStaticDns = @()" in wrapper
@@ -1417,7 +1300,7 @@ def test_photon_image_optional_pip_global_index_configuration():
     assert "/etc/atlaso/update-trust.d" in script
     assert 'trust_source_dir="$ATLASO_HOME/image/common/update-trust"' in script
     assert 'for trust_key in "$trust_source_dir"/*.pem' in script
-    for packer_template in (template, vmware_template):
+    for packer_template in (template,):
         assert 'source      = "../../requirements-appliance.lock"' in packer_template
         assert 'destination = "/tmp/atlaso-src/requirements-appliance.lock"' in packer_template
         assert 'source      = "../../scripts/generate_third_party_notices.py"' in packer_template
@@ -1471,129 +1354,6 @@ def test_vmware_builder_uses_nat_gateway_dns_by_default():
     assert "servers into the Photon kickstart" in docs
 
 
-def test_lifecycle_hyperv_script_uses_separate_vm_set_by_default():
-    """Verify that lifecycle hyperv script uses separate vm set by default."""
-    script = Path("scripts/windows/hyperv/run-lifecycle-test.ps1").read_text(encoding="utf-8")
-    wrapper = Path("scripts/windows/hyperv/invoke-lifecycle-test.ps1").read_text(encoding="utf-8")
-    runner = Path("scripts/interop/lifecycle_test.py").read_text(encoding="utf-8")
-    network_boot_runner = Path("scripts/interop/network_boot_lifecycle.py").read_text(encoding="utf-8")
-
-    assert "[string]$LabName = 'AtlasoLifecycle'" in script
-    assert "[string]$ApplianceUrl = ''" in script
-    assert '$ApplianceUrl = "https://${ApplianceIPAddress}"' in script
-    assert "'--appliance-url', $ApplianceUrl" in script
-    assert '"http://${ApplianceIPAddress}:8000"' not in script
-    assert "[string]$ApplianceUrl = ''" in wrapper
-    assert '"https://${ApplianceIPAddress}"' in wrapper
-    assert '"http://${ApplianceIPAddress}:8000"' not in wrapper
-    assert "'-ApplianceUrl', $effectiveApplianceUrl" in wrapper
-    assert 'parser.add_argument("--appliance-url", default="https://192.168.49.1")' in runner
-    assert "[string]$SiteInterface = 'eth1.12'" in script
-    assert "[string]$SiteCidr = '192.168.12.1/24'" in script
-    assert "[int]$SiteVlanId = 12" in script
-    assert "$applianceName = \"$LabName-Appliance\"" in script
-    assert "$clientAName = \"$LabName-ClientA\"" in script
-    assert "$clientBName = \"$LabName-ClientB\"" in script
-    assert "$pxeClientName = \"$LabName-PxeBoot\"" in script
-    assert "New-LifecyclePxeVm -Name $pxeClientName -SwitchName 'Atlaso-SiteA'" in script
-    assert "Invoke-PxeBootSmoke -Name $pxeClientName -MacAddress $pxeClientMac" in script
-    assert "$inventoryDiscoveryTimeoutSeconds = 180" in script
-    assert "$captureTimeoutSeconds = $inventoryDiscoveryTimeoutSeconds + 30" in script
-    assert '"sudo timeout $captureTimeoutSeconds nc -u -l -p 9 | head -c 102 | od -An -v -tx1"' in script
-    assert "--timeout $inventoryDiscoveryTimeoutSeconds" in script
-    assert "Wait-Job -Job $captureJob -Timeout ($captureTimeoutSeconds + 15)" in script
-    assert "$expectedHex = -join (('ff' * 6) + ($compactMac * 16))" in script
-    assert "wake_packet_capture" in script
-    assert "exact_match = $true" in script
-    assert 'f"/api/v1/network-boot/hosts/{host[\'id\']}/wake"' in network_boot_runner
-    assert 'wake.get("status") != "packet_sent"' in network_boot_runner
-    assert "[string]$EsxIsoPath = ''" in script
-    assert "[string]$EsxIsoPath = ''" in wrapper
-    assert "'-EsxIsoPath', $EsxIsoPath" in wrapper
-    assert "--pxe-test-mode" in runner
-    assert "--pxe-client-mac" in runner
-    assert "--pxe-installer-iso-path" in runner
-    assert "[string]$SignedReleaseRepositoryUrl = ''" in script
-    assert "[string]$SignedReleaseRepositoryUrl = ''" in wrapper
-    assert "'--signed-release-repository-url', $SignedReleaseRepositoryUrl" in script
-    assert "'-SignedReleaseRepositoryUrl', $SignedReleaseRepositoryUrl" in wrapper
-    assert "signed_release_update_check" in runner
-    assert '"signed-release-update-check"' in runner
-    assert '"schema_sha256"' in runner
-    assert 'transaction.get("rolled_back") is not True' in runner
-    assert '"esxi_pxe"' in runner
-    assert "configure-esxi-pxe" in runner
-    assert "Refusing to use reserved VM name" in script
-    assert "@('Atlaso', 'Atlaso-Photon-Builder')" in script
-    assert "image\\hyperv\\clients\\alpine-cloud\\atlaso-tiny-linux-client.vhdx" in script
-    assert "Running lifecycle appliance VM(s) may already own ${ApplianceIPAddress}" in script
-    assert "-CleanupVmsOnly" in script
-
-
-def test_create_atlaso_test_vm_wrapper_is_safe_and_simple():
-    """Verify that create atlaso test vm wrapper is safe and simple."""
-    script = Path("scripts/windows/hyperv/create-atlaso-test-vm.ps1").read_text(encoding="utf-8")
-    vm_script = Path("scripts/windows/hyperv/create-atlaso-vm.ps1").read_text(encoding="utf-8")
-    docs = Path("image/hyperv/README.md").read_text(encoding="utf-8")
-
-    assert "[string]$Name = 'Atlaso'" in script
-    assert "[switch]$Redeploy" in script
-    assert "[switch]$ResetDataDisks" in script
-    assert "[switch]$SkipLabNetworkAdapters" in script
-    assert "[int]$SiteVlanId = 12" in script
-    assert "[int]$TaggedVlanId = 50" in script
-    assert "[switch]$WaitForIp" in script
-    assert "Find-LatestApplianceVhdx" in script
-    assert "Remove-ExistingDataDisks" in script
-    assert "Atlaso-Depot.vhdx" in script
-    assert "Atlaso-Backups.vhdx" in script
-    assert "Refusing to remove OS disk as a data disk" in script
-    assert "create-switches.ps1" in script
-    assert "create-atlaso-vm.ps1" in script
-    assert "-SkipLabNetworkAdapters:$SkipLabNetworkAdapters" in script
-    assert "-SiteVlanId $SiteVlanId" in script
-    assert "-TaggedVlanId $TaggedVlanId" in script
-    assert "start-atlaso-vm.ps1" in script
-    assert "get-atlaso-vm-ip.ps1" in script
-    assert "VM already exists: $Name. Pass -Redeploy" in script
-    assert "Remove-VM -Name $Name -Force" in script
-    assert "Run this script from an elevated PowerShell session." not in script
-    assert "create-atlaso-test-vm.ps1 -WaitForIp" in docs
-    assert "`-Redeploy` to remove and recreate only that VM" in docs
-    assert "first adapter management-only on `Atlaso-Mgmt`" in docs
-    assert "second adapter is `Services`" in docs
-    assert "`Atlaso-Services` switch" in docs
-    assert "`SiteA` on" in docs and "`Atlaso-SiteA` as trunk VLAN 12" in docs
-    assert "`Trunk`" in docs and "`Atlaso-Trunk`" in docs and "VLAN 50" in docs
-    assert "WAN-Test` on `Atlaso-SiteB` as" in docs
-    assert "`/var/lib/atlaso/users/<admin>` with `/usr/bin/pwsh`" in docs
-    assert "`powershell` package" in docs
-    assert "[switch]$SkipLabNetworkAdapters" in vm_script
-    assert "[int]$SiteVlanId = 12" in vm_script
-    assert "[int]$TaggedVlanId = 50" in vm_script
-    assert "[string]$ServiceSwitchName = 'Atlaso-Services'" in vm_script
-    assert "Add-ServiceNetworkAdapter" in vm_script
-    assert "Add-VMNetworkAdapter -VMName $VMName -Name 'Services' -SwitchName $SwitchName" in vm_script
-    assert "Set-VMNetworkAdapterVlan -VMName $VMName -VMNetworkAdapterName 'Services' -Untagged" in vm_script
-    assert "Add-LabNetworkAdapters" in vm_script
-    assert "Add-VMNetworkAdapter -VMName $VMName -Name 'SiteA' -SwitchName 'Atlaso-SiteA'" in vm_script
-    assert "Set-VMNetworkAdapterVlan -VMName $VMName -VMNetworkAdapterName 'SiteA' -Trunk -AllowedVlanIdList \"$SiteTag\" -NativeVlanId 0" in vm_script
-    assert "Add-VMNetworkAdapter -VMName $VMName -Name 'Trunk' -SwitchName 'Atlaso-Trunk'" in vm_script
-    assert "Set-VMNetworkAdapterVlan -VMName $VMName -VMNetworkAdapterName 'Trunk' -Trunk -AllowedVlanIdList \"$TaggedVlanTag\" -NativeVlanId 0" in vm_script
-    assert "Add-VMNetworkAdapter -VMName $VMName -Name 'WAN-Test' -SwitchName 'Atlaso-SiteB'" in vm_script
-    assert "[ValidateScript({ $_ -eq 500GB })]" in vm_script
-    assert "$existingDisk = Get-VHD -Path $Path" in vm_script
-    assert "[int64]$existingDisk.Size -ne $SizeBytes" in vm_script
-    assert (
-        "Add-VMHardDiskDrive -VMName $Name -ControllerType SCSI -ControllerNumber 0 "
-        "-ControllerLocation 1 -Path $resolvedDepotVhdxPath"
-    ) in vm_script
-    assert (
-        "Add-VMHardDiskDrive -VMName $Name -ControllerType SCSI -ControllerNumber 0 "
-        "-ControllerLocation 2 -Path $resolvedBackupVhdxPath"
-    ) in vm_script
-
-
 def test_windows_script_names_use_provider_tokens():
     """Verify that windows script names use provider tokens."""
     script_paths = {
@@ -1617,14 +1377,9 @@ def test_windows_script_names_use_provider_tokens():
     assert script_paths.isdisjoint(old_names)
 
     assert "common/Atlaso.PhotonImage.psm1" not in script_paths
-    assert "hyperv/build-photon-image.ps1" in script_paths
-    assert "hyperv/create-atlaso-test-vm.ps1" in script_paths
-    assert "hyperv/create-atlaso-vm.ps1" in script_paths
-    assert "hyperv/invoke-lifecycle-test.ps1" in script_paths
-    assert "hyperv/prepare-tiny-linux-client.ps1" in script_paths
-    assert "hyperv/get-atlaso-vm-ip.ps1" in script_paths
-    assert "hyperv/start-atlaso-vm.ps1" in script_paths
-    assert "hyperv/stop-atlaso-vm.ps1" in script_paths
+    assert not any(path.startswith("hyperv/") for path in script_paths)
+    assert "virtualization/export-artifacts.ps1" in script_paths
+    assert "virtualization/templates/Import-Atlaso.ps1" in script_paths
     assert "vmware/build-photon-image.ps1" in script_paths
     assert "vmware/create-atlaso-test-vm.ps1" in script_paths
     assert "vmware/create-atlaso-vm.ps1" in script_paths
@@ -1655,8 +1410,8 @@ def test_windows_documentation_requires_powershell_74_or_newer():
 
     support_note = "PowerShell 7.4 or newer (`pwsh`)"
     for path in (
-        Path("image/hyperv/README.md"),
         Path("image/vmware-workstation/README.md"),
+        Path("docs/reference/virtualization-artifacts.md"),
         Path("docs/reference/full-technical-reference.md"),
     ):
         assert support_note in path.read_text(encoding="utf-8")
@@ -1891,7 +1646,7 @@ def test_vmware_raw_vmx_workflows_inject_complete_first_boot_ovf_environment_bef
     assert '"guestinfo.atlaso.test_vm_development_root_ca_private_key"' in customizer
     assert "def stage_development_root_ca(" in customizer
     assert "def publish_test_vm_ssh_host_key()" in customizer
-    assert 'run_initialization_layer("test VM SSH host key", publish_test_vm_ssh_host_key)' in customizer
+    assert 'run_initialization_layer("SSH host key", publish_test_vm_ssh_host_key)' in customizer
     assert 'if config["normal_test_vm"]:' in customizer
     assert 'run_initialization_layer("test VM hostname", publish_test_vm_hostname)' in customizer
 
@@ -2178,68 +1933,6 @@ def test_vmware_password_deploy_omits_absent_optional_native_arguments():
     assert "$deployArguments += $optionalPathPair" in optional_arguments
 
 
-def test_lifecycle_hyperv_script_does_not_cleanup_without_explicit_flag():
-    """Verify that lifecycle hyperv script does not cleanup without explicit flag."""
-    script = Path("scripts/windows/hyperv/run-lifecycle-test.ps1").read_text(encoding="utf-8")
-
-    assert "[switch]$CleanupCreatedLab" in script
-    assert "if ($CleanupCreatedLab)" in script
-    assert "Lifecycle VMs were left in place" in script
-    assert "Remove-VM -Name $name -Force" in script
-    assert "Remove-VM -Name 'Atlaso'" not in script
-
-
-def test_lifecycle_single_command_wrapper_prepares_runs_and_cleans_up_by_default():
-    """Verify that lifecycle single command wrapper prepares runs and cleans up by default."""
-    script = Path("scripts/windows/hyperv/invoke-lifecycle-test.ps1").read_text(encoding="utf-8")
-
-    assert "DefaultParameterSetName = 'Run'" in script
-    assert "ParameterSetName = 'PrepareNetworks'" in script
-    assert "ParameterSetName = 'CleanupNetworks'" in script
-    assert "ParameterSetName = 'CleanupVms'" in script
-    assert "[SecureString]$AdminPassword" in script
-    assert "[string]$ApplianceSshUser = 'admin'" in script
-    assert "[SecureString]$SshPassword" in script
-    assert "[SecureString]$VcfBackupPassword" in script
-    assert "Export-Clixml -LiteralPath $secretBundlePath -Force" in script
-    assert "'-SecretBundlePath', $secretBundlePath" in script
-    assert "Remove-Item -LiteralPath $secretBundlePath -Force" in script
-    assert "[string]$SiteInterface = 'eth1.12'" in script
-    assert "[string]$SiteCidr = '192.168.12.1/24'" in script
-    assert "[int]$SiteVlanId = 12" in script
-    assert "prepare-tiny-linux-client.ps1" in script
-    assert "Find-LatestApplianceVhdx" in script
-    assert "run-lifecycle-test.ps1" in script
-    assert "$arguments += '-CleanupCreatedLab'" in script
-    assert "[switch]$KeepVms" in script
-    assert "[switch]$PrepareNetworksOnly" in script
-    assert "[switch]$CleanupNetworksOnly" in script
-    assert "[switch]$CleanupVmsOnly" in script
-    assert "remove-lifecycle-networks.ps1" in script
-    assert "remove-lifecycle-vms.ps1" in script
-    assert "AtlasoLifecycle-$(Get-Date -Format 'yyyyMMddHHmmss')" in script
-    assert "$singlePurposeActions" not in script
-
-
-def test_lifecycle_cleanup_scripts_are_scoped_to_atlaso_assets():
-    """Verify that lifecycle cleanup scripts are scoped to atlaso assets."""
-    switch_script = Path("scripts/windows/hyperv/create-switches.ps1").read_text(encoding="utf-8")
-    network_script = Path("scripts/windows/hyperv/remove-lifecycle-networks.ps1").read_text(encoding="utf-8")
-    vm_script = Path("scripts/windows/hyperv/remove-lifecycle-vms.ps1").read_text(encoding="utf-8")
-
-    assert "Atlaso-Services" in switch_script
-    assert "Atlaso-Mgmt-NAT" in network_script
-    assert "Atlaso-Mgmt" in network_script
-    assert "Atlaso-Services" in network_script
-    assert "Atlaso-SiteA" in network_script
-    assert "Get-VMNetworkAdapter -All" in network_script
-    assert "Refusing to remove switch" in network_script
-    assert "AtlasoLifecycle*" in vm_script
-    assert "Atlaso-Photon-Builder" in vm_script
-    assert "Refusing VM cleanup" in vm_script
-    assert "Remove-VM -Name $vm.Name -Force" in vm_script
-
-
 def test_vmware_lifecycle_cleanup_only_removes_existing_lifecycle_vms():
     """Verify that vmware lifecycle cleanup only removes existing lifecycle vms."""
     wrapper = Path("scripts/windows/vmware/invoke-lifecycle-test.ps1").read_text(encoding="utf-8")
@@ -2323,28 +2016,6 @@ def test_vmware_lifecycle_cleanup_only_removes_existing_lifecycle_vms():
     assert "Cleanup also failed; VM artifacts were preserved" in runner
     assert "Remove-Item -LiteralPath $vmRoot -Recurse -Force" not in runner
     assert "-CleanupVmsOnly" in docs
-
-
-def test_lifecycle_hyperv_script_finds_alpine_ips_and_pins_plink_hostkeys():
-    """Verify that lifecycle hyperv script finds alpine ips and pins plink hostkeys."""
-    script = Path("scripts/windows/hyperv/run-lifecycle-test.ps1").read_text(encoding="utf-8")
-
-    assert "[string]$ApplianceSshUser = 'admin'" in script
-    assert "Get-NetNeighbor -AddressFamily IPv4" in script
-    assert "ConvertTo-HyphenMac" in script
-    assert "Wait-GuestIPv4 -Name $clientAName" in script
-    assert "function Test-TcpPort" in script
-    assert "Get-PlinkHostKey" in script
-    assert "$applianceHostKey = Get-PlinkHostKey -HostName $ApplianceIPAddress" in script
-    assert "(Get-Date).AddMinutes(4)" in script
-    assert "$ErrorActionPreference = 'Continue'" in script
-    assert "Timed out waiting for SSH host key" in script
-    assert "Set-VMNetworkAdapterVlan -VMName $applianceName -VMNetworkAdapterName 'SiteA' -Trunk" in script
-    assert "Set-VMNetworkAdapterVlan -VMName $clientAName -VMNetworkAdapterName 'SiteA-Test' -Access -VlanId $SiteVlanId" in script
-    assert "Appliance-Mgmt-Test" in script
-    assert "'--appliance-ssh-hostkey'" in script
-    assert "'--client-a-hostkey'" in script
-    assert "'--client-b-hostkey'" in script
 
 
 def test_lifecycle_vmware_script_supports_routing_wan_only_and_esxi_pxe_install():
@@ -2456,19 +2127,6 @@ def test_lifecycle_vmware_script_supports_routing_wan_only_and_esxi_pxe_install(
     assert "$seedCleanupFailure" in runner
 
 
-def test_lifecycle_hyperv_script_seeds_alpine_clients_for_ssh():
-    """Verify that lifecycle hyperv script seeds alpine clients for ssh."""
-    script = Path("scripts/windows/hyperv/run-lifecycle-test.ps1").read_text(encoding="utf-8")
-
-    assert "[string]$ClientSshUser = 'alpine'" in script
-    assert "New-CloudInitSeedIso" in script
-    assert "create_nocloud_seed_iso.py" in script
-    assert "Add-VMDvdDrive" in script
-    assert "pycdlib" in script
-    assert "ssh-keygen" not in script
-    assert "Client SSH access requires -SshPassword or an existing -SshKeyPath." in script
-
-
 def test_nocloud_seed_helper_writes_client_cloud_init_contract():
     """Verify that nocloud seed helper writes client cloud init contract."""
     script = Path("scripts/interop/create_nocloud_seed_iso.py").read_text(encoding="utf-8")
@@ -2512,14 +2170,14 @@ def test_nocloud_seed_helper_rejects_invalid_stdin_password(stdin_value):
 
 def test_prepare_tiny_linux_client_downloads_verifies_and_converts_alpine():
     """Verify that prepare tiny linux client downloads verifies and converts alpine."""
-    script = Path("scripts/windows/hyperv/prepare-tiny-linux-client.ps1").read_text(encoding="utf-8")
+    script = Path("scripts/windows/vmware/prepare-tiny-linux-client.ps1").read_text(encoding="utf-8")
 
     assert "dl-cdn.alpinelinux.org/alpine/v3.24/releases/cloud" in script
     assert "generic_alpine-3.24.1-x86_64-uefi-cloudinit-r0.qcow2" in script
     assert "-ExpectedDigest $ExpectedSha512" in script
     assert "Get-FileHash -Algorithm SHA512" in script
-    assert "qemu-img convert -p -f qcow2 -O vhdx -o subformat=dynamic" in script
-    assert "atlaso-tiny-linux-client.vhdx" in script
+    assert "qemu-img convert -p -f qcow2 -O vmdk -o subformat=monolithicSparse" in script
+    assert "atlaso-tiny-linux-client.vmdk" in script
 
 
 def test_lifecycle_runner_plan_includes_ca_and_global_apply_units():
@@ -2668,12 +2326,3 @@ def test_lifecycle_runner_summarizes_apply_validation_html():
     assert summary.startswith("Resolve validation errors before submitting appliance changes.")
     assert "CA listen interfaces must use configured access targets." in summary
     assert "doctype" not in summary.lower()
-
-
-def test_lifecycle_roadmap_splits_pester_and_pytest_ownership():
-    """Verify that lifecycle roadmap splits pester and pytest ownership."""
-    doc = Path("docs/reference/hyperv-lifecycle-testing.md").read_text(encoding="utf-8")
-
-    assert "Invoke-Pester tests/pester/HyperVLifecycle.Tests.ps1" in doc
-    assert "Python appliance and guest assertions must remain pytest-covered" in doc
-    assert "scripts/interop/lifecycle_test.py" in doc

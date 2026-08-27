@@ -137,9 +137,9 @@ brings infrastructure, storage, identity, networking, and lifecycle workflows in
 - [Windows image-build WSL environment](docs/contribute/windows-image-build-wsl.md) — provision and select the pinned,
   isolated `Atlaso-Build` host used by Inventory Linux and Photon image wrappers.
 - [Deployment asset validation](docs/reference/full-technical-reference.md#deployment-asset-validation) — validate the
-  complete Packer, systemd, and sudoers inventory locally and in protected CI; both image targets pin and verify exact
-  Packer plugin binaries, while authenticated discovery uses the step-scoped read-only Actions token without persisting
-  checkout credentials or exposing the token to fork code.
+  complete Packer, systemd, and sudoers inventory locally and in protected CI; the canonical image target pins and
+  verifies exact Packer plugin binaries, while authenticated discovery uses the step-scoped read-only Actions token without
+  persisting checkout credentials or exposing the token to fork code.
 
 ## Supported appliance targets
 
@@ -159,8 +159,10 @@ verification, requires that exact root to stay absent, and lets the active redep
 deletion.
 The supported VMware image wrapper starts a responsive Workstation UI in a separate process before GUI-mode Packer
 builds and reports bounded, sanitized, exact-VM startup diagnostics until SSH provisioning begins.
-Hyper-V remains
-the authoritative lifecycle interoperability environment for exact access and trunk VLAN behavior.
+The canonical OVA deploys on VMware and is the unchanged input for KVM and Proxmox VE imports. Hyper-V uses one ZIP
+converted from that validated OVA. The release assets retain the two-NIC, four-SCSI-disk appliance contract and include
+target import helpers, signed-source provenance metadata, and checksums; see the
+[portable virtualization artifact guide](docs/reference/virtualization-artifacts.md).
 Image-build download caches verify pinned checksums before reuse or durable promotion; ordinary retries replace only
 the exact corrupt expected cache entries and do not require manual cleanup.
 The VMware wheel-deployment helper accepts only absolute POSIX remote staging directories composed of ASCII letters,

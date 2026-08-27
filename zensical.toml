@@ -64,7 +64,7 @@ nav = [
     { "vSphere Key Provider protocol" = "reference/vsphere-key-provider-protocol.md" },
     { "vSphere Key Provider security" = "reference/vsphere-key-provider-security.md" },
     { "Full technical reference" = "reference/full-technical-reference.md" },
-    { "Hyper-V lifecycle testing" = "reference/hyperv-lifecycle-testing.md" },
+    { "Portable virtualization artifacts" = "reference/virtualization-artifacts.md" },
     { "VMware lifecycle testing" = "reference/vmware-workstation-lifecycle-testing.md" },
   ] },
   { "Contribute" = [

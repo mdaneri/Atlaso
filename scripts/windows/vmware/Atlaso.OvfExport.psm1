@@ -1,5 +1,21 @@
+<#
+.SYNOPSIS
+Provides bounded output-directory handling for the canonical VMware OVF exporter.
+
+.DESCRIPTION
+Resolves OVF output paths beneath the repository-owned VMware output root and
+prevents recursive removal of protected, external, or reparse-point paths.
+#>
+
 Set-StrictMode -Version Latest
 
+<#
+.SYNOPSIS
+Returns a normalized absolute filesystem path.
+
+.PARAMETER Path
+The PowerShell path to normalize.
+#>
 function ConvertTo-AtlasoNormalizedPath {
     param([Parameter(Mandatory = $true)][string]$Path)
 
@@ -19,6 +35,16 @@ function ConvertTo-AtlasoNormalizedPath {
     return $fullPath
 }
 
+<#
+.SYNOPSIS
+Tests whether two filesystem paths identify the same location.
+
+.PARAMETER Left
+The first path to compare.
+
+.PARAMETER Right
+The second path to compare.
+#>
 function Test-AtlasoPathEqual {
     param(
         [Parameter(Mandatory = $true)][string]$Left,
@@ -38,6 +64,22 @@ function Test-AtlasoPathEqual {
     )
 }
 
+<#
+.SYNOPSIS
+Builds the repository-bounded OVF output plan.
+
+.PARAMETER RepoRoot
+The Atlaso repository root.
+
+.PARAMETER OutputDirectory
+An optional caller-selected output directory.
+
+.PARAMETER Name
+The exported appliance name used for the canonical output directory.
+
+.PARAMETER CallerSpecifiedOutputDirectory
+Indicates that OutputDirectory was supplied explicitly by the caller.
+#>
 function Resolve-AtlasoOvfOutputPlan {
     param(
         [Parameter(Mandatory = $true)][string]$RepoRoot,
@@ -69,6 +111,19 @@ function Resolve-AtlasoOvfOutputPlan {
     }
 }
 
+<#
+.SYNOPSIS
+Proves that an OVF output path is safe for recursive removal.
+
+.PARAMETER RepoRoot
+The Atlaso repository root whose protected paths must not be removed.
+
+.PARAMETER ApprovedOutputRoot
+The repository-owned root beneath which removal is permitted.
+
+.PARAMETER OutputDirectory
+The exact candidate directory to validate.
+#>
 function Assert-AtlasoOvfRemovalTarget {
     param(
         [Parameter(Mandatory = $true)][string]$RepoRoot,
@@ -129,6 +184,19 @@ function Assert-AtlasoOvfRemovalTarget {
     return $resolvedTarget
 }
 
+<#
+.SYNOPSIS
+Removes an existing OVF output directory after bounded safety validation.
+
+.PARAMETER OutputPlan
+The output plan returned by Resolve-AtlasoOvfOutputPlan.
+
+.PARAMETER Release
+Allows automatic replacement only for the canonical repository-derived release directory.
+
+.PARAMETER Force
+Authorizes replacement of an existing safe output directory.
+#>
 function Clear-AtlasoOvfOutputDirectory {
     param(
         [Parameter(Mandatory = $true)]$OutputPlan,

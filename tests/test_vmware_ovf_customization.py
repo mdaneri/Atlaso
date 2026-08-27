@@ -29,6 +29,39 @@ def load_customizer():
     return module
 
 
+@pytest.mark.parametrize("platform", ("vmware", "qemu", "hyperv", "baremetal"))
+def test_portable_first_boot_uses_verified_guest_agent_platform_marker(tmp_path: Path, platform: str) -> None:
+    """The OVF handoff consumes the prerequisite provider-neutral platform result.
+
+    Args:
+        tmp_path: Temporary directory provided by pytest.
+        platform: Verified guest-agent platform marker value.
+    """
+
+    customizer = load_customizer()
+    marker = tmp_path / "guest-agent.applied"
+    marker.write_text(f"platform={platform}\n", encoding="utf-8")
+    customizer.GUEST_AGENT_MARKER_PATH = marker
+
+    assert customizer.detect_virtualization_platform() == platform
+
+
+def test_portable_first_boot_rejects_invalid_guest_agent_platform_marker(tmp_path: Path) -> None:
+    """Unknown or malformed prerequisite state cannot fall through to OVF polling.
+
+    Args:
+        tmp_path: Temporary directory provided by pytest.
+    """
+
+    customizer = load_customizer()
+    marker = tmp_path / "guest-agent.applied"
+    marker.write_text("platform=xen\n", encoding="utf-8")
+    customizer.GUEST_AGENT_MARKER_PATH = marker
+
+    with pytest.raises(customizer.OvfCustomizationError, match="platform marker is invalid"):
+        customizer.detect_virtualization_platform()
+
+
 OVF_ENV = """<?xml version="1.0" encoding="UTF-8"?>
 <Environment
   xmlns="http://schemas.dmtf.org/ovf/environment/1"
@@ -2355,9 +2388,11 @@ def test_vmware_ovf_export_and_image_plumbing_are_present():
     assert "RemoveAttribute('fileRef', $ovfNamespace)" in export_script
     assert "Set-OvfAttribute -Document $Document -Element $disk -Name 'format' -Value $diskFormat" in export_script
     assert "@('fileRef', 'parentRef', 'populatedSize')" in export_script
-    assert "MaximumReleaseAssetBytes = 2147483647" in export_script
-    assert "Publish-AtlasoReleaseAssets" in export_script
-    assert "Assert-AtlasoReleaseProvenance" in export_script
+    assert "Write-AtlasoOvaProvenance" in export_script
+    assert "atlaso-provenance.json" in export_script
+    assert "guestinfo.atlaso.template_ssh_host_ed25519_public_key" not in export_script
+    assert "ssh_host_ed25519_public_key" not in export_script
+    assert "Assert-AtlasoCanonicalOva" in export_script
     assert "Atlaso.OvfExport.psm1" in export_script
     assert "Clear-AtlasoOvfOutputDirectory" in export_script
     assert "$PSBoundParameters.ContainsKey('OutputDirectory')" in export_script
@@ -2388,8 +2423,6 @@ def test_vmware_ovf_export_and_image_plumbing_are_present():
     assert "is not classified as $expectedKind" in export_script
     assert "Skipping OVA release asset" in export_script
     assert "--clobber" not in export_script
-    assert "release upload $Tag @uploadAssets @repositoryArguments" in export_script
-    assert "already contains different bytes" in export_script
     assert "'osType' -Value 'vmwarePhoton64Guest'" in export_script
     assert "'id' -Value '36'" in export_script
     assert "'ResourceSubType' -Value 'VirtualSCSI'" in export_script

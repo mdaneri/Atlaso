@@ -47,8 +47,8 @@ def write_inventory(root: Path) -> None:
             contents = "[Service]\nExecStart=/bin/true\n"
         systemd.write_text(contents, encoding="utf-8")
 
-    for platform in ("hyperv", "vmware-workstation"):
-        sudoers = root / f"image/{platform}/sudoers.d/atlaso-helper"
+    for relative in (Path("image/common/sudoers.d/atlaso-helper"),):
+        sudoers = root / relative
         sudoers.parent.mkdir(parents=True, exist_ok=True)
         sudoers.write_text(
             "atlaso ALL=(root) /opt/atlaso/bin/atlaso-helper *\n",
@@ -67,9 +67,9 @@ def test_inventory_covers_packer_systemd_and_extensionless_sudoers(tmp_path: Pat
     inventory, findings = inventory_assets(tmp_path)
 
     assert findings == []
-    assert len(inventory.packer) == 2
+    assert len(inventory.packer) == 1
     assert len(inventory.systemd) == len(SYSTEMD_ASSETS)
-    assert [path.name for path in inventory.sudoers] == ["atlaso-helper", "atlaso-helper"]
+    assert [path.name for path in inventory.sudoers] == ["atlaso-helper"]
 
 
 def test_inventory_rejects_missing_canonical_packer_target(tmp_path: Path) -> None:
@@ -116,7 +116,7 @@ def test_inventory_rejects_nested_packer_asset(tmp_path: Path) -> None:
         tmp_path: Temporary repository root supplied by pytest.
     """
     write_inventory(tmp_path)
-    nested = tmp_path / "image/hyperv/modules/example.pkr.hcl"
+    nested = tmp_path / "image/vmware-workstation/modules/example.pkr.hcl"
     nested.parent.mkdir()
     nested.write_text('source "example" "nested" {}\n', encoding="utf-8")
 
@@ -138,9 +138,9 @@ def test_pre_commit_selector_covers_inventory_wide_packer_assets() -> None:
     assert match is not None
     selector = re.compile(match.group(1))
     assert selector.search("image/kvm/atlaso-photon.pkr.hcl")
-    assert selector.search("image/hyperv/modules/example.pkr.hcl")
+    assert selector.search("image/vmware-workstation/modules/example.pkr.hcl")
     assert selector.search("image/common/systemd/atlaso-worker.service")
-    assert selector.search("image/vmware-workstation/sudoers.d/atlaso-helper")
+    assert selector.search("image/common/sudoers.d/atlaso-helper")
     assert selector.search("image/inventory-linux/wsl-build-contract.json") is None
     assert re.search(r"^\s*always_run:\s*true\s*$", hook, flags=re.MULTILINE)
 
@@ -176,7 +176,7 @@ def test_inventory_rejects_common_platform_systemd_collision(tmp_path: Path) -> 
         tmp_path: Temporary repository root supplied by pytest.
     """
     write_inventory(tmp_path)
-    collision = tmp_path / "image/hyperv/systemd/atlaso-worker.service"
+    collision = tmp_path / "image/vmware-workstation/systemd/atlaso-worker.service"
     collision.write_text("[Service]\nDefinitelyNotARealSetting=yes\n", encoding="utf-8")
 
     _, findings = inventory_assets(tmp_path)
@@ -191,12 +191,12 @@ def test_inventory_rejects_common_platform_systemd_collision(tmp_path: Path) -> 
     ("relative", "contents", "expected"),
     (
         (
-            Path("image/hyperv/systemd/extra.service"),
+            Path("image/vmware-workstation/systemd/extra.service"),
             "[Service]\nExecStart=/bin/true\n",
             "systemd asset is absent from the provisioning allowlist",
         ),
         (
-            Path("image/vmware-workstation/sudoers.d/extra-helper"),
+            Path("image/common/sudoers.d/extra-helper"),
             "atlaso ALL=(root) /bin/true\n",
             "sudoers asset is absent from the provisioning allowlist",
         ),
@@ -247,7 +247,7 @@ def test_inventory_rejects_missing_canonical_systemd_asset(tmp_path: Path) -> No
     "relative",
     (
         Path("image/common/systemd/atlaso.service.d"),
-        Path("image/hyperv/sudoers.d/nested"),
+        Path("image/common/sudoers.d/nested"),
     ),
 )
 def test_inventory_rejects_nested_managed_entries(tmp_path: Path, relative: Path) -> None:
@@ -277,7 +277,7 @@ def test_inventory_rejects_missing_canonical_sudoers_fragment(tmp_path: Path) ->
         tmp_path: Temporary repository root supplied by pytest.
     """
     write_inventory(tmp_path)
-    required = tmp_path / "image/vmware-workstation/sudoers.d/atlaso-helper"
+    required = tmp_path / "image/common/sudoers.d/atlaso-helper"
     required.rename(required.with_name("renamed-helper"))
 
     _, findings = inventory_assets(tmp_path)
@@ -296,7 +296,7 @@ def test_inventory_rejects_suffixed_sudoers_fragment(tmp_path: Path) -> None:
         tmp_path: Temporary repository root supplied by pytest.
     """
     write_inventory(tmp_path)
-    unsupported = tmp_path / "image/hyperv/sudoers.d/atlaso-helper.bak"
+    unsupported = tmp_path / "image/common/sudoers.d/atlaso-helper.bak"
     unsupported.write_text("atlaso ALL=(root) /bin/true\n", encoding="utf-8")
 
     _, findings = inventory_assets(tmp_path)
@@ -316,7 +316,7 @@ def test_inventory_rejects_symlinked_managed_asset(tmp_path: Path) -> None:
     write_inventory(tmp_path)
     target = tmp_path / "outside.service"
     target.write_text("[Service]\nExecStart=/bin/true\n", encoding="utf-8")
-    link = tmp_path / "image/hyperv/systemd/linked.service"
+    link = tmp_path / "image/vmware-workstation/systemd/linked.service"
     try:
         link.symlink_to(target)
     except OSError as error:
@@ -337,8 +337,8 @@ def test_inventory_rejects_symlinked_required_asset_parent(tmp_path: Path) -> No
         tmp_path: Temporary repository root supplied by pytest.
     """
     write_inventory(tmp_path)
-    platform = tmp_path / "image/hyperv"
-    external = tmp_path / "external-hyperv"
+    platform = tmp_path / "image/vmware-workstation"
+    external = tmp_path / "external-vmware"
     platform.rename(external)
     try:
         platform.symlink_to(external, target_is_directory=True)
@@ -360,16 +360,16 @@ def test_packer_validation_uses_wrapper_guard_and_template_directory(tmp_path: P
     Args:
         tmp_path: Temporary repository root supplied by pytest.
     """
-    template = tmp_path / "image/hyperv/atlaso-photon.pkr.hcl"
+    template = tmp_path / "image/vmware-workstation/atlaso-photon.pkr.hcl"
     template.parent.mkdir(parents=True)
     template.write_text("packer {}\n", encoding="utf-8")
-    plugin = tmp_path / "packer-plugin-hyperv_v1.1.5_x5.0_windows_amd64.exe"
+    plugin = tmp_path / "packer-plugin-vmware_v2.1.5_x5.0_windows_amd64.exe"
     plugin.touch()
     completed = [
         Mock(returncode=0, stdout="", stderr=""),
         Mock(
             returncode=0,
-            stdout=f'hyperv github.com/hashicorp/hyperv "= 1.1.5" {plugin}\n',
+            stdout=f'vmware github.com/vmware/vmware "= 2.1.5" {plugin}\n',
             stderr="",
         ),
         Mock(returncode=0, stdout="", stderr=""),
@@ -443,11 +443,11 @@ def test_packer_plugin_resolution_rejects_ranges_and_mismatched_binaries(
         selected_version: Version encoded in the selected plugin filename.
         expected: Expected validation finding fragment.
     """
-    plugin = tmp_path / f"packer-plugin-hyperv_v{selected_version}_x5.0_windows_amd64.exe"
+    plugin = tmp_path / f"packer-plugin-vmware_v{selected_version}_x5.0_windows_amd64.exe"
     plugin.touch()
     completed = Mock(
         returncode=0,
-        stdout=f'hyperv github.com/hashicorp/hyperv "{constraint}" {plugin}\n',
+        stdout=f'vmware github.com/vmware/vmware "{constraint}" {plugin}\n',
         stderr="",
     )
 
@@ -459,13 +459,9 @@ def test_packer_plugin_resolution_rejects_ranges_and_mismatched_binaries(
 
 
 def test_supported_packer_templates_pin_reviewed_exact_plugins() -> None:
-    """Verify that both supported image targets retain their reviewed exact versions."""
+    """Verify that the canonical image target retains its reviewed exact plugin."""
     repository = Path(__file__).resolve().parents[1]
     expected = {
-        "image/hyperv/atlaso-photon.pkr.hcl": (
-            'version = "= 1.1.5"',
-            'source  = "github.com/hashicorp/hyperv"',
-        ),
         "image/vmware-workstation/atlaso-photon.pkr.hcl": (
             'version = "= 2.1.5"',
             'source  = "github.com/vmware/vmware"',
@@ -491,7 +487,7 @@ def test_supported_packer_templates_pin_reviewed_exact_plugins() -> None:
 
 
 def write_systemd_fixture(root: Path, service_text: str) -> None:
-    """Create both platform unit sets and a valid manager drop-in.
+    """Create the canonical unit set and a valid manager drop-in.
 
     Args:
         root: Temporary repository root to populate.
@@ -512,13 +508,16 @@ def write_systemd_fixture(root: Path, service_text: str) -> None:
         "[Unit]\nAfter=atlaso-data-disks.service\nRequires=atlaso-data-disks.service\n",
         encoding="utf-8",
     )
-    for platform in ("hyperv", "vmware-workstation"):
-        directory = root / f"image/{platform}/systemd"
-        directory.mkdir(parents=True)
-        (directory / "atlaso.service").write_text(
-            "[Service]\nExecStart=/bin/true\n",
-            encoding="utf-8",
-        )
+    (common / "atlaso.service").write_text(
+        "[Service]\nExecStart=/bin/true\n",
+        encoding="utf-8",
+    )
+    platform = root / "image/vmware-workstation/systemd"
+    platform.mkdir(parents=True)
+    (platform / "atlaso-vmware-ovf-customize.service").write_text(
+        "[Service]\nExecStart=/bin/true\n",
+        encoding="utf-8",
+    )
 
 
 def test_systemd_validation_rejects_malformed_manager_dropin(tmp_path: Path) -> None:
@@ -576,7 +575,7 @@ def test_sudoers_validation_rejects_malformed_rule(tmp_path: Path) -> None:
     Args:
         tmp_path: Temporary repository root supplied by pytest.
     """
-    sudoers = tmp_path / "image/hyperv/sudoers.d/atlaso-helper"
+    sudoers = tmp_path / "image/common/sudoers.d/atlaso-helper"
     sudoers.parent.mkdir(parents=True)
     sudoers.write_text("atlaso ALL=(root) NOPASSWD:\n", encoding="utf-8")
 

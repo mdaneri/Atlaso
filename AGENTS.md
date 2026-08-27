@@ -432,7 +432,10 @@ The following cross-cutting boundaries always apply:
   four-step contextual Automation wizard (Schedule, Timing, State, Review) in place with task type and profile bound
   server-side; preserve Automation's generic five-step wizard.
 - Keep development system adapters in dry-run mode unless a reviewed apply unit explicitly promotes real mutation.
-- VMware Workstation is the default live appliance target; use Hyper-V lifecycle coverage for exact VLAN behavior.
+- VMware Workstation is the canonical image-build and live appliance target. Treat Hyper-V, KVM, and Proxmox VE only as
+  portable artifacts exported from the validated VMware template; do not add provider-specific appliance build or
+  lifecycle stacks. Preserve the documented two-NIC, four-SCSI-disk import contract and validate target compatibility
+  without presenting it as canonical lifecycle evidence.
 - VMware Workstation recursive cleanup is authoritative only for an exact non-reparse-point Atlaso artifact root
   containing every expected VMX. Test-VM redeploy fails closed when its named VMX is missing or has another display
   name, and data-disk reset accepts only strict path-component descendants of that VM output. Capture immutable root,

@@ -1,6 +1,6 @@
 <#
 .SYNOPSIS
-Export a VMware VMX into an Atlaso OVF/OVA package and optionally publish release assets.
+Export a VMware VMX into a validated Atlaso OVF/OVA package.
 
 .PARAMETER SourceVmxPath
 Path to the source VMX used for ovftool export.
@@ -21,7 +21,7 @@ Maximum asset size for uploaded release assets.
 .PARAMETER NoOva
 Skip OVA creation and emit OVF only.
 .PARAMETER Force
-Allow destructive output cleanup during release export.
+Allow replacement of the exact approved output directory.
 #>
 <#
 .SYNOPSIS
@@ -529,7 +529,7 @@ XML document owning the created attribute.
 .PARAMETER Name
 Attribute local name.
 .PARAMETER Value
-Text written into the new OVF attribute.
+Text serialized into the created OVF attribute.
 #>
 <#
 .SYNOPSIS
@@ -564,7 +564,7 @@ XML element receiving the attribute.
 .PARAMETER Name
 Attribute local name.
 .PARAMETER Value
-Text written into the OVF attribute.
+Text serialized into the OVF attribute.
 #>
 <#
 .SYNOPSIS
@@ -605,7 +605,7 @@ XML element receiving the attribute.
 .PARAMETER Name
 Attribute local name.
 .PARAMETER Value
-Text written into the VMware attribute.
+Text serialized into the VMware namespaced attribute.
 #>
 <#
 .SYNOPSIS
@@ -617,7 +617,7 @@ Element value.
 .PARAMETER Name
 Name value.
 .PARAMETER Value
-Text assigned to the VMware attribute.
+Text assigned to the VMware namespaced attribute.
 #>
 function Set-VmwAttribute {
     param(
@@ -648,7 +648,7 @@ Parent element for the new node.
 .PARAMETER LocalName
 Local element name.
 .PARAMETER Value
-Text written inside the new element.
+Text serialized inside the new child element.
 #>
 <#
 .SYNOPSIS
@@ -660,7 +660,7 @@ Parent value.
 .PARAMETER LocalName
 Local Name value.
 .PARAMETER Value
-Inner text assigned to the new element.
+Inner text assigned to the new child element.
 #>
 function Add-TextElement {
     param(
@@ -1352,6 +1352,145 @@ function Assert-AtlasoOvfDiskTopology {
 
 <#
 .SYNOPSIS
+Write byte-bound OVA provenance for the two verified payload disks.
+.PARAMETER RepoRoot
+Atlaso repository containing the recorded source commit.
+.PARAMETER OvfPath
+Normalized OVF descriptor whose payload references are recorded.
+.PARAMETER SourceCommit
+Exact clean source commit from VMware build provenance.
+#>
+function Write-AtlasoOvaProvenance {
+    param(
+        [Parameter(Mandatory = $true)][string]$RepoRoot,
+        [Parameter(Mandatory = $true)][string]$OvfPath,
+        [Parameter(Mandatory = $true)][string]$SourceCommit
+    )
+
+    if ($SourceCommit -notmatch '^[0-9a-f]{40}$') {
+        throw 'VMware build provenance contains an invalid source commit.'
+    }
+    $metadata = @(& git -C $RepoRoot show "${SourceCommit}:pyproject.toml" 2>$null) -join "`n"
+    if ($LASTEXITCODE -ne 0) {
+        throw "The VMware build source commit is unavailable: $SourceCommit"
+    }
+    $versionMatch = [regex]::Match($metadata, '(?m)^version\s*=\s*"(?<version>\d+\.\d+\.\d+)"\s*$')
+    if (-not $versionMatch.Success) {
+        throw 'Could not resolve the synchronized product version from the VMware build source commit.'
+    }
+    [xml]$document = Get-Content -Raw -LiteralPath $OvfPath
+    $manager = New-Object System.Xml.XmlNamespaceManager($document.NameTable)
+    $manager.AddNamespace('ovf', $ovfNamespace)
+    $manager.AddNamespace('rasd', $rasdNamespace)
+    $hardwareDisks = @($document.SelectNodes(
+            '//ovf:VirtualSystem/ovf:VirtualHardwareSection/ovf:Item[rasd:ResourceType="17"]',
+            $manager
+        ))
+    $references = @($document.SelectNodes('/ovf:Envelope/ovf:References/ovf:File', $manager))
+    $payloadContracts = @(
+        @{ Slot = 0; Role = 'photon_os'; Capacity = 42949672960 },
+        @{ Slot = 1; Role = 'atlaso_system'; Capacity = 21474836480 }
+    )
+    $payloads = foreach ($contract in $payloadContracts) {
+        $hardware = @($hardwareDisks | Where-Object {
+                (Get-RasdValue -Item $_ -LocalName 'AddressOnParent') -eq [string]$contract.Slot
+            })
+        if ($hardware.Count -ne 1) {
+            throw "OVF provenance requires exactly one payload disk at SCSI slot $($contract.Slot)."
+        }
+        $hostResource = Get-RasdValue -Item $hardware[0] -LocalName 'HostResource'
+        $diskMatch = [regex]::Match($hostResource, '^ovf:/disk/(?<id>[^/]+)$')
+        if (-not $diskMatch.Success) {
+            throw "OVF payload at SCSI slot $($contract.Slot) has an invalid disk reference."
+        }
+        $disk = $document.SelectSingleNode(
+            "/ovf:Envelope/ovf:DiskSection/ovf:Disk[@ovf:diskId='$($diskMatch.Groups['id'].Value)']",
+            $manager
+        )
+        $fileId = if ($disk) { $disk.GetAttribute('fileRef', $ovfNamespace) } else { '' }
+        $file = @($references | Where-Object { $_.GetAttribute('id', $ovfNamespace) -eq $fileId })
+        if ($file.Count -ne 1) {
+            throw "OVF payload at SCSI slot $($contract.Slot) does not resolve to exactly one file."
+        }
+        $fileName = $file[0].GetAttribute('href', $ovfNamespace)
+        if ([System.IO.Path]::GetFileName($fileName) -ne $fileName) {
+            throw 'OVF payload provenance requires flat, safe VMDK file names.'
+        }
+        $filePath = Join-Path (Split-Path -Parent $OvfPath) $fileName
+        $fileItem = Get-Item -LiteralPath $filePath -ErrorAction Stop
+        if ($fileItem.Length -le 0 -or
+            ($fileItem.Attributes -band [System.IO.FileAttributes]::ReparsePoint) -ne 0) {
+            throw "OVF payload is missing, empty, or a reparse point: $fileName"
+        }
+        [ordered]@{
+            role               = $contract.Role
+            scsi_slot          = $contract.Slot
+            file               = $fileName
+            virtual_size_bytes = $contract.Capacity
+            sha256             = (Get-FileHash -LiteralPath $fileItem.FullName -Algorithm SHA256).Hash.ToLowerInvariant()
+        }
+    }
+    $provenance = [ordered]@{
+        schema_version  = 1
+        kind            = 'atlaso-vmware-ova-provenance'
+        product_version = $versionMatch.Groups['version'].Value
+        source_commit   = $SourceCommit
+        machine         = [ordered]@{
+            firmware    = 'uefi'
+            secure_boot = $false
+            cpu_count   = 4
+            memory_mib  = 4096
+            nic_count   = 2
+            disk_bus    = 'scsi'
+        }
+        payloads        = @($payloads)
+    }
+    $path = Join-Path (Split-Path -Parent $OvfPath) 'atlaso-provenance.json'
+    [System.IO.File]::WriteAllText(
+        $path,
+        (($provenance | ConvertTo-Json -Depth 8) + "`n"),
+        [System.Text.UTF8Encoding]::new($false)
+    )
+    return $path
+}
+
+<#
+.SYNOPSIS
+Validate the final OVA through the provider-neutral Python contract.
+.PARAMETER RepoRoot
+Atlaso repository containing the validator.
+.PARAMETER OvaPath
+Final OVA archive to validate.
+#>
+function Assert-AtlasoCanonicalOva {
+    param(
+        [Parameter(Mandatory = $true)][string]$RepoRoot,
+        [Parameter(Mandatory = $true)][string]$OvaPath
+    )
+
+    $python = Get-Command python -ErrorAction SilentlyContinue
+    if (-not $python) {
+        throw 'python was not found. Canonical OVA validation is mandatory.'
+    }
+    $validationRoot = Join-Path (Split-Path -Parent $OvaPath) ('.ova-validation-' + [guid]::NewGuid().ToString('N'))
+    New-Item -ItemType Directory -Path $validationRoot | Out-Null
+    try {
+        $output = @(& $python.Source (Join-Path $RepoRoot 'scripts\virtualization\validate_ova.py') `
+                $OvaPath '--extract-directory' $validationRoot 2>&1)
+        if ($LASTEXITCODE -ne 0) {
+            $tail = @($output | Select-Object -Last 20) -join [Environment]::NewLine
+            throw "Final OVA validation failed.$([Environment]::NewLine)$tail"
+        }
+    }
+    finally {
+        if (Test-Path -LiteralPath $validationRoot) {
+            Remove-Item -LiteralPath $validationRoot -Recurse -Force
+        }
+    }
+}
+
+<#
+.SYNOPSIS
 Find an existing product property by key.
 
 .PARAMETER ProductSection
@@ -1434,7 +1573,7 @@ Whether the property uses password input semantics.
 .PARAMETER Boolean
 Whether the property uses boolean input semantics.
 .PARAMETER DefaultValue
-Optional text rendered as the property's initial setting.
+Optional text serialized as the OVF property default.
 .PARAMETER MinLength
 Minimum permitted string length for password-like strings.
 #>
@@ -1458,7 +1597,7 @@ Password value.
 .PARAMETER Boolean
 Boolean value.
 .PARAMETER DefaultValue
-Optional default rendered in the OVF property.
+Optional OVF property default serialized when the property declares one.
 .PARAMETER MinLength
 Min Length value.
 #>
@@ -1708,13 +1847,13 @@ function Get-OvfDescriptorPath {
 $repoRoot = (Resolve-Path -LiteralPath (Join-Path $PSScriptRoot '..\..\..')).Path
 $resolvedSourceVmx = (Resolve-Path -LiteralPath $SourceVmxPath).Path
 $releaseTag = ''
-$releaseProvenance = $null
+$buildProvenance = $null
 if ($publishReleaseAssets) {
     $releaseTag = Resolve-AtlasoReleaseTag -RepoRoot $repoRoot -Prerelease:$Prerelease
-    $releaseProvenance = Assert-AtlasoReleaseProvenance -RepoRoot $repoRoot -Tag $releaseTag -SourceVmxPath $resolvedSourceVmx
+    $buildProvenance = Assert-AtlasoReleaseProvenance -RepoRoot $repoRoot -Tag $releaseTag -SourceVmxPath $resolvedSourceVmx
 }
 else {
-    $releaseProvenance = Assert-AtlasoVmwarePayloadProvenance -VmxPath $resolvedSourceVmx
+    $buildProvenance = Assert-AtlasoVmwarePayloadProvenance -VmxPath $resolvedSourceVmx
 }
 $callerSpecifiedOutputDirectory = $PSBoundParameters.ContainsKey('OutputDirectory')
 $outputPlan = Resolve-AtlasoOvfOutputPlan `
@@ -1738,12 +1877,17 @@ $ovfPath = Get-OvfDescriptorPath -OutputDirectory $resolvedOutputDirectory
 $ovfPackageDirectory = Split-Path -Parent $ovfPath
 Add-AtlasoOvfProperties -OvfPath $ovfPath
 Assert-AtlasoOvfDiskTopology -OvfPath $ovfPath
+$provenancePath = Write-AtlasoOvaProvenance `
+    -RepoRoot $repoRoot `
+    -OvfPath $ovfPath `
+    -SourceCommit ([string]$buildProvenance.source_commit)
 $manifestPath = Update-OvfManifest -OvfDirectory $ovfPackageDirectory
 
 $ovaPath = ''
 if (-not $NoOva) {
     $ovaPath = Join-Path (Split-Path -Parent $resolvedOutputDirectory) "$Name.ova"
     New-OvaArchive -OvfDirectory $ovfPackageDirectory -OvaPath $ovaPath -ResolvedTarPath $resolvedTar
+    Assert-AtlasoCanonicalOva -RepoRoot $repoRoot -OvaPath $ovaPath
 }
 
 foreach ($asset in @(Get-ChildItem -LiteralPath $ovfPackageDirectory -File | Sort-Object Name)) {
@@ -1761,14 +1905,14 @@ if ($publishReleaseAssets) {
         -Tag $releaseTag `
         -OvfDirectory $ovfPackageDirectory `
         -OvaPath $ovaPath `
-        -ExpectedCommit $releaseProvenance.source_commit `
+        -ExpectedCommit $buildProvenance.source_commit `
         -MaximumBytes $MaximumReleaseAssetBytes `
         -Prerelease:$Prerelease
 }
-
 Write-Host "Atlaso OVF export root: $resolvedOutputDirectory"
 Write-Host "Atlaso OVF folder: $ovfPackageDirectory"
 Write-Host "Atlaso OVF descriptor: $ovfPath"
+Write-Host "Atlaso OVA provenance: $provenancePath"
 Write-Host "Atlaso OVF manifest: $manifestPath"
 if ($ovaPath) {
     Write-Host "Atlaso OVA archive: $ovaPath"

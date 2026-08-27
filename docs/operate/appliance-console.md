@@ -25,7 +25,7 @@ This verified appliance view provides visual orientation before you begin.
 
 ## Before you begin
 
-- Open the VM console in VMware Workstation or Hyper-V.
+- Open the VM console in the deployed hypervisor.
 - Use the Photon `root` password for authenticated recovery actions.
 - Treat console networking and service changes as real appliance mutations.
 - Prefer the web UI for routine desired-state editing when it is reachable.

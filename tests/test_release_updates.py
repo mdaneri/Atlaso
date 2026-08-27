@@ -1236,9 +1236,33 @@ def test_release_workflows_use_successful_main_sha_and_promote_without_rebuildin
     assert '--expected-version "$VERSION"' in publication_check
     assert '--expected-commit "$RELEASE_SHA"' in publication_check
     assert "<script" not in publication
-    assert publication.count("ref: ${{ needs.prepare.outputs.release_sha }}") == 2
+    assert publication.count("ref: ${{ needs.prepare.outputs.release_sha }}") == 9
     assert "actions/upload-artifact@v7" in publication
-    assert publication.count("actions/download-artifact@v8") == 1
+    assert publication.count("actions/download-artifact@v8") == 9
+    for runner_label in ("atlaso-vmware", "atlaso-proxmox", "atlaso-kvm", "atlaso-hyperv"):
+        assert runner_label in publication
+    for job in (
+        "vmware_ova_build",
+        "vmware_ova_smoke",
+        "proxmox_ova_smoke",
+        "kvm_ova_smoke",
+        "hyperv_package",
+        "hyperv_smoke",
+        "virtualization_release",
+    ):
+        assert f"  {job}:" in publication
+    ci_packer = ci.split("  deployment-packer:", 1)[1].split("  python-tests:", 1)[0]
+    assert "Test-AtlasoVirtualizationArtifacts.ps1" in ci_packer
+    assert "Test-AtlasoHyperVSecureString.ps1" not in ci_packer
+    signed_virtualization = publication.split("  virtualization_release:", 1)[1].split(
+        "  publish:", 1
+    )[0]
+    assert "vmware_ova_smoke" in signed_virtualization
+    assert "proxmox_ova_smoke" in signed_virtualization
+    assert "kvm_ova_smoke" in signed_virtualization
+    assert "hyperv_smoke" in signed_virtualization
+    assert "build_virtualization_artifact_index.py" in signed_virtualization
+    assert "--require-virtualization-assets" in publication
     assert "python-version: '3.14'" in publication
     assert "python-version: '3.14'" in promotion
     assert ci.count("python-version: '3.14'") == 3
@@ -1707,14 +1731,65 @@ def test_release_bundle_carries_transactional_data_disk_safety_assets():
     destinations = {destination.as_posix() for _source, destination in module.RELEASE_OWNED_ASSETS}
     assert {
         "bin/atlaso-mount-data-disks",
+        "bin/atlaso-select-guest-agent",
+        "bin/atlaso-initialize-machine-identity.py",
         "data-disks/hyperv.conf",
+        "data-disks/virtualization.conf",
         "data-disks/vmware.conf",
         "systemd/atlaso-bootstrap-https.service",
         "systemd/atlaso-data-disks.service",
+        "systemd/atlaso-data-disks-legacy.service",
+        "systemd/atlaso-guest-agent-select.service",
         "systemd/atlaso.service.d/atlaso-data-disks.conf",
         "systemd/nginx.service.d/atlaso-data-disks.conf",
         "udev/99-atlaso-disk-identity.rules",
     } <= destinations
+
+
+def test_signed_updates_install_and_rollback_every_first_boot_asset(tmp_path):
+    """Bind bundled first-boot assets to their live updater-owned destinations.
+
+    Args:
+        tmp_path: Temporary release root used to verify source mappings.
+    """
+
+    from tests.test_appliance_update import load_helper_module
+
+    helper = load_helper_module()
+    owned = helper._release_first_boot_owned_files(tmp_path)
+
+    assert owned == [
+        (
+            tmp_path / "bin/atlaso-select-guest-agent",
+            helper.ATLASO_GUEST_AGENT_SELECTOR_PATH,
+            0o755,
+        ),
+        (
+            tmp_path / "bin/atlaso-initialize-machine-identity.py",
+            helper.ATLASO_MACHINE_IDENTITY_INITIALIZER_PATH,
+            0o755,
+        ),
+        (
+            tmp_path / "systemd/atlaso-guest-agent-select.service",
+            helper.ATLASO_GUEST_AGENT_SELECT_UNIT_PATH,
+            0o644,
+        ),
+    ]
+
+
+def test_legacy_release_uses_data_disk_unit_without_new_selector_dependency(tmp_path):
+    """An older appliance can install the disk boundary without unavailable selector assets.
+
+    Args:
+        tmp_path: Temporary directory provided by pytest for isolated filesystem state.
+    """
+
+    from tests.test_appliance_update import load_helper_module
+
+    helper = load_helper_module()
+    owned = helper._release_data_disk_owned_files(tmp_path, "vmware")
+    unit_sources = [source for source, destination, _mode in owned if destination == helper.ATLASO_DATA_DISK_UNIT_PATH]
+    assert unit_sources == [tmp_path / "systemd/atlaso-data-disks-legacy.service"]
 
 
 def test_image_bootstrap_release_skips_previous_updater_compatibility_gate(monkeypatch, tmp_path):
@@ -1750,9 +1825,10 @@ def test_image_bootstrap_release_skips_previous_updater_compatibility_gate(monke
     monkeypatch.setattr(
         helper,
         "_release_data_disk_platform",
-        lambda: (_ for _ in ()).throw(AssertionError("fresh image must not enter candidate compatibility bootstrap")),
+        lambda: (_ for _ in ()).throw(
+            AssertionError("fresh image must not enter candidate compatibility bootstrap")
+        ),
     )
-
     assert helper._bootstrap_release_data_disk_safety(release_root) == []
     assert json.loads(marker.read_text(encoding="utf-8")) == {"schema_version": 1, "status": "complete"}
     if os.name == "posix":
@@ -1782,7 +1858,7 @@ def test_previous_updater_service_bootstraps_every_new_data_disk_safety_asset(mo
         "systemd/atlaso-bootstrap-https.service": b"bootstrap-unit",
         "systemd/nginx.service.d/atlaso-data-disks.conf": b"nginx-dropin",
         "udev/99-atlaso-disk-identity.rules": b"udev-rule",
-        "data-disks/vmware.conf": b"disk-policy",
+        "data-disks/virtualization.conf": b"disk-policy",
     }
     destinations = {
         "ATLASO_MOUNT_DATA_DISKS_PATH": tmp_path / "host/bin/atlaso-mount-data-disks",
@@ -1802,9 +1878,9 @@ def test_previous_updater_service_bootstraps_every_new_data_disk_safety_asset(mo
     monkeypatch.setattr(helper, "ATLASO_UPDATE_BACKUP_DIR", tmp_path / "backups")
     marker = tmp_path / "host/etc/atlaso/data-disk-safety-bootstrap.json"
     monkeypatch.setattr(helper, "ATLASO_DATA_DISK_BOOTSTRAP_MARKER_PATH", marker)
+    monkeypatch.setattr(helper, "_release_data_disk_platform", lambda: "virtualization")
     for name, destination in destinations.items():
         monkeypatch.setattr(helper, name, destination)
-    monkeypatch.setattr(helper, "_release_data_disk_platform", lambda: "vmware")
     commands: list[list[str]] = []
     events: list[str] = []
 
@@ -1841,20 +1917,12 @@ def test_previous_updater_service_bootstraps_every_new_data_disk_safety_asset(mo
     assert events == ["migration", "preflight"]
     assert not any((tmp_path / "backups").iterdir())
     assert json.loads(marker.read_text(encoding="utf-8")) == {"schema_version": 1, "status": "complete"}
-    monkeypatch.setattr(
-        helper,
-        "_release_data_disk_platform",
-        lambda: (_ for _ in ()).throw(AssertionError("completed compatibility bootstrap must not run again")),
-    )
     assert helper._bootstrap_release_data_disk_safety(release_root) == []
-    for unit_path in [
-        ROOT / "image/hyperv/systemd/atlaso.service",
-        ROOT / "image/vmware-workstation/systemd/atlaso.service",
-    ]:
-        assert (
-            "ExecStartPre=+/opt/atlaso/bin/atlaso-helper appliance-update "
-            "bootstrap-data-disk-safety --real /opt/atlaso/current"
-        ) in unit_path.read_text(encoding="utf-8")
+    unit_path = ROOT / "image/common/systemd/atlaso.service"
+    assert (
+        "ExecStartPre=+/opt/atlaso/bin/atlaso-helper appliance-update "
+        "bootstrap-data-disk-safety --real /opt/atlaso/current"
+    ) in unit_path.read_text(encoding="utf-8")
 
 
 def test_previous_updater_bootstrap_restores_assets_claims_and_database(monkeypatch, tmp_path):
@@ -1899,7 +1967,7 @@ def test_previous_updater_bootstrap_restores_assets_claims_and_database(monkeypa
     marker = tmp_path / "host/data-disk-safety-bootstrap.json"
     monkeypatch.setattr(helper, "ATLASO_DATA_DISK_BOOTSTRAP_MARKER_PATH", marker)
     monkeypatch.setattr(helper, "ATLASO_DATABASE_PATH", database)
-    monkeypatch.setattr(helper, "_release_data_disk_platform", lambda: "vmware")
+    monkeypatch.setattr(helper, "_release_data_disk_platform", lambda: "virtualization")
     monkeypatch.setattr(
         helper,
         "_release_data_disk_owned_files",
@@ -1986,21 +2054,21 @@ def test_previous_updater_bootstrap_restores_assets_claims_and_database(monkeypa
         ("VMware, Inc.", "VMware Virtual Platform", "vmware"),
     ],
 )
-def test_release_data_disk_platform_uses_exact_virtualization_evidence(
+def test_release_data_disk_platform_preserves_legacy_topology(
     monkeypatch,
     tmp_path,
     vendor,
     product,
     expected,
 ):
-    """Verify that upgrades select only the matching signed disk policy.
+    """Select the matching signed legacy policy when no first-boot marker exists.
 
     Args:
         monkeypatch: Pytest fixture used to replace dependencies for the test.
         tmp_path: Temporary directory provided by pytest for isolated filesystem state.
         vendor: DMI system vendor supplied to the test scenario.
         product: DMI product name supplied to the test scenario.
-        expected: Expected platform policy name.
+        expected: Expected legacy policy name.
     """
     from tests.test_appliance_update import load_helper_module
 
@@ -2009,6 +2077,7 @@ def test_release_data_disk_platform_uses_exact_virtualization_evidence(
     product_path = tmp_path / "product_name"
     vendor_path.write_text(vendor, encoding="utf-8")
     product_path.write_text(product, encoding="utf-8")
+    monkeypatch.setattr(helper, "ATLASO_GUEST_AGENT_MARKER_PATH", tmp_path / "missing-marker")
     monkeypatch.setattr(helper, "ATLASO_DMI_SYS_VENDOR_PATH", vendor_path)
     monkeypatch.setattr(helper, "ATLASO_DMI_PRODUCT_NAME_PATH", product_path)
     monkeypatch.setattr(helper, "ATLASO_DATA_DISK_POLICY_PATH", tmp_path / "missing-policy")
@@ -2018,8 +2087,27 @@ def test_release_data_disk_platform_uses_exact_virtualization_evidence(
     assert helper._release_data_disk_platform() == expected
 
 
-def test_release_data_disk_platform_rejects_conflicting_evidence(monkeypatch, tmp_path):
-    """Verify that upgrades fail closed when platform evidence conflicts.
+@pytest.mark.parametrize("platform", ["vmware", "qemu", "hyperv", "baremetal"])
+def test_release_data_disk_platform_uses_portable_artifact_marker(monkeypatch, tmp_path, platform):
+    """Use the shared four-disk policy for every verified portable artifact.
+
+    Args:
+        monkeypatch: Pytest fixture used to replace dependencies for the test.
+        tmp_path: Temporary directory provided by pytest for isolated filesystem state.
+        platform: Verified provider recorded by first boot.
+    """
+    from tests.test_appliance_update import load_helper_module
+
+    helper = load_helper_module()
+    marker = tmp_path / "guest-agent.applied"
+    marker.write_text(f"platform={platform}\n", encoding="utf-8")
+    monkeypatch.setattr(helper, "ATLASO_GUEST_AGENT_MARKER_PATH", marker)
+
+    assert helper._release_data_disk_platform() == "virtualization"
+
+
+def test_release_data_disk_platform_rejects_conflicting_legacy_evidence(monkeypatch, tmp_path):
+    """Fail closed instead of replacing an installed policy under contradictory evidence.
 
     Args:
         monkeypatch: Pytest fixture used to replace dependencies for the test.
@@ -2034,6 +2122,7 @@ def test_release_data_disk_platform_rejects_conflicting_evidence(monkeypatch, tm
     vendor_path.write_text("Microsoft Corporation", encoding="utf-8")
     product_path.write_text("Virtual Machine", encoding="utf-8")
     vmware_unit.write_text("[Unit]\n", encoding="utf-8")
+    monkeypatch.setattr(helper, "ATLASO_GUEST_AGENT_MARKER_PATH", tmp_path / "missing-marker")
     monkeypatch.setattr(helper, "ATLASO_DMI_SYS_VENDOR_PATH", vendor_path)
     monkeypatch.setattr(helper, "ATLASO_DMI_PRODUCT_NAME_PATH", product_path)
     monkeypatch.setattr(helper, "ATLASO_DATA_DISK_POLICY_PATH", tmp_path / "missing-policy")

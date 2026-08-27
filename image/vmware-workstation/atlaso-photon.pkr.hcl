@@ -50,6 +50,11 @@ variable "iso_checksum" {
 variable "ssh_username" {
   type    = string
   default = "atlaso-build"
+
+  validation {
+    condition     = can(regex("^[a-z_][a-z0-9_-]*$", var.ssh_username))
+    error_message = "SSH username must be one safe Linux account name."
+  }
 }
 
 variable "ssh_password" {
@@ -174,7 +179,7 @@ source "vmware-iso" "photon" {
   ssh_username         = var.ssh_username
   ssh_password         = var.ssh_password
   ssh_timeout          = "45m"
-  shutdown_command     = "printf '%s' '${local.ssh_password_stdin_base64}' | base64 -d | sudo -S systemctl poweroff"
+  shutdown_command     = "printf '%s' '${local.ssh_password_stdin_base64}' | base64 -d | sudo -S systemd-run --quiet --unit=atlaso-image-build-finalize --on-active=1s --property=Type=oneshot /usr/local/sbin/atlaso-finalize-image-build ${var.ssh_username}"
 
   vmx_data = {
     "firmware"                 = "efi"
@@ -199,7 +204,7 @@ build {
 
   provisioner "shell" {
     inline = [
-      "mkdir -p /tmp/atlaso-src/scripts /tmp/atlaso-src/image/common /tmp/atlaso-src/image/vmware-workstation /tmp/atlaso-src/image/inventory-linux /tmp/atlaso-src/third_party"
+      "mkdir -p /tmp/atlaso-src/scripts /tmp/atlaso-src/image/common/scripts /tmp/atlaso-src/image/common/guest-agents /tmp/atlaso-src/image/vmware-workstation /tmp/atlaso-src/image/inventory-linux /tmp/atlaso-src/third_party"
     ]
   }
 
@@ -274,13 +279,28 @@ build {
   }
 
   provisioner "file" {
+    source      = "../common/scripts"
+    destination = "/tmp/atlaso-src/image/common/scripts"
+  }
+
+  provisioner "file" {
+    source      = "../common/guest-agents"
+    destination = "/tmp/atlaso-src/image/common/guest-agents"
+  }
+
+  provisioner "file" {
     source      = "../common/udev"
     destination = "/tmp/atlaso-src/image/common/udev"
   }
 
   provisioner "file" {
-    source      = "data-disks.conf"
-    destination = "/tmp/atlaso-src/image/vmware-workstation/data-disks.conf"
+    source      = "../common/data-disks.conf"
+    destination = "/tmp/atlaso-src/image/common/data-disks.conf"
+  }
+
+  provisioner "file" {
+    source      = "../common/sudoers.d"
+    destination = "/tmp/atlaso-src/image/common/sudoers.d"
   }
 
   provisioner "file" {
@@ -296,11 +316,6 @@ build {
   provisioner "file" {
     source      = "../common/powershell"
     destination = "/tmp/atlaso-src/image/common/powershell"
-  }
-
-  provisioner "file" {
-    source      = "sudoers.d"
-    destination = "/tmp/atlaso-src/image/vmware-workstation/sudoers.d"
   }
 
   provisioner "shell" {

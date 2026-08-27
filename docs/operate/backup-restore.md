@@ -116,7 +116,7 @@ then remove it idempotently. Password values never enter
 the database, recovery marker, tasks, audits, logs, or UI responses. Sign in using the bootstrap administrator password
 selected for the reset. Factory state disables Management HTTPS and restores the packaged management network
 (`192.168.49.1/24` on `eth0`), so the browser may lose the old address or HTTPS endpoint. Use the VMware or
-Hyper-V console to find or correct management networking when the login page does not return at the former URL.
+hypervisor console to find or correct management networking when the login page does not return at the former URL.
 
 If detached scheduling fails before reset execution begins, a later confirmed submission replaces both the rejected
 password plan and its scheduling marker before retrying. Once execution has started, a failed marker remains

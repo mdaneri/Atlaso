@@ -37,10 +37,20 @@ SUPPORTED_ABIS = ("cp314",)
 RELEASE_OWNED_ASSETS = (
     (ROOT / "scripts/appliance/atlaso-helper", Path("bin/atlaso-helper")),
     (ROOT / "scripts/appliance/atlaso-mount-data-disks", Path("bin/atlaso-mount-data-disks")),
-    (ROOT / "image/hyperv/systemd/atlaso.service", Path("systemd/atlaso.service")),
+    (ROOT / "scripts/appliance/atlaso-select-guest-agent", Path("bin/atlaso-select-guest-agent")),
+    (
+        ROOT / "scripts/appliance/atlaso-initialize-machine-identity.py",
+        Path("bin/atlaso-initialize-machine-identity.py"),
+    ),
+    (ROOT / "image/common/systemd/atlaso.service", Path("systemd/atlaso.service")),
     (ROOT / "image/common/systemd/atlaso-worker.service", Path("systemd/atlaso-worker.service")),
     (ROOT / "image/common/systemd/atlaso-console.service", Path("systemd/atlaso-console.service")),
     (ROOT / "image/common/systemd/atlaso-data-disks.service", Path("systemd/atlaso-data-disks.service")),
+    (
+        ROOT / "image/common/systemd/atlaso-data-disks-legacy.service",
+        Path("systemd/atlaso-data-disks-legacy.service"),
+    ),
+    (ROOT / "image/common/systemd/atlaso-guest-agent-select.service", Path("systemd/atlaso-guest-agent-select.service")),
     (
         ROOT / "image/common/systemd/atlaso-require-data-disks.conf",
         Path("systemd/atlaso.service.d/atlaso-data-disks.conf"),
@@ -54,8 +64,9 @@ RELEASE_OWNED_ASSETS = (
         ROOT / "image/common/udev/99-atlaso-disk-identity.rules",
         Path("udev/99-atlaso-disk-identity.rules"),
     ),
-    (ROOT / "image/hyperv/data-disks.conf", Path("data-disks/hyperv.conf")),
-    (ROOT / "image/vmware-workstation/data-disks.conf", Path("data-disks/vmware.conf")),
+    (ROOT / "image/common/data-disks.conf", Path("data-disks/virtualization.conf")),
+    (ROOT / "image/common/data-disks/legacy-hyperv.conf", Path("data-disks/hyperv.conf")),
+    (ROOT / "image/common/data-disks/legacy-vmware.conf", Path("data-disks/vmware.conf")),
 )
 
 

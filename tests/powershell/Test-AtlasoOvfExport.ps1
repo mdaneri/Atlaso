@@ -1,3 +1,10 @@
+<#
+.SYNOPSIS
+Validates bounded VMware OVF output-directory replacement behavior.
+
+.PARAMETER RepositoryRoot
+The Atlaso repository root containing the module under test.
+#>
 [CmdletBinding()]
 param(
     [Parameter(Mandatory = $true)][string]$RepositoryRoot
@@ -9,6 +16,16 @@ $ErrorActionPreference = 'Stop'
 $modulePath = Join-Path $RepositoryRoot 'scripts\windows\vmware\Atlaso.OvfExport.psm1'
 Import-Module $modulePath -Force
 
+<#
+.SYNOPSIS
+Asserts that an action terminates with the expected message pattern.
+
+.PARAMETER Action
+The PowerShell action expected to terminate.
+
+.PARAMETER Pattern
+The wildcard pattern required in the terminating error message.
+#>
 function Assert-ThrowsLike {
     param(
         [Parameter(Mandatory = $true)][scriptblock]$Action,
@@ -27,6 +44,13 @@ function Assert-ThrowsLike {
     throw "Expected error like '$Pattern', but the command succeeded."
 }
 
+<#
+.SYNOPSIS
+Creates a test directory containing a retention marker.
+
+.PARAMETER Path
+The exact test directory to create.
+#>
 function New-MarkerDirectory {
     param([Parameter(Mandatory = $true)][string]$Path)
 
@@ -101,7 +125,7 @@ try {
         -Name '..\..\escaped-release'
     New-MarkerDirectory -Path $escapedPlan.OutputDirectory
     Assert-ThrowsLike -Action {
-        Clear-AtlasoOvfOutputDirectory -OutputPlan $escapedPlan -Release
+        Clear-AtlasoOvfOutputDirectory -OutputPlan $escapedPlan -Force
     } -Pattern '*outside the approved root*'
     if (-not (Test-Path -LiteralPath (Join-Path $escapedPlan.OutputDirectory 'retain.marker'))) {
         throw 'A traversal-shaped release name escaped the approved output boundary.'

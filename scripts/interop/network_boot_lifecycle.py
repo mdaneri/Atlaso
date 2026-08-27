@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Prove Inventory Linux reporting and audited reboot during Hyper-V lifecycle."""
+"""Prove Inventory Linux reporting and audited reboot during virtualization lifecycle."""
 
 from __future__ import annotations
 
@@ -150,7 +150,7 @@ def main() -> int:
         "/authentication/api-tokens",
         {
             "name": "Network Boot lifecycle proof",
-            "description": "Temporary Hyper-V lifecycle token",
+            "description": "Temporary virtualization lifecycle token",
             "scopes": "read:pxe write:pxe",
             "csrf": token_csrf,
         },
@@ -201,7 +201,7 @@ def main() -> int:
     )
     report = detail.get("latest_report") or {}
     if not detail.get("dmi_uuid"):
-        raise RuntimeError("Inventory report is missing the Hyper-V DMI UUID.")
+        raise RuntimeError("Inventory report is missing the virtual-machine DMI UUID.")
     if not detail.get("cpu_model") or int(detail.get("total_memory_bytes") or 0) <= 0:
         raise RuntimeError("Inventory report is missing CPU or memory evidence.")
     if int(detail.get("disk_count") or 0) < 1 or int(detail.get("interface_count") or 0) < 1:

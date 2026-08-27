@@ -168,9 +168,10 @@ def test_publish_release_requests_generated_notes_and_keeps_provenance(
     )
     create = next(command for command in calls if command[:3] == ["gh", "release", "create"])
     assert "--generate-notes" in create
-    assert create[create.index("--notes") + 1] == (
-        f"Signed appliance release built from `{commit}`."
-    )
+    notes = create[create.index("--notes") + 1]
+    assert notes.startswith(f"Signed appliance release built from `{commit}`.")
+    assert "virtualization-artifact-index.json" in notes
+    assert "virtualization-artifacts.md" in notes
     assert create[create.index("--title") + 1] == "Atlaso v0.9.30"
     assert str(asset.resolve()) in create
 

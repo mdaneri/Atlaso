@@ -16,8 +16,8 @@ if [ "$ATLASO_MGMT_ADDRESS" = "dhcp" ] || [ "$ATLASO_MGMT_IPV4_METHOD" = "dhcp" 
   ATLASO_MGMT_USES_DHCP=true
 fi
 ATLASO_DRY_RUN_SYSTEM_ADAPTERS="${ATLASO_DRY_RUN_SYSTEM_ADAPTERS:-true}"
-ATLASO_GUEST_PLATFORM="${ATLASO_GUEST_PLATFORM:-hyperv}"
-ATLASO_IMAGE_ASSET_DIR="${ATLASO_IMAGE_ASSET_DIR:-image/hyperv}"
+ATLASO_GUEST_PLATFORM="${ATLASO_GUEST_PLATFORM:-vmware}"
+ATLASO_IMAGE_ASSET_DIR="${ATLASO_IMAGE_ASSET_DIR:-image/vmware-workstation}"
 ATLASO_PIP_GLOBAL_INDEX="${ATLASO_PIP_GLOBAL_INDEX:-}"
 ATLASO_PIP_GLOBAL_INDEX_URL="${ATLASO_PIP_GLOBAL_INDEX_URL:-}"
 ATLASO_POWERCLI_MODULE_SOURCE="${ATLASO_POWERCLI_MODULE_SOURCE:-}"
@@ -34,7 +34,13 @@ BOOTSTRAP_SHELL="${ATLASO_BOOTSTRAP_ADMIN_SHELL:-/usr/bin/pwsh}"
 PIP_CACHE_DIR="${PIP_CACHE_DIR:-/var/cache/atlaso-pip}"
 TDNF_PROGRESS_RUNNER="$ATLASO_SRC/scripts/run_tdnf_with_progress.py"
 DISK_IDENTITY_RULE_SOURCE="$ATLASO_SRC/image/common/udev/99-atlaso-disk-identity.rules"
-DATA_DISK_POLICY_SOURCE="$ATLASO_SRC/$ATLASO_IMAGE_ASSET_DIR/data-disks.conf"
+DATA_DISK_POLICY_SOURCE="$ATLASO_SRC/image/common/data-disks.conf"
+QEMU_GUEST_AGENT_BUILDER="$ATLASO_SRC/image/common/scripts/build-qemu-guest-agent-rpm.sh"
+GUEST_AGENT_SELECTOR_SOURCE="$ATLASO_SRC/scripts/appliance/atlaso-select-guest-agent"
+MACHINE_IDENTITY_INITIALIZER_SOURCE="$ATLASO_SRC/scripts/appliance/atlaso-initialize-machine-identity.py"
+IMAGE_BUILD_FINALIZER_SOURCE="$ATLASO_SRC/image/common/scripts/finalize-image-build.sh"
+GUEST_AGENT_UNIT_SOURCE="$ATLASO_SRC/image/common/systemd/atlaso-guest-agent-select.service"
+GUEST_AGENT_STAGING="$ATLASO_STATE/first-boot-packages"
 
 log_step() {
   printf '\n==> Atlaso appliance: %s\n' "$1"
@@ -244,6 +250,12 @@ if [ ! -r "$DATA_DISK_POLICY_SOURCE" ]; then
   echo "Platform data-disk policy is missing from staged Atlaso sources: $DATA_DISK_POLICY_SOURCE" >&2
   exit 2
 fi
+if [ ! -r "$QEMU_GUEST_AGENT_BUILDER" ] || [ ! -r "$GUEST_AGENT_SELECTOR_SOURCE" ] ||
+  [ ! -r "$MACHINE_IDENTITY_INITIALIZER_SOURCE" ] || [ ! -r "$IMAGE_BUILD_FINALIZER_SOURCE" ] ||
+  [ ! -r "$GUEST_AGENT_UNIT_SOURCE" ]; then
+  echo "Provider-neutral guest-agent build or first-boot assets are missing from staged Atlaso sources." >&2
+  exit 2
+fi
 
 log_step "system adapter dry-run mode: $ATLASO_DRY_RUN_SYSTEM_ADAPTERS"
 log_step "guest platform: $ATLASO_GUEST_PLATFORM"
@@ -258,9 +270,6 @@ run_tdnf "Photon OS update" update
 log_step "installing Photon appliance packages"
 GUEST_INTEGRATION_PACKAGES=""
 case "$ATLASO_GUEST_PLATFORM" in
-  hyperv)
-    GUEST_INTEGRATION_PACKAGES="hyper-v"
-    ;;
   vmware)
     GUEST_INTEGRATION_PACKAGES="open-vm-tools"
     ;;
@@ -270,7 +279,40 @@ case "$ATLASO_GUEST_PLATFORM" in
     ;;
 esac
 run_tdnf "Photon appliance package installation" \
-  install python3 python3-pip python3-devel python3-virtualenv python3-curses python3-ntp sudo openssh-server curl rsync tar gzip shadow e2fsprogs sqlite procps-ng gnupg $GUEST_INTEGRATION_PACKAGES nftables dnsmasq ntpsec nfs-utils rpcbind openldap openldap-servers ipxe syslinux nginx powershell
+  install python3 python3-pip python3-devel python3-setuptools python3-virtualenv python3-curses python3-ntp sudo openssh-server curl rsync tar gzip xz shadow e2fsprogs sqlite procps-ng gnupg rpm-build gcc gcc-c++ make glib-devel systemd-devel ninja-build pkg-config $GUEST_INTEGRATION_PACKAGES nftables dnsmasq ntpsec nfs-utils rpcbind openldap openldap-servers ipxe syslinux nginx powershell
+
+log_step "building and staging verified offline guest-agent RPM closures"
+rm -rf "$GUEST_AGENT_STAGING"
+install -d -o root -g root -m 0700 "$GUEST_AGENT_STAGING" \
+  "$GUEST_AGENT_STAGING/hyperv" "$GUEST_AGENT_STAGING/qemu"
+qemu_rpm_output=/tmp/atlaso-qemu-guest-agent-rpm
+rm -rf "$qemu_rpm_output"
+sh "$QEMU_GUEST_AGENT_BUILDER" "$qemu_rpm_output"
+qemu_rpm_count="$(find "$qemu_rpm_output" -maxdepth 1 -type f -name 'atlaso-qemu-guest-agent-*.rpm' | wc -l)"
+if [ "$qemu_rpm_count" -ne 1 ]; then
+  echo "Expected one built QEMU guest-agent RPM; found $qemu_rpm_count." >&2
+  exit 2
+fi
+qemu_rpm="$(find "$qemu_rpm_output" -maxdepth 1 -type f -name 'atlaso-qemu-guest-agent-*.rpm')"
+run_tdnf "Photon Hyper-V offline RPM closure" \
+  install --downloadonly --downloaddir "$GUEST_AGENT_STAGING/hyperv" --alldeps hyper-v
+run_tdnf "Photon QEMU guest-agent offline RPM closure" \
+  install --downloadonly --downloaddir "$GUEST_AGENT_STAGING/qemu" --alldeps "$qemu_rpm"
+install -o root -g root -m 0600 "$qemu_rpm" "$GUEST_AGENT_STAGING/qemu/$(basename "$qemu_rpm")"
+rm -rf "$qemu_rpm_output"
+if [ "$(find "$GUEST_AGENT_STAGING/hyperv" -maxdepth 1 -type f -name '*.rpm' | wc -l)" -eq 0 ] ||
+  [ "$(find "$GUEST_AGENT_STAGING/qemu" -maxdepth 1 -type f -name '*.rpm' | wc -l)" -eq 0 ]; then
+  echo "One or more offline guest-agent RPM closures are empty." >&2
+  exit 2
+fi
+find "$GUEST_AGENT_STAGING" -type d -exec chown root:root {} + -exec chmod 0700 {} +
+find "$GUEST_AGENT_STAGING" -type f -name '*.rpm' -exec chown root:root {} + -exec chmod 0600 {} +
+(
+  cd "$GUEST_AGENT_STAGING"
+  find hyperv qemu -type f -name '*.rpm' -print | LC_ALL=C sort | xargs sha256sum >SHA256SUMS
+)
+chown root:root "$GUEST_AGENT_STAGING/SHA256SUMS"
+chmod 0600 "$GUEST_AGENT_STAGING/SHA256SUMS"
 
 prepare_system_content_disk
 
@@ -318,10 +360,8 @@ install -d -o root -g root -m 0755 /etc/atlaso
 install -o root -g root -m 0644 "$DATA_DISK_POLICY_SOURCE" /etc/atlaso/data-disks.conf
 
 log_step "disabling systemd SSH-over-vsock auto generator"
-if [ "$ATLASO_GUEST_PLATFORM" = "hyperv" ]; then
-  install -d -o root -g root -m 0755 /etc/systemd/system-generators
-  ln -sfn /dev/null /etc/systemd/system-generators/systemd-ssh-generator
-fi
+install -d -o root -g root -m 0755 /etc/systemd/system-generators
+ln -sfn /dev/null /etc/systemd/system-generators/systemd-ssh-generator
 
 if ! getent group atlaso >/dev/null 2>&1; then
   groupadd --system atlaso
@@ -349,6 +389,7 @@ install -d -o atlaso -g atlaso -m 0750 "$ATLASO_STATE"
 install -d -o root -g atlaso -m 0750 /var/lib/atlaso-privileged
 install -d -o root -g atlaso -m 0750 /var/lib/atlaso-privileged/factory-reset
 install -d -o root -g root -m 0700 /var/lib/atlaso-privileged/management-front-door
+install -d -o root -g root -m 0700 /var/lib/atlaso-privileged/guest-agent
 install -d -o atlaso -g atlaso -m 0750 "$ATLASO_STATE/apply/firewall"
 install -d -o atlaso -g atlaso -m 0750 "$ATLASO_STATE/apply/dnsmasq"
 install -d -o atlaso -g atlaso -m 0750 "$ATLASO_STATE/apply/kms"
@@ -491,7 +532,12 @@ printf 'vcf_sdk=%s\n' "$("$ATLASO_HOME/.venv/bin/python" -c 'from importlib.meta
 
 log_step "writing third-party notices"
 NOTICE_RPM_INVENTORY="$(mktemp)"
-rpm -qa --qf '%{NAME}\t%{VERSION}-%{RELEASE}\t%{LICENSE}\t%{URL}\n' | LC_ALL=C sort >"$NOTICE_RPM_INVENTORY"
+{
+  rpm -qa --qf '%{NAME}\t%{VERSION}-%{RELEASE}\t%{LICENSE}\t%{URL}\n'
+  find "$GUEST_AGENT_STAGING" -type f -name '*.rpm' | LC_ALL=C sort | while IFS= read -r staged_rpm; do
+    rpm -qp --qf '%{NAME}\t%{VERSION}-%{RELEASE}\t%{LICENSE}\t%{URL}\n' "$staged_rpm"
+  done
+} | LC_ALL=C sort -u >"$NOTICE_RPM_INVENTORY"
 install -d -o root -g root -m 0755 /usr/share/doc/atlaso
 "$ATLASO_HOME/.venv/bin/python" "$ATLASO_HOME/scripts/generate_third_party_notices.py" \
   --version "$ATLASO_RELEASE_VERSION" \
@@ -521,18 +567,22 @@ EOF
 chmod 0640 /etc/atlaso/atlaso.env
 chown root:atlaso /etc/atlaso/atlaso.env
 
-install -o root -g root -m 0644 "$ATLASO_HOME/$ATLASO_IMAGE_ASSET_DIR/systemd/atlaso.service" /etc/systemd/system/atlaso.service
+install -o root -g root -m 0644 "$ATLASO_HOME/image/common/systemd/atlaso.service" /etc/systemd/system/atlaso.service
 install -d -o root -g root -m 0755 /etc/systemd/system/atlaso.service.d
 install -o root -g root -m 0644 "$ATLASO_HOME/image/common/systemd/atlaso-require-data-disks.conf" /etc/systemd/system/atlaso.service.d/atlaso-data-disks.conf
 install -o root -g root -m 0644 "$ATLASO_HOME/image/common/systemd/atlaso-console.service" /etc/systemd/system/atlaso-console.service
 install -o root -g root -m 0644 "$ATLASO_HOME/image/common/systemd/atlaso-worker.service" /etc/systemd/system/atlaso-worker.service
 install -o root -g root -m 0644 "$ATLASO_HOME/image/common/systemd/atlaso-data-disks.service" /etc/systemd/system/atlaso-data-disks.service
+install -o root -g root -m 0644 "$GUEST_AGENT_UNIT_SOURCE" /etc/systemd/system/atlaso-guest-agent-select.service
 install -o root -g root -m 0644 "$ATLASO_HOME/image/common/systemd/atlaso-bootstrap-https.service" /etc/systemd/system/atlaso-bootstrap-https.service
 install -d -o root -g root -m 0755 /etc/systemd/system.conf.d
 install -o root -g root -m 0644 "$ATLASO_HOME/image/common/systemd/atlaso-console-manager.conf" /etc/systemd/system.conf.d/atlaso-console.conf
 install -o root -g root -m 0755 "$ATLASO_HOME/scripts/appliance/atlaso-helper" "$ATLASO_HOME/bin/atlaso-helper"
 install -o root -g root -m 0755 "$ATLASO_HOME/scripts/appliance/atlaso-install-boot-branding" "$ATLASO_HOME/bin/atlaso-install-boot-branding"
 install -o root -g root -m 0755 "$ATLASO_HOME/scripts/appliance/atlaso-mount-data-disks" "$ATLASO_HOME/bin/atlaso-mount-data-disks"
+install -o root -g root -m 0755 "$GUEST_AGENT_SELECTOR_SOURCE" "$ATLASO_HOME/bin/atlaso-select-guest-agent"
+install -o root -g root -m 0755 "$MACHINE_IDENTITY_INITIALIZER_SOURCE" "$ATLASO_HOME/bin/atlaso-initialize-machine-identity.py"
+install -o root -g root -m 0700 "$IMAGE_BUILD_FINALIZER_SOURCE" /usr/local/sbin/atlaso-finalize-image-build
 install -o root -g root -m 0755 "$ATLASO_HOME/scripts/appliance/atlaso-bootstrap-https" "$ATLASO_HOME/bin/atlaso-bootstrap-https"
 trust_source_dir="$ATLASO_HOME/image/common/update-trust"
 if [ ! -d "$trust_source_dir" ]; then
@@ -565,8 +615,8 @@ if [ "$ATLASO_GUEST_PLATFORM" = "vmware" ]; then
   install -o root -g root -m 0755 "$ATLASO_HOME/scripts/appliance/atlaso-vmware-ovf-customize.py" "$ATLASO_HOME/bin/atlaso-vmware-ovf-customize.py"
   install -o root -g root -m 0644 "$ATLASO_HOME/$ATLASO_IMAGE_ASSET_DIR/systemd/atlaso-vmware-ovf-customize.service" /etc/systemd/system/atlaso-vmware-ovf-customize.service
 fi
-install -o root -g root -m 0440 "$ATLASO_HOME/$ATLASO_IMAGE_ASSET_DIR/sudoers.d/atlaso-helper" /etc/sudoers.d/atlaso-helper
-sed -i 's/\r$//' /etc/systemd/system/atlaso.service /etc/systemd/system/atlaso-worker.service /etc/systemd/system/atlaso-console.service /etc/systemd/system.conf.d/atlaso-console.conf "$ATLASO_HOME/bin/atlaso-helper" "$ATLASO_HOME/bin/atlaso-install-boot-branding" "$ATLASO_HOME/bin/atlaso-mount-data-disks" "$ATLASO_HOME/bin/atlaso-bootstrap-https" /etc/sudoers.d/atlaso-helper
+install -o root -g root -m 0440 "$ATLASO_HOME/image/common/sudoers.d/atlaso-helper" /etc/sudoers.d/atlaso-helper
+sed -i 's/\r$//' /etc/systemd/system/atlaso.service /etc/systemd/system/atlaso-worker.service /etc/systemd/system/atlaso-console.service /etc/systemd/system/atlaso-guest-agent-select.service /etc/systemd/system.conf.d/atlaso-console.conf "$ATLASO_HOME/bin/atlaso-helper" "$ATLASO_HOME/bin/atlaso-install-boot-branding" "$ATLASO_HOME/bin/atlaso-mount-data-disks" "$ATLASO_HOME/bin/atlaso-select-guest-agent" "$ATLASO_HOME/bin/atlaso-initialize-machine-identity.py" "$ATLASO_HOME/bin/atlaso-bootstrap-https" /etc/sudoers.d/atlaso-helper
 if [ "$ATLASO_GUEST_PLATFORM" = "vmware" ]; then
   sed -i 's/\r$//' "$ATLASO_HOME/bin/atlaso-vmware-ovf-customize.py" /etc/systemd/system/atlaso-vmware-ovf-customize.service
 fi
@@ -588,7 +638,10 @@ cat >/etc/ssh/sshd_config.d/atlaso-root-login.conf <<'EOF'
 PermitRootLogin no
 EOF
 chmod 0644 /etc/ssh/sshd_config.d/atlaso-root-login.conf
-chown -R atlaso:atlaso "$ATLASO_STATE" "$ATLASO_LOG"
+# The first-boot RPM closure is a root-only trust boundary. Apply ordinary
+# Atlaso state ownership without ever traversing or relabeling that subtree.
+find "$ATLASO_STATE" -path "$GUEST_AGENT_STAGING" -prune -o -exec chown atlaso:atlaso {} +
+chown -R atlaso:atlaso "$ATLASO_LOG"
 chmod 0711 "$ATLASO_STATE"
 if id "$BOOTSTRAP_USERNAME" >/dev/null 2>&1 && [ -d "$ATLASO_STATE/users/$BOOTSTRAP_USERNAME" ]; then
   chown "$BOOTSTRAP_USERNAME:$(id -gn "$BOOTSTRAP_USERNAME")" "$ATLASO_STATE/users/$BOOTSTRAP_USERNAME"
@@ -667,15 +720,12 @@ systemctl daemon-reload
 systemctl enable systemd-networkd
 systemctl enable systemd-resolved || true
 systemctl enable sshd
-if [ "$ATLASO_GUEST_PLATFORM" = "hyperv" ]; then
-  systemctl enable --now hv_kvp_daemon || true
-  systemctl enable --now hv_fcopy_daemon || true
-  systemctl enable --now hv_vss_daemon || true
-elif [ "$ATLASO_GUEST_PLATFORM" = "vmware" ]; then
+if [ "$ATLASO_GUEST_PLATFORM" = "vmware" ]; then
   install -o root -g root -m 0640 /dev/null "$ATLASO_STATE/vmware-ovf-initializing"
-  systemctl enable --now vmtoolsd || true
+  systemctl enable --now vmtoolsd
   systemctl enable atlaso-vmware-ovf-customize.service
 fi
+systemctl enable atlaso-guest-agent-select.service
 systemctl enable atlaso-data-disks.service
 systemctl enable atlaso-bootstrap-https.service
 systemctl enable atlaso
@@ -765,8 +815,33 @@ log_step "running Photon compatibility check"
 
 report_image_footprint "pre-cleanup"
 
+log_step "scrubbing template credentials and machine identity"
+python3 - /etc/atlaso/atlaso.env <<'PY'
+import os
+import sys
+from pathlib import Path
+
+path = Path(sys.argv[1])
+replacements = {
+    "ATLASO_SECRET_KEY": "INITIALIZATION_REQUIRED",
+    "ATLASO_SECRETS_KEY": "INITIALIZATION_REQUIRED",
+    "ATLASO_BOOTSTRAP_ADMIN_PASSWORD": "INITIALIZATION_REQUIRED",
+}
+lines = []
+for line in path.read_text(encoding="utf-8").splitlines():
+    key = line.partition("=")[0]
+    lines.append(f"{key}={replacements[key]}" if key in replacements else line)
+path.write_text("\n".join(lines) + "\n", encoding="utf-8")
+os.chmod(path, 0o640)
+PY
+usermod --password '!' "$BOOTSTRAP_USERNAME"
+usermod --password '!' root
+rm -f /etc/ssh/ssh_host_* /etc/machine-id /var/lib/dbus/machine-id
+rm -f /root/.bash_history "/home/$BOOTSTRAP_USERNAME/.bash_history"
+sync
+
 log_step "removing build-only packages and caches"
-run_tdnf "Build-only package removal" remove python3-devel
+run_tdnf "Build-only package removal" remove python3-devel python3-setuptools rpm-build gcc gcc-c++ make glib-devel systemd-devel ninja-build pkg-config
 command -v python3 >/dev/null
 command -v pwsh >/dev/null
 command -v vmtoolsd >/dev/null 2>&1 || [ "$ATLASO_GUEST_PLATFORM" != "vmware" ]

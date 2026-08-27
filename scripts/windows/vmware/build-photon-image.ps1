@@ -598,8 +598,13 @@ Invoke-AtlasoPhotonImageBuild `
     -PipGlobalIndexUrl $PipGlobalIndexUrl `
     -PreparedIsoPath $PreparedIsoPath `
     -PackerOnError $PackerOnError `
-    -GuestPackages @('open-vm-tools') `
-    -GuestPostInstallCommands @('systemctl enable vmtoolsd || true') `
+    -GuestPackages @('open-vm-tools', 'hyper-v') `
+    -GuestPostInstallCommands @(
+        'systemctl enable vmtoolsd || true',
+        'systemctl enable hv_kvp_daemon || true',
+        'systemctl enable hv_fcopy_daemon || true',
+        'systemctl enable hv_vss_daemon || true'
+    ) `
     -InstallDiskLayout 'vmware-workstation' `
     -AdditionalPackerVariables $packerVariables `
     -PackerBuildInvoker $packerBuildInvoker `

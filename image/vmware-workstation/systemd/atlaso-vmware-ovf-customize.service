@@ -1,8 +1,9 @@
 [Unit]
 Description=Atlaso VMware OVF first-boot customization
 DefaultDependencies=no
-After=local-fs.target atlaso-console.service
+After=local-fs.target atlaso-console.service atlaso-guest-agent-select.service
 Wants=atlaso-console.service
+Requires=atlaso-guest-agent-select.service
 Before=network-pre.target systemd-networkd.service atlaso-data-disks.service atlaso-firewall.service atlaso-bootstrap-https.service nginx.service atlaso.service
 
 [Service]

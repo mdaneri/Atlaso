@@ -1183,6 +1183,104 @@ def test_console_first_boot_initialization_locks_privileged_actions(monkeypatch)
     assert "<F12>" not in text
 
 
+def test_console_first_boot_access_persists_until_acknowledged(tmp_path, monkeypatch):
+    """Verify the one-time envelope survives redraws and explicit acknowledgement removes it.
+
+    Args:
+        tmp_path: Temporary directory provided by pytest for isolated filesystem state.
+        monkeypatch: Pytest helper used to replace the fixed runtime path.
+    """
+
+    access_path = tmp_path / "first-boot-access.json"
+    access_path.write_text(
+        json.dumps(
+            {
+                "username": "admin",
+                "password": "A!a1-admin-once",
+                "root_password": "A!a1-root-once",
+                "ssh_host_key": "ssh-ed25519 AAAAhostkey",
+            }
+        ),
+        encoding="utf-8",
+    )
+    access_path.chmod(0o600)
+    monkeypatch.setattr(appliance_console, "FIRST_BOOT_ACCESS_PATH", access_path)
+    monkeypatch.setattr(appliance_console, "_first_boot_access_owner_is_root", lambda _metadata: True)
+
+    access = appliance_console.load_first_boot_access()
+    assert access is not None
+    assert appliance_console.load_first_boot_access() == access
+
+    appliance_console.acknowledge_first_boot_access()
+
+    assert appliance_console.load_first_boot_access() is None
+    assert not access_path.exists()
+
+
+def test_console_draws_first_boot_access_acknowledgement(monkeypatch):
+    """Verify the transient access screen names every value and its destructive acknowledgement.
+
+    Args:
+        monkeypatch: Pytest helper used to replace the displayed package version.
+    """
+
+    rendered: list[str] = []
+    console = CursesConsole.__new__(CursesConsole)
+    console.curses = SimpleNamespace(A_BOLD=1, color_pair=lambda value: value)
+    console._safe_add = lambda _row, _column, value, *_args: rendered.append(value)
+    console._fill_line = lambda *_args: None
+    console._refresh_screen = lambda: None
+    monkeypatch.setattr(appliance_console, "_package_version", lambda: "0.9.220")
+    access = appliance_console.FirstBootAccess(
+        username="admin",
+        password="A!a1-admin-once",
+        root_password="A!a1-root-once",
+        ssh_host_key="ssh-ed25519 AAAAhostkey",
+    )
+
+    console._draw_first_boot_access(access, 30, 80)
+
+    text = "\n".join(rendered)
+    assert "Record this one-time access information" in text
+    assert "Administrator: admin" in text
+    assert "Administrator password:" in text
+    assert "A!a1-admin-once" in text
+    assert "Root password:" in text
+    assert "A!a1-root-once" in text
+    assert "ssh-ed25519 AAAAhostkey" in text
+    assert "<Enter> Acknowledge" in text
+
+
+def test_console_first_boot_access_wraps_generated_passwords_at_minimum_width(monkeypatch):
+    """Render complete generated credentials on the supported 72-column console.
+
+    Args:
+        monkeypatch: Pytest helper used to replace the displayed package version.
+    """
+
+    rendered: list[tuple[int, int, str]] = []
+    console = CursesConsole.__new__(CursesConsole)
+    console.curses = SimpleNamespace(A_BOLD=1, color_pair=lambda value: value)
+    console._safe_add = lambda row, column, value, *_args: rendered.append((row, column, value))
+    console._fill_line = lambda *_args: None
+    console._refresh_screen = lambda: None
+    monkeypatch.setattr(appliance_console, "_package_version", lambda: "0.9.223")
+    admin_password = "A" * 47
+    root_password = "R" * 47
+    access = appliance_console.FirstBootAccess(
+        username="admin",
+        password=admin_password,
+        root_password=root_password,
+        ssh_host_key="ssh-ed25519 " + "K" * 68,
+    )
+
+    console._draw_first_boot_access(access, 22, 72)
+
+    assert "".join(value for row, _column, value in rendered if row in {9, 10}) == admin_password
+    assert "".join(value for row, _column, value in rendered if row in {12, 13}) == root_password
+    assert all(len(value) <= 72 - column - 1 for _row, column, value in rendered)
+
+
 def test_console_first_boot_lock_ignores_privileged_action_keys(tmp_path, monkeypatch):
     """Verify pre-customization key handling cannot enter privileged workflows.
 

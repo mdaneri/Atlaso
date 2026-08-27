@@ -1,6 +1,6 @@
 <#
 .SYNOPSIS
-Verify provider-specific Atlaso Photon kickstart generation.
+Verify canonical Atlaso Photon kickstart generation.
 .PARAMETER RepositoryRoot
 Atlaso repository root.
 .PARAMETER OutputDirectory
@@ -103,20 +103,15 @@ if (Test-Path -LiteralPath $sensitiveArtifactRoot) {
 
 $providers = @(
     [pscustomobject]@{
-        Name                = 'hyperv'
-        InstallDiskLayout   = 'default'
-        AdditionalPackages  = @('hyper-v')
+        Name                = 'vmware-workstation'
+        InstallDiskLayout   = 'vmware-workstation'
+        AdditionalPackages  = @('open-vm-tools', 'hyper-v')
         PostInstallCommands = @(
+            'systemctl enable vmtoolsd || true',
             'systemctl enable hv_kvp_daemon || true',
             'systemctl enable hv_fcopy_daemon || true',
             'systemctl enable hv_vss_daemon || true'
         )
-    },
-    [pscustomobject]@{
-        Name                = 'vmware-workstation'
-        InstallDiskLayout   = 'vmware-workstation'
-        AdditionalPackages  = @('open-vm-tools')
-        PostInstallCommands = @('systemctl enable vmtoolsd || true')
     }
 )
 $passwords = @(

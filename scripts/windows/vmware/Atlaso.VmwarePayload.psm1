@@ -185,6 +185,7 @@ function Assert-AtlasoVmwarePayloadProvenance {
 
 Export-ModuleMember -Function @(
     'Assert-AtlasoVmwarePayloadProvenance',
+    'Get-AtlasoVmxValue',
     'Get-AtlasoVmwarePayloadLayout',
     'Get-AtlasoVmdkCapacityBytes'
 )

@@ -11,6 +11,7 @@ SCSI_GENERIC_SYS_ROOT="${ATLASO_DATA_DISK_SCSI_GENERIC_SYS_ROOT:-/sys/class/scsi
 BSG_DEVICE_ROOT="${ATLASO_DATA_DISK_BSG_DEVICE_ROOT:-/dev/bsg}"
 BSG_SYS_ROOT="${ATLASO_DATA_DISK_BSG_SYS_ROOT:-/sys/class/bsg}"
 RAW_DEVICE_ROOT="${ATLASO_DATA_DISK_RAW_DEVICE_ROOT:-/dev/raw}"
+GUEST_AGENT_MARKER_PATH="${ATLASO_GUEST_AGENT_MARKER_PATH:-/var/lib/atlaso-privileged/guest-agent/guest-agent.applied}"
 
 log() {
   printf '%s\n' "$*"
@@ -30,9 +31,44 @@ load_policy() {
   # shellcheck disable=SC1090
   . "$POLICY_PATH"
   : "${ATLASO_DATA_DISK_SIZE_BYTES:?missing data-disk capacity policy}"
+  if [ -z "${ATLASO_DEPOT_SCSI_TUPLE:-}" ] || [ -z "${ATLASO_BACKUP_SCSI_TUPLE:-}" ]; then
+    virtualization_provider="${ATLASO_VIRTUALIZATION_PROVIDER:-}"
+    if [ -z "$virtualization_provider" ]; then
+      [ -f "$GUEST_AGENT_MARKER_PATH" ] || fail "verified virtualization platform marker is missing"
+      platform_marker="$(cat "$GUEST_AGENT_MARKER_PATH")"
+      case "$platform_marker" in
+        platform=*) virtualization_provider="${platform_marker#platform=}" ;;
+        *) fail "verified virtualization platform marker is invalid" ;;
+      esac
+    fi
+    case "$virtualization_provider" in
+      vmware)
+        ATLASO_DEPOT_SCSI_TUPLE="${ATLASO_VMWARE_DEPOT_SCSI_TUPLE:-}"
+        ATLASO_BACKUP_SCSI_TUPLE="${ATLASO_VMWARE_BACKUP_SCSI_TUPLE:-}"
+        ATLASO_SYSTEM_SCSI_TUPLE="${ATLASO_VMWARE_SYSTEM_SCSI_TUPLE:-}"
+        ;;
+      microsoft|hyperv)
+        ATLASO_DEPOT_SCSI_TUPLE="${ATLASO_HYPERV_DEPOT_SCSI_TUPLE:-}"
+        ATLASO_BACKUP_SCSI_TUPLE="${ATLASO_HYPERV_BACKUP_SCSI_TUPLE:-}"
+        ATLASO_SYSTEM_SCSI_TUPLE="${ATLASO_HYPERV_SYSTEM_SCSI_TUPLE:-}"
+        ;;
+      kvm|qemu)
+        ATLASO_DEPOT_SCSI_TUPLE="${ATLASO_KVM_DEPOT_SCSI_TUPLE:-}"
+        ATLASO_BACKUP_SCSI_TUPLE="${ATLASO_KVM_BACKUP_SCSI_TUPLE:-}"
+        ATLASO_SYSTEM_SCSI_TUPLE="${ATLASO_KVM_SYSTEM_SCSI_TUPLE:-}"
+        ;;
+      baremetal)
+        ATLASO_DEPOT_SCSI_TUPLE="${ATLASO_BAREMETAL_DEPOT_SCSI_TUPLE:-}"
+        ATLASO_BACKUP_SCSI_TUPLE="${ATLASO_BAREMETAL_BACKUP_SCSI_TUPLE:-}"
+        ATLASO_SYSTEM_SCSI_TUPLE="${ATLASO_BAREMETAL_SYSTEM_SCSI_TUPLE:-}"
+        ;;
+      *) fail "unsupported virtualization platform ${virtualization_provider:-unknown}" ;;
+    esac
+  else
+    ATLASO_SYSTEM_SCSI_TUPLE="${ATLASO_SYSTEM_SCSI_TUPLE:-}"
+  fi
   : "${ATLASO_DEPOT_SCSI_TUPLE:?missing depot SCSI identity policy}"
   : "${ATLASO_BACKUP_SCSI_TUPLE:?missing backup SCSI identity policy}"
-  ATLASO_SYSTEM_SCSI_TUPLE="${ATLASO_SYSTEM_SCSI_TUPLE:-}"
   case "$ATLASO_DATA_DISK_SIZE_BYTES" in
     *[!0-9]*|'') fail "data-disk capacity policy is invalid" ;;
   esac

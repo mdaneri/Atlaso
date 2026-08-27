@@ -419,10 +419,10 @@ sources directly.
 
 ## Signed lifecycle fixture
 
-Hyper-V lifecycle coverage can exercise the complete release transaction with:
+The canonical VMware Workstation lifecycle coverage can exercise the complete release transaction with:
 
 ```powershell
-scripts/windows/hyperv/invoke-lifecycle-test.ps1 `
+scripts/windows/vmware/invoke-lifecycle-test.ps1 `
   -SignedReleaseRepositoryUrl https://release-fixture.example.test/updates
 ```
 

@@ -1,0 +1,306 @@
+#!/bin/sh
+set -eu
+
+STAGING_DIRECTORY="${ATLASO_GUEST_AGENT_STAGING:-/var/lib/atlaso/first-boot-packages}"
+MANIFEST_PATH="$STAGING_DIRECTORY/SHA256SUMS"
+RUNTIME_DIRECTORY="${ATLASO_GUEST_AGENT_RUNTIME:-/run/atlaso-guest-agent}"
+SUCCESS_MARKER="${ATLASO_GUEST_AGENT_MARKER:-/var/lib/atlaso-privileged/guest-agent/guest-agent.applied}"
+DMI_ROOT="${ATLASO_DMI_ROOT:-/sys/class/dmi/id}"
+EXPECTED_STAGING_IDENTITY="${ATLASO_GUEST_AGENT_STAGING_IDENTITY:-root:root:700}"
+PACKAGE_CACHE_DIRECTORY="${ATLASO_GUEST_AGENT_PACKAGE_CACHE:-/var/cache/tdnf}"
+MACHINE_IDENTITY_INITIALIZER="${ATLASO_MACHINE_IDENTITY_INITIALIZER:-/opt/atlaso/bin/atlaso-initialize-machine-identity.py}"
+
+log() {
+  printf 'atlaso-select-guest-agent: %s\n' "$1"
+}
+
+fail() {
+  log "$1" >&2
+  exit 2
+}
+
+case "$EXPECTED_STAGING_IDENTITY" in
+  *:*:700) ;;
+  *) fail "Offline guest-agent staging identity must end in mode 700." ;;
+esac
+expected_owner=${EXPECTED_STAGING_IDENTITY%%:*}
+expected_group_and_mode=${EXPECTED_STAGING_IDENTITY#*:}
+expected_group=${expected_group_and_mode%%:*}
+marker_parent=$(dirname -- "$SUCCESS_MARKER")
+[ -d "$marker_parent" ] && [ ! -L "$marker_parent" ] ||
+  fail "Guest-agent success marker parent is missing or unsafe."
+[ "$(stat -c '%U:%G:%a' "$marker_parent")" = "$expected_owner:$expected_group:700" ] ||
+  fail "Guest-agent success marker parent ownership or mode is unsafe."
+
+for managed_path in "$STAGING_DIRECTORY" "$RUNTIME_DIRECTORY" "$SUCCESS_MARKER" "$DMI_ROOT" "$PACKAGE_CACHE_DIRECTORY"; do
+  case "$managed_path" in
+    /*) ;;
+    *) fail "Guest-agent managed paths must be absolute." ;;
+  esac
+  [ "$managed_path" != "/" ] || fail "Guest-agent managed paths cannot identify the filesystem root."
+done
+
+installed_names() {
+  rpm -qa --queryformat '%{NAME}\n' | sort -u
+}
+
+remove_packages() {
+  pattern="$1"
+  packages="$(installed_names | awk -v pattern="$pattern" '$0 ~ pattern { print }')"
+  if [ -n "$packages" ]; then
+    # RPM package names cannot contain whitespace; one transaction keeps
+    # provider removal bounded and dependency-checked.
+    # shellcheck disable=SC2086
+    rpm -e $packages
+  fi
+}
+
+stop_foreign_agents() {
+  systemctl disable --now vmtoolsd.service 2>/dev/null || true
+  systemctl disable --now qemu-guest-agent.service 2>/dev/null || true
+  for service in hv_kvp_daemon.service hv_fcopy_daemon.service hv_vss_daemon.service; do
+    systemctl disable --now "$service" 2>/dev/null || true
+  done
+}
+
+verify_service_absent() {
+  service="$1"
+  if systemctl is-active --quiet "$service" 2>/dev/null; then
+    fail "A foreign guest-agent service remains active: $service"
+  fi
+  if systemctl is-enabled --quiet "$service" 2>/dev/null; then
+    fail "A foreign guest-agent service remains enabled: $service"
+  fi
+}
+
+install_profile() {
+  profile="$1"
+  set -- "$STAGING_DIRECTORY/$profile"/*.rpm
+  [ -f "$1" ] || fail "The verified $profile RPM closure is empty."
+  rpm -Uvh --replacepkgs "$@"
+}
+
+detect_platform() {
+  detected="$(systemd-detect-virt --vm 2>/dev/null || true)"
+  case "$detected" in
+    vmware) systemd_platform=vmware ;;
+    kvm|qemu) systemd_platform=qemu ;;
+    microsoft) systemd_platform=hyperv ;;
+    ''|none) systemd_platform=baremetal ;;
+    *) fail "Unsupported virtualization identifier: $detected" ;;
+  esac
+
+  dmi_text="$(printf '%s\n' "$(cat "$DMI_ROOT/sys_vendor" 2>/dev/null || true)" \
+    "$(cat "$DMI_ROOT/product_name" 2>/dev/null || true)" \
+    "$(cat "$DMI_ROOT/board_vendor" 2>/dev/null || true)" | tr '[:upper:]' '[:lower:]')"
+  dmi_platform=""
+  case "$dmi_text" in *vmware*) dmi_platform=vmware ;; esac
+  case "$dmi_text" in
+    *microsoft*virtual*)
+      [ -z "$dmi_platform" ] || fail "Contradictory VMware and Hyper-V DMI evidence."
+      dmi_platform=hyperv
+      ;;
+  esac
+  case "$dmi_text" in
+    *qemu*|*kvm*)
+      [ -z "$dmi_platform" ] || fail "Contradictory virtualization DMI evidence."
+      dmi_platform=qemu
+      ;;
+  esac
+  if [ -n "$dmi_platform" ] && [ "$systemd_platform" != "$dmi_platform" ]; then
+    fail "Contradictory virtualization evidence: systemd=$systemd_platform dmi=$dmi_platform"
+  fi
+  printf '%s\n' "$systemd_platform"
+}
+
+verify_staging() {
+  [ -d "$STAGING_DIRECTORY" ] || fail "Offline guest-agent staging is missing."
+  [ ! -L "$STAGING_DIRECTORY" ] || fail "Offline guest-agent staging cannot be a symlink."
+  [ "$(stat -c '%U:%G:%a' "$STAGING_DIRECTORY")" = "$EXPECTED_STAGING_IDENTITY" ] ||
+    fail "Offline guest-agent staging ownership or mode is unsafe."
+  [ -f "$MANIFEST_PATH" ] || fail "Offline guest-agent checksum manifest is missing."
+  [ ! -L "$MANIFEST_PATH" ] || fail "Offline guest-agent checksum manifest cannot be a symlink."
+  if awk 'NF != 2 || $2 ~ /^\*/ || $2 ~ /^\// || $2 ~ /(^|\/)\.\.($|\/)/ { exit 1 }' "$MANIFEST_PATH"; then
+    :
+  else
+    fail "Offline guest-agent checksum manifest contains an unsafe path."
+  fi
+  if find "$STAGING_DIRECTORY" -type l | grep -q .; then
+    fail "Offline guest-agent staging cannot contain symbolic links."
+  fi
+  if find "$STAGING_DIRECTORY" -type d \( ! -user "$expected_owner" -o ! -group "$expected_group" -o ! -perm 0700 \) -print -quit |
+    grep -q .; then
+    fail "Offline guest-agent staging contains an unsafe directory."
+  fi
+  if find "$STAGING_DIRECTORY" -type f \( ! -user "$expected_owner" -o ! -group "$expected_group" -o ! -perm 0600 \) -print -quit |
+    grep -q .; then
+    fail "Offline guest-agent staging contains an unsafe file."
+  fi
+  printf 'hyperv\nqemu\n' >"$RUNTIME_DIRECTORY/expected-directories"
+  find "$STAGING_DIRECTORY" -mindepth 1 -type d -printf '%P\n' | LC_ALL=C sort >"$RUNTIME_DIRECTORY/actual-directories"
+  cmp -s "$RUNTIME_DIRECTORY/expected-directories" "$RUNTIME_DIRECTORY/actual-directories" ||
+    fail "Offline guest-agent staging contains an unexpected directory."
+  find "$STAGING_DIRECTORY" -type f -printf '%P\n' | while IFS= read -r relative_path; do
+    case "$relative_path" in
+      SHA256SUMS|hyperv/*.rpm|qemu/*.rpm) ;;
+      *) fail "Offline guest-agent staging contains an unexpected file: $relative_path" ;;
+    esac
+  done
+  find "$STAGING_DIRECTORY" -mindepth 2 -maxdepth 2 -type f -name '*.rpm' -printf '%P\n' |
+    LC_ALL=C sort >"$RUNTIME_DIRECTORY/actual-rpms"
+  awk '{ print $2 }' "$MANIFEST_PATH" | LC_ALL=C sort >"$RUNTIME_DIRECTORY/manifest-rpms"
+  cmp -s "$RUNTIME_DIRECTORY/actual-rpms" "$RUNTIME_DIRECTORY/manifest-rpms" ||
+    fail "Offline guest-agent checksum manifest does not cover the exact RPM closure."
+  (cd "$STAGING_DIRECTORY" && sha256sum -c SHA256SUMS)
+}
+
+verify_absent() {
+  pattern="$1"
+  if installed_names | awk -v pattern="$pattern" '$0 ~ pattern { found=1 } END { exit !found }'; then
+    fail "A foreign guest-agent package remains installed: $pattern"
+  fi
+}
+
+cleanup_staging() {
+  cleanup_required=0
+  if [ -d "$STAGING_DIRECTORY" ]; then
+    cleanup_required=1
+    find "$STAGING_DIRECTORY" -type f -exec shred -u -z -- {} + 2>/dev/null ||
+      find "$STAGING_DIRECTORY" -type f -delete
+  fi
+  [ ! -e "$RUNTIME_DIRECTORY" ] && [ ! -L "$RUNTIME_DIRECTORY" ] || cleanup_required=1
+  rm -rf "$STAGING_DIRECTORY" "$RUNTIME_DIRECTORY"
+  if [ "$cleanup_required" -eq 1 ]; then
+    if [ -e "$PACKAGE_CACHE_DIRECTORY" ] || [ -L "$PACKAGE_CACHE_DIRECTORY" ]; then
+      [ -d "$PACKAGE_CACHE_DIRECTORY" ] && [ ! -L "$PACKAGE_CACHE_DIRECTORY" ] ||
+        fail "Guest-agent package cache must be an ordinary directory."
+      find "$PACKAGE_CACHE_DIRECTORY" -mindepth 1 -maxdepth 1 -exec rm -rf -- {} +
+    fi
+  fi
+  sync
+}
+
+if [ -f "$SUCCESS_MARKER" ]; then
+  [ ! -L "$SUCCESS_MARKER" ] || fail "Guest-agent success marker cannot be a symlink."
+  [ "$(stat -c '%U:%G:%a' "$SUCCESS_MARKER")" = "$expected_owner:$expected_group:600" ] ||
+    fail "Guest-agent success marker ownership or mode is unsafe."
+  marker_platform=$(sed -n 's/^platform=//p' "$SUCCESS_MARKER")
+  [ "$(wc -l <"$SUCCESS_MARKER")" -eq 1 ] || fail "Guest-agent success marker is malformed."
+  case "$marker_platform" in vmware|qemu|hyperv|baremetal) ;; *) fail "Guest-agent success marker is malformed." ;; esac
+  detected_platform=$(detect_platform)
+  [ "$marker_platform" = "$detected_platform" ] ||
+    fail "Guest-agent marker platform conflicts with current evidence: marker=$marker_platform detected=$detected_platform"
+  [ -f "$MACHINE_IDENTITY_INITIALIZER" ] && [ ! -L "$MACHINE_IDENTITY_INITIALIZER" ] ||
+    fail "Machine-identity initializer is missing or unsafe."
+  if [ "$marker_platform" = "hyperv" ]; then
+    # The KVP daemon caches its pool. Keep it stopped while removing Atlaso's
+    # one-time record, then reload the retained pool before serving the host.
+    systemctl stop hv_kvp_daemon.service
+    "$MACHINE_IDENTITY_INITIALIZER" --platform "$marker_platform" --clear-access
+    systemctl start hv_kvp_daemon.service
+    systemctl is-active --quiet hv_kvp_daemon.service
+  else
+    "$MACHINE_IDENTITY_INITIALIZER" --platform "$marker_platform" --clear-access
+  fi
+  # A durable marker proves the provider transaction completed. Retrying the
+  # cleanup here closes the power-loss window between that commit and erasure.
+  cleanup_staging
+  log "Guest-agent selection already completed."
+  exit 0
+fi
+
+# The runtime scratch directory follows the same trusted identity contract as
+# the persistent closure. Production fixes that identity at root:root; the
+# override exists only for the unprivileged, isolated selector test boundary.
+install -d -o "$expected_owner" -g "$expected_group" -m 0700 "$RUNTIME_DIRECTORY"
+verify_staging
+platform="$(detect_platform)"
+log "Detected platform: $platform"
+
+case "$platform" in
+  vmware)
+    stop_foreign_agents
+    rpm -q open-vm-tools >/dev/null
+    remove_packages '^hyper-v$'
+    remove_packages '^qemu-guest-agent$|^atlaso-qemu-guest-agent$'
+    systemctl enable --now vmtoolsd.service
+    systemctl is-active --quiet vmtoolsd.service
+    verify_absent '^hyper-v$|^qemu-guest-agent$|^atlaso-qemu-guest-agent$'
+    verify_service_absent qemu-guest-agent.service
+    for service in hv_kvp_daemon.service hv_fcopy_daemon.service hv_vss_daemon.service; do
+      verify_service_absent "$service"
+    done
+    ;;
+  qemu)
+    stop_foreign_agents
+    remove_packages '^open-vm-tools'
+    remove_packages '^hyper-v$'
+    remove_packages '^qemu-guest-agent$'
+    install_profile qemu
+    systemctl daemon-reload
+    systemctl enable --now qemu-guest-agent.service
+    systemctl is-active --quiet qemu-guest-agent.service
+    rpm -q atlaso-qemu-guest-agent >/dev/null
+    verify_absent '^open-vm-tools|^hyper-v$'
+    verify_service_absent vmtoolsd.service
+    for service in hv_kvp_daemon.service hv_fcopy_daemon.service hv_vss_daemon.service; do
+      verify_service_absent "$service"
+    done
+    ;;
+  hyperv)
+    stop_foreign_agents
+    remove_packages '^open-vm-tools'
+    remove_packages '^qemu-guest-agent$|^atlaso-qemu-guest-agent$'
+    install_profile hyperv
+    systemctl daemon-reload
+    # hv_kvp_daemon reads its pool only at startup. Enable it now but leave it
+    # stopped until the initializer has atomically published Atlaso's record.
+    systemctl enable hv_kvp_daemon.service
+    systemctl is-enabled --quiet hv_kvp_daemon.service
+    for service in hv_fcopy_daemon.service hv_vss_daemon.service; do
+      systemctl enable --now "$service"
+      systemctl is-active --quiet "$service"
+    done
+    rpm -q hyper-v >/dev/null
+    verify_absent '^open-vm-tools|^qemu-guest-agent$|^atlaso-qemu-guest-agent$'
+    verify_service_absent vmtoolsd.service
+    verify_service_absent qemu-guest-agent.service
+    ;;
+  baremetal)
+    stop_foreign_agents
+    remove_packages '^open-vm-tools'
+    remove_packages '^hyper-v$'
+    remove_packages '^qemu-guest-agent$|^atlaso-qemu-guest-agent$'
+    verify_absent '^open-vm-tools|^hyper-v$|^qemu-guest-agent$|^atlaso-qemu-guest-agent$'
+    verify_service_absent vmtoolsd.service
+    verify_service_absent qemu-guest-agent.service
+    for service in hv_kvp_daemon.service hv_fcopy_daemon.service hv_vss_daemon.service; do
+      verify_service_absent "$service"
+    done
+    ;;
+  *)
+    fail "Internal platform selection error: $platform"
+    ;;
+esac
+
+[ -f "$MACHINE_IDENTITY_INITIALIZER" ] && [ ! -L "$MACHINE_IDENTITY_INITIALIZER" ] ||
+  fail "Machine-identity initializer is missing or unsafe."
+"$MACHINE_IDENTITY_INITIALIZER" --platform "$platform"
+if [ "$platform" = "hyperv" ]; then
+  # Starting after publication makes the new pool visible to the host and
+  # keeps failure retryable before the durable success marker is committed.
+  systemctl start hv_kvp_daemon.service
+  systemctl is-active --quiet hv_kvp_daemon.service
+fi
+
+marker_tmp=$(mktemp "${SUCCESS_MARKER}.new.XXXXXX")
+trap 'rm -f -- "$marker_tmp"' EXIT HUP INT TERM
+printf 'platform=%s\n' "$platform" >"$marker_tmp"
+chown "$expected_owner:$expected_group" "$marker_tmp"
+chmod 0600 "$marker_tmp"
+sync
+mv -f -- "$marker_tmp" "$SUCCESS_MARKER"
+trap - EXIT HUP INT TERM
+sync
+cleanup_staging
+log "Guest-agent selection completed."

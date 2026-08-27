@@ -68,6 +68,7 @@ SSH_HOST_ED25519_PUBLIC_KEY_PATH = Path("/etc/ssh/ssh_host_ed25519_key.pub")
 MARKER_PATH = Path("/var/lib/atlaso/vmware-ovf-customization.applied")
 PENDING_MARKER_PATH = Path("/var/lib/atlaso/vmware-ovf-customization.pending")
 NO_OVF_MARKER_PATH = Path("/var/lib/atlaso/vmware-no-ovf-initialization.applied")
+GUEST_AGENT_MARKER_PATH = Path("/var/lib/atlaso-privileged/guest-agent/guest-agent.applied")
 INITIALIZATION_LOCK_PATH = Path("/var/lib/atlaso/vmware-ovf-initializing")
 NETWORK_REVIEW_PATH = Path("/var/lib/atlaso/vmware-ovf-network-review.json")
 NETWORK_CORRECTION_PATH = Path("/var/lib/atlaso/vmware-ovf-network-correction.json")
@@ -1002,6 +1003,32 @@ def try_read_ovf_environment() -> tuple[bool, str]:
     return False, ""
 
 
+def detect_virtualization_platform() -> str:
+    """Return the platform selected by the prerequisite guest-agent service."""
+
+    if GUEST_AGENT_MARKER_PATH.exists():
+        try:
+            marker = GUEST_AGENT_MARKER_PATH.read_text(encoding="utf-8").strip()
+        except OSError as exc:
+            raise OvfCustomizationError("Guest-agent platform marker could not be read") from exc
+        match = re.fullmatch(r"platform=(vmware|qemu|hyperv|baremetal)", marker)
+        if match is None:
+            raise OvfCustomizationError("Guest-agent platform marker is invalid")
+        return match.group(1)
+    executable = shutil.which("systemd-detect-virt")
+    if executable is None:
+        return ""
+    result = subprocess.run(
+        [executable, "--vm"],
+        check=False,
+        text=True,
+        capture_output=True,
+    )
+    if result.returncode != 0:
+        return ""
+    return result.stdout.strip().lower()
+
+
 def read_ovf_environment() -> str:
     """Return OVF XML, collapsing an inconclusive read for the normal polling path."""
     _answered, content = try_read_ovf_environment()
@@ -1790,6 +1817,9 @@ def apply_customization(config: dict[str, object], *, dry_run: bool = False) -> 
         "bootstrap administrator password",
         lambda: set_password(bootstrap_user, str(config["admin_password"])),
     )
+    # Every imported appliance regenerated its host identity before networking;
+    # publish that exact public key for authenticated deployment automation.
+    run_initialization_layer("SSH host key", publish_test_vm_ssh_host_key)
     if config["development_admin_ssh_public_key"]:
         run_initialization_layer(
             "development administrator SSH",
@@ -1802,7 +1832,6 @@ def apply_customization(config: dict[str, object], *, dry_run: bool = False) -> 
         # first-boot customizer for raw Workstation clones. Only the normal test
         # wrapper injects this development-key property; lifecycle and exported
         # appliances therefore never publish this convenience-channel value.
-        run_initialization_layer("test VM SSH host key", publish_test_vm_ssh_host_key)
     if config["normal_test_vm"]:
         # The explicit normal-test marker survives password-only clone creation;
         # do not infer this trust boundary from optional SSH key provisioning.
@@ -1840,6 +1869,26 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--ovf-env-file", default="", help="Read OVF environment XML from a file instead of VMware Tools.")
     parser.add_argument("--dry-run", action="store_true", help="Validate and print the redacted summary without changing the host.")
     args = parser.parse_args(argv)
+
+    if not args.dry_run and not args.ovf_env_file:
+        try:
+            virtualization_platform = detect_virtualization_platform()
+        except OvfCustomizationError as exc:
+            log(f"Portable artifact initialization failed closed: {exc}")
+            return 2
+        if virtualization_platform and virtualization_platform != "vmware":
+            if MARKER_PATH.exists() or PENDING_MARKER_PATH.exists():
+                log(
+                    "Portable artifact initialization rejected VMware deployment state from a previously booted template."
+                )
+                return 2
+            result = complete_no_ovf_initialization()
+            if result == 0:
+                log(
+                    f"Portable {virtualization_platform} artifact initialized from image defaults; "
+                    "VMware OVF properties do not apply."
+                )
+            return result
 
     if MARKER_PATH.exists() and not args.dry_run:
         scrub_applied_ovf_environment()

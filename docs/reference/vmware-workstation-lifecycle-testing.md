@@ -43,8 +43,8 @@ Normal test VM creation uses a separate development-CA handoff. It requires the 
 that bounded child, and cryptographically verifies its concealed signer against the checked-in development root before
 VM mutation. The stable SDK-backed wheel deployment above does not change this normal-test-wrapper-only trust path.
 
-Atlaso can run a VMware Workstation lifecycle lab alongside the Hyper-V lab. The Workstation path uses VMX/VMDK
-artifacts and `vmrun.exe`, then delegates appliance behavior checks to the shared Python lifecycle runner.
+Atlaso uses a VMware Workstation lifecycle lab as its canonical deployed-behavior environment. The path uses VMX/VMDK
+artifacts and `vmrun.exe`, then delegates appliance behavior checks to the provider-neutral Python lifecycle runner.
 
 Run all Windows commands in PowerShell 7.4 or newer (`pwsh`). Earlier PowerShell releases and Windows PowerShell 5.1
 (`powershell.exe`) are not supported.
@@ -64,7 +64,7 @@ test-results/vmware-workstation-lifecycle/<timestamp>/vms
 ```
 
 The appliance VMX is copied from the selected Workstation image output. Client VMs use an Alpine cloud VMDK prepared
-from the same upstream QCOW2 source as the Hyper-V lifecycle client. The payload and SHA-512 metadata are cached only as
+from a pinned upstream QCOW2 source. The payload and SHA-512 metadata are cached only as
 a verified pair: corrupt entries are removed on an ordinary rerun, downloads stay in unique partial files until
 validation succeeds, and promotion is scoped to the exact expected cache files. The default Alpine artifact uses the
 versioned `v3.24` release URL and a repository-pinned SHA-512 digest; custom images must pass their own
@@ -89,8 +89,8 @@ If vmnets are missing, adjust them in VMware Virtual Network Editor before runni
 wrapper reads the selected management vmnet before rendering Packer variables; for bridged `vmnet0`, it uses the active
 Windows IPv4 interface or the interface named by `-BridgedInterfaceAlias`.
 
-The Workstation management subnet must remain separate from the Hyper-V management subnet. Unless overridden, the build
-wrapper chooses `.30` in that subnet for temporary builder SSH, then leaves final appliance management on DHCP and
+Unless overridden, the build wrapper chooses `.30` in the selected management subnet for temporary builder SSH, then
+leaves final appliance management on DHCP and
 discovers the runtime address through VMware Tools.
 
 ## Build The Appliance
@@ -105,11 +105,11 @@ pwsh -ExecutionPolicy Bypass `
   -EnableRealSystemAdapters
 ```
 
-The wrapper shares Photon ISO remastering, kickstart rendering, checksum validation, and Packer var-file generation with
-the Hyper-V build wrapper. Both wrappers use `image/common/source` for the original Photon ISO download cache so the
-source ISO is not duplicated under each target. The Workstation image installs `open-vm-tools`; the Hyper-V image keeps
-the `hyper-v` package and Hyper-V guest daemons. The Workstation build wrapper opens a visible VMware console by
-default. Use `-Headless` only when an unattended build is preferred.
+The wrapper uses the shared Photon ISO remastering, kickstart rendering, checksum validation, and Packer var-file
+generation. `image/common/source` holds the original Photon ISO download cache. The canonical image installs
+`open-vm-tools` and stages the locked offline RPM closures used by the provider-neutral first-boot guest-agent selector.
+The Workstation build wrapper opens a visible VMware console by default. Use `-Headless` only when an unattended build
+is preferred.
 The shared builder removes and verifies the absence of its plaintext kickstart source, generated Packer variable file,
 and remastered credential-bearing ISO after the bounded Packer consumer exits. The cleanup covers validation, build,
 failure, and fallback ISO paths; an ACL, file-lock, or endpoint-protection cleanup failure terminates the build instead
@@ -299,8 +299,8 @@ pwsh -ExecutionPolicy Bypass `
   -TrustRootCa
 ```
 
-That is the Workstation counterpart to `scripts/windows/hyperv/create-atlaso-test-vm.ps1`. It defaults to the management
-vmnet only; pass `-IncludeLabNetworkAdapters` after creating the SiteA, WAN/SiteB, and trunk-like vmnets.
+It defaults to the management vmnet only; pass `-IncludeLabNetworkAdapters` after creating the SiteA, WAN/SiteB, and
+trunk-like vmnets.
 For real creation, the wrapper prefers an explicit `-OnePasswordEnvironmentId` override and otherwise reads the exact
 single-line `.atlaso-local/onepassword-environment-id` file. The entire `.atlaso-local` directory is ignored by Git. A
 custom file may be selected with `-EnvironmentIdFile`; the legacy `-OnePasswordEnvironmentIdFile` spelling remains an
@@ -367,11 +367,10 @@ before 1Password preflight or any new network, disk, or VM mutation; do not edit
 For ESX Storage appliance acceptance, attach an extra blank VMDK to the normal Workstation test appliance, initialize it
 only through global `esx_storage` apply, and apply the matching DNS/DHCP and Firewall units. Record the job ID,
 `/dev/disk/by-id` fingerprint, UUID mount, generated A/AAAA names, `exportfs -v`, TCP/111/2049/20048 sockets, nftables
-family rules, and persistence after appliance reboot. Workstation proves real Photon disk/NFS/DNS/firewall behavior; the
-Hyper-V/ESX 9 lifecycle remains authoritative for IPv4 and IPv6 VMkernel mounts and datastore I/O.
+family rules, and persistence after appliance reboot. Workstation proves real Photon disk/NFS/DNS/firewall behavior.
+External ESX 9 integration evidence remains required for IPv4 and IPv6 VMkernel mounts and datastore I/O.
 
-VMware Workstation vmnets provide isolated layer-2 segments, but they do not match Hyper-V's explicit access/trunk VLAN
-port model. The Workstation lifecycle therefore validates the appliance workflow, management reachability, service apply
-behavior, tty1 console ownership with tty2 left available for normal login, backup/restore portability, and host/client
-integration where separate vmnets are equivalent. Keep Hyper-V lifecycle results as the authoritative acceptance
-evidence for VLAN access/trunk behavior until a Workstation-specific tagged-client strategy is added and proven.
+VMware Workstation vmnets provide isolated layer-2 segments. The lifecycle validates the appliance workflow, management
+reachability, service apply behavior, tty1 console ownership with tty2 left available for normal login, backup/restore
+portability, and host/client integration where separate vmnets are equivalent. Tagged-trunk acceptance requires a
+compatible upstream virtual-network configuration and recorded topology evidence.
