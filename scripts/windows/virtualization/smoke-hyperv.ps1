@@ -58,6 +58,43 @@ function Get-AtlasoHyperVFirstBootAccess {
     return $null
 }
 
+<#
+.SYNOPSIS
+Returns the stable Windows file identifier for a Hyper-V smoke path.
+.PARAMETER Path
+Existing file or directory whose identity must be captured.
+#>
+function Get-AtlasoHyperVSmokeWindowsFileId {
+    param([Parameter(Mandatory = $true)][string]$Path)
+
+    $output = @(& fsutil file queryfileid $Path 2>&1)
+    $fileIdMatches = @([regex]::Matches(($output -join "`n"), '0x[0-9A-Fa-f]+'))
+    if ($LASTEXITCODE -ne 0 -or $fileIdMatches.Count -ne 1) {
+        throw "Could not resolve one stable Windows file ID for: $Path"
+    }
+    return $fileIdMatches[0].Value.ToLowerInvariant()
+}
+
+<#
+.SYNOPSIS
+Snapshots every non-reparse descendant beneath a Hyper-V smoke root.
+.PARAMETER DirectoryPath
+Invocation-owned operation directory to inventory.
+#>
+function Get-AtlasoHyperVSmokeDescendantIdentity {
+    param([Parameter(Mandatory = $true)][string]$DirectoryPath)
+
+    $identity = @{}
+    foreach ($item in @(Get-ChildItem -LiteralPath $DirectoryPath -Recurse -Force)) {
+        if (($item.Attributes -band [System.IO.FileAttributes]::ReparsePoint) -ne 0) {
+            throw "Hyper-V smoke descendant cannot be a reparse point: $($item.FullName)"
+        }
+        $relativePath = [System.IO.Path]::GetRelativePath($DirectoryPath, $item.FullName)
+        $identity[$relativePath] = Get-AtlasoHyperVSmokeWindowsFileId -Path $item.FullName
+    }
+    return ,$identity
+}
+
 $repoRoot = (Resolve-Path -LiteralPath (Join-Path $PSScriptRoot '..\..\..')).Path
 $sourceZip = Get-Item -LiteralPath $ZipPath -Force -ErrorAction Stop
 if ($sourceZip.PSIsContainer -or
@@ -87,11 +124,18 @@ $operationRoot = Join-Path $resolvedRoot ('.hyperv-smoke-' + [guid]::NewGuid().T
 $packageRoot = Join-Path $operationRoot 'package'
 $vmRoot = Join-Path $operationRoot 'vm'
 New-Item -ItemType Directory -Path $packageRoot -Force | Out-Null
+$operationRootItem = Get-Item -LiteralPath $operationRoot -Force -ErrorAction Stop
+if (($operationRootItem.Attributes -band [System.IO.FileAttributes]::ReparsePoint) -ne 0) {
+    throw 'The Hyper-V smoke operation root became a reparse point.'
+}
+$operationRootId = Get-AtlasoHyperVSmokeWindowsFileId -Path $operationRoot
+$ownedDescendantIds = Get-AtlasoHyperVSmokeDescendantIdentity -DirectoryPath $operationRoot
 $vmCreated = $false
 $createdVm = $null
 $importAttempted = $false
 try {
     Expand-Archive -LiteralPath $sourceZip.FullName -DestinationPath $packageRoot
+    $ownedDescendantIds = Get-AtlasoHyperVSmokeDescendantIdentity -DirectoryPath $operationRoot
     $importer = Join-Path $packageRoot 'Import-Atlaso.ps1'
     if (-not (Test-Path -LiteralPath $importer -PathType Leaf)) {
         throw 'The Hyper-V ZIP does not contain Import-Atlaso.ps1.'
@@ -156,6 +200,12 @@ finally {
             if ([string]$createdVm.State -ne 'Off') {
                 Stop-VM -VM $createdVm -TurnOff -Force -ErrorAction Stop
             }
+            $operationRootItem = Get-Item -LiteralPath $operationRoot -Force -ErrorAction Stop
+            if (($operationRootItem.Attributes -band [System.IO.FileAttributes]::ReparsePoint) -ne 0 -or
+                (Get-AtlasoHyperVSmokeWindowsFileId -Path $operationRoot) -ne $operationRootId) {
+                throw 'The invocation-owned Hyper-V smoke root identity changed before provider deletion.'
+            }
+            $ownedDescendantIds = Get-AtlasoHyperVSmokeDescendantIdentity -DirectoryPath $operationRoot
             Remove-VM -VM $createdVm -Force -ErrorAction Stop
             $matchingVm = @(Get-VM -ErrorAction Stop | Where-Object Id -eq $createdVm.Id)
             if ($matchingVm.Count -ne 0) {
@@ -171,7 +221,29 @@ finally {
         $cleanupFailure = 'The exact created Hyper-V smoke VM could not be resolved; its files were preserved.'
     }
     if ($operationRootSafeToRemove -and (Test-Path -LiteralPath $operationRoot)) {
-        Remove-Item -LiteralPath $operationRoot -Recurse -Force
+        try {
+            $operationRootItem = Get-Item -LiteralPath $operationRoot -Force -ErrorAction Stop
+            if (($operationRootItem.Attributes -band [System.IO.FileAttributes]::ReparsePoint) -ne 0 -or
+                (Get-AtlasoHyperVSmokeWindowsFileId -Path $operationRoot) -ne $operationRootId) {
+                throw 'The invocation-owned Hyper-V smoke root identity changed before filesystem deletion.'
+            }
+            $currentDescendantIds = Get-AtlasoHyperVSmokeDescendantIdentity -DirectoryPath $operationRoot
+            $descendantChanged = @($currentDescendantIds.Keys | Where-Object {
+                    -not $ownedDescendantIds.ContainsKey($_) -or
+                    $ownedDescendantIds[$_] -ne $currentDescendantIds[$_]
+                })
+            if ($descendantChanged.Count -ne 0) {
+                throw 'The invocation-owned Hyper-V smoke descendant identity changed before filesystem deletion.'
+            }
+            Remove-Item -LiteralPath $operationRoot -Recurse -Force -ErrorAction Stop
+            if (Test-Path -LiteralPath $operationRoot) {
+                throw 'The invocation-owned Hyper-V smoke operation root remains after filesystem deletion.'
+            }
+        }
+        catch {
+            $cleanupFailure = "The Hyper-V smoke operation root could not be safely removed; its files were " +
+                "preserved. $($_.Exception.Message)"
+        }
     }
     if ($cleanupFailure) {
         throw $cleanupFailure

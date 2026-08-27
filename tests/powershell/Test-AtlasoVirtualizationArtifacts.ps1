@@ -160,6 +160,11 @@ foreach ($required in @(
         'did not return one exact created virtual-machine identity',
         '$operationRootSafeToRemove = -not $importAttempted',
         '$operationRootSafeToRemove',
+        'Get-AtlasoHyperVSmokeWindowsFileId',
+        'Get-AtlasoHyperVSmokeDescendantIdentity',
+        '$ownedDescendantIds.ContainsKey($_)',
+        'root identity changed before filesystem deletion',
+        'descendant identity changed before filesystem deletion',
         'its files were preserved'
     )) {
     if (-not $hyperVSmoke.Contains($required)) {

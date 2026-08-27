@@ -256,6 +256,9 @@ ATLASO_DISK_IDENTITY_UDEV_PATH = Path("/etc/udev/rules.d/99-atlaso-disk-identity
 ATLASO_VMWARE_OVF_UNIT_PATH = Path("/etc/systemd/system/atlaso-vmware-ovf-customize.service")
 ATLASO_HYPERV_GENERATOR_PATH = Path("/etc/systemd/system-generators/systemd-ssh-generator")
 ATLASO_GUEST_AGENT_MARKER_PATH = Path("/var/lib/atlaso-privileged/guest-agent/guest-agent.applied")
+ATLASO_GUEST_AGENT_SELECTOR_PATH = Path("/opt/atlaso/bin/atlaso-select-guest-agent")
+ATLASO_MACHINE_IDENTITY_INITIALIZER_PATH = Path("/opt/atlaso/bin/atlaso-initialize-machine-identity.py")
+ATLASO_GUEST_AGENT_SELECT_UNIT_PATH = Path("/etc/systemd/system/atlaso-guest-agent-select.service")
 ATLASO_DMI_SYS_VENDOR_PATH = Path("/sys/class/dmi/id/sys_vendor")
 ATLASO_DMI_PRODUCT_NAME_PATH = Path("/sys/class/dmi/id/product_name")
 SUPPORTED_RELEASE_PYTHON_ABIS = {"cp314"}
@@ -12836,6 +12839,7 @@ def _install_release_owned_files(
         (release_root / "systemd/atlaso.service", Path("/etc/systemd/system/atlaso.service"), 0o644),
         (release_root / "systemd/atlaso-worker.service", Path("/etc/systemd/system/atlaso-worker.service"), 0o644),
         (release_root / "systemd/atlaso-console.service", Path("/etc/systemd/system/atlaso-console.service"), 0o644),
+        *_release_first_boot_owned_files(release_root),
         *_release_data_disk_owned_files(release_root, data_disk_platform),
     ]
     trust = release_root / "trust"
@@ -12876,6 +12880,28 @@ def _install_release_owned_files(
             raise ValueError("Atlaso release asset installation failed and rollback was incomplete") from exc
         raise
     return backups
+
+
+def _release_first_boot_owned_files(release_root: Path) -> list[tuple[Path, Path, int]]:
+    """Return first-boot executables and units owned by signed appliance updates.
+
+    Args:
+        release_root: Verified extracted release root.
+    """
+
+    return [
+        (release_root / "bin/atlaso-select-guest-agent", ATLASO_GUEST_AGENT_SELECTOR_PATH, 0o755),
+        (
+            release_root / "bin/atlaso-initialize-machine-identity.py",
+            ATLASO_MACHINE_IDENTITY_INITIALIZER_PATH,
+            0o755,
+        ),
+        (
+            release_root / "systemd/atlaso-guest-agent-select.service",
+            ATLASO_GUEST_AGENT_SELECT_UNIT_PATH,
+            0o644,
+        ),
+    ]
 
 
 def _release_data_disk_owned_files(release_root: Path, platform: str) -> list[tuple[Path, Path, int]]:

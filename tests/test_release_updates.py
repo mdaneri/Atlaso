@@ -1731,16 +1731,50 @@ def test_release_bundle_carries_transactional_data_disk_safety_assets():
     destinations = {destination.as_posix() for _source, destination in module.RELEASE_OWNED_ASSETS}
     assert {
         "bin/atlaso-mount-data-disks",
+        "bin/atlaso-select-guest-agent",
+        "bin/atlaso-initialize-machine-identity.py",
         "data-disks/hyperv.conf",
         "data-disks/virtualization.conf",
         "data-disks/vmware.conf",
         "systemd/atlaso-bootstrap-https.service",
         "systemd/atlaso-data-disks.service",
         "systemd/atlaso-data-disks-legacy.service",
+        "systemd/atlaso-guest-agent-select.service",
         "systemd/atlaso.service.d/atlaso-data-disks.conf",
         "systemd/nginx.service.d/atlaso-data-disks.conf",
         "udev/99-atlaso-disk-identity.rules",
     } <= destinations
+
+
+def test_signed_updates_install_and_rollback_every_first_boot_asset(tmp_path):
+    """Bind bundled first-boot assets to their live updater-owned destinations.
+
+    Args:
+        tmp_path: Temporary release root used to verify source mappings.
+    """
+
+    from tests.test_appliance_update import load_helper_module
+
+    helper = load_helper_module()
+    owned = helper._release_first_boot_owned_files(tmp_path)
+
+    assert owned == [
+        (
+            tmp_path / "bin/atlaso-select-guest-agent",
+            helper.ATLASO_GUEST_AGENT_SELECTOR_PATH,
+            0o755,
+        ),
+        (
+            tmp_path / "bin/atlaso-initialize-machine-identity.py",
+            helper.ATLASO_MACHINE_IDENTITY_INITIALIZER_PATH,
+            0o755,
+        ),
+        (
+            tmp_path / "systemd/atlaso-guest-agent-select.service",
+            helper.ATLASO_GUEST_AGENT_SELECT_UNIT_PATH,
+            0o644,
+        ),
+    ]
 
 
 def test_legacy_release_uses_data_disk_unit_without_new_selector_dependency(tmp_path):
