@@ -605,6 +605,60 @@ def test_appliance_settings_autosave_reconciles_factory_service_desired_state(
     assert alias_actors == [None]
 
 
+def test_appliance_settings_audit_includes_independent_dns_reconciliation(
+    client, monkeypatch
+):
+    """Consolidate appliance and alias DNS mutations into the settings audit.
+
+    Args:
+        client: Authenticated Atlaso test client with an isolated database.
+        monkeypatch: Pytest fixture used to provide deterministic DNS actions.
+    """
+    from sqlalchemy import select
+
+    from atlaso.app import ui as ui_module
+    from atlaso.app.database import SessionLocal
+    from atlaso.app.models import AuditEvent
+    from tests.routers.ui.helpers import login
+
+    monkeypatch.setattr(
+        ui_module,
+        "ensure_dns_for_appliance_settings",
+        lambda *args, **kwargs: "updated",
+    )
+    monkeypatch.setattr(
+        ui_module,
+        "reconcile_service_dns_aliases",
+        lambda *args, **kwargs: ["vcf_private_registry"],
+    )
+
+    login(client)
+    page = client.get("/settings")
+    csrf = page.text.split('name="csrf" value="', 1)[1].split('"', 1)[0]
+    response = client.post(
+        "/settings",
+        data={
+            "fqdn": "core.atlaso.internal",
+            "service_dns_target_naming": "interface",
+            "external_dns_servers": "1.1.1.1\n9.9.9.9",
+            "csrf": csrf,
+        },
+        headers={"X-Atlaso-Autosave": "1"},
+    )
+
+    assert response.status_code == 200, response.text
+    with SessionLocal() as db:
+        audit = db.execute(
+            select(AuditEvent)
+            .where(AuditEvent.action == "update_appliance_settings")
+            .order_by(AuditEvent.id.desc())
+        ).scalars().first()
+        assert audit is not None
+        assert audit.detail == (
+            "appliance_dns=updated; service_dns_aliases=vcf_private_registry"
+        )
+
+
 def test_settings_restore_reconciles_legacy_factory_service_domain(client):
     """Archive restore upgrades legacy factory identities without rewriting custom names.
 
