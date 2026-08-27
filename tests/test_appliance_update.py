@@ -2794,6 +2794,101 @@ def test_appliance_update_recovery_keeps_running_until_helper_quiesces(
     assert worker._reconcile_appliance_update_status_surface() is False
 
 
+def test_interrupted_photon_apply_recovery_preserves_restart_obligation(
+    client,
+    monkeypatch,
+):
+    """Restart services when Photon may have mutated before worker interruption.
+
+    Args:
+        client: HTTP test client providing isolated application state.
+        monkeypatch: Pytest fixture used to replace recovery side effects.
+    """
+    import atlaso.app.ui as ui
+    import atlaso.app.worker as worker
+    from atlaso.app.database import SessionLocal
+    from atlaso.app.models import Job, JobStatus
+    from atlaso.app.services.appliance_update import (
+        APPLIANCE_UPDATE_STAGED_CONFIG_PATH,
+        ensure_appliance_update_job_steps,
+    )
+
+    client.get("/login")
+    job_id = "job_234567abcdef"
+    restart_calls = []
+    quiesce_calls = []
+
+    class RestartAdapter:
+        """Record the conservative delayed restart dispatch."""
+
+        def restart_appliance_after_update(self, config_path: str) -> AdapterResult:
+            """Return a successful delayed-restart schedule.
+
+            Args:
+                config_path: Staged Appliance Update manifest path.
+            """
+            restart_calls.append(config_path)
+            return AdapterResult(command=["restart-service", config_path], dry_run=False)
+
+    monkeypatch.setattr(ui, "SystemAdapter", RestartAdapter)
+    monkeypatch.setattr(ui, "log_appliance_update_failures", lambda *_args: None)
+    monkeypatch.setattr(ui, "log_appliance_update_submission", lambda *_args: None)
+    monkeypatch.setattr(ui, "record_audit", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr(
+        worker,
+        "_quiesce_appliance_update_action",
+        lambda observed_job_id, stream: quiesce_calls.append(
+            (observed_job_id, stream)
+        )
+        or True,
+    )
+    monkeypatch.setattr(
+        worker,
+        "_publish_appliance_update_status",
+        lambda *_args, **_kwargs: pytest.fail("the update-only hold must remain active"),
+    )
+    with SessionLocal() as db:
+        job = Job(
+            id=job_id,
+            type="appliance-update",
+            status=JobStatus.RUNNING.value,
+            created_by="admin",
+            task_config_json=json.dumps(
+                {
+                    "schema_version": 2,
+                    "mode": "run",
+                    "selected_streams": ["photon_os"],
+                    "execution_order": ["photon_os"],
+                    "status_transaction_id": "e" * 32,
+                    "settings": {},
+                }
+            ),
+            result=json.dumps({"apply_started": True}),
+        )
+        db.add(job)
+        db.flush()
+        step = ensure_appliance_update_job_steps(
+            db,
+            job=job,
+            selected_streams=["photon_os"],
+        )[0]
+        step.status = JobStatus.RUNNING.value
+        step.result = json.dumps({"apply_started": True})
+        db.commit()
+
+        assert worker.recover_interrupted_worker_jobs(db) == 1
+        recovered = db.get(Job, job_id)
+        recovered_result = json.loads(recovered.result)
+        recovered_step = list(recovered.steps)[0]
+
+    assert quiesce_calls == [(job_id, "photon_os")]
+    assert recovered.status == JobStatus.FAILED.value
+    assert recovered_step.status == JobStatus.FAILED.value
+    assert recovered_result["restart_after_commit"] is True
+    assert recovered_result["restart_scheduled"] is True
+    assert restart_calls == [APPLIANCE_UPDATE_STAGED_CONFIG_PATH]
+
+
 def test_recovered_photon_prefix_retains_status_hold_until_restart(client, monkeypatch):
     """Keep the update-only surface active through a recovered restart.
 

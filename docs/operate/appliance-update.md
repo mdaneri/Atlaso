@@ -57,7 +57,9 @@ the task becomes visible. A task created by an older updater retains its origina
 than being silently reordered. A current task interrupted safely between children resumes only its untouched pending
 suffix; a child that started is never replayed. If a worker disappears while a non-release child is running, startup
 stops and verifies that task-and-stream-bound transient helper before failing the child or restoring ordinary UIs; an
-unverifiable helper keeps the hierarchy running and the update-only surface held. Atlaso Release runs last, so its
+unverifiable helper keeps the hierarchy running and the update-only surface held. If the interrupted Photon child had
+entered its real apply phase, recovery conservatively completes the delayed all-service restart even when the helper's
+terminal result was never persisted. Atlaso Release runs last, so its
 verified candidate-worker handoff has
 no pending post-release child and suppresses the former extra Photon-triggered delayed restart. The parent succeeds only
 when every selected child succeeds and all required restoration evidence is durable.

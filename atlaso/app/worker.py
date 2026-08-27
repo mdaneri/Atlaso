@@ -610,6 +610,21 @@ def recover_interrupted_worker_jobs(
                 if step.status == JobStatus.RUNNING.value
                 and not (step is release_step and recovered)
             ]
+            interrupted_photon_apply_started = False
+            if str(config.get("mode") or "run") == "run":
+                for step in unresolved_running_steps:
+                    if step.component_key != "photon_os":
+                        continue
+                    try:
+                        running_result = json.loads(step.result or "{}")
+                    except json.JSONDecodeError:
+                        running_result = {}
+                    interrupted_photon_apply_started = bool(
+                        isinstance(running_result, dict)
+                        and running_result.get("apply_started") is True
+                    )
+                    if interrupted_photon_apply_started:
+                        break
             if any(
                 not _quiesce_appliance_update_action(job.id, step.component_key)
                 for step in unresolved_running_steps
@@ -699,11 +714,13 @@ def recover_interrupted_worker_jobs(
                     {
                         "status": JobStatus.FAILED.value,
                         "success": False,
-                        "restart_after_commit": False,
+                        "restart_after_commit": interrupted_photon_apply_started,
                         "worker_recovery": "interrupted",
                         "error": interrupted_error,
                     }
                 )
+                if interrupted_photon_apply_started:
+                    update_result["config_path"] = APPLIANCE_UPDATE_STAGED_CONFIG_PATH
                 if mode == "check":
                     interrupted_availability = {
                         "state": "failed",
