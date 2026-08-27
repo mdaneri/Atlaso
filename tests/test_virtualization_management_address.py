@@ -18,7 +18,7 @@ def _interface(mac: str, *addresses: str) -> dict[str, object]:
 
     Args:
         mac: Interface hardware address.
-        addresses: IPv4 values to publish on the fixture.
+        *addresses: IPv4 values to publish on the fixture.
     """
 
     return {
