@@ -16,7 +16,7 @@ case "$vmid" in ''|*[!0-9]*) echo "VMID must be numeric." >&2; exit 2 ;; esac
 for value in "$storage" "$management_bridge" "$service_bridge"; do
   case "$value" in ''|*[!A-Za-z0-9_.-]*) echo "Storage and bridge names contain an unsafe character." >&2; exit 2 ;; esac
 done
-for command in python3 qm pvesm qemu-img jq mktemp realpath; do
+for command in python3 qm pvesm qemu-img jq mktemp realpath flock; do
   command -v "$command" >/dev/null 2>&1 || {
     echo "$command is required on the Proxmox VE node." >&2
     exit 2
@@ -29,6 +29,15 @@ done
 ova_path=$(realpath -- "$ova_argument")
 [ -f "$ova_path" ] && [ ! -L "$ova_argument" ] || {
   echo "The OVA must be an existing ordinary file, not a symlink." >&2
+  exit 2
+}
+
+# Serialize the complete absent-VMID ownership transaction. Every importer
+# using this helper observes the same lock before preflight, mutation, or rollback.
+lock_path="/run/lock/atlaso-proxmox-vmid-$vmid.lock"
+exec 9>"$lock_path"
+flock -n 9 || {
+  echo "Another Atlaso import owns Proxmox VMID $vmid." >&2
   exit 2
 }
 qm status "$vmid" >/dev/null 2>&1 && {

@@ -119,6 +119,8 @@ foreach ($required in @(
         'Get-VM -ErrorAction Stop | Where-Object Id -eq $createdVm.Id',
         'atlaso.first_boot_access',
         'Get-AtlasoHyperVFirstBootAccess',
+        'did not return an exact created VM identity',
+        '$operationRootSafeToRemove = -not $importAttempted',
         '$operationRootSafeToRemove',
         'its files were preserved'
     )) {
@@ -129,6 +131,9 @@ foreach ($required in @(
 if ($importer.Contains('Remove-VM -VM $vm -Force -ErrorAction Continue') -or
     $hyperVSmoke.Contains('Remove-VM -Name $Name -Force -ErrorAction Continue')) {
     throw 'A Hyper-V cleanup still ignores VM removal failure.'
+}
+if (($hyperVSmoke.Split('Get-VM -ErrorAction Stop | Where-Object Name -eq $Name').Count - 1) -ne 1) {
+    throw 'Hyper-V smoke cleanup still claims a post-failure VM by name instead of a captured ID.'
 }
 
 Write-Host 'Hyper-V virtualization artifact contract test passed.'

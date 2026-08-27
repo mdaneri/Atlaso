@@ -143,22 +143,11 @@ try {
 finally {
     $cleanupFailure = ''
     if ($importAttempted -and -not $vmCreated) {
-        try {
-            $createdVmMatches = @(Get-VM -ErrorAction Stop | Where-Object Name -eq $Name)
-            if ($createdVmMatches.Count -gt 1) {
-                throw 'More than one Hyper-V smoke VM resolved to the invocation-owned name.'
-            }
-            if ($createdVmMatches.Count -eq 1) {
-                $createdVm = $createdVmMatches[0]
-                $vmCreated = $true
-            }
-        }
-        catch {
-            $cleanupFailure = "The Hyper-V smoke VM ownership could not be resolved; its files were preserved. " +
-                $_.Exception.Message
-        }
+        $cleanupFailure = 'The Hyper-V importer did not return an exact created VM identity; its files were preserved.'
     }
-    $operationRootSafeToRemove = -not $vmCreated
+    # Once the importer was invoked, an exact VM identity is required before
+    # either provider state or the diagnostic operation root can be removed.
+    $operationRootSafeToRemove = -not $importAttempted
     if (-not $cleanupFailure -and $vmCreated -and $null -ne $createdVm) {
         try {
             if ([string]$createdVm.State -ne 'Off') {

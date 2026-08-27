@@ -237,19 +237,27 @@ jobs:
         shell: pwsh
         env:
           SMOKE_USERNAME: ${{ vars.ATLASO_VIRTUALIZATION_SMOKE_USERNAME }}
-          SMOKE_PASSWORD: ${{ secrets.ATLASO_BOOTSTRAP_ADMIN_PASSWORD }}
           MANAGEMENT_VMNET: ${{ vars.ATLASO_VMWARE_MANAGEMENT_VMNET }}
           SERVICE_VMNET: ${{ vars.ATLASO_VMWARE_SERVICE_VMNET }}
         run: |
-          $password = ConvertTo-SecureString $env:SMOKE_PASSWORD -AsPlainText -Force
-          $credential = [PSCredential]::new($env:SMOKE_USERNAME, $password)
-          $ova = @(Get-ChildItem artifacts/incoming/ova -Filter '*.ova' -File)
-          if ($ova.Count -ne 1) { throw 'Expected exactly one canonical OVA artifact.' }
-          & scripts/windows/virtualization/smoke-ova-vmware.ps1 `
-            -OvaPath $ova[0].FullName `
-            -Credential $credential `
-            -ManagementVmnet $env:MANAGEMENT_VMNET `
-            -ServiceVmnet $env:SERVICE_VMNET
+          $passwordText = 'A!a1' + [Convert]::ToBase64String(
+            [Security.Cryptography.RandomNumberGenerator]::GetBytes(32))
+          try {
+            $password = ConvertTo-SecureString $passwordText -AsPlainText -Force
+            $credential = [PSCredential]::new($env:SMOKE_USERNAME, $password)
+            $ova = @(Get-ChildItem artifacts/incoming/ova -Filter '*.ova' -File)
+            if ($ova.Count -ne 1) { throw 'Expected exactly one canonical OVA artifact.' }
+            & scripts/windows/virtualization/smoke-ova-vmware.ps1 `
+              -OvaPath $ova[0].FullName `
+              -Credential $credential `
+              -ManagementVmnet $env:MANAGEMENT_VMNET `
+              -ServiceVmnet $env:SERVICE_VMNET
+          }
+          finally {
+            $credential = $null
+            $password = $null
+            $passwordText = $null
+          }
 
   proxmox_ova_smoke:
     name: Smoke canonical OVA on Proxmox VE

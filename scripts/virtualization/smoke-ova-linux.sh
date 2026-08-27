@@ -39,28 +39,59 @@ owned=0
 disk_volume_list="$work_root/kvm-volumes"
 
 cleanup() {
+  exit_status=$?
+  trap - EXIT HUP INT TERM
+  cleanup_failed=0
   if [ "$owned" -eq 1 ]; then
     case "$provider" in
       proxmox)
-        qm stop "$identifier" --skiplock 0 >/dev/null 2>&1 || true
-        qm destroy "$identifier" --purge 1 --destroy-unreferenced-disks 1 >/dev/null 2>&1 || true
+        if status=$(qm status "$identifier" 2>/dev/null); then
+          case "$status" in
+            *'status: running'*) qm stop "$identifier" --skiplock 0 >/dev/null 2>&1 || cleanup_failed=1 ;;
+          esac
+          qm destroy "$identifier" --purge 1 --destroy-unreferenced-disks 1 >/dev/null 2>&1 || cleanup_failed=1
+        fi
+        if qm status "$identifier" >/dev/null 2>&1; then
+          echo "The Proxmox smoke VM remains after cleanup: $identifier" >&2
+          cleanup_failed=1
+        fi
         ;;
       kvm)
-        virsh destroy "$identifier" >/dev/null 2>&1 || true
-        virsh undefine "$identifier" --nvram >/dev/null 2>&1 || \
-          virsh undefine "$identifier" >/dev/null 2>&1 || true
+        if state=$(virsh domstate "$identifier" 2>/dev/null); then
+          case "$state" in
+            'shut off') ;;
+            *) virsh destroy "$identifier" >/dev/null 2>&1 || cleanup_failed=1 ;;
+          esac
+          virsh undefine "$identifier" --nvram >/dev/null 2>&1 || \
+            virsh undefine "$identifier" >/dev/null 2>&1 || cleanup_failed=1
+        fi
+        if virsh dominfo "$identifier" >/dev/null 2>&1; then
+          echo "The KVM smoke domain remains after cleanup: $identifier" >&2
+          cleanup_failed=1
+        fi
         if [ -f "$disk_volume_list" ]; then
           while IFS= read -r volume; do
             [ -n "$volume" ] || continue
-            virsh vol-delete --pool "$storage" "$volume" >/dev/null 2>&1 || true
+            if virsh vol-info --pool "$storage" "$volume" >/dev/null 2>&1; then
+              virsh vol-delete --pool "$storage" "$volume" >/dev/null 2>&1 || cleanup_failed=1
+            fi
+            if virsh vol-info --pool "$storage" "$volume" >/dev/null 2>&1; then
+              echo "The KVM smoke volume remains after cleanup: $volume" >&2
+              cleanup_failed=1
+            fi
           done <"$disk_volume_list"
         fi
         ;;
     esac
   fi
-  rm -rf -- "$work_root"
+  rm -rf -- "$work_root" || cleanup_failed=1
+  if [ "$cleanup_failed" -ne 0 ] && [ "$exit_status" -eq 0 ]; then
+    exit_status=1
+  fi
+  exit "$exit_status"
 }
-trap cleanup EXIT HUP INT TERM
+trap cleanup EXIT
+trap 'exit 2' HUP INT TERM
 
 qga_ping() {
   case "$provider" in

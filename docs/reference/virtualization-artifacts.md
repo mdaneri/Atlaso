@@ -219,14 +219,17 @@ and storage owned by that import attempt, correct the host prerequisite, and run
 Virtualization release jobs run only for the exact protected-main commit selected by the release workflow. The runner
 fleet must provide the dedicated `atlaso-vmware`, `atlaso-proxmox`, `atlaso-kvm`, and `atlaso-hyperv` labels; do not
 attach those labels to general-purpose or fork-accessible runners. Build credentials are disposable values generated
-inside the protected build job and are scrubbed before export. Configure only the deployment-specific VMware smoke
-credential in the `appliance-release` environment, and define the repository variables named by
+inside the protected build job and are scrubbed before export. Define the repository variables named by
 `.github/workflows/release.yml` for VMware vmnets, Proxmox storage and bridges, KVM storage and networks, Hyper-V
 switches, and bounded test destinations.
 
 The VMware build runner requires Workstation, Packer, OVF Tool, and the existing Photon build prerequisites. The
 Proxmox and KVM runners require the same host tools listed in their import sections. The Hyper-V runner requires
 PowerShell 7.4 or newer, Hyper-V, `qemu-img`, and two operator-owned virtual switches. Every smoke identity and storage
-namespace must be dedicated to CI so cleanup can remain limited to resources created by that invocation. Release
+namespace is invocation-scoped: VMware generates a disposable per-run password, Proxmox serializes each VMID import,
+and cleanup failures fail the active smoke job instead of allowing publication with retained provider state. Hyper-V
+cleanup removes only a VM whose exact ID was captured after successful import; an indeterminate import preserves files
+for diagnosis rather than claiming a later name match. Every smoke identity and storage namespace must be dedicated to
+CI so cleanup can remain limited to resources created by that invocation. Release
 publication waits for all four platform smoke tests and refuses an asset at or above the repository's existing 2 GiB
 limit rather than producing multipart output.

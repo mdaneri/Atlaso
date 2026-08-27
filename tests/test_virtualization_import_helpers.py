@@ -82,6 +82,11 @@ def test_proxmox_imports_the_unchanged_ova_and_rejects_conflicting_disks() -> No
     assert 'if [ "$disk_count" -lt 2 ] || [ "$disk_count" -gt 4 ]' in script
     assert script.count("$storage:500") == 2
     assert 'qm destroy "$vmid" --purge 1 --destroy-unreferenced-disks 1' in script
+    lock = script.index('flock -n 9')
+    preflight = script.index('qm status "$vmid"')
+    mutation = script.index('qm importovf "$vmid"')
+    assert lock < preflight < mutation
+    assert 'exec 9>"$lock_path"' in script
     assert "photon-os.qcow2" not in script
     assert script.count('rm -rf -- "$validation_root"') == 2
 
@@ -100,6 +105,9 @@ def test_linux_smoke_imports_reboots_validates_and_bounds_cleanup() -> None:
     assert kvm_import < kvm_owned < disk_inventory
     assert 'qm destroy "$identifier" --purge 1 --destroy-unreferenced-disks 1' in script
     assert 'virsh vol-delete --pool "$storage" "$volume"' in script
+    assert 'cleanup_failed=1' in script
+    assert 'exit "$exit_status"' in script
+    assert '|| true' not in script.split('cleanup() {', 1)[1].split('qga_ping() {', 1)[0]
     assert 'grep -qx "platform=qemu" /var/lib/atlaso/guest-agent.applied' in script
     assert 'test ! -e /var/lib/atlaso/first-boot-packages' in script
     assert 'systemctl is-active --quiet qemu-guest-agent.service' in script
@@ -119,3 +127,7 @@ def test_release_image_build_uses_only_disposable_credentials() -> None:
     assert "RandomNumberGenerator]::GetBytes(32)" in build_job
     assert "$sshText = $null" in build_job
     assert "$adminText = $null" in build_job
+    smoke_job = workflow.split("  vmware_ova_smoke:\n", 1)[1].split("  proxmox_ova_smoke:\n", 1)[0]
+    assert "secrets.ATLASO_BOOTSTRAP_ADMIN_PASSWORD" not in smoke_job
+    assert "RandomNumberGenerator]::GetBytes(32)" in smoke_job
+    assert "$passwordText = $null" in smoke_job
