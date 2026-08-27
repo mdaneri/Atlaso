@@ -1901,9 +1901,8 @@ def test_vmware_raw_vmx_workflows_inject_complete_first_boot_ovf_environment_bef
     assert "Set-AtlasoWorkstationOvfEnvironment -VmxPath $targetVmx" in test_vm
     assert "Invoke-OnePasswordDevelopmentCaChild" in test_vm
     assert "Wait-AtlasoWorkstationDevelopmentRootCaPrivateKeyScrub" in test_vm
-    assert test_vm.index("Set-AtlasoWorkstationOvfEnvironment -VmxPath $targetVmx") < test_vm.index(
-        "start-atlaso-vm.ps1"
-    )
+    ovf_injection = test_vm.index("Set-AtlasoWorkstationOvfEnvironment -VmxPath $targetVmx")
+    assert ovf_injection < test_vm.index("start-atlaso-vm.ps1", ovf_injection)
 
     assert "Atlaso.WorkstationFirstBoot.ps1" in lifecycle
     assert "New-AtlasoWorkstationOvfEnvironment" in lifecycle

@@ -98,7 +98,16 @@ foreach ($functionAst in $ast.FindAll({
         }, $true)) {
     # Compile each parsed function into the isolated test scope without using
     # Invoke-Expression, whose ambient command resolution is unnecessarily broad.
-    $functionDefinition = [scriptblock]::Create($functionAst.Extent.Text)
+    # Dynamic scriptblocks have no file-backed PSScriptRoot, so bind the wrapper's
+    # real directory before exercising helper-script path construction.
+    $wrapperScriptRootLiteral = "'$(
+        (Split-Path -Parent $wrapperPath).Replace("'", "''")
+    )'"
+    $functionSource = $functionAst.Extent.Text.Replace(
+        '$PSScriptRoot',
+        $wrapperScriptRootLiteral
+    )
+    $functionDefinition = [scriptblock]::Create($functionSource)
     . $functionDefinition
 }
 
@@ -313,6 +322,7 @@ if ($wrapperSource -notmatch "Wait-AtlasoWorkstationDevelopmentRootCaPrivateKeyS
 $stageStart = $wrapperSource.IndexOf('-Action Stage', [System.StringComparison]::Ordinal)
 $importProof = $wrapperSource.IndexOf(
     'Wait-AtlasoWorkstationDevelopmentRootCaImportProof',
+    $stageStart,
     [System.StringComparison]::Ordinal
 )
 $rollbackCatch = $wrapperSource.IndexOf("`n    catch {", $stageStart, [System.StringComparison]::Ordinal)
@@ -369,6 +379,15 @@ if (
 ) {
     throw 'Cleanup-marker publication must use a Windows write-through rename before signer staging.'
 }
+if (
+    $firstBootSource -notmatch 'function Write-AtlasoWorkstationDurableVmxLines' -or
+    $firstBootSource -notmatch '\[System\.IO\.FileOptions\]::WriteThrough' -or
+    $firstBootSource -notmatch '\$stream\.Flush\(\$true\)' -or
+    $firstBootSource -notmatch '0x1 -bor 0x8' -or
+    $firstBootSource -notmatch 'Write-AtlasoWorkstationDurableVmxLines -VmxPath \$VmxPath'
+) {
+    throw 'Powered-off VMX signer changes must use a flushed write-through atomic replacement.'
+}
 if ($wrapperSource.IndexOf('Remove-AtlasoDevelopmentCaCleanupMarker', $importProof) -lt $importProof) {
     throw 'The durable cleanup marker must remain until encrypted-import proof succeeds.'
 }
@@ -379,9 +398,17 @@ if ($firstBootSource -notmatch '\$process\.Kill\(\$true\)' -or
 if ($firstBootSource -notmatch "AtlasoProcessTreeTerminationUnproven") {
     throw 'Unproven process-tree termination must carry a machine-readable failure marker.'
 }
-$childActiveDeferral = $wrapperSource.IndexOf(
-    "`$cleanupMarker.Phase -in @('secret-child-active', 'vm-start-child-active')",
-    $rollbackCatch,
+$childActiveDeferral = $wrapperSource.IndexOf("'secret-child-active',", $rollbackCatch, [System.StringComparison]::Ordinal)
+$stopChildActiveDeferral = $wrapperSource.IndexOf("'vm-stop-child-active',", $childActiveDeferral, [System.StringComparison]::Ordinal)
+$restartChildActiveDeferral = $wrapperSource.IndexOf("'vm-restart-child-active'", $stopChildActiveDeferral, [System.StringComparison]::Ordinal)
+$importFinalizationDeferral = $wrapperSource.IndexOf(
+    "'import-proven-stopped-vmx-scrubbed',",
+    $restartChildActiveDeferral,
+    [System.StringComparison]::Ordinal
+)
+$restartedFinalizationDeferral = $wrapperSource.IndexOf(
+    "'restarted-vmx-scrubbed'",
+    $importFinalizationDeferral,
     [System.StringComparison]::Ordinal
 )
 $rollbackRuntimeScrub = $wrapperSource.IndexOf(
@@ -391,9 +418,13 @@ $rollbackRuntimeScrub = $wrapperSource.IndexOf(
 )
 if (
     $childActiveDeferral -lt $rollbackCatch -or
-    $rollbackRuntimeScrub -lt $childActiveDeferral
+    $stopChildActiveDeferral -lt $childActiveDeferral -or
+    $restartChildActiveDeferral -lt $stopChildActiveDeferral -or
+    $importFinalizationDeferral -lt $restartChildActiveDeferral -or
+    $restartedFinalizationDeferral -lt $importFinalizationDeferral -or
+    $rollbackRuntimeScrub -lt $restartedFinalizationDeferral
 ) {
-    throw 'The broad rollback handler must defer before VM mutation while a staging or start child may remain active.'
+    throw 'The broad rollback handler must preserve child-active and proven-import finalization states before VM mutation.'
 }
 $startChildPhase = $wrapperSource.IndexOf(
     '-Phase vm-start-child-active',
@@ -471,6 +502,30 @@ RW 524288000 SPARSE "Atlaso-Depot-s002.vmdk"
     if ($marker.VmxPath -cne (Resolve-Path -LiteralPath $markerVmx).Path) {
         throw 'The durable cleanup marker did not bind the exact VMX path and identity.'
     }
+    $boundVmxContent = [System.IO.File]::ReadAllText($markerVmx)
+    $boundVmxIdentity = [Atlaso.WorkstationFileIdentity]::Get($markerVmx)
+    $replacementVmx = "$markerVmx.replacement"
+    [System.IO.File]::WriteAllText($replacementVmx, $boundVmxContent, [System.Text.UTF8Encoding]::new($false))
+    [System.IO.File]::Move($replacementVmx, $markerVmx, $true)
+    if ([Atlaso.WorkstationFileIdentity]::Get($markerVmx) -ceq $boundVmxIdentity) {
+        throw 'The focused VMX replacement did not change filesystem identity.'
+    }
+    $replacementMarker = Read-AtlasoDevelopmentCaCleanupMarker `
+        -MarkerPath $markerPath `
+        -MarkerRoot $markerRoot
+    if ($replacementMarker.Schema -ne 3) {
+        throw 'A replacement-stable cleanup marker must use schema 3.'
+    }
+    $tamperedVmxContent = $boundVmxContent -replace (
+        'guestinfo\.atlaso\.test_vm_cleanup_identity\s*=\s*"[0-9a-f]{32}"'
+    ), 'guestinfo.atlaso.test_vm_cleanup_identity = "00000000000000000000000000000000"'
+    [System.IO.File]::WriteAllText($markerVmx, $tamperedVmxContent, [System.Text.UTF8Encoding]::new($false))
+    Assert-Throws {
+        Read-AtlasoDevelopmentCaCleanupMarker `
+            -MarkerPath $markerPath `
+            -MarkerRoot $markerRoot
+    } 'A changed VMX without the exact cleanup identity must fail closed.'
+    [System.IO.File]::WriteAllText($markerVmx, $boundVmxContent, [System.Text.UTF8Encoding]::new($false))
     if ($marker.Phase -cne 'secret-child-active' -or $marker.ArtifactsRemoved -or $marker.DataDisks.Count -ne 3) {
         throw 'A new cleanup marker must conservatively begin in the secret-child-active phase.'
     }
@@ -533,6 +588,327 @@ RW 524288000 SPARSE "Atlaso-Depot-s002.vmdk"
         -not (Test-Path -LiteralPath $startVmx -PathType Leaf)
     ) {
         throw 'Same-boot retry mutated the VM while the bounded start child could still start it.'
+    }
+
+    $script:successfulImportRuntimeValue = '""'
+    $script:successfulImportRunningVmxPath = ''
+    $script:successfulImportVmrunCalls = [System.Collections.Generic.List[string]]::new()
+    $script:successfulImportProcessActions = [System.Collections.Generic.List[string]]::new()
+
+    <#
+    .SYNOPSIS
+    Emulate one powered-off VM and quoted-empty runtime readback.
+
+    .PARAMETER Remaining
+    Positional vmrun arguments supplied by successful-import recovery.
+    #>
+    function AtlasoSuccessfulImportVmrun {
+        param([Parameter(ValueFromRemainingArguments = $true)][string[]]$Remaining)
+
+        $script:successfulImportVmrunCalls.Add(($Remaining -join ' '))
+        $global:LASTEXITCODE = 0
+        if ($Remaining -contains 'list') {
+            if ($script:successfulImportRunningVmxPath) {
+                'Total running VMs: 1'
+                $script:successfulImportRunningVmxPath
+            }
+            else {
+                'Total running VMs: 0'
+            }
+            return
+        }
+        if ($Remaining -contains 'readVariable') {
+            $script:successfulImportRuntimeValue
+            return
+        }
+        throw 'Successful-import recovery issued an unexpected vmrun operation.'
+    }
+
+    <#
+    .SYNOPSIS
+    Record the bounded restart child without launching VMware.
+
+    .PARAMETER FilePath
+    PowerShell executable selected by the recovery helper.
+
+    .PARAMETER ArgumentList
+    Exact child arguments used for the restart.
+
+    .PARAMETER TimeoutSeconds
+    Bounded child deadline accepted for signature compatibility.
+
+    .PARAMETER Action
+    Safe action description used for ordering assertions.
+    #>
+    function Invoke-AtlasoBoundedProcess {
+        param(
+            [string]$FilePath,
+            [string[]]$ArgumentList,
+            [int]$TimeoutSeconds,
+            [string]$Action
+        )
+
+        $script:successfulImportProcessActions.Add($Action)
+        if ($ArgumentList -notcontains (Join-Path $RepositoryRoot 'scripts\windows\vmware\start-atlaso-vm.ps1')) {
+            throw 'Successful-import recovery launched an unexpected bounded child.'
+        }
+        return ''
+    }
+
+    try {
+        $interruptedStopVmRoot = Join-Path $markerTestRoot 'interrupted-stop-vm'
+        $interruptedStopMarkerRoot = Join-Path $markerTestRoot 'interrupted-stop-markers'
+        New-Item -ItemType Directory -Path $interruptedStopVmRoot | Out-Null
+        $interruptedStopVmx = Join-Path $interruptedStopVmRoot 'Atlaso-Interrupted-Stop.vmx'
+        [System.IO.File]::WriteAllLines(
+            $interruptedStopVmx,
+            @(
+                'config.version = "8"',
+                'guestinfo.atlaso.test_vm_development_root_ca_private_key = "test-fixture"'
+            ),
+            [System.Text.UTF8Encoding]::new($false)
+        )
+        $interruptedStopMarker = New-AtlasoDevelopmentCaCleanupMarker `
+            -VmxPath $interruptedStopVmx `
+            -Name 'Atlaso-Interrupted-Stop' `
+            -OutputDirectory $interruptedStopVmRoot `
+            -DataDiskStates @() `
+            -MarkerRoot $interruptedStopMarkerRoot
+        Set-AtlasoDevelopmentCaCleanupMarkerPhase `
+            -MarkerPath $interruptedStopMarker `
+            -ExpectedPhase secret-child-active `
+            -Phase staged
+        Set-AtlasoDevelopmentCaCleanupMarkerPhase `
+            -MarkerPath $interruptedStopMarker `
+            -ExpectedPhase staged `
+            -Phase vm-stop-child-active
+        $interruptedStopPayload = Get-Content -LiteralPath $interruptedStopMarker -Raw | ConvertFrom-Json
+        $interruptedStopPayload.HostBootIdentity = (
+            [long](Get-AtlasoHostBootIdentity) - 1
+        ).ToString([System.Globalization.CultureInfo]::InvariantCulture)
+        Write-AtlasoDevelopmentCaCleanupMarkerPayload `
+            -MarkerPath $interruptedStopMarker `
+            -Payload $interruptedStopPayload
+
+        Invoke-PendingAtlasoDevelopmentCaCleanup `
+            -VmrunPath AtlasoSuccessfulImportVmrun `
+            -TimeoutSeconds 5 `
+            -ExpectedFingerprint ('A' * 64) `
+            -MarkerRoot $interruptedStopMarkerRoot
+
+        if (
+            (Test-Path -LiteralPath $interruptedStopMarker) -or
+            -not (Test-Path -LiteralPath $interruptedStopVmx -PathType Leaf) -or
+            (Select-String -LiteralPath $interruptedStopVmx -Pattern (
+                    '^\s*guestinfo\.atlaso\.test_vm_development_root_ca_private_key\s*='
+                ) -Quiet) -or
+            -not (Select-String -LiteralPath $interruptedStopVmx -Pattern (
+                    '^\s*guestinfo\.atlaso\.test_vm_cleanup_identity\s*='
+                ) -Quiet) -or
+            $script:successfulImportProcessActions.Count -ne 1 -or
+            $script:successfulImportProcessActions[0] -cnotlike 'Restart the normal test VM*' -or
+            @($script:successfulImportVmrunCalls | Where-Object { $_ -match 'readVariable' }).Count -ne 3
+        ) {
+            throw 'Interrupted stop recovery did not preserve import proof through powered-off scrub and restart.'
+        }
+
+        $script:successfulImportVmrunCalls.Clear()
+        $script:successfulImportProcessActions.Clear()
+        $interruptedRestartVmRoot = Join-Path $markerTestRoot 'interrupted-restart-vm'
+        $interruptedRestartMarkerRoot = Join-Path $markerTestRoot 'interrupted-restart-markers'
+        New-Item -ItemType Directory -Path $interruptedRestartVmRoot | Out-Null
+        $interruptedRestartVmx = Join-Path $interruptedRestartVmRoot 'Atlaso-Interrupted-Restart.vmx'
+        [System.IO.File]::WriteAllLines(
+            $interruptedRestartVmx,
+            @(
+                'config.version = "8"',
+                'guestinfo.atlaso.test_vm_development_root_ca_private_key = "restored-after-crash"'
+            ),
+            [System.Text.UTF8Encoding]::new($false)
+        )
+        $interruptedRestartMarker = New-AtlasoDevelopmentCaCleanupMarker `
+            -VmxPath $interruptedRestartVmx `
+            -Name 'Atlaso-Interrupted-Restart' `
+            -OutputDirectory $interruptedRestartVmRoot `
+            -DataDiskStates @() `
+            -MarkerRoot $interruptedRestartMarkerRoot
+        Set-AtlasoDevelopmentCaCleanupMarkerPhase `
+            -MarkerPath $interruptedRestartMarker `
+            -ExpectedPhase secret-child-active `
+            -Phase staged
+        Set-AtlasoDevelopmentCaCleanupMarkerPhase `
+            -MarkerPath $interruptedRestartMarker `
+            -ExpectedPhase staged `
+            -Phase vm-stop-child-active
+        Set-AtlasoDevelopmentCaCleanupMarkerPhase `
+            -MarkerPath $interruptedRestartMarker `
+            -ExpectedPhase vm-stop-child-active `
+            -Phase import-proven-stopped-vmx-scrubbed
+        Set-AtlasoDevelopmentCaCleanupMarkerPhase `
+            -MarkerPath $interruptedRestartMarker `
+            -ExpectedPhase import-proven-stopped-vmx-scrubbed `
+            -Phase vm-restart-child-active
+        $interruptedRestartPayload = Get-Content -LiteralPath $interruptedRestartMarker -Raw | ConvertFrom-Json
+        $interruptedRestartPayload.HostBootIdentity = (
+            [long](Get-AtlasoHostBootIdentity) - 1
+        ).ToString([System.Globalization.CultureInfo]::InvariantCulture)
+        Write-AtlasoDevelopmentCaCleanupMarkerPayload `
+            -MarkerPath $interruptedRestartMarker `
+            -Payload $interruptedRestartPayload
+
+        Invoke-PendingAtlasoDevelopmentCaCleanup `
+            -VmrunPath AtlasoSuccessfulImportVmrun `
+            -TimeoutSeconds 5 `
+            -ExpectedFingerprint ('A' * 64) `
+            -MarkerRoot $interruptedRestartMarkerRoot
+
+        if (
+            (Test-Path -LiteralPath $interruptedRestartMarker) -or
+            -not (Test-Path -LiteralPath $interruptedRestartVmx -PathType Leaf) -or
+            (Select-String -LiteralPath $interruptedRestartVmx -Pattern (
+                    '^\s*guestinfo\.atlaso\.test_vm_development_root_ca_private_key\s*='
+                ) -Quiet) -or
+            $script:successfulImportProcessActions.Count -ne 1 -or
+            $script:successfulImportProcessActions[0] -cnotlike 'Restart the normal test VM*' -or
+            @($script:successfulImportVmrunCalls | Where-Object { $_ -match 'readVariable' }).Count -ne 3
+        ) {
+            throw 'Interrupted restart recovery did not safely retry and retire the successful-import marker.'
+        }
+
+        $script:successfulImportVmrunCalls.Clear()
+        $script:successfulImportProcessActions.Clear()
+        $finalReadVmRoot = Join-Path $markerTestRoot 'final-read-vm'
+        $finalReadMarkerRoot = Join-Path $markerTestRoot 'final-read-markers'
+        New-Item -ItemType Directory -Path $finalReadVmRoot | Out-Null
+        $finalReadVmx = Join-Path $finalReadVmRoot 'Atlaso-Final-Read.vmx'
+        [System.IO.File]::WriteAllText($finalReadVmx, 'config.version = "8"')
+        $finalReadMarker = New-AtlasoDevelopmentCaCleanupMarker `
+            -VmxPath $finalReadVmx `
+            -Name 'Atlaso-Final-Read' `
+            -OutputDirectory $finalReadVmRoot `
+            -DataDiskStates @() `
+            -MarkerRoot $finalReadMarkerRoot
+        Set-AtlasoDevelopmentCaCleanupMarkerPhase `
+            -MarkerPath $finalReadMarker `
+            -ExpectedPhase secret-child-active `
+            -Phase staged
+        Set-AtlasoDevelopmentCaCleanupMarkerPhase `
+            -MarkerPath $finalReadMarker `
+            -ExpectedPhase staged `
+            -Phase vm-stop-child-active
+        Set-AtlasoDevelopmentCaCleanupMarkerPhase `
+            -MarkerPath $finalReadMarker `
+            -ExpectedPhase vm-stop-child-active `
+            -Phase import-proven-stopped-vmx-scrubbed
+        Set-AtlasoDevelopmentCaCleanupMarkerPhase `
+            -MarkerPath $finalReadMarker `
+            -ExpectedPhase import-proven-stopped-vmx-scrubbed `
+            -Phase vm-restart-child-active
+        Set-AtlasoDevelopmentCaCleanupMarkerPhase `
+            -MarkerPath $finalReadMarker `
+            -ExpectedPhase vm-restart-child-active `
+            -Phase restarted-vmx-scrubbed
+        $script:successfulImportRunningVmxPath = $finalReadVmx
+        $script:successfulImportRuntimeValue = 'not-empty'
+        Assert-Throws {
+            $finalReadMarkerState = Read-AtlasoDevelopmentCaCleanupMarker `
+                -MarkerPath $finalReadMarker `
+                -MarkerRoot $finalReadMarkerRoot
+            Complete-AtlasoDevelopmentCaSuccessfulImport `
+                -Marker $finalReadMarkerState `
+                -VmrunPath AtlasoSuccessfulImportVmrun `
+                -TimeoutSeconds 1
+        } 'A non-empty post-restart signer readback must keep finalization pending.'
+        $pendingFinalReadMarker = Read-AtlasoDevelopmentCaCleanupMarker `
+            -MarkerPath $finalReadMarker `
+            -MarkerRoot $finalReadMarkerRoot
+        if (
+            $pendingFinalReadMarker.Phase -cne 'restarted-vmx-scrubbed' -or
+            -not (Test-Path -LiteralPath $finalReadVmx -PathType Leaf) -or
+            $script:successfulImportProcessActions.Count -ne 0
+        ) {
+            throw 'A failed final runtime proof did not preserve the running imported VM and retryable marker.'
+        }
+        $script:successfulImportRuntimeValue = '""'
+        $script:successfulImportVmrunCalls.Clear()
+        Invoke-PendingAtlasoDevelopmentCaCleanup `
+            -VmrunPath AtlasoSuccessfulImportVmrun `
+            -TimeoutSeconds 5 `
+            -ExpectedFingerprint ('A' * 64) `
+            -MarkerRoot $finalReadMarkerRoot
+        if (
+            (Test-Path -LiteralPath $finalReadMarker) -or
+            -not (Test-Path -LiteralPath $finalReadVmx -PathType Leaf) -or
+            $script:successfulImportProcessActions.Count -ne 0 -or
+            @($script:successfulImportVmrunCalls | Where-Object { $_ -match 'readVariable' }).Count -ne 3
+        ) {
+            throw 'Final runtime-proof retry did not preserve the running VM and retire its marker.'
+        }
+
+        $script:successfulImportRuntimeValue = '""'
+        $script:successfulImportRunningVmxPath = ''
+        $script:successfulImportVmrunCalls.Clear()
+        $script:successfulImportProcessActions.Clear()
+        $offlineRestartedVmRoot = Join-Path $markerTestRoot 'offline-restarted-vm'
+        $offlineRestartedMarkerRoot = Join-Path $markerTestRoot 'offline-restarted-markers'
+        New-Item -ItemType Directory -Path $offlineRestartedVmRoot | Out-Null
+        $offlineRestartedVmx = Join-Path $offlineRestartedVmRoot 'Atlaso-Offline-Restarted.vmx'
+        [System.IO.File]::WriteAllLines(
+            $offlineRestartedVmx,
+            @(
+                'config.version = "8"',
+                'guestinfo.atlaso.test_vm_development_root_ca_private_key = "restored-after-power-loss"'
+            ),
+            [System.Text.UTF8Encoding]::new($false)
+        )
+        $offlineRestartedMarker = New-AtlasoDevelopmentCaCleanupMarker `
+            -VmxPath $offlineRestartedVmx `
+            -Name 'Atlaso-Offline-Restarted' `
+            -OutputDirectory $offlineRestartedVmRoot `
+            -DataDiskStates @() `
+            -MarkerRoot $offlineRestartedMarkerRoot
+        Set-AtlasoDevelopmentCaCleanupMarkerPhase `
+            -MarkerPath $offlineRestartedMarker `
+            -ExpectedPhase secret-child-active `
+            -Phase staged
+        Set-AtlasoDevelopmentCaCleanupMarkerPhase `
+            -MarkerPath $offlineRestartedMarker `
+            -ExpectedPhase staged `
+            -Phase vm-stop-child-active
+        Set-AtlasoDevelopmentCaCleanupMarkerPhase `
+            -MarkerPath $offlineRestartedMarker `
+            -ExpectedPhase vm-stop-child-active `
+            -Phase import-proven-stopped-vmx-scrubbed
+        Set-AtlasoDevelopmentCaCleanupMarkerPhase `
+            -MarkerPath $offlineRestartedMarker `
+            -ExpectedPhase import-proven-stopped-vmx-scrubbed `
+            -Phase vm-restart-child-active
+        Set-AtlasoDevelopmentCaCleanupMarkerPhase `
+            -MarkerPath $offlineRestartedMarker `
+            -ExpectedPhase vm-restart-child-active `
+            -Phase restarted-vmx-scrubbed
+
+        Invoke-PendingAtlasoDevelopmentCaCleanup `
+            -VmrunPath AtlasoSuccessfulImportVmrun `
+            -TimeoutSeconds 5 `
+            -ExpectedFingerprint ('A' * 64) `
+            -MarkerRoot $offlineRestartedMarkerRoot
+        if (
+            (Test-Path -LiteralPath $offlineRestartedMarker) -or
+            -not (Test-Path -LiteralPath $offlineRestartedVmx -PathType Leaf) -or
+            (Select-String -LiteralPath $offlineRestartedVmx -Pattern (
+                    '^\s*guestinfo\.atlaso\.test_vm_development_root_ca_private_key\s*='
+                ) -Quiet) -or
+            $script:successfulImportProcessActions.Count -ne 1 -or
+            @($script:successfulImportVmrunCalls | Where-Object { $_ -match 'readVariable' }).Count -ne 3
+        ) {
+            throw 'Offline restarted-marker recovery did not re-scrub, restart, and prove runtime empty.'
+        }
+    }
+    finally {
+        Remove-Item Function:\AtlasoSuccessfulImportVmrun -ErrorAction SilentlyContinue
+        Remove-Item Function:\Invoke-AtlasoBoundedProcess -ErrorAction SilentlyContinue
+        . (Join-Path $RepositoryRoot 'scripts\windows\vmware\Atlaso.WorkstationFirstBoot.ps1')
     }
 
     $successVmRoot = Join-Path $markerTestRoot 'successful-vm'
