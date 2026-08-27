@@ -96,6 +96,7 @@ def test_reconcile_factory_identities_preserves_operator_state_and_dns_conflicts
     )
     from atlaso.app.seed import seed_initial_data
     from atlaso.app.services.service_dns_defaults import (
+        CA_PORTAL_DNS_DESCRIPTION,
         ESX_STORAGE_DNS_DESCRIPTION,
         ESXI_PXE_DNS_DESCRIPTION,
         VCF_DEPOT_DNS_DESCRIPTION,
@@ -176,6 +177,24 @@ def test_reconcile_factory_identities_preserves_operator_state_and_dns_conflicts
                     hostname="manual.atlaso.internal",
                     record_type="A",
                     address="192.0.2.30",
+                    description="Operator-owned record",
+                ),
+                DnsRecord(
+                    hostname="ca.atlaso.internal",
+                    record_type="CNAME",
+                    address="ca-eth9.atlaso.internal",
+                    description=CA_PORTAL_DNS_DESCRIPTION,
+                ),
+                DnsRecord(
+                    hostname="ca-eth9.atlaso.internal",
+                    record_type="A",
+                    address="192.0.2.35",
+                    description=CA_PORTAL_DNS_DESCRIPTION,
+                ),
+                DnsRecord(
+                    hostname="ca-eth9.lab.internal",
+                    record_type="A",
+                    address="192.0.2.36",
                     description="Operator-owned record",
                 ),
                 DnsRecord(
@@ -264,6 +283,21 @@ def test_reconcile_factory_identities_preserves_operator_state_and_dns_conflicts
             for row in records
         ) == 1
         assert any(row.hostname == "manual.atlaso.internal" for row in records)
+        assert not any(
+            row.record_type == "CNAME"
+            and row.description == CA_PORTAL_DNS_DESCRIPTION
+            and row.address in {
+                "ca-eth9.atlaso.internal",
+                "ca-eth9.lab.internal",
+            }
+            for row in records
+        )
+        assert any(
+            row.hostname == "ca-eth9.lab.internal"
+            and row.address == "192.0.2.36"
+            and row.description == "Operator-owned record"
+            for row in records
+        )
         assert any(row.hostname == "nfs.lab.internal" for row in records)
         assert not any(
             row.hostname == "nfs.lab.internal"

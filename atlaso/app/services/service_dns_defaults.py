@@ -247,6 +247,18 @@ def _migrate_owned_dns_records(
             )
         ).scalars().all()
         if any(candidate.description != description for candidate in destination_records):
+            if (
+                record.record_type in {"A", "AAAA"}
+                and record.hostname != old_hostname
+            ):
+                for alias in records:
+                    if (
+                        alias not in db.deleted
+                        and alias.record_type == "CNAME"
+                        and alias.address in {record.hostname, renamed_hostname}
+                    ):
+                        db.delete(alias)
+                        changed += 1
             db.delete(record)
             changed += 1
             conflicts += 1

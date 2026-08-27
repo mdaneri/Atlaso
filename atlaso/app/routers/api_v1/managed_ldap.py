@@ -20,6 +20,7 @@ from atlaso.app.audit import record_audit
 from atlaso.app.config import get_settings
 from atlaso.app.database import get_db
 from atlaso.app.models import (
+    ApplianceSettings,
     CaSettings,
     LdapGroup,
     LdapGroupMembership,
@@ -88,6 +89,7 @@ from atlaso.app.services.networking import (
     normalize_interface_mode,
     normalize_interface_role,
 )
+from atlaso.app.services.service_dns_defaults import factory_service_hostname
 
 Endpoint = Callable[..., Any]
 
@@ -123,7 +125,16 @@ def build_router(dependencies: ManagedLdapApiDependencies) -> ManagedLdapApiRout
         """
         settings = db.execute(select(LdapSettings)).scalar_one_or_none()
         if settings is None:
-            settings = LdapSettings(config_path=LDAP_STAGED_CONFIG_PATH)
+            appliance = db.execute(
+                select(ApplianceSettings).order_by(ApplianceSettings.id)
+            ).scalars().first()
+            settings = LdapSettings(
+                hostname=factory_service_hostname(
+                    "ldap",
+                    appliance.fqdn if appliance else get_settings().appliance_fqdn,
+                ),
+                config_path=LDAP_STAGED_CONFIG_PATH,
+            )
             db.add(settings)
             db.commit()
             db.refresh(settings)
