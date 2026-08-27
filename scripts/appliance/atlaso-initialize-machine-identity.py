@@ -133,23 +133,6 @@ def clear_access(platform: str) -> None:
         _clear_hyperv_access()
 
 
-def _publish_console_access(payload: str) -> None:
-    """Write the one-time envelope directly to the transient tty1 device.
-
-    Args:
-        payload: Compact JSON credential and host-key envelope.
-    """
-
-    no_controlling_terminal = getattr(os, "O_NOCTTY", 0)
-    descriptor = os.open("/dev/tty1", os.O_WRONLY | os.O_APPEND | no_controlling_terminal)
-    try:
-        # tty1 is a character-device transport rather than persistent storage.
-        # codeql[py/clear-text-storage-sensitive-data]
-        os.write(descriptor, f"Atlaso one-time first-boot access: {payload}\n".encode())
-    finally:
-        os.close(descriptor)
-
-
 def initialize(platform: str) -> None:
     """Initialize one cloned appliance before any network service starts.
 
@@ -186,10 +169,6 @@ def initialize(platform: str) -> None:
         os.chmod(ACCESS_PATH, 0o600)
         if platform == "hyperv":
             _publish_hyperv_access(access)
-        try:
-            _publish_console_access(access)
-        except OSError:
-            pass
 
 
 def main(argv: list[str] | None = None) -> int:

@@ -278,15 +278,48 @@ vSphere/ESXi import: `Atlaso Management Network` for the first adapter, which re
 `Atlaso Services Network` for the second adapter used by DNS, DHCP, CA, depot, PXE, KMS, and other Atlaso-managed
 services.
 
-The exporter creates and validates local OVF, manifest, provenance, VMDK, and OVA assets only. Existing output always
-requires explicit `-Force`; recursive replacement remains limited to a strict descendant of
-`image/vmware-workstation/ovf`. Filesystem, repository, image, VMware image, OVF-root, external, and reparse-point
-targets are refused even with `-Force`.
+To upload the deployable OVF package to an existing stable GitHub Release, authenticate GitHub CLI and select release
+publication:
 
-GitHub publication is owned by the protected release workflow. It accepts the canonical OVA only after VMware,
-Proxmox, KVM, and Hyper-V smoke jobs pass for the exact protected-main commit, stages the versioned import helpers and
-Hyper-V ZIP, enforces the existing less-than-2-GiB per-asset limit, and publishes the signed artifact index with the
-complete release set.
+```powershell
+pwsh -ExecutionPolicy Bypass `
+  -File scripts/windows/vmware/export-ovf.ps1 `
+  -Release
+```
+
+To target an existing GitHub prerelease instead, check out its exact annotated `vX.Y.Z-<prerelease>` tag and run:
+
+```powershell
+pwsh -ExecutionPolicy Bypass `
+  -File scripts/windows/vmware/export-ovf.ps1 `
+  -Prerelease
+```
+
+Stable mode derives `vX.Y.Z` from synchronized repository metadata. Prerelease mode requires exactly one annotated
+SemVer prerelease tag at `HEAD` whose `X.Y.Z` core matches that metadata. Both modes require the tag to identify the
+clean checked-out commit, resolve the destination repository from the checkout, and require an existing published,
+non-draft GitHub Release whose stable or prerelease classification matches the selected mode. The exporter only appends
+the verified OVF asset set; it never creates, retags, publishes, or reclassifies the GitHub Release.
+
+Publication replaces the generated local OVF output before uploading. That implicit replacement applies only when
+`-OutputDirectory` is omitted and the target is the canonical `image/vmware-workstation/ovf/<Name>` destination. An
+explicitly supplied existing destination, including that same canonical path, requires `-Force`. Recursive replacement
+is always limited to a strict descendant of `image/vmware-workstation/ovf`; filesystem, repository, image, VMware image,
+OVF-root, external, and reparse-point targets are refused even with `-Force`. A new external destination may receive an
+export because no existing tree is removed, but rerunning against it requires choosing a repository-owned output
+destination instead.
+
+Every OVF asset is checked against GitHub's less-than-2-GiB per-asset boundary before upload. The descriptor, manifest,
+and both payload VMDKs are uploaded as one set. A retry verifies every existing asset byte-for-byte and refuses partial
+or different assets instead of overwriting them. The OVA is also uploaded when it fits; an oversized OVA is omitted
+with a warning because it combines both otherwise deployable VMDKs into one archive. Publication also requires a clean
+checkout whose `HEAD` is the locally available annotated release tag, a byte-matching build provenance record, and a
+destination-repository tag resolving to the same commit. Release recovery parses the OVF and revalidates the two
+file-backed payload disks plus the two empty 500 GiB data disks before accepting existing assets.
+
+The protected portable-artifact release workflow owns publication of the complete cross-hypervisor set. It waits for
+the VMware, Proxmox, KVM, and Hyper-V smoke jobs for the exact protected-main commit, stages the versioned import
+helpers and Hyper-V ZIP, enforces the same per-asset size limit, and publishes the signed artifact index.
 
 The OVF properties are intended for vSphere/ESXi import:
 

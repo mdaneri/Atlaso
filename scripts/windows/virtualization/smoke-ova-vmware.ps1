@@ -44,8 +44,22 @@ if ($sourceOva.PSIsContainer -or
 $ovfTool = if ($OvfToolPath) { (Get-Item -LiteralPath $OvfToolPath -ErrorAction Stop).FullName } else {
     'C:\Program Files\VMware\VMware Workstation\OVFTool\ovftool.exe'
 }
-$vmrun = if ($VmrunPath) { (Get-Item -LiteralPath $VmrunPath -ErrorAction Stop).FullName } else {
-    'C:\Program Files (x86)\VMware\VMware Workstation\vmrun.exe'
+$vmrun = if ($VmrunPath) {
+    (Get-Item -LiteralPath $VmrunPath -ErrorAction Stop).FullName
+}
+else {
+    $resolvedVmrun = @(
+        'C:\Program Files\VMware\VMware Workstation\vmrun.exe',
+        'C:\Program Files (x86)\VMware\VMware Workstation\vmrun.exe'
+    ) | Where-Object { Test-Path -LiteralPath $_ -PathType Leaf } | Select-Object -First 1
+    if (-not $resolvedVmrun) {
+        $vmrunCommand = Get-Command vmrun -ErrorAction SilentlyContinue
+        $resolvedVmrun = if ($vmrunCommand) { $vmrunCommand.Source } else { '' }
+    }
+    if (-not $resolvedVmrun) {
+        throw 'vmrun.exe was not found. Install VMware Workstation Pro or pass -VmrunPath.'
+    }
+    $resolvedVmrun
 }
 $python = if ($PythonPath) { (Get-Item -LiteralPath $PythonPath -ErrorAction Stop).FullName } else {
     (Get-Command python -ErrorAction Stop).Source

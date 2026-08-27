@@ -1279,9 +1279,12 @@ Photon root/build password remains separate from the Atlaso web bootstrap admini
 The Workstation Packer template creates a 40 GiB OS disk and a sparse 20 GiB `ATLASO_SYSTEM` disk. Final provisioning
 removes build-only compiler packages, clears package/download caches and staged sources, trims the filesystems,
 and leaves Packer compaction enabled. OVF export preserves both payload VMDKs and adds empty 500 GiB depot and backup
-definitions at SCSI units 2 and 3. Export also writes a manifest-covered provenance record binding both payloads to the
-exact version and source commit. Release publication accepts the combined OVA only when it remains below the configured
-GitHub asset limit; exceeding the limit blocks publication. Replacement is limited to the canonical
+definitions at SCSI units 2 and 3. `export-ovf.ps1 -Release` derives the stable `vX.Y.Z` tag, while `-Prerelease`
+requires exactly one annotated `vX.Y.Z-<prerelease>` tag at the clean checkout commit. Both modes derive the destination
+repository, require an existing published non-draft GitHub Release with the matching classification, and preflight and
+upload the OVF assets with GitHub CLI without creating or reclassifying the release. The combined OVA uploads only when
+it independently remains below the configured asset limit. Export also writes a manifest-covered provenance record
+binding both payloads to the exact version and source commit. Publication mode implicitly replaces only the canonical
 repository-derived OVF output. Any explicitly supplied existing output requires `-Force`, while every recursive
 replacement remains limited to a strict, non-reparse-point descendant of `image/vmware-workstation/ovf`; filesystem,
 repository, image, output, and external roots are refused. On deployed-VM first boot, OVF IPv4, IPv6,

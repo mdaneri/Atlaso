@@ -116,7 +116,6 @@ def test_identity_retry_republishes_matching_access(monkeypatch, tmp_path: Path)
     monkeypatch.setattr(module, "_password", lambda: next(passwords))
     monkeypatch.setattr(module, "_replace_environment", lambda values: "admin")
     monkeypatch.setattr(module, "_regenerate_host_identity", lambda: "ssh-ed25519 host-key")
-    monkeypatch.setattr(module, "_publish_console_access", lambda payload: None)
     monkeypatch.setattr(
         module.subprocess,
         "run",
@@ -135,21 +134,3 @@ def test_identity_retry_republishes_matching_access(monkeypatch, tmp_path: Path)
         "admin:first-admin\nroot:first-root\n",
         "admin:second-admin\nroot:second-root\n",
     ]
-
-
-def test_console_access_uses_transient_device_io(monkeypatch) -> None:
-    """Console publication uses a character-device descriptor, not file storage.
-
-    Args:
-        monkeypatch: Pytest fixture used to replace OS device operations.
-    """
-
-    module = _load_module()
-    writes: list[tuple[int, bytes]] = []
-    monkeypatch.setattr(module.os, "open", lambda path, flags: 17)
-    monkeypatch.setattr(module.os, "write", lambda descriptor, payload: writes.append((descriptor, payload)))
-    monkeypatch.setattr(module.os, "close", lambda descriptor: None)
-
-    module._publish_console_access('{"username":"admin"}')
-
-    assert writes == [(17, b'Atlaso one-time first-boot access: {"username":"admin"}\n')]

@@ -179,9 +179,11 @@ Before networking, every cloned appliance generates a new machine ID, OpenSSH ho
 high-entropy administrator and root passwords. VMware replaces the generated passwords with its required OVF values
 and publishes the regenerated Ed25519 public host key through VMware guest-info for authenticated automation. KVM and
 Proxmox expose a root-only one-time envelope on tmpfs at `/run/atlaso/first-boot-access.json`, readable through the QEMU
-guest agent or from the console. Hyper-V publishes the same envelope under KVP key `atlaso.first_boot_access`; it is
-also printed on the local console. Retrieve this envelope only from the authenticated hypervisor control plane, pin
-its SSH host key before connecting and rotate both passwords immediately. The first reboot removes the runtime file and
+guest agent or from the local console. Hyper-V publishes the same envelope under KVP key `atlaso.first_boot_access`.
+The local console keeps the envelope on a dedicated first-time initialization screen until an operator presses Enter
+to acknowledge that every value was recorded; acknowledgement removes only the console's tmpfs copy. Retrieve the
+envelope only from the authenticated hypervisor control plane or the physically controlled console, pin its SSH host
+key before connecting, and rotate both passwords immediately. The first reboot removes any remaining runtime file and
 Atlaso's Hyper-V KVP record while preserving unrelated KVP data.
 
 Signed appliance updates preserve the disk policy already proven for the installed generation. Portable artifacts use

@@ -103,6 +103,9 @@ foreach ($required in @(
 }
 foreach ($required in @(
         'listRegisteredVM',
+        'C:\Program Files\VMware\VMware Workstation\vmrun.exe',
+        'C:\Program Files (x86)\VMware\VMware Workstation\vmrun.exe',
+        'Get-Command vmrun',
         '$vmRootSafeToRemove',
         '$cleanupFailure',
         'its files were preserved'

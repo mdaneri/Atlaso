@@ -190,7 +190,9 @@ The VMware release appliance uses separate compacted Photon OS and Atlaso/tools 
 500 GiB VCF Offline Depot and VCF Backups disks. The OVF package is the canonical GitHub-distributable form; its assets
 are size-gated individually, while the combined OVA is published only when it remains below GitHub's asset limit. OVF
 export limits recursive replacement to repository-owned OVF output descendants; release mode implicitly replaces only
-its canonical destination, and an explicit existing destination also requires `-Force`.
+its canonical destination, and an explicit existing destination also requires `-Force`. The exporter can append the
+same verified asset set to an existing GitHub prerelease through `-Prerelease`; it infers the exact annotated SemVer
+prerelease tag at the clean checkout commit and never creates or reclassifies the GitHub Release.
 First boot formats those data disks only after both match the image's fixed SCSI-slot, stable `atlaso-path-*`, and exact
 capacity policy. The preflight resolves `/` through its block-device dependency chain and requires exactly one physical
 operating-system disk before excluding it from data-disk candidates. Missing, extra, reordered, ambiguous, or mismatched

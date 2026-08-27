@@ -12,6 +12,12 @@ Base name for exported assets.
 Optional path to ovftool or an ovftool installation directory.
 .PARAMETER TarPath
 Optional path to tar used when creating OVA archives.
+.PARAMETER Release
+Publish generated assets to the checked-out GitHub release.
+.PARAMETER Prerelease
+Publish generated assets to the checked-out GitHub prerelease.
+.PARAMETER MaximumReleaseAssetBytes
+Maximum asset size for uploaded release assets.
 .PARAMETER NoOva
 Skip OVA creation and emit OVF only.
 .PARAMETER Force
@@ -30,6 +36,12 @@ Name value.
 Ovf Tool Path value.
 .PARAMETER TarPath
 Tar Path value.
+.PARAMETER Release
+Release value.
+.PARAMETER Prerelease
+Prerelease value.
+.PARAMETER MaximumReleaseAssetBytes
+Maximum Release Asset Bytes value.
 .PARAMETER NoOva
 No Ova value.
 .PARAMETER Force
@@ -42,11 +54,19 @@ param(
     [string]$Name = 'Atlaso-Photon',
     [string]$OvfToolPath = '',
     [string]$TarPath = '',
+    [switch]$Release,
+    [switch]$Prerelease,
+    [ValidateRange(1, 2147483647)]
+    [long]$MaximumReleaseAssetBytes = 2147483647,
     [switch]$NoOva,
     [switch]$Force
 )
 
 $ErrorActionPreference = 'Stop'
+$publishReleaseAssets = $Release -or $Prerelease
+if ($Release -and $Prerelease) {
+    throw '-Release and -Prerelease are mutually exclusive publishing modes.'
+}
 
 $outputSafetyModule = Join-Path $PSScriptRoot 'Atlaso.OvfExport.psm1'
 Import-Module $outputSafetyModule -Force
@@ -136,6 +156,368 @@ function Resolve-TarPath {
         return $fallback
     }
     throw 'tar.exe was not found. Pass -NoOva to keep only the OVF folder.'
+}
+
+<#
+.SYNOPSIS
+Resolve the GitHub CLI executable path.
+#>
+<#
+.SYNOPSIS
+Resolve Gh Path.
+#>
+function Resolve-GhPath {
+    $command = Get-Command gh -ErrorAction SilentlyContinue
+    if (-not $command) {
+        throw 'gh was not found. Install GitHub CLI before using -Release or -Prerelease.'
+    }
+    return $command.Source
+}
+
+<#
+.SYNOPSIS
+Select the stable or prerelease tag from exact HEAD tag records.
+
+.PARAMETER Version
+Synchronized Atlaso version without the leading v.
+.PARAMETER HeadCommit
+Exact source commit being published.
+.PARAMETER TagRecords
+Tag records at HEAD containing Name, ObjectType, and Commit properties.
+.PARAMETER Prerelease
+Select an annotated SemVer prerelease tag instead of the stable tag.
+#>
+function Select-AtlasoReleaseTag {
+    param(
+        [Parameter(Mandatory = $true)][string]$Version,
+        [Parameter(Mandatory = $true)][string]$HeadCommit,
+        [Parameter(Mandatory = $true)][AllowEmptyCollection()][object[]]$TagRecords,
+        [switch]$Prerelease
+    )
+
+    $escapedVersion = [regex]::Escape($Version)
+    $identifier = '(?:0|[1-9]\d*|[0-9A-Za-z-]*[A-Za-z-][0-9A-Za-z-]*)'
+    $tagPattern = if ($Prerelease) {
+        "^v$escapedVersion-$identifier(?:\.$identifier)*$"
+    }
+    else {
+        "^v$escapedVersion$"
+    }
+    $matchingTags = @($TagRecords | Where-Object { [string]$_.Name -cmatch $tagPattern })
+    $modeName = if ($Prerelease) { 'prerelease' } else { 'stable release' }
+    if ($matchingTags.Count -eq 0) {
+        $expected = if ($Prerelease) { "v$Version-<prerelease>" } else { "v$Version" }
+        throw "Publication requires exactly one annotated $modeName tag $expected at the checked-out commit."
+    }
+    if ($matchingTags.Count -gt 1) {
+        $names = @($matchingTags | ForEach-Object { [string]$_.Name } | Sort-Object) -join ', '
+        throw "Publication found multiple $modeName tags at the checked-out commit: $names"
+    }
+
+    $selected = $matchingTags[0]
+    if ([string]$selected.ObjectType -ne 'tag') {
+        throw "Publication requires annotated tag $($selected.Name); lightweight tags are not accepted."
+    }
+    if ([string]$selected.Commit -ne $HeadCommit) {
+        throw "Release tag $($selected.Name) identifies $($selected.Commit), but the checked-out commit is $HeadCommit."
+    }
+    return [string]$selected.Name
+}
+
+<#
+.SYNOPSIS
+Resolve the current release tag from repository version metadata and exact HEAD tags.
+
+.PARAMETER RepoRoot
+Repository root used to resolve the synchronized version.
+.PARAMETER Prerelease
+Resolve an annotated SemVer prerelease tag instead of the stable tag.
+#>
+<#
+.SYNOPSIS
+Resolve Atlaso Release Tag.
+.PARAMETER RepoRoot
+Repo Root value.
+.PARAMETER Prerelease
+Prerelease value.
+#>
+function Resolve-AtlasoReleaseTag {
+    param(
+        [string]$RepoRoot,
+        [switch]$Prerelease
+    )
+
+    $python = Get-Command python -ErrorAction SilentlyContinue
+    if (-not $python) {
+        throw 'python was not found. Release publication requires the checked-out Atlaso version metadata.'
+    }
+    $versionScript = Join-Path $RepoRoot 'scripts\version.py'
+    $version = [string](& $python.Source $versionScript get --root $RepoRoot)
+    $version = $version.Trim()
+    if ($LASTEXITCODE -ne 0 -or $version -notmatch '^\d+\.\d+\.\d+$') {
+        throw 'Could not resolve the synchronized Atlaso release version from the checked-out repository metadata.'
+    }
+
+    $headCommit = [string](& git -C $RepoRoot rev-parse HEAD)
+    $headCommit = $headCommit.Trim()
+    if ($LASTEXITCODE -ne 0 -or $headCommit -notmatch '^[0-9a-f]{40}$') {
+        throw 'Could not resolve the current repository commit.'
+    }
+
+    $tagLines = @(& git -C $RepoRoot for-each-ref --points-at $headCommit '--format=%(refname:short)|%(objecttype)|%(*objectname)|%(objectname)' refs/tags)
+    if ($LASTEXITCODE -ne 0) {
+        throw 'Could not enumerate release tags at the checked-out commit.'
+    }
+    $tagRecords = @(
+        foreach ($line in $tagLines) {
+            $parts = @([string]$line -split '\|', 4)
+            if ($parts.Count -ne 4) {
+                throw 'Git returned malformed release tag metadata.'
+            }
+            [pscustomobject]@{
+                Name       = $parts[0]
+                ObjectType = $parts[1]
+                Commit     = if ($parts[1] -eq 'tag') { $parts[2] } else { $parts[3] }
+            }
+        }
+    )
+    return Select-AtlasoReleaseTag `
+        -Version $version `
+        -HeadCommit $headCommit `
+        -TagRecords $tagRecords `
+        -Prerelease:$Prerelease
+}
+
+<#
+.SYNOPSIS
+Validate repository state and VMX provenance against the current release tag.
+
+.PARAMETER RepoRoot
+Repository root used for provenance validation.
+.PARAMETER Tag
+Release tag expected to match the exported VMX.
+.PARAMETER SourceVmxPath
+VMX path whose provenance is validated.
+#>
+<#
+.SYNOPSIS
+Validate Atlaso Release Provenance.
+.PARAMETER RepoRoot
+Repo Root value.
+.PARAMETER Tag
+Tag value.
+.PARAMETER SourceVmxPath
+Source Vmx Path value.
+#>
+function Assert-AtlasoReleaseProvenance {
+    param(
+        [string]$RepoRoot,
+        [string]$Tag,
+        [string]$SourceVmxPath
+    )
+
+    if (-not (Get-Command git -ErrorAction SilentlyContinue)) {
+        throw 'git was not found. Release publication requires an exact clean tag checkout.'
+    }
+    $dirtyPaths = @(& git -C $RepoRoot status --porcelain --untracked-files=no)
+    if ($LASTEXITCODE -ne 0 -or $dirtyPaths.Count -ne 0) {
+        throw 'Release publication requires a clean tracked worktree.'
+    }
+    $headCommit = [string](& git -C $RepoRoot rev-parse HEAD)
+    if ($LASTEXITCODE -ne 0) {
+        throw 'Could not resolve the current repository commit.'
+    }
+    $headCommit = $headCommit.Trim()
+    $tagCommit = [string](& git -C $RepoRoot rev-parse "$Tag^{}" 2>$null)
+    $tagCommit = $tagCommit.Trim()
+    if ($LASTEXITCODE -ne 0 -or [string]::IsNullOrWhiteSpace($tagCommit)) {
+        throw "Release tag $Tag is not available locally. Fetch the exact tag before publishing."
+    }
+    if ($tagCommit -ne $headCommit) {
+        throw "Release tag $Tag identifies $tagCommit, but the exported image checkout is $headCommit."
+    }
+
+    $provenance = Assert-AtlasoVmwarePayloadProvenance -VmxPath $SourceVmxPath
+    if ($provenance.source_commit -ne $headCommit -or
+        [bool]$provenance.tracked_source_dirty) {
+        throw 'VMware build provenance does not identify this exact clean release commit.'
+    }
+    return $provenance
+}
+
+<#
+.SYNOPSIS
+Validate that an existing GitHub Release matches the selected publication mode.
+
+.PARAMETER Metadata
+GitHub Release metadata returned by gh.
+.PARAMETER Tag
+Expected stable or prerelease tag.
+.PARAMETER Prerelease
+Require the GitHub Release to be marked as a prerelease.
+#>
+function Assert-AtlasoReleasePublicationTarget {
+    param(
+        [Parameter(Mandatory = $true)]$Metadata,
+        [Parameter(Mandatory = $true)][string]$Tag,
+        [switch]$Prerelease
+    )
+
+    $requiredProperties = @('tagName', 'isDraft', 'isPrerelease', 'assets')
+    $missingProperties = @($requiredProperties | Where-Object { $_ -notin $Metadata.PSObject.Properties.Name })
+    if ($missingProperties.Count -ne 0 -or
+        $Metadata.tagName -isnot [string] -or
+        $Metadata.isDraft -isnot [bool] -or
+        $Metadata.isPrerelease -isnot [bool]) {
+        throw "GitHub Release $Tag returned malformed metadata."
+    }
+    if ([string]$Metadata.tagName -ne $Tag) {
+        throw "GitHub Release lookup returned tag $($Metadata.tagName), not $Tag."
+    }
+    if ([bool]$Metadata.isDraft) {
+        throw "GitHub Release $Tag is a draft; publish it before uploading OVF assets."
+    }
+    if ([bool]$Metadata.isPrerelease -ne [bool]$Prerelease) {
+        $expectedKind = if ($Prerelease) { 'a prerelease' } else { 'a stable release' }
+        throw "GitHub Release $Tag is not classified as $expectedKind."
+    }
+}
+
+<#
+.SYNOPSIS
+Publish OVF release assets to GitHub after validation.
+
+.PARAMETER GhPath
+Path to the GitHub CLI binary.
+.PARAMETER Tag
+Release tag receiving the exported artifacts.
+.PARAMETER OvfDirectory
+Directory with generated OVF descriptor and companion files.
+.PARAMETER OvaPath
+Optional OVA file path to upload when present.
+.PARAMETER ExpectedCommit
+Expected source commit hash for provenance checks.
+.PARAMETER MaximumBytes
+Per-file byte limit for uploaded release assets.
+.PARAMETER Prerelease
+Require the destination GitHub Release to be an existing prerelease.
+#>
+<#
+.SYNOPSIS
+Publish Atlaso Release Assets.
+.PARAMETER GhPath
+Gh Path value.
+.PARAMETER Tag
+Tag value.
+.PARAMETER OvfDirectory
+Ovf Directory value.
+.PARAMETER OvaPath
+Ova Path value.
+.PARAMETER ExpectedCommit
+Expected Commit value.
+.PARAMETER MaximumBytes
+Maximum Bytes value.
+.PARAMETER Prerelease
+Prerelease value.
+#>
+function Publish-AtlasoReleaseAssets {
+    param(
+        [string]$GhPath,
+        [string]$Tag,
+        [string]$OvfDirectory,
+        [string]$OvaPath,
+        [string]$ExpectedCommit,
+        [long]$MaximumBytes,
+        [switch]$Prerelease
+    )
+
+    $effectiveRepository = [string](& $GhPath repo view --json nameWithOwner --jq '.nameWithOwner')
+    $effectiveRepository = $effectiveRepository.Trim()
+    if ($LASTEXITCODE -ne 0 -or [string]::IsNullOrWhiteSpace($effectiveRepository)) {
+        throw 'Could not resolve the destination GitHub repository from the current checkout.'
+    }
+    $repositoryArguments = @('--repo', $effectiveRepository)
+    $remoteTagCommit = [string](& $GhPath api "repos/$effectiveRepository/commits/$Tag" --jq '.sha')
+    $remoteTagCommit = $remoteTagCommit.Trim()
+    if ($LASTEXITCODE -ne 0 -or $remoteTagCommit -notmatch '^[0-9a-f]{40}$') {
+        throw "Could not resolve release tag $Tag in destination repository $effectiveRepository."
+    }
+    if ($remoteTagCommit -ne $ExpectedCommit) {
+        throw "Destination release tag $Tag identifies $remoteTagCommit, not exported image commit $ExpectedCommit."
+    }
+    $releaseMetadataJson = [string](& $GhPath release view $Tag --json tagName,isDraft,isPrerelease,assets @repositoryArguments)
+    if ($LASTEXITCODE -ne 0 -or [string]::IsNullOrWhiteSpace($releaseMetadataJson)) {
+        throw "GitHub Release $Tag was not found or is not accessible."
+    }
+    try {
+        $releaseMetadata = $releaseMetadataJson | ConvertFrom-Json -ErrorAction Stop
+    }
+    catch {
+        throw "GitHub Release $Tag returned malformed metadata."
+    }
+    Assert-AtlasoReleasePublicationTarget -Metadata $releaseMetadata -Tag $Tag -Prerelease:$Prerelease
+    $existingAssetNames = @($releaseMetadata.assets | ForEach-Object { [string]$_.name })
+
+    $ovfAssets = @(Get-ChildItem -LiteralPath $OvfDirectory -File | Sort-Object Name)
+    if ($ovfAssets.Count -eq 0) {
+        throw "No OVF release assets were found under $OvfDirectory."
+    }
+    foreach ($asset in $ovfAssets) {
+        if ($asset.Length -gt $MaximumBytes) {
+            throw "OVF release asset $($asset.Name) is $($asset.Length) bytes, exceeding the $MaximumBytes-byte GitHub asset limit."
+        }
+    }
+
+    $uploadAssets = @($ovfAssets.FullName)
+    if (-not [string]::IsNullOrWhiteSpace($OvaPath) -and (Test-Path -LiteralPath $OvaPath -PathType Leaf)) {
+        $ova = Get-Item -LiteralPath $OvaPath
+        if ($ova.Length -le $MaximumBytes) {
+            $uploadAssets += $ova.FullName
+        }
+        else {
+            Write-Warning "Skipping OVA release asset $($ova.Name): $($ova.Length) bytes exceeds the $MaximumBytes-byte GitHub asset limit. The OVF package remains directly deployable."
+        }
+    }
+
+    $uploadAssetNames = @($uploadAssets | ForEach-Object { [System.IO.Path]::GetFileName($_) })
+    $existingUploadAssets = @($uploadAssetNames | Where-Object { $_ -in $existingAssetNames })
+    if ($existingUploadAssets.Count -ne 0) {
+        if ($existingUploadAssets.Count -ne $uploadAssetNames.Count) {
+            throw "GitHub Release $Tag contains only part of the Atlaso OVF asset set; refusing a non-idempotent upload."
+        }
+        $verificationDirectory = Join-Path ([System.IO.Path]::GetTempPath()) "atlaso-ovf-release-$([guid]::NewGuid().ToString('N'))"
+        New-Item -ItemType Directory -Path $verificationDirectory | Out-Null
+        try {
+            foreach ($assetName in $uploadAssetNames) {
+                & $GhPath release download $Tag --pattern $assetName --dir $verificationDirectory @repositoryArguments
+                if ($LASTEXITCODE -ne 0) {
+                    throw "Could not download existing GitHub release asset $assetName for byte verification."
+                }
+            }
+            foreach ($assetPath in $uploadAssets) {
+                $assetName = [System.IO.Path]::GetFileName($assetPath)
+                $existingPath = Join-Path $verificationDirectory $assetName
+                if (-not (Test-Path -LiteralPath $existingPath -PathType Leaf) -or
+                    (Get-FileHash -LiteralPath $assetPath -Algorithm SHA256).Hash -ne (Get-FileHash -LiteralPath $existingPath -Algorithm SHA256).Hash) {
+                    throw "GitHub Release $Tag already contains different bytes for $assetName."
+                }
+            }
+        }
+        finally {
+            Remove-Item -LiteralPath $verificationDirectory -Recurse -Force -ErrorAction SilentlyContinue
+        }
+        Write-Host "GitHub Release $Tag already contains the identical Atlaso OVF asset set."
+        return
+    }
+
+    & $GhPath release upload $Tag @uploadAssets @repositoryArguments
+    if ($LASTEXITCODE -ne 0) {
+        throw "GitHub release asset upload failed with exit code $LASTEXITCODE."
+    }
+    foreach ($assetPath in $uploadAssets) {
+        $asset = Get-Item -LiteralPath $assetPath
+        Write-Host "Uploaded GitHub release asset: $($asset.Name) ($($asset.Length) bytes)"
+    }
 }
 
 <#
@@ -1464,7 +1846,15 @@ function Get-OvfDescriptorPath {
 
 $repoRoot = (Resolve-Path -LiteralPath (Join-Path $PSScriptRoot '..\..\..')).Path
 $resolvedSourceVmx = (Resolve-Path -LiteralPath $SourceVmxPath).Path
-$buildProvenance = Assert-AtlasoVmwarePayloadProvenance -VmxPath $resolvedSourceVmx
+$releaseTag = ''
+$buildProvenance = $null
+if ($publishReleaseAssets) {
+    $releaseTag = Resolve-AtlasoReleaseTag -RepoRoot $repoRoot -Prerelease:$Prerelease
+    $buildProvenance = Assert-AtlasoReleaseProvenance -RepoRoot $repoRoot -Tag $releaseTag -SourceVmxPath $resolvedSourceVmx
+}
+else {
+    $buildProvenance = Assert-AtlasoVmwarePayloadProvenance -VmxPath $resolvedSourceVmx
+}
 $callerSpecifiedOutputDirectory = $PSBoundParameters.ContainsKey('OutputDirectory')
 $outputPlan = Resolve-AtlasoOvfOutputPlan `
     -RepoRoot $repoRoot `
@@ -1475,7 +1865,7 @@ $resolvedOutputDirectory = $outputPlan.OutputDirectory
 $resolvedOvfTool = Resolve-OvfToolPath -Path $OvfToolPath
 $resolvedTar = if ($NoOva) { '' } else { Resolve-TarPath -Path $TarPath }
 
-Clear-AtlasoOvfOutputDirectory -OutputPlan $outputPlan -Force:$Force
+Clear-AtlasoOvfOutputDirectory -OutputPlan $outputPlan -Release:$publishReleaseAssets -Force:$Force
 New-Item -ItemType Directory -Force -Path $resolvedOutputDirectory | Out-Null
 
 & $resolvedOvfTool --acceptAllEulas $resolvedSourceVmx $resolvedOutputDirectory
@@ -1508,6 +1898,17 @@ if ($ovaPath) {
     Write-Host "Atlaso OVA archive size: $($ovaAsset.Length) bytes"
 }
 
+if ($publishReleaseAssets) {
+    $resolvedGh = Resolve-GhPath
+    Publish-AtlasoReleaseAssets `
+        -GhPath $resolvedGh `
+        -Tag $releaseTag `
+        -OvfDirectory $ovfPackageDirectory `
+        -OvaPath $ovaPath `
+        -ExpectedCommit $buildProvenance.source_commit `
+        -MaximumBytes $MaximumReleaseAssetBytes `
+        -Prerelease:$Prerelease
+}
 Write-Host "Atlaso OVF export root: $resolvedOutputDirectory"
 Write-Host "Atlaso OVF folder: $ovfPackageDirectory"
 Write-Host "Atlaso OVF descriptor: $ovfPath"

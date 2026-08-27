@@ -7,6 +7,7 @@ import os
 import platform
 import re
 import socket
+import stat
 import subprocess
 import sys
 import textwrap
@@ -84,6 +85,7 @@ MAINTENANCE_STATE_PATH = Path("/var/lib/atlaso/console/services.json")
 FIRST_BOOT_INITIALIZATION_LOCK_PATH = Path("/var/lib/atlaso/vmware-ovf-initializing")
 FIRST_BOOT_NETWORK_REVIEW_PATH = Path("/var/lib/atlaso/vmware-ovf-network-review.json")
 FIRST_BOOT_NETWORK_CORRECTION_PATH = Path("/var/lib/atlaso/vmware-ovf-network-correction.json")
+FIRST_BOOT_ACCESS_PATH = Path("/run/atlaso/first-boot-access.json")
 CONSOLE_ACTOR = "console:root"
 CONSOLE_REFRESH_ENV = "ATLASO_CONSOLE_REFRESH_SECONDS"
 CONSOLE_STARTUP_GRACE_SECONDS = 30
@@ -349,6 +351,16 @@ class FirstBootNetworkReview:
     fqdn: str
 
 
+@dataclass(frozen=True)
+class FirstBootAccess:
+    """Represent one root-owned transient first-boot access envelope."""
+
+    username: str
+    password: str
+    root_password: str
+    ssh_host_key: str
+
+
 def _run(
     command: list[str],
     *,
@@ -439,6 +451,55 @@ def load_first_boot_network_review() -> FirstBootNetworkReview | None:
         dns_servers=dns_servers,
         fqdn=bounded("fqdn", 253),
     )
+
+
+def load_first_boot_access() -> FirstBootAccess | None:
+    """Load the root-only access envelope retained until console acknowledgement."""
+
+    try:
+        metadata = FIRST_BOOT_ACCESS_PATH.lstat()
+    except FileNotFoundError:
+        return None
+    except OSError as exc:
+        raise ConsoleOperationError("First-boot access state is unreadable.") from exc
+    if not stat.S_ISREG(metadata.st_mode) or (os.name == "posix" and stat.S_IMODE(metadata.st_mode) != 0o600):
+        raise ConsoleOperationError("First-boot access state has unsafe file metadata.")
+    if os.name == "posix" and metadata.st_uid != 0:
+        raise ConsoleOperationError("First-boot access state is not owned by root.")
+    try:
+        payload = json.loads(FIRST_BOOT_ACCESS_PATH.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError) as exc:
+        raise ConsoleOperationError("First-boot access state is unreadable.") from exc
+    if not isinstance(payload, dict):
+        raise ConsoleOperationError("First-boot access state is malformed.")
+    fields = {name: payload.get(name) for name in ("username", "password", "root_password", "ssh_host_key")}
+    if any(not isinstance(value, str) or not value for value in fields.values()):
+        raise ConsoleOperationError("First-boot access state is incomplete.")
+    if not str(fields["ssh_host_key"]).startswith("ssh-ed25519 "):
+        raise ConsoleOperationError("First-boot access state contains an invalid SSH host key.")
+    return FirstBootAccess(
+        username=str(fields["username"]),
+        password=str(fields["password"]),
+        root_password=str(fields["root_password"]),
+        ssh_host_key=str(fields["ssh_host_key"]),
+    )
+
+
+def acknowledge_first_boot_access() -> None:
+    """Remove only the transient console copy after explicit operator acknowledgement."""
+
+    try:
+        metadata = FIRST_BOOT_ACCESS_PATH.lstat()
+    except FileNotFoundError:
+        return
+    except OSError as exc:
+        raise ConsoleOperationError("First-boot access state could not be acknowledged.") from exc
+    if not stat.S_ISREG(metadata.st_mode) or (os.name == "posix" and stat.S_IMODE(metadata.st_mode) != 0o600):
+        raise ConsoleOperationError("First-boot access state changed before acknowledgement.")
+    try:
+        FIRST_BOOT_ACCESS_PATH.unlink()
+    except OSError as exc:
+        raise ConsoleOperationError("First-boot access state could not be acknowledged.") from exc
 
 
 def _write_first_boot_network_correction(payload: dict[str, object]) -> None:
@@ -1586,6 +1647,56 @@ class CursesConsole:
         self._safe_add(height - 1, 1, "<F1> Help", curses.color_pair(3) | curses.A_BOLD)
         self._refresh_screen()
 
+    def _draw_first_boot_access(self, access: FirstBootAccess, height: int, width: int) -> None:
+        """Render one-time access until the local operator acknowledges capture.
+
+        Args:
+            access: Root-owned transient first-boot access values.
+            height: Current terminal height.
+            width: Current terminal width.
+        """
+
+        curses = self.curses
+        self._safe_add(1, 4, f"Atlaso Appliance {_package_version()}", curses.color_pair(1) | curses.A_BOLD)
+        self._safe_add(3, 4, "First-time initialization", curses.color_pair(1) | curses.A_BOLD)
+        self._safe_add(5, 4, "Record this one-time access information", curses.color_pair(6) | curses.A_BOLD)
+        self._safe_add(7, 6, f"Administrator: {access.username}", curses.color_pair(2))
+        self._safe_add(8, 6, f"Administrator password: {access.password}", curses.color_pair(2))
+        self._safe_add(9, 6, f"Root password: {access.root_password}", curses.color_pair(2))
+        self._safe_add(11, 6, "SSH Ed25519 host key:", curses.color_pair(2) | curses.A_BOLD)
+        for index, line in enumerate(textwrap.wrap(access.ssh_host_key, width=max(width - 12, 20))[:3]):
+            self._safe_add(12 + index, 8, line, curses.color_pair(2))
+        self._safe_add(
+            17,
+            4,
+            "Press Enter only after recording the values; acknowledgement removes this console copy.",
+            curses.color_pair(3) | curses.A_BOLD,
+        )
+        self._fill_line(height - 1, curses.color_pair(3))
+        self._safe_add(height - 1, 1, "<F1> Help", curses.color_pair(3) | curses.A_BOLD)
+        self._safe_add(height - 1, 12, "<Enter> Acknowledge", curses.color_pair(3) | curses.A_BOLD)
+        self._refresh_screen()
+
+    def _draw_first_boot_access_error(self, detail: str, height: int, width: int) -> None:
+        """Keep the console fail-closed when the transient access state is unsafe.
+
+        Args:
+            detail: Safe validation failure detail.
+            height: Current terminal height.
+            width: Current terminal width.
+        """
+
+        curses = self.curses
+        self._safe_add(1, 4, f"Atlaso Appliance {_package_version()}", curses.color_pair(1) | curses.A_BOLD)
+        self._safe_add(3, 4, "First-time initialization", curses.color_pair(1) | curses.A_BOLD)
+        self._safe_add(5, 4, "One-time access state needs attention", curses.color_pair(7) | curses.A_BOLD)
+        for index, line in enumerate(textwrap.wrap(detail, width=max(width - 10, 20))[:3]):
+            self._safe_add(7 + index, 6, line, curses.color_pair(7))
+        self._safe_add(12, 4, "Inspect the first-boot service from the local recovery console.", curses.color_pair(2))
+        self._fill_line(height - 1, curses.color_pair(3))
+        self._safe_add(height - 1, 1, "<F1> Help", curses.color_pair(3) | curses.A_BOLD)
+        self._refresh_screen()
+
     def draw_main(self) -> None:
         """Handle draw main."""
         curses = self.curses
@@ -1625,6 +1736,14 @@ class CursesConsole:
             return
         if FIRST_BOOT_INITIALIZATION_LOCK_PATH.exists():
             self._draw_first_boot_initializing(height)
+            return
+        try:
+            first_boot_access = load_first_boot_access()
+        except ConsoleOperationError as exc:
+            self._draw_first_boot_access_error(str(exc), height, width)
+            return
+        if first_boot_access is not None:
+            self._draw_first_boot_access(first_boot_access, height, width)
             return
         try:
             status = load_console_status()
@@ -2521,6 +2640,31 @@ class CursesConsole:
                     last_refresh = time.monotonic()
                 elif first_boot_review is not None and key in {curses.KEY_F2, 10, 13, curses.KEY_ENTER}:
                     self.review_first_boot_network(first_boot_review)
+                    self.draw_main()
+                    last_refresh = time.monotonic()
+                elif key == curses.KEY_RESIZE or time.monotonic() - last_refresh >= CONSOLE_REFRESH_SECONDS:
+                    self.draw_main()
+                    last_refresh = time.monotonic()
+                continue
+            try:
+                first_boot_access = load_first_boot_access()
+                access_state_invalid = False
+            except ConsoleOperationError:
+                first_boot_access = None
+                access_state_invalid = FIRST_BOOT_ACCESS_PATH.exists()
+            if first_boot_access is not None or access_state_invalid:
+                if key == curses.KEY_F1:
+                    self.show_help()
+                    self.draw_main()
+                    last_refresh = time.monotonic()
+                elif first_boot_access is not None and key in {10, 13, curses.KEY_ENTER}:
+                    try:
+                        acknowledge_first_boot_access()
+                        self.message = "One-time console access acknowledged and removed"
+                        self.message_error = False
+                    except ConsoleOperationError as exc:
+                        self.message = str(exc)
+                        self.message_error = True
                     self.draw_main()
                     last_refresh = time.monotonic()
                 elif key == curses.KEY_RESIZE or time.monotonic() - last_refresh >= CONSOLE_REFRESH_SECONDS:
