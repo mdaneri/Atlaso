@@ -950,6 +950,13 @@ Terminal order:
   artifact removal, and data-disk restoration before
   1Password preflight or any new mutation. Persist the
   stopped/scrubbed phase before artifact removal so a retry can safely resume restoration from an absent artifact root.
+  The VMware Photon image wrapper uses that same pinned selector and bounded SDK/DPAPI credential foundation. For each
+  omitted `-SshPassword` or `-BootstrapAdminPassword`, retrieve only the exact concealed `DEFAULT_ROOT_PASSWORD` or
+  `DEFAULT_ADMIN_PASSWORD`, while preserving each explicit `SecureString` independently. Complete Environment,
+  account, SDK, uniqueness, concealment, value, and cleanup preflight before network discovery or preparation, output
+  cleanup, ISO remastering, Packer initialization, or any other image mutation. Keep plaintext out of the PowerShell
+  parent, arguments, caller environment, durable files, output, logs, Packer diagnostics, and provenance, and preserve
+  exact-byte validation plus sensitive kickstart, ISO, and Packer-variable cleanup.
   Before persisting rollback state, reject configured data disks that repeat the same descriptor, hard-linked alias, or
   shared extent by filesystem identity. Before deleting a completed marker, write-through transition it to a
   non-actionable tombstone so a post-crash

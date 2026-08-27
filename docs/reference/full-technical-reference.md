@@ -202,9 +202,20 @@ pwsh -ExecutionPolicy Bypass `
   -File scripts/windows/vmware/build-photon-image.ps1 `
   -IsoUrl "https://packages.broadcom.com/photon/5.0/GA/iso/photon-5.0-dde71ec57.x86_64.iso" `
   -IsoChecksum "sha512:6a7a258399a258da742032987c043ab25503698d35edafaf1ae000f12127da1a161d8b84caa17fd8f23d129e81e1faa7ab087c20ab9229772a643f8f9475305f" `
-  -SshPassword "<one-time-build-root-password>" `
-  -BootstrapAdminPassword "<initial-atlaso-admin-password>"
+  -OnePasswordAccount "<approved-account-name-or-id>" `
+  -OnePasswordPython "<python-3.10-through-3.13>"
 ```
+
+The wrapper resolves an explicit `-OnePasswordEnvironmentId` first and otherwise reads the only line from the
+checkout-local, Git-ignored `.atlaso-local/onepassword-environment-id`; use `-EnvironmentIdFile` for another selector
+file. When `-SshPassword` and/or `-BootstrapAdminPassword` is omitted, it retrieves only the corresponding exact,
+unique, concealed `DEFAULT_ROOT_PASSWORD` and/or `DEFAULT_ADMIN_PASSWORD` through the supported bounded Windows
+1Password SDK desktop integration. Both explicit parameters accept `SecureString` and override their own Environment
+default independently. Caller `DEFAULT_*` variables, local `.env` files, repository password defaults, interactive
+prompts, ambiguous or non-concealed variables, and invalid values are rejected. The child returns only current-user
+DPAPI ciphertext, and its task-owned files are removed before network preparation, output cleanup, ISO remastering,
+Packer initialization, or other image mutation. Sanitized failures do not print the Environment ID, account input, or
+credential values.
 
 The supported VMware Workstation wrapper treats the Photon build password as opaque data. It encodes the
 credential before inserting it into generated kickstart or Packer shell commands, then decode it directly to standard

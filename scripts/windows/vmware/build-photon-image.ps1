@@ -6,9 +6,25 @@ Pinned Photon source URL or local path.
 .PARAMETER IsoChecksum
 Expected Photon ISO checksum.
 .PARAMETER SshPassword
-Temporary Packer SSH password. The wrapper prompts securely when omitted.
+Optional temporary Packer SSH password override. When omitted, the wrapper
+retrieves DEFAULT_ROOT_PASSWORD from the exact Atlaso 1Password Environment.
 .PARAMETER BootstrapAdminPassword
-Initial appliance administrator password. The wrapper prompts securely when omitted.
+Optional initial administrator password override. When omitted, the wrapper
+retrieves DEFAULT_ADMIN_PASSWORD from the exact Atlaso 1Password Environment.
+.PARAMETER OnePasswordEnvironmentId
+Opaque ID of the exact Atlaso 1Password Environment. When omitted, the wrapper
+reads the checkout-local onepassword-environment-id selector.
+.PARAMETER EnvironmentIdFile
+Optional single-line Atlaso Environment ID file. The legacy
+OnePasswordEnvironmentIdFile name remains available as an alias.
+.PARAMETER OnePasswordAccount
+1Password account name or ID approved for desktop SDK authorization when either
+credential is omitted.
+.PARAMETER OnePasswordPython
+CPython 3.10 through 3.13 executable used by the locked Windows 1Password SDK
+runtime when either credential is omitted.
+.PARAMETER CredentialTimeoutSeconds
+Bounded timeout for each 1Password SDK preparation and retrieval operation.
 .PARAMETER VmName
 Builder virtual-machine name.
 .PARAMETER OutputDirectory
@@ -68,6 +84,21 @@ Validate Packer inputs without building.
 .PARAMETER PrepareIsoOnly
 Reject ISO-only preparation because the retained ISO would contain reusable credentials.
 #>
+[Diagnostics.CodeAnalysis.SuppressMessageAttribute(
+    'PSAvoidUsingPlainTextForPassword',
+    'OnePasswordEnvironmentId',
+    Justification = 'Opaque Environment identifier; bounded children retrieve concealed values.'
+)]
+[Diagnostics.CodeAnalysis.SuppressMessageAttribute(
+    'PSAvoidUsingPlainTextForPassword',
+    'OnePasswordAccount',
+    Justification = 'Desktop authorization account identifier, not an account password.'
+)]
+[Diagnostics.CodeAnalysis.SuppressMessageAttribute(
+    'PSAvoidUsingPlainTextForPassword',
+    'OnePasswordPython',
+    Justification = 'Executable selector for the isolated SDK runtime, not a password.'
+)]
 [CmdletBinding()]
 param(
     [Parameter()]
@@ -78,6 +109,13 @@ param(
 
     [SecureString]$SshPassword,
     [SecureString]$BootstrapAdminPassword,
+    [string]$OnePasswordEnvironmentId = '',
+    [Alias('OnePasswordEnvironmentIdFile')]
+    [string]$EnvironmentIdFile = '',
+    [string]$OnePasswordAccount = '',
+    [string]$OnePasswordPython = '',
+    [ValidateRange(1, 3600)]
+    [int]$CredentialTimeoutSeconds = 300,
     [string]$VmName = 'Atlaso-Photon-Builder-VMware',
     [string]$OutputDirectory = '',
     [string]$SshHost = '',
@@ -120,18 +158,38 @@ if ($PrepareIsoOnly) {
     throw 'PrepareIsoOnly is not supported because a retained remastered ISO would contain reusable build credentials. Run Packer validation or a build so the ISO can be deleted after the bounded consumer exits.'
 }
 
-# Passwords have no repository defaults; resolve them before network or build mutation.
-if ($null -eq $SshPassword) {
-    $SshPassword = Read-Host -Prompt 'Temporary Photon builder SSH password' -AsSecureString
-}
-if ($null -eq $BootstrapAdminPassword) {
-    $BootstrapAdminPassword = Read-Host -Prompt 'Atlaso bootstrap administrator password' -AsSecureString
-}
-
+. (Join-Path $PSScriptRoot 'Atlaso.WorkstationFirstBoot.ps1')
+Import-Module (Join-Path $PSScriptRoot 'Atlaso.OnePasswordCredentials.psm1') -Force
 Import-Module (Join-Path $PSScriptRoot '..\common\Atlaso.PhotonImage.psm1') -Force
 Import-Module (Join-Path $PSScriptRoot 'Atlaso.WorkstationCleanup.psm1') -Force
 Import-Module (Join-Path $PSScriptRoot 'Atlaso.VmwarePayload.psm1') -Force
 Import-Module (Join-Path $PSScriptRoot 'Atlaso.WorkstationBuildMonitor.psm1') -Force
+
+$repoRoot = (Resolve-Path -LiteralPath (Join-Path $PSScriptRoot '..\..\..')).Path
+$needsOnePasswordDefaults = $null -eq $SshPassword -or $null -eq $BootstrapAdminPassword
+$resolvedEnvironmentId = ''
+if ($needsOnePasswordDefaults) {
+    $resolvedEnvironmentId = Resolve-AtlasoOnePasswordEnvironmentId `
+        -EnvironmentId $OnePasswordEnvironmentId `
+        -EnvironmentIdFile $EnvironmentIdFile `
+        -RepositoryRoot $repoRoot `
+        -ConsumerDescription 'VMware Photon image building'
+}
+
+# Credential preflight and DPAPI bridge cleanup complete before VMware network
+# discovery, output cleanup, ISO remastering, Packer initialization, or build work.
+$credentialPair = Get-AtlasoOnePasswordCredentialPair `
+    -RepositoryRoot $repoRoot `
+    -EnvironmentId $resolvedEnvironmentId `
+    -OnePasswordAccount $OnePasswordAccount `
+    -OnePasswordPython $OnePasswordPython `
+    -AdminPassword $BootstrapAdminPassword `
+    -RootPassword $SshPassword `
+    -TimeoutSeconds $CredentialTimeoutSeconds `
+    -ConsumerDescription 'VMware Photon image build'
+$SshPassword = $credentialPair.RootPassword
+$BootstrapAdminPassword = $credentialPair.AdminPassword
+$credentialPair = $null
 
 <#
 .SYNOPSIS
@@ -443,7 +501,6 @@ if ([string]::IsNullOrWhiteSpace($PackerDirectory)) {
     $PackerDirectory = Join-Path $PSScriptRoot '..\..\..\image\vmware-workstation'
 }
 $workstationOutputDirectory = Resolve-WorkstationOutputDirectory -PackerDirectory $PackerDirectory -OutputDirectory $OutputDirectory
-$repoRoot = (Resolve-Path -LiteralPath (Join-Path $PSScriptRoot '..\..\..')).Path
 
 $VmnetName = ConvertTo-WorkstationVmnetName -Name $VmnetName -ParameterName 'VmnetName'
 $ServiceVmnetName = ConvertTo-WorkstationVmnetName -Name $ServiceVmnetName -ParameterName 'ServiceVmnetName'

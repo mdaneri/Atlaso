@@ -123,13 +123,27 @@ destination would make Packer nest the source directory and leave the provisione
 pwsh -ExecutionPolicy Bypass `
   -File scripts/windows/vmware/build-photon-image.ps1 `
   -IsoUrl "https://packages.vmware.com/photon/5.0/GA/iso/photon-5.0-dde71ec57.x86_64.iso" `
-  -IsoChecksum "sha512:<checksum>"
+  -IsoChecksum "sha512:<checksum>" `
+  -OnePasswordAccount "<approved-account-name-or-id>" `
+  -OnePasswordPython "<python-3.10-through-3.13>"
 ```
 
-`-SshPassword` and `-BootstrapAdminPassword` accept only `SecureString` values and have no repository defaults. Omit
-them for interactive `Read-Host -AsSecureString` prompts, or collect each value securely in the current PowerShell
-process before invoking the wrapper. The shared builder unwraps them only for kickstart and Packer serialization and
-removes the temporary secret-bearing Packer variable file after the bounded child exits.
+`-SshPassword` and `-BootstrapAdminPassword` accept only `SecureString` values and remain independently authoritative.
+When either is omitted, the wrapper verifies the exact Atlaso 1Password Environment selected by an explicit
+`-OnePasswordEnvironmentId` or by the checkout-local, Git-ignored
+`.atlaso-local/onepassword-environment-id` file, then retrieves only the corresponding concealed
+`DEFAULT_ROOT_PASSWORD` or `DEFAULT_ADMIN_PASSWORD` through the bounded Windows 1Password SDK bridge. A custom
+single-line selector file may be passed with `-EnvironmentIdFile`; the legacy `-OnePasswordEnvironmentIdFile` spelling
+is an alias. Omitted values also require an approved `-OnePasswordAccount` and an SDK-supported CPython 3.10 through
+3.13 executable through `-OnePasswordPython`.
+
+There are no interactive prompts, caller-environment fallbacks, repository password defaults, or local `.env` inputs.
+Missing, ambiguous, non-concealed, invalid, unauthorized, or timed-out 1Password state fails with sanitized guidance
+before VMware network preparation, output cleanup, ISO remastering, Packer initialization, or other image mutation.
+The bounded bridge returns only current-user DPAPI ciphertext to the PowerShell parent and deletes its task-owned
+temporary root before image work begins. The shared builder unwraps validated `SecureString` values only at the
+kickstart and Packer serialization boundary and preserves the existing exact-byte checks and cleanup of the kickstart,
+remastered ISO, and secret-bearing Packer variable file.
 
 The wrapper does not build or embed Inventory Linux. New templates leave it uninstalled so an administrator can use
 **Download latest** to retrieve the signed independent release when needed. Contributors building Inventory Linux

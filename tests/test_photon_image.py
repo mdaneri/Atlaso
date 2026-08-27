@@ -1421,10 +1421,10 @@ def test_vmware_builder_uses_nat_gateway_dns_by_default():
 
     assert "[SecureString]$SshPassword" in wrapper
     assert "[SecureString]$BootstrapAdminPassword" in wrapper
-    assert "if ($null -eq $BootstrapAdminPassword)" in wrapper
+    assert "$needsOnePasswordDefaults = $null -eq $SshPassword -or $null -eq $BootstrapAdminPassword" in wrapper
     assert "PrepareIsoOnly is not supported because a retained remastered ISO" in wrapper
-    assert "Read-Host -Prompt 'Temporary Photon builder SSH password' -AsSecureString" in wrapper
-    assert "Read-Host -Prompt 'Atlaso bootstrap administrator password' -AsSecureString" in wrapper
+    assert "Read-Host" not in wrapper
+    assert "Get-AtlasoOnePasswordCredentialPair" in wrapper
     assert "$builderDnsWasPassed = $PSBoundParameters.ContainsKey('BuilderStaticDns')" in wrapper
     assert "-not $builderDnsWasPassed -and $BuilderStaticDns.Count -eq 0 -and $management.Type -eq 'nat'" in wrapper
     assert "$BuilderStaticDns = @($managementGateway)" in wrapper
@@ -1520,7 +1520,8 @@ def test_create_atlaso_vmware_test_vm_wrapper_uses_common_helpers():
     assert "[string]$EnvironmentIdFile = ''" in script
     assert "[Alias('OnePasswordEnvironmentIdFile')]" in script
     assert "ExpectedEnvironmentIdSha256" in script
-    assert "environmentIdDigest" in script
+    assert "Assert-AtlasoOnePasswordEnvironmentId" in script
+    assert "Atlaso.OnePasswordCredentials.psm1" in script
     assert ".atlaso-local\\onepassword-environment-id" in script
     assert "/.atlaso-local/" in Path(".gitignore").read_text(encoding="utf-8")
     assert script.index("Invoke-PendingAtlasoDevelopmentCaCleanup `") < script.index(

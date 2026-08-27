@@ -102,8 +102,20 @@ pwsh -ExecutionPolicy Bypass `
   -File scripts/windows/vmware/build-photon-image.ps1 `
   -IsoUrl "<photon-iso-url-or-path>" `
   -IsoChecksum "<packer-checksum>" `
+  -OnePasswordAccount "<approved-account-name-or-id>" `
+  -OnePasswordPython "<python-3.10-through-3.13>" `
   -EnableRealSystemAdapters
 ```
+
+The image wrapper uses the same exact Atlaso Environment selector contract as normal test-VM creation: an explicit
+`-OnePasswordEnvironmentId` takes precedence over the checkout-local, Git-ignored
+`.atlaso-local/onepassword-environment-id`, and `-EnvironmentIdFile` selects a different single-line file. When
+`-SshPassword` or `-BootstrapAdminPassword` is omitted, the bounded Windows SDK bridge retrieves only that value's
+unique concealed `DEFAULT_ROOT_PASSWORD` or `DEFAULT_ADMIN_PASSWORD`. Explicit `SecureString` parameters remain
+independently authoritative. The bridge returns only current-user DPAPI ciphertext and removes its temporary files
+before the wrapper performs network discovery or preparation, output cleanup, ISO remastering, Packer initialization,
+or other image mutation. It rejects caller `DEFAULT_*` variables, local `.env` inputs, ambiguous or non-concealed
+variables, invalid exact bytes, unavailable authorization, and timeouts without printing the Environment ID or values.
 
 The wrapper uses the shared Photon ISO remastering, kickstart rendering, checksum validation, and Packer var-file
 generation. `image/common/source` holds the original Photon ISO download cache. The canonical image installs
