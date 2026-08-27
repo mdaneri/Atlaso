@@ -82,7 +82,8 @@ The durable status snapshot lives in the root-only privileged state directory; o
 placed in `/run` for nginx. Publication rejects symlinks, unsafe ownership, malformed or duplicate children, non-install
 tasks, stale terminal tasks, and a transaction ID that does not match the active snapshot. Nginx configuration and
 runtime files use no-follow atomic replacement and file/directory synchronization. Every applied IPv4 and IPv6 browser
-listener must return three consecutive 503 samples before installation begins. If publication cannot be proven, no
+or machine-only listener must return three consecutive 503 samples before installation begins; machine-only vhosts use
+a private server-guard probe URI instead of inventing a human route. If publication cannot be proven, no
 selected stream starts and the task fails terminally. Atlaso records successful hold activation only after listener
 proof, so rolling back an initial publication cannot recreate a marker that never became active.
 Publication and restoration share one task-bound transient-helper identity. Before either transition retries, the helper

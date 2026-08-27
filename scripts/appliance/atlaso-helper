@@ -268,6 +268,7 @@ ATLASO_UPDATE_STATUS_NGINX_INCLUDE_PATH = Path(
     "/etc/atlaso/nginx/includes/appliance-update-status.conf"
 )
 ATLASO_UPDATE_READINESS_PATH = "/__atlaso_appliance_update_readiness_openapi"
+ATLASO_UPDATE_LISTENER_PROBE_PATH = "/__atlaso_appliance_update_listener_probe"
 ATLASO_UPDATE_RESTART_RECEIPT_PATH = (
     ATLASO_UPDATE_STATUS_DIR / "restart-receipt.json"
 )
@@ -14806,9 +14807,11 @@ def _update_status_probe_urls(site_text: str) -> tuple[tuple[str, bool], ...]:
             if re.search(rf"location\s+(?:=\s+|\^~\s+)?{re.escape(path)}(?:/)?\s*\{{", block)
         ]
         if not paths:
-            continue
+            # Server-level guards cover machine/protocol-only vhosts even when
+            # they intentionally expose no human UI location.
+            paths = [ATLASO_UPDATE_LISTENER_PROBE_PATH]
         for listener in re.finditer(
-            r"(?m)^\s*listen\s+(?P<endpoint>\S+)(?P<options>[^;]*);",
+            r"(?m)^\s*listen\s+(?P<endpoint>[^\s;]+)(?P<options>[^;]*);",
             block,
         ):
             endpoint = listener.group("endpoint")

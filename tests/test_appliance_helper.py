@@ -277,6 +277,11 @@ server {
   listen 192.0.2.10:443 ssl;
   location ^~ /ui/public/ { return 418; }
 }
+server {
+  listen 192.0.2.20:8080;
+  if (-f /run/atlaso-appliance-update-status) { return 418; }
+  location ^~ /PROD/ { proxy_pass http://127.0.0.1:8090; }
+}
 """
     observed = []
     monkeypatch.setattr(helper.shutil, "which", lambda _name: "curl")
@@ -289,13 +294,17 @@ server {
 
     result = helper._verify_update_status_responses([site])
 
-    assert result["listener_count"] == 5
+    assert result["listener_count"] == 6
     assert result["stable_samples"] == 3
     assert ("http://127.0.0.1/ui/management", False) in observed
     assert ("http://127.0.0.1/ui/public", False) in observed
     assert ("http://[::1]/ui/management", False) in observed
     assert ("http://[::1]/ui/public", False) in observed
     assert ("https://192.0.2.10/ui/public", True) in observed
+    assert (
+        f"http://192.0.2.20:8080{helper.ATLASO_UPDATE_LISTENER_PROBE_PATH}",
+        False,
+    ) in observed
 
 
 @pytest.mark.parametrize("marker_existed", [False, True])
