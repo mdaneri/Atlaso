@@ -14748,6 +14748,16 @@ def _publish_appliance_update_status(job_id: str) -> dict[str, object]:
     """
     snapshot = _write_appliance_update_status_files(_appliance_update_status_task(job_id))
     _write_update_status_nginx_include()
+    marker_existed = False
+    try:
+        marker_job = _read_appliance_update_runtime_file(
+            ATLASO_UPDATE_STATUS_MARKER_PATH
+        ).strip()
+        marker_existed = True
+    except FileNotFoundError:
+        marker_job = ""
+    if marker_existed and marker_job != job_id:
+        raise ValueError("update-only status marker belongs to another task")
     originals: dict[Path, str] = {}
     guarded_sites: list[str] = []
     try:
@@ -14788,7 +14798,11 @@ def _publish_appliance_update_status(job_id: str) -> dict[str, object]:
             if validation.returncode == 0
             else {"success": False}
         )
-        if validation.returncode == 0 and reload_result.get("success") is True:
+        if (
+            not marker_existed
+            and validation.returncode == 0
+            and reload_result.get("success") is True
+        ):
             ATLASO_UPDATE_STATUS_MARKER_PATH.unlink(missing_ok=True)
             _fsync_directory(ATLASO_UPDATE_STATUS_MARKER_PATH.parent)
         raise
@@ -14998,7 +15012,14 @@ def _finish_appliance_update_status(job_id: str) -> dict[str, object]:
         "updated_at": datetime.now(timezone.utc).isoformat(),
         "listener_proof": restoration_proof,
     }
-    snapshot = _write_appliance_update_status_files(snapshot)
+    try:
+        snapshot = _write_appliance_update_status_files(snapshot)
+    except Exception:
+        _write_appliance_update_runtime_file(
+            ATLASO_UPDATE_STATUS_MARKER_PATH,
+            job_id + "\n",
+        )
+        raise
     return snapshot
 
 

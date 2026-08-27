@@ -257,6 +257,125 @@ server {
     assert ("https://192.0.2.10/ui/public", True) in observed
 
 
+@pytest.mark.parametrize("marker_existed", [False, True])
+def test_status_publish_rollback_preserves_only_a_preexisting_hold(
+    monkeypatch,
+    tmp_path,
+    marker_existed,
+):
+    """Remove an initial failed hold but preserve an active refresh hold.
+
+    Args:
+        monkeypatch: Pytest fixture used to inject listener-proof failure.
+        tmp_path: Temporary directory used for nginx and marker state.
+        marker_existed: Whether this invocation refreshes an active hold.
+    """
+    helper = load_helper_module()
+    job_id = "job_0123456789ab"
+    marker = tmp_path / "run" / "status-marker"
+    management = tmp_path / "nginx" / "management.conf"
+    management.parent.mkdir(parents=True)
+    management.write_text(
+        "server {\n  listen 80 default_server;\n  location / {\n    return 200;\n  }\n}\n",
+        encoding="utf-8",
+    )
+    if marker_existed:
+        marker.parent.mkdir(parents=True)
+        marker.write_text(job_id + "\n", encoding="utf-8")
+    monkeypatch.setattr(helper, "ATLASO_UPDATE_STATUS_MARKER_PATH", marker)
+    monkeypatch.setattr(helper, "NGINX_MANAGEMENT_SITE_PATH", management)
+    monkeypatch.setattr(
+        helper,
+        "NGINX_PUBLIC_SERVICES_SITE_PATH",
+        tmp_path / "nginx" / "public.conf",
+    )
+    monkeypatch.setattr(helper, "_appliance_update_status_task", lambda _job_id: {})
+    monkeypatch.setattr(
+        helper,
+        "_write_appliance_update_status_files",
+        lambda _snapshot: {"task_id": job_id},
+    )
+    monkeypatch.setattr(helper, "_write_update_status_nginx_include", lambda: None)
+    monkeypatch.setattr(
+        helper,
+        "_nginx_test_command",
+        lambda: SimpleNamespace(returncode=0),
+    )
+    monkeypatch.setattr(helper, "_service_command", lambda *_args: {"success": True})
+    monkeypatch.setattr(
+        helper,
+        "_verify_update_status_responses",
+        lambda _sites: (_ for _ in ()).throw(ValueError("listener proof failed")),
+    )
+
+    with pytest.raises(ValueError, match="listener proof failed"):
+        helper._publish_appliance_update_status(job_id)
+
+    assert marker.exists() is marker_existed
+    if marker_existed:
+        assert marker.read_text(encoding="utf-8") == job_id + "\n"
+
+
+def test_status_finish_reestablishes_hold_when_restored_snapshot_write_fails(
+    monkeypatch,
+    tmp_path,
+):
+    """Keep terminal UI restoration retryable after final persistence failure.
+
+    Args:
+        monkeypatch: Pytest fixture used to fail the final snapshot write.
+        tmp_path: Temporary directory used for the durable marker.
+    """
+    helper = load_helper_module()
+    job_id = "job_0123456789ab"
+    marker = tmp_path / "run" / "status-marker"
+    marker.parent.mkdir(parents=True)
+    marker.write_text(job_id + "\n", encoding="utf-8")
+    snapshot = {
+        "task_id": job_id,
+        "terminal": True,
+        "status": "succeeded",
+        "children": [],
+    }
+
+    def persist(value):
+        """Fail only after ordinary listener proof succeeds.
+
+        Args:
+            value: Status snapshot requested for durable publication.
+        """
+        restoration = value.get("ui_restoration")
+        if isinstance(restoration, dict) and restoration.get("state") == "restored":
+            raise OSError("final snapshot write failed")
+        return value
+
+    monkeypatch.setattr(helper, "ATLASO_UPDATE_STATUS_MARKER_PATH", marker)
+    monkeypatch.setattr(
+        helper,
+        "_appliance_update_status_task",
+        lambda _job_id, *, allow_terminal=False: dict(snapshot),
+    )
+    monkeypatch.setattr(helper, "_write_appliance_update_status_files", persist)
+    monkeypatch.setattr(helper, "_verify_release_status_completion", lambda *_args: None)
+    monkeypatch.setattr(
+        helper,
+        "_nginx_test_command",
+        lambda: SimpleNamespace(returncode=0),
+    )
+    monkeypatch.setattr(helper, "_service_command", lambda *_args: {"success": True})
+    monkeypatch.setattr(helper, "_ordinary_update_ui_probe_sites", lambda: [])
+    monkeypatch.setattr(
+        helper,
+        "_verify_ordinary_update_ui_responses",
+        lambda _sites: {"listener_count": 1, "status_classes": ["200"]},
+    )
+
+    with pytest.raises(OSError, match="final snapshot write failed"):
+        helper._finish_appliance_update_status(job_id)
+
+    assert marker.read_text(encoding="utf-8") == job_id + "\n"
+
+
 def test_update_status_task_requires_current_install_contract(monkeypatch, tmp_path):
     """Reject stale checks while accepting the exact hierarchy.
 
