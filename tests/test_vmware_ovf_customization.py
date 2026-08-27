@@ -2362,10 +2362,15 @@ def test_vmware_ovf_export_and_image_plumbing_are_present():
     assert "Clear-AtlasoOvfOutputDirectory" in export_script
     assert "$PSBoundParameters.ContainsKey('OutputDirectory')" in export_script
     assert "[switch]$Release" in export_script
+    assert "[switch]$Prerelease" in export_script
+    assert "-Release and -Prerelease are mutually exclusive publishing modes" in export_script
     assert "[string]$ReleaseTag" not in export_script
     assert "[string]$Repository" not in export_script
     assert "[string]$RepositoryName" not in export_script
     assert "Resolve-AtlasoReleaseTag" in export_script
+    assert "Select-AtlasoReleaseTag" in export_script
+    assert "v$Version-<prerelease>" in export_script
+    assert "lightweight tags are not accepted" in export_script
     assert 'python.Source $versionScript get --root $RepoRoot' in export_script
     assert 'repo view --json nameWithOwner' in export_script
     assert "Release publication requires a clean tracked worktree" in export_script
@@ -2378,6 +2383,9 @@ def test_vmware_ovf_export_and_image_plumbing_are_present():
     ) < export_script.index("Clear-AtlasoOvfOutputDirectory")
     assert 'api "repos/$effectiveRepository/commits/$Tag"' in export_script
     assert "Destination release tag $Tag identifies" in export_script
+    assert "Assert-AtlasoReleasePublicationTarget" in export_script
+    assert "tagName,isDraft,isPrerelease,assets" in export_script
+    assert "is not classified as $expectedKind" in export_script
     assert "Skipping OVA release asset" in export_script
     assert "--clobber" not in export_script
     assert "release upload $Tag @uploadAssets @repositoryArguments" in export_script

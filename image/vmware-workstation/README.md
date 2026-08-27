@@ -283,7 +283,8 @@ vSphere/ESXi import: `Atlaso Management Network` for the first adapter, which re
 `Atlaso Services Network` for the second adapter used by DNS, DHCP, CA, depot, PXE, KMS, and other Atlaso-managed
 services.
 
-To upload the deployable OVF package to an existing GitHub Release, authenticate GitHub CLI and pass the release tag:
+To upload the deployable OVF package to an existing stable GitHub Release, authenticate GitHub CLI and select release
+publication:
 
 ```powershell
 pwsh -ExecutionPolicy Bypass `
@@ -291,14 +292,27 @@ pwsh -ExecutionPolicy Bypass `
   -Release
 ```
 
-Release mode derives `v<version>` from the synchronized repository metadata, requires that tag to identify the clean
-checked-out commit, resolves the destination GitHub repository from the current checkout, and replaces the generated
-local OVF output before publishing. That implicit replacement applies only when `-OutputDirectory` is omitted and the
-target is the canonical `image/vmware-workstation/ovf/<Name>` destination. An explicitly supplied existing destination,
-including that same canonical path, requires `-Force`. Recursive replacement is always limited to a strict descendant
-of `image/vmware-workstation/ovf`; filesystem, repository, image, VMware image, OVF-root, external, and reparse-point
-targets are refused even with `-Force`. A new external destination may receive an export because no existing tree is
-removed, but rerunning against it requires choosing a repository-owned output destination instead.
+To target an existing GitHub prerelease instead, check out its exact annotated `vX.Y.Z-<prerelease>` tag and run:
+
+```powershell
+pwsh -ExecutionPolicy Bypass `
+  -File scripts/windows/vmware/export-ovf.ps1 `
+  -Prerelease
+```
+
+Stable mode derives `vX.Y.Z` from synchronized repository metadata. Prerelease mode requires exactly one annotated
+SemVer prerelease tag at `HEAD` whose `X.Y.Z` core matches that metadata. Both modes require the tag to identify the
+clean checked-out commit, resolve the destination repository from the checkout, and require an existing published,
+non-draft GitHub Release whose stable or prerelease classification matches the selected mode. The exporter only appends
+the verified OVF asset set; it never creates, retags, publishes, or reclassifies the GitHub Release.
+
+Publication replaces the generated local OVF output before uploading. That implicit replacement applies only when
+`-OutputDirectory` is omitted and the target is the canonical `image/vmware-workstation/ovf/<Name>` destination. An
+explicitly supplied existing destination, including that same canonical path, requires `-Force`. Recursive replacement
+is always limited to a strict descendant of `image/vmware-workstation/ovf`; filesystem, repository, image, VMware image,
+OVF-root, external, and reparse-point targets are refused even with `-Force`. A new external destination may receive an
+export because no existing tree is removed, but rerunning against it requires choosing a repository-owned output
+destination instead.
 
 Every OVF asset is checked against GitHub's less-than-2-GiB per-asset boundary before upload. The descriptor, manifest,
 and both payload VMDKs are uploaded as one set. A retry verifies every existing asset byte-for-byte and refuses partial
