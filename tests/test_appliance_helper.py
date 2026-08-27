@@ -30,6 +30,1033 @@ def load_helper_module():
     return module
 
 
+def test_update_status_guards_every_browser_server_without_changing_route_paths():
+    """Guard browser servers while preserving stable machine-route locations."""
+    helper = load_helper_module()
+    management = """server {
+  listen 80 default_server;
+  server_name _;
+  location / {
+    proxy_pass http://127.0.0.1:8000;
+  }
+}
+"""
+    public = """server {
+  listen 192.0.2.10:443 ssl;
+  server_name _;
+  location = /ui/public {
+    proxy_pass http://127.0.0.1:8000;
+  }
+  location ^~ /ui/public/ {
+    proxy_pass http://127.0.0.1:8000;
+  }
+  location ^~ /ca/ {
+    proxy_pass http://127.0.0.1:8000;
+  }
+}
+server {
+  listen 192.0.2.11:443 ssl;
+  server_name oidc.example.test;
+  location ^~ /oidc/ {
+    proxy_pass http://127.0.0.1:8000;
+  }
+}
+"""
+
+    guarded_management = helper._site_with_update_status_guards(
+        management,
+        default_management=True,
+    )
+    guarded_public = helper._site_with_update_status_guards(
+        public,
+        default_management=False,
+    )
+
+    assert guarded_management.count(str(helper.ATLASO_UPDATE_STATUS_NGINX_INCLUDE_PATH)) == 1
+    assert guarded_management.count(str(helper.ATLASO_UPDATE_STATUS_MARKER_PATH)) == 5
+    assert "location = /ui/management" in guarded_management
+    assert "location ^~ /ui/public/" in guarded_management
+    assert (
+        f"location = {helper.ATLASO_UPDATE_READINESS_PATH} {{"
+        in guarded_management
+    )
+    assert "allow 127.0.0.1;" in guarded_management
+    assert "allow ::1;" in guarded_management
+    assert "deny all;" in guarded_management
+    assert "proxy_pass http://127.0.0.1:8000/openapi.json;" in guarded_management
+    assert helper.ATLASO_UPDATE_READINESS_PATH not in guarded_public
+    assert guarded_public.count(str(helper.ATLASO_UPDATE_STATUS_NGINX_INCLUDE_PATH)) == 2
+    assert guarded_public.count(str(helper.ATLASO_UPDATE_STATUS_MARKER_PATH)) == 4
+    assert "location ^~ /ca/" in guarded_public
+    assert "location ^~ /oidc/" in guarded_public
+    assert "proxy_pass http://127.0.0.1:8000;" in guarded_public
+    assert helper._site_with_update_status_guards(
+        guarded_management,
+        default_management=True,
+    ) == guarded_management
+
+    legacy_management = guarded_management.replace(
+        "  # Keep the release verifier on the applied listener without reopening ordinary routes.\n"
+        "  set $atlaso_appliance_update_guard 0;\n"
+        f"  if (-f {helper.ATLASO_UPDATE_STATUS_MARKER_PATH}) "
+        "{ set $atlaso_appliance_update_guard 1; }\n"
+        f"  if ($uri = {helper.ATLASO_UPDATE_READINESS_PATH}) "
+        "{ set $atlaso_appliance_update_guard 0; }\n"
+        "  if ($atlaso_appliance_update_guard = 1) { return 418; }\n"
+        f"  location = {helper.ATLASO_UPDATE_READINESS_PATH} {{\n"
+        "    allow 127.0.0.1;\n"
+        "    allow ::1;\n"
+        "    deny all;\n"
+        "    proxy_pass http://127.0.0.1:8000/openapi.json;\n"
+        "  }\n",
+        f"  if (-f {helper.ATLASO_UPDATE_STATUS_MARKER_PATH}) {{ return 418; }}\n",
+    )
+    migrated = helper._site_with_update_status_guards(
+        legacy_management,
+        default_management=True,
+    )
+    assert helper.ATLASO_UPDATE_READINESS_PATH in migrated
+    assert migrated.count(
+        f"if (-f {helper.ATLASO_UPDATE_STATUS_MARKER_PATH}) {{ return 418; }}"
+    ) == 4
+
+
+def test_update_status_include_uses_a_non_rewriting_named_location(monkeypatch):
+    """Avoid re-entering the server marker guard for the controlled 503 body.
+
+    Args:
+        monkeypatch: Pytest fixture used to capture the generated nginx include.
+    """
+    helper = load_helper_module()
+    written = {}
+    monkeypatch.setattr(
+        helper,
+        "_write_appliance_update_runtime_file",
+        lambda path, content: written.update(path=path, content=content),
+    )
+
+    helper._write_update_status_nginx_include()
+
+    assert written["path"] == helper.ATLASO_UPDATE_STATUS_NGINX_INCLUDE_PATH
+    assert "error_page 418 =503 @atlaso_appliance_update_status;" in written["content"]
+    assert "location @atlaso_appliance_update_status {" in written["content"]
+    assert "  root /;" in written["content"]
+    assert (
+        f"  try_files {helper.ATLASO_UPDATE_STATUS_HTML_PATH} =500;"
+        in written["content"]
+    )
+    assert "/__atlaso_appliance_update_status" not in written["content"]
+
+
+def test_update_status_page_escapes_bounded_task_content():
+    """Render a self-contained semantic hierarchy without HTML injection."""
+    helper = load_helper_module()
+    rendered = helper._render_appliance_update_status_html(
+        {
+            "task_id": "job_0123456789ab<script>",
+            "phase": "installing_photon_os",
+            "progress_percent": 30,
+            "children": [
+                {
+                    "label": "Photon <OS>",
+                    "status": "running",
+                    "progress_percent": 12,
+                }
+            ],
+        }
+    )
+
+    assert "Installing Photon OS" in rendered
+    assert "job_0123456789ab&lt;script&gt;" in rendered
+    assert "Photon &lt;OS&gt;" in rendered
+    assert "<script>" not in rendered
+    assert 'http-equiv="refresh" content="3"' in rendered
+    assert "<progress" in rendered
+
+
+def test_update_status_snapshot_is_monotonic_and_rejects_cross_task_reuse(monkeypatch, tmp_path):
+    """Bind durable status publication to one task transaction and sequence.
+
+    Args:
+        monkeypatch: Pytest fixture used to isolate durable status paths.
+        tmp_path: Temporary directory used for status evidence.
+    """
+    helper = load_helper_module()
+    status_dir = tmp_path / "status"
+    monkeypatch.setattr(helper, "ATLASO_UPDATE_STATUS_DIR", status_dir)
+    monkeypatch.setattr(helper, "ATLASO_UPDATE_STATUS_PATH", status_dir / "status.json")
+    monkeypatch.setattr(helper, "ATLASO_UPDATE_STATUS_HTML_PATH", status_dir / "index.html")
+    snapshot = {
+        "schema_version": 1,
+        "task_id": "job_0123456789ab",
+        "transaction_id": "a" * 32,
+        "status": "running",
+        "phase": "preparing",
+        "progress_percent": 0,
+        "created_at": "",
+        "started_at": "",
+        "finished_at": "",
+        "active_release": "0.9.218",
+        "children": [
+            {
+                "id": "job_0123456789ab:photon_os",
+                "component_key": "photon_os",
+                "label": "Photon OS",
+                "position": 1,
+                "status": "pending",
+                "progress_percent": 0,
+                "created_at": "",
+                "started_at": "",
+                "finished_at": "",
+            }
+        ],
+        "terminal": False,
+    }
+
+    first = helper._write_appliance_update_status_files(snapshot)
+    second = helper._write_appliance_update_status_files(snapshot)
+    assert first["sequence"] == 1
+    assert second["sequence"] == 2
+    assert second["status_activated"] is False
+    activated = helper._write_appliance_update_status_files(
+        {**snapshot, "status_activated": True}
+    )
+    refreshed = helper._write_appliance_update_status_files(snapshot)
+    assert activated["status_activated"] is True
+    assert refreshed["status_activated"] is True
+    assert json.loads((status_dir / "status.json").read_text(encoding="utf-8"))["sequence"] == 4
+    with pytest.raises(ValueError, match="another appliance update status transaction"):
+        helper._write_appliance_update_status_files(
+            {**snapshot, "task_id": "job_fedcba987654", "transaction_id": "b" * 32}
+        )
+
+
+def test_update_status_rejects_a_precreated_status_directory_symlink(monkeypatch, tmp_path):
+    """Do not follow an attacker-controlled status directory.
+
+    Args:
+        monkeypatch: Pytest fixture used to emulate the unsafe path.
+        tmp_path: Temporary directory used for status evidence.
+    """
+    helper = load_helper_module()
+    status_dir = tmp_path / "status"
+    status_dir.mkdir()
+    monkeypatch.setattr(helper, "ATLASO_UPDATE_STATUS_DIR", status_dir)
+    monkeypatch.setattr(helper, "ATLASO_UPDATE_STATUS_PATH", status_dir / "status.json")
+    original_is_symlink = helper.Path.is_symlink
+    monkeypatch.setattr(
+        helper.Path,
+        "is_symlink",
+        lambda path: path == status_dir or original_is_symlink(path),
+    )
+
+    with pytest.raises(ValueError, match="status directory is unsafe"):
+        helper._write_appliance_update_status_files(
+            {
+                "task_id": "job_0123456789ab",
+                "transaction_id": "a" * 32,
+                "terminal": False,
+            }
+        )
+
+
+def test_update_status_probe_covers_management_and_public_listeners(monkeypatch):
+    """Require stable maintenance responses from each applied browser listener.
+
+    Args:
+        monkeypatch: Pytest fixture used to capture bounded listener probes.
+    """
+    helper = load_helper_module()
+    site = """server {
+  listen 80 default_server;
+  listen [::]:80 default_server;
+  location = /ui/management { return 418; }
+  location = /ui/public { return 418; }
+}
+server {
+  listen 192.0.2.10:443 ssl;
+  location ^~ /ui/public/ { return 418; }
+}
+server {
+  listen 192.0.2.20:8080;
+  if (-f /run/atlaso-appliance-update-status) { return 418; }
+  location ^~ /PROD/ { proxy_pass http://127.0.0.1:8090; }
+}
+"""
+    observed = []
+    monkeypatch.setattr(helper.shutil, "which", lambda _name: "curl")
+    monkeypatch.setattr(
+        helper,
+        "_console_management_http_status",
+        lambda _curl, url, *, insecure: observed.append((url, insecure)) or "503",
+    )
+    monkeypatch.setattr(helper.time, "sleep", lambda _seconds: None)
+
+    result = helper._verify_update_status_responses([site])
+
+    assert result["listener_count"] == 6
+    assert result["stable_samples"] == 3
+    assert ("http://127.0.0.1/ui/management", False) in observed
+    assert ("http://127.0.0.1/ui/public", False) in observed
+    assert ("http://[::1]/ui/management", False) in observed
+    assert ("http://[::1]/ui/public", False) in observed
+    assert ("https://192.0.2.10/ui/public", True) in observed
+    assert (
+        f"http://192.0.2.20:8080{helper.ATLASO_UPDATE_LISTENER_PROBE_PATH}",
+        False,
+    ) in observed
+
+
+@pytest.mark.parametrize("marker_existed", [False, True])
+def test_status_publish_rollback_preserves_only_a_preexisting_hold(
+    monkeypatch,
+    tmp_path,
+    marker_existed,
+):
+    """Remove an initial failed hold but preserve an active refresh hold.
+
+    Args:
+        monkeypatch: Pytest fixture used to inject listener-proof failure.
+        tmp_path: Temporary directory used for nginx and marker state.
+        marker_existed: Whether this invocation refreshes an active hold.
+    """
+    helper = load_helper_module()
+    job_id = "job_0123456789ab"
+    marker = tmp_path / "run" / "status-marker"
+    management = tmp_path / "nginx" / "management.conf"
+    management.parent.mkdir(parents=True)
+    management.write_text(
+        "server {\n  listen 80 default_server;\n  location / {\n    return 200;\n  }\n}\n",
+        encoding="utf-8",
+    )
+    pxe = tmp_path / "nginx" / "esxi-pxe.conf"
+    pxe_original = (
+        "server {\n  listen 192.0.2.20:8080;\n"
+        "  location ^~ /pxe/esxi/ { return 200; }\n}\n"
+    )
+    pxe.write_text(pxe_original, encoding="utf-8")
+    if marker_existed:
+        marker.parent.mkdir(parents=True)
+        marker.write_text(job_id + "\n", encoding="utf-8")
+    persisted = []
+
+    def persist(snapshot):
+        """Record whether listener activation reached durable state.
+
+        Args:
+            snapshot: Bounded update-only status snapshot.
+        """
+        published = {**snapshot, "task_id": job_id}
+        published.setdefault("status_activated", False)
+        persisted.append(published)
+        return published
+
+    monkeypatch.setattr(helper, "ATLASO_UPDATE_STATUS_MARKER_PATH", marker)
+    monkeypatch.setattr(helper, "NGINX_MANAGEMENT_SITE_PATH", management)
+    monkeypatch.setattr(
+        helper,
+        "NGINX_PUBLIC_SERVICES_SITE_PATH",
+        tmp_path / "nginx" / "public.conf",
+    )
+    monkeypatch.setattr(helper, "ESXI_PXE_NGINX_SITE_PATH", pxe)
+    monkeypatch.setattr(helper, "_appliance_update_status_task", lambda _job_id: {})
+    monkeypatch.setattr(helper, "_write_appliance_update_status_files", persist)
+    monkeypatch.setattr(helper, "_write_update_status_nginx_include", lambda: None)
+    monkeypatch.setattr(
+        helper,
+        "_nginx_test_command",
+        lambda: SimpleNamespace(returncode=0),
+    )
+    monkeypatch.setattr(helper, "_service_command", lambda *_args: {"success": True})
+    def fail_listener_proof(sites):
+        """Prove the dedicated PXE vhost was guarded before failing admission.
+
+        Args:
+            sites: Applied nginx site paths participating in listener proof.
+        """
+
+        assert any("listen 192.0.2.20:8080;" in site for site in sites)
+        assert any(str(helper.ATLASO_UPDATE_STATUS_NGINX_INCLUDE_PATH) in site for site in sites)
+        raise ValueError("listener proof failed")
+
+    monkeypatch.setattr(helper, "_verify_update_status_responses", fail_listener_proof)
+
+    with pytest.raises(ValueError, match="listener proof failed"):
+        helper._publish_appliance_update_status(job_id)
+
+    assert marker.exists() is marker_existed
+    assert pxe.read_text(encoding="utf-8") == pxe_original
+    assert persisted[0]["status_activated"] is False
+    if marker_existed:
+        assert marker.read_text(encoding="utf-8") == job_id + "\n"
+
+
+def test_status_finish_does_not_activate_a_rolled_back_initial_hold(
+    monkeypatch,
+    tmp_path,
+):
+    """Complete a failed initial publication without recreating its marker.
+
+    Args:
+        monkeypatch: Pytest fixture used to isolate restoration side effects.
+        tmp_path: Temporary directory used for the absent runtime marker.
+    """
+    helper = load_helper_module()
+    job_id = "job_0123456789ab"
+    marker = tmp_path / "run" / "status-marker"
+    snapshot = {
+        "task_id": job_id,
+        "terminal": True,
+        "status": "failed",
+        "status_activated": False,
+        "ui_restoration": {"state": "held"},
+        "children": [{"component_key": "photon_os", "status": "failed"}],
+    }
+    persisted = []
+    monkeypatch.setattr(helper, "ATLASO_UPDATE_STATUS_MARKER_PATH", marker)
+    monkeypatch.setattr(
+        helper,
+        "_appliance_update_status_task",
+        lambda _job_id, *, allow_terminal=False: dict(snapshot),
+    )
+    monkeypatch.setattr(
+        helper,
+        "_write_appliance_update_status_files",
+        lambda value: persisted.append(dict(value)) or dict(value),
+    )
+    monkeypatch.setattr(helper, "_verify_release_status_completion", lambda *_args: None)
+    monkeypatch.setattr(
+        helper,
+        "_nginx_test_command",
+        lambda: (_ for _ in ()).throw(AssertionError("nginx must remain untouched")),
+    )
+
+    result = helper._finish_appliance_update_status(job_id)
+
+    assert result["ordinary_ui_restored"] is True
+    assert result["hold_not_activated"] is True
+    assert persisted[-1]["ui_restoration"]["state"] == "restored"
+    assert not marker.exists()
+
+
+@pytest.mark.parametrize("child_status", ["pending", "running"])
+def test_status_finish_requires_every_selected_child_to_be_terminal(
+    monkeypatch,
+    tmp_path,
+    child_status,
+):
+    """Keep the update-only surface held while any selected child is incomplete.
+
+    Args:
+        monkeypatch: Pytest fixture used to isolate restoration side effects.
+        tmp_path: Temporary directory used for the durable marker.
+        child_status: Incomplete child state under a terminal parent.
+    """
+    helper = load_helper_module()
+    job_id = "job_0123456789ab"
+    marker = tmp_path / "run" / "status-marker"
+    marker.parent.mkdir(parents=True)
+    marker.write_text(job_id + "\n", encoding="utf-8")
+    snapshot = {
+        "task_id": job_id,
+        "terminal": True,
+        "status": "failed",
+        "children": [{"component_key": "photon_os", "status": child_status}],
+    }
+    monkeypatch.setattr(helper, "ATLASO_UPDATE_STATUS_MARKER_PATH", marker)
+    monkeypatch.setattr(
+        helper,
+        "_appliance_update_status_task",
+        lambda _job_id, *, allow_terminal=False: dict(snapshot),
+    )
+    monkeypatch.setattr(helper, "_write_appliance_update_status_files", dict)
+    monkeypatch.setattr(
+        helper,
+        "_verify_release_status_completion",
+        lambda *_args: (_ for _ in ()).throw(AssertionError("evidence check must wait")),
+    )
+
+    with pytest.raises(ValueError, match="every selected child is terminal"):
+        helper._finish_appliance_update_status(job_id)
+
+    assert marker.read_text(encoding="utf-8") == job_id + "\n"
+
+
+def test_status_finish_reestablishes_hold_when_restored_snapshot_write_fails(
+    monkeypatch,
+    tmp_path,
+):
+    """Keep terminal UI restoration retryable after final persistence failure.
+
+    Args:
+        monkeypatch: Pytest fixture used to fail the final snapshot write.
+        tmp_path: Temporary directory used for the durable marker.
+    """
+    helper = load_helper_module()
+    job_id = "job_0123456789ab"
+    marker = tmp_path / "run" / "status-marker"
+    marker.parent.mkdir(parents=True)
+    marker.write_text(job_id + "\n", encoding="utf-8")
+    snapshot = {
+        "task_id": job_id,
+        "terminal": True,
+        "status": "succeeded",
+        "children": [{"component_key": "photon_os", "status": "succeeded"}],
+    }
+
+    def persist(value):
+        """Fail only after ordinary listener proof succeeds.
+
+        Args:
+            value: Status snapshot requested for durable publication.
+        """
+        restoration = value.get("ui_restoration")
+        if isinstance(restoration, dict) and restoration.get("state") == "restored":
+            raise OSError("final snapshot write failed")
+        return value
+
+    monkeypatch.setattr(helper, "ATLASO_UPDATE_STATUS_MARKER_PATH", marker)
+    monkeypatch.setattr(
+        helper,
+        "_appliance_update_status_task",
+        lambda _job_id, *, allow_terminal=False: dict(snapshot),
+    )
+    monkeypatch.setattr(helper, "_write_appliance_update_status_files", persist)
+    monkeypatch.setattr(helper, "_verify_release_status_completion", lambda *_args: None)
+    monkeypatch.setattr(
+        helper,
+        "_nginx_test_command",
+        lambda: SimpleNamespace(returncode=0),
+    )
+    monkeypatch.setattr(helper, "_service_command", lambda *_args: {"success": True})
+    monkeypatch.setattr(helper, "_ordinary_update_ui_probe_sites", lambda: [])
+    monkeypatch.setattr(
+        helper,
+        "_verify_ordinary_update_ui_responses",
+        lambda _sites: {"listener_count": 1, "status_classes": ["200"]},
+    )
+
+    with pytest.raises(OSError, match="final snapshot write failed"):
+        helper._finish_appliance_update_status(job_id)
+
+    assert marker.read_text(encoding="utf-8") == job_id + "\n"
+
+
+def test_status_startup_recreates_hold_on_dedicated_pxe_vhost(monkeypatch, tmp_path):
+    """Recreate machine-only PXE protection before nginx starts after reboot.
+
+    Args:
+        monkeypatch: Pytest fixture used to isolate status recovery state.
+        tmp_path: Temporary directory used for nginx and status files.
+    """
+    helper = load_helper_module()
+    job_id = "job_0123456789ab"
+    transaction_id = "a" * 32
+    status = tmp_path / "status.json"
+    marker = tmp_path / "run" / "status-marker"
+    management = tmp_path / "nginx" / "management.conf"
+    pxe = tmp_path / "nginx" / "esxi-pxe.conf"
+    management.parent.mkdir(parents=True)
+    management.write_text(
+        "server {\n  listen 80 default_server;\n  location / {\n    return 200;\n  }\n}\n",
+        encoding="utf-8",
+    )
+    pxe.write_text(
+        "server {\n  listen 192.0.2.20:8080;\n"
+        "  location ^~ /pxe/esxi/ { return 200; }\n}\n",
+        encoding="utf-8",
+    )
+    recorded = {
+        "task_id": job_id,
+        "transaction_id": transaction_id,
+        "terminal": False,
+        "status_activated": True,
+        "ui_restoration": {"state": "held"},
+    }
+    status.write_text(json.dumps(recorded), encoding="utf-8")
+    monkeypatch.setattr(helper, "ATLASO_UPDATE_STATUS_PATH", status)
+    monkeypatch.setattr(helper, "ATLASO_UPDATE_STATUS_MARKER_PATH", marker)
+    monkeypatch.setattr(helper, "NGINX_MANAGEMENT_SITE_PATH", management)
+    monkeypatch.setattr(
+        helper,
+        "NGINX_PUBLIC_SERVICES_SITE_PATH",
+        tmp_path / "nginx" / "public.conf",
+    )
+    monkeypatch.setattr(helper, "ESXI_PXE_NGINX_SITE_PATH", pxe)
+    monkeypatch.setattr(
+        helper,
+        "_appliance_update_status_task",
+        lambda _job_id, *, allow_terminal=False: dict(recorded),
+    )
+    monkeypatch.setattr(helper, "_write_appliance_update_status_files", dict)
+    monkeypatch.setattr(helper, "_write_update_status_nginx_include", lambda: None)
+    monkeypatch.setattr(
+        helper,
+        "_nginx_test_command",
+        lambda: SimpleNamespace(returncode=0),
+    )
+
+    result = helper._guard_appliance_update_status_startup()
+
+    assert result["success"] is True
+    assert result["status"] == "guarded"
+    assert marker.read_text(encoding="utf-8") == job_id + "\n"
+    guarded_pxe = pxe.read_text(encoding="utf-8")
+    assert str(helper.ATLASO_UPDATE_STATUS_NGINX_INCLUDE_PATH) in guarded_pxe
+    assert str(helper.ATLASO_UPDATE_STATUS_MARKER_PATH) in guarded_pxe
+
+
+def test_ordinary_status_restoration_probes_include_dedicated_pxe(monkeypatch, tmp_path):
+    """Include the machine-only PXE listener in ordinary-route restoration proof.
+
+    Args:
+        monkeypatch: Pytest fixture used to bind temporary nginx sites.
+        tmp_path: Temporary directory used for nginx site files.
+    """
+    helper = load_helper_module()
+    management = tmp_path / "management.conf"
+    public = tmp_path / "public.conf"
+    pxe = tmp_path / "esxi-pxe.conf"
+    management.write_text("management", encoding="utf-8")
+    public.write_text("public", encoding="utf-8")
+    pxe.write_text("pxe", encoding="utf-8")
+    monkeypatch.setattr(helper, "NGINX_MANAGEMENT_SITE_PATH", management)
+    monkeypatch.setattr(helper, "NGINX_PUBLIC_SERVICES_SITE_PATH", public)
+    monkeypatch.setattr(helper, "ESXI_PXE_NGINX_SITE_PATH", pxe)
+
+    assert helper._ordinary_update_ui_probe_sites() == ["management", "public", "pxe"]
+
+
+@pytest.mark.parametrize(
+    ("execution_order", "legacy_contract"),
+    [
+        (["photon_os", "atlaso_release"], False),
+        (["atlaso_release", "photon_os"], True),
+    ],
+)
+def test_update_status_task_accepts_current_and_migrated_install_contracts(
+    monkeypatch,
+    tmp_path,
+    execution_order,
+    legacy_contract,
+):
+    """Accept current and explicitly migrated legacy install hierarchies.
+
+    Args:
+        monkeypatch: Pytest fixture used to bind the temporary database.
+        tmp_path: Temporary directory used for task evidence.
+        execution_order: Exact current or historical stream sequence.
+        legacy_contract: Whether the historical sequence is explicitly marked.
+    """
+    helper = load_helper_module()
+    database = tmp_path / "atlaso.db"
+    connection = helper.sqlite3.connect(database)
+    connection.executescript(
+        """
+        create table jobs (
+          id text primary key, type text, status text, progress_percent integer,
+          created_at text, started_at text, finished_at text, task_config_json text
+        );
+        create table job_steps (
+          id text primary key, job_id text, component_key text, label text,
+          position integer, status text, progress_percent integer, result text,
+          created_at text, started_at text, finished_at text
+        );
+        """
+    )
+    config = {
+        "schema_version": 2,
+        "mode": "run",
+        "selected_streams": ["photon_os", "atlaso_release"],
+        "execution_order": execution_order,
+        "status_legacy_execution_order": legacy_contract,
+        "status_transaction_id": "a" * 32,
+    }
+    connection.execute(
+        "insert into jobs values (?, ?, ?, ?, ?, ?, ?, ?)",
+        (
+            "job_0123456789ab",
+            "appliance-update",
+            "running",
+            30,
+            "2026-08-26T00:00:00Z",
+            "2026-08-26T00:00:01Z",
+            "",
+            json.dumps(config),
+        ),
+    )
+    for position, stream in enumerate(config["execution_order"], start=1):
+        connection.execute(
+            "insert into job_steps values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            (
+                f"job_0123456789ab:{stream}",
+                "job_0123456789ab",
+                stream,
+                stream,
+                position,
+                "running" if position == 1 else "pending",
+                10 if position == 1 else 0,
+                "{}",
+                "",
+                "",
+                "",
+            ),
+        )
+    connection.commit()
+    connection.close()
+    monkeypatch.setattr(helper, "ATLASO_DATABASE_PATH", database)
+    monkeypatch.setattr(helper, "ATLASO_UPDATE_FINALIZER_PATH", tmp_path / "finalizer.json")
+
+    snapshot = helper._appliance_update_status_task("job_0123456789ab")
+
+    assert snapshot["transaction_id"] == "a" * 32
+    assert [child["component_key"] for child in snapshot["children"]] == execution_order
+    if legacy_contract:
+        unmarked = {**config, "status_legacy_execution_order": False}
+        with helper.sqlite3.connect(database) as update_connection:
+            update_connection.execute(
+                "update jobs set task_config_json = ?",
+                (json.dumps(unmarked),),
+            )
+        with pytest.raises(ValueError, match="execution order is invalid"):
+            helper._appliance_update_status_task("job_0123456789ab")
+        with helper.sqlite3.connect(database) as update_connection:
+            update_connection.execute(
+                "update jobs set task_config_json = ?",
+                (json.dumps(config),),
+            )
+    with helper.sqlite3.connect(database) as update_connection:
+        update_connection.execute(
+            "update jobs set status = 'failed', finished_at = '2026-08-26T00:01:00Z'"
+        )
+    with pytest.raises(ValueError, match="terminal appliance update status"):
+        helper._appliance_update_status_task("job_0123456789ab")
+    assert helper._appliance_update_status_task(
+        "job_0123456789ab",
+        allow_terminal=True,
+    )["terminal"] is True
+
+
+def test_release_status_completion_accepts_only_a_proven_pretransaction_failure(
+    monkeypatch,
+    tmp_path,
+):
+    """Restore after preflight failure only while services are healthy.
+
+    Args:
+        monkeypatch: Pytest fixture used to isolate release evidence and services.
+        tmp_path: Temporary directory used for release evidence.
+    """
+    helper = load_helper_module()
+    monkeypatch.setattr(helper, "ATLASO_UPDATE_FINALIZER_PATH", tmp_path / "finalizer.json")
+    monkeypatch.setattr(helper, "ATLASO_UPDATE_MAINTENANCE_PATH", tmp_path / "maintenance")
+    monkeypatch.setattr(helper, "ATLASO_UPDATE_RESTART_GATE_PATH", tmp_path / "gate")
+    monkeypatch.setattr(
+        helper,
+        "_service_command",
+        lambda *_args: {"success": True},
+    )
+    snapshot = {
+        "children": [
+            {
+                "component_key": "atlaso_release",
+                "status": "failed",
+                "apply_started": True,
+            }
+        ]
+    }
+
+    helper._verify_release_status_completion(snapshot, "job_0123456789ab")
+    monkeypatch.setattr(
+        helper,
+        "_service_command",
+        lambda *_args: {"success": False},
+    )
+    with pytest.raises(ValueError, match="transaction evidence is unavailable"):
+        helper._verify_release_status_completion(snapshot, "job_0123456789ab")
+
+
+def test_worker_prestart_recovery_recreates_the_update_status_hold(
+    monkeypatch,
+    tmp_path,
+):
+    """Run the update-only startup guard before release recovery admits the worker.
+
+    Args:
+        monkeypatch: Pytest fixture used to isolate the pre-start guard.
+        tmp_path: Temporary directory provided for an absent release finalizer.
+    """
+    helper = load_helper_module()
+    calls = []
+    monkeypatch.setattr(helper, "ATLASO_UPDATE_FINALIZER_PATH", tmp_path / "missing.json")
+    monkeypatch.setattr(
+        helper,
+        "_guard_appliance_update_status_startup",
+        lambda: calls.append("status_guard")
+        or {"success": True, "status": "terminal_pending_restoration"},
+    )
+
+    result = helper._recover_interrupted_release_transaction()
+
+    assert calls == ["status_guard"]
+    assert result == {"status": "not_required", "success": True, "allow_worker": True}
+
+
+def test_worker_prestart_recovery_blocks_when_status_hold_recreation_fails(
+    monkeypatch,
+):
+    """Do not admit the worker when the update-only startup guard fails closed.
+
+    Args:
+        monkeypatch: Pytest fixture used to inject a status-guard failure.
+    """
+    helper = load_helper_module()
+    monkeypatch.setattr(
+        helper,
+        "_guard_appliance_update_status_startup",
+        lambda: {
+            "success": False,
+            "status": "recovery_failed",
+            "error": "bounded status recovery failed",
+        },
+    )
+
+    result = helper._recover_interrupted_release_transaction()
+
+    assert result["allow_worker"] is False
+    assert result["status"] == "status_recovery_failed"
+    assert result["error"] == "bounded status recovery failed"
+
+
+def test_release_status_completion_ignores_a_stale_finalizer_before_transaction(
+    monkeypatch,
+    tmp_path,
+):
+    """Ignore a prior transaction only when the current failure is proven preflight.
+
+    Args:
+        monkeypatch: Pytest fixture used to isolate release evidence and services.
+        tmp_path: Temporary directory used for release evidence.
+    """
+    helper = load_helper_module()
+    finalizer = tmp_path / "finalizer.json"
+    finalizer.write_text(
+        json.dumps({"job_id": "job_prior_release", "status": "succeeded"}),
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(helper, "ATLASO_UPDATE_FINALIZER_PATH", finalizer)
+    monkeypatch.setattr(helper, "APPLIANCE_UPDATE_INFO_PATH", tmp_path / "missing-info.json")
+    monkeypatch.setattr(helper, "ATLASO_UPDATE_MAINTENANCE_PATH", tmp_path / "maintenance")
+    restart_gate = tmp_path / "gate"
+    monkeypatch.setattr(helper, "ATLASO_UPDATE_RESTART_GATE_PATH", restart_gate)
+    monkeypatch.setattr(helper, "_service_command", lambda *_args: {"success": True})
+    snapshot = {
+        "children": [
+            {
+                "component_key": "atlaso_release",
+                "status": "failed",
+                "apply_started": True,
+            }
+        ]
+    }
+
+    helper._verify_release_status_completion(snapshot, "job_current_release")
+
+    restart_gate.touch()
+    with pytest.raises(ValueError, match="update-info is unavailable"):
+        helper._verify_release_status_completion(snapshot, "job_current_release")
+
+
+@pytest.mark.parametrize("action", ["status-publish", "status-finish"])
+def test_appliance_update_status_mutations_use_bounded_helper_action_units(
+    monkeypatch,
+    action,
+):
+    """Dispatch status-file and nginx mutations outside the worker namespace.
+
+    Args:
+        monkeypatch: Pytest fixture used to capture transient dispatch.
+        action: Appliance Update status action under test.
+    """
+    helper = load_helper_module()
+    calls = []
+    monkeypatch.setenv("ATLASO_HELPER_USE_SYSTEMD_RUN", "1")
+    monkeypatch.delenv(helper.SYSTEMD_RUN_CHILD_ENV, raising=False)
+    monkeypatch.setattr(
+        helper.shutil,
+        "which",
+        lambda command: "/usr/bin/systemd-run" if command == "systemd-run" else None,
+    )
+    monkeypatch.setattr(
+        helper,
+        "_run_real_action_with_systemd",
+        lambda group, selected_action, args: calls.append(
+            (group, selected_action, args)
+        )
+        or 0,
+    )
+    monkeypatch.setattr(
+        helper,
+        "_handle_appliance_update",
+        lambda *_args: (_ for _ in ()).throw(
+            AssertionError("handler should run in the transient child")
+        ),
+    )
+
+    assert helper.main(
+        ["atlaso-helper", "appliance-update", action, "--real", "job_0123456789ab"]
+    ) == 0
+    assert calls == [("appliance-update", action, ["job_0123456789ab"])]
+
+
+def test_appliance_update_status_inspection_returns_only_bounded_state(
+    monkeypatch,
+    tmp_path,
+    capsys,
+):
+    """Expose restoration identity without leaking the durable hierarchy.
+
+    Args:
+        monkeypatch: Pytest fixture used to isolate the root-owned snapshot.
+        tmp_path: Temporary directory provided for status evidence.
+        capsys: Pytest fixture used to capture helper output.
+    """
+    helper = load_helper_module()
+    status = tmp_path / "status.json"
+    status.write_text(
+        json.dumps(
+            {
+                "task_id": "job_0123456789ab",
+                "transaction_id": "a" * 32,
+                "terminal": True,
+                "ui_restoration": {"state": "pending"},
+                "children": [{"error": "must not be exposed"}],
+            }
+        ),
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(helper, "ATLASO_UPDATE_STATUS_PATH", status)
+
+    assert helper._handle_appliance_update("status-inspect", []) == 0
+    assert json.loads(capsys.readouterr().out) == {
+        "state": "pending",
+        "status_activated": False,
+        "task_id": "job_0123456789ab",
+        "terminal": True,
+    }
+
+
+def test_delayed_restart_targets_receipted_helper_action(monkeypatch, tmp_path):
+    """Schedule the independent restart helper instead of bare systemctl.
+
+    Args:
+        monkeypatch: Pytest fixture used to capture scheduling and persistence.
+        tmp_path: Temporary directory provided for the prior receipt.
+    """
+    helper = load_helper_module()
+    receipt = tmp_path / "restart-receipt.json"
+    receipt.write_text("stale", encoding="utf-8")
+    commands = []
+    monkeypatch.setattr(helper, "ATLASO_UPDATE_RESTART_RECEIPT_PATH", receipt)
+    monkeypatch.setattr(
+        helper.shutil,
+        "which",
+        lambda command: "/usr/bin/systemd-run" if command == "systemd-run" else None,
+    )
+    monkeypatch.setattr(
+        helper,
+        "_run",
+        lambda command: commands.append(command)
+        or subprocess.CompletedProcess(command, 0, "", ""),
+    )
+    monkeypatch.setattr(helper, "_fsync_directory", lambda _path: None)
+
+    assert helper._restart_atlaso_service_after_update("job_0123456789ab") == 0
+    assert not receipt.exists()
+    assert commands[0][-4:] == [
+        "appliance-update",
+        "restart-complete",
+        "--real",
+        "job_0123456789ab",
+    ]
+
+
+def test_completed_restart_publishes_exact_worker_receipt(monkeypatch, tmp_path):
+    """Persist receipt only after all services and the new worker are active.
+
+    Args:
+        monkeypatch: Pytest fixture used to replace service and file boundaries.
+        tmp_path: Temporary directory provided for worker startup identity.
+    """
+    helper = load_helper_module()
+    startup = tmp_path / "worker-startup.json"
+    startup.write_text(
+        json.dumps(
+            {
+                "boot_id": "boot-a",
+                "pid": 321,
+                "start_ticks": "456",
+                "started_at": "2026-08-27T02:00:01+00:00",
+            }
+        ),
+        encoding="utf-8",
+    )
+    calls = []
+    written = {}
+    monkeypatch.setattr(helper, "ATLASO_WORKER_STARTUP_STATUS_PATH", startup)
+    monkeypatch.setattr(
+        helper.pwd,
+        "getpwnam",
+        lambda _name: SimpleNamespace(pw_uid=startup.stat().st_uid),
+    )
+    monkeypatch.setattr(
+        helper,
+        "_service_command",
+        lambda action, *units: calls.append((action, units)) or {"success": True},
+    )
+    monkeypatch.setattr(helper, "_service_main_pid", lambda _unit: 321)
+    monkeypatch.setattr(
+        helper,
+        "_write_appliance_update_runtime_file",
+        lambda path, content: written.update(path=path, content=content),
+    )
+
+    assert helper._complete_atlaso_service_restart("job_0123456789ab") == 0
+    assert [action for action, _units in calls] == ["restart", "is-active"]
+    receipt = json.loads(written["content"])
+    assert receipt["job_id"] == "job_0123456789ab"
+    assert receipt["state"] == "completed"
+    assert receipt["worker_pid"] == 321
+    assert receipt["worker_boot_id"] == "boot-a"
+    assert receipt["worker_start_ticks"] == "456"
+
+
+def test_restart_completion_task_identity_is_not_path_normalized(monkeypatch):
+    """Pass the durable parent identity unchanged to the transient child.
+
+    Args:
+        monkeypatch: Pytest fixture used to capture helper dispatch.
+    """
+    helper = load_helper_module()
+    calls = []
+    monkeypatch.setattr(
+        helper,
+        "_complete_atlaso_service_restart",
+        lambda job_id: calls.append(job_id) or 0,
+    )
+
+    assert helper.main(
+        [
+            "atlaso-helper",
+            "appliance-update",
+            "restart-complete",
+            "--real",
+            "job_0123456789ab",
+        ]
+    ) == 0
+    assert calls == ["job_0123456789ab"]
+
+
 def test_management_handoff_applies_and_restores_coupled_wan(monkeypatch):
     """Apply candidate WAN intent and restore its last-applied config through one helper path.
 
@@ -7186,6 +8213,181 @@ def test_account_commands_use_bounded_helper_action_units(monkeypatch):
     assert commands[0][-3:] == ["usermod", "--lock", "operator"]
     assert stdin_commands[0][0][-1] == "chpasswd"
     assert stdin_commands[0][1] == "operator:secret\n"
+
+
+def test_appliance_update_apply_uses_a_fixed_task_stream_unit(monkeypatch, tmp_path):
+    """Bind a real update helper to the durable parent and child identity.
+
+    Args:
+        monkeypatch: Pytest fixture used to replace systemd execution.
+        tmp_path: Temporary directory containing the staged manifest.
+    """
+    helper = load_helper_module()
+    manifest = tmp_path / "update.json"
+    manifest.write_text(
+        json.dumps(
+            {
+                "job_id": "job_012345abcdef",
+                "selected_streams": ["photon_os"],
+            }
+        ),
+        encoding="utf-8",
+    )
+    commands = []
+    monkeypatch.setattr(
+        helper.shutil,
+        "which",
+        lambda command: "/usr/bin/systemd-run" if command == "systemd-run" else None,
+    )
+    monkeypatch.setattr(
+        helper,
+        "_appliance_update_powershell_environment",
+        lambda: {
+            "HOME": "/var/lib/atlaso/powershell",
+            "XDG_CACHE_HOME": "/var/lib/atlaso/powershell/.cache",
+            "XDG_CONFIG_HOME": "/var/lib/atlaso/powershell/.config",
+            "XDG_DATA_HOME": "/var/lib/atlaso/powershell/.local/share",
+        },
+    )
+    monkeypatch.setattr(
+        helper,
+        "_run",
+        lambda command: commands.append(command)
+        or subprocess.CompletedProcess(command, 0, "", ""),
+    )
+
+    assert helper._run_real_action_with_systemd(
+        "appliance-update",
+        "apply",
+        [str(manifest)],
+    ) == 0
+
+    unit = helper._appliance_update_action_unit_name("job_012345abcdef", "photon_os")
+    assert f"--unit={unit}" in commands[0]
+    assert re.fullmatch(r"atlaso-helper-action-[0-9a-f]{32}", unit)
+
+
+def test_appliance_update_quiescence_stops_and_verifies_the_exact_unit(monkeypatch):
+    """Stop only the interrupted task stream helper before worker recovery.
+
+    Args:
+        monkeypatch: Pytest fixture used to replace systemctl execution.
+    """
+    helper = load_helper_module()
+    commands = []
+    states = iter(["active\n", "inactive\n"])
+
+    def fake_run(command):
+        """Return bounded systemctl state transitions.
+
+        Args:
+            command: Command and arguments to execute.
+        """
+        commands.append(command)
+        if command[1] == "is-active":
+            return subprocess.CompletedProcess(command, 0, next(states), "")
+        return subprocess.CompletedProcess(command, 0, "", "")
+
+    monkeypatch.setattr(helper, "_run", fake_run)
+
+    evidence = helper._quiesce_appliance_update_action_unit(
+        "job_012345abcdef",
+        "photon_os",
+    )
+
+    unit = f"{helper._appliance_update_action_unit_name('job_012345abcdef', 'photon_os')}.service"
+    assert commands == [
+        ["systemctl", "is-active", unit],
+        ["systemctl", "stop", unit],
+        ["systemctl", "is-active", unit],
+    ]
+    assert evidence == {"unit": unit, "state": "inactive", "stopped": True}
+
+
+@pytest.mark.parametrize("action", ["status-publish", "status-finish"])
+def test_appliance_update_status_transitions_serialize_one_fixed_task_unit(
+    monkeypatch,
+    action,
+):
+    """Quiesce one durable status unit before publishing or finishing.
+
+    Args:
+        monkeypatch: Pytest fixture used to capture systemd execution.
+        action: Status transition selected for the retry.
+    """
+    helper = load_helper_module()
+    commands = []
+    quiesced = []
+    job_id = "job_012345abcdef"
+    monkeypatch.setattr(
+        helper.shutil,
+        "which",
+        lambda command: "/usr/bin/systemd-run" if command == "systemd-run" else None,
+    )
+    monkeypatch.setattr(
+        helper,
+        "_appliance_update_powershell_environment",
+        lambda: {
+            "HOME": "/var/lib/atlaso/powershell",
+            "XDG_CACHE_HOME": "/var/lib/atlaso/powershell/.cache",
+            "XDG_CONFIG_HOME": "/var/lib/atlaso/powershell/.config",
+            "XDG_DATA_HOME": "/var/lib/atlaso/powershell/.local/share",
+        },
+    )
+    monkeypatch.setattr(
+        helper,
+        "_quiesce_appliance_update_status_unit",
+        lambda observed_job_id: quiesced.append(observed_job_id) or {"state": "inactive"},
+    )
+    monkeypatch.setattr(
+        helper,
+        "_run",
+        lambda command: commands.append(command)
+        or subprocess.CompletedProcess(command, 0, "", ""),
+    )
+
+    assert helper._run_real_action_with_systemd(
+        "appliance-update",
+        action,
+        [job_id],
+    ) == 0
+
+    unit = helper._appliance_update_status_unit_name(job_id)
+    assert quiesced == [job_id]
+    assert f"--unit={unit}" in commands[0]
+    assert re.fullmatch(r"atlaso-helper-action-[0-9a-f]{32}", unit)
+
+
+def test_appliance_update_status_transition_fails_closed_on_quiescence_failure(
+    monkeypatch,
+    capsys,
+):
+    """Refuse a status retry while its prior fixed-identity helper may survive.
+
+    Args:
+        monkeypatch: Pytest fixture used to replace systemd execution.
+        capsys: Pytest fixture used to capture the bounded failure.
+    """
+    helper = load_helper_module()
+    monkeypatch.setattr(
+        helper,
+        "_quiesce_appliance_update_status_unit",
+        lambda _job_id: (_ for _ in ()).throw(ValueError("surviving helper did not stop")),
+    )
+    monkeypatch.setattr(
+        helper,
+        "_run",
+        lambda _command: (_ for _ in ()).throw(
+            AssertionError("a replacement helper must not start")
+        ),
+    )
+
+    assert helper._run_real_action_with_systemd(
+        "appliance-update",
+        "status-publish",
+        ["job_012345abcdef"],
+    ) == 1
+    assert "serialization failed" in capsys.readouterr().err
 
 
 @pytest.mark.parametrize(

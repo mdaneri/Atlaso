@@ -5,6 +5,62 @@ import subprocess
 from atlaso.app.adapters.system import SystemAdapter
 
 
+def test_appliance_update_inspection_is_safely_absent_in_development():
+    """Avoid privileged helper execution for development-only status checks."""
+    status = SystemAdapter(dry_run=True).inspect_appliance_update_status()
+    restart = SystemAdapter(dry_run=True).inspect_appliance_update_restart(
+        "job_012345abcdef"
+    )
+
+    assert status.returncode == 0
+    assert status.dry_run is True
+    assert status.stdout == '{"state": "absent", "task_id": "", "terminal": false}'
+    assert restart.returncode == 0
+    assert restart.dry_run is True
+    assert restart.stdout == (
+        '{"state": "absent", "job_id": "job_012345abcdef"}'
+    )
+
+
+def test_appliance_update_quiescence_allows_the_full_systemd_stop_window(monkeypatch):
+    """Keep startup recovery attached through the blocking service stop.
+
+    Args:
+        monkeypatch: Pytest fixture used to replace privileged helper execution.
+    """
+    import atlaso.app.adapters.system as system_adapter
+
+    observed: dict[str, object] = {}
+
+    def fake_run(command, **kwargs):
+        """Capture the bounded helper invocation.
+
+        Args:
+            command: Exact helper command passed to subprocess.
+            **kwargs: Subprocess options supplied by the adapter.
+        """
+        observed["command"] = command
+        observed["timeout"] = kwargs.get("timeout")
+        return subprocess.CompletedProcess(command, 0, '{"state":"inactive"}', "")
+
+    monkeypatch.setattr(system_adapter.subprocess, "run", fake_run)
+
+    result = SystemAdapter(dry_run=False).quiesce_appliance_update_action(
+        "job_012345abcdef",
+        "photon_os",
+    )
+
+    assert result.returncode == 0
+    assert observed["timeout"] == 120
+    assert observed["command"][-5:] == [
+        "appliance-update",
+        "quiesce-action",
+        "--real",
+        "job_012345abcdef",
+        "photon_os",
+    ]
+
+
 def test_esx_storage_inventory_executes_read_only_helper_during_dry_run(monkeypatch):
     """Verify that esx storage inventory executes read only helper during dry run.
 

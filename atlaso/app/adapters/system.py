@@ -983,6 +983,103 @@ class SystemAdapter:
         """
         return self._helper_result("appliance-update", "restart-service", config_path, dry_run_message="dry-run: Atlaso service restart command recorded")
 
+    def quiesce_appliance_update_action(self, job_id: str, stream: str) -> AdapterResult:
+        """Stop and verify the exact interrupted Appliance Update helper action.
+
+        Args:
+            job_id: Exact Appliance Update parent identifier.
+            stream: Update stream whose fixed-identity helper may have survived.
+
+        Returns:
+            The privileged helper-quiescence result.
+        """
+        return self._helper_result(
+            "appliance-update",
+            "quiesce-action",
+            job_id,
+            stream,
+            dry_run_message="dry-run: Appliance Update helper quiescence recorded",
+            # The helper uses blocking systemctl stop and the appliance's default
+            # service-stop allowance is 90 seconds. Keep the caller alive through
+            # that full window so startup recovery cannot abandon a task whose
+            # fixed-identity helper is still completing an orderly stop.
+            timeout_seconds=120,
+        )
+
+    def publish_appliance_update_status(self, job_id: str) -> AdapterResult:
+        """Publish the root-owned update-only browser surface.
+
+        Args:
+            job_id: Exact Appliance Update parent identifier.
+
+        Returns:
+            The privileged status publication result.
+        """
+        return self._helper_result(
+            "appliance-update",
+            "status-publish",
+            job_id,
+            dry_run_message="dry-run: Appliance Update status publication recorded",
+            timeout_seconds=180,
+        )
+
+    def finish_appliance_update_status(self, job_id: str) -> AdapterResult:
+        """Restore ordinary browser UIs after terminal update bookkeeping.
+
+        Args:
+            job_id: Exact Appliance Update parent identifier.
+
+        Returns:
+            The privileged status completion result.
+        """
+        return self._helper_result(
+            "appliance-update",
+            "status-finish",
+            job_id,
+            dry_run_message="dry-run: Appliance Update status completion recorded",
+            timeout_seconds=180,
+        )
+
+    def inspect_appliance_update_status(self) -> AdapterResult:
+        """Return bounded durable update-status restoration state.
+
+        Returns:
+            The privileged status-inspection result.
+        """
+        if self.dry_run:
+            return self._record_only_result(
+                ["atlaso-helper", "appliance-update", "status-inspect"],
+                json.dumps({"state": "absent", "task_id": "", "terminal": False}),
+            )
+        return self._helper_result(
+            "appliance-update",
+            "status-inspect",
+            dry_run_message="dry-run: Appliance Update status inspection recorded",
+            timeout_seconds=30,
+        )
+
+    def inspect_appliance_update_restart(self, job_id: str) -> AdapterResult:
+        """Return durable completion evidence for the delayed restart.
+
+        Args:
+            job_id: Exact Appliance Update parent identifier.
+
+        Returns:
+            The privileged restart-receipt inspection result.
+        """
+        if self.dry_run:
+            return self._record_only_result(
+                ["atlaso-helper", "appliance-update", "restart-inspect", job_id],
+                json.dumps({"state": "absent", "job_id": job_id}),
+            )
+        return self._helper_result(
+            "appliance-update",
+            "restart-inspect",
+            job_id,
+            dry_run_message="dry-run: Appliance Update restart inspection recorded",
+            timeout_seconds=30,
+        )
+
     def run_automation_script(
         self,
         script_path: str,

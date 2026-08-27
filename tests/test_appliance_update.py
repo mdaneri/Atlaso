@@ -4,9 +4,10 @@ import importlib.machinery
 import importlib.util
 import json
 import logging
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
+import pytest
 from sqlalchemy import select
 
 from atlaso.app.adapters.system import AdapterResult
@@ -606,6 +607,7 @@ def test_real_install_marks_evidence_expected_only_after_apply_starts(monkeypatc
 
     assert result["apply_started"] is True
     assert aggregate["apply_started"] is True
+    assert aggregate["restart_after_commit"] is True
     assert events == ["persist", "apply"]
 
 
@@ -646,6 +648,196 @@ def test_worker_persists_apply_started_for_interruption_recovery():
             error="The Atlaso worker restarted while this update stream was running.",
         )
         assert recovered["apply_started"] is True
+
+
+def test_unexpected_parent_failure_terminalizes_incomplete_update_children(client):
+    """Preserve terminal children and fail or skip every incomplete selected child.
+
+    Args:
+        client: Test client whose fixture initializes the isolated database.
+    """
+    from atlaso.app import worker
+    from atlaso.app.database import SessionLocal
+    from atlaso.app.models import Job, JobStatus, JobStep
+    from atlaso.app.services.appliance_update import ensure_appliance_update_job_steps
+
+    job_id = "job_terminal_children"
+    with SessionLocal() as db:
+        job = Job(
+            id=job_id,
+            type="appliance-update",
+            status=JobStatus.RUNNING.value,
+            created_by="admin",
+            progress_percent=30,
+            result="{}",
+            task_config_json=json.dumps(
+                {
+                    "schema_version": 2,
+                    "mode": "run",
+                    "execution_order": [
+                        "photon_os",
+                        "powershell_modules",
+                        "atlaso_release",
+                    ],
+                }
+            ),
+        )
+        db.add(job)
+        db.flush()
+        steps = ensure_appliance_update_job_steps(
+            db,
+            job=job,
+            selected_streams=["photon_os", "powershell_modules", "atlaso_release"],
+        )
+        steps[0].status = JobStatus.SUCCEEDED.value
+        steps[0].progress_percent = 100
+        steps[0].result = json.dumps({"status": "succeeded", "success": True})
+        steps[1].status = JobStatus.RUNNING.value
+        steps[1].result = json.dumps({"apply_started": True})
+        db.commit()
+
+        worker._fail_job(db, job, RuntimeError("durable completion write failed"))
+
+        persisted = db.execute(
+            select(JobStep).where(JobStep.job_id == job_id).order_by(JobStep.position)
+        ).scalars().all()
+        assert job.status == JobStatus.FAILED.value
+        assert [step.status for step in persisted] == [
+            JobStatus.SUCCEEDED.value,
+            JobStatus.FAILED.value,
+            JobStatus.SKIPPED.value,
+        ]
+        assert json.loads(persisted[0].result)["success"] is True
+        assert json.loads(persisted[1].result)["apply_started"] is True
+        assert all(step.finished_at is not None for step in persisted[1:])
+        parent_result = json.loads(job.result or "{}")
+        assert parent_result["restart_after_commit"] is True
+        assert parent_result["restart_scheduled"] is False
+        assert parent_result["config_path"].endswith("/atlaso-update.json")
+
+
+def test_failed_photon_completion_commit_preserves_restart_obligation(client):
+    """Restart after Photon applied even when terminal child persistence failed.
+
+    Args:
+        client: Test client whose fixture initializes the isolated database.
+    """
+    from atlaso.app import worker
+    from atlaso.app.database import SessionLocal
+    from atlaso.app.models import Job, JobStatus
+    from atlaso.app.services.appliance_update import ensure_appliance_update_job_steps
+
+    job_id = "job_photon_commit_failure"
+    with SessionLocal() as db:
+        job = Job(
+            id=job_id,
+            type="appliance-update",
+            status=JobStatus.RUNNING.value,
+            created_by="admin",
+            task_config_json=json.dumps(
+                {"mode": "run", "selected_streams": ["photon_os"]}
+            ),
+            result=json.dumps({"apply_started": True}),
+        )
+        db.add(job)
+        db.flush()
+        step = ensure_appliance_update_job_steps(
+            db,
+            job=job,
+            selected_streams=["photon_os"],
+        )[0]
+        step.status = JobStatus.RUNNING.value
+        step.result = json.dumps({"apply_started": True})
+        db.commit()
+
+        worker._fail_job(db, job, RuntimeError("durable completion write failed"))
+
+        parent_result = json.loads(job.result or "{}")
+        persisted_step = db.get(type(step), step.id)
+
+    assert persisted_step.status == JobStatus.FAILED.value
+    assert json.loads(persisted_step.result)["apply_started"] is True
+    assert parent_result["restart_after_commit"] is True
+    assert parent_result["restart_scheduled"] is False
+
+
+def test_pending_appliance_update_cancellation_is_an_atomic_state_transition(client):
+    """Cancel only the exact pending task and reject an already claimed task.
+
+    Args:
+        client: Test client whose fixture initializes the isolated database.
+    """
+    from atlaso.app.database import SessionLocal
+    from atlaso.app.models import Job, JobStatus, JobStep
+    from atlaso.app.services.appliance_update import (
+        cancel_pending_appliance_update,
+        ensure_appliance_update_job_steps,
+    )
+
+    with SessionLocal() as db:
+        pending = Job(
+            id="job_cancel_pending",
+            type="appliance-update",
+            status=JobStatus.PENDING.value,
+            created_by="admin",
+        )
+        claimed = Job(
+            id="job_cancel_claimed",
+            type="appliance-update",
+            status=JobStatus.RUNNING.value,
+            created_by="admin",
+        )
+        db.add_all([pending, claimed])
+        db.flush()
+        ensure_appliance_update_job_steps(
+            db,
+            job=pending,
+            selected_streams=["photon_os", "atlaso_release"],
+        )
+        ensure_appliance_update_job_steps(
+            db,
+            job=claimed,
+            selected_streams=["photon_os"],
+        )
+        db.commit()
+        finished_at = datetime(2026, 8, 27, 5, 0, tzinfo=timezone.utc)
+
+        assert cancel_pending_appliance_update(
+            db,
+            "job_cancel_pending",
+            finished_at=finished_at,
+            error="Task cancelled by operator.",
+            result='{"state":"cancelled"}',
+        ) is True
+        assert cancel_pending_appliance_update(
+            db,
+            "job_cancel_claimed",
+            finished_at=finished_at,
+            error="Task cancelled by operator.",
+            result='{"state":"cancelled"}',
+        ) is False
+        db.commit()
+
+        assert db.get(Job, "job_cancel_pending").status == JobStatus.CANCELLED.value
+        assert db.get(Job, "job_cancel_claimed").status == JobStatus.RUNNING.value
+        pending_steps = db.execute(
+            select(JobStep)
+            .where(JobStep.job_id == "job_cancel_pending")
+            .order_by(JobStep.position)
+        ).scalars().all()
+        claimed_step = db.execute(
+            select(JobStep).where(JobStep.job_id == "job_cancel_claimed")
+        ).scalar_one()
+        assert [step.status for step in pending_steps] == [
+            JobStatus.SKIPPED.value,
+            JobStatus.SKIPPED.value,
+        ]
+        assert all(
+            step.finished_at is not None
+            and step.finished_at.replace(tzinfo=timezone.utc) == finished_at
+            for step in pending_steps
+        )
+        assert claimed_step.status == JobStatus.PENDING.value
 
 
 def seed_available_confirmations(streams: list[str]) -> None:
@@ -1191,6 +1383,782 @@ def test_no_change_release_does_not_schedule_an_unverified_restart():
     assert result["restart_after_commit"] is False
 
 
+def test_release_last_worker_handoff_suppresses_the_photon_delayed_restart():
+    """Do not kill the candidate worker after release-last terminal bookkeeping."""
+    from atlaso.app.ui import aggregate_appliance_update_results
+
+    result = aggregate_appliance_update_results(
+        selected_stream_ids=["photon_os", "atlaso_release"],
+        settings={},
+        actor="admin",
+        mode="run",
+        stream_results=[
+            {
+                "unit_id": "photon_os",
+                "status": "succeeded",
+                "success": True,
+                "dry_run": False,
+                "commands": [],
+            },
+            {
+                "unit_id": "atlaso_release",
+                "status": "succeeded",
+                "success": True,
+                "dry_run": False,
+                "commands": [],
+                "release_transaction": {
+                    "status": "succeeded",
+                    "worker_restart": {"success": True},
+                    "active_release_verification": {"success": True},
+                },
+            },
+        ],
+        job_id="job-release-last",
+    )
+
+    assert result["success"] is True
+    assert result["release_worker_restarted"] is True
+    assert result["restart_after_commit"] is False
+
+
+def test_successful_photon_still_restarts_worker_when_a_later_stream_fails():
+    """Restart after Photon changes even when a later selected stream fails."""
+    from atlaso.app.ui import aggregate_appliance_update_results
+
+    result = aggregate_appliance_update_results(
+        selected_stream_ids=["photon_os", "powershell_modules"],
+        settings={},
+        actor="admin",
+        mode="run",
+        stream_results=[
+            {"unit_id": "photon_os", "status": "succeeded", "success": True},
+            {"unit_id": "powershell_modules", "status": "failed", "success": False},
+        ],
+        job_id="job-photon-success-module-failure",
+    )
+
+    assert result["success"] is False
+    assert result["restart_after_commit"] is True
+
+
+def test_legacy_release_restart_does_not_cover_a_later_failed_photon_apply():
+    """Restart again when legacy release-first work mutates Photon afterward."""
+    from atlaso.app.ui import aggregate_appliance_update_results
+
+    legacy_order = ["atlaso_release", "photon_os"]
+    result = aggregate_appliance_update_results(
+        selected_stream_ids=["photon_os", "atlaso_release"],
+        settings={},
+        actor="admin",
+        mode="run",
+        execution_order=legacy_order,
+        stream_results=[
+            {
+                "unit_id": "atlaso_release",
+                "status": "succeeded",
+                "success": True,
+                "release_transaction": {
+                    "status": "succeeded",
+                    "worker_restart": {"success": True},
+                },
+            },
+            {
+                "unit_id": "photon_os",
+                "status": "failed",
+                "success": False,
+                "apply_started": True,
+            },
+        ],
+        job_id="job-legacy-photon-failure",
+    )
+
+    assert result["success"] is False
+    assert result["release_worker_restarted"] is True
+    assert result["restart_after_commit"] is True
+
+
+def test_legacy_execution_order_is_preserved_in_aggregate_command_evidence():
+    """Report resumed legacy commands in their stored release-first order."""
+    from atlaso.app.ui import aggregate_appliance_update_results
+
+    legacy_order = ["atlaso_release", "powershell_modules", "photon_os"]
+    result = aggregate_appliance_update_results(
+        selected_stream_ids=["photon_os", "powershell_modules", "atlaso_release"],
+        settings={},
+        actor="admin",
+        mode="run",
+        execution_order=legacy_order,
+        stream_results=[
+            {
+                "unit_id": stream,
+                "status": "succeeded",
+                "success": True,
+                "commands": [{"stream": stream}],
+            }
+            for stream in legacy_order
+        ],
+        job_id="job-legacy-order",
+    )
+
+    assert [command["stream"] for command in result["commands"]] == legacy_order
+
+
+def test_status_recovery_accepts_receipt_before_schedule_flag_commit(
+    client,
+    monkeypatch,
+    tmp_path,
+):
+    """Finish from an exact receipt after the schedule-flag commit is interrupted.
+
+    Args:
+        client: Test application HTTP client.
+        monkeypatch: Pytest fixture used to replace recovery paths and effects.
+        tmp_path: Temporary directory provided for isolated startup evidence.
+    """
+    import os
+
+    from atlaso.app import worker
+    from atlaso.app.database import SessionLocal
+    from atlaso.app.models import Job
+
+    job_id = "job_012345abcdef"
+    marker = tmp_path / "appliance-update-status"
+    marker.write_text(job_id, encoding="utf-8")
+    startup = tmp_path / "worker-startup.json"
+    startup.write_text(
+        json.dumps(
+            {
+                "boot_id": "boot-a",
+                "pid": os.getpid(),
+                "start_ticks": "100",
+                "started_at": "2026-08-27T02:00:01+00:00",
+            }
+        ),
+        encoding="utf-8",
+    )
+    with SessionLocal() as db:
+        db.add(
+            Job(
+                id=job_id,
+                type="appliance-update",
+                status="succeeded",
+                created_by="admin",
+                finished_at=datetime(2026, 8, 27, 2, 0, 0),
+                result='{"restart_after_commit":true}',
+            )
+        )
+        db.commit()
+    published = []
+    monkeypatch.setattr(worker, "APPLIANCE_UPDATE_STATUS_MARKER_PATH", marker)
+    monkeypatch.setattr(worker, "WORKER_STARTUP_STATUS_PATH", startup)
+    monkeypatch.setattr(
+        worker,
+        "_inspect_appliance_update_restart",
+        lambda observed_job_id: {
+            "job_id": observed_job_id,
+            "state": "completed",
+            "worker_pid": os.getpid(),
+            "worker_boot_id": "boot-a",
+            "worker_start_ticks": "100",
+            "worker_started_at": "2026-08-27T02:00:01+00:00",
+        },
+    )
+    monkeypatch.setattr(
+        worker,
+        "_publish_appliance_update_status",
+        lambda observed_job_id, *, finish=False: published.append(
+            (observed_job_id, finish)
+        )
+        or True,
+    )
+
+    assert worker._reconcile_appliance_update_status_surface() is True
+    assert published == [(job_id, True)]
+
+
+def test_status_recovery_requires_durable_restart_scheduling_proof(
+    client,
+    monkeypatch,
+    tmp_path,
+):
+    """Reject an unrelated worker restart after the pre-scheduling commit.
+
+    Args:
+        client: Test application HTTP client.
+        monkeypatch: Pytest fixture used to replace recovery paths and effects.
+        tmp_path: Temporary directory provided for isolated startup evidence.
+    """
+    import os
+
+    from atlaso.app import worker
+    from atlaso.app.database import SessionLocal
+    from atlaso.app.models import Job
+
+    job_id = "job_012345abcdea"
+    marker = tmp_path / "appliance-update-status"
+    marker.write_text(job_id, encoding="utf-8")
+    startup = tmp_path / "worker-startup.json"
+    startup.write_text(
+        json.dumps({"pid": os.getpid(), "started_at": "2026-08-27T02:00:01+00:00"}),
+        encoding="utf-8",
+    )
+    with SessionLocal() as db:
+        db.add(
+            Job(
+                id=job_id,
+                type="appliance-update",
+                status="succeeded",
+                created_by="admin",
+                finished_at=datetime(2026, 8, 27, 2, 0, 0),
+                result='{"restart_after_commit":true}',
+            )
+        )
+        db.commit()
+    monkeypatch.setattr(worker, "APPLIANCE_UPDATE_STATUS_MARKER_PATH", marker)
+    monkeypatch.setattr(worker, "WORKER_STARTUP_STATUS_PATH", startup)
+    monkeypatch.setattr(
+        worker,
+        "_publish_appliance_update_status",
+        lambda *_args, **_kwargs: pytest.fail("status hold must remain active"),
+    )
+
+    assert worker._reconcile_appliance_update_status_surface() is False
+
+
+def test_status_recovery_retries_a_missing_restart_receipt(
+    client,
+    monkeypatch,
+    tmp_path,
+):
+    """Retry a dispatched all-service restart whose completion proof is absent.
+
+    Args:
+        client: Test application HTTP client.
+        monkeypatch: Pytest fixture used to replace restart recovery effects.
+        tmp_path: Temporary directory provided for worker startup evidence.
+    """
+    import os
+
+    from atlaso.app import worker
+    from atlaso.app.database import SessionLocal
+    from atlaso.app.models import Job
+
+    job_id = "job_012345abcdec"
+    marker = tmp_path / "appliance-update-status"
+    marker.write_text(job_id, encoding="utf-8")
+    startup = tmp_path / "worker-startup.json"
+    startup.write_text(
+        json.dumps(
+            {
+                "boot_id": "boot-a",
+                "pid": os.getpid(),
+                "start_ticks": "100",
+                "started_at": "2000-01-01T00:00:01+00:00",
+            }
+        ),
+        encoding="utf-8",
+    )
+    with SessionLocal() as db:
+        db.add(
+            Job(
+                id=job_id,
+                type="appliance-update",
+                status="failed",
+                created_by="admin",
+                finished_at=datetime(2000, 1, 1, 0, 0, 0),
+                result=json.dumps(
+                    {
+                        "restart_after_commit": True,
+                        "restart_scheduled": True,
+                        "config_path": "/var/lib/atlaso/apply/appliance-update/update.json",
+                    }
+                ),
+            )
+        )
+        db.commit()
+    calls = []
+
+    class RetryAdapter:
+        """Record a bounded delayed-restart retry."""
+
+        def restart_appliance_after_update(self, config_path: str) -> AdapterResult:
+            """Return a successful retry dispatch.
+
+            Args:
+                config_path: Staged Appliance Update manifest path.
+            """
+            calls.append(config_path)
+            return AdapterResult(command=["restart-service", config_path], dry_run=False)
+
+    monkeypatch.setattr(worker, "APPLIANCE_UPDATE_STATUS_MARKER_PATH", marker)
+    monkeypatch.setattr(worker, "WORKER_STARTUP_STATUS_PATH", startup)
+    monkeypatch.setattr(worker, "_inspect_appliance_update_restart", lambda _job_id: None)
+    monkeypatch.setattr(worker, "SystemAdapter", RetryAdapter)
+    monkeypatch.setattr(
+        worker,
+        "_publish_appliance_update_status",
+        lambda *_args, **_kwargs: pytest.fail("status hold must remain active"),
+    )
+
+    assert worker._reconcile_appliance_update_status_surface() is False
+    assert worker._reconcile_appliance_update_status_surface() is False
+    assert calls == ["/var/lib/atlaso/apply/appliance-update/update.json"]
+    with SessionLocal() as db:
+        result = json.loads(db.get(Job, job_id).result)
+    assert result["restart_recovery_attempts"] == 1
+
+
+def test_restart_recovery_grace_covers_the_full_helper_window(client, monkeypatch):
+    """Do not overlap the initial delayed restart during its full helper window.
+
+    Args:
+        client: HTTP test client providing isolated application state.
+        monkeypatch: Pytest fixture used to replace restart recovery effects.
+    """
+    from atlaso.app import worker
+    from atlaso.app.database import SessionLocal
+    from atlaso.app.models import Job
+
+    client.get("/login")
+    job_id = "job_012345abcded"
+    dispatched_at = (datetime.now(timezone.utc) - timedelta(minutes=32)).isoformat()
+    with SessionLocal() as db:
+        db.add(
+            Job(
+                id=job_id,
+                type="appliance-update",
+                status="succeeded",
+                created_by="admin",
+                finished_at=datetime(2000, 1, 1, 0, 0, 0),
+                result=json.dumps(
+                    {
+                        "restart_after_commit": True,
+                        "restart_dispatch_started_at": dispatched_at,
+                        "config_path": "/var/lib/atlaso/apply/appliance-update/update.json",
+                    }
+                ),
+            )
+        )
+        db.commit()
+    calls = []
+
+    class RetryAdapter:
+        """Record an unexpected delayed-restart retry."""
+
+        def restart_appliance_after_update(self, config_path: str) -> AdapterResult:
+            """Record the staged configuration path.
+
+            Args:
+                config_path: Staged Appliance Update manifest path.
+            """
+            calls.append(config_path)
+            return AdapterResult(command=["restart-service", config_path], dry_run=False)
+
+    monkeypatch.setattr(worker, "SystemAdapter", RetryAdapter)
+
+    worker._retry_appliance_update_restart(job_id)
+
+    assert calls == []
+    assert worker.APPLIANCE_UPDATE_RESTART_COMPLETION_GRACE_SECONDS >= 33 * 60
+    with SessionLocal() as db:
+        result = json.loads(db.get(Job, job_id).result)
+        assert "restart_recovery_attempts" not in result
+        result["restart_dispatch_started_at"] = (
+            datetime.now(timezone.utc) - timedelta(minutes=34)
+        ).isoformat()
+        db.get(Job, job_id).result = json.dumps(result)
+        db.commit()
+
+    worker._retry_appliance_update_restart(job_id)
+
+    assert calls == ["/var/lib/atlaso/apply/appliance-update/update.json"]
+    with SessionLocal() as db:
+        result = json.loads(db.get(Job, job_id).result)
+    assert result["restart_scheduled"] is True
+    assert datetime.fromisoformat(result["restart_dispatch_started_at"]) > (
+        datetime.now(timezone.utc) - timedelta(minutes=1)
+    )
+
+
+def test_restart_recovery_immediately_dispatches_explicitly_unscheduled_restart(
+    client,
+    monkeypatch,
+):
+    """Retry a restart immediately when durable state proves it was not dispatched.
+
+    Args:
+        client: HTTP test client providing isolated application state.
+        monkeypatch: Pytest fixture used to replace restart recovery effects.
+    """
+    from atlaso.app import worker
+    from atlaso.app.database import SessionLocal
+    from atlaso.app.models import Job
+
+    client.get("/login")
+    job_id = "job_012345abcdea"
+    with SessionLocal() as db:
+        db.add(
+            Job(
+                id=job_id,
+                type="appliance-update",
+                status="failed",
+                created_by="admin",
+                finished_at=datetime.now(timezone.utc).replace(tzinfo=None),
+                result=json.dumps(
+                    {
+                        "restart_after_commit": True,
+                        "restart_scheduled": False,
+                        "config_path": "/var/lib/atlaso/apply/appliance-update/update.json",
+                    }
+                ),
+            )
+        )
+        db.commit()
+    calls = []
+
+    class RetryAdapter:
+        """Record the immediate delayed-restart retry."""
+
+        def restart_appliance_after_update(self, config_path: str) -> AdapterResult:
+            """Return a successful retry dispatch.
+
+            Args:
+                config_path: Staged Appliance Update manifest path.
+            """
+            calls.append(config_path)
+            return AdapterResult(command=["restart-service", config_path], dry_run=False)
+
+    monkeypatch.setattr(worker, "SystemAdapter", RetryAdapter)
+
+    worker._retry_appliance_update_restart(job_id)
+
+    assert calls == ["/var/lib/atlaso/apply/appliance-update/update.json"]
+    with SessionLocal() as db:
+        result = json.loads(db.get(Job, job_id).result)
+    assert result["restart_recovery_attempts"] == 1
+    assert result["restart_scheduled"] is True
+    assert "restart_dispatch_started_at" in result
+
+
+def test_restart_recovery_keeps_known_dispatch_failure_immediately_retryable(
+    client,
+    monkeypatch,
+):
+    """Do not apply the completion grace after a proven scheduling failure.
+
+    Args:
+        client: HTTP test client providing isolated application state.
+        monkeypatch: Pytest fixture used to replace restart recovery effects.
+    """
+    from atlaso.app import worker
+    from atlaso.app.database import SessionLocal
+    from atlaso.app.models import Job
+
+    client.get("/login")
+    job_id = "job_012345abcde9"
+    with SessionLocal() as db:
+        db.add(
+            Job(
+                id=job_id,
+                type="appliance-update",
+                status="failed",
+                created_by="admin",
+                finished_at=datetime.now(timezone.utc).replace(tzinfo=None),
+                result=json.dumps(
+                    {
+                        "restart_after_commit": True,
+                        "restart_scheduled": False,
+                        "config_path": "/var/lib/atlaso/apply/appliance-update/update.json",
+                    }
+                ),
+            )
+        )
+        db.commit()
+
+    class FailingRetryAdapter:
+        """Return a deterministic delayed-restart retry failure."""
+
+        def restart_appliance_after_update(self, config_path: str) -> AdapterResult:
+            """Return the failed retry dispatch.
+
+            Args:
+                config_path: Staged Appliance Update manifest path.
+            """
+            return AdapterResult(
+                command=["restart-service", config_path],
+                dry_run=False,
+                returncode=1,
+            )
+
+    monkeypatch.setattr(worker, "SystemAdapter", FailingRetryAdapter)
+
+    worker._retry_appliance_update_restart(job_id)
+
+    with SessionLocal() as db:
+        result = json.loads(db.get(Job, job_id).result)
+    assert result["restart_recovery_attempts"] == 1
+    assert result["restart_scheduled"] is False
+    assert "restart_dispatch_started_at" not in result
+    assert "restart_recovery_last_attempt_at" in result
+
+
+def test_status_recovery_retries_pending_restoration_without_runtime_marker(
+    client,
+    monkeypatch,
+):
+    """Retry terminal restoration from durable state when the marker vanished.
+
+    Args:
+        client: Test application HTTP client.
+        monkeypatch: Pytest fixture used to replace recovery paths and effects.
+    """
+    from atlaso.app import worker
+    from atlaso.app.database import SessionLocal
+    from atlaso.app.models import Job
+
+    job_id = "job_012345abcdeb"
+    with SessionLocal() as db:
+        db.add(
+            Job(
+                id=job_id,
+                type="appliance-update",
+                status="failed",
+                created_by="admin",
+                finished_at=datetime(2026, 8, 27, 2, 0, 0),
+                result='{"restart_after_commit":false}',
+            )
+        )
+        db.commit()
+    monkeypatch.setattr(
+        worker,
+        "_inspect_appliance_update_status",
+        lambda: {"state": "pending", "task_id": job_id, "terminal": True},
+    )
+    published = []
+    monkeypatch.setattr(
+        worker,
+        "_publish_appliance_update_status",
+        lambda observed_job_id, *, finish=False: published.append(
+            (observed_job_id, finish)
+        )
+        or True,
+    )
+
+    assert worker._reconcile_appliance_update_status_surface() is True
+    assert published == [(job_id, True)]
+
+
+def test_status_recovery_releases_failed_initial_publication_to_task_runner(
+    client,
+    monkeypatch,
+):
+    """Do not loop forever on a hold that never became active.
+
+    Args:
+        client: Test application HTTP client.
+        monkeypatch: Pytest fixture used to replace status inspection effects.
+    """
+    from atlaso.app import ui, worker
+    from atlaso.app.database import SessionLocal
+    from atlaso.app.models import Job, JobStatus, JobStep
+    from atlaso.app.services.appliance_update import ensure_appliance_update_job_steps
+
+    job_id = "job_012345abcdec"
+    with SessionLocal() as db:
+        job = Job(
+                id=job_id,
+                type="appliance-update",
+                status=JobStatus.PENDING.value,
+                created_by="admin",
+                task_config_json=json.dumps(
+                    {
+                        "mode": "run",
+                        "selected_streams": ["photon_os"],
+                        "status_transaction_id": "a" * 32,
+                    }
+                ),
+                result="{}",
+            )
+        db.add(job)
+        db.flush()
+        ensure_appliance_update_job_steps(
+            db,
+            job=job,
+            selected_streams=["photon_os"],
+        )
+        db.commit()
+    monkeypatch.setattr(
+        worker,
+        "_inspect_appliance_update_status",
+        lambda: {
+            "state": "held",
+            "task_id": job_id,
+            "terminal": False,
+            "status_activated": False,
+        },
+    )
+    monkeypatch.setattr(
+        worker,
+        "_publish_appliance_update_status",
+        lambda *_args, **_kwargs: False,
+    )
+    monkeypatch.setattr(
+        ui,
+        "execute_appliance_update_job",
+        lambda **_kwargs: pytest.fail("failed publication must prevent mutation"),
+    )
+
+    assert worker.run_worker_once() == job_id
+    with SessionLocal() as db:
+        job = db.get(Job, job_id)
+        step = db.get(JobStep, f"{job_id}:photon_os")
+    assert job.status == JobStatus.FAILED.value
+    assert step.status == JobStatus.SKIPPED.value
+    assert "status surface could not be proven continuously" in (job.error or "")
+
+
+def test_status_recovery_terminalizes_a_legacy_cancelled_update_hierarchy(
+    client,
+    monkeypatch,
+    tmp_path,
+):
+    """Fail closed and restore only after a cancelled claimed hierarchy is terminal.
+
+    Args:
+        client: Test application HTTP client.
+        monkeypatch: Pytest fixture used to replace status restoration effects.
+        tmp_path: Temporary directory provided for the runtime marker.
+    """
+    from atlaso.app import worker
+    from atlaso.app.database import SessionLocal
+    from atlaso.app.models import Job, JobStatus, JobStep
+    from atlaso.app.services.appliance_update import ensure_appliance_update_job_steps
+
+    job_id = "job_abcdef123456"
+    marker = tmp_path / "appliance-update-status"
+    marker.write_text(job_id, encoding="utf-8")
+    with SessionLocal() as db:
+        job = Job(
+            id=job_id,
+            type="appliance-update",
+            status=JobStatus.CANCELLED.value,
+            created_by="admin",
+            progress_percent=100,
+            result='{"state":"cancelled"}',
+        )
+        db.add(job)
+        db.flush()
+        steps = ensure_appliance_update_job_steps(
+            db,
+            job=job,
+            selected_streams=["photon_os", "atlaso_release"],
+        )
+        steps[0].status = JobStatus.RUNNING.value
+        db.commit()
+    published = []
+    monkeypatch.setattr(worker, "APPLIANCE_UPDATE_STATUS_MARKER_PATH", marker)
+    monkeypatch.setattr(
+        worker,
+        "_publish_appliance_update_status",
+        lambda observed_job_id, *, finish=False: published.append(
+            (observed_job_id, finish)
+        )
+        or True,
+    )
+
+    assert worker._reconcile_appliance_update_status_surface() is True
+    assert published == [(job_id, True)]
+    with SessionLocal() as db:
+        job = db.get(Job, job_id)
+        persisted = db.execute(
+            select(JobStep).where(JobStep.job_id == job_id).order_by(JobStep.position)
+        ).scalars().all()
+    assert job.status == JobStatus.FAILED.value
+    assert [step.status for step in persisted] == [
+        JobStatus.FAILED.value,
+        JobStatus.SKIPPED.value,
+    ]
+
+
+def test_restart_scheduling_failure_logs_terminal_update_result(
+    client,
+    monkeypatch,
+):
+    """Log an actionable terminal failure when delayed restart scheduling fails.
+
+    Args:
+        client: Test application HTTP client.
+        monkeypatch: Pytest fixture used to replace restart and logging effects.
+    """
+    from atlaso.app import ui
+    from atlaso.app.database import SessionLocal
+    from atlaso.app.models import Job, JobStatus
+
+    class FailingRestartAdapter:
+        """Return a deterministic delayed-restart scheduling failure."""
+
+        def restart_appliance_after_update(self, config_path: str) -> AdapterResult:
+            """Return the failed scheduling command result.
+
+            Args:
+                config_path: Filesystem path containing the update configuration.
+            """
+            return AdapterResult(
+                command=["atlaso-helper", "appliance-update", "restart", config_path],
+                dry_run=False,
+                stdout="",
+                stderr="restart scheduling failed",
+                returncode=1,
+            )
+
+    failures = []
+    submissions = []
+    monkeypatch.setattr(ui, "SystemAdapter", lambda: FailingRestartAdapter())
+    monkeypatch.setattr(
+        ui,
+        "log_appliance_update_failures",
+        lambda job_id, result: failures.append((job_id, result["status"])),
+    )
+    monkeypatch.setattr(
+        ui,
+        "log_appliance_update_submission",
+        lambda job_id, result: submissions.append((job_id, result["status"])),
+    )
+    with SessionLocal() as db:
+        job = Job(
+            id="job_restart_schedule_failure",
+            type="appliance-update",
+            status=JobStatus.RUNNING.value,
+            created_by="admin",
+        )
+        db.add(job)
+        db.commit()
+        result = ui.aggregate_appliance_update_results(
+            selected_stream_ids=["photon_os"],
+            settings={},
+            actor="admin",
+            mode="run",
+            stream_results=[
+                {
+                    "unit_id": "photon_os",
+                    "status": "succeeded",
+                    "success": True,
+                    "dry_run": False,
+                    "commands": [],
+                }
+            ],
+            job_id=job.id,
+        )
+        ui.complete_appliance_update_task(db, job=job, update_result=result)
+        persisted_result = json.loads(job.result or "{}")
+
+    assert failures == [(job.id, "failed")]
+    assert submissions == [(job.id, "failed")]
+    assert persisted_result["restart_after_commit"] is True
+    assert persisted_result["restart_scheduled"] is False
+    assert "restart_dispatch_started_at" not in persisted_result
+
+
 def test_appliance_update_page_and_dry_run_job(client):
     """Verify that appliance update page and dry run job.
 
@@ -1216,7 +2184,10 @@ def test_appliance_update_page_and_dry_run_job(client):
     assert "Atlaso Release" in page.text
     assert "Check for updates" in page.text
     assert "Install updates" in page.text
-    assert "Checking is read-only. Installing runs the selected maintenance streams." in page.text
+    assert (
+        "Checking is read-only. Installation runs Photon OS first, PowerShell Modules second, "
+        "and Atlaso Release last among the selected streams."
+    ) in page.text
     assert 'href="/ui/management/automation"' in page.text
     assert "schedule update checks or installations in Automation" in page.text
     assert 'formaction="/ui/management/appliance-update/check" title="Check the selected streams without installing changes"' in page.text
@@ -1287,8 +2258,8 @@ def test_appliance_update_page_and_dry_run_job(client):
     assert "appliance-update-task-card" not in refreshed_page.text
     assert payload["dry_run"] is True
     assert [(step.component_key, step.status) for step in steps] == [
-        ("atlaso_release", "succeeded"),
         ("photon_os", "succeeded"),
+        ("atlaso_release", "succeeded"),
     ]
     assert set(payload["stream_results"]) == {"atlaso_release", "photon_os"}
     task_payload = client.get(f"/tasks/{job.id}/status").json()["task"]
@@ -1863,18 +2834,18 @@ def test_appliance_update_check_runs_every_child_after_failure(client, monkeypat
         ]
 
 
-def test_appliance_update_install_skips_photon_after_earlier_failure(client, monkeypatch):
-    """Verify that appliance update install skips photon after earlier failure.
+def test_appliance_update_install_skips_later_streams_after_photon_failure(client, monkeypatch):
+    """Verify that installation stops after Photon fails.
 
     Args:
         client: HTTP test client used to exercise the Atlaso application.
         monkeypatch: Pytest fixture used to replace dependencies for the test.
     """
     import atlaso.app.ui as ui
+    import atlaso.app.worker as worker
     from atlaso.app.database import SessionLocal
     from atlaso.app.models import Job, JobStatus, JobStep
     from atlaso.app.services.appliance_update import ensure_appliance_update_job_steps
-    from atlaso.app.worker import run_worker_once
 
     client.get("/login")
     selected = ["photon_os", "powershell_modules", "atlaso_release"]
@@ -1888,7 +2859,7 @@ def test_appliance_update_install_skips_photon_after_earlier_failure(client, mon
         """
         stream = kwargs["selected_stream_ids"][0]
         calls.append(stream)
-        succeeded = stream != "atlaso_release"
+        succeeded = stream != "photon_os"
         return {
             "unit_id": stream,
             "label": stream,
@@ -1902,18 +2873,27 @@ def test_appliance_update_install_skips_photon_after_earlier_failure(client, mon
             "commands": [],
             "config_path": "",
             "config_preview": "",
-            "error": "" if succeeded else "release install failed",
+            "error": "" if succeeded else "Photon install failed",
         }
 
     monkeypatch.setattr(ui, "execute_appliance_update_job", fake_execute)
+    monkeypatch.setattr(worker, "_publish_appliance_update_status", lambda *_args, **_kwargs: True)
+    job_id = "job_abcdeffedcba"
     with SessionLocal() as db:
         job = Job(
-            id="job_update_install_children",
+            id=job_id,
             type="appliance-update",
             status=JobStatus.PENDING.value,
             created_by="admin",
             task_config_json=json.dumps(
-                {"selected_streams": selected, "settings": {}, "mode": "run"}
+                {
+                    "schema_version": 2,
+                    "selected_streams": selected,
+                    "execution_order": selected,
+                    "settings": {},
+                    "mode": "run",
+                    "status_transaction_id": "a" * 32,
+                }
             ),
             result="{}",
         )
@@ -1922,20 +2902,640 @@ def test_appliance_update_install_skips_photon_after_earlier_failure(client, mon
         ensure_appliance_update_job_steps(db, job=job, selected_streams=selected)
         db.commit()
 
-    assert run_worker_once() == "job_update_install_children"
-    assert calls == ["atlaso_release", "powershell_modules"]
+    assert worker.run_worker_once() == job_id
+    assert calls == ["photon_os"]
     with SessionLocal() as db:
-        job = db.get(Job, "job_update_install_children")
+        job = db.get(Job, job_id)
         steps = db.execute(
             select(JobStep).where(JobStep.job_id == job.id).order_by(JobStep.position)
         ).scalars().all()
         assert job.status == "failed"
         assert [(step.component_key, step.status) for step in steps] == [
-            ("atlaso_release", "failed"),
-            ("powershell_modules", "succeeded"),
-            ("photon_os", "skipped"),
+            ("photon_os", "failed"),
+            ("powershell_modules", "skipped"),
+            ("atlaso_release", "skipped"),
         ]
-        assert "earlier selected update stream failed" in (steps[-1].error or "")
+        assert "earlier selected update stream failed" in (steps[1].error or "")
+        assert "earlier selected update stream failed" in (steps[2].error or "")
+
+
+def test_appliance_update_migrates_legacy_install_status_identity_before_mutation(
+    client,
+    monkeypatch,
+):
+    """Publish the update-only hold for a queued pre-schema-two install.
+
+    Args:
+        client: HTTP test client providing isolated application state.
+        monkeypatch: Pytest fixture used to replace worker side effects.
+    """
+    import re
+
+    import atlaso.app.ui as ui
+    import atlaso.app.worker as worker
+    from atlaso.app.database import SessionLocal
+    from atlaso.app.models import Job, JobStatus
+
+    client.get("/login")
+    job_id = "job_012345abcdef"
+    events = []
+    selected = ["photon_os", "atlaso_release"]
+
+    def publish(observed_job_id: str, *, finish: bool = False) -> bool:
+        """Record publication after its transaction identity is durable.
+
+        Args:
+            observed_job_id: Appliance Update parent identifier being published.
+            finish: Whether publication restores ordinary browser surfaces.
+        """
+
+        with SessionLocal() as db:
+            config = json.loads(db.get(Job, observed_job_id).task_config_json)
+        events.append(("finish" if finish else "publish", config))
+        return False
+
+    monkeypatch.setattr(worker, "_publish_appliance_update_status", publish)
+    monkeypatch.setattr(
+        ui,
+        "execute_appliance_update_job",
+        lambda **_kwargs: pytest.fail("failed publication must prevent mutation"),
+    )
+    with SessionLocal() as db:
+        db.add(
+            Job(
+                id=job_id,
+                type="appliance-update",
+                status=JobStatus.PENDING.value,
+                created_by="admin",
+                task_config_json=json.dumps(
+                    {"mode": "run", "selected_streams": selected, "settings": {}}
+                ),
+                result="{}",
+            )
+        )
+        db.commit()
+
+    assert worker.run_worker_once() == job_id
+    with SessionLocal() as db:
+        job = db.get(Job, job_id)
+        config = json.loads(job.task_config_json)
+    assert re.fullmatch(r"[0-9a-f]{32}", config["status_transaction_id"])
+    assert config["schema_version"] == 2
+    assert config["execution_order"] == ["atlaso_release", "photon_os"]
+    assert config["status_legacy_execution_order"] is True
+    assert events[0] == ("publish", config)
+    assert job.status == JobStatus.FAILED.value
+
+
+def test_appliance_update_terminalizes_incompatible_legacy_scheduled_install(
+    client,
+    monkeypatch,
+):
+    """Refuse a legacy scheduled install whose task identity cannot own a hold.
+
+    Args:
+        client: HTTP test client providing isolated application state.
+        monkeypatch: Pytest fixture used to reject privileged side effects.
+    """
+    from atlaso.app import ui, worker
+    from atlaso.app.database import SessionLocal
+    from atlaso.app.models import Job, JobStatus, JobStep
+    from atlaso.app.services.appliance_update import ensure_appliance_update_job_steps
+
+    client.get("/login")
+    job_id = "job_schedule_7_012345abcdef"
+    monkeypatch.setattr(
+        worker,
+        "_publish_appliance_update_status",
+        lambda *_args, **_kwargs: pytest.fail("an incompatible task must not publish"),
+    )
+    monkeypatch.setattr(
+        ui,
+        "execute_appliance_update_job",
+        lambda **_kwargs: pytest.fail("an incompatible task must not mutate"),
+    )
+    with SessionLocal() as db:
+        job = Job(
+            id=job_id,
+            type="appliance-update",
+            status=JobStatus.PENDING.value,
+            created_by="admin",
+            task_config_json=json.dumps(
+                {"mode": "run", "selected_streams": ["atlaso_release"], "settings": {}}
+            ),
+            result="{}",
+        )
+        db.add(job)
+        db.flush()
+        ensure_appliance_update_job_steps(
+            db,
+            job=job,
+            selected_streams=["atlaso_release"],
+        )
+        db.commit()
+
+    assert worker.run_worker_once() == job_id
+    with SessionLocal() as db:
+        job = db.get(Job, job_id)
+        step = db.get(JobStep, f"{job_id}:atlaso_release")
+    assert job.status == JobStatus.FAILED.value
+    assert step.status == JobStatus.SKIPPED.value
+    assert "no compatible durable status identity" in (job.error or "")
+
+
+def test_appliance_update_status_publication_failure_prevents_all_mutation(client, monkeypatch):
+    """Fail terminally when listener proof is unavailable.
+
+    Args:
+        client: HTTP test client providing isolated application state.
+        monkeypatch: Pytest fixture used to replace worker side effects.
+    """
+    import atlaso.app.ui as ui
+    import atlaso.app.worker as worker
+    from atlaso.app.database import SessionLocal
+    from atlaso.app.models import Job, JobStatus, JobStep
+    from atlaso.app.services.appliance_update import ensure_appliance_update_job_steps
+
+    client.get("/login")
+    calls = []
+    status_calls = []
+    monkeypatch.setattr(
+        ui,
+        "execute_appliance_update_job",
+        lambda **kwargs: calls.append(kwargs) or {},
+    )
+    monkeypatch.setattr(
+        worker,
+        "_publish_appliance_update_status",
+        lambda job_id, *, finish=False: status_calls.append((job_id, finish)) or False,
+    )
+    selected = ["photon_os", "powershell_modules", "atlaso_release"]
+    with SessionLocal() as db:
+        job = Job(
+            id="job_0123456789ab",
+            type="appliance-update",
+            status=JobStatus.PENDING.value,
+            created_by="admin",
+            task_config_json=json.dumps(
+                {
+                    "schema_version": 2,
+                    "mode": "run",
+                    "selected_streams": selected,
+                    "execution_order": selected,
+                    "status_transaction_id": "a" * 32,
+                    "settings": {},
+                }
+            ),
+            result="{}",
+        )
+        db.add(job)
+        db.flush()
+        ensure_appliance_update_job_steps(db, job=job, selected_streams=selected)
+        db.commit()
+
+    assert worker.run_worker_once() == "job_0123456789ab"
+    assert calls == []
+    assert status_calls[0] == ("job_0123456789ab", False)
+    with SessionLocal() as db:
+        job = db.get(Job, "job_0123456789ab")
+        steps = db.execute(
+            select(JobStep).where(JobStep.job_id == job.id).order_by(JobStep.position)
+        ).scalars().all()
+        assert job.status == "failed"
+        assert all(step.status == "skipped" for step in steps)
+        assert "status surface could not be proven continuously" in (job.error or "")
+
+
+@pytest.mark.parametrize(
+    ("mode", "completed_status"),
+    [
+        ("run", "succeeded"),
+        ("check", "failed"),
+    ],
+)
+def test_appliance_update_recovery_requeues_only_a_safe_pending_suffix(
+    client,
+    mode,
+    completed_status,
+):
+    """Resume schema-two work interrupted between terminal children.
+
+    Args:
+        client: HTTP test client providing isolated application state.
+        mode: Appliance Update operation mode stored by the task.
+        completed_status: Terminal status already committed for the first child.
+    """
+    import atlaso.app.worker as worker
+    from atlaso.app.database import SessionLocal
+    from atlaso.app.models import Job, JobStatus, JobStep
+    from atlaso.app.services.appliance_update import ensure_appliance_update_job_steps
+
+    client.get("/login")
+    selected = ["photon_os", "powershell_modules", "atlaso_release"]
+    with SessionLocal() as db:
+        job = Job(
+            id="job_fedcba987654",
+            type="appliance-update",
+            status=JobStatus.RUNNING.value,
+            created_by="admin",
+            task_config_json=json.dumps(
+                {
+                    "schema_version": 2,
+                    "mode": mode,
+                    "selected_streams": selected,
+                    "execution_order": selected,
+                    "status_transaction_id": "b" * 32,
+                }
+            ),
+            result="{}",
+        )
+        db.add(job)
+        db.flush()
+        steps = ensure_appliance_update_job_steps(db, job=job, selected_streams=selected)
+        steps[0].status = completed_status
+        steps[0].progress_percent = 100
+        steps[0].result = json.dumps(
+            {
+                "unit_id": "photon_os",
+                "status": completed_status,
+                "success": completed_status == JobStatus.SUCCEEDED.value,
+            }
+        )
+        db.commit()
+
+        assert worker.recover_interrupted_worker_jobs(db) == 1
+        recovered = db.get(Job, job.id)
+        recovered_steps = db.execute(
+            select(JobStep).where(JobStep.job_id == job.id).order_by(JobStep.position)
+        ).scalars().all()
+
+        assert recovered.status == JobStatus.PENDING.value
+        assert json.loads(recovered.result)["worker_recovery"] == "between_streams"
+        assert [step.status for step in recovered_steps] == [
+            completed_status,
+            "pending",
+            "pending",
+        ]
+
+
+def test_appliance_update_recovery_keeps_running_until_helper_quiesces(
+    client,
+    monkeypatch,
+    tmp_path,
+):
+    """Keep the hierarchy and update-only surface active on quiescence failure.
+
+    Args:
+        client: HTTP test client providing isolated application state.
+        monkeypatch: Pytest fixture used to replace privileged quiescence.
+        tmp_path: Temporary directory for the runtime status marker.
+    """
+    import atlaso.app.worker as worker
+    from atlaso.app.database import SessionLocal
+    from atlaso.app.models import Job, JobStatus, JobStep
+    from atlaso.app.services.appliance_update import ensure_appliance_update_job_steps
+
+    client.get("/login")
+    job_id = "job_123456abcdef"
+    marker = tmp_path / "appliance-update-status"
+    marker.write_text(job_id, encoding="utf-8")
+    monkeypatch.setattr(worker, "APPLIANCE_UPDATE_STATUS_MARKER_PATH", marker)
+    observed = []
+
+    def refuse_quiescence(observed_job_id: str, stream: str) -> bool:
+        """Prove the child is still running when recovery requests quiescence.
+
+        Args:
+            observed_job_id: Exact parent identifier passed to the helper.
+            stream: Exact running child stream passed to the helper.
+        """
+        with SessionLocal() as inspection_db:
+            step = inspection_db.get(JobStep, f"{observed_job_id}:{stream}")
+            observed.append((observed_job_id, stream, step.status))
+        return False
+
+    monkeypatch.setattr(worker, "_quiesce_appliance_update_action", refuse_quiescence)
+    with SessionLocal() as db:
+        job = Job(
+            id=job_id,
+            type="appliance-update",
+            status=JobStatus.RUNNING.value,
+            created_by="admin",
+            task_config_json=json.dumps(
+                {
+                    "schema_version": 2,
+                    "mode": "run",
+                    "selected_streams": ["photon_os", "powershell_modules"],
+                    "execution_order": ["photon_os", "powershell_modules"],
+                    "status_transaction_id": "d" * 32,
+                }
+            ),
+            result="{}",
+        )
+        db.add(job)
+        db.flush()
+        steps = ensure_appliance_update_job_steps(
+            db,
+            job=job,
+            selected_streams=["photon_os", "powershell_modules"],
+        )
+        steps[0].status = JobStatus.RUNNING.value
+        db.commit()
+
+        assert worker.recover_interrupted_worker_jobs(db) == 0
+        assert db.get(Job, job_id).status == JobStatus.RUNNING.value
+        persisted_steps = list(db.get(Job, job_id).steps)
+
+    assert observed == [(job_id, "photon_os", JobStatus.RUNNING.value)]
+    assert [step.status for step in persisted_steps] == [
+        JobStatus.RUNNING.value,
+        JobStatus.PENDING.value,
+    ]
+    assert worker._reconcile_appliance_update_status_surface() is False
+
+
+@pytest.mark.parametrize(
+    ("selected_streams", "running_stream", "photon_status", "photon_result"),
+    [
+        (
+            ["photon_os"],
+            "photon_os",
+            "running",
+            {"apply_started": True},
+        ),
+        (
+            ["photon_os", "powershell_modules"],
+            "powershell_modules",
+            "succeeded",
+            {"unit_id": "photon_os", "status": "succeeded", "success": True},
+        ),
+    ],
+)
+def test_interrupted_appliance_update_recovery_preserves_photon_restart_obligation(
+    client,
+    monkeypatch,
+    selected_streams,
+    running_stream,
+    photon_status,
+    photon_result,
+):
+    """Restart services when Photon mutated before a worker interruption.
+
+    Args:
+        client: HTTP test client providing isolated application state.
+        monkeypatch: Pytest fixture used to replace recovery side effects.
+        selected_streams: Ordered streams selected for the interrupted task.
+        running_stream: Stream that was running when the worker stopped.
+        photon_status: Durable Photon child status before recovery.
+        photon_result: Durable Photon child result before recovery.
+    """
+    import atlaso.app.ui as ui
+    import atlaso.app.worker as worker
+    from atlaso.app.database import SessionLocal
+    from atlaso.app.models import Job, JobStatus
+    from atlaso.app.services.appliance_update import (
+        APPLIANCE_UPDATE_STAGED_CONFIG_PATH,
+        ensure_appliance_update_job_steps,
+    )
+
+    client.get("/login")
+    job_id = "job_234567abcdef"
+    restart_calls = []
+    quiesce_calls = []
+
+    class RestartAdapter:
+        """Record the conservative delayed restart dispatch."""
+
+        def restart_appliance_after_update(self, config_path: str) -> AdapterResult:
+            """Return a successful delayed-restart schedule.
+
+            Args:
+                config_path: Staged Appliance Update manifest path.
+            """
+            restart_calls.append(config_path)
+            return AdapterResult(command=["restart-service", config_path], dry_run=False)
+
+    monkeypatch.setattr(ui, "SystemAdapter", RestartAdapter)
+    monkeypatch.setattr(ui, "log_appliance_update_failures", lambda *_args: None)
+    monkeypatch.setattr(ui, "log_appliance_update_submission", lambda *_args: None)
+    monkeypatch.setattr(ui, "record_audit", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr(
+        worker,
+        "_quiesce_appliance_update_action",
+        lambda observed_job_id, stream: quiesce_calls.append(
+            (observed_job_id, stream)
+        )
+        or True,
+    )
+    monkeypatch.setattr(
+        worker,
+        "_publish_appliance_update_status",
+        lambda *_args, **_kwargs: pytest.fail("the update-only hold must remain active"),
+    )
+    with SessionLocal() as db:
+        job = Job(
+            id=job_id,
+            type="appliance-update",
+            status=JobStatus.RUNNING.value,
+            created_by="admin",
+            task_config_json=json.dumps(
+                {
+                    "schema_version": 2,
+                    "mode": "run",
+                    "selected_streams": selected_streams,
+                    "execution_order": selected_streams,
+                    "status_transaction_id": "e" * 32,
+                    "settings": {},
+                }
+            ),
+            result=json.dumps({"apply_started": True}),
+        )
+        db.add(job)
+        db.flush()
+        steps = ensure_appliance_update_job_steps(
+            db,
+            job=job,
+            selected_streams=selected_streams,
+        )
+        steps_by_stream = {step.component_key: step for step in steps}
+        photon_step = steps_by_stream["photon_os"]
+        photon_step.status = photon_status
+        photon_step.progress_percent = 100 if photon_status == JobStatus.SUCCEEDED.value else 0
+        photon_step.result = json.dumps(photon_result)
+        steps_by_stream[running_stream].status = JobStatus.RUNNING.value
+        db.commit()
+
+        assert worker.recover_interrupted_worker_jobs(db) == 1
+        recovered = db.get(Job, job_id)
+        recovered_result = json.loads(recovered.result)
+        recovered_step = steps_by_stream[running_stream]
+
+    assert quiesce_calls == [(job_id, running_stream)]
+    assert recovered.status == JobStatus.FAILED.value
+    assert recovered_step.status == JobStatus.FAILED.value
+    assert recovered_result["restart_after_commit"] is True
+    assert recovered_result["restart_scheduled"] is True
+    assert restart_calls == [APPLIANCE_UPDATE_STAGED_CONFIG_PATH]
+
+
+def test_recovered_photon_prefix_retains_status_hold_until_restart(client, monkeypatch):
+    """Keep the update-only surface active through a recovered restart.
+
+    Args:
+        client: HTTP test client providing isolated application state.
+        monkeypatch: Pytest fixture used to replace recovery side effects.
+    """
+    import atlaso.app.ui as ui
+    import atlaso.app.worker as worker
+    from atlaso.app.database import SessionLocal
+    from atlaso.app.models import Job, JobStatus
+    from atlaso.app.services.appliance_update import ensure_appliance_update_job_steps
+
+    job_id = "job_abcdef123456"
+    finalizer = {
+        "job_id": job_id,
+        "status": JobStatus.FAILED.value,
+        "rolled_back": True,
+        "rollback_health": True,
+        "error": "candidate readiness failed",
+        "commands": [],
+    }
+    monkeypatch.setattr(worker, "_release_finalizer", lambda: dict(finalizer))
+    monkeypatch.setattr(
+        worker,
+        "reconcile_release_success_finalizer",
+        lambda payload: (dict(payload), True),
+    )
+
+    class RestartAdapter:
+        """Return a successful delayed all-service restart schedule."""
+
+        def restart_appliance_after_update(self, config_path: str) -> AdapterResult:
+            """Return a successful scheduling result.
+
+            Args:
+                config_path: Staged Appliance Update manifest path.
+            """
+            return AdapterResult(command=["restart-service", config_path], dry_run=False)
+
+    monkeypatch.setattr(ui, "SystemAdapter", RestartAdapter)
+    monkeypatch.setattr(ui, "log_appliance_update_failures", lambda *_args: None)
+    monkeypatch.setattr(ui, "log_appliance_update_submission", lambda *_args: None)
+    monkeypatch.setattr(ui, "record_audit", lambda *_args, **_kwargs: None)
+    status_calls = []
+    monkeypatch.setattr(
+        worker,
+        "_publish_appliance_update_status",
+        lambda observed_job_id, *, finish=False: status_calls.append(
+            (observed_job_id, finish)
+        )
+        or True,
+    )
+
+    selected = ["photon_os", "atlaso_release"]
+    with SessionLocal() as db:
+        job = Job(
+            id=job_id,
+            type="appliance-update",
+            status=JobStatus.RUNNING.value,
+            created_by="admin",
+            task_config_json=json.dumps(
+                {
+                    "schema_version": 2,
+                    "mode": "run",
+                    "selected_streams": selected,
+                    "execution_order": selected,
+                    "status_transaction_id": "c" * 32,
+                    "settings": {},
+                }
+            ),
+            result="{}",
+        )
+        db.add(job)
+        db.flush()
+        steps = ensure_appliance_update_job_steps(
+            db,
+            job=job,
+            selected_streams=selected,
+        )
+        steps[0].status = JobStatus.SUCCEEDED.value
+        steps[0].progress_percent = 100
+        steps[0].result = json.dumps(
+            {"unit_id": "photon_os", "status": "succeeded", "success": True}
+        )
+        steps[1].status = JobStatus.RUNNING.value
+        db.commit()
+
+        assert worker.recover_interrupted_worker_jobs(db) == 1
+        recovered = db.get(Job, job_id)
+        recovered_result = json.loads(recovered.result)
+
+    assert recovered.status == JobStatus.FAILED.value
+    assert recovered_result["restart_after_commit"] is True
+    assert recovered_result["restart_scheduled"] is True
+    assert status_calls == []
+
+
+@pytest.mark.parametrize(
+    ("selected", "expected"),
+    [
+        (["photon_os"], ["photon_os"]),
+        (["powershell_modules"], ["powershell_modules"]),
+        (["atlaso_release"], ["atlaso_release"]),
+        (["photon_os", "powershell_modules"], ["photon_os", "powershell_modules"]),
+        (["photon_os", "atlaso_release"], ["photon_os", "atlaso_release"]),
+        (["powershell_modules", "atlaso_release"], ["powershell_modules", "atlaso_release"]),
+        (
+            ["photon_os", "powershell_modules", "atlaso_release"],
+            ["photon_os", "powershell_modules", "atlaso_release"],
+        ),
+    ],
+)
+def test_appliance_update_new_tasks_persist_every_subset_in_safe_order(
+    client,
+    selected,
+    expected,
+):
+    """Persist each installation subset in Photon, PowerShell, Atlaso order.
+
+    Args:
+        client: HTTP test client used to initialize an isolated database.
+        selected: Selected update streams for the task.
+        expected: Expected immutable child order.
+    """
+    from atlaso.app.database import SessionLocal
+    from atlaso.app.models import Job
+    from atlaso.app.services.appliance_update import ensure_appliance_update_job_steps
+
+    client.get("/login")
+    with SessionLocal() as db:
+        job = Job(
+            id="job_subset_order",
+            type="appliance-update",
+            status="pending",
+            created_by="admin",
+            task_config_json=json.dumps(
+                {
+                    "schema_version": 2,
+                    "selected_streams": selected,
+                    "execution_order": expected,
+                    "status_transaction_id": "a" * 32,
+                    "settings": {},
+                    "mode": "run",
+                }
+            ),
+            result="{}",
+        )
+        db.add(job)
+        db.flush()
+        steps = ensure_appliance_update_job_steps(
+            db,
+            job=job,
+            selected_streams=selected,
+        )
+
+        assert [step.component_key for step in steps] == expected
+        assert [step.position for step in steps] == list(range(1, len(expected) + 1))
 
 
 def test_appliance_update_service_version_helpers():

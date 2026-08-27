@@ -18,6 +18,7 @@ from atlaso.app.config import get_settings
 from atlaso.app.database import get_db
 from atlaso.app.models import EsxNfsShare, Job, JobStatus, Role, ServiceState, utcnow
 from atlaso.app.security import Identity, require_session_identity
+from atlaso.app.services.appliance_update import cancel_pending_appliance_update
 from atlaso.app.services.ca import ca_service_state
 from atlaso.app.services.esx_storage import (
     rpcbind_required as esx_storage_rpcbind_required,
@@ -834,6 +835,63 @@ def build_router(dependencies: OperationsUiDependencies) -> OperationsUiRouter:
                     status_code=status.HTTP_409_CONFLICT,
                     detail="A running Network Boot media deletion cannot be cancelled.",
                 )
+        if job.type == "appliance-update" and job.status == JobStatus.RUNNING.value:
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail=(
+                    "A running Appliance Update cannot be cancelled because host mutation "
+                    "and update-only status recovery may already be in progress."
+                ),
+            )
+        if job.type == "appliance-update" and job.status == JobStatus.PENDING.value:
+            finished_at = utcnow()
+            payload = _job_payload(job)
+            payload["state"] = "cancelled"
+            payload["cancelled_by"] = identity.username
+            payload["cancelled_at"] = finished_at.isoformat()
+            cancelled = cancel_pending_appliance_update(
+                db,
+                job.id,
+                finished_at=finished_at,
+                error="Task cancelled by operator.",
+                result=json.dumps(_redact_task_value(payload), sort_keys=True),
+            )
+            if not cancelled:
+                db.rollback()
+                db.expire_all()
+                current = db.get(Job, job.id)
+                if current is None:
+                    raise HTTPException(status_code=404, detail="Task not found")
+                if current.status == JobStatus.RUNNING.value:
+                    raise HTTPException(
+                        status_code=status.HTTP_409_CONFLICT,
+                        detail=(
+                            "A running Appliance Update cannot be cancelled because host mutation "
+                            "and update-only status recovery may already be in progress."
+                        ),
+                    )
+                return JSONResponse(
+                    {
+                        "task": _task_row(current, identity),
+                        "message": "Task is already finished.",
+                    }
+                )
+            db.commit()
+            record_audit(
+                db,
+                actor=identity.username,
+                action="cancel_task",
+                resource_type="job",
+                resource_id=job.id,
+                detail=f"type={job.type}",
+            )
+            db.refresh(job)
+            return JSONResponse(
+                {
+                    "task": _task_row(job, identity),
+                    "message": "Task cancellation requested.",
+                }
+            )
         if job.type == "vcf-depot-software-id":
             raise HTTPException(
                 status_code=status.HTTP_409_CONFLICT,

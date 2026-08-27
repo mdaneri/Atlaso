@@ -15,6 +15,7 @@ from pathlib import Path
 from typing import Any
 from urllib.parse import urlparse
 
+from sqlalchemy import update
 from sqlalchemy.orm import Session
 
 from atlaso import __version__
@@ -34,7 +35,8 @@ PHOTON_REPOSITORY_DIR = Path("/etc/yum.repos.d")
 DEFAULT_ATLASO_RELEASE_URL = "https://mdaneri.github.io/Atlaso/updates"
 DEFAULT_ATLASO_MANIFEST_URL = f"{DEFAULT_ATLASO_RELEASE_URL}/channels/stable/manifest.json"
 UPDATE_STREAMS = ("photon_os", "powershell_modules", "atlaso_release")
-APPLIANCE_UPDATE_EXECUTION_ORDER = ("atlaso_release", "powershell_modules", "photon_os")
+APPLIANCE_UPDATE_EXECUTION_ORDER = ("photon_os", "powershell_modules", "atlaso_release")
+APPLIANCE_UPDATE_LEGACY_EXECUTION_ORDER = ("atlaso_release", "powershell_modules", "photon_os")
 UPDATE_STREAM_LABELS = {
     "photon_os": "Photon OS",
     "powershell_modules": "PowerShell Modules",
@@ -556,6 +558,7 @@ def ensure_appliance_update_job_steps(
     *,
     job: Job,
     selected_streams: list[str] | tuple[str, ...],
+    execution_order: list[str] | tuple[str, ...] | None = None,
 ) -> list[JobStep]:
     """Ensure appliance update job steps.
 
@@ -563,6 +566,7 @@ def ensure_appliance_update_job_steps(
         db: Active database session.
         job: Job being processed.
         selected_streams: Update streams selected for the job.
+        execution_order: Immutable stream order stored when the task was admitted.
 
     Returns:
         The ensure appliance update job steps result.
@@ -570,8 +574,29 @@ def ensure_appliance_update_job_steps(
     selected = set(selected_update_streams(selected_streams))
     existing = {step.component_key: step for step in job.steps}
     steps: list[JobStep] = []
+    if execution_order is None:
+        try:
+            task_config = json.loads(job.task_config_json or "{}")
+        except json.JSONDecodeError:
+            task_config = {}
+        configured_order = (
+            task_config.get("execution_order") if isinstance(task_config, dict) else None
+        )
+        if isinstance(configured_order, list):
+            execution_order = [str(stream) for stream in configured_order]
+        elif int(task_config.get("schema_version") or 0) < 2:
+            execution_order = [
+                stream
+                for stream in APPLIANCE_UPDATE_LEGACY_EXECUTION_ORDER
+                if stream in selected
+            ]
+    ordered_streams = tuple(execution_order or APPLIANCE_UPDATE_EXECUTION_ORDER)
+    if set(ordered_streams) != selected or len(ordered_streams) != len(selected):
+        ordered_streams = tuple(
+            stream for stream in APPLIANCE_UPDATE_EXECUTION_ORDER if stream in selected
+        )
     for position, stream in enumerate(
-        (stream for stream in APPLIANCE_UPDATE_EXECUTION_ORDER if stream in selected),
+        (stream for stream in ordered_streams if stream in selected),
         start=1,
     ):
         step = existing.get(stream)
@@ -602,6 +627,69 @@ def ensure_appliance_update_job_steps(
             step.label = UPDATE_STREAM_LABELS[stream]
         steps.append(step)
     return steps
+
+
+def cancel_pending_appliance_update(
+    db: Session,
+    job_id: str,
+    *,
+    finished_at: datetime,
+    error: str,
+    result: str,
+) -> bool:
+    """Cancel an Appliance Update only while its durable claim is pending.
+
+    Args:
+        db: Active database session.
+        job_id: Exact queued Appliance Update identifier.
+        finished_at: Cancellation completion time.
+        error: Durable cancellation message.
+        result: Redacted durable task result.
+
+    Returns:
+        Whether the pending-only transition acquired the task.
+    """
+    cancelled = db.execute(
+        update(Job)
+        .where(
+            Job.id == job_id,
+            Job.type == "appliance-update",
+            Job.status == JobStatus.PENDING.value,
+        )
+        .values(
+            status=JobStatus.CANCELLED.value,
+            finished_at=finished_at,
+            error=error,
+            result=result,
+            progress_percent=100,
+        )
+    )
+    if cancelled.rowcount != 1:
+        return False
+    child_error = "Task cancelled by operator before this selected stream could run."
+    db.execute(
+        update(JobStep)
+        .where(
+            JobStep.job_id == job_id,
+            JobStep.status == JobStatus.PENDING.value,
+        )
+        .values(
+            status=JobStatus.SKIPPED.value,
+            finished_at=finished_at,
+            error=child_error,
+            result=json.dumps(
+                {
+                    "status": JobStatus.SKIPPED.value,
+                    "success": False,
+                    "error": child_error,
+                },
+                indent=2,
+                sort_keys=True,
+            ),
+            progress_percent=100,
+        )
+    )
+    return True
 
 
 DEFAULT_UPDATE_SETTINGS = {

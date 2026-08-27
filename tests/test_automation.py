@@ -2,6 +2,7 @@
 
 import hashlib
 import json
+import re
 from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
@@ -609,7 +610,11 @@ def test_due_schedule_queues_one_job_and_skips_overlap(client):
         jobs = enqueue_due_schedules(db, now=now)
         assert len(jobs) == 1
         assert jobs[0].trigger == "scheduled"
-        assert json.loads(jobs[0].task_config_json)["mode"] == "check"
+        task_config = json.loads(jobs[0].task_config_json)
+        assert task_config["mode"] == "check"
+        assert task_config["schema_version"] == 2
+        assert task_config["execution_order"] == ["photon_os"]
+        assert "status_transaction_id" not in task_config
         steps = db.execute(select(JobStep).where(JobStep.job_id == jobs[0].id)).scalars().all()
         assert [(step.component_key, step.status) for step in steps] == [("photon_os", "pending")]
 
@@ -620,6 +625,56 @@ def test_due_schedule_queues_one_job_and_skips_overlap(client):
         db.commit()
         assert enqueue_due_schedules(db, now=now) == []
         assert len(db.execute(select(Job).where(Job.schedule_id == schedule_id)).scalars().all()) == 1
+
+
+def test_due_scheduled_install_gets_fresh_status_identity_and_safe_order(client):
+    """Bind every scheduled installation to release-last status evidence.
+
+    Args:
+        client: HTTP test client providing isolated application state.
+    """
+    from atlaso.app.database import SessionLocal
+    from atlaso.app.models import Schedule
+    from atlaso.app.services.automation import enqueue_due_schedules
+
+    client.get("/login")
+    now = datetime.now(timezone.utc)
+    with SessionLocal() as db:
+        db.add(
+            Schedule(
+                name="nightly-update-install",
+                task_type="appliance_update_install",
+                task_config_json=json.dumps(
+                    {
+                        "selected_streams": [
+                            "atlaso_release",
+                            "photon_os",
+                            "powershell_modules",
+                        ]
+                    }
+                ),
+                schedule_kind="once",
+                timezone_name="UTC",
+                enabled=True,
+                next_run_at=now - timedelta(minutes=1),
+                created_by="admin",
+            )
+        )
+        db.commit()
+
+    with SessionLocal() as db:
+        [job] = enqueue_due_schedules(db, now=now)
+        task_config = json.loads(job.task_config_json)
+
+    assert re.fullmatch(r"job_[0-9a-f]{12}", job.id)
+    assert task_config["mode"] == "run"
+    assert task_config["schema_version"] == 2
+    assert task_config["execution_order"] == [
+        "photon_os",
+        "powershell_modules",
+        "atlaso_release",
+    ]
+    assert re.fullmatch(r"[0-9a-f]{32}", task_config["status_transaction_id"])
 
 
 def test_worker_rejects_queued_vcf_download_when_profile_was_disabled(client, monkeypatch):
