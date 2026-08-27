@@ -14636,10 +14636,10 @@ def _write_update_status_nginx_include() -> None:
     content = "\n".join(
         [
             "# Managed by Atlaso. Local changes may be overwritten.",
-            "error_page 418 =503 /__atlaso_appliance_update_status;",
-            "location = /__atlaso_appliance_update_status {",
-            "  internal;",
-            f"  alias {ATLASO_UPDATE_STATUS_HTML_PATH};",
+            "error_page 418 =503 @atlaso_appliance_update_status;",
+            "location @atlaso_appliance_update_status {",
+            "  root /;",
+            f"  try_files {ATLASO_UPDATE_STATUS_HTML_PATH} =500;",
             "  default_type text/html;",
             '  add_header Cache-Control "no-store, no-cache, must-revalidate" always;',
             '  add_header Pragma "no-cache" always;',

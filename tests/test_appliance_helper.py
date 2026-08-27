@@ -87,6 +87,33 @@ server {
     ) == guarded_management
 
 
+def test_update_status_include_uses_a_non_rewriting_named_location(monkeypatch):
+    """Avoid re-entering the server marker guard for the controlled 503 body.
+
+    Args:
+        monkeypatch: Pytest fixture used to capture the generated nginx include.
+    """
+    helper = load_helper_module()
+    written = {}
+    monkeypatch.setattr(
+        helper,
+        "_write_appliance_update_runtime_file",
+        lambda path, content: written.update(path=path, content=content),
+    )
+
+    helper._write_update_status_nginx_include()
+
+    assert written["path"] == helper.ATLASO_UPDATE_STATUS_NGINX_INCLUDE_PATH
+    assert "error_page 418 =503 @atlaso_appliance_update_status;" in written["content"]
+    assert "location @atlaso_appliance_update_status {" in written["content"]
+    assert "  root /;" in written["content"]
+    assert (
+        f"  try_files {helper.ATLASO_UPDATE_STATUS_HTML_PATH} =500;"
+        in written["content"]
+    )
+    assert "/__atlaso_appliance_update_status" not in written["content"]
+
+
 def test_update_status_page_escapes_bounded_task_content():
     """Render a self-contained semantic hierarchy without HTML injection."""
     helper = load_helper_module()
