@@ -604,6 +604,22 @@ def recover_interrupted_worker_jobs(
                 job.result = json.dumps(result, indent=2, sort_keys=True)
                 db.add(job)
                 continue
+            unresolved_running_steps = [
+                step
+                for step in update_steps
+                if step.status == JobStatus.RUNNING.value
+                and not (step is release_step and recovered)
+            ]
+            if any(
+                not _quiesce_appliance_update_action(job.id, step.component_key)
+                for step in unresolved_running_steps
+            ):
+                LOGGER.error(
+                    "Interrupted Appliance Update helper quiescence failed for %s; "
+                    "the task and update-only UI hold remain active",
+                    job.id,
+                )
+                continue
             for step in update_steps:
                 if step is release_step and recovered:
                     continue
@@ -741,7 +757,7 @@ def recover_interrupted_worker_jobs(
         db.add(job)
     if jobs:
         db.commit()
-    return len(jobs)
+    return sum(job.status != JobStatus.RUNNING.value for job in jobs)
 
 
 def _fail_job(db: Session, job: Job, exc: Exception) -> None:
@@ -878,6 +894,24 @@ def _publish_appliance_update_status(job_id: str, *, finish: bool = False) -> bo
     return False
 
 
+def _quiesce_appliance_update_action(job_id: str, stream: str) -> bool:
+    """Stop and verify the fixed-identity helper for one interrupted stream.
+
+    Args:
+        job_id: Exact Appliance Update parent identifier.
+        stream: Interrupted child stream whose helper must be quiescent.
+    """
+    result = SystemAdapter().quiesce_appliance_update_action(job_id, stream)
+    if result.returncode == 0:
+        return True
+    LOGGER.error(
+        "Appliance Update helper quiescence failed for %s/%s; privileged details omitted",
+        job_id,
+        stream,
+    )
+    return False
+
+
 def _inspect_appliance_update_status() -> dict[str, Any] | None:
     """Return bounded root-owned restoration state through the helper boundary."""
     result = SystemAdapter().inspect_appliance_update_status()
@@ -912,18 +946,13 @@ def _inspect_appliance_update_restart(job_id: str) -> dict[str, Any] | None:
 
 def _retry_appliance_update_restart(
     job_id: str,
-    *,
-    worker_started_at: datetime,
 ) -> None:
     """Retry a missing delayed-restart receipt through a bounded durable gate.
 
     Args:
         job_id: Exact Appliance Update parent identifier.
-        worker_started_at: Current worker startup timestamp from fixed identity evidence.
     """
     now = datetime.now(timezone.utc)
-    if (now - worker_started_at).total_seconds() < 15:
-        return
     with SessionLocal() as db:
         job = db.get(Job, job_id)
         if job is None or job.type != "appliance-update":
@@ -933,6 +962,24 @@ def _retry_appliance_update_restart(
         except json.JSONDecodeError:
             return
         if not isinstance(result, dict) or result.get("restart_after_commit") is not True:
+            return
+        dispatch_text = str(result.get("restart_dispatch_started_at") or "")
+        try:
+            dispatch_started_at = (
+                datetime.fromisoformat(dispatch_text)
+                if dispatch_text
+                else job.finished_at
+            )
+            if dispatch_started_at is None:
+                return
+            dispatch_started_at = (
+                dispatch_started_at.replace(tzinfo=timezone.utc)
+                if dispatch_started_at.tzinfo is None
+                else dispatch_started_at.astimezone(timezone.utc)
+            )
+        except ValueError:
+            return
+        if (now - dispatch_started_at).total_seconds() < 15:
             return
         attempts = int(result.get("restart_recovery_attempts") or 0)
         if attempts >= 3:
@@ -1022,12 +1069,15 @@ def _reconcile_appliance_update_status_surface() -> bool:
             JobStatus.SUCCEEDED.value,
             JobStatus.FAILED.value,
         }
+        job_status = job.status
         finished_at = job.finished_at
         try:
             result = json.loads(job.result or "{}")
         except json.JSONDecodeError:
             result = {}
     if not terminal:
+        if job_status == JobStatus.RUNNING.value:
+            return False
         if not marker_present:
             return bool(
                 restoration_state == "held"
@@ -1059,10 +1109,7 @@ def _reconcile_appliance_update_status_surface() -> bool:
             == str(startup.get("started_at") or "")
         )
         if not receipt_matches:
-            _retry_appliance_update_restart(
-                marker_job_id,
-                worker_started_at=started_at,
-            )
+            _retry_appliance_update_restart(marker_job_id)
             return False
         if finished_at is not None:
             finished_at = (

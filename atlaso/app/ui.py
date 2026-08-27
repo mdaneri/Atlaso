@@ -12430,6 +12430,11 @@ def complete_appliance_update_task(db: Session, *, job: Job, update_result: dict
         success=update_result["success"],
     )
     if update_result.get("restart_after_commit"):
+        update_result["restart_dispatch_started_at"] = datetime.now(timezone.utc).isoformat()
+        update_result["restart_scheduled"] = False
+        job.result = json.dumps(update_result, indent=2)
+        db.add(job)
+        db.commit()
         restart_result = SystemAdapter().restart_appliance_after_update(str(update_result["config_path"]))
         update_result["commands"].append(adapter_result_to_payload(restart_result))
         update_result["restart_scheduled"] = restart_result.returncode == 0

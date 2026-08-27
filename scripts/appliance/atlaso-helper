@@ -111,6 +111,7 @@ COMMANDS: dict[str, set[str]] = {
         "status-publish",
         "status-finish",
         "status-inspect",
+        "quiesce-action",
     },
     "automation": {"run"},
     "appliance-power": {"reboot", "shutdown"},
@@ -205,6 +206,7 @@ NO_PATH_ACTIONS = {
     ("appliance-update", "status-inspect"),
     ("appliance-update", "restart-complete"),
     ("appliance-update", "restart-inspect"),
+    ("appliance-update", "quiesce-action"),
 }
 NON_PATH_ARGUMENT_ACTIONS = {
     ("local-users", "authenticate"),
@@ -217,6 +219,7 @@ NON_PATH_ARGUMENT_ACTIONS = {
     ("appliance-update", "status-finish"),
     ("appliance-update", "restart-complete"),
     ("appliance-update", "restart-inspect"),
+    ("appliance-update", "quiesce-action"),
 }
 ATLASO_SERVICE_USER = "atlaso"
 ATLASO_STATE_DIR = Path("/var/lib/atlaso")
@@ -643,6 +646,45 @@ def _systemd_run_action_unit_name() -> str:
     return f"{SYSTEMD_RUN_ACTION_UNIT_PREFIX}-{uuid.uuid4().hex}"
 
 
+def _appliance_update_action_unit_name(job_id: str, stream: str) -> str:
+    """Return the fixed systemd identity for one Appliance Update stream.
+
+    Args:
+        job_id: Exact Appliance Update parent identifier.
+        stream: Single update stream executed by the helper.
+    """
+    if re.fullmatch(r"job_[0-9a-f]{12}", job_id) is None:
+        raise ValueError("Appliance Update helper action task identity is invalid")
+    if stream not in {"photon_os", "powershell_modules", "atlaso_release"}:
+        raise ValueError("Appliance Update helper action stream identity is invalid")
+    identity = hashlib.sha256(f"{job_id}:{stream}".encode("utf-8")).hexdigest()[:32]
+    return f"{SYSTEMD_RUN_ACTION_UNIT_PREFIX}-{identity}"
+
+
+def _appliance_update_action_unit_from_config(args: list[str]) -> str | None:
+    """Return a fixed helper unit when the manifest contains one exact stream.
+
+    Args:
+        args: Normalized helper arguments whose first value is the update manifest.
+    """
+    if not args:
+        return None
+    try:
+        payload = json.loads(Path(args[0]).read_text(encoding="utf-8"))
+    except (OSError, UnicodeDecodeError, json.JSONDecodeError):
+        return None
+    selected = payload.get("selected_streams") if isinstance(payload, dict) else None
+    if not isinstance(selected, list) or len(selected) != 1:
+        return None
+    try:
+        return _appliance_update_action_unit_name(
+            str(payload.get("job_id") or ""),
+            str(selected[0] or ""),
+        )
+    except ValueError:
+        return None
+
+
 def _should_run_real_action_with_systemd(action: str) -> bool:
     """Perform should run real action with systemd.
 
@@ -692,6 +734,9 @@ def _run_real_action_with_systemd(group: str, action: str, args: list[str]) -> i
         args: Parsed command-line options consumed by the operation.
     """
     helper_path = str(Path(__file__).resolve())
+    unit_name = _systemd_run_action_unit_name()
+    if group == "appliance-update" and action == "apply":
+        unit_name = _appliance_update_action_unit_from_config(args) or unit_name
     command = [
         shutil.which("systemd-run") or "systemd-run",
         "--quiet",
@@ -700,7 +745,7 @@ def _run_real_action_with_systemd(group: str, action: str, args: list[str]) -> i
         "--collect",
         "--service-type=exec",
         f"--setenv={SYSTEMD_RUN_CHILD_ENV}=1",
-        f"--unit={_systemd_run_action_unit_name()}",
+        f"--unit={unit_name}",
     ]
     if group == "management-handoff" and action in {"apply", "recover"}:
         unit = MANAGEMENT_HANDOFF_APPLY_UNIT
@@ -20945,6 +20990,54 @@ def _quiesce_management_handoff_unit(unit_name: str, unit_label: str) -> dict[st
     }
 
 
+def _quiesce_appliance_update_action_unit(job_id: str, stream: str) -> dict[str, object]:
+    """Stop and verify one fixed-identity Appliance Update helper action.
+
+    Args:
+        job_id: Exact Appliance Update parent identifier.
+        stream: Interrupted child stream whose helper must be quiescent.
+
+    Returns:
+        Bounded systemd unit evidence without command or environment contents.
+    """
+    unit_name = f"{_appliance_update_action_unit_name(job_id, stream)}.service"
+
+    def verified_state(result: subprocess.CompletedProcess[str], stage: str) -> str:
+        """Return one bounded systemd active state or fail closed.
+
+        Args:
+            result: Completed systemctl state inspection.
+            stage: Bounded diagnostic stage label.
+        """
+        state = result.stdout.strip()
+        known_states = {
+            "active",
+            "activating",
+            "deactivating",
+            "reloading",
+            "inactive",
+            "failed",
+            "unknown",
+        }
+        if state not in known_states:
+            raise ValueError(f"{stage} Appliance Update helper state could not be verified")
+        return state
+
+    initial = _run(["systemctl", "is-active", unit_name])
+    state = verified_state(initial, "initial")
+    stopped = False
+    if state in {"active", "activating", "deactivating", "reloading"}:
+        stop = _run(["systemctl", "stop", unit_name])
+        if stop.returncode != 0:
+            raise ValueError("surviving Appliance Update helper could not be stopped")
+        stopped = True
+    final = _run(["systemctl", "is-active", unit_name])
+    final_state = verified_state(final, "post-stop")
+    if final_state in {"active", "activating", "deactivating", "reloading"}:
+        raise ValueError("surviving Appliance Update helper did not stop")
+    return {"unit": unit_name, "state": final_state, "stopped": stopped}
+
+
 def _quiesce_management_handoff_apply() -> dict[str, object]:
     """Stop and verify any surviving transient apply helper before rollback."""
     return _quiesce_management_handoff_unit(MANAGEMENT_HANDOFF_APPLY_UNIT, "apply")
@@ -21375,6 +21468,18 @@ def _handle_appliance_update(action: str, args: list[str]) -> int:
         action: Action consumed by handle appliance update.
         args: Parsed command-line options consumed by the operation.
     """
+    if action == "quiesce-action":
+        if len(args) != 2:
+            print("quiesce-action requires exactly one task id and stream", file=sys.stderr)
+            return 2
+        try:
+            evidence = _quiesce_appliance_update_action_unit(args[0], args[1])
+        except ValueError as exc:
+            print(str(exc), file=sys.stderr)
+            return 1
+        print(json.dumps(evidence, sort_keys=True))
+        return 0
+
     if action == "status-inspect":
         if args:
             print("status-inspect does not accept arguments", file=sys.stderr)

@@ -1600,6 +1600,62 @@ def test_status_recovery_retries_a_missing_restart_receipt(
     assert result["restart_recovery_attempts"] == 1
 
 
+def test_restart_recovery_grace_uses_the_dispatch_timestamp(client, monkeypatch):
+    """Do not overlap the initial delayed restart on a long-lived worker.
+
+    Args:
+        client: HTTP test client providing isolated application state.
+        monkeypatch: Pytest fixture used to replace restart recovery effects.
+    """
+    from atlaso.app import worker
+    from atlaso.app.database import SessionLocal
+    from atlaso.app.models import Job
+
+    client.get("/login")
+    job_id = "job_012345abcded"
+    dispatched_at = datetime.now(timezone.utc).isoformat()
+    with SessionLocal() as db:
+        db.add(
+            Job(
+                id=job_id,
+                type="appliance-update",
+                status="succeeded",
+                created_by="admin",
+                finished_at=datetime(2000, 1, 1, 0, 0, 0),
+                result=json.dumps(
+                    {
+                        "restart_after_commit": True,
+                        "restart_dispatch_started_at": dispatched_at,
+                        "config_path": "/var/lib/atlaso/apply/appliance-update/update.json",
+                    }
+                ),
+            )
+        )
+        db.commit()
+    calls = []
+
+    class RetryAdapter:
+        """Record an unexpected delayed-restart retry."""
+
+        def restart_appliance_after_update(self, config_path: str) -> AdapterResult:
+            """Record the staged configuration path.
+
+            Args:
+                config_path: Staged Appliance Update manifest path.
+            """
+            calls.append(config_path)
+            return AdapterResult(command=["restart-service", config_path], dry_run=False)
+
+    monkeypatch.setattr(worker, "SystemAdapter", RetryAdapter)
+
+    worker._retry_appliance_update_restart(job_id)
+
+    assert calls == []
+    with SessionLocal() as db:
+        result = json.loads(db.get(Job, job_id).result)
+    assert "restart_recovery_attempts" not in result
+
+
 def test_status_recovery_retries_pending_restoration_without_runtime_marker(
     client,
     monkeypatch,
@@ -2660,6 +2716,82 @@ def test_appliance_update_recovery_requeues_only_a_safe_pending_suffix(client):
             "pending",
             "pending",
         ]
+
+
+def test_appliance_update_recovery_keeps_running_until_helper_quiesces(
+    client,
+    monkeypatch,
+    tmp_path,
+):
+    """Keep the hierarchy and update-only surface active on quiescence failure.
+
+    Args:
+        client: HTTP test client providing isolated application state.
+        monkeypatch: Pytest fixture used to replace privileged quiescence.
+        tmp_path: Temporary directory for the runtime status marker.
+    """
+    import atlaso.app.worker as worker
+    from atlaso.app.database import SessionLocal
+    from atlaso.app.models import Job, JobStatus, JobStep
+    from atlaso.app.services.appliance_update import ensure_appliance_update_job_steps
+
+    client.get("/login")
+    job_id = "job_123456abcdef"
+    marker = tmp_path / "appliance-update-status"
+    marker.write_text(job_id, encoding="utf-8")
+    monkeypatch.setattr(worker, "APPLIANCE_UPDATE_STATUS_MARKER_PATH", marker)
+    observed = []
+
+    def refuse_quiescence(observed_job_id: str, stream: str) -> bool:
+        """Prove the child is still running when recovery requests quiescence.
+
+        Args:
+            observed_job_id: Exact parent identifier passed to the helper.
+            stream: Exact running child stream passed to the helper.
+        """
+        with SessionLocal() as inspection_db:
+            step = inspection_db.get(JobStep, f"{observed_job_id}:{stream}")
+            observed.append((observed_job_id, stream, step.status))
+        return False
+
+    monkeypatch.setattr(worker, "_quiesce_appliance_update_action", refuse_quiescence)
+    with SessionLocal() as db:
+        job = Job(
+            id=job_id,
+            type="appliance-update",
+            status=JobStatus.RUNNING.value,
+            created_by="admin",
+            task_config_json=json.dumps(
+                {
+                    "schema_version": 2,
+                    "mode": "run",
+                    "selected_streams": ["photon_os", "powershell_modules"],
+                    "execution_order": ["photon_os", "powershell_modules"],
+                    "status_transaction_id": "d" * 32,
+                }
+            ),
+            result="{}",
+        )
+        db.add(job)
+        db.flush()
+        steps = ensure_appliance_update_job_steps(
+            db,
+            job=job,
+            selected_streams=["photon_os", "powershell_modules"],
+        )
+        steps[0].status = JobStatus.RUNNING.value
+        db.commit()
+
+        assert worker.recover_interrupted_worker_jobs(db) == 0
+        assert db.get(Job, job_id).status == JobStatus.RUNNING.value
+        persisted_steps = list(db.get(Job, job_id).steps)
+
+    assert observed == [(job_id, "photon_os", JobStatus.RUNNING.value)]
+    assert [step.status for step in persisted_steps] == [
+        JobStatus.RUNNING.value,
+        JobStatus.PENDING.value,
+    ]
+    assert worker._reconcile_appliance_update_status_surface() is False
 
 
 def test_recovered_photon_prefix_retains_status_hold_until_restart(client, monkeypatch):

@@ -502,9 +502,11 @@ Terminal order:
 - Real mutating helper actions run through `systemd-run` from inside `atlaso-helper` when
   `ATLASO_HELPER_USE_SYSTEMD_RUN=1` is set. This escapes the `atlaso.service` read-only `/etc` mount namespace without
   giving the web control plane broad shell/root access. Keep that environment variable in `atlaso.service` and preserve
-  it in the Atlaso sudoers rule. Give every real helper action and nested account mutation an exact UUID-named
-  `atlaso-helper-action-*` transient service. Complete factory reset stops and verifies that bounded family after
-  stopping Atlaso callers and before inventorying delayed update restarts.
+  it in the Atlaso sudoers rule. Give every real helper action and nested account mutation an exact 32-hex-identity
+  `atlaso-helper-action-*` transient service. Ordinary actions use a fresh UUID. A single-stream Appliance Update apply
+  derives the same collision-resistant identity from its durable task and stream so startup recovery can stop and verify
+  only that surviving helper before terminalizing the child. Complete factory reset stops and verifies the whole bounded
+  family after stopping Atlaso callers and before inventorying delayed update restarts.
 - The global `/ui/management/appliance-apply` workflow remains the only ordinary host-mutation workflow. The dedicated
   complete factory-reset transaction is the sole recovery exception; it validates and activates all factory units and
   establishes matching baselines without an operator-created Apply task. Do not add
@@ -543,7 +545,8 @@ Terminal order:
   and any scheduled Photon worker restart has completed in the new worker process. Persist successful hold activation
   only after listener proof so an initial publication rollback cannot recreate a never-active marker. Bind restart
   completion to the exact task and current worker identity, and retry missing completion evidence through a bounded,
-  durable, rate-limited dispatch budget. Persist `pending` before removing the marker and `restored` only after nginx
+  durable, rate-limited dispatch budget whose initial grace begins at the persisted restart dispatch timestamp, never at
+  the long-lived worker process start. Persist `pending` before removing the marker and `restored` only after nginx
   reload and listener proof; startup and the worker must retry an interrupted restoration idempotently.
 - Submit manual Appliance Update checks and installations asynchronously from Update Streams. Refresh only the embedded
   shared Tasks grid, highlight the newly created task, and keep both task actions disabled until the active Appliance

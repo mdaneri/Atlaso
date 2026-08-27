@@ -8079,6 +8079,95 @@ def test_account_commands_use_bounded_helper_action_units(monkeypatch):
     assert stdin_commands[0][1] == "operator:secret\n"
 
 
+def test_appliance_update_apply_uses_a_fixed_task_stream_unit(monkeypatch, tmp_path):
+    """Bind a real update helper to the durable parent and child identity.
+
+    Args:
+        monkeypatch: Pytest fixture used to replace systemd execution.
+        tmp_path: Temporary directory containing the staged manifest.
+    """
+    helper = load_helper_module()
+    manifest = tmp_path / "update.json"
+    manifest.write_text(
+        json.dumps(
+            {
+                "job_id": "job_012345abcdef",
+                "selected_streams": ["photon_os"],
+            }
+        ),
+        encoding="utf-8",
+    )
+    commands = []
+    monkeypatch.setattr(
+        helper.shutil,
+        "which",
+        lambda command: "/usr/bin/systemd-run" if command == "systemd-run" else None,
+    )
+    monkeypatch.setattr(
+        helper,
+        "_appliance_update_powershell_environment",
+        lambda: {
+            "HOME": "/var/lib/atlaso/powershell",
+            "XDG_CACHE_HOME": "/var/lib/atlaso/powershell/.cache",
+            "XDG_CONFIG_HOME": "/var/lib/atlaso/powershell/.config",
+            "XDG_DATA_HOME": "/var/lib/atlaso/powershell/.local/share",
+        },
+    )
+    monkeypatch.setattr(
+        helper,
+        "_run",
+        lambda command: commands.append(command)
+        or subprocess.CompletedProcess(command, 0, "", ""),
+    )
+
+    assert helper._run_real_action_with_systemd(
+        "appliance-update",
+        "apply",
+        [str(manifest)],
+    ) == 0
+
+    unit = helper._appliance_update_action_unit_name("job_012345abcdef", "photon_os")
+    assert f"--unit={unit}" in commands[0]
+    assert re.fullmatch(r"atlaso-helper-action-[0-9a-f]{32}", unit)
+
+
+def test_appliance_update_quiescence_stops_and_verifies_the_exact_unit(monkeypatch):
+    """Stop only the interrupted task stream helper before worker recovery.
+
+    Args:
+        monkeypatch: Pytest fixture used to replace systemctl execution.
+    """
+    helper = load_helper_module()
+    commands = []
+    states = iter(["active\n", "inactive\n"])
+
+    def fake_run(command):
+        """Return bounded systemctl state transitions.
+
+        Args:
+            command: Command and arguments to execute.
+        """
+        commands.append(command)
+        if command[1] == "is-active":
+            return subprocess.CompletedProcess(command, 0, next(states), "")
+        return subprocess.CompletedProcess(command, 0, "", "")
+
+    monkeypatch.setattr(helper, "_run", fake_run)
+
+    evidence = helper._quiesce_appliance_update_action_unit(
+        "job_012345abcdef",
+        "photon_os",
+    )
+
+    unit = f"{helper._appliance_update_action_unit_name('job_012345abcdef', 'photon_os')}.service"
+    assert commands == [
+        ["systemctl", "is-active", unit],
+        ["systemctl", "stop", unit],
+        ["systemctl", "is-active", unit],
+    ]
+    assert evidence == {"unit": unit, "state": "inactive", "stopped": True}
+
+
 @pytest.mark.parametrize(
     "action",
     [

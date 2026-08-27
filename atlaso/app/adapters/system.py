@@ -983,6 +983,25 @@ class SystemAdapter:
         """
         return self._helper_result("appliance-update", "restart-service", config_path, dry_run_message="dry-run: Atlaso service restart command recorded")
 
+    def quiesce_appliance_update_action(self, job_id: str, stream: str) -> AdapterResult:
+        """Stop and verify the exact interrupted Appliance Update helper action.
+
+        Args:
+            job_id: Exact Appliance Update parent identifier.
+            stream: Update stream whose fixed-identity helper may have survived.
+
+        Returns:
+            The privileged helper-quiescence result.
+        """
+        return self._helper_result(
+            "appliance-update",
+            "quiesce-action",
+            job_id,
+            stream,
+            dry_run_message="dry-run: Appliance Update helper quiescence recorded",
+            timeout_seconds=30,
+        )
+
     def publish_appliance_update_status(self, job_id: str) -> AdapterResult:
         """Publish the root-owned update-only browser surface.
 
