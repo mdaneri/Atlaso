@@ -35,6 +35,67 @@ param(
 
 $ErrorActionPreference = 'Stop'
 Set-StrictMode -Version Latest
+
+<#
+.SYNOPSIS
+Returns the stable Windows file identifier for an owned smoke path.
+.PARAMETER Path
+Existing file or directory whose identity must be captured.
+#>
+function Get-AtlasoWindowsFileId {
+    param([Parameter(Mandatory = $true)][string]$Path)
+
+    $output = @(& fsutil file queryfileid $Path 2>&1)
+    $fileIdMatches = @([regex]::Matches(($output -join "`n"), '0x[0-9A-Fa-f]+'))
+    if ($LASTEXITCODE -ne 0 -or $fileIdMatches.Count -ne 1) {
+        throw "Could not resolve one stable Windows file ID for: $Path"
+    }
+    return $fileIdMatches[0].Value.ToLowerInvariant()
+}
+
+<#
+.SYNOPSIS
+Revalidates the exact VMware smoke VM filesystem identity.
+.PARAMETER DirectoryPath
+Invocation-owned VM directory.
+.PARAMETER VmxPath
+Exact imported VMX path.
+.PARAMETER Name
+Expected VMware display name.
+.PARAMETER DirectoryId
+Captured directory file ID.
+.PARAMETER VmxId
+Captured VMX file ID.
+#>
+function Assert-AtlasoVmwareVmIdentity {
+    param(
+        [Parameter(Mandatory = $true)][string]$DirectoryPath,
+        [Parameter(Mandatory = $true)][string]$VmxPath,
+        [Parameter(Mandatory = $true)][string]$Name,
+        [Parameter(Mandatory = $true)][string]$DirectoryId,
+        [Parameter(Mandatory = $true)][string]$VmxId
+    )
+
+    foreach ($path in @($DirectoryPath, $VmxPath)) {
+        $item = Get-Item -LiteralPath $path -Force -ErrorAction Stop
+        if (($item.Attributes -band [System.IO.FileAttributes]::ReparsePoint) -ne 0) {
+            throw "VMware smoke identity traverses a reparse point: $path"
+        }
+    }
+    if ((Get-AtlasoWindowsFileId -Path $DirectoryPath) -ne $DirectoryId -or
+        (Get-AtlasoWindowsFileId -Path $VmxPath) -ne $VmxId) {
+        throw 'The invocation-owned VMware smoke filesystem identity changed.'
+    }
+    $vmxFiles = @(Get-ChildItem -LiteralPath $DirectoryPath -Filter '*.vmx' -File -Recurse -Force)
+    if ($vmxFiles.Count -ne 1 -or $vmxFiles[0].FullName -ine $VmxPath) {
+        throw 'The invocation-owned VMware smoke directory has an unexpected VMX set.'
+    }
+    $displayNamePattern = '^displayName = "' + [regex]::Escape($Name) + '"$'
+    if (-not (Select-String -LiteralPath $VmxPath -Pattern $displayNamePattern -Quiet)) {
+        throw 'The invocation-owned VMware smoke VMX has an unexpected display name.'
+    }
+}
+
 $repoRoot = (Resolve-Path -LiteralPath (Join-Path $PSScriptRoot '..\..\..')).Path
 if ($Name -notmatch '^[A-Za-z0-9][A-Za-z0-9_.-]{0,63}$') {
     throw 'VMware smoke-test Name must be one safe filesystem component.'
@@ -116,6 +177,8 @@ foreach ($ownedDirectory in @($vmRoot, $validationRoot)) {
     }
 }
 $vmStarted = $false
+$vmRootId = ''
+$vmxId = ''
 try {
     $contractOutput = @(& $python `
             (Join-Path $repoRoot 'scripts\virtualization\validate_ova.py') `
@@ -172,6 +235,10 @@ try {
     if ($LASTEXITCODE -ne 0 -or -not (Test-Path -LiteralPath $vmxPath -PathType Leaf)) {
         throw 'VMware OVF Tool did not create the expected disposable VMX.'
     }
+    $vmRootId = Get-AtlasoWindowsFileId -Path $vmRoot
+    $vmxId = Get-AtlasoWindowsFileId -Path $vmxPath
+    Assert-AtlasoVmwareVmIdentity -DirectoryPath $vmRoot -VmxPath $vmxPath `
+        -Name $Name -DirectoryId $vmRootId -VmxId $vmxId
     & $vmrun -T ws start $vmxPath nogui | Out-Null
     if ($LASTEXITCODE -ne 0) {
         throw 'vmrun could not start the imported OVA.'
@@ -209,7 +276,17 @@ try {
 finally {
     $vmRootSafeToRemove = $true
     $cleanupFailure = ''
-    if ($vmStarted) {
+    if ($vmxId -and $vmRootId) {
+        try {
+            Assert-AtlasoVmwareVmIdentity -DirectoryPath $vmRoot -VmxPath $vmxPath `
+                -Name $Name -DirectoryId $vmRootId -VmxId $vmxId
+        }
+        catch {
+            $vmRootSafeToRemove = $false
+            $cleanupFailure = "VMware smoke identity changed; its files were preserved. $($_.Exception.Message)"
+        }
+    }
+    if ($vmStarted -and $vmRootSafeToRemove) {
         & $vmrun -T ws stop $vmxPath hard 2>$null | Out-Null
         if ($LASTEXITCODE -ne 0) {
             $vmRootSafeToRemove = $false
@@ -224,6 +301,8 @@ finally {
         }
     }
     if ($vmRootSafeToRemove -and (Test-Path -LiteralPath $vmxPath)) {
+        Assert-AtlasoVmwareVmIdentity -DirectoryPath $vmRoot -VmxPath $vmxPath `
+            -Name $Name -DirectoryId $vmRootId -VmxId $vmxId
         & $vmrun -T ws deleteVM $vmxPath 2>$null | Out-Null
         if ($LASTEXITCODE -ne 0) {
             $vmRootSafeToRemove = $false
@@ -240,6 +319,12 @@ finally {
         }
     }
     if ($vmRootSafeToRemove -and (Test-Path -LiteralPath $vmRoot)) {
+        $rootItem = Get-Item -LiteralPath $vmRoot -Force
+        if (($rootItem.Attributes -band [System.IO.FileAttributes]::ReparsePoint) -ne 0 -or
+            (Get-AtlasoWindowsFileId -Path $vmRoot) -ne $vmRootId -or
+            @(Get-ChildItem -LiteralPath $vmRoot -Filter '*.vmx' -File -Recurse -Force).Count -ne 0) {
+            throw 'VMware smoke root identity changed after provider deletion; its files were preserved.'
+        }
         Remove-Item -LiteralPath $vmRoot -Recurse -Force
     }
     if (Test-Path -LiteralPath $validationRoot) {
