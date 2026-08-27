@@ -16,6 +16,24 @@ RELEASE_WORKFLOW = ROOT / ".github/workflows/release.yml"
 
 
 @pytest.mark.parametrize("path", (KVM_HELPER, PROXMOX_HELPER, LINUX_SMOKE))
+def test_linux_release_helpers_are_git_executable(path: Path) -> None:
+    """Release workflows can execute every shipped Linux helper directly.
+
+    Args:
+        path: Tracked helper whose Git mode is part of the release contract.
+    """
+
+    result = subprocess.run(
+        ["git", "ls-files", "--stage", "--", path.relative_to(ROOT).as_posix()],
+        cwd=ROOT,
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+    assert result.stdout.startswith("100755 ")
+
+
+@pytest.mark.parametrize("path", (KVM_HELPER, PROXMOX_HELPER, LINUX_SMOKE))
 def test_import_helpers_are_valid_posix_shell(path: Path) -> None:
     """Both versioned release helpers remain parseable without executing host mutation.
 
@@ -124,9 +142,11 @@ def test_linux_smoke_imports_reboots_validates_and_bounds_cleanup() -> None:
     assert 'virsh dominfo "$identifier"' in script
     assert 'owned=1' in script
     kvm_import = script.index('"$template_root/import-atlaso-kvm.sh"')
-    kvm_owned = script.index("owned=1", kvm_import)
     disk_inventory = script.index('virsh domblklist "$identifier"', kvm_import)
-    assert kvm_import < kvm_owned < disk_inventory
+    volume_capture = script.index('virsh vol-name "$disk_path"', disk_inventory)
+    kvm_owned = script.index("owned=1", volume_capture)
+    assert kvm_import < disk_inventory < volume_capture < kvm_owned
+    assert 'disk_inventory=$(virsh domblklist "$identifier" --details' in script
     assert 'qm destroy "$identifier" --purge 1 --destroy-unreferenced-disks 1' in script
     assert 'virsh vol-delete --pool "$storage" "$volume"' in script
     cleanup = script.split("cleanup() {", 1)[1].split("qga_ping() {", 1)[0]

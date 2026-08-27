@@ -97,18 +97,21 @@ try {
         throw 'The Hyper-V ZIP does not contain Import-Atlaso.ps1.'
     }
     $importAttempted = $true
-    & $importer `
-        -Name $Name `
-        -ManagementSwitch $ManagementSwitch `
-        -ServiceSwitch $ServiceSwitch `
-        -DestinationRoot $vmRoot `
-        -Start | Out-Null
-    $vmCreated = $true
-    $createdVmMatches = @(Get-VM -Name $Name -ErrorAction Stop)
-    if ($createdVmMatches.Count -ne 1) {
-        throw 'The Hyper-V smoke importer did not create exactly one expected virtual machine.'
+    $createdVmMatches = @(
+        & $importer `
+            -Name $Name `
+            -ManagementSwitch $ManagementSwitch `
+            -ServiceSwitch $ServiceSwitch `
+            -DestinationRoot $vmRoot `
+            -Start
+    )
+    if ($createdVmMatches.Count -ne 1 -or
+        [string]$createdVmMatches[0].Name -cne $Name -or
+        [string]$createdVmMatches[0].Id -notmatch '^[0-9a-fA-F-]{36}$') {
+        throw 'The Hyper-V smoke importer did not return one exact created virtual-machine identity.'
     }
     $createdVm = $createdVmMatches[0]
+    $vmCreated = $true
     $deadline = [DateTimeOffset]::UtcNow.AddMinutes(15)
     $address = ''
     $access = $null
