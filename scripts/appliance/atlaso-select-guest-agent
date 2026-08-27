@@ -192,7 +192,16 @@ if [ -f "$SUCCESS_MARKER" ]; then
     fail "Guest-agent marker platform conflicts with current evidence: marker=$marker_platform detected=$detected_platform"
   [ -f "$MACHINE_IDENTITY_INITIALIZER" ] && [ ! -L "$MACHINE_IDENTITY_INITIALIZER" ] ||
     fail "Machine-identity initializer is missing or unsafe."
-  "$MACHINE_IDENTITY_INITIALIZER" --platform "$marker_platform" --clear-access
+  if [ "$marker_platform" = "hyperv" ]; then
+    # The KVP daemon caches its pool. Keep it stopped while removing Atlaso's
+    # one-time record, then reload the retained pool before serving the host.
+    systemctl stop hv_kvp_daemon.service
+    "$MACHINE_IDENTITY_INITIALIZER" --platform "$marker_platform" --clear-access
+    systemctl start hv_kvp_daemon.service
+    systemctl is-active --quiet hv_kvp_daemon.service
+  else
+    "$MACHINE_IDENTITY_INITIALIZER" --platform "$marker_platform" --clear-access
+  fi
   # A durable marker proves the provider transaction completed. Retrying the
   # cleanup here closes the power-loss window between that commit and erasure.
   cleanup_staging
@@ -244,7 +253,11 @@ case "$platform" in
     remove_packages '^qemu-guest-agent$|^atlaso-qemu-guest-agent$'
     install_profile hyperv
     systemctl daemon-reload
-    for service in hv_kvp_daemon.service hv_fcopy_daemon.service hv_vss_daemon.service; do
+    # hv_kvp_daemon reads its pool only at startup. Enable it now but leave it
+    # stopped until the initializer has atomically published Atlaso's record.
+    systemctl enable hv_kvp_daemon.service
+    systemctl is-enabled --quiet hv_kvp_daemon.service
+    for service in hv_fcopy_daemon.service hv_vss_daemon.service; do
       systemctl enable --now "$service"
       systemctl is-active --quiet "$service"
     done
@@ -273,6 +286,12 @@ esac
 [ -f "$MACHINE_IDENTITY_INITIALIZER" ] && [ ! -L "$MACHINE_IDENTITY_INITIALIZER" ] ||
   fail "Machine-identity initializer is missing or unsafe."
 "$MACHINE_IDENTITY_INITIALIZER" --platform "$platform"
+if [ "$platform" = "hyperv" ]; then
+  # Starting after publication makes the new pool visible to the host and
+  # keeps failure retryable before the durable success marker is committed.
+  systemctl start hv_kvp_daemon.service
+  systemctl is-active --quiet hv_kvp_daemon.service
+fi
 
 marker_tmp=$(mktemp "${SUCCESS_MARKER}.new.XXXXXX")
 trap 'rm -f -- "$marker_tmp"' EXIT HUP INT TERM

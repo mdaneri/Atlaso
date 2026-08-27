@@ -110,7 +110,7 @@ esac
     initializer = tmp_path / "atlaso-initialize-machine-identity"
     _write_executable(
         initializer,
-        "#!/bin/sh\nprintf '%s\\n' \"$*\" >\"$FAKE_MACHINE_IDENTITY_LOG\"\n",
+        "#!/bin/sh\nprintf '%s\\n' \"$*\" >\"$FAKE_MACHINE_IDENTITY_LOG\"\nprintf 'initialize %s\\n' \"$*\" >>\"$FAKE_SYSTEMCTL_LOG\"\n",
     )
 
     staging = tmp_path / "first-boot-packages"
@@ -223,6 +223,11 @@ def test_selects_one_provider_and_erases_staging(
     if detected in {"kvm", "microsoft"}:
         rpm_log = Path(environment["FAKE_RPM_LOG"]).read_text(encoding="utf-8")
         assert rpm_log.index("-e open-vm-tools") < rpm_log.index("-Uvh")
+    if detected == "microsoft":
+        service_log = Path(environment["FAKE_SYSTEMCTL_LOG"]).read_text(encoding="utf-8")
+        assert "enable --now hv_kvp_daemon.service" not in service_log
+        assert service_log.index("enable hv_kvp_daemon.service") < service_log.index("initialize --platform hyperv")
+        assert service_log.index("initialize --platform hyperv") < service_log.index("start hv_kvp_daemon.service")
 
 
 @pytest.mark.parametrize(
@@ -325,3 +330,33 @@ def test_success_marker_is_revalidated_against_current_platform(tmp_path: Path) 
     conflict = _run_selector(environment)
     assert conflict.returncode == 2
     assert "conflicts with current evidence" in conflict.stderr
+
+
+def test_hyperv_access_cleanup_reloads_kvp_after_record_removal(tmp_path: Path) -> None:
+    """A completed Hyper-V boot reloads KVP only after access is cleared.
+
+    Args:
+        tmp_path: Temporary directory provided by pytest.
+    """
+
+    environment = _prepare_runtime(
+        tmp_path,
+        platform="microsoft",
+        dmi="Microsoft Corporation",
+        packages=("open-vm-tools",),
+    )
+    first = _run_selector(environment)
+    assert first.returncode == 0, first.stderr
+    log_path = Path(environment["FAKE_SYSTEMCTL_LOG"])
+    log_path.write_text("", encoding="utf-8")
+
+    second = _run_selector(environment)
+
+    assert second.returncode == 0, second.stderr
+    service_log = log_path.read_text(encoding="utf-8")
+    assert service_log.index("stop hv_kvp_daemon.service") < service_log.index(
+        "initialize --platform hyperv --clear-access"
+    )
+    assert service_log.index("initialize --platform hyperv --clear-access") < service_log.index(
+        "start hv_kvp_daemon.service"
+    )
