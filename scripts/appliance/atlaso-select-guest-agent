@@ -4,7 +4,7 @@ set -eu
 STAGING_DIRECTORY="${ATLASO_GUEST_AGENT_STAGING:-/var/lib/atlaso/first-boot-packages}"
 MANIFEST_PATH="$STAGING_DIRECTORY/SHA256SUMS"
 RUNTIME_DIRECTORY="${ATLASO_GUEST_AGENT_RUNTIME:-/run/atlaso-guest-agent}"
-SUCCESS_MARKER="${ATLASO_GUEST_AGENT_MARKER:-/var/lib/atlaso/guest-agent.applied}"
+SUCCESS_MARKER="${ATLASO_GUEST_AGENT_MARKER:-/var/lib/atlaso-privileged/guest-agent/guest-agent.applied}"
 DMI_ROOT="${ATLASO_DMI_ROOT:-/sys/class/dmi/id}"
 EXPECTED_STAGING_IDENTITY="${ATLASO_GUEST_AGENT_STAGING_IDENTITY:-root:root:700}"
 PACKAGE_CACHE_DIRECTORY="${ATLASO_GUEST_AGENT_PACKAGE_CACHE:-/var/cache/tdnf}"
@@ -26,6 +26,11 @@ esac
 expected_owner=${EXPECTED_STAGING_IDENTITY%%:*}
 expected_group_and_mode=${EXPECTED_STAGING_IDENTITY#*:}
 expected_group=${expected_group_and_mode%%:*}
+marker_parent=$(dirname -- "$SUCCESS_MARKER")
+[ -d "$marker_parent" ] && [ ! -L "$marker_parent" ] ||
+  fail "Guest-agent success marker parent is missing or unsafe."
+[ "$(stat -c '%U:%G:%a' "$marker_parent")" = "$expected_owner:$expected_group:700" ] ||
+  fail "Guest-agent success marker parent ownership or mode is unsafe."
 
 for managed_path in "$STAGING_DIRECTORY" "$RUNTIME_DIRECTORY" "$SUCCESS_MARKER" "$DMI_ROOT" "$PACKAGE_CACHE_DIRECTORY"; do
   case "$managed_path" in

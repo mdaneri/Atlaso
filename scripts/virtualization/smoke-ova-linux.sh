@@ -183,7 +183,7 @@ validate_guest() {
     set -eu
     test "$(find /sys/class/net -mindepth 1 -maxdepth 1 ! -name lo | wc -l)" -eq 2
     test "$(lsblk -dn -o TYPE | awk '\''$1 == "disk" { count++ } END { print count + 0 }'\'')" -eq 4
-    grep -qx "platform=qemu" /var/lib/atlaso/guest-agent.applied
+    grep -qx "platform=qemu" /var/lib/atlaso-privileged/guest-agent/guest-agent.applied
     test ! -e /var/lib/atlaso/first-boot-packages
     rpm -q atlaso-qemu-guest-agent >/dev/null
     ! rpm -q open-vm-tools >/dev/null 2>&1

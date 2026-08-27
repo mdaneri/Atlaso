@@ -114,7 +114,10 @@ def test_linux_smoke_imports_reboots_validates_and_bounds_cleanup() -> None:
     assert 'cleanup_failed=1' in script
     assert 'exit "$exit_status"' in script
     assert '|| true' not in script.split('cleanup() {', 1)[1].split('qga_ping() {', 1)[0]
-    assert 'grep -qx "platform=qemu" /var/lib/atlaso/guest-agent.applied' in script
+    assert (
+        'grep -qx "platform=qemu" '
+        "/var/lib/atlaso-privileged/guest-agent/guest-agent.applied"
+    ) in script
     assert 'test ! -e /var/lib/atlaso/first-boot-packages' in script
     assert 'systemctl is-active --quiet qemu-guest-agent.service' in script
     assert 'systemctl is-active --quiet atlaso-worker.service' in script

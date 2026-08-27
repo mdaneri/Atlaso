@@ -137,10 +137,17 @@ def test_guest_agent_success_marker_makes_cleanup_retryable() -> None:
     """Commit provider success before erasure and retry an interrupted cleanup."""
 
     selector = Path("scripts/appliance/atlaso-select-guest-agent").read_text(encoding="utf-8")
+    provision = Path("image/common/scripts/provision-atlaso.sh").read_text(encoding="utf-8")
     existing_marker = selector.index('if [ -f "$SUCCESS_MARKER" ]; then')
     retry_cleanup = selector.index("cleanup_staging", existing_marker)
     already_completed = selector.index('log "Guest-agent selection already completed."', existing_marker)
     publish_marker = selector.rindex('mv -f -- "$marker_tmp" "$SUCCESS_MARKER"')
+    assert 'stat -c \'%U:%G:%a\' "$marker_parent"' in selector
+    assert "success marker parent ownership or mode is unsafe" in selector
+    assert (
+        "install -d -o root -g root -m 0700 "
+        "/var/lib/atlaso-privileged/guest-agent"
+    ) in provision
     final_cleanup = selector.rindex("cleanup_staging")
 
     assert retry_cleanup < already_completed

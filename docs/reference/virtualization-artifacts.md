@@ -168,7 +168,9 @@ repository.
 Successful selection proves that only the expected agent is installed, then securely removes the RPM staging tree,
 checksum manifest, package-manager cache, and runtime scratch directory. Failure leaves the verified persistent RPM
 closure available for automatic retry while the Atlaso front door and application remain stopped.
-The selector's success marker is the only first-boot transaction commit. An interruption before that commit reruns
+The selector's success marker is the only first-boot transaction commit. It is stored under the root-only
+`/var/lib/atlaso-privileged/guest-agent` boundary, whose ownership and mode are revalidated before the marker is trusted.
+An interruption before that commit reruns
 identity initialization, generates a fresh credential set, and republishes its matching one-time envelope before
 networking. The retry never exposes a password whose corresponding host state was replaced.
 

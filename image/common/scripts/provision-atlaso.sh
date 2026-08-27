@@ -389,6 +389,7 @@ install -d -o atlaso -g atlaso -m 0750 "$ATLASO_STATE"
 install -d -o root -g atlaso -m 0750 /var/lib/atlaso-privileged
 install -d -o root -g atlaso -m 0750 /var/lib/atlaso-privileged/factory-reset
 install -d -o root -g root -m 0700 /var/lib/atlaso-privileged/management-front-door
+install -d -o root -g root -m 0700 /var/lib/atlaso-privileged/guest-agent
 install -d -o atlaso -g atlaso -m 0750 "$ATLASO_STATE/apply/firewall"
 install -d -o atlaso -g atlaso -m 0750 "$ATLASO_STATE/apply/dnsmasq"
 install -d -o atlaso -g atlaso -m 0750 "$ATLASO_STATE/apply/kms"

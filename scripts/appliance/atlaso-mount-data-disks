@@ -11,7 +11,7 @@ SCSI_GENERIC_SYS_ROOT="${ATLASO_DATA_DISK_SCSI_GENERIC_SYS_ROOT:-/sys/class/scsi
 BSG_DEVICE_ROOT="${ATLASO_DATA_DISK_BSG_DEVICE_ROOT:-/dev/bsg}"
 BSG_SYS_ROOT="${ATLASO_DATA_DISK_BSG_SYS_ROOT:-/sys/class/bsg}"
 RAW_DEVICE_ROOT="${ATLASO_DATA_DISK_RAW_DEVICE_ROOT:-/dev/raw}"
-GUEST_AGENT_MARKER_PATH="${ATLASO_GUEST_AGENT_MARKER_PATH:-/var/lib/atlaso/guest-agent.applied}"
+GUEST_AGENT_MARKER_PATH="${ATLASO_GUEST_AGENT_MARKER_PATH:-/var/lib/atlaso-privileged/guest-agent/guest-agent.applied}"
 
 log() {
   printf '%s\n' "$*"
