@@ -4460,6 +4460,9 @@ def test_release_activation_verification_requires_exact_candidate_through_nginx(
     monkeypatch.setattr(helper, "ATLASO_CURRENT_LINK", current)
     monkeypatch.setattr(helper, "ATLASO_VENV_LINK", venv)
     monkeypatch.setattr(helper, "ATLASO_UPDATE_MAINTENANCE_PATH", tmp_path / "maintenance")
+    status_marker = tmp_path / "update-status-marker"
+    status_marker.write_text("job_0123456789ab\n", encoding="utf-8")
+    monkeypatch.setattr(helper, "ATLASO_UPDATE_STATUS_MARKER_PATH", status_marker)
     monkeypatch.setattr(
         helper,
         "_nginx_test_command",
@@ -4488,14 +4491,18 @@ def test_release_activation_verification_requires_exact_candidate_through_nginx(
         ),
     )
 
-    def version_check(*, layer, expected_version, **_kwargs):
+    observed_urls = {}
+
+    def version_check(*, layer, expected_version, url, **_kwargs):
         """Return exact candidate-version readiness for either endpoint.
 
         Args:
             layer: Stable readiness layer represented by the probe.
             expected_version: Candidate version expected from the endpoint.
+            url: Endpoint used for the readiness probe.
             **_kwargs: Additional endpoint probe options.
         """
+        observed_urls[layer] = url
         return helper._release_check(
             layer,
             True,
@@ -4525,6 +4532,20 @@ def test_release_activation_verification_requires_exact_candidate_through_nginx(
         "failure_layer": "",
     }
     assert all(check["success"] for check in checks)
+    assert observed_urls == {
+        "internal_openapi": "http://127.0.0.1:8000/openapi.json",
+        "management_front_door": (
+            "https://127.0.0.1"
+            f"{helper.ATLASO_UPDATE_READINESS_PATH}"
+        ),
+    }
+
+    status_marker.unlink()
+    observed_urls.clear()
+    evidence, checks = helper._release_activation_verification(release_root, release)
+    assert evidence["success"] is True
+    assert all(check["success"] for check in checks)
+    assert observed_urls["management_front_door"] == "https://127.0.0.1/openapi.json"
 
 
 @pytest.mark.parametrize("failure_stage", ["", "maintenance_cleanup", "management_front_door", "finalizer_persistence"])

@@ -254,6 +254,7 @@ ATLASO_UPDATE_STATUS_HTML_PATH = Path("/run/atlaso-appliance-update-status.html"
 ATLASO_UPDATE_STATUS_NGINX_INCLUDE_PATH = Path(
     "/etc/atlaso/nginx/includes/appliance-update-status.conf"
 )
+ATLASO_UPDATE_READINESS_PATH = "/__atlaso_appliance_update_readiness_openapi"
 ATLASO_UPDATE_RESTART_GATE_PATH = Path("/run/atlaso-release-restart-gate")
 ATLASO_WORKER_STARTUP_STATUS_PATH = ATLASO_STATE_DIR / "worker-startup.json"
 ATLASO_POWERSHELL_HOME = ATLASO_STATE_DIR / "powershell"
@@ -14610,16 +14611,56 @@ def _site_with_update_status_guards(text: str, *, default_management: bool) -> s
     include_line = f"include {ATLASO_UPDATE_STATUS_NGINX_INCLUDE_PATH};"
     for server, end in reversed(_management_site_server_ranges(guarded)):
         block = guarded[server.start():end]
+        indent = f"{server.group('indent')}  "
+        server_condition = f"{indent}if (-f {ATLASO_UPDATE_STATUS_MARKER_PATH}) {{ return 418; }}"
+        if default_management and ATLASO_UPDATE_READINESS_PATH not in block:
+            legacy_start = -1
+            search_start = 0
+            while True:
+                candidate = block.find(server_condition, search_start)
+                if candidate < 0:
+                    break
+                prefix = block[:candidate]
+                if prefix.count("{") - prefix.count("}") == 1:
+                    legacy_start = candidate
+                    break
+                search_start = candidate + len(server_condition)
+            if legacy_start >= 0:
+                legacy_end = legacy_start + len(server_condition)
+                if block[legacy_end:legacy_end + 2] == "\r\n":
+                    legacy_end += 2
+                elif block[legacy_end:legacy_end + 1] == "\n":
+                    legacy_end += 1
+                absolute_start = server.start() + legacy_start
+                absolute_end = server.start() + legacy_end
+                guarded = guarded[:absolute_start] + guarded[absolute_end:]
+                end -= absolute_end - absolute_start
+                block = guarded[server.start():end]
         line_end = guarded.find("\n", server.end())
         insertion = len(guarded) if line_end < 0 else line_end + 1
-        indent = f"{server.group('indent')}  "
-        server_condition = (
-            f"{indent}if (-f {ATLASO_UPDATE_STATUS_MARKER_PATH}) {{ return 418; }}"
-        )
         additions = []
         if include_line not in block:
             additions.append(f"{indent}{include_line}")
-        if re.search(rf"(?m)^{re.escape(server_condition)}$", block) is None:
+        if default_management:
+            variable = "$atlaso_appliance_update_guard"
+            trusted_guard = "\n".join(
+                [
+                    f"{indent}# Keep the release verifier on the applied listener without reopening ordinary routes.",
+                    f"{indent}set {variable} 0;",
+                    f"{indent}if (-f {ATLASO_UPDATE_STATUS_MARKER_PATH}) {{ set {variable} 1; }}",
+                    f"{indent}if ($uri = {ATLASO_UPDATE_READINESS_PATH}) {{ set {variable} 0; }}",
+                    f"{indent}if ({variable} = 1) {{ return 418; }}",
+                    f"{indent}location = {ATLASO_UPDATE_READINESS_PATH} {{",
+                    f"{indent}  allow 127.0.0.1;",
+                    f"{indent}  allow ::1;",
+                    f"{indent}  deny all;",
+                    f"{indent}  proxy_pass http://127.0.0.1:8000/openapi.json;",
+                    f"{indent}}}",
+                ]
+            )
+            if ATLASO_UPDATE_READINESS_PATH not in block:
+                additions.append(trusted_guard)
+        elif re.search(rf"(?m)^{re.escape(server_condition)}$", block) is None:
             additions.append(server_condition)
         if additions:
             guarded = (
@@ -15773,6 +15814,18 @@ def _wait_for_openapi_version(
     )
 
 
+def _release_front_door_readiness_url(url: str) -> str:
+    """Return the loopback-only nginx path used during an update hold.
+
+    Args:
+        url: Applied management-listener OpenAPI URL.
+    """
+    parsed = urlparse(url)
+    if parsed.path != "/openapi.json" or parsed.query or parsed.fragment:
+        raise ValueError("management front-door readiness URL is invalid")
+    return parsed._replace(path=ATLASO_UPDATE_READINESS_PATH).geturl()
+
+
 def _release_activation_verification(
     release_root: Path,
     release: dict,
@@ -15890,6 +15943,8 @@ def _release_activation_verification(
                 for check in readiness_checks
                 if check[0].startswith("nginx") and check[1].endswith("/openapi.json")
             )
+            if ATLASO_UPDATE_STATUS_MARKER_PATH.exists():
+                front_door_url = _release_front_door_readiness_url(front_door_url)
             checks.append(
                 _wait_for_openapi_version(
                     layer="management_front_door",

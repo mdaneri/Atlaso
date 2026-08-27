@@ -76,6 +76,15 @@ server {
     assert guarded_management.count(str(helper.ATLASO_UPDATE_STATUS_MARKER_PATH)) == 5
     assert "location = /ui/management" in guarded_management
     assert "location ^~ /ui/public/" in guarded_management
+    assert (
+        f"location = {helper.ATLASO_UPDATE_READINESS_PATH} {{"
+        in guarded_management
+    )
+    assert "allow 127.0.0.1;" in guarded_management
+    assert "allow ::1;" in guarded_management
+    assert "deny all;" in guarded_management
+    assert "proxy_pass http://127.0.0.1:8000/openapi.json;" in guarded_management
+    assert helper.ATLASO_UPDATE_READINESS_PATH not in guarded_public
     assert guarded_public.count(str(helper.ATLASO_UPDATE_STATUS_NGINX_INCLUDE_PATH)) == 2
     assert guarded_public.count(str(helper.ATLASO_UPDATE_STATUS_MARKER_PATH)) == 4
     assert "location ^~ /ca/" in guarded_public
@@ -85,6 +94,31 @@ server {
         guarded_management,
         default_management=True,
     ) == guarded_management
+
+    legacy_management = guarded_management.replace(
+        "  # Keep the release verifier on the applied listener without reopening ordinary routes.\n"
+        "  set $atlaso_appliance_update_guard 0;\n"
+        f"  if (-f {helper.ATLASO_UPDATE_STATUS_MARKER_PATH}) "
+        "{ set $atlaso_appliance_update_guard 1; }\n"
+        f"  if ($uri = {helper.ATLASO_UPDATE_READINESS_PATH}) "
+        "{ set $atlaso_appliance_update_guard 0; }\n"
+        "  if ($atlaso_appliance_update_guard = 1) { return 418; }\n"
+        f"  location = {helper.ATLASO_UPDATE_READINESS_PATH} {{\n"
+        "    allow 127.0.0.1;\n"
+        "    allow ::1;\n"
+        "    deny all;\n"
+        "    proxy_pass http://127.0.0.1:8000/openapi.json;\n"
+        "  }\n",
+        f"  if (-f {helper.ATLASO_UPDATE_STATUS_MARKER_PATH}) {{ return 418; }}\n",
+    )
+    migrated = helper._site_with_update_status_guards(
+        legacy_management,
+        default_management=True,
+    )
+    assert helper.ATLASO_UPDATE_READINESS_PATH in migrated
+    assert migrated.count(
+        f"if (-f {helper.ATLASO_UPDATE_STATUS_MARKER_PATH}) {{ return 418; }}"
+    ) == 4
 
 
 def test_update_status_include_uses_a_non_rewriting_named_location(monkeypatch):
