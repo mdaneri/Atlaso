@@ -61,6 +61,9 @@ def test_photon_wrapper_preflights_credentials_before_image_mutation() -> None:
     assert "AdminPasswordCiphertext = ConvertFrom-SecureString" in wrapper
     assert "RootPasswordCiphertext  = ConvertFrom-SecureString" in wrapper
     assert "Invoke-AtlasoBoundedStreamingProcess `" in wrapper
+    assert "$childArguments += '-BuilderStaticDnsJson'" in wrapper
+    assert "ConvertTo-Json -InputObject @($entry.Value) -Compress" in wrapper
+    assert "$BuilderStaticDns = @($transportedDns)" in wrapper
     assert "-Action 'The isolated VMware Photon image build'" in wrapper
 
     credential_preflight = wrapper.index(

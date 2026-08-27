@@ -31,6 +31,8 @@ Bounded deadline for the isolated plaintext-consuming Photon/Packer child.
 Internal current-user DPAPI credential bundle used only by the isolated child.
 .PARAMETER CredentialChild
 Internal marker proving the current process is the isolated image-build child.
+.PARAMETER BuilderStaticDnsJson
+Internal JSON transport for the non-secret builder DNS server array.
 .PARAMETER VmName
 Builder virtual-machine name.
 .PARAMETER OutputDirectory
@@ -131,6 +133,7 @@ param(
     [int]$ImageBuildTimeoutSeconds = 21600,
     [string]$CredentialBundlePath = '',
     [switch]$CredentialChild,
+    [string]$BuilderStaticDnsJson = '',
     [string]$VmName = 'Atlaso-Photon-Builder-VMware',
     [string]$OutputDirectory = '',
     [string]$SshHost = '',
@@ -202,6 +205,19 @@ if ($CredentialChild) {
         throw 'The isolated Photon credential bundle is unavailable or invalid.'
     }
     $credentialBundle = $null
+    if (-not [string]::IsNullOrWhiteSpace($BuilderStaticDnsJson)) {
+        try {
+            $transportedDns = @(ConvertFrom-Json -InputObject $BuilderStaticDnsJson)
+            if ($transportedDns.Count -eq 0 -or
+                @($transportedDns | Where-Object { $_ -isnot [string] }).Count -ne 0) {
+                throw 'Invalid builder DNS transport.'
+            }
+            $BuilderStaticDns = @($transportedDns)
+        }
+        catch {
+            throw 'The isolated Photon builder DNS transport is invalid.'
+        }
+    }
 }
 else {
     $needsOnePasswordDefaults = $null -eq $SshPassword -or $null -eq $BootstrapAdminPassword
@@ -256,7 +272,7 @@ else {
             'OnePasswordEnvironmentId', 'EnvironmentIdFile',
             'OnePasswordAccount', 'OnePasswordPython',
             'CredentialTimeoutSeconds', 'ImageBuildTimeoutSeconds',
-            'CredentialBundlePath', 'CredentialChild'
+            'CredentialBundlePath', 'CredentialChild', 'BuilderStaticDnsJson'
         )
         foreach ($entry in $PSBoundParameters.GetEnumerator()) {
             if ($entry.Key -in $excludedParameters) {
@@ -268,11 +284,15 @@ else {
                 }
                 continue
             }
-            $childArguments += "-$($entry.Key)"
             if ($entry.Value -is [array]) {
-                $childArguments += @($entry.Value | ForEach-Object { $_.ToString() })
+                if ($entry.Key -cne 'BuilderStaticDns') {
+                    throw "Unsupported isolated Photon array parameter: $($entry.Key)."
+                }
+                $childArguments += '-BuilderStaticDnsJson'
+                $childArguments += ConvertTo-Json -InputObject @($entry.Value) -Compress
             }
             else {
+                $childArguments += "-$($entry.Key)"
                 $childArguments += $entry.Value.ToString()
             }
         }
