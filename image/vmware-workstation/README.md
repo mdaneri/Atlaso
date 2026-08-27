@@ -104,9 +104,10 @@ userspace headers separately from the compiler. The QEMU configuration probe inc
 sizes; without `linux-api-headers`, the missing `linux/limits.h` compile error is otherwise reported as a misleading GLib
 metadata mismatch. A configure failure prints only the bounded tail of QEMU's Meson log and never dumps the guest
 environment. The RPM builder copies QEMU 10.2's linked guest agent from its `build/qga` target directory.
-Because that Atlaso-built RPM is not a repository-signed package, only its local closure-download transaction bypasses
-the repository GPG check; Photon repository dependencies retain their normal signature checks, and the completed
-root-owned offline closure remains bound by its generated SHA-256 manifest.
+Because that Atlaso-built RPM is not a repository-signed package, the provisioner downloads its `glib` and `systemd`
+runtime dependency closure in a separate signature-checked Photon transaction, then stages the pinned local RPM
+directly. No transaction bypasses repository GPG checks, and the completed root-owned offline closure remains bound by
+its generated SHA-256 manifest.
 
 Packer also stages the shared udev disk-identity rule and virtualization data-disk policy. The shared provisioner validates
 and installs both from the staged source tree before the application sync populates `/opt/atlaso`, so this early

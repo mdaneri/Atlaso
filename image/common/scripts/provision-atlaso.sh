@@ -296,12 +296,13 @@ fi
 qemu_rpm="$(find "$qemu_rpm_output" -maxdepth 1 -type f -name 'atlaso-qemu-guest-agent-*.rpm')"
 run_tdnf "Photon Hyper-V offline RPM closure" \
   install --downloadonly --downloaddir "$GUEST_AGENT_STAGING/hyperv" --alldeps hyper-v
-# The local RPM is built above from Atlaso's pinned, hash-verified QEMU source.
-# Bypass repository signing only for that exact local package while retaining
-# ordinary signature checks for every repository package in its closure; the
-# completed closure is then bound by the root-owned SHA-256 manifest below.
-run_tdnf "Photon QEMU guest-agent offline RPM closure" \
-  install --nogpgcheck --downloadonly --downloaddir "$GUEST_AGENT_STAGING/qemu" --alldeps "$qemu_rpm"
+# Resolve the local RPM's signed runtime dependencies independently so an
+# unsigned Atlaso-built package can never weaken Photon repository verification.
+run_tdnf "Photon QEMU guest-agent signed dependency closure" \
+  install --downloadonly --downloaddir "$GUEST_AGENT_STAGING/qemu" --alldeps glib systemd
+# The local RPM is built above from Atlaso's pinned, hash-verified QEMU source;
+# stage it directly beside the signed dependency closure and bind every byte in
+# the combined result to the root-owned SHA-256 manifest below.
 install -o root -g root -m 0600 "$qemu_rpm" "$GUEST_AGENT_STAGING/qemu/$(basename "$qemu_rpm")"
 rm -rf "$qemu_rpm_output"
 if [ "$(find "$GUEST_AGENT_STAGING/hyperv" -maxdepth 1 -type f -name '*.rpm' | wc -l)" -eq 0 ] ||

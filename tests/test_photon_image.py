@@ -1383,15 +1383,16 @@ def test_photon_build_installs_the_complete_qemu_build_toolchain() -> None:
     assert "gcc-c++" not in package_install
     assert "gcc-c++" not in package_removal
     assert (
-        'install --nogpgcheck --downloadonly --downloaddir '
-        '"$GUEST_AGENT_STAGING/qemu" --alldeps "$qemu_rpm"'
+        'install --downloadonly --downloaddir "$GUEST_AGENT_STAGING/qemu" '
+        "--alldeps glib systemd"
         in provision
     )
     assert (
-        'install --nogpgcheck --downloadonly --downloaddir '
-        '"$GUEST_AGENT_STAGING/hyperv"'
-        not in provision
+        'install -o root -g root -m 0600 "$qemu_rpm" '
+        '"$GUEST_AGENT_STAGING/qemu/$(basename "$qemu_rpm")"'
+        in provision
     )
+    assert "--nogpgcheck" not in provision
     assert (
         "find hyperv qemu -type f -name '*.rpm' -print | LC_ALL=C sort | "
         "xargs sha256sum >SHA256SUMS"
