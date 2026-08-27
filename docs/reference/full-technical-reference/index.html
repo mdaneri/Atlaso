@@ -5238,7 +5238,9 @@ marker phases also cover VM start and artifact removal. An unproven termination 
 reused disks quarantined during removal, until a Windows host restart proves that child tree is gone. Every post-staging
 VMware operation is also bounded. A durable, non-secret per-user cleanup marker is published through a Windows
 write-through atomic rename before signer staging and is bound to a non-secret VMX identity that survives VMware's
-legitimate power-on file replacement. After encrypted-import proof, the wrapper stops the exact VM, removes and proves
+legitimate power-on file replacement. The wrapper publishes that identity through a write-excluding handle only after
+checking the caller-bound filesystem identity, appends it without replacing or truncating the pre-marker VMX, and
+flushes it before publishing the marker. After encrypted-import proof, the wrapper stops the exact VM, removes and proves
 the powered-off VMX signer assignment absent, restarts the VM, and proves VMware's runtime value remains empty before
 retiring the marker. The next validated wrapper invocation resumes an interrupted finalization or exact rollback before
 any network or VM mutation; the marker is write-through transitioned to a non-actionable tombstone before deletion only
