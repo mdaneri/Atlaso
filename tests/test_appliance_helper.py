@@ -533,6 +533,87 @@ def test_release_status_completion_accepts_only_a_proven_pretransaction_failure(
         helper._verify_release_status_completion(snapshot, "job_0123456789ab")
 
 
+def test_release_status_completion_ignores_a_stale_finalizer_before_transaction(
+    monkeypatch,
+    tmp_path,
+):
+    """Ignore a prior transaction only when the current failure is proven preflight.
+
+    Args:
+        monkeypatch: Pytest fixture used to isolate release evidence and services.
+        tmp_path: Temporary directory used for release evidence.
+    """
+    helper = load_helper_module()
+    finalizer = tmp_path / "finalizer.json"
+    finalizer.write_text(
+        json.dumps({"job_id": "job_prior_release", "status": "succeeded"}),
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(helper, "ATLASO_UPDATE_FINALIZER_PATH", finalizer)
+    monkeypatch.setattr(helper, "APPLIANCE_UPDATE_INFO_PATH", tmp_path / "missing-info.json")
+    monkeypatch.setattr(helper, "ATLASO_UPDATE_MAINTENANCE_PATH", tmp_path / "maintenance")
+    restart_gate = tmp_path / "gate"
+    monkeypatch.setattr(helper, "ATLASO_UPDATE_RESTART_GATE_PATH", restart_gate)
+    monkeypatch.setattr(helper, "_service_command", lambda *_args: {"success": True})
+    snapshot = {
+        "children": [
+            {
+                "component_key": "atlaso_release",
+                "status": "failed",
+                "apply_started": True,
+            }
+        ]
+    }
+
+    helper._verify_release_status_completion(snapshot, "job_current_release")
+
+    restart_gate.touch()
+    with pytest.raises(ValueError, match="update-info is unavailable"):
+        helper._verify_release_status_completion(snapshot, "job_current_release")
+
+
+@pytest.mark.parametrize("action", ["status-publish", "status-finish"])
+def test_appliance_update_status_mutations_use_bounded_helper_action_units(
+    monkeypatch,
+    action,
+):
+    """Dispatch status-file and nginx mutations outside the worker namespace.
+
+    Args:
+        monkeypatch: Pytest fixture used to capture transient dispatch.
+        action: Appliance Update status action under test.
+    """
+    helper = load_helper_module()
+    calls = []
+    monkeypatch.setenv("ATLASO_HELPER_USE_SYSTEMD_RUN", "1")
+    monkeypatch.delenv(helper.SYSTEMD_RUN_CHILD_ENV, raising=False)
+    monkeypatch.setattr(
+        helper.shutil,
+        "which",
+        lambda command: "/usr/bin/systemd-run" if command == "systemd-run" else None,
+    )
+    monkeypatch.setattr(
+        helper,
+        "_run_real_action_with_systemd",
+        lambda group, selected_action, args: calls.append(
+            (group, selected_action, args)
+        )
+        or 0,
+    )
+    monkeypatch.setattr(
+        helper,
+        "_handle_appliance_update",
+        lambda *_args: (_ for _ in ()).throw(
+            AssertionError("handler should run in the transient child")
+        ),
+    )
+
+    assert helper.main(
+        ["atlaso-helper", "appliance-update", action, "--real", "job_0123456789ab"]
+    ) == 0
+    assert calls == [("appliance-update", action, ["job_0123456789ab"])]
+
+
 def test_management_handoff_applies_and_restores_coupled_wan(monkeypatch):
     """Apply candidate WAN intent and restore its last-applied config through one helper path.
 

@@ -152,6 +152,8 @@ SYSTEMD_RUN_REAL_ACTIONS = {
     "recover",
     "acknowledge",
     "sync-sources",
+    "status-publish",
+    "status-finish",
     "terminate-login-sessions",
     "reset-network-runtime",
     "reset-retained-runtime",
@@ -14870,9 +14872,9 @@ def _verify_release_status_completion(
     )
     if release_child is None or release_child.get("apply_started") is not True:
         return
-    try:
-        finalizer = json.loads(ATLASO_UPDATE_FINALIZER_PATH.read_text(encoding="utf-8"))
-    except FileNotFoundError:
+
+    def pretransaction_failure_is_proven() -> bool:
+        """Return whether the current release failed before its transaction began."""
         services = _service_command(
             "is-active",
             "atlaso.service",
@@ -14880,23 +14882,35 @@ def _verify_release_status_completion(
             "atlaso-console.service",
             "nginx.service",
         )
-        if (
+        return bool(
             release_child.get("status") in {"failed", "skipped"}
             and services.get("success") is True
             and not ATLASO_UPDATE_MAINTENANCE_PATH.exists()
             and not ATLASO_UPDATE_RESTART_GATE_PATH.exists()
-        ):
+        )
+
+    try:
+        finalizer = json.loads(ATLASO_UPDATE_FINALIZER_PATH.read_text(encoding="utf-8"))
+    except FileNotFoundError:
+        if pretransaction_failure_is_proven():
             return
         raise ValueError(
             "release transaction evidence is unavailable at status completion"
         ) from None
     except (OSError, UnicodeDecodeError, json.JSONDecodeError) as exc:
         raise ValueError("release transaction evidence is unavailable at status completion") from exc
+    if not isinstance(finalizer, dict):
+        raise ValueError("release transaction evidence is invalid at status completion")
+    if (
+        str(finalizer.get("job_id") or "") != job_id
+        and pretransaction_failure_is_proven()
+    ):
+        return
     try:
         update_info = json.loads(APPLIANCE_UPDATE_INFO_PATH.read_text(encoding="utf-8"))
     except (OSError, UnicodeDecodeError, json.JSONDecodeError) as exc:
         raise ValueError("release update-info is unavailable at status completion") from exc
-    if not isinstance(finalizer, dict) or not isinstance(update_info, dict):
+    if not isinstance(update_info, dict):
         raise ValueError("release transaction evidence is invalid at status completion")
     finalizer_status = str(finalizer.get("status") or "")
     definitive = finalizer_status == "succeeded" or (
