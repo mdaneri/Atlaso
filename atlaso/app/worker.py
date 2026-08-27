@@ -8,7 +8,7 @@ import os
 import re
 import signal
 import time
-from datetime import datetime
+from datetime import datetime, timezone
 from functools import partial
 from pathlib import Path
 from secrets import compare_digest
@@ -845,6 +845,17 @@ def _reconcile_appliance_update_status_surface() -> bool:
             started_at = datetime.fromisoformat(str(startup.get("started_at") or ""))
         except (OSError, ValueError, json.JSONDecodeError, AttributeError):
             return False
+        started_at = (
+            started_at.replace(tzinfo=timezone.utc)
+            if started_at.tzinfo is None
+            else started_at.astimezone(timezone.utc)
+        )
+        if finished_at is not None:
+            finished_at = (
+                finished_at.replace(tzinfo=timezone.utc)
+                if finished_at.tzinfo is None
+                else finished_at.astimezone(timezone.utc)
+            )
         if (
             int(startup.get("pid") or 0) != os.getpid()
             or finished_at is None

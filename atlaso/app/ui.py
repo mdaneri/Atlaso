@@ -12416,6 +12416,7 @@ def complete_appliance_update_task(db: Session, *, job: Job, update_result: dict
         if not update_result["success"]:
             log_appliance_update_failures(job.id, update_result)
         log_appliance_update_submission(job.id, update_result)
+        should_log_final_result = False
     detail = " ; ".join(" ".join(command["command"]) for command in update_result["commands"])
     record_audit(
         db,
@@ -12449,7 +12450,7 @@ def complete_appliance_update_task(db: Session, *, job: Job, update_result: dict
             detail=" ".join(restart_result.command),
             success=restart_result.returncode == 0,
         )
-    if should_log_final_result and update_result.get("restart_after_commit"):
+    if should_log_final_result:
         if not update_result["success"]:
             log_appliance_update_failures(job.id, update_result)
         log_appliance_update_submission(job.id, update_result)

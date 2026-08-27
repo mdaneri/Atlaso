@@ -1250,6 +1250,140 @@ def test_successful_photon_still_restarts_worker_when_a_later_stream_fails():
     assert result["restart_after_commit"] is True
 
 
+def test_status_recovery_compares_sqlite_timestamp_with_aware_worker_start(
+    client,
+    monkeypatch,
+    tmp_path,
+):
+    """Finish the status hold after SQLite reloads a naive terminal timestamp.
+
+    Args:
+        client: Test application HTTP client.
+        monkeypatch: Pytest fixture used to replace recovery paths and effects.
+        tmp_path: Temporary directory provided for isolated startup evidence.
+    """
+    import os
+
+    from atlaso.app import worker
+    from atlaso.app.database import SessionLocal
+    from atlaso.app.models import Job
+
+    job_id = "job_012345abcdef"
+    marker = tmp_path / "appliance-update-status"
+    marker.write_text(job_id, encoding="utf-8")
+    startup = tmp_path / "worker-startup.json"
+    startup.write_text(
+        json.dumps(
+            {
+                "pid": os.getpid(),
+                "started_at": "2026-08-27T02:00:01+00:00",
+            }
+        ),
+        encoding="utf-8",
+    )
+    with SessionLocal() as db:
+        db.add(
+            Job(
+                id=job_id,
+                type="appliance-update",
+                status="succeeded",
+                created_by="admin",
+                finished_at=datetime(2026, 8, 27, 2, 0, 0),
+                result='{"restart_after_commit":true}',
+            )
+        )
+        db.commit()
+    published = []
+    monkeypatch.setattr(worker, "APPLIANCE_UPDATE_STATUS_MARKER_PATH", marker)
+    monkeypatch.setattr(worker, "WORKER_STARTUP_STATUS_PATH", startup)
+    monkeypatch.setattr(
+        worker,
+        "_publish_appliance_update_status",
+        lambda observed_job_id, *, finish=False: published.append(
+            (observed_job_id, finish)
+        )
+        or True,
+    )
+
+    assert worker._reconcile_appliance_update_status_surface() is True
+    assert published == [(job_id, True)]
+
+
+def test_restart_scheduling_failure_logs_terminal_update_result(
+    client,
+    monkeypatch,
+):
+    """Log an actionable terminal failure when delayed restart scheduling fails.
+
+    Args:
+        client: Test application HTTP client.
+        monkeypatch: Pytest fixture used to replace restart and logging effects.
+    """
+    from atlaso.app import ui
+    from atlaso.app.database import SessionLocal
+    from atlaso.app.models import Job, JobStatus
+
+    class FailingRestartAdapter:
+        """Return a deterministic delayed-restart scheduling failure."""
+
+        def restart_appliance_after_update(self, config_path: str) -> AdapterResult:
+            """Return the failed scheduling command result.
+
+            Args:
+                config_path: Filesystem path containing the update configuration.
+            """
+            return AdapterResult(
+                command=["atlaso-helper", "appliance-update", "restart", config_path],
+                dry_run=False,
+                stdout="",
+                stderr="restart scheduling failed",
+                returncode=1,
+            )
+
+    failures = []
+    submissions = []
+    monkeypatch.setattr(ui, "SystemAdapter", lambda: FailingRestartAdapter())
+    monkeypatch.setattr(
+        ui,
+        "log_appliance_update_failures",
+        lambda job_id, result: failures.append((job_id, result["status"])),
+    )
+    monkeypatch.setattr(
+        ui,
+        "log_appliance_update_submission",
+        lambda job_id, result: submissions.append((job_id, result["status"])),
+    )
+    with SessionLocal() as db:
+        job = Job(
+            id="job_restart_schedule_failure",
+            type="appliance-update",
+            status=JobStatus.RUNNING.value,
+            created_by="admin",
+        )
+        db.add(job)
+        db.commit()
+        result = ui.aggregate_appliance_update_results(
+            selected_stream_ids=["photon_os"],
+            settings={},
+            actor="admin",
+            mode="run",
+            stream_results=[
+                {
+                    "unit_id": "photon_os",
+                    "status": "succeeded",
+                    "success": True,
+                    "dry_run": False,
+                    "commands": [],
+                }
+            ],
+            job_id=job.id,
+        )
+        ui.complete_appliance_update_task(db, job=job, update_result=result)
+
+    assert failures == [(job.id, "failed")]
+    assert submissions == [(job.id, "failed")]
+
+
 def test_appliance_update_page_and_dry_run_job(client):
     """Verify that appliance update page and dry run job.
 
