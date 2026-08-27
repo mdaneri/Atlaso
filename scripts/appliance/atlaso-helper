@@ -14595,7 +14595,11 @@ def _site_with_update_status_guards(text: str, *, default_management: bool) -> s
     )
 
     def add_condition(match: re.Match[str]) -> str:
-        """Insert the marker check at the start of one human UI location."""
+        """Insert the marker check at the start of one human UI location.
+
+        Args:
+            match: Matched nginx human-UI location declaration.
+        """
         condition = (
             f"{match.group('indent')}  if (-f {ATLASO_UPDATE_STATUS_MARKER_PATH}) "
             "{ return 418; }"
@@ -14606,8 +14610,6 @@ def _site_with_update_status_guards(text: str, *, default_management: bool) -> s
     include_line = f"include {ATLASO_UPDATE_STATUS_NGINX_INCLUDE_PATH};"
     for server, end in reversed(_management_site_server_ranges(guarded)):
         block = guarded[server.start():end]
-        if "/ui/management" not in block and "/ui/public" not in block:
-            continue
         line_end = guarded.find("\n", server.end())
         insertion = len(guarded) if line_end < 0 else line_end + 1
         indent = f"{server.group('indent')}  "

@@ -54,6 +54,13 @@ def test_update_status_guards_every_browser_server_without_changing_route_paths(
     proxy_pass http://127.0.0.1:8000;
   }
 }
+server {
+  listen 192.0.2.11:443 ssl;
+  server_name oidc.example.test;
+  location ^~ /oidc/ {
+    proxy_pass http://127.0.0.1:8000;
+  }
+}
 """
 
     guarded_management = helper._site_with_update_status_guards(
@@ -69,9 +76,10 @@ def test_update_status_guards_every_browser_server_without_changing_route_paths(
     assert guarded_management.count(str(helper.ATLASO_UPDATE_STATUS_MARKER_PATH)) == 5
     assert "location = /ui/management" in guarded_management
     assert "location ^~ /ui/public/" in guarded_management
-    assert guarded_public.count(str(helper.ATLASO_UPDATE_STATUS_NGINX_INCLUDE_PATH)) == 1
-    assert guarded_public.count(str(helper.ATLASO_UPDATE_STATUS_MARKER_PATH)) == 3
+    assert guarded_public.count(str(helper.ATLASO_UPDATE_STATUS_NGINX_INCLUDE_PATH)) == 2
+    assert guarded_public.count(str(helper.ATLASO_UPDATE_STATUS_MARKER_PATH)) == 4
     assert "location ^~ /ca/" in guarded_public
+    assert "location ^~ /oidc/" in guarded_public
     assert "proxy_pass http://127.0.0.1:8000;" in guarded_public
     assert helper._site_with_update_status_guards(
         guarded_management,
@@ -106,7 +114,12 @@ def test_update_status_page_escapes_bounded_task_content():
 
 
 def test_update_status_snapshot_is_monotonic_and_rejects_cross_task_reuse(monkeypatch, tmp_path):
-    """Bind durable status publication to one task transaction and sequence."""
+    """Bind durable status publication to one task transaction and sequence.
+
+    Args:
+        monkeypatch: Pytest fixture used to isolate durable status paths.
+        tmp_path: Temporary directory used for status evidence.
+    """
     helper = load_helper_module()
     status_dir = tmp_path / "status"
     monkeypatch.setattr(helper, "ATLASO_UPDATE_STATUS_DIR", status_dir)
@@ -151,7 +164,12 @@ def test_update_status_snapshot_is_monotonic_and_rejects_cross_task_reuse(monkey
 
 
 def test_update_status_rejects_a_precreated_status_directory_symlink(monkeypatch, tmp_path):
-    """Do not let the privileged writer follow an attacker-controlled status directory."""
+    """Do not follow an attacker-controlled status directory.
+
+    Args:
+        monkeypatch: Pytest fixture used to emulate the unsafe path.
+        tmp_path: Temporary directory used for status evidence.
+    """
     helper = load_helper_module()
     status_dir = tmp_path / "status"
     status_dir.mkdir()
@@ -175,7 +193,11 @@ def test_update_status_rejects_a_precreated_status_directory_symlink(monkeypatch
 
 
 def test_update_status_probe_covers_management_and_public_listeners(monkeypatch):
-    """Require stable maintenance responses from each applied browser listener."""
+    """Require stable maintenance responses from each applied browser listener.
+
+    Args:
+        monkeypatch: Pytest fixture used to capture bounded listener probes.
+    """
     helper = load_helper_module()
     site = """server {
   listen 80 default_server;
@@ -209,7 +231,12 @@ server {
 
 
 def test_update_status_task_requires_current_install_contract(monkeypatch, tmp_path):
-    """Reject stale checks and terminal publication while accepting the exact hierarchy."""
+    """Reject stale checks while accepting the exact hierarchy.
+
+    Args:
+        monkeypatch: Pytest fixture used to bind the temporary database.
+        tmp_path: Temporary directory used for task evidence.
+    """
     helper = load_helper_module()
     database = tmp_path / "atlaso.db"
     connection = helper.sqlite3.connect(database)
@@ -291,7 +318,12 @@ def test_release_status_completion_accepts_only_a_proven_pretransaction_failure(
     monkeypatch,
     tmp_path,
 ):
-    """Restore after release preflight failure only while ordinary services are healthy."""
+    """Restore after preflight failure only while services are healthy.
+
+    Args:
+        monkeypatch: Pytest fixture used to isolate release evidence and services.
+        tmp_path: Temporary directory used for release evidence.
+    """
     helper = load_helper_module()
     monkeypatch.setattr(helper, "ATLASO_UPDATE_FINALIZER_PATH", tmp_path / "finalizer.json")
     monkeypatch.setattr(helper, "ATLASO_UPDATE_MAINTENANCE_PATH", tmp_path / "maintenance")

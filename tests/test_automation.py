@@ -628,7 +628,11 @@ def test_due_schedule_queues_one_job_and_skips_overlap(client):
 
 
 def test_due_scheduled_install_gets_fresh_status_identity_and_safe_order(client):
-    """Bind every scheduled installation instance to release-last status evidence."""
+    """Bind every scheduled installation to release-last status evidence.
+
+    Args:
+        client: HTTP test client providing isolated application state.
+    """
     from atlaso.app.database import SessionLocal
     from atlaso.app.models import Schedule
     from atlaso.app.services.automation import enqueue_due_schedules

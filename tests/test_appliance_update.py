@@ -1230,6 +1230,26 @@ def test_release_last_worker_handoff_suppresses_the_photon_delayed_restart():
     assert result["restart_after_commit"] is False
 
 
+def test_successful_photon_still_restarts_worker_when_a_later_stream_fails():
+    """Restart after Photon changes even when a later selected stream fails."""
+    from atlaso.app.ui import aggregate_appliance_update_results
+
+    result = aggregate_appliance_update_results(
+        selected_stream_ids=["photon_os", "powershell_modules"],
+        settings={},
+        actor="admin",
+        mode="run",
+        stream_results=[
+            {"unit_id": "photon_os", "status": "succeeded", "success": True},
+            {"unit_id": "powershell_modules", "status": "failed", "success": False},
+        ],
+        job_id="job-photon-success-module-failure",
+    )
+
+    assert result["success"] is False
+    assert result["restart_after_commit"] is True
+
+
 def test_appliance_update_page_and_dry_run_job(client):
     """Verify that appliance update page and dry run job.
 
@@ -1988,7 +2008,12 @@ def test_appliance_update_install_skips_later_streams_after_photon_failure(clien
 
 
 def test_appliance_update_status_publication_failure_prevents_all_mutation(client, monkeypatch):
-    """Fail terminally without invoking a stream when listener proof is unavailable."""
+    """Fail terminally when listener proof is unavailable.
+
+    Args:
+        client: HTTP test client providing isolated application state.
+        monkeypatch: Pytest fixture used to replace worker side effects.
+    """
     import atlaso.app.ui as ui
     import atlaso.app.worker as worker
     from atlaso.app.database import SessionLocal
@@ -2046,7 +2071,11 @@ def test_appliance_update_status_publication_failure_prevents_all_mutation(clien
 
 
 def test_appliance_update_recovery_requeues_only_a_safe_pending_suffix(client):
-    """Resume schema-two work interrupted strictly between terminal children."""
+    """Resume schema-two work interrupted between terminal children.
+
+    Args:
+        client: HTTP test client providing isolated application state.
+    """
     import atlaso.app.worker as worker
     from atlaso.app.database import SessionLocal
     from atlaso.app.models import Job, JobStatus, JobStep
