@@ -714,7 +714,10 @@ def recover_interrupted_worker_jobs(
                     {
                         "status": JobStatus.FAILED.value,
                         "success": False,
-                        "restart_after_commit": interrupted_photon_apply_started,
+                        "restart_after_commit": bool(
+                            update_result.get("restart_after_commit")
+                            or interrupted_photon_apply_started
+                        ),
                         "worker_recovery": "interrupted",
                         "error": interrupted_error,
                     }

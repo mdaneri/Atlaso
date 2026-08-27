@@ -2794,15 +2794,40 @@ def test_appliance_update_recovery_keeps_running_until_helper_quiesces(
     assert worker._reconcile_appliance_update_status_surface() is False
 
 
-def test_interrupted_photon_apply_recovery_preserves_restart_obligation(
+@pytest.mark.parametrize(
+    ("selected_streams", "running_stream", "photon_status", "photon_result"),
+    [
+        (
+            ["photon_os"],
+            "photon_os",
+            "running",
+            {"apply_started": True},
+        ),
+        (
+            ["photon_os", "powershell_modules"],
+            "powershell_modules",
+            "succeeded",
+            {"unit_id": "photon_os", "status": "succeeded", "success": True},
+        ),
+    ],
+)
+def test_interrupted_appliance_update_recovery_preserves_photon_restart_obligation(
     client,
     monkeypatch,
+    selected_streams,
+    running_stream,
+    photon_status,
+    photon_result,
 ):
-    """Restart services when Photon may have mutated before worker interruption.
+    """Restart services when Photon mutated before a worker interruption.
 
     Args:
         client: HTTP test client providing isolated application state.
         monkeypatch: Pytest fixture used to replace recovery side effects.
+        selected_streams: Ordered streams selected for the interrupted task.
+        running_stream: Stream that was running when the worker stopped.
+        photon_status: Durable Photon child status before recovery.
+        photon_result: Durable Photon child result before recovery.
     """
     import atlaso.app.ui as ui
     import atlaso.app.worker as worker
@@ -2857,8 +2882,8 @@ def test_interrupted_photon_apply_recovery_preserves_restart_obligation(
                 {
                     "schema_version": 2,
                     "mode": "run",
-                    "selected_streams": ["photon_os"],
-                    "execution_order": ["photon_os"],
+                    "selected_streams": selected_streams,
+                    "execution_order": selected_streams,
                     "status_transaction_id": "e" * 32,
                     "settings": {},
                 }
@@ -2867,21 +2892,25 @@ def test_interrupted_photon_apply_recovery_preserves_restart_obligation(
         )
         db.add(job)
         db.flush()
-        step = ensure_appliance_update_job_steps(
+        steps = ensure_appliance_update_job_steps(
             db,
             job=job,
-            selected_streams=["photon_os"],
-        )[0]
-        step.status = JobStatus.RUNNING.value
-        step.result = json.dumps({"apply_started": True})
+            selected_streams=selected_streams,
+        )
+        steps_by_stream = {step.component_key: step for step in steps}
+        photon_step = steps_by_stream["photon_os"]
+        photon_step.status = photon_status
+        photon_step.progress_percent = 100 if photon_status == JobStatus.SUCCEEDED.value else 0
+        photon_step.result = json.dumps(photon_result)
+        steps_by_stream[running_stream].status = JobStatus.RUNNING.value
         db.commit()
 
         assert worker.recover_interrupted_worker_jobs(db) == 1
         recovered = db.get(Job, job_id)
         recovered_result = json.loads(recovered.result)
-        recovered_step = list(recovered.steps)[0]
+        recovered_step = steps_by_stream[running_stream]
 
-    assert quiesce_calls == [(job_id, "photon_os")]
+    assert quiesce_calls == [(job_id, running_stream)]
     assert recovered.status == JobStatus.FAILED.value
     assert recovered_step.status == JobStatus.FAILED.value
     assert recovered_result["restart_after_commit"] is True
