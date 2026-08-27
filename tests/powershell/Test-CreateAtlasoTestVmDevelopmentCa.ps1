@@ -473,6 +473,45 @@ try {
     Assert-Throws {
         Get-AtlasoTestVmCleanupIdentityHash -VmxPath $cleanupIdentityVmx
     } 'A malformed duplicate cleanup identity must remain ambiguous.'
+
+    $legacyUpgradeVmx = Join-Path $cleanupIdentityRoot 'Atlaso-Legacy-Upgrade.vmx'
+    $legacyUpgradeMarker = Join-Path $cleanupIdentityRoot 'legacy-upgrade.json'
+    [System.IO.File]::WriteAllText(
+        $legacyUpgradeVmx,
+        'displayName = "Atlaso Legacy Upgrade"',
+        [System.Text.UTF8Encoding]::new($false)
+    )
+    $legacyUpgradeIdentity = [Atlaso.WorkstationFileIdentity]::Get($legacyUpgradeVmx)
+    [System.IO.File]::WriteAllText(
+        $legacyUpgradeMarker,
+        (([ordered]@{
+                    Schema = 2
+                    Phase = 'vm-stop-child-active'
+                    VmxIdentity = $legacyUpgradeIdentity
+                }) | ConvertTo-Json -Compress),
+        [System.Text.UTF8Encoding]::new($false)
+    )
+    $legacyUpgradeState = [pscustomobject]@{
+        MarkerPath = $legacyUpgradeMarker
+        VmxPath = $legacyUpgradeVmx
+        Schema = 2
+        Phase = 'vm-stop-child-active'
+        VmxIdentity = $legacyUpgradeIdentity
+        CleanupIdentityHash = ''
+    }
+    Upgrade-AtlasoLegacyDevelopmentCaCleanupMarker -Marker $legacyUpgradeState
+    $legacyUpgradePayload = Get-Content -LiteralPath $legacyUpgradeMarker -Raw | ConvertFrom-Json
+    if (
+        [Atlaso.WorkstationFileIdentity]::Get($legacyUpgradeVmx) -cne $legacyUpgradeIdentity -or
+        $legacyUpgradePayload.Schema -ne 3 -or
+        $legacyUpgradePayload.Phase -cne 'import-proven-stopped-vmx-scrubbed' -or
+        $legacyUpgradePayload.VmxIdentity -cne $legacyUpgradeIdentity -or
+        $legacyUpgradeState.Schema -ne 3 -or
+        $legacyUpgradeState.Phase -cne 'import-proven-stopped-vmx-scrubbed' -or
+        $legacyUpgradeState.CleanupIdentityHash -cnotmatch '^[0-9A-F]{64}$'
+    ) {
+        throw 'Legacy cleanup-marker upgrade did not retain and bind the exact stopped VMX identity.'
+    }
 }
 finally {
     Remove-Item -LiteralPath $cleanupIdentityRoot -Recurse -Force -ErrorAction SilentlyContinue

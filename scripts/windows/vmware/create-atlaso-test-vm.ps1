@@ -1966,10 +1966,14 @@ function Upgrade-AtlasoLegacyDevelopmentCaCleanupMarker {
         throw "Legacy cleanup marker upgrade did not match the stopped transition: $($Marker.MarkerPath)"
     }
     $cleanupIdentity = [guid]::NewGuid().ToString('N')
-    Set-AtlasoTestVmCleanupIdentity -VmxPath $Marker.VmxPath -Identity $cleanupIdentity
+    $vmxIdentity = [Atlaso.WorkstationFileIdentity]::Get($Marker.VmxPath)
+    Set-AtlasoTestVmCleanupIdentity `
+        -VmxPath $Marker.VmxPath `
+        -Identity $cleanupIdentity `
+        -ExpectedVmxIdentity $vmxIdentity
     $payload.Schema = 3
     $payload.Phase = 'import-proven-stopped-vmx-scrubbed'
-    $payload.VmxIdentity = [Atlaso.WorkstationFileIdentity]::Get($Marker.VmxPath)
+    $payload.VmxIdentity = $vmxIdentity
     $payload | Add-Member `
         -NotePropertyName CleanupIdentityHash `
         -NotePropertyValue (Get-AtlasoCleanupIdentityHash -Value $cleanupIdentity)
