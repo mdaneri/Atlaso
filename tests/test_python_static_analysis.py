@@ -120,7 +120,7 @@ def test_static_analysis_configuration_is_pinned_and_scoped() -> None:
         .splitlines()
     )
 
-    assert analyzer_requirements == {"ruff==0.16.3", "mypy==2.3.0"}
+    assert analyzer_requirements == {"ruff==0.16.3", "mypy==2.3.1"}
     assert project["tool"]["ruff"] == {
         "target-version": "py314",
         "extend-exclude": ["VCFDT", "third_party", "vcfDownloadTool"],
