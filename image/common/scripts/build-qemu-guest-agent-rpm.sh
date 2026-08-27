@@ -27,7 +27,7 @@ cd "$BUILD_ROOT/qemu-$QEMU_VERSION"
 # QEMU models the guest agent separately from its ordinary support tools, so
 # disabling tools and system/user emulators still leaves the explicitly enabled
 # qemu-ga target and its libudev-backed Linux commands available.
-./configure \
+if ! ./configure \
   --prefix=/usr \
   --libdir=/usr/lib64 \
   --sysconfdir=/etc \
@@ -38,10 +38,19 @@ cd "$BUILD_ROOT/qemu-$QEMU_VERSION"
   --disable-system \
   --disable-tools \
   --disable-user \
-  --enable-guest-agent
+  --enable-guest-agent; then
+  # QEMU's summary collapses every failed compiler probe into the same GLib
+  # metadata hint. Preserve a bounded source-build diagnostic without dumping
+  # the guest environment or any Packer connection material.
+  if [ -f build/meson-logs/meson-log.txt ]; then
+    echo "QEMU configure diagnostic (last 80 Meson log lines):" >&2
+    tail -n 80 build/meson-logs/meson-log.txt >&2
+  fi
+  exit 1
+fi
 ninja -C build qemu-ga
 
-install -o root -g root -m 0755 build/qemu-ga "$RPM_ROOT/SOURCES/qemu-ga"
+install -o root -g root -m 0755 build/qga/qemu-ga "$RPM_ROOT/SOURCES/qemu-ga"
 install -o root -g root -m 0644 \
   "$SOURCE_ROOT/image/common/guest-agents/qemu-guest-agent.service" \
   "$RPM_ROOT/SOURCES/qemu-guest-agent.service"
