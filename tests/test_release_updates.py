@@ -2828,6 +2828,10 @@ def test_worker_restart_uses_matching_root_release_finalizer(
             task_config_json=json.dumps(
                 {
                     "selected_streams": ["powershell_modules", "photon_os", "atlaso_release"],
+                    "schema_version": 2,
+                    "execution_order": ["atlaso_release", "powershell_modules", "photon_os"],
+                    "status_legacy_execution_order": True,
+                    "status_transaction_id": "1" * 32,
                     "mode": "run",
                 }
             ),
@@ -2924,6 +2928,7 @@ def test_worker_restart_uses_matching_root_release_finalizer(
 
     monkeypatch.setattr(ui, "execute_appliance_update_job", execute_remaining)
     monkeypatch.setattr(ui, "SystemAdapter", RestartAdapter)
+    monkeypatch.setattr(worker, "_publish_appliance_update_status", lambda *_args, **_kwargs: True)
 
     assert worker.run_worker_once() == "job_release_finalizer"
     assert calls == ["photon_os"]
@@ -2978,6 +2983,10 @@ def test_worker_restart_resumes_untouched_children_after_healthy_release_rollbac
             task_config_json=json.dumps(
                 {
                     "selected_streams": ["atlaso_release", "powershell_modules", "photon_os"],
+                    "schema_version": 2,
+                    "execution_order": ["atlaso_release", "powershell_modules", "photon_os"],
+                    "status_legacy_execution_order": True,
+                    "status_transaction_id": "2" * 32,
                     "settings": {},
                     "mode": "run",
                 }
@@ -3045,6 +3054,7 @@ def test_worker_restart_resumes_untouched_children_after_healthy_release_rollbac
         }
 
     monkeypatch.setattr(ui, "execute_appliance_update_job", execute_remaining)
+    monkeypatch.setattr(worker, "_publish_appliance_update_status", lambda *_args, **_kwargs: True)
 
     assert worker.run_worker_once() == "job_release_rollback_handoff"
     assert calls == ["powershell_modules"]
@@ -4460,6 +4470,9 @@ def test_release_activation_verification_requires_exact_candidate_through_nginx(
     monkeypatch.setattr(helper, "ATLASO_CURRENT_LINK", current)
     monkeypatch.setattr(helper, "ATLASO_VENV_LINK", venv)
     monkeypatch.setattr(helper, "ATLASO_UPDATE_MAINTENANCE_PATH", tmp_path / "maintenance")
+    status_marker = tmp_path / "update-status-marker"
+    status_marker.write_text("job_0123456789ab\n", encoding="utf-8")
+    monkeypatch.setattr(helper, "ATLASO_UPDATE_STATUS_MARKER_PATH", status_marker)
     monkeypatch.setattr(
         helper,
         "_nginx_test_command",
@@ -4488,14 +4501,18 @@ def test_release_activation_verification_requires_exact_candidate_through_nginx(
         ),
     )
 
-    def version_check(*, layer, expected_version, **_kwargs):
+    observed_urls = {}
+
+    def version_check(*, layer, expected_version, url, **_kwargs):
         """Return exact candidate-version readiness for either endpoint.
 
         Args:
             layer: Stable readiness layer represented by the probe.
             expected_version: Candidate version expected from the endpoint.
+            url: Endpoint used for the readiness probe.
             **_kwargs: Additional endpoint probe options.
         """
+        observed_urls[layer] = url
         return helper._release_check(
             layer,
             True,
@@ -4525,6 +4542,20 @@ def test_release_activation_verification_requires_exact_candidate_through_nginx(
         "failure_layer": "",
     }
     assert all(check["success"] for check in checks)
+    assert observed_urls == {
+        "internal_openapi": "http://127.0.0.1:8000/openapi.json",
+        "management_front_door": (
+            "https://127.0.0.1"
+            f"{helper.ATLASO_UPDATE_READINESS_PATH}"
+        ),
+    }
+
+    status_marker.unlink()
+    observed_urls.clear()
+    evidence, checks = helper._release_activation_verification(release_root, release)
+    assert evidence["success"] is True
+    assert all(check["success"] for check in checks)
+    assert observed_urls["management_front_door"] == "https://127.0.0.1/openapi.json"
 
 
 @pytest.mark.parametrize("failure_stage", ["", "maintenance_cleanup", "management_front_door", "finalizer_persistence"])

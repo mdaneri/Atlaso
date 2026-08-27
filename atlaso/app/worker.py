@@ -5,12 +5,15 @@ from __future__ import annotations
 import json
 import logging
 import os
+import re
 import signal
 import time
+from datetime import datetime, timezone
 from functools import partial
 from pathlib import Path
 from secrets import compare_digest
 from typing import Any
+from uuid import uuid4
 
 from sqlalchemy import select, update
 from sqlalchemy.exc import IntegrityError
@@ -36,7 +39,9 @@ from atlaso.app.models import (
 from atlaso.app.services.appliance_update import (
     APPLIANCE_UPDATE_EXECUTION_ORDER,
     APPLIANCE_UPDATE_FINALIZER_PATH,
+    APPLIANCE_UPDATE_LEGACY_EXECUTION_ORDER,
     APPLIANCE_UPDATE_RESTART_GATE_PATH,
+    APPLIANCE_UPDATE_STAGED_CONFIG_PATH,
     ATLASO_CURRENT_RELEASE_PATH,
     UPDATE_STREAM_LABELS,
     ensure_appliance_update_job_steps,
@@ -60,9 +65,15 @@ from atlaso.app.services.vaults import (
 LOGGER = logging.getLogger("atlaso.worker")
 POLL_SECONDS = 5
 TERMINAL_CHILD_HANDOFF_MINIMUM_VERSION = (0, 9, 163)
+# The receipted helper may spend 30 minutes starting atlaso-worker, another
+# 90 seconds stopping the old services, and 60 seconds proving the new worker
+# identity after the three-second timer. Keep retry admission beyond that full
+# systemd/helper window so recovery cannot overlap the original restart.
+APPLIANCE_UPDATE_RESTART_COMPLETION_GRACE_SECONDS = 33 * 60
 AUTOMATION_STAGE_DIR = Path("/var/lib/atlaso/automation/scripts")
 AUTOMATION_VAULT_STAGE_DIR = Path("/run/atlaso-automation-vaults")
 WORKER_STARTUP_STATUS_PATH = Path("/var/lib/atlaso/worker-startup.json")
+APPLIANCE_UPDATE_STATUS_MARKER_PATH = Path("/run/atlaso-appliance-update-status")
 WORKER_JOB_TYPES = {
     "appliance-update",
     "vcf-depot-download",
@@ -476,6 +487,56 @@ def recover_interrupted_worker_jobs(
         )
         update_steps = list(job.steps) if job.type == "appliance-update" else []
         if update_steps:
+            config = _job_config(job)
+            resumable_between_children = bool(
+                not recovered
+                and int(config.get("schema_version") or 0) >= 2
+                and any(step.status == JobStatus.PENDING.value for step in update_steps)
+                and all(step.status != JobStatus.RUNNING.value for step in update_steps)
+                and (
+                    all(
+                        step.status == JobStatus.SUCCEEDED.value
+                        for step in update_steps
+                        if step.status != JobStatus.PENDING.value
+                    )
+                    or (
+                        str(config.get("mode") or "check") == "check"
+                        and all(
+                            step.status
+                            in {
+                                JobStatus.SUCCEEDED.value,
+                                JobStatus.FAILED.value,
+                                JobStatus.SKIPPED.value,
+                            }
+                            for step in update_steps
+                            if step.status != JobStatus.PENDING.value
+                        )
+                    )
+                )
+            )
+            if resumable_between_children:
+                job.status = JobStatus.PENDING.value
+                job.finished_at = None
+                job.error = None
+                completed_steps = sum(
+                    step.status == JobStatus.SUCCEEDED.value for step in update_steps
+                )
+                job.progress_percent = int((completed_steps / len(update_steps)) * 90)
+                try:
+                    resumed_result = json.loads(job.result or "{}")
+                except json.JSONDecodeError:
+                    resumed_result = {}
+                resumed_result.update(
+                    {
+                        "status": JobStatus.PENDING.value,
+                        "success": False,
+                        "worker_recovery": "between_streams",
+                    }
+                )
+                resumed_result.pop("error", None)
+                job.result = json.dumps(resumed_result, indent=2, sort_keys=True)
+                db.add(job)
+                continue
             release_step = next(
                 (step for step in update_steps if step.component_key == "atlaso_release"),
                 None,
@@ -564,6 +625,37 @@ def recover_interrupted_worker_jobs(
                 job.result = json.dumps(result, indent=2, sort_keys=True)
                 db.add(job)
                 continue
+            unresolved_running_steps = [
+                step
+                for step in update_steps
+                if step.status == JobStatus.RUNNING.value
+                and not (step is release_step and recovered)
+            ]
+            interrupted_photon_apply_started = False
+            if str(config.get("mode") or "run") == "run":
+                for step in unresolved_running_steps:
+                    if step.component_key != "photon_os":
+                        continue
+                    try:
+                        running_result = json.loads(step.result or "{}")
+                    except json.JSONDecodeError:
+                        running_result = {}
+                    interrupted_photon_apply_started = bool(
+                        isinstance(running_result, dict)
+                        and running_result.get("apply_started") is True
+                    )
+                    if interrupted_photon_apply_started:
+                        break
+            if any(
+                not _quiesce_appliance_update_action(job.id, step.component_key)
+                for step in unresolved_running_steps
+            ):
+                LOGGER.error(
+                    "Interrupted Appliance Update helper quiescence failed for %s; "
+                    "the task and update-only UI hold remain active",
+                    job.id,
+                )
+                continue
             for step in update_steps:
                 if step is release_step and recovered:
                     continue
@@ -610,7 +702,6 @@ def recover_interrupted_worker_jobs(
                 complete_appliance_update_task,
             )
 
-            config = _job_config(job)
             selected = [str(value) for value in config.get("selected_streams", [])]
             stream_results = []
             for step in update_steps:
@@ -621,6 +712,18 @@ def recover_interrupted_worker_jobs(
                 if isinstance(step_result, dict):
                     stream_results.append(step_result)
             mode = str(config.get("mode") or "run")
+            stored_order = config.get("execution_order")
+            execution_order = (
+                [str(stream) for stream in stored_order]
+                if isinstance(stored_order, list)
+                and set(str(stream) for stream in stored_order) == set(selected)
+                and len(stored_order) == len(selected)
+                else [
+                    stream
+                    for stream in APPLIANCE_UPDATE_LEGACY_EXECUTION_ORDER
+                    if stream in selected
+                ]
+            )
             update_result = aggregate_appliance_update_results(
                 selected_stream_ids=selected,
                 settings=config.get("settings") if isinstance(config.get("settings"), dict) else {},
@@ -628,6 +731,7 @@ def recover_interrupted_worker_jobs(
                 mode=mode,
                 stream_results=stream_results,
                 job_id=job.id,
+                execution_order=execution_order,
             )
             if recovered:
                 update_result["worker_recovery"] = "root_finalizer"
@@ -644,11 +748,16 @@ def recover_interrupted_worker_jobs(
                     {
                         "status": JobStatus.FAILED.value,
                         "success": False,
-                        "restart_after_commit": False,
+                        "restart_after_commit": bool(
+                            update_result.get("restart_after_commit")
+                            or interrupted_photon_apply_started
+                        ),
                         "worker_recovery": "interrupted",
                         "error": interrupted_error,
                     }
                 )
+                if interrupted_photon_apply_started:
+                    update_result["config_path"] = APPLIANCE_UPDATE_STAGED_CONFIG_PATH
                 if mode == "check":
                     interrupted_availability = {
                         "state": "failed",
@@ -660,6 +769,20 @@ def recover_interrupted_worker_jobs(
                         if stream_result.get("worker_recovery") == "interrupted":
                             stream_result["availability"] = dict(interrupted_availability)
             complete_appliance_update_task(db, job=job, update_result=update_result)
+            if (
+                str(config.get("status_transaction_id") or "")
+                and not bool(update_result.get("restart_after_commit"))
+            ):
+                if not _publish_appliance_update_status(job.id, finish=True):
+                    if job.status == JobStatus.SUCCEEDED.value:
+                        _fail_job(
+                            db,
+                            job,
+                            RuntimeError(
+                                "The release transaction completed, but ordinary browser UIs "
+                                "could not be safely restored."
+                            ),
+                        )
             continue
         else:
             job.status = finalizer_status if recovered else JobStatus.FAILED.value
@@ -688,7 +811,7 @@ def recover_interrupted_worker_jobs(
         db.add(job)
     if jobs:
         db.commit()
-    return len(jobs)
+    return sum(job.status != JobStatus.RUNNING.value for job in jobs)
 
 
 def _fail_job(db: Session, job: Job, exc: Exception) -> None:
@@ -699,6 +822,9 @@ def _fail_job(db: Session, job: Job, exc: Exception) -> None:
         job: Job being processed.
         exc: Exception that caused the operation to fail.
     """
+    restart_required = False
+    if job.type == "appliance-update":
+        restart_required = _terminalize_incomplete_appliance_update_steps(db, job, exc)
     job.status = JobStatus.FAILED.value
     job.finished_at = utcnow()
     job.progress_percent = 100
@@ -708,9 +834,91 @@ def _fail_job(db: Session, job: Job, exc: Exception) -> None:
     except json.JSONDecodeError:
         result = {}
     result.update({"status": JobStatus.FAILED.value, "success": False, "error": str(exc)})
+    if restart_required:
+        result.update(
+            {
+                "restart_after_commit": True,
+                "restart_scheduled": False,
+                "config_path": APPLIANCE_UPDATE_STAGED_CONFIG_PATH,
+            }
+        )
     job.result = json.dumps(result, indent=2, sort_keys=True)
     db.add(job)
     db.commit()
+
+
+def _terminalize_incomplete_appliance_update_steps(
+    db: Session,
+    job: Job,
+    exc: Exception,
+) -> bool:
+    """Fail or skip incomplete children and return the Photon restart obligation.
+
+    Args:
+        db: Active database session.
+        job: Appliance Update parent reaching a terminal failure.
+        exc: Exception that escaped the per-stream completion bookkeeping.
+
+    Returns:
+        Whether a real Photon installation already succeeded and requires restart.
+    """
+    now = utcnow()
+    steps = db.execute(
+        select(JobStep).where(JobStep.job_id == job.id).order_by(JobStep.position, JobStep.id)
+    ).scalars().all()
+    terminal = {
+        JobStatus.SUCCEEDED.value,
+        JobStatus.FAILED.value,
+        JobStatus.SKIPPED.value,
+    }
+    try:
+        config = json.loads(job.task_config_json or "{}")
+    except json.JSONDecodeError:
+        config = {}
+    install_mode = isinstance(config, dict) and config.get("mode") == "run"
+    photon_restart_required = False
+    for step in steps:
+        if step.component_key != "photon_os":
+            continue
+        if step.status == JobStatus.SUCCEEDED.value:
+            photon_restart_required = True
+            break
+        if step.status != JobStatus.RUNNING.value:
+            continue
+        try:
+            photon_result = json.loads(step.result or "{}")
+        except json.JSONDecodeError:
+            photon_result = {}
+        if isinstance(photon_result, dict) and photon_result.get("apply_started") is True:
+            # The privileged helper may have completed its package mutation before
+            # the worker failed to commit the terminal child result. Preserve the
+            # restart duty conservatively from the pre-apply durable marker.
+            photon_restart_required = True
+            break
+    for step in steps:
+        if step.status in terminal:
+            continue
+        was_running = step.status == JobStatus.RUNNING.value
+        status = JobStatus.FAILED.value if was_running else JobStatus.SKIPPED.value
+        error = (
+            str(exc)
+            if was_running
+            else "The parent Appliance Update failed before this selected stream could run."
+        )
+        try:
+            result = json.loads(step.result or "{}")
+        except json.JSONDecodeError:
+            result = {}
+        if not isinstance(result, dict):
+            result = {}
+        result.update({"status": status, "success": False, "error": error})
+        step.status = status
+        step.finished_at = now
+        step.progress_percent = 100
+        step.error = error
+        step.result = json.dumps(result, indent=2, sort_keys=True)
+        db.add(step)
+    return bool(install_mode and photon_restart_required)
 
 
 def _appliance_update_result_error(result: dict[str, Any]) -> str:
@@ -729,6 +937,319 @@ def _appliance_update_result_error(result: dict[str, Any]) -> str:
         if detail:
             return detail[-2000:]
     return "This appliance update stream reported a failure."
+
+
+def _publish_appliance_update_status(job_id: str, *, finish: bool = False) -> bool:
+    """Synchronize the root-owned update-only browser surface.
+
+    Args:
+        job_id: Exact Appliance Update parent identifier.
+        finish: Whether terminal bookkeeping should restore ordinary UIs.
+    """
+    adapter = SystemAdapter()
+    result = (
+        adapter.finish_appliance_update_status(job_id)
+        if finish
+        else adapter.publish_appliance_update_status(job_id)
+    )
+    if result.returncode == 0:
+        return True
+    LOGGER.error(
+        "Appliance Update status %s failed for %s; privileged details omitted.",
+        "completion" if finish else "publication",
+        job_id,
+    )
+    return False
+
+
+def _quiesce_appliance_update_action(job_id: str, stream: str) -> bool:
+    """Stop and verify the fixed-identity helper for one interrupted stream.
+
+    Args:
+        job_id: Exact Appliance Update parent identifier.
+        stream: Interrupted child stream whose helper must be quiescent.
+    """
+    result = SystemAdapter().quiesce_appliance_update_action(job_id, stream)
+    if result.returncode == 0:
+        return True
+    LOGGER.error(
+        "Appliance Update helper quiescence failed for %s/%s; privileged details omitted",
+        job_id,
+        stream,
+    )
+    return False
+
+
+def _inspect_appliance_update_status() -> dict[str, Any] | None:
+    """Return bounded root-owned restoration state through the helper boundary."""
+    result = SystemAdapter().inspect_appliance_update_status()
+    if result.returncode != 0:
+        LOGGER.error("Durable Appliance Update status inspection failed")
+        return None
+    try:
+        payload = json.loads(result.stdout.strip().splitlines()[-1])
+    except (IndexError, json.JSONDecodeError):
+        LOGGER.error("Durable Appliance Update status inspection was invalid")
+        return None
+    return payload if isinstance(payload, dict) else None
+
+
+def _inspect_appliance_update_restart(job_id: str) -> dict[str, Any] | None:
+    """Return durable all-service restart completion evidence.
+
+    Args:
+        job_id: Exact Appliance Update parent identifier.
+    """
+    result = SystemAdapter().inspect_appliance_update_restart(job_id)
+    if result.returncode != 0:
+        LOGGER.error("Durable Appliance Update restart inspection failed")
+        return None
+    try:
+        payload = json.loads(result.stdout.strip().splitlines()[-1])
+    except (IndexError, json.JSONDecodeError):
+        LOGGER.error("Durable Appliance Update restart inspection was invalid")
+        return None
+    return payload if isinstance(payload, dict) else None
+
+
+def _retry_appliance_update_restart(
+    job_id: str,
+) -> None:
+    """Retry a missing delayed-restart receipt through a bounded durable gate.
+
+    Args:
+        job_id: Exact Appliance Update parent identifier.
+    """
+    now = datetime.now(timezone.utc)
+    with SessionLocal() as db:
+        job = db.get(Job, job_id)
+        if job is None or job.type != "appliance-update":
+            return
+        try:
+            result = json.loads(job.result or "{}")
+        except json.JSONDecodeError:
+            return
+        if not isinstance(result, dict) or result.get("restart_after_commit") is not True:
+            return
+        dispatch_text = str(result.get("restart_dispatch_started_at") or "")
+        try:
+            dispatch_started_at = (
+                datetime.fromisoformat(dispatch_text)
+                if dispatch_text
+                else None
+            )
+            if (
+                dispatch_started_at is None
+                and result.get("restart_scheduled") is not False
+            ):
+                # Historical records did not distinguish an undispatched restart
+                # from one whose dispatch evidence was lost. Preserve the
+                # completion grace for that ambiguous compatibility case.
+                dispatch_started_at = job.finished_at
+            if dispatch_started_at is not None:
+                dispatch_started_at = (
+                    dispatch_started_at.replace(tzinfo=timezone.utc)
+                    if dispatch_started_at.tzinfo is None
+                    else dispatch_started_at.astimezone(timezone.utc)
+                )
+        except ValueError:
+            return
+        if dispatch_started_at is not None and (
+            now - dispatch_started_at
+        ).total_seconds() < APPLIANCE_UPDATE_RESTART_COMPLETION_GRACE_SECONDS:
+            return
+        attempts = int(result.get("restart_recovery_attempts") or 0)
+        if attempts >= 3:
+            LOGGER.error(
+                "Appliance Update restart recovery exhausted for %s; status hold remains active",
+                job_id,
+            )
+            return
+        last_attempt_text = str(result.get("restart_recovery_last_attempt_at") or "")
+        if last_attempt_text:
+            try:
+                last_attempt = datetime.fromisoformat(last_attempt_text)
+                last_attempt = (
+                    last_attempt.replace(tzinfo=timezone.utc)
+                    if last_attempt.tzinfo is None
+                    else last_attempt.astimezone(timezone.utc)
+                )
+            except ValueError:
+                return
+            if (now - last_attempt).total_seconds() < 60:
+                return
+        config_path = str(result.get("config_path") or "")
+        if not config_path:
+            LOGGER.error(
+                "Appliance Update restart recovery lacks its staged configuration for %s",
+                job_id,
+            )
+            return
+        result["restart_recovery_attempts"] = attempts + 1
+        result["restart_recovery_last_attempt_at"] = now.isoformat()
+        # Publish the retry boundary before asking the privileged helper to
+        # schedule work. An interruption after dispatch must receive the full
+        # completion grace rather than launching a duplicate restart.
+        result["restart_dispatch_started_at"] = now.isoformat()
+        result["restart_scheduled"] = False
+        job.result = json.dumps(result, indent=2)
+        db.add(job)
+        db.commit()
+    retry = SystemAdapter().restart_appliance_after_update(config_path)
+    if retry.returncode != 0:
+        LOGGER.error(
+            "Appliance Update restart recovery dispatch failed for %s; privileged details omitted",
+            job_id,
+        )
+        with SessionLocal() as db:
+            job = db.get(Job, job_id)
+            if job is None or job.type != "appliance-update":
+                return
+            try:
+                result = json.loads(job.result or "{}")
+            except json.JSONDecodeError:
+                return
+            if (
+                not isinstance(result, dict)
+                or result.get("restart_dispatch_started_at") != now.isoformat()
+            ):
+                return
+            # The helper returned a definitive scheduling failure. Preserve the
+            # one-minute retry rate limit, but remove the active-helper evidence
+            # that would otherwise impose the full completion grace.
+            result.pop("restart_dispatch_started_at", None)
+            job.result = json.dumps(result, indent=2)
+            db.add(job)
+            db.commit()
+        return
+    with SessionLocal() as db:
+        job = db.get(Job, job_id)
+        if job is None or job.type != "appliance-update":
+            return
+        try:
+            result = json.loads(job.result or "{}")
+        except json.JSONDecodeError:
+            return
+        if (
+            not isinstance(result, dict)
+            or result.get("restart_dispatch_started_at") != now.isoformat()
+        ):
+            return
+        result["restart_scheduled"] = True
+        job.result = json.dumps(result, indent=2)
+        db.add(job)
+        db.commit()
+
+
+def _reconcile_appliance_update_status_surface() -> bool:
+    """Restore a terminal update surface or block unrelated mutation safely.
+
+    Returns:
+        Whether the worker may claim another durable task.
+    """
+    marker_present = True
+    restoration_state = "held"
+    try:
+        marker_job_id = APPLIANCE_UPDATE_STATUS_MARKER_PATH.read_text(
+            encoding="utf-8"
+        ).strip()
+    except FileNotFoundError:
+        marker_present = False
+        inspection = _inspect_appliance_update_status()
+        if inspection is None:
+            return False
+        restoration_state = str(inspection.get("state") or "")
+        if restoration_state in {"absent", "restored"}:
+            return True
+        if restoration_state not in {"held", "pending"}:
+            return False
+        marker_job_id = str(inspection.get("task_id") or "")
+    except OSError:
+        LOGGER.error(
+            "Appliance Update status marker is unreadable; worker admission remains blocked"
+        )
+        return False
+    if re.fullmatch(r"job_[0-9a-f]{12}", marker_job_id) is None:
+        LOGGER.error("Appliance Update status recovery requires privileged attention")
+        return False
+    with SessionLocal() as db:
+        job = db.get(Job, marker_job_id)
+        if job is None or job.type != "appliance-update":
+            LOGGER.error("Appliance Update status marker has no matching durable task")
+            return False
+        if job.status == JobStatus.CANCELLED.value:
+            _fail_job(
+                db,
+                job,
+                RuntimeError(
+                    "A claimed Appliance Update was cancelled before its durable hierarchy completed."
+                ),
+            )
+        terminal = job.status in {
+            JobStatus.SUCCEEDED.value,
+            JobStatus.FAILED.value,
+        }
+        job_status = job.status
+        finished_at = job.finished_at
+        try:
+            result = json.loads(job.result or "{}")
+        except json.JSONDecodeError:
+            result = {}
+    if not terminal:
+        if job_status == JobStatus.RUNNING.value:
+            return False
+        if not marker_present:
+            if restoration_state == "held" and inspection.get("status_activated") is False:
+                # Initial publication failed before the marker became active. Let
+                # the durable pending task retry through its normal runner, which
+                # terminalizes failed publication instead of blocking admission
+                # forever at startup.
+                return True
+            return bool(
+                restoration_state == "held"
+                and _publish_appliance_update_status(marker_job_id)
+            )
+        return True
+    if isinstance(result, dict) and result.get("restart_after_commit") is True:
+        try:
+            startup = json.loads(WORKER_STARTUP_STATUS_PATH.read_text(encoding="utf-8"))
+            started_at = datetime.fromisoformat(str(startup.get("started_at") or ""))
+        except (OSError, ValueError, json.JSONDecodeError, AttributeError):
+            return False
+        started_at = (
+            started_at.replace(tzinfo=timezone.utc)
+            if started_at.tzinfo is None
+            else started_at.astimezone(timezone.utc)
+        )
+        receipt = _inspect_appliance_update_restart(marker_job_id)
+        receipt_matches = bool(
+            receipt is not None
+            and receipt.get("state") == "completed"
+            and str(receipt.get("job_id") or "") == marker_job_id
+            and int(receipt.get("worker_pid") or 0) == os.getpid()
+            and str(receipt.get("worker_boot_id") or "")
+            == str(startup.get("boot_id") or "")
+            and str(receipt.get("worker_start_ticks") or "")
+            == str(startup.get("start_ticks") or "")
+            and str(receipt.get("worker_started_at") or "")
+            == str(startup.get("started_at") or "")
+        )
+        if not receipt_matches:
+            _retry_appliance_update_restart(marker_job_id)
+            return False
+        if finished_at is not None:
+            finished_at = (
+                finished_at.replace(tzinfo=timezone.utc)
+                if finished_at.tzinfo is None
+                else finished_at.astimezone(timezone.utc)
+            )
+        if (
+            int(startup.get("pid") or 0) != os.getpid()
+            or finished_at is None
+            or started_at <= finished_at
+        ):
+            return False
+    return _publish_appliance_update_status(marker_job_id, finish=True)
 
 
 def _set_appliance_update_step_running(job_id: str, stream: str, *, completed: int, total: int) -> None:
@@ -868,6 +1389,7 @@ def _run_appliance_update(job_id: str) -> None:
     )
 
     terminal_stream_results: dict[str, dict[str, Any]] = {}
+    status_surface_required = False
     with SessionLocal() as db:
         job = db.get(Job, job_id)
         if job is None:
@@ -876,10 +1398,64 @@ def _run_appliance_update(job_id: str) -> None:
         selected = [str(value) for value in config.get("selected_streams", [])]
         settings = config.get("settings") if isinstance(config.get("settings"), dict) else appliance_update_settings(db)
         mode = str(config.get("mode") or "check")
+        if mode == "run" and not str(config.get("status_transaction_id") or ""):
+            if re.fullmatch(r"job_[0-9a-f]{12}", job.id) is None:
+                raise RuntimeError(
+                    "This legacy Appliance Update has no compatible durable status identity; "
+                    "submit the update again."
+                )
+            stored_order = config.get("execution_order")
+            if not (
+                isinstance(stored_order, list)
+                and len(stored_order) == len(selected)
+                and set(str(stream) for stream in stored_order) == set(selected)
+            ):
+                stored_order = [
+                    stream
+                    for stream in APPLIANCE_UPDATE_LEGACY_EXECUTION_ORDER
+                    if stream in selected
+                ]
+            normalized_order = [str(stream) for stream in stored_order]
+            legacy_order = [
+                stream
+                for stream in APPLIANCE_UPDATE_LEGACY_EXECUTION_ORDER
+                if stream in selected
+            ]
+            # Older queued installs predate the update-only surface contract. Add
+            # its complete publishable status contract and commit it before the
+            # hold or any privileged stream can mutate the appliance. Retain the
+            # historical release-first order explicitly instead of silently
+            # converting an in-flight task to the new Photon-first sequence.
+            config["schema_version"] = 2
+            config["execution_order"] = normalized_order
+            config["status_legacy_execution_order"] = normalized_order == legacy_order
+            config["status_transaction_id"] = uuid4().hex
+            job.task_config_json = json.dumps(config, indent=2, sort_keys=True)
+            db.add(job)
+            db.commit()
+        status_surface_required = bool(
+            mode == "run" and str(config.get("status_transaction_id") or "")
+        )
         actor = job.created_by
         credentials = update_source_credentials(db)
         if mode != "source_sync":
-            steps = ensure_appliance_update_job_steps(db, job=job, selected_streams=selected)
+            stored_order = config.get("execution_order")
+            if not isinstance(stored_order, list):
+                stored_order = [
+                    stream
+                    for stream in APPLIANCE_UPDATE_LEGACY_EXECUTION_ORDER
+                    if stream in selected
+                ]
+            steps = ensure_appliance_update_job_steps(
+                db,
+                job=job,
+                selected_streams=selected,
+                execution_order=(
+                    [str(stream) for stream in stored_order]
+                    if isinstance(stored_order, list)
+                    else None
+                ),
+            )
             for step in steps:
                 if step.status not in {
                     JobStatus.SUCCEEDED.value,
@@ -894,6 +1470,9 @@ def _run_appliance_update(job_id: str) -> None:
                 if isinstance(parsed_result, dict) and str(parsed_result.get("status") or "") == step.status:
                     terminal_stream_results[step.component_key] = parsed_result
             db.commit()
+    status_surface_failed = bool(
+        status_surface_required and not _publish_appliance_update_status(job_id)
+    )
     if mode == "source_sync":
         try:
             update_result = execute_appliance_update_job(
@@ -914,14 +1493,39 @@ def _run_appliance_update(job_id: str) -> None:
                 exc=exc,
             )
     else:
-        execution_streams = [stream for stream in APPLIANCE_UPDATE_EXECUTION_ORDER if stream in selected]
+        stored_order = config.get("execution_order")
+        if not isinstance(stored_order, list):
+            stored_order = [
+                stream
+                for stream in APPLIANCE_UPDATE_LEGACY_EXECUTION_ORDER
+                if stream in selected
+            ]
+        execution_order = (
+            [str(stream) for stream in stored_order]
+            if isinstance(stored_order, list)
+            and set(str(stream) for stream in stored_order) == set(selected)
+            and len(stored_order) == len(selected)
+            else list(APPLIANCE_UPDATE_EXECUTION_ORDER)
+        )
+        execution_streams = [stream for stream in execution_order if stream in selected]
+        current_install_contract = bool(
+            int(config.get("schema_version") or 0) >= 2
+            and not config.get("status_legacy_execution_order")
+        )
         stream_results: list[dict[str, Any]] = []
-        earlier_failed = False
+        earlier_failed = status_surface_failed
         for index, stream in enumerate(execution_streams, start=1):
             if stream in terminal_stream_results:
                 stream_result = terminal_stream_results[stream]
-            elif mode == "run" and stream == "photon_os" and earlier_failed:
-                skip_reason = "Photon OS was not started because an earlier selected update stream failed."
+            elif (
+                mode == "run"
+                and earlier_failed
+                and (current_install_contract or stream == "photon_os")
+            ):
+                skip_reason = (
+                    f"{UPDATE_STREAM_LABELS[stream]} was not started because an earlier "
+                    "selected update stream failed."
+                )
                 stream_result = {
                     "unit_id": stream,
                     "label": UPDATE_STREAM_LABELS[stream],
@@ -946,25 +1550,50 @@ def _run_appliance_update(job_id: str) -> None:
                     completed=index - 1,
                     total=len(execution_streams),
                 )
-                try:
-                    stream_result = execute_appliance_update_job(
-                        selected_stream_ids=[stream],
-                        settings=settings,
-                        actor=actor,
-                        mode=mode,
-                        job_id=job_id,
-                        credentials=credentials,
-                        before_apply=partial(_mark_appliance_update_apply_started, job_id, stream),
+                if status_surface_required and not _publish_appliance_update_status(job_id):
+                    status_surface_failed = True
+                    earlier_failed = True
+                    skip_reason = (
+                        f"{UPDATE_STREAM_LABELS[stream]} was not started because the "
+                        "update-only status surface could not be proven on every browser listener."
                     )
-                except Exception as exc:  # noqa: BLE001 - each child step must reach a terminal state.
-                    LOGGER.exception("Appliance update stream %s for job %s failed before helper completion", stream, job_id)
-                    stream_result = appliance_update_exception_result(
-                        selected_stream_ids=[stream],
-                        settings=settings,
-                        actor=actor,
-                        mode=mode,
-                        exc=exc,
-                    )
+                    stream_result = {
+                        "unit_id": stream,
+                        "label": UPDATE_STREAM_LABELS[stream],
+                        "mode": mode,
+                        "selected_streams": [stream],
+                        "selected_labels": [UPDATE_STREAM_LABELS[stream]],
+                        "status": JobStatus.FAILED.value,
+                        "success": False,
+                        "skipped": True,
+                        "skip_reason": skip_reason,
+                        "dry_run": False,
+                        "restart_after_commit": False,
+                        "commands": [],
+                        "config_path": "",
+                        "config_preview": "",
+                        "error": skip_reason,
+                    }
+                else:
+                    try:
+                        stream_result = execute_appliance_update_job(
+                            selected_stream_ids=[stream],
+                            settings=settings,
+                            actor=actor,
+                            mode=mode,
+                            job_id=job_id,
+                            credentials=credentials,
+                            before_apply=partial(_mark_appliance_update_apply_started, job_id, stream),
+                        )
+                    except Exception as exc:  # noqa: BLE001 - each child step must reach a terminal state.
+                        LOGGER.exception("Appliance update stream %s for job %s failed before helper completion", stream, job_id)
+                        stream_result = appliance_update_exception_result(
+                            selected_stream_ids=[stream],
+                            settings=settings,
+                            actor=actor,
+                            mode=mode,
+                            exc=exc,
+                        )
             stream_results.append(stream_result)
             earlier_failed = earlier_failed or not bool(stream_result.get("success"))
             if stream not in terminal_stream_results:
@@ -975,6 +1604,9 @@ def _run_appliance_update(job_id: str) -> None:
                     completed=index,
                     total=len(execution_streams),
                 )
+                if status_surface_required and not _publish_appliance_update_status(job_id):
+                    status_surface_failed = True
+                    earlier_failed = True
         update_result = aggregate_appliance_update_results(
             selected_stream_ids=selected,
             settings=settings,
@@ -982,12 +1614,34 @@ def _run_appliance_update(job_id: str) -> None:
             mode=mode,
             stream_results=stream_results,
             job_id=job_id,
+            execution_order=execution_streams,
         )
     with SessionLocal() as db:
         job = db.get(Job, job_id)
         if job is None:
             return
         complete_appliance_update_task(db, job=job, update_result=update_result)
+        if status_surface_failed:
+            _fail_job(
+                db,
+                job,
+                RuntimeError(
+                    "The update stream results were preserved, but the update-only browser "
+                    "status surface could not be proven continuously."
+                ),
+            )
+    if status_surface_required and not bool(update_result.get("restart_after_commit")):
+        if not _publish_appliance_update_status(job_id, finish=True):
+            with SessionLocal() as db:
+                job = db.get(Job, job_id)
+                if job is not None and job.status == JobStatus.SUCCEEDED.value:
+                    _fail_job(
+                        db,
+                        job,
+                        RuntimeError(
+                            "The update completed, but ordinary browser UIs could not be safely restored."
+                        ),
+                    )
 
 
 def _automation_stage_path(job_id: str, interpreter: str) -> Path:
@@ -1269,6 +1923,8 @@ def run_worker_once() -> str | None:
     Raises:
         ValueError: If an input value is invalid.
     """
+    if not _reconcile_appliance_update_status_surface():
+        return None
     with SessionLocal() as db:
         enqueue_due_schedules(db)
         job = claim_next_job(db)

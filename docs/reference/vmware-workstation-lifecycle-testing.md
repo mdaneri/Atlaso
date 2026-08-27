@@ -93,6 +93,43 @@ Unless overridden, the build wrapper chooses `.30` in the selected management su
 leaves final appliance management on DHCP and
 discovers the runtime address through VMware Tools.
 
+## Appliance Update status and ordering acceptance
+
+For the 0.9.220 to 0.9.223 updater transition, use a brand-new normal test VM with a unique name and destination. Run
+the creation wrapper's ownership, source-provenance, VMX collision, data-disk collision, running-VM, and pending cleanup
+marker checks before mutation; do not reuse or redeploy the canonical test VM for this acceptance. Confirm the source
+appliance reports exactly 0.9.220 before publishing the isolated signed candidate fixture for 0.9.223.
+
+Capture the parent task ID, all child IDs/positions, transaction ID hash (never the raw source credentials), created,
+started, child-transition, restart, recovery, and finished timestamps. Probe continuously from three vantage points:
+
+- guest-local Atlaso `/openapi.json` on the internal listener;
+- guest-local nginx `/`, `/ui/management`, `/ui/public`, and `/openapi.json` on every applied IPv4/IPv6 browser listener;
+- host-facing `/`, canonical management/public UI paths, and `/openapi.json` on the discovered VM address.
+
+Before mutation, ordinary browser routes are HTTP 200 or the expected authentication redirect. From status admission
+through every Photon, PowerShell, Atlaso, web/worker/console restart, and release-finalizer boundary, browser routes are
+HTTP 503 with `Retry-After: 3`, `Cache-Control: no-store`, and `X-Atlaso-Update-Mode: active`. No sample may be HTTP 502.
+Stable protocol paths remain unchanged and may return the controlled maintenance 503 while their upstream is down.
+After definitive success or verified rollback, ordinary browser behavior returns and three consecutive host-facing
+samples contain no 500/502/503/504 response.
+
+Verify the child execution sequence is Photon OS, PowerShell Modules, Atlaso Release for the all-stream selection and
+the same filtered order for every non-empty subset. Inject one failure before each child apply, after each child terminal
+commit, before/after status-marker removal, before/after nginx validation/reload, before release link switch, during
+worker handoff, after `activation_committed`, and before the restoration receipt. Later children must skip after an
+install failure, earlier terminal results must remain unchanged, and every parent must become terminal. Reboot once
+during a nonterminal child and once after a terminal parent with restoration pending. The same parent/child identity
+must reappear, mutation must remain blocked until recovery, and no task may remain running indefinitely.
+
+Successful release acceptance requires `/opt/atlaso/current`, the compatibility virtualenv, signed release receipt,
+candidate manifest/bundle/commit hashes, `/etc/atlaso/update-info`, definitive finalizer, cleared restart gate, worker
+startup identity, active services, internal OpenAPI, nginx-local OpenAPI, and host-facing OpenAPI to agree on 0.9.223.
+Rollback acceptance requires the corresponding definitive `rolled_back=true` evidence and restored 0.9.220 identity.
+After each outcome, perform an audited appliance reboot and repeat the task-finality, status-marker absence, service,
+receipt/finalizer/update-info, and three-vantage probe checks. Preserve sanitized probe tables and screenshots of the
+desktop and responsive update-only page; redact sessions, credentials, keys, source credentials, and raw helper output.
+
 ## Build The Appliance
 
 Build the Workstation appliance with:

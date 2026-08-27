@@ -1072,6 +1072,7 @@ def test_photon_provisioning_prepares_attached_data_disks():
 
     assert 'run_tdnf "Photon appliance package installation"' in provision
     assert "install -d -o root -g root -m 0700 /var/lib/atlaso-privileged/management-front-door" in provision
+    assert "install -d -o root -g root -m 0700 /var/lib/atlaso-privileged/appliance-update-status" in provision
     assert "e2fsprogs" in provision
     assert "atlaso-mount-data-disks" in provision
     assert "atlaso-data-disks.service" in provision

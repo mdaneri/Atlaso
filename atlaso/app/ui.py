@@ -8176,6 +8176,8 @@ def _can_cancel_task(job: Job, identity: Identity | None = None) -> bool:
             return False
     if job.type == "appliance-apply" and _job_payload(job).get("cancel_requested"):
         return False
+    if job.type == "appliance-update" and job.status == JobStatus.RUNNING.value:
+        return False
     if job.type == "vcf-depot-software-id":
         return False
     if job.type == "vcf-depot-download" and job.status == JobStatus.RUNNING.value:
@@ -12232,6 +12234,7 @@ def aggregate_appliance_update_results(
     mode: str,
     stream_results: list[dict[str, Any]],
     job_id: str = "",
+    execution_order: list[str] | None = None,
 ) -> dict[str, Any]:
     """Return aggregate appliance update results.
 
@@ -12242,6 +12245,7 @@ def aggregate_appliance_update_results(
         mode: Operating mode selected for the workflow.
         stream_results: Stream results supplied by the caller.
         job_id: Identifier of the job.
+        execution_order: Stored stream order used for execution and reporting.
     """
     selected = selected_update_streams(selected_stream_ids)
     results_by_stream = {
@@ -12249,10 +12253,17 @@ def aggregate_appliance_update_results(
         for result in stream_results
         if str(result.get("unit_id") or "") in UPDATE_STREAM_LABELS
     }
+    stored_order = [str(stream) for stream in execution_order or []]
+    if len(stored_order) != len(selected) or set(stored_order) != set(selected):
+        stored_order = []
+        for result in stream_results:
+            stream = str(result.get("unit_id") or "")
+            if stream in selected and stream not in stored_order:
+                stored_order.append(stream)
     ordered_results = [
         results_by_stream[stream]
-        for stream in APPLIANCE_UPDATE_EXECUTION_ORDER
-        if stream in selected and stream in results_by_stream
+        for stream in stored_order
+        if stream in results_by_stream
     ]
     succeeded = len(ordered_results) == len(selected) and all(
         bool(result.get("success")) and result.get("status") == JobStatus.SUCCEEDED.value
@@ -12271,6 +12282,22 @@ def aggregate_appliance_update_results(
         and release_transaction["worker_restart"].get("success") is True
     )
     release_no_change = release_transaction.get("no_change") is True
+    photon_succeeded = bool(
+        isinstance(results_by_stream.get("photon_os"), dict)
+        and results_by_stream["photon_os"].get("success") is True
+        and results_by_stream["photon_os"].get("status") == JobStatus.SUCCEEDED.value
+    )
+    photon_apply_started = bool(
+        isinstance(results_by_stream.get("photon_os"), dict)
+        and results_by_stream["photon_os"].get("apply_started") is True
+    )
+    photon_changed = photon_succeeded or photon_apply_started
+    release_restart_covers_photon = bool(
+        release_worker_restarted
+        and "photon_os" in stored_order
+        and "atlaso_release" in stored_order
+        and stored_order.index("atlaso_release") > stored_order.index("photon_os")
+    )
     return {
         "unit_id": "appliance_update",
         "label": _appliance_update_task_label(mode),
@@ -12282,12 +12309,12 @@ def aggregate_appliance_update_results(
         "dry_run": any(bool(result.get("dry_run")) for result in ordered_results),
         "apply_started": any(bool(result.get("apply_started")) for result in ordered_results),
         "restart_after_commit": mode == "run"
-        and succeeded
         and (
-            "photon_os" in selected
+            (photon_changed and not release_restart_covers_photon)
             or (
-                "atlaso_release" in selected
-                and not release_worker_restarted
+                not release_worker_restarted
+                and succeeded
+                and "atlaso_release" in selected
                 and not release_no_change
             )
         ),
@@ -12411,6 +12438,7 @@ def complete_appliance_update_task(db: Session, *, job: Job, update_result: dict
         if not update_result["success"]:
             log_appliance_update_failures(job.id, update_result)
         log_appliance_update_submission(job.id, update_result)
+        should_log_final_result = False
     detail = " ; ".join(" ".join(command["command"]) for command in update_result["commands"])
     record_audit(
         db,
@@ -12422,8 +12450,18 @@ def complete_appliance_update_task(db: Session, *, job: Job, update_result: dict
         success=update_result["success"],
     )
     if update_result.get("restart_after_commit"):
+        update_result["restart_dispatch_started_at"] = datetime.now(timezone.utc).isoformat()
+        update_result["restart_scheduled"] = False
+        job.result = json.dumps(update_result, indent=2)
+        db.add(job)
+        db.commit()
         restart_result = SystemAdapter().restart_appliance_after_update(str(update_result["config_path"]))
         update_result["commands"].append(adapter_result_to_payload(restart_result))
+        update_result["restart_scheduled"] = restart_result.returncode == 0
+        if restart_result.returncode != 0:
+            # A synchronous helper failure proves that no delayed restart was
+            # scheduled. Do not make recovery wait for an active-helper window.
+            update_result.pop("restart_dispatch_started_at", None)
         update_result["success"] = bool(update_result["success"]) and restart_result.returncode == 0
         update_result["status"] = JobStatus.SUCCEEDED.value if update_result["success"] else JobStatus.FAILED.value
         job.status = update_result["status"]
@@ -12441,7 +12479,7 @@ def complete_appliance_update_task(db: Session, *, job: Job, update_result: dict
             detail=" ".join(restart_result.command),
             success=restart_result.returncode == 0,
         )
-    if should_log_final_result and update_result.get("restart_after_commit"):
+    if should_log_final_result:
         if not update_result["success"]:
             log_appliance_update_failures(job.id, update_result)
         log_appliance_update_submission(job.id, update_result)
@@ -14578,7 +14616,16 @@ def submit_appliance_update(
             },
             status_code=409,
         )
-    task_config = {"selected_streams": selected, "settings": settings, "mode": mode}
+    task_config = {
+        "schema_version": 2,
+        "selected_streams": selected,
+        "execution_order": [
+            stream for stream in APPLIANCE_UPDATE_EXECUTION_ORDER if stream in selected
+        ],
+        "status_transaction_id": uuid4().hex,
+        "settings": settings,
+        "mode": mode,
+    }
     update_result = {
         "unit_id": "appliance_update",
         "label": _appliance_update_task_label(mode),
