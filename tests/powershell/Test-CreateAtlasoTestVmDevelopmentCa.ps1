@@ -654,6 +654,33 @@ try {
     $markerDisk = Join-Path $markerVmRoot 'Atlaso-Depot.vmdk'
     $markerDiskExtentOne = Join-Path $markerVmRoot 'Atlaso-Depot-s001.vmdk'
     $markerDiskExtentTwo = Join-Path $markerVmRoot 'Atlaso-Depot-s002.vmdk'
+    $blockedMarkerVmx = Join-Path $markerVmRoot 'Atlaso-Blocked-Marker.vmx'
+    [System.IO.File]::WriteAllText(
+        $blockedMarkerVmx,
+        "displayName = `"Atlaso Blocked Marker`"`r`n" +
+        "guestinfo.atlaso.test_vm_cleanup_identity = `"$('d' * 32)`"`r`n",
+        [System.Text.UTF8Encoding]::new($false)
+    )
+    $blockedMarkerPath = ''
+    Assert-Throws {
+        New-AtlasoDevelopmentCaCleanupMarker `
+            -VmxPath $blockedMarkerVmx `
+            -Name 'Atlaso-Blocked-Marker' `
+            -OutputDirectory $markerVmRoot `
+            -DataDiskStates @() `
+            -MarkerRoot $markerRoot `
+            -MarkerPathReference ([ref]$blockedMarkerPath)
+    } 'A pre-existing VMX cleanup identity must block marker publication.'
+    if (
+        [string]::IsNullOrWhiteSpace($blockedMarkerPath) -or
+        (Test-Path -LiteralPath $blockedMarkerPath) -or
+        -not ([System.IO.Path]::GetDirectoryName($blockedMarkerPath)).Equals(
+            [System.IO.Path]::GetFullPath($markerRoot),
+            [System.StringComparison]::OrdinalIgnoreCase
+        )
+    ) {
+        throw 'A marker-publication failure did not preserve its unbound path for fail-closed rollback.'
+    }
     [System.IO.File]::WriteAllText($markerVmx, 'config.version = "8"')
     [System.IO.File]::WriteAllText(
         $markerDisk,
@@ -1547,7 +1574,7 @@ $credentialStageCallIndex = $wrapperSource.LastIndexOf(
     [System.StringComparison]::Ordinal
 )
 $credentialStageMarkerIndex = $wrapperSource.LastIndexOf(
-    '$developmentCaCleanupMarkerPath = New-AtlasoDevelopmentCaCleanupMarker `',
+    'New-AtlasoDevelopmentCaCleanupMarker `',
     $credentialStageCallIndex,
     [System.StringComparison]::Ordinal
 )

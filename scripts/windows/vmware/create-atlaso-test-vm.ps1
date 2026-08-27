@@ -1212,12 +1212,17 @@ Fresh lowercase hexadecimal identity generated for this VM invocation.
 
 .PARAMETER ExpectedVmxIdentity
 Filesystem identity captured before acquiring the mutation lock.
+
+.PARAMETER DurableIdentityAction
+Optional marker-publication action that must complete while the VMX remains
+locked against writers and same-path replacement.
 #>
 function Set-AtlasoTestVmCleanupIdentity {
     param(
         [Parameter(Mandatory = $true)][string]$VmxPath,
         [Parameter(Mandatory = $true)][string]$Identity,
-        [Parameter(Mandatory = $true)][string]$ExpectedVmxIdentity
+        [Parameter(Mandatory = $true)][string]$ExpectedVmxIdentity,
+        [scriptblock]$DurableIdentityAction
     )
 
     if ($Identity -cnotmatch '^[0-9a-f]{32}$') {
@@ -1292,16 +1297,19 @@ function Set-AtlasoTestVmCleanupIdentity {
             }
             throw $writeError
         }
+        if (
+            [Atlaso.WorkstationFileIdentity]::Get($resolvedVmxPath) -cne $ExpectedVmxIdentity -or
+            (Get-AtlasoTestVmCleanupIdentityHash -VmxPath $resolvedVmxPath) -cne
+            (Get-AtlasoCleanupIdentityHash -Value $Identity)
+        ) {
+            throw "The cleanup identity could not be proven in the VMX: $resolvedVmxPath"
+        }
+        if ($null -ne $DurableIdentityAction) {
+            & $DurableIdentityAction
+        }
     }
     finally {
         $stream.Dispose()
-    }
-    if (
-        [Atlaso.WorkstationFileIdentity]::Get($resolvedVmxPath) -cne $ExpectedVmxIdentity -or
-        (Get-AtlasoTestVmCleanupIdentityHash -VmxPath $resolvedVmxPath) -cne
-        (Get-AtlasoCleanupIdentityHash -Value $Identity)
-    ) {
-        throw "The cleanup identity could not be proven in the VMX: $resolvedVmxPath"
     }
 }
 
@@ -1493,6 +1501,10 @@ Pre-existing data-disk identities that destructive retry must preserve.
 
 .PARAMETER MarkerRoot
 Per-user marker directory; override only for focused tests.
+
+.PARAMETER MarkerPathReference
+Optional caller-owned path reference populated before VMX mutation so a
+publication failure cannot enter unbound automatic rollback.
 #>
 function New-AtlasoDevelopmentCaCleanupMarker {
     param(
@@ -1500,7 +1512,8 @@ function New-AtlasoDevelopmentCaCleanupMarker {
         [Parameter(Mandatory = $true)][string]$Name,
         [Parameter(Mandatory = $true)][string]$OutputDirectory,
         [Parameter(Mandatory = $true)][AllowEmptyCollection()][object[]]$DataDiskStates,
-        [string]$MarkerRoot = (Get-AtlasoDevelopmentCaCleanupMarkerRoot)
+        [string]$MarkerRoot = (Get-AtlasoDevelopmentCaCleanupMarkerRoot),
+        [ref]$MarkerPathReference
     )
 
     $resolvedVmxPath = (Resolve-Path -LiteralPath $VmxPath).Path
@@ -1513,10 +1526,6 @@ function New-AtlasoDevelopmentCaCleanupMarker {
     # preserves this assignment when it atomically replaces the VMX at power-on.
     $cleanupIdentity = [guid]::NewGuid().ToString('N')
     $vmxIdentity = [Atlaso.WorkstationFileIdentity]::Get($resolvedVmxPath)
-    Set-AtlasoTestVmCleanupIdentity `
-        -VmxPath $resolvedVmxPath `
-        -Identity $cleanupIdentity `
-        -ExpectedVmxIdentity $vmxIdentity
     $cleanupIdentityHash = Get-AtlasoCleanupIdentityHash -Value $cleanupIdentity
     if (-not (Test-Path -LiteralPath $MarkerRoot -PathType Container)) {
         New-Item -ItemType Directory -Path $MarkerRoot -Force | Out-Null
@@ -1528,6 +1537,9 @@ function New-AtlasoDevelopmentCaCleanupMarker {
     $markerId = [guid]::NewGuid().ToString('N')
     $markerPath = Join-Path $MarkerRoot "$markerId.json"
     $temporaryPath = Join-Path $MarkerRoot "$markerId.tmp"
+    if ($null -ne $MarkerPathReference) {
+        $MarkerPathReference.Value = $markerPath
+    }
     # Keep preserved data on the VM artifact volume so quarantine uses a
     # same-volume rename and retains the recorded filesystem identity.
     $quarantineDirectory = Join-Path `
@@ -1557,8 +1569,8 @@ function New-AtlasoDevelopmentCaCleanupMarker {
     $bytes = [System.Text.UTF8Encoding]::new($false).GetBytes(
         ($payload | ConvertTo-Json -Depth 4 -Compress)
     )
-    try {
-        $stream = [System.IO.FileStream]::new(
+    $publishMarker = {
+        $markerStream = [System.IO.FileStream]::new(
             $temporaryPath,
             [System.IO.FileMode]::CreateNew,
             [System.IO.FileAccess]::Write,
@@ -1567,17 +1579,24 @@ function New-AtlasoDevelopmentCaCleanupMarker {
             [System.IO.FileOptions]::WriteThrough
         )
         try {
-            $stream.Write($bytes, 0, $bytes.Length)
-            $stream.Flush($true)
+            $markerStream.Write($bytes, 0, $bytes.Length)
+            $markerStream.Flush($true)
         }
         finally {
-            $stream.Dispose()
+            $markerStream.Dispose()
         }
-        # The signer-bearing VMX may be flushed immediately after this returns;
-        # require the marker directory entry itself to reach disk first.
+        # Keep the VMX write-excluding handle through durable marker rename so
+        # the marker can never bind an unproven same-path replacement.
         Move-AtlasoDurableCleanupMarkerFile `
             -SourcePath $temporaryPath `
             -DestinationPath $markerPath
+    }.GetNewClosure()
+    try {
+        Set-AtlasoTestVmCleanupIdentity `
+            -VmxPath $resolvedVmxPath `
+            -Identity $cleanupIdentity `
+            -ExpectedVmxIdentity $vmxIdentity `
+            -DurableIdentityAction $publishMarker
         return $markerPath
     }
     finally {
@@ -2885,11 +2904,12 @@ if ($PSCmdlet.ShouldProcess($targetVmx, "Create Atlaso Workstation test VM from 
             # Credential staging can rewrite the new VMX. Publish the same
             # restart-safe child-active marker used by signer staging before
             # launching it, so an unproven process tree blocks later cleanup.
-            $developmentCaCleanupMarkerPath = New-AtlasoDevelopmentCaCleanupMarker `
+            New-AtlasoDevelopmentCaCleanupMarker `
                 -VmxPath $targetVmx `
                 -Name $Name `
                 -OutputDirectory $resolvedOutputDirectory `
-                -DataDiskStates $rollbackDataDiskStates
+                -DataDiskStates $rollbackDataDiskStates `
+                -MarkerPathReference ([ref]$developmentCaCleanupMarkerPath) | Out-Null
             try {
                 Invoke-AtlasoTestVmCredentialStage `
                     -BridgeState $credentialBridgeState `
