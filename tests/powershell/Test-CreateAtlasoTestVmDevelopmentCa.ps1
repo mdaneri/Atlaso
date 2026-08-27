@@ -565,6 +565,16 @@ RW 524288000 SPARSE "Atlaso-Depot-s002.vmdk"
         -MarkerPath $startMarker `
         -ExpectedPhase secret-child-active `
         -Phase staged
+    # Credential staging and signer staging are separate bounded children. The
+    # marker must safely re-enter child-active state between those operations.
+    Set-AtlasoDevelopmentCaCleanupMarkerPhase `
+        -MarkerPath $startMarker `
+        -ExpectedPhase staged `
+        -Phase secret-child-active
+    Set-AtlasoDevelopmentCaCleanupMarkerPhase `
+        -MarkerPath $startMarker `
+        -ExpectedPhase secret-child-active `
+        -Phase staged
     Set-AtlasoDevelopmentCaCleanupMarkerPhase `
         -MarkerPath $startMarker `
         -ExpectedPhase staged `

@@ -1501,6 +1501,7 @@ function Set-AtlasoDevelopmentCaCleanupMarkerPhase {
         [string]$ExpectedPhase,
         [Parameter(Mandatory = $true)]
         [ValidateSet(
+            'secret-child-active',
             'staged',
             'vm-start-child-active',
             'vm-stop-child-active',
@@ -1527,7 +1528,7 @@ function Set-AtlasoDevelopmentCaCleanupMarkerPhase {
     }
     $validTransition = switch ($ExpectedPhase) {
         'secret-child-active' { $Phase -cin @('staged', 'stopped-vmx-scrubbed') }
-        'staged' { $Phase -cin @('vm-start-child-active', 'vm-stop-child-active', 'stopped-vmx-scrubbed', 'retired') }
+        'staged' { $Phase -cin @('secret-child-active', 'vm-start-child-active', 'vm-stop-child-active', 'stopped-vmx-scrubbed', 'retired') }
         'vm-start-child-active' { $Phase -cin @('staged', 'stopped-vmx-scrubbed') }
         'vm-stop-child-active' { $Phase -cin @('staged', 'import-proven-stopped-vmx-scrubbed') }
         'import-proven-stopped-vmx-scrubbed' { $Phase -cin @('vm-stop-child-active', 'vm-restart-child-active') }
