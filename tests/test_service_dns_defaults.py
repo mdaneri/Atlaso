@@ -26,10 +26,12 @@ def test_fresh_seed_and_lazy_service_defaults_use_appliance_domain(monkeypatch):
 
     monkeypatch.setenv("ATLASO_APPLIANCE_FQDN", "atlaso.lab.internal")
 
+    from atlaso.app.api.v1 import get_esx_storage_settings
     from atlaso.app.config import get_settings
     from atlaso.app.models import (
         ApplianceSettings,
         CaSettings,
+        DnsSettings,
         KmsSettings,
         LdapSettings,
         NtpSettings,
@@ -70,6 +72,9 @@ def test_fresh_seed_and_lazy_service_defaults_use_appliance_domain(monkeypatch):
             oidc = ensure_provider_settings(db)
             assert oidc.hostname == "oidc.lab.internal"
             assert oidc.issuer_url == "https://oidc.lab.internal/identity"
+            dns = db.execute(select(DnsSettings)).scalar_one()
+            dns.domain = "operator.example"
+            assert get_esx_storage_settings(db).hostname == "nfs.lab.internal"
             assert get_esx_storage_settings_row(db).hostname == "nfs.lab.internal"
             assert esxi_pxe_boot_settings(db)["hostname"] == "esxi-pxe.lab.internal"
     finally:
@@ -431,7 +436,9 @@ def test_appliance_settings_autosave_reconciles_factory_service_desired_state(
     from tests.routers.ui.helpers import login
 
     alias_actors: list[str | None] = []
+    appliance_dns_actors: list[str | None] = []
     original_alias_reconciler = ui_module.reconcile_service_dns_aliases
+    original_appliance_dns_reconciler = ui_module.ensure_dns_for_appliance_settings
 
     def observe_alias_reconciliation(db, actor=None):
         """Record the audit boundary while preserving real UI alias reconciliation.
@@ -447,6 +454,31 @@ def test_appliance_settings_autosave_reconciles_factory_service_desired_state(
         ui_module,
         "reconcile_service_dns_aliases",
         observe_alias_reconciliation,
+    )
+
+    def observe_appliance_dns_reconciliation(
+        db, settings, *, previous_fqdn, actor
+    ):
+        """Record the appliance-DNS audit boundary while preserving behavior.
+
+        Args:
+            db: Active database session.
+            settings: Desired appliance settings supplied by the caller.
+            previous_fqdn: Appliance FQDN before the update.
+            actor: Optional audit actor passed to the DNS reconciler.
+        """
+        appliance_dns_actors.append(actor)
+        return original_appliance_dns_reconciler(
+            db,
+            settings,
+            previous_fqdn=previous_fqdn,
+            actor=actor,
+        )
+
+    monkeypatch.setattr(
+        ui_module,
+        "ensure_dns_for_appliance_settings",
+        observe_appliance_dns_reconciliation,
     )
 
     with SessionLocal() as db:
@@ -474,6 +506,8 @@ def test_appliance_settings_autosave_reconciles_factory_service_desired_state(
     )
 
     assert response.status_code == 200, response.text
+    assert appliance_dns_actors
+    assert set(appliance_dns_actors) == {None}
     assert response.json()["fqdn"] == "atlaso.lab.internal"
     with SessionLocal() as db:
         assert db.execute(select(NtpSettings)).scalar_one().hostname == "ntp.lab.internal"

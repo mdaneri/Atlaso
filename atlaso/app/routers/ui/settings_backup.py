@@ -596,14 +596,15 @@ def build_router(dependencies: SettingsBackupUiDependencies) -> SettingsBackupUi
         )
         validation_errors = [*ca_state_errors, *validation_errors]
         dns_record_action = None
+        reconciled_service_aliases: list[str] = []
         if not validation_errors:
             dns_record_action = ensure_dns_for_appliance_settings(
-                db, settings, previous_fqdn=previous_fqdn, actor=identity.username
+                db, settings, previous_fqdn=previous_fqdn, actor=None
             )
-            if previous_service_dns_target_naming != settings.service_dns_target_naming:
-                reconcile_service_dns_aliases(db, actor=identity.username)
-        reconciled_service_aliases: list[str] = []
-        if reconciled_service_identities:
+        if (
+            previous_service_dns_target_naming != settings.service_dns_target_naming
+            or reconciled_service_identities
+        ):
             reconciled_service_aliases = reconcile_service_dns_aliases(db, actor=None)
         db.add(settings)
         db.commit()

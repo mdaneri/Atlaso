@@ -1208,9 +1208,12 @@ def get_esx_storage_settings(db: Session) -> EsxStorageSettings:
     """
     row = db.execute(select(EsxStorageSettings).order_by(EsxStorageSettings.id)).scalars().first()
     if row is None:
-        dns = db.execute(select(DnsSettings).order_by(DnsSettings.id)).scalars().first()
-        domain = (dns.domain if dns else "atlaso.internal").splitlines()[0].strip().strip(".")
-        row = EsxStorageSettings(enabled=False, hostname=f"nfs.{domain}")
+        row = EsxStorageSettings(
+            enabled=False,
+            hostname=factory_service_hostname(
+                "nfs", get_appliance_settings(db).fqdn
+            ),
+        )
         db.add(row)
         db.flush()
     return row
