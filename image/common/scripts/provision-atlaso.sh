@@ -279,7 +279,7 @@ case "$ATLASO_GUEST_PLATFORM" in
     ;;
 esac
 run_tdnf "Photon appliance package installation" \
-  install python3 python3-pip python3-devel python3-setuptools python3-virtualenv python3-curses python3-ntp sudo openssh-server curl rsync tar gzip xz shadow e2fsprogs sqlite procps-ng gnupg rpm-build gcc binutils make glib-devel systemd-devel ninja-build pkg-config $GUEST_INTEGRATION_PACKAGES nftables dnsmasq ntpsec nfs-utils rpcbind openldap openldap-servers ipxe syslinux nginx powershell
+  install python3 python3-pip python3-devel python3-setuptools python3-virtualenv python3-curses python3-ntp sudo openssh-server curl rsync tar gzip xz shadow e2fsprogs sqlite procps-ng gnupg rpm-build gcc binutils linux-api-headers make glib-devel systemd-devel ninja-build pkg-config $GUEST_INTEGRATION_PACKAGES nftables dnsmasq ntpsec nfs-utils rpcbind openldap openldap-servers ipxe syslinux nginx powershell
 
 log_step "building and staging verified offline guest-agent RPM closures"
 rm -rf "$GUEST_AGENT_STAGING"
@@ -296,8 +296,13 @@ fi
 qemu_rpm="$(find "$qemu_rpm_output" -maxdepth 1 -type f -name 'atlaso-qemu-guest-agent-*.rpm')"
 run_tdnf "Photon Hyper-V offline RPM closure" \
   install --downloadonly --downloaddir "$GUEST_AGENT_STAGING/hyperv" --alldeps hyper-v
-run_tdnf "Photon QEMU guest-agent offline RPM closure" \
-  install --downloadonly --downloaddir "$GUEST_AGENT_STAGING/qemu" --alldeps "$qemu_rpm"
+# Resolve the local RPM's signed runtime dependencies independently so an
+# unsigned Atlaso-built package can never weaken Photon repository verification.
+run_tdnf "Photon QEMU guest-agent signed dependency closure" \
+  install --downloadonly --downloaddir "$GUEST_AGENT_STAGING/qemu" --alldeps glib systemd
+# The local RPM is built above from Atlaso's pinned, hash-verified QEMU source;
+# stage it directly beside the signed dependency closure and bind every byte in
+# the combined result to the root-owned SHA-256 manifest below.
 install -o root -g root -m 0600 "$qemu_rpm" "$GUEST_AGENT_STAGING/qemu/$(basename "$qemu_rpm")"
 rm -rf "$qemu_rpm_output"
 if [ "$(find "$GUEST_AGENT_STAGING/hyperv" -maxdepth 1 -type f -name '*.rpm' | wc -l)" -eq 0 ] ||
@@ -841,7 +846,7 @@ rm -f /root/.bash_history "/home/$BOOTSTRAP_USERNAME/.bash_history"
 sync
 
 log_step "removing build-only packages and caches"
-run_tdnf "Build-only package removal" remove python3-devel python3-setuptools rpm-build gcc binutils make glib-devel systemd-devel ninja-build pkg-config
+run_tdnf "Build-only package removal" remove python3-devel python3-setuptools rpm-build gcc binutils linux-api-headers make glib-devel systemd-devel ninja-build pkg-config
 command -v python3 >/dev/null
 command -v pwsh >/dev/null
 command -v vmtoolsd >/dev/null 2>&1 || [ "$ATLASO_GUEST_PLATFORM" != "vmware" ]

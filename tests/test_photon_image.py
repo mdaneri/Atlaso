@@ -1354,12 +1354,15 @@ def test_photon_image_optional_pip_global_index_configuration():
     assert "\ntdnf -y update" not in script
 
 
-def test_photon_build_uses_the_combined_gcc_package() -> None:
-    """Photon's gcc package supplies both C and C++ compiler front ends."""
+def test_photon_build_installs_the_complete_qemu_build_toolchain() -> None:
+    """Photon supplies the compiler and Linux userspace headers separately."""
 
     provision = Path("image/common/scripts/provision-atlaso.sh").read_text(
         encoding="utf-8"
     )
+    qemu_builder = Path(
+        "image/common/scripts/build-qemu-guest-agent-rpm.sh"
+    ).read_text(encoding="utf-8")
     package_install = next(
         line.strip()
         for line in provision.splitlines()
@@ -1375,8 +1378,32 @@ def test_photon_build_uses_the_combined_gcc_package() -> None:
     assert " gcc " in f" {package_removal} "
     assert " binutils " in f" {package_install} "
     assert " binutils " in f" {package_removal} "
+    assert " linux-api-headers " in f" {package_install} "
+    assert " linux-api-headers " in f" {package_removal} "
     assert "gcc-c++" not in package_install
     assert "gcc-c++" not in package_removal
+    assert (
+        'install --downloadonly --downloaddir "$GUEST_AGENT_STAGING/qemu" '
+        "--alldeps glib systemd"
+        in provision
+    )
+    assert (
+        'install -o root -g root -m 0600 "$qemu_rpm" '
+        '"$GUEST_AGENT_STAGING/qemu/$(basename "$qemu_rpm")"'
+        in provision
+    )
+    assert "--nogpgcheck" not in provision
+    assert (
+        "find hyperv qemu -type f -name '*.rpm' -print | LC_ALL=C sort | "
+        "xargs sha256sum >SHA256SUMS"
+        in provision
+    )
+    assert "QEMU configure diagnostic (last 80 Meson log lines):" in qemu_builder
+    assert "tail -n 80 build/meson-logs/meson-log.txt" in qemu_builder
+    assert (
+        'install -o root -g root -m 0755 build/qga/qemu-ga "$RPM_ROOT/SOURCES/qemu-ga"'
+        in qemu_builder
+    )
 
 
 def test_vmware_builder_uses_nat_gateway_dns_by_default():
