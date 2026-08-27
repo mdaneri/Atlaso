@@ -59,7 +59,9 @@ path only after replacement preflight succeeds. `New-AtlasoPhotonKickstart` in
 `scripts/windows/common/Atlaso.PhotonImage.psm1` is the only kickstart source. Focused image tests parse its VMware JSON
 output and validate the installer, package, and guest-service contract.
 At shutdown, Packer schedules the root-only image finalizer from `/opt/atlaso/bin`, the same boundary as other
-Atlaso-owned Photon helpers. The detached finalizer waits for the communicator to exit, removes the temporary build
+Atlaso-owned Photon helpers. Packer retains its SSH communicator while it polls for poweroff, so the detached finalizer
+captures the exact disposable build-account UID, gives only that UID a bounded graceful termination window, and uses a
+bounded forced termination only for survivors. It then verifies the session is gone, removes the temporary build
 account and authorization, deletes both its staged source and installed copy, syncs the filesystem, and powers off.
 Workstation builds show the VMware console by default so boot/install progress is visible; pass `-Headless` for
 unattended runs. For the default GUI build, the wrapper starts or reuses a responsive VMware Workstation UI before

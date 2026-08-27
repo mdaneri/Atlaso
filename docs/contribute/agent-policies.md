@@ -698,10 +698,11 @@ Terminal order:
   unchanged OVA and use their native target storage formats during import. Record the applicable host prerequisites in
   artifact handoff notes.
 - Release image builds must generate disposable credentials inside the protected job, scrub every credential hash,
-  application secret, machine ID, and SSH host key before export, and remove the build account before shutdown. Schedule
-  build-account removal only from a detached root-owned context after the Packer SSH communicator exits; verify the
-  account, home, sudo authorization, and build-only finalizer are absent before powering off so any failure blocks
-  export. Every
+  application secret, machine ID, and SSH host key before export, and remove the build account before shutdown. Packer
+  retains its SSH communicator while polling for poweroff, so schedule build-account removal only from a detached
+  root-owned context that captures the disposable account's non-root numeric UID, gives only that UID bounded graceful
+  and forced termination windows, and verifies its session is gone before deletion. Verify the account, home, sudo
+  authorization, and build-only finalizer are absent before powering off so any failure blocks export. Every
   deployment regenerates identity before networking. Never bind a template SSH host key into OVA or converted-artifact
   provenance; retrieve the regenerated public key and one-time credential only through the authenticated hypervisor
   metadata channel or local console.
