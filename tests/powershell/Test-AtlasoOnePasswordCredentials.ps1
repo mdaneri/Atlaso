@@ -172,4 +172,42 @@ if ($ordinaryExitSurvivors.Count -ne 0) {
     throw 'An ordinary-exit process-tree descendant survived completion proof.'
 }
 
+$breakawayToken = "atlaso-breakaway-$([guid]::NewGuid().ToString('N'))"
+$escapedRunnerPath = (Join-Path $repositoryRoot 'scripts\windows\vmware\Atlaso.WorkstationFirstBoot.ps1') `
+    -replace "'", "''"
+$escapedPowerShellPath = ((Get-Process -Id $PID).Path) -replace "'", "''"
+$breakawaySource = @'
+. '__ATLASO_RUNNER_PATH__'
+Initialize-AtlasoWorkstationProcessJobType
+$breakawayArguments = @(
+    '-NoLogo', '-NoProfile', '-NonInteractive', '-Command',
+    'Start-Sleep -Seconds 30', '__ATLASO_BREAKAWAY_TOKEN__'
+)
+$breakaway = [Atlaso.WorkstationProcessJob]::StartBreakaway(
+    '__ATLASO_POWERSHELL_PATH__',
+    $breakawayArguments
+)
+$breakaway.Dispose()
+'@.Replace('__ATLASO_RUNNER_PATH__', $escapedRunnerPath).
+    Replace('__ATLASO_POWERSHELL_PATH__', $escapedPowerShellPath).
+    Replace('__ATLASO_BREAKAWAY_TOKEN__', $breakawayToken)
+$encodedBreakawaySource = [Convert]::ToBase64String([Text.Encoding]::Unicode.GetBytes($breakawaySource))
+Invoke-AtlasoBoundedStreamingProcess `
+    -FilePath (Get-Process -Id $PID).Path `
+    -ArgumentList @('-NoLogo', '-NoProfile', '-NonInteractive', '-EncodedCommand', $encodedBreakawaySource) `
+    -TimeoutSeconds 10 `
+    -Action 'Focused verified-breakaway test'
+$breakawayProcesses = @(Get-CimInstance -ClassName Win32_Process |
+    Where-Object { $_.CommandLine -like "*$breakawayToken*" })
+try {
+    if ($breakawayProcesses.Count -ne 1) {
+        throw 'The verified breakaway process did not outlive its sensitive-consumer job exactly once.'
+    }
+}
+finally {
+    foreach ($breakawayProcess in $breakawayProcesses) {
+        Stop-Process -Id $breakawayProcess.ProcessId -Force -ErrorAction SilentlyContinue
+    }
+}
+
 Write-Host 'Shared Atlaso 1Password credential bridge tests passed.'

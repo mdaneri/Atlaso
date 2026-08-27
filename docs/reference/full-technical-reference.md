@@ -1271,7 +1271,9 @@ first-boot service verifies the closure and retains or replaces VMware Tools onl
 
 The supported GUI wrapper starts or reuses a responsive VMware Workstation UI in a separate process before Packer asks
 `vmrun` to power on the builder. This keeps the visible console without allowing the GUI start transition to retain
-Packer's redirected output handles after the VM is already live. Sanitized startup heartbeats bind provider inventory,
+Packer's redirected output handles after the VM is already live. Only the exact resolved `vmware.exe` may use the
+verified Windows Job Object breakaway boundary; Packer, plugins, and VM consumers remain bound to the sensitive job.
+Sanitized startup heartbeats bind provider inventory,
 running state, and TCP/22 reachability to the expected VMX filesystem identity until SSH provisioning begins. The
 default 2700-second start-to-provisioning timeout matches Packer's 45-minute SSH communicator allowance and performs
 checked exact-root cleanup only for

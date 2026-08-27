@@ -146,7 +146,9 @@ artifact left behind. `-PrepareIsoOnly` is rejected because retaining that ISO w
 
 GUI builds start or reuse a responsive VMware Workstation UI as a process separate from Packer before invoking the
 VMware builder. This preserves the visible console while preventing an already-running VM from leaving Packer blocked
-inside the synchronous `vmrun` start transition. Until SSH provisioning begins, the wrapper reports sanitized,
+inside the synchronous `vmrun` start transition. When the UI is not already open, only the exact resolved `vmware.exe`
+may cross the sensitive-consumer Job Object through the verified Windows breakaway flag; Packer, plugins, and their VM
+consumers remain in the bounded job. Until SSH provisioning begins, the wrapper reports sanitized,
 exact-VMX startup heartbeats and applies a 45-minute default timeout matching Packer's SSH communicator allowance. The
 interval begins at monitored Packer process start, including pre-VMX and pre-power-on failures. Use
 `-PackerStartupTimeoutSeconds` to select a different bounded start-to-provisioning interval and

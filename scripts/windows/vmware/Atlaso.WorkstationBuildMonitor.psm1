@@ -306,11 +306,14 @@ Start or verify a detached VMware Workstation UI before Packer requests GUI mode
 Resolved vmrun executable used to locate the matching Workstation UI.
 .PARAMETER TimeoutSeconds
 Maximum UI readiness wait.
+.PARAMETER ProcessLauncher
+Optional verified launcher that starts the UI outside a sensitive-consumer job.
 #>
 function Initialize-AtlasoWorkstationGui {
     param(
         [Parameter(Mandatory = $true)][string]$VmrunPath,
-        [ValidateRange(5, 60)][int]$TimeoutSeconds = 20
+        [ValidateRange(5, 60)][int]$TimeoutSeconds = 20,
+        [scriptblock]$ProcessLauncher
     )
 
     $vmwarePath = Join-Path (Split-Path -Parent $VmrunPath) 'vmware.exe'
@@ -333,7 +336,25 @@ function Initialize-AtlasoWorkstationGui {
 
     # The visible console is the documented default. Starting it through a separate
     # process detaches Workstation from the stdout/stderr handles Packer gives vmrun.
-    $process = Start-Process -FilePath $resolvedVmwarePath -PassThru
+    $process = if ($null -eq $ProcessLauncher) {
+        Start-Process -FilePath $resolvedVmwarePath -PassThru
+    }
+    else {
+        & $ProcessLauncher $resolvedVmwarePath
+    }
+    if ($null -eq $process -or $null -eq $process.PSObject.Properties['Id']) {
+        throw 'The VMware Workstation UI launcher returned no process identity.'
+    }
+    $startedProcess = Get-Process -Id $process.Id -ErrorAction SilentlyContinue
+    if ($null -eq $startedProcess -or -not $startedProcess.Path.Equals(
+            $resolvedVmwarePath,
+            [System.StringComparison]::OrdinalIgnoreCase
+        )) {
+        if ($null -ne $startedProcess) {
+            $startedProcess.Kill()
+        }
+        throw 'The VMware Workstation UI launcher returned an unexpected executable identity.'
+    }
     $ready = $false
     try {
         $ready = $process.WaitForInputIdle($TimeoutSeconds * 1000)

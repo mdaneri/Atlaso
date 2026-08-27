@@ -142,6 +142,10 @@ def test_photon_wrapper_preflights_credentials_before_image_mutation() -> None:
     assert "MoveFileEx" in runner
     assert "StartSuspended($FilePath, $ArgumentList)" in runner
     assert "ResumeThread(processInformation.Thread)" in runner
+    assert "JOB_OBJECT_LIMIT_BREAKAWAY_OK" in runner
+    assert "CREATE_BREAKAWAY_FROM_JOB" in runner
+    assert "Start-AtlasoWorkstationUiBreakawayProcess" in runner
+    assert "Only the exact VMware Workstation UI" in runner
     assert "$Job.TerminateAndWait(10000)" in runner
     assert "$Job.CompleteAndWait(10000)" in runner
     assert "accounting.ActiveProcesses == 0" in runner

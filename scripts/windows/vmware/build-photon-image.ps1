@@ -941,7 +941,13 @@ if (-not $ValidateOnly -and -not $PrepareIsoOnly) {
         # ISO preparation and Packer initialization can be lengthy, so prove the
         # GUI provider is responsive at the last safe point before Packer starts.
         if (-not $Headless) {
-            $null = Initialize-AtlasoWorkstationGui -VmrunPath $resolvedVmrunPath
+            $breakawayUiLauncher = {
+                param($FilePath)
+                Start-AtlasoWorkstationUiBreakawayProcess -FilePath $FilePath
+            }.GetNewClosure()
+            $null = Initialize-AtlasoWorkstationGui `
+                -VmrunPath $resolvedVmrunPath `
+                -ProcessLauncher $breakawayUiLauncher
         }
         $packerPath = (Get-Command packer -ErrorAction Stop).Source
         Invoke-AtlasoMonitoredPackerBuild `

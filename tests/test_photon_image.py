@@ -1510,6 +1510,9 @@ def test_create_atlaso_vmware_test_vm_wrapper_uses_common_helpers():
     vm_script = Path("scripts/windows/vmware/create-atlaso-vm.ps1").read_text(encoding="utf-8")
     nics_script = Path("scripts/windows/vmware/set-test-nics.ps1").read_text(encoding="utf-8")
     build_script = Path("scripts/windows/vmware/build-photon-image.ps1").read_text(encoding="utf-8")
+    build_monitor = Path(
+        "scripts/windows/vmware/Atlaso.WorkstationBuildMonitor.psm1"
+    ).read_text(encoding="utf-8")
     packer_template = Path("image/vmware-workstation/atlaso-photon.pkr.hcl").read_text(encoding="utf-8")
     docs = Path("image/vmware-workstation/README.md").read_text(encoding="utf-8")
 
@@ -1629,9 +1632,13 @@ def test_create_atlaso_vmware_test_vm_wrapper_uses_common_helpers():
     assert explicit_ssh_probe in build_script
     assert static_builder_probe in build_script
     assert build_script.index(explicit_ssh_probe) < build_script.index(static_builder_probe)
-    assert build_script.count("Initialize-AtlasoWorkstationGui -VmrunPath $resolvedVmrunPath") == 1
+    assert build_script.count("Initialize-AtlasoWorkstationGui `") == 1
+    assert "-ProcessLauncher $breakawayUiLauncher" in build_script
+    assert "Start-AtlasoWorkstationUiBreakawayProcess -FilePath $FilePath" in build_script
+    assert "[scriptblock]$ProcessLauncher" in build_monitor
+    assert "The VMware Workstation UI launcher returned an unexpected executable identity." in build_monitor
     assert build_script.index("$packerBuildInvoker = {") < build_script.index(
-        "Initialize-AtlasoWorkstationGui -VmrunPath $resolvedVmrunPath"
+        "Initialize-AtlasoWorkstationGui `"
     ) < build_script.index("Invoke-AtlasoMonitoredPackerBuild")
 
     lifecycle_script = Path(

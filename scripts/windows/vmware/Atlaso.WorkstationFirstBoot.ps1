@@ -14,20 +14,9 @@ omit it.
 
 <#
 .SYNOPSIS
-Create a suspended process, assign its Windows job, and only then resume it.
-
-.PARAMETER FilePath
-Exact executable to start without shell interpretation.
-
-.PARAMETER ArgumentList
-Individual process arguments encoded through the Windows argv contract.
+Load the native Windows process-job boundary once per PowerShell process.
 #>
-function New-AtlasoBoundedProcessJob {
-    param(
-        [Parameter(Mandatory = $true)][string]$FilePath,
-        [Parameter(Mandatory = $true)][AllowEmptyString()][string[]]$ArgumentList
-    )
-
+function Initialize-AtlasoWorkstationProcessJobType {
     if (-not $IsWindows) {
         throw 'Bounded process-tree jobs require Windows.'
     }
@@ -43,6 +32,7 @@ namespace Atlaso
     public sealed class WorkstationProcessJob : IDisposable
     {
         private const uint JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE = 0x00002000;
+        private const uint JOB_OBJECT_LIMIT_BREAKAWAY_OK = 0x00000800;
         private IntPtr handle;
 
         [StructLayout(LayoutKind.Sequential)]
@@ -227,7 +217,8 @@ namespace Atlaso
             try
             {
                 ExtendedLimitInformation limits = new ExtendedLimitInformation();
-                limits.BasicLimitInformation.LimitFlags = JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE;
+                limits.BasicLimitInformation.LimitFlags =
+                    JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE | JOB_OBJECT_LIMIT_BREAKAWAY_OK;
                 if (!SetInformationJobObject(job, 9, ref limits, (uint)Marshal.SizeOf(limits)))
                 {
                     throw new Win32Exception(Marshal.GetLastWin32Error(), "Windows process job limits could not be established.");
@@ -284,6 +275,58 @@ namespace Atlaso
                     CloseHandle(processInformation.Thread);
                 }
                 CloseHandle(job);
+                throw;
+            }
+        }
+
+        public static Process StartBreakaway(string filePath, string[] arguments)
+        {
+            const uint CREATE_BREAKAWAY_FROM_JOB = 0x01000000;
+            ProcessInformation processInformation = new ProcessInformation();
+            try
+            {
+                System.Text.StringBuilder commandLine = new System.Text.StringBuilder(QuoteArgument(filePath));
+                foreach (string argument in arguments)
+                {
+                    commandLine.Append(' ');
+                    commandLine.Append(QuoteArgument(argument));
+                }
+                StartupInformation startup = new StartupInformation();
+                startup.Size = (uint)Marshal.SizeOf(typeof(StartupInformation));
+                if (!CreateProcess(
+                    filePath,
+                    commandLine,
+                    IntPtr.Zero,
+                    IntPtr.Zero,
+                    false,
+                    CREATE_BREAKAWAY_FROM_JOB,
+                    IntPtr.Zero,
+                    null,
+                    ref startup,
+                    out processInformation))
+                {
+                    throw new Win32Exception(Marshal.GetLastWin32Error(), "The verified breakaway process could not be created.");
+                }
+                Process process = Process.GetProcessById((int)processInformation.ProcessId);
+                IntPtr managedProcessHandle = process.Handle;
+                CloseHandle(processInformation.Thread);
+                processInformation.Thread = IntPtr.Zero;
+                CloseHandle(processInformation.Process);
+                processInformation.Process = IntPtr.Zero;
+                return process;
+            }
+            catch
+            {
+                if (processInformation.Process != IntPtr.Zero)
+                {
+                    TerminateProcess(processInformation.Process, 1);
+                    WaitForSingleObject(processInformation.Process, 10000);
+                    CloseHandle(processInformation.Process);
+                }
+                if (processInformation.Thread != IntPtr.Zero)
+                {
+                    CloseHandle(processInformation.Thread);
+                }
                 throw;
             }
         }
@@ -347,6 +390,25 @@ namespace Atlaso
 }
 '@
     }
+}
+
+<#
+.SYNOPSIS
+Create a suspended process, assign its Windows job, and only then resume it.
+
+.PARAMETER FilePath
+Exact executable to start without shell interpretation.
+
+.PARAMETER ArgumentList
+Individual process arguments encoded through the Windows argv contract.
+#>
+function New-AtlasoBoundedProcessJob {
+    param(
+        [Parameter(Mandatory = $true)][string]$FilePath,
+        [Parameter(Mandatory = $true)][AllowEmptyString()][string[]]$ArgumentList
+    )
+
+    Initialize-AtlasoWorkstationProcessJobType
     try {
         return [Atlaso.WorkstationProcessJob]::StartSuspended($FilePath, $ArgumentList)
     }
@@ -358,6 +420,27 @@ namespace Atlaso
         $assignmentFailure.Data['AtlasoProcessTreeTerminationUnproven'] = $true
         throw $assignmentFailure
     }
+}
+
+<#
+.SYNOPSIS
+Start the exact VMware Workstation UI outside the sensitive-consumer Windows job.
+
+.PARAMETER FilePath
+Exact executable that is allowed to outlive the sensitive consumer.
+
+#>
+function Start-AtlasoWorkstationUiBreakawayProcess {
+    param(
+        [Parameter(Mandatory = $true)][string]$FilePath
+    )
+
+    Initialize-AtlasoWorkstationProcessJobType
+    $resolvedFilePath = (Resolve-Path -LiteralPath $FilePath -ErrorAction Stop).Path
+    if ((Split-Path -Leaf $resolvedFilePath) -cne 'vmware.exe') {
+        throw 'Only the exact VMware Workstation UI may cross the sensitive-consumer job boundary.'
+    }
+    return [Atlaso.WorkstationProcessJob]::StartBreakaway($resolvedFilePath, @())
 }
 
 <#
