@@ -223,7 +223,7 @@ foreach ($ownedDirectory in @($vmRoot, $validationRoot)) {
     }
 }
 $vmStarted = $false
-$vmRootId = ''
+$vmRootId = Get-AtlasoWindowsFileId -Path $vmRoot
 $vmxId = ''
 $ownedDescendantIds = $null
 $ownedRegisteredPaths = @()
@@ -324,6 +324,30 @@ try {
 finally {
     $vmRootSafeToRemove = $true
     $cleanupFailure = ''
+    if (-not $vmxId -and (Test-Path -LiteralPath $vmRoot)) {
+        try {
+            $rootItem = Get-Item -LiteralPath $vmRoot -Force
+            if (($rootItem.Attributes -band [System.IO.FileAttributes]::ReparsePoint) -ne 0 -or
+                (Get-AtlasoWindowsFileId -Path $vmRoot) -ne $vmRootId) {
+                throw 'The pre-provider VMware smoke root identity changed.'
+            }
+            $partialDescendants = Get-AtlasoVmwareDescendantIdentity -DirectoryPath $vmRoot
+            $verifiedPartialDescendants = Get-AtlasoVmwareDescendantIdentity -DirectoryPath $vmRoot
+            $partialChanged = $partialDescendants.Count -ne $verifiedPartialDescendants.Count -or
+                @($verifiedPartialDescendants.Keys | Where-Object {
+                        -not $partialDescendants.ContainsKey($_) -or
+                        $partialDescendants[$_] -ne $verifiedPartialDescendants[$_]
+                    }).Count -ne 0
+            if ($partialChanged) {
+                throw 'The pre-provider VMware smoke descendant identity changed.'
+            }
+            Remove-Item -LiteralPath $vmRoot -Recurse -Force
+        }
+        catch {
+            $cleanupFailure = "Partial VMware smoke output was preserved. $($_.Exception.Message)"
+        }
+        $vmRootSafeToRemove = $false
+    }
     if ($vmxId -and $vmRootId) {
         try {
             Assert-AtlasoVmwareVmIdentity -DirectoryPath $vmRoot -VmxPath $vmxPath `

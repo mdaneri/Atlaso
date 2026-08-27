@@ -63,6 +63,8 @@ foreach ($required in @(
         'Get-AtlasoVmwareDescendantIdentity',
         'Get-AtlasoVmwareInventoryPathById',
         '$ownedDescendantIds.ContainsKey($_)',
+        'The pre-provider VMware smoke root identity changed',
+        '$partialDescendants.ContainsKey($_)',
         'unexpected VMX set',
         'unexpected display name',
         'root identity changed after provider deletion',

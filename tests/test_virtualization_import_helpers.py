@@ -59,6 +59,8 @@ def test_kvm_imports_the_unchanged_ova_and_normalizes_exact_contract() -> None:
     assert '"$name"-*' in script
     assert 'virsh vol-delete --pool "$pool" "$volume_name"' in script
     assert 'virsh vol-list "$pool" --name' in script
+    assert 'KVM import rollback did not reach its cleanup postcondition' in script
+    assert 'Rollback retained a volume in the locked $pool/$name namespace' in script
     cleanup = script.split("cleanup() {", 1)[1].split("trap cleanup", 1)[0]
     absence_proof = cleanup.index('domain_names=$(virsh list --all --name')
     guarded_delete = cleanup.index('if [ "$created" -eq 1 ] && [ "$domain_absent" -eq 1 ]')

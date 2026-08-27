@@ -72,6 +72,9 @@ depot_volume_created=0
 backup_volume_created=0
 owned_volume_names="$validation_root/owned-volumes"
 cleanup() {
+  exit_status=$?
+  trap - EXIT HUP INT TERM
+  cleanup_failed=0
   domain_absent=0
   if [ "$created" -eq 1 ] && virsh dominfo "$name" >/dev/null 2>&1; then
     cleanup_safe=1
@@ -91,8 +94,16 @@ cleanup() {
       printf '%s\n' "$volume_name" >>"$owned_volume_names"
     done <"$validation_root/owned-disk-paths"
     if [ "$cleanup_safe" -eq 1 ]; then
-      virsh destroy "$name" >/dev/null 2>&1 || true
-      virsh undefine "$name" --nvram >/dev/null 2>&1 || virsh undefine "$name" >/dev/null 2>&1 || true
+      if state=$(virsh domstate "$name" 2>/dev/null); then
+        case "$state" in
+          'shut off') ;;
+          *) virsh destroy "$name" >/dev/null 2>&1 || cleanup_failed=1 ;;
+        esac
+        virsh undefine "$name" --nvram >/dev/null 2>&1 ||
+          virsh undefine "$name" >/dev/null 2>&1 || cleanup_failed=1
+      else
+        cleanup_failed=1
+      fi
     else
       echo "Rollback preserved $name because an attached disk is outside the invocation-owned storage namespace." >&2
     fi
@@ -110,24 +121,40 @@ cleanup() {
   if [ "$created" -eq 1 ] && [ "$domain_absent" -eq 1 ]; then
     # The locked name/pool namespace was empty before ownership began. Any
     # matching partial volume is therefore owned by this failed virt-v2v run.
-    virsh vol-list "$pool" --name | while IFS= read -r volume_name; do
-      case "$volume_name" in
-        "$name"-*) virsh vol-delete --pool "$pool" "$volume_name" >/dev/null 2>&1 || true ;;
-      esac
-    done
-  fi
-  if [ "$depot_volume_created" -eq 1 ] && [ "$domain_absent" -eq 1 ]; then
-    virsh vol-delete --pool "$pool" "$name-vcf-offline-depot.qcow2" >/dev/null 2>&1 || true
-  fi
-  if [ "$backup_volume_created" -eq 1 ] && [ "$domain_absent" -eq 1 ]; then
-    virsh vol-delete --pool "$pool" "$name-vcf-backups.qcow2" >/dev/null 2>&1 || true
+    if volumes=$(virsh vol-list "$pool" --name 2>/dev/null); then
+      printf '%s\n' "$volumes" >"$validation_root/rollback-volumes"
+      while IFS= read -r volume_name; do
+        case "$volume_name" in
+          "$name"-*) virsh vol-delete --pool "$pool" "$volume_name" >/dev/null 2>&1 || cleanup_failed=1 ;;
+        esac
+      done <"$validation_root/rollback-volumes"
+    else
+      cleanup_failed=1
+    fi
   fi
   if [ "$created" -eq 1 ] && [ "$domain_absent" -ne 1 ]; then
     echo "Rollback preserved $name volumes because exact domain absence could not be proved." >&2
   fi
-  rm -rf -- "$validation_root"
+  if [ "$created" -eq 1 ] && [ "$domain_absent" -eq 1 ]; then
+    if volumes=$(virsh vol-list "$pool" --name 2>/dev/null); then
+      if printf '%s\n' "$volumes" | grep -Eq "^${name}-"; then
+        echo "Rollback retained a volume in the locked $pool/$name namespace." >&2
+        cleanup_failed=1
+      fi
+    else
+      echo "Rollback could not inventory the locked $pool/$name namespace." >&2
+      cleanup_failed=1
+    fi
+  fi
+  rm -rf -- "$validation_root" || cleanup_failed=1
+  if [ "$cleanup_failed" -ne 0 ]; then
+    echo "KVM import rollback did not reach its cleanup postcondition." >&2
+    [ "$exit_status" -ne 0 ] || exit_status=1
+  fi
+  exit "$exit_status"
 }
-trap cleanup EXIT HUP INT TERM
+trap cleanup EXIT
+trap 'exit 2' HUP INT TERM
 python3 "$validator" "$ova_path" --extract-directory "$validation_root/extracted" >"$validation_root/contract.json"
 
 # The name, pool, networks, and matching storage namespace are all absent or
