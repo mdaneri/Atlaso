@@ -266,6 +266,37 @@ def test_reconcile_factory_identities_preserves_operator_state_and_dns_conflicts
             for row in records
         )
 
+        depot.server_certificate = "depot.atlaso.internal"
+        oidc.issuer_url = "https://oidc.atlaso.internal/identity"
+        certificate.common_name = "depot.atlaso.internal"
+        certificate.subject_alt_names = "depot.atlaso.internal"
+        certificate.cert_path = "/etc/atlaso/depot.atlaso.internal.crt"
+        db.add(
+            DnsRecord(
+                hostname="depot.atlaso.internal",
+                record_type="AAAA",
+                address="2001:db8::99",
+                description=VCF_DEPOT_DNS_DESCRIPTION,
+            )
+        )
+        db.flush()
+
+        repaired = reconcile_factory_service_identities(db)
+        db.commit()
+
+        assert repaired["vcf_offline_depot"]["certificate_changed"] is True
+        assert depot.hostname == "depot.lab.internal"
+        assert depot.server_certificate == "depot.lab.internal"
+        assert oidc.hostname == "oidc.lab.internal"
+        assert oidc.issuer_url == "https://oidc.lab.internal/identity"
+        assert certificate.common_name == "depot.lab.internal"
+        assert db.execute(
+            select(DnsRecord).where(
+                DnsRecord.hostname == "depot.atlaso.internal",
+                DnsRecord.description == VCF_DEPOT_DNS_DESCRIPTION,
+            )
+        ).scalars().all() == []
+
 
 def test_factory_reset_seed_restores_coherent_factory_service_domain(monkeypatch):
     """Factory replacement ignores deployment overrides and restores one factory domain.

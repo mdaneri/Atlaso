@@ -349,42 +349,58 @@ def reconcile_factory_service_identities(
             str(getattr(row, identity.hostname_attribute) or "")
         )
         target_hostname = factory_service_hostname(identity.label, appliance.fqdn)
-        if current_hostname == target_hostname:
-            continue
         eligible = _eligible_factory_hostnames(
             identity.label,
             previous_appliance_fqdn=previous_appliance_fqdn,
         )
-        if current_hostname not in eligible:
+        hostname_changed = current_hostname != target_hostname
+        if hostname_changed and current_hostname not in eligible:
             continue
-        setattr(row, identity.hostname_attribute, target_hostname)
+        identity_changed = hostname_changed
+        if hostname_changed:
+            setattr(row, identity.hostname_attribute, target_hostname)
         for attribute in identity.coupled_hostname_attributes:
             coupled = normalize_fqdn(str(getattr(row, attribute) or ""))
-            if coupled in eligible or coupled == current_hostname:
+            if coupled != target_hostname and (
+                coupled in eligible or coupled == current_hostname
+            ):
                 setattr(row, attribute, target_hostname)
+                identity_changed = True
         if isinstance(row, OidcProviderSettings):
-            old_issuer = factory_oidc_issuer(current_hostname, row.port)
-            if row.issuer_url == old_issuer:
-                row.issuer_url = factory_oidc_issuer(target_hostname, row.port)
-        if hasattr(row, "updated_at"):
-            row.updated_at = utcnow()
+            target_issuer = factory_oidc_issuer(target_hostname, row.port)
+            eligible_issuers = {
+                factory_oidc_issuer(hostname, row.port) for hostname in eligible
+            }
+            if row.issuer_url != target_issuer and row.issuer_url in eligible_issuers:
+                row.issuer_url = target_issuer
+                identity_changed = True
         dns_changed = 0
         conflicts = 0
-        if identity.dns_description:
-            dns_changed, conflicts = _migrate_owned_dns_records(
-                db,
-                description=identity.dns_description,
-                old_hostname=current_hostname,
-                new_hostname=target_hostname,
-            )
         certificate_changed = False
-        if identity.certificate_owner:
-            certificate_changed = _reconcile_managed_certificate(
-                db,
-                owner=identity.certificate_owner,
-                old_hostname=current_hostname,
-                new_hostname=target_hostname,
-            )
+        for old_hostname in sorted(eligible - {target_hostname}):
+            if identity.dns_description:
+                migrated, migrated_conflicts = _migrate_owned_dns_records(
+                    db,
+                    description=identity.dns_description,
+                    old_hostname=old_hostname,
+                    new_hostname=target_hostname,
+                )
+                dns_changed += migrated
+                conflicts += migrated_conflicts
+            if identity.certificate_owner:
+                certificate_changed = (
+                    _reconcile_managed_certificate(
+                        db,
+                        owner=identity.certificate_owner,
+                        old_hostname=old_hostname,
+                        new_hostname=target_hostname,
+                    )
+                    or certificate_changed
+                )
+        if not (identity_changed or dns_changed or certificate_changed):
+            continue
+        if hasattr(row, "updated_at"):
+            row.updated_at = utcnow()
         changes[identity.key] = {
             "old_hostname": current_hostname,
             "new_hostname": target_hostname,
@@ -402,14 +418,25 @@ def reconcile_factory_service_identities(
         eligible = _eligible_factory_hostnames(
             "esxi-pxe", previous_appliance_fqdn=previous_appliance_fqdn
         )
-        if current_hostname != target_hostname and current_hostname in eligible:
-            pxe_row.value = target_hostname
-            dns_changed, conflicts = _migrate_owned_dns_records(
-                db,
-                description=ESXI_PXE_DNS_DESCRIPTION,
-                old_hostname=current_hostname,
-                new_hostname=target_hostname,
-            )
+        hostname_changed = current_hostname != target_hostname
+        if not hostname_changed or current_hostname in eligible:
+            if hostname_changed:
+                pxe_row.value = target_hostname
+            dns_changed = 0
+            conflicts = 0
+            for old_hostname in sorted(eligible - {target_hostname}):
+                migrated, migrated_conflicts = _migrate_owned_dns_records(
+                    db,
+                    description=ESXI_PXE_DNS_DESCRIPTION,
+                    old_hostname=old_hostname,
+                    new_hostname=target_hostname,
+                )
+                dns_changed += migrated
+                conflicts += migrated_conflicts
+        else:
+            dns_changed = 0
+            conflicts = 0
+        if (hostname_changed and current_hostname in eligible) or dns_changed:
             changes["esxi_pxe"] = {
                 "old_hostname": current_hostname,
                 "new_hostname": target_hostname,
