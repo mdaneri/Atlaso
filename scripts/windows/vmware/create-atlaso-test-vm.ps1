@@ -2000,13 +2000,33 @@ function Upgrade-AtlasoLegacyDevelopmentCaCleanupMarker {
             -Identity $cleanupIdentity `
             -ExpectedVmxIdentity $vmxIdentity
     }
-    $payload.Schema = 3
-    $payload.Phase = 'import-proven-stopped-vmx-scrubbed'
-    $payload.VmxIdentity = $vmxIdentity
-    $payload | Add-Member `
-        -NotePropertyName CleanupIdentityHash `
-        -NotePropertyValue (Get-AtlasoCleanupIdentityHash -Value $cleanupIdentity)
-    Write-AtlasoDevelopmentCaCleanupMarkerPayload -MarkerPath $Marker.MarkerPath -Payload $payload
+    $resolvedVmxPath = (Resolve-Path -LiteralPath $Marker.VmxPath).Path
+    # Hold the captured VMX against writers and same-path replacement while
+    # rebinding the sole durable identity into the upgraded marker. The first
+    # read decides only whether an append is needed; this locked read is the
+    # authoritative value published by the schema transition.
+    $stream = [System.IO.File]::Open(
+        $resolvedVmxPath,
+        [System.IO.FileMode]::Open,
+        [System.IO.FileAccess]::Read,
+        [System.IO.FileShare]::Read
+    )
+    try {
+        if ([Atlaso.WorkstationFileIdentity]::Get($resolvedVmxPath) -cne $vmxIdentity) {
+            throw "The VMX changed before legacy cleanup marker upgrade; the marker was preserved: $resolvedVmxPath"
+        }
+        $cleanupIdentity = Get-AtlasoTestVmCleanupIdentity -VmxPath $resolvedVmxPath
+        $payload.Schema = 3
+        $payload.Phase = 'import-proven-stopped-vmx-scrubbed'
+        $payload.VmxIdentity = $vmxIdentity
+        $payload | Add-Member `
+            -NotePropertyName CleanupIdentityHash `
+            -NotePropertyValue (Get-AtlasoCleanupIdentityHash -Value $cleanupIdentity)
+        Write-AtlasoDevelopmentCaCleanupMarkerPayload -MarkerPath $Marker.MarkerPath -Payload $payload
+    }
+    finally {
+        $stream.Dispose()
+    }
     $Marker.Schema = 3
     $Marker.Phase = 'import-proven-stopped-vmx-scrubbed'
     $Marker.CleanupIdentityHash = [string]$payload.CleanupIdentityHash
