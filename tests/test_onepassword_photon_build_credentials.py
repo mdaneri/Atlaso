@@ -91,8 +91,10 @@ def test_photon_wrapper_preflights_credentials_before_image_mutation() -> None:
     assert "$Marker.Phase = 'root-absent'" in wrapper
     assert "$Marker.Phase = 'retired'" in wrapper
     assert "AtlasoProcessTreeTerminationUnproven" in wrapper
+    assert "AtlasoProcessTreeTerminationProven" in wrapper
     assert "if (-not $processTreeTerminationUnproven)" in wrapper
     assert "Restart Windows, then rerun this wrapper" in wrapper
+    assert "The outer image deadline selected checked VMware artifact cleanup." in wrapper
     assert wrapper.index("[System.IO.Directory]::Delete($resolvedRoot, $true)") < wrapper.index(
         "Remove-Item -LiteralPath $MarkerPath"
     )
@@ -105,6 +107,9 @@ def test_photon_wrapper_preflights_credentials_before_image_mutation() -> None:
     )
     isolated_child = wrapper.index(
         "-Action 'The isolated VMware Photon image build'"
+    )
+    assert wrapper.index("AtlasoProcessTreeTerminationProven") < wrapper.index(
+        "Remove-AtlasoWorkstationArtifactRoot `", isolated_child
     )
     parent_return = wrapper.index("    return\n}", isolated_child)
     network_discovery = wrapper.index("if (-not $SkipNetworkCheck) {")
@@ -135,6 +140,11 @@ def test_photon_wrapper_preflights_credentials_before_image_mutation() -> None:
     assert "[System.IO.FileOptions]::WriteThrough" in runner
     assert "$stream.Flush($true)" in runner
     assert "MoveFileEx" in runner
+    assert "New-AtlasoBoundedProcessJob -RootProcess $process" in runner
+    assert "$Job.TerminateAndWait(10000)" in runner
+    assert "accounting.ActiveProcesses == 0" in runner
+    assert "AtlasoProcessTreeTerminationProven" in runner
+    assert "-TrackDescendants `" in module
     assert "MOVEFILE" not in wrapper
 
 

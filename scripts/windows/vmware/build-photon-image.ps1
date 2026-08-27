@@ -470,6 +470,27 @@ else {
                 $processTreeTerminationUnproven = $true
                 throw 'The isolated VMware Photon image build could not prove whole-tree termination. Restart Windows, then rerun this wrapper to complete sensitive cleanup.'
             }
+            if ($_.Exception.Data['AtlasoProcessTreeTerminationProven'] -and
+                $PackerOnError -eq 'cleanup' -and -not $KeepExistingOutput) {
+                $cleanupPackerDirectory = if ([string]::IsNullOrWhiteSpace($PackerDirectory)) {
+                    Join-Path $PSScriptRoot '..\..\..\image\vmware-workstation'
+                }
+                else {
+                    $PackerDirectory
+                }
+                $cleanupOutputDirectory = Resolve-WorkstationOutputDirectory `
+                    -PackerDirectory $cleanupPackerDirectory `
+                    -OutputDirectory $OutputDirectory
+                if (Test-Path -LiteralPath $cleanupOutputDirectory) {
+                    $cleanupVmrunPath = Resolve-WorkstationVmrunPath -Path $VmrunPath
+                    Write-Host 'The outer image deadline selected checked VMware artifact cleanup.'
+                    Remove-AtlasoWorkstationArtifactRoot `
+                        -VmrunPath $cleanupVmrunPath `
+                        -ExpectedRemovalRoot $cleanupOutputDirectory `
+                        -RemovalRoot $cleanupOutputDirectory `
+                        -Confirm:$false
+                }
+            }
             throw
         }
     }

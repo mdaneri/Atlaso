@@ -118,8 +118,10 @@ or other image mutation. It rejects caller `DEFAULT_*` variables, local `.env` i
 variables, invalid exact bytes, unavailable authorization, and timeouts without printing the Environment ID or values.
 The parent passes only DPAPI ciphertext to a separately bounded image-build child; only that child unwraps values for
 kickstart and Packer serialization. Every plaintext kickstart, remastered ISO, and Packer variable file is placed under
-the same exact task-owned temporary root. If the whole-child deadline force-terminates the process tree before child
-cleanup can run, the parent removes that root and verifies its absence before returning.
+the same exact task-owned temporary root. A Windows process job tracks the child and every Packer or plugin descendant.
+If the whole-child deadline terminates that job before child cleanup can run, the parent waits for job accounting to
+prove zero active processes, applies checked exact-output cleanup when `-PackerOnError cleanup` owns replacement output,
+then removes the sensitive root and verifies its absence before returning.
 `-ImageBuildTimeoutSeconds` selects the deadline and defaults to six hours.
 If whole-tree termination itself cannot be proven, the wrapper retains the root and a non-secret
 `.atlaso-local/photon-image-build-cleanup.json` ownership marker and blocks further work. Restart Windows and rerun the
@@ -151,8 +153,9 @@ interval begins at monitored Packer process start, including pre-VMX and pre-pow
 so the probe matches Packer's communicator endpoint. A
 heartbeat distinguishes output identity, provider inventory, exact running state, TCP/22 reachability, Workstation
 handoff, and SSH authentication; it never reads or reports VMX contents or connection credentials. With
-`-PackerOnError cleanup`, a timeout uses the same checked exact-root cleanup as an ordinary replacement build. Other
-failure selections preserve the exact output for investigation.
+`-PackerOnError cleanup`, either the monitored startup timeout or the outer whole-image deadline uses the same checked
+exact-root cleanup as an ordinary replacement build. `-KeepExistingOutput` and other failure selections preserve the
+exact output when the wrapper cannot claim replacement ownership.
 
 For Workstation, Photon installation is bound to VMware SCSI identity `0:0:0` through kickstart preinstall discovery,
 not `/dev/sda` enumeration. Provisioning then proves the complete root dependency chain reaches that disk and proves

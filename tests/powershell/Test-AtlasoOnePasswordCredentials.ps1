@@ -15,6 +15,7 @@ param()
 
 $ErrorActionPreference = 'Stop'
 $repositoryRoot = (Resolve-Path -LiteralPath (Join-Path $PSScriptRoot '..\..')).Path
+. (Join-Path $repositoryRoot 'scripts\windows\vmware\Atlaso.WorkstationFirstBoot.ps1')
 Import-Module (Join-Path $repositoryRoot 'scripts\windows\vmware\Atlaso.OnePasswordCredentials.psm1') -Force
 $cleanupMarkerPath = Join-Path $repositoryRoot '.atlaso-local\onepassword-credential-cleanup.json'
 if (Test-Path -LiteralPath $cleanupMarkerPath) {
@@ -114,6 +115,38 @@ if ($newBridgeRoots.Count -ne 0) {
 }
 if (Test-Path -LiteralPath $cleanupMarkerPath) {
     throw 'A focused credential bridge test left its durable cleanup marker.'
+}
+
+$processTreeToken = "atlaso-descendant-$([guid]::NewGuid().ToString('N'))"
+$childSource = @'
+$null = Start-Process -FilePath (Get-Process -Id $PID).Path -ArgumentList @(
+    '-NoLogo', '-NoProfile', '-NonInteractive', '-Command',
+    'Start-Sleep -Seconds 30', '__ATLASO_PROCESS_TREE_TOKEN__'
+)
+Start-Sleep -Seconds 30
+'@.Replace('__ATLASO_PROCESS_TREE_TOKEN__', $processTreeToken)
+$encodedChildSource = [Convert]::ToBase64String([Text.Encoding]::Unicode.GetBytes($childSource))
+try {
+    Invoke-AtlasoBoundedProcess `
+        -FilePath (Get-Process -Id $PID).Path `
+        -ArgumentList @('-NoLogo', '-NoProfile', '-NonInteractive', '-EncodedCommand', $encodedChildSource) `
+        -TimeoutSeconds 1 `
+        -TrackDescendants `
+        -Action 'Focused descendant termination test'
+    throw 'The focused descendant termination test did not reach its deadline.'
+}
+catch {
+    if (-not $_.Exception.Data['AtlasoProcessTreeTerminationProven']) {
+        throw
+    }
+}
+$survivingDescendants = @(Get-CimInstance -ClassName Win32_Process |
+    Where-Object { $_.CommandLine -like "*$processTreeToken*" })
+if ($survivingDescendants.Count -ne 0) {
+    foreach ($survivingDescendant in $survivingDescendants) {
+        Stop-Process -Id $survivingDescendant.ProcessId -Force -ErrorAction SilentlyContinue
+    }
+    throw 'A tracked process-tree descendant survived proven termination.'
 }
 
 Write-Host 'Shared Atlaso 1Password credential bridge tests passed.'

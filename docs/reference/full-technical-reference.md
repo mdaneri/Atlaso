@@ -218,8 +218,10 @@ Packer initialization, or other image mutation. Sanitized failures do not print 
 credential values. The parent then launches the complete plaintext-consuming image workflow in a separately bounded
 PowerShell child, passes only a second current-user DPAPI bundle, and verifies bundle removal afterward. Only that
 child unwraps values for kickstart and Packer serialization. All plaintext kickstart, remastered ISO, and Packer
-variable artifacts live under that exact task-owned root, allowing the parent to remove and verify them even when the
-deadline force-terminates the child before its own cleanup runs. The default six-hour deadline is configurable through
+variable artifacts live under that exact task-owned root. The parent assigns the child to a Windows process job, and a
+deadline termination is proven only after job accounting reports zero active Packer or plugin descendants. The parent
+then applies checked exact-output cleanup when the selected policy owns replacement output and removes and verifies the
+sensitive root even when the child could not run its own cleanup. The default six-hour deadline is configurable through
 `-ImageBuildTimeoutSeconds`.
 An unproven whole-tree termination retains that root and a non-secret checkout-local ownership marker. Same-boot
 invocations fail closed; after Windows restarts, the changed boot identity proves the prior tree inactive and recovery

@@ -14,6 +14,253 @@ omit it.
 
 <#
 .SYNOPSIS
+Assign a started process to an owned Windows job before it can launch consumers.
+
+.PARAMETER RootProcess
+Started root process whose descendants the job must track.
+#>
+function New-AtlasoBoundedProcessJob {
+    param(
+        [Parameter(Mandatory = $true)][System.Diagnostics.Process]$RootProcess
+    )
+
+    if (-not $IsWindows) {
+        throw 'Bounded process-tree jobs require Windows.'
+    }
+    if (-not ('Atlaso.WorkstationProcessJob' -as [type])) {
+        Add-Type -TypeDefinition @'
+using System;
+using System.ComponentModel;
+using System.Diagnostics;
+using System.Runtime.InteropServices;
+
+namespace Atlaso
+{
+    public sealed class WorkstationProcessJob : IDisposable
+    {
+        private const uint JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE = 0x00002000;
+        private IntPtr handle;
+
+        [StructLayout(LayoutKind.Sequential)]
+        private struct BasicLimitInformation
+        {
+            public long PerProcessUserTimeLimit;
+            public long PerJobUserTimeLimit;
+            public uint LimitFlags;
+            public UIntPtr MinimumWorkingSetSize;
+            public UIntPtr MaximumWorkingSetSize;
+            public uint ActiveProcessLimit;
+            public UIntPtr Affinity;
+            public uint PriorityClass;
+            public uint SchedulingClass;
+        }
+
+        [StructLayout(LayoutKind.Sequential)]
+        private struct IoCounters
+        {
+            public ulong ReadOperationCount;
+            public ulong WriteOperationCount;
+            public ulong OtherOperationCount;
+            public ulong ReadTransferCount;
+            public ulong WriteTransferCount;
+            public ulong OtherTransferCount;
+        }
+
+        [StructLayout(LayoutKind.Sequential)]
+        private struct ExtendedLimitInformation
+        {
+            public BasicLimitInformation BasicLimitInformation;
+            public IoCounters IoInfo;
+            public UIntPtr ProcessMemoryLimit;
+            public UIntPtr JobMemoryLimit;
+            public UIntPtr PeakProcessMemoryUsed;
+            public UIntPtr PeakJobMemoryUsed;
+        }
+
+        [StructLayout(LayoutKind.Sequential)]
+        private struct BasicAccountingInformation
+        {
+            public long TotalUserTime;
+            public long TotalKernelTime;
+            public long ThisPeriodTotalUserTime;
+            public long ThisPeriodTotalKernelTime;
+            public uint TotalPageFaultCount;
+            public uint TotalProcesses;
+            public uint ActiveProcesses;
+            public uint TotalTerminatedProcesses;
+        }
+
+        [DllImport("kernel32.dll", CharSet = CharSet.Unicode, SetLastError = true)]
+        private static extern IntPtr CreateJobObject(IntPtr securityAttributes, string name);
+
+        [DllImport("kernel32.dll", SetLastError = true)]
+        private static extern bool SetInformationJobObject(
+            IntPtr job,
+            int informationClass,
+            ref ExtendedLimitInformation information,
+            uint informationLength);
+
+        [DllImport("kernel32.dll", SetLastError = true)]
+        private static extern bool AssignProcessToJobObject(IntPtr job, IntPtr process);
+
+        [DllImport("kernel32.dll", SetLastError = true)]
+        private static extern bool TerminateJobObject(IntPtr job, uint exitCode);
+
+        [DllImport("kernel32.dll", SetLastError = true)]
+        private static extern bool QueryInformationJobObject(
+            IntPtr job,
+            int informationClass,
+            out BasicAccountingInformation information,
+            uint informationLength,
+            IntPtr returnLength);
+
+        [DllImport("kernel32.dll", SetLastError = true)]
+        private static extern bool CloseHandle(IntPtr handle);
+
+        private WorkstationProcessJob(IntPtr jobHandle)
+        {
+            handle = jobHandle;
+        }
+
+        public static WorkstationProcessJob Create(Process rootProcess)
+        {
+            IntPtr job = CreateJobObject(IntPtr.Zero, null);
+            if (job == IntPtr.Zero)
+            {
+                throw new Win32Exception(Marshal.GetLastWin32Error(), "Windows process job creation failed.");
+            }
+            try
+            {
+                ExtendedLimitInformation limits = new ExtendedLimitInformation();
+                limits.BasicLimitInformation.LimitFlags = JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE;
+                if (!SetInformationJobObject(job, 9, ref limits, (uint)Marshal.SizeOf(limits)))
+                {
+                    throw new Win32Exception(Marshal.GetLastWin32Error(), "Windows process job limits could not be established.");
+                }
+                if (!AssignProcessToJobObject(job, rootProcess.Handle))
+                {
+                    throw new Win32Exception(Marshal.GetLastWin32Error(), "The bounded process could not be assigned to its Windows job.");
+                }
+                return new WorkstationProcessJob(job);
+            }
+            catch
+            {
+                CloseHandle(job);
+                throw;
+            }
+        }
+
+        public void TerminateAndWait(int timeoutMilliseconds)
+        {
+            if (!TerminateJobObject(handle, 1))
+            {
+                throw new Win32Exception(Marshal.GetLastWin32Error(), "Windows process-job termination failed.");
+            }
+            Stopwatch deadline = Stopwatch.StartNew();
+            while (deadline.ElapsedMilliseconds <= timeoutMilliseconds)
+            {
+                BasicAccountingInformation accounting;
+                if (!QueryInformationJobObject(
+                    handle,
+                    1,
+                    out accounting,
+                    (uint)Marshal.SizeOf(typeof(BasicAccountingInformation)),
+                    IntPtr.Zero))
+                {
+                    throw new Win32Exception(Marshal.GetLastWin32Error(), "Windows process-job accounting failed.");
+                }
+                if (accounting.ActiveProcesses == 0)
+                {
+                    return;
+                }
+                System.Threading.Thread.Sleep(50);
+            }
+            throw new TimeoutException("A process-job descendant remained active after termination.");
+        }
+
+        public void Dispose()
+        {
+            if (handle != IntPtr.Zero)
+            {
+                CloseHandle(handle);
+                handle = IntPtr.Zero;
+            }
+            GC.SuppressFinalize(this);
+        }
+    }
+}
+'@
+    }
+    try {
+        return [Atlaso.WorkstationProcessJob]::Create($RootProcess)
+    }
+    catch {
+        try {
+            $RootProcess.Kill($true)
+            $null = $RootProcess.WaitForExit(10000)
+        }
+        catch {
+            # The durable caller marker retains ownership for restart recovery.
+            Write-Verbose 'Immediate fallback termination could not be proven.'
+        }
+        $assignmentFailure = [System.InvalidOperationException]::new(
+            'The bounded process could not establish whole-process-tree ownership.',
+            $_.Exception
+        )
+        $assignmentFailure.Data['AtlasoProcessTreeTerminationUnproven'] = $true
+        throw $assignmentFailure
+    }
+}
+
+<#
+.SYNOPSIS
+Terminate a bounded process tree and prove every captured descendant exited.
+
+.PARAMETER Process
+Started root process whose descendants must be terminated.
+
+.PARAMETER Job
+Owned Windows job tracking the root and every descendant.
+
+.PARAMETER TimeoutSeconds
+Configured deadline included in sanitized failure messages.
+
+.PARAMETER Action
+Safe action description used in the sanitized timeout failure.
+#>
+function Stop-AtlasoBoundedProcessTree {
+    param(
+        [Parameter(Mandatory = $true)][System.Diagnostics.Process]$Process,
+        [Parameter(Mandatory = $true)][object]$Job,
+        [Parameter(Mandatory = $true)][ValidateRange(1, 86400)][int]$TimeoutSeconds,
+        [Parameter(Mandatory = $true)][string]$Action
+    )
+
+    try {
+        # Job accounting is the authoritative descendant set. Immediate-child
+        # exit alone does not prove that Packer or plugin consumers are inactive.
+        $Job.TerminateAndWait(10000)
+        if (-not $Process.WaitForExit(10000)) {
+            throw 'The bounded root remained active after process-job termination.'
+        }
+    }
+    catch {
+        $terminationFailure = [System.TimeoutException]::new(
+            "$Action exceeded its $TimeoutSeconds-second deadline and whole-process-tree cleanup could not be proven.",
+            $_.Exception
+        )
+        $terminationFailure.Data['AtlasoProcessTreeTerminationUnproven'] = $true
+        throw $terminationFailure
+    }
+    $deadlineFailure = [System.TimeoutException]::new(
+        "$Action exceeded its $TimeoutSeconds-second deadline after proven whole-process-tree termination."
+    )
+    $deadlineFailure.Data['AtlasoProcessTreeTerminationProven'] = $true
+    throw $deadlineFailure
+}
+
+<#
+.SYNOPSIS
 Run one external process with a deadline and whole-tree termination.
 
 .PARAMETER FilePath
@@ -25,6 +272,9 @@ Individual process arguments added without command-line interpolation.
 .PARAMETER TimeoutSeconds
 Positive deadline for the external process.
 
+.PARAMETER TrackDescendants
+Assign the process to an owned Windows job when every descendant must be proven inactive.
+
 .PARAMETER Action
 Safe action description used in failure messages.
 #>
@@ -33,6 +283,7 @@ function Invoke-AtlasoBoundedProcess {
         [Parameter(Mandatory = $true)][string]$FilePath,
         [Parameter(Mandatory = $true)][AllowEmptyString()][string[]]$ArgumentList,
         [Parameter(Mandatory = $true)][ValidateRange(1, 86400)][int]$TimeoutSeconds,
+        [switch]$TrackDescendants,
         [Parameter(Mandatory = $true)][string]$Action
     )
 
@@ -46,15 +297,26 @@ function Invoke-AtlasoBoundedProcess {
     }
     $process = [System.Diagnostics.Process]::new()
     $process.StartInfo = $startInfo
+    $processJob = $null
     try {
         if (-not $process.Start()) {
             throw "$Action could not be started."
+        }
+        if ($TrackDescendants) {
+            $processJob = New-AtlasoBoundedProcessJob -RootProcess $process
         }
         # Drain both streams asynchronously so a verbose child cannot block
         # before the bounded wait has an opportunity to terminate its tree.
         $standardOutput = $process.StandardOutput.ReadToEndAsync()
         $standardError = $process.StandardError.ReadToEndAsync()
         if (-not $process.WaitForExit($TimeoutSeconds * 1000)) {
+            if ($TrackDescendants) {
+                Stop-AtlasoBoundedProcessTree `
+                    -Process $process `
+                    -Job $processJob `
+                    -TimeoutSeconds $TimeoutSeconds `
+                    -Action $Action
+            }
             try {
                 $process.Kill($true)
                 if (-not $process.WaitForExit(10000)) {
@@ -63,7 +325,7 @@ function Invoke-AtlasoBoundedProcess {
             }
             catch {
                 $terminationFailure = [System.TimeoutException]::new(
-                    "$Action exceeded its deadline and whole-process-tree cleanup could not be proven.",
+                    "$Action exceeded its $TimeoutSeconds-second deadline and whole-process-tree cleanup could not be proven.",
                     $_.Exception
                 )
                 $terminationFailure.Data['AtlasoProcessTreeTerminationUnproven'] = $true
@@ -79,6 +341,9 @@ function Invoke-AtlasoBoundedProcess {
         return $output
     }
     finally {
+        if ($null -ne $processJob) {
+            $processJob.Dispose()
+        }
         $process.Dispose()
     }
 }
@@ -120,32 +385,27 @@ function Invoke-AtlasoBoundedStreamingProcess {
     }
     $process = [System.Diagnostics.Process]::new()
     $process.StartInfo = $startInfo
+    $processJob = $null
     try {
         if (-not $process.Start()) {
             throw "$Action could not be started."
         }
+        $processJob = New-AtlasoBoundedProcessJob -RootProcess $process
         if (-not $process.WaitForExit($TimeoutSeconds * 1000)) {
-            try {
-                $process.Kill($true)
-                if (-not $process.WaitForExit(10000)) {
-                    throw 'The process remained active after whole-tree termination.'
-                }
-            }
-            catch {
-                $terminationFailure = [System.TimeoutException]::new(
-                    "$Action exceeded its deadline and whole-process-tree cleanup could not be proven.",
-                    $_.Exception
-                )
-                $terminationFailure.Data['AtlasoProcessTreeTerminationUnproven'] = $true
-                throw $terminationFailure
-            }
-            throw "$Action exceeded its $TimeoutSeconds-second deadline."
+            Stop-AtlasoBoundedProcessTree `
+                -Process $process `
+                -Job $processJob `
+                -TimeoutSeconds $TimeoutSeconds `
+                -Action $Action
         }
         if ($process.ExitCode -ne 0) {
             throw "$Action failed with exit code $($process.ExitCode)."
         }
     }
     finally {
+        if ($null -ne $processJob) {
+            $processJob.Dispose()
+        }
         $process.Dispose()
     }
 }
