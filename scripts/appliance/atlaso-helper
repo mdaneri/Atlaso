@@ -14792,6 +14792,15 @@ def _write_update_status_nginx_include() -> None:
     )
 
 
+def _appliance_update_status_nginx_sites() -> tuple[tuple[Path, bool], ...]:
+    """Return every applied nginx site that must honor the update-only hold."""
+    return (
+        (NGINX_MANAGEMENT_SITE_PATH, True),
+        (NGINX_PUBLIC_SERVICES_SITE_PATH, False),
+        (ESXI_PXE_NGINX_SITE_PATH, False),
+    )
+
+
 def _update_status_probe_urls(site_text: str) -> tuple[tuple[str, bool], ...]:
     """Return every applied browser-listener URL that must serve status.
 
@@ -14900,10 +14909,7 @@ def _publish_appliance_update_status(job_id: str) -> dict[str, object]:
     originals: dict[Path, str] = {}
     guarded_sites: list[str] = []
     try:
-        for path, default_management in (
-            (NGINX_MANAGEMENT_SITE_PATH, True),
-            (NGINX_PUBLIC_SERVICES_SITE_PATH, False),
-        ):
+        for path, default_management in _appliance_update_status_nginx_sites():
             if not path.is_file():
                 if default_management:
                     raise ValueError("applied management nginx site is unavailable")
@@ -15072,7 +15078,7 @@ def _verify_release_status_completion(
 def _ordinary_update_ui_probe_sites() -> list[str]:
     """Return the currently applied browser-listener configurations."""
     sites = []
-    for path in (NGINX_MANAGEMENT_SITE_PATH, NGINX_PUBLIC_SERVICES_SITE_PATH):
+    for path, _default_management in _appliance_update_status_nginx_sites():
         if path.is_file():
             sites.append(path.read_text(encoding="utf-8"))
     return sites
@@ -15226,10 +15232,7 @@ def _guard_appliance_update_status_startup() -> dict[str, object]:
             return {"success": True, "status": "terminal_restored"}
         _write_appliance_update_status_files(current)
         _write_update_status_nginx_include()
-        for path, default_management in (
-            (NGINX_MANAGEMENT_SITE_PATH, True),
-            (NGINX_PUBLIC_SERVICES_SITE_PATH, False),
-        ):
+        for path, default_management in _appliance_update_status_nginx_sites():
             if not path.is_file():
                 if default_management:
                     raise ValueError("applied management nginx site is unavailable")
@@ -15269,10 +15272,7 @@ def _guard_appliance_update_status_startup() -> dict[str, object]:
             _render_appliance_update_status_html(generic),
         )
         _write_update_status_nginx_include()
-        for path, default_management in (
-            (NGINX_MANAGEMENT_SITE_PATH, True),
-            (NGINX_PUBLIC_SERVICES_SITE_PATH, False),
-        ):
+        for path, default_management in _appliance_update_status_nginx_sites():
             if not path.is_file():
                 continue
             guarded = _site_with_update_status_guards(
@@ -21568,6 +21568,7 @@ def _handle_appliance_update(action: str, args: list[str]) -> int:
                     "state": state,
                     "task_id": task_id,
                     "terminal": recorded.get("terminal") is True,
+                    "status_activated": recorded.get("status_activated") is True,
                 },
                 sort_keys=True,
             )

@@ -13,6 +13,7 @@ from functools import partial
 from pathlib import Path
 from secrets import compare_digest
 from typing import Any
+from uuid import uuid4
 
 from sqlalchemy import select, update
 from sqlalchemy.exc import IntegrityError
@@ -855,11 +856,25 @@ def _terminalize_incomplete_appliance_update_steps(
     except json.JSONDecodeError:
         config = {}
     install_mode = isinstance(config, dict) and config.get("mode") == "run"
-    photon_succeeded = any(
-        step.component_key == "photon_os"
-        and step.status == JobStatus.SUCCEEDED.value
-        for step in steps
-    )
+    photon_restart_required = False
+    for step in steps:
+        if step.component_key != "photon_os":
+            continue
+        if step.status == JobStatus.SUCCEEDED.value:
+            photon_restart_required = True
+            break
+        if step.status != JobStatus.RUNNING.value:
+            continue
+        try:
+            photon_result = json.loads(step.result or "{}")
+        except json.JSONDecodeError:
+            photon_result = {}
+        if isinstance(photon_result, dict) and photon_result.get("apply_started") is True:
+            # The privileged helper may have completed its package mutation before
+            # the worker failed to commit the terminal child result. Preserve the
+            # restart duty conservatively from the pre-apply durable marker.
+            photon_restart_required = True
+            break
     for step in steps:
         if step.status in terminal:
             continue
@@ -883,7 +898,7 @@ def _terminalize_incomplete_appliance_update_steps(
         step.error = error
         step.result = json.dumps(result, indent=2, sort_keys=True)
         db.add(step)
-    return bool(install_mode and photon_succeeded)
+    return bool(install_mode and photon_restart_required)
 
 
 def _appliance_update_result_error(result: dict[str, Any]) -> str:
@@ -1112,6 +1127,12 @@ def _reconcile_appliance_update_status_surface() -> bool:
         if job_status == JobStatus.RUNNING.value:
             return False
         if not marker_present:
+            if restoration_state == "held" and inspection.get("status_activated") is False:
+                # Initial publication failed before the marker became active. Let
+                # the durable pending task retry through its normal runner, which
+                # terminalizes failed publication instead of blocking admission
+                # forever at startup.
+                return True
             return bool(
                 restoration_state == "held"
                 and _publish_appliance_update_status(marker_job_id)
@@ -1305,6 +1326,19 @@ def _run_appliance_update(job_id: str) -> None:
         selected = [str(value) for value in config.get("selected_streams", [])]
         settings = config.get("settings") if isinstance(config.get("settings"), dict) else appliance_update_settings(db)
         mode = str(config.get("mode") or "check")
+        if mode == "run" and not str(config.get("status_transaction_id") or ""):
+            if re.fullmatch(r"job_[0-9a-f]{12}", job.id) is None:
+                raise RuntimeError(
+                    "This legacy Appliance Update has no compatible durable status identity; "
+                    "submit the update again."
+                )
+            # Older queued installs predate the update-only surface contract. Add
+            # its transaction identity and commit it before the hold is published
+            # or any privileged stream is allowed to mutate the appliance.
+            config["status_transaction_id"] = uuid4().hex
+            job.task_config_json = json.dumps(config, indent=2, sort_keys=True)
+            db.add(job)
+            db.commit()
         status_surface_required = bool(
             mode == "run" and str(config.get("status_transaction_id") or "")
         )

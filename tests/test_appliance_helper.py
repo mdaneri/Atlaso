@@ -329,6 +329,12 @@ def test_status_publish_rollback_preserves_only_a_preexisting_hold(
         "server {\n  listen 80 default_server;\n  location / {\n    return 200;\n  }\n}\n",
         encoding="utf-8",
     )
+    pxe = tmp_path / "nginx" / "esxi-pxe.conf"
+    pxe_original = (
+        "server {\n  listen 192.0.2.20:8080;\n"
+        "  location ^~ /pxe/esxi/ { return 200; }\n}\n"
+    )
+    pxe.write_text(pxe_original, encoding="utf-8")
     if marker_existed:
         marker.parent.mkdir(parents=True)
         marker.write_text(job_id + "\n", encoding="utf-8")
@@ -352,6 +358,7 @@ def test_status_publish_rollback_preserves_only_a_preexisting_hold(
         "NGINX_PUBLIC_SERVICES_SITE_PATH",
         tmp_path / "nginx" / "public.conf",
     )
+    monkeypatch.setattr(helper, "ESXI_PXE_NGINX_SITE_PATH", pxe)
     monkeypatch.setattr(helper, "_appliance_update_status_task", lambda _job_id: {})
     monkeypatch.setattr(helper, "_write_appliance_update_status_files", persist)
     monkeypatch.setattr(helper, "_write_update_status_nginx_include", lambda: None)
@@ -361,16 +368,19 @@ def test_status_publish_rollback_preserves_only_a_preexisting_hold(
         lambda: SimpleNamespace(returncode=0),
     )
     monkeypatch.setattr(helper, "_service_command", lambda *_args: {"success": True})
-    monkeypatch.setattr(
-        helper,
-        "_verify_update_status_responses",
-        lambda _sites: (_ for _ in ()).throw(ValueError("listener proof failed")),
-    )
+    def fail_listener_proof(sites):
+        """Prove the dedicated PXE vhost was guarded before failing admission."""
+        assert any("listen 192.0.2.20:8080;" in site for site in sites)
+        assert any(str(helper.ATLASO_UPDATE_STATUS_NGINX_INCLUDE_PATH) in site for site in sites)
+        raise ValueError("listener proof failed")
+
+    monkeypatch.setattr(helper, "_verify_update_status_responses", fail_listener_proof)
 
     with pytest.raises(ValueError, match="listener proof failed"):
         helper._publish_appliance_update_status(job_id)
 
     assert marker.exists() is marker_existed
+    assert pxe.read_text(encoding="utf-8") == pxe_original
     assert persisted[0]["status_activated"] is False
     if marker_existed:
         assert marker.read_text(encoding="utf-8") == job_id + "\n"
@@ -525,6 +535,91 @@ def test_status_finish_reestablishes_hold_when_restored_snapshot_write_fails(
         helper._finish_appliance_update_status(job_id)
 
     assert marker.read_text(encoding="utf-8") == job_id + "\n"
+
+
+def test_status_startup_recreates_hold_on_dedicated_pxe_vhost(monkeypatch, tmp_path):
+    """Recreate machine-only PXE protection before nginx starts after reboot.
+
+    Args:
+        monkeypatch: Pytest fixture used to isolate status recovery state.
+        tmp_path: Temporary directory used for nginx and status files.
+    """
+    helper = load_helper_module()
+    job_id = "job_0123456789ab"
+    transaction_id = "a" * 32
+    status = tmp_path / "status.json"
+    marker = tmp_path / "run" / "status-marker"
+    management = tmp_path / "nginx" / "management.conf"
+    pxe = tmp_path / "nginx" / "esxi-pxe.conf"
+    management.parent.mkdir(parents=True)
+    management.write_text(
+        "server {\n  listen 80 default_server;\n  location / {\n    return 200;\n  }\n}\n",
+        encoding="utf-8",
+    )
+    pxe.write_text(
+        "server {\n  listen 192.0.2.20:8080;\n"
+        "  location ^~ /pxe/esxi/ { return 200; }\n}\n",
+        encoding="utf-8",
+    )
+    recorded = {
+        "task_id": job_id,
+        "transaction_id": transaction_id,
+        "terminal": False,
+        "status_activated": True,
+        "ui_restoration": {"state": "held"},
+    }
+    status.write_text(json.dumps(recorded), encoding="utf-8")
+    monkeypatch.setattr(helper, "ATLASO_UPDATE_STATUS_PATH", status)
+    monkeypatch.setattr(helper, "ATLASO_UPDATE_STATUS_MARKER_PATH", marker)
+    monkeypatch.setattr(helper, "NGINX_MANAGEMENT_SITE_PATH", management)
+    monkeypatch.setattr(
+        helper,
+        "NGINX_PUBLIC_SERVICES_SITE_PATH",
+        tmp_path / "nginx" / "public.conf",
+    )
+    monkeypatch.setattr(helper, "ESXI_PXE_NGINX_SITE_PATH", pxe)
+    monkeypatch.setattr(
+        helper,
+        "_appliance_update_status_task",
+        lambda _job_id, *, allow_terminal=False: dict(recorded),
+    )
+    monkeypatch.setattr(helper, "_write_appliance_update_status_files", dict)
+    monkeypatch.setattr(helper, "_write_update_status_nginx_include", lambda: None)
+    monkeypatch.setattr(
+        helper,
+        "_nginx_test_command",
+        lambda: SimpleNamespace(returncode=0),
+    )
+
+    result = helper._guard_appliance_update_status_startup()
+
+    assert result["success"] is True
+    assert result["status"] == "guarded"
+    assert marker.read_text(encoding="utf-8") == job_id + "\n"
+    guarded_pxe = pxe.read_text(encoding="utf-8")
+    assert str(helper.ATLASO_UPDATE_STATUS_NGINX_INCLUDE_PATH) in guarded_pxe
+    assert str(helper.ATLASO_UPDATE_STATUS_MARKER_PATH) in guarded_pxe
+
+
+def test_ordinary_status_restoration_probes_include_dedicated_pxe(monkeypatch, tmp_path):
+    """Include the machine-only PXE listener in ordinary-route restoration proof.
+
+    Args:
+        monkeypatch: Pytest fixture used to bind temporary nginx sites.
+        tmp_path: Temporary directory used for nginx site files.
+    """
+    helper = load_helper_module()
+    management = tmp_path / "management.conf"
+    public = tmp_path / "public.conf"
+    pxe = tmp_path / "esxi-pxe.conf"
+    management.write_text("management", encoding="utf-8")
+    public.write_text("public", encoding="utf-8")
+    pxe.write_text("pxe", encoding="utf-8")
+    monkeypatch.setattr(helper, "NGINX_MANAGEMENT_SITE_PATH", management)
+    monkeypatch.setattr(helper, "NGINX_PUBLIC_SERVICES_SITE_PATH", public)
+    monkeypatch.setattr(helper, "ESXI_PXE_NGINX_SITE_PATH", pxe)
+
+    assert helper._ordinary_update_ui_probe_sites() == ["management", "public", "pxe"]
 
 
 def test_update_status_task_requires_current_install_contract(monkeypatch, tmp_path):
@@ -814,6 +909,7 @@ def test_appliance_update_status_inspection_returns_only_bounded_state(
     assert helper._handle_appliance_update("status-inspect", []) == 0
     assert json.loads(capsys.readouterr().out) == {
         "state": "pending",
+        "status_activated": False,
         "task_id": "job_0123456789ab",
         "terminal": True,
     }

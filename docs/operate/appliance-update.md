@@ -54,13 +54,16 @@ installations preserve the safety order Photon OS, PowerShell Modules, then Atla
 Any failed installation child leaves every later selected child explicitly **skipped**, while preserving every earlier
 terminal result. Atlaso records that exact order and a random update-status transaction identity with the parent before
 the task becomes visible. A task created by an older updater retains its original recorded order during recovery and
-reports its aggregate command evidence in that same order rather than being silently reordered. A current task
+reports its aggregate command evidence in that same order rather than being silently reordered. Before an older queued
+installation runs, the worker durably adds a compatible missing status transaction identity; an incompatible legacy
+task identity fails terminally without appliance mutation and must be resubmitted. A current task
 interrupted safely between children resumes only its untouched pending
 suffix; a child that started is never replayed. If a worker disappears while a non-release child is running, startup
 stops and verifies that task-and-stream-bound transient helper before failing the child or restoring ordinary UIs; an
 unverifiable helper keeps the hierarchy running and the update-only surface held. If the interrupted Photon child had
 entered its real apply phase, recovery conservatively completes the delayed all-service restart even when the helper's
-terminal result was never persisted. Atlaso Release runs last, so its
+terminal result was never persisted, including when the helper returned successfully but the child completion commit
+failed. Atlaso Release runs last, so its
 verified candidate-worker handoff has
 no pending post-release child and suppresses the former extra Photon-triggered delayed restart. The parent succeeds only
 when every selected child succeeds and all required restoration evidence is durable.
@@ -82,10 +85,13 @@ The durable status snapshot lives in the root-only privileged state directory; o
 placed in `/run` for nginx. Publication rejects symlinks, unsafe ownership, malformed or duplicate children, non-install
 tasks, stale terminal tasks, and a transaction ID that does not match the active snapshot. Nginx configuration and
 runtime files use no-follow atomic replacement and file/directory synchronization. Every applied IPv4 and IPv6 browser
-or machine-only listener must return three consecutive 503 samples before installation begins; machine-only vhosts use
+or machine-only listener, including the dedicated ESXi PXE nginx vhost when present, must return three consecutive 503
+samples before installation begins; machine-only vhosts use
 a private server-guard probe URI instead of inventing a human route. If publication cannot be proven, no
 selected stream starts and the task fails terminally. Atlaso records successful hold activation only after listener
 proof, so rolling back an initial publication cannot recreate a marker that never became active.
+After a worker restart, a snapshot whose initial publication never activated is returned to the normal task runner so
+the failed publication becomes a terminal parent and child result instead of an endlessly retried admission hold.
 Publication and restoration share one task-bound transient-helper identity. Before either transition retries, the helper
 stops and verifies any surviving transition with that identity; an unverified survivor blocks the retry so an older
 publication cannot undo a newer hold.
