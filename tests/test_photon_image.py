@@ -2,6 +2,7 @@
 
 import hashlib
 import importlib.util
+import io
 import json
 import os
 import re
@@ -22,6 +23,16 @@ def load_lifecycle_runner():
     assert spec and spec.loader
     module = importlib.util.module_from_spec(spec)
     sys.modules["lifecycle_test"] = module
+    spec.loader.exec_module(module)
+    return module
+
+
+def load_nocloud_seed_helper():
+    """Return the NoCloud seed helper module."""
+    path = Path("scripts/interop/create_nocloud_seed_iso.py")
+    spec = importlib.util.spec_from_file_location("create_nocloud_seed_iso", path)
+    assert spec and spec.loader
+    module = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(module)
     return module
 
@@ -549,6 +560,38 @@ def test_vmware_workstation_build_monitor_behavior(tmp_path):
     assert "generated-vnc-test-secret" not in result.stderr
 
 
+def test_vmware_workstation_address_readiness_behavior(tmp_path):
+    """Verify duplicate static addresses and wrong host neighbors fail closed.
+
+    Args:
+        tmp_path: Temporary directory provided by pytest for synthetic VMX evidence.
+    """
+    pwsh = shutil.which("pwsh")
+    if pwsh is None:
+        pytest.skip("PowerShell 7 is not available")
+
+    result = subprocess.run(
+        [
+            pwsh,
+            "-NoLogo",
+            "-NoProfile",
+            "-NonInteractive",
+            "-File",
+            "tests/powershell/Test-AtlasoWorkstationReadiness.ps1",
+            "-RepositoryRoot",
+            str(Path.cwd()),
+            "-OutputDirectory",
+            str(tmp_path / "vmware-readiness"),
+        ],
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert "Atlaso VMware Workstation readiness tests passed." in result.stdout
+
+
 def test_hyperv_management_nat_prefix_is_validated_and_canonical():
     """Verify Hyper-V NAT CIDRs are masked and invalid input fails before mutation."""
     pwsh = shutil.which("pwsh")
@@ -785,6 +828,24 @@ def test_photon_provisioning_installs_default_nginx_management_proxy():
     assert '"$ATLASO_HOME/.venv/bin/python" "$ATLASO_HOME/bin/atlaso-bootstrap-https"' not in script
     assert "sync_host_physical_interfaces(db)" in bootstrap
     assert bootstrap.index("sync_host_physical_interfaces(db)") < bootstrap.index("ensure_ca_state(db)")
+    assert "first-boot-development-root-ca.json" in bootstrap
+    assert "first-boot-development-root-ca-imported" in bootstrap
+    assert "guestinfo.atlaso.test_vm_development_root_ca_imported" in bootstrap
+    assert "import_root_ca_material(" in bootstrap
+    assert 'expected_common_name="Atlaso Development Root CA"' in bootstrap
+    assert "certificates=certificates" in bootstrap
+    import_failure = bootstrap.index("except Exception as exc:")
+    failure_scrub = bootstrap.index(
+        "scrub_staged_development_root_ca_after_failure()", import_failure
+    )
+    assert failure_scrub < bootstrap.index("return 2", failure_scrub)
+    committed_import = bootstrap.index("db.commit()")
+    staged_removal = bootstrap.index("remove_staged_development_root_ca()", committed_import)
+    assert committed_import < staged_removal < bootstrap.index("ensure_ca_state(db)")
+    proof_write = bootstrap.index("write_development_root_ca_import_proof(development_root_fingerprint)")
+    proof_publish = bootstrap.index("publish_development_root_ca_import_proof()", proof_write)
+    marker_write = bootstrap.index('MARKER_PATH.write_text("Atlaso first-boot HTTPS bootstrap completed.')
+    assert bootstrap.index("fix_state_permissions()") < proof_write < proof_publish < marker_write
     assert 'str(HELPER_PATH), "ca", action, str(CA_STAGED_CONFIG_PATH), "--real"' in bootstrap
     assert 'for db_file in state_path.glob("atlaso.db*")' in bootstrap
     assert 'shutil.chown(db_file, user="atlaso", group="atlaso")' in bootstrap
@@ -797,6 +858,7 @@ def test_photon_provisioning_installs_default_nginx_management_proxy():
     assert 'listen 443 ssl default_server;' in bootstrap
     assert 'ssl_certificate {cert_path};' in bootstrap
     assert 'ssl_certificate_key {key_path};' in bootstrap
+
     assert "client_max_body_size 1g;" in bootstrap
     assert "client_max_body_size 512m;" not in bootstrap
     assert "proxy_pass http://127.0.0.1:8000;" in bootstrap
@@ -848,6 +910,117 @@ def test_photon_provisioning_installs_default_nginx_management_proxy():
     assert "-PipGlobalIndexUrl" in root_docs
     assert "Leave both options empty to keep" in root_docs
     assert "standard pip behavior" in root_docs
+
+
+def test_photon_https_bootstrap_publishes_exact_development_root_import_proof(
+    tmp_path, monkeypatch
+):
+    """Publish only the durable exact fingerprint after signer import and scrub.
+
+    Args:
+        tmp_path: Isolated proof-marker directory.
+        monkeypatch: Pytest fixture used to replace VMware guest-info commands.
+    """
+    import importlib.machinery
+    import importlib.util
+    from types import SimpleNamespace
+
+    script_path = Path("scripts/appliance/atlaso-bootstrap-https")
+    loader = importlib.machinery.SourceFileLoader("atlaso_bootstrap_https_test", str(script_path))
+    spec = importlib.util.spec_from_loader(loader.name, loader)
+    bootstrap = importlib.util.module_from_spec(spec)
+    loader.exec_module(bootstrap)
+    bootstrap.DEVELOPMENT_ROOT_CA_IMPORTED_MARKER_PATH = tmp_path / "imported"
+    fingerprint = "A1" * 32
+    commands = []
+
+    def fake_run(command):
+        """Capture VMware guest-info commands and return deterministic results.
+
+        Args:
+            command: Command and arguments issued by the bootstrap helper.
+        """
+        commands.append(command)
+        stdout = f"{fingerprint}\n" if "info-get" in command[-1] else ""
+        return SimpleNamespace(returncode=0, stdout=stdout, stderr="")
+
+    monkeypatch.setattr(
+        bootstrap.shutil,
+        "which",
+        lambda name: "/usr/bin/vmware-rpctool" if name == "vmware-rpctool" else None,
+    )
+    monkeypatch.setattr(bootstrap, "run", fake_run)
+
+    bootstrap.write_development_root_ca_import_proof(fingerprint)
+
+    assert bootstrap.publish_development_root_ca_import_proof() is True
+    assert bootstrap.DEVELOPMENT_ROOT_CA_IMPORTED_MARKER_PATH.read_text(
+        encoding="ascii"
+    ) == fingerprint
+    assert commands == [
+        [
+            "/usr/bin/vmware-rpctool",
+            f"info-set {bootstrap.DEVELOPMENT_ROOT_CA_IMPORTED_GUESTINFO} {fingerprint}",
+        ],
+        [
+            "/usr/bin/vmware-rpctool",
+            f"info-get {bootstrap.DEVELOPMENT_ROOT_CA_IMPORTED_GUESTINFO}",
+        ],
+    ]
+
+
+def test_photon_https_bootstrap_sets_secret_payload_mode_before_write(tmp_path, monkeypatch):
+    """Protect decrypted CA keys before opening their apply payload for writing.
+
+    Args:
+        tmp_path: Isolated destination directory.
+        monkeypatch: Pytest fixture used to record descriptor operations.
+    """
+    import importlib.machinery
+    import importlib.util
+
+    script_path = Path("scripts/appliance/atlaso-bootstrap-https")
+    loader = importlib.machinery.SourceFileLoader(
+        "atlaso_bootstrap_https_secret_write_test", str(script_path)
+    )
+    spec = importlib.util.spec_from_loader(loader.name, loader)
+    bootstrap = importlib.util.module_from_spec(spec)
+    loader.exec_module(bootstrap)
+    destination = tmp_path / "apply" / "ca" / "atlaso-ca.json"
+    events = []
+    original_fchmod = bootstrap.os.fchmod
+    original_fdopen = bootstrap.os.fdopen
+
+    def record_fchmod(descriptor, mode):
+        """Record and apply the descriptor mode.
+
+        Args:
+            descriptor: Open temporary-file descriptor.
+            mode: Requested filesystem mode.
+        """
+        events.append(("fchmod", mode))
+        return original_fchmod(descriptor, mode)
+
+    def record_fdopen(descriptor, *args, **kwargs):
+        """Record conversion of the protected descriptor to a text handle.
+
+        Args:
+            descriptor: Protected temporary-file descriptor.
+            *args: Positional arguments forwarded to ``os.fdopen``.
+            **kwargs: Keyword arguments forwarded to ``os.fdopen``.
+        """
+        events.append(("fdopen", None))
+        return original_fdopen(descriptor, *args, **kwargs)
+
+    monkeypatch.setattr(bootstrap.os, "fchmod", record_fchmod)
+    monkeypatch.setattr(bootstrap.os, "fdopen", record_fdopen)
+
+    bootstrap.write_secret_text_atomic(destination, "private-key-payload")
+
+    assert events[:2] == [("fchmod", 0o600), ("fdopen", None)]
+    assert destination.read_text(encoding="utf-8") == "private-key-payload"
+    if os.name == "posix":
+        assert destination.stat().st_mode & 0o777 == 0o600
 
 
 def test_photon_provisioning_prepares_attached_data_disks():
@@ -1131,9 +1304,10 @@ def test_packer_build_uses_atlaso_management_network_by_default():
     assert "-PipGlobalIndex" in docs
     assert "-PipGlobalIndexUrl" in docs
     assert "Omit both pip options for standard/default pip behavior." in docs
-    assert "[string]$SshPassword = 'PhotonBuild01!'" in wrapper
-    assert "[string]$BootstrapAdminPassword = 'VMware01!'" in wrapper
-    assert "[string]$SshPassword = 'VMware01!'" not in wrapper
+    assert "[SecureString]$SshPassword" in wrapper
+    assert "[SecureString]$BootstrapAdminPassword" in wrapper
+    assert "Read-Host -Prompt 'Temporary Photon builder SSH password' -AsSecureString" in wrapper
+    assert "Read-Host -Prompt 'Atlaso bootstrap administrator password' -AsSecureString" in wrapper
     assert "[string[]]$BuilderStaticDns = @()" in wrapper
     assert "[string]$PipGlobalIndex = ''" in wrapper
     assert "[string]$PipGlobalIndexUrl = ''" in wrapper
@@ -1147,6 +1321,27 @@ def test_packer_build_uses_atlaso_management_network_by_default():
     assert "Using remastered Photon ISO" in build_module
     assert "Packer will boot a single DVD with embedded photon-ks.json and a GRUB auto-install entry." in build_module
     assert "Write-AtlasoPackerVarFile" in build_module
+    assert "function Remove-AtlasoSensitiveBuildArtifact" in build_module
+    assert "Remove-Item -LiteralPath $Path -Force -ErrorAction Stop" in build_module
+    assert "Plaintext credential artifact cleanup did not complete" in build_module
+    assert "Remove-AtlasoSensitiveBuildArtifact -Path $kickstartJson" in build_module
+    assert "Remove-AtlasoSensitiveBuildArtifact -Path $ksSourceDir" in build_module
+    assert "Remove-AtlasoSensitiveBuildArtifact -Path $varFilePath" in build_module
+    assert "$CleanupPaths.Add($attemptIsoPath)" in build_module
+    assert "$CleanupPaths.Add($OutputIso)" in build_module
+    assert "Move-Item -LiteralPath $attemptIsoPath -Destination $OutputIso" in build_module
+    assert "Remove-AtlasoSensitiveBuildArtifact -Path $candidatePath" in build_module
+    assert "Remastered Photon ISO credential cleanup failed" in build_module
+    assert "PrepareIsoOnly is not supported because a retained remastered ISO" in build_module
+    kickstart_build = build_module.split("    $kickstartJson =", maxsplit=1)[1].split(
+        "    $preparedIso =", maxsplit=1
+    )[0]
+    cleanup_start = kickstart_build.index("    try {")
+    assert cleanup_start < kickstart_build.index("        New-AtlasoPhotonKickstart `")
+    assert cleanup_start < kickstart_build.index("        $sourceIsoPath = Resolve-AtlasoPhotonSourceIso")
+    assert kickstart_build.index("    } finally {") > kickstart_build.index(
+        "        $sourceIsoPath = Resolve-AtlasoPhotonSourceIso"
+    )
     assert "Using Packer var-file" in build_module
     assert "[ValidateSet('cleanup', 'abort', 'ask', 'run-cleanup-provisioner')]" in wrapper
     assert "[string]$PackerOnError = 'cleanup'" in wrapper
@@ -1260,9 +1455,12 @@ def test_vmware_builder_uses_nat_gateway_dns_by_default():
     wrapper = Path("scripts/windows/vmware/build-photon-image.ps1").read_text(encoding="utf-8")
     docs = Path("image/vmware-workstation/README.md").read_text(encoding="utf-8")
 
-    assert "[string]$SshPassword = 'PhotonBuild01!'" in wrapper
-    assert "[string]$BootstrapAdminPassword = 'VMware01!'" in wrapper
-    assert "[string]$SshPassword = 'VMware01!'" not in wrapper
+    assert "[SecureString]$SshPassword" in wrapper
+    assert "[SecureString]$BootstrapAdminPassword" in wrapper
+    assert "if ($null -eq $BootstrapAdminPassword)" in wrapper
+    assert "PrepareIsoOnly is not supported because a retained remastered ISO" in wrapper
+    assert "Read-Host -Prompt 'Temporary Photon builder SSH password' -AsSecureString" in wrapper
+    assert "Read-Host -Prompt 'Atlaso bootstrap administrator password' -AsSecureString" in wrapper
     assert "$builderDnsWasPassed = $PSBoundParameters.ContainsKey('BuilderStaticDns')" in wrapper
     assert "-not $builderDnsWasPassed -and $BuilderStaticDns.Count -eq 0 -and $management.Type -eq 'nat'" in wrapper
     assert "$BuilderStaticDns = @($managementGateway)" in wrapper
@@ -1479,7 +1677,22 @@ def test_create_atlaso_vmware_test_vm_wrapper_uses_common_helpers():
     assert "[switch]$IncludeLabNetworkAdapters" in script
     assert "[switch]$ResetDataDisks" in script
     assert "[switch]$WaitForIp" in script
+    assert "$PSBoundParameters.ContainsKey('WaitForIp')" in script
+    assert "$waitForIpEnabled = if" in script
     assert "[switch]$TrustRootCa" in script
+    assert "[string]$OnePasswordEnvironmentId = ''" in script
+    assert "[string]$EnvironmentIdFile = ''" in script
+    assert "[Alias('OnePasswordEnvironmentIdFile')]" in script
+    assert "ExpectedEnvironmentIdSha256" in script
+    assert "environmentIdDigest" in script
+    assert ".atlaso-local\\onepassword-environment-id" in script
+    assert "/.atlaso-local/" in Path(".gitignore").read_text(encoding="utf-8")
+    assert script.index("Invoke-PendingAtlasoDevelopmentCaCleanup `") < script.index(
+        "$OnePasswordEnvironmentId = Resolve-OnePasswordDevelopmentCaEnvironmentId `"
+    )
+    assert "Install the Environments-enabled beta CLI and retry." in script
+    assert script.index("'1Password CLI\\op.exe'") < script.index("'Microsoft\\WinGet\\Links\\op.exe'")
+    assert "[switch]$RootSshEnabled" in script
     assert "[string]$SshPublicKeyPath = ''" in script
     assert "[switch]$SkipSshKeyProvisioning" in script
     assert "Resolve-AtlasoWorkstationAdminSshPublicKey -Path $SshPublicKeyPath" in script
@@ -1489,7 +1702,8 @@ def test_create_atlaso_vmware_test_vm_wrapper_uses_common_helpers():
     assert "Waiting up to $TimeoutSeconds seconds for the Atlaso root CA" in script
     assert "Atlaso root CA is not ready; retrying in $PollSeconds seconds." in script
     assert "-TimeoutSec $requestTimeoutSeconds" in script
-    assert "Install-ApplianceRootCa -IpAddress $ip -Name $Name -TimeoutSeconds $TimeoutSeconds" in script
+    assert "-ExpectedCertificatePath $developmentRootCaCertificatePath" in script
+    assert "-TrustRootCa:$TrustRootCa" in script
     assert "Write-ConnectionSummary" in script
     assert "Get-AtlasoWorkstationSshHostKey" in script
     assert "ssh-keyscan" not in script
@@ -1499,11 +1713,13 @@ def test_create_atlaso_vmware_test_vm_wrapper_uses_common_helpers():
     assert "http://$IpAddress/ca/downloads/root-ca.pem" in script
     assert "-SkipCertificateCheck" not in script
     assert "Cert:\\CurrentUser\\Root" in script
-    assert "certutil.exe -user -delstore Root $staleRoot.Thumbprint" in script
+    assert "certutil.exe -user -delstore Root" not in script
     assert "certutil.exe -f -user -addstore Root $rootCerPath" in script
-    assert "if ($TrustRootCa -and $NoStart)" in script
-    assert "if (-not $NoStart -and -not $WhatIfPreference)" in script
-    assert "if (($WaitForIp -or $TrustRootCa) -and -not $NoStart -and -not $WhatIfPreference)" in script
+    assert "-NoStart is not supported for normal test VMs" in script
+    assert "if (($waitForIpEnabled -or $TrustRootCa) -and $readinessIdentity)" in script
+    assert "-ExpectedHostname $FirstBootFqdn" in script
+    assert "-PassThruIdentity" in script
+    assert "Atlaso Workstation test VM ready" in script
     assert 'Write-SummaryRow -Label "Console URL:" -Value "https://$IpAddress/"' in script
     assert 'Write-SummaryRow -Label "API URL:" -Value "https://$IpAddress/openapi.json"' in script
     assert 'Write-SummaryRow -Label "Swagger URL:" -Value "https://$IpAddress/api/docs"' in script
@@ -1515,7 +1731,7 @@ def test_create_atlaso_vmware_test_vm_wrapper_uses_common_helpers():
     assert 'Write-SummaryRow -Label "Lab DNS:"' in script
     assert "Windows DNS for lab FQDNs" in script
     assert "pass -TrustRootCa to trust this appliance root CA" in script
-    assert "Pass -WaitForIp to print the HTTPS console" in script
+    assert "explicitly disabled with -WaitForIp:$false" in script
     assert "-ValueColor Yellow" in script
     assert "[string]$ManagementNetwork = 'VMnet8'" in script
     assert "[string]$ManagementNetwork = 'VMnet8'" in vm_script
@@ -1611,7 +1827,7 @@ def test_create_atlaso_vmware_test_vm_wrapper_uses_common_helpers():
     assert 'disk_adapter_type    = "pvscsi"' in packer_template
     assert '"sata0:0.present" = "FALSE"' in packer_template
     assert "-TrustRootCa" in docs
-    assert "removes stale" in docs
+    assert "already trusted" in docs
     assert "connection summary" in docs
     assert "Windows DNS for lab FQDNs" in docs
     assert "Add-DnsClientNrptRule" in docs
@@ -1649,6 +1865,9 @@ def test_vmware_raw_vmx_workflows_inject_complete_first_boot_ovf_environment_bef
     ):
         assert f"'{key}'" in helper
     assert "'atlaso.development_admin_ssh_public_key'" in helper
+    assert "'atlaso.development_test_vm'" in helper
+    assert "'atlaso.development_root_ca_certificate'" in helper
+    assert "guestinfo.atlaso.test_vm_development_root_ca_private_key" in helper
     assert "[guid]::NewGuid().ToString('D')" in helper
     assert "[System.Security.SecurityElement]::Escape($Value)" in helper
     assert "[System.Xml.XmlConvert]::VerifyXmlChars($passwordInput.Value)" in helper
@@ -1663,16 +1882,25 @@ def test_vmware_raw_vmx_workflows_inject_complete_first_boot_ovf_environment_bef
     assert "Resolve-AtlasoWorkstationAdminSshPublicKey" in helper
     assert "[System.Xml.XmlConvert]::VerifyXmlChars($normalized)" in helper
     assert "guestinfo.atlaso.test_vm_ssh_host_ed25519_public_key" in helper
-    assert "readVariable $resolvedVmxPath runtimeConfig $guestInfoName" in helper
+    assert "@('-T', 'ws', 'readVariable', $resolvedVmxPath, 'runtimeConfig', $guestInfoName)" in helper
     assert "ssh-keyscan" not in helper
 
     assert 'TEST_VM_SSH_HOST_KEY_GUESTINFO = "guestinfo.atlaso.test_vm_ssh_host_ed25519_public_key"' in customizer
+    assert 'PROPERTY_DEVELOPMENT_TEST_VM = f"{PROPERTY_PREFIX}development_test_vm"' in customizer
+    assert 'PROPERTY_DEVELOPMENT_ROOT_CA_CERTIFICATE = f"{PROPERTY_PREFIX}development_root_ca_certificate"' in customizer
+    assert '"guestinfo.atlaso.test_vm_development_root_ca_private_key"' in customizer
+    assert "def stage_development_root_ca(" in customizer
     assert "def publish_test_vm_ssh_host_key()" in customizer
     assert 'run_initialization_layer("test VM SSH host key", publish_test_vm_ssh_host_key)' in customizer
+    assert 'if config["normal_test_vm"]:' in customizer
+    assert 'run_initialization_layer("test VM hostname", publish_test_vm_hostname)' in customizer
 
     assert "Atlaso.WorkstationFirstBoot.ps1" in test_vm
     assert "New-AtlasoWorkstationOvfEnvironment" in test_vm
+    assert "-NormalTestVm" in test_vm
     assert "Set-AtlasoWorkstationOvfEnvironment -VmxPath $targetVmx" in test_vm
+    assert "Invoke-OnePasswordDevelopmentCaChild" in test_vm
+    assert "Wait-AtlasoWorkstationDevelopmentRootCaPrivateKeyScrub" in test_vm
     assert test_vm.index("Set-AtlasoWorkstationOvfEnvironment -VmxPath $targetVmx") < test_vm.index(
         "start-atlaso-vm.ps1"
     )
@@ -1682,17 +1910,45 @@ def test_vmware_raw_vmx_workflows_inject_complete_first_boot_ovf_environment_bef
     assert "-RootSshEnabled:($ApplianceSshUser -eq 'root')" in lifecycle
     assert "Set-AtlasoWorkstationOvfEnvironment -VmxPath $applianceVmx" in lifecycle
     assert "DevelopmentAdminSshPublicKey" not in lifecycle
+    assert "DevelopmentRootCaCertificatePem" not in lifecycle
+    assert "test_vm_development_root_ca_private_key" not in lifecycle
+    assert "-NormalTestVm" not in lifecycle
     assert lifecycle.index("Set-AtlasoWorkstationOvfEnvironment -VmxPath $applianceVmx") < lifecycle.index(
         "Start-WorkstationVm -Path $vmx"
     )
-    assert "[string]$AdminPassword = 'VMware01!Test'" in lifecycle
+    assert "[string]$SecretBundlePath" in lifecycle
+    assert "Import-Clixml -LiteralPath $SecretBundlePath" in lifecycle
     assert "$ApplianceGuestPassword = $AdminPassword" in lifecycle
-    assert "'--appliance-ssh-password', $ApplianceGuestPassword" in lifecycle
+    assert "'--secret-stdin'" in lifecycle
+    assert "'--password', $AdminPassword" not in lifecycle
+    assert "'--appliance-ssh-password', $ApplianceGuestPassword" not in lifecycle
+    assert "'--ssh-password', $SshPassword" not in lifecycle
+    assert "'--vcf-backup-password', $VcfBackupPassword" not in lifecycle
     assert "-gp $SshPassword" not in lifecycle
-    assert "[string]$AdminPassword = 'VMware01!Test'" in lifecycle_wrapper
-    assert "[string]$SshPassword = 'VMware01!Test'" in lifecycle_wrapper
+    assert "[SecureString]$AdminPassword" in lifecycle_wrapper
+    assert "[SecureString]$SshPassword" in lifecycle_wrapper
+    assert "Export-Clixml -LiteralPath $secretBundlePath -Force" in lifecycle_wrapper
+    assert "'-SecretBundlePath', $secretBundlePath" in lifecycle_wrapper
+    assert "Remove-Item -LiteralPath $secretBundlePath -Force" in lifecycle_wrapper
+    assert "[SecureString]$AdminPassword" in test_vm
+    assert "[SecureString]$RootPassword" in test_vm
+    assert "Read-Host -Prompt 'Atlaso bootstrap administrator password' -AsSecureString" in test_vm
+    assert "Read-Host -Prompt 'Photon root console password' -AsSecureString" in test_vm
+    credential_prompt_block = test_vm.split(
+        "# Ask for VM credentials only after credential-independent recovery", 1
+    )[1].split("# Key input validation intentionally precedes", 1)[0]
+    assert "if (-not $WhatIfPreference)" in credential_prompt_block
+    ovf_block = test_vm.split("$firstBootOvfEnvironment = ''", 1)[1].split(
+        "if ($SkipLabNetworkAdapters", 1
+    )[0]
+    assert "if (-not $WhatIfPreference)" in ovf_block
+    assert "New-AtlasoWorkstationOvfEnvironment" in ovf_block
     assert "complete Atlaso first-boot OVF environment" in docs
     assert "plan and result artifacts" in docs
+    normal_test_vm_docs = docs.split("## Normal Test VM", 1)[1].split("## Fidelity Boundary", 1)[0]
+    assert ".atlaso-local/onepassword-environment-id" in normal_test_vm_docs
+    assert "-OnePasswordEnvironmentId` override" in normal_test_vm_docs
+    assert "Environments-enabled beta 1Password CLI" in normal_test_vm_docs
 
 
 def test_create_atlaso_vmware_test_vm_root_ca_retry_cleanup_is_idempotent():
@@ -1703,7 +1959,8 @@ def test_create_atlaso_vmware_test_vm_root_ca_retry_cleanup_is_idempotent():
     )[0]
 
     assert "[System.IO.Path]::GetFullPath([System.IO.Path]::GetTempPath())" in install_root_ca
-    assert '[System.IO.Path]::Combine($tempRoot, "atlaso-$Name-root-ca.pem")' in install_root_ca
+    assert "[guid]::NewGuid().ToString('N')" in install_root_ca
+    assert '[System.IO.Path]::Combine($tempRoot, "atlaso-$temporaryToken-root-ca.pem")' in install_root_ca
     assert "[System.IO.File]::Delete($rootPemPath)" in install_root_ca
     assert "File.Delete is idempotent for a missing file" in install_root_ca
     assert "valid dotted/short Windows paths" in install_root_ca
@@ -1716,6 +1973,9 @@ def test_vmware_deploy_wheel_supports_secure_onepassword_password_deploy():
     """Verify that VMware deploy wheel uses a concealed 1Password Environment handoff."""
     script = Path("scripts/windows/vmware/deploy-wheel.ps1").read_text(encoding="utf-8")
     readme = Path("docs/reference/full-technical-reference.md").read_text(encoding="utf-8")
+    image_readme = Path("image/vmware-workstation/README.md").read_text(encoding="utf-8")
+    image_password_docs = image_readme.split("## Local Wheel Deploy", 1)[1].split("## OVF / OVA Export", 1)[0]
+    image_password_docs = " ".join(image_password_docs.split())
 
     assert "[string]$OnePasswordEnvironmentId = ''" in script
     assert "[string]$OnePasswordAccount = ''" in script
@@ -1800,6 +2060,10 @@ def test_vmware_deploy_wheel_supports_secure_onepassword_password_deploy():
     assert "pinned 1Password SDK" in readme
     assert "Without `-OnePasswordEnvironmentId`, the helper preserves" in readme
     assert "`scp`/`ssh` key or agent workflow" in readme
+    assert "-OnePasswordEnvironmentId '<atlaso-environment-id>'" in image_password_docs
+    assert "-OnePasswordAccount '<account-name-or-id>'" in image_password_docs
+    assert "-OnePasswordPython '<path-to-python-3.13.exe>'" in image_password_docs
+    assert "../../docs/reference/full-technical-reference.md#vmware-workstation-workflow" in image_password_docs
 
 
 def test_vmware_deploy_wheel_remote_path_contract():
@@ -1845,6 +2109,31 @@ def test_vmware_deploy_wheel_onepassword_bridge_contract():
             "-NonInteractive",
             "-File",
             "tests/powershell/Test-DeployWheelOnePassword.ps1",
+            "-RepositoryRoot",
+            str(Path.cwd()),
+        ],
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+
+    assert result.returncode == 0, result.stdout + result.stderr
+
+
+def test_vmware_normal_test_vm_development_ca_bridge_contract():
+    """Verify normal test VM shared-CA defaults and fail-closed boundaries."""
+    pwsh = shutil.which("pwsh")
+    if pwsh is None:
+        pytest.skip("PowerShell 7 is not available")
+
+    result = subprocess.run(
+        [
+            pwsh,
+            "-NoLogo",
+            "-NoProfile",
+            "-NonInteractive",
+            "-File",
+            "tests/powershell/Test-CreateAtlasoTestVmDevelopmentCa.ps1",
             "-RepositoryRoot",
             str(Path.cwd()),
         ],
@@ -1909,11 +2198,13 @@ def test_lifecycle_single_command_wrapper_prepares_runs_and_cleans_up_by_default
     assert "ParameterSetName = 'PrepareNetworks'" in script
     assert "ParameterSetName = 'CleanupNetworks'" in script
     assert "ParameterSetName = 'CleanupVms'" in script
-    assert "[string]$AdminPassword = 'VMware01!'" in script
+    assert "[SecureString]$AdminPassword" in script
     assert "[string]$ApplianceSshUser = 'admin'" in script
-    assert "[string]$SshPassword = 'VMware01!'" in script
-    assert "[string]$VcfBackupPassword = 'VMware01!Test'" in script
-    assert "'-VcfBackupPassword', $VcfBackupPassword" in script
+    assert "[SecureString]$SshPassword" in script
+    assert "[SecureString]$VcfBackupPassword" in script
+    assert "Export-Clixml -LiteralPath $secretBundlePath -Force" in script
+    assert "'-SecretBundlePath', $secretBundlePath" in script
+    assert "Remove-Item -LiteralPath $secretBundlePath -Force" in script
     assert "[string]$SiteInterface = 'eth1.12'" in script
     assert "[string]$SiteCidr = '192.168.12.1/24'" in script
     assert "[int]$SiteVlanId = 12" in script
@@ -2073,6 +2364,16 @@ def test_lifecycle_vmware_script_supports_routing_wan_only_and_esxi_pxe_install(
     assert "if ($FullEsxiPxeInstall) { $arguments += '-FullEsxiPxeInstall' }" in wrapper
     assert "if ($PxeInstallerIsoPath) { $arguments += @('-PxeInstallerIsoPath', $PxeInstallerIsoPath) }" in wrapper
     assert "-OidcOnly, -RoutingWanOnly, and -FullEsxiPxeInstall are mutually exclusive." in wrapper
+    assert "[SecureString]$EsxiPassword" in wrapper
+    assert "Read-Host -Prompt 'ESXi root password for lifecycle probing' -AsSecureString" in wrapper
+    assert "if (-not ($OidcOnly -or $RoutingWanOnly) -and $null -eq $VcfBackupPassword)" in wrapper
+    assert wrapper.index("$secretBundlePath = ''\ntry {") < wrapper.index("Export-Clixml")
+    assert wrapper.index("Export-Clixml") < wrapper.index("Remove-Item -LiteralPath $secretBundlePath -Force")
+    assert "Remove-Item -LiteralPath $secretBundlePath -Force -ErrorAction Stop" in wrapper
+    assert "-GuestPassword $esxiPasswordSecure" in runner
+    assert "'--secret-stdin'" in runner
+    assert "$secretPayload | & python @Arguments | Out-Host" in runner
+    assert "'--esxi-password'," not in runner
 
     assert "function Get-GuestIPv4ViaGuestOps" in runner
     assert "function Invoke-VmrunBounded" in runner
@@ -2144,6 +2445,16 @@ def test_lifecycle_vmware_script_supports_routing_wan_only_and_esxi_pxe_install(
     assert "'--routing-wan-only'" in runner
     assert "'--pxe-test-mode', $(if ($FullEsxiPxeInstall) { 'esxi' } else { 'linux' })" in runner
     assert "Add-LifecycleResultStep -ResultDirectory $initialResultRoot -Name 'esxi-pxe-install-check' -Status 'passed'" in runner
+    assert "--password-stdin" in runner
+    assert "--password $SshPassword" not in runner
+    assert "function Remove-ClientSeedArtifacts" in runner
+    assert "Remove-Item -LiteralPath $seedPath -Force -ErrorAction Stop" in runner
+    assert "Credential-bearing client seed ISO remains after cleanup" in runner
+    assert runner.index("Remove-ClientSeedArtifacts `") > runner.index(
+        "Invoke-LifecyclePython -Arguments $initialPythonArgs"
+    )
+    assert runner.count("Remove-ClientSeedArtifacts `") == 2
+    assert "$seedCleanupFailure" in runner
 
 
 def test_lifecycle_hyperv_script_seeds_alpine_clients_for_ssh():
@@ -2166,12 +2477,38 @@ def test_nocloud_seed_helper_writes_client_cloud_init_contract():
     assert 'vol_ident="cidata"' in script
     assert "ssh_authorized_keys:" in script
     assert 'parser.add_argument("--public-key", default="")' in script
+    assert '"--password-stdin"' in script
+    assert "load_password_from_stdin(args, sys.stdin)" in script
     assert "Either --public-key or --password is required" in script
     assert "openssl" in script
     assert "sshpass" in script
     assert "chrony-nts" in script
     assert "atlaso-refresh-test-dhcp" in script
     assert "joliet_path=f\"/{name}\"" in script
+
+
+def test_nocloud_seed_helper_reads_client_password_from_stdin():
+    """Verify the seed helper loads a client password without argv exposure."""
+    helper = load_nocloud_seed_helper()
+    args = helper.argparse.Namespace(password="", password_stdin=True)
+
+    helper.load_password_from_stdin(args, io.StringIO("ClientSecret!\n"))
+
+    assert args.password == "ClientSecret!"
+
+
+@pytest.mark.parametrize("stdin_value", ["", "\n", "first\nsecond\n", "x" * 4097])
+def test_nocloud_seed_helper_rejects_invalid_stdin_password(stdin_value):
+    """Verify malformed stdin password payloads fail closed.
+
+    Args:
+        stdin_value: Empty, multiline, or oversized password payload under test.
+    """
+    helper = load_nocloud_seed_helper()
+    args = helper.argparse.Namespace(password="", password_stdin=True)
+
+    with pytest.raises(ValueError):
+        helper.load_password_from_stdin(args, io.StringIO(stdin_value))
 
 
 def test_prepare_tiny_linux_client_downloads_verifies_and_converts_alpine():

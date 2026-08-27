@@ -1,4 +1,65 @@
-[Diagnostics.CodeAnalysis.SuppressMessageAttribute('PSAvoidUsingPlainTextForPassword', '')]
+<#
+.SYNOPSIS
+Launch the bounded Hyper-V lifecycle test with secure credential handoff.
+.PARAMETER LabName
+Name prefix used to isolate generated lifecycle resources.
+.PARAMETER ApplianceVhdxPath
+Path to the source appliance VHDX used for the lifecycle VM.
+.PARAMETER ClientVhdxPath
+Path to the prepared client VHDX used by lifecycle guests.
+.PARAMETER EsxIsoPath
+Optional path to an ESXi installer ISO used by PXE coverage.
+.PARAMETER ClientManagementSwitch
+Hyper-V switch that connects lifecycle client management adapters.
+.PARAMETER ApplianceIPAddress
+Management IPv4 address assigned to or expected from the appliance.
+.PARAMETER ApplianceUrl
+HTTPS URL used for appliance API validation.
+.PARAMETER SiteInterface
+Appliance interface used for the site-network scenario.
+.PARAMETER SiteCidr
+IPv4 CIDR assigned to the site-network scenario.
+.PARAMETER SiteVlanId
+VLAN identifier used by the site-network scenario.
+.PARAMETER AdminUsername
+Atlaso administrator account used by the lifecycle harness.
+.PARAMETER AdminPassword
+Secure Admin Password supplied at runtime; no repository default is used.
+.PARAMETER ApplianceSshUser
+SSH account used for appliance guest operations.
+.PARAMETER ClientSshUser
+SSH account used for lifecycle client guests.
+.PARAMETER SshPassword
+Secure SSH Password supplied at runtime; no repository default is used.
+.PARAMETER VcfBackupPassword
+Secure VCF Backup Password supplied at runtime; no repository default is used.
+.PARAMETER VlanId
+VLAN identifier used by the tagged-network scenario.
+.PARAMETER TaggedVlanCidr
+IPv4 CIDR used by the tagged-network scenario.
+.PARAMETER WanCidr
+IPv4 CIDR used by the simulated WAN scenario.
+.PARAMETER KeepVms
+Retain generated lifecycle VMs after the run completes.
+.PARAMETER SkipClientPrepare
+Reuse the existing client image instead of rebuilding it.
+.PARAMETER PrepareNetworksOnly
+Prepare required lifecycle networks and exit without creating VMs.
+.PARAMETER CleanupNetworksOnly
+Remove lifecycle networks and exit without running scenarios.
+.PARAMETER CleanupVmsOnly
+Remove VMs for the selected lifecycle lab and exit.
+.PARAMETER CleanupNetworksAfterTest
+Remove lifecycle networks after a successful or failed run.
+.PARAMETER AllowDryRunApply
+Allow the harness to exercise the appliance dry-run apply path.
+.PARAMETER SkipBackupRestoreTest
+Skip the backup and restore lifecycle phase.
+.PARAMETER SignedReleaseRepositoryUrl
+Signed release repository URL used by update lifecycle validation.
+.PARAMETER PlanOnly
+Emit the resolved lifecycle plan without prompting for secrets or mutating the host.
+#>
 [CmdletBinding(DefaultParameterSetName = 'Run', SupportsShouldProcess = $true)]
 param(
     [Parameter(ParameterSetName = 'Run')]
@@ -48,7 +109,7 @@ param(
 
     [Parameter(ParameterSetName = 'Run')]
     [Parameter(ParameterSetName = 'Plan')]
-    [string]$AdminPassword = 'VMware01!',
+    [SecureString]$AdminPassword,
 
     [Parameter(ParameterSetName = 'Run')]
     [Parameter(ParameterSetName = 'Plan')]
@@ -60,11 +121,11 @@ param(
 
     [Parameter(ParameterSetName = 'Run')]
     [Parameter(ParameterSetName = 'Plan')]
-    [string]$SshPassword = 'VMware01!',
+    [SecureString]$SshPassword,
 
     [Parameter(ParameterSetName = 'Run')]
     [Parameter(ParameterSetName = 'Plan')]
-    [string]$VcfBackupPassword = 'VMware01!Test',
+    [SecureString]$VcfBackupPassword,
 
     [Parameter(ParameterSetName = 'Run')]
     [Parameter(ParameterSetName = 'Plan')]
@@ -117,6 +178,10 @@ $ErrorActionPreference = 'Stop'
 
 $repoRoot = Resolve-Path -LiteralPath (Join-Path $PSScriptRoot '..\..\..')
 
+<#
+.SYNOPSIS
+Return the newest eligible appliance VHDX from the Hyper-V build output.
+#>
 function Find-LatestApplianceVhdx {
     $outputRoot = Join-Path $repoRoot 'image\hyperv\output'
     if (-not (Test-Path -LiteralPath $outputRoot)) {
@@ -167,11 +232,16 @@ if ($PSCmdlet.ParameterSetName -eq 'CleanupVms') {
     return
 }
 
-if (-not $SshPassword) {
-    $SshPassword = $AdminPassword
-}
-if (-not $VcfBackupPassword) {
-    $VcfBackupPassword = 'VMware01!Test'
+if (-not $PlanOnly) {
+    if ($null -eq $AdminPassword) {
+        $AdminPassword = Read-Host -Prompt 'Atlaso lifecycle administrator password' -AsSecureString
+    }
+    if ($null -eq $SshPassword) {
+        $SshPassword = $AdminPassword
+    }
+    if ($null -eq $VcfBackupPassword) {
+        $VcfBackupPassword = Read-Host -Prompt 'VCF Backup lifecycle password' -AsSecureString
+    }
 }
 if (-not $ApplianceVhdxPath) {
     $ApplianceVhdxPath = Find-LatestApplianceVhdx
@@ -194,6 +264,18 @@ if (-not $SkipClientPrepare -and -not $PlanOnly) {
     }
 }
 
+$secretBundlePath = ''
+if (-not $PlanOnly) {
+    $secretBundlePath = Join-Path ([System.IO.Path]::GetTempPath()) "atlaso-hyperv-lifecycle-$([guid]::NewGuid().ToString('N')).clixml"
+    # CLIXML uses the current Windows user's DPAPI protection for SecureString
+    # members, avoiding plaintext password arguments across the PowerShell process boundary.
+    [pscustomobject]@{
+        AdminPassword     = $AdminPassword
+        SshPassword       = $SshPassword
+        VcfBackupPassword = $VcfBackupPassword
+    } | Export-Clixml -LiteralPath $secretBundlePath -Force
+}
+
 $arguments = @(
     '-ExecutionPolicy', 'Bypass',
     '-File', (Join-Path $PSScriptRoot 'run-lifecycle-test.ps1'),
@@ -207,15 +289,15 @@ $arguments = @(
     '-SiteCidr', $SiteCidr,
     '-SiteVlanId', "$SiteVlanId",
     '-AdminUsername', $AdminUsername,
-    '-AdminPassword', $AdminPassword,
     '-ApplianceSshUser', $ApplianceSshUser,
     '-ClientSshUser', $ClientSshUser,
-    '-SshPassword', $SshPassword,
-    '-VcfBackupPassword', $VcfBackupPassword,
     '-VlanId', "$VlanId",
     '-TaggedVlanCidr', $TaggedVlanCidr,
     '-WanCidr', $WanCidr
 )
+if (-not $PlanOnly) {
+    $arguments += @('-SecretBundlePath', $secretBundlePath)
+}
 if ($EsxIsoPath) {
     $arguments += @('-EsxIsoPath', $EsxIsoPath)
 }
@@ -244,9 +326,15 @@ Write-Host "Signed release lifecycle repository: $SignedReleaseRepositoryUrl"
 Write-Host ("Backup/restore validation: {0}" -f (-not $SkipBackupRestoreTest))
 Write-Host ("Cleanup created VMs: {0}" -f (-not $KeepVms))
 
-& powershell.exe @arguments
-if ($LASTEXITCODE -ne 0) {
-    throw "Hyper-V lifecycle test failed with exit code $LASTEXITCODE"
+try {
+    & powershell.exe @arguments
+    if ($LASTEXITCODE -ne 0) {
+        throw "Hyper-V lifecycle test failed with exit code $LASTEXITCODE"
+    }
+} finally {
+    if ($secretBundlePath) {
+        Remove-Item -LiteralPath $secretBundlePath -Force -ErrorAction SilentlyContinue
+    }
 }
 
 if ($CleanupNetworksAfterTest) {

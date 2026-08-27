@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import argparse
 import json
 from collections import defaultdict
 from pathlib import Path
@@ -60,11 +61,19 @@ def route_title(route: str) -> str:
     return title
 
 
-def main() -> None:
-    """Run the command-line entry point."""
-    payload = json.loads(MANIFEST.read_text(encoding="utf-8"))
+def render_gallery(payload: dict[str, object]) -> str:
+    """Render the canonical gallery without changing the checkout.
+
+    Args:
+        payload: Parsed screenshot manifest.
+    """
     grouped: dict[str, list[dict[str, object]]] = defaultdict(list)
-    for screenshot in payload["screenshots"]:
+    screenshots = payload.get("screenshots")
+    if not isinstance(screenshots, list):
+        raise ValueError("screenshot manifest must contain a screenshots list")
+    for screenshot in screenshots:
+        if not isinstance(screenshot, dict):
+            raise ValueError("screenshot manifest entries must be objects")
         grouped[canonical_route(str(screenshot["route"]))].append(screenshot)
 
     lines = [
@@ -98,9 +107,38 @@ def main() -> None:
                     "",
                 ]
             )
-    GALLERY.write_text("\n".join(lines), encoding="utf-8", newline="\n")
-    print(f"Wrote {len(payload['screenshots'])} images to {GALLERY.relative_to(ROOT)}")
+    return "\n".join(lines)
+
+
+def main(argv: list[str] | None = None) -> int:
+    """Run the command-line entry point.
+
+    Args:
+        argv: Optional command-line arguments for tests and embedded callers.
+    """
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument(
+        "--check",
+        action="store_true",
+        help="fail without writing when the checked-in gallery is stale",
+    )
+    args = parser.parse_args(argv)
+    payload = json.loads(MANIFEST.read_text(encoding="utf-8"))
+    rendered = render_gallery(payload)
+    if args.check:
+        if not GALLERY.exists() or GALLERY.read_text(encoding="utf-8") != rendered:
+            parser.error(
+                "screenshot gallery is out of date; run "
+                "python scripts/generate_screenshot_gallery.py"
+            )
+        print(f"Verified {GALLERY.relative_to(ROOT)}")
+        return 0
+
+    GALLERY.write_text(rendered, encoding="utf-8", newline="\n")
+    screenshots = payload["screenshots"]
+    print(f"Wrote {len(screenshots)} images to {GALLERY.relative_to(ROOT)}")
+    return 0
 
 
 if __name__ == "__main__":
-    main()
+    raise SystemExit(main())

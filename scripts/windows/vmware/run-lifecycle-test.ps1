@@ -28,16 +28,12 @@ Interface name used for site routing in workload checks.
 Site A IPv4 CIDR used in test harness arguments.
 .PARAMETER AdminUsername
 Atlaso web admin username.
-.PARAMETER AdminPassword
-Atlaso web admin password.
+.PARAMETER SecretBundlePath
+Path to the current-user DPAPI-protected CLIXML bundle; required unless PlanOnly is set.
 .PARAMETER ApplianceSshUser
 SSH username for appliance interactions.
 .PARAMETER ClientSshUser
 SSH username for client guest interactions.
-.PARAMETER SshPassword
-Password for client SSH and appliance operations.
-.PARAMETER VcfBackupPassword
-Password used for VCF backup archive export/import.
 .PARAMETER VlanId
 VLAN identifier for WAN scenario traffic.
 .PARAMETER TaggedVlanCidr
@@ -67,75 +63,6 @@ Remove generated lifecycle VM artifacts when complete.
 .PARAMETER PlanOnly
 Emit and return planning JSON without executing scenarios.
 #>
-<#
-.SYNOPSIS
-Run the bounded Atlaso VMware Workstation lifecycle interoperability lab.
-.PARAMETER LabName
-Lab Name value.
-.PARAMETER ApplianceVmxPath
-Appliance Vmx Path value.
-.PARAMETER ClientVmdkPath
-Client Vmdk Path value.
-.PARAMETER VmrunPath
-Vmrun Path value.
-.PARAMETER ManagementNetwork
-Management Network value.
-.PARAMETER SiteANetwork
-Site A Network value.
-.PARAMETER SiteBNetwork
-Site B Network value.
-.PARAMETER TrunkNetwork
-Trunk Network value.
-.PARAMETER ApplianceIPAddress
-Appliance IP Address value.
-.PARAMETER ApplianceUrl
-Appliance Url value.
-.PARAMETER SiteInterface
-Site Interface value.
-.PARAMETER SiteCidr
-Site Cidr value.
-.PARAMETER AdminUsername
-Admin Username value.
-.PARAMETER AdminPassword
-Admin Password value.
-.PARAMETER ApplianceSshUser
-Appliance Ssh User value.
-.PARAMETER ClientSshUser
-Client Ssh User value.
-.PARAMETER SshPassword
-Ssh Password value.
-.PARAMETER VcfBackupPassword
-Vcf Backup Password value.
-.PARAMETER VlanId
-Vlan Id value.
-.PARAMETER TaggedVlanCidr
-Tagged Vlan Cidr value.
-.PARAMETER WanCidr
-Wan Cidr value.
-.PARAMETER AllowDryRunApply
-Allow Dry Run Apply value.
-.PARAMETER SkipBackupRestoreTest
-Skip Backup Restore Test value.
-.PARAMETER OidcOnly
-Oidc Only value.
-.PARAMETER RoutingWanOnly
-Routing Wan Only value.
-.PARAMETER FullEsxiPxeInstall
-Full Esxi Pxe Install value.
-.PARAMETER PxeInstallerIsoPath
-Pxe Installer Iso Path value.
-.PARAMETER PxeClientIPAddress
-Pxe Client IP Address value.
-.PARAMETER EsxiInstallTimeoutSeconds
-Esxi Install Timeout Seconds value.
-.PARAMETER EsxiInstallProbeDelaySeconds
-Esxi Install Probe Delay Seconds value.
-.PARAMETER CleanupCreatedLab
-Cleanup Created Lab value.
-.PARAMETER PlanOnly
-Plan Only value.
-#>
-[Diagnostics.CodeAnalysis.SuppressMessageAttribute('PSAvoidUsingPlainTextForPassword', '')]
 [CmdletBinding(SupportsShouldProcess = $true)]
 param(
     [string]$LabName = 'AtlasoWorkstationLifecycle',
@@ -153,11 +80,9 @@ param(
     [string]$SiteInterface = 'eth1',
     [string]$SiteCidr = '192.168.12.1/24',
     [string]$AdminUsername = 'admin',
-    [string]$AdminPassword = 'VMware01!Test',
+    [string]$SecretBundlePath = '',
     [string]$ApplianceSshUser = 'admin',
     [string]$ClientSshUser = 'alpine',
-    [string]$SshPassword = '',
-    [string]$VcfBackupPassword = 'VMware01!Test',
     [int]$VlanId = 50,
     [string]$TaggedVlanCidr = '192.168.60.1/24',
     [string]$WanCidr = '172.31.50.1/24',
@@ -175,6 +100,46 @@ param(
 )
 
 $ErrorActionPreference = 'Stop'
+
+# Plan-only execution consumes no credentials. Runtime execution imports the
+# current-user-protected bundle before VMware or the harness needs plaintext.
+$adminPasswordSecure = $null
+$sshPasswordSecure = $null
+$vcfBackupPasswordSecure = $null
+$esxiPasswordSecure = $null
+$AdminPassword = ''
+$SshPassword = ''
+$VcfBackupPassword = ''
+if (-not $PlanOnly) {
+    if ([string]::IsNullOrWhiteSpace($SecretBundlePath)) {
+        throw 'SecretBundlePath is required unless PlanOnly is set.'
+    }
+    $secretBundle = Import-Clixml -LiteralPath $SecretBundlePath
+    foreach ($propertyName in @('AdminPassword', 'SshPassword')) {
+        if ($secretBundle.$propertyName -isnot [SecureString]) {
+            throw "Lifecycle secret bundle property is missing or invalid: $propertyName"
+        }
+    }
+    $focusedRun = $OidcOnly -or $RoutingWanOnly
+    if (-not $focusedRun -and $secretBundle.VcfBackupPassword -isnot [SecureString]) {
+        throw 'Lifecycle secret bundle property is missing or invalid: VcfBackupPassword'
+    }
+    if ($focusedRun -and $null -ne $secretBundle.VcfBackupPassword -and $secretBundle.VcfBackupPassword -isnot [SecureString]) {
+        throw 'Lifecycle secret bundle property is invalid: VcfBackupPassword'
+    }
+    if ($FullEsxiPxeInstall -and $secretBundle.EsxiPassword -isnot [SecureString]) {
+        throw 'Lifecycle secret bundle property is missing or invalid: EsxiPassword'
+    }
+    $adminPasswordSecure = $secretBundle.AdminPassword
+    $sshPasswordSecure = $secretBundle.SshPassword
+    $vcfBackupPasswordSecure = $secretBundle.VcfBackupPassword
+    $esxiPasswordSecure = $secretBundle.EsxiPassword
+    $AdminPassword = ConvertFrom-SecureString -SecureString $adminPasswordSecure -AsPlainText
+    $SshPassword = ConvertFrom-SecureString -SecureString $sshPasswordSecure -AsPlainText
+    if ($null -ne $vcfBackupPasswordSecure) {
+        $VcfBackupPassword = ConvertFrom-SecureString -SecureString $vcfBackupPasswordSecure -AsPlainText
+    }
+}
 . (Join-Path $PSScriptRoot 'Atlaso.WorkstationFirstBoot.ps1')
 Import-Module (Join-Path $PSScriptRoot 'Atlaso.WorkstationCleanup.psm1') -Force
 Import-Module (Join-Path $PSScriptRoot 'Atlaso.VmwarePayload.psm1') -Force
@@ -189,6 +154,72 @@ if ($RoutingWanOnly) {
 }
 if ($OidcOnly) {
     $SkipBackupRestoreTest = $true
+}
+
+<#
+.SYNOPSIS
+Run the Python lifecycle consumer with a secret envelope supplied through standard input.
+
+.PARAMETER Arguments
+Literal Python arguments that contain no lifecycle passwords.
+
+.PARAMETER AdminPassword
+Protected Atlaso administrator password written only to the child process standard-input stream.
+
+.PARAMETER SshPassword
+Protected client SSH password written only to the child process standard-input stream.
+
+.PARAMETER VcfBackupPassword
+Optional protected VCF Backup password written only to the child process standard-input stream.
+
+.PARAMETER EsxiPassword
+Optional protected ESXi password written only to the child process standard-input stream.
+#>
+function Invoke-LifecyclePython {
+    [OutputType([int])]
+    param(
+        [Parameter(Mandatory = $true)][string[]]$Arguments,
+        [Parameter(Mandatory = $true)][SecureString]$AdminPassword,
+        [Parameter(Mandatory = $true)][SecureString]$SshPassword,
+        [SecureString]$VcfBackupPassword,
+        [SecureString]$EsxiPassword
+    )
+
+    $adminPasswordText = ''
+    $sshPasswordText = ''
+    $vcfBackupPasswordText = ''
+    $esxiPasswordText = ''
+    $secretPayload = ''
+    try {
+        $adminPasswordText = ConvertFrom-SecureString -SecureString $AdminPassword -AsPlainText
+        $sshPasswordText = ConvertFrom-SecureString -SecureString $SshPassword -AsPlainText
+        if ($null -ne $VcfBackupPassword) {
+            $vcfBackupPasswordText = ConvertFrom-SecureString -SecureString $VcfBackupPassword -AsPlainText
+        }
+        if ($null -ne $EsxiPassword) {
+            $esxiPasswordText = ConvertFrom-SecureString -SecureString $EsxiPassword -AsPlainText
+        }
+        # One compressed JSON line keeps every lifecycle credential out of the
+        # child command line without creating another plaintext file boundary.
+        $secretPayload = [pscustomobject]@{
+            password               = $adminPasswordText
+            appliance_ssh_password = $adminPasswordText
+            ssh_password           = $sshPasswordText
+            vcf_backup_password    = $vcfBackupPasswordText
+            esxi_password          = $esxiPasswordText
+        } | ConvertTo-Json -Compress
+        # Keep the child's progress output visible without adding it to this
+        # function's success stream, which is reserved for the exit code.
+        $secretPayload | & python @Arguments | Out-Host
+        return $LASTEXITCODE
+    }
+    finally {
+        $adminPasswordText = $null
+        $sshPasswordText = $null
+        $vcfBackupPasswordText = $null
+        $esxiPasswordText = $null
+        $secretPayload = $null
+    }
 }
 
 $resultStamp = Get-Date -Format 'yyyyMMdd-HHmmss'
@@ -206,7 +237,7 @@ Optional vmrun.exe path or install directory.
 #>
 <#
 .SYNOPSIS
-Resolve Vmrun Path.
+Resolve vmrun from an override or supported installation location.
 #>
 function Resolve-VmrunPath {
     if ($VmrunPath) {
@@ -232,7 +263,7 @@ function Resolve-VmrunPath {
 
 <#
 .SYNOPSIS
-Resolve Vdisk Manager Path.
+Resolve vmware-vdiskmanager from supported installation locations.
 #>
 function Resolve-VdiskManagerPath {
     $vmrunDirectory = Split-Path -Parent $resolvedVmrun
@@ -262,12 +293,6 @@ Reject reserved VM names to avoid clobbering protected environments.
 .PARAMETER Name
 VM name to validate.
 #>
-<#
-.SYNOPSIS
-Validate Safe Lifecycle Name.
-.PARAMETER Name
-Name value.
-#>
 function Assert-SafeLifecycleName {
     param([string]$Name)
 
@@ -287,12 +312,6 @@ Escape a value for single-quoted shell expansion.
 .PARAMETER Value
 String value to escape.
 #>
-<#
-.SYNOPSIS
-Convert Guest Shell Single Quote.
-.PARAMETER Value
-Value value.
-#>
 function ConvertTo-GuestShellSingleQuote {
     param([string]$Value)
     return "'" + ($Value -replace "'", "'\''") + "'"
@@ -304,12 +323,6 @@ Escape an argument for native command execution.
 
 .PARAMETER Value
 Input string to escape.
-#>
-<#
-.SYNOPSIS
-Convert Native Argument.
-.PARAMETER Value
-Value value.
 #>
 function ConvertTo-NativeArgument {
     param([string]$Value)
@@ -332,14 +345,6 @@ Argument list for vmrun.
 .PARAMETER TimeoutSeconds
 Bounded timeout in seconds.
 #>
-<#
-.SYNOPSIS
-Invoke Vmrun Bounded.
-.PARAMETER Arguments
-Arguments value.
-.PARAMETER TimeoutSeconds
-Timeout Seconds value.
-#>
 function Invoke-VmrunBounded {
     param(
         [string[]]$Arguments,
@@ -359,6 +364,7 @@ function Invoke-VmrunBounded {
         try {
             $process.Kill()
         } catch {
+            Write-Verbose "Could not terminate timed-out vmrun process: $($_.Exception.Message)"
         }
         return [pscustomobject]@{
             ExitCode = -1
@@ -381,7 +387,7 @@ Generate a randomized static MAC in VMware OUI space.
 #>
 <#
 .SYNOPSIS
-Create Static Vmware Mac.
+Generate a randomized static MAC in VMware OUI space.
 #>
 function New-StaticVmwareMac {
     $bytes = [guid]::NewGuid().ToByteArray()
@@ -390,16 +396,9 @@ function New-StaticVmwareMac {
 
 <#
 .SYNOPSIS
-Escape a VMX value for literal writing.
-
+Escape a literal value for a VMX assignment.
 .PARAMETER Value
-Raw string value.
-#>
-<#
-.SYNOPSIS
-Convert Vmx String.
-.PARAMETER Value
-Value value.
+Unquoted VMX property text to escape and quote.
 #>
 function ConvertTo-VmxString {
     param([string]$Value)
@@ -408,13 +407,13 @@ function ConvertTo-VmxString {
 
 <#
 .SYNOPSIS
-Set Vmx Value.
+Set one VMX key while preserving unrelated configuration.
 .PARAMETER Path
-Path value.
+VMX file whose exact key assignment is updated.
 .PARAMETER Key
-Key value.
+VMX property name to replace or append.
 .PARAMETER Value
-Value value.
+Unquoted VMX property value to serialize.
 #>
 function Set-VmxValue {
     param(
@@ -454,14 +453,6 @@ Path to VMX file.
 .PARAMETER Key
 VMX key name to remove.
 #>
-<#
-.SYNOPSIS
-Remove Vmx Value.
-.PARAMETER Path
-Path value.
-.PARAMETER Key
-Key value.
-#>
 function Remove-VmxValue {
     param(
         [string]$Path,
@@ -482,12 +473,6 @@ Create deterministic SCSI-compatible IDs for LAN segments.
 
 .PARAMETER Name
 Segment name used as input entropy.
-#>
-<#
-.SYNOPSIS
-Create Lan Segment Id.
-.PARAMETER Name
-Name value.
 #>
 function New-LanSegmentId {
     param([string]$Name)
@@ -511,12 +496,6 @@ Resolve or create a VMware LAN segment ID for a named segment.
 
 .PARAMETER Name
 LAN segment name to resolve.
-#>
-<#
-.SYNOPSIS
-Resolve Lan Segment Id.
-.PARAMETER Name
-Name value.
 #>
 function Resolve-LanSegmentId {
     param([string]$Name)
@@ -629,20 +608,6 @@ Optional static MAC address.
 .PARAMETER VirtualDev
 VMXNET device type.
 #>
-<#
-.SYNOPSIS
-Set Vmx Network Adapter.
-.PARAMETER Path
-Path value.
-.PARAMETER Index
-Index value.
-.PARAMETER Vmnet
-Vmnet value.
-.PARAMETER StaticMac
-Static Mac value.
-.PARAMETER VirtualDev
-Virtual Dev value.
-#>
 function Set-VmxNetworkAdapter {
     param(
         [string]$Path,
@@ -687,16 +652,6 @@ Destination directory for the copied appliance.
 .PARAMETER Name
 Lifecycle VM name.
 #>
-<#
-.SYNOPSIS
-Copy Vm Directory.
-.PARAMETER SourceVmx
-Source Vmx value.
-.PARAMETER DestinationDirectory
-Destination Directory value.
-.PARAMETER Name
-Name value.
-#>
 function Copy-VmDirectory {
     param(
         [string]$SourceVmx,
@@ -740,20 +695,6 @@ Base client VMDK path.
 NoCloud seed ISO path.
 .PARAMETER Networks
 VM adapter target networks by index.
-#>
-<#
-.SYNOPSIS
-Create Client Vm.
-.PARAMETER Name
-Name value.
-.PARAMETER Directory
-Directory value.
-.PARAMETER DiskPath
-Disk Path value.
-.PARAMETER SeedIso
-Seed Iso value.
-.PARAMETER Networks
-Networks value.
 #>
 function New-ClientVm {
     param(
@@ -810,18 +751,6 @@ VM directory.
 Initial network attachment.
 .PARAMETER MacAddress
 Optional static MAC address.
-#>
-<#
-.SYNOPSIS
-Create Esxi Pxe Vm.
-.PARAMETER Name
-Name value.
-.PARAMETER Directory
-Directory value.
-.PARAMETER Network
-Network value.
-.PARAMETER MacAddress
-Mac Address value.
 #>
 function New-EsxiPxeVm {
     param(
@@ -890,14 +819,6 @@ Seed ISO output path.
 .PARAMETER HostName
 Client hostname for cloud-init metadata.
 #>
-<#
-.SYNOPSIS
-Create Cloud Init Seed Iso.
-.PARAMETER Path
-Path value.
-.PARAMETER HostName
-Host Name value.
-#>
 function New-CloudInitSeedIso {
     param(
         [string]$Path,
@@ -910,7 +831,9 @@ function New-CloudInitSeedIso {
             python -m pip install pycdlib
         }
         $helper = Join-Path $repoRoot 'scripts\interop\create_nocloud_seed_iso.py'
-        python $helper --output $Path --hostname $HostName --user $ClientSshUser --password $SshPassword | Out-Host
+        # The repository-controlled seed helper reads one password line from
+        # stdin so the client credential never appears in process arguments.
+        $SshPassword | & python $helper --output $Path --hostname $HostName --user $ClientSshUser --password-stdin | Out-Host
         if ($LASTEXITCODE -ne 0) {
             throw "Failed to create NoCloud seed ISO for $HostName"
         }
@@ -923,12 +846,6 @@ Invoke vmrun with fail-fast behavior.
 
 .PARAMETER Arguments
 vmrun arguments.
-#>
-<#
-.SYNOPSIS
-Invoke Vmrun.
-.PARAMETER Arguments
-Arguments value.
 #>
 function Invoke-Vmrun {
     param([string[]]$Arguments)
@@ -944,12 +861,6 @@ Register a Workstation VM if possible.
 
 .PARAMETER Path
 VMX path to register.
-#>
-<#
-.SYNOPSIS
-Register Workstation Vm.
-.PARAMETER Path
-Path value.
 #>
 function Register-WorkstationVm {
     param([string]$Path)
@@ -968,12 +879,6 @@ Start a Workstation VM with bounded registration workflow.
 .PARAMETER Path
 VMX path to start.
 #>
-<#
-.SYNOPSIS
-Start Workstation Vm.
-.PARAMETER Path
-Path value.
-#>
 function Start-WorkstationVm {
     param([string]$Path)
     if ($PSCmdlet.ShouldProcess($Path, 'Start Workstation VM')) {
@@ -984,14 +889,112 @@ function Start-WorkstationVm {
 
 <#
 .SYNOPSIS
-Test Tcp Port.
-.PARAMETER HostName
-Host Name value.
-.PARAMETER Port
-Port value.
-.PARAMETER TimeoutMilliseconds
-Timeout Milliseconds value.
+Report whether an exact VMware Workstation VMX is running.
+
+.PARAMETER Path
+VMX path whose running state is queried.
 #>
+function Test-WorkstationVmRunning {
+    param([string]$Path)
+
+    $listResult = Invoke-VmrunBounded -Arguments @('-T', 'ws', 'list') -TimeoutSeconds 15
+    if ($listResult.ExitCode -ne 0) {
+        throw "Failed to list running VMware Workstation VMs before seed cleanup: $($listResult.StdErr)"
+    }
+    $targetPath = [System.IO.Path]::GetFullPath($Path)
+    foreach ($line in @($listResult.StdOut -split "`r?`n")) {
+        $candidate = $line.Trim()
+        if (-not $candidate -or $candidate -match '^Total running VMs:') {
+            continue
+        }
+        try {
+            $candidatePath = [System.IO.Path]::GetFullPath($candidate)
+        } catch {
+            continue
+        }
+        if ([string]::Equals($candidatePath, $targetPath, [System.StringComparison]::OrdinalIgnoreCase)) {
+            return $true
+        }
+    }
+    return $false
+}
+
+<#
+.SYNOPSIS
+Stop one running client VM before detaching its credential-bearing seed.
+
+.PARAMETER Path
+Client VMX path to stop.
+#>
+function Stop-WorkstationVmForSeedCleanup {
+    [OutputType([bool])]
+    param([string]$Path)
+
+    if (-not (Test-Path -LiteralPath $Path -PathType Leaf) -or -not (Test-WorkstationVmRunning -Path $Path)) {
+        return $false
+    }
+    [void](Invoke-VmrunBounded -Arguments @('-T', 'ws', 'stop', $Path, 'soft') -TimeoutSeconds 45)
+    if (Test-WorkstationVmRunning -Path $Path) {
+        [void](Invoke-VmrunBounded -Arguments @('-T', 'ws', 'stop', $Path, 'hard') -TimeoutSeconds 30)
+    }
+    if (Test-WorkstationVmRunning -Path $Path) {
+        throw "Client VM remained running during credential-bearing seed cleanup: $Path"
+    }
+    return $true
+}
+
+<#
+.SYNOPSIS
+Detach and delete credential-bearing client seed ISOs with absence verification.
+
+.PARAMETER VmxPaths
+Client VMX paths that may reference the seed ISOs.
+
+.PARAMETER SeedPaths
+Exact seed ISO paths to delete.
+
+.PARAMETER Restart
+Restart client VMs that were running after all seeds are verifiably absent.
+#>
+function Remove-ClientSeedArtifacts {
+    param(
+        [string[]]$VmxPaths,
+        [string[]]$SeedPaths,
+        [switch]$Restart
+    )
+
+    $restartPaths = New-Object System.Collections.Generic.List[string]
+    foreach ($vmxPath in @($VmxPaths | Where-Object { $_ })) {
+        if (Stop-WorkstationVmForSeedCleanup -Path $vmxPath) {
+            $restartPaths.Add($vmxPath)
+        }
+        if (Test-Path -LiteralPath $vmxPath -PathType Leaf) {
+            # A stopped VM cannot retain an open seed handle. Detach before
+            # deletion so a later restart cannot reacquire the secret artifact.
+            Set-VmxValue -Path $vmxPath -Key 'sata0:1.present' -Value 'FALSE'
+            foreach ($key in @('sata0:1.fileName', 'sata0:1.deviceType', 'sata0:1.startConnected')) {
+                Remove-VmxValue -Path $vmxPath -Key $key
+            }
+        }
+    }
+    foreach ($seedPath in @($SeedPaths | Where-Object { $_ })) {
+        if (Test-Path -LiteralPath $seedPath) {
+            if ($PSCmdlet.ShouldProcess($seedPath, 'Delete credential-bearing client seed ISO')) {
+                Remove-Item -LiteralPath $seedPath -Force -ErrorAction Stop
+            }
+        }
+        if (Test-Path -LiteralPath $seedPath) {
+            throw "Credential-bearing client seed ISO remains after cleanup: $seedPath"
+        }
+    }
+    if ($Restart) {
+        foreach ($vmxPath in $restartPaths) {
+            $startParameters = @{ Path = $vmxPath }
+            Start-WorkstationVm @startParameters
+        }
+    }
+}
+
 function Test-TcpPort {
 <#
 .SYNOPSIS
@@ -1036,26 +1039,18 @@ SSH username.
 .PARAMETER Password
 SSH password.
 #>
-<#
-.SYNOPSIS
-Return Plink Host Key.
-.PARAMETER HostName
-Host Name value.
-.PARAMETER UserName
-User Name value.
-.PARAMETER Password
-Password value.
-#>
 function Get-PlinkHostKey {
     param(
         [string]$HostName,
         [string]$UserName,
-        [string]$Password
+        [SecureString]$Password
     )
 
     if (-not $HostName -or -not $Password -or -not (Get-Command plink -ErrorAction SilentlyContinue)) {
         return ''
     }
+
+    $passwordText = ConvertFrom-SecureString -SecureString $Password -AsPlainText
 
     $deadline = (Get-Date).AddMinutes(4)
     while ((Get-Date) -lt $deadline) {
@@ -1067,20 +1062,24 @@ function Get-PlinkHostKey {
         $previousErrorActionPreference = $ErrorActionPreference
         $ErrorActionPreference = 'Continue'
         try {
-            $output = & plink -batch -ssh -pw $Password "$UserName@$HostName" 'hostname' 2>&1
+            $output = & plink -batch -ssh -pw $passwordText "$UserName@$HostName" 'hostname' 2>&1
             $exitCode = $LASTEXITCODE
         } finally {
             $ErrorActionPreference = $previousErrorActionPreference
         }
         $text = ($output | Out-String)
         if ($text -match '(ssh-[A-Za-z0-9-]+\s+\d+\s+SHA256:[A-Za-z0-9+/=]+)') {
-            return $Matches[1]
+            $hostKey = $Matches[1]
+            $passwordText = $null
+            return $hostKey
         }
         if ($exitCode -eq 0) {
+            $passwordText = $null
             return ''
         }
         Start-Sleep -Seconds 5
     }
+    $passwordText = $null
     Write-Warning "Timed out waiting for SSH host key from $UserName@$HostName; continuing without host key pinning."
     return ''
 }
@@ -1091,12 +1090,6 @@ Parse IPv4 addresses from text lines.
 
 .PARAMETER Lines
 Text lines to scan.
-#>
-<#
-.SYNOPSIS
-Return Guest I Pv4 From Address Text.
-.PARAMETER Lines
-Lines value.
 #>
 function Get-GuestIPv4FromAddressText {
     param([string[]]$Lines)
@@ -1125,12 +1118,6 @@ Normalize MAC addresses to hyphen format.
 .PARAMETER MacAddress
 MAC address input.
 #>
-<#
-.SYNOPSIS
-Convert Hyphen Mac.
-.PARAMETER MacAddress
-Mac Address value.
-#>
 function ConvertTo-HyphenMac {
     param([string]$MacAddress)
 
@@ -1145,14 +1132,6 @@ Read a VMX ethernet MAC address by adapter index.
 VMX path.
 .PARAMETER Index
 Ethernet adapter index.
-#>
-<#
-.SYNOPSIS
-Return Vmx Ethernet Mac Address.
-.PARAMETER Path
-Path value.
-.PARAMETER Index
-Index value.
 #>
 function Get-VmxEthernetMacAddress {
     param(
@@ -1183,14 +1162,6 @@ Resolve a guest IPv4 address from neighbor cache by MAC.
 VMX path.
 .PARAMETER Index
 Ethernet adapter index.
-#>
-<#
-.SYNOPSIS
-Return Guest I Pv4 From Host Neighbor.
-.PARAMETER Path
-Path value.
-.PARAMETER Index
-Index value.
 #>
 function Get-GuestIPv4FromHostNeighbor {
     param(
@@ -1232,42 +1203,35 @@ Guest password.
 .PARAMETER Name
 VM-friendly name for temporary host output names.
 #>
-<#
-.SYNOPSIS
-Return Guest I Pv4 Via Guest Ops.
-.PARAMETER Path
-Path value.
-.PARAMETER GuestUser
-Guest User value.
-.PARAMETER GuestPassword
-Guest Password value.
-.PARAMETER Name
-Name value.
-#>
 function Get-GuestIPv4ViaGuestOps {
     param(
         [string]$Path,
         [string]$GuestUser,
-        [string]$GuestPassword,
+        [SecureString]$GuestPassword,
         [string]$Name
     )
 
     if (-not $GuestUser -or -not $GuestPassword) {
         return ''
     }
+    $guestPasswordText = ConvertFrom-SecureString -SecureString $GuestPassword -AsPlainText
     $safeName = ($Name -replace '[^A-Za-z0-9_.-]', '-')
     $guestOutput = "/tmp/atlaso-ipv4-$safeName.txt"
     $hostOutput = Join-Path $resultRoot "guest-ipv4-$safeName.txt"
     $script = "ip -4 -br addr > $guestOutput 2>/dev/null || /sbin/ip -4 -br addr > $guestOutput 2>/dev/null || ifconfig > $guestOutput 2>/dev/null"
-    $runResult = Invoke-VmrunBounded -Arguments @('-T', 'ws', '-gu', $GuestUser, '-gp', $GuestPassword, 'runScriptInGuest', $Path, '/bin/sh', $script) -TimeoutSeconds 15
+    $runResult = Invoke-VmrunBounded -Arguments @('-T', 'ws', '-gu', $GuestUser, '-gp', $guestPasswordText, 'runScriptInGuest', $Path, '/bin/sh', $script) -TimeoutSeconds 15
     if ($runResult.ExitCode -ne 0) {
+        $guestPasswordText = $null
         return ''
     }
-    $copyResult = Invoke-VmrunBounded -Arguments @('-T', 'ws', '-gu', $GuestUser, '-gp', $GuestPassword, 'copyFileFromGuestToHost', $Path, $guestOutput, $hostOutput) -TimeoutSeconds 15
+    $copyResult = Invoke-VmrunBounded -Arguments @('-T', 'ws', '-gu', $GuestUser, '-gp', $guestPasswordText, 'copyFileFromGuestToHost', $Path, $guestOutput, $hostOutput) -TimeoutSeconds 15
     if ($copyResult.ExitCode -ne 0 -or -not (Test-Path -LiteralPath $hostOutput)) {
+        $guestPasswordText = $null
         return ''
     }
-    return Get-GuestIPv4FromAddressText -Lines @(Get-Content -LiteralPath $hostOutput)
+    $guestAddress = Get-GuestIPv4FromAddressText -Lines @(Get-Content -LiteralPath $hostOutput)
+    $guestPasswordText = $null
+    return $guestAddress
 }
 
 <#
@@ -1285,26 +1249,12 @@ Guest password used for guest-ops probing.
 .PARAMETER Name
 VM name used for temporary artifacts.
 #>
-<#
-.SYNOPSIS
-Wait Guest I Pv4.
-.PARAMETER Path
-Path value.
-.PARAMETER TimeoutSeconds
-Timeout Seconds value.
-.PARAMETER GuestUser
-Guest User value.
-.PARAMETER GuestPassword
-Guest Password value.
-.PARAMETER Name
-Name value.
-#>
 function Wait-GuestIPv4 {
     param(
         [string]$Path,
         [int]$TimeoutSeconds = 240,
         [string]$GuestUser = '',
-        [string]$GuestPassword = '',
+        [SecureString]$GuestPassword,
         [string]$Name = 'guest'
     )
 
@@ -1339,14 +1289,6 @@ Appliance VMX path.
 .PARAMETER Script
 Shell script content.
 #>
-<#
-.SYNOPSIS
-Invoke Appliance Guest Script.
-.PARAMETER ApplianceVmx
-Appliance Vmx value.
-.PARAMETER Script
-Script value.
-#>
 function Invoke-ApplianceGuestScript {
     param(
         [string]$ApplianceVmx,
@@ -1365,12 +1307,6 @@ Probe a URL for successful openapi endpoint response.
 
 .PARAMETER Url
 OpenAPI URL to probe.
-#>
-<#
-.SYNOPSIS
-Test Appliance Open Api.
-.PARAMETER Url
-Url value.
 #>
 function Test-ApplianceOpenApi {
     param([string]$Url)
@@ -1402,9 +1338,9 @@ function Test-ApplianceOpenApi {
 
 <#
 .SYNOPSIS
-Synchronize Appliance Helper Script.
+Upload the lifecycle helper script to the appliance guest.
 .PARAMETER ApplianceVmx
-Appliance Vmx value.
+VMX path identifying the appliance guest that receives the helper.
 #>
 function Sync-ApplianceHelperScript {
     param([string]$ApplianceVmx)
@@ -1428,9 +1364,9 @@ function Sync-ApplianceHelperScript {
 
 <#
 .SYNOPSIS
-Synchronize Appliance Application Wheel.
+Upload and install the lifecycle application wheel in the appliance guest.
 .PARAMETER ApplianceVmx
-Appliance Vmx value.
+VMX path identifying the appliance guest where the wheel is installed.
 #>
 function Sync-ApplianceApplicationWheel {
     param([string]$ApplianceVmx)
@@ -1476,9 +1412,9 @@ function Sync-ApplianceApplicationWheel {
 
 <#
 .SYNOPSIS
-Find Appliance Esxi Iso Path.
+Find an ESXi installer ISO already stored on the appliance.
 .PARAMETER ApplianceVmx
-Appliance Vmx value.
+VMX path identifying the appliance guest whose depot is searched.
 #>
 function Find-ApplianceEsxiIsoPath {
     param([string]$ApplianceVmx)
@@ -1499,9 +1435,9 @@ function Find-ApplianceEsxiIsoPath {
 
 <#
 .SYNOPSIS
-Resolve Appliance Esxi Iso Path.
+Resolve or upload the ESXi ISO required by the PXE scenario.
 .PARAMETER ApplianceVmx
-Appliance Vmx value.
+VMX path identifying the appliance guest that owns the ESXi depot.
 #>
 function Resolve-ApplianceEsxiIsoPath {
     param([string]$ApplianceVmx)
@@ -1539,17 +1475,17 @@ function Resolve-ApplianceEsxiIsoPath {
 
 <#
 .SYNOPSIS
-Add Lifecycle Result Step.
+Append one timestamped validation step to the lifecycle result.
 .PARAMETER ResultDirectory
-Result Directory value.
+Directory containing the lifecycle result JSON to update.
 .PARAMETER Name
-Name value.
+Stable result-step name recorded for the validation.
 .PARAMETER Status
-Status value.
+Validation outcome written to the step and aggregate result.
 .PARAMETER Evidence
-Evidence value.
+Non-secret structured evidence captured for the validation.
 .PARAMETER ErrorMessage
-Error Message value.
+Optional sanitized failure context for an unsuccessful step.
 #>
 function Add-LifecycleResultStep {
     param(
@@ -1627,8 +1563,8 @@ if ($PlanOnly) {
 
 $firstBootOvfEnvironment = New-AtlasoWorkstationOvfEnvironment `
     -Fqdn (New-AtlasoWorkstationFqdn -Name $applianceName) `
-    -AdminPassword $AdminPassword `
-    -RootPassword $AdminPassword `
+    -AdminPassword $adminPasswordSecure `
+    -RootPassword $adminPasswordSecure `
     -RootSshEnabled:($ApplianceSshUser -eq 'root')
 
 New-Item -ItemType Directory -Force -Path $vmRoot | Out-Null
@@ -1636,20 +1572,20 @@ New-Item -ItemType Directory -Force -Path $seedRoot | Out-Null
 
 $clientASeedIso = ''
 $clientBSeedIso = ''
-if (-not $OidcOnly) {
-    $clientASeedIso = Join-Path $seedRoot "$clientAName-seed.iso"
-    $clientBSeedIso = Join-Path $seedRoot "$clientBName-seed.iso"
-    New-CloudInitSeedIso -Path $clientASeedIso -HostName ($clientAName.ToLowerInvariant())
-    New-CloudInitSeedIso -Path $clientBSeedIso -HostName ($clientBName.ToLowerInvariant())
-}
-
+$clientAVmx = ''
+$clientBVmx = ''
+$seedArtifactsRetired = [bool]$OidcOnly
 $scenarioFailure = $null
 try {
+    if (-not $OidcOnly) {
+        $clientASeedIso = Join-Path $seedRoot "$clientAName-seed.iso"
+        $clientBSeedIso = Join-Path $seedRoot "$clientBName-seed.iso"
+        New-CloudInitSeedIso -Path $clientASeedIso -HostName ($clientAName.ToLowerInvariant())
+        New-CloudInitSeedIso -Path $clientBSeedIso -HostName ($clientBName.ToLowerInvariant())
+    }
     $applianceVmx = Copy-VmDirectory -SourceVmx $ApplianceVmxPath -DestinationDirectory (Join-Path $vmRoot $applianceName) -Name $applianceName
     Set-VmxNetworkAdapter -Path $applianceVmx -Index 0 -Vmnet $ManagementNetwork
     Set-AtlasoWorkstationOvfEnvironment -VmxPath $applianceVmx -OvfEnvironment $firstBootOvfEnvironment
-    $clientAVmx = ''
-    $clientBVmx = ''
     if (-not $OidcOnly) {
         Set-VmxNetworkAdapter -Path $applianceVmx -Index 1 -Vmnet $SiteANetwork
         Set-VmxNetworkAdapter -Path $applianceVmx -Index 2 -Vmnet $TrunkNetwork
@@ -1672,7 +1608,7 @@ try {
 
     Start-Sleep -Seconds 20
     if (-not $ApplianceIPAddress) {
-        $ApplianceIPAddress = Wait-GuestIPv4 -Path $applianceVmx -TimeoutSeconds 300 -GuestUser $ApplianceSshUser -GuestPassword $ApplianceGuestPassword -Name $applianceName
+        $ApplianceIPAddress = Wait-GuestIPv4 -Path $applianceVmx -TimeoutSeconds 300 -GuestUser $ApplianceSshUser -GuestPassword $adminPasswordSecure -Name $applianceName
         if (-not $ApplianceIPAddress) {
             throw "Timed out waiting for VMware Tools to report the appliance management IPv4 address."
         }
@@ -1686,16 +1622,19 @@ try {
     } | ConvertTo-Json -Depth 3 | Set-Content -LiteralPath (Join-Path $resultRoot 'discovered-appliance.json') -Encoding UTF8
     Sync-ApplianceHelperScript -ApplianceVmx $applianceVmx
     $applianceWheelPath = Sync-ApplianceApplicationWheel -ApplianceVmx $applianceVmx
-    $applianceHostKey = Get-PlinkHostKey -HostName $ApplianceIPAddress -UserName $ApplianceSshUser -Password $ApplianceGuestPassword
+    $applianceHostKey = Get-PlinkHostKey -HostName $ApplianceIPAddress -UserName $ApplianceSshUser -Password $adminPasswordSecure
     $clientAHost = ''
     $clientBHost = ''
     $clientAHostKey = ''
     $clientBHostKey = ''
     if (-not $OidcOnly) {
-        $clientAHost = Wait-GuestIPv4 -Path $clientAVmx -GuestUser $ClientSshUser -GuestPassword $SshPassword -Name $clientAName
-        $clientBHost = Wait-GuestIPv4 -Path $clientBVmx -GuestUser $ClientSshUser -GuestPassword $SshPassword -Name $clientBName
-        $clientAHostKey = Get-PlinkHostKey -HostName $clientAHost -UserName $ClientSshUser -Password $SshPassword
-        $clientBHostKey = Get-PlinkHostKey -HostName $clientBHost -UserName $ClientSshUser -Password $SshPassword
+        $clientAHost = Wait-GuestIPv4 -Path $clientAVmx -GuestUser $ClientSshUser -GuestPassword $sshPasswordSecure -Name $clientAName
+        $clientBHost = Wait-GuestIPv4 -Path $clientBVmx -GuestUser $ClientSshUser -GuestPassword $sshPasswordSecure -Name $clientBName
+        if (-not $clientAHost -or -not $clientBHost) {
+            throw 'Client guest readiness did not return both lifecycle addresses.'
+        }
+        $clientAHostKey = Get-PlinkHostKey -HostName $clientAHost -UserName $ClientSshUser -Password $sshPasswordSecure
+        $clientBHostKey = Get-PlinkHostKey -HostName $clientBHost -UserName $ClientSshUser -Password $sshPasswordSecure
     }
     $appliancePxeInstallerIsoPath = if ($FullEsxiPxeInstall) {
         Resolve-ApplianceEsxiIsoPath -ApplianceVmx $applianceVmx
@@ -1708,12 +1647,9 @@ try {
         '--appliance-url', $ApplianceUrl,
         '--appliance-ssh-host', $ApplianceIPAddress,
         '--username', $AdminUsername,
-        '--password', $AdminPassword,
         '--appliance-ssh-user', $ApplianceSshUser,
         '--client-ssh-user', $ClientSshUser,
-        '--appliance-ssh-password', $ApplianceGuestPassword,
-        '--ssh-password', $SshPassword,
-        '--vcf-backup-password', $VcfBackupPassword,
+        '--secret-stdin',
         '--site-interface', $SiteInterface,
         '--site-cidr', $SiteCidr,
         '--vlan-id', "$VlanId",
@@ -1749,9 +1685,13 @@ try {
     }
 
     if ($PSCmdlet.ShouldProcess($LabName, 'Run Workstation lifecycle interop scenario')) {
-        python @initialPythonArgs
-        if ($LASTEXITCODE -ne 0) {
-            throw "Lifecycle interop runner failed with exit code $LASTEXITCODE"
+        $pythonExitCode = Invoke-LifecyclePython -Arguments $initialPythonArgs `
+            -AdminPassword $adminPasswordSecure `
+            -SshPassword $sshPasswordSecure `
+            -VcfBackupPassword $vcfBackupPasswordSecure `
+            -EsxiPassword $esxiPasswordSecure
+        if ($pythonExitCode -ne 0) {
+            throw "Lifecycle interop runner failed with exit code $pythonExitCode"
         }
         if ($FullEsxiPxeInstall) {
             try {
@@ -1760,7 +1700,7 @@ try {
                     Write-Host "Waiting $EsxiInstallProbeDelaySeconds seconds before probing ESXi guest operations."
                     Start-Sleep -Seconds $EsxiInstallProbeDelaySeconds
                 }
-                $esxiDetectedIp = Wait-GuestIPv4 -Path $esxiVmx -TimeoutSeconds $EsxiInstallTimeoutSeconds -GuestUser 'root' -GuestPassword 'vmware01!' -Name $esxiName
+                $esxiDetectedIp = Wait-GuestIPv4 -Path $esxiVmx -TimeoutSeconds $EsxiInstallTimeoutSeconds -GuestUser 'root' -GuestPassword $esxiPasswordSecure -Name $esxiName
                 if (-not $esxiDetectedIp) {
                     throw "Timed out waiting for ESXi PXE install guest IP after $EsxiInstallTimeoutSeconds seconds."
                 }
@@ -1786,14 +1726,41 @@ try {
                 '--restored-state-run',
                 '--certificate-baseline-result', (Join-Path $initialResultRoot 'result.json')
             ))
-            python @restoredPythonArgs
-            if ($LASTEXITCODE -ne 0) {
-                throw "Restored lifecycle interop runner failed with exit code $LASTEXITCODE"
+            $pythonExitCode = Invoke-LifecyclePython -Arguments $restoredPythonArgs `
+                -AdminPassword $adminPasswordSecure `
+                -SshPassword $sshPasswordSecure `
+                -VcfBackupPassword $vcfBackupPasswordSecure `
+                -EsxiPassword $esxiPasswordSecure
+            if ($pythonExitCode -ne 0) {
+                throw "Restored lifecycle interop runner failed with exit code $pythonExitCode"
             }
         }
     }
+    if (-not $OidcOnly) {
+        # Successful lifecycle client access proves cloud-init consumed both
+        # seeds. Leave retained labs running only after verified deletion.
+        Remove-ClientSeedArtifacts `
+            -VmxPaths @($clientAVmx, $clientBVmx) `
+            -SeedPaths @($clientASeedIso, $clientBSeedIso) `
+            -Restart:(-not $CleanupCreatedLab)
+        $seedArtifactsRetired = $true
+    }
 } catch {
     $scenarioFailure = $_
+}
+
+$seedCleanupFailure = $null
+if (-not $seedArtifactsRetired) {
+    try {
+        # Failure cleanup intentionally leaves affected clients stopped: a
+        # restart is unsafe until every credential-bearing ISO is absent.
+        Remove-ClientSeedArtifacts `
+            -VmxPaths @($clientAVmx, $clientBVmx) `
+            -SeedPaths @($clientASeedIso, $clientBSeedIso)
+        $seedArtifactsRetired = $true
+    } catch {
+        $seedCleanupFailure = $_
+    }
 }
 
 $cleanupFailure = $null
@@ -1817,11 +1784,21 @@ if ($CleanupCreatedLab) {
 }
 
 if ($scenarioFailure) {
-    if ($cleanupFailure) {
-        $combinedMessage = "Lifecycle scenario failed: $($scenarioFailure.Exception.Message) Cleanup also failed; VM artifacts were preserved at '$vmRoot': $($cleanupFailure.Exception.Message)"
+    if ($seedCleanupFailure -or $cleanupFailure) {
+        $cleanupMessages = @(
+            $seedCleanupFailure,
+            $cleanupFailure
+        ) | Where-Object { $null -ne $_ } | ForEach-Object { $_.Exception.Message }
+        $combinedMessage = "Lifecycle scenario failed: $($scenarioFailure.Exception.Message) Cleanup also failed; VM artifacts were preserved at '$vmRoot': $($cleanupMessages -join '; ')"
         throw [System.InvalidOperationException]::new($combinedMessage, $scenarioFailure.Exception)
     }
     throw $scenarioFailure
+}
+if ($seedCleanupFailure) {
+    if ($cleanupFailure) {
+        throw "Credential-bearing seed cleanup failed: $($seedCleanupFailure.Exception.Message) VM cleanup also failed: $($cleanupFailure.Exception.Message)"
+    }
+    throw $seedCleanupFailure
 }
 if ($cleanupFailure) {
     throw $cleanupFailure

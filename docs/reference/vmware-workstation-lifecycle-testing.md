@@ -38,6 +38,11 @@ human-approved 1Password desktop authorization prompt and keeps it in process me
 and an explicit dependency path so startup hooks and inherited `PYTHONPATH` cannot observe the value. The beta-only
 `op run --environment` flag is not supported by the stable CLI and is not part of this workflow.
 
+Normal test VM creation uses a separate development-CA handoff. It requires the Environments-enabled beta CLI at
+`C:\Program Files\1Password CLI\op.exe` with `op run --environment`, retrieves the selected Environment only through
+that bounded child, and cryptographically verifies its concealed signer against the checked-in development root before
+VM mutation. The stable SDK-backed wheel deployment above does not change this normal-test-wrapper-only trust path.
+
 Atlaso can run a VMware Workstation lifecycle lab alongside the Hyper-V lab. The Workstation path uses VMX/VMDK
 artifacts and `vmrun.exe`, then delegates appliance behavior checks to the shared Python lifecycle runner.
 
@@ -105,6 +110,11 @@ the Hyper-V build wrapper. Both wrappers use `image/common/source` for the origi
 source ISO is not duplicated under each target. The Workstation image installs `open-vm-tools`; the Hyper-V image keeps
 the `hyper-v` package and Hyper-V guest daemons. The Workstation build wrapper opens a visible VMware console by
 default. Use `-Headless` only when an unattended build is preferred.
+The shared builder removes and verifies the absence of its plaintext kickstart source, generated Packer variable file,
+and remastered credential-bearing ISO after the bounded Packer consumer exits. The cleanup covers validation, build,
+failure, and fallback ISO paths; an ACL, file-lock, or endpoint-protection cleanup failure terminates the build instead
+of reporting success with a credential-bearing artifact left behind. `-PrepareIsoOnly` is rejected because retaining
+that ISO would retain a reusable build credential.
 
 GUI builds start or reuse a responsive VMware Workstation UI as a process separate from Packer before invoking the
 VMware builder. This preserves the visible console while preventing an already-running VM from leaving Packer blocked
@@ -132,6 +142,27 @@ by formatting or silently swapping unrelated VMDKs.
 pwsh -ExecutionPolicy Bypass `
   -File scripts/windows/vmware/invoke-lifecycle-test.ps1
 ```
+
+The wrapper has no password defaults. It prompts securely for the appliance administrator and VCF Backup credentials;
+client SSH reuses the administrator `SecureString` unless `-SshPassword` is supplied. `-FullEsxiPxeInstall` also
+requires the ESXi root password that matches the selected rendered Kickstart profile. The launcher sends these values to
+its child through a current-user DPAPI-protected temporary CLIXML bundle and removes that bundle after the child exits.
+The runner streams the complete password set for the main lifecycle Python consumer as one JSON envelope over standard
+input, so those values do not enter that child's process arguments. Client NoCloud seed generation likewise sends its
+SSH password as one bounded standard-input line to the repository-controlled helper; the helper rejects empty,
+multiline, and oversized input before replacing an existing seed artifact. After successful lifecycle client access
+proves that cloud-init consumed each seed, the runner stops the clients, detaches and deletes both ISOs with absence
+verification, then restarts a retained lab. Failure cleanup also stops affected clients and requires verified seed absence.
+For a full ESXi PXE install, the consumer rotates
+the encrypted `Lifecycle ESXi` vault entry and persists only
+`{{vault.lifecycle_esxi.esx.lifecycle.root.password}}` in the Kickstart source; Atlaso resolves that marker for the
+authorized PXE request without storing the plaintext password in desired state. The lifecycle reuses a vault whose
+display name normalizes to `lifecycle_esxi` and fails closed if more than one vault claims that marker name. Because
+settings archives intentionally exclude vaults, the restored pass recreates this entry from the same standard-input
+secret after restore and before the
+ESXi PXE unit is applied.
+The `-OidcOnly` and `-RoutingWanOnly` paths do not prompt for or include a VCF Backup password because those focused
+scenarios neither stage VCF Backup nor run the settings backup/restore pass.
 
 The wrapper selects the newest appliance VMX under `image/vmware-workstation/output`, prepares the tiny Alpine client
 VMDK when needed, creates a unique `AtlasoWorkstationLifecycle-*` lab, runs the initial lifecycle scenario, and by
@@ -178,6 +209,9 @@ pwsh -ExecutionPolicy Bypass `
   -CleanupVmsOnly
 ```
 
+The plan-only command does not prompt for passwords or create a protected credential bundle because the emitted plan
+does not consume credentials.
+
 ## Cleanup Safety
 
 Workstation cleanup is authoritative only for an exact Atlaso artifact root. It rejects filesystem roots, sibling or
@@ -216,6 +250,8 @@ continues the same registration and identity-aware running-inventory postconditi
 absent through the final gate. It does not enumerate or recursively remove the missing directory, so the same
 `create-atlaso-test-vm.ps1 -Redeploy` invocation can proceed to a fresh clone. A recreated root or changed target
 inventory remains an ambiguous state that fails closed and preserves the new path.
+Focused regression coverage exercises that complete redeploy wrapper with a synthetic schema-v2, role-bound source
+payload and separately proves that missing-target cleanup and sibling-prefix data-disk resets still fail closed.
 
 The read-only Workstation registration inventory may reside beneath a redirected `%APPDATA%` junction or symbolic link.
 The non-reparse-point requirement remains enforced on the Atlaso artifact root that cleanup recursively deletes, not on
@@ -234,7 +270,25 @@ descendants of the selected VM output, so sibling-prefix and reparse-point paths
 
 ## Normal Test VM
 
-For a normal Workstation appliance VM, separate from the lifecycle lab, use:
+For a normal Workstation appliance VM, separate from the lifecycle lab, store the exact `Atlaso` Environment ID once in
+the checkout-local, Git-ignored configuration file. The prompt is masked and the command does not print the ID:
+
+```powershell
+$atlasoLocal = Join-Path (git rev-parse --show-toplevel) '.atlaso-local'
+New-Item -ItemType Directory -Path $atlasoLocal -Force | Out-Null
+$atlasoEnvironmentId = Read-Host 'Paste the Atlaso Environment ID' -MaskInput
+try {
+    [System.IO.File]::WriteAllText(
+        (Join-Path $atlasoLocal 'onepassword-environment-id'),
+        $atlasoEnvironmentId
+    )
+}
+finally {
+    Remove-Variable atlasoEnvironmentId -ErrorAction SilentlyContinue
+}
+```
+
+Then use the ordinary command without an ID argument:
 
 ```powershell
 pwsh -ExecutionPolicy Bypass `
@@ -247,8 +301,19 @@ pwsh -ExecutionPolicy Bypass `
 
 That is the Workstation counterpart to `scripts/windows/hyperv/create-atlaso-test-vm.ps1`. It defaults to the management
 vmnet only; pass `-IncludeLabNetworkAdapters` after creating the SiteA, WAN/SiteB, and trunk-like vmnets.
-The wrapper injects the same complete DHCP-first OVF environment before power-on; use `-FirstBootFqdn`,
-`-AdminPassword`, and `-RootPassword` when the default local test identity or credentials are not appropriate.
+For real creation, the wrapper prefers an explicit `-OnePasswordEnvironmentId` override and otherwise reads the exact
+single-line `.atlaso-local/onepassword-environment-id` file. The entire `.atlaso-local` directory is ignored by Git. A
+custom file may be selected with `-EnvironmentIdFile`; the legacy `-OnePasswordEnvironmentIdFile` spelling remains an
+alias for existing automation.
+Pending signer cleanup runs first because it consumes no 1Password material. After that recovery, a missing or
+malformed ID fails with an actionable preflight error before network preparation, disk reset, cloning, or other new VM
+mutation. The wrapper verifies its SHA-256 identity against the repository pin without printing the ID. Install the
+Environments-enabled beta 1Password CLI under `C:\Program Files\1Password CLI`; a stable CLI without
+`op run --environment` fails before Environment access. A wrong Environment ID or signer fails before new VM mutation.
+The wrapper injects the same complete DHCP-first OVF environment before power-on. Use `-FirstBootFqdn` for the test
+identity. `-AdminPassword` and `-RootPassword` accept only `SecureString` objects; when omitted, the wrapper prompts
+securely after pending signer recovery and Environment validation, but before network preparation or new VM mutation.
+Neither credential has a repository default.
 It also resolves the current Windows user's existing `.ssh/id_ed25519.pub` before any network preparation, cleanup, or
 VM creation, installs that Ed25519 public key for `admin`, and adds a separate test-only passwordless-sudo rule. Pass
 `-SshPublicKeyPath <path>` to select another existing Ed25519 public key, or `-SkipSshKeyProvisioning` to retain
@@ -260,6 +325,22 @@ drop-in, restoring the ordinary password-backed sudo policy. Approve the applian
 wrapper's host-derived output: after startup it prints the exact Ed25519 public host key and SHA-256 fingerprint from
 test-only VMware guest-info for explicit `known_hosts` verification without trusting unauthenticated `ssh-keyscan`
 output. Subsequent Codex and Copilot tasks under the same Windows user reuse that trust and key identity.
+Before any ready message or connection endpoint, every started normal clone must prove that VMware Tools' management
+IPv4 address belongs uniquely to the exact running VMX. An explicit normal-test marker, independent of optional SSH key
+provisioning, makes first boot publish the actual applied hostname through VMware Tools. The proof records the VMX, its
+`ethernet0` MAC, the matching injected and observed hostnames, and the host-facing
+address; it requires an address answer from every running Workstation guest and requires the Windows neighbor entry for
+that address to match the target MAC. An unanswered running guest remains incomplete evidence and retries. A hostname
+mismatch, duplicate static address, or neighbor entry owned by another running VM fails closed with the relevant exact
+identity evidence. The wrapper re-lists the running inventory and rechecks the target address immediately before
+returning; a concurrent VM start, stop, or target-address change retries the complete proof.
+
+Recover from that failure through the exact clone's local console: stop the named conflicting VM, or give the clone a
+unique applied static address. A temporary DHCP reservation is acceptable only when it is bound to the exact target MAC
+shown by the failure. Then rerun `get-atlaso-vm-ip.ps1` with the exact VMX and the original `-ExpectedHostname`, or
+redeploy the normal test VM, before running SSH or HTTPS validation. Keep SSH trust explicit: compare the separately
+published Ed25519 key and SHA-256 fingerprint, and update `known_hosts` yourself only when intended. The wrapper never
+changes normal SSH `known_hosts` automatically.
 Changing the applied management listener from a dedicated interface to an access physical interface or VLAN with
 **Management UI** enabled must retain TCP/22 admission for this ordinary `admin` SSH workflow, under the same management
 Source Group restriction as TCP/80 and TCP/443. It does not enable root SSH and must not expose SSH on an unflagged
@@ -270,7 +351,10 @@ whitespace, and contain only XML-representable characters so the OVF value round
 `-TrustRootCa` waits for the first-boot CA endpoint, removes partial downloads best-effort between retries, validates the
 self-signed Atlaso root CA, and imports it into the current-user Trusted Root store. The temporary-file cleanup remains
 idempotent for missing files and safely handles dotted user-profile directories and valid DOS 8.3 short paths, so a
-cleanup race or path alias cannot stop the readiness retry loop. Use `-TimeoutSeconds` to change the IP and CA waits.
+cleanup race or path alias cannot stop the readiness retry loop. Use `-TimeoutSeconds` to change the secret-child, IP,
+and CA deadlines; rollback mutates the VM only after staging and start child-tree termination is proven. It also keeps
+reused disks quarantined while an artifact-removal child may survive. An unproven termination preserves the durable
+marker until a Windows host restart provides that proof.
 
 ## Fidelity Boundary
 

@@ -1,7 +1,9 @@
 """Test vmware ovf customization behavior."""
 
+import base64
 import importlib.util
 import json
+import os
 import shutil
 import subprocess
 import sys
@@ -151,15 +153,148 @@ def test_vmware_ovf_customizer_validates_optional_development_admin_key():
     properties = customizer.parse_ovf_environment(OVF_ENV)
 
     assert customizer.validate_properties(properties)["development_admin_ssh_public_key"] == ""
+    assert customizer.validate_properties(properties)["normal_test_vm"] is False
 
     properties[customizer.PROPERTY_DEVELOPMENT_ADMIN_SSH_PUBLIC_KEY] = VALID_ED25519_PUBLIC_KEY
+    properties[customizer.PROPERTY_NORMAL_TEST_VM] = "true"
     config = customizer.validate_properties(properties)
     summary = customizer.redacted_summary(config)
 
     assert config["development_admin_ssh_public_key"] == VALID_ED25519_PUBLIC_KEY
+    assert config["normal_test_vm"] is True
     assert summary["development_admin_ssh_key_set"] is True
     assert summary["development_admin_passwordless_sudo"] is True
     assert VALID_ED25519_PUBLIC_KEY not in str(summary)
+
+
+def test_vmware_ovf_customizer_stages_and_scrubs_development_root_key(
+    tmp_path, monkeypatch
+):
+    """Stage the shared signer mode 0600 without exposing it in summaries.
+
+    Args:
+        tmp_path: Isolated staging root.
+        monkeypatch: Pytest fixture used to replace VMware guest-info access.
+    """
+    customizer = load_customizer()
+    customizer.DEVELOPMENT_ROOT_CA_STAGING_PATH = tmp_path / "ca" / "development.json"
+    certificate_pem = (
+        "-----BEGIN CERTIFICATE-----\nY2VydGlmaWNhdGU=\n-----END CERTIFICATE-----\n"
+    )
+    private_key_pem = (
+        "-----BEGIN PRIVATE KEY-----\ncHJpdmF0ZS1rZXk=\n-----END PRIVATE KEY-----\n"
+    )
+    properties = customizer.parse_ovf_environment(OVF_ENV)
+    properties[customizer.PROPERTY_DEVELOPMENT_TEST_VM] = "true"
+    properties[customizer.PROPERTY_DEVELOPMENT_ROOT_CA_CERTIFICATE] = base64.b64encode(
+        certificate_pem.encode("ascii")
+    ).decode("ascii")
+    config = customizer.validate_properties(properties)
+    clears = []
+    monkeypatch.setattr(
+        customizer,
+        "try_read_guestinfo_value",
+        lambda name: (
+            True,
+            base64.b64encode(private_key_pem.encode("ascii")).decode("ascii"),
+        ),
+    )
+    monkeypatch.setattr(
+        customizer,
+        "clear_guestinfo_value",
+        lambda name: clears.append(name),
+    )
+
+    customizer.stage_development_root_ca(config)
+
+    staged = json.loads(
+        customizer.DEVELOPMENT_ROOT_CA_STAGING_PATH.read_text(encoding="utf-8")
+    )
+    assert staged == {
+        "certificate_pem": certificate_pem,
+        "private_key_pem": private_key_pem,
+    }
+    if os.name == "posix":
+        assert customizer.DEVELOPMENT_ROOT_CA_STAGING_PATH.stat().st_mode & 0o777 == 0o600
+    assert clears == [customizer.DEVELOPMENT_ROOT_CA_PRIVATE_KEY_GUESTINFO]
+    summary = customizer.redacted_summary(config)
+    assert summary["development_root_ca_staged"] is True
+    assert private_key_pem not in str(summary)
+
+
+def test_atomic_json_applies_secret_mode_before_opening_payload(tmp_path, monkeypatch):
+    """Apply the requested staging mode before a shared signer can be written.
+
+    Args:
+        tmp_path: Isolated destination directory.
+        monkeypatch: Pytest fixture used to observe descriptor setup order.
+    """
+    customizer = load_customizer()
+    destination = tmp_path / "development-root.json"
+    events = []
+    original_fchmod = customizer.os.fchmod
+    original_fdopen = customizer.os.fdopen
+
+    def record_fchmod(descriptor, mode):
+        """Record mode ordering while delegating to the real descriptor helper.
+
+        Args:
+            descriptor: Open temporary-file descriptor.
+            mode: Requested POSIX file mode.
+        """
+        events.append(("fchmod", mode))
+        return original_fchmod(descriptor, mode)
+
+    def record_fdopen(descriptor, *args, **kwargs):
+        """Record open ordering while delegating to the real descriptor helper.
+
+        Args:
+            descriptor: Open temporary-file descriptor.
+            *args: Positional arguments forwarded to ``os.fdopen``.
+            **kwargs: Keyword arguments forwarded to ``os.fdopen``.
+        """
+        events.append(("fdopen", None))
+        return original_fdopen(descriptor, *args, **kwargs)
+
+    monkeypatch.setattr(customizer.os, "fchmod", record_fchmod)
+    monkeypatch.setattr(customizer.os, "fdopen", record_fdopen)
+    customizer.write_json_atomic(destination, {"private_key_pem": "redacted"}, mode=0o600)
+
+    assert events[:2] == [("fchmod", 0o600), ("fdopen", None)]
+
+
+def test_vmware_ovf_customizer_rejects_development_root_without_test_access():
+    """Keep the development trust field out of lifecycle and exported inputs."""
+    customizer = load_customizer()
+    properties = customizer.parse_ovf_environment(OVF_ENV)
+    properties[customizer.PROPERTY_DEVELOPMENT_ROOT_CA_CERTIFICATE] = base64.b64encode(
+        b"-----BEGIN CERTIFICATE-----\nYQ==\n-----END CERTIFICATE-----\n"
+    ).decode("ascii")
+
+    with pytest.raises(customizer.OvfCustomizationError, match="normal test wrapper"):
+        customizer.validate_properties(properties)
+
+
+def test_vmware_ovf_customizer_requires_proven_guestinfo_scrub(monkeypatch):
+    """Fail when VMware Tools accepts a clear but cannot prove the value is empty.
+
+    Args:
+        monkeypatch: Pytest fixture used to replace VMware Tools subprocesses.
+    """
+    customizer = load_customizer()
+    monkeypatch.setattr(customizer.shutil, "which", lambda command: f"/usr/bin/{command}")
+    monkeypatch.setattr(
+        customizer.subprocess,
+        "run",
+        lambda *args, **kwargs: type(
+            "Result", (), {"returncode": 0, "stdout": "still-present"}
+        )(),
+    )
+
+    with pytest.raises(customizer.OvfCustomizationError, match="could not prove"):
+        customizer.clear_guestinfo_value(
+            customizer.DEVELOPMENT_ROOT_CA_PRIVATE_KEY_GUESTINFO
+        )
 
 
 @pytest.mark.parametrize(
@@ -1560,18 +1695,19 @@ def test_vmware_ovf_customizer_durably_persists_atomic_marker_before_scrub(tmp_p
     customizer = load_customizer()
     destination = tmp_path / "customization.pending"
     fsync_calls = []
-    closed = []
-    directory_fd = 987
+    synchronized_parents = []
     monkeypatch.setattr(customizer.os, "fsync", fsync_calls.append)
-    monkeypatch.setattr(customizer.os, "open", lambda path, flags: directory_fd)
-    monkeypatch.setattr(customizer.os, "close", closed.append)
+    monkeypatch.setattr(
+        customizer,
+        "fsync_parent_directory",
+        lambda path: synchronized_parents.append(path.parent),
+    )
 
     customizer.write_json_atomic(destination, {"fqdn": "appliance.atlaso.internal"})
 
     assert destination.exists()
-    assert len(fsync_calls) == 2
-    assert fsync_calls[-1] == directory_fd
-    assert closed == [directory_fd]
+    assert len(fsync_calls) == 1
+    assert synchronized_parents == [destination.parent]
 
 
 def test_vmware_ovf_customizer_supports_disabled_auto_and_static_ipv6(tmp_path):
@@ -1776,6 +1912,45 @@ def test_normal_test_vm_first_boot_publishes_host_key_without_client_key(
         )
     ]
     assert "atlaso-test" not in str(commands)
+
+
+def test_normal_test_vm_first_boot_publishes_actual_hostname(monkeypatch):
+    """Publish the hostname observed inside the guest through guest-info.
+
+    Args:
+        monkeypatch: Pytest fixture used to replace VMware Tools and hostname evidence.
+    """
+    customizer = load_customizer()
+    commands = []
+
+    def fake_run(command, **kwargs):
+        """Record one VMware guest-info publication.
+
+        Args:
+            command: Command and arguments to execute.
+            **kwargs: Additional subprocess options.
+
+        Returns:
+            A successful bounded command result.
+        """
+        commands.append((command, kwargs))
+        return type("Result", (), {"returncode": 0})()
+
+    monkeypatch.setattr(customizer.socket, "gethostname", lambda: "issue-535.atlaso.internal")
+    monkeypatch.setattr(customizer.shutil, "which", lambda command: f"/usr/bin/{command}")
+    monkeypatch.setattr(customizer.subprocess, "run", fake_run)
+
+    customizer.publish_test_vm_hostname()
+
+    assert commands == [
+        (
+            [
+                "/usr/bin/vmware-rpctool",
+                f'info-set {customizer.TEST_VM_HOSTNAME_GUESTINFO} "issue-535.atlaso.internal"',
+            ],
+            {"check": False, "text": True, "capture_output": True},
+        )
+    ]
 
 
 @pytest.mark.parametrize("host_key", ["ssh-rsa invalid\n", "\n"])
@@ -2070,6 +2245,8 @@ def test_vmware_ovf_customizer_rotates_clone_specific_env_secrets(tmp_path, monk
     )
     published_host_keys = []
     customizer.publish_test_vm_ssh_host_key = lambda: published_host_keys.append(True)
+    published_hostnames = []
+    customizer.publish_test_vm_hostname = lambda: published_hostnames.append(True)
     scrubbed = []
 
     def clear_ovf_environment():
@@ -2097,6 +2274,7 @@ def test_vmware_ovf_customizer_rotates_clone_specific_env_secrets(tmp_path, monk
     properties["atlaso.ipv6_gateway"] = "fe80::1"
     properties["atlaso.root_ssh_enabled"] = "true"
     properties[customizer.PROPERTY_DEVELOPMENT_ADMIN_SSH_PUBLIC_KEY] = VALID_ED25519_PUBLIC_KEY
+    properties[customizer.PROPERTY_NORMAL_TEST_VM] = "true"
     config = customizer.validate_properties(properties)
 
     summary = customizer.apply_customization(config)
@@ -2118,6 +2296,7 @@ def test_vmware_ovf_customizer_rotates_clone_specific_env_secrets(tmp_path, monk
     assert scrubbed == [True]
     assert development_ssh == [("admin", VALID_ED25519_PUBLIC_KEY)]
     assert published_host_keys == [True]
+    assert published_hostnames == [True]
     assert marker["cidr"] == "192.168.10.10/24"
     assert "admin-secret" not in str(marker)
     assert "root-secret1" not in str(marker)
@@ -2183,10 +2362,15 @@ def test_vmware_ovf_export_and_image_plumbing_are_present():
     assert "Clear-AtlasoOvfOutputDirectory" in export_script
     assert "$PSBoundParameters.ContainsKey('OutputDirectory')" in export_script
     assert "[switch]$Release" in export_script
+    assert "[switch]$Prerelease" in export_script
+    assert "-Release and -Prerelease are mutually exclusive publishing modes" in export_script
     assert "[string]$ReleaseTag" not in export_script
     assert "[string]$Repository" not in export_script
     assert "[string]$RepositoryName" not in export_script
     assert "Resolve-AtlasoReleaseTag" in export_script
+    assert "Select-AtlasoReleaseTag" in export_script
+    assert "v$Version-<prerelease>" in export_script
+    assert "lightweight tags are not accepted" in export_script
     assert 'python.Source $versionScript get --root $RepoRoot' in export_script
     assert 'repo view --json nameWithOwner' in export_script
     assert "Release publication requires a clean tracked worktree" in export_script
@@ -2199,6 +2383,9 @@ def test_vmware_ovf_export_and_image_plumbing_are_present():
     ) < export_script.index("Clear-AtlasoOvfOutputDirectory")
     assert 'api "repos/$effectiveRepository/commits/$Tag"' in export_script
     assert "Destination release tag $Tag identifies" in export_script
+    assert "Assert-AtlasoReleasePublicationTarget" in export_script
+    assert "tagName,isDraft,isPrerelease,assets" in export_script
+    assert "is not classified as $expectedKind" in export_script
     assert "Skipping OVA release asset" in export_script
     assert "--clobber" not in export_script
     assert "release upload $Tag @uploadAssets @repositoryArguments" in export_script
@@ -2223,6 +2410,8 @@ def test_vmware_ovf_export_and_image_plumbing_are_present():
     assert "-Key 'admin_password'" in export_script and "-Password $true -MinLength 12" in export_script
     assert "-Key 'root_password'" in export_script and "-Password $true -MinLength 12" in export_script
     assert "development_admin_ssh_public_key" not in export_script
+    assert "development_test_vm" not in export_script
+    assert "development_root_ca_certificate" not in export_script
     assert "-Name 'qualifiers' -Value \"MinLen($MinLength)\"" in export_script
     assert "Atlaso Management Network" in export_script
     assert "Atlaso Services Network" in export_script

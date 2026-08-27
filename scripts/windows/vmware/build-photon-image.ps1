@@ -6,9 +6,9 @@ Pinned Photon source URL or local path.
 .PARAMETER IsoChecksum
 Expected Photon ISO checksum.
 .PARAMETER SshPassword
-Temporary Packer SSH password.
+Temporary Packer SSH password. The wrapper prompts securely when omitted.
 .PARAMETER BootstrapAdminPassword
-Initial appliance administrator password.
+Initial appliance administrator password. The wrapper prompts securely when omitted.
 .PARAMETER VmName
 Builder virtual-machine name.
 .PARAMETER OutputDirectory
@@ -66,9 +66,8 @@ Enable real system adapters in the image.
 .PARAMETER ValidateOnly
 Validate Packer inputs without building.
 .PARAMETER PrepareIsoOnly
-Stop after preparing the remastered ISO.
+Reject ISO-only preparation because the retained ISO would contain reusable credentials.
 #>
-[Diagnostics.CodeAnalysis.SuppressMessageAttribute('PSAvoidUsingPlainTextForPassword', '')]
 [CmdletBinding()]
 param(
     [Parameter()]
@@ -77,8 +76,8 @@ param(
     [Parameter()]
     [string]$IsoChecksum = 'sha512:6a7a258399a258da742032987c043ab25503698d35edafaf1ae000f12127da1a161d8b84caa17fd8f23d129e81e1faa7ab087c20ab9229772a643f8f9475305f',
 
-    [string]$SshPassword = 'PhotonBuild01!',
-    [string]$BootstrapAdminPassword = 'VMware01!',
+    [SecureString]$SshPassword,
+    [SecureString]$BootstrapAdminPassword,
     [string]$VmName = 'Atlaso-Photon-Builder-VMware',
     [string]$OutputDirectory = '',
     [string]$SshHost = '',
@@ -116,6 +115,18 @@ param(
 
 Set-StrictMode -Version Latest
 $ErrorActionPreference = 'Stop'
+
+if ($PrepareIsoOnly) {
+    throw 'PrepareIsoOnly is not supported because a retained remastered ISO would contain reusable build credentials. Run Packer validation or a build so the ISO can be deleted after the bounded consumer exits.'
+}
+
+# Passwords have no repository defaults; resolve them before network or build mutation.
+if ($null -eq $SshPassword) {
+    $SshPassword = Read-Host -Prompt 'Temporary Photon builder SSH password' -AsSecureString
+}
+if ($null -eq $BootstrapAdminPassword) {
+    $BootstrapAdminPassword = Read-Host -Prompt 'Atlaso bootstrap administrator password' -AsSecureString
+}
 
 Import-Module (Join-Path $PSScriptRoot '..\common\Atlaso.PhotonImage.psm1') -Force
 Import-Module (Join-Path $PSScriptRoot 'Atlaso.WorkstationCleanup.psm1') -Force
@@ -162,7 +173,7 @@ function ConvertTo-Ipv4Integer {
 .SYNOPSIS
 Convert an integer to an IPv4 address.
 .PARAMETER Address
-Integer address value.
+Unsigned 32-bit network-order address to render in dotted-decimal form.
 #>
 function ConvertFrom-Ipv4Integer {
     param([Parameter(Mandatory = $true)][uint32]$Address)

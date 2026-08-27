@@ -100,8 +100,8 @@ Provider disk-discovery policy used by the installer.
 function New-AtlasoPhotonKickstart {
     param(
         [Parameter(Mandatory = $true)][string]$Path,
-        [Parameter(Mandatory = $true)][string]$RootPassword,
-        [Parameter(Mandatory = $true)][string]$BuildPassword,
+        [Parameter(Mandatory = $true)][SecureString]$RootPassword,
+        [Parameter(Mandatory = $true)][SecureString]$BuildPassword,
         [Parameter(Mandatory = $true)][string]$BuildUsername,
         [string]$StaticAddress,
         [string]$StaticNetmask,
@@ -113,7 +113,13 @@ function New-AtlasoPhotonKickstart {
         [string]$InstallDiskLayout = 'default'
     )
 
-    $network = if ($StaticAddress) {
+    # Photon kickstart JSON requires plaintext at its serialization boundary. Keep
+    # that representation local to this function instead of accepting it from callers.
+    $rootPasswordText = ConvertFrom-SecureString -SecureString $RootPassword -AsPlainText
+    $buildPasswordText = ConvertFrom-SecureString -SecureString $BuildPassword -AsPlainText
+
+    try {
+        $network = if ($StaticAddress) {
         $nameserver = if ($StaticDns.Count -gt 0) { $StaticDns[0] } else { '1.1.1.1' }
         [ordered]@{
             type       = 'static'
@@ -143,7 +149,7 @@ function New-AtlasoPhotonKickstart {
 
     # Keep the credential out of the nested shell grammar. The installer decodes
     # one complete chpasswd record directly to stdin without evaluating its bytes.
-    $buildCredentialBase64 = ConvertTo-AtlasoUtf8Base64 -Value "${BuildUsername}:$BuildPassword`n"
+    $buildCredentialBase64 = ConvertTo-AtlasoUtf8Base64 -Value "${BuildUsername}:$buildPasswordText`n"
     $postInstall = @(
         '#!/bin/sh',
         "useradd -m -G sudo -s /bin/bash $BuildUsername || true",
@@ -173,7 +179,7 @@ function New-AtlasoPhotonKickstart {
         hostname            = 'atlaso'
         password            = [ordered]@{
             crypted = $false
-            text    = $RootPassword
+            text    = $rootPasswordText
         }
         disk                = $installDisk
         partitions          = @(
@@ -194,6 +200,11 @@ function New-AtlasoPhotonKickstart {
     New-Item -ItemType Directory -Force -Path $parent | Out-Null
     $json = $kickstart | ConvertTo-Json -Depth 10
     [System.IO.File]::WriteAllText($Path, $json, [System.Text.UTF8Encoding]::new($false))
+    }
+    finally {
+        $rootPasswordText = $null
+        $buildPasswordText = $null
+    }
 }
 
 <#
@@ -342,12 +353,15 @@ Verified Photon source ISO.
 Generated Photon kickstart document.
 .PARAMETER OutputIso
 Destination remastered ISO.
+.PARAMETER CleanupPaths
+Mutable list that records only task-owned partial or replaced ISO paths.
 #>
 function New-AtlasoRemasteredPhotonIso {
     param(
         [Parameter(Mandatory = $true)][string]$SourceIso,
         [Parameter(Mandatory = $true)][string]$KickstartJson,
-        [Parameter(Mandatory = $true)][string]$OutputIso
+        [Parameter(Mandatory = $true)][string]$OutputIso,
+        [Parameter(Mandatory = $true)][System.Collections.Generic.List[string]]$CleanupPaths
     )
 
     $repoRoot = Resolve-Path -LiteralPath (Join-Path $PSScriptRoot '..\..\..')
@@ -355,9 +369,30 @@ function New-AtlasoRemasteredPhotonIso {
     if (-not (Test-Path -LiteralPath $script)) {
         throw "Photon ISO remaster helper not found: $script"
     }
-    & python $script --source-iso $SourceIso --kickstart $KickstartJson --output $OutputIso
+    $pythonPath = (Get-Command python -ErrorAction Stop).Source
+    $outputDirectory = Split-Path -Parent $OutputIso
+    $outputLeaf = [System.IO.Path]::GetFileNameWithoutExtension($OutputIso)
+    $outputExtension = [System.IO.Path]::GetExtension($OutputIso)
+    $attemptIsoPath = Join-Path $outputDirectory ".$outputLeaf.$([guid]::NewGuid().ToString('N')).partial$outputExtension"
+    # The unique attempt path is task-owned before the helper can write a
+    # credential-bearing byte. A caller-selected target is not task-owned yet.
+    $CleanupPaths.Add($attemptIsoPath)
+    & $pythonPath $script --source-iso $SourceIso --kickstart $KickstartJson --output $attemptIsoPath
     if ($LASTEXITCODE -ne 0) {
         throw "Failed to create remastered Photon ISO."
+    }
+    if (Test-Path -LiteralPath $OutputIso) {
+        Remove-Item -LiteralPath $OutputIso -Force -ErrorAction Stop
+        if (Test-Path -LiteralPath $OutputIso) {
+            throw "Could not replace prepared Photon ISO: $OutputIso"
+        }
+    }
+    # Only after successful remastering and target replacement preflight does
+    # the final path become task-owned and eligible for credential cleanup.
+    $CleanupPaths.Add($OutputIso)
+    Move-Item -LiteralPath $attemptIsoPath -Destination $OutputIso -Force -ErrorAction Stop
+    if (Test-Path -LiteralPath $attemptIsoPath -or -not (Test-Path -LiteralPath $OutputIso -PathType Leaf)) {
+        throw "Remastered Photon ISO promotion did not complete: $OutputIso"
     }
 }
 
@@ -454,6 +489,29 @@ function New-AtlasoFallbackPreparedIsoPath {
 
 <#
 .SYNOPSIS
+Remove a plaintext credential artifact and prove that it is absent.
+.PARAMETER Path
+Exact file or directory path whose failed cleanup must terminate the build.
+#>
+function Remove-AtlasoSensitiveBuildArtifact {
+    param([Parameter(Mandatory = $true)][string]$Path)
+
+    if (Test-Path -LiteralPath $Path -ErrorAction Stop) {
+        $artifact = Get-Item -LiteralPath $Path -Force -ErrorAction Stop
+        if ($artifact.PSIsContainer) {
+            Remove-Item -LiteralPath $Path -Recurse -Force -ErrorAction Stop
+        }
+        else {
+            Remove-Item -LiteralPath $Path -Force -ErrorAction Stop
+        }
+    }
+    if (Test-Path -LiteralPath $Path -ErrorAction Stop) {
+        throw "Plaintext credential artifact cleanup did not complete: $Path"
+    }
+}
+
+<#
+.SYNOPSIS
 Build or validate a supported Atlaso Photon image with Packer.
 .PARAMETER IsoUrl
 Pinned Photon source URL or path.
@@ -464,7 +522,7 @@ Provider Packer template directory.
 .PARAMETER SshPassword
 Temporary Packer SSH password.
 .PARAMETER BootstrapAdminPassword
-Initial appliance administrator password.
+Initial appliance administrator password. Required for Packer validation and builds.
 .PARAMETER VmName
 Builder virtual-machine name.
 .PARAMETER OutputDirectory
@@ -512,15 +570,15 @@ Enable real system adapters in the image.
 .PARAMETER ValidateOnly
 Validate without building an artifact.
 .PARAMETER PrepareIsoOnly
-Stop after remastering the Photon ISO.
+Reject ISO-only preparation because the retained ISO would contain reusable credentials.
 #>
 function Invoke-AtlasoPhotonImageBuild {
     param(
         [Parameter(Mandatory = $true)][string]$IsoUrl,
         [Parameter(Mandatory = $true)][string]$IsoChecksum,
         [Parameter(Mandatory = $true)][string]$PackerDirectory,
-        [string]$SshPassword = 'VMware01!',
-        [string]$BootstrapAdminPassword = 'VMware01!',
+        [Parameter(Mandatory = $true)][SecureString]$SshPassword,
+        [SecureString]$BootstrapAdminPassword,
         [string]$VmName = 'Atlaso-Photon-Builder',
         [string]$OutputDirectory = '',
         [string]$SshHost = '',
@@ -580,49 +638,75 @@ function Invoke-AtlasoPhotonImageBuild {
     $resolvedPreparedIsoPath = $ExecutionContext.SessionState.Path.GetUnresolvedProviderPathFromPSPath($PreparedIsoPath)
     $resolvedPreparedIsoPath = Resolve-AtlasoPreparedIsoPath -Path $resolvedPreparedIsoPath
 
-    Remove-Item -LiteralPath $ksSourceDir -Recurse -Force -ErrorAction SilentlyContinue
-    New-Item -ItemType Directory -Force -Path $ksSourceDir | Out-Null
-    New-AtlasoPhotonKickstart `
-        -Path $kickstartJson `
-        -RootPassword $SshPassword `
-        -BuildPassword $SshPassword `
-        -BuildUsername 'atlaso-build' `
-        -StaticAddress (Get-AtlasoBuilderAddress -Cidr $BuilderStaticIp) `
-        -StaticNetmask $BuilderStaticNetmask `
-        -StaticGateway $BuilderStaticGateway `
-        -StaticDns $BuilderStaticDns `
-        -AdditionalPackages $GuestPackages `
-        -PostInstallCommands $GuestPostInstallCommands `
-        -InstallDiskLayout $InstallDiskLayout
-
-    $sourceIsoPath = Resolve-AtlasoPhotonSourceIso -UrlOrPath $IsoUrl -Checksum $IsoChecksum -BuildDirectory $buildDir -PackerDirectory $packerDir -SharedSourceDirectory $sharedSourceDir
-    try {
-        New-AtlasoRemasteredPhotonIso -SourceIso $sourceIsoPath -KickstartJson $kickstartJson -OutputIso $resolvedPreparedIsoPath
-    } catch {
-        $fallbackPreparedIsoPath = New-AtlasoFallbackPreparedIsoPath -Path $resolvedPreparedIsoPath
-        Write-Warning "Could not replace prepared ISO at $resolvedPreparedIsoPath; retrying this run with $fallbackPreparedIsoPath"
-        $resolvedPreparedIsoPath = $fallbackPreparedIsoPath
-        New-AtlasoRemasteredPhotonIso -SourceIso $sourceIsoPath -KickstartJson $kickstartJson -OutputIso $resolvedPreparedIsoPath
-    }
-    $preparedIso = Get-Item -LiteralPath $resolvedPreparedIsoPath -ErrorAction Stop
-    if ($preparedIso.Length -le 0) {
-        throw "Remastered Photon ISO was created but is empty: $resolvedPreparedIsoPath"
-    }
-    $preparedIsoChecksum = "sha512:$(Get-AtlasoFileHashHex -Path $resolvedPreparedIsoPath -Algorithm SHA512)"
-    Write-Host "Using remastered Photon ISO: $resolvedPreparedIsoPath"
-    Write-Host "Packer will boot a single DVD with embedded photon-ks.json and a GRUB auto-install entry."
-
     if ($PrepareIsoOnly) {
-        Write-Host "Remastered Photon ISO prepared at $resolvedPreparedIsoPath"
-        return
+        throw 'PrepareIsoOnly is not supported because a retained remastered ISO would contain reusable build credentials. Run Packer validation or a build so the ISO can be deleted after the bounded consumer exits.'
     }
 
-    $packerVariables = @{
+    $preparedIsoCleanupPaths = [System.Collections.Generic.List[string]]::new()
+    try {
+        try {
+            Remove-AtlasoSensitiveBuildArtifact -Path $ksSourceDir
+            New-Item -ItemType Directory -Force -Path $ksSourceDir | Out-Null
+            New-AtlasoPhotonKickstart `
+                -Path $kickstartJson `
+                -RootPassword $SshPassword `
+                -BuildPassword $SshPassword `
+                -BuildUsername 'atlaso-build' `
+                -StaticAddress (Get-AtlasoBuilderAddress -Cidr $BuilderStaticIp) `
+                -StaticNetmask $BuilderStaticNetmask `
+                -StaticGateway $BuilderStaticGateway `
+                -StaticDns $BuilderStaticDns `
+                -AdditionalPackages $GuestPackages `
+                -PostInstallCommands $GuestPostInstallCommands `
+                -InstallDiskLayout $InstallDiskLayout
+
+            $sourceIsoPath = Resolve-AtlasoPhotonSourceIso -UrlOrPath $IsoUrl -Checksum $IsoChecksum -BuildDirectory $buildDir -PackerDirectory $packerDir -SharedSourceDirectory $sharedSourceDir
+            try {
+                New-AtlasoRemasteredPhotonIso `
+                    -SourceIso $sourceIsoPath `
+                    -KickstartJson $kickstartJson `
+                    -OutputIso $resolvedPreparedIsoPath `
+                    -CleanupPaths $preparedIsoCleanupPaths
+            } catch {
+                $fallbackPreparedIsoPath = New-AtlasoFallbackPreparedIsoPath -Path $resolvedPreparedIsoPath
+                Write-Warning "Could not replace prepared ISO at $resolvedPreparedIsoPath; retrying this run with $fallbackPreparedIsoPath"
+                $resolvedPreparedIsoPath = $fallbackPreparedIsoPath
+                New-AtlasoRemasteredPhotonIso `
+                    -SourceIso $sourceIsoPath `
+                    -KickstartJson $kickstartJson `
+                    -OutputIso $resolvedPreparedIsoPath `
+                    -CleanupPaths $preparedIsoCleanupPaths
+            }
+        } finally {
+            # The remastered ISO owns the consumed kickstart payload. Do not retain
+            # its plaintext build password in the ignored repository workspace.
+            Remove-AtlasoSensitiveBuildArtifact -Path $kickstartJson
+            Remove-AtlasoSensitiveBuildArtifact -Path $ksSourceDir
+        }
+        $preparedIso = Get-Item -LiteralPath $resolvedPreparedIsoPath -ErrorAction Stop
+        if ($preparedIso.Length -le 0) {
+            throw "Remastered Photon ISO was created but is empty: $resolvedPreparedIsoPath"
+        }
+        $preparedIsoChecksum = "sha512:$(Get-AtlasoFileHashHex -Path $resolvedPreparedIsoPath -Algorithm SHA512)"
+        Write-Host "Using remastered Photon ISO: $resolvedPreparedIsoPath"
+        Write-Host "Packer will boot a single DVD with embedded photon-ks.json and a GRUB auto-install entry."
+
+    # Packer's HCL boundary requires strings. Convert only after all password-free
+    # preparation has completed, then remove the generated secret-bearing var file.
+        if ($null -eq $BootstrapAdminPassword) {
+            throw 'BootstrapAdminPassword is required.'
+        }
+        $sshPasswordText = $null
+        $bootstrapAdminPasswordText = $null
+        try {
+            $sshPasswordText = ConvertFrom-SecureString -SecureString $SshPassword -AsPlainText
+            $bootstrapAdminPasswordText = ConvertFrom-SecureString -SecureString $BootstrapAdminPassword -AsPlainText
+            $packerVariables = @{
         iso_url                  = $resolvedPreparedIsoPath
         iso_checksum             = $preparedIsoChecksum
         iso_contains_kickstart   = $true
-        ssh_password             = $SshPassword
-        bootstrap_admin_password = $BootstrapAdminPassword
+        ssh_password             = $sshPasswordText
+        bootstrap_admin_password = $bootstrapAdminPasswordText
         vm_name                  = $VmName
         builder_static_ip        = $BuilderStaticIp
         builder_static_netmask   = $BuilderStaticNetmask
@@ -659,29 +743,56 @@ function Invoke-AtlasoPhotonImageBuild {
     }
     $packerArgs += @('-var-file', $varFilePath, '.')
 
-    Push-Location $packerDir
-    try {
-        & packer init .
-        if ($LASTEXITCODE -ne 0) {
-            throw "packer init failed with exit code $LASTEXITCODE."
-        }
-        $pluginCheckScript = Join-Path $PSScriptRoot '..\..\check_packer_plugins.py'
-        & python $pluginCheckScript --packer (Get-Command packer -ErrorAction Stop).Source $packerDir
-        if ($LASTEXITCODE -ne 0) {
-            throw "Exact Packer plugin verification failed with exit code $LASTEXITCODE."
-        }
-        if (-not $ValidateOnly -and $null -ne $PackerBuildInvoker) {
-            & $PackerBuildInvoker $packerArgs $packerDir
-        }
-        else {
-            & packer @packerArgs
-            if ($LASTEXITCODE -ne 0) {
-                $operation = if ($ValidateOnly) { 'validate' } else { 'build' }
-                throw "packer $operation failed with exit code $LASTEXITCODE."
+            Push-Location $packerDir
+            try {
+                & packer init .
+                if ($LASTEXITCODE -ne 0) {
+                    throw "packer init failed with exit code $LASTEXITCODE."
+                }
+                $pluginCheckScript = Join-Path $PSScriptRoot '..\..\check_packer_plugins.py'
+                & python $pluginCheckScript --packer (Get-Command packer -ErrorAction Stop).Source $packerDir
+                if ($LASTEXITCODE -ne 0) {
+                    throw "Exact Packer plugin verification failed with exit code $LASTEXITCODE."
+                }
+                if (-not $ValidateOnly -and $null -ne $PackerBuildInvoker) {
+                    & $PackerBuildInvoker $packerArgs $packerDir
+                }
+                else {
+                    & packer @packerArgs
+                    if ($LASTEXITCODE -ne 0) {
+                        $operation = if ($ValidateOnly) { 'validate' } else { 'build' }
+                        throw "packer $operation failed with exit code $LASTEXITCODE."
+                    }
+                }
+            } finally {
+                Pop-Location
+            }
+        } finally {
+            try {
+                # The var file is needed only by the bounded Packer child and must
+                # not leave reusable plaintext credentials in the build workspace.
+                Remove-AtlasoSensitiveBuildArtifact -Path $varFilePath
+            }
+            finally {
+                $sshPasswordText = $null
+                $bootstrapAdminPasswordText = $null
             }
         }
     } finally {
-        Pop-Location
+        # The remastered ISO embeds the temporary SSH password and is safe only
+        # while owned by the bounded Packer consumer. Try every attempted path so
+        # a failed fallback cannot leave a credential-bearing partial ISO behind.
+        $preparedIsoCleanupFailures = [System.Collections.Generic.List[string]]::new()
+        foreach ($candidatePath in @($preparedIsoCleanupPaths | Select-Object -Unique)) {
+            try {
+                Remove-AtlasoSensitiveBuildArtifact -Path $candidatePath
+            } catch {
+                $preparedIsoCleanupFailures.Add("$candidatePath ($($_.Exception.Message))")
+            }
+        }
+        if ($preparedIsoCleanupFailures.Count -gt 0) {
+            throw "Remastered Photon ISO credential cleanup failed: $($preparedIsoCleanupFailures -join '; ')"
+        }
     }
 }
 

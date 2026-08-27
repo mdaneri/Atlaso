@@ -80,6 +80,12 @@ constructors outside the shared foundation are forbidden.
 label, documentation in the same change, the next patch version, validation, and a pull request containing
 `Closes #<issue>`. Never commit directly to `main`.
 
+Agent-authored implementation work must use a dedicated clean sibling worktree on its task-owned branch. Do not make
+implementation edits in the repository's primary checkout; reserve that checkout for synchronization, coordination,
+and completed-task cleanup. Create or select the task worktree before applying implementation changes, and repeat the
+Mandatory Agent Startup Gate there before planning or mutation. If a safe dedicated worktree cannot be established,
+stop for maintainer direction instead of continuing in the primary checkout.
+
 ### Unrelated issue discoveries
 
 Keep each pull request limited to its linked issue scope. When work reveals a reproducible or otherwise evidence-backed
@@ -268,7 +274,10 @@ Every new or changed PowerShell script or module must provide comment-based help
 function, including nested helpers. Include a concise `.SYNOPSIS`, document every declared parameter with `.PARAMETER`,
 and add rationale comments for non-obvious safety ordering, trust boundaries, and platform behavior. Run
 `scripts/check_powershell_help.ps1` against the base checkout; the incremental gate requires complete compliance for
-each touched PowerShell file without forcing unrelated legacy rewrites.
+each touched PowerShell file without forcing unrelated legacy rewrites. Install PSScriptAnalyzer `1.25.0` and run
+`scripts/check_powershell_analysis.ps1`; every tracked PowerShell source must pass the repository profile. Real password
+parameters must use `SecureString` or `PSCredential`, declare no default, and never use a broad
+`PSAvoidUsingPlainTextForPassword` suppression.
 
 Every new or changed `/api/v1` operation must follow the
 [API authoring standard](docs/contribute/api-authoring.md), including operation, authorization, parameter,
@@ -468,8 +477,10 @@ The following cross-cutting boundaries always apply:
   empty 500 GiB depot and backup disks. Preserve `/opt/atlaso` and appliance-wide PowerShell modules on the UUID-mounted
   system-content disk, size-gate individual OVF release assets below 2 GiB, and publish the aggregate OVA only when it
   independently fits that limit. OVF export may recursively replace only a strict, non-reparse-point descendant of the
-  repository OVF output root. `-Release` provides implicit replacement only for the canonical derived destination; an
-  explicitly supplied existing destination still requires `-Force`, which never widens the approved deletion boundary.
+  repository OVF output root. `-Release` and `-Prerelease` provide implicit replacement only for the canonical derived
+  destination; an explicitly supplied existing destination still requires `-Force`, which never widens the approved
+  deletion boundary. Prerelease publication requires exactly one annotated `vX.Y.Z-<prerelease>` tag at the clean
+  checkout commit and an existing published non-draft GitHub prerelease; the exporter never creates or reclassifies it.
 - First-boot depot and backup initialization requires the root-owned image policy, exact platform SCSI identities,
   topology-derived `atlaso-path-*` links, and exact 500 GiB capacities. Complete an all-disk preflight before `mkfs` and
   fail closed for missing, extra, reordered, ambiguous, read-only, in-use, or identity/capacity-mismatched disks.
@@ -504,8 +515,34 @@ The following cross-cutting boundaries always apply:
   private key. When that test-only property is present, publish only the VM's public Ed25519 SSH host key through a
   separate VMware guest-info value. Read, wire-validate, and fingerprint that host-derived value before displaying it
   for explicit `known_hosts` verification; never substitute unauthenticated `ssh-keyscan` output.
-  Keep both properties internal to this wrapper, preserve root SSH as disabled, and do not extend this development-only
-  authority to lifecycle VMs or exported OVF/OVA deployments.
+  The wrapper also owns the sole development-root exception to per-appliance CA generation: require the exact `Atlaso`
+  1Password Environment's concealed `ATLASO_DEVELOPMENT_ROOT_CA_PRIVATE_KEY`, validate it against the checked-in public
+  `Atlaso Development Root CA` before mutation, pin and verify the exact Environment ID by SHA-256 before invoking `op`,
+  bound and whole-tree-terminate every `op`/secret-child invocation and every post-staging VMware operation, and pass
+  the signer only through a separately
+  scrubbed normal-wrapper guest-info value. First boot must stage it mode `0600`, prove guest-info scrub, encrypt it with
+  the VM-unique secrets key, remove staging even when encrypted import fails, and issue a unique HTTPS leaf. Commit a
+  durable non-secret cleanup marker through a Windows write-through atomic rename before staging; later normal-wrapper
+  invocations must retry its exact identity-bound stop, VMX scrub, artifact removal, and data-disk restoration before
+  1Password preflight or any new mutation. Persist
+  boot-bound child-active phases before staging, VM start, and artifact removal. An unproven child-tree termination must
+  preserve the VM and VMX, or keep reused disks quarantined during removal, until a Windows host restart makes cleanup
+  safe. Persist the stopped/scrubbed phase before artifact removal so a retry can resume restoration from an absent
+  artifact root. Before persisting rollback state, reject configured data disks that repeat the same descriptor,
+  hard-linked alias, or shared extent by filesystem identity. Before deleting a completed marker, write-through
+  transition it to a non-actionable tombstone so a
+  post-crash directory-entry resurrection cannot trigger cleanup of a successful VM.
+  Default waiting must verify the
+  exact
+  checked-in fingerprint; Windows trust
+  remains explicit and idempotent. Reject `-NoStart`, preserve root SSH as disabled, and do not extend either development
+  authority to lifecycle VMs, Hyper-V, reusable images, or exported OVF/OVA deployments. Rotate the repository PEM and
+  concealed Environment key together after compromise of any in-scope test VM.
+  Before reporting a started clone ready or printing connection endpoints, bind VMware Tools' management IPv4 result to
+  the exact running VMX, its `ethernet0` MAC, the injected hostname, and a Windows neighbor entry for that MAC. Compare
+  the address with every running Workstation VM and fail closed with the conflicting VMX, MAC, and address when another
+  guest reports it or the host-facing neighbor maps elsewhere. Never continue SSH or HTTPS validation through an
+  ambiguous address and never modify the user's SSH `known_hosts` automatically during recovery.
 - Inventory Linux reports use bounded schema v2 while accepting and normalizing legacy v1. Keep sysfs authoritative for
   device enumeration, use metadata tools only for structured enrichment/readable names, retain JSON in the existing
   report column, enforce the 256 KiB boundary, and never submit raw command output. Its five-minute local console

@@ -17,6 +17,7 @@ atlaso.egg-info/
 .env.*
 !.env.example
 !.env.*.example
+/.atlaso-local/
 
 # Coverage artifacts
 .coverage

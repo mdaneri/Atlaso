@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import re
+from collections.abc import Iterable
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from ipaddress import ip_address
@@ -386,6 +387,128 @@ def ensure_root_ca_material(settings: CaSettings) -> bool:
     settings.root_expires_at = certificate.not_valid_after_utc
     settings.updated_at = utcnow()
     return True
+
+
+def import_root_ca_material(
+    settings: CaSettings,
+    certificate_pem: str,
+    private_key_pem: str,
+    *,
+    expected_common_name: str = "",
+    certificates: Iterable[CaCertificate] = (),
+) -> None:
+    """Validate and import externally supplied root CA material.
+
+    Args:
+        settings: Saved CA settings to populate with encrypted root material.
+        certificate_pem: One canonical self-signed CA certificate PEM.
+        private_key_pem: Matching unencrypted private-key PEM held in memory.
+        expected_common_name: Optional exact root common name required by the caller.
+        certificates: Managed certificate rows to invalidate when the root changes.
+
+    Raises:
+        ValueError: If the material is malformed, unsafe, expired, or mismatched.
+    """
+    # PowerShell reads repository text with the checkout's native line endings.
+    # Normalize before enforcing canonical PEM so an otherwise byte-identical
+    # trust anchor remains usable on Windows without weakening X.509 validation.
+    normalized_certificate_pem = certificate_pem.replace("\r\n", "\n").replace("\r", "\n").strip()
+    normalized_private_key_pem = private_key_pem.replace("\r\n", "\n").replace("\r", "\n").strip()
+    if (
+        normalized_certificate_pem.count("-----BEGIN CERTIFICATE-----") != 1
+        or "PRIVATE KEY" in normalized_certificate_pem
+        or len(normalized_certificate_pem) > 32768
+        or len(normalized_private_key_pem) > 16384
+    ):
+        raise ValueError("Development root CA material is not one bounded certificate and private key.")
+    try:
+        certificate = x509.load_pem_x509_certificate(
+            normalized_certificate_pem.encode("utf-8")
+        )
+        private_key = serialization.load_pem_private_key(
+            normalized_private_key_pem.encode("utf-8"),
+            password=None,
+        )
+        constraints = certificate.extensions.get_extension_for_class(
+            x509.BasicConstraints
+        ).value
+        key_usage = certificate.extensions.get_extension_for_class(x509.KeyUsage).value
+    except (TypeError, UnsupportedAlgorithm, ValueError, x509.ExtensionNotFound) as exc:
+        raise ValueError("Development root CA material is not usable.") from exc
+
+    canonical_certificate_pem = _pem_public_cert(certificate).strip()
+    if canonical_certificate_pem != normalized_certificate_pem:
+        raise ValueError("Development root CA certificate PEM is not canonical.")
+    common_names = certificate.subject.get_attributes_for_oid(NameOID.COMMON_NAME)
+    common_name = common_names[0].value if len(common_names) == 1 else ""
+    if expected_common_name and common_name != expected_common_name:
+        raise ValueError("Development root CA common name does not match the required trust anchor.")
+    if (
+        not constraints.ca
+        or not key_usage.key_cert_sign
+        or not key_usage.crl_sign
+        or certificate.subject != certificate.issuer
+    ):
+        raise ValueError("Development root certificate is not a self-signed CA certificate.")
+    now = datetime.now(timezone.utc)
+    if certificate.not_valid_before_utc > now or certificate.not_valid_after_utc <= now:
+        raise ValueError("Development root CA certificate is not currently valid.")
+
+    public_key = certificate.public_key()
+    try:
+        if isinstance(public_key, rsa.RSAPublicKey):
+            public_key.verify(
+                certificate.signature,
+                certificate.tbs_certificate_bytes,
+                padding.PKCS1v15(),
+                certificate.signature_hash_algorithm,
+            )
+        elif isinstance(public_key, ec.EllipticCurvePublicKey):
+            public_key.verify(
+                certificate.signature,
+                certificate.tbs_certificate_bytes,
+                ec.ECDSA(certificate.signature_hash_algorithm),
+            )
+        else:
+            raise ValueError("Development root CA key algorithm is unsupported.")
+    except (InvalidSignature, TypeError, UnsupportedAlgorithm, ValueError) as exc:
+        raise ValueError("Development root CA certificate signature is invalid.") from exc
+
+    certificate_public = public_key.public_bytes(
+        serialization.Encoding.DER,
+        serialization.PublicFormat.SubjectPublicKeyInfo,
+    )
+    private_public = private_key.public_key().public_bytes(
+        serialization.Encoding.DER,
+        serialization.PublicFormat.SubjectPublicKeyInfo,
+    )
+    if certificate_public != private_public:
+        raise ValueError("Development root CA certificate and private key do not match.")
+
+    imported_fingerprint = _fingerprint(certificate)
+    root_changed = (settings.root_fingerprint or "").strip().upper() != imported_fingerprint
+    if root_changed:
+        # An issued managed leaf must never survive a root replacement: doing so
+        # would publish one trust anchor while deploying a leaf under another.
+        for managed_certificate in certificates:
+            if managed_certificate.managed_owner and managed_certificate.status == "issued":
+                managed_certificate.status = "planned"
+
+    settings.root_common_name = common_name
+    organizations = certificate.subject.get_attributes_for_oid(NameOID.ORGANIZATION_NAME)
+    settings.organization = organizations[0].value if organizations else ""
+    settings.key_algorithm = "RSA" if isinstance(private_key, rsa.RSAPrivateKey) else "EC"
+    settings.key_size = private_key.key_size
+    settings.digest_algorithm = certificate.signature_hash_algorithm.name
+    settings.root_certificate_pem = canonical_certificate_pem + "\n"
+    settings.root_private_key_encrypted = encrypt_secret(
+        _pem_private_key(private_key)
+    )
+    settings.root_serial_number = format(certificate.serial_number, "x")
+    settings.root_fingerprint = imported_fingerprint
+    settings.root_issued_at = certificate.not_valid_before_utc
+    settings.root_expires_at = certificate.not_valid_after_utc
+    settings.updated_at = utcnow()
 
 
 def _certificate_profile(profiles: list[CaProfile], certificate: CaCertificate) -> CaProfile | None:

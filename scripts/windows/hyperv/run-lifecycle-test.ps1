@@ -1,4 +1,65 @@
-[Diagnostics.CodeAnalysis.SuppressMessageAttribute('PSAvoidUsingPlainTextForPassword', '')]
+<#
+.SYNOPSIS
+Run the bounded Atlaso Hyper-V lifecycle interoperability lab.
+.PARAMETER LabName
+Name prefix used to isolate generated lifecycle resources.
+.PARAMETER ApplianceVhdxPath
+Path to the source appliance VHDX used for the lifecycle VM.
+.PARAMETER ClientVhdxPath
+Path to the prepared client VHDX used by lifecycle guests.
+.PARAMETER EsxIsoPath
+Optional path to an ESXi installer ISO used by PXE coverage.
+.PARAMETER ClientManagementSwitch
+Hyper-V switch that connects lifecycle client management adapters.
+.PARAMETER ApplianceIPAddress
+Management IPv4 address assigned to or expected from the appliance.
+.PARAMETER ApplianceUrl
+HTTPS URL used for appliance API validation.
+.PARAMETER ApplianceMemoryStartupBytes
+Startup memory assigned to the appliance VM.
+.PARAMETER ClientMemoryStartupBytes
+Startup memory assigned to each client VM.
+.PARAMETER ApplianceProcessorCount
+Virtual processor count assigned to the appliance VM.
+.PARAMETER ClientProcessorCount
+Virtual processor count assigned to each client VM.
+.PARAMETER SiteInterface
+Appliance interface used for the site-network scenario.
+.PARAMETER SiteCidr
+IPv4 CIDR assigned to the site-network scenario.
+.PARAMETER SiteVlanId
+VLAN identifier used by the site-network scenario.
+.PARAMETER VlanId
+VLAN identifier used by the tagged-network scenario.
+.PARAMETER TaggedVlanCidr
+IPv4 CIDR used by the tagged-network scenario.
+.PARAMETER WanCidr
+IPv4 CIDR used by the simulated WAN scenario.
+.PARAMETER AdminUsername
+Atlaso administrator account used by the lifecycle harness.
+.PARAMETER SecretBundlePath
+Path to the current-user DPAPI-protected CLIXML secret bundle; required unless PlanOnly is set.
+.PARAMETER SshUser
+Deprecated shared SSH account override retained for compatibility.
+.PARAMETER ApplianceSshUser
+SSH account used for appliance guest operations.
+.PARAMETER ClientSshUser
+SSH account used for lifecycle client guests.
+.PARAMETER SshKeyPath
+Path to the SSH private key used for client access.
+.PARAMETER SignedReleaseRepositoryUrl
+Signed release repository URL used by update lifecycle validation.
+.PARAMETER AllowDryRunApply
+Allow the harness to exercise the appliance dry-run apply path.
+.PARAMETER SkipBackupRestoreTest
+Skip the backup and restore lifecycle phase.
+.PARAMETER AllowExistingLifecycleLab
+Permit reuse of lifecycle VMs that already exist.
+.PARAMETER CleanupCreatedLab
+Remove resources created by this lifecycle run.
+.PARAMETER PlanOnly
+Emit the resolved lifecycle plan without prompting for secrets or mutating the host.
+#>
 [CmdletBinding(SupportsShouldProcess = $true)]
 param(
     [string]$LabName = 'AtlasoLifecycle',
@@ -20,14 +81,11 @@ param(
     [string]$TaggedVlanCidr = '192.168.60.1/24',
     [string]$WanCidr = '172.31.50.1/24',
     [string]$AdminUsername = 'admin',
-    [Parameter(Mandatory = $true)]
-    [string]$AdminPassword,
+    [string]$SecretBundlePath = '',
     [string]$SshUser = '',
     [string]$ApplianceSshUser = 'admin',
     [string]$ClientSshUser = 'alpine',
     [string]$SshKeyPath = '',
-    [string]$SshPassword = '',
-    [string]$VcfBackupPassword = 'VMware01!Test',
     [string]$SignedReleaseRepositoryUrl = '',
     [switch]$AllowDryRunApply,
     [switch]$SkipBackupRestoreTest,
@@ -37,6 +95,52 @@ param(
 )
 
 $ErrorActionPreference = 'Stop'
+
+<#
+.SYNOPSIS
+Unwrap a SecureString at a Windows PowerShell-compatible native-tool boundary.
+.PARAMETER Value
+Secure value to unwrap for the immediate legacy tool call.
+#>
+function ConvertFrom-AtlasoSecureString {
+    param([Parameter(Mandatory = $true)][SecureString]$Value)
+
+    # Windows PowerShell 5.1 lacks ConvertFrom-SecureString -AsPlainText. The
+    # unmanaged buffer is bounded to this conversion and zeroed before return.
+    $buffer = [Runtime.InteropServices.Marshal]::SecureStringToBSTR($Value)
+    try {
+        return [Runtime.InteropServices.Marshal]::PtrToStringBSTR($buffer)
+    }
+    finally {
+        [Runtime.InteropServices.Marshal]::ZeroFreeBSTR($buffer)
+    }
+}
+
+# Plan-only execution consumes no credentials. Runtime execution imports the
+# current-user-protected bundle before any native-tool boundary needs plaintext.
+$adminPasswordSecure = $null
+$sshPasswordSecure = $null
+$vcfBackupPasswordSecure = $null
+$AdminPassword = ''
+$SshPassword = ''
+$VcfBackupPassword = ''
+if (-not $PlanOnly) {
+    if ([string]::IsNullOrWhiteSpace($SecretBundlePath)) {
+        throw 'SecretBundlePath is required unless PlanOnly is set.'
+    }
+    $secretBundle = Import-Clixml -LiteralPath $SecretBundlePath
+    foreach ($propertyName in @('AdminPassword', 'SshPassword', 'VcfBackupPassword')) {
+        if ($secretBundle.$propertyName -isnot [SecureString]) {
+            throw "Lifecycle secret bundle property is missing or invalid: $propertyName"
+        }
+    }
+    $adminPasswordSecure = $secretBundle.AdminPassword
+    $sshPasswordSecure = $secretBundle.SshPassword
+    $vcfBackupPasswordSecure = $secretBundle.VcfBackupPassword
+    $AdminPassword = ConvertFrom-AtlasoSecureString -Value $adminPasswordSecure
+    $SshPassword = ConvertFrom-AtlasoSecureString -Value $sshPasswordSecure
+    $VcfBackupPassword = ConvertFrom-AtlasoSecureString -Value $vcfBackupPasswordSecure
+}
 
 $repoRoot = Resolve-Path -LiteralPath (Join-Path $PSScriptRoot '..\..\..')
 if (-not $ApplianceUrl) {
@@ -51,6 +155,12 @@ $diskRoot = Join-Path $resultRoot 'disks'
 $seedRoot = Join-Path $resultRoot 'seed'
 $createdVms = New-Object System.Collections.Generic.List[string]
 
+<#
+.SYNOPSIS
+Reject lifecycle VM names that could target protected or unrelated resources.
+.PARAMETER Name
+Name input consumed by Assert-SafeLifecycleName.
+#>
 function Assert-SafeLifecycleName {
     param([string]$Name)
 
@@ -63,6 +173,14 @@ function Assert-SafeLifecycleName {
     }
 }
 
+<#
+.SYNOPSIS
+Require an existing VHDX input with the expected file type.
+.PARAMETER Path
+Path input consumed by Assert-InputVhdx.
+.PARAMETER Label
+Label input consumed by Assert-InputVhdx.
+#>
 function Assert-InputVhdx {
     param([string]$Path, [string]$Label)
 
@@ -71,6 +189,16 @@ function Assert-InputVhdx {
     }
 }
 
+<#
+.SYNOPSIS
+Create and validate a lifecycle differencing disk from an immutable parent.
+.PARAMETER ParentPath
+Path to the immutable parent VHDX.
+.PARAMETER ChildPath
+Destination path for the differencing VHDX.
+.PARAMETER Label
+Operator-facing disk label included in validation errors.
+#>
 function New-LifecycleDifferencingDisk {
     [CmdletBinding(SupportsShouldProcess = $true)]
     param(
@@ -87,6 +215,20 @@ function New-LifecycleDifferencingDisk {
     }
 }
 
+<#
+.SYNOPSIS
+Create a lifecycle VM with bounded compute, disk, and network settings.
+.PARAMETER Name
+Name of the VM or lifecycle resource being operated on.
+.PARAMETER VhdxPath
+Path to the VHDX attached to the new VM.
+.PARAMETER SwitchName
+Hyper-V switch connected to the VM network adapter.
+.PARAMETER MemoryStartupBytes
+Startup memory assigned to the VM.
+.PARAMETER ProcessorCount
+Virtual processor count assigned to the VM.
+#>
 function New-LifecycleVm {
     [CmdletBinding(SupportsShouldProcess = $true)]
     param(
@@ -117,6 +259,10 @@ function New-LifecycleVm {
     }
 }
 
+<#
+.SYNOPSIS
+Resolve an existing client SSH key or create an isolated lifecycle key pair.
+#>
 function Ensure-ClientSshKey {
     if (-not $SshKeyPath) {
         if ($SshPassword) {
@@ -131,6 +277,16 @@ function Ensure-ClientSshKey {
     return (Get-Content -LiteralPath $publicPath -Raw).Trim()
 }
 
+<#
+.SYNOPSIS
+Create a NoCloud seed ISO for a lifecycle client guest.
+.PARAMETER Path
+Filesystem path consumed or produced by the helper.
+.PARAMETER HostName
+Guest hostname or remote host queried by the helper.
+.PARAMETER PublicKey
+OpenSSH public key installed in the generated guest seed.
+#>
 function New-CloudInitSeedIso {
     [CmdletBinding(SupportsShouldProcess = $true)]
     param(
@@ -171,6 +327,14 @@ function New-CloudInitSeedIso {
     }
 }
 
+<#
+.SYNOPSIS
+Attach the expected VHDX to a Hyper-V VM when it is absent.
+.PARAMETER VMName
+VM Name input consumed by Ensure-HardDisk.
+.PARAMETER Path
+Path input consumed by Ensure-HardDisk.
+#>
 function Ensure-HardDisk {
     [CmdletBinding(SupportsShouldProcess = $true)]
     param(
@@ -188,6 +352,14 @@ function Ensure-HardDisk {
     }
 }
 
+<#
+.SYNOPSIS
+Attach or update the expected ISO-backed DVD drive.
+.PARAMETER VMName
+VM Name input consumed by Ensure-DvdDrive.
+.PARAMETER Path
+Path input consumed by Ensure-DvdDrive.
+#>
 function Ensure-DvdDrive {
     [CmdletBinding(SupportsShouldProcess = $true)]
     param(
@@ -212,6 +384,16 @@ function Ensure-DvdDrive {
     }
 }
 
+<#
+.SYNOPSIS
+Create or update a named Hyper-V network adapter.
+.PARAMETER VMName
+VM Name input consumed by Ensure-NetworkAdapter.
+.PARAMETER Name
+Name input consumed by Ensure-NetworkAdapter.
+.PARAMETER SwitchName
+Switch Name input consumed by Ensure-NetworkAdapter.
+#>
 function Ensure-NetworkAdapter {
     [CmdletBinding(SupportsShouldProcess = $true)]
     param(
@@ -234,6 +416,10 @@ function Ensure-NetworkAdapter {
     }
 }
 
+<#
+.SYNOPSIS
+Apply the required management, site, and trunk adapters to lifecycle VMs.
+#>
 function Set-LifecycleNetworkTopology {
     [CmdletBinding(SupportsShouldProcess = $true)]
     param()
@@ -280,6 +466,12 @@ function Set-LifecycleNetworkTopology {
     }
 }
 
+<#
+.SYNOPSIS
+Wait until a Hyper-V VM reaches the running state.
+.PARAMETER Name
+Name input consumed by Wait-VMRunning.
+#>
 function Wait-VMRunning {
     param([string]$Name)
 
@@ -294,6 +486,14 @@ function Wait-VMRunning {
     throw "VM did not reach Running state: $Name"
 }
 
+<#
+.SYNOPSIS
+Return a guest IPv4 address reported by Hyper-V integration services.
+.PARAMETER Name
+Name of the VM or lifecycle resource being operated on.
+.PARAMETER AdapterName
+Hyper-V network adapter name used for address discovery.
+#>
 function Get-GuestIPv4 {
     param(
         [string]$Name,
@@ -306,6 +506,12 @@ function Get-GuestIPv4 {
     return $addresses | Select-Object -First 1
 }
 
+<#
+.SYNOPSIS
+Normalize a MAC address to uppercase hyphen-separated form.
+.PARAMETER MacAddress
+MAC address to normalize for the target transport.
+#>
 function ConvertTo-HyphenMac {
     param([string]$MacAddress)
 
@@ -317,6 +523,12 @@ function ConvertTo-HyphenMac {
     return ($pairs -join '-')
 }
 
+<#
+.SYNOPSIS
+Normalize a MAC address to lowercase colon-separated form.
+.PARAMETER MacAddress
+MAC address to normalize for the target transport.
+#>
 function ConvertTo-ColonMac {
     param([string]$MacAddress)
 
@@ -328,6 +540,12 @@ function ConvertTo-ColonMac {
     return ($pairs -join ':')
 }
 
+<#
+.SYNOPSIS
+Escape a literal value for one POSIX single-quoted shell argument.
+.PARAMETER Value
+Literal value escaped for safe shell use.
+#>
 function ConvertTo-ShellSingleQuoted {
     param([string]$Value)
 
@@ -335,6 +553,16 @@ function ConvertTo-ShellSingleQuoted {
     return "'$safe'"
 }
 
+<#
+.SYNOPSIS
+Create the isolated Hyper-V client used for PXE boot validation.
+.PARAMETER Name
+Name of the VM or lifecycle resource being operated on.
+.PARAMETER SwitchName
+Hyper-V switch connected to the VM network adapter.
+.PARAMETER DiskPath
+Path to the VM disk attached to the PXE client.
+#>
 function New-LifecyclePxeVm {
     [CmdletBinding(SupportsShouldProcess = $true)]
     param(
@@ -373,6 +601,12 @@ function New-LifecyclePxeVm {
     }
 }
 
+<#
+.SYNOPSIS
+Return the normalized MAC address of the PXE client adapter.
+.PARAMETER Name
+Name of the VM or lifecycle resource being operated on.
+#>
 function Get-PxeClientMac {
     param([string]$Name)
 
@@ -383,6 +617,12 @@ function Get-PxeClientMac {
     return ConvertTo-ColonMac -MacAddress $adapter.MacAddress
 }
 
+<#
+.SYNOPSIS
+Upload an ESXi installer ISO to the appliance PXE media directory.
+.PARAMETER Path
+Path input consumed by Copy-EsxIsoToAppliance.
+#>
 function Copy-EsxIsoToAppliance {
     param([string]$Path)
 
@@ -424,6 +664,16 @@ function Copy-EsxIsoToAppliance {
     return $remotePath
 }
 
+<#
+.SYNOPSIS
+Boot the PXE client and verify that network boot reaches the expected media.
+.PARAMETER Name
+Name input consumed by Invoke-PxeBootSmoke.
+.PARAMETER MacAddress
+Mac Address input consumed by Invoke-PxeBootSmoke.
+.PARAMETER OutputPath
+Output Path input consumed by Invoke-PxeBootSmoke.
+#>
 function Invoke-PxeBootSmoke {
     param(
         [string]$Name,
@@ -476,6 +726,20 @@ function Invoke-PxeBootSmoke {
     Write-Host "PXE boot smoke result: $OutputPath"
 }
 
+<#
+.SYNOPSIS
+Capture traffic and inventory evidence for the network-boot workflow.
+.PARAMETER Name
+Name input consumed by Invoke-NetworkBootInventoryProof.
+.PARAMETER MacAddress
+Mac Address input consumed by Invoke-NetworkBootInventoryProof.
+.PARAMETER CaptureHost
+Capture Host input consumed by Invoke-NetworkBootInventoryProof.
+.PARAMETER CaptureHostKey
+Capture Host Key input consumed by Invoke-NetworkBootInventoryProof.
+.PARAMETER OutputPath
+Output Path input consumed by Invoke-NetworkBootInventoryProof.
+#>
 function Invoke-NetworkBootInventoryProof {
     param(
         [string]$Name,
@@ -497,8 +761,10 @@ function Invoke-NetworkBootInventoryProof {
     }
     $captureArgs += @('-pw', $SshPassword, "$ClientSshUser@$CaptureHost", $captureCommand)
     $captureJob = Start-Job -ScriptBlock {
-        param([string[]]$PlinkArguments)
-        & plink @PlinkArguments
+        # Start-Job receives the plink vector as one array argument. Extract it
+        # inside the runspace so analyzer scope checks and native splatting agree.
+        [string[]]$plinkArguments = $args[0]
+        & plink @plinkArguments
     } -ArgumentList (,$captureArgs)
     Start-Sleep -Seconds 2
     $before = (Get-VM -Name $Name).Uptime
@@ -555,6 +821,14 @@ function Invoke-NetworkBootInventoryProof {
     throw "Inventory Linux acknowledged reboot, but Hyper-V VM uptime did not reset."
 }
 
+<#
+.SYNOPSIS
+Resolve a guest IPv4 address from the host neighbor cache and adapter MAC.
+.PARAMETER VMName
+Hyper-V VM whose neighbor address is queried.
+.PARAMETER AdapterName
+Hyper-V network adapter name used for address discovery.
+#>
 function Get-NeighborIPv4ForAdapter {
     param(
         [string]$VMName,
@@ -577,6 +851,14 @@ function Get-NeighborIPv4ForAdapter {
     return $neighbors | Select-Object -ExpandProperty IPAddress -First 1
 }
 
+<#
+.SYNOPSIS
+Wait for a guest IPv4 address using integration and neighbor evidence.
+.PARAMETER Name
+Name input consumed by Wait-GuestIPv4.
+.PARAMETER AdapterName
+Adapter Name input consumed by Wait-GuestIPv4.
+#>
 function Wait-GuestIPv4 {
     param(
         [string]$Name,
@@ -598,6 +880,16 @@ function Wait-GuestIPv4 {
     return ''
 }
 
+<#
+.SYNOPSIS
+Return whether a TCP endpoint accepts a connection within the timeout.
+.PARAMETER HostName
+Host Name input consumed by Test-TcpPort.
+.PARAMETER Port
+Port input consumed by Test-TcpPort.
+.PARAMETER TimeoutMilliseconds
+Timeout Milliseconds input consumed by Test-TcpPort.
+#>
 function Test-TcpPort {
     param(
         [string]$HostName,
@@ -622,16 +914,28 @@ function Test-TcpPort {
     }
 }
 
+<#
+.SYNOPSIS
+Probe and return the SSH host-key fingerprint reported by Plink.
+.PARAMETER HostName
+Guest hostname or remote host queried by the helper.
+.PARAMETER UserName
+SSH account used for the remote host-key probe.
+.PARAMETER Password
+Secure Password supplied at runtime; no repository default is used.
+#>
 function Get-PlinkHostKey {
     param(
         [string]$HostName,
         [string]$UserName,
-        [string]$Password
+        [SecureString]$Password
     )
 
     if (-not $HostName -or -not $Password -or -not (Get-Command plink -ErrorAction SilentlyContinue)) {
         return ''
     }
+
+    $passwordText = ConvertFrom-AtlasoSecureString -Value $Password
 
     $deadline = (Get-Date).AddMinutes(4)
     while ((Get-Date) -lt $deadline) {
@@ -643,7 +947,7 @@ function Get-PlinkHostKey {
         $previousErrorActionPreference = $ErrorActionPreference
         $ErrorActionPreference = 'Continue'
         try {
-            $output = & plink -batch -ssh -pw $Password "$UserName@$HostName" 'hostname' 2>&1
+            $output = & plink -batch -ssh -pw $passwordText "$UserName@$HostName" 'hostname' 2>&1
             $exitCode = $LASTEXITCODE
         }
         finally {
@@ -651,17 +955,29 @@ function Get-PlinkHostKey {
         }
         $text = ($output | Out-String)
         if ($text -match '(ssh-[A-Za-z0-9-]+\s+\d+\s+SHA256:[A-Za-z0-9+/=]+)') {
-            return $Matches[1]
+            $hostKey = $Matches[1]
+            $passwordText = $null
+            return $hostKey
         }
         if ($exitCode -eq 0) {
+            $passwordText = $null
             return ''
         }
         Start-Sleep -Seconds 5
     }
+    $passwordText = $null
     Write-Warning "Timed out waiting for SSH host key from $UserName@$HostName; continuing without host key pinning."
     return ''
 }
 
+<#
+.SYNOPSIS
+Require a child path to remain within an approved lifecycle root.
+.PARAMETER Path
+Filesystem path consumed or produced by the helper.
+.PARAMETER Root
+Validated parent directory that must contain the child path.
+#>
 function Resolve-SafeChildPath {
     param(
         [string]$Path,
@@ -677,6 +993,10 @@ function Resolve-SafeChildPath {
     return $pathFull
 }
 
+<#
+.SYNOPSIS
+Restore the lifecycle appliance VM to its clean differencing-disk state.
+#>
 function Reset-LifecycleApplianceVm {
     [CmdletBinding(SupportsShouldProcess = $true)]
     param()
@@ -706,7 +1026,7 @@ function Reset-LifecycleApplianceVm {
     }
     Wait-VMRunning -Name $applianceName
     Start-Sleep -Seconds 20
-    return Get-PlinkHostKey -HostName $ApplianceIPAddress -UserName $ApplianceSshUser -Password $SshPassword
+    return Get-PlinkHostKey -HostName $ApplianceIPAddress -UserName $ApplianceSshUser -Password $sshPasswordSecure
 }
 
 $applianceName = "$LabName-Appliance"
@@ -730,10 +1050,6 @@ if ($EsxIsoPath) {
     if ([System.IO.Path]::GetExtension($EsxIsoPath).ToLowerInvariant() -ne '.iso') {
         throw "-EsxIsoPath must point to an .iso file."
     }
-}
-
-if (-not $VcfBackupPassword) {
-    $VcfBackupPassword = 'VMware01!Test'
 }
 
 if ($PlanOnly) {
@@ -828,11 +1144,11 @@ try {
     }
 
     Start-Sleep -Seconds 20
-    $applianceHostKey = Get-PlinkHostKey -HostName $ApplianceIPAddress -UserName $ApplianceSshUser -Password $SshPassword
+    $applianceHostKey = Get-PlinkHostKey -HostName $ApplianceIPAddress -UserName $ApplianceSshUser -Password $sshPasswordSecure
     $clientAHost = Wait-GuestIPv4 -Name $clientAName
     $clientBHost = Wait-GuestIPv4 -Name $clientBName
-    $clientAHostKey = Get-PlinkHostKey -HostName $clientAHost -UserName $ClientSshUser -Password $SshPassword
-    $clientBHostKey = Get-PlinkHostKey -HostName $clientBHost -UserName $ClientSshUser -Password $SshPassword
+    $clientAHostKey = Get-PlinkHostKey -HostName $clientAHost -UserName $ClientSshUser -Password $sshPasswordSecure
+    $clientBHostKey = Get-PlinkHostKey -HostName $clientBHost -UserName $ClientSshUser -Password $sshPasswordSecure
     $pxeClientMac = Get-PxeClientMac -Name $pxeClientName
     $remoteEsxIsoPath = Copy-EsxIsoToAppliance -Path $EsxIsoPath
 
@@ -862,7 +1178,23 @@ try {
         $basePythonArgs += @('--signed-release-repository-url', $SignedReleaseRepositoryUrl)
     }
 
-    function New-LifecyclePythonArgs {
+    <#
+.SYNOPSIS
+Build the Python harness arguments for one lifecycle validation phase.
+.PARAMETER RunResultRoot
+Directory that stores artifacts for the current lifecycle phase.
+.PARAMETER CurrentApplianceHostKey
+Verified appliance SSH host-key fingerprint for the current phase.
+.PARAMETER CurrentClientAHost
+Resolved IPv4 address of lifecycle client A.
+.PARAMETER CurrentClientBHost
+Resolved IPv4 address of lifecycle client B.
+.PARAMETER CurrentClientAHostKey
+Verified SSH host-key fingerprint for lifecycle client A.
+.PARAMETER CurrentClientBHostKey
+Verified SSH host-key fingerprint for lifecycle client B.
+#>
+function New-LifecyclePythonArgs {
         param(
             [string]$RunResultRoot,
             [string]$CurrentApplianceHostKey,
@@ -921,8 +1253,8 @@ try {
             $applianceHostKey = Reset-LifecycleApplianceVm
             $clientAHost = Wait-GuestIPv4 -Name $clientAName
             $clientBHost = Wait-GuestIPv4 -Name $clientBName
-            $clientAHostKey = Get-PlinkHostKey -HostName $clientAHost -UserName $ClientSshUser -Password $SshPassword
-            $clientBHostKey = Get-PlinkHostKey -HostName $clientBHost -UserName $ClientSshUser -Password $SshPassword
+            $clientAHostKey = Get-PlinkHostKey -HostName $clientAHost -UserName $ClientSshUser -Password $sshPasswordSecure
+            $clientBHostKey = Get-PlinkHostKey -HostName $clientBHost -UserName $ClientSshUser -Password $sshPasswordSecure
 
             $restoredPythonArgs = New-LifecyclePythonArgs `
                 -RunResultRoot $restoredResultRoot `

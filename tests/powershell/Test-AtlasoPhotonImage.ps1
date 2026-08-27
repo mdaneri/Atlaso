@@ -17,8 +17,90 @@ param(
 Set-StrictMode -Version Latest
 $ErrorActionPreference = 'Stop'
 
+<#
+.SYNOPSIS
+Create a read-only SecureString from a non-secret test fixture.
+.PARAMETER Value
+Fixture text appended one character at a time.
+#>
+function ConvertTo-TestSecureString {
+    param([Parameter(Mandatory = $true)][string]$Value)
+
+    $secureValue = [SecureString]::new()
+    foreach ($character in $Value.ToCharArray()) {
+        $secureValue.AppendChar($character)
+    }
+    $secureValue.MakeReadOnly()
+    return $secureValue
+}
+
 $modulePath = Join-Path $RepositoryRoot 'scripts/windows/common/Atlaso.PhotonImage.psm1'
 $module = Import-Module $modulePath -Force -PassThru
+$rejectedPreparedIsoPath = Join-Path $OutputDirectory 'rejected-credential-bearing.iso'
+$rejectedSecurePassword = ConvertTo-TestSecureString -Value 'non-secret-test-credential'
+try {
+    Invoke-AtlasoPhotonImageBuild `
+        -IsoUrl 'unused-for-rejected-iso-only-mode' `
+        -IsoChecksum 'none' `
+        -PackerDirectory (Join-Path $RepositoryRoot 'image\vmware-workstation') `
+        -SshPassword $rejectedSecurePassword `
+        -BuilderStaticIp '' `
+        -PreparedIsoPath $rejectedPreparedIsoPath `
+        -PrepareIsoOnly
+    throw 'PrepareIsoOnly unexpectedly retained a credential-bearing remastered ISO.'
+}
+catch {
+    if ($_.Exception.Message -notlike 'PrepareIsoOnly is not supported because a retained remastered ISO*') {
+        throw
+    }
+}
+if (Test-Path -LiteralPath $rejectedPreparedIsoPath) {
+    throw 'Rejected ISO-only preparation created a credential-bearing artifact.'
+}
+
+New-Item -ItemType Directory -Force -Path $OutputDirectory | Out-Null
+$preservedPreparedIsoPath = Join-Path $OutputDirectory 'caller-owned-prepared.iso'
+$preservedPreparedIsoBytes = [System.Text.UTF8Encoding]::new($false).GetBytes('caller-owned-iso-fixture')
+[System.IO.File]::WriteAllBytes($preservedPreparedIsoPath, $preservedPreparedIsoBytes)
+try {
+    Invoke-AtlasoPhotonImageBuild `
+        -IsoUrl (Join-Path $OutputDirectory 'missing-source.iso') `
+        -IsoChecksum 'sha512:00000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000' `
+        -PackerDirectory (Join-Path $RepositoryRoot 'image\vmware-workstation') `
+        -SshPassword $rejectedSecurePassword `
+        -BuilderStaticIp '' `
+        -PreparedIsoPath $preservedPreparedIsoPath `
+        -ValidateOnly
+    throw 'Missing source ISO unexpectedly reached Photon remastering.'
+}
+catch {
+    if ($_.Exception.Message -eq 'Missing source ISO unexpectedly reached Photon remastering.') {
+        throw
+    }
+}
+if (-not (Test-Path -LiteralPath $preservedPreparedIsoPath -PathType Leaf)) {
+    throw 'Pre-remaster failure deleted the caller-owned prepared ISO.'
+}
+$actualPreservedPreparedIsoBytes = [System.IO.File]::ReadAllBytes($preservedPreparedIsoPath)
+if (-not [System.Linq.Enumerable]::SequenceEqual[byte]($actualPreservedPreparedIsoBytes, $preservedPreparedIsoBytes)) {
+    throw 'Pre-remaster failure modified the caller-owned prepared ISO.'
+}
+Remove-Item -LiteralPath $preservedPreparedIsoPath -Force
+
+$sensitiveArtifactRoot = Join-Path $OutputDirectory 'sensitive-artifact-cleanup'
+New-Item -ItemType Directory -Force -Path $sensitiveArtifactRoot | Out-Null
+[System.IO.File]::WriteAllText(
+    (Join-Path $sensitiveArtifactRoot 'credential.txt'),
+    'non-secret-test-credential'
+)
+& $module {
+    param([string]$Path)
+    Remove-AtlasoSensitiveBuildArtifact -Path $Path
+} $sensitiveArtifactRoot
+if (Test-Path -LiteralPath $sensitiveArtifactRoot) {
+    throw 'Sensitive Photon build artifact cleanup did not prove directory absence.'
+}
+
 $providers = @(
     [pscustomobject]@{
         Name                = 'hyperv'
@@ -61,17 +143,18 @@ New-Item -ItemType Directory -Force -Path $OutputDirectory | Out-Null
 foreach ($provider in $providers) {
     foreach ($password in $passwords) {
         $path = Join-Path $OutputDirectory "$($provider.Name)-kickstart.json"
+        $securePassword = ConvertTo-TestSecureString -Value $password
         & $module {
-            param($KickstartPath, $Credential, $AdditionalPackages, $PostInstallCommands, $InstallDiskLayout)
+            param($KickstartPath, [SecureString]$Secret, $AdditionalPackages, $PostInstallCommands, $InstallDiskLayout)
             New-AtlasoPhotonKickstart `
                 -Path $KickstartPath `
-                -RootPassword $Credential `
-                -BuildPassword $Credential `
+                -RootPassword $Secret `
+                -BuildPassword $Secret `
                 -BuildUsername 'atlaso-build' `
                 -AdditionalPackages $AdditionalPackages `
                 -PostInstallCommands $PostInstallCommands `
                 -InstallDiskLayout $InstallDiskLayout
-        } $path $password $provider.AdditionalPackages $provider.PostInstallCommands $provider.InstallDiskLayout
+        } $path $securePassword $provider.AdditionalPackages $provider.PostInstallCommands $provider.InstallDiskLayout
 
         $kickstart = Get-Content -LiteralPath $path -Raw | ConvertFrom-Json
         if ($kickstart.password.text -cne $password) {

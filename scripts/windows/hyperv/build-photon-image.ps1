@@ -1,4 +1,57 @@
-[Diagnostics.CodeAnalysis.SuppressMessageAttribute('PSAvoidUsingPlainTextForPassword', '')]
+<#
+.SYNOPSIS
+Build or validate the supported Atlaso Hyper-V Photon image.
+.PARAMETER IsoUrl
+Pinned Photon source URL or local path.
+.PARAMETER IsoChecksum
+Expected Photon ISO checksum.
+.PARAMETER SshPassword
+Temporary Packer SSH password. The wrapper prompts securely when omitted.
+.PARAMETER BootstrapAdminPassword
+Initial appliance administrator password. The wrapper prompts securely when omitted.
+.PARAMETER VmName
+Builder virtual-machine name.
+.PARAMETER OutputDirectory
+Artifact output directory.
+.PARAMETER SshHost
+Optional explicit builder SSH address.
+.PARAMETER SharedSourceDirectory
+Shared checksum-verified ISO cache.
+.PARAMETER SwitchName
+Hyper-V management switch used by the builder.
+.PARAMETER BuilderStaticIp
+Temporary Photon builder address.
+.PARAMETER BuilderStaticNetmask
+Temporary Photon builder netmask.
+.PARAMETER BuilderStaticGateway
+Temporary Photon builder gateway.
+.PARAMETER BuilderStaticDns
+Temporary Photon builder DNS servers.
+.PARAMETER FinalMgmtAddress
+Final appliance management address.
+.PARAMETER FinalMgmtGateway
+Final appliance management gateway.
+.PARAMETER FinalMgmtInterface
+Final appliance management interface.
+.PARAMETER PipGlobalIndex
+Optional pip global index setting.
+.PARAMETER PipGlobalIndexUrl
+Optional pip index URL.
+.PARAMETER PackerDirectory
+Hyper-V Packer template directory.
+.PARAMETER PreparedIsoPath
+Optional remastered ISO path.
+.PARAMETER PackerOnError
+Packer failure-handling mode.
+.PARAMETER KeepExistingOutput
+Preserve an existing output directory.
+.PARAMETER EnableRealSystemAdapters
+Enable real system adapters in the image.
+.PARAMETER ValidateOnly
+Validate Packer inputs without building.
+.PARAMETER PrepareIsoOnly
+Stop after preparing the remastered ISO.
+#>
 [CmdletBinding()]
 param(
     [Parameter()]
@@ -7,8 +60,8 @@ param(
     [Parameter()]
     [string]$IsoChecksum = 'sha512:6a7a258399a258da742032987c043ab25503698d35edafaf1ae000f12127da1a161d8b84caa17fd8f23d129e81e1faa7ab087c20ab9229772a643f8f9475305f',
 
-    [string]$SshPassword = 'PhotonBuild01!',
-    [string]$BootstrapAdminPassword = 'VMware01!',
+    [SecureString]$SshPassword,
+    [SecureString]$BootstrapAdminPassword,
     [string]$VmName = 'Atlaso-Photon-Builder',
     [string]$OutputDirectory = '',
     [string]$SshHost = '',
@@ -35,6 +88,14 @@ param(
 
 Set-StrictMode -Version Latest
 $ErrorActionPreference = 'Stop'
+
+# Passwords have no repository defaults; resolve them before build preparation.
+if ($null -eq $SshPassword) {
+    $SshPassword = Read-Host -Prompt 'Temporary Photon builder SSH password' -AsSecureString
+}
+if ($null -eq $BootstrapAdminPassword) {
+    $BootstrapAdminPassword = Read-Host -Prompt 'Atlaso bootstrap administrator password' -AsSecureString
+}
 
 Import-Module (Join-Path $PSScriptRoot '..\common\Atlaso.PhotonImage.psm1') -Force
 

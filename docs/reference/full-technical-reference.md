@@ -230,7 +230,10 @@ DNS servers and uses them for both the temporary Photon builder and the finished
 public DNS only as a fallback. The wrapper writes `photon-ks.json`, embeds it into a remastered Photon ISO, replaces the
 ISO's UEFI GRUB config with a Atlaso auto-install entry, and passes that single ISO to Packer. Photon then boots with
 `ks=cdrom:/photon-ks.json` without Packer typing boot commands. Raw `packer build .` is intentionally blocked unless the
-ISO is marked as wrapper-prepared; the wrapper is the tested Windows Server 2025 path. Build runs pass Packer's `-force`
+ISO is marked as wrapper-prepared; the wrapper is the tested Windows Server 2025 path. The remastered ISO is a bounded
+sensitive artifact: the wrapper removes it and verifies its absence after Packer exits, including failure and fallback
+paths. ISO-only preparation is rejected because retaining the remastered ISO would retain a reusable build credential.
+Build runs pass Packer's `-force`
 flag by default so the fixed output directory can be rebuilt in one command. Use `-OutputDirectory <path>` to keep
 multiple artifacts or `-KeepExistingOutput` when you want Packer to fail instead of replacing an existing output
 directory. Use `-PackerOnError abort` to keep a failed builder VM for debugging, or `-PackerOnError ask` to choose the
@@ -1290,10 +1293,11 @@ deterministic packet-loss/recovery proof, CA apply with a ClientA CSR request an
 Backup SFTP with the `vcf-backup` OS user, client-side connectivity, and by default a backup/restore redeploy pass that
 confirms the restored ClientA certificate has the same serial number and SHA-256 fingerprint as the pre-restore
 certificate and that the restored CA archive fingerprints match the original settings backup. It prints a human-readable
-console summary, writes `result.json`, then removes the VMs it created. It defaults to the local Hyper-V lab password
-for admin and appliance/client SSH access; appliance host-state probes log in as `admin` because root SSH is disabled by
-default, then run checks through sudo. It uses a separate policy-compliant default for VCF Backup SFTP test access; pass
-`-AdminPassword`, `-SshPassword`, and `-VcfBackupPassword` to override those defaults. Pass `-SkipBackupRestoreTest`
+console summary, writes `result.json`, then removes the VMs it created. It prompts securely for the administrator and
+VCF Backup SFTP passwords and reuses the administrator `SecureString` for SSH unless a separate `-SshPassword` is
+provided; no password has a repository default. Appliance host-state probes log in as `admin` because root SSH is
+disabled by default, then run checks through sudo. The launcher hands credentials to its child only through a
+current-user DPAPI-protected temporary CLIXML bundle and removes it after the child exits. Pass `-SkipBackupRestoreTest`
 only when you need the older single-pass run, and pass `-KeepVms` only when preserving a failed lab for inspection. Use
 `-PrepareNetworksOnly` to set up the Hyper-V switches/NAT, `-CleanupVmsOnly` to remove only lifecycle VMs, and
 `-CleanupNetworksOnly` to remove Atlaso switches/NAT after all attached VMs are gone. Details live in
@@ -1349,9 +1353,11 @@ Photon root/build password remains separate from the Atlaso web bootstrap admini
 The Workstation Packer template creates a 40 GiB OS disk and a sparse 20 GiB `ATLASO_SYSTEM` disk. Final provisioning
 removes the build-only `python3-devel` package, clears package/download caches and staged sources, trims the filesystems,
 and leaves Packer compaction enabled. OVF export preserves both payload VMDKs and adds empty 500 GiB depot and backup
-definitions at SCSI units 2 and 3. `export-ovf.ps1 -Release` derives the exact tag and destination repository from the
-clean tagged checkout, then preflights and uploads the OVF assets with GitHub CLI. It uploads the combined OVA only when
-that archive independently remains below the configured asset limit. Release mode implicitly replaces only the canonical
+definitions at SCSI units 2 and 3. `export-ovf.ps1 -Release` derives the stable `vX.Y.Z` tag, while `-Prerelease`
+requires exactly one annotated `vX.Y.Z-<prerelease>` tag at the clean checkout commit. Both modes derive the destination
+repository, require an existing published non-draft GitHub Release with the matching classification, and preflight and
+upload the OVF assets with GitHub CLI without creating or reclassifying the release. The combined OVA uploads only when
+it independently remains below the configured asset limit. Publication mode implicitly replaces only the canonical
 repository-derived OVF output. Any explicitly supplied existing output requires `-Force`, while every recursive
 replacement remains limited to a strict, non-reparse-point descendant of `image/vmware-workstation/ovf`; filesystem,
 repository, image, output, and external roots are refused. On deployed-VM first boot, OVF IPv4, IPv6,
@@ -1399,25 +1405,75 @@ terminating and print their success message only after every target is absent.
 An existing canonical target that is not a directory is an error and blocks that success message instead of being
 silently skipped.
 
-For a normal Workstation test appliance on the management vmnet:
+For a normal Workstation test appliance on the management vmnet, first store the exact `Atlaso` Environment ID in the
+checkout-local, Git-ignored configuration file. Input is masked and is never printed:
+
+```powershell
+$atlasoLocal = Join-Path (git rev-parse --show-toplevel) '.atlaso-local'
+New-Item -ItemType Directory -Path $atlasoLocal -Force | Out-Null
+$atlasoEnvironmentId = Read-Host 'Paste the Atlaso Environment ID' -MaskInput
+try {
+    [System.IO.File]::WriteAllText(
+        (Join-Path $atlasoLocal 'onepassword-environment-id'),
+        $atlasoEnvironmentId
+    )
+}
+finally {
+    Remove-Variable atlasoEnvironmentId -ErrorAction SilentlyContinue
+}
+```
+
+Then run:
 
 ```powershell
 pwsh -ExecutionPolicy Bypass `
   -File scripts/windows/vmware/create-atlaso-test-vm.ps1 `
   -Redeploy `
-  -ResetDataDisks `
-  -WaitForIp
+  -ResetDataDisks
 ```
 
 The normal wrapper resolves the current Windows user's existing `.ssh/id_ed25519.pub` before any cleanup or VM
 creation, validates it as one canonical Ed25519 public key, and provisions it for the bootstrap `admin` account with a
 separate test-only passwordless-sudo rule. Use `-SshPublicKeyPath <path>` for another existing Ed25519 public key or
 `-SkipSshKeyProvisioning` to preserve password-backed access. It never generates or copies a private key. Lifecycle
-VMs, exported OVF/OVA appliances, and root SSH remain unchanged. After startup, the wrapper reads the VM's public
+VMs, exported OVF/OVA appliances, and root SSH remain unchanged. Normal test VMs use the checked-in public
+`Atlaso Development Root CA` and the matching concealed
+`ATLASO_DEVELOPMENT_ROOT_CA_PRIVATE_KEY` from the exact `Atlaso` 1Password Environment. The wrapper requires the opaque
+Environment ID for real creation, preferring an explicit `-OnePasswordEnvironmentId` override and otherwise reading the
+single-line `.atlaso-local/onepassword-environment-id` file ignored by Git. It verifies the ID against the non-secret
+repository SHA-256 pin before invoking `op`, requires the Environments-enabled beta CLI installed under
+`C:\Program Files\1Password CLI`, validates `op run --environment`, and cryptographically verifies the retrieved
+certificate/key pair before mutation. It uses a bounded child and a separately scrubbed guest-info value.
+`-TimeoutSeconds` requires proven complete
+`op`/secret-child process-tree termination before a staging failure may enter signer scrub or VM rollback. Boot-bound
+marker phases also cover VM start and artifact removal. An unproven termination preserves the VM and VMX, or keeps
+reused disks quarantined during removal, until a Windows host restart proves that child tree is gone. Every post-staging
+VMware operation is also bounded. A durable, non-secret per-user cleanup marker is published through a Windows
+write-through atomic rename before signer staging and makes the next
+validated wrapper invocation retry the exact interrupted rollback before any network or VM mutation; the marker is
+write-through transitioned to a non-actionable tombstone before deletion only after encrypted-import proof or successful
+stopped-VM artifact cleanup. A tombstone that reappears after a crash is retired without VM mutation. Recovery precedes
+1Password
+preflight and records a stopped/scrubbed phase so restoration can resume after the artifact root has already been
+removed without restoring data while a removal child may survive. Rollback preflight rejects configured disks that
+repeat the same descriptor, hard-linked alias, or shared extent by filesystem identity before persisting the marker.
+First boot encrypts the signer with the VM's unique
+`ATLASO_SECRETS_KEY`, deletes staging, and issues a unique
+`appliance:https` leaf for that VM's FQDN/IP. Default waiting
+requires the downloaded root fingerprint to match the checked-in certificate; use `-WaitForIp:$false` to opt out.
+`-TrustRootCa` changes Windows trust only when that exact certificate is not already trusted, while `-NoStart` is
+rejected so the signer cannot remain in a powered-off VMX. Rotate the development root by updating the repository PEM
+and concealed 1Password key together and redeploying every normal test VM; never reuse it outside local testing.
+
+After startup, the wrapper reads the VM's public
 Ed25519 host key from test-only VMware guest-info, validates its OpenSSH wire format, and prints the exact public key and
 SHA-256 fingerprint for explicit `known_hosts` verification without trusting unauthenticated `ssh-keyscan` output. The
 canonical operational details and safety boundary
 are documented in [VMware Workstation Lifecycle Testing](vmware-workstation-lifecycle-testing.md#normal-test-vm).
+The wrapper reports a started clone ready only after the exact running VMX, `ethernet0` MAC, injected hostname, VMware
+Tools address, and Windows neighbor mapping agree and no other running Workstation VM reports that address. Duplicate
+static ownership fails closed before SSH or HTTPS endpoints are printed; use the linked lifecycle guide for the
+console-based stop-or-readdress recovery path and explicit `known_hosts` handling.
 
 To deploy the current repo to an existing VMware test appliance without rebuilding the image, use the wheel deploy
 helper. A normal test VM created with the default key provisioning uses the existing key/agent path without 1Password:

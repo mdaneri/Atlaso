@@ -1,3 +1,9 @@
+<#
+.SYNOPSIS
+Verify deploy-wheel remote-path validation and command serialization.
+.PARAMETER RepositoryRoot
+Atlaso checkout containing the deploy-wheel script under test.
+#>
 [CmdletBinding()]
 param(
     [string]$RepositoryRoot = (Resolve-Path (Join-Path $PSScriptRoot '..\..')).Path
@@ -5,6 +11,16 @@ param(
 
 $ErrorActionPreference = 'Stop'
 
+<#
+.SYNOPSIS
+Assert that two scalar fixture values are exactly equal.
+.PARAMETER Actual
+Actual input consumed by Assert-Equal.
+.PARAMETER Expected
+Expected input consumed by Assert-Equal.
+.PARAMETER Message
+Message input consumed by Assert-Equal.
+#>
 function Assert-Equal {
     param(
         [Parameter(Mandatory = $true)]$Actual,
@@ -25,7 +41,7 @@ if ($executionIndex -lt 0) {
     throw 'Unable to locate the deploy-wheel execution boundary.'
 }
 
-Invoke-Expression $deploySource.Substring(0, $executionIndex)
+Invoke-Command -ScriptBlock ([scriptblock]::Create($deploySource.Substring(0, $executionIndex))) -NoNewScope
 
 Assert-Equal (Resolve-RemoteDirectoryPath -Path '/tmp') '/tmp' 'The default path must remain unchanged.'
 Assert-Equal (Resolve-RemoteDirectoryPath -Path '/tmp/atlaso-build_1.2/') '/tmp/atlaso-build_1.2' 'One trailing slash must be normalized.'
@@ -93,6 +109,16 @@ foreach ($invalidPath in $invalidPaths) {
 }
 
 $capturedCommands = [System.Collections.Generic.List[object]]::new()
+<#
+.SYNOPSIS
+Invoke a fixture command and fail when it returns a nonzero exit code.
+.PARAMETER FilePath
+File Path input consumed by Invoke-CheckedCommand.
+.PARAMETER Arguments
+Arguments input consumed by Invoke-CheckedCommand.
+.PARAMETER WorkingDirectory
+Working Directory input consumed by Invoke-CheckedCommand.
+#>
 function Invoke-CheckedCommand {
     param(
         [Parameter(Mandatory = $true)][string]$FilePath,
@@ -105,6 +131,12 @@ function Invoke-CheckedCommand {
         Arguments = @($Arguments)
     })
 }
+<#
+.SYNOPSIS
+Build the strict SSH connection arguments used by the deployment fixture.
+.PARAMETER ControlPath
+Validated SSH control-socket path supplied to the fixture.
+#>
 function Get-SshConnectionArguments {
     param([string]$ControlPath)
 
@@ -133,7 +165,7 @@ foreach ($fixtureFile in $fixtureFiles) {
     [System.IO.File]::WriteAllText($fixturePath, 'fixture', [System.Text.UTF8Encoding]::new($false))
 }
 $wheelPath = Get-Item -LiteralPath (Join-Path $fixtureRoot 'dist\atlaso-9.9.9-py3-none-any.whl')
-$wheelFileName = $wheelPath.Name
+$expectedWheelLeafName = $wheelPath.Name
 
 $RepoRoot = $fixtureRoot
 $IpAddress = '192.0.2.10'
@@ -153,7 +185,7 @@ $WheelPath = $wheelPath.FullName
 $ResetVaultEntries = $false
 $SkipHostCheck = $true
 try {
-    Invoke-Expression $deploySource.Substring($executionIndex)
+    Invoke-Command -ScriptBlock ([scriptblock]::Create($deploySource.Substring($executionIndex))) -NoNewScope
 } finally {
     Remove-Item -LiteralPath $fixtureRoot -Recurse -Force -ErrorAction SilentlyContinue
 }
@@ -166,7 +198,7 @@ if (-not $upload) {
 }
 $uploadArguments = @($upload.Arguments)
 Assert-Equal $uploadArguments[-1] "admin@192.0.2.10:$safeDirectory/" 'The normalized safe directory must remain one scp destination argument.'
-if (-not ($uploadArguments | Where-Object { (Split-Path -Leaf $_) -eq $wheelFileName }) -or $uploadArguments.Count -lt 3) {
+if (-not ($uploadArguments | Where-Object { (Split-Path -Leaf $_) -eq $expectedWheelLeafName }) -or $uploadArguments.Count -lt 3) {
     throw 'The primary scp upload must preserve each source and destination as separate arguments.'
 }
 $themePath = Join-Path $fixtureRoot 'image\common\boot\grub\theme.txt'
@@ -198,7 +230,7 @@ $remoteCommand = [System.Text.Encoding]::UTF8.GetString(
     [Convert]::FromBase64String($encodedRemoteCommand.Groups['payload'].Value)
 )
 $expectedScriptArgument = ConvertTo-PosixShellArgument -Value "$safeDirectory/atlaso-deploy-wheel.sh"
-$expectedWheelArgument = ConvertTo-PosixShellArgument -Value "$safeDirectory/$wheelFileName"
+$expectedWheelArgument = ConvertTo-PosixShellArgument -Value "$safeDirectory/$expectedWheelLeafName"
 if (-not $remoteCommand.Contains($expectedScriptArgument, [System.StringComparison]::Ordinal)) {
     throw 'The exact safe remote script path was not preserved as one shell argument.'
 }

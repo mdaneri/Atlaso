@@ -18,6 +18,7 @@ image/hyperv/systemd/* text eol=lf
 # First boot sources these platform policies as shell input.
 image/hyperv/data-disks.conf text eol=lf
 image/vmware-workstation/data-disks.conf text eol=lf
+image/vmware-workstation/development-trust/*.pem text eol=lf
 
 scripts/appliance/atlaso-helper text eol=lf
 docs/assets/screenshots/manifest.json text eol=lf

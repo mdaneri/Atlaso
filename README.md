@@ -117,7 +117,8 @@ brings infrastructure, storage, identity, networking, and lifecycle workflows in
 - [Technical reference](docs/reference/index.md) — API, image building, lifecycle testing, and detailed behavior.
 - [Contributing](CONTRIBUTING.md) — issue, version, focused local validation, full-suite GitHub CI, exact-head review
   follow-through, protected trusted-CI status handoff, multi-entry GitHub Pages publication serialization,
-  incremental comment-based-help enforcement for changed PowerShell files,
+  incremental comment-based-help enforcement for changed PowerShell files, pinned repository-wide PSScriptAnalyzer
+  enforcement, and default-free `SecureString` credential parameters,
   pull-request, capability-aware completed-task lease-guarded remote/local-branch, worktree, and title cleanup with
   guarded resumable restoration,
   and seven-day Python dependency-age requirements.
@@ -171,6 +172,12 @@ handoff. It never generates or copies a private key, and lifecycle and exported 
 password-backed sudo policy. First boot publishes only the test VM's public Ed25519 SSH host key through VMware
 guest-info; the wrapper prints the exact key and SHA-256 fingerprint for explicit `known_hosts` verification without
 trusting `ssh-keyscan`.
+Before it prints ready state or connection endpoints, the wrapper also proves one identity tuple across the exact
+running VMX, management NIC MAC, injected hostname, guest-published actual hostname, VMware Tools address, and Windows
+neighbor cache. Every running guest must answer the address inventory query. A static address also claimed by another
+running Workstation VM fails closed with the conflicting VMX and MAC. The wrapper re-lists the running inventory and
+rechecks the target address immediately before returning, retrying when either changes. Recovery remains an explicit
+stop-or-readdress operation and never rewrites SSH `known_hosts`.
 Password-backed Windows deployment binds the concealed `DEFAULT_ADMIN_PASSWORD` variable from the verified `Atlaso`
 1Password Environment through the Windows-supported 1Password SDK desktop integration; the SDK and Paramiko run in one
 bounded child that rejects unknown SSH host keys and never accepts a password
@@ -181,7 +188,9 @@ The VMware release appliance uses separate compacted Photon OS and Atlaso/tools 
 500 GiB VCF Offline Depot and VCF Backups disks. The OVF package is the canonical GitHub-distributable form; its assets
 are size-gated individually, while the combined OVA is published only when it remains below GitHub's asset limit. OVF
 export limits recursive replacement to repository-owned OVF output descendants; release mode implicitly replaces only
-its canonical destination, and an explicit existing destination also requires `-Force`.
+its canonical destination, and an explicit existing destination also requires `-Force`. The exporter can append the
+same verified asset set to an existing GitHub prerelease through `-Prerelease`; it infers the exact annotated SemVer
+prerelease tag at the clean checkout commit and never creates or reclassifies the GitHub Release.
 First boot formats those data disks only after both match the image's fixed SCSI-slot, stable `atlaso-path-*`, and exact
 capacity policy. The preflight resolves `/` through its block-device dependency chain and requires exactly one physical
 operating-system disk before excluding it from data-disk candidates. Missing, extra, reordered, ambiguous, or mismatched

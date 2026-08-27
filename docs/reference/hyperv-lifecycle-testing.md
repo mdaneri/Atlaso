@@ -81,9 +81,10 @@ lifecycle run, and pass `-KeepVms` only when you want to inspect a failed lab. D
 `initial/result.json`, `restored/result.json`, `settings-backup.json`, and `restored/restored-settings-backup.json`
 under the timestamped result directory.
 
-The wrapper defaults the Atlaso admin and SSH passwords to the local Hyper-V lab password. The VCF Backup SFTP test
-password defaults to a separate policy-compliant value because Local Users enforces the appliance password policy before
-OS sync. Override them with `-AdminPassword`, `-SshPassword`, and `-VcfBackupPassword` when testing a different image.
+The wrapper has no password defaults. It securely prompts for `-AdminPassword` and `-VcfBackupPassword` when omitted;
+`-SshPassword` reuses the supplied admin `SecureString` unless the caller provides a separate secure value. The launcher
+exports those `SecureString` objects to a current-user DPAPI-protected temporary CLIXML bundle, gives the child only the
+bundle path, and removes the bundle after the child exits. No password is placed on the child process command line.
 
 The lifecycle web probe defaults to `https://<ApplianceIPAddress>`. Fresh appliance images install nginx with CA-backed
 management HTTPS/443 and redirect public HTTP/80 to HTTPS; override the probe with `-ApplianceUrl` only when testing a
@@ -111,21 +112,33 @@ pwsh -ExecutionPolicy Bypass `
 Pass `-CleanupNetworksAfterTest` to remove the switches/NAT after a successful test as well as the VMs. Network cleanup
 is intentionally opt-in because the normal `Atlaso` VM can also be attached to the shared Atlaso switches.
 
-Use `-PlanOnly` first to print the VM names, VHDX parents, and result path without creating or modifying VMs. Use
+Use `-PlanOnly` first to print the VM names, VHDX parents, and result path without prompting for credentials or creating
+or modifying VMs. Use
 `-ApplianceVhdxPath` when you want a specific appliance image instead of the newest discovered VHDX.
 
 ## Low-Level Run
 
-The wrapper delegates to `scripts/windows/hyperv/run-lifecycle-test.ps1`. That lower-level script is still available
-when you need explicit control over every input:
+The wrapper delegates to `scripts/windows/hyperv/run-lifecycle-test.ps1`. Direct low-level use requires the same
+current-user DPAPI-protected CLIXML handoff:
 
 ```powershell
-pwsh -ExecutionPolicy Bypass `
-  -File scripts/windows/hyperv/run-lifecycle-test.ps1 `
-  -ApplianceVhdxPath image/hyperv/output/atlaso-photon-hyperv/"Virtual Hard Disks"/Atlaso-Photon-Builder.vhdx `
-  -AdminPassword '<bootstrap-admin-password>' `
-  -SshPassword '<bootstrap-admin-password>' `
-  -CleanupCreatedLab
+$secretBundlePath = Join-Path $env:TEMP "atlaso-lifecycle-$([guid]::NewGuid()).clixml"
+$adminPassword = Read-Host 'Atlaso administrator password' -AsSecureString
+$backupPassword = Read-Host 'VCF Backup test password' -AsSecureString
+[pscustomobject]@{
+  AdminPassword = $adminPassword
+  SshPassword = $adminPassword
+  VcfBackupPassword = $backupPassword
+} | Export-Clixml -LiteralPath $secretBundlePath
+try {
+  pwsh -ExecutionPolicy Bypass `
+    -File scripts/windows/hyperv/run-lifecycle-test.ps1 `
+    -ApplianceVhdxPath image/hyperv/output/atlaso-photon-hyperv/"Virtual Hard Disks"/Atlaso-Photon-Builder.vhdx `
+    -SecretBundlePath $secretBundlePath `
+    -CleanupCreatedLab
+} finally {
+  Remove-Item -LiteralPath $secretBundlePath -Force
+}
 ```
 
 The default path uses password SSH for both appliance and client probes. The default appliance SSH user is `admin`

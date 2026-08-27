@@ -51,7 +51,9 @@ and Hyper-V templates. Canonical CI runs the same protected inventory on its Win
 
 Use the wrapper instead of raw `packer build`; it creates the remastered Photon ISO with `photon-ks.json` and the Atlaso
 GRUB auto-install entry. The original Photon source ISO is shared with the Hyper-V image path under
-`image/common/source`; only the target-specific remastered kickstart ISO is written under this image directory.
+`image/common/source`; the target-specific remastered kickstart ISO is a temporary sensitive artifact under this image
+directory. The wrapper removes it and verifies its absence after the bounded Packer validation or build exits, including
+failure paths. `-PrepareIsoOnly` is rejected because retaining that ISO would retain a reusable build credential.
 `New-AtlasoPhotonKickstart` in `scripts/windows/common/Atlaso.PhotonImage.psm1` is the only kickstart source for both
 providers. The focused image tests invoke that generator, parse the VMware and Hyper-V JSON outputs, and validate their
 shared installer contract plus provider-specific packages and guest-service commands.
@@ -105,6 +107,11 @@ pwsh -ExecutionPolicy Bypass `
   -IsoUrl "https://packages.vmware.com/photon/5.0/GA/iso/photon-5.0-dde71ec57.x86_64.iso" `
   -IsoChecksum "sha512:<checksum>"
 ```
+
+`-SshPassword` and `-BootstrapAdminPassword` accept only `SecureString` values and have no repository defaults. Omit
+them for interactive `Read-Host -AsSecureString` prompts, or collect each value securely in the current PowerShell
+process before invoking the wrapper. The shared builder unwraps them only for kickstart and Packer serialization and
+removes the temporary secret-bearing Packer variable file after the bounded child exits.
 
 The wrapper does not build or embed Inventory Linux. New templates leave it uninstalled so an administrator can use
 **Download latest** to retrieve the signed independent release when needed. Contributors building Inventory Linux
@@ -192,22 +199,25 @@ test appliance with:
 .\scripts\windows\vmware\deploy-wheel.ps1 -IpAddress 192.168.167.10
 ```
 
-For the password-backed path, first authenticate the local 1Password integration, verify that exactly one Environment
-named `Atlaso` exists, and confirm that it contains the concealed `DEFAULT_ADMIN_PASSWORD` variable without reading its
-value. Copy that Environment's opaque ID from 1Password and pass only the ID to the supported Windows bridge:
+For the password-backed path, first authenticate the local 1Password desktop integration, verify that exactly one
+Environment named `Atlaso` exists, and confirm that it contains the concealed `DEFAULT_ADMIN_PASSWORD` variable without
+reading its value. Copy that Environment's opaque ID, identify the approved 1Password account name or ID, and select an
+explicit CPython 3.10 through 3.13 executable for the supported Windows SDK bridge:
 
 ```powershell
 .\scripts\windows\vmware\deploy-wheel.ps1 `
   -IpAddress 192.168.167.10 `
-  -OnePasswordEnvironmentId '<atlaso-environment-id>'
+  -OnePasswordEnvironmentId '<atlaso-environment-id>' `
+  -OnePasswordAccount '<account-name-or-id>' `
+  -OnePasswordPython '<path-to-python-3.13.exe>'
 ```
 
-The bridge requires a 1Password CLI build that supports `op run --environment`; it starts the deployment script as the
-single bounded child process and keeps the concealed value in that process environment and the existing password-backed
-SSH stdin channel. It fails closed when the CLI, authorization, exact Environment, or variable is unavailable. Do not
-set `DEFAULT_ADMIN_PASSWORD`, pass a password argument, create a local `.env` file, or use the retired
-`ATLASO_DEPLOY_SSH_PASSWORD` fallback. Password-backed Paramiko connections load the user's SSH known-hosts database
-and reject unknown host keys; approve the VM host key through the normal verified SSH workflow before deployment.
+The supported 1Password Python SDK uses desktop authorization and a locked, offline SDK/Paramiko runtime. The
+[canonical VMware Workstation workflow](../../docs/reference/full-technical-reference.md#vmware-workstation-workflow)
+documents its isolation, dependency, failure, and host-trust boundaries. The 1Password CLI is not part of this
+password-deployment path, and the concealed password is not placed in the deployment process environment. Do not set
+`DEFAULT_ADMIN_PASSWORD`, pass a password argument, create a local `.env` file, or use the retired
+`ATLASO_DEPLOY_SSH_PASSWORD` fallback.
 
 When the IP should be resolved from VMware Tools, pass the VMX path as a named argument:
 
@@ -273,7 +283,8 @@ vSphere/ESXi import: `Atlaso Management Network` for the first adapter, which re
 `Atlaso Services Network` for the second adapter used by DNS, DHCP, CA, depot, PXE, KMS, and other Atlaso-managed
 services.
 
-To upload the deployable OVF package to an existing GitHub Release, authenticate GitHub CLI and pass the release tag:
+To upload the deployable OVF package to an existing stable GitHub Release, authenticate GitHub CLI and select release
+publication:
 
 ```powershell
 pwsh -ExecutionPolicy Bypass `
@@ -281,14 +292,27 @@ pwsh -ExecutionPolicy Bypass `
   -Release
 ```
 
-Release mode derives `v<version>` from the synchronized repository metadata, requires that tag to identify the clean
-checked-out commit, resolves the destination GitHub repository from the current checkout, and replaces the generated
-local OVF output before publishing. That implicit replacement applies only when `-OutputDirectory` is omitted and the
-target is the canonical `image/vmware-workstation/ovf/<Name>` destination. An explicitly supplied existing destination,
-including that same canonical path, requires `-Force`. Recursive replacement is always limited to a strict descendant
-of `image/vmware-workstation/ovf`; filesystem, repository, image, VMware image, OVF-root, external, and reparse-point
-targets are refused even with `-Force`. A new external destination may receive an export because no existing tree is
-removed, but rerunning against it requires choosing a repository-owned output destination instead.
+To target an existing GitHub prerelease instead, check out its exact annotated `vX.Y.Z-<prerelease>` tag and run:
+
+```powershell
+pwsh -ExecutionPolicy Bypass `
+  -File scripts/windows/vmware/export-ovf.ps1 `
+  -Prerelease
+```
+
+Stable mode derives `vX.Y.Z` from synchronized repository metadata. Prerelease mode requires exactly one annotated
+SemVer prerelease tag at `HEAD` whose `X.Y.Z` core matches that metadata. Both modes require the tag to identify the
+clean checked-out commit, resolve the destination repository from the checkout, and require an existing published,
+non-draft GitHub Release whose stable or prerelease classification matches the selected mode. The exporter only appends
+the verified OVF asset set; it never creates, retags, publishes, or reclassifies the GitHub Release.
+
+Publication replaces the generated local OVF output before uploading. That implicit replacement applies only when
+`-OutputDirectory` is omitted and the target is the canonical `image/vmware-workstation/ovf/<Name>` destination. An
+explicitly supplied existing destination, including that same canonical path, requires `-Force`. Recursive replacement
+is always limited to a strict descendant of `image/vmware-workstation/ovf`; filesystem, repository, image, VMware image,
+OVF-root, external, and reparse-point targets are refused even with `-Force`. A new external destination may receive an
+export because no existing tree is removed, but rerunning against it requires choosing a repository-owned output
+destination instead.
 
 Every OVF asset is checked against GitHub's less-than-2-GiB per-asset boundary before upload. The descriptor, manifest,
 and both payload VMDKs are uploaded as one set. A retry verifies every existing asset byte-for-byte and refuses partial
@@ -392,14 +416,31 @@ Pass `-PlanOnly` to print the selected VMX, client VMDK, vmnets, and result path
 
 ## Boot A Test Appliance
 
-Create and start a normal Workstation test appliance from the latest built VMX:
+Store the exact `Atlaso` Environment ID once in the checkout-local configuration file. The `.atlaso-local` directory is
+ignored by Git, the prompt is masked, and the command does not print the ID:
+
+```powershell
+$atlasoLocal = Join-Path (git rev-parse --show-toplevel) '.atlaso-local'
+New-Item -ItemType Directory -Path $atlasoLocal -Force | Out-Null
+$atlasoEnvironmentId = Read-Host 'Paste the Atlaso Environment ID' -MaskInput
+try {
+    [System.IO.File]::WriteAllText(
+        (Join-Path $atlasoLocal 'onepassword-environment-id'),
+        $atlasoEnvironmentId
+    )
+}
+finally {
+    Remove-Variable atlasoEnvironmentId -ErrorAction SilentlyContinue
+}
+```
+
+Create and start a normal Workstation test appliance from the latest built VMX without passing the ID each time:
 
 ```powershell
 pwsh -ExecutionPolicy Bypass `
   -File scripts/windows/vmware/create-atlaso-test-vm.ps1 `
   -Redeploy `
   -ResetDataDisks `
-  -WaitForIp `
   -TrustRootCa
 ```
 
@@ -408,8 +449,9 @@ user's existing `.ssh/id_ed25519.pub` and validates it as one canonical Ed25519 
 that key for `admin` and a separate development-only passwordless-sudo drop-in. Pass
 `-SshPublicKeyPath <path-to-existing-ed25519-public-key>` to select another public key, or
 `-SkipSshKeyProvisioning` to retain the prior password-backed SSH and sudo behavior; those options cannot be combined.
-The wrapper fails early for a missing, malformed, multiline, non-Ed25519, or unbounded key and never generates or copies
-a private key. Root SSH stays disabled, and the Workstation lifecycle runner and exported OVF/OVA properties do not
+The wrapper fails early for a missing, malformed, multiline, non-Ed25519, or unbounded SSH key and never generates or
+copies an SSH private key. Root SSH stays disabled, and the Workstation lifecycle runner and exported OVF/OVA
+properties do not
 receive this test-only access. Complete factory reset removes the development key and sudoers drop-in. Verify and
 approve the appliance SSH host key once from the wrapper's host-derived output. After startup it prints the exact
 public Ed25519 host key and SHA-256 fingerprint from test-only VMware guest-info for explicit `known_hosts`
@@ -433,24 +475,77 @@ Windows filesystem identity, stops through checked `vmrun` when needed, and comp
 preflights before checked `vmrun deleteVM` removes registered targets. Preflight failures preserve all artifacts;
 provider deletion or postcondition failures preserve the remaining artifacts and return failure. Stale library-row
 cleanup holds a write-excluding inventory handle through its final byte comparison and atomic replacement.
+Every started normal test clone must pass unique-address readiness before the wrapper reports it ready. The wrapper
+injects an explicit normal-test marker independently of optional SSH key provisioning; after applying the hostname, the
+guest uses that marker to publish its actual value through VMware Tools. The check binds the exact running VMX, its
+`ethernet0` MAC, the injected and guest-published hostnames, VMware Tools' IPv4 result, and the Windows neighbor entry
+for that host-facing address. It also requires an address answer from every running Workstation VM; incomplete guest
+evidence retries rather than being treated as unique. If another VM reports the same address, the hostname differs, or
+the neighbor entry maps to another running VM's MAC, the wrapper stops before printing SSH or HTTPS endpoints and names
+the relevant conflicting identity evidence. Immediately before returning readiness, it re-lists the running inventory
+and rechecks the target address; a concurrent VM start, stop, or target-address change restarts the proof.
+
+For recovery, leave the failed clone running only while using its local console, then either stop the named conflicting
+VM or assign the clone a unique management address. A task-specific DHCP reservation must target the exact MAC printed
+in the failure; a static address must be changed and applied from the clone's console before retrying readiness. Re-run
+`get-atlaso-vm-ip.ps1 -VmxPath <exact-vmx> -ExpectedHostname <first-boot-fqdn>` to prove the corrected identity, or
+redeploy the normal test VM. Review and update `known_hosts` explicitly only after comparing the wrapper's published
+Ed25519 key and SHA-256 fingerprint; these scripts never change normal SSH `known_hosts` automatically.
+
 Pass `-IncludeLabNetworkAdapters` only after `VMnet2`, `VMnet3`, and `VMnet4` exist for the
-SiteA, WAN/SiteB, and trunk-like lifecycle networks. `-TrustRootCa` downloads the freshly deployed appliance root CA,
-removes stale Atlaso root CAs from the current-user Trusted Root store, and trusts the new root so Edge and the Codex
-integrated browser accept the first-boot HTTPS cert. The root CA is generated by `atlaso-bootstrap-https.service` on
-each deployed VM's first boot, not baked into the reusable Packer-built VMX. The wrapper waits up to five minutes by
-default for the first-boot CA endpoint, retrying transient connection and service-readiness failures. Pass
-`-TimeoutSeconds <seconds>` to adjust both IP discovery and CA readiness waits. Partial downloads are removed
-best-effort between retries through .NET file APIs, including when the current user's temporary directory contains a
-dotted profile name or a valid DOS 8.3 short-path representation. Cleanup cannot replace the original readiness error
-or stop the retry loop. After the VM starts, the wrapper prints a connection summary with the HTTPS console URL,
-Swagger URL, OpenAPI URL, root certificate URL, `ssh admin@<appliance-ip>` command, and—when development key
+SiteA, WAN/SiteB, and trunk-like lifecycle networks. `-TrustRootCa` downloads the deployed root CA, requires its SHA-256
+fingerprint to match the checked-in `development-trust/atlaso-development-root-ca.pem`, and adds that exact certificate
+to the current-user Trusted Root store only when it is not already trusted. It never deletes unrelated roots based on
+their subject. Normal VMware test VMs share this development-only root, but each first boot generates a unique
+`appliance:https` key, serial, certificate, and FQDN/IP SAN set. Lifecycle VMs, Hyper-V VMs, reusable image output, and
+exported OVF/OVA appliances continue to generate their own roots and never receive this development signer.
+
+Real normal-test-VM creation requires the exact `Atlaso` 1Password Environment ID. The wrapper prefers an explicit
+`-OnePasswordEnvironmentId` override and otherwise reads `.atlaso-local/onepassword-environment-id`, which Git ignores.
+It verifies the ID against the repository's non-secret SHA-256 pin before invoking `op`. That Environment must contain
+one concealed `ATLASO_DEVELOPMENT_ROOT_CA_PRIVATE_KEY` matching the checked-in certificate, and the Environments-enabled
+beta CLI under `C:\Program Files\1Password CLI` must support `op run --environment`. The wrapper validates that
+capability and cryptographically verifies the retrieved key against the checked-in certificate before network
+preparation, redeploy cleanup, or cloning. A bounded child removes the inherited variable
+immediately and stages the signer only through the normal-wrapper guest-info field. `-TimeoutSeconds` bounds each
+`op`/secret-child
+process tree; a timeout enters signer scrub and VM rollback only after whole-tree termination is proven. Boot-bound
+marker phases also cover VM start and artifact removal. If termination cannot be proven, the wrapper leaves the VM and
+VMX untouched, or keeps reused disks quarantined during removal, until a Windows host restart proves the child tree is
+gone. First boot writes it mode
+`0600`, proves guest-info scrub, encrypts it with that VM's unique `ATLASO_SECRETS_KEY`, and deletes the staging file.
+Every post-staging VMware operation has its own process-tree deadline. Before staging, the wrapper records a non-secret
+per-user cleanup marker through a Windows write-through atomic rename, so the marker reaches disk before the VMX signer
+assignment. An interrupted rollback blocks later normal-VM creation until the exact marked VM is stopped, its VMX signer
+value is scrubbed, its artifacts are removed, and preserved data disks are restored. This
+recovery runs before 1Password preflight and resumes from a durable stopped/scrubbed phase if VM removal completed
+before data-disk restoration. It never restores quarantined disks while the removal child might still delete them. The
+rollback preflight rejects configured data disks that repeat the same descriptor, hard-linked alias, or shared extent
+by filesystem identity, before persisting a plan that could move one file twice. First
+boot also durably scrubs plaintext staging when encrypted import fails. `-NoStart` is rejected because a powered-off VM
+would retain
+the signer before consumption. The wrapper never prints the signer or places it in arguments, logs, markers, lifecycle
+artifacts, or exports. Successful import or rollback write-through transitions the marker to a non-actionable tombstone
+before deletion; a tombstone that reappears after a crash is deleted without touching its VM.
+
+Waiting is enabled by default and verifies the shared root before printing the management summary. Mandatory
+unique-address readiness still runs when `-WaitForIp:$false` opts out of root verification. The wrapper waits up to five
+minutes
+for the first-boot CA endpoint, retrying transient connection and service-readiness failures. Pass
+`-TimeoutSeconds <seconds>` to adjust the secret-child, IP-discovery, and CA-readiness deadlines. Partial downloads are
+removed best-effort between retries through .NET file APIs, including when the current user's temporary directory
+contains a dotted profile name or a valid DOS 8.3 short-path representation. Cleanup cannot replace the original
+readiness error or stop the retry loop. After unique-address readiness succeeds, the wrapper prints a connection summary
+with the verified VMX, management MAC, hostname, HTTPS console URL, Swagger URL, OpenAPI URL, root certificate URL,
+`ssh admin@<appliance-ip>` command, and—when development key
 provisioning is enabled—the host-derived Ed25519 public key plus SHA-256 fingerprint.
 
 Both this wrapper and the Workstation lifecycle runner inject a complete `guestinfo.ovfEnv` document into a raw cloned
 VMX before power-on. The default document selects IPv4 DHCP, leaves resolver overrides blank, keeps IPv6 and root SSH
 disabled, and supplies the required appliance identity and first-boot credentials. The normal test wrapper alone adds
-the internal development administrator public-key property; the lifecycle runner omits it. When that property is
-present, the customizer publishes the VM's public Ed25519 SSH host key through the separate
+the internal development administrator public-key and public development-root properties; the lifecycle runner omits
+both. The signing key uses a separate test-wrapper-only guest-info value and is not an OVF property. When the
+administrator property is present, the customizer publishes the VM's public Ed25519 SSH host key through the separate
 `guestinfo.atlaso.test_vm_ssh_host_ed25519_public_key` value after wire-format validation. This gives raw Workstation
 clones the same fail-closed initialization contract as an OVA deployment instead of leaving the customizer waiting for
 properties
@@ -460,6 +555,14 @@ override the normal test-VM values; the lifecycle wrapper uses its existing admi
 written only to the guestinfo-backed VMX setting until successful first-boot consumption clears it; they are never
 printed in plan, result, or connection-summary output. Raw-clone credential overrides must be at least 12 characters
 and cannot contain leading, trailing, XML control, or non-XML characters that would change during OVF attribute parsing.
+
+### Development root CA rotation
+
+Treat compromise of any normal VMware test VM as compromise of the shared development signer. Rotate it by generating
+one new 4096-bit RSA/SHA-256 self-signed `Atlaso Development Root CA`, replacing the checked-in public PEM and the
+matching concealed `ATLASO_DEVELOPMENT_ROOT_CA_PRIVATE_KEY` in the exact `Atlaso` 1Password Environment as one
+coordinated change, then redeploy every normal test VM. Remove the retired certificate from Windows trust explicitly
+after verifying no retained test VM depends on it. Never reuse this root outside local normal-VM testing.
 
 The VM's first virtual terminal runs the Atlaso recovery console; tty2 and later terminals retain Photon login prompts.
 Its normal 80x30 layout includes boot and runtime state for the appliance services, including Firewall desired state. F3
