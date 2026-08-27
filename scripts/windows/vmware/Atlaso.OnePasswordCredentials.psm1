@@ -266,9 +266,6 @@ Exact private temporary root created for the bounded credential bridge.
 function Remove-AtlasoOnePasswordCredentialBridge {
     param([Parameter(Mandatory = $true)][string]$BridgeRoot)
 
-    if (-not (Test-Path -LiteralPath $BridgeRoot)) {
-        return
-    }
     $resolvedBridgeRoot = [System.IO.Path]::GetFullPath($BridgeRoot).TrimEnd('\')
     $resolvedTempRoot = [System.IO.Path]::GetFullPath([System.IO.Path]::GetTempPath()).TrimEnd('\')
     $bridgeName = [System.IO.Path]::GetFileName($resolvedBridgeRoot)
@@ -281,14 +278,19 @@ function Remove-AtlasoOnePasswordCredentialBridge {
     ) {
         throw "Refusing to remove an unrecognized credential bridge root: $resolvedBridgeRoot"
     }
-    $bridgeItem = Get-Item -LiteralPath $resolvedBridgeRoot -Force
-    if (($bridgeItem.Attributes -band [System.IO.FileAttributes]::ReparsePoint) -ne 0) {
-        throw "Refusing to remove a reparse-point credential bridge root: $resolvedBridgeRoot"
+    if (Test-Path -LiteralPath $resolvedBridgeRoot) {
+        $bridgeItem = Get-Item -LiteralPath $resolvedBridgeRoot -Force
+        if (($bridgeItem.Attributes -band [System.IO.FileAttributes]::ReparsePoint) -ne 0) {
+            throw "Refusing to remove a reparse-point credential bridge root: $resolvedBridgeRoot"
+        }
+        [System.IO.Directory]::Delete($resolvedBridgeRoot, $true)
     }
-    [System.IO.Directory]::Delete($resolvedBridgeRoot, $true)
     if (Test-Path -LiteralPath $resolvedBridgeRoot) {
         throw "Credential bridge cleanup did not remove the exact task-created root: $resolvedBridgeRoot"
     }
+    # The checkout-local marker can reside on another volume, so first flush
+    # deletion metadata through the bridge root's own parent directory.
+    Sync-AtlasoDirectoryMetadata -DirectoryPath (Split-Path -Parent $resolvedBridgeRoot)
 }
 
 <#

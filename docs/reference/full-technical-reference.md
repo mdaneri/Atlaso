@@ -228,8 +228,9 @@ An unproven whole-tree termination retains that root and a non-secret checkout-l
 invocations fail closed; after Windows restarts, the changed boot identity proves the prior tree inactive and recovery
 removes the exact root followed by its marker before new credential or image work.
 The shared SDK bridge uses the same boot-bound ownership. Marker bytes and atomic publication are write-through durable
-before plaintext consumption; after root absence, durable `root-absent` and `retired` transitions precede marker
-deletion so crash recovery never mistakes a resurrected marker for active secret material.
+before plaintext consumption. After root deletion, the parent flushes directory metadata through the root parent's
+Windows handle on that same volume before durable `root-absent` and `retired` transitions precede marker deletion, so
+cross-volume crash recovery cannot mistake a resurrected marker or root for active secret material.
 
 The supported VMware Workstation wrapper treats the Photon build password as opaque data. It encodes the
 credential before inserting it into generated kickstart or Packer shell commands, then decode it directly to standard
@@ -245,10 +246,11 @@ sensitive artifact: the wrapper removes it and verifies its absence after Packer
 paths. ISO-only preparation is rejected because retaining the remastered ISO would retain a reusable build credential.
 Build runs pass Packer's `-force`
 flag by default so the fixed output directory can be rebuilt in one command. Use `-OutputDirectory <path>` to keep
-multiple artifacts or `-KeepExistingOutput` when you want Packer to fail instead of replacing an existing output
-directory. Use `-PackerOnError abort` to keep a failed builder VM for debugging, or `-PackerOnError ask` to choose the
-failure action interactively. During provisioning, the shared Photon path reads `[project].version` from the staged
-`pyproject.toml` with Python's TOML parser and validates the repository's strict `X.Y.Z` release format before creating
+multiple artifacts or `-KeepExistingOutput` when you want Packer to fail instead of replacing an output directory that
+already existed before the build. A new partial output created by the current invocation remains cleanup-owned after a
+proven outer timeout. Use `-PackerOnError abort` to keep a failed builder VM for debugging, or `-PackerOnError ask` to
+choose the failure action interactively. During provisioning, the shared Photon path reads `[project].version` from the
+staged `pyproject.toml` with Python's TOML parser and validates the repository's strict `X.Y.Z` release format before creating
 the bootstrap release directory. Missing, unreadable, malformed, or invalid version metadata fails the build with the
 specific version-policy error instead of an ambiguous shell match failure. The Photon Packer target stages
 `requirements-appliance.lock` with the application source so bootstrap dependency installation can retain

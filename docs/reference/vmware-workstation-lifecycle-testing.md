@@ -158,17 +158,19 @@ kickstart and Packer serialization. Every plaintext kickstart, remastered ISO, a
 the same exact task-owned temporary root. The parent creates the child suspended, assigns it to a Windows process job,
 and resumes it only after the job owns every future Packer or plugin descendant. Both ordinary child exit and deadline
 termination require job accounting to prove zero active processes. A proven deadline also applies checked exact-output
-cleanup when `-PackerOnError cleanup` owns replacement output, then the parent removes the sensitive root and verifies
-its absence before returning.
+cleanup when `-PackerOnError cleanup` owns replacement output. `-KeepExistingOutput` preserves only a root that existed
+before the child started; a partial root created by this invocation remains cleanup-owned. The parent then removes the
+sensitive root and verifies its absence before returning.
 `-ImageBuildTimeoutSeconds` selects the deadline and defaults to six hours.
 If whole-tree termination itself cannot be proven, the wrapper retains the root and a non-secret
 `.atlaso-local/photon-image-build-cleanup.json` ownership marker and blocks further work. Restart Windows and rerun the
 wrapper; only a changed boot identity permits the recovery path to remove and verify the exact root and then its marker
 before new credential access or image mutation.
 The shared SDK credential bridge follows the same recovery ownership. Each non-secret marker is flushed with
-write-through semantics and atomically renamed before a plaintext child starts. Cleanup then durably records
-`root-absent` and `retired` phases before marker deletion, making a resurrected post-crash marker non-actionable while
-still forcing another exact-root absence check.
+write-through semantics and atomically renamed before a plaintext child starts. Cleanup flushes the sensitive root
+parent's directory metadata on the root's own volume before it durably records `root-absent` and `retired` phases and
+deletes the marker. A resurrected post-crash marker remains non-actionable while still forcing another exact-root
+absence check.
 
 The wrapper uses the shared Photon ISO remastering, kickstart rendering, checksum validation, and Packer var-file
 generation. `image/common/source` holds the original Photon ISO download cache. The canonical image installs
@@ -194,8 +196,9 @@ so the probe matches Packer's communicator endpoint. A
 heartbeat distinguishes output identity, provider inventory, exact running state, TCP/22 reachability, Workstation
 handoff, and SSH authentication; it never reads or reports VMX contents or connection credentials. With
 `-PackerOnError cleanup`, either the monitored startup timeout or the outer whole-image deadline uses the same checked
-exact-root cleanup as an ordinary replacement build. `-KeepExistingOutput` and other failure selections preserve the
-exact output when the wrapper cannot claim replacement ownership.
+exact-root cleanup as an ordinary replacement build. `-KeepExistingOutput` preserves a root that predated the build,
+but not a new partial root created by this invocation; other failure selections preserve output when the wrapper cannot
+claim replacement ownership.
 
 For Workstation, Photon installation is bound to VMware SCSI identity `0:0:0` through kickstart preinstall discovery,
 not `/dev/sda` enumeration. Provisioning then proves the complete root dependency chain reaches that disk and proves

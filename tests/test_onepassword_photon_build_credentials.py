@@ -90,11 +90,14 @@ def test_photon_wrapper_preflights_credentials_before_image_mutation() -> None:
     assert "Write-AtlasoDurableJsonFile" in wrapper
     assert "$Marker.Phase = 'root-absent'" in wrapper
     assert "$Marker.Phase = 'retired'" in wrapper
+    assert "Sync-AtlasoDirectoryMetadata -DirectoryPath (Split-Path -Parent $resolvedRoot)" in wrapper
     assert "AtlasoProcessTreeTerminationUnproven" in wrapper
     assert "AtlasoProcessTreeTerminationProven" in wrapper
     assert "if (-not $processTreeTerminationUnproven)" in wrapper
     assert "Restart Windows, then rerun this wrapper" in wrapper
     assert "The outer image deadline selected checked VMware artifact cleanup." in wrapper
+    assert "$outerCleanupOutputExistedBeforeChild = Test-Path" in wrapper
+    assert "(-not $KeepExistingOutput -or -not $outerCleanupOutputExistedBeforeChild)" in wrapper
     assert wrapper.index("[System.IO.Directory]::Delete($resolvedRoot, $true)") < wrapper.index(
         "Remove-Item -LiteralPath $MarkerPath"
     )
@@ -132,6 +135,7 @@ def test_photon_wrapper_preflights_credentials_before_image_mutation() -> None:
         "Remove-AtlasoOnePasswordCredentialBridge -BridgeRoot ([string]$Marker.RootPath)"
     )
     assert credential_root_cleanup in module
+    assert "Sync-AtlasoDirectoryMetadata -DirectoryPath (Split-Path -Parent $resolvedBridgeRoot)" in module
     assert "onepassword-credential-cleanup.json" in module
     assert "Invoke-AtlasoOnePasswordCredentialCleanupRecovery" in module
     assert "Write-AtlasoDurableJsonFile -Path $cleanupMarkerPath" in module
@@ -140,6 +144,8 @@ def test_photon_wrapper_preflights_credentials_before_image_mutation() -> None:
     assert "[System.IO.FileOptions]::WriteThrough" in runner
     assert "$stream.Flush($true)" in runner
     assert "MoveFileEx" in runner
+    assert "FlushFileBuffers" in runner
+    assert "FILE_FLAG_BACKUP_SEMANTICS" in runner
     assert "StartSuspended($FilePath, $ArgumentList)" in runner
     assert "ResumeThread(processInformation.Thread)" in runner
     assert "JOB_OBJECT_LIMIT_BREAKAWAY_OK" in runner

@@ -721,6 +721,90 @@ namespace Atlaso
 
 <#
 .SYNOPSIS
+Flush directory metadata through an exact Windows directory handle.
+
+.PARAMETER DirectoryPath
+Existing non-reparse-point directory whose metadata changes must reach its own volume.
+#>
+function Sync-AtlasoDirectoryMetadata {
+    param([Parameter(Mandatory = $true)][string]$DirectoryPath)
+
+    if (-not $IsWindows) {
+        throw 'Durable directory metadata synchronization requires Windows.'
+    }
+    $resolvedDirectoryPath = (Resolve-Path -LiteralPath $DirectoryPath).Path
+    $directoryItem = Get-Item -LiteralPath $resolvedDirectoryPath -Force -ErrorAction Stop
+    if (-not $directoryItem.PSIsContainer -or
+        ($directoryItem.Attributes -band [System.IO.FileAttributes]::ReparsePoint)) {
+        throw 'Durable directory metadata synchronization requires a non-reparse-point directory.'
+    }
+    if (-not ('Atlaso.WorkstationDurableDirectory' -as [type])) {
+        Add-Type -TypeDefinition @'
+using System;
+using System.Runtime.InteropServices;
+using Microsoft.Win32.SafeHandles;
+
+namespace Atlaso
+{
+    public static class WorkstationDurableDirectory
+    {
+        [DllImport("kernel32.dll", CharSet = CharSet.Unicode, SetLastError = true)]
+        public static extern SafeFileHandle CreateFileW(
+            string path,
+            uint desiredAccess,
+            uint shareMode,
+            IntPtr securityAttributes,
+            uint creationDisposition,
+            uint flagsAndAttributes,
+            IntPtr templateFile
+        );
+
+        [DllImport("kernel32.dll", SetLastError = true)]
+        [return: MarshalAs(UnmanagedType.Bool)]
+        public static extern bool FlushFileBuffers(SafeFileHandle handle);
+    }
+}
+'@
+    }
+    # FILE_FLAG_BACKUP_SEMANTICS permits an ordinary directory handle, while
+    # WRITE_THROUGH and FlushFileBuffers commit its metadata on this volume.
+    [uint32]$directoryFlags = 0x02000000
+    $directoryFlags = $directoryFlags -bor [uint32]::Parse(
+        '80000000',
+        [System.Globalization.NumberStyles]::HexNumber
+    )
+    $directoryHandle = [Atlaso.WorkstationDurableDirectory]::CreateFileW(
+        $resolvedDirectoryPath,
+        [uint32]0x40000000,
+        [uint32]0x00000007,
+        [IntPtr]::Zero,
+        [uint32]0x00000003,
+        $directoryFlags,
+        [IntPtr]::Zero
+    )
+    try {
+        if ($directoryHandle.IsInvalid) {
+            $errorCode = [System.Runtime.InteropServices.Marshal]::GetLastWin32Error()
+            throw [System.ComponentModel.Win32Exception]::new(
+                $errorCode,
+                'Opening the directory for durable metadata synchronization failed.'
+            )
+        }
+        if (-not [Atlaso.WorkstationDurableDirectory]::FlushFileBuffers($directoryHandle)) {
+            $errorCode = [System.Runtime.InteropServices.Marshal]::GetLastWin32Error()
+            throw [System.ComponentModel.Win32Exception]::new(
+                $errorCode,
+                'Durable directory metadata synchronization failed.'
+            )
+        }
+    }
+    finally {
+        $directoryHandle.Dispose()
+    }
+}
+
+<#
+.SYNOPSIS
 Durably publish one non-secret JSON ownership marker.
 
 .PARAMETER Path

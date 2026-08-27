@@ -216,6 +216,9 @@ function Complete-AtlasoPhotonBuildCleanup {
     if (Test-Path -LiteralPath $resolvedRoot) {
         throw 'Retained Photon credential artifact cleanup did not complete.'
     }
+    # Flush the parent on the sensitive root's own volume before a marker on a
+    # different volume is allowed to claim that the deletion is durable.
+    Sync-AtlasoDirectoryMetadata -DirectoryPath (Split-Path -Parent $resolvedRoot)
     $Marker.Phase = 'root-absent'
     Write-AtlasoDurableJsonFile -Path $MarkerPath -Payload $Marker -Replace
     $Marker.Phase = 'retired'
@@ -383,6 +386,16 @@ else {
     $cleanupMarkerPayload = $null
     $childCredentialBundlePath = Join-Path $credentialRoot 'credentials.json'
     $childSensitiveBuildDirectory = Join-Path $credentialRoot 'sensitive-build'
+    $outerCleanupPackerDirectory = if ([string]::IsNullOrWhiteSpace($PackerDirectory)) {
+        Join-Path $PSScriptRoot '..\..\..\image\vmware-workstation'
+    }
+    else {
+        $PackerDirectory
+    }
+    $outerCleanupOutputDirectory = Resolve-WorkstationOutputDirectory `
+        -PackerDirectory $outerCleanupPackerDirectory `
+        -OutputDirectory $OutputDirectory
+    $outerCleanupOutputExistedBeforeChild = Test-Path -LiteralPath $outerCleanupOutputDirectory
     $preparedIsoLeaf = if ($PSBoundParameters.ContainsKey('PreparedIsoPath') -and
         -not [string]::IsNullOrWhiteSpace($PreparedIsoPath)) {
         [System.IO.Path]::GetFileName($PreparedIsoPath)
@@ -471,23 +484,15 @@ else {
                 throw 'The isolated VMware Photon image build could not prove whole-tree termination. Restart Windows, then rerun this wrapper to complete sensitive cleanup.'
             }
             if ($_.Exception.Data['AtlasoProcessTreeTerminationProven'] -and
-                $PackerOnError -eq 'cleanup' -and -not $KeepExistingOutput) {
-                $cleanupPackerDirectory = if ([string]::IsNullOrWhiteSpace($PackerDirectory)) {
-                    Join-Path $PSScriptRoot '..\..\..\image\vmware-workstation'
-                }
-                else {
-                    $PackerDirectory
-                }
-                $cleanupOutputDirectory = Resolve-WorkstationOutputDirectory `
-                    -PackerDirectory $cleanupPackerDirectory `
-                    -OutputDirectory $OutputDirectory
-                if (Test-Path -LiteralPath $cleanupOutputDirectory) {
+                $PackerOnError -eq 'cleanup' -and
+                (-not $KeepExistingOutput -or -not $outerCleanupOutputExistedBeforeChild)) {
+                if (Test-Path -LiteralPath $outerCleanupOutputDirectory) {
                     $cleanupVmrunPath = Resolve-WorkstationVmrunPath -Path $VmrunPath
                     Write-Host 'The outer image deadline selected checked VMware artifact cleanup.'
                     Remove-AtlasoWorkstationArtifactRoot `
                         -VmrunPath $cleanupVmrunPath `
-                        -ExpectedRemovalRoot $cleanupOutputDirectory `
-                        -RemovalRoot $cleanupOutputDirectory `
+                        -ExpectedRemovalRoot $outerCleanupOutputDirectory `
+                        -RemovalRoot $outerCleanupOutputDirectory `
                         -Confirm:$false
                 }
             }

@@ -77,8 +77,10 @@ interval from monitored Packer process start to SSH provisioning, including fail
 exists; `-PackerHeartbeatSeconds 30` controls the heartbeat interval. When `-SshHost` is explicit, TCP/22 diagnostics
 probe that Packer communicator endpoint instead of the temporary static builder address. A timeout terminates only the
 Packer process tree and
-routes `-PackerOnError cleanup` through the checked exact-root cleanup. Other failure modes preserve the builder
-artifacts for diagnosis. Raw Packer debug-log environment variables are removed from the monitored child because those
+routes `-PackerOnError cleanup` through the checked exact-root cleanup. `-KeepExistingOutput` protects only an output
+root that existed before this invocation; a newly created partial root is still removed after a proven outer timeout.
+Other failure modes preserve the builder artifacts for diagnosis. Raw Packer debug-log environment variables are
+removed from the monitored child because those
 logs bypass output redaction. Console lines that can contain generated connection credentials are redacted before they
 are displayed. Workstation may atomically rewrite the VMX during power-on; the monitor accepts a new file identity only
 when exact provider inventory proves that the expected VMX path is the running builder.
@@ -153,8 +155,10 @@ If Windows cannot prove whole-tree termination, the wrapper retains the root plu
 marker and fails closed. Restart Windows and rerun the wrapper; the changed boot identity proves the prior tree is
 inactive, allowing exact-root cleanup and marker removal before any new credential access or image mutation.
 The shared SDK bridge uses the same boot-bound recovery rule. Both marker types are write-through flushed and
-atomically renamed before a plaintext child starts; cleanup durably records root absence and a retired tombstone before
-removing the marker, so a crash cannot erase recovery ownership while credential-bearing files remain.
+atomically renamed before a plaintext child starts. After root removal, the wrapper flushes deletion metadata through
+the root parent's Windows directory handle on that same volume before it durably records root absence and a retired
+tombstone in the marker. A crash therefore cannot preserve marker retirement while resurrecting credential-bearing
+files from a different volume.
 
 The wrapper does not build or embed Inventory Linux. New templates leave it uninstalled so an administrator can use
 **Download latest** to retrieve the signed independent release when needed. Contributors building Inventory Linux
