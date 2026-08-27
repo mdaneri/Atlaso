@@ -700,6 +700,56 @@ def test_unexpected_parent_failure_terminalizes_incomplete_update_children(clien
         assert all(step.finished_at is not None for step in persisted[1:])
 
 
+def test_pending_appliance_update_cancellation_is_an_atomic_state_transition(client):
+    """Cancel only the exact pending task and reject an already claimed task.
+
+    Args:
+        client: Test client whose fixture initializes the isolated database.
+    """
+    from atlaso.app.database import SessionLocal
+    from atlaso.app.models import Job, JobStatus
+    from atlaso.app.services.appliance_update import cancel_pending_appliance_update
+
+    with SessionLocal() as db:
+        db.add_all(
+            [
+                Job(
+                    id="job_cancel_pending",
+                    type="appliance-update",
+                    status=JobStatus.PENDING.value,
+                    created_by="admin",
+                ),
+                Job(
+                    id="job_cancel_claimed",
+                    type="appliance-update",
+                    status=JobStatus.RUNNING.value,
+                    created_by="admin",
+                ),
+            ]
+        )
+        db.commit()
+        finished_at = datetime(2026, 8, 27, 5, 0, tzinfo=timezone.utc)
+
+        assert cancel_pending_appliance_update(
+            db,
+            "job_cancel_pending",
+            finished_at=finished_at,
+            error="Task cancelled by operator.",
+            result='{"state":"cancelled"}',
+        ) is True
+        assert cancel_pending_appliance_update(
+            db,
+            "job_cancel_claimed",
+            finished_at=finished_at,
+            error="Task cancelled by operator.",
+            result='{"state":"cancelled"}',
+        ) is False
+        db.commit()
+
+        assert db.get(Job, "job_cancel_pending").status == JobStatus.CANCELLED.value
+        assert db.get(Job, "job_cancel_claimed").status == JobStatus.RUNNING.value
+
+
 def seed_available_confirmations(streams: list[str]) -> None:
     """Persist fresh available confirmations for manual-install tests.
 

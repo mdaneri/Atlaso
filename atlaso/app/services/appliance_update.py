@@ -15,6 +15,7 @@ from pathlib import Path
 from typing import Any
 from urllib.parse import urlparse
 
+from sqlalchemy import update
 from sqlalchemy.orm import Session
 
 from atlaso import __version__
@@ -626,6 +627,44 @@ def ensure_appliance_update_job_steps(
             step.label = UPDATE_STREAM_LABELS[stream]
         steps.append(step)
     return steps
+
+
+def cancel_pending_appliance_update(
+    db: Session,
+    job_id: str,
+    *,
+    finished_at: datetime,
+    error: str,
+    result: str,
+) -> bool:
+    """Cancel an Appliance Update only while its durable claim is pending.
+
+    Args:
+        db: Active database session.
+        job_id: Exact queued Appliance Update identifier.
+        finished_at: Cancellation completion time.
+        error: Durable cancellation message.
+        result: Redacted durable task result.
+
+    Returns:
+        Whether the pending-only transition acquired the task.
+    """
+    cancelled = db.execute(
+        update(Job)
+        .where(
+            Job.id == job_id,
+            Job.type == "appliance-update",
+            Job.status == JobStatus.PENDING.value,
+        )
+        .values(
+            status=JobStatus.CANCELLED.value,
+            finished_at=finished_at,
+            error=error,
+            result=result,
+            progress_percent=100,
+        )
+    )
+    return cancelled.rowcount == 1
 
 
 DEFAULT_UPDATE_SETTINGS = {
