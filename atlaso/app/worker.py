@@ -65,6 +65,11 @@ from atlaso.app.services.vaults import (
 LOGGER = logging.getLogger("atlaso.worker")
 POLL_SECONDS = 5
 TERMINAL_CHILD_HANDOFF_MINIMUM_VERSION = (0, 9, 163)
+# The receipted helper may spend 30 minutes starting atlaso-worker, another
+# 90 seconds stopping the old services, and 60 seconds proving the new worker
+# identity after the three-second timer. Keep retry admission beyond that full
+# systemd/helper window so recovery cannot overlap the original restart.
+APPLIANCE_UPDATE_RESTART_COMPLETION_GRACE_SECONDS = 33 * 60
 AUTOMATION_STAGE_DIR = Path("/var/lib/atlaso/automation/scripts")
 AUTOMATION_VAULT_STAGE_DIR = Path("/run/atlaso-automation-vaults")
 WORKER_STARTUP_STATUS_PATH = Path("/var/lib/atlaso/worker-startup.json")
@@ -1027,7 +1032,9 @@ def _retry_appliance_update_restart(
             )
         except ValueError:
             return
-        if (now - dispatch_started_at).total_seconds() < 15:
+        if (
+            now - dispatch_started_at
+        ).total_seconds() < APPLIANCE_UPDATE_RESTART_COMPLETION_GRACE_SECONDS:
             return
         attempts = int(result.get("restart_recovery_attempts") or 0)
         if attempts >= 3:

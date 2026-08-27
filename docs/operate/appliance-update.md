@@ -107,7 +107,10 @@ the ordinary services are proven active and no release maintenance or restart ga
 schedules a worker restart leaves the status hold active until the new worker publishes an exact job-bound completion
 receipt for its current PID, boot ID, process start ticks, and startup timestamp after the terminal parent. A missing
 receipt is retried through at most three persisted, rate-limited delayed-restart dispatches; incomplete evidence then
-continues to block restoration for operator recovery. Restoration first persists `pending`, removes the runtime marker,
+continues to block restoration for operator recovery. Recovery does not retry until the original timer, the worker's
+30-minute startup allowance, service-stop allowance, and the helper's worker-identity proof window have all elapsed;
+ordinary UIs remain held throughout that bounded completion window. Restoration first persists `pending`, removes the
+runtime marker,
 validates and reloads nginx, proves
 ordinary browser responses contain no 500/502/503/504 gateway or maintenance status, and only then persists `restored`.
 If reboot or process interruption occurs at any boundary, nginx pre-start recreates the hold and the worker retries the

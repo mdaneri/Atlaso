@@ -4,7 +4,7 @@ import importlib.machinery
 import importlib.util
 import json
 import logging
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 import pytest
@@ -1708,8 +1708,8 @@ def test_status_recovery_retries_a_missing_restart_receipt(
     assert result["restart_recovery_attempts"] == 1
 
 
-def test_restart_recovery_grace_uses_the_dispatch_timestamp(client, monkeypatch):
-    """Do not overlap the initial delayed restart on a long-lived worker.
+def test_restart_recovery_grace_covers_the_full_helper_window(client, monkeypatch):
+    """Do not overlap the initial delayed restart during its full helper window.
 
     Args:
         client: HTTP test client providing isolated application state.
@@ -1721,7 +1721,7 @@ def test_restart_recovery_grace_uses_the_dispatch_timestamp(client, monkeypatch)
 
     client.get("/login")
     job_id = "job_012345abcded"
-    dispatched_at = datetime.now(timezone.utc).isoformat()
+    dispatched_at = (datetime.now(timezone.utc) - timedelta(minutes=32)).isoformat()
     with SessionLocal() as db:
         db.add(
             Job(
@@ -1759,9 +1759,19 @@ def test_restart_recovery_grace_uses_the_dispatch_timestamp(client, monkeypatch)
     worker._retry_appliance_update_restart(job_id)
 
     assert calls == []
+    assert worker.APPLIANCE_UPDATE_RESTART_COMPLETION_GRACE_SECONDS >= 33 * 60
     with SessionLocal() as db:
         result = json.loads(db.get(Job, job_id).result)
-    assert "restart_recovery_attempts" not in result
+        assert "restart_recovery_attempts" not in result
+        result["restart_dispatch_started_at"] = (
+            datetime.now(timezone.utc) - timedelta(minutes=34)
+        ).isoformat()
+        db.get(Job, job_id).result = json.dumps(result)
+        db.commit()
+
+    worker._retry_appliance_update_restart(job_id)
+
+    assert calls == ["/var/lib/atlaso/apply/appliance-update/update.json"]
 
 
 def test_status_recovery_retries_pending_restoration_without_runtime_marker(
