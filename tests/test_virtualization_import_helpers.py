@@ -62,6 +62,14 @@ def test_kvm_imports_the_unchanged_ova_and_normalizes_exact_contract() -> None:
     assert 'atlaso-kvm-domain-${name}.lock' in script
     assert 'atlaso-kvm-pool-${pool}-${name}.lock' in script
     assert script.index('flock -n 8') < script.index('flock -n 9')
+    domain_inventory = script.index('domain_names=$(virsh list --all --name')
+    domain_absence = script.index('grep -Fxq -- "$name"', domain_inventory)
+    volume_inventory = script.index('volumes=$(virsh vol-list "$pool" --name', domain_absence)
+    volume_absence = script.index('grep -Eq "^${name}-"', volume_inventory)
+    ownership = script.index('created=1')
+    assert domain_inventory < domain_absence < volume_inventory < volume_absence < ownership
+    assert "could not prove domain name $name is available" in script
+    assert "could not prove the $pool/$name storage namespace is available" in script
     assert 'KVM import rollback did not reach its cleanup postcondition' in script
     assert 'Rollback retained a volume in the locked $pool/$name namespace' in script
     cleanup = script.split("cleanup() {", 1)[1].split("trap cleanup", 1)[0]

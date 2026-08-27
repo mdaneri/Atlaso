@@ -53,15 +53,24 @@ done
   exit 2
 }
 ova_path=$(realpath -- "$ova_argument")
-virsh dominfo "$name" >/dev/null 2>&1 && {
-  echo "A libvirt domain named $name already exists." >&2
+if domain_names=$(virsh list --all --name 2>/dev/null); then
+  if printf '%s\n' "$domain_names" | grep -Fxq -- "$name"; then
+    echo "A libvirt domain named $name already exists." >&2
+    exit 2
+  fi
+else
+  echo "Libvirt inventory could not prove domain name $name is available." >&2
   exit 2
-}
+fi
 virsh pool-info "$pool" | grep -Eq '^State:[[:space:]]+running$' || {
   echo "The libvirt storage pool $pool is not active." >&2
   exit 2
 }
-if virsh vol-list "$pool" --name | grep -Eq "^${name}-"; then
+if ! volumes=$(virsh vol-list "$pool" --name 2>/dev/null); then
+  echo "Libvirt inventory could not prove the $pool/$name storage namespace is available." >&2
+  exit 2
+fi
+if printf '%s\n' "$volumes" | grep -Eq "^${name}-"; then
   echo "The storage pool already contains a volume reserved for $name." >&2
   exit 2
 fi
