@@ -310,6 +310,10 @@ malformed ID fails with an actionable preflight error before network preparation
 mutation. The wrapper verifies its SHA-256 identity against the repository pin without printing the ID. Install the
 Environments-enabled beta 1Password CLI under `C:\Program Files\1Password CLI`; a stable CLI without
 `op run --environment` fails before Environment access. A wrong Environment ID or signer fails before new VM mutation.
+The cleanup marker uses a non-secret identity stored in the VMX, not the VMX file ID alone, because Workstation may
+replace the VMX during power-on. After first boot proves encrypted import and VMware reports the exact empty runtime
+sentinel, the wrapper stops the exact VM, removes and verifies the powered-off signing-key assignment, restarts it, and
+requires three empty runtime readbacks before retiring the marker.
 The wrapper injects the same complete DHCP-first OVF environment before power-on. Use `-FirstBootFqdn` for the test
 identity. `-AdminPassword` and `-RootPassword` accept only `SecureString` objects; when omitted, the wrapper prompts
 securely after pending signer recovery and Environment validation, but before network preparation or new VM mutation.
@@ -355,6 +359,8 @@ cleanup race or path alias cannot stop the readiness retry loop. Use `-TimeoutSe
 and CA deadlines; rollback mutates the VM only after staging and start child-tree termination is proven. It also keeps
 reused disks quarantined while an artifact-removal child may survive. An unproven termination preserves the durable
 marker until a Windows host restart provides that proof.
+If this final stop/scrub/restart sequence is interrupted, rerun the same wrapper command. The pending marker resumes
+before 1Password preflight or any new network, disk, or VM mutation; do not edit the marker or VMX manually.
 
 ## Fidelity Boundary
 

@@ -937,8 +937,11 @@ Terminal order:
   a Windows host restart proves the child tree is gone. Validate the
   key before host mutation, use only the separately scrubbed test-wrapper guest-info/staging path, encrypt it with each
   VM's unique secrets key, scrub plaintext staging when import fails, and issue a unique HTTPS leaf. Commit a durable
-  non-secret cleanup marker through a Windows write-through atomic rename before staging; later normal-wrapper
-  invocations must retry its exact identity-bound stop, VMX scrub, artifact removal, and data-disk restoration before
+  non-secret cleanup marker through a Windows write-through atomic rename before staging and bind it to a non-secret
+  VMX identity that survives VMware's legitimate power-on file replacement. After encrypted import proof, stop the
+  exact VM, prove the powered-off VMX signer assignment absent, restart it, and prove runtime guest-info remains empty
+  before retiring the marker. Later normal-wrapper invocations must retry its exact identity-bound stop, VMX scrub,
+  artifact removal, and data-disk restoration before
   1Password preflight or any new mutation. Persist the
   stopped/scrubbed phase before artifact removal so a retry can safely resume restoration from an absent artifact root.
   Before persisting rollback state, reject configured data disks that repeat the same descriptor, hard-linked alias, or

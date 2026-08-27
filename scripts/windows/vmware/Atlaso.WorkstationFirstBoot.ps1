@@ -643,6 +643,86 @@ function Assert-AtlasoDevelopmentRootCaMaterial {
 
 <#
 .SYNOPSIS
+Atomically replace one VMX with write-through durability.
+
+.PARAMETER VmxPath
+Exact powered-off VMX to replace.
+
+.PARAMETER Lines
+Complete validated VMX lines to publish.
+#>
+function Write-AtlasoWorkstationDurableVmxLines {
+    param(
+        [Parameter(Mandatory = $true)][string]$VmxPath,
+        [Parameter(Mandatory = $true)][AllowEmptyCollection()][string[]]$Lines
+    )
+
+    $resolvedVmxPath = (Resolve-Path -LiteralPath $VmxPath).Path
+    $temporaryPath = "$resolvedVmxPath.$([guid]::NewGuid().ToString('N')).tmp"
+    if (-not ('Atlaso.WorkstationDurableFile' -as [type])) {
+        Add-Type -TypeDefinition @'
+using System;
+using System.Runtime.InteropServices;
+
+namespace Atlaso
+{
+    public static class WorkstationDurableFile
+    {
+        [DllImport("kernel32.dll", CharSet = CharSet.Unicode, SetLastError = true)]
+        [return: MarshalAs(UnmanagedType.Bool)]
+        public static extern bool MoveFileEx(string existingPath, string newPath, uint flags);
+    }
+}
+'@
+    }
+    try {
+        $stream = [System.IO.FileStream]::new(
+            $temporaryPath,
+            [System.IO.FileMode]::CreateNew,
+            [System.IO.FileAccess]::Write,
+            [System.IO.FileShare]::None,
+            4096,
+            [System.IO.FileOptions]::WriteThrough
+        )
+        try {
+            $writer = [System.IO.StreamWriter]::new(
+                $stream,
+                [System.Text.UTF8Encoding]::new($false),
+                4096,
+                $true
+            )
+            try {
+                foreach ($line in $Lines) {
+                    $writer.WriteLine($line)
+                }
+                $writer.Flush()
+                $stream.Flush($true)
+            }
+            finally {
+                $writer.Dispose()
+            }
+        }
+        finally {
+            $stream.Dispose()
+        }
+        # MOVEFILE_REPLACE_EXISTING plus MOVEFILE_WRITE_THROUGH binds the
+        # durable phase transition to bytes already published at the VMX path.
+        if (-not [Atlaso.WorkstationDurableFile]::MoveFileEx(
+                $temporaryPath,
+                $resolvedVmxPath,
+                0x1 -bor 0x8
+            )) {
+            $errorCode = [Runtime.InteropServices.Marshal]::GetLastWin32Error()
+            throw "The powered-off VMX durable replacement failed with Windows error $errorCode."
+        }
+    }
+    finally {
+        Remove-Item -LiteralPath $temporaryPath -Force -ErrorAction SilentlyContinue
+    }
+}
+
+<#
+.SYNOPSIS
 Stage the development root private key in one powered-off normal test VM.
 
 .PARAMETER VmxPath
@@ -686,7 +766,7 @@ function Set-AtlasoWorkstationDevelopmentRootCaPrivateKey {
     if (-not $updated) {
         $content += $line
     }
-    [System.IO.File]::WriteAllLines($VmxPath, [string[]]$content, [System.Text.UTF8Encoding]::new($false))
+    Write-AtlasoWorkstationDurableVmxLines -VmxPath $VmxPath -Lines ([string[]]$content)
 }
 
 <#
@@ -703,7 +783,7 @@ function Clear-AtlasoWorkstationDevelopmentRootCaPrivateKey {
 
     $pattern = '^\s*guestinfo\.atlaso\.test_vm_development_root_ca_private_key\s*='
     $content = @(Get-Content -LiteralPath $VmxPath | Where-Object { $_ -notmatch $pattern })
-    [System.IO.File]::WriteAllLines($VmxPath, [string[]]$content, [System.Text.UTF8Encoding]::new($false))
+    Write-AtlasoWorkstationDurableVmxLines -VmxPath $VmxPath -Lines ([string[]]$content)
     if (Select-String -LiteralPath $VmxPath -Pattern $pattern -Quiet) {
         throw 'The powered-off normal test VM still contains the development signing-key assignment.'
     }
@@ -869,7 +949,11 @@ function Wait-AtlasoWorkstationDevelopmentRootCaPrivateKeyScrub {
             -ArgumentList @('-T', 'ws', 'readVariable', $VmxPath, 'runtimeConfig', $guestInfoName) `
             -TimeoutSeconds $remainingSeconds `
             -Action 'Read the development signing-key guest-info value'
-        if ([string]::IsNullOrWhiteSpace($value)) {
+        $normalizedValue = if ($null -eq $value) { '' } else { $value.Trim() }
+        # vmrun serializes an empty runtimeConfig value as the literal VMX
+        # empty-string sentinel. Treat only that exact sentinel as empty; other
+        # quoted or unquoted text remains a non-empty secret-bearing value.
+        if ([string]::IsNullOrWhiteSpace($normalizedValue) -or $normalizedValue -ceq '""') {
             $emptyReads += 1
             if ($emptyReads -ge 3) {
                 return

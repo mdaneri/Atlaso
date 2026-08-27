@@ -98,7 +98,7 @@ function Invoke-AtlasoImportProofVmrun {
 
 <#
 .SYNOPSIS
-Simulate VMware runtime signer clearing and empty readback.
+Simulate VMware runtime signer clearing and its quoted empty readback.
 
 .PARAMETER Arguments
 vmrun-compatible arguments captured for ordering assertions.
@@ -111,7 +111,7 @@ function Invoke-AtlasoRuntimeSignerScrubVmrun {
     $script:RuntimeSignerScrubCalls.Add(($Arguments -join ' '))
     $global:LASTEXITCODE = 0
     if ($Arguments -contains 'readVariable') {
-        return ''
+        return '""'
     }
 }
 

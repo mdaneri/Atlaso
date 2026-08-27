@@ -1369,10 +1369,13 @@ certificate/key pair before mutation. It uses a bounded child and a separately s
 marker phases also cover VM start and artifact removal. An unproven termination preserves the VM and VMX, or keeps
 reused disks quarantined during removal, until a Windows host restart proves that child tree is gone. Every post-staging
 VMware operation is also bounded. A durable, non-secret per-user cleanup marker is published through a Windows
-write-through atomic rename before signer staging and makes the next
-validated wrapper invocation retry the exact interrupted rollback before any network or VM mutation; the marker is
-write-through transitioned to a non-actionable tombstone before deletion only after encrypted-import proof or successful
-stopped-VM artifact cleanup. A tombstone that reappears after a crash is retired without VM mutation. Recovery precedes
+write-through atomic rename before signer staging and is bound to a non-secret VMX identity that survives VMware's
+legitimate power-on file replacement. After encrypted-import proof, the wrapper stops the exact VM, removes and proves
+the powered-off VMX signer assignment absent, restarts the VM, and proves VMware's runtime value remains empty before
+retiring the marker. The next validated wrapper invocation resumes an interrupted finalization or exact rollback before
+any network or VM mutation; the marker is write-through transitioned to a non-actionable tombstone before deletion only
+after restarted-VM scrub proof or successful stopped-VM artifact cleanup. A tombstone that reappears after a crash is
+retired without VM mutation. Recovery precedes
 1Password
 preflight and records a stopped/scrubbed phase so restoration can resume after the artifact root has already been
 removed without restoring data while a removal child may survive. Rollback preflight rejects configured disks that
