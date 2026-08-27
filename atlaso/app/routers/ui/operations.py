@@ -834,6 +834,14 @@ def build_router(dependencies: OperationsUiDependencies) -> OperationsUiRouter:
                     status_code=status.HTTP_409_CONFLICT,
                     detail="A running Network Boot media deletion cannot be cancelled.",
                 )
+        if job.type == "appliance-update" and job.status == JobStatus.RUNNING.value:
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail=(
+                    "A running Appliance Update cannot be cancelled because host mutation "
+                    "and update-only status recovery may already be in progress."
+                ),
+            )
         if job.type == "vcf-depot-software-id":
             raise HTTPException(
                 status_code=status.HTTP_409_CONFLICT,

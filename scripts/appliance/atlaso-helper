@@ -13429,6 +13429,17 @@ def _schedule_committed_release_completion(job_id: str) -> dict:
 
 def _recover_interrupted_release_transaction() -> dict:
     """Rollback a stale provisional release transaction before the worker starts."""
+    status_guard = _guard_appliance_update_status_startup()
+    if status_guard.get("success") is not True:
+        return {
+            "status": "status_recovery_failed",
+            "success": False,
+            "allow_worker": False,
+            "error": str(
+                status_guard.get("error")
+                or "Update-only status recovery must complete before the worker starts."
+            ),
+        }
     try:
         parsed = json.loads(ATLASO_UPDATE_FINALIZER_PATH.read_text(encoding="utf-8"))
     except FileNotFoundError:

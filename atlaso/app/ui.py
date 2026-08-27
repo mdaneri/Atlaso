@@ -8176,6 +8176,8 @@ def _can_cancel_task(job: Job, identity: Identity | None = None) -> bool:
             return False
     if job.type == "appliance-apply" and _job_payload(job).get("cancel_requested"):
         return False
+    if job.type == "appliance-update" and job.status == JobStatus.RUNNING.value:
+        return False
     if job.type == "vcf-depot-software-id":
         return False
     if job.type == "vcf-depot-download" and job.status == JobStatus.RUNNING.value:

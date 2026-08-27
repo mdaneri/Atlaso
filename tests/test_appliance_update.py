@@ -1552,6 +1552,69 @@ def test_status_recovery_retries_pending_restoration_without_runtime_marker(
     assert published == [(job_id, True)]
 
 
+def test_status_recovery_terminalizes_a_legacy_cancelled_update_hierarchy(
+    client,
+    monkeypatch,
+    tmp_path,
+):
+    """Fail closed and restore only after a cancelled claimed hierarchy is terminal.
+
+    Args:
+        client: Test application HTTP client.
+        monkeypatch: Pytest fixture used to replace status restoration effects.
+        tmp_path: Temporary directory provided for the runtime marker.
+    """
+    from atlaso.app import worker
+    from atlaso.app.database import SessionLocal
+    from atlaso.app.models import Job, JobStatus, JobStep
+    from atlaso.app.services.appliance_update import ensure_appliance_update_job_steps
+
+    job_id = "job_abcdef123456"
+    marker = tmp_path / "appliance-update-status"
+    marker.write_text(job_id, encoding="utf-8")
+    with SessionLocal() as db:
+        job = Job(
+            id=job_id,
+            type="appliance-update",
+            status=JobStatus.CANCELLED.value,
+            created_by="admin",
+            progress_percent=100,
+            result='{"state":"cancelled"}',
+        )
+        db.add(job)
+        db.flush()
+        steps = ensure_appliance_update_job_steps(
+            db,
+            job=job,
+            selected_streams=["photon_os", "atlaso_release"],
+        )
+        steps[0].status = JobStatus.RUNNING.value
+        db.commit()
+    published = []
+    monkeypatch.setattr(worker, "APPLIANCE_UPDATE_STATUS_MARKER_PATH", marker)
+    monkeypatch.setattr(
+        worker,
+        "_publish_appliance_update_status",
+        lambda observed_job_id, *, finish=False: published.append(
+            (observed_job_id, finish)
+        )
+        or True,
+    )
+
+    assert worker._reconcile_appliance_update_status_surface() is True
+    assert published == [(job_id, True)]
+    with SessionLocal() as db:
+        job = db.get(Job, job_id)
+        persisted = db.execute(
+            select(JobStep).where(JobStep.job_id == job_id).order_by(JobStep.position)
+        ).scalars().all()
+    assert job.status == JobStatus.FAILED.value
+    assert [step.status for step in persisted] == [
+        JobStatus.FAILED.value,
+        JobStatus.SKIPPED.value,
+    ]
+
+
 def test_restart_scheduling_failure_logs_terminal_update_result(
     client,
     monkeypatch,

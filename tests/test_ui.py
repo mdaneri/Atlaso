@@ -907,6 +907,42 @@ def test_service_admin_task_cancellation_is_limited_to_vcf_helpers(client):
     assert allowed.json()["task"]["status"] == "cancelled"
 
 
+def test_running_appliance_update_rejects_operator_cancellation(client):
+    """Keep a claimed Appliance Update owned by worker recovery until terminal.
+
+    Args:
+        client: Test client providing an authenticated management session.
+    """
+    from atlaso.app.database import SessionLocal
+    from atlaso.app.models import Job, JobStatus
+
+    job_id = "job_update_cancel_guard"
+    with SessionLocal() as db:
+        db.add(
+            Job(
+                id=job_id,
+                type="appliance-update",
+                status=JobStatus.RUNNING.value,
+                created_by="admin",
+                progress_percent=30,
+            )
+        )
+        db.commit()
+
+    login(client)
+    page = client.get("/tasks")
+    csrf = page.text.split('data-csrf="', 1)[1].split('"', 1)[0]
+
+    status_response = client.get(f"/tasks/{job_id}/status")
+    cancel_response = client.post(f"/tasks/{job_id}/cancel", data={"csrf": csrf})
+
+    assert status_response.json()["task"]["can_cancel"] is False
+    assert cancel_response.status_code == 409
+    assert "running Appliance Update cannot be cancelled" in cancel_response.json()["detail"]
+    with SessionLocal() as db:
+        assert db.get(Job, job_id).status == JobStatus.RUNNING.value
+
+
 def test_pwa_manifest_service_worker_and_offline_shell(client):
     """Verify that pwa manifest service worker and offline shell.
 

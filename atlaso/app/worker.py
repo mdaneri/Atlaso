@@ -986,6 +986,14 @@ def _reconcile_appliance_update_status_surface() -> bool:
         if job is None or job.type != "appliance-update":
             LOGGER.error("Appliance Update status marker has no matching durable task")
             return False
+        if job.status == JobStatus.CANCELLED.value:
+            _fail_job(
+                db,
+                job,
+                RuntimeError(
+                    "A claimed Appliance Update was cancelled before its durable hierarchy completed."
+                ),
+            )
         terminal = job.status in {
             JobStatus.SUCCEEDED.value,
             JobStatus.FAILED.value,

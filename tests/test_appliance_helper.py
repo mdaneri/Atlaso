@@ -641,6 +641,58 @@ def test_release_status_completion_accepts_only_a_proven_pretransaction_failure(
         helper._verify_release_status_completion(snapshot, "job_0123456789ab")
 
 
+def test_worker_prestart_recovery_recreates_the_update_status_hold(
+    monkeypatch,
+    tmp_path,
+):
+    """Run the update-only startup guard before release recovery admits the worker.
+
+    Args:
+        monkeypatch: Pytest fixture used to isolate the pre-start guard.
+        tmp_path: Temporary directory provided for an absent release finalizer.
+    """
+    helper = load_helper_module()
+    calls = []
+    monkeypatch.setattr(helper, "ATLASO_UPDATE_FINALIZER_PATH", tmp_path / "missing.json")
+    monkeypatch.setattr(
+        helper,
+        "_guard_appliance_update_status_startup",
+        lambda: calls.append("status_guard")
+        or {"success": True, "status": "terminal_pending_restoration"},
+    )
+
+    result = helper._recover_interrupted_release_transaction()
+
+    assert calls == ["status_guard"]
+    assert result == {"status": "not_required", "success": True, "allow_worker": True}
+
+
+def test_worker_prestart_recovery_blocks_when_status_hold_recreation_fails(
+    monkeypatch,
+):
+    """Do not admit the worker when the update-only startup guard fails closed.
+
+    Args:
+        monkeypatch: Pytest fixture used to inject a status-guard failure.
+    """
+    helper = load_helper_module()
+    monkeypatch.setattr(
+        helper,
+        "_guard_appliance_update_status_startup",
+        lambda: {
+            "success": False,
+            "status": "recovery_failed",
+            "error": "bounded status recovery failed",
+        },
+    )
+
+    result = helper._recover_interrupted_release_transaction()
+
+    assert result["allow_worker"] is False
+    assert result["status"] == "status_recovery_failed"
+    assert result["error"] == "bounded status recovery failed"
+
+
 def test_release_status_completion_ignores_a_stale_finalizer_before_transaction(
     monkeypatch,
     tmp_path,
