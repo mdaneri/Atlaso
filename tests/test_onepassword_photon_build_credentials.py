@@ -46,6 +46,9 @@ def test_photon_wrapper_preflights_credentials_before_image_mutation() -> None:
     module = Path(
         "scripts/windows/vmware/Atlaso.OnePasswordCredentials.psm1"
     ).read_text(encoding="utf-8")
+    build_module = Path(
+        "scripts/windows/common/Atlaso.PhotonImage.psm1"
+    ).read_text(encoding="utf-8")
 
     assert "[SecureString]$SshPassword" in wrapper
     assert "[SecureString]$BootstrapAdminPassword" in wrapper
@@ -62,14 +65,25 @@ def test_photon_wrapper_preflights_credentials_before_image_mutation() -> None:
     assert "RootPasswordCiphertext  = ConvertFrom-SecureString" in wrapper
     assert "Invoke-AtlasoBoundedStreamingProcess `" in wrapper
     assert "$childArguments += '-BuilderStaticDnsJson'" in wrapper
-    assert "ConvertTo-Json -InputObject @($entry.Value) -Compress" in wrapper
+    assert "ConvertTo-Json -InputObject $transportedDns -Compress" in wrapper
     assert "$childArguments += '-BuilderStaticDnsBound'" in wrapper
+    assert "$transportedDns = if ($null -eq $entry.Value) { @() }" in wrapper
     assert "$BuilderStaticDns = @($transportedDns)" in wrapper
     assert "$transportedDns.Count -eq 0" not in wrapper
     assert (
         "$PSBoundParameters.ContainsKey('BuilderStaticDns') -or $BuilderStaticDnsBound"
         in wrapper
     )
+    assert (
+        "$childSensitiveBuildDirectory = Join-Path $credentialRoot 'sensitive-build'"
+        in wrapper
+    )
+    assert "'-SensitiveBuildDirectory', $childSensitiveBuildDirectory" in wrapper
+    assert "'SensitiveBuildDirectory', 'PreparedIsoPath'" in wrapper
+    assert "-SensitiveBuildDirectory $SensitiveBuildDirectory" in wrapper
+    assert "[System.IO.Directory]::Delete($resolvedCredentialRoot, $true)" in wrapper
+    assert "Join-Path $sensitiveBuildDir 'packer-vars\\atlaso-photon.auto.pkrvars.hcl'" in build_module
+    assert "Join-Path $sensitiveBuildDir 'kickstart-src'" in build_module
     assert "-Action 'The isolated VMware Photon image build'" in wrapper
 
     credential_preflight = wrapper.index(

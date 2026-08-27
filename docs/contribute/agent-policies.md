@@ -959,7 +959,9 @@ Terminal order:
   parent, arguments, caller environment, durable files, output, logs, Packer diagnostics, and provenance, and preserve
   exact-byte validation plus sensitive kickstart, ISO, and Packer-variable cleanup. Run the complete
   plaintext-consuming image workflow in a separately bounded PowerShell child; the parent may pass only current-user
-  DPAPI ciphertext and must verify its task-owned bundle is removed after the child exits.
+  DPAPI ciphertext. Place every plaintext kickstart, remastered ISO, and Packer variable artifact inside the exact
+  task-owned child root, and require the parent to remove and verify that root after ordinary exit or whole-tree
+  termination so a killed child cannot bypass sensitive cleanup.
   Before persisting rollback state, reject configured data disks that repeat the same descriptor, hard-linked alias, or
   shared extent by filesystem identity. Before deleting a completed marker, write-through transition it to a
   non-actionable tombstone so a post-crash

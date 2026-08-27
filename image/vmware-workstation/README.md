@@ -145,9 +145,10 @@ before VMware network preparation, output cleanup, ISO remastering, Packer initi
 The retrieval bridge returns only current-user DPAPI ciphertext to the PowerShell parent. That parent starts the whole
 plaintext-consuming image workflow as a separately bounded PowerShell child, passes credentials only through a second
 current-user DPAPI bundle, and verifies removal of both task-owned roots. Only the child unwraps validated
-`SecureString` values at the kickstart and Packer serialization boundary. `-ImageBuildTimeoutSeconds` bounds the whole
-child and defaults to six hours. The child preserves the existing exact-byte checks and cleanup of the kickstart,
-remastered ISO, and secret-bearing Packer variable file.
+`SecureString` values at the kickstart and Packer serialization boundary. The wrapper places the kickstart, remastered
+ISO, and secret-bearing Packer variable file inside that exact task-owned root, so parent cleanup still removes and
+verifies them after a whole-tree timeout kills the child before its normal `finally` blocks can run.
+`-ImageBuildTimeoutSeconds` bounds the whole child and defaults to six hours.
 
 The wrapper does not build or embed Inventory Linux. New templates leave it uninstalled so an administrator can use
 **Download latest** to retrieve the signed independent release when needed. Contributors building Inventory Linux

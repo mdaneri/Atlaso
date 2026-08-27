@@ -531,7 +531,9 @@ The following cross-cutting boundaries always apply:
   preflight and task-owned bridge cleanup before network discovery or preparation, output cleanup, ISO remastering,
   Packer initialization, or other image mutation; retain exact-byte validation and all sensitive ISO/Packer-variable
   cleanup. Run the complete plaintext-consuming image workflow in a separately bounded PowerShell child; the parent
-  may pass only current-user DPAPI ciphertext and must verify its task-owned bundle is removed after child exit.
+  may pass only current-user DPAPI ciphertext. Place every plaintext kickstart, remastered ISO, and Packer variable
+  artifact inside the exact task-owned child root, and require the parent to remove and verify that root after ordinary
+  exit or whole-tree termination so a killed child cannot bypass sensitive cleanup.
   The wrapper also owns the sole development-root exception to per-appliance CA generation: require the exact `Atlaso`
   1Password Environment's concealed `ATLASO_DEVELOPMENT_ROOT_CA_PRIVATE_KEY`, validate it against the checked-in public
   `Atlaso Development Root CA` before mutation, pin and verify the exact Environment ID by SHA-256 before invoking `op`,

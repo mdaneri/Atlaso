@@ -35,6 +35,8 @@ Internal marker proving the current process is the isolated image-build child.
 Internal JSON transport for the non-secret builder DNS server array.
 .PARAMETER BuilderStaticDnsBound
 Internal marker preserving whether the caller explicitly bound the builder DNS array.
+.PARAMETER SensitiveBuildDirectory
+Internal task-owned directory containing all plaintext image-build artifacts.
 .PARAMETER VmName
 Builder virtual-machine name.
 .PARAMETER OutputDirectory
@@ -137,6 +139,7 @@ param(
     [switch]$CredentialChild,
     [string]$BuilderStaticDnsJson = '',
     [switch]$BuilderStaticDnsBound,
+    [string]$SensitiveBuildDirectory = '',
     [string]$VmName = 'Atlaso-Photon-Builder-VMware',
     [string]$OutputDirectory = '',
     [string]$SshHost = '',
@@ -193,6 +196,34 @@ if ($CredentialChild) {
         -not (Test-Path -LiteralPath $CredentialBundlePath -PathType Leaf)) {
         throw 'The isolated Photon credential bundle is unavailable or invalid.'
     }
+    $credentialBundleRoot = [System.IO.Path]::GetFullPath((Split-Path -Parent $CredentialBundlePath))
+    $sensitiveBuildRoot = if ([string]::IsNullOrWhiteSpace($SensitiveBuildDirectory)) {
+        ''
+    }
+    else {
+        [System.IO.Path]::GetFullPath($SensitiveBuildDirectory)
+    }
+    $credentialRootPrefix = $credentialBundleRoot.TrimEnd(
+        [System.IO.Path]::DirectorySeparatorChar,
+        [System.IO.Path]::AltDirectorySeparatorChar
+    ) + [System.IO.Path]::DirectorySeparatorChar
+    if ([string]::IsNullOrWhiteSpace($sensitiveBuildRoot) -or
+        -not $sensitiveBuildRoot.StartsWith($credentialRootPrefix, [StringComparison]::OrdinalIgnoreCase)) {
+        throw 'The isolated Photon sensitive-build root is unavailable or invalid.'
+    }
+    if (-not [string]::IsNullOrWhiteSpace($PreparedIsoPath)) {
+        $resolvedChildPreparedIsoPath = [System.IO.Path]::GetFullPath($PreparedIsoPath)
+        $sensitiveBuildPrefix = $sensitiveBuildRoot.TrimEnd(
+            [System.IO.Path]::DirectorySeparatorChar,
+            [System.IO.Path]::AltDirectorySeparatorChar
+        ) + [System.IO.Path]::DirectorySeparatorChar
+        if (-not $resolvedChildPreparedIsoPath.StartsWith(
+                $sensitiveBuildPrefix,
+                [StringComparison]::OrdinalIgnoreCase
+            )) {
+            throw 'The isolated Photon prepared-ISO path is unavailable or invalid.'
+        }
+    }
     try {
         $credentialBundle = Get-Content -LiteralPath $CredentialBundlePath -Raw | ConvertFrom-Json
         $bundleProperties = @($credentialBundle.PSObject.Properties.Name)
@@ -248,6 +279,18 @@ else {
     )
     [void][System.IO.Directory]::CreateDirectory($credentialRoot)
     $childCredentialBundlePath = Join-Path $credentialRoot 'credentials.json'
+    $childSensitiveBuildDirectory = Join-Path $credentialRoot 'sensitive-build'
+    $preparedIsoLeaf = if ($PSBoundParameters.ContainsKey('PreparedIsoPath') -and
+        -not [string]::IsNullOrWhiteSpace($PreparedIsoPath)) {
+        [System.IO.Path]::GetFileName($PreparedIsoPath)
+    }
+    else {
+        'atlaso-photon-with-kickstart.iso'
+    }
+    if ([string]::IsNullOrWhiteSpace($preparedIsoLeaf)) {
+        $preparedIsoLeaf = 'atlaso-photon-with-kickstart.iso'
+    }
+    $childPreparedIsoPath = Join-Path (Join-Path $childSensitiveBuildDirectory 'kickstart') $preparedIsoLeaf
     try {
         $credentialPayload = [ordered]@{
             AdminPasswordCiphertext = ConvertFrom-SecureString -SecureString $credentialPair.AdminPassword
@@ -267,7 +310,9 @@ else {
             '-NoLogo', '-NoProfile', '-NonInteractive',
             '-File', $PSCommandPath,
             '-CredentialChild',
-            '-CredentialBundlePath', $childCredentialBundlePath
+            '-CredentialBundlePath', $childCredentialBundlePath,
+            '-SensitiveBuildDirectory', $childSensitiveBuildDirectory,
+            '-PreparedIsoPath', $childPreparedIsoPath
         )
         $excludedParameters = @(
             'SshPassword', 'BootstrapAdminPassword',
@@ -275,7 +320,8 @@ else {
             'OnePasswordAccount', 'OnePasswordPython',
             'CredentialTimeoutSeconds', 'ImageBuildTimeoutSeconds',
             'CredentialBundlePath', 'CredentialChild',
-            'BuilderStaticDnsJson', 'BuilderStaticDnsBound'
+            'BuilderStaticDnsJson', 'BuilderStaticDnsBound',
+            'SensitiveBuildDirectory', 'PreparedIsoPath'
         )
         foreach ($entry in $PSBoundParameters.GetEnumerator()) {
             if ($entry.Key -in $excludedParameters) {
@@ -287,15 +333,23 @@ else {
                 }
                 continue
             }
+            if ($entry.Key -ceq 'BuilderStaticDns' -and
+                ($null -eq $entry.Value -or $entry.Value -is [array])) {
+                $transportedDns = if ($null -eq $entry.Value) { @() } else { @($entry.Value) }
+                $childArguments += '-BuilderStaticDnsJson'
+                $childArguments += ConvertTo-Json -InputObject $transportedDns -Compress
+                $childArguments += '-BuilderStaticDnsBound'
+                continue
+            }
             if ($entry.Value -is [array]) {
                 if ($entry.Key -cne 'BuilderStaticDns') {
                     throw "Unsupported isolated Photon array parameter: $($entry.Key)."
                 }
-                $childArguments += '-BuilderStaticDnsJson'
-                $childArguments += ConvertTo-Json -InputObject @($entry.Value) -Compress
-                $childArguments += '-BuilderStaticDnsBound'
             }
             else {
+                if ($null -eq $entry.Value) {
+                    throw "Unsupported null isolated Photon parameter: $($entry.Key)."
+                }
                 $childArguments += "-$($entry.Key)"
                 $childArguments += $entry.Value.ToString()
             }
@@ -793,6 +847,7 @@ Invoke-AtlasoPhotonImageBuild `
     -PipGlobalIndex $PipGlobalIndex `
     -PipGlobalIndexUrl $PipGlobalIndexUrl `
     -PreparedIsoPath $PreparedIsoPath `
+    -SensitiveBuildDirectory $SensitiveBuildDirectory `
     -PackerOnError $PackerOnError `
     -GuestPackages @('open-vm-tools', 'hyper-v') `
     -GuestPostInstallCommands @(

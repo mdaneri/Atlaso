@@ -551,6 +551,8 @@ Optional pip index configuration.
 Optional pip index URL.
 .PARAMETER PreparedIsoPath
 Optional remastered ISO destination.
+.PARAMETER SensitiveBuildDirectory
+Optional task-owned directory that contains every plaintext credential artifact.
 .PARAMETER PackerOnError
 Packer failure-handling mode.
 .PARAMETER GuestPackages
@@ -593,6 +595,7 @@ function Invoke-AtlasoPhotonImageBuild {
         [string]$PipGlobalIndex = '',
         [string]$PipGlobalIndexUrl = '',
         [string]$PreparedIsoPath = '',
+        [string]$SensitiveBuildDirectory = '',
         [ValidateSet('cleanup', 'abort', 'ask', 'run-cleanup-provisioner')]
         [string]$PackerOnError = 'cleanup',
         [string[]]$GuestPackages = @(),
@@ -627,13 +630,20 @@ function Invoke-AtlasoPhotonImageBuild {
         $SharedSourceDirectory = Join-Path $repoRoot 'image\common\source'
     }
     $sharedSourceDir = $ExecutionContext.SessionState.Path.GetUnresolvedProviderPathFromPSPath($SharedSourceDirectory)
+    $buildDir = Join-Path $packerDir 'build'
+    $sensitiveBuildDir = if ([string]::IsNullOrWhiteSpace($SensitiveBuildDirectory)) {
+        $buildDir
+    }
+    else {
+        $ExecutionContext.SessionState.Path.GetUnresolvedProviderPathFromPSPath($SensitiveBuildDirectory)
+    }
+    New-Item -ItemType Directory -Force -Path $sensitiveBuildDir | Out-Null
     if ([string]::IsNullOrWhiteSpace($PreparedIsoPath)) {
-        $PreparedIsoPath = Join-Path $packerDir 'build\kickstart\atlaso-photon-with-kickstart.iso'
+        $PreparedIsoPath = Join-Path $sensitiveBuildDir 'kickstart\atlaso-photon-with-kickstart.iso'
     }
 
-    $buildDir = Join-Path $packerDir 'build'
-    $varFilePath = Join-Path $buildDir 'packer-vars\atlaso-photon.auto.pkrvars.hcl'
-    $ksSourceDir = Join-Path $buildDir 'kickstart-src'
+    $varFilePath = Join-Path $sensitiveBuildDir 'packer-vars\atlaso-photon.auto.pkrvars.hcl'
+    $ksSourceDir = Join-Path $sensitiveBuildDir 'kickstart-src'
     $kickstartJson = Join-Path $ksSourceDir 'photon-ks.json'
     $resolvedPreparedIsoPath = $ExecutionContext.SessionState.Path.GetUnresolvedProviderPathFromPSPath($PreparedIsoPath)
     $resolvedPreparedIsoPath = Resolve-AtlasoPreparedIsoPath -Path $resolvedPreparedIsoPath

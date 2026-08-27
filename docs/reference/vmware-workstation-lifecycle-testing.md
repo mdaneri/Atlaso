@@ -117,8 +117,10 @@ before the wrapper performs network discovery or preparation, output cleanup, IS
 or other image mutation. It rejects caller `DEFAULT_*` variables, local `.env` inputs, ambiguous or non-concealed
 variables, invalid exact bytes, unavailable authorization, and timeouts without printing the Environment ID or values.
 The parent passes only DPAPI ciphertext to a separately bounded image-build child; only that child unwraps values for
-kickstart and Packer serialization. `-ImageBuildTimeoutSeconds` selects the whole-child deadline and defaults to six
-hours.
+kickstart and Packer serialization. Every plaintext kickstart, remastered ISO, and Packer variable file is placed under
+the same exact task-owned temporary root. If the whole-child deadline force-terminates the process tree before child
+cleanup can run, the parent removes that root and verifies its absence before returning.
+`-ImageBuildTimeoutSeconds` selects the deadline and defaults to six hours.
 
 The wrapper uses the shared Photon ISO remastering, kickstart rendering, checksum validation, and Packer var-file
 generation. `image/common/source` holds the original Photon ISO download cache. The canonical image installs
@@ -127,9 +129,9 @@ The Workstation build wrapper opens a visible VMware console by default. Use `-H
 is preferred.
 The shared builder removes and verifies the absence of its plaintext kickstart source, generated Packer variable file,
 and remastered credential-bearing ISO after the bounded Packer consumer exits. The cleanup covers validation, build,
-failure, and fallback ISO paths; an ACL, file-lock, or endpoint-protection cleanup failure terminates the build instead
-of reporting success with a credential-bearing artifact left behind. `-PrepareIsoOnly` is rejected because retaining
-that ISO would retain a reusable build credential.
+failure, fallback ISO paths, and forced whole-child timeout through the parent-owned root; an ACL, file-lock, or
+endpoint-protection cleanup failure terminates the build instead of reporting success with a credential-bearing
+artifact left behind. `-PrepareIsoOnly` is rejected because retaining that ISO would retain a reusable build credential.
 
 GUI builds start or reuse a responsive VMware Workstation UI as a process separate from Packer before invoking the
 VMware builder. This preserves the visible console while preventing an already-running VM from leaving Packer blocked

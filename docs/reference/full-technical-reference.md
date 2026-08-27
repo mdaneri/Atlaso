@@ -217,7 +217,9 @@ DPAPI ciphertext, and its task-owned files are removed before network preparatio
 Packer initialization, or other image mutation. Sanitized failures do not print the Environment ID, account input, or
 credential values. The parent then launches the complete plaintext-consuming image workflow in a separately bounded
 PowerShell child, passes only a second current-user DPAPI bundle, and verifies bundle removal afterward. Only that
-child unwraps values for kickstart and Packer serialization. The default six-hour deadline is configurable through
+child unwraps values for kickstart and Packer serialization. All plaintext kickstart, remastered ISO, and Packer
+variable artifacts live under that exact task-owned root, allowing the parent to remove and verify them even when the
+deadline force-terminates the child before its own cleanup runs. The default six-hour deadline is configurable through
 `-ImageBuildTimeoutSeconds`.
 
 The supported VMware Workstation wrapper treats the Photon build password as opaque data. It encodes the
