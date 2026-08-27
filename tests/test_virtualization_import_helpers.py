@@ -59,6 +59,9 @@ def test_kvm_imports_the_unchanged_ova_and_normalizes_exact_contract() -> None:
     assert '"$name"-*' in script
     assert 'virsh vol-delete --pool "$pool" "$volume_name"' in script
     assert 'virsh vol-list "$pool" --name' in script
+    assert 'atlaso-kvm-domain-${name}.lock' in script
+    assert 'atlaso-kvm-pool-${pool}-${name}.lock' in script
+    assert script.index('flock -n 8') < script.index('flock -n 9')
     assert 'KVM import rollback did not reach its cleanup postcondition' in script
     assert 'Rollback retained a volume in the locked $pool/$name namespace' in script
     cleanup = script.split("cleanup() {", 1)[1].split("trap cleanup", 1)[0]
@@ -91,10 +94,11 @@ def test_proxmox_imports_the_unchanged_ova_and_rejects_conflicting_disks() -> No
     assert script.count("$storage:500") == 2
     assert 'qm destroy "$vmid" --purge 1 --destroy-unreferenced-disks 1' in script
     lock = script.index('flock -n 9')
-    preflight = script.index('qm status "$vmid"')
+    preflight = script.index("vmids=$(qm list")
     mutation = script.index('qm importovf "$vmid"')
     assert lock < preflight < mutation
     assert 'exec 9>"$lock_path"' in script
+    assert "Proxmox import rollback did not reach its cleanup postcondition" in script
     assert "photon-os.qcow2" not in script
     assert script.count('rm -rf -- "$validation_root"') == 2
 

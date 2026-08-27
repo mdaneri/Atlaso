@@ -30,8 +30,14 @@ for command in python3 virt-v2v virsh qemu-img jq mktemp realpath awk grep flock
     exit 2
   }
 done
-lock_path="/run/lock/atlaso-kvm-import-${pool}-${name}.lock"
-exec 9>"$lock_path"
+domain_lock_path="/run/lock/atlaso-kvm-domain-${name}.lock"
+pool_lock_path="/run/lock/atlaso-kvm-pool-${pool}-${name}.lock"
+exec 8>"$domain_lock_path"
+flock -n 8 || {
+  echo "Another Atlaso KVM import owns domain name $name." >&2
+  exit 2
+}
+exec 9>"$pool_lock_path"
 flock -n 9 || {
   echo "Another Atlaso KVM import owns the $pool/$name namespace." >&2
   exit 2

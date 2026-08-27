@@ -40,20 +40,48 @@ flock -n 9 || {
   echo "Another Atlaso import owns Proxmox VMID $vmid." >&2
   exit 2
 }
-qm status "$vmid" >/dev/null 2>&1 && {
-  echo "A Proxmox VM with ID $vmid already exists." >&2
+vmids=$(qm list 2>/dev/null | awk 'NR > 1 { print $1 }') || {
+  echo "Proxmox inventory could not prove VMID $vmid absent." >&2
   exit 2
 }
+if printf '%s\n' "$vmids" | grep -Fxq -- "$vmid"; then
+  echo "A Proxmox VM with ID $vmid already exists." >&2
+  exit 2
+fi
 
 validation_root=$(mktemp -d -t atlaso-ova-validation.XXXXXX)
 created=0
 cleanup() {
-  rm -rf -- "$validation_root"
-  if [ "$created" -eq 1 ] && qm status "$vmid" >/dev/null 2>&1; then
-    qm destroy "$vmid" --purge 1 --destroy-unreferenced-disks 1 >/dev/null 2>&1 || true
+  exit_status=$?
+  trap - EXIT HUP INT TERM
+  cleanup_failed=0
+  rm -rf -- "$validation_root" || cleanup_failed=1
+  if [ "$created" -eq 1 ]; then
+    if vmids=$(qm list 2>/dev/null | awk 'NR > 1 { print $1 }'); then
+      if printf '%s\n' "$vmids" | grep -Fxq -- "$vmid"; then
+        qm destroy "$vmid" --purge 1 --destroy-unreferenced-disks 1 >/dev/null 2>&1 || cleanup_failed=1
+      fi
+    else
+      cleanup_failed=1
+    fi
+    if vmids=$(qm list 2>/dev/null | awk 'NR > 1 { print $1 }'); then
+      if printf '%s\n' "$vmids" | grep -Fxq -- "$vmid"; then
+        echo "Proxmox rollback retained VMID $vmid." >&2
+        cleanup_failed=1
+      fi
+    else
+      echo "Proxmox rollback could not inventory VMID $vmid." >&2
+      cleanup_failed=1
+    fi
   fi
+  if [ "$cleanup_failed" -ne 0 ]; then
+    echo "Proxmox import rollback did not reach its cleanup postcondition." >&2
+    [ "$exit_status" -ne 0 ] || exit_status=1
+  fi
+  exit "$exit_status"
 }
-trap cleanup EXIT HUP INT TERM
+trap cleanup EXIT
+trap 'exit 2' HUP INT TERM
 python3 "$validator" "$ova_path" --extract-directory "$validation_root/extracted" >"$validation_root/contract.json"
 ovf_name=$(jq -er '.ovf | select(type == "string" and test("^[^/\\\\]+[.]ovf$"; "i"))' "$validation_root/contract.json")
 ovf_path="$validation_root/extracted/$ovf_name"

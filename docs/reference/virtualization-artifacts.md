@@ -233,7 +233,8 @@ passes it to OVF Tool through a runner-only temporary configuration file instead
 file immediately after import. Proxmox serializes each VMID import, and cleanup failures fail the active smoke job
 instead of allowing publication with retained provider state. VMware cleanup binds the root, VMX, provider aliases,
 and every remaining descendant to captured Windows file identities; Proxmox and KVM require successful inventories to
-prove absence. Hyper-V
+prove absence. KVM serializes the global domain name and its selected pool namespace independently; Proxmox importer
+rollback requires a final inventory proving its fixed VMID absent. Hyper-V
 cleanup removes only a VM whose exact ID was captured after successful import; an indeterminate import preserves files
 for diagnosis rather than claiming a later name match. KVM rollback preserves every imported volume unless a successful
 libvirt inventory proves that the exact domain is absent. Every smoke identity and storage namespace must be dedicated to
