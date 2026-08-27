@@ -35,8 +35,19 @@ ova_path=$(realpath -- "$ova_argument")
 # Serialize the complete absent-VMID ownership transaction. Every importer
 # using this helper observes the same lock before preflight, mutation, or rollback.
 lock_path="/run/lock/atlaso-proxmox-vmid-$vmid.lock"
-exec 9>"$lock_path"
-flock -n 9 || {
+lock_fd="${ATLASO_PROXMOX_LOCK_FD:-}"
+if [ -n "$lock_fd" ]; then
+  case "$lock_fd" in *[!0-9]*|'') echo "The inherited Proxmox lock descriptor is invalid." >&2; exit 2 ;; esac
+  inherited_lock_path=$(realpath -- "/proc/self/fd/$lock_fd" 2>/dev/null || true)
+  [ "$inherited_lock_path" = "$lock_path" ] || {
+    echo "The inherited Proxmox lock does not own VMID $vmid." >&2
+    exit 2
+  }
+else
+  exec 9>"$lock_path"
+  lock_fd=9
+fi
+flock -n "$lock_fd" || {
   echo "Another Atlaso import owns Proxmox VMID $vmid." >&2
   exit 2
 }

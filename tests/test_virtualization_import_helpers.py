@@ -79,7 +79,11 @@ def test_kvm_imports_the_unchanged_ova_and_normalizes_exact_contract() -> None:
     assert 'virsh vol-list "$pool" --name' in script
     assert 'atlaso-kvm-domain-${name}.lock' in script
     assert 'atlaso-kvm-pool-${pool}-${name}.lock' in script
-    assert script.index('flock -n 8') < script.index('flock -n 9')
+    assert 'ATLASO_KVM_DOMAIN_LOCK_FD' in script
+    assert 'ATLASO_KVM_POOL_LOCK_FD' in script
+    assert '"/proc/self/fd/$domain_lock_fd"' in script
+    assert '"/proc/self/fd/$pool_lock_fd"' in script
+    assert script.index('flock -n "$domain_lock_fd"') < script.index('flock -n "$pool_lock_fd"')
     domain_inventory = script.index('domain_names=$(virsh list --all --name')
     domain_absence = script.index('grep -Fxq -- "$name"', domain_inventory)
     volume_inventory = script.index('volumes=$(virsh vol-list "$pool" --name', domain_absence)
@@ -119,7 +123,7 @@ def test_proxmox_imports_the_unchanged_ova_and_rejects_conflicting_disks() -> No
     assert 'if [ "$disk_count" -lt 2 ] || [ "$disk_count" -gt 4 ]' in script
     assert script.count("$storage:500") == 2
     assert 'qm destroy "$vmid" --purge 1 --destroy-unreferenced-disks 1' in script
-    lock = script.index('flock -n 9')
+    lock = script.index('flock -n "$lock_fd"')
     raw_inventory = script.index("qm_inventory=$(qm list")
     filtered_inventory = script.index("printf '%s\\n' \"$qm_inventory\" | awk")
     preflight = script.index("vmids=$(list_vmids)")
@@ -128,6 +132,8 @@ def test_proxmox_imports_the_unchanged_ova_and_rejects_conflicting_disks() -> No
     assert script.count("vmids=$(list_vmids)") == 3
     assert "qm list 2>/dev/null | awk" not in script
     assert 'exec 9>"$lock_path"' in script
+    assert 'ATLASO_PROXMOX_LOCK_FD' in script
+    assert '"/proc/self/fd/$lock_fd"' in script
     assert "Proxmox import rollback did not reach its cleanup postcondition" in script
     assert "photon-os.qcow2" not in script
     assert script.count('rm -rf -- "$validation_root"') == 2
@@ -159,6 +165,16 @@ def test_linux_smoke_imports_reboots_validates_and_bounds_cleanup() -> None:
     assert 'qm_inventory=$(qm list 2>/dev/null)' in script
     assert script.count('vmids=$(proxmox_vmids)') == 3
     assert 'qm list 2>/dev/null | awk' not in script
+    proxmox_lock = script.index('exec 9>"$proxmox_lock_path"')
+    proxmox_import = script.index('"$template_root/import-atlaso-proxmox.sh"')
+    trap_registration = script.index("trap cleanup EXIT")
+    assert trap_registration < proxmox_lock < proxmox_import
+    assert 'export ATLASO_PROXMOX_LOCK_FD=9' in script
+    kvm_lock = script.index('exec 8>"$kvm_domain_lock_path"')
+    assert kvm_lock < kvm_import < kvm_owned
+    assert 'export ATLASO_KVM_DOMAIN_LOCK_FD=8' in script
+    assert 'export ATLASO_KVM_POOL_LOCK_FD=9' in script
+    assert 'flock -u' not in script
     assert 'domains=$(virsh list --all --name' in script
     assert 'volumes=$(virsh vol-list --pool "$storage" --name' in script
     assert "inventory could not prove cleanup" in script

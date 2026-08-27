@@ -32,13 +32,35 @@ for command in python3 virt-v2v virsh qemu-img jq mktemp realpath awk grep flock
 done
 domain_lock_path="/run/lock/atlaso-kvm-domain-${name}.lock"
 pool_lock_path="/run/lock/atlaso-kvm-pool-${pool}-${name}.lock"
-exec 8>"$domain_lock_path"
-flock -n 8 || {
+domain_lock_fd="${ATLASO_KVM_DOMAIN_LOCK_FD:-}"
+if [ -n "$domain_lock_fd" ]; then
+  case "$domain_lock_fd" in *[!0-9]*|'') echo "The inherited KVM domain lock descriptor is invalid." >&2; exit 2 ;; esac
+  inherited_domain_lock_path=$(realpath -- "/proc/self/fd/$domain_lock_fd" 2>/dev/null || true)
+  [ "$inherited_domain_lock_path" = "$domain_lock_path" ] || {
+    echo "The inherited KVM domain lock does not own $name." >&2
+    exit 2
+  }
+else
+  exec 8>"$domain_lock_path"
+  domain_lock_fd=8
+fi
+flock -n "$domain_lock_fd" || {
   echo "Another Atlaso KVM import owns domain name $name." >&2
   exit 2
 }
-exec 9>"$pool_lock_path"
-flock -n 9 || {
+pool_lock_fd="${ATLASO_KVM_POOL_LOCK_FD:-}"
+if [ -n "$pool_lock_fd" ]; then
+  case "$pool_lock_fd" in *[!0-9]*|'') echo "The inherited KVM pool lock descriptor is invalid." >&2; exit 2 ;; esac
+  inherited_pool_lock_path=$(realpath -- "/proc/self/fd/$pool_lock_fd" 2>/dev/null || true)
+  [ "$inherited_pool_lock_path" = "$pool_lock_path" ] || {
+    echo "The inherited KVM pool lock does not own $pool/$name." >&2
+    exit 2
+  }
+else
+  exec 9>"$pool_lock_path"
+  pool_lock_fd=9
+fi
+flock -n "$pool_lock_fd" || {
   echo "Another Atlaso KVM import owns the $pool/$name namespace." >&2
   exit 2
 }

@@ -22,7 +22,7 @@ for value in "$identifier" "$storage" "$management_network" "$service_network"; 
       ;;
   esac
 done
-for command in jq curl mktemp realpath; do
+for command in jq curl flock mktemp realpath; do
   command -v "$command" >/dev/null 2>&1 || {
     echo "$command is required for the Linux OVA smoke test." >&2
     exit 2
@@ -262,6 +262,13 @@ case "$provider" in
         exit 2
       }
     done
+    proxmox_lock_path="/run/lock/atlaso-proxmox-vmid-$identifier.lock"
+    exec 9>"$proxmox_lock_path"
+    flock -n 9 || {
+      echo "Another Atlaso smoke run owns Proxmox VMID $identifier." >&2
+      exit 2
+    }
+    export ATLASO_PROXMOX_LOCK_FD=9
     if vmids=$(proxmox_vmids); then
       if printf '%s\n' "$vmids" | grep -Fxq -- "$identifier"; then
         echo "The Proxmox smoke-test VMID already exists: $identifier" >&2
@@ -283,6 +290,20 @@ case "$provider" in
         exit 2
       }
     done
+    kvm_domain_lock_path="/run/lock/atlaso-kvm-domain-${identifier}.lock"
+    kvm_pool_lock_path="/run/lock/atlaso-kvm-pool-${storage}-${identifier}.lock"
+    exec 8>"$kvm_domain_lock_path"
+    flock -n 8 || {
+      echo "Another Atlaso smoke run owns KVM domain $identifier." >&2
+      exit 2
+    }
+    exec 9>"$kvm_pool_lock_path"
+    flock -n 9 || {
+      echo "Another Atlaso smoke run owns the $storage/$identifier KVM namespace." >&2
+      exit 2
+    }
+    export ATLASO_KVM_DOMAIN_LOCK_FD=8
+    export ATLASO_KVM_POOL_LOCK_FD=9
     virsh dominfo "$identifier" >/dev/null 2>&1 && {
       echo "The KVM smoke-test domain already exists: $identifier" >&2
       exit 2
