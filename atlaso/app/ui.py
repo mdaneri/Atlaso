@@ -1486,11 +1486,12 @@ def ca_managed_certificate_paths(db: Session, owner: str) -> tuple[str, str, str
     return certificate.cert_path or "", certificate.key_path or "", certificate.chain_path or ""
 
 
-def ensure_ca_state(db: Session) -> list[str]:
+def ensure_ca_state(db: Session, *, commit: bool = True) -> list[str]:
     """Ensure ca state.
 
     Args:
         db: Active database session.
+        commit: Whether to commit reconciled CA state before returning.
 
     Returns:
         The ensure ca state result.
@@ -1513,7 +1514,10 @@ def ensure_ca_state(db: Session) -> list[str]:
         )
         changed = ensure_ca_issued_state(db, settings=settings, profiles=profiles, certificates=certificates) or changed
         if changed:
-            db.commit()
+            if commit:
+                db.commit()
+            else:
+                db.flush()
     except IntegrityError as exc:
         db.rollback()
         if "ca_certificates.managed_owner" not in str(exc):

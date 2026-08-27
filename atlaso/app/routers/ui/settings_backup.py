@@ -571,7 +571,7 @@ def build_router(dependencies: SettingsBackupUiDependencies) -> SettingsBackupUi
             and ca_settings.enabled
             and not preflight_errors
         ):
-            ca_state_errors = ensure_ca_state(db)
+            ca_state_errors = ensure_ca_state(db, commit=False)
             management = appliance_settings_management_context(db)
             ca_settings = get_ca_settings_row(db)
         (

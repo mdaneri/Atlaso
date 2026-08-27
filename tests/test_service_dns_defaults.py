@@ -659,6 +659,61 @@ def test_appliance_settings_audit_includes_independent_dns_reconciliation(
         )
 
 
+def test_appliance_settings_keeps_ca_reconciliation_in_request_transaction(
+    client, monkeypatch
+):
+    """Request non-committing CA reconciliation from appliance settings.
+
+    Args:
+        client: Authenticated Atlaso test client with an isolated database.
+        monkeypatch: Pytest fixture used to observe the CA transaction boundary.
+    """
+    from sqlalchemy import select
+
+    from atlaso.app import ui as ui_module
+    from atlaso.app.database import SessionLocal
+    from atlaso.app.models import CaSettings
+    from tests.routers.ui.helpers import login
+
+    commit_modes: list[bool] = []
+    original_ensure_ca_state = ui_module.ensure_ca_state
+
+    def observe_ca_state(db, *, commit=True):
+        """Record and preserve the requested CA transaction mode.
+
+        Args:
+            db: Active database session.
+            commit: Whether CA reconciliation may commit independently.
+        """
+        commit_modes.append(commit)
+        return original_ensure_ca_state(db, commit=commit)
+
+    monkeypatch.setattr(ui_module, "ensure_ca_state", observe_ca_state)
+    with SessionLocal() as db:
+        ca_settings = db.execute(select(CaSettings)).scalar_one()
+        ca_settings.enabled = True
+        db.commit()
+
+    login(client)
+    page = client.get("/settings")
+    csrf = page.text.split('name="csrf" value="', 1)[1].split('"', 1)[0]
+    commit_modes.clear()
+    response = client.post(
+        "/settings",
+        data={
+            "fqdn": "core.atlaso.internal",
+            "management_https_enabled": "on",
+            "external_dns_servers": "1.1.1.1\n9.9.9.9",
+            "csrf": csrf,
+        },
+        headers={"X-Atlaso-Autosave": "1"},
+    )
+
+    assert response.status_code == 200, response.text
+    assert response.json()["valid"] is True
+    assert commit_modes == [False]
+
+
 def test_settings_restore_reconciles_legacy_factory_service_domain(client):
     """Archive restore upgrades legacy factory identities without rewriting custom names.
 
