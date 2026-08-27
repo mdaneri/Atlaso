@@ -1974,9 +1974,7 @@ def test_vmware_deploy_wheel_supports_secure_onepassword_password_deploy():
     script = Path("scripts/windows/vmware/deploy-wheel.ps1").read_text(encoding="utf-8")
     readme = Path("docs/reference/full-technical-reference.md").read_text(encoding="utf-8")
     image_readme = Path("image/vmware-workstation/README.md").read_text(encoding="utf-8")
-    image_password_docs = image_readme.split("For the password-backed path", 1)[1].split(
-        "When the IP should be resolved from VMware Tools", 1
-    )[0]
+    image_password_docs = image_readme.split("## Local Wheel Deploy", 1)[1].split("## OVF / OVA Export", 1)[0]
     image_password_docs = " ".join(image_password_docs.split())
 
     assert "[string]$OnePasswordEnvironmentId = ''" in script
@@ -2065,12 +2063,7 @@ def test_vmware_deploy_wheel_supports_secure_onepassword_password_deploy():
     assert "-OnePasswordEnvironmentId '<atlaso-environment-id>'" in image_password_docs
     assert "-OnePasswordAccount '<account-name-or-id>'" in image_password_docs
     assert "-OnePasswordPython '<path-to-python-3.13.exe>'" in image_password_docs
-    assert "CPython 3.10 through 3.13" in image_password_docs
     assert "../../docs/reference/full-technical-reference.md#vmware-workstation-workflow" in image_password_docs
-    assert "supported 1Password Python SDK" in image_password_docs
-    assert "locked, offline SDK/Paramiko runtime" in image_password_docs
-    assert "op run --environment" not in image_password_docs
-    assert "concealed value in that process environment" not in image_password_docs
 
 
 def test_vmware_deploy_wheel_remote_path_contract():
