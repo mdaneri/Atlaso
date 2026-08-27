@@ -63,7 +63,13 @@ def test_photon_wrapper_preflights_credentials_before_image_mutation() -> None:
     assert "Invoke-AtlasoBoundedStreamingProcess `" in wrapper
     assert "$childArguments += '-BuilderStaticDnsJson'" in wrapper
     assert "ConvertTo-Json -InputObject @($entry.Value) -Compress" in wrapper
+    assert "$childArguments += '-BuilderStaticDnsBound'" in wrapper
     assert "$BuilderStaticDns = @($transportedDns)" in wrapper
+    assert "$transportedDns.Count -eq 0" not in wrapper
+    assert (
+        "$PSBoundParameters.ContainsKey('BuilderStaticDns') -or $BuilderStaticDnsBound"
+        in wrapper
+    )
     assert "-Action 'The isolated VMware Photon image build'" in wrapper
 
     credential_preflight = wrapper.index(

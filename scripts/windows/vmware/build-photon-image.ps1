@@ -33,6 +33,8 @@ Internal current-user DPAPI credential bundle used only by the isolated child.
 Internal marker proving the current process is the isolated image-build child.
 .PARAMETER BuilderStaticDnsJson
 Internal JSON transport for the non-secret builder DNS server array.
+.PARAMETER BuilderStaticDnsBound
+Internal marker preserving whether the caller explicitly bound the builder DNS array.
 .PARAMETER VmName
 Builder virtual-machine name.
 .PARAMETER OutputDirectory
@@ -134,6 +136,7 @@ param(
     [string]$CredentialBundlePath = '',
     [switch]$CredentialChild,
     [string]$BuilderStaticDnsJson = '',
+    [switch]$BuilderStaticDnsBound,
     [string]$VmName = 'Atlaso-Photon-Builder-VMware',
     [string]$OutputDirectory = '',
     [string]$SshHost = '',
@@ -208,8 +211,7 @@ if ($CredentialChild) {
     if (-not [string]::IsNullOrWhiteSpace($BuilderStaticDnsJson)) {
         try {
             $transportedDns = @(ConvertFrom-Json -InputObject $BuilderStaticDnsJson)
-            if ($transportedDns.Count -eq 0 -or
-                @($transportedDns | Where-Object { $_ -isnot [string] }).Count -ne 0) {
+            if (@($transportedDns | Where-Object { $_ -isnot [string] }).Count -ne 0) {
                 throw 'Invalid builder DNS transport.'
             }
             $BuilderStaticDns = @($transportedDns)
@@ -272,7 +274,8 @@ else {
             'OnePasswordEnvironmentId', 'EnvironmentIdFile',
             'OnePasswordAccount', 'OnePasswordPython',
             'CredentialTimeoutSeconds', 'ImageBuildTimeoutSeconds',
-            'CredentialBundlePath', 'CredentialChild', 'BuilderStaticDnsJson'
+            'CredentialBundlePath', 'CredentialChild',
+            'BuilderStaticDnsJson', 'BuilderStaticDnsBound'
         )
         foreach ($entry in $PSBoundParameters.GetEnumerator()) {
             if ($entry.Key -in $excludedParameters) {
@@ -290,6 +293,7 @@ else {
                 }
                 $childArguments += '-BuilderStaticDnsJson'
                 $childArguments += ConvertTo-Json -InputObject @($entry.Value) -Compress
+                $childArguments += '-BuilderStaticDnsBound'
             }
             else {
                 $childArguments += "-$($entry.Key)"
@@ -643,7 +647,7 @@ $ServiceVmnetName = ConvertTo-WorkstationVmnetName -Name $ServiceVmnetName -Para
 $builderIpWasPassed = $PSBoundParameters.ContainsKey('BuilderStaticIp')
 $builderNetmaskWasPassed = $PSBoundParameters.ContainsKey('BuilderStaticNetmask')
 $builderGatewayWasPassed = $PSBoundParameters.ContainsKey('BuilderStaticGateway')
-$builderDnsWasPassed = $PSBoundParameters.ContainsKey('BuilderStaticDns')
+$builderDnsWasPassed = $PSBoundParameters.ContainsKey('BuilderStaticDns') -or $BuilderStaticDnsBound
 $finalAddressWasPassed = $PSBoundParameters.ContainsKey('FinalMgmtAddress')
 $finalGatewayWasPassed = $PSBoundParameters.ContainsKey('FinalMgmtGateway')
 
