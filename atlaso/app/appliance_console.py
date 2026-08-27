@@ -454,7 +454,11 @@ def load_first_boot_network_review() -> FirstBootNetworkReview | None:
 
 
 def _first_boot_access_owner_is_root(metadata: os.stat_result) -> bool:
-    """Return whether access metadata satisfies the appliance ownership boundary."""
+    """Return whether access metadata satisfies the appliance ownership boundary.
+
+    Args:
+        metadata: Filesystem metadata for the fixed first-boot access path.
+    """
 
     return os.name != "posix" or metadata.st_uid == 0
 
