@@ -102,9 +102,13 @@ def test_proxmox_imports_the_unchanged_ova_and_rejects_conflicting_disks() -> No
     assert script.count("$storage:500") == 2
     assert 'qm destroy "$vmid" --purge 1 --destroy-unreferenced-disks 1' in script
     lock = script.index('flock -n 9')
-    preflight = script.index("vmids=$(qm list")
+    raw_inventory = script.index("qm_inventory=$(qm list")
+    filtered_inventory = script.index("printf '%s\\n' \"$qm_inventory\" | awk")
+    preflight = script.index("vmids=$(list_vmids)")
     mutation = script.index('qm importovf "$vmid"')
-    assert lock < preflight < mutation
+    assert lock < raw_inventory < filtered_inventory < preflight < mutation
+    assert script.count("vmids=$(list_vmids)") == 3
+    assert "qm list 2>/dev/null | awk" not in script
     assert 'exec 9>"$lock_path"' in script
     assert "Proxmox import rollback did not reach its cleanup postcondition" in script
     assert "photon-os.qcow2" not in script

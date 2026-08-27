@@ -40,7 +40,11 @@ flock -n 9 || {
   echo "Another Atlaso import owns Proxmox VMID $vmid." >&2
   exit 2
 }
-vmids=$(qm list 2>/dev/null | awk 'NR > 1 { print $1 }') || {
+list_vmids() {
+  qm_inventory=$(qm list 2>/dev/null) || return 1
+  printf '%s\n' "$qm_inventory" | awk 'NR > 1 { print $1 }'
+}
+vmids=$(list_vmids) || {
   echo "Proxmox inventory could not prove VMID $vmid absent." >&2
   exit 2
 }
@@ -57,14 +61,14 @@ cleanup() {
   cleanup_failed=0
   rm -rf -- "$validation_root" || cleanup_failed=1
   if [ "$created" -eq 1 ]; then
-    if vmids=$(qm list 2>/dev/null | awk 'NR > 1 { print $1 }'); then
+    if vmids=$(list_vmids); then
       if printf '%s\n' "$vmids" | grep -Fxq -- "$vmid"; then
         qm destroy "$vmid" --purge 1 --destroy-unreferenced-disks 1 >/dev/null 2>&1 || cleanup_failed=1
       fi
     else
       cleanup_failed=1
     fi
-    if vmids=$(qm list 2>/dev/null | awk 'NR > 1 { print $1 }'); then
+    if vmids=$(list_vmids); then
       if printf '%s\n' "$vmids" | grep -Fxq -- "$vmid"; then
         echo "Proxmox rollback retained VMID $vmid." >&2
         cleanup_failed=1
