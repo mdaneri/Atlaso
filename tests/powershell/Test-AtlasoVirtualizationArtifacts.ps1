@@ -122,6 +122,9 @@ foreach ($required in @(
         'Remove-VM -VM $vm',
         '$vmRemovalVerified',
         'Get-VM -ErrorAction Stop | Where-Object Id -eq $vm.Id',
+        '$verifiedVmMatches',
+        '$verifiedVm = $verifiedVmMatches[0]',
+        'exact created Hyper-V VM identity changed',
         'if ($vmRootCreated',
         'Get-AtlasoHyperVWindowsFileId',
         'Get-AtlasoHyperVDescendantIdentity',
@@ -174,6 +177,9 @@ foreach ($required in @(
 if ($importer.Contains('Remove-VM -VM $vm -Force -ErrorAction Continue') -or
     $hyperVSmoke.Contains('Remove-VM -Name $Name -Force -ErrorAction Continue')) {
     throw 'A Hyper-V cleanup still ignores VM removal failure.'
+}
+if ($importer.Contains('Get-VM -Name $Name')) {
+    throw 'The Hyper-V importer reacquires its invocation-owned VM by name.'
 }
 if (($hyperVSmoke.Split('Get-VM -ErrorAction Stop | Where-Object Name -eq $Name').Count - 1) -ne 1) {
     throw 'Hyper-V smoke cleanup still claims a post-failure VM by name instead of a captured ID.'

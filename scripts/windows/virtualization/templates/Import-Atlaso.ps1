@@ -255,7 +255,11 @@ try {
         throw 'The created Hyper-V VM does not expose the required two-switch topology.'
     }
     Set-VMFirmware -VM $vm -FirstBootDevice $drives[0]
-    $verifiedVm = Get-VM -Name $Name -ErrorAction Stop
+    $verifiedVmMatches = @(Get-VM -ErrorAction Stop | Where-Object Id -eq $vm.Id)
+    if ($verifiedVmMatches.Count -ne 1 -or [string]$verifiedVmMatches[0].Name -cne $Name) {
+        throw 'The exact created Hyper-V VM identity changed before topology verification.'
+    }
+    $verifiedVm = $verifiedVmMatches[0]
     if ([int]$verifiedVm.Generation -ne 2 -or
         [long]$verifiedVm.MemoryStartup -ne 4GB -or
         [int](Get-VMProcessor -VM $verifiedVm).Count -ne 4 -or
@@ -265,7 +269,7 @@ try {
     if ($Start) {
         Start-VM -VM $verifiedVm | Out-Null
     }
-    Get-VM -Name $Name
+    $verifiedVm
 }
 catch {
     $importFailure = $_
