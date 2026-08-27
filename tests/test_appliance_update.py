@@ -649,6 +649,57 @@ def test_worker_persists_apply_started_for_interruption_recovery():
         assert recovered["apply_started"] is True
 
 
+def test_unexpected_parent_failure_terminalizes_incomplete_update_children(client):
+    """Preserve terminal children and fail or skip every incomplete selected child.
+
+    Args:
+        client: Test client whose fixture initializes the isolated database.
+    """
+    from atlaso.app import worker
+    from atlaso.app.database import SessionLocal
+    from atlaso.app.models import Job, JobStatus, JobStep
+    from atlaso.app.services.appliance_update import ensure_appliance_update_job_steps
+
+    job_id = "job_terminal_children"
+    with SessionLocal() as db:
+        job = Job(
+            id=job_id,
+            type="appliance-update",
+            status=JobStatus.RUNNING.value,
+            created_by="admin",
+            progress_percent=30,
+            result="{}",
+        )
+        db.add(job)
+        db.flush()
+        steps = ensure_appliance_update_job_steps(
+            db,
+            job=job,
+            selected_streams=["photon_os", "powershell_modules", "atlaso_release"],
+        )
+        steps[0].status = JobStatus.SUCCEEDED.value
+        steps[0].progress_percent = 100
+        steps[0].result = json.dumps({"status": "succeeded", "success": True})
+        steps[1].status = JobStatus.RUNNING.value
+        steps[1].result = json.dumps({"apply_started": True})
+        db.commit()
+
+        worker._fail_job(db, job, RuntimeError("durable completion write failed"))
+
+        persisted = db.execute(
+            select(JobStep).where(JobStep.job_id == job_id).order_by(JobStep.position)
+        ).scalars().all()
+        assert job.status == JobStatus.FAILED.value
+        assert [step.status for step in persisted] == [
+            JobStatus.SUCCEEDED.value,
+            JobStatus.FAILED.value,
+            JobStatus.SKIPPED.value,
+        ]
+        assert json.loads(persisted[0].result)["success"] is True
+        assert json.loads(persisted[1].result)["apply_started"] is True
+        assert all(step.finished_at is not None for step in persisted[1:])
+
+
 def seed_available_confirmations(streams: list[str]) -> None:
     """Persist fresh available confirmations for manual-install tests.
 

@@ -751,6 +751,8 @@ def _fail_job(db: Session, job: Job, exc: Exception) -> None:
         job: Job being processed.
         exc: Exception that caused the operation to fail.
     """
+    if job.type == "appliance-update":
+        _terminalize_incomplete_appliance_update_steps(db, job, exc)
     job.status = JobStatus.FAILED.value
     job.finished_at = utcnow()
     job.progress_percent = 100
@@ -763,6 +765,52 @@ def _fail_job(db: Session, job: Job, exc: Exception) -> None:
     job.result = json.dumps(result, indent=2, sort_keys=True)
     db.add(job)
     db.commit()
+
+
+def _terminalize_incomplete_appliance_update_steps(
+    db: Session,
+    job: Job,
+    exc: Exception,
+) -> None:
+    """Fail or skip every non-terminal child when its parent fails unexpectedly.
+
+    Args:
+        db: Active database session.
+        job: Appliance Update parent reaching a terminal failure.
+        exc: Exception that escaped the per-stream completion bookkeeping.
+    """
+    now = utcnow()
+    steps = db.execute(
+        select(JobStep).where(JobStep.job_id == job.id).order_by(JobStep.position, JobStep.id)
+    ).scalars().all()
+    terminal = {
+        JobStatus.SUCCEEDED.value,
+        JobStatus.FAILED.value,
+        JobStatus.SKIPPED.value,
+    }
+    for step in steps:
+        if step.status in terminal:
+            continue
+        was_running = step.status == JobStatus.RUNNING.value
+        status = JobStatus.FAILED.value if was_running else JobStatus.SKIPPED.value
+        error = (
+            str(exc)
+            if was_running
+            else "The parent Appliance Update failed before this selected stream could run."
+        )
+        try:
+            result = json.loads(step.result or "{}")
+        except json.JSONDecodeError:
+            result = {}
+        if not isinstance(result, dict):
+            result = {}
+        result.update({"status": status, "success": False, "error": error})
+        step.status = status
+        step.finished_at = now
+        step.progress_percent = 100
+        step.error = error
+        step.result = json.dumps(result, indent=2, sort_keys=True)
+        db.add(step)
 
 
 def _appliance_update_result_error(result: dict[str, Any]) -> str:

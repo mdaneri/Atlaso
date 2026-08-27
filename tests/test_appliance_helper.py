@@ -386,7 +386,7 @@ def test_status_finish_does_not_activate_a_rolled_back_initial_hold(
         "status": "failed",
         "status_activated": False,
         "ui_restoration": {"state": "held"},
-        "children": [],
+        "children": [{"component_key": "photon_os", "status": "failed"}],
     }
     persisted = []
     monkeypatch.setattr(helper, "ATLASO_UPDATE_STATUS_MARKER_PATH", marker)
@@ -415,6 +415,49 @@ def test_status_finish_does_not_activate_a_rolled_back_initial_hold(
     assert not marker.exists()
 
 
+@pytest.mark.parametrize("child_status", ["pending", "running"])
+def test_status_finish_requires_every_selected_child_to_be_terminal(
+    monkeypatch,
+    tmp_path,
+    child_status,
+):
+    """Keep the update-only surface held while any selected child is incomplete.
+
+    Args:
+        monkeypatch: Pytest fixture used to isolate restoration side effects.
+        tmp_path: Temporary directory used for the durable marker.
+        child_status: Incomplete child state under a terminal parent.
+    """
+    helper = load_helper_module()
+    job_id = "job_0123456789ab"
+    marker = tmp_path / "run" / "status-marker"
+    marker.parent.mkdir(parents=True)
+    marker.write_text(job_id + "\n", encoding="utf-8")
+    snapshot = {
+        "task_id": job_id,
+        "terminal": True,
+        "status": "failed",
+        "children": [{"component_key": "photon_os", "status": child_status}],
+    }
+    monkeypatch.setattr(helper, "ATLASO_UPDATE_STATUS_MARKER_PATH", marker)
+    monkeypatch.setattr(
+        helper,
+        "_appliance_update_status_task",
+        lambda _job_id, *, allow_terminal=False: dict(snapshot),
+    )
+    monkeypatch.setattr(helper, "_write_appliance_update_status_files", dict)
+    monkeypatch.setattr(
+        helper,
+        "_verify_release_status_completion",
+        lambda *_args: (_ for _ in ()).throw(AssertionError("evidence check must wait")),
+    )
+
+    with pytest.raises(ValueError, match="every selected child is terminal"):
+        helper._finish_appliance_update_status(job_id)
+
+    assert marker.read_text(encoding="utf-8") == job_id + "\n"
+
+
 def test_status_finish_reestablishes_hold_when_restored_snapshot_write_fails(
     monkeypatch,
     tmp_path,
@@ -434,7 +477,7 @@ def test_status_finish_reestablishes_hold_when_restored_snapshot_write_fails(
         "task_id": job_id,
         "terminal": True,
         "status": "succeeded",
-        "children": [],
+        "children": [{"component_key": "photon_os", "status": "succeeded"}],
     }
 
     def persist(value):

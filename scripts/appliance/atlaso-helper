@@ -15028,6 +15028,20 @@ def _finish_appliance_update_status(job_id: str) -> dict[str, object]:
     )
     if snapshot.get("terminal") is not True:
         raise ValueError("appliance update status cannot finish before the parent is terminal")
+    children = snapshot.get("children")
+    terminal_child_states = {"succeeded", "failed", "skipped"}
+    if (
+        not isinstance(children, list)
+        or not children
+        or any(
+            not isinstance(child, dict)
+            or str(child.get("status") or "") not in terminal_child_states
+            for child in children
+        )
+    ):
+        raise ValueError(
+            "appliance update status cannot finish before every selected child is terminal"
+        )
     _verify_release_status_completion(snapshot, job_id)
     try:
         marker_job = _read_appliance_update_runtime_file(
