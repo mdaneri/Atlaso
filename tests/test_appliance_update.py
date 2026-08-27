@@ -669,6 +669,17 @@ def test_unexpected_parent_failure_terminalizes_incomplete_update_children(clien
             created_by="admin",
             progress_percent=30,
             result="{}",
+            task_config_json=json.dumps(
+                {
+                    "schema_version": 2,
+                    "mode": "run",
+                    "execution_order": [
+                        "photon_os",
+                        "powershell_modules",
+                        "atlaso_release",
+                    ],
+                }
+            ),
         )
         db.add(job)
         db.flush()
@@ -698,6 +709,10 @@ def test_unexpected_parent_failure_terminalizes_incomplete_update_children(clien
         assert json.loads(persisted[0].result)["success"] is True
         assert json.loads(persisted[1].result)["apply_started"] is True
         assert all(step.finished_at is not None for step in persisted[1:])
+        parent_result = json.loads(job.result or "{}")
+        assert parent_result["restart_after_commit"] is True
+        assert parent_result["restart_scheduled"] is False
+        assert parent_result["config_path"].endswith("/atlaso-update.json")
 
 
 def test_pending_appliance_update_cancellation_is_an_atomic_state_transition(client):

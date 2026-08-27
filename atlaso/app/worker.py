@@ -40,6 +40,7 @@ from atlaso.app.services.appliance_update import (
     APPLIANCE_UPDATE_FINALIZER_PATH,
     APPLIANCE_UPDATE_LEGACY_EXECUTION_ORDER,
     APPLIANCE_UPDATE_RESTART_GATE_PATH,
+    APPLIANCE_UPDATE_STAGED_CONFIG_PATH,
     ATLASO_CURRENT_RELEASE_PATH,
     UPDATE_STREAM_LABELS,
     ensure_appliance_update_job_steps,
@@ -751,8 +752,9 @@ def _fail_job(db: Session, job: Job, exc: Exception) -> None:
         job: Job being processed.
         exc: Exception that caused the operation to fail.
     """
+    restart_required = False
     if job.type == "appliance-update":
-        _terminalize_incomplete_appliance_update_steps(db, job, exc)
+        restart_required = _terminalize_incomplete_appliance_update_steps(db, job, exc)
     job.status = JobStatus.FAILED.value
     job.finished_at = utcnow()
     job.progress_percent = 100
@@ -762,6 +764,14 @@ def _fail_job(db: Session, job: Job, exc: Exception) -> None:
     except json.JSONDecodeError:
         result = {}
     result.update({"status": JobStatus.FAILED.value, "success": False, "error": str(exc)})
+    if restart_required:
+        result.update(
+            {
+                "restart_after_commit": True,
+                "restart_scheduled": False,
+                "config_path": APPLIANCE_UPDATE_STAGED_CONFIG_PATH,
+            }
+        )
     job.result = json.dumps(result, indent=2, sort_keys=True)
     db.add(job)
     db.commit()
@@ -771,13 +781,16 @@ def _terminalize_incomplete_appliance_update_steps(
     db: Session,
     job: Job,
     exc: Exception,
-) -> None:
-    """Fail or skip every non-terminal child when its parent fails unexpectedly.
+) -> bool:
+    """Fail or skip incomplete children and return the Photon restart obligation.
 
     Args:
         db: Active database session.
         job: Appliance Update parent reaching a terminal failure.
         exc: Exception that escaped the per-stream completion bookkeeping.
+
+    Returns:
+        Whether a real Photon installation already succeeded and requires restart.
     """
     now = utcnow()
     steps = db.execute(
@@ -788,6 +801,16 @@ def _terminalize_incomplete_appliance_update_steps(
         JobStatus.FAILED.value,
         JobStatus.SKIPPED.value,
     }
+    try:
+        config = json.loads(job.task_config_json or "{}")
+    except json.JSONDecodeError:
+        config = {}
+    install_mode = isinstance(config, dict) and config.get("mode") == "run"
+    photon_succeeded = any(
+        step.component_key == "photon_os"
+        and step.status == JobStatus.SUCCEEDED.value
+        for step in steps
+    )
     for step in steps:
         if step.status in terminal:
             continue
@@ -811,6 +834,7 @@ def _terminalize_incomplete_appliance_update_steps(
         step.error = error
         step.result = json.dumps(result, indent=2, sort_keys=True)
         db.add(step)
+    return bool(install_mode and photon_succeeded)
 
 
 def _appliance_update_result_error(result: dict[str, Any]) -> str:
