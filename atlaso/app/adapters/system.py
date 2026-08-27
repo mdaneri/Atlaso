@@ -999,7 +999,11 @@ class SystemAdapter:
             job_id,
             stream,
             dry_run_message="dry-run: Appliance Update helper quiescence recorded",
-            timeout_seconds=30,
+            # The helper uses blocking systemctl stop and the appliance's default
+            # service-stop allowance is 90 seconds. Keep the caller alive through
+            # that full window so startup recovery cannot abandon a task whose
+            # fixed-identity helper is still completing an orderly stop.
+            timeout_seconds=120,
         )
 
     def publish_appliance_update_status(self, job_id: str) -> AdapterResult:
