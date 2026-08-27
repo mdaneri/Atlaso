@@ -2053,7 +2053,7 @@ def test_release_data_disk_platform_preserves_legacy_topology(
     assert helper._release_data_disk_platform() == expected
 
 
-@pytest.mark.parametrize("platform", ["vmware", "qemu", "hyperv"])
+@pytest.mark.parametrize("platform", ["vmware", "qemu", "hyperv", "baremetal"])
 def test_release_data_disk_platform_uses_portable_artifact_marker(monkeypatch, tmp_path, platform):
     """Use the shared four-disk policy for every verified portable artifact.
 

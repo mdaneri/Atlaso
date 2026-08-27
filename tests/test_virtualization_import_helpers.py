@@ -117,6 +117,11 @@ def test_linux_smoke_imports_reboots_validates_and_bounds_cleanup() -> None:
     assert kvm_import < kvm_owned < disk_inventory
     assert 'qm destroy "$identifier" --purge 1 --destroy-unreferenced-disks 1' in script
     assert 'virsh vol-delete --pool "$storage" "$volume"' in script
+    cleanup = script.split("cleanup() {", 1)[1].split("qga_ping() {", 1)[0]
+    domain_postcondition = cleanup.index('domain_absent=1')
+    guarded_volumes = cleanup.index('if [ "$domain_absent" -eq 1 ] && [ -f "$disk_volume_list" ]')
+    volume_delete = cleanup.index('virsh vol-delete --pool "$storage" "$volume"')
+    assert domain_postcondition < guarded_volumes < volume_delete
     assert 'cleanup_failed=1' in script
     assert 'exit "$exit_status"' in script
     assert 'vmids=$(qm list' in script

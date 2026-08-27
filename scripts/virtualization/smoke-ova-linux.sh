@@ -70,6 +70,7 @@ cleanup() {
         fi
         ;;
       kvm)
+        domain_absent=0
         if domains=$(virsh list --all --name 2>/dev/null); then
           if printf '%s\n' "$domains" | grep -Fxq -- "$identifier"; then
             if state=$(virsh domstate "$identifier" 2>/dev/null); then
@@ -90,12 +91,16 @@ cleanup() {
           if printf '%s\n' "$domains" | grep -Fxq -- "$identifier"; then
             echo "The KVM smoke domain remains after cleanup: $identifier" >&2
             cleanup_failed=1
+          else
+            domain_absent=1
           fi
         else
           echo "KVM inventory could not prove cleanup for domain $identifier." >&2
           cleanup_failed=1
         fi
-        if [ -f "$disk_volume_list" ]; then
+        # A surviving domain may still reference every imported volume. Preserve
+        # those volumes unless inventory proves the exact domain is absent.
+        if [ "$domain_absent" -eq 1 ] && [ -f "$disk_volume_list" ]; then
           while IFS= read -r volume; do
             [ -n "$volume" ] || continue
             if volumes=$(virsh vol-list --pool "$storage" --name 2>/dev/null); then

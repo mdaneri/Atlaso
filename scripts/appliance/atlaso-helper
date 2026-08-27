@@ -12773,6 +12773,7 @@ def _release_data_disk_platform() -> str:
             "platform=vmware",
             "platform=qemu",
             "platform=hyperv",
+            "platform=baremetal",
         }:
             raise ValueError("Atlaso guest-agent platform marker is invalid")
         return "virtualization"
