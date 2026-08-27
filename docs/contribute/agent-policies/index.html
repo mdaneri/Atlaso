@@ -2376,14 +2376,14 @@
   
   
     <li class="md-nav__item">
-      <a href="../../reference/hyperv-lifecycle-testing/" class="md-nav__link">
+      <a href="../../reference/virtualization-artifacts/" class="md-nav__link">
         
   
   
   <span class="md-ellipsis">
     
   
-  Hyper-V lifecycle testing
+  Portable virtualization artifacts
 
     
   </span>
@@ -4431,11 +4431,11 @@ runtime.</p>
 </ul>
 <h2 id="photon-os-appliance-deployment">Photon OS Appliance Deployment<a class="headerlink" href="#photon-os-appliance-deployment" title="Permanent link">&para;</a></h2>
 <ul>
-<li>Default live appliance testing should use VMware Workstation. VMware Workstation is installed by default at
+<li>Canonical image builds and live appliance testing use VMware Workstation. VMware Workstation is installed by default at
   <code>C:\Program Files\VMware\VMware Workstation</code>; use <code>vmrun.exe</code> there with the helpers under <code>scripts/windows/vmware/</code>.</li>
-<li>The first real OS appliance target is Photon OS 5.0. Keep Hyper-V image-build work under <code>image/hyperv/</code>. VMware
-  Workstation work lives under <code>image/vmware-workstation/</code> and should share Photon image-build/provisioning code with
-  Hyper-V whenever possible.</li>
+<li>The Photon OS 5.0 canonical template lives under <code>image/vmware-workstation/</code>. Hyper-V, KVM, and Proxmox VE are
+  portable artifacts exported from its validated payload and must not grow independent image-build or lifecycle stacks.
+  Keep guest-neutral provisioning and disk identity assets under <code>image/common/</code>.</li>
 <li>Before a VMware Workstation image rebuild force-replaces the configured output directory, route any existing output
   VMX through the checked cleanup module. Current Workstation automation has no unregister-only operation: <code>vmrun</code>
   rejects unregister, VIX reports it unsupported, and <code>vmrest</code> exposes only credentialed destructive deletion. After
@@ -4489,15 +4489,15 @@ runtime.</p>
   capabilities, clean package/download caches and staged build sources, zero-fill both payload filesystems with a
   bounded free-space reserve, remove the fill files, request TRIM, and emit bounded before/after footprint evidence
   before Packer compaction.</li>
-<li>The Hyper-V image is automated with Packer, Photon kickstart JSON, an ISO-embedded GRUB auto-install entry, and
-  provisioning scripts. Do not replace it with manual-only install steps unless the automation path is also kept
-  current.</li>
+<li>The VMware image is automated with Packer, Photon kickstart JSON, an ISO-embedded GRUB auto-install entry, and
+  provisioning scripts. Portable target exporters must consume the validated role-bound VMware provenance instead of
+  recreating installation steps.</li>
 <li>Photon appliance provisioning should run <code>tdnf -y makecache</code> and <code>tdnf -y update</code> before installing Atlaso so the
   image lands on the current Photon 5.0 package stream.</li>
-<li>Both Photon Packer templates must stage <code>requirements-appliance.lock</code> into <code>/tmp/atlaso-src</code> before shared
+<li>The Photon Packer template must stage <code>requirements-appliance.lock</code> into <code>/tmp/atlaso-src</code> before shared
   provisioning syncs the application under <code>/opt/atlaso</code>. Keep bootstrap dependency installation hash-locked and fail
   the image when the staged lock is missing; do not fall back to unpinned dependency resolution.</li>
-<li>Both Photon Packer templates must also stage <code>scripts/generate_third_party_notices.py</code> and
+<li>The Photon Packer template must also stage <code>scripts/generate_third_party_notices.py</code> and
   <code>scripts/third_party_notices.json</code>. Treat third-party notice generation as mandatory and fail the image when its
   generator, inventory, referenced notice, installed top-level Python distribution metadata, or Photon RPM inventory is
   missing or invalid; ignore nested package-internal vendored metadata during installed-environment lock verification,
@@ -4531,9 +4531,8 @@ runtime.</p>
   <code>atlaso</code> service user.</li>
 <li>Photon appliance firewall ownership is nftables-first. Provisioning installs nftables and loads
   <code>atlaso-firewall.service</code>; do not add a Atlaso iptables apply path.</li>
-<li>Photon Hyper-V images should mask <code>systemd-ssh-generator</code> because Atlaso uses normal TCP SSH and does not rely on
-  automatic SSH-over-AF_VSOCK sockets. This prevents noisy <code>Failed to query local AF_VSOCK CID</code> console messages on
-  current systemd/Hyper-V combinations.</li>
+<li>The canonical image masks <code>systemd-ssh-generator</code> because Atlaso uses normal TCP SSH and does not rely on automatic
+  SSH-over-AF_VSOCK sockets. Preserve that state in portable conversions.</li>
 <li>Keep <code>ATLASO_DRY_RUN_SYSTEM_ADAPTERS=true</code> for first-boot appliance images. Promote real host mutation one apply unit
   at a time after validation, preview, job capture, and rollback behavior are reviewed.</li>
 <li>Privileged appliance enforcement must go through <code>atlaso-helper</code> and constrained sudoers entries. Do not give the
@@ -4732,9 +4731,19 @@ runtime.</p>
   applied Web Terminal, explicit SHA-256 host-key confirmation, a short-lived one-use launch, and a second host-key
   check before server-side password authentication. Never place the password or an authenticated URI in browser launch
   state, response, audit events, or logs.</li>
-<li>Packer is a Windows-host prerequisite for the Photon image path; Hyper-V and <code>qemu-img</code> may already be available
-  locally but should still be checked in handoff notes.</li>
-<li>Pin every Photon image Packer plugin to one reviewed exact <code>X.Y.Z</code> version. Both supported Windows wrappers must run
+<li>Packer and VMware Workstation are Windows-host prerequisites for the Photon image path. <code>qemu-img</code> is required only
+  when converting the canonical OVA payload disks into the portable Hyper-V ZIP. KVM and Proxmox VE consume the
+  unchanged OVA and use their native target storage formats during import. Record the applicable host prerequisites in
+  artifact handoff notes.</li>
+<li>Release image builds must generate disposable credentials inside the protected job, scrub every credential hash,
+  application secret, machine ID, and SSH host key before export, and remove the build account before shutdown. Schedule
+  build-account removal only from a detached root-owned context after the Packer SSH communicator exits; verify the
+  account, home, sudo authorization, and build-only finalizer are absent before powering off so any failure blocks
+  export. Every
+  deployment regenerates identity before networking. Never bind a template SSH host key into OVA or converted-artifact
+  provenance; retrieve the regenerated public key and one-time credential only through the authenticated hypervisor
+  metadata channel or local console.</li>
+<li>Pin every Photon image Packer plugin to one reviewed exact <code>X.Y.Z</code> version. The supported Windows wrapper must run
   <code>packer init</code> and <code>scripts/check_packer_plugins.py</code> before validation or build, and canonical Packer CI must perform
   the same resolution check between initialization and validation. A range constraint or a selected binary whose
   filename does not match the exact required version fails closed. Plugin updates are explicit dependency changes that
@@ -4742,31 +4751,16 @@ runtime.</p>
 </ul>
 <h2 id="photon-vm-debugging-notes">Photon VM Debugging Notes<a class="headerlink" href="#photon-vm-debugging-notes" title="Permanent link">&para;</a></h2>
 <ul>
-<li>The Hyper-V management NAT appliance address used during the first Photon bring-up was <code>192.168.49.1</code>; verify the
-  actual current address before assuming it with <code>scripts/windows/hyperv/get-atlaso-vm-ip.ps1</code>, Hyper-V Manager, or SSH.</li>
-<li>Current live test appliance access for this lab: web UI <code>https://192.168.49.1/</code> with <code>admin</code> / <code>VMware01!</code>; SSH with
-  <code>root</code> / <code>VMware01!</code>. These are local lab test credentials only, not production secrets. If connectivity fails, verify
-  the VM IP first because Hyper-V NAT addresses can drift.</li>
-<li>Use the running Photon VM for real functionality checks after appliance-impacting changes: validate local tests first,
-  then install/test on the VM when behavior depends on Photon, Hyper-V NICs, systemd, nftables, dnsmasq, resolver state,
-  or <code>/ui/management/appliance-apply</code>.</li>
-<li>Hyper-V lifecycle interop tests must use a completely separate VM set from the normal <code>Atlaso</code> test appliance. Prefer
-  <code>scripts/windows/hyperv/invoke-lifecycle-test.ps1</code> for one-command runs; it prepares the tiny Linux client image,
-  picks the latest appliance VHDX, runs the test, validates backup/restore by redeploying the appliance and comparing
-  pre/post restore client certificate identity plus restored CA archive fingerprints, and cleans up created lifecycle
-  VMs by default. Use <code>-SkipBackupRestoreTest</code> only when the older single-pass run is intentionally needed, use
-  <code>-KeepVms</code> only for debugging, and use <code>-PrepareNetworksOnly</code>, <code>-CleanupVmsOnly</code>, and <code>-CleanupNetworksOnly</code> for
-  explicit Hyper-V lab maintenance. Network cleanup must remain opt-in and refuse removal while VMs are attached to
-  Atlaso switches.</li>
+<li>Use the running VMware Photon VM for real functionality checks after appliance-impacting changes: validate focused
+  local tests first, then install and test on the VM when behavior depends on Photon NICs, systemd, nftables, dnsmasq,
+  resolver state, or <code>/ui/management/appliance-apply</code>.</li>
 <li>VMware Workstation lifecycle interop tests use VMX/VMDK artifacts and <code>vmrun.exe</code> through
   <code>scripts/windows/vmware/invoke-lifecycle-test.ps1</code>. Keep Workstation lifecycle VMs under
-  <code>test-results/vmware-workstation-lifecycle/</code>, keep Workstation management on a subnet separate from Hyper-V such as
-  the default <code>192.168.167.0/24</code>, validate vmnet topology with <code>scripts/windows/vmware/prepare-networks.ps1</code>, and keep
-  Hyper-V lifecycle evidence authoritative for exact access/trunk VLAN behavior because Workstation vmnets are isolated
-  layer-2 segments rather than Hyper-V-style VLAN port policies.</li>
-<li>Any newly implemented appliance feature that affects deployed behavior must be added to the Hyper-V lifecycle coverage
+  <code>test-results/vmware-workstation-lifecycle/</code>, validate vmnet topology with
+  <code>scripts/windows/vmware/prepare-networks.ps1</code>, and record any upstream tagged-trunk configuration needed by the test.</li>
+<li>Any newly implemented appliance feature that affects deployed behavior must be added to the VMware lifecycle coverage
   and validated through the lifecycle test before the feature is treated as complete. Keep the feature's local/unit
-  tests in place, but use the lifecycle run as the interop acceptance check for Photon, Hyper-V networking, service
+  tests in place, but use the lifecycle run as the interop acceptance check for Photon, virtual networking, service
   apply behavior, and client-observable results.</li>
 <li>For the default VMware test appliance, resolve the current IP with <code>scripts/windows/vmware/get-atlaso-vm-ip.ps1</code> and
   check web reachability with <code>Invoke-WebRequest https://&lt;vmware-ip&gt;/openapi.json -SkipCertificateCheck</code>. Use the
@@ -4783,8 +4777,8 @@ runtime.</p>
 <li>When the appliance web UI is unreachable, separate network reachability from service reachability: use host-side
   <code>Test-Connection &lt;ip&gt;</code> for ICMP, <code>Test-NetConnection &lt;ip&gt; -Port 8000</code> for the web service, and in-guest
   <code>systemctl status atlaso --no-pager</code> plus <code>journalctl -u atlaso -n 120 --no-pager</code>.</li>
-<li>ICMP can be intentionally blocked by nftables while SSH and TCP/8000 still work. Do not treat failed ping as proof
-  that the VM is down; check TCP ports and Hyper-V console before changing networking.</li>
+<li>ICMP can be intentionally blocked by nftables while SSH and HTTPS still work. Do not treat failed ping as proof
+  that the VM is down; check TCP ports and the VMware console before changing networking.</li>
 <li>For VMware live appliance patching, prefer <code>scripts/windows/vmware/deploy-wheel.ps1</code>; it builds a local wheel, uploads
   it with <code>scp</code>, installs it into <code>/opt/atlaso/.venv</code>, syncs <code>scripts/appliance/atlaso-helper</code> to
   <code>/opt/atlaso/bin/atlaso-helper</code>, provisions every checked-in public release key under <code>/etc/atlaso/update-trust.d</code>,
@@ -5227,7 +5221,7 @@ runtime.</p>
   preserve the saved value. A missing-parent VLAN may remain saved only while disabled and must move to an available
   trunk before enablement. Saving remains desired-state-only and global <code>/ui/management/appliance-apply</code> owns network
   enforcement.</li>
-<li>Physical Interfaces automatically refresh observed Photon/Hyper-V NIC inventory on appliance startup and may also
+<li>Physical Interfaces automatically refresh observed Photon NIC inventory on appliance startup and may also
   refresh it manually from the page, but host inventory is read-only context; desired-state edits remain separate and
   enforcement still goes through <code>/ui/management/appliance-apply</code>.</li>
 <li>When the dedicated management interface uses IPv4 DHCP, its direct-edit grid discovers a usable DHCP-protocol default
@@ -5607,7 +5601,7 @@ runtime.</p>
   Python/template-adjacent changes.</li>
 <li>Before finalizing appliance deployment changes, also run <code>python scripts/check_photon_compatibility.py</code>. If image
   build files changed and Packer is available, run <code>packer fmt</code> and <code>packer validate</code> from the changed image target
-  directories such as <code>image/hyperv/</code> and <code>image/vmware-workstation/</code>.</li>
+  directory <code>image/vmware-workstation/</code>.</li>
 <li>Restart the local uvicorn server after template/static/route changes so the in-app browser sees the new code. Bump the
   static asset query string in <code>base.html</code> after CSS or JS changes.</li>
 </ul>

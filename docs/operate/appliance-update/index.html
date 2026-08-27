@@ -2562,14 +2562,14 @@
   
   
     <li class="md-nav__item">
-      <a href="../../reference/hyperv-lifecycle-testing/" class="md-nav__link">
+      <a href="../../reference/virtualization-artifacts/" class="md-nav__link">
         
   
   
   <span class="md-ellipsis">
     
   
-  Hyper-V lifecycle testing
+  Portable virtualization artifacts
 
     
   </span>
@@ -4077,8 +4077,8 @@ recovery boundary.</p>
 or installed environments from the retired product. Deploy a fresh Atlaso appliance and configure its signed update
 sources directly.</p>
 <h2 id="signed-lifecycle-fixture">Signed lifecycle fixture<a class="headerlink" href="#signed-lifecycle-fixture" title="Permanent link">&para;</a></h2>
-<p>Hyper-V lifecycle coverage can exercise the complete release transaction with:</p>
-<div class="language-powershell highlight"><pre><span></span><code><span id="__span-5-1"><a id="__codelineno-5-1" name="__codelineno-5-1" href="#__codelineno-5-1"></a><span class="n">scripts</span><span class="p">/</span><span class="n">windows</span><span class="p">/</span><span class="n">hyperv</span><span class="p">/</span><span class="nb">invoke-lifecycle</span><span class="n">-test</span><span class="p">.</span><span class="n">ps1</span> <span class="p">`</span>
+<p>The canonical VMware Workstation lifecycle coverage can exercise the complete release transaction with:</p>
+<div class="language-powershell highlight"><pre><span></span><code><span id="__span-5-1"><a id="__codelineno-5-1" name="__codelineno-5-1" href="#__codelineno-5-1"></a><span class="n">scripts</span><span class="p">/</span><span class="n">windows</span><span class="p">/</span><span class="n">vmware</span><span class="p">/</span><span class="nb">invoke-lifecycle</span><span class="n">-test</span><span class="p">.</span><span class="n">ps1</span> <span class="p">`</span>
 </span><span id="__span-5-2"><a id="__codelineno-5-2" name="__codelineno-5-2" href="#__codelineno-5-2"></a>  <span class="n">-SignedReleaseRepositoryUrl</span> <span class="n">https</span><span class="p">://</span><span class="n">release-fixture</span><span class="p">.</span><span class="n">example</span><span class="p">.</span><span class="n">test</span><span class="p">/</span><span class="n">updates</span>
 </span></code></pre></div>
 <p>The fixture must use the appliance's named test trust key. Its signed <code>preview</code> channel must select a healthy release

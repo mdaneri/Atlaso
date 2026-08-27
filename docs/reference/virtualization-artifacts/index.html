@@ -6,13 +6,13 @@
       <meta charset="utf-8">
       <meta name="viewport" content="width=device-width,initial-scale=1">
       
-        <meta name="description" content="Run and interpret the Atlaso Hyper-V lifecycle interoperability suite.">
+        <meta name="description" content="Deploy one verified Atlaso OVA on VMware, Proxmox VE, or KVM, or import its converted Hyper-V ZIP.">
       
       
         <meta name="author" content="Atlaso contributors">
       
       
-        <link rel="canonical" href="https://mdaneri.github.io/Atlaso/docs/reference/hyperv-lifecycle-testing/">
+        <link rel="canonical" href="https://mdaneri.github.io/Atlaso/docs/reference/virtualization-artifacts/">
       
       
         <link rel="prev" href="../full-technical-reference/">
@@ -29,7 +29,7 @@
     
     
       
-        <title>Hyper-V Lifecycle Testing - Atlaso Documentation</title>
+        <title>Portable virtualization artifacts - Atlaso Documentation</title>
       
     
     
@@ -87,7 +87,7 @@
     <div data-md-component="skip">
       
         
-        <a href="#hyper-v-lifecycle-testing" class="md-skip">
+        <a href="#portable-virtualization-artifacts" class="md-skip">
           Skip to content
         </a>
       
@@ -122,7 +122,7 @@
         <div class="md-header__topic" data-md-component="header-topic">
           <span class="md-ellipsis">
             
-              Hyper-V Lifecycle Testing
+              Portable virtualization artifacts
             
           </span>
         </div>
@@ -2397,7 +2397,7 @@
   <span class="md-ellipsis">
     
   
-  Hyper-V lifecycle testing
+  Portable virtualization artifacts
 
     
   </span>
@@ -2421,7 +2421,7 @@
   <span class="md-ellipsis">
     
   
-  Hyper-V lifecycle testing
+  Portable virtualization artifacts
 
     
   </span>
@@ -2454,10 +2454,10 @@
     <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
       
         <li class="md-nav__item">
-  <a href="#topology" class="md-nav__link">
+  <a href="#verify-release-assets" class="md-nav__link">
     <span class="md-ellipsis">
       <span class="md-typeset">
-        Topology
+        Verify release assets
       </span>
     </span>
   </a>
@@ -2465,10 +2465,10 @@
 </li>
       
         <li class="md-nav__item">
-  <a href="#single-command-run" class="md-nav__link">
+  <a href="#deploy-on-vmware" class="md-nav__link">
     <span class="md-ellipsis">
       <span class="md-typeset">
-        Single-Command Run
+        Deploy on VMware
       </span>
     </span>
   </a>
@@ -2476,10 +2476,10 @@
 </li>
       
         <li class="md-nav__item">
-  <a href="#low-level-run" class="md-nav__link">
+  <a href="#import-on-proxmox-ve" class="md-nav__link">
     <span class="md-ellipsis">
       <span class="md-typeset">
-        Low-Level Run
+        Import on Proxmox VE
       </span>
     </span>
   </a>
@@ -2487,10 +2487,10 @@
 </li>
       
         <li class="md-nav__item">
-  <a href="#what-it-validates" class="md-nav__link">
+  <a href="#import-on-kvm-with-virt-v2v" class="md-nav__link">
     <span class="md-ellipsis">
       <span class="md-typeset">
-        What It Validates
+        Import on KVM with virt-v2v
       </span>
     </span>
   </a>
@@ -2498,10 +2498,10 @@
 </li>
       
         <li class="md-nav__item">
-  <a href="#dry-run-boundary" class="md-nav__link">
+  <a href="#import-on-hyper-v" class="md-nav__link">
     <span class="md-ellipsis">
       <span class="md-typeset">
-        Dry-Run Boundary
+        Import on Hyper-V
       </span>
     </span>
   </a>
@@ -2509,10 +2509,32 @@
 </li>
       
         <li class="md-nav__item">
-  <a href="#test-roadmap" class="md-nav__link">
+  <a href="#first-boot-guest-agent-selection" class="md-nav__link">
     <span class="md-ellipsis">
       <span class="md-typeset">
-        Test Roadmap
+        First boot guest-agent selection
+      </span>
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#validate-and-recover" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Validate and recover
+      </span>
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#protected-release-runners" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Protected release runners
       </span>
     </span>
   </a>
@@ -3416,10 +3438,10 @@
     <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
       
         <li class="md-nav__item">
-  <a href="#topology" class="md-nav__link">
+  <a href="#verify-release-assets" class="md-nav__link">
     <span class="md-ellipsis">
       <span class="md-typeset">
-        Topology
+        Verify release assets
       </span>
     </span>
   </a>
@@ -3427,10 +3449,10 @@
 </li>
       
         <li class="md-nav__item">
-  <a href="#single-command-run" class="md-nav__link">
+  <a href="#deploy-on-vmware" class="md-nav__link">
     <span class="md-ellipsis">
       <span class="md-typeset">
-        Single-Command Run
+        Deploy on VMware
       </span>
     </span>
   </a>
@@ -3438,10 +3460,10 @@
 </li>
       
         <li class="md-nav__item">
-  <a href="#low-level-run" class="md-nav__link">
+  <a href="#import-on-proxmox-ve" class="md-nav__link">
     <span class="md-ellipsis">
       <span class="md-typeset">
-        Low-Level Run
+        Import on Proxmox VE
       </span>
     </span>
   </a>
@@ -3449,10 +3471,10 @@
 </li>
       
         <li class="md-nav__item">
-  <a href="#what-it-validates" class="md-nav__link">
+  <a href="#import-on-kvm-with-virt-v2v" class="md-nav__link">
     <span class="md-ellipsis">
       <span class="md-typeset">
-        What It Validates
+        Import on KVM with virt-v2v
       </span>
     </span>
   </a>
@@ -3460,10 +3482,10 @@
 </li>
       
         <li class="md-nav__item">
-  <a href="#dry-run-boundary" class="md-nav__link">
+  <a href="#import-on-hyper-v" class="md-nav__link">
     <span class="md-ellipsis">
       <span class="md-typeset">
-        Dry-Run Boundary
+        Import on Hyper-V
       </span>
     </span>
   </a>
@@ -3471,10 +3493,32 @@
 </li>
       
         <li class="md-nav__item">
-  <a href="#test-roadmap" class="md-nav__link">
+  <a href="#first-boot-guest-agent-selection" class="md-nav__link">
     <span class="md-ellipsis">
       <span class="md-typeset">
-        Test Roadmap
+        First boot guest-agent selection
+      </span>
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#validate-and-recover" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Validate and recover
+      </span>
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#protected-release-runners" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Protected release runners
       </span>
     </span>
   </a>
@@ -3573,7 +3617,7 @@
                 
                   
   
-    <a href="https://github.com/mdaneri/Atlaso/edit/main/docs/reference/hyperv-lifecycle-testing.md" title="Edit this page" class="md-content__button md-icon" rel="edit">
+    <a href="https://github.com/mdaneri/Atlaso/edit/main/docs/reference/virtualization-artifacts.md" title="Edit this page" class="md-content__button md-icon" rel="edit">
       
       <svg xmlns="http://www.w3.org/2000/svg" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="2" class="lucide lucide-file-pen" viewBox="0 0 24 24"><path d="M12.659 22H18a2 2 0 0 0 2-2V8a2.4 2.4 0 0 0-.706-1.706l-3.588-3.588A2.4 2.4 0 0 0 14 2H6a2 2 0 0 0-2 2v9.34"/><path d="M14 2v5a1 1 0 0 0 1 1h5M10.378 12.622a1 1 0 0 1 3 3.003L8.36 20.637a2 2 0 0 1-.854.506l-2.867.837a.5.5 0 0 1-.62-.62l.836-2.869a2 2 0 0 1 .506-.853z"/></svg>
     </a>
@@ -3582,192 +3626,211 @@
     
       
     
-    <a href="https://github.com/mdaneri/Atlaso/raw/main/docs/reference/hyperv-lifecycle-testing.md" title="View source of this page" class="md-content__button md-icon">
+    <a href="https://github.com/mdaneri/Atlaso/raw/main/docs/reference/virtualization-artifacts.md" title="View source of this page" class="md-content__button md-icon">
       
       <svg xmlns="http://www.w3.org/2000/svg" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="2" class="lucide lucide-file-code-2" viewBox="0 0 24 24"><path d="M4 12.15V4a2 2 0 0 1 2-2h8a2.4 2.4 0 0 1 1.706.706l3.588 3.588A2.4 2.4 0 0 1 20 8v12a2 2 0 0 1-2 2h-3.35"/><path d="M14 2v5a1 1 0 0 0 1 1h5M5 16l-3 3 3 3M9 22l3-3-3-3"/></svg>
     </a>
   
 
 
-<h1 id="hyper-v-lifecycle-testing">Hyper-V Lifecycle Testing<a class="headerlink" href="#hyper-v-lifecycle-testing" title="Permanent link">&para;</a></h1>
-<p>Atlaso lifecycle interop tests use a separate Hyper-V lab set. They must not reuse or destroy the normal <code>Atlaso</code> test
-appliance VM.</p>
-<p>Run all Windows commands in PowerShell 7.4 or newer (<code>pwsh</code>). Earlier PowerShell releases and Windows PowerShell 5.1
-(<code>powershell.exe</code>) are not supported.</p>
-<h2 id="topology">Topology<a class="headerlink" href="#topology" title="Permanent link">&para;</a></h2>
-<p>The default lifecycle lab creates these VMs:</p>
+<h1 id="portable-virtualization-artifacts">Portable virtualization artifacts<a class="headerlink" href="#portable-virtualization-artifacts" title="Permanent link">&para;</a></h1>
+<p>Atlaso builds and validates one appliance template with VMware Workstation. A release publishes that template as the
+canonical OVA for VMware, Proxmox VE, and KVM, plus one Hyper-V ZIP converted from the same OVA payload. The import
+helpers normalize target-specific VM configuration without changing the source OVA.</p>
+<p>The shared machine contract is UEFI with Secure Boot disabled, four virtual CPUs, 4096 MiB RAM, two NICs, one SCSI
+controller, and four ordered disks:</p>
+<ol>
+<li>40 GiB Photon OS at SCSI slot 0;</li>
+<li>20 GiB Atlaso system content at SCSI slot 1;</li>
+<li>500 GiB VCF Offline Depot at SCSI slot 2; and</li>
+<li>500 GiB VCF Backups at SCSI slot 3.</li>
+</ol>
+<p>The OVA contains files for the two payload disks. Its two 500 GiB data disks are fileless declarations. Import helpers
+retain fileless disks when the platform creates them, create only missing data disks, and reject reordered or
+conflicting disks.</p>
+<h2 id="verify-release-assets">Verify release assets<a class="headerlink" href="#verify-release-assets" title="Permanent link">&para;</a></h2>
+<p>Download the release into a new directory, then obtain the trusted public key from the immutable source tag. The
+release key ID is <code>atlaso-release-2026-01</code>; its SHA-256 fingerprint is
+<code>b0bb5614342c4f432a01c53fc4c9aae54c1eeffb12806539a92babbcda74b58e</code>. This example verifies the detached Ed25519
+signature, expected version, and every indexed asset before import:</p>
+<div class="language-bash highlight"><pre><span></span><code><span id="__span-0-1"><a id="__codelineno-0-1" name="__codelineno-0-1" href="#__codelineno-0-1"></a><span class="nv">TAG</span><span class="o">=</span>vX.Y.Z
+</span><span id="__span-0-2"><a id="__codelineno-0-2" name="__codelineno-0-2" href="#__codelineno-0-2"></a><span class="nv">ASSET_ROOT</span><span class="o">=</span><span class="s2">&quot;atlaso-</span><span class="nv">$TAG</span><span class="s2">&quot;</span>
+</span><span id="__span-0-3"><a id="__codelineno-0-3" name="__codelineno-0-3" href="#__codelineno-0-3"></a>mkdir<span class="w"> </span>--<span class="w"> </span><span class="s2">&quot;</span><span class="nv">$ASSET_ROOT</span><span class="s2">&quot;</span>
+</span><span id="__span-0-4"><a id="__codelineno-0-4" name="__codelineno-0-4" href="#__codelineno-0-4"></a>gh<span class="w"> </span>release<span class="w"> </span>download<span class="w"> </span><span class="s2">&quot;</span><span class="nv">$TAG</span><span class="s2">&quot;</span><span class="w"> </span>--repo<span class="w"> </span>mdaneri/Atlaso<span class="w"> </span>--dir<span class="w"> </span><span class="s2">&quot;</span><span class="nv">$ASSET_ROOT</span><span class="s2">&quot;</span>
+</span><span id="__span-0-5"><a id="__codelineno-0-5" name="__codelineno-0-5" href="#__codelineno-0-5"></a>curl<span class="w"> </span>--fail<span class="w"> </span>--location<span class="w"> </span>--output<span class="w"> </span><span class="s2">&quot;</span><span class="nv">$ASSET_ROOT</span><span class="s2">/atlaso-release-2026-01.pem&quot;</span><span class="w"> </span><span class="se">\</span>
+</span><span id="__span-0-6"><a id="__codelineno-0-6" name="__codelineno-0-6" href="#__codelineno-0-6"></a><span class="w">  </span><span class="s2">&quot;https://raw.githubusercontent.com/mdaneri/Atlaso/</span><span class="nv">$TAG</span><span class="s2">/image/common/update-trust/atlaso-release-2026-01.pem&quot;</span>
+</span><span id="__span-0-7"><a id="__codelineno-0-7" name="__codelineno-0-7" href="#__codelineno-0-7"></a><span class="nb">printf</span><span class="w"> </span><span class="s1">&#39;%s  %s\n&#39;</span><span class="w"> </span><span class="se">\</span>
+</span><span id="__span-0-8"><a id="__codelineno-0-8" name="__codelineno-0-8" href="#__codelineno-0-8"></a><span class="w">  </span><span class="s1">&#39;b0bb5614342c4f432a01c53fc4c9aae54c1eeffb12806539a92babbcda74b58e&#39;</span><span class="w"> </span><span class="se">\</span>
+</span><span id="__span-0-9"><a id="__codelineno-0-9" name="__codelineno-0-9" href="#__codelineno-0-9"></a><span class="w">  </span><span class="s2">&quot;</span><span class="nv">$ASSET_ROOT</span><span class="s2">/atlaso-release-2026-01.pem&quot;</span><span class="w"> </span><span class="p">|</span><span class="w"> </span>sha256sum<span class="w"> </span>--check<span class="w"> </span>--strict
+</span><span id="__span-0-10"><a id="__codelineno-0-10" name="__codelineno-0-10" href="#__codelineno-0-10"></a>jq<span class="w"> </span>-e<span class="w"> </span>--arg<span class="w"> </span>version<span class="w"> </span><span class="s2">&quot;</span><span class="si">${</span><span class="nv">TAG</span><span class="p">#v</span><span class="si">}</span><span class="s2">&quot;</span><span class="w"> </span><span class="s1">&#39;</span>
+</span><span id="__span-0-11"><a id="__codelineno-0-11" name="__codelineno-0-11" href="#__codelineno-0-11"></a><span class="s1">  .schema_version == 1 and .kind == &quot;atlaso-virtualization-artifacts&quot; and</span>
+</span><span id="__span-0-12"><a id="__codelineno-0-12" name="__codelineno-0-12" href="#__codelineno-0-12"></a><span class="s1">  .version == $version and .signing_key_id == &quot;atlaso-release-2026-01&quot; and</span>
+</span><span id="__span-0-13"><a id="__codelineno-0-13" name="__codelineno-0-13" href="#__codelineno-0-13"></a><span class="s1">  (.source_commit | test(&quot;^[0-9a-f]{40}$&quot;)) and</span>
+</span><span id="__span-0-14"><a id="__codelineno-0-14" name="__codelineno-0-14" href="#__codelineno-0-14"></a><span class="s1">  (.assets | type == &quot;array&quot; and length &gt; 0 and</span>
+</span><span id="__span-0-15"><a id="__codelineno-0-15" name="__codelineno-0-15" href="#__codelineno-0-15"></a><span class="s1">    all(.[]; (.name | test(&quot;^[A-Za-z0-9][A-Za-z0-9._-]*$&quot;)) and</span>
+</span><span id="__span-0-16"><a id="__codelineno-0-16" name="__codelineno-0-16" href="#__codelineno-0-16"></a><span class="s1">      (.size | type == &quot;number&quot;) and (.sha256 | test(&quot;^[0-9a-f]{64}$&quot;))) and</span>
+</span><span id="__span-0-17"><a id="__codelineno-0-17" name="__codelineno-0-17" href="#__codelineno-0-17"></a><span class="s1">    ([.[].name] | length == (unique | length)))</span>
+</span><span id="__span-0-18"><a id="__codelineno-0-18" name="__codelineno-0-18" href="#__codelineno-0-18"></a><span class="s1">&#39;</span><span class="w"> </span><span class="s2">&quot;</span><span class="nv">$ASSET_ROOT</span><span class="s2">/virtualization-artifact-index.json&quot;</span><span class="w"> </span>&gt;/dev/null
+</span><span id="__span-0-19"><a id="__codelineno-0-19" name="__codelineno-0-19" href="#__codelineno-0-19"></a>jq<span class="w"> </span>-e<span class="w"> </span><span class="s1">&#39;</span>
+</span><span id="__span-0-20"><a id="__codelineno-0-20" name="__codelineno-0-20" href="#__codelineno-0-20"></a><span class="s1">  .schema_version == 1 and .algorithm == &quot;ed25519&quot; and</span>
+</span><span id="__span-0-21"><a id="__codelineno-0-21" name="__codelineno-0-21" href="#__codelineno-0-21"></a><span class="s1">  .key_id == &quot;atlaso-release-2026-01&quot; and (.signature | type == &quot;string&quot;)</span>
+</span><span id="__span-0-22"><a id="__codelineno-0-22" name="__codelineno-0-22" href="#__codelineno-0-22"></a><span class="s1">&#39;</span><span class="w"> </span><span class="s2">&quot;</span><span class="nv">$ASSET_ROOT</span><span class="s2">/virtualization-artifact-index.json.sig&quot;</span><span class="w"> </span>&gt;/dev/null
+</span><span id="__span-0-23"><a id="__codelineno-0-23" name="__codelineno-0-23" href="#__codelineno-0-23"></a>jq<span class="w"> </span>-r<span class="w"> </span>.signature<span class="w"> </span><span class="s2">&quot;</span><span class="nv">$ASSET_ROOT</span><span class="s2">/virtualization-artifact-index.json.sig&quot;</span><span class="w"> </span><span class="p">|</span>
+</span><span id="__span-0-24"><a id="__codelineno-0-24" name="__codelineno-0-24" href="#__codelineno-0-24"></a><span class="w">  </span>base64<span class="w"> </span>--decode<span class="w"> </span>&gt;<span class="s2">&quot;</span><span class="nv">$ASSET_ROOT</span><span class="s2">/virtualization-artifact-index.raw.sig&quot;</span>
+</span><span id="__span-0-25"><a id="__codelineno-0-25" name="__codelineno-0-25" href="#__codelineno-0-25"></a>openssl<span class="w"> </span>pkeyutl<span class="w"> </span>-verify<span class="w"> </span>-pubin<span class="w"> </span>-rawin<span class="w"> </span><span class="se">\</span>
+</span><span id="__span-0-26"><a id="__codelineno-0-26" name="__codelineno-0-26" href="#__codelineno-0-26"></a><span class="w">  </span>-inkey<span class="w"> </span><span class="s2">&quot;</span><span class="nv">$ASSET_ROOT</span><span class="s2">/atlaso-release-2026-01.pem&quot;</span><span class="w"> </span><span class="se">\</span>
+</span><span id="__span-0-27"><a id="__codelineno-0-27" name="__codelineno-0-27" href="#__codelineno-0-27"></a><span class="w">  </span>-in<span class="w"> </span><span class="s2">&quot;</span><span class="nv">$ASSET_ROOT</span><span class="s2">/virtualization-artifact-index.json&quot;</span><span class="w"> </span><span class="se">\</span>
+</span><span id="__span-0-28"><a id="__codelineno-0-28" name="__codelineno-0-28" href="#__codelineno-0-28"></a><span class="w">  </span>-sigfile<span class="w"> </span><span class="s2">&quot;</span><span class="nv">$ASSET_ROOT</span><span class="s2">/virtualization-artifact-index.raw.sig&quot;</span>
+</span><span id="__span-0-29"><a id="__codelineno-0-29" name="__codelineno-0-29" href="#__codelineno-0-29"></a><span class="k">while</span><span class="w"> </span><span class="nv">IFS</span><span class="o">=</span><span class="s1">$&#39;\t&#39;</span><span class="w"> </span><span class="nb">read</span><span class="w"> </span>-r<span class="w"> </span>digest<span class="w"> </span>size<span class="w"> </span>name<span class="p">;</span><span class="w"> </span><span class="k">do</span>
+</span><span id="__span-0-30"><a id="__codelineno-0-30" name="__codelineno-0-30" href="#__codelineno-0-30"></a><span class="w">  </span><span class="nb">test</span><span class="w"> </span><span class="s2">&quot;</span><span class="k">$(</span>stat<span class="w"> </span>--format<span class="o">=</span><span class="s1">&#39;%s&#39;</span><span class="w"> </span><span class="s2">&quot;</span><span class="nv">$ASSET_ROOT</span><span class="s2">/</span><span class="nv">$name</span><span class="s2">&quot;</span><span class="k">)</span><span class="s2">&quot;</span><span class="w"> </span>-eq<span class="w"> </span><span class="s2">&quot;</span><span class="nv">$size</span><span class="s2">&quot;</span>
+</span><span id="__span-0-31"><a id="__codelineno-0-31" name="__codelineno-0-31" href="#__codelineno-0-31"></a><span class="w">  </span><span class="nb">printf</span><span class="w"> </span><span class="s1">&#39;%s  %s\n&#39;</span><span class="w"> </span><span class="s2">&quot;</span><span class="nv">$digest</span><span class="s2">&quot;</span><span class="w"> </span><span class="s2">&quot;</span><span class="nv">$name</span><span class="s2">&quot;</span>
+</span><span id="__span-0-32"><a id="__codelineno-0-32" name="__codelineno-0-32" href="#__codelineno-0-32"></a><span class="k">done</span><span class="w"> </span>&lt;<span class="w"> </span>&lt;<span class="o">(</span>jq<span class="w"> </span>-r<span class="w"> </span><span class="s1">&#39;.assets[] | [.sha256, .size, .name] | @tsv&#39;</span><span class="w"> </span><span class="se">\</span>
+</span><span id="__span-0-33"><a id="__codelineno-0-33" name="__codelineno-0-33" href="#__codelineno-0-33"></a><span class="w">  </span><span class="s2">&quot;</span><span class="nv">$ASSET_ROOT</span><span class="s2">/virtualization-artifact-index.json&quot;</span><span class="o">)</span><span class="w"> </span><span class="p">|</span>
+</span><span id="__span-0-34"><a id="__codelineno-0-34" name="__codelineno-0-34" href="#__codelineno-0-34"></a><span class="w">  </span><span class="o">(</span><span class="nb">cd</span><span class="w"> </span><span class="s2">&quot;</span><span class="nv">$ASSET_ROOT</span><span class="s2">&quot;</span><span class="w"> </span><span class="o">&amp;&amp;</span><span class="w"> </span>sha256sum<span class="w"> </span>--check<span class="w"> </span>--strict<span class="o">)</span>
+</span><span id="__span-0-35"><a id="__codelineno-0-35" name="__codelineno-0-35" href="#__codelineno-0-35"></a>rm<span class="w"> </span>--<span class="w"> </span><span class="s2">&quot;</span><span class="nv">$ASSET_ROOT</span><span class="s2">/virtualization-artifact-index.raw.sig&quot;</span>
+</span></code></pre></div>
+<p>Run the verification from a trusted administrative workstation with OpenSSL 3, <code>jq</code>, GNU coreutils, and GitHub CLI.
+The standard tools authenticate the signed index before trusting its asset records; no downloaded verifier executes
+before that trust boundary. Keep the verified OVA immutable and available until deployment validation succeeds. Do not
+import any asset if key fingerprint, signature, version, size, or asset hash verification fails.</p>
+<p>Every helper runs <code>validate_ova.py</code> before changing hypervisor state. Validation requires the manifest, source commit,
+version, payload hashes and roles, fixed capacities, and complete machine topology to agree. An unexpected archive
+member, symbolic link, unsafe path, missing provenance record, or changed payload blocks the import.</p>
+<h2 id="deploy-on-vmware">Deploy on VMware<a class="headerlink" href="#deploy-on-vmware" title="Permanent link">&para;</a></h2>
+<p>Import the OVA directly in VMware Workstation or another compatible VMware OVF deployment environment. Map the first
+NIC to the management network and the second NIC to the services network. Do not change the disk controller, slots, or
+capacities.</p>
+<p>VMware deployment continues through OVF-property customization. The first-boot selector retains <code>open-vm-tools</code>,
+discards the unused offline QEMU and Hyper-V RPM payloads, and records success before Atlaso services start.
+Supply a unique FQDN, Atlaso administrator password, and root password in the OVF deployment properties. The release
+image contains no usable build or deployment credential and no reusable SSH host key.
+Packer schedules final build-account removal in a detached root-owned unit so the SSH communicator exits first. That
+unit verifies the build account, home directory, passwordless sudo authorization, and build-only helper are absent;
+any failed verification leaves the VM powered on and blocks export.</p>
+<h2 id="import-on-proxmox-ve">Import on Proxmox VE<a class="headerlink" href="#import-on-proxmox-ve" title="Permanent link">&para;</a></h2>
+<p>The Proxmox VE node needs <code>qm</code>, <code>pvesm</code>, <code>qemu-img</code>, <code>jq</code>, Python 3, and access to the selected storage and bridges. Copy
+the OVA, <code>import-atlaso-proxmox.sh</code>, and <code>validate_ova.py</code> into one ordinary directory, then run:</p>
+<div class="language-bash highlight"><pre><span></span><code><span id="__span-1-1"><a id="__codelineno-1-1" name="__codelineno-1-1" href="#__codelineno-1-1"></a>chmod<span class="w"> </span><span class="m">0755</span><span class="w"> </span>import-atlaso-proxmox.sh
+</span><span id="__span-1-2"><a id="__codelineno-1-2" name="__codelineno-1-2" href="#__codelineno-1-2"></a>./import-atlaso-proxmox.sh<span class="w"> </span>atlaso-vX.Y.Z.ova<span class="w"> </span><span class="m">240</span><span class="w"> </span>local-lvm<span class="w"> </span>vmbr0<span class="w"> </span>vmbr1
+</span></code></pre></div>
+<p>Arguments are the OVA, an unused VM ID, destination storage, management bridge, and optional services bridge. The
+helper uses the platform OVF/OVA importer, then enforces q35, OVMF without pre-enrolled Secure Boot keys, four CPUs,
+4096 MiB RAM, one shared virtio SCSI controller, two NICs, QEMU guest-agent support, boot from SCSI slot 0, and the
+four-disk contract. It
+extracts the manifest-verified OVF member into a private temporary directory for <code>qm importovf</code>; the downloaded OVA is
+never rewritten.</p>
+<p>Do not reuse a VM ID or pre-create matching destination volumes. A failed invocation destroys only the VM ID and
+unreferenced storage that it created after all preflight checks passed.</p>
+<h2 id="import-on-kvm-with-virt-v2v">Import on KVM with virt-v2v<a class="headerlink" href="#import-on-kvm-with-virt-v2v" title="Permanent link">&para;</a></h2>
+<p>The KVM host needs <code>virt-v2v</code>, <code>virsh</code>, <code>qemu-img</code>, <code>jq</code>, Python 3, q35-compatible OVMF firmware, one active storage
+pool, and two existing libvirt networks. Copy the OVA, <code>import-atlaso-kvm.sh</code>, <code>validate_ova.py</code>, and
+<code>normalize_libvirt.py</code> into one ordinary directory, then run:</p>
+<div class="language-bash highlight"><pre><span></span><code><span id="__span-2-1"><a id="__codelineno-2-1" name="__codelineno-2-1" href="#__codelineno-2-1"></a>chmod<span class="w"> </span><span class="m">0755</span><span class="w"> </span>import-atlaso-kvm.sh
+</span><span id="__span-2-2"><a id="__codelineno-2-2" name="__codelineno-2-2" href="#__codelineno-2-2"></a>sudo<span class="w"> </span>./import-atlaso-kvm.sh<span class="w"> </span>atlaso-vX.Y.Z.ova<span class="w"> </span>atlaso<span class="w"> </span>default<span class="w"> </span>atlaso-management<span class="w"> </span>atlaso-services
+</span></code></pre></div>
+<p>Arguments are the OVA, an unused domain name, active storage pool, management network, and optional services network.
+The helper imports with <code>virt-v2v -i ova</code>, creates only missing 500 GiB data volumes, verifies the resulting disk order
+and capacities, and normalizes the inactive libvirt definition. The resulting domain remains shut off for inspection.</p>
+<p>The helper serializes each pool/domain namespace and rejects an existing domain or matching storage namespace.
+Rollback removes only the domain and matching volumes created after that locked preflight, including partial
+<code>virt-v2v</code> volumes left before a domain definition exists.</p>
+<h2 id="import-on-hyper-v">Import on Hyper-V<a class="headerlink" href="#import-on-hyper-v" title="Permanent link">&para;</a></h2>
+<p>Download and extract <code>atlaso-v&lt;version&gt;-hyperv-x86_64.zip</code> into a new ordinary directory on the Hyper-V host. Open an
+elevated PowerShell 7.4 or newer (<code>pwsh</code>) session and run:</p>
+<div class="language-powershell highlight"><pre><span></span><code><span id="__span-3-1"><a id="__codelineno-3-1" name="__codelineno-3-1" href="#__codelineno-3-1"></a><span class="n">pwsh</span> <span class="o">-File</span> <span class="p">.\</span><span class="nb">Import-Atlaso</span><span class="p">.</span><span class="n">ps1</span> <span class="p">`</span>
+</span><span id="__span-3-2"><a id="__codelineno-3-2" name="__codelineno-3-2" href="#__codelineno-3-2"></a>  <span class="n">-Name</span> <span class="n">Atlaso</span> <span class="p">`</span>
+</span><span id="__span-3-3"><a id="__codelineno-3-3" name="__codelineno-3-3" href="#__codelineno-3-3"></a>  <span class="n">-ManagementSwitch</span> <span class="s1">&#39;Management&#39;</span> <span class="p">`</span>
+</span><span id="__span-3-4"><a id="__codelineno-3-4" name="__codelineno-3-4" href="#__codelineno-3-4"></a>  <span class="n">-ServiceSwitch</span> <span class="s1">&#39;Services&#39;</span> <span class="p">`</span>
+</span><span id="__span-3-5"><a id="__codelineno-3-5" name="__codelineno-3-5" href="#__codelineno-3-5"></a>  <span class="n">-DestinationRoot</span> <span class="s1">&#39;D:\Hyper-V\Atlaso&#39;</span> <span class="p">`</span>
+</span><span id="__span-3-6"><a id="__codelineno-3-6" name="__codelineno-3-6" href="#__codelineno-3-6"></a>  <span class="n">-Start</span>
+</span></code></pre></div>
+<p>The importer verifies its manifest and checksums before creating state. It copies four dynamic VHDX disks into a new
+destination, creates a Generation 2 VM with Secure Boot off, attaches two selected switches and the four ordered SCSI
+disks, and applies the shared CPU and memory contract. Existing VM names, destinations, unsafe paths, malformed
+manifests, checksum failures, and conflicting topology are rejected. Failure cleanup removes only resources recorded
+as created by that invocation.</p>
+<h2 id="first-boot-guest-agent-selection">First boot guest-agent selection<a class="headerlink" href="#first-boot-guest-agent-selection" title="Permanent link">&para;</a></h2>
+<p>The image carries locked offline RPM closures under <code>/var/lib/atlaso/first-boot-packages</code>. A provider-neutral service
+runs before data-disk initialization, networking handoff, nginx, Atlaso, and the worker. It does not use a network
+repository.</p>
 <ul>
-<li><code>AtlasoLifecycle-Appliance</code></li>
-<li><code>AtlasoLifecycle-ClientA</code></li>
-<li><code>AtlasoLifecycle-ClientB</code></li>
+<li>VMware retains and enables <code>open-vm-tools</code>.</li>
+<li>KVM, QEMU, and Proxmox remove VMware Tools, install the verified local QEMU guest-agent closure, and enable its
+  service.</li>
+<li>Hyper-V removes VMware Tools, installs the verified local Photon Hyper-V closure, and enables its required daemons.</li>
+<li>Bare metal removes VMware Tools and all virtual guest-agent payloads, then continues without an agent.</li>
+<li>Unknown or contradictory platform evidence blocks appliance startup for diagnosis.</li>
 </ul>
-<p>The appliance attaches to <code>Atlaso-Mgmt</code>, <code>Atlaso-SiteA</code>, <code>Atlaso-Trunk</code>, and <code>Atlaso-SiteB</code>. Client A attaches to its
-SSH management switch, SiteA, an access VLAN on the trunk switch, and a dedicated Atlaso management test NIC used only
-for the CA request path. Client B attaches to a management switch plus the WAN-test switch.</p>
-<p>The default SiteA test network is tagged VLAN 12 on appliance interface <code>eth1.12</code> with gateway <code>192.168.12.1/24</code>. The
-separate trunk validation network uses VLAN 50 on <code>eth2.50</code> with gateway <code>192.168.60.1/24</code>. These defaults match the
-current appliance image state and avoid changing a physical parent that already owns VLAN children.</p>
-<p>The lifecycle script creates differencing disks under <code>test-results/hyperv-lifecycle/&lt;timestamp&gt;/disks</code>, using the
-supplied appliance and client VHDX files as read-only parents. It also creates per-client NoCloud seed ISOs under
-<code>test-results/hyperv-lifecycle/&lt;timestamp&gt;/seed</code> so the client VMs boot with SSH access and the test NIC DHCP refresh
-helper.</p>
-<p>The default client parent image path is:</p>
-<div class="language-text highlight"><pre><span></span><code><span id="__span-0-1"><a id="__codelineno-0-1" name="__codelineno-0-1" href="#__codelineno-0-1"></a>image/hyperv/clients/alpine-cloud/atlaso-tiny-linux-client.vhdx
-</span></code></pre></div>
-<p>Prepare or refresh that image with:</p>
-<div class="language-powershell highlight"><pre><span></span><code><span id="__span-1-1"><a id="__codelineno-1-1" name="__codelineno-1-1" href="#__codelineno-1-1"></a><span class="n">pwsh</span> <span class="n">-ExecutionPolicy</span> <span class="n">Bypass</span> <span class="p">`</span>
-</span><span id="__span-1-2"><a id="__codelineno-1-2" name="__codelineno-1-2" href="#__codelineno-1-2"></a>  <span class="o">-File</span> <span class="n">scripts</span><span class="p">/</span><span class="n">windows</span><span class="p">/</span><span class="n">hyperv</span><span class="p">/</span><span class="n">prepare-tiny-linux-client</span><span class="p">.</span><span class="n">ps1</span>
-</span></code></pre></div>
-<p>The preparation script downloads Alpine's official UEFI cloud-init QCOW2 image, verifies the <code>.sha512</code> checksum, and
-converts it to a dynamic Hyper-V VHDX with <code>qemu-img</code>. A failed conversion or image inspection exits nonzero without
-emitting the prepared-image JSON. When the current run created an incomplete or unverified VHDX, the wrapper removes
-that exact output so a later lifecycle run cannot accept it as prepared. Cached Alpine payload and checksum files are
-accepted only as a verified pair. Both the cached payload and downloaded checksum metadata must match the repository-
-pinned SHA-512 digest for the exact default Alpine image. A corrupt or incomplete pair is removed and reacquired into
-unique partial files, validated before atomic promotion, and never requires <code>-Force</code> for ordinary recovery. Custom
-images must supply their own <code>-ExpectedSha512</code> pin. The lifecycle script uses
-<code>pycdlib</code> to build the NoCloud seed ISOs; if it is missing, the script installs it with
-<code>python -m pip install pycdlib</code>.</p>
-<h2 id="single-command-run">Single-Command Run<a class="headerlink" href="#single-command-run" title="Permanent link">&para;</a></h2>
-<p>Run from an elevated PowerShell 7 session:</p>
-<div class="language-powershell highlight"><pre><span></span><code><span id="__span-2-1"><a id="__codelineno-2-1" name="__codelineno-2-1" href="#__codelineno-2-1"></a><span class="n">pwsh</span> <span class="n">-ExecutionPolicy</span> <span class="n">Bypass</span> <span class="p">`</span>
-</span><span id="__span-2-2"><a id="__codelineno-2-2" name="__codelineno-2-2" href="#__codelineno-2-2"></a>  <span class="o">-File</span> <span class="n">scripts</span><span class="p">/</span><span class="n">windows</span><span class="p">/</span><span class="n">hyperv</span><span class="p">/</span><span class="nb">invoke-lifecycle</span><span class="n">-test</span><span class="p">.</span><span class="n">ps1</span>
-</span></code></pre></div>
-<p>The wrapper prepares the Alpine client VHDX if needed, selects the newest appliance VHDX under <code>image/hyperv/output</code>,
-creates a unique lifecycle lab name, runs the full interop scenario, prints a human-readable summary to the console,
-writes <code>result.json</code>, and removes the VMs it created after the test. By default, a successful first pass exports a
-settings backup, redeploys the appliance VM from the parent VHDX, restores the backup on the fresh appliance, applies
-the restored desired state, and reruns the host/client checks. The restored pass also compares the pre-restore and
-post-restore Client A CA certificate serial number and SHA-256 fingerprint, then exports the restored settings state and
-compares the archived root CA plus CA-managed certificate fingerprints against the original backup. Backup/restore
-portability fails loudly when certificate identity changes. Pass <code>-SkipBackupRestoreTest</code> for the older single-pass
-lifecycle run, and pass <code>-KeepVms</code> only when you want to inspect a failed lab. Default two-pass runs write
-<code>initial/result.json</code>, <code>restored/result.json</code>, <code>settings-backup.json</code>, and <code>restored/restored-settings-backup.json</code>
-under the timestamped result directory.</p>
-<p>The wrapper has no password defaults. It securely prompts for <code>-AdminPassword</code> and <code>-VcfBackupPassword</code> when omitted;
-<code>-SshPassword</code> reuses the supplied admin <code>SecureString</code> unless the caller provides a separate secure value. The launcher
-exports those <code>SecureString</code> objects to a current-user DPAPI-protected temporary CLIXML bundle, gives the child only the
-bundle path, and removes the bundle after the child exits. No password is placed on the child process command line.</p>
-<p>The lifecycle web probe defaults to <code>https://&lt;ApplianceIPAddress&gt;</code>. Fresh appliance images install nginx with CA-backed
-management HTTPS/443 and redirect public HTTP/80 to HTTPS; override the probe with <code>-ApplianceUrl</code> only when testing a
-different management front door.</p>
-<p>Useful single-purpose commands:</p>
-<div class="language-powershell highlight"><pre><span></span><code><span id="__span-3-1"><a id="__codelineno-3-1" name="__codelineno-3-1" href="#__codelineno-3-1"></a><span class="c"># Create or repair the Atlaso Hyper-V switches and management NAT only.</span>
-</span><span id="__span-3-2"><a id="__codelineno-3-2" name="__codelineno-3-2" href="#__codelineno-3-2"></a><span class="n">pwsh</span> <span class="n">-ExecutionPolicy</span> <span class="n">Bypass</span> <span class="p">`</span>
-</span><span id="__span-3-3"><a id="__codelineno-3-3" name="__codelineno-3-3" href="#__codelineno-3-3"></a>  <span class="o">-File</span> <span class="n">scripts</span><span class="p">/</span><span class="n">windows</span><span class="p">/</span><span class="n">hyperv</span><span class="p">/</span><span class="nb">invoke-lifecycle</span><span class="n">-test</span><span class="p">.</span><span class="n">ps1</span> <span class="p">`</span>
-</span><span id="__span-3-4"><a id="__codelineno-3-4" name="__codelineno-3-4" href="#__codelineno-3-4"></a>  <span class="n">-PrepareNetworksOnly</span>
-</span><span id="__span-3-5"><a id="__codelineno-3-5" name="__codelineno-3-5" href="#__codelineno-3-5"></a>
-</span><span id="__span-3-6"><a id="__codelineno-3-6" name="__codelineno-3-6" href="#__codelineno-3-6"></a><span class="c"># Remove only AtlasoLifecycle* VMs; keep Hyper-V switches and NAT.</span>
-</span><span id="__span-3-7"><a id="__codelineno-3-7" name="__codelineno-3-7" href="#__codelineno-3-7"></a><span class="n">pwsh</span> <span class="n">-ExecutionPolicy</span> <span class="n">Bypass</span> <span class="p">`</span>
-</span><span id="__span-3-8"><a id="__codelineno-3-8" name="__codelineno-3-8" href="#__codelineno-3-8"></a>  <span class="o">-File</span> <span class="n">scripts</span><span class="p">/</span><span class="n">windows</span><span class="p">/</span><span class="n">hyperv</span><span class="p">/</span><span class="nb">invoke-lifecycle</span><span class="n">-test</span><span class="p">.</span><span class="n">ps1</span> <span class="p">`</span>
-</span><span id="__span-3-9"><a id="__codelineno-3-9" name="__codelineno-3-9" href="#__codelineno-3-9"></a>  <span class="n">-CleanupVmsOnly</span>
-</span><span id="__span-3-10"><a id="__codelineno-3-10" name="__codelineno-3-10" href="#__codelineno-3-10"></a>
-</span><span id="__span-3-11"><a id="__codelineno-3-11" name="__codelineno-3-11" href="#__codelineno-3-11"></a><span class="c"># Remove Atlaso switches and management NAT; refuses if VMs are attached.</span>
-</span><span id="__span-3-12"><a id="__codelineno-3-12" name="__codelineno-3-12" href="#__codelineno-3-12"></a><span class="n">pwsh</span> <span class="n">-ExecutionPolicy</span> <span class="n">Bypass</span> <span class="p">`</span>
-</span><span id="__span-3-13"><a id="__codelineno-3-13" name="__codelineno-3-13" href="#__codelineno-3-13"></a>  <span class="o">-File</span> <span class="n">scripts</span><span class="p">/</span><span class="n">windows</span><span class="p">/</span><span class="n">hyperv</span><span class="p">/</span><span class="nb">invoke-lifecycle</span><span class="n">-test</span><span class="p">.</span><span class="n">ps1</span> <span class="p">`</span>
-</span><span id="__span-3-14"><a id="__codelineno-3-14" name="__codelineno-3-14" href="#__codelineno-3-14"></a>  <span class="n">-CleanupNetworksOnly</span>
-</span></code></pre></div>
-<p>Pass <code>-CleanupNetworksAfterTest</code> to remove the switches/NAT after a successful test as well as the VMs. Network cleanup
-is intentionally opt-in because the normal <code>Atlaso</code> VM can also be attached to the shared Atlaso switches.</p>
-<p>Use <code>-PlanOnly</code> first to print the VM names, VHDX parents, and result path without prompting for credentials or creating
-or modifying VMs. Use
-<code>-ApplianceVhdxPath</code> when you want a specific appliance image instead of the newest discovered VHDX.</p>
-<h2 id="low-level-run">Low-Level Run<a class="headerlink" href="#low-level-run" title="Permanent link">&para;</a></h2>
-<p>The wrapper delegates to <code>scripts/windows/hyperv/run-lifecycle-test.ps1</code>. Direct low-level use requires the same
-current-user DPAPI-protected CLIXML handoff:</p>
-<div class="language-powershell highlight"><pre><span></span><code><span id="__span-4-1"><a id="__codelineno-4-1" name="__codelineno-4-1" href="#__codelineno-4-1"></a><span class="nv">$secretBundlePath</span> <span class="p">=</span> <span class="nb">Join-Path</span> <span class="nv">$env:TEMP</span> <span class="s2">&quot;atlaso-lifecycle-</span><span class="p">$(</span><span class="no">[guid]</span><span class="p">::</span><span class="n">NewGuid</span><span class="p">())</span><span class="s2">.clixml&quot;</span>
-</span><span id="__span-4-2"><a id="__codelineno-4-2" name="__codelineno-4-2" href="#__codelineno-4-2"></a><span class="nv">$adminPassword</span> <span class="p">=</span> <span class="nb">Read-Host</span> <span class="s1">&#39;Atlaso administrator password&#39;</span> <span class="n">-AsSecureString</span>
-</span><span id="__span-4-3"><a id="__codelineno-4-3" name="__codelineno-4-3" href="#__codelineno-4-3"></a><span class="nv">$backupPassword</span> <span class="p">=</span> <span class="nb">Read-Host</span> <span class="s1">&#39;VCF Backup test password&#39;</span> <span class="n">-AsSecureString</span>
-</span><span id="__span-4-4"><a id="__codelineno-4-4" name="__codelineno-4-4" href="#__codelineno-4-4"></a><span class="no">[pscustomobject]</span><span class="p">@{</span>
-</span><span id="__span-4-5"><a id="__codelineno-4-5" name="__codelineno-4-5" href="#__codelineno-4-5"></a>  <span class="n">AdminPassword</span> <span class="p">=</span> <span class="nv">$adminPassword</span>
-</span><span id="__span-4-6"><a id="__codelineno-4-6" name="__codelineno-4-6" href="#__codelineno-4-6"></a>  <span class="n">SshPassword</span> <span class="p">=</span> <span class="nv">$adminPassword</span>
-</span><span id="__span-4-7"><a id="__codelineno-4-7" name="__codelineno-4-7" href="#__codelineno-4-7"></a>  <span class="n">VcfBackupPassword</span> <span class="p">=</span> <span class="nv">$backupPassword</span>
-</span><span id="__span-4-8"><a id="__codelineno-4-8" name="__codelineno-4-8" href="#__codelineno-4-8"></a><span class="p">}</span> <span class="p">|</span> <span class="nb">Export-Clixml</span> <span class="n">-LiteralPath</span> <span class="nv">$secretBundlePath</span>
-</span><span id="__span-4-9"><a id="__codelineno-4-9" name="__codelineno-4-9" href="#__codelineno-4-9"></a><span class="k">try</span> <span class="p">{</span>
-</span><span id="__span-4-10"><a id="__codelineno-4-10" name="__codelineno-4-10" href="#__codelineno-4-10"></a>  <span class="n">pwsh</span> <span class="n">-ExecutionPolicy</span> <span class="n">Bypass</span> <span class="p">`</span>
-</span><span id="__span-4-11"><a id="__codelineno-4-11" name="__codelineno-4-11" href="#__codelineno-4-11"></a>    <span class="o">-File</span> <span class="n">scripts</span><span class="p">/</span><span class="n">windows</span><span class="p">/</span><span class="n">hyperv</span><span class="p">/</span><span class="n">run-lifecycle-test</span><span class="p">.</span><span class="n">ps1</span> <span class="p">`</span>
-</span><span id="__span-4-12"><a id="__codelineno-4-12" name="__codelineno-4-12" href="#__codelineno-4-12"></a>    <span class="n">-ApplianceVhdxPath</span> <span class="n">image</span><span class="p">/</span><span class="n">hyperv</span><span class="p">/</span><span class="n">output</span><span class="p">/</span><span class="n">atlaso-photon-hyperv</span><span class="p">/</span><span class="s2">&quot;Virtual Hard Disks&quot;</span><span class="p">/</span><span class="n">Atlaso-Photon-Builder</span><span class="p">.</span><span class="n">vhdx</span> <span class="p">`</span>
-</span><span id="__span-4-13"><a id="__codelineno-4-13" name="__codelineno-4-13" href="#__codelineno-4-13"></a>    <span class="n">-SecretBundlePath</span> <span class="nv">$secretBundlePath</span> <span class="p">`</span>
-</span><span id="__span-4-14"><a id="__codelineno-4-14" name="__codelineno-4-14" href="#__codelineno-4-14"></a>    <span class="n">-CleanupCreatedLab</span>
-</span><span id="__span-4-15"><a id="__codelineno-4-15" name="__codelineno-4-15" href="#__codelineno-4-15"></a><span class="p">}</span> <span class="k">finally</span> <span class="p">{</span>
-</span><span id="__span-4-16"><a id="__codelineno-4-16" name="__codelineno-4-16" href="#__codelineno-4-16"></a>  <span class="nb">Remove-Item</span> <span class="n">-LiteralPath</span> <span class="nv">$secretBundlePath</span> <span class="n">-Force</span>
-</span><span id="__span-4-17"><a id="__codelineno-4-17" name="__codelineno-4-17" href="#__codelineno-4-17"></a><span class="p">}</span>
-</span></code></pre></div>
-<p>The default path uses password SSH for both appliance and client probes. The default appliance SSH user is <code>admin</code>
-because root SSH is disabled by default on fresh appliance images. Appliance host-state probes log in as <code>admin</code> and run
-the existing Linux checks through <code>sudo sh -lc</code>; pass <code>-ApplianceSshUser root</code> only for images where Appliance Settings
-has enabled root SSH. The default client SSH user is <code>alpine</code>. Key-based client auth is still available by passing an
-existing <code>-SshKeyPath</code>; the matching <code>.pub</code> file is injected into both client VMs. The scripts do not generate SSH keys
-automatically. When using Plink, the Hyper-V script discovers and pins the appliance and client SSH host keys for the
-test run so rebuilt VMs can safely reuse the same lab IPs without depending on PuTTY's cached host key state.</p>
-<p>The low-level script only cleans up when <code>-CleanupCreatedLab</code> is present. That flag removes only VM names created during
-the current run that start with the lifecycle lab prefix. Both scripts refuse to use reserved names such as <code>Atlaso</code> and
-<code>Atlaso-Photon-Builder</code>.</p>
-<h2 id="what-it-validates">What It Validates<a class="headerlink" href="#what-it-validates" title="Permanent link">&para;</a></h2>
-<p>The lifecycle runner records structured evidence in <code>test-results/hyperv-lifecycle/&lt;timestamp&gt;/result.json</code>:</p>
+<p>The bare-metal selector branch applies only when the canonical portable four-disk set is attached with its declared
+SCSI layout; it uses the explicit system-content, Depot, and Backups identities at slots 1, 2, and 3. It does not select,
+partition, or adopt arbitrary physical disks. The separate offline installation ISO tracked in #542 owns interactive
+target selection and the physical-hardware disk-safety contract.</p>
+<p>Successful selection proves that only the expected agent is installed, then securely removes the RPM staging tree,
+checksum manifest, package-manager cache, and runtime scratch directory. Failure leaves the verified persistent RPM
+closure available for automatic retry while the Atlaso front door and application remain stopped.
+The selector's success marker is the only first-boot transaction commit. It is stored under the root-only
+<code>/var/lib/atlaso-privileged/guest-agent</code> boundary, whose ownership and mode are revalidated before the marker is trusted.
+An interruption before that commit reruns
+identity initialization, generates a fresh credential set, and republishes its matching one-time envelope before
+networking. The retry never exposes a password whose corresponding host state was replaced.</p>
+<p>VMware continues into OVF-property customization. Hyper-V, KVM, and Proxmox use DHCP-first defaults and do not wait for
+VMware metadata. Use the appliance console to complete initial networking when DHCP is unavailable.</p>
+<p>Before networking, every cloned appliance generates a new machine ID, OpenSSH host-key set, application secrets, and
+high-entropy administrator and root passwords. VMware replaces the generated passwords with its required OVF values
+and publishes the regenerated Ed25519 public host key through VMware guest-info for authenticated automation. KVM and
+Proxmox expose a root-only one-time envelope on tmpfs at <code>/run/atlaso/first-boot-access.json</code>, readable through the QEMU
+guest agent or from the local console. Hyper-V publishes the same envelope under KVP key <code>atlaso.first_boot_access</code>.
+The local console keeps the envelope on a dedicated first-time initialization screen until an operator presses Enter
+to acknowledge that every value was recorded; acknowledgement removes only the console's tmpfs copy. Retrieve the
+envelope only from the authenticated hypervisor control plane or the physically controlled console, pin its SSH host
+key before connecting, and rotate both passwords immediately. The first reboot removes any remaining runtime file and
+Atlaso's Hyper-V KVP record while preserving unrelated KVP data.</p>
+<p>Signed appliance updates preserve the disk policy already proven for the installed generation. Portable artifacts use
+the shared four-disk policy recorded by the verified first-boot provider marker. Older VMware appliances retain their
+existing four-disk controller identities, while older three-disk Hyper-V appliances retain their Depot and Backups
+slots and are never reinterpreted as the new four-disk layout. These compatibility policies support updates only; the
+retired Hyper-V template-build and lifecycle environment is not restored.</p>
+<p>The protected smoke jobs retrieve each booted VM's regenerated Ed25519 public host key and unique credential through
+its authenticated hypervisor metadata channel before SSH authentication. They reject an unknown or changed host and
+never use trust-on-first-use host-key acceptance. Artifact provenance intentionally contains no reusable host identity.</p>
+<h2 id="validate-and-recover">Validate and recover<a class="headerlink" href="#validate-and-recover" title="Permanent link">&para;</a></h2>
+<p>After first boot, verify all of the following before adopting the VM:</p>
 <ul>
-<li>appliance boot, SSH, <code>atlaso.service</code>, <code>/openapi.json</code>, and dashboard API</li>
-<li>physical interface refresh, access NICs, trunk NIC, and VLAN desired state</li>
-<li>tty1 Atlaso console service ownership, masked tty1 getty, untouched tty2 getty template, installed console executable,
-  and non-isolated recovery state</li>
-<li>DNS and DHCP desired state plus dnsmasq host-state checks</li>
-<li>first-boot <code>vcf-sdk</code> plus unprivileged appliance-user VCF PowerCLI version/import checks, including <code>Connect-VIServer</code>
-  without sudo</li>
-<li>firewall settings, NAT, WAN policy, nftables, routes, and <code>tc</code> state</li>
-<li>WAN impairment evidence through a route-bound netem policy and a live <code>tc qdisc</code> assertion on the appliance WAN
-  interface</li>
-<li>deterministic WAN packet-loss evidence by temporarily applying 100% loss, proving Client A cannot ping Client B across
-  the WAN path, restoring the normal 25ms/5ms/0% loss policy, and proving the ping recovers</li>
-<li>CA enablement, root CA generation/download metadata, Client A CSR request submission over its lifecycle management
-  test NIC, global <code>ca</code> appliance apply, issued certificate download from Client A, runner-side certificate
-  signature/subject validation, and CA files under <code>/etc/atlaso</code></li>
-<li>CA-backed management HTTPS desired state, the global <code>appliance_settings</code> apply unit, HTTP-to-HTTPS redirect behavior
-  on the management front door, and HTTPS <code>/openapi.json</code> reachability with the locally issued appliance certificate</li>
-<li>passwordless admin web-terminal desired state on management plus the selected SiteA interface, applied OpenSSH user-CA
-  trust, a ready terminal page and one-use ticket on both listeners, and proof that the extra listener returns 404 for
-  <code>/ui/management/dashboard</code></li>
-<li>VCF Backups SFTP desired state, <code>vcf-backup</code> Local Users password staging and OS sync, global <code>vcf_backups</code> appliance
-  apply, OpenSSH drop-in host state, and a client-side SFTP probe from Client A to the SiteA appliance address</li>
-<li>VCF Offline Depot desired state, selected <code>vcf-depot</code> Local Users password staging, browser-session login, curl and
-  wget Basic-auth artifact downloads, and password rotation proven through Local Users apply without reapplying the
-  depot service</li>
-<li>ESX Storage with an attached blank VHDX, job-scoped format confirmation, ext4 UUID mount, generated A and AAAA
-  targets, IPv4 and IPv6 storage VMkernel paths, NFS 3 and NFS 4.1 mounts, create/read/delete probes for every
-  protocol/family pair, one dual-stack share, and appliance/ESX reboot persistence evidence</li>
-<li>client-side DNS/DHCP/routing probes when client SSH addresses are available</li>
-<li>Network Boot Inventory Linux report submission and audited reboot, plus an
-  Alpine client capture of the exact 102-byte UDP/9 Wake-on-LAN magic packet on
-  the private SiteA switch. The capture must equal six <code>ff</code> octets followed by
-  the discovered host MAC repeated 16 times; API success alone is insufficient
-  lifecycle evidence.</li>
-<li>settings backup export, appliance redeploy, settings restore, restored desired-state apply, downloaded Client A
-  certificate comparison, and restored CA archive certificate comparison unless <code>-SkipBackupRestoreTest</code> is used</li>
-<li>optional signed Atlaso Release coverage when <code>-SignedReleaseRepositoryUrl</code> is supplied: exact candidate-version
-  agreement through nginx, candidate persistence after an audited appliance reboot, injected final nginx/front-door
-  failure with <code>rolled_back=true</code>, and the restored release identity and version remaining healthy after a second reboot</li>
+<li>the expected guest agent is installed and active and foreign agents are absent;</li>
+<li><code>/var/lib/atlaso/first-boot-packages</code> no longer exists;</li>
+<li>both NICs and four ordered disks are present;</li>
+<li>the Depot and Backups data disks are mounted at their documented paths; and</li>
+<li><code>https://&lt;management-address&gt;/openapi.json</code> returns the Atlaso API document.</li>
 </ul>
-<p>The runner submits only global <code>/ui/management/appliance-apply</code> units. It does not call service-specific apply routes.</p>
-<p>ESX Storage acceptance records the global job IDs, stable disk identity and fingerprint, generated family names, direct
-A/AAAA answers, <code>exportfs -v</code>, listening TCP sockets, nftables <code>ip saddr</code>/<code>ip6 saddr</code> rules, ESX datastore listings, and
-post-reboot data probes. IPv4 and IPv6 must both pass before the feature PR is ready.</p>
-<h2 id="dry-run-boundary">Dry-Run Boundary<a class="headerlink" href="#dry-run-boundary" title="Permanent link">&para;</a></h2>
-<p>First-boot images may still have <code>ATLASO_DRY_RUN_SYSTEM_ADAPTERS=true</code>. That is useful for control-plane smoke testing,
-but a real lifecycle interop run should use an appliance image built with <code>-EnableRealSystemAdapters</code>. If a deliberate
-dry-run pass is needed, pass <code>-AllowDryRunApply</code>; otherwise the runner fails when an apply job reports dry-run.</p>
-<h2 id="test-roadmap">Test Roadmap<a class="headerlink" href="#test-roadmap" title="Permanent link">&para;</a></h2>
-<p>Keep the test stack split by ownership:</p>
-<ul>
-<li>PowerShell and Hyper-V orchestration tests should move into Pester. The intended entry point is
-  <code>Invoke-Pester tests/pester/HyperVLifecycle.Tests.ps1</code>. Pester should cover wrapper parameter sets, plan-only output,
-  VHDX discovery, switch/NAT preparation, VM cleanup safety, reserved VM protections, and mocked Hyper-V cmdlet
-  behavior.</li>
-<li>Python appliance and guest assertions must remain pytest-covered. The <code>scripts/interop/lifecycle_test.py</code> runner owns
-  HTTP/API flows, global <code>/ui/management/appliance-apply</code>, result JSON evidence, SSH probes, DNS/DHCP checks,
-  firewall/routing/NAT
-  assertions, and client-side connectivity checks.</li>
-</ul>
-<p>Use Pester tags for destructive or host-mutating scenarios. Normal Pester tests should mock Hyper-V cmdlets; real
-VM-creating runs should be explicit integration tests.</p>
+<p>Reboot the VM and repeat the readiness and disk checks. An assigned address or a running VM alone is not application
+readiness.</p>
+<p>If guest-agent selection fails, inspect its service status and journal from the console. Preserve the RPM staging tree,
+correct only the reported image or platform conflict, and restart the selector. Do not manually enable Atlaso or nginx
+while the selector is failed. For an import-time failure, keep the original release assets, remove only the target VM
+and storage owned by that import attempt, correct the host prerequisite, and run the helper again.</p>
+<h2 id="protected-release-runners">Protected release runners<a class="headerlink" href="#protected-release-runners" title="Permanent link">&para;</a></h2>
+<p>Virtualization release jobs run only for the exact protected-main commit selected by the release workflow. The runner
+fleet must provide the dedicated <code>atlaso-vmware</code>, <code>atlaso-proxmox</code>, <code>atlaso-kvm</code>, and <code>atlaso-hyperv</code> labels; do not
+attach those labels to general-purpose or fork-accessible runners. Build credentials are disposable values generated
+inside the protected build job and are scrubbed before export. Define the repository variables named by
+<code>.github/workflows/release.yml</code> for VMware vmnets, Proxmox storage and bridges, KVM storage and networks, Hyper-V
+switches, and bounded test destinations.</p>
+<p>The VMware build runner requires Workstation, Packer, OVF Tool, and the existing Photon build prerequisites. The
+Proxmox and KVM runners require the same host tools listed in their import sections. The Hyper-V runner requires
+PowerShell 7.4 or newer, Hyper-V, <code>qemu-img</code>, and two operator-owned virtual switches. Every smoke identity and storage
+namespace is invocation-scoped: VMware generates a disposable per-run password, Proxmox serializes each VMID import,
+passes it to OVF Tool through a runner-only temporary configuration file instead of process arguments, and deletes that
+file immediately after import. Proxmox serializes each VMID import, and cleanup failures fail the active smoke job
+instead of allowing publication with retained provider state. VMware cleanup binds the root, VMX, provider aliases,
+and every remaining descendant to captured Windows file identities; Proxmox and KVM require successful inventories to
+prove absence. KVM serializes the global domain name and its selected pool namespace independently; Proxmox importer
+rollback requires a final inventory proving its fixed VMID absent. Hyper-V
+cleanup removes only a VM whose exact ID was captured after successful import; an indeterminate import preserves files
+for diagnosis rather than claiming a later name match. KVM rollback preserves every imported volume unless a successful
+libvirt inventory proves that the exact domain is absent. Every smoke identity and storage namespace must be dedicated to
+CI so cleanup can remain limited to resources created by that invocation. Release
+publication waits for all four platform smoke tests and refuses an asset at or above the repository's existing 2 GiB
+limit rather than producing multipart output.</p>
 
 
 
