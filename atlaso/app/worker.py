@@ -1436,7 +1436,10 @@ def _run_appliance_update(job_id: str) -> None:
             else list(APPLIANCE_UPDATE_EXECUTION_ORDER)
         )
         execution_streams = [stream for stream in execution_order if stream in selected]
-        current_install_contract = int(config.get("schema_version") or 0) >= 2
+        current_install_contract = bool(
+            int(config.get("schema_version") or 0) >= 2
+            and not config.get("status_legacy_execution_order")
+        )
         stream_results: list[dict[str, Any]] = []
         earlier_failed = status_surface_failed
         for index, stream in enumerate(execution_streams, start=1):

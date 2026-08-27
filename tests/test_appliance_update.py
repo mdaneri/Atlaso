@@ -2803,7 +2803,13 @@ def test_appliance_update_migrates_legacy_install_status_identity_before_mutatio
     selected = ["photon_os", "atlaso_release"]
 
     def publish(observed_job_id: str, *, finish: bool = False) -> bool:
-        """Record publication after its transaction identity is durable."""
+        """Record publication after its transaction identity is durable.
+
+        Args:
+            observed_job_id: Appliance Update parent identifier being published.
+            finish: Whether publication restores ordinary browser surfaces.
+        """
+
         with SessionLocal() as db:
             config = json.loads(db.get(Job, observed_job_id).task_config_json)
         events.append(("finish" if finish else "publish", config))

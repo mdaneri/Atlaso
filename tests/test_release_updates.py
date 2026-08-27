@@ -2828,6 +2828,10 @@ def test_worker_restart_uses_matching_root_release_finalizer(
             task_config_json=json.dumps(
                 {
                     "selected_streams": ["powershell_modules", "photon_os", "atlaso_release"],
+                    "schema_version": 2,
+                    "execution_order": ["atlaso_release", "powershell_modules", "photon_os"],
+                    "status_legacy_execution_order": True,
+                    "status_transaction_id": "1" * 32,
                     "mode": "run",
                 }
             ),
@@ -2924,6 +2928,7 @@ def test_worker_restart_uses_matching_root_release_finalizer(
 
     monkeypatch.setattr(ui, "execute_appliance_update_job", execute_remaining)
     monkeypatch.setattr(ui, "SystemAdapter", RestartAdapter)
+    monkeypatch.setattr(worker, "_publish_appliance_update_status", lambda *_args, **_kwargs: True)
 
     assert worker.run_worker_once() == "job_release_finalizer"
     assert calls == ["photon_os"]
@@ -2978,6 +2983,10 @@ def test_worker_restart_resumes_untouched_children_after_healthy_release_rollbac
             task_config_json=json.dumps(
                 {
                     "selected_streams": ["atlaso_release", "powershell_modules", "photon_os"],
+                    "schema_version": 2,
+                    "execution_order": ["atlaso_release", "powershell_modules", "photon_os"],
+                    "status_legacy_execution_order": True,
+                    "status_transaction_id": "2" * 32,
                     "settings": {},
                     "mode": "run",
                 }
@@ -3045,6 +3054,7 @@ def test_worker_restart_resumes_untouched_children_after_healthy_release_rollbac
         }
 
     monkeypatch.setattr(ui, "execute_appliance_update_job", execute_remaining)
+    monkeypatch.setattr(worker, "_publish_appliance_update_status", lambda *_args, **_kwargs: True)
 
     assert worker.run_worker_once() == "job_release_rollback_handoff"
     assert calls == ["powershell_modules"]

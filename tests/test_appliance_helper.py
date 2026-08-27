@@ -369,7 +369,12 @@ def test_status_publish_rollback_preserves_only_a_preexisting_hold(
     )
     monkeypatch.setattr(helper, "_service_command", lambda *_args: {"success": True})
     def fail_listener_proof(sites):
-        """Prove the dedicated PXE vhost was guarded before failing admission."""
+        """Prove the dedicated PXE vhost was guarded before failing admission.
+
+        Args:
+            sites: Applied nginx site paths participating in listener proof.
+        """
+
         assert any("listen 192.0.2.20:8080;" in site for site in sites)
         assert any(str(helper.ATLASO_UPDATE_STATUS_NGINX_INCLUDE_PATH) in site for site in sites)
         raise ValueError("listener proof failed")
