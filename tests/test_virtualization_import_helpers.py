@@ -156,7 +156,9 @@ def test_linux_smoke_imports_reboots_validates_and_bounds_cleanup() -> None:
     assert domain_postcondition < guarded_volumes < volume_delete
     assert 'cleanup_failed=1' in script
     assert 'exit "$exit_status"' in script
-    assert 'vmids=$(qm list' in script
+    assert 'qm_inventory=$(qm list 2>/dev/null)' in script
+    assert script.count('vmids=$(proxmox_vmids)') == 3
+    assert 'qm list 2>/dev/null | awk' not in script
     assert 'domains=$(virsh list --all --name' in script
     assert 'volumes=$(virsh vol-list --pool "$storage" --name' in script
     assert "inventory could not prove cleanup" in script

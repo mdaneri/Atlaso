@@ -38,6 +38,11 @@ work_root=$(mktemp -d -t atlaso-ova-smoke.XXXXXX)
 owned=0
 disk_volume_list="$work_root/kvm-volumes"
 
+proxmox_vmids() {
+  qm_inventory=$(qm list 2>/dev/null) || return 1
+  printf '%s\n' "$qm_inventory" | awk 'NR > 1 { print $1 }'
+}
+
 cleanup() {
   exit_status=$?
   trap - EXIT HUP INT TERM
@@ -45,7 +50,7 @@ cleanup() {
   if [ "$owned" -eq 1 ]; then
     case "$provider" in
       proxmox)
-        if vmids=$(qm list 2>/dev/null | awk 'NR > 1 { print $1 }'); then
+        if vmids=$(proxmox_vmids); then
           if printf '%s\n' "$vmids" | grep -Fxq -- "$identifier"; then
             if status=$(qm status "$identifier" 2>/dev/null); then
               case "$status" in
@@ -59,7 +64,7 @@ cleanup() {
         else
           cleanup_failed=1
         fi
-        if vmids=$(qm list 2>/dev/null | awk 'NR > 1 { print $1 }'); then
+        if vmids=$(proxmox_vmids); then
           if printf '%s\n' "$vmids" | grep -Fxq -- "$identifier"; then
             echo "The Proxmox smoke VM remains after cleanup: $identifier" >&2
             cleanup_failed=1
@@ -257,10 +262,15 @@ case "$provider" in
         exit 2
       }
     done
-    qm status "$identifier" >/dev/null 2>&1 && {
-      echo "The Proxmox smoke-test VMID already exists: $identifier" >&2
+    if vmids=$(proxmox_vmids); then
+      if printf '%s\n' "$vmids" | grep -Fxq -- "$identifier"; then
+        echo "The Proxmox smoke-test VMID already exists: $identifier" >&2
+        exit 2
+      fi
+    else
+      echo "Proxmox inventory could not prove VMID $identifier absent." >&2
       exit 2
-    }
+    fi
     "$template_root/import-atlaso-proxmox.sh" \
       "$ova_path" "$identifier" "$storage" "$management_network" "$service_network" >/dev/null
     owned=1
