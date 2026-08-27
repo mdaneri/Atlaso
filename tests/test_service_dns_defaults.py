@@ -18,7 +18,11 @@ def _session_factory():
 
 
 def test_fresh_seed_and_lazy_service_defaults_use_appliance_domain(monkeypatch):
-    """Fresh and OVF-derived first boot state uses one canonical domain source."""
+    """Fresh and OVF-derived first boot state uses one canonical domain source.
+
+    Args:
+        monkeypatch: Pytest fixture used to provide the OVF-style appliance FQDN.
+    """
 
     monkeypatch.setenv("ATLASO_APPLIANCE_FQDN", "atlaso.lab.internal")
 
@@ -238,7 +242,11 @@ def test_reconcile_factory_identities_preserves_operator_state_and_dns_conflicts
 
 
 def test_factory_reset_seed_restores_coherent_factory_service_domain(monkeypatch):
-    """Factory replacement ignores deployment overrides and restores one factory domain."""
+    """Factory replacement ignores deployment overrides and restores one factory domain.
+
+    Args:
+        monkeypatch: Pytest fixture used to provide a deployment-time appliance FQDN override.
+    """
 
     monkeypatch.setenv("ATLASO_APPLIANCE_FQDN", "atlaso.lab.internal")
 
@@ -327,7 +335,11 @@ def test_appliance_domain_change_reconciles_only_previous_factory_domain():
 
 
 def test_appliance_settings_autosave_reconciles_factory_service_desired_state(client):
-    """A valid appliance-domain change leaves every factory service truthfully pending."""
+    """A valid appliance-domain change leaves every factory service truthfully pending.
+
+    Args:
+        client: Authenticated Atlaso test client with an isolated database.
+    """
 
     from atlaso.app.database import SessionLocal
     from atlaso.app.models import (
@@ -407,7 +419,11 @@ def test_appliance_settings_autosave_reconciles_factory_service_desired_state(cl
 
 
 def test_settings_restore_reconciles_legacy_factory_service_domain(client):
-    """Archive restore upgrades legacy factory identities without rewriting custom names."""
+    """Archive restore upgrades legacy factory identities without rewriting custom names.
+
+    Args:
+        client: Authenticated Atlaso test client with an isolated database.
+    """
 
     from atlaso.app.database import SessionLocal
     from atlaso.app.models import (

@@ -122,7 +122,11 @@ FACTORY_SERVICE_IDENTITIES = (
 
 
 def appliance_domain_from_fqdn(fqdn: str) -> str:
-    """Return the validated domain portion of an appliance FQDN."""
+    """Return the validated domain portion of an appliance FQDN.
+
+    Args:
+        fqdn: Candidate appliance fully qualified domain name.
+    """
 
     normalized = normalize_fqdn(fqdn)
     if not normalized or "." not in normalized:
@@ -131,14 +135,24 @@ def appliance_domain_from_fqdn(fqdn: str) -> str:
 
 
 def factory_service_hostname(label: str, appliance_fqdn: str) -> str:
-    """Return a factory service hostname under the appliance domain."""
+    """Return a factory service hostname under the appliance domain.
+
+    Args:
+        label: Factory-owned service label to prepend to the appliance domain.
+        appliance_fqdn: Canonical appliance fully qualified domain name.
+    """
 
     domain = appliance_domain_from_fqdn(appliance_fqdn) or FACTORY_APPLIANCE_DOMAIN
     return f"{label}.{domain}"
 
 
 def factory_oidc_issuer(hostname: str, port: int = 443) -> str:
-    """Return the canonical factory OIDC issuer for a service hostname."""
+    """Return the canonical factory OIDC issuer for a service hostname.
+
+    Args:
+        hostname: OIDC provider hostname.
+        port: OIDC provider HTTPS port.
+    """
 
     authority = hostname if int(port) == 443 else f"{hostname}:{int(port)}"
     return f"https://{authority}/identity"
@@ -149,6 +163,12 @@ def _eligible_factory_hostnames(
     *,
     previous_appliance_fqdn: str | None,
 ) -> set[str]:
+    """Return service names that prove factory ownership during reconciliation.
+
+    Args:
+        label: Factory-owned service label.
+        previous_appliance_fqdn: Canonical appliance FQDN before the current change, if known.
+    """
     hostnames = {f"{label}.{FACTORY_APPLIANCE_DOMAIN}"}
     previous_domain = appliance_domain_from_fqdn(previous_appliance_fqdn or "")
     if previous_domain:
@@ -157,6 +177,13 @@ def _eligible_factory_hostnames(
 
 
 def _renamed_service_record_hostname(hostname: str, old_hostname: str, new_hostname: str) -> str | None:
+    """Return the migrated service or generated-alias hostname when eligible.
+
+    Args:
+        hostname: Existing DNS record hostname.
+        old_hostname: Previous factory-owned service hostname.
+        new_hostname: Replacement factory-owned service hostname.
+    """
     if hostname == old_hostname:
         return new_hostname
     old_label, old_domain = old_hostname.split(".", 1)
@@ -176,7 +203,14 @@ def _migrate_owned_dns_records(
     old_hostname: str,
     new_hostname: str,
 ) -> tuple[int, int]:
-    """Rename only exact app-owned records and preserve conflicting operator rows."""
+    """Rename only exact app-owned records and preserve conflicting operator rows.
+
+    Args:
+        db: Active database session.
+        description: Exact app-owned DNS provenance marker.
+        old_hostname: Previous factory-owned service hostname.
+        new_hostname: Replacement factory-owned service hostname.
+    """
 
     changed = 0
     conflicts = 0
@@ -240,7 +274,14 @@ def _reconcile_managed_certificate(
     old_hostname: str,
     new_hostname: str,
 ) -> bool:
-    """Mark an existing managed certificate stale for its new service identity."""
+    """Mark an existing managed certificate stale for its new service identity.
+
+    Args:
+        db: Active database session.
+        owner: Exact managed-certificate owner identifier.
+        old_hostname: Previous factory-owned service hostname.
+        new_hostname: Replacement factory-owned service hostname.
+    """
 
     from atlaso.app.models import CaCertificate
 
@@ -277,6 +318,10 @@ def reconcile_factory_service_identities(
 
     A legacy package default and the exact hostname under the immediately previous appliance
     domain are eligible. Any other hostname is treated as operator-owned and remains unchanged.
+
+    Args:
+        db: Active database session.
+        previous_appliance_fqdn: Canonical appliance FQDN before the current change, if known.
     """
 
     appliance = db.execute(select(ApplianceSettings)).scalar_one_or_none()
