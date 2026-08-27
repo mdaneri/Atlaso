@@ -511,11 +511,10 @@ function Get-AtlasoOnePasswordCredentialPair {
                 '-EnvironmentId', $EnvironmentId
             )
         }
-        Invoke-AtlasoBoundedProcess `
+        Invoke-AtlasoBoundedStreamingProcess `
             -FilePath (Get-Process -Id $PID).Path `
             -ArgumentList $arguments `
             -TimeoutSeconds $TimeoutSeconds `
-            -TrackDescendants `
             -Action "The bounded $ConsumerDescription credential preparation child" | Out-Null
         if (-not (Test-Path -LiteralPath $statusPath -PathType Leaf)) {
             throw "The bounded $ConsumerDescription credential child returned no safe status."

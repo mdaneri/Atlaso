@@ -118,10 +118,11 @@ or other image mutation. It rejects caller `DEFAULT_*` variables, local `.env` i
 variables, invalid exact bytes, unavailable authorization, and timeouts without printing the Environment ID or values.
 The parent passes only DPAPI ciphertext to a separately bounded image-build child; only that child unwraps values for
 kickstart and Packer serialization. Every plaintext kickstart, remastered ISO, and Packer variable file is placed under
-the same exact task-owned temporary root. A Windows process job tracks the child and every Packer or plugin descendant.
-If the whole-child deadline terminates that job before child cleanup can run, the parent waits for job accounting to
-prove zero active processes, applies checked exact-output cleanup when `-PackerOnError cleanup` owns replacement output,
-then removes the sensitive root and verifies its absence before returning.
+the same exact task-owned temporary root. The parent creates the child suspended, assigns it to a Windows process job,
+and resumes it only after the job owns every future Packer or plugin descendant. Both ordinary child exit and deadline
+termination require job accounting to prove zero active processes. A proven deadline also applies checked exact-output
+cleanup when `-PackerOnError cleanup` owns replacement output, then the parent removes the sensitive root and verifies
+its absence before returning.
 `-ImageBuildTimeoutSeconds` selects the deadline and defaults to six hours.
 If whole-tree termination itself cannot be proven, the wrapper retains the root and a non-secret
 `.atlaso-local/photon-image-build-cleanup.json` ownership marker and blocks further work. Restart Windows and rerun the

@@ -127,11 +127,10 @@ Start-Sleep -Seconds 30
 '@.Replace('__ATLASO_PROCESS_TREE_TOKEN__', $processTreeToken)
 $encodedChildSource = [Convert]::ToBase64String([Text.Encoding]::Unicode.GetBytes($childSource))
 try {
-    Invoke-AtlasoBoundedProcess `
+    Invoke-AtlasoBoundedStreamingProcess `
         -FilePath (Get-Process -Id $PID).Path `
         -ArgumentList @('-NoLogo', '-NoProfile', '-NonInteractive', '-EncodedCommand', $encodedChildSource) `
         -TimeoutSeconds 1 `
-        -TrackDescendants `
         -Action 'Focused descendant termination test'
     throw 'The focused descendant termination test did not reach its deadline.'
 }
@@ -147,6 +146,30 @@ if ($survivingDescendants.Count -ne 0) {
         Stop-Process -Id $survivingDescendant.ProcessId -Force -ErrorAction SilentlyContinue
     }
     throw 'A tracked process-tree descendant survived proven termination.'
+}
+
+$ordinaryExitToken = "atlaso-ordinary-descendant-$([guid]::NewGuid().ToString('N'))"
+$ordinaryExitSource = @'
+$null = Start-Process -FilePath (Get-Process -Id $PID).Path -ArgumentList @(
+    '-NoLogo', '-NoProfile', '-NonInteractive', '-Command',
+    'Start-Sleep -Seconds 30', '__ATLASO_ORDINARY_EXIT_TOKEN__'
+)
+'@.Replace('__ATLASO_ORDINARY_EXIT_TOKEN__', $ordinaryExitToken)
+$encodedOrdinaryExitSource = [Convert]::ToBase64String(
+    [Text.Encoding]::Unicode.GetBytes($ordinaryExitSource)
+)
+Invoke-AtlasoBoundedStreamingProcess `
+    -FilePath (Get-Process -Id $PID).Path `
+    -ArgumentList @('-NoLogo', '-NoProfile', '-NonInteractive', '-EncodedCommand', $encodedOrdinaryExitSource) `
+    -TimeoutSeconds 10 `
+    -Action 'Focused ordinary-exit descendant test'
+$ordinaryExitSurvivors = @(Get-CimInstance -ClassName Win32_Process |
+    Where-Object { $_.CommandLine -like "*$ordinaryExitToken*" })
+if ($ordinaryExitSurvivors.Count -ne 0) {
+    foreach ($ordinaryExitSurvivor in $ordinaryExitSurvivors) {
+        Stop-Process -Id $ordinaryExitSurvivor.ProcessId -Force -ErrorAction SilentlyContinue
+    }
+    throw 'An ordinary-exit process-tree descendant survived completion proof.'
 }
 
 Write-Host 'Shared Atlaso 1Password credential bridge tests passed.'

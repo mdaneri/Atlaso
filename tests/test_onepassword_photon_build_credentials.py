@@ -140,11 +140,13 @@ def test_photon_wrapper_preflights_credentials_before_image_mutation() -> None:
     assert "[System.IO.FileOptions]::WriteThrough" in runner
     assert "$stream.Flush($true)" in runner
     assert "MoveFileEx" in runner
-    assert "New-AtlasoBoundedProcessJob -RootProcess $process" in runner
+    assert "StartSuspended($FilePath, $ArgumentList)" in runner
+    assert "ResumeThread(processInformation.Thread)" in runner
     assert "$Job.TerminateAndWait(10000)" in runner
+    assert "$Job.CompleteAndWait(10000)" in runner
     assert "accounting.ActiveProcesses == 0" in runner
     assert "AtlasoProcessTreeTerminationProven" in runner
-    assert "-TrackDescendants `" in module
+    assert "Invoke-AtlasoBoundedStreamingProcess `" in module
     assert "MOVEFILE" not in wrapper
 
 
