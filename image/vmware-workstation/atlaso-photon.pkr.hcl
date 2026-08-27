@@ -204,7 +204,7 @@ build {
 
   provisioner "shell" {
     inline = [
-      "mkdir -p /tmp/atlaso-src/scripts /tmp/atlaso-src/image/common/scripts /tmp/atlaso-src/image/common/guest-agents /tmp/atlaso-src/image/vmware-workstation /tmp/atlaso-src/image/inventory-linux /tmp/atlaso-src/third_party"
+      "mkdir -p /tmp/atlaso-src/scripts /tmp/atlaso-src/image/common /tmp/atlaso-src/image/vmware-workstation /tmp/atlaso-src/image/inventory-linux /tmp/atlaso-src/third_party"
     ]
   }
 

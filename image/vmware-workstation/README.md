@@ -101,6 +101,9 @@ normalized, bounded output tail.
 Packer also stages the shared udev disk-identity rule and virtualization data-disk policy. The shared provisioner validates
 and installs both from the staged source tree before the application sync populates `/opt/atlaso`, so this early
 disk-safety setup never depends on files that have not been copied yet.
+Directory uploads for shared scripts and provider-neutral guest agents target paths beneath
+`/tmp/atlaso-src/image/common`. The initial staging command creates only that parent; pre-creating either exact upload
+destination would make Packer nest the source directory and leave the provisioner without its expected assets.
 
 ```powershell
 pwsh -ExecutionPolicy Bypass `
