@@ -587,7 +587,10 @@ install -o root -g root -m 0755 "$ATLASO_HOME/scripts/appliance/atlaso-install-b
 install -o root -g root -m 0755 "$ATLASO_HOME/scripts/appliance/atlaso-mount-data-disks" "$ATLASO_HOME/bin/atlaso-mount-data-disks"
 install -o root -g root -m 0755 "$GUEST_AGENT_SELECTOR_SOURCE" "$ATLASO_HOME/bin/atlaso-select-guest-agent"
 install -o root -g root -m 0755 "$MACHINE_IDENTITY_INITIALIZER_SOURCE" "$ATLASO_HOME/bin/atlaso-initialize-machine-identity.py"
-install -o root -g root -m 0700 "$IMAGE_BUILD_FINALIZER_SOURCE" /usr/local/sbin/atlaso-finalize-image-build
+# Packer invokes this transient root helper after the communicator exits. Keep
+# it inside Atlaso's existing product-helper boundary so no global local-sbin
+# directory is assumed or created solely for image construction.
+install -o root -g root -m 0700 "$IMAGE_BUILD_FINALIZER_SOURCE" "$ATLASO_HOME/bin/atlaso-finalize-image-build"
 install -o root -g root -m 0755 "$ATLASO_HOME/scripts/appliance/atlaso-bootstrap-https" "$ATLASO_HOME/bin/atlaso-bootstrap-https"
 trust_source_dir="$ATLASO_HOME/image/common/update-trust"
 if [ ! -d "$trust_source_dir" ]; then
