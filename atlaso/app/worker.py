@@ -1086,6 +1086,26 @@ def _retry_appliance_update_restart(
             "Appliance Update restart recovery dispatch failed for %s; privileged details omitted",
             job_id,
         )
+        with SessionLocal() as db:
+            job = db.get(Job, job_id)
+            if job is None or job.type != "appliance-update":
+                return
+            try:
+                result = json.loads(job.result or "{}")
+            except json.JSONDecodeError:
+                return
+            if (
+                not isinstance(result, dict)
+                or result.get("restart_dispatch_started_at") != now.isoformat()
+            ):
+                return
+            # The helper returned a definitive scheduling failure. Preserve the
+            # one-minute retry rate limit, but remove the active-helper evidence
+            # that would otherwise impose the full completion grace.
+            result.pop("restart_dispatch_started_at", None)
+            job.result = json.dumps(result, indent=2)
+            db.add(job)
+            db.commit()
         return
     with SessionLocal() as db:
         job = db.get(Job, job_id)

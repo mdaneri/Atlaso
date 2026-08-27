@@ -1840,6 +1840,68 @@ def test_restart_recovery_immediately_dispatches_explicitly_unscheduled_restart(
     assert "restart_dispatch_started_at" in result
 
 
+def test_restart_recovery_keeps_known_dispatch_failure_immediately_retryable(
+    client,
+    monkeypatch,
+):
+    """Do not apply the completion grace after a proven scheduling failure.
+
+    Args:
+        client: HTTP test client providing isolated application state.
+        monkeypatch: Pytest fixture used to replace restart recovery effects.
+    """
+    from atlaso.app import worker
+    from atlaso.app.database import SessionLocal
+    from atlaso.app.models import Job
+
+    client.get("/login")
+    job_id = "job_012345abcde9"
+    with SessionLocal() as db:
+        db.add(
+            Job(
+                id=job_id,
+                type="appliance-update",
+                status="failed",
+                created_by="admin",
+                finished_at=datetime.now(timezone.utc).replace(tzinfo=None),
+                result=json.dumps(
+                    {
+                        "restart_after_commit": True,
+                        "restart_scheduled": False,
+                        "config_path": "/var/lib/atlaso/apply/appliance-update/update.json",
+                    }
+                ),
+            )
+        )
+        db.commit()
+
+    class FailingRetryAdapter:
+        """Return a deterministic delayed-restart retry failure."""
+
+        def restart_appliance_after_update(self, config_path: str) -> AdapterResult:
+            """Return the failed retry dispatch.
+
+            Args:
+                config_path: Staged Appliance Update manifest path.
+            """
+            return AdapterResult(
+                command=["restart-service", config_path],
+                dry_run=False,
+                returncode=1,
+            )
+
+    monkeypatch.setattr(worker, "SystemAdapter", FailingRetryAdapter)
+
+    worker._retry_appliance_update_restart(job_id)
+
+    with SessionLocal() as db:
+        result = json.loads(db.get(Job, job_id).result)
+    assert result["restart_recovery_attempts"] == 1
+    assert result["restart_scheduled"] is False
+    assert "restart_dispatch_started_at" not in result
+    assert "restart_recovery_last_attempt_at" in result
+
+
 def test_status_recovery_retries_pending_restoration_without_runtime_marker(
     client,
     monkeypatch,
@@ -2094,6 +2156,7 @@ def test_restart_scheduling_failure_logs_terminal_update_result(
     assert submissions == [(job.id, "failed")]
     assert persisted_result["restart_after_commit"] is True
     assert persisted_result["restart_scheduled"] is False
+    assert "restart_dispatch_started_at" not in persisted_result
 
 
 def test_appliance_update_page_and_dry_run_job(client):
