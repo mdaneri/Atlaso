@@ -27,7 +27,9 @@ cd "$BUILD_ROOT/qemu-$QEMU_VERSION"
 # QEMU models the guest agent separately from its ordinary support tools, so
 # disabling tools and system/user emulators still leaves the explicitly enabled
 # qemu-ga target and its libudev-backed Linux commands available.
-./configure \
+# Photon ships the compiler front ends as gcc and g++ without a generic cc
+# command, so bind this isolated source build to the installed package names.
+CC=gcc CXX=g++ ./configure \
   --prefix=/usr \
   --libdir=/usr/lib64 \
   --sysconfdir=/etc \

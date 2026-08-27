@@ -99,6 +99,8 @@ through Packer. Successful operations report their duration, while failures reta
 normalized, bounded output tail.
 Photon 5.0 packages the C and C++ compiler front ends together as `gcc`. The image requests and later removes that one
 build-only package; it does not request the unavailable `gcc-c++` name used by distributions that split the front ends.
+The isolated QEMU guest-agent build selects `gcc` and `g++` explicitly because Photon does not install a generic `cc`
+alias for the compiler package.
 
 Packer also stages the shared udev disk-identity rule and virtualization data-disk policy. The shared provisioner validates
 and installs both from the staged source tree before the application sync populates `/opt/atlaso`, so this early
