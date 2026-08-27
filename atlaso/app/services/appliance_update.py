@@ -664,7 +664,32 @@ def cancel_pending_appliance_update(
             progress_percent=100,
         )
     )
-    return cancelled.rowcount == 1
+    if cancelled.rowcount != 1:
+        return False
+    child_error = "Task cancelled by operator before this selected stream could run."
+    db.execute(
+        update(JobStep)
+        .where(
+            JobStep.job_id == job_id,
+            JobStep.status == JobStatus.PENDING.value,
+        )
+        .values(
+            status=JobStatus.SKIPPED.value,
+            finished_at=finished_at,
+            error=child_error,
+            result=json.dumps(
+                {
+                    "status": JobStatus.SKIPPED.value,
+                    "success": False,
+                    "error": child_error,
+                },
+                indent=2,
+                sort_keys=True,
+            ),
+            progress_percent=100,
+        )
+    )
+    return True
 
 
 DEFAULT_UPDATE_SETTINGS = {

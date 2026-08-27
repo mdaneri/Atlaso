@@ -707,25 +707,36 @@ def test_pending_appliance_update_cancellation_is_an_atomic_state_transition(cli
         client: Test client whose fixture initializes the isolated database.
     """
     from atlaso.app.database import SessionLocal
-    from atlaso.app.models import Job, JobStatus
-    from atlaso.app.services.appliance_update import cancel_pending_appliance_update
+    from atlaso.app.models import Job, JobStatus, JobStep
+    from atlaso.app.services.appliance_update import (
+        cancel_pending_appliance_update,
+        ensure_appliance_update_job_steps,
+    )
 
     with SessionLocal() as db:
-        db.add_all(
-            [
-                Job(
-                    id="job_cancel_pending",
-                    type="appliance-update",
-                    status=JobStatus.PENDING.value,
-                    created_by="admin",
-                ),
-                Job(
-                    id="job_cancel_claimed",
-                    type="appliance-update",
-                    status=JobStatus.RUNNING.value,
-                    created_by="admin",
-                ),
-            ]
+        pending = Job(
+            id="job_cancel_pending",
+            type="appliance-update",
+            status=JobStatus.PENDING.value,
+            created_by="admin",
+        )
+        claimed = Job(
+            id="job_cancel_claimed",
+            type="appliance-update",
+            status=JobStatus.RUNNING.value,
+            created_by="admin",
+        )
+        db.add_all([pending, claimed])
+        db.flush()
+        ensure_appliance_update_job_steps(
+            db,
+            job=pending,
+            selected_streams=["photon_os", "atlaso_release"],
+        )
+        ensure_appliance_update_job_steps(
+            db,
+            job=claimed,
+            selected_streams=["photon_os"],
         )
         db.commit()
         finished_at = datetime(2026, 8, 27, 5, 0, tzinfo=timezone.utc)
@@ -748,6 +759,24 @@ def test_pending_appliance_update_cancellation_is_an_atomic_state_transition(cli
 
         assert db.get(Job, "job_cancel_pending").status == JobStatus.CANCELLED.value
         assert db.get(Job, "job_cancel_claimed").status == JobStatus.RUNNING.value
+        pending_steps = db.execute(
+            select(JobStep)
+            .where(JobStep.job_id == "job_cancel_pending")
+            .order_by(JobStep.position)
+        ).scalars().all()
+        claimed_step = db.execute(
+            select(JobStep).where(JobStep.job_id == "job_cancel_claimed")
+        ).scalar_one()
+        assert [step.status for step in pending_steps] == [
+            JobStatus.SKIPPED.value,
+            JobStatus.SKIPPED.value,
+        ]
+        assert all(
+            step.finished_at is not None
+            and step.finished_at.replace(tzinfo=timezone.utc) == finished_at
+            for step in pending_steps
+        )
+        assert claimed_step.status == JobStatus.PENDING.value
 
 
 def seed_available_confirmations(streams: list[str]) -> None:
