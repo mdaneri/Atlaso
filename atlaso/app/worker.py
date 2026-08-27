@@ -838,6 +838,70 @@ def _inspect_appliance_update_restart(job_id: str) -> dict[str, Any] | None:
     return payload if isinstance(payload, dict) else None
 
 
+def _retry_appliance_update_restart(
+    job_id: str,
+    *,
+    worker_started_at: datetime,
+) -> None:
+    """Retry a missing delayed-restart receipt through a bounded durable gate.
+
+    Args:
+        job_id: Exact Appliance Update parent identifier.
+        worker_started_at: Current worker startup timestamp from fixed identity evidence.
+    """
+    now = datetime.now(timezone.utc)
+    if (now - worker_started_at).total_seconds() < 15:
+        return
+    with SessionLocal() as db:
+        job = db.get(Job, job_id)
+        if job is None or job.type != "appliance-update":
+            return
+        try:
+            result = json.loads(job.result or "{}")
+        except json.JSONDecodeError:
+            return
+        if not isinstance(result, dict) or result.get("restart_after_commit") is not True:
+            return
+        attempts = int(result.get("restart_recovery_attempts") or 0)
+        if attempts >= 3:
+            LOGGER.error(
+                "Appliance Update restart recovery exhausted for %s; status hold remains active",
+                job_id,
+            )
+            return
+        last_attempt_text = str(result.get("restart_recovery_last_attempt_at") or "")
+        if last_attempt_text:
+            try:
+                last_attempt = datetime.fromisoformat(last_attempt_text)
+                last_attempt = (
+                    last_attempt.replace(tzinfo=timezone.utc)
+                    if last_attempt.tzinfo is None
+                    else last_attempt.astimezone(timezone.utc)
+                )
+            except ValueError:
+                return
+            if (now - last_attempt).total_seconds() < 60:
+                return
+        config_path = str(result.get("config_path") or "")
+        if not config_path:
+            LOGGER.error(
+                "Appliance Update restart recovery lacks its staged configuration for %s",
+                job_id,
+            )
+            return
+        result["restart_recovery_attempts"] = attempts + 1
+        result["restart_recovery_last_attempt_at"] = now.isoformat()
+        job.result = json.dumps(result, indent=2)
+        db.add(job)
+        db.commit()
+    retry = SystemAdapter().restart_appliance_after_update(config_path)
+    if retry.returncode != 0:
+        LOGGER.error(
+            "Appliance Update restart recovery dispatch failed for %s; privileged details omitted",
+            job_id,
+        )
+
+
 def _reconcile_appliance_update_status_surface() -> bool:
     """Restore a terminal update surface or block unrelated mutation safely.
 
@@ -902,18 +966,23 @@ def _reconcile_appliance_update_status_surface() -> bool:
             else started_at.astimezone(timezone.utc)
         )
         receipt = _inspect_appliance_update_restart(marker_job_id)
-        if (
-            receipt is None
-            or receipt.get("state") != "completed"
-            or str(receipt.get("job_id") or "") != marker_job_id
-            or int(receipt.get("worker_pid") or 0) != os.getpid()
-            or str(receipt.get("worker_boot_id") or "")
-            != str(startup.get("boot_id") or "")
-            or str(receipt.get("worker_start_ticks") or "")
-            != str(startup.get("start_ticks") or "")
-            or str(receipt.get("worker_started_at") or "")
-            != str(startup.get("started_at") or "")
-        ):
+        receipt_matches = bool(
+            receipt is not None
+            and receipt.get("state") == "completed"
+            and str(receipt.get("job_id") or "") == marker_job_id
+            and int(receipt.get("worker_pid") or 0) == os.getpid()
+            and str(receipt.get("worker_boot_id") or "")
+            == str(startup.get("boot_id") or "")
+            and str(receipt.get("worker_start_ticks") or "")
+            == str(startup.get("start_ticks") or "")
+            and str(receipt.get("worker_started_at") or "")
+            == str(startup.get("started_at") or "")
+        )
+        if not receipt_matches:
+            _retry_appliance_update_restart(
+                marker_job_id,
+                worker_started_at=started_at,
+            )
             return False
         if finished_at is not None:
             finished_at = (

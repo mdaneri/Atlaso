@@ -1372,6 +1372,89 @@ def test_status_recovery_requires_durable_restart_scheduling_proof(
     assert worker._reconcile_appliance_update_status_surface() is False
 
 
+def test_status_recovery_retries_a_missing_restart_receipt(
+    client,
+    monkeypatch,
+    tmp_path,
+):
+    """Retry a dispatched all-service restart whose completion proof is absent.
+
+    Args:
+        client: Test application HTTP client.
+        monkeypatch: Pytest fixture used to replace restart recovery effects.
+        tmp_path: Temporary directory provided for worker startup evidence.
+    """
+    import os
+
+    from atlaso.app import worker
+    from atlaso.app.database import SessionLocal
+    from atlaso.app.models import Job
+
+    job_id = "job_012345abcdec"
+    marker = tmp_path / "appliance-update-status"
+    marker.write_text(job_id, encoding="utf-8")
+    startup = tmp_path / "worker-startup.json"
+    startup.write_text(
+        json.dumps(
+            {
+                "boot_id": "boot-a",
+                "pid": os.getpid(),
+                "start_ticks": "100",
+                "started_at": "2000-01-01T00:00:01+00:00",
+            }
+        ),
+        encoding="utf-8",
+    )
+    with SessionLocal() as db:
+        db.add(
+            Job(
+                id=job_id,
+                type="appliance-update",
+                status="failed",
+                created_by="admin",
+                finished_at=datetime(2000, 1, 1, 0, 0, 0),
+                result=json.dumps(
+                    {
+                        "restart_after_commit": True,
+                        "restart_scheduled": True,
+                        "config_path": "/var/lib/atlaso/apply/appliance-update/update.json",
+                    }
+                ),
+            )
+        )
+        db.commit()
+    calls = []
+
+    class RetryAdapter:
+        """Record a bounded delayed-restart retry."""
+
+        def restart_appliance_after_update(self, config_path: str) -> AdapterResult:
+            """Return a successful retry dispatch.
+
+            Args:
+                config_path: Staged Appliance Update manifest path.
+            """
+            calls.append(config_path)
+            return AdapterResult(command=["restart-service", config_path], dry_run=False)
+
+    monkeypatch.setattr(worker, "APPLIANCE_UPDATE_STATUS_MARKER_PATH", marker)
+    monkeypatch.setattr(worker, "WORKER_STARTUP_STATUS_PATH", startup)
+    monkeypatch.setattr(worker, "_inspect_appliance_update_restart", lambda _job_id: None)
+    monkeypatch.setattr(worker, "SystemAdapter", RetryAdapter)
+    monkeypatch.setattr(
+        worker,
+        "_publish_appliance_update_status",
+        lambda *_args, **_kwargs: pytest.fail("status hold must remain active"),
+    )
+
+    assert worker._reconcile_appliance_update_status_surface() is False
+    assert worker._reconcile_appliance_update_status_surface() is False
+    assert calls == ["/var/lib/atlaso/apply/appliance-update/update.json"]
+    with SessionLocal() as db:
+        result = json.loads(db.get(Job, job_id).result)
+    assert result["restart_recovery_attempts"] == 1
+
+
 def test_status_recovery_retries_pending_restoration_without_runtime_marker(
     client,
     monkeypatch,

@@ -77,15 +77,19 @@ placed in `/run` for nginx. Publication rejects symlinks, unsafe ownership, malf
 tasks, stale terminal tasks, and a transaction ID that does not match the active snapshot. Nginx configuration and
 runtime files use no-follow atomic replacement and file/directory synchronization. Every applied IPv4 and IPv6 browser
 listener must return three consecutive 503 samples before installation begins. If publication cannot be proven, no
-selected stream starts and the task fails terminally.
+selected stream starts and the task fails terminally. Atlaso records successful hold activation only after listener
+proof, so rolling back an initial publication cannot recreate a marker that never became active.
 
 Parent completion does not by itself reopen ordinary UIs. For a started release child, restoration independently
 requires the matching definitive finalizer, `/etc/atlaso/update-info`, active-release link, signed receipt identity,
 cleared restart gate, candidate-worker identity, and active service state; a verified healthy rollback satisfies the
 corresponding previous-release contract. A skipped release or a pre-transaction release failure may restore only when
 the ordinary services are proven active and no release maintenance or restart gate remains. Photon-only work that
-schedules a worker restart leaves the status hold active until the new worker publishes a startup timestamp after the
-terminal parent. Restoration first persists `pending`, removes the runtime marker, validates and reloads nginx, proves
+schedules a worker restart leaves the status hold active until the new worker publishes an exact job-bound completion
+receipt for its current PID, boot ID, process start ticks, and startup timestamp after the terminal parent. A missing
+receipt is retried through at most three persisted, rate-limited delayed-restart dispatches; incomplete evidence then
+continues to block restoration for operator recovery. Restoration first persists `pending`, removes the runtime marker,
+validates and reloads nginx, proves
 ordinary browser responses contain no 500/502/503/504 gateway or maintenance status, and only then persists `restored`.
 If reboot or process interruption occurs at any boundary, nginx pre-start recreates the hold and the worker retries the
 same terminal restoration. Corrupt or cross-task evidence yields a generic no-detail recovery 503 and blocks new worker

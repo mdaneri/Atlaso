@@ -540,9 +540,11 @@ Terminal order:
   nginx pre-start after reboot. Corrupt evidence must serve a generic no-detail recovery 503 and block worker admission,
   not prevent nginx from starting. Restore ordinary UIs only after the parent is terminal, every selected child is
   terminal, any started release has definitive finalizer/update-info/current-link/signed-receipt/worker/service evidence,
-  and any scheduled Photon worker restart has completed in the new worker process. Persist `pending` before removing the
-  marker and `restored` only after nginx reload and listener proof; startup and the worker must retry an interrupted
-  restoration idempotently.
+  and any scheduled Photon worker restart has completed in the new worker process. Persist successful hold activation
+  only after listener proof so an initial publication rollback cannot recreate a never-active marker. Bind restart
+  completion to the exact task and current worker identity, and retry missing completion evidence through a bounded,
+  durable, rate-limited dispatch budget. Persist `pending` before removing the marker and `restored` only after nginx
+  reload and listener proof; startup and the worker must retry an interrupted restoration idempotently.
 - Submit manual Appliance Update checks and installations asynchronously from Update Streams. Refresh only the embedded
   shared Tasks grid, highlight the newly created task, and keep both task actions disabled until the active Appliance
   Update task reaches a terminal state; do not restore a separate submission-result card.

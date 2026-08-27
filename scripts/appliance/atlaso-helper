@@ -14437,6 +14437,9 @@ def _write_appliance_update_status_files(snapshot: dict[str, object]) -> dict[st
         restoration = existing.get("ui_restoration")
         if isinstance(restoration, dict):
             published["ui_restoration"] = restoration
+    if existing_task == snapshot["task_id"] and "status_activated" not in published:
+        published["status_activated"] = existing.get("status_activated") is True
+    published.setdefault("status_activated", False)
     if published.get("terminal") is not True and "ui_restoration" not in published:
         published["ui_restoration"] = {
             "state": "held",
@@ -14843,6 +14846,8 @@ def _publish_appliance_update_status(job_id: str) -> dict[str, object]:
         if reload_result.get("success") is not True:
             raise ValueError("update-only nginx configuration did not reload")
         snapshot["listener_proof"] = _verify_update_status_responses(guarded_sites)
+        snapshot["status_activated"] = True
+        snapshot = _write_appliance_update_status_files(snapshot)
     except Exception:
         for path, original in originals.items():
             _write_appliance_update_runtime_file(path, original)
@@ -15032,6 +15037,18 @@ def _finish_appliance_update_status(job_id: str) -> dict[str, object]:
         restoration = snapshot.get("ui_restoration")
         if isinstance(restoration, dict) and restoration.get("state") == "restored":
             return {**snapshot, "ordinary_ui_restored": True, "already_restored": True}
+        if snapshot.get("status_activated") is not True:
+            snapshot["ui_restoration"] = {
+                "state": "restored",
+                "reason": "update_only_surface_not_activated",
+                "updated_at": datetime.now(timezone.utc).isoformat(),
+            }
+            snapshot = _write_appliance_update_status_files(snapshot)
+            return {
+                **snapshot,
+                "ordinary_ui_restored": True,
+                "hold_not_activated": True,
+            }
         _write_appliance_update_runtime_file(
             ATLASO_UPDATE_STATUS_MARKER_PATH,
             job_id + "\n",
@@ -15105,6 +15122,9 @@ def _guard_appliance_update_status_startup() -> dict[str, object]:
         restored = bool(
             isinstance(restoration, dict) and restoration.get("state") == "restored"
         )
+        if recorded.get("status_activated") is not True:
+            ATLASO_UPDATE_STATUS_MARKER_PATH.unlink(missing_ok=True)
+            return {"success": True, "status": "not_activated"}
         if current.get("terminal") is True and restored:
             ATLASO_UPDATE_STATUS_MARKER_PATH.unlink(missing_ok=True)
             return {"success": True, "status": "terminal_restored"}

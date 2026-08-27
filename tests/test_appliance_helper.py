@@ -217,7 +217,14 @@ def test_update_status_snapshot_is_monotonic_and_rejects_cross_task_reuse(monkey
     second = helper._write_appliance_update_status_files(snapshot)
     assert first["sequence"] == 1
     assert second["sequence"] == 2
-    assert json.loads((status_dir / "status.json").read_text(encoding="utf-8"))["sequence"] == 2
+    assert second["status_activated"] is False
+    activated = helper._write_appliance_update_status_files(
+        {**snapshot, "status_activated": True}
+    )
+    refreshed = helper._write_appliance_update_status_files(snapshot)
+    assert activated["status_activated"] is True
+    assert refreshed["status_activated"] is True
+    assert json.loads((status_dir / "status.json").read_text(encoding="utf-8"))["sequence"] == 4
     with pytest.raises(ValueError, match="another appliance update status transaction"):
         helper._write_appliance_update_status_files(
             {**snapshot, "task_id": "job_fedcba987654", "transaction_id": "b" * 32}
@@ -316,6 +323,19 @@ def test_status_publish_rollback_preserves_only_a_preexisting_hold(
     if marker_existed:
         marker.parent.mkdir(parents=True)
         marker.write_text(job_id + "\n", encoding="utf-8")
+    persisted = []
+
+    def persist(snapshot):
+        """Record whether listener activation reached durable state.
+
+        Args:
+            snapshot: Bounded update-only status snapshot.
+        """
+        published = {**snapshot, "task_id": job_id}
+        published.setdefault("status_activated", False)
+        persisted.append(published)
+        return published
+
     monkeypatch.setattr(helper, "ATLASO_UPDATE_STATUS_MARKER_PATH", marker)
     monkeypatch.setattr(helper, "NGINX_MANAGEMENT_SITE_PATH", management)
     monkeypatch.setattr(
@@ -324,11 +344,7 @@ def test_status_publish_rollback_preserves_only_a_preexisting_hold(
         tmp_path / "nginx" / "public.conf",
     )
     monkeypatch.setattr(helper, "_appliance_update_status_task", lambda _job_id: {})
-    monkeypatch.setattr(
-        helper,
-        "_write_appliance_update_status_files",
-        lambda _snapshot: {"task_id": job_id},
-    )
+    monkeypatch.setattr(helper, "_write_appliance_update_status_files", persist)
     monkeypatch.setattr(helper, "_write_update_status_nginx_include", lambda: None)
     monkeypatch.setattr(
         helper,
@@ -346,8 +362,57 @@ def test_status_publish_rollback_preserves_only_a_preexisting_hold(
         helper._publish_appliance_update_status(job_id)
 
     assert marker.exists() is marker_existed
+    assert persisted[0]["status_activated"] is False
     if marker_existed:
         assert marker.read_text(encoding="utf-8") == job_id + "\n"
+
+
+def test_status_finish_does_not_activate_a_rolled_back_initial_hold(
+    monkeypatch,
+    tmp_path,
+):
+    """Complete a failed initial publication without recreating its marker.
+
+    Args:
+        monkeypatch: Pytest fixture used to isolate restoration side effects.
+        tmp_path: Temporary directory used for the absent runtime marker.
+    """
+    helper = load_helper_module()
+    job_id = "job_0123456789ab"
+    marker = tmp_path / "run" / "status-marker"
+    snapshot = {
+        "task_id": job_id,
+        "terminal": True,
+        "status": "failed",
+        "status_activated": False,
+        "ui_restoration": {"state": "held"},
+        "children": [],
+    }
+    persisted = []
+    monkeypatch.setattr(helper, "ATLASO_UPDATE_STATUS_MARKER_PATH", marker)
+    monkeypatch.setattr(
+        helper,
+        "_appliance_update_status_task",
+        lambda _job_id, *, allow_terminal=False: dict(snapshot),
+    )
+    monkeypatch.setattr(
+        helper,
+        "_write_appliance_update_status_files",
+        lambda value: persisted.append(dict(value)) or dict(value),
+    )
+    monkeypatch.setattr(helper, "_verify_release_status_completion", lambda *_args: None)
+    monkeypatch.setattr(
+        helper,
+        "_nginx_test_command",
+        lambda: (_ for _ in ()).throw(AssertionError("nginx must remain untouched")),
+    )
+
+    result = helper._finish_appliance_update_status(job_id)
+
+    assert result["ordinary_ui_restored"] is True
+    assert result["hold_not_activated"] is True
+    assert persisted[-1]["ui_restoration"]["state"] == "restored"
+    assert not marker.exists()
 
 
 def test_status_finish_reestablishes_hold_when_restored_snapshot_write_fails(
