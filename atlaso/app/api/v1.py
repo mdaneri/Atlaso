@@ -179,7 +179,10 @@ from atlaso.app.services.networking import (
     normalize_interface_role,
 )
 from atlaso.app.services.ntp import default_ntp_upstream_fields
-from atlaso.app.services.service_dns_defaults import factory_service_hostname
+from atlaso.app.services.service_dns_defaults import (
+    factory_service_hostname,
+    reconcile_factory_service_identities,
+)
 from atlaso.app.services.service_registry import (
     SERVICE_SYSTEMD_UNITS,
 )
@@ -1169,6 +1172,8 @@ _settings_api = build_settings_api_router(
             *args, **kwargs
         ),
         ensure_ca_state=_ensure_settings_ca_state,
+        reconcile_factory_service_identities=reconcile_factory_service_identities,
+        reconcile_service_dns_aliases=refresh_interface_service_dns_aliases,
     )
 )
 settings_router = _settings_api.router

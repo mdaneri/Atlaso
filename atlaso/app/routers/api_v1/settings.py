@@ -40,6 +40,8 @@ class SettingsApiDependencies:
     appliance_settings_response: Endpoint
     get_appliance_settings: Endpoint
     ensure_ca_state: Endpoint
+    reconcile_factory_service_identities: Endpoint
+    reconcile_service_dns_aliases: Endpoint
 
 
 @dataclass(frozen=True)
@@ -63,6 +65,10 @@ def build_router(dependencies: SettingsApiDependencies) -> SettingsApiRouter:
     appliance_settings_response = dependencies.appliance_settings_response
     get_appliance_settings = dependencies.get_appliance_settings
     ensure_ca_state = dependencies.ensure_ca_state
+    reconcile_factory_service_identities = (
+        dependencies.reconcile_factory_service_identities
+    )
+    reconcile_service_dns_aliases = dependencies.reconcile_service_dns_aliases
 
     @router.get(
         "/settings",
@@ -111,6 +117,7 @@ def build_router(dependencies: SettingsApiDependencies) -> SettingsApiRouter:
             settings: Current Atlaso settings used to configure the operation.
         """
         desired = get_appliance_settings(db)
+        previous_fqdn = desired.fqdn
         desired.fqdn = normalize_fqdn(payload.appliance_fqdn)
         desired.management_https_enabled = payload.management_https_enabled
         desired.web_terminal_enabled = payload.web_terminal_enabled
@@ -148,6 +155,12 @@ def build_router(dependencies: SettingsApiDependencies) -> SettingsApiRouter:
         )
         desired.config_path = APPLIANCE_SETTINGS_STAGED_CONFIG_PATH
         desired.updated_at = utcnow()
+        reconciled_service_identities = reconcile_factory_service_identities(
+            db,
+            previous_appliance_fqdn=previous_fqdn,
+        )
+        if reconciled_service_identities:
+            reconcile_service_dns_aliases(db, actor=identity.username)
         db.add(desired)
         db.commit()
         db.refresh(desired)

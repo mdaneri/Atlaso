@@ -47,6 +47,76 @@ def test_settings_api_updates_root_ssh_desired_state(client):
     assert '"root_ssh_enabled": true' in payload["config_preview"]
 
 
+def test_settings_api_reconciles_factory_service_identities(client):
+    """Keep API-driven appliance-domain changes coherent with factory service state.
+
+    Args:
+        client: HTTP test client used to exercise the Atlaso application.
+    """
+    from sqlalchemy import select
+
+    from atlaso.app.database import SessionLocal
+    from atlaso.app.models import (
+        CaSettings,
+        EsxStorageSettings,
+        KmsSettings,
+        LdapSettings,
+        NtpSettings,
+        OidcProviderSettings,
+        Setting,
+        VcfOfflineDepotSettings,
+        VcfPrivateRegistrySettings,
+    )
+    from atlaso.app.services.oidc import ensure_provider_settings
+    from atlaso.app.services.service_dns_defaults import ESXI_PXE_HOSTNAME_KEY
+    from atlaso.app.ui import get_esx_storage_settings_row
+
+    with SessionLocal() as db:
+        ensure_provider_settings(db)
+        get_esx_storage_settings_row(db)
+        db.add(Setting(key=ESXI_PXE_HOSTNAME_KEY, value="esxi-pxe.atlaso.internal"))
+        db.commit()
+
+    token, _metadata = create_token(client, scopes=["admin:all", "read:dashboard"])
+
+    response = client.patch(
+        "/api/v1/settings",
+        headers={"Authorization": f"Bearer {token}"},
+        json={
+            "appliance_fqdn": "api.lab.internal",
+            "management_https_enabled": False,
+            "root_ssh_enabled": False,
+            "external_dns_servers": [],
+        },
+    )
+
+    assert response.status_code == 200, response.text
+    with SessionLocal() as db:
+        assert db.execute(select(NtpSettings)).scalar_one().hostname == "ntp.lab.internal"
+        assert db.execute(select(CaSettings)).scalar_one().portal_hostname == "ca.lab.internal"
+        assert db.execute(select(KmsSettings)).scalar_one().hostname == "kms.lab.internal"
+        assert db.execute(select(LdapSettings)).scalar_one().hostname == "ldap.lab.internal"
+        oidc = db.execute(select(OidcProviderSettings)).scalar_one()
+        assert oidc.hostname == "oidc.lab.internal"
+        assert oidc.issuer_url == "https://oidc.lab.internal/identity"
+        assert (
+            db.execute(select(EsxStorageSettings)).scalar_one().hostname
+            == "nfs.lab.internal"
+        )
+        assert (
+            db.execute(select(VcfPrivateRegistrySettings)).scalar_one().hostname
+            == "registry.lab.internal"
+        )
+        assert (
+            db.execute(select(VcfOfflineDepotSettings)).scalar_one().hostname
+            == "depot.lab.internal"
+        )
+        pxe = db.execute(
+            select(Setting).where(Setting.key == ESXI_PXE_HOSTNAME_KEY)
+        ).scalar_one()
+        assert pxe.value == "esxi-pxe.lab.internal"
+
+
 def test_settings_api_retains_read_and_admin_scope_boundaries(client):
     """Verify the extracted Settings operations keep their distinct scopes.
 
