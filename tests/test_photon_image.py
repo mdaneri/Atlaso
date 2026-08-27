@@ -558,7 +558,11 @@ def test_photon_kickstart_generator_is_canonical_and_provider_specific(tmp_path)
         assert "| base64 -d | sudo -S -E sh -c" in template
 
     finalizer = Path("image/common/scripts/finalize-image-build.sh").read_text(encoding="utf-8")
-    process_wait = finalizer.index('while pgrep -u "$build_user"')
+    uid_capture = finalizer.index('build_uid=$(printf')
+    root_identity_guard = finalizer.index('[ "$build_uid" -ne 0 ]', uid_capture)
+    process_wait = finalizer.index('while pgrep -u "$build_uid"', root_identity_guard)
+    graceful_termination = finalizer.index('pkill -TERM -u "$build_uid"', process_wait)
+    forced_termination = finalizer.index('pkill -KILL -u "$build_uid"', graceful_termination)
     user_deletion = finalizer.index('userdel -r "$build_user"')
     account_verification = finalizer.index('if getent passwd "$build_user"', user_deletion)
     home_verification = finalizer.index('[ ! -e "$build_home" ]', account_verification)
@@ -568,9 +572,11 @@ def test_photon_kickstart_generator_is_canonical_and_provider_specific(tmp_path)
         "/opt/atlaso/bin/atlaso-finalize-image-build"
     )
     poweroff = finalizer.index("systemctl poweroff")
-    assert process_wait < user_deletion < account_verification < home_verification < sudoers_verification
+    assert uid_capture < root_identity_guard < process_wait < graceful_termination < forced_termination
+    assert forced_termination < user_deletion < account_verification < home_verification < sudoers_verification
     assert sudoers_verification < helper_removal < poweroff
-    assert "[ \"$attempt\" -le 120 ]" in finalizer
+    assert "[ \"$attempt\" -le 40 ]" in finalizer
+    assert 'if [ "$attempt" -le 30 ]' in finalizer
     assert "[ ! -e /opt/atlaso/bin/atlaso-finalize-image-build ] || exit 2" in finalizer
     assert "/usr/local/sbin/atlaso-finalize-image-build" not in finalizer
 
