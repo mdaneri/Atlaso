@@ -55,6 +55,9 @@ if ($vmwareSmoke.Contains('"--prop:atlaso.admin_password=$passwordText"') -or
     throw 'VMware smoke still exposes the disposable credential through OVF Tool process arguments.'
 }
 foreach ($required in @(
+        "Name -notmatch '^[A-Za-z0-9][A-Za-z0-9_.-]{0,63}$'",
+        'must be a strict descendant of its owned output root',
+        'owned directory cannot be a reparse point',
         '"--configFile=$ovfToolConfigPath"',
         '$configAcl.SetAccessRuleProtection($true, $false)',
         'Remove-Item -LiteralPath $ovfToolConfigPath -Force',

@@ -36,6 +36,9 @@ param(
 $ErrorActionPreference = 'Stop'
 Set-StrictMode -Version Latest
 $repoRoot = (Resolve-Path -LiteralPath (Join-Path $PSScriptRoot '..\..\..')).Path
+if ($Name -notmatch '^[A-Za-z0-9][A-Za-z0-9_.-]{0,63}$') {
+    throw 'VMware smoke-test Name must be one safe filesystem component.'
+}
 $sourceOva = Get-Item -LiteralPath $OvaPath -Force -ErrorAction Stop
 if ($sourceOva.PSIsContainer -or
     ($sourceOva.Attributes -band [System.IO.FileAttributes]::ReparsePoint) -ne 0) {
@@ -82,14 +85,36 @@ if ($resolvedRoot -ne $allowedRoot -and
     -not $resolvedRoot.StartsWith($allowedPrefix, [System.StringComparison]::OrdinalIgnoreCase)) {
     throw "VMware smoke output must stay beneath the repository-owned root: $allowedRoot"
 }
-$vmRoot = Join-Path $resolvedRoot $Name
-$vmxPath = Join-Path $vmRoot "$Name.vmx"
+if (Test-Path -LiteralPath $resolvedRoot) {
+    $currentPath = $resolvedRoot
+    while ($true) {
+        $currentItem = Get-Item -LiteralPath $currentPath -Force
+        if (($currentItem.Attributes -band [System.IO.FileAttributes]::ReparsePoint) -ne 0) {
+            throw "VMware smoke output cannot traverse a reparse point: $currentPath"
+        }
+        if ($currentPath -ieq $allowedRoot) { break }
+        $currentPath = [System.IO.Directory]::GetParent($currentPath).FullName
+    }
+}
+$vmRoot = [System.IO.Path]::GetFullPath((Join-Path $resolvedRoot $Name))
+$resolvedRootPrefix = $resolvedRoot.TrimEnd([System.IO.Path]::DirectorySeparatorChar) +
+    [System.IO.Path]::DirectorySeparatorChar
+if (-not $vmRoot.StartsWith($resolvedRootPrefix, [System.StringComparison]::OrdinalIgnoreCase)) {
+    throw 'VMware smoke VM directory must be a strict descendant of its owned output root.'
+}
+$vmxPath = [System.IO.Path]::GetFullPath((Join-Path $vmRoot "$Name.vmx"))
 $validationRoot = Join-Path $resolvedRoot ('.ova-validation-' + [guid]::NewGuid().ToString('N'))
 if (Test-Path -LiteralPath $vmRoot) {
     throw "VMware smoke-test destination already exists: $vmRoot"
 }
 New-Item -ItemType Directory -Path $vmRoot -Force | Out-Null
 New-Item -ItemType Directory -Path $validationRoot -Force | Out-Null
+foreach ($ownedDirectory in @($vmRoot, $validationRoot)) {
+    $ownedItem = Get-Item -LiteralPath $ownedDirectory -Force
+    if (($ownedItem.Attributes -band [System.IO.FileAttributes]::ReparsePoint) -ne 0) {
+        throw "VMware smoke owned directory cannot be a reparse point: $ownedDirectory"
+    }
+}
 $vmStarted = $false
 try {
     $contractOutput = @(& $python `
