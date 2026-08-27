@@ -53,7 +53,9 @@ Use the wrapper instead of raw `packer build`; it creates the remastered Photon 
 GRUB auto-install entry. The original Photon source ISO is cached under `image/common/source`; only the remastered
 kickstart ISO is written under this image directory as a temporary sensitive artifact. The wrapper removes it and
 verifies its absence after the bounded Packer validation or build exits, including failure paths. `-PrepareIsoOnly` is
-rejected because retaining that ISO would retain a reusable build credential. `New-AtlasoPhotonKickstart` in
+rejected because retaining that ISO would retain a reusable build credential. A fresh build starts with an empty
+task-owned cleanup ledger; the remaster helper records each unique partial path before writing and records the final
+path only after replacement preflight succeeds. `New-AtlasoPhotonKickstart` in
 `scripts/windows/common/Atlaso.PhotonImage.psm1` is the only kickstart source. Focused image tests parse its VMware JSON
 output and validate the installer, package, and guest-service contract.
 Workstation builds show the VMware console by default so boot/install progress is visible; pass `-Headless` for
