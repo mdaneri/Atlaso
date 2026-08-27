@@ -85,6 +85,73 @@ function Invoke-AtlasoBoundedProcess {
 
 <#
 .SYNOPSIS
+Run one external process with live inherited diagnostics and a deadline.
+
+.PARAMETER FilePath
+Exact executable to start without shell interpretation.
+
+.PARAMETER ArgumentList
+Individual process arguments added without command-line interpolation.
+
+.PARAMETER TimeoutSeconds
+Positive deadline for the external process.
+
+.PARAMETER Action
+Safe action description used in failure messages.
+#>
+function Invoke-AtlasoBoundedStreamingProcess {
+    param(
+        [Parameter(Mandatory = $true)][string]$FilePath,
+        [Parameter(Mandatory = $true)][AllowEmptyString()][string[]]$ArgumentList,
+        [Parameter(Mandatory = $true)][ValidateRange(1, 86400)][int]$TimeoutSeconds,
+        [Parameter(Mandatory = $true)][string]$Action
+    )
+
+    $startInfo = [System.Diagnostics.ProcessStartInfo]::new()
+    $startInfo.FileName = $FilePath
+    $startInfo.UseShellExecute = $false
+    # The isolated image child owns redaction. Inheriting the console preserves
+    # its sanitized Packer heartbeats and diagnostics without copying plaintext
+    # credentials or buffered output into the PowerShell parent.
+    $startInfo.RedirectStandardOutput = $false
+    $startInfo.RedirectStandardError = $false
+    foreach ($argument in $ArgumentList) {
+        $startInfo.ArgumentList.Add($argument)
+    }
+    $process = [System.Diagnostics.Process]::new()
+    $process.StartInfo = $startInfo
+    try {
+        if (-not $process.Start()) {
+            throw "$Action could not be started."
+        }
+        if (-not $process.WaitForExit($TimeoutSeconds * 1000)) {
+            try {
+                $process.Kill($true)
+                if (-not $process.WaitForExit(10000)) {
+                    throw 'The process remained active after whole-tree termination.'
+                }
+            }
+            catch {
+                $terminationFailure = [System.TimeoutException]::new(
+                    "$Action exceeded its deadline and whole-process-tree cleanup could not be proven.",
+                    $_.Exception
+                )
+                $terminationFailure.Data['AtlasoProcessTreeTerminationUnproven'] = $true
+                throw $terminationFailure
+            }
+            throw "$Action exceeded its $TimeoutSeconds-second deadline."
+        }
+        if ($process.ExitCode -ne 0) {
+            throw "$Action failed with exit code $($process.ExitCode)."
+        }
+    }
+    finally {
+        $process.Dispose()
+    }
+}
+
+<#
+.SYNOPSIS
 Run one vmrun operation through the bounded process boundary.
 
 .PARAMETER VmrunPath

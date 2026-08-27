@@ -60,6 +60,7 @@ def test_photon_wrapper_preflights_credentials_before_image_mutation() -> None:
     assert "if ($CredentialChild) {" in wrapper
     assert "AdminPasswordCiphertext = ConvertFrom-SecureString" in wrapper
     assert "RootPasswordCiphertext  = ConvertFrom-SecureString" in wrapper
+    assert "Invoke-AtlasoBoundedStreamingProcess `" in wrapper
     assert "-Action 'The isolated VMware Photon image build'" in wrapper
 
     credential_preflight = wrapper.index(

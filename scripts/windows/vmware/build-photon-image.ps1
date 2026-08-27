@@ -276,14 +276,11 @@ else {
                 $childArguments += $entry.Value.ToString()
             }
         }
-        $childOutput = Invoke-AtlasoBoundedProcess `
+        Invoke-AtlasoBoundedStreamingProcess `
             -FilePath (Get-Process -Id $PID).Path `
             -ArgumentList $childArguments `
             -TimeoutSeconds $ImageBuildTimeoutSeconds `
             -Action 'The isolated VMware Photon image build'
-        if ($childOutput) {
-            Write-Host -NoNewline $childOutput
-        }
     }
     finally {
         $credentialPair = $null
