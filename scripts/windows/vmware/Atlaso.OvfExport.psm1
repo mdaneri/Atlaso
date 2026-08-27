@@ -191,12 +191,16 @@ Removes an existing OVF output directory after bounded safety validation.
 .PARAMETER OutputPlan
 The output plan returned by Resolve-AtlasoOvfOutputPlan.
 
+.PARAMETER Release
+Allows automatic replacement only for the canonical repository-derived release directory.
+
 .PARAMETER Force
 Authorizes replacement of an existing safe output directory.
 #>
 function Clear-AtlasoOvfOutputDirectory {
     param(
         [Parameter(Mandatory = $true)]$OutputPlan,
+        [switch]$Release,
         [switch]$Force
     )
 
@@ -209,7 +213,12 @@ function Clear-AtlasoOvfOutputDirectory {
         -RepoRoot $OutputPlan.RepoRoot `
         -ApprovedOutputRoot $OutputPlan.ApprovedOutputRoot `
         -OutputDirectory $resolvedTarget
-    if (-not $Force) {
+    $canonicalReleaseReplacement = (
+        $Release -and
+        -not $OutputPlan.CallerSpecifiedOutputDirectory -and
+        (Test-AtlasoPathEqual -Left $resolvedTarget -Right $OutputPlan.CanonicalOutputDirectory)
+    )
+    if (-not $Force -and -not $canonicalReleaseReplacement) {
         throw "OVF output directory already exists: $resolvedTarget. Pass -Force to replace it."
     }
 

@@ -69,10 +69,10 @@ try {
         -OutputDirectory '' `
         -Name 'Atlaso-Photon'
     New-MarkerDirectory -Path $canonicalPlan.OutputDirectory
-    Assert-ThrowsLike -Action {
-        Clear-AtlasoOvfOutputDirectory -OutputPlan $canonicalPlan
-    } -Pattern '*Pass -Force to replace it*'
-    Clear-AtlasoOvfOutputDirectory -OutputPlan $canonicalPlan -Force
+    Clear-AtlasoOvfOutputDirectory -OutputPlan $canonicalPlan -Release
+    if (Test-Path -LiteralPath $canonicalPlan.OutputDirectory) {
+        throw 'Release mode did not replace the canonical repository-derived OVF output.'
+    }
 
     New-MarkerDirectory -Path $canonicalPlan.OutputDirectory
     $explicitCanonicalPlan = Resolve-AtlasoOvfOutputPlan `
@@ -81,7 +81,7 @@ try {
         -Name 'Atlaso-Photon' `
         -CallerSpecifiedOutputDirectory
     Assert-ThrowsLike -Action {
-        Clear-AtlasoOvfOutputDirectory -OutputPlan $explicitCanonicalPlan
+        Clear-AtlasoOvfOutputDirectory -OutputPlan $explicitCanonicalPlan -Release
     } -Pattern '*Pass -Force to replace it*'
     if (-not (Test-Path -LiteralPath (Join-Path $explicitCanonicalPlan.OutputDirectory 'retain.marker'))) {
         throw 'Release mode removed an explicitly supplied canonical output directory without -Force.'
@@ -95,7 +95,7 @@ try {
         -Name 'Atlaso-Photon' `
         -CallerSpecifiedOutputDirectory
     Assert-ThrowsLike -Action {
-        Clear-AtlasoOvfOutputDirectory -OutputPlan $alternatePlan
+        Clear-AtlasoOvfOutputDirectory -OutputPlan $alternatePlan -Release
     } -Pattern '*Pass -Force to replace it*'
     if (-not (Test-Path -LiteralPath (Join-Path $alternatePath 'retain.marker'))) {
         throw 'Release mode removed an alternate output directory without -Force.'

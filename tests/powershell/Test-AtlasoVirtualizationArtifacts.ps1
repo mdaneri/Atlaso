@@ -50,6 +50,20 @@ $module = Get-Content -Raw -LiteralPath $modulePath
 $ovaExporter = Get-Content -Raw -LiteralPath $ovaExporterPath
 $hyperVSmoke = Get-Content -Raw -LiteralPath $hyperVSmokePath
 $vmwareSmoke = Get-Content -Raw -LiteralPath $vmwareSmokePath
+if ($vmwareSmoke.Contains('"--prop:atlaso.admin_password=$passwordText"') -or
+    $vmwareSmoke.Contains('"--prop:atlaso.root_password=$passwordText"')) {
+    throw 'VMware smoke still exposes the disposable credential through OVF Tool process arguments.'
+}
+foreach ($required in @(
+        '"--configFile=$ovfToolConfigPath"',
+        '$configAcl.SetAccessRuleProtection($true, $false)',
+        'Remove-Item -LiteralPath $ovfToolConfigPath -Force',
+        '$passwordText = $null'
+    )) {
+    if (-not $vmwareSmoke.Contains($required)) {
+        throw "VMware smoke is missing a protected non-argv OVF Tool credential marker: $required"
+    }
+}
 foreach ($required in @(
         'Invoke-AtlasoOvaValidation',
         'Get-AtlasoTemplateVersion',

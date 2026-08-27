@@ -103,16 +103,47 @@ try {
     $contract = ($contractOutput -join "`n") | ConvertFrom-Json -ErrorAction Stop
     $passwordText = $Credential.GetNetworkCredential().Password
     $fqdn = ($Name.ToLowerInvariant() -replace '[^a-z0-9-]', '-') + '.smoke.atlaso.internal'
-    & $ovfTool `
-        '--acceptAllEulas' `
-        "--name=$Name" `
-        "--net:Atlaso Management Network=$ManagementVmnet" `
-        "--net:Atlaso Services Network=$ServiceVmnet" `
-        "--prop:atlaso.fqdn=$fqdn" `
-        "--prop:atlaso.admin_password=$passwordText" `
-        "--prop:atlaso.root_password=$passwordText" `
-        $sourceOva.FullName `
-        $vmxPath
+    $ovfToolConfigPath = Join-Path $validationRoot 'ovftool.cfg'
+    $currentSid = [Security.Principal.WindowsIdentity]::GetCurrent().User
+    $configAcl = [Security.AccessControl.DirectorySecurity]::new()
+    $configAcl.SetOwner($currentSid)
+    $configAcl.SetAccessRuleProtection($true, $false)
+    $configAcl.AddAccessRule([Security.AccessControl.FileSystemAccessRule]::new(
+            $currentSid,
+            [Security.AccessControl.FileSystemRights]::FullControl,
+            [Security.AccessControl.InheritanceFlags]'ContainerInherit, ObjectInherit',
+            [Security.AccessControl.PropagationFlags]::None,
+            [Security.AccessControl.AccessControlType]::Allow))
+    Set-Acl -LiteralPath $validationRoot -AclObject $configAcl
+    $ovfToolConfig = @(
+        "prop:atlaso.fqdn=$fqdn",
+        "prop:atlaso.admin_password=$passwordText",
+        "prop:atlaso.root_password=$passwordText"
+    )
+    try {
+        # OVF Tool's config file is the supported non-argv option channel. The
+        # containing directory admits only this runner identity and the file is
+        # removed immediately after the bounded import attempt.
+        [IO.File]::WriteAllLines(
+            $ovfToolConfigPath,
+            $ovfToolConfig,
+            [Text.UTF8Encoding]::new($false))
+        & $ovfTool `
+            '--acceptAllEulas' `
+            "--configFile=$ovfToolConfigPath" `
+            "--name=$Name" `
+            "--net:Atlaso Management Network=$ManagementVmnet" `
+            "--net:Atlaso Services Network=$ServiceVmnet" `
+            $sourceOva.FullName `
+            $vmxPath
+    }
+    finally {
+        $ovfToolConfig = $null
+        $passwordText = $null
+        if (Test-Path -LiteralPath $ovfToolConfigPath) {
+            Remove-Item -LiteralPath $ovfToolConfigPath -Force
+        }
+    }
     if ($LASTEXITCODE -ne 0 -or -not (Test-Path -LiteralPath $vmxPath -PathType Leaf)) {
         throw 'VMware OVF Tool did not create the expected disposable VMX.'
     }

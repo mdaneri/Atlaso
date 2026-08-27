@@ -227,7 +227,9 @@ The VMware build runner requires Workstation, Packer, OVF Tool, and the existing
 Proxmox and KVM runners require the same host tools listed in their import sections. The Hyper-V runner requires
 PowerShell 7.4 or newer, Hyper-V, `qemu-img`, and two operator-owned virtual switches. Every smoke identity and storage
 namespace is invocation-scoped: VMware generates a disposable per-run password, Proxmox serializes each VMID import,
-and cleanup failures fail the active smoke job instead of allowing publication with retained provider state. Hyper-V
+passes it to OVF Tool through a runner-only temporary configuration file instead of process arguments, and deletes that
+file immediately after import. Proxmox serializes each VMID import, and cleanup failures fail the active smoke job
+instead of allowing publication with retained provider state. Hyper-V
 cleanup removes only a VM whose exact ID was captured after successful import; an indeterminate import preserves files
 for diagnosis rather than claiming a later name match. KVM rollback preserves every imported volume unless a successful
 libvirt inventory proves that the exact domain is absent. Every smoke identity and storage namespace must be dedicated to
