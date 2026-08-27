@@ -156,6 +156,12 @@ def test_reconcile_factory_identities_preserves_operator_state_and_dns_conflicts
                     description=VCF_DEPOT_DNS_DESCRIPTION,
                 ),
                 DnsRecord(
+                    hostname="depot-eth2.lab.internal",
+                    record_type="CNAME",
+                    address="stale-app-target.atlaso.internal",
+                    description=VCF_DEPOT_DNS_DESCRIPTION,
+                ),
+                DnsRecord(
                     hostname="depot.lab.internal",
                     record_type="A",
                     address="192.0.2.99",
@@ -246,6 +252,12 @@ def test_reconcile_factory_identities_preserves_operator_state_and_dns_conflicts
             and row.address == "depot.lab.internal"
             for row in records
         )
+        assert sum(
+            row.hostname == "depot-eth2.lab.internal"
+            and row.record_type == "CNAME"
+            and row.description == VCF_DEPOT_DNS_DESCRIPTION
+            for row in records
+        ) == 1
         assert any(row.hostname == "manual.atlaso.internal" for row in records)
         assert any(row.hostname == "nfs.lab.internal" for row in records)
         assert not any(
@@ -267,6 +279,7 @@ def test_reconcile_factory_identities_preserves_operator_state_and_dns_conflicts
         )
 
         depot.server_certificate = "depot.atlaso.internal"
+        oidc.port = 8443
         oidc.issuer_url = "https://oidc.atlaso.internal/identity"
         certificate.common_name = "depot.atlaso.internal"
         certificate.subject_alt_names = "depot.atlaso.internal"
@@ -288,7 +301,7 @@ def test_reconcile_factory_identities_preserves_operator_state_and_dns_conflicts
         assert depot.hostname == "depot.lab.internal"
         assert depot.server_certificate == "depot.lab.internal"
         assert oidc.hostname == "oidc.lab.internal"
-        assert oidc.issuer_url == "https://oidc.lab.internal/identity"
+        assert oidc.issuer_url == "https://oidc.lab.internal:8443/identity"
         assert certificate.common_name == "depot.lab.internal"
         assert db.execute(
             select(DnsRecord).where(

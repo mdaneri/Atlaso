@@ -251,19 +251,25 @@ def _migrate_owned_dns_records(
             changed += 1
             conflicts += 1
             continue
-        stale_type_conflicts = [
+        stale_destination_conflicts = [
             candidate
             for candidate in destination_records
             if candidate.description == description
-            and candidate.record_type != record.record_type
+            and (
+                candidate.record_type != record.record_type
+                or (
+                    record.record_type == "CNAME"
+                    and candidate.address != renamed_address
+                )
+            )
         ]
-        for candidate in stale_type_conflicts:
+        for candidate in stale_destination_conflicts:
             db.delete(candidate)
             changed += 1
         destination_records = [
             candidate
             for candidate in destination_records
-            if candidate not in stale_type_conflicts
+            if candidate not in stale_destination_conflicts
         ]
         duplicate = next(
             (
@@ -371,6 +377,9 @@ def reconcile_factory_service_identities(
             eligible_issuers = {
                 factory_oidc_issuer(hostname, row.port) for hostname in eligible
             }
+            eligible_issuers.add(
+                factory_oidc_issuer(f"{identity.label}.{FACTORY_APPLIANCE_DOMAIN}")
+            )
             if row.issuer_url != target_issuer and row.issuer_url in eligible_issuers:
                 row.issuer_url = target_issuer
                 identity_changed = True
