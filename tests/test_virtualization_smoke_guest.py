@@ -72,6 +72,7 @@ def test_validation_script_proves_agent_disks_services_and_front_door(
     assert expected in script
     assert foreign in script
     assert f"platform={platform}" in script
+    assert "/var/lib/atlaso-privileged/guest-agent/guest-agent.applied" in script
     assert "/var/lib/atlaso/first-boot-packages" in script
     assert "lsblk -dn -o TYPE" in script
     assert "/mnt/atlaso-vcf-offline-depot" in script

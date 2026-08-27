@@ -151,7 +151,7 @@ curl -fsS http://127.0.0.1:8000/openapi.json >/dev/null
 """
     provider = {
         "vmware": r"""
-grep -qx 'platform=vmware' /var/lib/atlaso/guest-agent.applied
+grep -qx 'platform=vmware' /var/lib/atlaso-privileged/guest-agent/guest-agent.applied
 rpm -q open-vm-tools >/dev/null
 ! rpm -q hyper-v >/dev/null 2>&1
 ! rpm -q qemu-guest-agent atlaso-qemu-guest-agent >/dev/null 2>&1
@@ -159,7 +159,7 @@ systemctl is-active --quiet vmtoolsd.service
 ! systemctl is-active --quiet qemu-guest-agent.service
 """,
         "hyperv": r"""
-grep -qx 'platform=hyperv' /var/lib/atlaso/guest-agent.applied
+grep -qx 'platform=hyperv' /var/lib/atlaso-privileged/guest-agent/guest-agent.applied
 rpm -q hyper-v >/dev/null
 ! rpm -q open-vm-tools >/dev/null 2>&1
 ! rpm -q qemu-guest-agent atlaso-qemu-guest-agent >/dev/null 2>&1
