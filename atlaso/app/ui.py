@@ -12234,6 +12234,7 @@ def aggregate_appliance_update_results(
     mode: str,
     stream_results: list[dict[str, Any]],
     job_id: str = "",
+    execution_order: list[str] | None = None,
 ) -> dict[str, Any]:
     """Return aggregate appliance update results.
 
@@ -12244,6 +12245,7 @@ def aggregate_appliance_update_results(
         mode: Operating mode selected for the workflow.
         stream_results: Stream results supplied by the caller.
         job_id: Identifier of the job.
+        execution_order: Stored stream order used for execution and reporting.
     """
     selected = selected_update_streams(selected_stream_ids)
     results_by_stream = {
@@ -12251,10 +12253,17 @@ def aggregate_appliance_update_results(
         for result in stream_results
         if str(result.get("unit_id") or "") in UPDATE_STREAM_LABELS
     }
+    stored_order = [str(stream) for stream in execution_order or []]
+    if len(stored_order) != len(selected) or set(stored_order) != set(selected):
+        stored_order = []
+        for result in stream_results:
+            stream = str(result.get("unit_id") or "")
+            if stream in selected and stream not in stored_order:
+                stored_order.append(stream)
     ordered_results = [
         results_by_stream[stream]
-        for stream in APPLIANCE_UPDATE_EXECUTION_ORDER
-        if stream in selected and stream in results_by_stream
+        for stream in stored_order
+        if stream in results_by_stream
     ]
     succeeded = len(ordered_results) == len(selected) and all(
         bool(result.get("success")) and result.get("status") == JobStatus.SUCCEEDED.value

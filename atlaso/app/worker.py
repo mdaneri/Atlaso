@@ -691,6 +691,18 @@ def recover_interrupted_worker_jobs(
                 if isinstance(step_result, dict):
                     stream_results.append(step_result)
             mode = str(config.get("mode") or "run")
+            stored_order = config.get("execution_order")
+            execution_order = (
+                [str(stream) for stream in stored_order]
+                if isinstance(stored_order, list)
+                and set(str(stream) for stream in stored_order) == set(selected)
+                and len(stored_order) == len(selected)
+                else [
+                    stream
+                    for stream in APPLIANCE_UPDATE_LEGACY_EXECUTION_ORDER
+                    if stream in selected
+                ]
+            )
             update_result = aggregate_appliance_update_results(
                 selected_stream_ids=selected,
                 settings=config.get("settings") if isinstance(config.get("settings"), dict) else {},
@@ -698,6 +710,7 @@ def recover_interrupted_worker_jobs(
                 mode=mode,
                 stream_results=stream_results,
                 job_id=job.id,
+                execution_order=execution_order,
             )
             if recovered:
                 update_result["worker_recovery"] = "root_finalizer"
@@ -1470,6 +1483,7 @@ def _run_appliance_update(job_id: str) -> None:
             mode=mode,
             stream_results=stream_results,
             job_id=job_id,
+            execution_order=execution_streams,
         )
     with SessionLocal() as db:
         job = db.get(Job, job_id)

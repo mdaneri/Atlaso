@@ -1395,6 +1395,32 @@ def test_successful_photon_still_restarts_worker_when_a_later_stream_fails():
     assert result["restart_after_commit"] is True
 
 
+def test_legacy_execution_order_is_preserved_in_aggregate_command_evidence():
+    """Report resumed legacy commands in their stored release-first order."""
+    from atlaso.app.ui import aggregate_appliance_update_results
+
+    legacy_order = ["atlaso_release", "powershell_modules", "photon_os"]
+    result = aggregate_appliance_update_results(
+        selected_stream_ids=["photon_os", "powershell_modules", "atlaso_release"],
+        settings={},
+        actor="admin",
+        mode="run",
+        execution_order=legacy_order,
+        stream_results=[
+            {
+                "unit_id": stream,
+                "status": "succeeded",
+                "success": True,
+                "commands": [{"stream": stream}],
+            }
+            for stream in legacy_order
+        ],
+        job_id="job-legacy-order",
+    )
+
+    assert [command["stream"] for command in result["commands"]] == legacy_order
+
+
 def test_status_recovery_accepts_receipt_before_schedule_flag_commit(
     client,
     monkeypatch,

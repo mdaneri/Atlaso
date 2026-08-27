@@ -53,8 +53,9 @@ Checks execute every selected child even when another check fails, which keeps d
 installations preserve the safety order Photon OS, PowerShell Modules, then Atlaso Release among the selected streams.
 Any failed installation child leaves every later selected child explicitly **skipped**, while preserving every earlier
 terminal result. Atlaso records that exact order and a random update-status transaction identity with the parent before
-the task becomes visible. A task created by an older updater retains its original recorded order during recovery rather
-than being silently reordered. A current task interrupted safely between children resumes only its untouched pending
+the task becomes visible. A task created by an older updater retains its original recorded order during recovery and
+reports its aggregate command evidence in that same order rather than being silently reordered. A current task
+interrupted safely between children resumes only its untouched pending
 suffix; a child that started is never replayed. If a worker disappears while a non-release child is running, startup
 stops and verifies that task-and-stream-bound transient helper before failing the child or restoring ordinary UIs; an
 unverifiable helper keeps the hierarchy running and the update-only surface held. If the interrupted Photon child had
