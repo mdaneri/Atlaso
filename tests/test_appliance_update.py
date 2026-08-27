@@ -3106,11 +3106,24 @@ def test_appliance_update_status_publication_failure_prevents_all_mutation(clien
         assert "status surface could not be proven continuously" in (job.error or "")
 
 
-def test_appliance_update_recovery_requeues_only_a_safe_pending_suffix(client):
+@pytest.mark.parametrize(
+    ("mode", "completed_status"),
+    [
+        ("run", "succeeded"),
+        ("check", "failed"),
+    ],
+)
+def test_appliance_update_recovery_requeues_only_a_safe_pending_suffix(
+    client,
+    mode,
+    completed_status,
+):
     """Resume schema-two work interrupted between terminal children.
 
     Args:
         client: HTTP test client providing isolated application state.
+        mode: Appliance Update operation mode stored by the task.
+        completed_status: Terminal status already committed for the first child.
     """
     import atlaso.app.worker as worker
     from atlaso.app.database import SessionLocal
@@ -3128,7 +3141,7 @@ def test_appliance_update_recovery_requeues_only_a_safe_pending_suffix(client):
             task_config_json=json.dumps(
                 {
                     "schema_version": 2,
-                    "mode": "run",
+                    "mode": mode,
                     "selected_streams": selected,
                     "execution_order": selected,
                     "status_transaction_id": "b" * 32,
@@ -3139,10 +3152,14 @@ def test_appliance_update_recovery_requeues_only_a_safe_pending_suffix(client):
         db.add(job)
         db.flush()
         steps = ensure_appliance_update_job_steps(db, job=job, selected_streams=selected)
-        steps[0].status = JobStatus.SUCCEEDED.value
+        steps[0].status = completed_status
         steps[0].progress_percent = 100
         steps[0].result = json.dumps(
-            {"unit_id": "photon_os", "status": "succeeded", "success": True}
+            {
+                "unit_id": "photon_os",
+                "status": completed_status,
+                "success": completed_status == JobStatus.SUCCEEDED.value,
+            }
         )
         db.commit()
 
@@ -3155,7 +3172,7 @@ def test_appliance_update_recovery_requeues_only_a_safe_pending_suffix(client):
         assert recovered.status == JobStatus.PENDING.value
         assert json.loads(recovered.result)["worker_recovery"] == "between_streams"
         assert [step.status for step in recovered_steps] == [
-            "succeeded",
+            completed_status,
             "pending",
             "pending",
         ]

@@ -493,10 +493,25 @@ def recover_interrupted_worker_jobs(
                 and int(config.get("schema_version") or 0) >= 2
                 and any(step.status == JobStatus.PENDING.value for step in update_steps)
                 and all(step.status != JobStatus.RUNNING.value for step in update_steps)
-                and all(
-                    step.status == JobStatus.SUCCEEDED.value
-                    for step in update_steps
-                    if step.status != JobStatus.PENDING.value
+                and (
+                    all(
+                        step.status == JobStatus.SUCCEEDED.value
+                        for step in update_steps
+                        if step.status != JobStatus.PENDING.value
+                    )
+                    or (
+                        str(config.get("mode") or "check") == "check"
+                        and all(
+                            step.status
+                            in {
+                                JobStatus.SUCCEEDED.value,
+                                JobStatus.FAILED.value,
+                                JobStatus.SKIPPED.value,
+                            }
+                            for step in update_steps
+                            if step.status != JobStatus.PENDING.value
+                        )
+                    )
                 )
             )
             if resumable_between_children:
