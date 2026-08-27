@@ -102,12 +102,15 @@ COMMANDS: dict[str, set[str]] = {
         "apply",
         "sync-sources",
         "restart-service",
+        "restart-complete",
+        "restart-inspect",
         "bootstrap-data-disk-safety",
         "guard-release",
         "recover-release",
         "complete-committed-release",
         "status-publish",
         "status-finish",
+        "status-inspect",
     },
     "automation": {"run"},
     "appliance-power": {"reboot", "shutdown"},
@@ -199,6 +202,9 @@ NO_PATH_ACTIONS = {
     ("appliance-update", "recover-release"),
     ("appliance-update", "guard-release"),
     ("appliance-update", "complete-committed-release"),
+    ("appliance-update", "status-inspect"),
+    ("appliance-update", "restart-complete"),
+    ("appliance-update", "restart-inspect"),
 }
 NON_PATH_ARGUMENT_ACTIONS = {
     ("local-users", "authenticate"),
@@ -209,6 +215,8 @@ NON_PATH_ARGUMENT_ACTIONS = {
     ("management-handoff", "acknowledge"),
     ("appliance-update", "status-publish"),
     ("appliance-update", "status-finish"),
+    ("appliance-update", "restart-complete"),
+    ("appliance-update", "restart-inspect"),
 }
 ATLASO_SERVICE_USER = "atlaso"
 ATLASO_STATE_DIR = Path("/var/lib/atlaso")
@@ -257,6 +265,9 @@ ATLASO_UPDATE_STATUS_NGINX_INCLUDE_PATH = Path(
     "/etc/atlaso/nginx/includes/appliance-update-status.conf"
 )
 ATLASO_UPDATE_READINESS_PATH = "/__atlaso_appliance_update_readiness_openapi"
+ATLASO_UPDATE_RESTART_RECEIPT_PATH = (
+    ATLASO_UPDATE_STATUS_DIR / "restart-receipt.json"
+)
 ATLASO_UPDATE_RESTART_GATE_PATH = Path("/run/atlaso-release-restart-gate")
 ATLASO_WORKER_STARTUP_STATUS_PATH = ATLASO_STATE_DIR / "worker-startup.json"
 ATLASO_POWERSHELL_HOME = ATLASO_STATE_DIR / "powershell"
@@ -16842,29 +16853,129 @@ def _apply_appliance_update(
     return result
 
 
-def _restart_atlaso_service_after_update() -> int:
-    """Perform restart atlaso service after update.
+def _complete_atlaso_service_restart(job_id: str) -> int:
+    """Restart every Atlaso service and publish exact worker-startup proof.
 
+    Args:
+        job_id: Exact Appliance Update parent identifier.
     """
-    systemctl = _command_path("systemctl")
-    if systemctl is None:
-        print("systemctl command not found", file=sys.stderr)
-        return 127
+    if re.fullmatch(r"job_[0-9a-f]{12}", job_id) is None:
+        print("Atlaso service restart task identity is invalid", file=sys.stderr)
+        return 2
+    restart = _service_command(
+        "restart",
+        "atlaso.service",
+        "atlaso-worker.service",
+        "atlaso-console.service",
+    )
+    if restart.get("success") is not True:
+        print("Atlaso service restart did not complete", file=sys.stderr)
+        return 1
+    active = _service_command(
+        "is-active",
+        "atlaso.service",
+        "atlaso-worker.service",
+        "atlaso-console.service",
+    )
+    if active.get("success") is not True:
+        print("Atlaso services are not active after restart", file=sys.stderr)
+        return 1
+    deadline = time.monotonic() + 60
+    startup: dict[str, object] = {}
+    worker_pid = 0
+    worker_started_at = ""
+    worker_boot_id = ""
+    worker_start_ticks = ""
+    while time.monotonic() < deadline:
+        try:
+            flags = os.O_RDONLY
+            if hasattr(os, "O_NOFOLLOW"):
+                flags |= os.O_NOFOLLOW
+            descriptor = os.open(ATLASO_WORKER_STARTUP_STATUS_PATH, flags)
+            try:
+                metadata = os.fstat(descriptor)
+                expected_uid = (
+                    pwd.getpwnam(ATLASO_SERVICE_USER).pw_uid
+                    if os.name == "posix"
+                    else metadata.st_uid
+                )
+                if (
+                    not stat.S_ISREG(metadata.st_mode)
+                    or metadata.st_nlink != 1
+                    or metadata.st_size > 4096
+                    or metadata.st_uid != expected_uid
+                ):
+                    raise ValueError("worker startup identity file is unsafe")
+                with os.fdopen(descriptor, "r", encoding="utf-8", closefd=False) as stream:
+                    loaded = json.load(stream)
+            finally:
+                os.close(descriptor)
+            if not isinstance(loaded, dict):
+                raise ValueError("worker startup identity is invalid")
+            startup = loaded
+            worker_pid = int(startup.get("pid") or 0)
+            worker_started_at = str(startup.get("started_at") or "")
+            datetime.fromisoformat(worker_started_at)
+            worker_boot_id = str(startup.get("boot_id") or "")
+            worker_start_ticks = str(startup.get("start_ticks") or "")
+            if (
+                worker_pid > 0
+                and worker_pid == _service_main_pid("atlaso-worker.service")
+                and worker_boot_id
+                and worker_start_ticks
+            ):
+                break
+        except (OSError, ValueError, TypeError, json.JSONDecodeError):
+            pass
+        time.sleep(1)
+    else:
+        print("Worker restart identity is unavailable after service restart", file=sys.stderr)
+        return 1
+    _write_appliance_update_runtime_file(
+        ATLASO_UPDATE_RESTART_RECEIPT_PATH,
+        json.dumps(
+            {
+                "completed_at": datetime.now(timezone.utc).isoformat(),
+                "job_id": job_id,
+                "state": "completed",
+                "worker_pid": worker_pid,
+                "worker_boot_id": worker_boot_id,
+                "worker_start_ticks": worker_start_ticks,
+                "worker_started_at": worker_started_at,
+            },
+            sort_keys=True,
+        )
+        + "\n",
+    )
+    return 0
+
+
+def _restart_atlaso_service_after_update(job_id: str) -> int:
+    """Schedule a delayed all-service restart with a durable receipt.
+
+    Args:
+        job_id: Exact Appliance Update parent identifier.
+    """
+    if re.fullmatch(r"job_[0-9a-f]{12}", job_id) is None:
+        print("Atlaso service restart task identity is invalid", file=sys.stderr)
+        return 2
     systemd_run = shutil.which("systemd-run")
     if systemd_run is None:
         print("systemd-run is required to schedule the delayed Atlaso service restart", file=sys.stderr)
         return 127
+    ATLASO_UPDATE_RESTART_RECEIPT_PATH.unlink(missing_ok=True)
+    _fsync_directory(ATLASO_UPDATE_RESTART_RECEIPT_PATH.parent)
     result = _run(
         [
             systemd_run,
             "--quiet",
             "--on-active=3",
             f"--unit=atlaso-update-restart-{datetime.now(timezone.utc).strftime('%Y%m%d%H%M%S%f')}",
-            systemctl,
-            "restart",
-            "atlaso.service",
-            "atlaso-worker.service",
-            "atlaso-console.service",
+            str(Path(__file__).resolve()),
+            "appliance-update",
+            "restart-complete",
+            "--real",
+            job_id,
         ]
     )
     print(result.stdout, end="")
@@ -21219,6 +21330,88 @@ def _handle_appliance_update(action: str, args: list[str]) -> int:
         action: Action consumed by handle appliance update.
         args: Parsed command-line options consumed by the operation.
     """
+    if action == "status-inspect":
+        if args:
+            print("status-inspect does not accept arguments", file=sys.stderr)
+            return 2
+        try:
+            recorded = json.loads(
+                _read_appliance_update_runtime_file(
+                    ATLASO_UPDATE_STATUS_PATH,
+                    limit=1024 * 1024,
+                )
+            )
+        except FileNotFoundError:
+            print(json.dumps({"state": "absent"}, sort_keys=True))
+            return 0
+        except (OSError, UnicodeDecodeError, json.JSONDecodeError, ValueError) as exc:
+            print(
+                f"Appliance Update status inspection failed: {type(exc).__name__}.",
+                file=sys.stderr,
+            )
+            return 1
+        restoration = recorded.get("ui_restoration") if isinstance(recorded, dict) else None
+        task_id = str(recorded.get("task_id") or "") if isinstance(recorded, dict) else ""
+        state = str(restoration.get("state") or "") if isinstance(restoration, dict) else ""
+        if (
+            re.fullmatch(r"job_[0-9a-f]{12}", task_id) is None
+            or re.fullmatch(r"[0-9a-f]{32}", str(recorded.get("transaction_id") or "")) is None
+            or state not in {"held", "pending", "restored"}
+        ):
+            print("Appliance Update status inspection found invalid durable state.", file=sys.stderr)
+            return 1
+        print(
+            json.dumps(
+                {
+                    "state": state,
+                    "task_id": task_id,
+                    "terminal": recorded.get("terminal") is True,
+                },
+                sort_keys=True,
+            )
+        )
+        return 0
+
+    if action == "restart-inspect":
+        if len(args) != 1 or re.fullmatch(r"job_[0-9a-f]{12}", args[0]) is None:
+            print("restart-inspect requires exactly one task id", file=sys.stderr)
+            return 2
+        try:
+            receipt = json.loads(
+                _read_appliance_update_runtime_file(
+                    ATLASO_UPDATE_RESTART_RECEIPT_PATH,
+                    limit=4096,
+                )
+            )
+        except FileNotFoundError:
+            print(json.dumps({"state": "absent"}, sort_keys=True))
+            return 0
+        except (OSError, UnicodeDecodeError, json.JSONDecodeError, ValueError) as exc:
+            print(f"Restart receipt inspection failed: {type(exc).__name__}.", file=sys.stderr)
+            return 1
+        try:
+            receipt_worker_pid = int(receipt.get("worker_pid") or 0)
+        except (AttributeError, TypeError, ValueError):
+            receipt_worker_pid = 0
+        if (
+            not isinstance(receipt, dict)
+            or str(receipt.get("job_id") or "") != args[0]
+            or receipt.get("state") != "completed"
+            or receipt_worker_pid <= 0
+            or not str(receipt.get("worker_boot_id") or "")
+            or not str(receipt.get("worker_start_ticks") or "")
+        ):
+            print("Restart receipt does not match the task", file=sys.stderr)
+            return 1
+        print(json.dumps(receipt, sort_keys=True))
+        return 0
+
+    if action == "restart-complete":
+        if len(args) != 1:
+            print("restart-complete requires exactly one task id", file=sys.stderr)
+            return 2
+        return _complete_atlaso_service_restart(args[0])
+
     if action in {"status-publish", "status-finish"}:
         if len(args) != 1:
             print(f"{action} requires exactly one task id", file=sys.stderr)
@@ -21355,7 +21548,7 @@ def _handle_appliance_update(action: str, args: list[str]) -> int:
             print(str(result["error"]), file=sys.stderr)
         return 0 if result.get("status") == "succeeded" else 1
     if action == "restart-service":
-        return _restart_atlaso_service_after_update()
+        return _restart_atlaso_service_after_update(str(payload.get("job_id") or ""))
 
     print(f"unsupported appliance-update action: {action}", file=sys.stderr)
     return 2

@@ -1275,10 +1275,78 @@ def test_status_recovery_compares_sqlite_timestamp_with_aware_worker_start(
     startup.write_text(
         json.dumps(
             {
+                "boot_id": "boot-a",
                 "pid": os.getpid(),
+                "start_ticks": "100",
                 "started_at": "2026-08-27T02:00:01+00:00",
             }
         ),
+        encoding="utf-8",
+    )
+    with SessionLocal() as db:
+        db.add(
+            Job(
+                id=job_id,
+                type="appliance-update",
+                status="succeeded",
+                created_by="admin",
+                finished_at=datetime(2026, 8, 27, 2, 0, 0),
+                result='{"restart_after_commit":true,"restart_scheduled":true}',
+            )
+        )
+        db.commit()
+    published = []
+    monkeypatch.setattr(worker, "APPLIANCE_UPDATE_STATUS_MARKER_PATH", marker)
+    monkeypatch.setattr(worker, "WORKER_STARTUP_STATUS_PATH", startup)
+    monkeypatch.setattr(
+        worker,
+        "_inspect_appliance_update_restart",
+        lambda observed_job_id: {
+            "job_id": observed_job_id,
+            "state": "completed",
+            "worker_pid": os.getpid(),
+            "worker_boot_id": "boot-a",
+            "worker_start_ticks": "100",
+            "worker_started_at": "2026-08-27T02:00:01+00:00",
+        },
+    )
+    monkeypatch.setattr(
+        worker,
+        "_publish_appliance_update_status",
+        lambda observed_job_id, *, finish=False: published.append(
+            (observed_job_id, finish)
+        )
+        or True,
+    )
+
+    assert worker._reconcile_appliance_update_status_surface() is True
+    assert published == [(job_id, True)]
+
+
+def test_status_recovery_requires_durable_restart_scheduling_proof(
+    client,
+    monkeypatch,
+    tmp_path,
+):
+    """Reject an unrelated worker restart after the pre-scheduling commit.
+
+    Args:
+        client: Test application HTTP client.
+        monkeypatch: Pytest fixture used to replace recovery paths and effects.
+        tmp_path: Temporary directory provided for isolated startup evidence.
+    """
+    import os
+
+    from atlaso.app import worker
+    from atlaso.app.database import SessionLocal
+    from atlaso.app.models import Job
+
+    job_id = "job_012345abcdea"
+    marker = tmp_path / "appliance-update-status"
+    marker.write_text(job_id, encoding="utf-8")
+    startup = tmp_path / "worker-startup.json"
+    startup.write_text(
+        json.dumps({"pid": os.getpid(), "started_at": "2026-08-27T02:00:01+00:00"}),
         encoding="utf-8",
     )
     with SessionLocal() as db:
@@ -1293,9 +1361,50 @@ def test_status_recovery_compares_sqlite_timestamp_with_aware_worker_start(
             )
         )
         db.commit()
-    published = []
     monkeypatch.setattr(worker, "APPLIANCE_UPDATE_STATUS_MARKER_PATH", marker)
     monkeypatch.setattr(worker, "WORKER_STARTUP_STATUS_PATH", startup)
+    monkeypatch.setattr(
+        worker,
+        "_publish_appliance_update_status",
+        lambda *_args, **_kwargs: pytest.fail("status hold must remain active"),
+    )
+
+    assert worker._reconcile_appliance_update_status_surface() is False
+
+
+def test_status_recovery_retries_pending_restoration_without_runtime_marker(
+    client,
+    monkeypatch,
+):
+    """Retry terminal restoration from durable state when the marker vanished.
+
+    Args:
+        client: Test application HTTP client.
+        monkeypatch: Pytest fixture used to replace recovery paths and effects.
+    """
+    from atlaso.app import worker
+    from atlaso.app.database import SessionLocal
+    from atlaso.app.models import Job
+
+    job_id = "job_012345abcdeb"
+    with SessionLocal() as db:
+        db.add(
+            Job(
+                id=job_id,
+                type="appliance-update",
+                status="failed",
+                created_by="admin",
+                finished_at=datetime(2026, 8, 27, 2, 0, 0),
+                result='{"restart_after_commit":false}',
+            )
+        )
+        db.commit()
+    monkeypatch.setattr(
+        worker,
+        "_inspect_appliance_update_status",
+        lambda: {"state": "pending", "task_id": job_id, "terminal": True},
+    )
+    published = []
     monkeypatch.setattr(
         worker,
         "_publish_appliance_update_status",

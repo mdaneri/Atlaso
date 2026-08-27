@@ -1017,6 +1017,38 @@ class SystemAdapter:
             timeout_seconds=180,
         )
 
+    def inspect_appliance_update_status(self) -> AdapterResult:
+        """Return bounded durable update-status restoration state.
+
+        Returns:
+            The privileged status-inspection result.
+        """
+        return self._helper_result(
+            "appliance-update",
+            "status-inspect",
+            dry_run_message="dry-run: Appliance Update status inspection recorded",
+            timeout_seconds=30,
+            execute_in_dry_run=True,
+        )
+
+    def inspect_appliance_update_restart(self, job_id: str) -> AdapterResult:
+        """Return durable completion evidence for the delayed restart.
+
+        Args:
+            job_id: Exact Appliance Update parent identifier.
+
+        Returns:
+            The privileged restart-receipt inspection result.
+        """
+        return self._helper_result(
+            "appliance-update",
+            "restart-inspect",
+            job_id,
+            dry_run_message="dry-run: Appliance Update restart inspection recorded",
+            timeout_seconds=30,
+            execute_in_dry_run=True,
+        )
+
     def run_automation_script(
         self,
         script_path: str,

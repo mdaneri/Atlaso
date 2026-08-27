@@ -614,6 +614,148 @@ def test_appliance_update_status_mutations_use_bounded_helper_action_units(
     assert calls == [("appliance-update", action, ["job_0123456789ab"])]
 
 
+def test_appliance_update_status_inspection_returns_only_bounded_state(
+    monkeypatch,
+    tmp_path,
+    capsys,
+):
+    """Expose restoration identity without leaking the durable hierarchy.
+
+    Args:
+        monkeypatch: Pytest fixture used to isolate the root-owned snapshot.
+        tmp_path: Temporary directory provided for status evidence.
+        capsys: Pytest fixture used to capture helper output.
+    """
+    helper = load_helper_module()
+    status = tmp_path / "status.json"
+    status.write_text(
+        json.dumps(
+            {
+                "task_id": "job_0123456789ab",
+                "transaction_id": "a" * 32,
+                "terminal": True,
+                "ui_restoration": {"state": "pending"},
+                "children": [{"error": "must not be exposed"}],
+            }
+        ),
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(helper, "ATLASO_UPDATE_STATUS_PATH", status)
+
+    assert helper._handle_appliance_update("status-inspect", []) == 0
+    assert json.loads(capsys.readouterr().out) == {
+        "state": "pending",
+        "task_id": "job_0123456789ab",
+        "terminal": True,
+    }
+
+
+def test_delayed_restart_targets_receipted_helper_action(monkeypatch, tmp_path):
+    """Schedule the independent restart helper instead of bare systemctl.
+
+    Args:
+        monkeypatch: Pytest fixture used to capture scheduling and persistence.
+        tmp_path: Temporary directory provided for the prior receipt.
+    """
+    helper = load_helper_module()
+    receipt = tmp_path / "restart-receipt.json"
+    receipt.write_text("stale", encoding="utf-8")
+    commands = []
+    monkeypatch.setattr(helper, "ATLASO_UPDATE_RESTART_RECEIPT_PATH", receipt)
+    monkeypatch.setattr(
+        helper.shutil,
+        "which",
+        lambda command: "/usr/bin/systemd-run" if command == "systemd-run" else None,
+    )
+    monkeypatch.setattr(
+        helper,
+        "_run",
+        lambda command: commands.append(command)
+        or subprocess.CompletedProcess(command, 0, "", ""),
+    )
+    monkeypatch.setattr(helper, "_fsync_directory", lambda _path: None)
+
+    assert helper._restart_atlaso_service_after_update("job_0123456789ab") == 0
+    assert not receipt.exists()
+    assert commands[0][-4:] == [
+        "appliance-update",
+        "restart-complete",
+        "--real",
+        "job_0123456789ab",
+    ]
+
+
+def test_completed_restart_publishes_exact_worker_receipt(monkeypatch, tmp_path):
+    """Persist receipt only after all services and the new worker are active.
+
+    Args:
+        monkeypatch: Pytest fixture used to replace service and file boundaries.
+        tmp_path: Temporary directory provided for worker startup identity.
+    """
+    helper = load_helper_module()
+    startup = tmp_path / "worker-startup.json"
+    startup.write_text(
+        json.dumps(
+            {
+                "boot_id": "boot-a",
+                "pid": 321,
+                "start_ticks": "456",
+                "started_at": "2026-08-27T02:00:01+00:00",
+            }
+        ),
+        encoding="utf-8",
+    )
+    calls = []
+    written = {}
+    monkeypatch.setattr(helper, "ATLASO_WORKER_STARTUP_STATUS_PATH", startup)
+    monkeypatch.setattr(
+        helper,
+        "_service_command",
+        lambda action, *units: calls.append((action, units)) or {"success": True},
+    )
+    monkeypatch.setattr(helper, "_service_main_pid", lambda _unit: 321)
+    monkeypatch.setattr(
+        helper,
+        "_write_appliance_update_runtime_file",
+        lambda path, content: written.update(path=path, content=content),
+    )
+
+    assert helper._complete_atlaso_service_restart("job_0123456789ab") == 0
+    assert [action for action, _units in calls] == ["restart", "is-active"]
+    receipt = json.loads(written["content"])
+    assert receipt["job_id"] == "job_0123456789ab"
+    assert receipt["state"] == "completed"
+    assert receipt["worker_pid"] == 321
+    assert receipt["worker_boot_id"] == "boot-a"
+    assert receipt["worker_start_ticks"] == "456"
+
+
+def test_restart_completion_task_identity_is_not_path_normalized(monkeypatch):
+    """Pass the durable parent identity unchanged to the transient child.
+
+    Args:
+        monkeypatch: Pytest fixture used to capture helper dispatch.
+    """
+    helper = load_helper_module()
+    calls = []
+    monkeypatch.setattr(
+        helper,
+        "_complete_atlaso_service_restart",
+        lambda job_id: calls.append(job_id) or 0,
+    )
+
+    assert helper.main(
+        [
+            "atlaso-helper",
+            "appliance-update",
+            "restart-complete",
+            "--real",
+            "job_0123456789ab",
+        ]
+    ) == 0
+    assert calls == ["job_0123456789ab"]
+
+
 def test_management_handoff_applies_and_restores_coupled_wan(monkeypatch):
     """Apply candidate WAN intent and restore its last-applied config through one helper path.
 

@@ -803,18 +803,61 @@ def _publish_appliance_update_status(job_id: str, *, finish: bool = False) -> bo
     return False
 
 
+def _inspect_appliance_update_status() -> dict[str, Any] | None:
+    """Return bounded root-owned restoration state through the helper boundary."""
+    result = SystemAdapter().inspect_appliance_update_status()
+    if result.returncode != 0:
+        LOGGER.error("Durable Appliance Update status inspection failed")
+        return None
+    try:
+        payload = json.loads(result.stdout.strip().splitlines()[-1])
+    except (IndexError, json.JSONDecodeError):
+        LOGGER.error("Durable Appliance Update status inspection was invalid")
+        return None
+    return payload if isinstance(payload, dict) else None
+
+
+def _inspect_appliance_update_restart(job_id: str) -> dict[str, Any] | None:
+    """Return durable all-service restart completion evidence.
+
+    Args:
+        job_id: Exact Appliance Update parent identifier.
+    """
+    result = SystemAdapter().inspect_appliance_update_restart(job_id)
+    if result.returncode != 0:
+        LOGGER.error("Durable Appliance Update restart inspection failed")
+        return None
+    try:
+        payload = json.loads(result.stdout.strip().splitlines()[-1])
+    except (IndexError, json.JSONDecodeError):
+        LOGGER.error("Durable Appliance Update restart inspection was invalid")
+        return None
+    return payload if isinstance(payload, dict) else None
+
+
 def _reconcile_appliance_update_status_surface() -> bool:
     """Restore a terminal update surface or block unrelated mutation safely.
 
     Returns:
         Whether the worker may claim another durable task.
     """
+    marker_present = True
+    restoration_state = "held"
     try:
         marker_job_id = APPLIANCE_UPDATE_STATUS_MARKER_PATH.read_text(
             encoding="utf-8"
         ).strip()
     except FileNotFoundError:
-        return True
+        marker_present = False
+        inspection = _inspect_appliance_update_status()
+        if inspection is None:
+            return False
+        restoration_state = str(inspection.get("state") or "")
+        if restoration_state in {"absent", "restored"}:
+            return True
+        if restoration_state not in {"held", "pending"}:
+            return False
+        marker_job_id = str(inspection.get("task_id") or "")
     except OSError:
         LOGGER.error(
             "Appliance Update status marker is unreadable; worker admission remains blocked"
@@ -838,8 +881,15 @@ def _reconcile_appliance_update_status_surface() -> bool:
         except json.JSONDecodeError:
             result = {}
     if not terminal:
+        if not marker_present:
+            return bool(
+                restoration_state == "held"
+                and _publish_appliance_update_status(marker_job_id)
+            )
         return True
     if isinstance(result, dict) and result.get("restart_after_commit") is True:
+        if result.get("restart_scheduled") is not True:
+            return False
         try:
             startup = json.loads(WORKER_STARTUP_STATUS_PATH.read_text(encoding="utf-8"))
             started_at = datetime.fromisoformat(str(startup.get("started_at") or ""))
@@ -850,6 +900,20 @@ def _reconcile_appliance_update_status_surface() -> bool:
             if started_at.tzinfo is None
             else started_at.astimezone(timezone.utc)
         )
+        receipt = _inspect_appliance_update_restart(marker_job_id)
+        if (
+            receipt is None
+            or receipt.get("state") != "completed"
+            or str(receipt.get("job_id") or "") != marker_job_id
+            or int(receipt.get("worker_pid") or 0) != os.getpid()
+            or str(receipt.get("worker_boot_id") or "")
+            != str(startup.get("boot_id") or "")
+            or str(receipt.get("worker_start_ticks") or "")
+            != str(startup.get("start_ticks") or "")
+            or str(receipt.get("worker_started_at") or "")
+            != str(startup.get("started_at") or "")
+        ):
+            return False
         if finished_at is not None:
             finished_at = (
                 finished_at.replace(tzinfo=timezone.utc)
