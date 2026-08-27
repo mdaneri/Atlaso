@@ -552,7 +552,8 @@ def test_photon_kickstart_generator_is_canonical_and_provider_specific(tmp_path)
         assert template.count("${local.ssh_password_stdin_base64}") == 2
         assert "echo '${var.ssh_password}'" not in template
         assert "systemd-run --quiet --unit=atlaso-image-build-finalize" in template
-        assert "/usr/local/sbin/atlaso-finalize-image-build ${var.ssh_username}" in template
+        assert "/opt/atlaso/bin/atlaso-finalize-image-build ${var.ssh_username}" in template
+        assert "/usr/local/sbin/atlaso-finalize-image-build" not in template
         assert "userdel -r ${var.ssh_username}" not in template
         assert "| base64 -d | sudo -S -E sh -c" in template
 
@@ -562,14 +563,21 @@ def test_photon_kickstart_generator_is_canonical_and_provider_specific(tmp_path)
     account_verification = finalizer.index('if getent passwd "$build_user"', user_deletion)
     home_verification = finalizer.index('[ ! -e "$build_home" ]', account_verification)
     sudoers_verification = finalizer.index("[ ! -e /etc/sudoers.d/90-atlaso-build ]", home_verification)
-    helper_removal = finalizer.index("rm -f -- /opt/atlaso/image/common/scripts/finalize-image-build.sh")
+    helper_removal = finalizer.index(
+        "rm -f -- /opt/atlaso/image/common/scripts/finalize-image-build.sh "
+        "/opt/atlaso/bin/atlaso-finalize-image-build"
+    )
     poweroff = finalizer.index("systemctl poweroff")
     assert process_wait < user_deletion < account_verification < home_verification < sudoers_verification
     assert sudoers_verification < helper_removal < poweroff
     assert "[ \"$attempt\" -le 120 ]" in finalizer
+    assert "[ ! -e /opt/atlaso/bin/atlaso-finalize-image-build ] || exit 2" in finalizer
+    assert "/usr/local/sbin/atlaso-finalize-image-build" not in finalizer
 
     provision = Path("image/common/scripts/provision-atlaso.sh").read_text(encoding="utf-8")
     assert 'install -o root -g root -m 0700 "$IMAGE_BUILD_FINALIZER_SOURCE"' in provision
+    assert '"$ATLASO_HOME/bin/atlaso-finalize-image-build"' in provision
+    assert "/usr/local/sbin/atlaso-finalize-image-build" not in provision
 
 
 def test_vmware_workstation_build_monitor_behavior(tmp_path):
