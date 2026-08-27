@@ -191,15 +191,39 @@ Import-Module (Join-Path $PSScriptRoot 'Atlaso.WorkstationBuildMonitor.psm1') -F
 
 <#
 .SYNOPSIS
-Return the current Windows boot identity used by deferred Photon cleanup.
+Remove a proven-inactive Photon root and durably retire its marker.
 
-.DESCRIPTION
-Uses the operating-system boot timestamp so a later invocation can prove that
-no process tree from the recorded boot remains active.
+.PARAMETER MarkerPath
+Exact non-secret cleanup marker path.
+
+.PARAMETER Marker
+Validated marker payload owning the exact root.
 #>
-function Get-AtlasoPhotonWindowsBootIdentity {
-    $operatingSystem = Get-CimInstance -ClassName Win32_OperatingSystem -ErrorAction Stop
-    return $operatingSystem.LastBootUpTime.ToUniversalTime().ToString('o')
+function Complete-AtlasoPhotonBuildCleanup {
+    param(
+        [Parameter(Mandatory = $true)][string]$MarkerPath,
+        [Parameter(Mandatory = $true)][object]$Marker
+    )
+
+    $resolvedRoot = [System.IO.Path]::GetFullPath([string]$Marker.RootPath)
+    if (Test-Path -LiteralPath $resolvedRoot) {
+        $rootItem = Get-Item -LiteralPath $resolvedRoot -Force -ErrorAction Stop
+        if ($rootItem.Attributes -band [System.IO.FileAttributes]::ReparsePoint) {
+            throw 'Invalid cleanup root type.'
+        }
+        [System.IO.Directory]::Delete($resolvedRoot, $true)
+    }
+    if (Test-Path -LiteralPath $resolvedRoot) {
+        throw 'Retained Photon credential artifact cleanup did not complete.'
+    }
+    $Marker.Phase = 'root-absent'
+    Write-AtlasoDurableJsonFile -Path $MarkerPath -Payload $Marker -Replace
+    $Marker.Phase = 'retired'
+    Write-AtlasoDurableJsonFile -Path $MarkerPath -Payload $Marker -Replace
+    Remove-Item -LiteralPath $MarkerPath -Force -ErrorAction Stop
+    if (Test-Path -LiteralPath $MarkerPath) {
+        throw 'Retained Photon cleanup marker removal did not complete.'
+    }
 }
 
 <#
@@ -218,10 +242,11 @@ function Invoke-AtlasoPhotonBuildCleanupRecovery {
     try {
         $marker = Get-Content -LiteralPath $MarkerPath -Raw -ErrorAction Stop | ConvertFrom-Json
         $markerProperties = @($marker.PSObject.Properties.Name)
-        if ($markerProperties.Count -ne 3 -or
+        if ($markerProperties.Count -ne 4 -or
             'Schema' -notin $markerProperties -or
             'RootPath' -notin $markerProperties -or
             'BootIdentity' -notin $markerProperties -or
+            'Phase' -notin $markerProperties -or
             $marker.Schema -ne 1) {
             throw 'Invalid cleanup marker schema.'
         }
@@ -235,23 +260,14 @@ function Invoke-AtlasoPhotonBuildCleanupRecovery {
             (Split-Path -Leaf $resolvedRoot) -notmatch '^atlaso-photon-build-credentials-[0-9a-f]{32}$') {
             throw 'Invalid cleanup root.'
         }
-        if ([string]$marker.BootIdentity -ceq (Get-AtlasoPhotonWindowsBootIdentity)) {
+        if ($marker.Phase -notin @('active', 'root-absent', 'retired')) {
+            throw 'Invalid cleanup marker phase.'
+        }
+        if ($marker.Phase -ceq 'active' -and
+            [string]$marker.BootIdentity -ceq (Get-AtlasoWindowsBootIdentity)) {
             throw 'A Windows restart is required before retained Photon credential artifacts can be cleaned safely.'
         }
-        if (Test-Path -LiteralPath $resolvedRoot) {
-            $rootItem = Get-Item -LiteralPath $resolvedRoot -Force -ErrorAction Stop
-            if ($rootItem.Attributes -band [System.IO.FileAttributes]::ReparsePoint) {
-                throw 'Invalid cleanup root type.'
-            }
-            [System.IO.Directory]::Delete($resolvedRoot, $true)
-        }
-        if (Test-Path -LiteralPath $resolvedRoot) {
-            throw 'Retained Photon credential artifact cleanup did not complete.'
-        }
-        Remove-Item -LiteralPath $MarkerPath -Force -ErrorAction Stop
-        if (Test-Path -LiteralPath $MarkerPath) {
-            throw 'Retained Photon cleanup marker removal did not complete.'
-        }
+        Complete-AtlasoPhotonBuildCleanup -MarkerPath $MarkerPath -Marker $marker
     }
     catch {
         throw 'A prior Photon image build has unresolved sensitive cleanup. Restart Windows, then rerun this wrapper.'
@@ -354,18 +370,13 @@ else {
     [void][System.IO.Directory]::CreateDirectory($credentialRoot)
     $cleanupMarkerDirectory = Split-Path -Parent $cleanupMarkerPath
     [void][System.IO.Directory]::CreateDirectory($cleanupMarkerDirectory)
-    $cleanupMarkerTemporaryPath = "$cleanupMarkerPath.$([guid]::NewGuid().ToString('N')).tmp"
     $cleanupMarkerPayload = [ordered]@{
         Schema       = 1
         RootPath     = [System.IO.Path]::GetFullPath($credentialRoot)
-        BootIdentity = Get-AtlasoPhotonWindowsBootIdentity
+        BootIdentity = Get-AtlasoWindowsBootIdentity
+        Phase        = 'active'
     }
-    [System.IO.File]::WriteAllText(
-        $cleanupMarkerTemporaryPath,
-        ($cleanupMarkerPayload | ConvertTo-Json -Compress),
-        [System.Text.UTF8Encoding]::new($false)
-    )
-    Move-Item -LiteralPath $cleanupMarkerTemporaryPath -Destination $cleanupMarkerPath -ErrorAction Stop
+    Write-AtlasoDurableJsonFile -Path $cleanupMarkerPath -Payload $cleanupMarkerPayload
     if (-not (Test-Path -LiteralPath $cleanupMarkerPath -PathType Leaf)) {
         throw 'Photon sensitive-cleanup ownership could not be established.'
     }
@@ -473,20 +484,11 @@ else {
             throw 'Refusing to clean an invalid Photon credential bridge root.'
         }
         if (-not $processTreeTerminationUnproven) {
-            if (Test-Path -LiteralPath $resolvedCredentialRoot) {
-                $rootItem = Get-Item -LiteralPath $resolvedCredentialRoot -Force
-                if ($rootItem.Attributes -band [System.IO.FileAttributes]::ReparsePoint) {
-                    throw 'Refusing to clean a reparse-point Photon credential bridge root.'
-                }
-                [System.IO.Directory]::Delete($resolvedCredentialRoot, $true)
-            }
-            if (Test-Path -LiteralPath $resolvedCredentialRoot) {
-                throw 'Photon credential bridge cleanup did not remove its exact task-created root.'
-            }
-            Remove-Item -LiteralPath $cleanupMarkerPath -Force -ErrorAction Stop
-            if (Test-Path -LiteralPath $cleanupMarkerPath) {
-                throw 'Photon sensitive-cleanup ownership marker removal did not complete.'
-            }
+            $cleanupMarker = Get-Content -LiteralPath $cleanupMarkerPath -Raw -ErrorAction Stop |
+                ConvertFrom-Json
+            Complete-AtlasoPhotonBuildCleanup `
+                -MarkerPath $cleanupMarkerPath `
+                -Marker $cleanupMarker
         }
     }
     return

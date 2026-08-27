@@ -16,6 +16,10 @@ param()
 $ErrorActionPreference = 'Stop'
 $repositoryRoot = (Resolve-Path -LiteralPath (Join-Path $PSScriptRoot '..\..')).Path
 Import-Module (Join-Path $repositoryRoot 'scripts\windows\vmware\Atlaso.OnePasswordCredentials.psm1') -Force
+$cleanupMarkerPath = Join-Path $repositoryRoot '.atlaso-local\onepassword-credential-cleanup.json'
+if (Test-Path -LiteralPath $cleanupMarkerPath) {
+    throw 'A focused credential test cannot start with retained cleanup ownership.'
+}
 $initialBridgeRoots = @(Get-ChildItem -LiteralPath ([System.IO.Path]::GetTempPath()) -Directory |
     Where-Object { $_.Name -like 'atlaso-onepassword-credentials-*' } |
     ForEach-Object { $_.FullName })
@@ -107,6 +111,9 @@ $newBridgeRoots = @(Get-ChildItem -LiteralPath ([System.IO.Path]::GetTempPath())
     })
 if ($newBridgeRoots.Count -ne 0) {
     throw 'A focused credential bridge test left a task-created temporary root.'
+}
+if (Test-Path -LiteralPath $cleanupMarkerPath) {
+    throw 'A focused credential bridge test left its durable cleanup marker.'
 }
 
 Write-Host 'Shared Atlaso 1Password credential bridge tests passed.'

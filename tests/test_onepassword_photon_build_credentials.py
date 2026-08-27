@@ -49,6 +49,9 @@ def test_photon_wrapper_preflights_credentials_before_image_mutation() -> None:
     build_module = Path(
         "scripts/windows/common/Atlaso.PhotonImage.psm1"
     ).read_text(encoding="utf-8")
+    runner = Path(
+        "scripts/windows/vmware/Atlaso.WorkstationFirstBoot.ps1"
+    ).read_text(encoding="utf-8")
 
     assert "[SecureString]$SshPassword" in wrapper
     assert "[SecureString]$BootstrapAdminPassword" in wrapper
@@ -81,14 +84,17 @@ def test_photon_wrapper_preflights_credentials_before_image_mutation() -> None:
     assert "'-SensitiveBuildDirectory', $childSensitiveBuildDirectory" in wrapper
     assert "'SensitiveBuildDirectory', 'PreparedIsoPath'" in wrapper
     assert "-SensitiveBuildDirectory $SensitiveBuildDirectory" in wrapper
-    assert "[System.IO.Directory]::Delete($resolvedCredentialRoot, $true)" in wrapper
+    assert "[System.IO.Directory]::Delete($resolvedRoot, $true)" in wrapper
     assert "photon-image-build-cleanup.json" in wrapper
-    assert "Get-AtlasoPhotonWindowsBootIdentity" in wrapper
+    assert "Get-AtlasoWindowsBootIdentity" in wrapper
+    assert "Write-AtlasoDurableJsonFile" in wrapper
+    assert "$Marker.Phase = 'root-absent'" in wrapper
+    assert "$Marker.Phase = 'retired'" in wrapper
     assert "AtlasoProcessTreeTerminationUnproven" in wrapper
     assert "if (-not $processTreeTerminationUnproven)" in wrapper
     assert "Restart Windows, then rerun this wrapper" in wrapper
-    assert wrapper.index("[System.IO.Directory]::Delete($resolvedCredentialRoot, $true)") < wrapper.index(
-        "Remove-Item -LiteralPath $cleanupMarkerPath"
+    assert wrapper.index("[System.IO.Directory]::Delete($resolvedRoot, $true)") < wrapper.index(
+        "Remove-Item -LiteralPath $MarkerPath"
     )
     assert "Join-Path $sensitiveBuildDir 'packer-vars\\atlaso-photon.auto.pkrvars.hcl'" in build_module
     assert "Join-Path $sensitiveBuildDir 'kickstart-src'" in build_module
@@ -117,10 +123,19 @@ def test_photon_wrapper_preflights_credentials_before_image_mutation() -> None:
     assert "$env:DEFAULT_ADMIN_PASSWORD -or $env:DEFAULT_ROOT_PASSWORD" in module
     assert "ConvertFrom-SecureString -SecureString $AdminPassword" in module
     assert "ConvertFrom-SecureString -SecureString $RootPassword" in module
-    assert "Remove-AtlasoOnePasswordCredentialBridge -BridgeRoot $bridgeRoot" in module
-    assert module.index("Remove-AtlasoOnePasswordCredentialBridge -BridgeRoot $bridgeRoot") < module.index(
-        "return $result"
+    credential_root_cleanup = (
+        "Remove-AtlasoOnePasswordCredentialBridge -BridgeRoot ([string]$Marker.RootPath)"
     )
+    assert credential_root_cleanup in module
+    assert "onepassword-credential-cleanup.json" in module
+    assert "Invoke-AtlasoOnePasswordCredentialCleanupRecovery" in module
+    assert "Write-AtlasoDurableJsonFile -Path $cleanupMarkerPath" in module
+    assert "$processTreeTerminationUnproven" in module
+    assert module.index(credential_root_cleanup) < module.index("return $result")
+    assert "[System.IO.FileOptions]::WriteThrough" in runner
+    assert "$stream.Flush($true)" in runner
+    assert "MoveFileEx" in runner
+    assert "MOVEFILE" not in wrapper
 
 
 def test_environment_selector_and_sdk_runtime_are_shared_with_test_vm() -> None:

@@ -152,6 +152,126 @@ function Invoke-AtlasoBoundedStreamingProcess {
 
 <#
 .SYNOPSIS
+Return a stable identity for the current Windows boot.
+#>
+function Get-AtlasoWindowsBootIdentity {
+    $operatingSystem = Get-CimInstance -ClassName Win32_OperatingSystem -ErrorAction Stop
+    return $operatingSystem.LastBootUpTime.ToUniversalTime().ToString('o')
+}
+
+<#
+.SYNOPSIS
+Atomically rename one file with Windows write-through durability.
+
+.PARAMETER SourcePath
+Exact flushed temporary file.
+
+.PARAMETER DestinationPath
+Exact destination in the same directory.
+
+.PARAMETER Replace
+Replace an existing destination during a validated state transition.
+#>
+function Move-AtlasoDurableFile {
+    param(
+        [Parameter(Mandatory = $true)][string]$SourcePath,
+        [Parameter(Mandatory = $true)][string]$DestinationPath,
+        [switch]$Replace
+    )
+
+    if (-not $IsWindows) {
+        throw 'Durable file replacement requires Windows.'
+    }
+    $resolvedSourcePath = (Resolve-Path -LiteralPath $SourcePath).Path
+    $resolvedDestinationPath = [System.IO.Path]::GetFullPath($DestinationPath)
+    if (-not ('Atlaso.WorkstationDurableFile' -as [type])) {
+        Add-Type -TypeDefinition @'
+using System.Runtime.InteropServices;
+
+namespace Atlaso
+{
+    public static class WorkstationDurableFile
+    {
+        [DllImport("kernel32.dll", CharSet = CharSet.Unicode, SetLastError = true)]
+        public static extern bool MoveFileEx(string existingPath, string newPath, uint flags);
+    }
+}
+'@
+    }
+    [uint32]$flags = 0x00000008
+    if ($Replace) {
+        $flags = $flags -bor 0x00000001
+    }
+    if (-not [Atlaso.WorkstationDurableFile]::MoveFileEx(
+            $resolvedSourcePath,
+            $resolvedDestinationPath,
+            $flags
+        )) {
+        $errorCode = [System.Runtime.InteropServices.Marshal]::GetLastWin32Error()
+        throw [System.ComponentModel.Win32Exception]::new(
+            $errorCode,
+            'Durable write-through file replacement failed.'
+        )
+    }
+    if ((Test-Path -LiteralPath $resolvedSourcePath) -or
+        -not (Test-Path -LiteralPath $resolvedDestinationPath -PathType Leaf)) {
+        throw 'Durable write-through file replacement could not be proven.'
+    }
+}
+
+<#
+.SYNOPSIS
+Durably publish one non-secret JSON ownership marker.
+
+.PARAMETER Path
+Exact marker path.
+
+.PARAMETER Payload
+Validated non-secret payload to serialize.
+
+.PARAMETER Replace
+Replace an existing marker during a validated state transition.
+#>
+function Write-AtlasoDurableJsonFile {
+    param(
+        [Parameter(Mandatory = $true)][string]$Path,
+        [Parameter(Mandatory = $true)][object]$Payload,
+        [switch]$Replace
+    )
+
+    $resolvedPath = [System.IO.Path]::GetFullPath($Path)
+    $temporaryPath = "$resolvedPath.$([guid]::NewGuid().ToString('N')).tmp"
+    $bytes = [System.Text.UTF8Encoding]::new($false).GetBytes(
+        ($Payload | ConvertTo-Json -Depth 4 -Compress)
+    )
+    try {
+        $stream = [System.IO.FileStream]::new(
+            $temporaryPath,
+            [System.IO.FileMode]::CreateNew,
+            [System.IO.FileAccess]::Write,
+            [System.IO.FileShare]::None,
+            4096,
+            [System.IO.FileOptions]::WriteThrough
+        )
+        try {
+            $stream.Write($bytes, 0, $bytes.Length)
+            $stream.Flush($true)
+        }
+        finally {
+            $stream.Dispose()
+        }
+        Move-AtlasoDurableFile `
+            -SourcePath $temporaryPath `
+            -DestinationPath $resolvedPath `
+            -Replace:$Replace
+    }
+    finally {
+        Remove-Item -LiteralPath $temporaryPath -Force -ErrorAction SilentlyContinue
+    }
+}
+
+<#
+.SYNOPSIS
 Run one vmrun operation through the bounded process boundary.
 
 .PARAMETER VmrunPath

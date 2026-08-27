@@ -963,7 +963,10 @@ Terminal order:
   task-owned child root, and require the parent to remove and verify that root after ordinary exit or whole-tree
   termination so a killed child cannot bypass sensitive cleanup. If whole-tree termination is unproven, retain the
   exact root plus a non-secret cleanup marker, block same-boot reuse, and permit exact-root cleanup only after a changed
-  Windows boot identity proves the prior tree inactive; remove the marker only after root absence is verified.
+  Windows boot identity proves the prior tree inactive; remove the marker only after root absence is verified. Apply
+  the same boot-bound recovery ownership to the shared SDK credential bridge. Durably publish each marker with
+  write-through file and rename semantics before starting a child that can consume plaintext, then durably transition
+  through root absence and a non-actionable retired tombstone before deleting the marker.
   Before persisting rollback state, reject configured data disks that repeat the same descriptor, hard-linked alias, or
   shared extent by filesystem identity. Before deleting a completed marker, write-through transition it to a
   non-actionable tombstone so a post-crash

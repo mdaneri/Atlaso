@@ -293,6 +293,93 @@ function Remove-AtlasoOnePasswordCredentialBridge {
 
 <#
 .SYNOPSIS
+Return the checkout-local durable credential-cleanup marker path.
+
+.PARAMETER RepositoryRoot
+Atlaso checkout owning the recovery marker.
+#>
+function Get-AtlasoOnePasswordCleanupMarkerPath {
+    param([Parameter(Mandatory = $true)][string]$RepositoryRoot)
+
+    return Join-Path $RepositoryRoot '.atlaso-local\onepassword-credential-cleanup.json'
+}
+
+<#
+.SYNOPSIS
+Remove a proven-inactive credential root and durably retire its marker.
+
+.PARAMETER MarkerPath
+Exact non-secret cleanup marker path.
+
+.PARAMETER Marker
+Validated marker payload owning the exact bridge root.
+#>
+function Complete-AtlasoOnePasswordCredentialCleanup {
+    param(
+        [Parameter(Mandatory = $true)][string]$MarkerPath,
+        [Parameter(Mandatory = $true)][object]$Marker
+    )
+
+    Remove-AtlasoOnePasswordCredentialBridge -BridgeRoot ([string]$Marker.RootPath)
+    $Marker.Phase = 'root-absent'
+    Write-AtlasoDurableJsonFile -Path $MarkerPath -Payload $Marker -Replace
+    $Marker.Phase = 'retired'
+    Write-AtlasoDurableJsonFile -Path $MarkerPath -Payload $Marker -Replace
+    Remove-Item -LiteralPath $MarkerPath -Force -ErrorAction Stop
+    if (Test-Path -LiteralPath $MarkerPath) {
+        throw 'The credential cleanup marker removal did not complete.'
+    }
+}
+
+<#
+.SYNOPSIS
+Recover a retained 1Password bridge after proven process-tree inactivity.
+
+.PARAMETER RepositoryRoot
+Atlaso checkout owning the durable marker.
+#>
+function Invoke-AtlasoOnePasswordCredentialCleanupRecovery {
+    param([Parameter(Mandatory = $true)][string]$RepositoryRoot)
+
+    $markerPath = Get-AtlasoOnePasswordCleanupMarkerPath -RepositoryRoot $RepositoryRoot
+    if (-not (Test-Path -LiteralPath $markerPath -PathType Leaf)) {
+        return
+    }
+    try {
+        $marker = Get-Content -LiteralPath $markerPath -Raw -ErrorAction Stop | ConvertFrom-Json
+        $properties = @($marker.PSObject.Properties.Name)
+        if ($properties.Count -ne 4 -or
+            'Schema' -notin $properties -or
+            'RootPath' -notin $properties -or
+            'BootIdentity' -notin $properties -or
+            'Phase' -notin $properties -or
+            $marker.Schema -ne 1 -or
+            $marker.Phase -notin @('active', 'root-absent', 'retired')) {
+            throw 'Invalid credential cleanup marker.'
+        }
+        $resolvedRoot = [System.IO.Path]::GetFullPath([string]$marker.RootPath)
+        $resolvedTempRoot = [System.IO.Path]::GetFullPath([System.IO.Path]::GetTempPath())
+        $tempRootPrefix = $resolvedTempRoot.TrimEnd(
+            [System.IO.Path]::DirectorySeparatorChar,
+            [System.IO.Path]::AltDirectorySeparatorChar
+        ) + [System.IO.Path]::DirectorySeparatorChar
+        if (-not $resolvedRoot.StartsWith($tempRootPrefix, [StringComparison]::OrdinalIgnoreCase) -or
+            (Split-Path -Leaf $resolvedRoot) -notmatch '^atlaso-onepassword-credentials-[0-9a-f]{32}$') {
+            throw 'Invalid credential cleanup root.'
+        }
+        if ($marker.Phase -ceq 'active' -and
+            [string]$marker.BootIdentity -ceq (Get-AtlasoWindowsBootIdentity)) {
+            throw 'A Windows restart is required before retained credential artifacts can be cleaned safely.'
+        }
+        Complete-AtlasoOnePasswordCredentialCleanup -MarkerPath $markerPath -Marker $marker
+    }
+    catch {
+        throw 'A prior 1Password credential bridge has unresolved cleanup. Restart Windows, then rerun the workflow.'
+    }
+}
+
+<#
+.SYNOPSIS
 Return validated SecureStrings from explicit inputs or the exact Atlaso Environment.
 
 .PARAMETER RepositoryRoot
@@ -347,12 +434,23 @@ function Get-AtlasoOnePasswordCredentialPair {
     if (-not (Get-Command Invoke-AtlasoBoundedProcess -ErrorAction SilentlyContinue)) {
         throw 'The bounded Atlaso process runner is unavailable.'
     }
+    Invoke-AtlasoOnePasswordCredentialCleanupRecovery -RepositoryRoot $RepositoryRoot
     $bridgeRoot = Join-Path ([System.IO.Path]::GetTempPath()) (
         "atlaso-onepassword-credentials-$([guid]::NewGuid().ToString('N'))"
     )
     [void][System.IO.Directory]::CreateDirectory($bridgeRoot)
+    $cleanupMarkerPath = Get-AtlasoOnePasswordCleanupMarkerPath -RepositoryRoot $RepositoryRoot
+    [void][System.IO.Directory]::CreateDirectory((Split-Path -Parent $cleanupMarkerPath))
+    $cleanupMarker = [ordered]@{
+        Schema       = 1
+        RootPath     = [System.IO.Path]::GetFullPath($bridgeRoot)
+        BootIdentity = Get-AtlasoWindowsBootIdentity
+        Phase        = 'active'
+    }
+    Write-AtlasoDurableJsonFile -Path $cleanupMarkerPath -Payload $cleanupMarker
     $failure = $null
     $result = $null
+    $processTreeTerminationUnproven = $false
     try {
         $requestPath = Join-Path $bridgeRoot 'request.json'
         $statusPath = Join-Path $bridgeRoot 'status.json'
@@ -438,16 +536,26 @@ function Get-AtlasoOnePasswordCredentialPair {
     }
     catch {
         $failure = $_
+        if ($_.Exception.Data['AtlasoProcessTreeTerminationUnproven']) {
+            $processTreeTerminationUnproven = $true
+        }
     }
 
-    try {
-        Remove-AtlasoOnePasswordCredentialBridge -BridgeRoot $bridgeRoot
-    }
-    catch {
-        if ($failure) {
-            throw "$($failure.Exception.Message) Credential bridge cleanup also failed: $($_.Exception.Message)"
+    if (-not $processTreeTerminationUnproven) {
+        try {
+            Complete-AtlasoOnePasswordCredentialCleanup `
+                -MarkerPath $cleanupMarkerPath `
+                -Marker $cleanupMarker
         }
-        throw
+        catch {
+            if ($failure) {
+                throw "$($failure.Exception.Message) Credential bridge cleanup also failed: $($_.Exception.Message)"
+            }
+            throw
+        }
+    }
+    else {
+        throw 'The bounded credential process tree could not be proven inactive. Restart Windows, then rerun the workflow to complete sensitive cleanup.'
     }
     if ($failure) {
         throw $failure

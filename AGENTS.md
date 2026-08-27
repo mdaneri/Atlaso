@@ -536,7 +536,9 @@ The following cross-cutting boundaries always apply:
   exit or whole-tree termination so a killed child cannot bypass sensitive cleanup. If whole-tree termination is
   unproven, retain the exact root plus a non-secret cleanup marker, block same-boot reuse, and permit exact-root cleanup
   only after a changed Windows boot identity proves the prior tree inactive; remove the marker only after root absence
-  is verified.
+  is verified. Apply the same boot-bound recovery ownership to the shared SDK credential bridge. Durably publish each
+  marker with write-through file and rename semantics before starting a child that can consume plaintext, then durably
+  transition through root absence and a non-actionable retired tombstone before deleting the marker.
   The wrapper also owns the sole development-root exception to per-appliance CA generation: require the exact `Atlaso`
   1Password Environment's concealed `ATLASO_DEVELOPMENT_ROOT_CA_PRIVATE_KEY`, validate it against the checked-in public
   `Atlaso Development Root CA` before mutation, pin and verify the exact Environment ID by SHA-256 before invoking `op`,

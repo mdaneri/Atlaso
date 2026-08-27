@@ -152,6 +152,9 @@ verifies them after a whole-tree timeout kills the child before its normal `fina
 If Windows cannot prove whole-tree termination, the wrapper retains the root plus a non-secret checkout-local cleanup
 marker and fails closed. Restart Windows and rerun the wrapper; the changed boot identity proves the prior tree is
 inactive, allowing exact-root cleanup and marker removal before any new credential access or image mutation.
+The shared SDK bridge uses the same boot-bound recovery rule. Both marker types are write-through flushed and
+atomically renamed before a plaintext child starts; cleanup durably records root absence and a retired tombstone before
+removing the marker, so a crash cannot erase recovery ownership while credential-bearing files remain.
 
 The wrapper does not build or embed Inventory Linux. New templates leave it uninstalled so an administrator can use
 **Download latest** to retrieve the signed independent release when needed. Contributors building Inventory Linux

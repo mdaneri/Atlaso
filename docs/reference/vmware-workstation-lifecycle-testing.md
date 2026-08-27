@@ -125,6 +125,10 @@ If whole-tree termination itself cannot be proven, the wrapper retains the root 
 `.atlaso-local/photon-image-build-cleanup.json` ownership marker and blocks further work. Restart Windows and rerun the
 wrapper; only a changed boot identity permits the recovery path to remove and verify the exact root and then its marker
 before new credential access or image mutation.
+The shared SDK credential bridge follows the same recovery ownership. Each non-secret marker is flushed with
+write-through semantics and atomically renamed before a plaintext child starts. Cleanup then durably records
+`root-absent` and `retired` phases before marker deletion, making a resurrected post-crash marker non-actionable while
+still forcing another exact-root absence check.
 
 The wrapper uses the shared Photon ISO remastering, kickstart rendering, checksum validation, and Packer var-file
 generation. `image/common/source` holds the original Photon ISO download cache. The canonical image installs
