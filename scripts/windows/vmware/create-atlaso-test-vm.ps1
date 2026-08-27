@@ -1307,13 +1307,19 @@ function Set-AtlasoTestVmCleanupIdentity {
 
 <#
 .SYNOPSIS
-Read and hash the exact non-secret cleanup identity from one VMX.
+Read the exact non-secret cleanup identity from one VMX.
 
 .PARAMETER VmxPath
 Exact VMX whose stable cleanup binding must be verified.
+
+.PARAMETER AllowAbsent
+Return an empty value only when the VMX has no cleanup-identity assignment.
 #>
-function Get-AtlasoTestVmCleanupIdentityHash {
-    param([Parameter(Mandatory = $true)][string]$VmxPath)
+function Get-AtlasoTestVmCleanupIdentity {
+    param(
+        [Parameter(Mandatory = $true)][string]$VmxPath,
+        [switch]$AllowAbsent
+    )
 
     $assignmentPattern = '^\s*guestinfo\.atlaso\.test_vm_cleanup_identity\s*='
     $valuePattern = '^\s*guestinfo\.atlaso\.test_vm_cleanup_identity\s*=\s*"(?<identity>[0-9a-f]{32})"\s*$'
@@ -1323,6 +1329,9 @@ function Get-AtlasoTestVmCleanupIdentityHash {
         Get-Content -LiteralPath $VmxPath |
             Where-Object { $_ -match $assignmentPattern }
     )
+    if ($AllowAbsent -and $identityLines.Count -eq 0) {
+        return ''
+    }
     if ($identityLines.Count -ne 1) {
         throw 'The VMX does not contain exactly one valid non-secret cleanup identity.'
     }
@@ -1330,7 +1339,22 @@ function Get-AtlasoTestVmCleanupIdentityHash {
     if (-not $identityMatch.Success) {
         throw 'The VMX does not contain exactly one valid non-secret cleanup identity.'
     }
-    return Get-AtlasoCleanupIdentityHash -Value $identityMatch.Groups['identity'].Value
+    return $identityMatch.Groups['identity'].Value
+}
+
+<#
+.SYNOPSIS
+Read and hash the exact non-secret cleanup identity from one VMX.
+
+.PARAMETER VmxPath
+Exact VMX whose stable cleanup binding must be verified.
+#>
+function Get-AtlasoTestVmCleanupIdentityHash {
+    param([Parameter(Mandatory = $true)][string]$VmxPath)
+
+    return Get-AtlasoCleanupIdentityHash -Value (
+        Get-AtlasoTestVmCleanupIdentity -VmxPath $VmxPath
+    )
 }
 
 <#
@@ -1965,12 +1989,17 @@ function Upgrade-AtlasoLegacyDevelopmentCaCleanupMarker {
     if ($payload.Schema -ne 2 -or $payload.Phase -cne 'vm-stop-child-active') {
         throw "Legacy cleanup marker upgrade did not match the stopped transition: $($Marker.MarkerPath)"
     }
-    $cleanupIdentity = [guid]::NewGuid().ToString('N')
     $vmxIdentity = [Atlaso.WorkstationFileIdentity]::Get($Marker.VmxPath)
-    Set-AtlasoTestVmCleanupIdentity `
+    $cleanupIdentity = Get-AtlasoTestVmCleanupIdentity `
         -VmxPath $Marker.VmxPath `
-        -Identity $cleanupIdentity `
-        -ExpectedVmxIdentity $vmxIdentity
+        -AllowAbsent
+    if ([string]::IsNullOrEmpty($cleanupIdentity)) {
+        $cleanupIdentity = [guid]::NewGuid().ToString('N')
+        Set-AtlasoTestVmCleanupIdentity `
+            -VmxPath $Marker.VmxPath `
+            -Identity $cleanupIdentity `
+            -ExpectedVmxIdentity $vmxIdentity
+    }
     $payload.Schema = 3
     $payload.Phase = 'import-proven-stopped-vmx-scrubbed'
     $payload.VmxIdentity = $vmxIdentity

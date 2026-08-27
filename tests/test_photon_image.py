@@ -1189,6 +1189,27 @@ def test_packer_templates_stage_shared_appliance_assets():
         assert 'destination = "/tmp/atlaso-src/image/common/powershell"' in template
 
 
+def test_vmware_packer_leaves_directory_upload_destinations_uncreated() -> None:
+    """Packer directory uploads must create their own exact destination paths."""
+
+    template = Path("image/vmware-workstation/atlaso-photon.pkr.hcl").read_text(
+        encoding="utf-8"
+    )
+    staging_command = next(
+        line.strip()
+        for line in template.splitlines()
+        if line.strip().startswith('"mkdir -p /tmp/atlaso-src/scripts ')
+    )
+
+    assert "/tmp/atlaso-src/image/common " in staging_command
+    assert "/tmp/atlaso-src/image/common/scripts" not in staging_command
+    assert "/tmp/atlaso-src/image/common/guest-agents" not in staging_command
+    assert 'source      = "../common/scripts"' in template
+    assert 'destination = "/tmp/atlaso-src/image/common/scripts"' in template
+    assert 'source      = "../common/guest-agents"' in template
+    assert 'destination = "/tmp/atlaso-src/image/common/guest-agents"' in template
+
+
 def test_vmware_packer_build_uses_two_compacted_payload_disks():
     """Verify that vmware packer build uses two compacted payload disks."""
     template = Path("image/vmware-workstation/atlaso-photon.pkr.hcl").read_text(encoding="utf-8")

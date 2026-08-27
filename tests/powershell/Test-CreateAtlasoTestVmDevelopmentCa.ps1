@@ -512,6 +512,49 @@ try {
     ) {
         throw 'Legacy cleanup-marker upgrade did not retain and bind the exact stopped VMX identity.'
     }
+
+    $legacyRetryVmx = Join-Path $cleanupIdentityRoot 'Atlaso-Legacy-Retry.vmx'
+    $legacyRetryMarker = Join-Path $cleanupIdentityRoot 'legacy-retry.json'
+    $legacyRetryCleanupIdentity = 'c' * 32
+    [System.IO.File]::WriteAllText(
+        $legacyRetryVmx,
+        "displayName = `"Atlaso Legacy Retry`"`r`n" +
+        "guestinfo.atlaso.test_vm_cleanup_identity = `"$legacyRetryCleanupIdentity`"`r`n",
+        [System.Text.UTF8Encoding]::new($false)
+    )
+    $legacyRetryIdentity = [Atlaso.WorkstationFileIdentity]::Get($legacyRetryVmx)
+    [System.IO.File]::WriteAllText(
+        $legacyRetryMarker,
+        (([ordered]@{
+                    Schema = 2
+                    Phase = 'vm-stop-child-active'
+                    VmxIdentity = $legacyRetryIdentity
+                }) | ConvertTo-Json -Compress),
+        [System.Text.UTF8Encoding]::new($false)
+    )
+    $legacyRetryState = [pscustomobject]@{
+        MarkerPath = $legacyRetryMarker
+        VmxPath = $legacyRetryVmx
+        Schema = 2
+        Phase = 'vm-stop-child-active'
+        VmxIdentity = $legacyRetryIdentity
+        CleanupIdentityHash = ''
+    }
+    Upgrade-AtlasoLegacyDevelopmentCaCleanupMarker -Marker $legacyRetryState
+    $legacyRetryPayload = Get-Content -LiteralPath $legacyRetryMarker -Raw | ConvertFrom-Json
+    $legacyRetryAssignments = @(
+        Get-Content -LiteralPath $legacyRetryVmx |
+            Where-Object { $_ -match '^\s*guestinfo\.atlaso\.test_vm_cleanup_identity\s*=' }
+    )
+    if (
+        $legacyRetryAssignments.Count -ne 1 -or
+        [Atlaso.WorkstationFileIdentity]::Get($legacyRetryVmx) -cne $legacyRetryIdentity -or
+        $legacyRetryPayload.Schema -ne 3 -or
+        $legacyRetryPayload.CleanupIdentityHash -cne
+        (Get-AtlasoCleanupIdentityHash -Value $legacyRetryCleanupIdentity)
+    ) {
+        throw 'Legacy cleanup-marker retry did not reuse the sole durable VMX cleanup identity.'
+    }
 }
 finally {
     Remove-Item -LiteralPath $cleanupIdentityRoot -Recurse -Force -ErrorAction SilentlyContinue
