@@ -16,6 +16,23 @@ if [ ! -f "$normalizer" ]; then
   normalizer="$helper_dir/../normalize_libvirt.py"
 fi
 
+volume_name_belongs_to_domain() {
+  case "$1" in
+    "$name"-*) return 0 ;;
+    *) return 1 ;;
+  esac
+}
+
+volume_list_contains_domain_namespace() {
+  while IFS= read -r volume_name; do
+    [ -n "$volume_name" ] || continue
+    if volume_name_belongs_to_domain "$volume_name"; then
+      return 0
+    fi
+  done
+  return 1
+}
+
 for value in "$name" "$pool" "$management_network" "$service_network"; do
   case "$value" in
     ''|.|..|*[!A-Za-z0-9_.-]*)
@@ -92,7 +109,7 @@ if ! volumes=$(virsh vol-list "$pool" --name 2>/dev/null); then
   echo "Libvirt inventory could not prove the $pool/$name storage namespace is available." >&2
   exit 2
 fi
-if printf '%s\n' "$volumes" | grep -Eq "^${name}-"; then
+if printf '%s\n' "$volumes" | volume_list_contains_domain_namespace; then
   echo "The storage pool already contains a volume reserved for $name." >&2
   exit 2
 fi
@@ -121,10 +138,9 @@ cleanup() {
       [ -n "$disk_path" ] || continue
       volume_pool=$(virsh vol-pool "$disk_path" 2>/dev/null || true)
       volume_name=$(virsh vol-name "$disk_path" 2>/dev/null || true)
-      case "$volume_name" in
-        "$name"-*) ;;
-        *) cleanup_safe=0 ;;
-      esac
+      if ! volume_name_belongs_to_domain "$volume_name"; then
+        cleanup_safe=0
+      fi
       if [ "$volume_pool" != "$pool" ]; then
         cleanup_safe=0
       fi
@@ -161,9 +177,9 @@ cleanup() {
     if volumes=$(virsh vol-list "$pool" --name 2>/dev/null); then
       printf '%s\n' "$volumes" >"$validation_root/rollback-volumes"
       while IFS= read -r volume_name; do
-        case "$volume_name" in
-          "$name"-*) virsh vol-delete --pool "$pool" "$volume_name" >/dev/null 2>&1 || cleanup_failed=1 ;;
-        esac
+        if volume_name_belongs_to_domain "$volume_name"; then
+          virsh vol-delete --pool "$pool" "$volume_name" >/dev/null 2>&1 || cleanup_failed=1
+        fi
       done <"$validation_root/rollback-volumes"
     else
       cleanup_failed=1
@@ -174,7 +190,7 @@ cleanup() {
   fi
   if [ "$created" -eq 1 ] && [ "$domain_absent" -eq 1 ]; then
     if volumes=$(virsh vol-list "$pool" --name 2>/dev/null); then
-      if printf '%s\n' "$volumes" | grep -Eq "^${name}-"; then
+      if printf '%s\n' "$volumes" | volume_list_contains_domain_namespace; then
         echo "Rollback retained a volume in the locked $pool/$name namespace." >&2
         cleanup_failed=1
       fi
