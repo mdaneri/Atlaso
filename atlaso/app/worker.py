@@ -698,7 +698,10 @@ def recover_interrupted_worker_jobs(
                         if stream_result.get("worker_recovery") == "interrupted":
                             stream_result["availability"] = dict(interrupted_availability)
             complete_appliance_update_task(db, job=job, update_result=update_result)
-            if str(config.get("status_transaction_id") or ""):
+            if (
+                str(config.get("status_transaction_id") or "")
+                and not bool(update_result.get("restart_after_commit"))
+            ):
                 if not _publish_appliance_update_status(job.id, finish=True):
                     if job.status == JobStatus.SUCCEEDED.value:
                         _fail_job(

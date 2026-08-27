@@ -1023,12 +1023,16 @@ class SystemAdapter:
         Returns:
             The privileged status-inspection result.
         """
+        if self.dry_run:
+            return self._record_only_result(
+                ["atlaso-helper", "appliance-update", "status-inspect"],
+                json.dumps({"state": "absent", "task_id": "", "terminal": False}),
+            )
         return self._helper_result(
             "appliance-update",
             "status-inspect",
             dry_run_message="dry-run: Appliance Update status inspection recorded",
             timeout_seconds=30,
-            execute_in_dry_run=True,
         )
 
     def inspect_appliance_update_restart(self, job_id: str) -> AdapterResult:
@@ -1040,13 +1044,17 @@ class SystemAdapter:
         Returns:
             The privileged restart-receipt inspection result.
         """
+        if self.dry_run:
+            return self._record_only_result(
+                ["atlaso-helper", "appliance-update", "restart-inspect", job_id],
+                json.dumps({"state": "absent", "job_id": job_id}),
+            )
         return self._helper_result(
             "appliance-update",
             "restart-inspect",
             job_id,
             dry_run_message="dry-run: Appliance Update restart inspection recorded",
             timeout_seconds=30,
-            execute_in_dry_run=True,
         )
 
     def run_automation_script(

@@ -2368,6 +2368,104 @@ def test_appliance_update_recovery_requeues_only_a_safe_pending_suffix(client):
         ]
 
 
+def test_recovered_photon_prefix_retains_status_hold_until_restart(client, monkeypatch):
+    """Keep the update-only surface active through a recovered restart.
+
+    Args:
+        client: HTTP test client providing isolated application state.
+        monkeypatch: Pytest fixture used to replace recovery side effects.
+    """
+    import atlaso.app.ui as ui
+    import atlaso.app.worker as worker
+    from atlaso.app.database import SessionLocal
+    from atlaso.app.models import Job, JobStatus
+    from atlaso.app.services.appliance_update import ensure_appliance_update_job_steps
+
+    job_id = "job_abcdef123456"
+    finalizer = {
+        "job_id": job_id,
+        "status": JobStatus.FAILED.value,
+        "rolled_back": True,
+        "rollback_health": True,
+        "error": "candidate readiness failed",
+        "commands": [],
+    }
+    monkeypatch.setattr(worker, "_release_finalizer", lambda: dict(finalizer))
+    monkeypatch.setattr(
+        worker,
+        "reconcile_release_success_finalizer",
+        lambda payload: (dict(payload), True),
+    )
+
+    class RestartAdapter:
+        """Return a successful delayed all-service restart schedule."""
+
+        def restart_appliance_after_update(self, config_path: str) -> AdapterResult:
+            """Return a successful scheduling result.
+
+            Args:
+                config_path: Staged Appliance Update manifest path.
+            """
+            return AdapterResult(command=["restart-service", config_path], dry_run=False)
+
+    monkeypatch.setattr(ui, "SystemAdapter", RestartAdapter)
+    monkeypatch.setattr(ui, "log_appliance_update_failures", lambda *_args: None)
+    monkeypatch.setattr(ui, "log_appliance_update_submission", lambda *_args: None)
+    monkeypatch.setattr(ui, "record_audit", lambda *_args, **_kwargs: None)
+    status_calls = []
+    monkeypatch.setattr(
+        worker,
+        "_publish_appliance_update_status",
+        lambda observed_job_id, *, finish=False: status_calls.append(
+            (observed_job_id, finish)
+        )
+        or True,
+    )
+
+    selected = ["photon_os", "atlaso_release"]
+    with SessionLocal() as db:
+        job = Job(
+            id=job_id,
+            type="appliance-update",
+            status=JobStatus.RUNNING.value,
+            created_by="admin",
+            task_config_json=json.dumps(
+                {
+                    "schema_version": 2,
+                    "mode": "run",
+                    "selected_streams": selected,
+                    "execution_order": selected,
+                    "status_transaction_id": "c" * 32,
+                    "settings": {},
+                }
+            ),
+            result="{}",
+        )
+        db.add(job)
+        db.flush()
+        steps = ensure_appliance_update_job_steps(
+            db,
+            job=job,
+            selected_streams=selected,
+        )
+        steps[0].status = JobStatus.SUCCEEDED.value
+        steps[0].progress_percent = 100
+        steps[0].result = json.dumps(
+            {"unit_id": "photon_os", "status": "succeeded", "success": True}
+        )
+        steps[1].status = JobStatus.RUNNING.value
+        db.commit()
+
+        assert worker.recover_interrupted_worker_jobs(db) == 1
+        recovered = db.get(Job, job_id)
+        recovered_result = json.loads(recovered.result)
+
+    assert recovered.status == JobStatus.FAILED.value
+    assert recovered_result["restart_after_commit"] is True
+    assert recovered_result["restart_scheduled"] is True
+    assert status_calls == []
+
+
 @pytest.mark.parametrize(
     ("selected", "expected"),
     [

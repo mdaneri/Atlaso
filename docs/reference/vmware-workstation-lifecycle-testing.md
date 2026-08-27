@@ -95,10 +95,10 @@ discovers the runtime address through VMware Tools.
 
 ## Appliance Update status and ordering acceptance
 
-For the 0.9.219 to 0.9.220 updater transition, use a brand-new normal test VM with a unique name and destination. Run
+For the 0.9.220 to 0.9.222 updater transition, use a brand-new normal test VM with a unique name and destination. Run
 the creation wrapper's ownership, source-provenance, VMX collision, data-disk collision, running-VM, and pending cleanup
 marker checks before mutation; do not reuse or redeploy the canonical test VM for this acceptance. Confirm the source
-appliance reports exactly 0.9.219 before publishing the isolated signed candidate fixture for 0.9.220.
+appliance reports exactly 0.9.220 before publishing the isolated signed candidate fixture for 0.9.222.
 
 Capture the parent task ID, all child IDs/positions, transaction ID hash (never the raw source credentials), created,
 started, child-transition, restart, recovery, and finished timestamps. Probe continuously from three vantage points:
@@ -124,8 +124,8 @@ must reappear, mutation must remain blocked until recovery, and no task may rema
 
 Successful release acceptance requires `/opt/atlaso/current`, the compatibility virtualenv, signed release receipt,
 candidate manifest/bundle/commit hashes, `/etc/atlaso/update-info`, definitive finalizer, cleared restart gate, worker
-startup identity, active services, internal OpenAPI, nginx-local OpenAPI, and host-facing OpenAPI to agree on 0.9.220.
-Rollback acceptance requires the corresponding definitive `rolled_back=true` evidence and restored 0.9.219 identity.
+startup identity, active services, internal OpenAPI, nginx-local OpenAPI, and host-facing OpenAPI to agree on 0.9.222.
+Rollback acceptance requires the corresponding definitive `rolled_back=true` evidence and restored 0.9.220 identity.
 After each outcome, perform an audited appliance reboot and repeat the task-finality, status-marker absence, service,
 receipt/finalizer/update-info, and three-vantage probe checks. Preserve sanitized probe tables and screenshots of the
 desktop and responsive update-only page; redact sessions, credentials, keys, source credentials, and raw helper output.
