@@ -567,7 +567,9 @@ password prompts are never credential sources.
 
 Plaintext exists only inside bounded credential children. The parent receives current-user DPAPI ciphertext, stages a
 DPAPI-protected complete OVF bundle into the exact newly created VMX through a second bounded child, and removes the
-temporary isolated runtime. Passwords are never placed in process arguments, caller-controlled environment, logs,
+temporary isolated runtime. Before that staging child starts, the wrapper durably records child-active recovery state;
+an unproven process-tree termination blocks cleanup or redeploy until a later host boot can prove the child is gone.
+Passwords are never placed in process arguments, caller-controlled environment, logs,
 output, markers, test evidence, documentation, or GitHub surfaces. The guestinfo-backed VMX setting remains only until
 successful first-boot consumption clears it. Raw-clone credentials must be at least 12 characters and cannot contain
 leading, trailing, XML control, or non-XML characters that would change during OVF attribute parsing.

@@ -1373,8 +1373,9 @@ only the corresponding exact concealed default through the supported 1Password S
 receives only current-user DPAPI ciphertext; a second bounded child stages the DPAPI-protected OVF environment into the
 exact new VMX. There are no interactive password prompts, caller-environment fallbacks, repository defaults, or local
 `.env` inputs. SDK or credential failure occurs before network preparation, cleanup, disk reset, or cloning, and
-`-WhatIf` never prepares the SDK or accesses credentials. It uses a bounded child and a separately scrubbed guest-info
-value for the signer.
+`-WhatIf` never prepares the SDK or accesses credentials. Before VMX credential staging, a durable child-active marker
+ensures an unproven process-tree termination blocks cleanup or redeploy until a later host boot proves the child gone.
+It uses a bounded child and a separately scrubbed guest-info value for the signer.
 `-TimeoutSeconds` requires proven complete
 `op`/secret-child process-tree termination before a staging failure may enter signer scrub or VM rollback. Boot-bound
 marker phases also cover VM start and artifact removal. An unproven termination preserves the VM and VMX, or keeps

@@ -2713,6 +2713,8 @@ if (Test-Path -LiteralPath $resolvedOutputDirectory -PathType Container) {
 
 $createdThisInvocation = $false
 $developmentCaCleanupMarkerPath = ''
+$credentialStageFailure = $null
+$credentialBridgeCleanupError = ''
 if ($PSCmdlet.ShouldProcess($targetVmx, "Create Atlaso Workstation test VM from $resolvedSourceVmx")) {
         & (Join-Path $PSScriptRoot 'create-atlaso-vm.ps1') `
             -Name $Name `
@@ -2732,35 +2734,81 @@ if ($PSCmdlet.ShouldProcess($targetVmx, "Create Atlaso Workstation test VM from 
         if (-not $?) {
             throw "Atlaso VMware Workstation VM creation failed."
         }
-        Invoke-AtlasoTestVmCredentialStage `
-            -BridgeState $credentialBridgeState `
-            -VmxPath $targetVmx `
-            -TimeoutSeconds $TimeoutSeconds
-    $createdThisInvocation = $true
+        $createdThisInvocation = $true
+        try {
+            # Credential staging can rewrite the new VMX. Publish the same
+            # restart-safe child-active marker used by signer staging before
+            # launching it, so an unproven process tree blocks later cleanup.
+            $developmentCaCleanupMarkerPath = New-AtlasoDevelopmentCaCleanupMarker `
+                -VmxPath $targetVmx `
+                -Name $Name `
+                -OutputDirectory $resolvedOutputDirectory `
+                -DataDiskStates $rollbackDataDiskStates
+            try {
+                Invoke-AtlasoTestVmCredentialStage `
+                    -BridgeState $credentialBridgeState `
+                    -VmxPath $targetVmx `
+                    -TimeoutSeconds $TimeoutSeconds
+            }
+            catch {
+                $stageFailure = $_
+                if ($stageFailure.Exception.Data['AtlasoProcessTreeTerminationUnproven'] -ne $true) {
+                    Set-AtlasoDevelopmentCaCleanupMarkerPhase `
+                        -MarkerPath $developmentCaCleanupMarkerPath `
+                        -ExpectedPhase secret-child-active `
+                        -Phase staged
+                }
+                throw $stageFailure
+            }
+            Set-AtlasoDevelopmentCaCleanupMarkerPhase `
+                -MarkerPath $developmentCaCleanupMarkerPath `
+                -ExpectedPhase secret-child-active `
+                -Phase staged
+        }
+        catch {
+            # Defer the failure until after the DPAPI bridge cleanup attempt,
+            # then enter the shared identity-bound VM rollback below.
+            $credentialStageFailure = $_
+        }
 }
 }
 finally {
     if ($null -ne $credentialBridgeState) {
-        Remove-AtlasoTestVmCredentialBridgeState -BridgeRoot $credentialBridgeState.Root
+        try {
+            Remove-AtlasoTestVmCredentialBridgeState -BridgeRoot $credentialBridgeState.Root
+        }
+        catch {
+            $credentialBridgeCleanupError = $_.Exception.Message
+        }
         $credentialBridgeState = $null
     }
 }
 
 if (-not $createdThisInvocation -and -not $WhatIfPreference) {
+    if ($credentialBridgeCleanupError) {
+        throw "Normal test VM creation was not approved, and credential bridge cleanup failed: $credentialBridgeCleanupError"
+    }
     Write-Host 'Normal test VM creation was not approved; no development signing key was staged.' -ForegroundColor Yellow
     return
 }
 
 if (-not $WhatIfPreference) {
     try {
-        # The durable, non-secret marker is committed before the signer is
-        # staged. Any interruption thereafter blocks subsequent wrappers until
-        # the exact failed VM is stopped and its VMX signer assignment scrubbed.
-        $developmentCaCleanupMarkerPath = New-AtlasoDevelopmentCaCleanupMarker `
-            -VmxPath $targetVmx `
-            -Name $Name `
-            -OutputDirectory $resolvedOutputDirectory `
-            -DataDiskStates $rollbackDataDiskStates
+        if ($null -ne $credentialStageFailure) {
+            if ($credentialBridgeCleanupError) {
+                throw "$($credentialStageFailure.Exception.Message) Credential bridge cleanup also failed: $credentialBridgeCleanupError"
+            }
+            throw $credentialStageFailure
+        }
+        if ($credentialBridgeCleanupError) {
+            throw "Credential bridge cleanup failed before signer staging: $credentialBridgeCleanupError"
+        }
+        # Re-enter child-active state before the signer child can rewrite the
+        # exact VMX. Any unproven termination keeps restart-safe recovery active.
+        Set-AtlasoDevelopmentCaCleanupMarkerPhase `
+            -MarkerPath $developmentCaCleanupMarkerPath `
+            -ExpectedPhase staged `
+            -Phase secret-child-active
         try {
             Invoke-OnePasswordDevelopmentCaChild `
                 -EnvironmentId $OnePasswordEnvironmentId `

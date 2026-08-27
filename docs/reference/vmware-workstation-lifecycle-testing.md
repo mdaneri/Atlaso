@@ -330,7 +330,9 @@ the PowerShell parent. A second bounded child stages the DPAPI-protected OVF env
 Authorization, Environment, variable uniqueness, concealment, value validation, runtime, or timeout failure stops
 before network preparation, redeploy cleanup, data-disk reset, or cloning. `-WhatIf` does not prepare the SDK, authorize
 1Password, or retrieve either credential. Password plaintext never enters parent memory, process arguments,
-caller-controlled environment, logs, output, markers, evidence, documentation, or GitHub surfaces.
+caller-controlled environment, logs, output, markers, evidence, documentation, or GitHub surfaces. The wrapper commits
+durable child-active recovery state before the VMX staging child starts. If whole-tree termination cannot be proven,
+later cleanup or redeploy remains blocked until a new host boot proves that child is gone.
 It also resolves the current Windows user's existing `.ssh/id_ed25519.pub` before any network preparation, cleanup, or
 VM creation, installs that Ed25519 public key for `admin`, and adds a separate test-only passwordless-sudo rule. Pass
 `-SshPublicKeyPath <path>` to select another existing Ed25519 public key, or `-SkipSshKeyProvisioning` to retain

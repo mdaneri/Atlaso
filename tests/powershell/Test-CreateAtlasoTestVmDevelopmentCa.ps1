@@ -1352,6 +1352,34 @@ $whatIfGuardIndex = $wrapperSource.LastIndexOf(
 if ($whatIfGuardIndex -lt 0 -or $whatIfGuardIndex -ge $credentialPreparationIndex) {
     throw 'Credential preparation must remain disabled for WhatIf execution.'
 }
+$credentialStageCallIndex = $wrapperSource.LastIndexOf(
+    'Invoke-AtlasoTestVmCredentialStage `',
+    [System.StringComparison]::Ordinal
+)
+$credentialStageMarkerIndex = $wrapperSource.LastIndexOf(
+    '$developmentCaCleanupMarkerPath = New-AtlasoDevelopmentCaCleanupMarker `',
+    $credentialStageCallIndex,
+    [System.StringComparison]::Ordinal
+)
+$credentialStageTerminationGuardIndex = $wrapperSource.IndexOf(
+    "`$stageFailure.Exception.Data['AtlasoProcessTreeTerminationUnproven']",
+    $credentialStageCallIndex,
+    [System.StringComparison]::Ordinal
+)
+$credentialStageRollbackIndex = $wrapperSource.IndexOf(
+    'if ($null -ne $credentialStageFailure) {',
+    $credentialStageCallIndex,
+    [System.StringComparison]::Ordinal
+)
+if (
+    $credentialStageCallIndex -lt 0 -or
+    $credentialStageMarkerIndex -lt 0 -or
+    $credentialStageMarkerIndex -ge $credentialStageCallIndex -or
+    $credentialStageTerminationGuardIndex -lt $credentialStageCallIndex -or
+    $credentialStageRollbackIndex -lt $credentialStageTerminationGuardIndex
+) {
+    throw 'Credential staging must publish child-active recovery state and enter shared rollback safely.'
+}
 
 $credentialTestRoot = Join-Path ([System.IO.Path]::GetTempPath()) (
     "atlaso-test-vm-credential-helper-$([guid]::NewGuid().ToString('N'))"
