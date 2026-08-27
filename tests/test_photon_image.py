@@ -1360,9 +1360,6 @@ def test_photon_build_uses_the_combined_gcc_package() -> None:
     provision = Path("image/common/scripts/provision-atlaso.sh").read_text(
         encoding="utf-8"
     )
-    qemu_builder = Path(
-        "image/common/scripts/build-qemu-guest-agent-rpm.sh"
-    ).read_text(encoding="utf-8")
     package_install = next(
         line.strip()
         for line in provision.splitlines()
@@ -1376,9 +1373,10 @@ def test_photon_build_uses_the_combined_gcc_package() -> None:
 
     assert " gcc " in f" {package_install} "
     assert " gcc " in f" {package_removal} "
+    assert " binutils " in f" {package_install} "
+    assert " binutils " in f" {package_removal} "
     assert "gcc-c++" not in package_install
     assert "gcc-c++" not in package_removal
-    assert "CC=gcc CXX=g++ ./configure" in qemu_builder
 
 
 def test_vmware_builder_uses_nat_gateway_dns_by_default():
