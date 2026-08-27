@@ -1671,17 +1671,19 @@ class CursesConsole:
         self._safe_add(3, 4, "First-time initialization", curses.color_pair(1) | curses.A_BOLD)
         self._safe_add(5, 4, "Record this one-time access information", curses.color_pair(6) | curses.A_BOLD)
         self._safe_add(7, 6, f"Administrator: {access.username}", curses.color_pair(2))
-        self._safe_add(8, 6, f"Administrator password: {access.password}", curses.color_pair(2))
-        self._safe_add(9, 6, f"Root password: {access.root_password}", curses.color_pair(2))
-        self._safe_add(11, 6, "SSH Ed25519 host key:", curses.color_pair(2) | curses.A_BOLD)
-        for index, line in enumerate(textwrap.wrap(access.ssh_host_key, width=max(width - 12, 20))[:3]):
+        credential_width = max(width - 12, 20)
+        self._safe_add(8, 6, "Administrator password:", curses.color_pair(2) | curses.A_BOLD)
+        for index, line in enumerate(textwrap.wrap(access.password, width=credential_width)[:2]):
+            self._safe_add(9 + index, 8, line, curses.color_pair(2))
+        self._safe_add(11, 6, "Root password:", curses.color_pair(2) | curses.A_BOLD)
+        for index, line in enumerate(textwrap.wrap(access.root_password, width=credential_width)[:2]):
             self._safe_add(12 + index, 8, line, curses.color_pair(2))
-        self._safe_add(
-            17,
-            4,
-            "Press Enter only after recording the values; acknowledgement removes this console copy.",
-            curses.color_pair(3) | curses.A_BOLD,
-        )
+        self._safe_add(14, 6, "SSH Ed25519 host key:", curses.color_pair(2) | curses.A_BOLD)
+        for index, line in enumerate(textwrap.wrap(access.ssh_host_key, width=max(width - 12, 20))[:3]):
+            self._safe_add(15 + index, 8, line, curses.color_pair(2))
+        acknowledgement = "Press Enter only after recording the values; acknowledgement removes this console copy."
+        for index, line in enumerate(textwrap.wrap(acknowledgement, width=max(width - 8, 20))[:2]):
+            self._safe_add(18 + index, 4, line, curses.color_pair(3) | curses.A_BOLD)
         self._fill_line(height - 1, curses.color_pair(3))
         self._safe_add(height - 1, 1, "<F1> Help", curses.color_pair(3) | curses.A_BOLD)
         self._safe_add(height - 1, 12, "<Enter> Acknowledge", curses.color_pair(3) | curses.A_BOLD)
