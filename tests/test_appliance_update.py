@@ -1772,6 +1772,72 @@ def test_restart_recovery_grace_covers_the_full_helper_window(client, monkeypatc
     worker._retry_appliance_update_restart(job_id)
 
     assert calls == ["/var/lib/atlaso/apply/appliance-update/update.json"]
+    with SessionLocal() as db:
+        result = json.loads(db.get(Job, job_id).result)
+    assert result["restart_scheduled"] is True
+    assert datetime.fromisoformat(result["restart_dispatch_started_at"]) > (
+        datetime.now(timezone.utc) - timedelta(minutes=1)
+    )
+
+
+def test_restart_recovery_immediately_dispatches_explicitly_unscheduled_restart(
+    client,
+    monkeypatch,
+):
+    """Retry a restart immediately when durable state proves it was not dispatched.
+
+    Args:
+        client: HTTP test client providing isolated application state.
+        monkeypatch: Pytest fixture used to replace restart recovery effects.
+    """
+    from atlaso.app import worker
+    from atlaso.app.database import SessionLocal
+    from atlaso.app.models import Job
+
+    client.get("/login")
+    job_id = "job_012345abcdea"
+    with SessionLocal() as db:
+        db.add(
+            Job(
+                id=job_id,
+                type="appliance-update",
+                status="failed",
+                created_by="admin",
+                finished_at=datetime.now(timezone.utc).replace(tzinfo=None),
+                result=json.dumps(
+                    {
+                        "restart_after_commit": True,
+                        "restart_scheduled": False,
+                        "config_path": "/var/lib/atlaso/apply/appliance-update/update.json",
+                    }
+                ),
+            )
+        )
+        db.commit()
+    calls = []
+
+    class RetryAdapter:
+        """Record the immediate delayed-restart retry."""
+
+        def restart_appliance_after_update(self, config_path: str) -> AdapterResult:
+            """Return a successful retry dispatch.
+
+            Args:
+                config_path: Staged Appliance Update manifest path.
+            """
+            calls.append(config_path)
+            return AdapterResult(command=["restart-service", config_path], dry_run=False)
+
+    monkeypatch.setattr(worker, "SystemAdapter", RetryAdapter)
+
+    worker._retry_appliance_update_restart(job_id)
+
+    assert calls == ["/var/lib/atlaso/apply/appliance-update/update.json"]
+    with SessionLocal() as db:
+        result = json.loads(db.get(Job, job_id).result)
+    assert result["restart_recovery_attempts"] == 1
+    assert result["restart_scheduled"] is True
+    assert "restart_dispatch_started_at" in result
 
 
 def test_status_recovery_retries_pending_restoration_without_runtime_marker(

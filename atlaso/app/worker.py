@@ -1021,18 +1021,25 @@ def _retry_appliance_update_restart(
             dispatch_started_at = (
                 datetime.fromisoformat(dispatch_text)
                 if dispatch_text
-                else job.finished_at
+                else None
             )
-            if dispatch_started_at is None:
-                return
-            dispatch_started_at = (
-                dispatch_started_at.replace(tzinfo=timezone.utc)
-                if dispatch_started_at.tzinfo is None
-                else dispatch_started_at.astimezone(timezone.utc)
-            )
+            if (
+                dispatch_started_at is None
+                and result.get("restart_scheduled") is not False
+            ):
+                # Historical records did not distinguish an undispatched restart
+                # from one whose dispatch evidence was lost. Preserve the
+                # completion grace for that ambiguous compatibility case.
+                dispatch_started_at = job.finished_at
+            if dispatch_started_at is not None:
+                dispatch_started_at = (
+                    dispatch_started_at.replace(tzinfo=timezone.utc)
+                    if dispatch_started_at.tzinfo is None
+                    else dispatch_started_at.astimezone(timezone.utc)
+                )
         except ValueError:
             return
-        if (
+        if dispatch_started_at is not None and (
             now - dispatch_started_at
         ).total_seconds() < APPLIANCE_UPDATE_RESTART_COMPLETION_GRACE_SECONDS:
             return
@@ -1065,6 +1072,11 @@ def _retry_appliance_update_restart(
             return
         result["restart_recovery_attempts"] = attempts + 1
         result["restart_recovery_last_attempt_at"] = now.isoformat()
+        # Publish the retry boundary before asking the privileged helper to
+        # schedule work. An interruption after dispatch must receive the full
+        # completion grace rather than launching a duplicate restart.
+        result["restart_dispatch_started_at"] = now.isoformat()
+        result["restart_scheduled"] = False
         job.result = json.dumps(result, indent=2)
         db.add(job)
         db.commit()
@@ -1074,6 +1086,24 @@ def _retry_appliance_update_restart(
             "Appliance Update restart recovery dispatch failed for %s; privileged details omitted",
             job_id,
         )
+        return
+    with SessionLocal() as db:
+        job = db.get(Job, job_id)
+        if job is None or job.type != "appliance-update":
+            return
+        try:
+            result = json.loads(job.result or "{}")
+        except json.JSONDecodeError:
+            return
+        if (
+            not isinstance(result, dict)
+            or result.get("restart_dispatch_started_at") != now.isoformat()
+        ):
+            return
+        result["restart_scheduled"] = True
+        job.result = json.dumps(result, indent=2)
+        db.add(job)
+        db.commit()
 
 
 def _reconcile_appliance_update_status_surface() -> bool:
