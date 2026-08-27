@@ -1250,12 +1250,12 @@ def test_successful_photon_still_restarts_worker_when_a_later_stream_fails():
     assert result["restart_after_commit"] is True
 
 
-def test_status_recovery_compares_sqlite_timestamp_with_aware_worker_start(
+def test_status_recovery_accepts_receipt_before_schedule_flag_commit(
     client,
     monkeypatch,
     tmp_path,
 ):
-    """Finish the status hold after SQLite reloads a naive terminal timestamp.
+    """Finish from an exact receipt after the schedule-flag commit is interrupted.
 
     Args:
         client: Test application HTTP client.
@@ -1291,7 +1291,7 @@ def test_status_recovery_compares_sqlite_timestamp_with_aware_worker_start(
                 status="succeeded",
                 created_by="admin",
                 finished_at=datetime(2026, 8, 27, 2, 0, 0),
-                result='{"restart_after_commit":true,"restart_scheduled":true}',
+                result='{"restart_after_commit":true}',
             )
         )
         db.commit()

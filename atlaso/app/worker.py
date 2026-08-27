@@ -891,8 +891,6 @@ def _reconcile_appliance_update_status_surface() -> bool:
             )
         return True
     if isinstance(result, dict) and result.get("restart_after_commit") is True:
-        if result.get("restart_scheduled") is not True:
-            return False
         try:
             startup = json.loads(WORKER_STARTUP_STATUS_PATH.read_text(encoding="utf-8"))
             started_at = datetime.fromisoformat(str(startup.get("started_at") or ""))

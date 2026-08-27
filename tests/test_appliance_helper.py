@@ -709,6 +709,11 @@ def test_completed_restart_publishes_exact_worker_receipt(monkeypatch, tmp_path)
     written = {}
     monkeypatch.setattr(helper, "ATLASO_WORKER_STARTUP_STATUS_PATH", startup)
     monkeypatch.setattr(
+        helper.pwd,
+        "getpwnam",
+        lambda _name: SimpleNamespace(pw_uid=startup.stat().st_uid),
+    )
+    monkeypatch.setattr(
         helper,
         "_service_command",
         lambda action, *units: calls.append((action, units)) or {"success": True},
