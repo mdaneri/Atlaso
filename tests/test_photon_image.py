@@ -1354,6 +1354,29 @@ def test_photon_image_optional_pip_global_index_configuration():
     assert "\ntdnf -y update" not in script
 
 
+def test_photon_build_uses_the_combined_gcc_package() -> None:
+    """Photon's gcc package supplies both C and C++ compiler front ends."""
+
+    provision = Path("image/common/scripts/provision-atlaso.sh").read_text(
+        encoding="utf-8"
+    )
+    package_install = next(
+        line.strip()
+        for line in provision.splitlines()
+        if line.strip().startswith("install python3 ")
+    )
+    package_removal = next(
+        line.strip()
+        for line in provision.splitlines()
+        if line.strip().startswith('run_tdnf "Build-only package removal" remove ')
+    )
+
+    assert " gcc " in f" {package_install} "
+    assert " gcc " in f" {package_removal} "
+    assert "gcc-c++" not in package_install
+    assert "gcc-c++" not in package_removal
+
+
 def test_vmware_builder_uses_nat_gateway_dns_by_default():
     """Verify that vmware builder uses nat gateway dns by default."""
     wrapper = Path("scripts/windows/vmware/build-photon-image.ps1").read_text(encoding="utf-8")

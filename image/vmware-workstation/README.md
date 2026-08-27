@@ -97,6 +97,8 @@ only top-level virtual-environment distributions and ignores package-internal ve
 emit compact 30-second heartbeats with elapsed time and cache size instead of streaming terminal progress redraws
 through Packer. Successful operations report their duration, while failures retain the TDNF exit status and replay a
 normalized, bounded output tail.
+Photon 5.0 packages the C and C++ compiler front ends together as `gcc`. The image requests and later removes that one
+build-only package; it does not request the unavailable `gcc-c++` name used by distributions that split the front ends.
 
 Packer also stages the shared udev disk-identity rule and virtualization data-disk policy. The shared provisioner validates
 and installs both from the staged source tree before the application sync populates `/opt/atlaso`, so this early
