@@ -607,6 +607,7 @@ def test_real_install_marks_evidence_expected_only_after_apply_starts(monkeypatc
 
     assert result["apply_started"] is True
     assert aggregate["apply_started"] is True
+    assert aggregate["restart_after_commit"] is True
     assert events == ["persist", "apply"]
 
 
@@ -1437,6 +1438,42 @@ def test_successful_photon_still_restarts_worker_when_a_later_stream_fails():
     )
 
     assert result["success"] is False
+    assert result["restart_after_commit"] is True
+
+
+def test_legacy_release_restart_does_not_cover_a_later_failed_photon_apply():
+    """Restart again when legacy release-first work mutates Photon afterward."""
+    from atlaso.app.ui import aggregate_appliance_update_results
+
+    legacy_order = ["atlaso_release", "photon_os"]
+    result = aggregate_appliance_update_results(
+        selected_stream_ids=["photon_os", "atlaso_release"],
+        settings={},
+        actor="admin",
+        mode="run",
+        execution_order=legacy_order,
+        stream_results=[
+            {
+                "unit_id": "atlaso_release",
+                "status": "succeeded",
+                "success": True,
+                "release_transaction": {
+                    "status": "succeeded",
+                    "worker_restart": {"success": True},
+                },
+            },
+            {
+                "unit_id": "photon_os",
+                "status": "failed",
+                "success": False,
+                "apply_started": True,
+            },
+        ],
+        job_id="job-legacy-photon-failure",
+    )
+
+    assert result["success"] is False
+    assert result["release_worker_restarted"] is True
     assert result["restart_after_commit"] is True
 
 
@@ -2763,35 +2800,21 @@ def test_appliance_update_migrates_legacy_install_status_identity_before_mutatio
     client.get("/login")
     job_id = "job_012345abcdef"
     events = []
+    selected = ["photon_os", "atlaso_release"]
 
     def publish(observed_job_id: str, *, finish: bool = False) -> bool:
         """Record publication after its transaction identity is durable."""
         with SessionLocal() as db:
             config = json.loads(db.get(Job, observed_job_id).task_config_json)
-        events.append(("finish" if finish else "publish", config["status_transaction_id"]))
-        return True
-
-    def execute(**_kwargs):
-        """Return one terminal result after proving publication happened first."""
-        assert events and events[0][0] == "publish"
-        return {
-            "unit_id": "photon_os",
-            "label": "Photon OS",
-            "mode": "run",
-            "selected_streams": ["photon_os"],
-            "selected_labels": ["Photon OS"],
-            "status": "failed",
-            "success": False,
-            "dry_run": False,
-            "restart_after_commit": False,
-            "commands": [],
-            "config_path": "",
-            "config_preview": "",
-            "error": "injected failure",
-        }
+        events.append(("finish" if finish else "publish", config))
+        return False
 
     monkeypatch.setattr(worker, "_publish_appliance_update_status", publish)
-    monkeypatch.setattr(ui, "execute_appliance_update_job", execute)
+    monkeypatch.setattr(
+        ui,
+        "execute_appliance_update_job",
+        lambda **_kwargs: pytest.fail("failed publication must prevent mutation"),
+    )
     with SessionLocal() as db:
         db.add(
             Job(
@@ -2800,7 +2823,7 @@ def test_appliance_update_migrates_legacy_install_status_identity_before_mutatio
                 status=JobStatus.PENDING.value,
                 created_by="admin",
                 task_config_json=json.dumps(
-                    {"mode": "run", "selected_streams": ["photon_os"], "settings": {}}
+                    {"mode": "run", "selected_streams": selected, "settings": {}}
                 ),
                 result="{}",
             )
@@ -2812,7 +2835,10 @@ def test_appliance_update_migrates_legacy_install_status_identity_before_mutatio
         job = db.get(Job, job_id)
         config = json.loads(job.task_config_json)
     assert re.fullmatch(r"[0-9a-f]{32}", config["status_transaction_id"])
-    assert events[0] == ("publish", config["status_transaction_id"])
+    assert config["schema_version"] == 2
+    assert config["execution_order"] == ["atlaso_release", "photon_os"]
+    assert config["status_legacy_execution_order"] is True
+    assert events[0] == ("publish", config)
     assert job.status == JobStatus.FAILED.value
 
 

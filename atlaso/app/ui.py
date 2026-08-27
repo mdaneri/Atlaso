@@ -12287,6 +12287,17 @@ def aggregate_appliance_update_results(
         and results_by_stream["photon_os"].get("success") is True
         and results_by_stream["photon_os"].get("status") == JobStatus.SUCCEEDED.value
     )
+    photon_apply_started = bool(
+        isinstance(results_by_stream.get("photon_os"), dict)
+        and results_by_stream["photon_os"].get("apply_started") is True
+    )
+    photon_changed = photon_succeeded or photon_apply_started
+    release_restart_covers_photon = bool(
+        release_worker_restarted
+        and "photon_os" in stored_order
+        and "atlaso_release" in stored_order
+        and stored_order.index("atlaso_release") > stored_order.index("photon_os")
+    )
     return {
         "unit_id": "appliance_update",
         "label": _appliance_update_task_label(mode),
@@ -12298,11 +12309,11 @@ def aggregate_appliance_update_results(
         "dry_run": any(bool(result.get("dry_run")) for result in ordered_results),
         "apply_started": any(bool(result.get("apply_started")) for result in ordered_results),
         "restart_after_commit": mode == "run"
-        and not release_worker_restarted
         and (
-            photon_succeeded
+            (photon_changed and not release_restart_covers_photon)
             or (
-                succeeded
+                not release_worker_restarted
+                and succeeded
                 and "atlaso_release" in selected
                 and not release_no_change
             )

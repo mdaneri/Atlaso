@@ -56,14 +56,17 @@ terminal result. Atlaso records that exact order and a random update-status tran
 the task becomes visible. A task created by an older updater retains its original recorded order during recovery and
 reports its aggregate command evidence in that same order rather than being silently reordered. Before an older queued
 installation runs, the worker durably adds a compatible missing status transaction identity; an incompatible legacy
-task identity fails terminally without appliance mutation and must be resubmitted. A current task
+task identity fails terminally without appliance mutation and must be resubmitted. The migrated status contract records
+schema 2 plus an explicit legacy-order marker, allowing the privileged status renderer to accept only the exact retained
+release-first sequence rather than silently changing it. A current task
 interrupted safely between children resumes only its untouched pending
 suffix; a child that started is never replayed. If a worker disappears while a non-release child is running, startup
 stops and verifies that task-and-stream-bound transient helper before failing the child or restoring ordinary UIs; an
 unverifiable helper keeps the hierarchy running and the update-only surface held. If the interrupted Photon child had
 entered its real apply phase, recovery conservatively completes the delayed all-service restart even when the helper's
 terminal result was never persisted, including when the helper returned successfully but the child completion commit
-failed. Atlaso Release runs last, so its
+failed. A failed Photon helper result retains the same restart duty because partial package or Python-environment
+mutation cannot be excluded. Atlaso Release runs last, so its
 verified candidate-worker handoff has
 no pending post-release child and suppresses the former extra Photon-triggered delayed restart. The parent succeeds only
 when every selected child succeeds and all required restoration evidence is durable.

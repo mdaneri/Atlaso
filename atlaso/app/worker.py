@@ -1332,9 +1332,31 @@ def _run_appliance_update(job_id: str) -> None:
                     "This legacy Appliance Update has no compatible durable status identity; "
                     "submit the update again."
                 )
+            stored_order = config.get("execution_order")
+            if not (
+                isinstance(stored_order, list)
+                and len(stored_order) == len(selected)
+                and set(str(stream) for stream in stored_order) == set(selected)
+            ):
+                stored_order = [
+                    stream
+                    for stream in APPLIANCE_UPDATE_LEGACY_EXECUTION_ORDER
+                    if stream in selected
+                ]
+            normalized_order = [str(stream) for stream in stored_order]
+            legacy_order = [
+                stream
+                for stream in APPLIANCE_UPDATE_LEGACY_EXECUTION_ORDER
+                if stream in selected
+            ]
             # Older queued installs predate the update-only surface contract. Add
-            # its transaction identity and commit it before the hold is published
-            # or any privileged stream is allowed to mutate the appliance.
+            # its complete publishable status contract and commit it before the
+            # hold or any privileged stream can mutate the appliance. Retain the
+            # historical release-first order explicitly instead of silently
+            # converting an in-flight task to the new Photon-first sequence.
+            config["schema_version"] = 2
+            config["execution_order"] = normalized_order
+            config["status_legacy_execution_order"] = normalized_order == legacy_order
             config["status_transaction_id"] = uuid4().hex
             job.task_config_json = json.dumps(config, indent=2, sort_keys=True)
             db.add(job)

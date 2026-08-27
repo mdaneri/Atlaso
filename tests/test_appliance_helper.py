@@ -622,12 +622,26 @@ def test_ordinary_status_restoration_probes_include_dedicated_pxe(monkeypatch, t
     assert helper._ordinary_update_ui_probe_sites() == ["management", "public", "pxe"]
 
 
-def test_update_status_task_requires_current_install_contract(monkeypatch, tmp_path):
-    """Reject stale checks while accepting the exact hierarchy.
+@pytest.mark.parametrize(
+    ("execution_order", "legacy_contract"),
+    [
+        (["photon_os", "atlaso_release"], False),
+        (["atlaso_release", "photon_os"], True),
+    ],
+)
+def test_update_status_task_accepts_current_and_migrated_install_contracts(
+    monkeypatch,
+    tmp_path,
+    execution_order,
+    legacy_contract,
+):
+    """Accept current and explicitly migrated legacy install hierarchies.
 
     Args:
         monkeypatch: Pytest fixture used to bind the temporary database.
         tmp_path: Temporary directory used for task evidence.
+        execution_order: Exact current or historical stream sequence.
+        legacy_contract: Whether the historical sequence is explicitly marked.
     """
     helper = load_helper_module()
     database = tmp_path / "atlaso.db"
@@ -649,7 +663,8 @@ def test_update_status_task_requires_current_install_contract(monkeypatch, tmp_p
         "schema_version": 2,
         "mode": "run",
         "selected_streams": ["photon_os", "atlaso_release"],
-        "execution_order": ["photon_os", "atlaso_release"],
+        "execution_order": execution_order,
+        "status_legacy_execution_order": legacy_contract,
         "status_transaction_id": "a" * 32,
     }
     connection.execute(
@@ -690,10 +705,21 @@ def test_update_status_task_requires_current_install_contract(monkeypatch, tmp_p
     snapshot = helper._appliance_update_status_task("job_0123456789ab")
 
     assert snapshot["transaction_id"] == "a" * 32
-    assert [child["component_key"] for child in snapshot["children"]] == [
-        "photon_os",
-        "atlaso_release",
-    ]
+    assert [child["component_key"] for child in snapshot["children"]] == execution_order
+    if legacy_contract:
+        unmarked = {**config, "status_legacy_execution_order": False}
+        with helper.sqlite3.connect(database) as update_connection:
+            update_connection.execute(
+                "update jobs set task_config_json = ?",
+                (json.dumps(unmarked),),
+            )
+        with pytest.raises(ValueError, match="execution order is invalid"):
+            helper._appliance_update_status_task("job_0123456789ab")
+        with helper.sqlite3.connect(database) as update_connection:
+            update_connection.execute(
+                "update jobs set task_config_json = ?",
+                (json.dumps(config),),
+            )
     with helper.sqlite3.connect(database) as update_connection:
         update_connection.execute(
             "update jobs set status = 'failed', finished_at = '2026-08-26T00:01:00Z'"

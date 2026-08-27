@@ -14306,11 +14306,20 @@ def _appliance_update_status_task(
     ):
         raise ValueError("appliance update status stream contract is invalid")
     expected_order = [str(value) for value in execution_order]
-    if expected_order != [
+    current_order = [
         stream
         for stream in ("photon_os", "powershell_modules", "atlaso_release")
         if stream in set(expected_order)
-    ]:
+    ]
+    legacy_order = [
+        stream
+        for stream in ("atlaso_release", "powershell_modules", "photon_os")
+        if stream in set(expected_order)
+    ]
+    legacy_contract = config.get("status_legacy_execution_order") is True
+    if expected_order != current_order and not (
+        legacy_contract and expected_order == legacy_order
+    ):
         raise ValueError("appliance update status execution order is invalid")
     children: list[dict[str, object]] = []
     for step in steps:
