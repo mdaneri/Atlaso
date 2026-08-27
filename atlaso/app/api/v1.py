@@ -1173,7 +1173,9 @@ _settings_api = build_settings_api_router(
         ),
         ensure_ca_state=_ensure_settings_ca_state,
         reconcile_factory_service_identities=reconcile_factory_service_identities,
-        reconcile_service_dns_aliases=refresh_interface_service_dns_aliases,
+        reconcile_service_dns_aliases=lambda *args, **kwargs: refresh_interface_service_dns_aliases(
+            *args, **kwargs
+        ),
     )
 )
 settings_router = _settings_api.router

@@ -159,8 +159,9 @@ def build_router(dependencies: SettingsApiDependencies) -> SettingsApiRouter:
             db,
             previous_appliance_fqdn=previous_fqdn,
         )
+        reconciled_service_aliases: list[str] = []
         if reconciled_service_identities:
-            reconcile_service_dns_aliases(db, actor=identity.username)
+            reconciled_service_aliases = reconcile_service_dns_aliases(db, actor=None)
         db.add(desired)
         db.commit()
         db.refresh(desired)
@@ -174,6 +175,14 @@ def build_router(dependencies: SettingsApiDependencies) -> SettingsApiRouter:
             action="update_appliance_settings",
             resource_type="settings",
             resource_id=str(desired.id),
+            detail=(
+                "factory_service_identities="
+                f"{','.join(sorted(reconciled_service_identities))}; "
+                "service_dns_aliases="
+                f"{','.join(sorted(reconciled_service_aliases))}"
+                if reconciled_service_identities
+                else None
+            ),
         )
         return appliance_settings_response(db, settings)
 

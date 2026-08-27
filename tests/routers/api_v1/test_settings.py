@@ -47,16 +47,19 @@ def test_settings_api_updates_root_ssh_desired_state(client):
     assert '"root_ssh_enabled": true' in payload["config_preview"]
 
 
-def test_settings_api_reconciles_factory_service_identities(client):
+def test_settings_api_reconciles_factory_service_identities(client, monkeypatch):
     """Keep API-driven appliance-domain changes coherent with factory service state.
 
     Args:
         client: HTTP test client used to exercise the Atlaso application.
+        monkeypatch: Pytest fixture used to observe the alias reconciliation boundary.
     """
     from sqlalchemy import select
 
+    from atlaso.app.api import v1
     from atlaso.app.database import SessionLocal
     from atlaso.app.models import (
+        AuditEvent,
         CaSettings,
         EsxStorageSettings,
         KmsSettings,
@@ -70,6 +73,21 @@ def test_settings_api_reconciles_factory_service_identities(client):
     from atlaso.app.services.oidc import ensure_provider_settings
     from atlaso.app.services.service_dns_defaults import ESXI_PXE_HOSTNAME_KEY
     from atlaso.app.ui import get_esx_storage_settings_row
+
+    alias_actors: list[str | None] = []
+    original_alias_refresher = v1.refresh_interface_service_dns_aliases
+
+    def observe_alias_refresh(db, actor=None):
+        """Record the audit boundary while preserving the real alias reconciliation.
+
+        Args:
+            db: Active database session.
+            actor: Optional audit actor passed to the alias reconciler.
+        """
+        alias_actors.append(actor)
+        return original_alias_refresher(db, actor=actor)
+
+    monkeypatch.setattr(v1, "refresh_interface_service_dns_aliases", observe_alias_refresh)
 
     with SessionLocal() as db:
         ensure_provider_settings(db)
@@ -115,6 +133,14 @@ def test_settings_api_reconciles_factory_service_identities(client):
             select(Setting).where(Setting.key == ESXI_PXE_HOSTNAME_KEY)
         ).scalar_one()
         assert pxe.value == "esxi-pxe.lab.internal"
+        audit = db.execute(
+            select(AuditEvent)
+            .where(AuditEvent.action == "update_appliance_settings")
+            .order_by(AuditEvent.id.desc())
+        ).scalars().first()
+        assert audit is not None
+        assert "factory_service_identities=" in (audit.detail or "")
+    assert alias_actors == [None]
 
 
 def test_settings_api_retains_read_and_admin_scope_boundaries(client):
