@@ -453,6 +453,12 @@ def load_first_boot_network_review() -> FirstBootNetworkReview | None:
     )
 
 
+def _first_boot_access_owner_is_root(metadata: os.stat_result) -> bool:
+    """Return whether access metadata satisfies the appliance ownership boundary."""
+
+    return os.name != "posix" or metadata.st_uid == 0
+
+
 def load_first_boot_access() -> FirstBootAccess | None:
     """Load the root-only access envelope retained until console acknowledgement."""
 
@@ -464,7 +470,7 @@ def load_first_boot_access() -> FirstBootAccess | None:
         raise ConsoleOperationError("First-boot access state is unreadable.") from exc
     if not stat.S_ISREG(metadata.st_mode) or (os.name == "posix" and stat.S_IMODE(metadata.st_mode) != 0o600):
         raise ConsoleOperationError("First-boot access state has unsafe file metadata.")
-    if os.name == "posix" and metadata.st_uid != 0:
+    if not _first_boot_access_owner_is_root(metadata):
         raise ConsoleOperationError("First-boot access state is not owned by root.")
     try:
         payload = json.loads(FIRST_BOOT_ACCESS_PATH.read_text(encoding="utf-8"))

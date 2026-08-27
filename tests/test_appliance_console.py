@@ -1205,6 +1205,7 @@ def test_console_first_boot_access_persists_until_acknowledged(tmp_path, monkeyp
     )
     access_path.chmod(0o600)
     monkeypatch.setattr(appliance_console, "FIRST_BOOT_ACCESS_PATH", access_path)
+    monkeypatch.setattr(appliance_console, "_first_boot_access_owner_is_root", lambda _metadata: True)
 
     access = appliance_console.load_first_boot_access()
     assert access is not None
