@@ -10,6 +10,7 @@ children. Plaintext remains confined to the bounded helper process.
 
 Set-StrictMode -Version Latest
 $ErrorActionPreference = 'Stop'
+. (Join-Path $PSScriptRoot 'Atlaso.WorkstationFirstBoot.ps1')
 
 <#
 .SYNOPSIS
