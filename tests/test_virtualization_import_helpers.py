@@ -186,7 +186,12 @@ def test_linux_smoke_imports_reboots_validates_and_bounds_cleanup() -> None:
     assert 'test ! -e /var/lib/atlaso/first-boot-packages' in script
     assert 'systemctl is-active --quiet qemu-guest-agent.service' in script
     assert 'systemctl is-active --quiet atlaso-worker.service' in script
-    assert 'https://$address/openapi.json' in script
+    assert 'https://$confirmed_address/openapi.json' in script
+    assert 'initial_provider_identity=$(provider_network_identity)' in script
+    assert 'current_provider_identity=$(provider_network_identity)' in script
+    assert 'select_management_ipv4.py' in script
+    assert '--management-mac "$management_mac"' in script
+    assert '--service-mac "$service_mac"' in script
     assert "qga_exec 'systemctl reboot'" in script
     assert script.count("validate_guest") == 3
 

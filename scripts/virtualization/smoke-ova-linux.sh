@@ -22,7 +22,7 @@ for value in "$identifier" "$storage" "$management_network" "$service_network"; 
       ;;
   esac
 done
-for command in jq curl flock mktemp realpath; do
+for command in jq curl flock mktemp realpath python3; do
   command -v "$command" >/dev/null 2>&1 || {
     echo "$command is required for the Linux OVA smoke test." >&2
     exit 2
@@ -206,7 +206,73 @@ qga_exec() {
   esac
 }
 
+normalize_provider_mac() {
+  candidate=$(printf '%s' "$1" | tr '[:upper:]-' '[:lower:]:')
+  printf '%s\n' "$candidate" | grep -Eq '^([0-9a-f]{2}:){5}[0-9a-f]{2}$' || {
+    echo "Provider network identity contains a malformed MAC address." >&2
+    return 2
+  }
+  printf '%s\n' "$candidate"
+}
+
+provider_network_identity() {
+  case "$provider" in
+    proxmox)
+      config=$(qm config "$identifier") || {
+        echo "Proxmox network inventory failed for VMID $identifier." >&2
+        return 2
+      }
+      management_rows=$(printf '%s\n' "$config" | awk -F ': ' '$1 == "net0" { print $2 }')
+      service_rows=$(printf '%s\n' "$config" | awk -F ': ' '$1 == "net1" { print $2 }')
+      [ "$(printf '%s\n' "$management_rows" | sed '/^$/d' | wc -l)" -eq 1 ] &&
+        [ "$(printf '%s\n' "$service_rows" | sed '/^$/d' | wc -l)" -eq 1 ] || {
+          echo "Proxmox must expose exactly one net0 management and net1 services adapter." >&2
+          return 2
+        }
+      observed_management_network=$(printf '%s\n' "$management_rows" | tr ',' '\n' |
+        awk -F= '$1 == "bridge" { print $2 }')
+      observed_service_network=$(printf '%s\n' "$service_rows" | tr ',' '\n' |
+        awk -F= '$1 == "bridge" { print $2 }')
+      raw_management_mac=$(printf '%s\n' "$management_rows" | awk -F '[=,]' '{ print $2 }')
+      raw_service_mac=$(printf '%s\n' "$service_rows" | awk -F '[=,]' '{ print $2 }')
+      ;;
+    kvm)
+      rows=$(virsh domiflist "$identifier" 2>/dev/null | awk 'NR > 2 && NF >= 5 { print $3 "|" $5 }') || {
+        echo "KVM network inventory failed for domain $identifier." >&2
+        return 2
+      }
+      [ "$(printf '%s\n' "$rows" | sed '/^$/d' | wc -l)" -eq 2 ] || {
+        echo "KVM must expose exactly two ordered network adapters." >&2
+        return 2
+      }
+      management_row=$(printf '%s\n' "$rows" | sed -n '1p')
+      service_row=$(printf '%s\n' "$rows" | sed -n '2p')
+      observed_management_network=${management_row%%|*}
+      raw_management_mac=${management_row#*|}
+      observed_service_network=${service_row%%|*}
+      raw_service_mac=${service_row#*|}
+      ;;
+  esac
+  [ "$observed_management_network" = "$management_network" ] &&
+    [ "$observed_service_network" = "$service_network" ] || {
+      echo "Provider adapter-to-network mapping does not match the requested smoke topology." >&2
+      return 2
+    }
+  normalized_management_mac=$(normalize_provider_mac "$raw_management_mac") || return
+  normalized_service_mac=$(normalize_provider_mac "$raw_service_mac") || return
+  [ "$normalized_management_mac" != "$normalized_service_mac" ] || {
+    echo "Provider management and services adapters must have distinct MAC addresses." >&2
+    return 2
+  }
+  printf '%s|%s\n' "$normalized_management_mac" "$normalized_service_mac"
+}
+
 guest_ipv4() {
+  current_provider_identity=$(provider_network_identity)
+  [ "$current_provider_identity" = "$initial_provider_identity" ] || {
+    echo "Provider management or services network identity changed during smoke validation." >&2
+    return 2
+  }
   case "$provider" in
     proxmox) interfaces=$(qm guest cmd "$identifier" network-get-interfaces) ;;
     kvm)
@@ -214,12 +280,9 @@ guest_ipv4() {
         '{"execute":"guest-network-get-interfaces"}' | jq -c '.return')
       ;;
   esac
-  printf '%s' "$interfaces" | jq -er '
-    [ .[] | .["ip-addresses"][]?
-      | select(.["ip-address-type"] == "ipv4")
-      | .["ip-address"]
-      | select(. != "127.0.0.1") ][0]
-  '
+  printf '%s' "$interfaces" | python3 "$script_root/select_management_ipv4.py" \
+    --management-mac "$management_mac" \
+    --service-mac "$service_mac"
 }
 
 validate_guest() {
@@ -250,8 +313,13 @@ validate_guest() {
     printf "atlaso-guest-smoke-ok\\n"
   ' | grep -qx 'atlaso-guest-smoke-ok'
   address=$(guest_ipv4)
+  confirmed_address=$(guest_ipv4)
+  [ "$confirmed_address" = "$address" ] || {
+    echo "The provider-bound management IPv4 changed immediately before the front-door probe." >&2
+    return 2
+  }
   curl --fail --silent --show-error --insecure --max-time 30 \
-    "https://$address/openapi.json" >/dev/null
+    "https://$confirmed_address/openapi.json" >/dev/null
 }
 
 case "$provider" in
@@ -281,6 +349,9 @@ case "$provider" in
     "$template_root/import-atlaso-proxmox.sh" \
       "$ova_path" "$identifier" "$storage" "$management_network" "$service_network" >/dev/null
     owned=1
+    initial_provider_identity=$(provider_network_identity)
+    management_mac=${initial_provider_identity%%|*}
+    service_mac=${initial_provider_identity#*|}
     qm start "$identifier"
     ;;
   kvm)
@@ -335,6 +406,9 @@ case "$provider" in
     # Cleanup ownership begins only after all four attached volume identities
     # are captured from successful provider queries.
     owned=1
+    initial_provider_identity=$(provider_network_identity)
+    management_mac=${initial_provider_identity%%|*}
+    service_mac=${initial_provider_identity#*|}
     virsh start "$identifier" >/dev/null
     ;;
 esac

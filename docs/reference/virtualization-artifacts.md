@@ -203,6 +203,13 @@ The protected smoke jobs retrieve each booted VM's regenerated Ed25519 public ho
 its authenticated hypervisor metadata channel before SSH authentication. They reject an unknown or changed host and
 never use trust-on-first-use host-key acceptance. Artifact provenance intentionally contains no reusable host identity.
 
+Each smoke also captures both provider-side NIC identities before probing the guest. Hyper-V binds the address to the
+named **Management** adapter and its exact switch, KVM and Proxmox match QEMU guest-agent interface data to the
+management MAC from the ordered provider topology, and VMware resolves `ethernet0` only through its mapped management
+vmnet and exact MAC. Services-first enumeration cannot choose the probe target. Missing, duplicate, mismatched, or
+changing management MAC/address evidence fails the smoke run before the SSH or `/openapi.json` result is accepted, and
+the same binding is revalidated after reboot.
+
 ## Validate and recover
 
 After first boot, verify all of the following before adopting the VM:
