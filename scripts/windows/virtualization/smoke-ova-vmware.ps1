@@ -96,6 +96,52 @@ function Assert-AtlasoVmwareVmIdentity {
     }
 }
 
+<#
+.SYNOPSIS
+Snapshots every descendant path and stable file ID beneath an owned VM root.
+.PARAMETER DirectoryPath
+Invocation-owned VM directory to inventory.
+#>
+function Get-AtlasoVmwareDescendantIdentity {
+    param([Parameter(Mandatory = $true)][string]$DirectoryPath)
+
+    $identity = @{}
+    foreach ($item in @(Get-ChildItem -LiteralPath $DirectoryPath -Recurse -Force)) {
+        if (($item.Attributes -band [System.IO.FileAttributes]::ReparsePoint) -ne 0) {
+            throw "VMware smoke descendant cannot be a reparse point: $($item.FullName)"
+        }
+        $relativePath = [System.IO.Path]::GetRelativePath($DirectoryPath, $item.FullName)
+        $identity[$relativePath] = Get-AtlasoWindowsFileId -Path $item.FullName
+    }
+    return ,$identity
+}
+
+<#
+.SYNOPSIS
+Returns provider inventory paths that identify the captured VMX file.
+.PARAMETER Paths
+Raw paths returned by vmrun inventory.
+.PARAMETER VmxId
+Captured stable VMX file ID.
+#>
+function Get-AtlasoVmwareInventoryPathById {
+    param(
+        [Parameter(Mandatory = $true)][string[]]$Paths,
+        [Parameter(Mandatory = $true)][string]$VmxId
+    )
+
+    foreach ($entry in $Paths) {
+        $candidate = $entry.Trim().Trim('"')
+        if ($candidate -and (Test-Path -LiteralPath $candidate -PathType Leaf)) {
+            $item = Get-Item -LiteralPath $candidate -Force
+            if (($item.Attributes -band [System.IO.FileAttributes]::ReparsePoint) -eq 0 -and
+                (Get-AtlasoWindowsFileId -Path $item.FullName) -eq $VmxId) {
+                $candidate
+            }
+        }
+    }
+}
+
 $repoRoot = (Resolve-Path -LiteralPath (Join-Path $PSScriptRoot '..\..\..')).Path
 if ($Name -notmatch '^[A-Za-z0-9][A-Za-z0-9_.-]{0,63}$') {
     throw 'VMware smoke-test Name must be one safe filesystem component.'
@@ -179,6 +225,8 @@ foreach ($ownedDirectory in @($vmRoot, $validationRoot)) {
 $vmStarted = $false
 $vmRootId = ''
 $vmxId = ''
+$ownedDescendantIds = $null
+$ownedRegisteredPaths = @()
 try {
     $contractOutput = @(& $python `
             (Join-Path $repoRoot 'scripts\virtualization\validate_ova.py') `
@@ -295,7 +343,9 @@ finally {
     }
     if ($vmRootSafeToRemove -and (Test-Path -LiteralPath $vmxPath)) {
         $runningVmPaths = @(& $vmrun -T ws list 2>$null)
-        if ($LASTEXITCODE -ne 0 -or @($runningVmPaths | Where-Object { $_.Trim() -ieq $vmxPath }).Count -ne 0) {
+        $runningInventoryExitCode = $LASTEXITCODE
+        $runningOwnedPaths = @(Get-AtlasoVmwareInventoryPathById -Paths $runningVmPaths -VmxId $vmxId)
+        if ($runningInventoryExitCode -ne 0 -or $runningOwnedPaths.Count -ne 0) {
             $vmRootSafeToRemove = $false
             $cleanupFailure = 'vmrun could not prove the disposable VMware smoke VM was stopped; its files were preserved.'
         }
@@ -303,6 +353,15 @@ finally {
     if ($vmRootSafeToRemove -and (Test-Path -LiteralPath $vmxPath)) {
         Assert-AtlasoVmwareVmIdentity -DirectoryPath $vmRoot -VmxPath $vmxPath `
             -Name $Name -DirectoryId $vmRootId -VmxId $vmxId
+        $registeredBeforeDelete = @(& $vmrun -T ws listRegisteredVM 2>$null)
+        $registeredBeforeDeleteExitCode = $LASTEXITCODE
+        if ($registeredBeforeDeleteExitCode -ne 0) {
+            throw 'vmrun could not inventory registered VMs before deletion; files were preserved.'
+        }
+        $ownedRegisteredPaths = @(
+            Get-AtlasoVmwareInventoryPathById -Paths $registeredBeforeDelete -VmxId $vmxId
+        )
+        $ownedDescendantIds = Get-AtlasoVmwareDescendantIdentity -DirectoryPath $vmRoot
         & $vmrun -T ws deleteVM $vmxPath 2>$null | Out-Null
         if ($LASTEXITCODE -ne 0) {
             $vmRootSafeToRemove = $false
@@ -311,17 +370,28 @@ finally {
     }
     if ($vmRootSafeToRemove) {
         $registeredVmPaths = @(& $vmrun -T ws listRegisteredVM 2>$null)
-        if ($LASTEXITCODE -ne 0 -or
+        $registeredInventoryExitCode = $LASTEXITCODE
+        $registeredOwnedAlias = @($registeredVmPaths | Where-Object {
+                $candidate = $_.Trim().Trim('"')
+                $ownedRegisteredPaths -icontains $candidate
+            })
+        if ($registeredInventoryExitCode -ne 0 -or
             (Test-Path -LiteralPath $vmxPath) -or
-            @($registeredVmPaths | Where-Object { $_.Trim() -ieq $vmxPath }).Count -ne 0) {
+            $registeredOwnedAlias.Count -ne 0) {
             $vmRootSafeToRemove = $false
             $cleanupFailure = 'vmrun could not prove the disposable VMware smoke VM was deleted; its files were preserved.'
         }
     }
     if ($vmRootSafeToRemove -and (Test-Path -LiteralPath $vmRoot)) {
         $rootItem = Get-Item -LiteralPath $vmRoot -Force
+        $currentDescendantIds = Get-AtlasoVmwareDescendantIdentity -DirectoryPath $vmRoot
+        $descendantChanged = @($currentDescendantIds.Keys | Where-Object {
+                -not $ownedDescendantIds.ContainsKey($_) -or
+                $ownedDescendantIds[$_] -ne $currentDescendantIds[$_]
+            }).Count -ne 0
         if (($rootItem.Attributes -band [System.IO.FileAttributes]::ReparsePoint) -ne 0 -or
             (Get-AtlasoWindowsFileId -Path $vmRoot) -ne $vmRootId -or
+            $descendantChanged -or
             @(Get-ChildItem -LiteralPath $vmRoot -Filter '*.vmx' -File -Recurse -Force).Count -ne 0) {
             throw 'VMware smoke root identity changed after provider deletion; its files were preserved.'
         }

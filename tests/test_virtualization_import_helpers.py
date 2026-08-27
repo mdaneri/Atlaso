@@ -113,6 +113,10 @@ def test_linux_smoke_imports_reboots_validates_and_bounds_cleanup() -> None:
     assert 'virsh vol-delete --pool "$storage" "$volume"' in script
     assert 'cleanup_failed=1' in script
     assert 'exit "$exit_status"' in script
+    assert 'vmids=$(qm list' in script
+    assert 'domains=$(virsh list --all --name' in script
+    assert 'volumes=$(virsh vol-list --pool "$storage" --name' in script
+    assert "inventory could not prove cleanup" in script
     assert '|| true' not in script.split('cleanup() {', 1)[1].split('qga_ping() {', 1)[0]
     assert (
         'grep -qx "platform=qemu" '

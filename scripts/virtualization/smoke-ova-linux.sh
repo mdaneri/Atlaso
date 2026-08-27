@@ -45,38 +45,72 @@ cleanup() {
   if [ "$owned" -eq 1 ]; then
     case "$provider" in
       proxmox)
-        if status=$(qm status "$identifier" 2>/dev/null); then
-          case "$status" in
-            *'status: running'*) qm stop "$identifier" --skiplock 0 >/dev/null 2>&1 || cleanup_failed=1 ;;
-          esac
-          qm destroy "$identifier" --purge 1 --destroy-unreferenced-disks 1 >/dev/null 2>&1 || cleanup_failed=1
+        if vmids=$(qm list 2>/dev/null | awk 'NR > 1 { print $1 }'); then
+          if printf '%s\n' "$vmids" | grep -Fxq -- "$identifier"; then
+            if status=$(qm status "$identifier" 2>/dev/null); then
+              case "$status" in
+                *'status: running'*) qm stop "$identifier" --skiplock 0 >/dev/null 2>&1 || cleanup_failed=1 ;;
+              esac
+              qm destroy "$identifier" --purge 1 --destroy-unreferenced-disks 1 >/dev/null 2>&1 || cleanup_failed=1
+            else
+              cleanup_failed=1
+            fi
+          fi
+        else
+          cleanup_failed=1
         fi
-        if qm status "$identifier" >/dev/null 2>&1; then
-          echo "The Proxmox smoke VM remains after cleanup: $identifier" >&2
+        if vmids=$(qm list 2>/dev/null | awk 'NR > 1 { print $1 }'); then
+          if printf '%s\n' "$vmids" | grep -Fxq -- "$identifier"; then
+            echo "The Proxmox smoke VM remains after cleanup: $identifier" >&2
+            cleanup_failed=1
+          fi
+        else
+          echo "Proxmox inventory could not prove cleanup for VMID $identifier." >&2
           cleanup_failed=1
         fi
         ;;
       kvm)
-        if state=$(virsh domstate "$identifier" 2>/dev/null); then
-          case "$state" in
-            'shut off') ;;
-            *) virsh destroy "$identifier" >/dev/null 2>&1 || cleanup_failed=1 ;;
-          esac
-          virsh undefine "$identifier" --nvram >/dev/null 2>&1 || \
-            virsh undefine "$identifier" >/dev/null 2>&1 || cleanup_failed=1
+        if domains=$(virsh list --all --name 2>/dev/null); then
+          if printf '%s\n' "$domains" | grep -Fxq -- "$identifier"; then
+            if state=$(virsh domstate "$identifier" 2>/dev/null); then
+              case "$state" in
+                'shut off') ;;
+                *) virsh destroy "$identifier" >/dev/null 2>&1 || cleanup_failed=1 ;;
+              esac
+              virsh undefine "$identifier" --nvram >/dev/null 2>&1 || \
+                virsh undefine "$identifier" >/dev/null 2>&1 || cleanup_failed=1
+            else
+              cleanup_failed=1
+            fi
+          fi
+        else
+          cleanup_failed=1
         fi
-        if virsh dominfo "$identifier" >/dev/null 2>&1; then
-          echo "The KVM smoke domain remains after cleanup: $identifier" >&2
+        if domains=$(virsh list --all --name 2>/dev/null); then
+          if printf '%s\n' "$domains" | grep -Fxq -- "$identifier"; then
+            echo "The KVM smoke domain remains after cleanup: $identifier" >&2
+            cleanup_failed=1
+          fi
+        else
+          echo "KVM inventory could not prove cleanup for domain $identifier." >&2
           cleanup_failed=1
         fi
         if [ -f "$disk_volume_list" ]; then
           while IFS= read -r volume; do
             [ -n "$volume" ] || continue
-            if virsh vol-info --pool "$storage" "$volume" >/dev/null 2>&1; then
-              virsh vol-delete --pool "$storage" "$volume" >/dev/null 2>&1 || cleanup_failed=1
+            if volumes=$(virsh vol-list --pool "$storage" --name 2>/dev/null); then
+              if printf '%s\n' "$volumes" | grep -Fxq -- "$volume"; then
+                virsh vol-delete --pool "$storage" "$volume" >/dev/null 2>&1 || cleanup_failed=1
+              fi
+            else
+              cleanup_failed=1
             fi
-            if virsh vol-info --pool "$storage" "$volume" >/dev/null 2>&1; then
-              echo "The KVM smoke volume remains after cleanup: $volume" >&2
+            if volumes=$(virsh vol-list --pool "$storage" --name 2>/dev/null); then
+              if printf '%s\n' "$volumes" | grep -Fxq -- "$volume"; then
+                echo "The KVM smoke volume remains after cleanup: $volume" >&2
+                cleanup_failed=1
+              fi
+            else
               cleanup_failed=1
             fi
           done <"$disk_volume_list"
