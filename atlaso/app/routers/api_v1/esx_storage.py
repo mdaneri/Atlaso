@@ -128,7 +128,7 @@ def build_router(dependencies: EsxStorageApiDependencies) -> EsxStorageApiRouter
         """
         row = dependencies.get_esx_storage_settings(db)
         previous_hostname = row.hostname
-        hostname = payload.hostname.strip().lower().rstrip(".")
+        hostname = (payload.hostname or row.hostname).strip().lower().rstrip(".")
         if "." not in hostname:
             raise HTTPException(
                 status_code=422,

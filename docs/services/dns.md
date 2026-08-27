@@ -74,6 +74,21 @@ Atlaso owns one shared monotonic SOA serial. Zone creation/deletion, record crea
 generated-record changes, and authoritative settings or listen-target changes advance it. The serial is exposed
 read-only in the UI and public DNS settings response and is included in backup/restore and desired-state comparisons.
 
+## Factory service identities
+
+Factory-derived service names use the domain portion of the canonical appliance FQDN. For example, an appliance FQDN
+of `atlaso.lab.internal` produces `ca.lab.internal`, `kms.lab.internal`, `ldap.lab.internal`, `ntp.lab.internal`,
+`oidc.lab.internal`, `nfs.lab.internal`, `esxi-pxe.lab.internal`, `registry.lab.internal`, and
+`depot.lab.internal`. Fresh seed, OVF first boot, factory reset, settings restore, and later appliance-domain changes
+all use this rule.
+
+When the appliance domain changes, Atlaso migrates only a packaged default or the exact factory name under the
+immediately previous appliance domain. A different service hostname is treated as operator-owned and remains unchanged.
+Atlaso renames or removes only DNS rows carrying that service's exact app-owned marker, including generated IPv4 and
+IPv6 targets. If the destination name already has an operator-owned record of the same type, Atlaso preserves the
+operator record and removes the stale app-owned alias instead of overwriting it. The affected service and DNS desired
+state remain pending until submitted through Appliance Apply.
+
 ## Zone-file import and export
 
 Zone-file export includes `$ORIGIN`, `$TTL`, generated SOA/NS/glue, and all enabled operator records. Import supports A,

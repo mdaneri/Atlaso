@@ -179,6 +179,7 @@ from atlaso.app.services.networking import (
     normalize_interface_role,
 )
 from atlaso.app.services.ntp import default_ntp_upstream_fields
+from atlaso.app.services.service_dns_defaults import factory_service_hostname
 from atlaso.app.services.service_registry import (
     SERVICE_SYSTEMD_UNITS,
 )
@@ -433,7 +434,10 @@ def get_kms_settings_row(db: Session) -> KmsSettings:
     """
     settings = db.execute(select(KmsSettings)).scalar_one_or_none()
     if settings is None:
-        settings = KmsSettings()
+        hostname = factory_service_hostname(
+            "kms", get_appliance_settings(db).fqdn
+        )
+        settings = KmsSettings(hostname=hostname, server_certificate=hostname)
         db.add(settings)
         db.commit()
         db.refresh(settings)
@@ -450,6 +454,9 @@ def get_ntp_settings(db: Session) -> NtpSettings:
     if settings is None:
         ntp_upstreams = default_ntp_upstream_fields()
         settings = NtpSettings(
+            hostname=factory_service_hostname(
+                "ntp", get_appliance_settings(db).fqdn
+            ),
             upstream_servers=ntp_upstreams["upstream_servers"],
             upstream_sources_json=ntp_upstreams["upstream_sources_json"],
         )
@@ -589,7 +596,13 @@ def get_vcf_private_registry_settings(db: Session) -> VcfPrivateRegistrySettings
     """
     settings = db.execute(select(VcfPrivateRegistrySettings)).scalar_one_or_none()
     if settings is None:
-        settings = VcfPrivateRegistrySettings()
+        hostname = factory_service_hostname(
+            "registry", get_appliance_settings(db).fqdn
+        )
+        settings = VcfPrivateRegistrySettings(
+            hostname=hostname,
+            server_certificate=hostname,
+        )
         db.add(settings)
         db.commit()
         db.refresh(settings)
@@ -604,7 +617,13 @@ def get_vcf_offline_depot_settings(db: Session) -> VcfOfflineDepotSettings:
     """
     settings = db.execute(select(VcfOfflineDepotSettings)).scalar_one_or_none()
     if settings is None:
-        settings = VcfOfflineDepotSettings()
+        hostname = factory_service_hostname(
+            "depot", get_appliance_settings(db).fqdn
+        )
+        settings = VcfOfflineDepotSettings(
+            hostname=hostname,
+            server_certificate=hostname,
+        )
         db.add(settings)
         db.commit()
         db.refresh(settings)

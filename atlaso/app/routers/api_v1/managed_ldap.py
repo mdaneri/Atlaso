@@ -341,7 +341,7 @@ def build_router(dependencies: ManagedLdapApiDependencies) -> ManagedLdapApiRout
         """
         settings = _ldap_settings_row(db)
         settings.enabled = payload.enabled
-        settings.hostname = payload.hostname.strip().lower()
+        settings.hostname = (payload.hostname or settings.hostname).strip().lower()
         available = _ldap_api_interface_addresses(db)
         selected_interfaces = [
             item.strip()

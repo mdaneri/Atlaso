@@ -84,8 +84,8 @@ brings infrastructure, storage, identity, networking, and lifecycle workflows in
   add/edit wizards before global appliance apply.
 - [Public Services](docs/services/public-services.md) — use the canonical `/ui/management` and `/ui/public` browser
   planes, understand interface-aware `/` dispatch, and keep machine/protocol routes at their stable paths.
-- [DNS](docs/services/dns.md) — preserve explicit forwarders or usable resolvers from the management interface's exact
-  DHCP lease
+- [DNS](docs/services/dns.md) — derive factory service identities from the appliance domain and preserve explicit
+  forwarders or usable resolvers from the management interface's exact DHCP lease
   across global appliance applies, including applies triggered by unrelated settings such as Web Terminal.
 - [Network Boot](docs/services/ipxe.md) — discover unassigned hardware with
   independently released read-only Inventory Linux, download its latest package

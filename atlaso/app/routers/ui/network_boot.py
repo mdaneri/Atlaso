@@ -20,7 +20,6 @@ from atlaso.app.database import get_db
 from atlaso.app.models import EsxiKickstart, EsxiPxeHost, utcnow
 from atlaso.app.security import Identity, require_session_identity
 from atlaso.app.services.esxi_pxe import (
-    ESXI_PXE_DEFAULT_HOSTNAME,
     ESXI_PXE_HTTP_PORT,
     assign_kickstart_content,
     canonical_http_path,
@@ -163,7 +162,7 @@ def build_router(dependencies: NetworkBootUiDependencies) -> NetworkBootUiRouter
     def update_esxi_pxe_boot_settings_from_ui(
         request: Request,
         enabled: bool = Form(False),
-        hostname: str = Form(ESXI_PXE_DEFAULT_HOSTNAME),
+        hostname: str = Form(""),
         dhcp_scope_id: str = Form(""),
         dhcp_scope_ids: list[str] = Form(default=[]),
         listen_interfaces: list[str] = Form(default=[]),
@@ -225,7 +224,7 @@ def build_router(dependencies: NetworkBootUiDependencies) -> NetworkBootUiRouter
             boot = save_esxi_pxe_boot_settings(
                 db,
                 enabled=enabled,
-                hostname=hostname,
+                hostname=hostname.strip() or str(previous_boot.get("hostname") or ""),
                 listen_interface=selected_interfaces,
                 listen_address=selected_addresses,
                 dhcp_scope_id=dhcp_scope_id,

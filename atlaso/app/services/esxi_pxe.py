@@ -15,6 +15,7 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from atlaso.app.models import (
+    ApplianceSettings,
     DhcpReservation,
     DhcpScope,
     DnsRecord,
@@ -24,6 +25,7 @@ from atlaso.app.models import (
     utcnow,
 )
 from atlaso.app.services.dnsmasq import reservation_dns_record
+from atlaso.app.services.service_dns_defaults import factory_service_hostname
 from atlaso.app.services.vaults import validate_kickstart_vault_markers
 
 ESXI_PXE_UNIT_ID = "esxi_pxe"
@@ -861,9 +863,15 @@ def esxi_pxe_boot_settings(db: Session) -> dict[str, Any]:
     if dhcp_scopes:
         listen_interface = "\n".join(_ordered_unique(scope.interface_name.strip() for scope in dhcp_scopes if scope.interface_name.strip()))
         listen_address = "\n".join(_ordered_unique(scope.site_address.strip() for scope in dhcp_scopes if scope.site_address.strip()))
+    appliance = db.execute(select(ApplianceSettings)).scalar_one_or_none()
+    default_hostname = factory_service_hostname(
+        "esxi-pxe",
+        appliance.fqdn if appliance is not None else "core.atlaso.internal",
+    )
     settings = {
         "enabled": enabled,
-        "hostname": rows.get(ESXI_PXE_HOSTNAME_KEY, ESXI_PXE_DEFAULT_HOSTNAME).strip() or ESXI_PXE_DEFAULT_HOSTNAME,
+        "hostname": rows.get(ESXI_PXE_HOSTNAME_KEY, default_hostname).strip()
+        or default_hostname,
         "dhcp_scope_id": dhcp_scope.id if dhcp_scope is not None else None,
         "dhcp_scope_name": dhcp_scope.name if dhcp_scope is not None else "",
         "dhcp_scope_ids": [scope.id for scope in dhcp_scopes],

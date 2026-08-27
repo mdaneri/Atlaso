@@ -442,14 +442,14 @@ enabled and should be treated as temporary troubleshooting because it can expose
 
 Service-owned endpoint DNS uses a canonical alias plus generated target records. When a service such as KMS, ESXi PXE,
 VCF Offline Depot, or VCF Private Registry selects one or more listen interfaces, Atlaso creates direct A/AAAA records
-for each selected listener target and makes the main service name, such as `depot.atlaso.internal`, a CNAME to the first
-selected target. This alias is created even for a single selected interface. Appliance Settings controls generated
-target names globally: the default `ip` mode creates names such as `depot-192-168-87-12.atlaso.internal`, while
-`interface` mode preserves the older style such as `depot-eth2.atlaso.internal`. Operators can use the canonical name by
-default and use the generated target names for networks that cannot reach the first selected listener. Atlaso does not
-create a multi-A default for the canonical service name because clients may resolve an unreachable address. If the first
-selected interface is removed, interface order changes, or the target naming mode changes, the CNAME target moves to the
-next first valid selected target and stale app-owned generated records are removed.
+for each selected listener target and makes the main service name, such as `depot.<appliance-domain>`, a CNAME to the
+first selected target. This alias is created even for a single selected interface. Appliance Settings controls generated
+target names globally: the default `ip` mode creates names such as `depot-192-168-87-12.<appliance-domain>`, while
+`interface` mode preserves the older style such as `depot-eth2.<appliance-domain>`. Operators can use the canonical
+name by default and use the generated target names for networks that cannot reach the first selected listener. Atlaso
+does not create a multi-A default for the canonical service name because clients may resolve an unreachable address.
+If the first selected interface is removed, interface order changes, or the target naming mode changes, the CNAME
+target moves to the next first valid selected target and stale app-owned generated records are removed.
 
 #### Operator records and resolver fallback
 
@@ -611,7 +611,7 @@ The `public_services` unit stages `/var/lib/atlaso/apply/public-services/atlaso-
 `/etc/atlaso/nginx/sites.d/public-services.conf`. It renders HTTP server blocks only for non-management interface IPs
 where ESXi PXE is enabled, redirects `/pxe/esxi` to `/pxe/esxi/`, proxies dynamic PXE requests to Atlaso, and serves
 remaining `/pxe/esxi/` boot artifacts from the narrow PXE HTTP alias. It also renders hostname-specific HTTPS/SNI server
-blocks for the CA portal using the CA-managed `ca_portal:https` certificate, so `ca.atlaso.internal` and other HTTPS
+blocks for the CA portal using the CA-managed `ca_portal:https` certificate, so `ca.<appliance-domain>` and other HTTPS
 service names can share an IP without sharing a leaf certificate. It must not expose VCF Offline Depot, management,
 broad depot roots, or `/registry` proxy locations over HTTP. The app-owned public service directory at `/` defaults
 service cards to hostnames, offers a Name/IP toggle stored in the `atlaso_public_address_mode` cookie, and builds card

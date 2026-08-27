@@ -62,6 +62,7 @@ class SettingsBackupUiDependencies:
     ca_managed_certificate_paths: Endpoint
     ca_certificate_available: Endpoint
     ensure_dns_for_appliance_settings: Endpoint
+    reconcile_factory_service_identities: Endpoint
     reconcile_service_dns_aliases: Endpoint
     save_logging_preferences: Endpoint
     configure_operational_logging: Endpoint
@@ -134,6 +135,9 @@ def build_router(dependencies: SettingsBackupUiDependencies) -> SettingsBackupUi
     ca_managed_certificate_paths = dependencies.ca_managed_certificate_paths
     ca_certificate_available = dependencies.ca_certificate_available
     ensure_dns_for_appliance_settings = dependencies.ensure_dns_for_appliance_settings
+    reconcile_factory_service_identities = (
+        dependencies.reconcile_factory_service_identities
+    )
     reconcile_service_dns_aliases = dependencies.reconcile_service_dns_aliases
     save_logging_preferences = dependencies.save_logging_preferences
     configure_operational_logging = dependencies.configure_operational_logging
@@ -557,6 +561,10 @@ def build_router(dependencies: SettingsBackupUiDependencies) -> SettingsBackupUi
             management_https_cert_available=True,
             web_terminal_options=terminal_options,
         )
+        reconciled_service_identities = reconcile_factory_service_identities(
+            db,
+            previous_appliance_fqdn=previous_fqdn,
+        )
         ca_state_errors: list[str] = []
         if (
             settings.management_https_enabled
@@ -594,6 +602,8 @@ def build_router(dependencies: SettingsBackupUiDependencies) -> SettingsBackupUi
             )
             if previous_service_dns_target_naming != settings.service_dns_target_naming:
                 reconcile_service_dns_aliases(db, actor=identity.username)
+        if reconciled_service_identities:
+            reconcile_service_dns_aliases(db, actor=identity.username)
         db.add(settings)
         db.commit()
         record_audit(

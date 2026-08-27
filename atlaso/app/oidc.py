@@ -1021,7 +1021,7 @@ def update_oidc_provider_settings(
     provider = ensure_provider_settings(db)
     previous_issuer = provider.issuer_url
     try:
-        provider.hostname = normalize_fqdn(payload.hostname)
+        provider.hostname = normalize_fqdn(payload.hostname or provider.hostname)
         provider.listen_interface = join_interfaces(payload.listen_interfaces)
         provider.port = payload.port
         provider.issuer_url = normalize_issuer_url(expected_issuer_url(provider))

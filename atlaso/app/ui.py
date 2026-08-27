@@ -506,6 +506,13 @@ from atlaso.app.services.routes_wan import (
     validate_wan_state,
     wan_policy_to_dict,
 )
+from atlaso.app.services.service_dns_defaults import (
+    appliance_domain_from_fqdn as canonical_appliance_domain_from_fqdn,
+)
+from atlaso.app.services.service_dns_defaults import (
+    factory_service_hostname,
+    reconcile_factory_service_identities,
+)
 from atlaso.app.services.service_registry import (
     SERVICE_STATE_IDS,
 )
@@ -1244,7 +1251,11 @@ def get_ca_settings_row(db: Session) -> CaSettings:
     """
     settings = db.execute(select(CaSettings)).scalar_one_or_none()
     if settings is None:
-        settings = CaSettings()
+        settings = CaSettings(
+            portal_hostname=factory_service_hostname(
+                "ca", get_appliance_settings_row(db).fqdn
+            )
+        )
         db.add(settings)
         db.commit()
         db.refresh(settings)
@@ -1521,7 +1532,10 @@ def get_kms_settings_row(db: Session) -> KmsSettings:
     """
     settings = db.execute(select(KmsSettings)).scalar_one_or_none()
     if settings is None:
-        settings = KmsSettings()
+        hostname = factory_service_hostname(
+            "kms", get_appliance_settings_row(db).fqdn
+        )
+        settings = KmsSettings(hostname=hostname, server_certificate=hostname)
         db.add(settings)
         db.commit()
         db.refresh(settings)
@@ -1537,7 +1551,9 @@ def get_ldap_settings_row(db: Session) -> LdapSettings:
     settings = db.execute(select(LdapSettings)).scalar_one_or_none()
     if settings is None:
         settings = LdapSettings(
-            hostname=LDAP_DEFAULT_HOSTNAME,
+            hostname=factory_service_hostname(
+                "ldap", get_appliance_settings_row(db).fqdn
+            ),
             port=LDAP_DEFAULT_PORT,
             config_path=LDAP_STAGED_CONFIG_PATH,
         )
@@ -1557,7 +1573,9 @@ def get_ntp_settings_row(db: Session) -> NtpSettings:
     if settings is None:
         ntp_upstreams = default_ntp_upstream_fields()
         settings = NtpSettings(
-            hostname=NTP_DEFAULT_HOSTNAME,
+            hostname=factory_service_hostname(
+                "ntp", get_appliance_settings_row(db).fqdn
+            ),
             upstream_servers=ntp_upstreams["upstream_servers"],
             upstream_sources_json=ntp_upstreams["upstream_sources_json"],
             config_path=NTP_STAGED_CONFIG_PATH,
@@ -1609,7 +1627,13 @@ def get_vcf_private_registry_settings_row(db: Session, *, reconcile: bool = True
     """
     settings = db.execute(select(VcfPrivateRegistrySettings)).scalar_one_or_none()
     if settings is None:
-        settings = VcfPrivateRegistrySettings()
+        hostname = factory_service_hostname(
+            "registry", get_appliance_settings_row(db).fqdn
+        )
+        settings = VcfPrivateRegistrySettings(
+            hostname=hostname,
+            server_certificate=hostname,
+        )
         if reconcile:
             db.add(settings)
             db.commit()
@@ -1633,7 +1657,14 @@ def get_vcf_offline_depot_settings_row(
     settings = db.execute(select(VcfOfflineDepotSettings).options(selectinload(VcfOfflineDepotSettings.http_user))).scalar_one_or_none()
     default_user = db.execute(select(User).where(User.username == VCF_DEPOT_DEFAULT_USERNAME).order_by(User.username)).scalar_one_or_none()
     if settings is None:
-        settings = VcfOfflineDepotSettings(http_user_id=default_user.id if default_user else None)
+        hostname = factory_service_hostname(
+            "depot", get_appliance_settings_row(db).fqdn
+        )
+        settings = VcfOfflineDepotSettings(
+            hostname=hostname,
+            server_certificate=hostname,
+            http_user_id=default_user.id if default_user else None,
+        )
         if reconcile:
             db.add(settings)
             db.commit()
@@ -2346,9 +2377,7 @@ def appliance_domain_from_fqdn(fqdn: str) -> str:
     Args:
         fqdn: Fqdn consumed by appliance domain from FQDN.
     """
-    normalized = normalize_fqdn(fqdn)
-    parts = normalized.split(".", 1)
-    return parts[1] if len(parts) == 2 else ""
+    return canonical_appliance_domain_from_fqdn(fqdn)
 
 
 def ensure_dns_domain_for_appliance_settings(dns_settings: DnsSettings, fqdn: str) -> bool:
@@ -6607,9 +6636,12 @@ def get_esx_storage_settings_row(db: Session) -> EsxStorageSettings:
     """
     settings = db.execute(select(EsxStorageSettings).order_by(EsxStorageSettings.id)).scalars().first()
     if settings is None:
-        dns = db.execute(select(DnsSettings).order_by(DnsSettings.id)).scalars().first()
-        domain = (dns.domain if dns else "atlaso.internal").splitlines()[0].strip().strip(".")
-        settings = EsxStorageSettings(enabled=False, hostname=f"nfs.{domain}")
+        settings = EsxStorageSettings(
+            enabled=False,
+            hostname=factory_service_hostname(
+                "nfs", get_appliance_settings_row(db).fqdn
+            ),
+        )
         db.add(settings)
         db.flush()
     return settings
@@ -6746,26 +6778,7 @@ def reconcile_service_dns_aliases(db: Session, actor: str | None = None) -> list
         db: Active database session.
         actor: Authenticated identity attributed to the audit record.
     """
-    changed: list[str] = []
-    kms_settings = db.execute(select(KmsSettings)).scalar_one_or_none()
-    if kms_settings and ensure_dns_for_kms(db, kms_settings, actor=actor, previous_hostname=kms_settings.hostname):
-        changed.append("KMS")
-    depot_settings = db.execute(select(VcfOfflineDepotSettings)).scalar_one_or_none()
-    if depot_settings and ensure_dns_for_vcf_offline_depot(db, depot_settings, actor=actor or "system", previous_hostname=depot_settings.hostname):
-        changed.append("VCF Offline Depot")
-    registry_settings = db.execute(select(VcfPrivateRegistrySettings)).scalar_one_or_none()
-    if registry_settings and ensure_dns_for_vcf_registry(db, registry_settings, actor=actor or "system", previous_hostname=registry_settings.hostname):
-        changed.append("VCF Private Registry")
-    ca_settings = db.execute(select(CaSettings)).scalar_one_or_none()
-    if ca_settings and ensure_dns_for_ca_portal(db, ca_settings, actor=actor, previous_hostname=ca_settings.portal_hostname):
-        changed.append("Certificate Authority")
-    esxi_action = ensure_dns_for_esxi_pxe(db, esxi_pxe_boot_settings(db), actor, previous_hostname=str(esxi_pxe_boot_settings(db).get("hostname") or ""))
-    if esxi_action:
-        changed.append("ESXi PXE")
-    esx_action = ensure_dns_for_esx_storage(db, actor, previous_hostname=get_esx_storage_settings_row(db).hostname)
-    if esx_action:
-        changed.append("ESX Storage")
-    return changed
+    return refresh_interface_service_dns_aliases(db, actor=actor)
 
 
 def available_dns_listen_addresses(
@@ -16962,6 +16975,9 @@ _settings_backup_ui = build_settings_backup_ui_router(
             *args, **kwargs
         ),
         ensure_dns_for_appliance_settings=lambda *args, **kwargs: ensure_dns_for_appliance_settings(
+            *args, **kwargs
+        ),
+        reconcile_factory_service_identities=lambda *args, **kwargs: reconcile_factory_service_identities(
             *args, **kwargs
         ),
         reconcile_service_dns_aliases=lambda *args, **kwargs: reconcile_service_dns_aliases(
