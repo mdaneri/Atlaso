@@ -72,6 +72,7 @@ depot_volume_created=0
 backup_volume_created=0
 owned_volume_names="$validation_root/owned-volumes"
 cleanup() {
+  domain_absent=0
   if [ "$created" -eq 1 ] && virsh dominfo "$name" >/dev/null 2>&1; then
     cleanup_safe=1
     : >"$owned_volume_names"
@@ -92,15 +93,21 @@ cleanup() {
     if [ "$cleanup_safe" -eq 1 ]; then
       virsh destroy "$name" >/dev/null 2>&1 || true
       virsh undefine "$name" --nvram >/dev/null 2>&1 || virsh undefine "$name" >/dev/null 2>&1 || true
-      while IFS= read -r volume_name; do
-        [ -n "$volume_name" ] || continue
-        virsh vol-delete --pool "$pool" "$volume_name" >/dev/null 2>&1 || true
-      done <"$owned_volume_names"
     else
       echo "Rollback preserved $name because an attached disk is outside the invocation-owned storage namespace." >&2
     fi
   fi
-  if [ "$created" -eq 1 ] && ! virsh dominfo "$name" >/dev/null 2>&1; then
+  if [ "$created" -eq 1 ]; then
+    # A failed dominfo call is not absence proof: libvirt itself may be
+    # unavailable. Only a successful inventory that omits the exact name lets
+    # rollback remove volumes from the invocation-owned locked namespace.
+    if domain_names=$(virsh list --all --name 2>/dev/null); then
+      if ! printf '%s\n' "$domain_names" | grep -Fxq -- "$name"; then
+        domain_absent=1
+      fi
+    fi
+  fi
+  if [ "$created" -eq 1 ] && [ "$domain_absent" -eq 1 ]; then
     # The locked name/pool namespace was empty before ownership began. Any
     # matching partial volume is therefore owned by this failed virt-v2v run.
     virsh vol-list "$pool" --name | while IFS= read -r volume_name; do
@@ -109,11 +116,14 @@ cleanup() {
       esac
     done
   fi
-  if [ "$depot_volume_created" -eq 1 ]; then
+  if [ "$depot_volume_created" -eq 1 ] && [ "$domain_absent" -eq 1 ]; then
     virsh vol-delete --pool "$pool" "$name-vcf-offline-depot.qcow2" >/dev/null 2>&1 || true
   fi
-  if [ "$backup_volume_created" -eq 1 ]; then
+  if [ "$backup_volume_created" -eq 1 ] && [ "$domain_absent" -eq 1 ]; then
     virsh vol-delete --pool "$pool" "$name-vcf-backups.qcow2" >/dev/null 2>&1 || true
+  fi
+  if [ "$created" -eq 1 ] && [ "$domain_absent" -ne 1 ]; then
+    echo "Rollback preserved $name volumes because exact domain absence could not be proved." >&2
   fi
   rm -rf -- "$validation_root"
 }

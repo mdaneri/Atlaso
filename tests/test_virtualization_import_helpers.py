@@ -59,6 +59,12 @@ def test_kvm_imports_the_unchanged_ova_and_normalizes_exact_contract() -> None:
     assert '"$name"-*' in script
     assert 'virsh vol-delete --pool "$pool" "$volume_name"' in script
     assert 'virsh vol-list "$pool" --name' in script
+    cleanup = script.split("cleanup() {", 1)[1].split("trap cleanup", 1)[0]
+    absence_proof = cleanup.index('domain_names=$(virsh list --all --name')
+    guarded_delete = cleanup.index('if [ "$created" -eq 1 ] && [ "$domain_absent" -eq 1 ]')
+    volume_delete = cleanup.index('virsh vol-delete')
+    assert absence_proof < guarded_delete < volume_delete
+    assert "exact domain absence could not be proved" in cleanup
     assert "photon-os.qcow2" not in script
     assert script.count('rm -rf -- "$validation_root"') == 2
 

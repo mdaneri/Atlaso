@@ -229,7 +229,8 @@ PowerShell 7.4 or newer, Hyper-V, `qemu-img`, and two operator-owned virtual swi
 namespace is invocation-scoped: VMware generates a disposable per-run password, Proxmox serializes each VMID import,
 and cleanup failures fail the active smoke job instead of allowing publication with retained provider state. Hyper-V
 cleanup removes only a VM whose exact ID was captured after successful import; an indeterminate import preserves files
-for diagnosis rather than claiming a later name match. Every smoke identity and storage namespace must be dedicated to
+for diagnosis rather than claiming a later name match. KVM rollback preserves every imported volume unless a successful
+libvirt inventory proves that the exact domain is absent. Every smoke identity and storage namespace must be dedicated to
 CI so cleanup can remain limited to resources created by that invocation. Release
 publication waits for all four platform smoke tests and refuses an asset at or above the repository's existing 2 GiB
 limit rather than producing multipart output.
