@@ -122,7 +122,15 @@ foreach ($required in @(
         'Remove-VM -VM $vm',
         '$vmRemovalVerified',
         'Get-VM -ErrorAction Stop | Where-Object Id -eq $vm.Id',
-        'if ($vmRootCreated'
+        'if ($vmRootCreated',
+        'Get-AtlasoHyperVWindowsFileId',
+        'Get-AtlasoHyperVDescendantIdentity',
+        '$ownedDescendantIds[[string]$disk.file]',
+        '$ownedDescendantIds.ContainsKey($_)',
+        'an unrecorded partial copy is preserved',
+        'root identity changed before filesystem deletion',
+        'descendant identity changed before filesystem deletion',
+        'files were preserved'
     )) {
     if (-not $importer.Contains($required)) {
         throw "The Hyper-V importer is missing required topology or rollback marker: $required"

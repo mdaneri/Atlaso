@@ -1097,6 +1097,7 @@ def test_photon_provisioning_prepares_attached_data_disks():
     assert "ATLASO_VMWARE_DEPOT_SCSI_TUPLE=0:2:0" in virtualization_policy
     assert "ATLASO_HYPERV_DEPOT_SCSI_TUPLE=0:0:2" in virtualization_policy
     assert "ATLASO_KVM_DEPOT_SCSI_TUPLE=0:0:2" in virtualization_policy
+    assert "ATLASO_BAREMETAL_DEPOT_SCSI_TUPLE=0:2:0" in virtualization_policy
     assert "validate_exact_disk_set" in mount_script
     assert "is_managed_esx_storage_disk" in mount_script
     assert "# BEGIN ATLASO ESX STORAGE" in mount_script

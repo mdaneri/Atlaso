@@ -494,7 +494,7 @@ def test_hyperv_first_boot_uses_fixed_controller_locations(tmp_path: Path):
     assert len(calls) == 2
 
 
-@pytest.mark.parametrize("platform", ("hyperv", "vmware", "qemu"))
+@pytest.mark.parametrize("platform", ("hyperv", "vmware", "qemu", "baremetal"))
 def test_checked_in_platform_policy_passes_first_boot_validation(
     tmp_path: Path, platform: str
 ) -> None:

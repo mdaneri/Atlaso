@@ -57,6 +57,11 @@ load_policy() {
         ATLASO_BACKUP_SCSI_TUPLE="${ATLASO_KVM_BACKUP_SCSI_TUPLE:-}"
         ATLASO_SYSTEM_SCSI_TUPLE="${ATLASO_KVM_SYSTEM_SCSI_TUPLE:-}"
         ;;
+      baremetal)
+        ATLASO_DEPOT_SCSI_TUPLE="${ATLASO_BAREMETAL_DEPOT_SCSI_TUPLE:-}"
+        ATLASO_BACKUP_SCSI_TUPLE="${ATLASO_BAREMETAL_BACKUP_SCSI_TUPLE:-}"
+        ATLASO_SYSTEM_SCSI_TUPLE="${ATLASO_BAREMETAL_SYSTEM_SCSI_TUPLE:-}"
+        ;;
       *) fail "unsupported virtualization platform ${virtualization_provider:-unknown}" ;;
     esac
   else

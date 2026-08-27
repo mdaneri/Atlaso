@@ -165,6 +165,11 @@ repository.
 - Bare metal removes VMware Tools and all virtual guest-agent payloads, then continues without an agent.
 - Unknown or contradictory platform evidence blocks appliance startup for diagnosis.
 
+The bare-metal selector branch applies only when the canonical portable four-disk set is attached with its declared
+SCSI layout; it uses the explicit system-content, Depot, and Backups identities at slots 1, 2, and 3. It does not select,
+partition, or adopt arbitrary physical disks. The separate offline installation ISO tracked in #542 owns interactive
+target selection and the physical-hardware disk-safety contract.
+
 Successful selection proves that only the expected agent is installed, then securely removes the RPM staging tree,
 checksum manifest, package-manager cache, and runtime scratch directory. Failure leaves the verified persistent RPM
 closure available for automatic retry while the Atlaso front door and application remain stopped.

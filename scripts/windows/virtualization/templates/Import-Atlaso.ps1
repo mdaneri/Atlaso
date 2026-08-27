@@ -24,6 +24,43 @@ param(
 $ErrorActionPreference = 'Stop'
 Set-StrictMode -Version Latest
 
+<#
+.SYNOPSIS
+Returns the stable Windows file identifier for an importer-owned path.
+.PARAMETER Path
+Existing file or directory whose identity must be captured.
+#>
+function Get-AtlasoHyperVWindowsFileId {
+    param([Parameter(Mandatory = $true)][string]$Path)
+
+    $output = @(& fsutil file queryfileid $Path 2>&1)
+    $fileIdMatches = @([regex]::Matches(($output -join "`n"), '0x[0-9A-Fa-f]+'))
+    if ($LASTEXITCODE -ne 0 -or $fileIdMatches.Count -ne 1) {
+        throw "Could not resolve one stable Windows file ID for: $Path"
+    }
+    return $fileIdMatches[0].Value.ToLowerInvariant()
+}
+
+<#
+.SYNOPSIS
+Snapshots every non-reparse descendant beneath an importer-owned VM root.
+.PARAMETER DirectoryPath
+Importer-owned VM directory to inventory.
+#>
+function Get-AtlasoHyperVDescendantIdentity {
+    param([Parameter(Mandatory = $true)][string]$DirectoryPath)
+
+    $identity = @{}
+    foreach ($item in @(Get-ChildItem -LiteralPath $DirectoryPath -Recurse -Force)) {
+        if (($item.Attributes -band [System.IO.FileAttributes]::ReparsePoint) -ne 0) {
+            throw "Hyper-V importer descendant cannot be a reparse point: $($item.FullName)"
+        }
+        $relativePath = [System.IO.Path]::GetRelativePath($DirectoryPath, $item.FullName)
+        $identity[$relativePath] = Get-AtlasoHyperVWindowsFileId -Path $item.FullName
+    }
+    return ,$identity
+}
+
 $packageRoot = (Get-Item -LiteralPath $PSScriptRoot -Force -ErrorAction Stop)
 if (-not $packageRoot.PSIsContainer -or
     ($packageRoot.Attributes -band [System.IO.FileAttributes]::ReparsePoint) -ne 0) {
@@ -159,14 +196,24 @@ if (Test-Path -LiteralPath $vmRoot) {
 }
 
 $vmRootCreated = $false
+$vmRootId = ''
+$ownedDescendantIds = @{}
 $vmCreated = $false
 $vm = $null
 try {
     New-Item -ItemType Directory -Path $vmRoot | Out-Null
     $vmRootCreated = $true
+    $vmRootItem = Get-Item -LiteralPath $vmRoot -Force -ErrorAction Stop
+    if (($vmRootItem.Attributes -band [System.IO.FileAttributes]::ReparsePoint) -ne 0) {
+        throw 'The created Hyper-V VM directory became a reparse point.'
+    }
+    $vmRootId = Get-AtlasoHyperVWindowsFileId -Path $vmRoot
     foreach ($disk in $manifestDisks) {
         $destinationDisk = Join-Path $vmRoot $disk.file
         Copy-Item -LiteralPath (Join-Path $packageRoot.FullName $disk.file) -Destination $destinationDisk
+        # Capture each completed invocation-owned copy before another operation
+        # can fail; an unrecorded partial copy is preserved rather than guessed.
+        $ownedDescendantIds[[string]$disk.file] = Get-AtlasoHyperVWindowsFileId -Path $destinationDisk
         $inspectedDisk = Get-VHD -Path $destinationDisk -ErrorAction Stop
         if ([string]$inspectedDisk.VhdFormat -ne 'VHDX' -or
             [string]$inspectedDisk.VhdType -ne 'Dynamic' -or
@@ -226,6 +273,12 @@ catch {
     # Never remove a VM that New-VM did not return to this invocation, even if a concurrent actor used the same name.
     if ($vmCreated -and $null -ne $vm) {
         try {
+            $vmRootItem = Get-Item -LiteralPath $vmRoot -Force -ErrorAction Stop
+            if (($vmRootItem.Attributes -band [System.IO.FileAttributes]::ReparsePoint) -ne 0 -or
+                (Get-AtlasoHyperVWindowsFileId -Path $vmRoot) -ne $vmRootId) {
+                throw 'The invocation-owned Hyper-V VM root identity changed before provider deletion.'
+            }
+            $ownedDescendantIds = Get-AtlasoHyperVDescendantIdentity -DirectoryPath $vmRoot
             Remove-VM -VM $vm -Force -ErrorAction Stop
             $matchingVm = @(Get-VM -ErrorAction Stop | Where-Object Id -eq $vm.Id)
             if ($matchingVm.Count -ne 0) {
@@ -239,7 +292,29 @@ catch {
         }
     }
     if ($vmRootCreated -and $vmRemovalVerified -and (Test-Path -LiteralPath $vmRoot)) {
-        Remove-Item -LiteralPath $vmRoot -Recurse -Force
+        try {
+            $vmRootItem = Get-Item -LiteralPath $vmRoot -Force -ErrorAction Stop
+            if (($vmRootItem.Attributes -band [System.IO.FileAttributes]::ReparsePoint) -ne 0 -or
+                (Get-AtlasoHyperVWindowsFileId -Path $vmRoot) -ne $vmRootId) {
+                throw 'The invocation-owned Hyper-V VM root identity changed before filesystem deletion.'
+            }
+            $currentDescendantIds = Get-AtlasoHyperVDescendantIdentity -DirectoryPath $vmRoot
+            $descendantChanged = @($currentDescendantIds.Keys | Where-Object {
+                    -not $ownedDescendantIds.ContainsKey($_) -or
+                    $ownedDescendantIds[$_] -ne $currentDescendantIds[$_]
+                })
+            if ($descendantChanged.Count -ne 0) {
+                throw 'The invocation-owned Hyper-V descendant identity changed before filesystem deletion.'
+            }
+            Remove-Item -LiteralPath $vmRoot -Recurse -Force -ErrorAction Stop
+            if (Test-Path -LiteralPath $vmRoot) {
+                throw 'The invocation-owned Hyper-V VM directory remains after filesystem deletion.'
+            }
+        }
+        catch {
+            throw "Hyper-V import failed and its VM directory could not be safely removed; files were preserved. " +
+                "Cleanup error: $($_.Exception.Message) Original error: $($importFailure.Exception.Message)"
+        }
     }
     throw $importFailure
 }
