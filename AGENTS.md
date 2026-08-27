@@ -518,6 +518,13 @@ The following cross-cutting boundaries always apply:
   private key. When that test-only property is present, publish only the VM's public Ed25519 SSH host key through a
   separate VMware guest-info value. Read, wire-validate, and fingerprint that host-derived value before displaying it
   for explicit `known_hosts` verification; never substitute unauthenticated `ssh-keyscan` output.
+  For each omitted `-AdminPassword` or `-RootPassword`, retrieve only the corresponding exact concealed
+  `DEFAULT_ADMIN_PASSWORD` or `DEFAULT_ROOT_PASSWORD` from that same verified Environment through the supported bounded
+  Windows 1Password SDK pattern. Each explicit `SecureString` remains authoritative for its credential. Keep plaintext
+  out of the PowerShell parent, arguments, caller-controlled environment, logs, output, markers, evidence,
+  documentation, and GitHub surfaces; use current-user DPAPI between bounded children. Reject caller environment
+  fallbacks, repository defaults, local `.env` files, and interactive password prompts. Credential failure must precede
+  network preparation, cleanup, disk reset, and cloning, while `-WhatIf` remains credential-free.
   The wrapper also owns the sole development-root exception to per-appliance CA generation: require the exact `Atlaso`
   1Password Environment's concealed `ATLASO_DEVELOPMENT_ROOT_CA_PRIVATE_KEY`, validate it against the checked-in public
   `Atlaso Development Root CA` before mutation, pin and verify the exact Environment ID by SHA-256 before invoking `op`,

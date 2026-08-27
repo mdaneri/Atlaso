@@ -1348,6 +1348,8 @@ Then run:
 ```powershell
 pwsh -ExecutionPolicy Bypass `
   -File scripts/windows/vmware/create-atlaso-test-vm.ps1 `
+  -OnePasswordAccount '<account-name-or-id>' `
+  -OnePasswordPython '<path-to-python-3.13.exe>' `
   -Redeploy `
   -ResetDataDisks
 ```
@@ -1358,12 +1360,22 @@ separate test-only passwordless-sudo rule. Use `-SshPublicKeyPath <path>` for an
 `-SkipSshKeyProvisioning` to preserve password-backed access. It never generates or copies a private key. Lifecycle
 VMs, exported OVF/OVA appliances, and root SSH remain unchanged. Normal test VMs use the checked-in public
 `Atlaso Development Root CA` and the matching concealed
-`ATLASO_DEVELOPMENT_ROOT_CA_PRIVATE_KEY` from the exact `Atlaso` 1Password Environment. The wrapper requires the opaque
+`ATLASO_DEVELOPMENT_ROOT_CA_PRIVATE_KEY` from the exact `Atlaso` 1Password Environment. That Environment also contains
+exactly one concealed `DEFAULT_ADMIN_PASSWORD` and `DEFAULT_ROOT_PASSWORD`. The wrapper requires the opaque
 Environment ID for real creation, preferring an explicit `-OnePasswordEnvironmentId` override and otherwise reading the
 single-line `.atlaso-local/onepassword-environment-id` file ignored by Git. It verifies the ID against the non-secret
 repository SHA-256 pin before invoking `op`, requires the Environments-enabled beta CLI installed under
 `C:\Program Files\1Password CLI`, validates `op run --environment`, and cryptographically verifies the retrieved
-certificate/key pair before mutation. It uses a bounded child and a separately scrubbed guest-info value.
+certificate/key pair before mutation. For each omitted `-AdminPassword` or `-RootPassword`, it independently retrieves
+only the corresponding exact concealed default through the supported 1Password SDK desktop integration. An explicit
+`SecureString` remains authoritative for that credential. Pass the approved account name or ID with
+`-OnePasswordAccount` and an SDK-supported CPython 3.10 through 3.13 executable with `-OnePasswordPython`. The parent
+receives only current-user DPAPI ciphertext; a second bounded child stages the DPAPI-protected OVF environment into the
+exact new VMX. There are no interactive password prompts, caller-environment fallbacks, repository defaults, or local
+`.env` inputs. SDK or credential failure occurs before network preparation, cleanup, disk reset, or cloning, and
+`-WhatIf` never prepares the SDK or accesses credentials. Before VMX credential staging, a durable child-active marker
+ensures an unproven process-tree termination blocks cleanup or redeploy until a later host boot proves the child gone.
+It uses a bounded child and a separately scrubbed guest-info value for the signer.
 `-TimeoutSeconds` requires proven complete
 `op`/secret-child process-tree termination before a staging failure may enter signer scrub or VM rollback. Boot-bound
 marker phases also cover VM start and artifact removal. An unproven termination preserves the VM and VMX, or keeps

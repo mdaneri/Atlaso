@@ -86,8 +86,17 @@ An exact existing trust entry is reused without reimport.
 
 .PARAMETER OnePasswordEnvironmentId
 Opaque ID of the exact Atlaso 1Password Environment containing the concealed
-ATLASO_DEVELOPMENT_ROOT_CA_PRIVATE_KEY variable. When omitted, the wrapper reads
-the single-line .atlaso-local\onepassword-environment-id file from the checkout.
+ATLASO_DEVELOPMENT_ROOT_CA_PRIVATE_KEY, DEFAULT_ADMIN_PASSWORD, and
+DEFAULT_ROOT_PASSWORD variables. When omitted, the wrapper reads the single-line
+.atlaso-local\onepassword-environment-id file from the checkout.
+
+.PARAMETER OnePasswordAccount
+1Password account name or ID approved for desktop SDK authorization when either
+first-boot credential is omitted.
+
+.PARAMETER OnePasswordPython
+CPython 3.10 through 3.13 executable used by the supported Windows 1Password SDK
+bridge when either first-boot credential is omitted.
 
 .PARAMETER EnvironmentIdFile
 Optional path to a single-line local Environment ID file. The checkout-local,
@@ -98,10 +107,12 @@ legacy OnePasswordEnvironmentIdFile name remains available as an alias.
 Optional first-boot appliance FQDN override.
 
 .PARAMETER AdminPassword
-Initial Atlaso and Photon bootstrap administrator password. The wrapper prompts securely when omitted.
+Initial Atlaso and Photon bootstrap administrator password. When omitted, the
+bounded SDK child retrieves DEFAULT_ADMIN_PASSWORD from the exact Environment.
 
 .PARAMETER RootPassword
-Initial Photon root console password. The wrapper prompts securely when omitted.
+Initial Photon root console password. When omitted, the bounded SDK child
+retrieves DEFAULT_ROOT_PASSWORD from the exact Environment.
 
 .PARAMETER RootSshEnabled
 Enable password-backed root SSH for this test VM; disabled by default.
@@ -121,7 +132,17 @@ root-CA readiness.
 [Diagnostics.CodeAnalysis.SuppressMessageAttribute(
     'PSAvoidUsingPlainTextForPassword',
     'OnePasswordEnvironmentId',
-    Justification = 'Opaque Environment identifier; the bounded child retrieves the concealed signing key.'
+    Justification = 'Opaque Environment identifier; bounded children retrieve concealed values.'
+)]
+[Diagnostics.CodeAnalysis.SuppressMessageAttribute(
+    'PSAvoidUsingPlainTextForPassword',
+    'OnePasswordAccount',
+    Justification = 'Desktop authorization account identifier, not an account password.'
+)]
+[Diagnostics.CodeAnalysis.SuppressMessageAttribute(
+    'PSAvoidUsingPlainTextForPassword',
+    'OnePasswordPython',
+    Justification = 'Path to the approved Python interpreter, not a password.'
 )]
 [CmdletBinding(SupportsShouldProcess = $true)]
 param(
@@ -147,6 +168,8 @@ param(
     [switch]$WaitForIp,
     [switch]$TrustRootCa,
     [string]$OnePasswordEnvironmentId = '',
+    [string]$OnePasswordAccount = '',
+    [string]$OnePasswordPython = '',
     [Alias('OnePasswordEnvironmentIdFile')]
     [string]$EnvironmentIdFile = '',
     [string]$FirstBootFqdn = '',
@@ -369,6 +392,416 @@ function Invoke-OnePasswordDevelopmentCaChild {
         -ArgumentList $arguments `
         -TimeoutSeconds $TimeoutSeconds `
         -Action "The bounded 1Password development-CA $Action child" | Out-Null
+}
+
+<#
+.SYNOPSIS
+Validate the non-secret 1Password account selector used by desktop authorization.
+
+.PARAMETER Account
+1Password account name or ID.
+#>
+function Assert-OnePasswordTestVmAccount {
+    param([Parameter(Mandatory = $true)][string]$Account)
+
+    if ([string]::IsNullOrWhiteSpace($Account) -or $Account.Length -gt 255 -or $Account -match '[\x00-\x1f\x7f]') {
+        throw 'OnePasswordAccount is required and must be a bounded 1Password account name or ID.'
+    }
+}
+
+<#
+.SYNOPSIS
+Resolve a Python runtime supported by the 1Password SDK Windows wheel.
+
+.PARAMETER PythonCommand
+Explicit CPython 3.10 through 3.13 executable or command.
+
+.PARAMETER TimeoutSeconds
+Positive deadline for the version probe.
+#>
+function Resolve-OnePasswordTestVmPython {
+    param(
+        [Parameter(Mandatory = $true)][string]$PythonCommand,
+        [Parameter(Mandatory = $true)][ValidateRange(1, 3600)][int]$TimeoutSeconds
+    )
+
+    $command = Get-Command -Name $PythonCommand -CommandType Application -ErrorAction SilentlyContinue
+    if (-not $command) {
+        throw "The 1Password SDK Python executable was not found: $PythonCommand."
+    }
+    $resolvedCommand = $command.Source
+    $version = (Invoke-AtlasoBoundedProcess `
+            -FilePath $resolvedCommand `
+            -ArgumentList @('-I', '-S', '-c', 'import sys; print(f"{sys.version_info.major}.{sys.version_info.minor}")') `
+            -TimeoutSeconds ([Math]::Min($TimeoutSeconds, 30)) `
+            -Action 'The 1Password SDK Python version probe').Trim()
+    if ($version -notmatch '^3\.1[0-3]$') {
+        throw 'Omitted VMware test-VM credentials require CPython 3.10 through 3.13 for the locked 1Password SDK Windows runtime.'
+    }
+    return $resolvedCommand
+}
+
+<#
+.SYNOPSIS
+Prepare the isolated hash-locked 1Password SDK runtime.
+
+.PARAMETER PythonCommand
+Approved CPython 3.10 through 3.13 executable.
+
+.PARAMETER RepositoryRoot
+Atlaso checkout containing requirements-onepassword-deploy.lock.
+
+.PARAMETER BridgeRoot
+Private task-specific temporary root for wheels and installed dependencies.
+
+.PARAMETER TimeoutSeconds
+Positive deadline for each dependency operation.
+#>
+function Initialize-OnePasswordTestVmSdkRuntime {
+    param(
+        [Parameter(Mandatory = $true)][string]$PythonCommand,
+        [Parameter(Mandatory = $true)][string]$RepositoryRoot,
+        [Parameter(Mandatory = $true)][string]$BridgeRoot,
+        [Parameter(Mandatory = $true)][ValidateRange(1, 3600)][int]$TimeoutSeconds
+    )
+
+    $lockPath = Join-Path $RepositoryRoot 'requirements-onepassword-deploy.lock'
+    if (-not (Test-Path -LiteralPath $lockPath -PathType Leaf)) {
+        throw "The vetted 1Password deployment lock is unavailable: $lockPath."
+    }
+    $wheelDirectory = Join-Path $BridgeRoot 'wheels'
+    $dependencyDirectory = Join-Path $BridgeRoot 'python-dependencies'
+    [void][System.IO.Directory]::CreateDirectory($wheelDirectory)
+    [void][System.IO.Directory]::CreateDirectory($dependencyDirectory)
+
+    # Download is the only index-enabled step. Installation is deliberately
+    # offline from the exact hash-verified wheel set, matching deploy-wheel.ps1.
+    Invoke-AtlasoBoundedProcess `
+        -FilePath $PythonCommand `
+        -ArgumentList @(
+            '-I', '-m', 'pip', 'download',
+            '--disable-pip-version-check',
+            '--index-url', 'https://pypi.org/simple',
+            '--require-hashes',
+            '--only-binary=:all:',
+            '--dest', $wheelDirectory,
+            '-r', $lockPath
+        ) `
+        -TimeoutSeconds $TimeoutSeconds `
+        -Action 'The hash-verified 1Password SDK wheel download' | Out-Null
+    Invoke-AtlasoBoundedProcess `
+        -FilePath $PythonCommand `
+        -ArgumentList @(
+            '-I', '-m', 'pip', 'install',
+            '--disable-pip-version-check',
+            '--no-index',
+            '--find-links', $wheelDirectory,
+            '--require-hashes',
+            '--target', $dependencyDirectory,
+            '-r', $lockPath
+        ) `
+        -TimeoutSeconds $TimeoutSeconds `
+        -Action 'The isolated offline 1Password SDK runtime preparation' | Out-Null
+    return $dependencyDirectory
+}
+
+<#
+.SYNOPSIS
+Translate a safe credential-bridge status code into an actionable error.
+
+.PARAMETER Code
+Machine-readable status emitted by the bounded credential helper.
+#>
+function Get-AtlasoTestVmCredentialBridgeError {
+    param([Parameter(Mandatory = $true)][string]$Code)
+
+    $message = switch ($Code) {
+        'sdk_configuration_missing' {
+            'Omitted VMware test-VM credentials require OnePasswordAccount and OnePasswordPython for the supported 1Password SDK bridge.'
+        }
+        'sdk_access_failed' {
+            '1Password desktop authorization or exact Atlaso Environment access failed; no VMware network, VM, or disk mutation was attempted.'
+        }
+        'admin_variable_invalid' {
+            'The exact Atlaso 1Password Environment must contain exactly one concealed DEFAULT_ADMIN_PASSWORD variable.'
+        }
+        'root_variable_invalid' {
+            'The exact Atlaso 1Password Environment must contain exactly one concealed DEFAULT_ROOT_PASSWORD variable.'
+        }
+        'admin_password_invalid' {
+            'DEFAULT_ADMIN_PASSWORD or the explicit AdminPassword does not satisfy the Atlaso first-boot credential policy.'
+        }
+        'root_password_invalid' {
+            'DEFAULT_ROOT_PASSWORD or the explicit RootPassword does not satisfy the Atlaso first-boot credential policy.'
+        }
+        'sdk_runtime_invalid' {
+            'The isolated 1Password SDK runtime could not be loaded; no VMware mutation was attempted.'
+        }
+        'sdk_output_protection_failed' {
+            'The bounded 1Password child could not protect its credential result with current-user DPAPI.'
+        }
+        'credential_ciphertext_invalid' {
+            'The current-user DPAPI credential handoff could not be decrypted in the bounded serializer child.'
+        }
+        'ovf_input_invalid' {
+            'The bounded credential serializer rejected a non-secret first-boot input.'
+        }
+        'stage_input_invalid' {
+            'The bounded credential stage did not receive the exact new VMX and protected OVF bundle.'
+        }
+        'stage_failed' {
+            'The bounded credential stage could not update the exact new VMX.'
+        }
+        default {
+            "The bounded VMware test-VM credential bridge failed safely ($Code)."
+        }
+    }
+    return $message
+}
+
+<#
+.SYNOPSIS
+Remove one exact task-created credential bridge root.
+
+.PARAMETER BridgeRoot
+Exact private temporary root returned by New-AtlasoTestVmCredentialBridgeState.
+#>
+function Remove-AtlasoTestVmCredentialBridgeState {
+    param([Parameter(Mandatory = $true)][string]$BridgeRoot)
+
+    if (-not (Test-Path -LiteralPath $BridgeRoot)) {
+        return
+    }
+    $resolvedBridgeRoot = [System.IO.Path]::GetFullPath($BridgeRoot).TrimEnd('\')
+    $resolvedTempRoot = [System.IO.Path]::GetFullPath([System.IO.Path]::GetTempPath()).TrimEnd('\')
+    $bridgeName = [System.IO.Path]::GetFileName($resolvedBridgeRoot)
+    if (
+        -not $resolvedBridgeRoot.StartsWith(
+            $resolvedTempRoot + '\',
+            [System.StringComparison]::OrdinalIgnoreCase
+        ) -or
+        -not $bridgeName.StartsWith('atlaso-test-vm-credentials-', [System.StringComparison]::Ordinal)
+    ) {
+        throw "Refusing to remove an unrecognized credential bridge root: $resolvedBridgeRoot"
+    }
+    $bridgeItem = Get-Item -LiteralPath $resolvedBridgeRoot -Force
+    if (($bridgeItem.Attributes -band [System.IO.FileAttributes]::ReparsePoint) -ne 0) {
+        throw "Refusing to remove a reparse-point credential bridge root: $resolvedBridgeRoot"
+    }
+    foreach ($sensitiveName in @(
+            'request.json',
+            'status.json',
+            'stage-status.json',
+            'onepassword-defaults.json',
+            'first-boot-ovf.dpapi',
+            'atlaso-test-vm-onepassword.py'
+        )) {
+        $sensitivePath = Join-Path $resolvedBridgeRoot $sensitiveName
+        if (Test-Path -LiteralPath $sensitivePath -PathType Leaf) {
+            [System.IO.File]::Delete($sensitivePath)
+        }
+    }
+    [System.IO.Directory]::Delete($resolvedBridgeRoot, $true)
+    if (Test-Path -LiteralPath $resolvedBridgeRoot) {
+        throw "Credential bridge cleanup did not remove the exact task-created root: $resolvedBridgeRoot"
+    }
+}
+
+<#
+.SYNOPSIS
+Prepare a DPAPI-protected first-boot OVF bundle before VMware mutation.
+
+.PARAMETER RepositoryRoot
+Atlaso checkout root.
+
+.PARAMETER EnvironmentId
+Opaque ID of the already pinned and verified Atlaso Environment.
+
+.PARAMETER OnePasswordAccount
+Account name or ID used for desktop SDK authorization when a default is needed.
+
+.PARAMETER OnePasswordPython
+CPython 3.10 through 3.13 executable used when a default is needed.
+
+.PARAMETER AdminPassword
+Optional explicit administrator SecureString override.
+
+.PARAMETER RootPassword
+Optional explicit root SecureString override.
+
+.PARAMETER Fqdn
+Validated first-boot appliance FQDN.
+
+.PARAMETER RootSshEnabled
+Whether first boot enables password-backed root SSH.
+
+.PARAMETER DevelopmentAdminSshPublicKey
+Optional validated development administrator public key.
+
+.PARAMETER DevelopmentRootCaCertificatePem
+Checked-in public development root certificate.
+
+.PARAMETER TimeoutSeconds
+Positive deadline for dependency and credential children.
+#>
+function New-AtlasoTestVmCredentialBridgeState {
+    param(
+        [Parameter(Mandatory = $true)][string]$RepositoryRoot,
+        [Parameter(Mandatory = $true)][string]$EnvironmentId,
+        [string]$OnePasswordAccount = '',
+        [string]$OnePasswordPython = '',
+        [SecureString]$AdminPassword,
+        [SecureString]$RootPassword,
+        [Parameter(Mandatory = $true)][string]$Fqdn,
+        [Parameter(Mandatory = $true)][bool]$RootSshEnabled,
+        [AllowEmptyString()][string]$DevelopmentAdminSshPublicKey = '',
+        [Parameter(Mandatory = $true)][string]$DevelopmentRootCaCertificatePem,
+        [Parameter(Mandatory = $true)][ValidateRange(1, 3600)][int]$TimeoutSeconds
+    )
+
+    if ($env:DEFAULT_ADMIN_PASSWORD -or $env:DEFAULT_ROOT_PASSWORD) {
+        throw 'DEFAULT_ADMIN_PASSWORD and DEFAULT_ROOT_PASSWORD must not be supplied by the caller; use the exact Atlaso 1Password Environment bridge.'
+    }
+    $bridgeRoot = Join-Path ([System.IO.Path]::GetTempPath()) (
+        "atlaso-test-vm-credentials-$([guid]::NewGuid().ToString('N'))"
+    )
+    [void][System.IO.Directory]::CreateDirectory($bridgeRoot)
+    try {
+        $requestPath = Join-Path $bridgeRoot 'request.json'
+        $statusPath = Join-Path $bridgeRoot 'status.json'
+        $ovfBundlePath = Join-Path $bridgeRoot 'first-boot-ovf.dpapi'
+        $needsDefaults = $null -eq $AdminPassword -or $null -eq $RootPassword
+        $request = [ordered]@{
+            AdminPasswordCiphertext       = if ($null -eq $AdminPassword) {
+                ''
+            }
+            else {
+                ConvertFrom-SecureString -SecureString $AdminPassword
+            }
+            RootPasswordCiphertext        = if ($null -eq $RootPassword) {
+                ''
+            }
+            else {
+                ConvertFrom-SecureString -SecureString $RootPassword
+            }
+            Fqdn                          = $Fqdn
+            RootSshEnabled                = $RootSshEnabled
+            DevelopmentAdminSshPublicKey  = $DevelopmentAdminSshPublicKey
+            DevelopmentRootCaCertificatePem = $DevelopmentRootCaCertificatePem
+        }
+        [System.IO.File]::WriteAllText(
+            $requestPath,
+            ($request | ConvertTo-Json -Compress),
+            [System.Text.UTF8Encoding]::new($false)
+        )
+
+        $resolvedPython = ''
+        $dependencyPath = ''
+        if ($needsDefaults) {
+            Assert-OnePasswordTestVmAccount -Account $OnePasswordAccount
+            if ([string]::IsNullOrWhiteSpace($OnePasswordPython)) {
+                throw 'OnePasswordPython is required when AdminPassword or RootPassword is omitted.'
+            }
+            $resolvedPython = Resolve-OnePasswordTestVmPython `
+                -PythonCommand $OnePasswordPython `
+                -TimeoutSeconds $TimeoutSeconds
+            $dependencyPath = Initialize-OnePasswordTestVmSdkRuntime `
+                -PythonCommand $resolvedPython `
+                -RepositoryRoot $RepositoryRoot `
+                -BridgeRoot $bridgeRoot `
+                -TimeoutSeconds $TimeoutSeconds
+        }
+
+        $helperPath = Join-Path $PSScriptRoot 'Invoke-AtlasoTestVmCredentials.ps1'
+        $arguments = @(
+            '-NoLogo', '-NoProfile', '-NonInteractive', '-File', $helperPath,
+            '-Action', 'Prepare',
+            '-RequestPath', $requestPath,
+            '-StatusPath', $statusPath,
+            '-OvfBundlePath', $ovfBundlePath,
+            '-TimeoutSeconds', "$TimeoutSeconds"
+        )
+        if ($needsDefaults) {
+            $arguments += @(
+                '-PythonCommand', $resolvedPython,
+                '-DependencyPath', $dependencyPath,
+                '-OnePasswordAccount', $OnePasswordAccount,
+                '-EnvironmentId', $EnvironmentId
+            )
+        }
+        Invoke-AtlasoBoundedProcess `
+            -FilePath (Get-Process -Id $PID).Path `
+            -ArgumentList $arguments `
+            -TimeoutSeconds $TimeoutSeconds `
+            -Action 'The bounded VMware test-VM credential preparation child' | Out-Null
+        if (-not (Test-Path -LiteralPath $statusPath -PathType Leaf)) {
+            throw 'The bounded VMware test-VM credential child returned no safe status.'
+        }
+        $status = [System.IO.File]::ReadAllText($statusPath) | ConvertFrom-Json
+        if (-not [bool]$status.Success) {
+            throw (Get-AtlasoTestVmCredentialBridgeError -Code ([string]$status.Code))
+        }
+        if (-not (Test-Path -LiteralPath $ovfBundlePath -PathType Leaf)) {
+            throw 'The bounded VMware test-VM credential child returned no protected OVF bundle.'
+        }
+        return [pscustomobject]@{
+            Root          = $bridgeRoot
+            OvfBundlePath = $ovfBundlePath
+        }
+    }
+    catch {
+        $failure = $_
+        try {
+            Remove-AtlasoTestVmCredentialBridgeState -BridgeRoot $bridgeRoot
+        }
+        catch {
+            throw "$($failure.Exception.Message) Credential bridge cleanup also failed: $($_.Exception.Message)"
+        }
+        throw $failure
+    }
+}
+
+<#
+.SYNOPSIS
+Stage a prepared DPAPI-protected OVF bundle into the exact new VMX.
+
+.PARAMETER BridgeState
+Protected credential bridge state returned by the preparation function.
+
+.PARAMETER VmxPath
+Exact newly created VMX path.
+
+.PARAMETER TimeoutSeconds
+Positive deadline for the staging child.
+#>
+function Invoke-AtlasoTestVmCredentialStage {
+    param(
+        [Parameter(Mandatory = $true)][psobject]$BridgeState,
+        [Parameter(Mandatory = $true)][string]$VmxPath,
+        [Parameter(Mandatory = $true)][ValidateRange(1, 3600)][int]$TimeoutSeconds
+    )
+
+    $statusPath = Join-Path $BridgeState.Root 'stage-status.json'
+    Invoke-AtlasoBoundedProcess `
+        -FilePath (Get-Process -Id $PID).Path `
+        -ArgumentList @(
+            '-NoLogo', '-NoProfile', '-NonInteractive', '-File',
+            (Join-Path $PSScriptRoot 'Invoke-AtlasoTestVmCredentials.ps1'),
+            '-Action', 'Stage',
+            '-StatusPath', $statusPath,
+            '-OvfBundlePath', $BridgeState.OvfBundlePath,
+            '-VmxPath', $VmxPath,
+            '-TimeoutSeconds', "$TimeoutSeconds"
+        ) `
+        -TimeoutSeconds $TimeoutSeconds `
+        -Action 'The bounded VMware test-VM credential staging child' | Out-Null
+    if (-not (Test-Path -LiteralPath $statusPath -PathType Leaf)) {
+        throw 'The bounded VMware test-VM credential stage returned no safe status.'
+    }
+    $status = [System.IO.File]::ReadAllText($statusPath) | ConvertFrom-Json
+    if (-not [bool]$status.Success) {
+        throw (Get-AtlasoTestVmCredentialBridgeError -Code ([string]$status.Code))
+    }
 }
 
 <#
@@ -1068,6 +1501,7 @@ function Set-AtlasoDevelopmentCaCleanupMarkerPhase {
         [string]$ExpectedPhase,
         [Parameter(Mandatory = $true)]
         [ValidateSet(
+            'secret-child-active',
             'staged',
             'vm-start-child-active',
             'vm-stop-child-active',
@@ -1094,7 +1528,7 @@ function Set-AtlasoDevelopmentCaCleanupMarkerPhase {
     }
     $validTransition = switch ($ExpectedPhase) {
         'secret-child-active' { $Phase -cin @('staged', 'stopped-vmx-scrubbed') }
-        'staged' { $Phase -cin @('vm-start-child-active', 'vm-stop-child-active', 'stopped-vmx-scrubbed', 'retired') }
+        'staged' { $Phase -cin @('secret-child-active', 'vm-start-child-active', 'vm-stop-child-active', 'stopped-vmx-scrubbed', 'retired') }
         'vm-start-child-active' { $Phase -cin @('staged', 'stopped-vmx-scrubbed') }
         'vm-stop-child-active' { $Phase -cin @('staged', 'import-proven-stopped-vmx-scrubbed') }
         'import-proven-stopped-vmx-scrubbed' { $Phase -cin @('vm-stop-child-active', 'vm-restart-child-active') }
@@ -2154,18 +2588,6 @@ if (-not $WhatIfPreference) {
         -TimeoutSeconds $TimeoutSeconds
 }
 
-# Ask for VM credentials only after credential-independent recovery and the
-# Environment preflight succeed, but before network preparation or VM mutation.
-# Read-Host returns SecureString without recreating a repository default.
-if (-not $WhatIfPreference) {
-    if ($null -eq $AdminPassword) {
-        $AdminPassword = Read-Host -Prompt 'Atlaso bootstrap administrator password' -AsSecureString
-    }
-    if ($null -eq $RootPassword) {
-        $RootPassword = Read-Host -Prompt 'Photon root console password' -AsSecureString
-    }
-}
-
 # Key input validation intentionally precedes network preparation, cleanup, disk
 # reset, and cloning so an authentication setup error preserves every existing VM.
 if ($SkipSshKeyProvisioning -and $PSBoundParameters.ContainsKey('SshPublicKeyPath')) {
@@ -2182,20 +2604,26 @@ if (-not $SkipSshKeyProvisioning) {
 if (-not $FirstBootFqdn) {
     $FirstBootFqdn = New-AtlasoWorkstationFqdn -Name $Name
 }
-$firstBootOvfEnvironment = ''
+$credentialBridgeState = $null
 if (-not $WhatIfPreference) {
-    # OVF serialization is itself a plaintext boundary, so preview execution
-    # must remain credential-free instead of fabricating unused values.
-    $firstBootOvfEnvironment = New-AtlasoWorkstationOvfEnvironment `
-        -Fqdn $FirstBootFqdn `
+    # The parent converts explicit SecureStrings only to current-user DPAPI
+    # ciphertext. Retrieved defaults and OVF plaintext exist solely in bounded
+    # children, and all credential failures precede provider preparation.
+    $credentialBridgeState = New-AtlasoTestVmCredentialBridgeState `
+        -RepositoryRoot $repoRoot `
+        -EnvironmentId $OnePasswordEnvironmentId `
+        -OnePasswordAccount $OnePasswordAccount `
+        -OnePasswordPython $OnePasswordPython `
         -AdminPassword $AdminPassword `
         -RootPassword $RootPassword `
-        -RootSshEnabled:$RootSshEnabled `
-        -NormalTestVm `
+        -Fqdn $FirstBootFqdn `
+        -RootSshEnabled ([bool]$RootSshEnabled) `
         -DevelopmentAdminSshPublicKey $developmentAdminSshPublicKey `
-        -DevelopmentRootCaCertificatePem $developmentRootCaCertificatePem
+        -DevelopmentRootCaCertificatePem $developmentRootCaCertificatePem `
+        -TimeoutSeconds $TimeoutSeconds
 }
 
+try {
 if ($SkipLabNetworkAdapters -and $IncludeLabNetworkAdapters) {
     throw "Pass either -SkipLabNetworkAdapters or -IncludeLabNetworkAdapters, not both."
 }
@@ -2286,44 +2714,102 @@ if (Test-Path -LiteralPath $resolvedOutputDirectory -PathType Container) {
 
 $createdThisInvocation = $false
 $developmentCaCleanupMarkerPath = ''
+$credentialStageFailure = $null
+$credentialBridgeCleanupError = ''
 if ($PSCmdlet.ShouldProcess($targetVmx, "Create Atlaso Workstation test VM from $resolvedSourceVmx")) {
-    & (Join-Path $PSScriptRoot 'create-atlaso-vm.ps1') `
-        -Name $Name `
-        -ApplianceVmxPath $resolvedSourceVmx `
-        -OutputDirectory $resolvedOutputDirectory `
-        -VmrunPath $VmrunPath `
-        -VdiskManagerPath $VdiskManagerPath `
-        -DepotVmdkPath $resolvedDepotVmdkPath `
-        -BackupVmdkPath $resolvedBackupVmdkPath `
-        -DepotDiskSize $DepotDiskSize `
-        -BackupDiskSize $BackupDiskSize `
-        -ManagementNetwork $ManagementNetwork `
-        -SiteANetwork $SiteANetwork `
-        -SiteBNetwork $SiteBNetwork `
-        -TrunkNetwork $TrunkNetwork `
-        -SkipLabNetworkAdapters:$effectiveSkipLabNetworkAdapters
-    if (-not $?) {
-        throw "Atlaso VMware Workstation VM creation failed."
+        & (Join-Path $PSScriptRoot 'create-atlaso-vm.ps1') `
+            -Name $Name `
+            -ApplianceVmxPath $resolvedSourceVmx `
+            -OutputDirectory $resolvedOutputDirectory `
+            -VmrunPath $VmrunPath `
+            -VdiskManagerPath $VdiskManagerPath `
+            -DepotVmdkPath $resolvedDepotVmdkPath `
+            -BackupVmdkPath $resolvedBackupVmdkPath `
+            -DepotDiskSize $DepotDiskSize `
+            -BackupDiskSize $BackupDiskSize `
+            -ManagementNetwork $ManagementNetwork `
+            -SiteANetwork $SiteANetwork `
+            -SiteBNetwork $SiteBNetwork `
+            -TrunkNetwork $TrunkNetwork `
+            -SkipLabNetworkAdapters:$effectiveSkipLabNetworkAdapters
+        if (-not $?) {
+            throw "Atlaso VMware Workstation VM creation failed."
+        }
+        $createdThisInvocation = $true
+        try {
+            # Credential staging can rewrite the new VMX. Publish the same
+            # restart-safe child-active marker used by signer staging before
+            # launching it, so an unproven process tree blocks later cleanup.
+            $developmentCaCleanupMarkerPath = New-AtlasoDevelopmentCaCleanupMarker `
+                -VmxPath $targetVmx `
+                -Name $Name `
+                -OutputDirectory $resolvedOutputDirectory `
+                -DataDiskStates $rollbackDataDiskStates
+            try {
+                Invoke-AtlasoTestVmCredentialStage `
+                    -BridgeState $credentialBridgeState `
+                    -VmxPath $targetVmx `
+                    -TimeoutSeconds $TimeoutSeconds
+            }
+            catch {
+                $stageFailure = $_
+                if ($stageFailure.Exception.Data['AtlasoProcessTreeTerminationUnproven'] -ne $true) {
+                    Set-AtlasoDevelopmentCaCleanupMarkerPhase `
+                        -MarkerPath $developmentCaCleanupMarkerPath `
+                        -ExpectedPhase secret-child-active `
+                        -Phase staged
+                }
+                throw $stageFailure
+            }
+            Set-AtlasoDevelopmentCaCleanupMarkerPhase `
+                -MarkerPath $developmentCaCleanupMarkerPath `
+                -ExpectedPhase secret-child-active `
+                -Phase staged
+        }
+        catch {
+            # Defer the failure until after the DPAPI bridge cleanup attempt,
+            # then enter the shared identity-bound VM rollback below.
+            $credentialStageFailure = $_
+        }
+}
+}
+finally {
+    if ($null -ne $credentialBridgeState) {
+        try {
+            Remove-AtlasoTestVmCredentialBridgeState -BridgeRoot $credentialBridgeState.Root
+        }
+        catch {
+            $credentialBridgeCleanupError = $_.Exception.Message
+        }
+        $credentialBridgeState = $null
     }
-    Set-AtlasoWorkstationOvfEnvironment -VmxPath $targetVmx -OvfEnvironment $firstBootOvfEnvironment
-    $createdThisInvocation = $true
 }
 
 if (-not $createdThisInvocation -and -not $WhatIfPreference) {
+    if ($credentialBridgeCleanupError) {
+        throw "Normal test VM creation was not approved, and credential bridge cleanup failed: $credentialBridgeCleanupError"
+    }
     Write-Host 'Normal test VM creation was not approved; no development signing key was staged.' -ForegroundColor Yellow
     return
 }
 
 if (-not $WhatIfPreference) {
     try {
-        # The durable, non-secret marker is committed before the signer is
-        # staged. Any interruption thereafter blocks subsequent wrappers until
-        # the exact failed VM is stopped and its VMX signer assignment scrubbed.
-        $developmentCaCleanupMarkerPath = New-AtlasoDevelopmentCaCleanupMarker `
-            -VmxPath $targetVmx `
-            -Name $Name `
-            -OutputDirectory $resolvedOutputDirectory `
-            -DataDiskStates $rollbackDataDiskStates
+        if ($null -ne $credentialStageFailure) {
+            if ($credentialBridgeCleanupError) {
+                throw "$($credentialStageFailure.Exception.Message) Credential bridge cleanup also failed: $credentialBridgeCleanupError"
+            }
+            throw $credentialStageFailure
+        }
+        if ($credentialBridgeCleanupError) {
+            throw "Credential bridge cleanup failed before signer staging: $credentialBridgeCleanupError"
+        }
+        # Re-enter child-active state before the signer child can rewrite the
+        # exact VMX. Any unproven termination keeps restart-safe recovery active.
+        Set-AtlasoDevelopmentCaCleanupMarkerPhase `
+            -MarkerPath $developmentCaCleanupMarkerPath `
+            -ExpectedPhase staged `
+            -Phase secret-child-active
         try {
             Invoke-OnePasswordDevelopmentCaChild `
                 -EnvironmentId $OnePasswordEnvironmentId `

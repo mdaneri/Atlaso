@@ -1597,6 +1597,9 @@ def test_vmware_raw_vmx_workflows_inject_complete_first_boot_ovf_environment_bef
     """Verify raw Workstation clones receive the same complete first-boot contract as OVA deployments."""
     helper = Path("scripts/windows/vmware/Atlaso.WorkstationFirstBoot.ps1").read_text(encoding="utf-8")
     test_vm = Path("scripts/windows/vmware/create-atlaso-test-vm.ps1").read_text(encoding="utf-8")
+    test_vm_credentials = Path(
+        "scripts/windows/vmware/Invoke-AtlasoTestVmCredentials.ps1"
+    ).read_text(encoding="utf-8")
     lifecycle = Path("scripts/windows/vmware/run-lifecycle-test.ps1").read_text(encoding="utf-8")
     lifecycle_wrapper = Path("scripts/windows/vmware/invoke-lifecycle-test.ps1").read_text(encoding="utf-8")
     customizer = Path("scripts/appliance/atlaso-vmware-ovf-customize.py").read_text(
@@ -1651,13 +1654,15 @@ def test_vmware_raw_vmx_workflows_inject_complete_first_boot_ovf_environment_bef
     assert 'run_initialization_layer("test VM hostname", publish_test_vm_hostname)' in customizer
 
     assert "Atlaso.WorkstationFirstBoot.ps1" in test_vm
-    assert "New-AtlasoWorkstationOvfEnvironment" in test_vm
-    assert "-NormalTestVm" in test_vm
-    assert "Set-AtlasoWorkstationOvfEnvironment -VmxPath $targetVmx" in test_vm
+    assert "New-AtlasoWorkstationOvfEnvironment" in test_vm_credentials
+    assert "-NormalTestVm" in test_vm_credentials
+    assert "Set-AtlasoWorkstationOvfEnvironment -VmxPath $VmxPath" in test_vm_credentials
     assert "Invoke-OnePasswordDevelopmentCaChild" in test_vm
+    assert "Invoke-AtlasoTestVmCredentialStage" in test_vm
     assert "Wait-AtlasoWorkstationDevelopmentRootCaPrivateKeyScrub" in test_vm
-    ovf_injection = test_vm.index("Set-AtlasoWorkstationOvfEnvironment -VmxPath $targetVmx")
-    assert ovf_injection < test_vm.index("start-atlaso-vm.ps1", ovf_injection)
+    assert test_vm.index("Invoke-AtlasoTestVmCredentialStage") < test_vm.index(
+        "start-atlaso-vm.ps1"
+    )
 
     assert "Atlaso.WorkstationFirstBoot.ps1" in lifecycle
     assert "New-AtlasoWorkstationOvfEnvironment" in lifecycle
@@ -1686,17 +1691,15 @@ def test_vmware_raw_vmx_workflows_inject_complete_first_boot_ovf_environment_bef
     assert "Remove-Item -LiteralPath $secretBundlePath -Force" in lifecycle_wrapper
     assert "[SecureString]$AdminPassword" in test_vm
     assert "[SecureString]$RootPassword" in test_vm
-    assert "Read-Host -Prompt 'Atlaso bootstrap administrator password' -AsSecureString" in test_vm
-    assert "Read-Host -Prompt 'Photon root console password' -AsSecureString" in test_vm
-    credential_prompt_block = test_vm.split(
-        "# Ask for VM credentials only after credential-independent recovery", 1
-    )[1].split("# Key input validation intentionally precedes", 1)[0]
-    assert "if (-not $WhatIfPreference)" in credential_prompt_block
-    ovf_block = test_vm.split("$firstBootOvfEnvironment = ''", 1)[1].split(
+    assert "Read-Host -Prompt 'Atlaso bootstrap administrator password' -AsSecureString" not in test_vm
+    assert "Read-Host -Prompt 'Photon root console password' -AsSecureString" not in test_vm
+    ovf_block = test_vm.split("$credentialBridgeState = $null", 1)[1].split(
         "if ($SkipLabNetworkAdapters", 1
     )[0]
     assert "if (-not $WhatIfPreference)" in ovf_block
-    assert "New-AtlasoWorkstationOvfEnvironment" in ovf_block
+    assert "New-AtlasoTestVmCredentialBridgeState" in ovf_block
+    assert "DEFAULT_ADMIN_PASSWORD" in test_vm_credentials
+    assert "DEFAULT_ROOT_PASSWORD" in test_vm_credentials
     assert "complete Atlaso first-boot OVF environment" in docs
     assert "plan and result artifacts" in docs
     normal_test_vm_docs = docs.split("## Normal Test VM", 1)[1].split("## Fidelity Boundary", 1)[0]
