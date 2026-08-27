@@ -5205,8 +5205,10 @@ checkout-local, Git-ignored configuration file. Input is masked and is never pri
 <p>Then run:</p>
 <div class="language-powershell highlight"><pre><span></span><code><span id="__span-30-1"><a id="__codelineno-30-1" name="__codelineno-30-1" href="#__codelineno-30-1"></a><span class="n">pwsh</span> <span class="n">-ExecutionPolicy</span> <span class="n">Bypass</span> <span class="p">`</span>
 </span><span id="__span-30-2"><a id="__codelineno-30-2" name="__codelineno-30-2" href="#__codelineno-30-2"></a>  <span class="o">-File</span> <span class="n">scripts</span><span class="p">/</span><span class="n">windows</span><span class="p">/</span><span class="n">vmware</span><span class="p">/</span><span class="n">create-atlaso-test-vm</span><span class="p">.</span><span class="n">ps1</span> <span class="p">`</span>
-</span><span id="__span-30-3"><a id="__codelineno-30-3" name="__codelineno-30-3" href="#__codelineno-30-3"></a>  <span class="n">-Redeploy</span> <span class="p">`</span>
-</span><span id="__span-30-4"><a id="__codelineno-30-4" name="__codelineno-30-4" href="#__codelineno-30-4"></a>  <span class="n">-ResetDataDisks</span>
+</span><span id="__span-30-3"><a id="__codelineno-30-3" name="__codelineno-30-3" href="#__codelineno-30-3"></a>  <span class="n">-OnePasswordAccount</span> <span class="s1">&#39;&lt;account-name-or-id&gt;&#39;</span> <span class="p">`</span>
+</span><span id="__span-30-4"><a id="__codelineno-30-4" name="__codelineno-30-4" href="#__codelineno-30-4"></a>  <span class="n">-OnePasswordPython</span> <span class="s1">&#39;&lt;path-to-python-3.13.exe&gt;&#39;</span> <span class="p">`</span>
+</span><span id="__span-30-5"><a id="__codelineno-30-5" name="__codelineno-30-5" href="#__codelineno-30-5"></a>  <span class="n">-Redeploy</span> <span class="p">`</span>
+</span><span id="__span-30-6"><a id="__codelineno-30-6" name="__codelineno-30-6" href="#__codelineno-30-6"></a>  <span class="n">-ResetDataDisks</span>
 </span></code></pre></div>
 <p>The normal wrapper resolves the current Windows user's existing <code>.ssh/id_ed25519.pub</code> before any cleanup or VM
 creation, validates it as one canonical Ed25519 public key, and provisions it for the bootstrap <code>admin</code> account with a
@@ -5214,12 +5216,22 @@ separate test-only passwordless-sudo rule. Use <code>-SshPublicKeyPath &lt;path&
 <code>-SkipSshKeyProvisioning</code> to preserve password-backed access. It never generates or copies a private key. Lifecycle
 VMs, exported OVF/OVA appliances, and root SSH remain unchanged. Normal test VMs use the checked-in public
 <code>Atlaso Development Root CA</code> and the matching concealed
-<code>ATLASO_DEVELOPMENT_ROOT_CA_PRIVATE_KEY</code> from the exact <code>Atlaso</code> 1Password Environment. The wrapper requires the opaque
+<code>ATLASO_DEVELOPMENT_ROOT_CA_PRIVATE_KEY</code> from the exact <code>Atlaso</code> 1Password Environment. That Environment also contains
+exactly one concealed <code>DEFAULT_ADMIN_PASSWORD</code> and <code>DEFAULT_ROOT_PASSWORD</code>. The wrapper requires the opaque
 Environment ID for real creation, preferring an explicit <code>-OnePasswordEnvironmentId</code> override and otherwise reading the
 single-line <code>.atlaso-local/onepassword-environment-id</code> file ignored by Git. It verifies the ID against the non-secret
 repository SHA-256 pin before invoking <code>op</code>, requires the Environments-enabled beta CLI installed under
 <code>C:\Program Files\1Password CLI</code>, validates <code>op run --environment</code>, and cryptographically verifies the retrieved
-certificate/key pair before mutation. It uses a bounded child and a separately scrubbed guest-info value.
+certificate/key pair before mutation. For each omitted <code>-AdminPassword</code> or <code>-RootPassword</code>, it independently retrieves
+only the corresponding exact concealed default through the supported 1Password SDK desktop integration. An explicit
+<code>SecureString</code> remains authoritative for that credential. Pass the approved account name or ID with
+<code>-OnePasswordAccount</code> and an SDK-supported CPython 3.10 through 3.13 executable with <code>-OnePasswordPython</code>. The parent
+receives only current-user DPAPI ciphertext; a second bounded child stages the DPAPI-protected OVF environment into the
+exact new VMX. There are no interactive password prompts, caller-environment fallbacks, repository defaults, or local
+<code>.env</code> inputs. SDK or credential failure occurs before network preparation, cleanup, disk reset, or cloning, and
+<code>-WhatIf</code> never prepares the SDK or accesses credentials. Before VMX credential staging, a durable child-active marker
+ensures an unproven process-tree termination blocks cleanup or redeploy until a later host boot proves the child gone.
+It uses a bounded child and a separately scrubbed guest-info value for the signer.
 <code>-TimeoutSeconds</code> requires proven complete
 <code>op</code>/secret-child process-tree termination before a staging failure may enter signer scrub or VM rollback. Boot-bound
 marker phases also cover VM start and artifact removal. An unproven termination preserves the VM and VMX, or keeps

@@ -3824,10 +3824,12 @@ the checkout-local, Git-ignored configuration file. The prompt is masked and the
 <p>Then use the ordinary command without an ID argument:</p>
 <div class="language-powershell highlight"><pre><span></span><code><span id="__span-6-1"><a id="__codelineno-6-1" name="__codelineno-6-1" href="#__codelineno-6-1"></a><span class="n">pwsh</span> <span class="n">-ExecutionPolicy</span> <span class="n">Bypass</span> <span class="p">`</span>
 </span><span id="__span-6-2"><a id="__codelineno-6-2" name="__codelineno-6-2" href="#__codelineno-6-2"></a>  <span class="o">-File</span> <span class="n">scripts</span><span class="p">/</span><span class="n">windows</span><span class="p">/</span><span class="n">vmware</span><span class="p">/</span><span class="n">create-atlaso-test-vm</span><span class="p">.</span><span class="n">ps1</span> <span class="p">`</span>
-</span><span id="__span-6-3"><a id="__codelineno-6-3" name="__codelineno-6-3" href="#__codelineno-6-3"></a>  <span class="n">-Redeploy</span> <span class="p">`</span>
-</span><span id="__span-6-4"><a id="__codelineno-6-4" name="__codelineno-6-4" href="#__codelineno-6-4"></a>  <span class="n">-ResetDataDisks</span> <span class="p">`</span>
-</span><span id="__span-6-5"><a id="__codelineno-6-5" name="__codelineno-6-5" href="#__codelineno-6-5"></a>  <span class="n">-WaitForIp</span> <span class="p">`</span>
-</span><span id="__span-6-6"><a id="__codelineno-6-6" name="__codelineno-6-6" href="#__codelineno-6-6"></a>  <span class="n">-TrustRootCa</span>
+</span><span id="__span-6-3"><a id="__codelineno-6-3" name="__codelineno-6-3" href="#__codelineno-6-3"></a>  <span class="n">-OnePasswordAccount</span> <span class="s1">&#39;&lt;account-name-or-id&gt;&#39;</span> <span class="p">`</span>
+</span><span id="__span-6-4"><a id="__codelineno-6-4" name="__codelineno-6-4" href="#__codelineno-6-4"></a>  <span class="n">-OnePasswordPython</span> <span class="s1">&#39;&lt;path-to-python-3.13.exe&gt;&#39;</span> <span class="p">`</span>
+</span><span id="__span-6-5"><a id="__codelineno-6-5" name="__codelineno-6-5" href="#__codelineno-6-5"></a>  <span class="n">-Redeploy</span> <span class="p">`</span>
+</span><span id="__span-6-6"><a id="__codelineno-6-6" name="__codelineno-6-6" href="#__codelineno-6-6"></a>  <span class="n">-ResetDataDisks</span> <span class="p">`</span>
+</span><span id="__span-6-7"><a id="__codelineno-6-7" name="__codelineno-6-7" href="#__codelineno-6-7"></a>  <span class="n">-WaitForIp</span> <span class="p">`</span>
+</span><span id="__span-6-8"><a id="__codelineno-6-8" name="__codelineno-6-8" href="#__codelineno-6-8"></a>  <span class="n">-TrustRootCa</span>
 </span></code></pre></div>
 <p>It defaults to the management vmnet only; pass <code>-IncludeLabNetworkAdapters</code> after creating the SiteA, WAN/SiteB, and
 trunk-like vmnets.
@@ -3845,9 +3847,21 @@ replace the VMX during power-on. After first boot proves encrypted import and VM
 sentinel, the wrapper stops the exact VM, removes and verifies the powered-off signing-key assignment, restarts it, and
 requires three empty runtime readbacks before retiring the marker.
 The wrapper injects the same complete DHCP-first OVF environment before power-on. Use <code>-FirstBootFqdn</code> for the test
-identity. <code>-AdminPassword</code> and <code>-RootPassword</code> accept only <code>SecureString</code> objects; when omitted, the wrapper prompts
-securely after pending signer recovery and Environment validation, but before network preparation or new VM mutation.
-Neither credential has a repository default.
+identity. Pass the approved 1Password account name or ID through <code>-OnePasswordAccount</code> and an SDK-supported CPython
+3.10 through 3.13 executable through <code>-OnePasswordPython</code>. <code>-AdminPassword</code> and <code>-RootPassword</code> accept only
+<code>SecureString</code> objects. When either parameter is omitted, the wrapper retrieves only that credential's exact concealed
+<code>DEFAULT_ADMIN_PASSWORD</code> or <code>DEFAULT_ROOT_PASSWORD</code> from the already verified Environment through the supported
+1Password SDK desktop integration. Each explicit parameter remains independently authoritative; there are no password
+prompts, caller-environment fallbacks, repository defaults, or local <code>.env</code> inputs.</p>
+<p>The SDK runtime is built from the hash-locked deployment wheel set and invoked only after credential-independent signer
+recovery, exact Environment verification, and local input validation. It returns only current-user DPAPI ciphertext to
+the PowerShell parent. A second bounded child stages the DPAPI-protected OVF environment into the exact new VMX.
+Authorization, Environment, variable uniqueness, concealment, value validation, runtime, or timeout failure stops
+before network preparation, redeploy cleanup, data-disk reset, or cloning. <code>-WhatIf</code> does not prepare the SDK, authorize
+1Password, or retrieve either credential. Password plaintext never enters parent memory, process arguments,
+caller-controlled environment, logs, output, markers, evidence, documentation, or GitHub surfaces. The wrapper commits
+durable child-active recovery state before the VMX staging child starts. If whole-tree termination cannot be proven,
+later cleanup or redeploy remains blocked until a new host boot proves that child is gone.
 It also resolves the current Windows user's existing <code>.ssh/id_ed25519.pub</code> before any network preparation, cleanup, or
 VM creation, installs that Ed25519 public key for <code>admin</code>, and adds a separate test-only passwordless-sudo rule. Pass
 <code>-SshPublicKeyPath &lt;path&gt;</code> to select another existing Ed25519 public key, or <code>-SkipSshKeyProvisioning</code> to retain
