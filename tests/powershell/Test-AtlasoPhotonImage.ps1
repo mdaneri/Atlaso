@@ -36,6 +36,60 @@ function ConvertTo-TestSecureString {
 
 $modulePath = Join-Path $RepositoryRoot 'scripts/windows/common/Atlaso.PhotonImage.psm1'
 $module = Import-Module $modulePath -Force -PassThru
+$emptyCleanupLedgerRoot = Join-Path $OutputDirectory 'empty-cleanup-ledger'
+New-Item -ItemType Directory -Force -Path $emptyCleanupLedgerRoot | Out-Null
+$emptyCleanupLedger = [System.Collections.Generic.List[string]]::new()
+$fixtureScript = Join-Path $emptyCleanupLedgerRoot 'create-fixture.py'
+$fixtureSourceIso = Join-Path $emptyCleanupLedgerRoot 'source.iso'
+$fixtureKickstart = Join-Path $emptyCleanupLedgerRoot 'photon-ks.json'
+$fixtureOutputIso = Join-Path $emptyCleanupLedgerRoot 'prepared.iso'
+[System.IO.File]::WriteAllText($fixtureKickstart, '{}')
+[System.IO.File]::WriteAllText(
+    $fixtureScript,
+    @'
+import io
+import sys
+import pycdlib
+
+iso = pycdlib.PyCdlib()
+iso.new(interchange_level=3, rock_ridge="1.09")
+iso.add_directory("/BOOT", rr_name="boot")
+iso.add_directory("/BOOT/GRUB2", rr_name="grub2")
+payload = b"set default=0\n"
+iso.add_fp(io.BytesIO(payload), len(payload), iso_path="/BOOT/GRUB2/GRUB.CFG;1", rr_name="grub.cfg")
+iso.write(sys.argv[1])
+iso.close()
+'@
+)
+$pythonPath = (Get-Command python -ErrorAction Stop).Source
+& $pythonPath $fixtureScript $fixtureSourceIso
+if ($LASTEXITCODE -ne 0) {
+    throw 'Could not create the remaster source ISO fixture.'
+}
+& $module {
+    param(
+        [string]$SourceIso,
+        [string]$KickstartJson,
+        [string]$OutputIso,
+        [System.Collections.Generic.List[string]]$CleanupPaths
+    )
+    New-AtlasoRemasteredPhotonIso `
+        -SourceIso $SourceIso `
+        -KickstartJson $KickstartJson `
+        -OutputIso $OutputIso `
+        -CleanupPaths $CleanupPaths
+} $fixtureSourceIso $fixtureKickstart $fixtureOutputIso $emptyCleanupLedger
+if ($emptyCleanupLedger.Count -ne 2 -or
+    -not $emptyCleanupLedger[0].StartsWith($emptyCleanupLedgerRoot, [System.StringComparison]::OrdinalIgnoreCase) -or
+    $emptyCleanupLedger[1] -cne $fixtureOutputIso -or
+    -not (Test-Path -LiteralPath $fixtureOutputIso -PathType Leaf)) {
+    throw 'Fresh remastering did not promote its ISO through the initially empty cleanup ledger.'
+}
+$emptyCleanupLedger | ForEach-Object {
+    if (Test-Path -LiteralPath $_) {
+        Remove-Item -LiteralPath $_ -Force
+    }
+}
 $rejectedPreparedIsoPath = Join-Path $OutputDirectory 'rejected-credential-bearing.iso'
 $rejectedSecurePassword = ConvertTo-TestSecureString -Value 'non-secret-test-credential'
 try {

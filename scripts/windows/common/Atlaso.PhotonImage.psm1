@@ -361,7 +361,7 @@ function New-AtlasoRemasteredPhotonIso {
         [Parameter(Mandatory = $true)][string]$SourceIso,
         [Parameter(Mandatory = $true)][string]$KickstartJson,
         [Parameter(Mandatory = $true)][string]$OutputIso,
-        [Parameter(Mandatory = $true)][System.Collections.Generic.List[string]]$CleanupPaths
+        [Parameter(Mandatory = $true)][AllowEmptyCollection()][System.Collections.Generic.List[string]]$CleanupPaths
     )
 
     $repoRoot = Resolve-Path -LiteralPath (Join-Path $PSScriptRoot '..\..\..')
@@ -391,7 +391,7 @@ function New-AtlasoRemasteredPhotonIso {
     # the final path become task-owned and eligible for credential cleanup.
     $CleanupPaths.Add($OutputIso)
     Move-Item -LiteralPath $attemptIsoPath -Destination $OutputIso -Force -ErrorAction Stop
-    if (Test-Path -LiteralPath $attemptIsoPath -or -not (Test-Path -LiteralPath $OutputIso -PathType Leaf)) {
+    if ((Test-Path -LiteralPath $attemptIsoPath) -or -not (Test-Path -LiteralPath $OutputIso -PathType Leaf)) {
         throw "Remastered Photon ISO promotion did not complete: $OutputIso"
     }
 }
