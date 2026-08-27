@@ -661,6 +661,18 @@ def _appliance_update_action_unit_name(job_id: str, stream: str) -> str:
     return f"{SYSTEMD_RUN_ACTION_UNIT_PREFIX}-{identity}"
 
 
+def _appliance_update_status_unit_name(job_id: str) -> str:
+    """Return the fixed systemd identity for one task's status transitions.
+
+    Args:
+        job_id: Exact Appliance Update parent identifier.
+    """
+    if re.fullmatch(r"job_[0-9a-f]{12}", job_id) is None:
+        raise ValueError("Appliance Update status transition task identity is invalid")
+    identity = hashlib.sha256(f"{job_id}:status-transition".encode("utf-8")).hexdigest()[:32]
+    return f"{SYSTEMD_RUN_ACTION_UNIT_PREFIX}-{identity}"
+
+
 def _appliance_update_action_unit_from_config(args: list[str]) -> str | None:
     """Return a fixed helper unit when the manifest contains one exact stream.
 
@@ -735,8 +747,19 @@ def _run_real_action_with_systemd(group: str, action: str, args: list[str]) -> i
     """
     helper_path = str(Path(__file__).resolve())
     unit_name = _systemd_run_action_unit_name()
-    if group == "appliance-update" and action == "apply":
-        unit_name = _appliance_update_action_unit_from_config(args) or unit_name
+    if group == "appliance-update":
+        if action == "apply":
+            unit_name = _appliance_update_action_unit_from_config(args) or unit_name
+        elif action in {"status-publish", "status-finish"}:
+            if len(args) != 1:
+                print(f"{action} requires exactly one task id", file=sys.stderr)
+                return 2
+            try:
+                unit_name = _appliance_update_status_unit_name(args[0])
+                _quiesce_appliance_update_status_unit(args[0])
+            except ValueError as exc:
+                print(f"Appliance Update status transition serialization failed: {exc}", file=sys.stderr)
+                return 1
     command = [
         shutil.which("systemd-run") or "systemd-run",
         "--quiet",
@@ -20990,18 +21013,15 @@ def _quiesce_management_handoff_unit(unit_name: str, unit_label: str) -> dict[st
     }
 
 
-def _quiesce_appliance_update_action_unit(job_id: str, stream: str) -> dict[str, object]:
-    """Stop and verify one fixed-identity Appliance Update helper action.
+def _quiesce_appliance_update_unit(unit_name: str) -> dict[str, object]:
+    """Stop and verify one fixed-identity Appliance Update helper unit.
 
     Args:
-        job_id: Exact Appliance Update parent identifier.
-        stream: Interrupted child stream whose helper must be quiescent.
+        unit_name: Exact systemd service unit selected for serialization.
 
     Returns:
         Bounded systemd unit evidence without command or environment contents.
     """
-    unit_name = f"{_appliance_update_action_unit_name(job_id, stream)}.service"
-
     def verified_state(result: subprocess.CompletedProcess[str], stage: str) -> str:
         """Return one bounded systemd active state or fail closed.
 
@@ -21036,6 +21056,35 @@ def _quiesce_appliance_update_action_unit(job_id: str, stream: str) -> dict[str,
     if final_state in {"active", "activating", "deactivating", "reloading"}:
         raise ValueError("surviving Appliance Update helper did not stop")
     return {"unit": unit_name, "state": final_state, "stopped": stopped}
+
+
+def _quiesce_appliance_update_action_unit(job_id: str, stream: str) -> dict[str, object]:
+    """Stop and verify one fixed-identity Appliance Update stream helper.
+
+    Args:
+        job_id: Exact Appliance Update parent identifier.
+        stream: Interrupted child stream whose helper must be quiescent.
+
+    Returns:
+        Bounded systemd unit evidence without command or environment contents.
+    """
+    return _quiesce_appliance_update_unit(
+        f"{_appliance_update_action_unit_name(job_id, stream)}.service"
+    )
+
+
+def _quiesce_appliance_update_status_unit(job_id: str) -> dict[str, object]:
+    """Stop and verify a surviving status transition before any retry.
+
+    Args:
+        job_id: Exact Appliance Update parent identifier.
+
+    Returns:
+        Bounded systemd unit evidence without command or environment contents.
+    """
+    return _quiesce_appliance_update_unit(
+        f"{_appliance_update_status_unit_name(job_id)}.service"
+    )
 
 
 def _quiesce_management_handoff_apply() -> dict[str, object]:

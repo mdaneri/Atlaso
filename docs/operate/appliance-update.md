@@ -84,6 +84,9 @@ runtime files use no-follow atomic replacement and file/directory synchronizatio
 listener must return three consecutive 503 samples before installation begins. If publication cannot be proven, no
 selected stream starts and the task fails terminally. Atlaso records successful hold activation only after listener
 proof, so rolling back an initial publication cannot recreate a marker that never became active.
+Publication and restoration share one task-bound transient-helper identity. Before either transition retries, the helper
+stops and verifies any surviving transition with that identity; an unverified survivor blocks the retry so an older
+publication cannot undo a newer hold.
 
 Parent completion does not by itself reopen ordinary UIs. For a started release child, restoration independently
 requires the matching definitive finalizer, `/etc/atlaso/update-info`, active-release link, signed receipt identity,

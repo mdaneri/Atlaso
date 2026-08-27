@@ -8168,6 +8168,92 @@ def test_appliance_update_quiescence_stops_and_verifies_the_exact_unit(monkeypat
     assert evidence == {"unit": unit, "state": "inactive", "stopped": True}
 
 
+@pytest.mark.parametrize("action", ["status-publish", "status-finish"])
+def test_appliance_update_status_transitions_serialize_one_fixed_task_unit(
+    monkeypatch,
+    action,
+):
+    """Quiesce one durable status unit before publishing or finishing.
+
+    Args:
+        monkeypatch: Pytest fixture used to capture systemd execution.
+        action: Status transition selected for the retry.
+    """
+    helper = load_helper_module()
+    commands = []
+    quiesced = []
+    job_id = "job_012345abcdef"
+    monkeypatch.setattr(
+        helper.shutil,
+        "which",
+        lambda command: "/usr/bin/systemd-run" if command == "systemd-run" else None,
+    )
+    monkeypatch.setattr(
+        helper,
+        "_appliance_update_powershell_environment",
+        lambda: {
+            "HOME": "/var/lib/atlaso/powershell",
+            "XDG_CACHE_HOME": "/var/lib/atlaso/powershell/.cache",
+            "XDG_CONFIG_HOME": "/var/lib/atlaso/powershell/.config",
+            "XDG_DATA_HOME": "/var/lib/atlaso/powershell/.local/share",
+        },
+    )
+    monkeypatch.setattr(
+        helper,
+        "_quiesce_appliance_update_status_unit",
+        lambda observed_job_id: quiesced.append(observed_job_id) or {"state": "inactive"},
+    )
+    monkeypatch.setattr(
+        helper,
+        "_run",
+        lambda command: commands.append(command)
+        or subprocess.CompletedProcess(command, 0, "", ""),
+    )
+
+    assert helper._run_real_action_with_systemd(
+        "appliance-update",
+        action,
+        [job_id],
+    ) == 0
+
+    unit = helper._appliance_update_status_unit_name(job_id)
+    assert quiesced == [job_id]
+    assert f"--unit={unit}" in commands[0]
+    assert re.fullmatch(r"atlaso-helper-action-[0-9a-f]{32}", unit)
+
+
+def test_appliance_update_status_transition_fails_closed_on_quiescence_failure(
+    monkeypatch,
+    capsys,
+):
+    """Refuse a status retry while its prior fixed-identity helper may survive.
+
+    Args:
+        monkeypatch: Pytest fixture used to replace systemd execution.
+        capsys: Pytest fixture used to capture the bounded failure.
+    """
+    helper = load_helper_module()
+    monkeypatch.setattr(
+        helper,
+        "_quiesce_appliance_update_status_unit",
+        lambda _job_id: (_ for _ in ()).throw(ValueError("surviving helper did not stop")),
+    )
+    monkeypatch.setattr(
+        helper,
+        "_run",
+        lambda _command: (_ for _ in ()).throw(
+            AssertionError("a replacement helper must not start")
+        ),
+    )
+
+    assert helper._run_real_action_with_systemd(
+        "appliance-update",
+        "status-publish",
+        ["job_012345abcdef"],
+    ) == 1
+    assert "serialization failed" in capsys.readouterr().err
+
+
 @pytest.mark.parametrize(
     "action",
     [
