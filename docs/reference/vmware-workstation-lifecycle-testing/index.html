@@ -3840,6 +3840,10 @@ malformed ID fails with an actionable preflight error before network preparation
 mutation. The wrapper verifies its SHA-256 identity against the repository pin without printing the ID. Install the
 Environments-enabled beta 1Password CLI under <code>C:\Program Files\1Password CLI</code>; a stable CLI without
 <code>op run --environment</code> fails before Environment access. A wrong Environment ID or signer fails before new VM mutation.
+The cleanup marker uses a non-secret identity stored in the VMX, not the VMX file ID alone, because Workstation may
+replace the VMX during power-on. After first boot proves encrypted import and VMware reports the exact empty runtime
+sentinel, the wrapper stops the exact VM, removes and verifies the powered-off signing-key assignment, restarts it, and
+requires three empty runtime readbacks before retiring the marker.
 The wrapper injects the same complete DHCP-first OVF environment before power-on. Use <code>-FirstBootFqdn</code> for the test
 identity. <code>-AdminPassword</code> and <code>-RootPassword</code> accept only <code>SecureString</code> objects; when omitted, the wrapper prompts
 securely after pending signer recovery and Environment validation, but before network preparation or new VM mutation.
@@ -3883,7 +3887,9 @@ idempotent for missing files and safely handles dotted user-profile directories 
 cleanup race or path alias cannot stop the readiness retry loop. Use <code>-TimeoutSeconds</code> to change the secret-child, IP,
 and CA deadlines; rollback mutates the VM only after staging and start child-tree termination is proven. It also keeps
 reused disks quarantined while an artifact-removal child may survive. An unproven termination preserves the durable
-marker until a Windows host restart provides that proof.</p>
+marker until a Windows host restart provides that proof.
+If this final stop/scrub/restart sequence is interrupted, rerun the same wrapper command. The pending marker resumes
+before 1Password preflight or any new network, disk, or VM mutation; do not edit the marker or VMX manually.</p>
 <h2 id="fidelity-boundary">Fidelity Boundary<a class="headerlink" href="#fidelity-boundary" title="Permanent link">&para;</a></h2>
 <p>For ESX Storage appliance acceptance, attach an extra blank VMDK to the normal Workstation test appliance, initialize it
 only through global <code>esx_storage</code> apply, and apply the matching DNS/DHCP and Firewall units. Record the job ID,
