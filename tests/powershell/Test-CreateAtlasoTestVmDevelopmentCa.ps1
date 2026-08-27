@@ -379,6 +379,104 @@ if (
 ) {
     throw 'Cleanup-marker publication must use a Windows write-through rename before signer staging.'
 }
+$cleanupIdentityWriter = $wrapperSource.IndexOf(
+    'function Set-AtlasoTestVmCleanupIdentity',
+    [System.StringComparison]::Ordinal
+)
+$cleanupIdentityLock = $wrapperSource.IndexOf(
+    '[System.IO.FileShare]::Read',
+    $cleanupIdentityWriter,
+    [System.StringComparison]::Ordinal
+)
+$cleanupIdentityVerification = $wrapperSource.IndexOf(
+    '[Atlaso.WorkstationFileIdentity]::Get($resolvedVmxPath) -cne $ExpectedVmxIdentity',
+    $cleanupIdentityLock,
+    [System.StringComparison]::Ordinal
+)
+$cleanupIdentityAppend = $wrapperSource.IndexOf(
+    '$stream.Write($bytes, 0, $bytes.Length)',
+    $cleanupIdentityVerification,
+    [System.StringComparison]::Ordinal
+)
+$cleanupIdentityFlush = $wrapperSource.IndexOf(
+    '$stream.Flush($true)',
+    $cleanupIdentityAppend,
+    [System.StringComparison]::Ordinal
+)
+$cleanupIdentityFunctionEnd = $wrapperSource.IndexOf(
+    'function Get-AtlasoTestVmCleanupIdentityHash',
+    $cleanupIdentityWriter,
+    [System.StringComparison]::Ordinal
+)
+if (
+    $cleanupIdentityWriter -lt 0 -or
+    $cleanupIdentityLock -lt $cleanupIdentityWriter -or
+    $cleanupIdentityVerification -lt $cleanupIdentityLock -or
+    $cleanupIdentityAppend -lt $cleanupIdentityVerification -or
+    $cleanupIdentityFlush -lt $cleanupIdentityAppend -or
+    $cleanupIdentityFlush -gt $markerCreation
+) {
+    throw 'Cleanup identity publication must be identity-bound, locked, and durably flushed before marker publication.'
+}
+if (
+    $cleanupIdentityFunctionEnd -lt $cleanupIdentityWriter -or
+    $wrapperSource.Substring(
+        $cleanupIdentityWriter,
+        $cleanupIdentityFunctionEnd - $cleanupIdentityWriter
+    ) -match 'Write-AtlasoWorkstationDurableVmxLines|MoveFileEx'
+) {
+    throw 'Pre-marker cleanup identity publication must preserve the original VMX file object.'
+}
+$cleanupIdentityRoot = Join-Path ([System.IO.Path]::GetTempPath()) (
+    "atlaso-cleanup-identity-lock-$([guid]::NewGuid().ToString('N'))"
+)
+try {
+    New-Item -ItemType Directory -Path $cleanupIdentityRoot | Out-Null
+    $cleanupIdentityVmx = Join-Path $cleanupIdentityRoot 'Atlaso-Cleanup-Identity.vmx'
+    [System.IO.File]::WriteAllText(
+        $cleanupIdentityVmx,
+        'displayName = "Atlaso Cleanup Identity"',
+        [System.Text.UTF8Encoding]::new($false)
+    )
+    $cleanupVmxIdentity = [Atlaso.WorkstationFileIdentity]::Get($cleanupIdentityVmx)
+    $cleanupOriginal = [System.IO.File]::ReadAllText($cleanupIdentityVmx)
+    $cleanupMismatch = '00000000:0000000000000000'
+    if ($cleanupVmxIdentity -ceq $cleanupMismatch) {
+        $cleanupMismatch = 'FFFFFFFF:FFFFFFFFFFFFFFFF'
+    }
+    Assert-Throws {
+        Set-AtlasoTestVmCleanupIdentity `
+            -VmxPath $cleanupIdentityVmx `
+            -Identity ('a' * 32) `
+            -ExpectedVmxIdentity $cleanupMismatch
+    } 'A caller-bound filesystem identity mismatch must fail closed.'
+    if ([System.IO.File]::ReadAllText($cleanupIdentityVmx) -cne $cleanupOriginal) {
+        throw 'A rejected cleanup identity publication changed the caller-bound VMX.'
+    }
+    Set-AtlasoTestVmCleanupIdentity `
+        -VmxPath $cleanupIdentityVmx `
+        -Identity ('b' * 32) `
+        -ExpectedVmxIdentity $cleanupVmxIdentity
+    if (
+        [Atlaso.WorkstationFileIdentity]::Get($cleanupIdentityVmx) -cne $cleanupVmxIdentity -or
+        (Get-AtlasoTestVmCleanupIdentityHash -VmxPath $cleanupIdentityVmx) -cne
+        (Get-AtlasoCleanupIdentityHash -Value ('b' * 32)) -or
+        -not ([System.IO.File]::ReadAllText($cleanupIdentityVmx).StartsWith($cleanupOriginal))
+    ) {
+        throw 'Cleanup identity publication did not retain every original byte on the caller-bound VMX.'
+    }
+    [System.IO.File]::AppendAllText(
+        $cleanupIdentityVmx,
+        "guestinfo.atlaso.test_vm_cleanup_identity = malformed`r`n",
+        [System.Text.UTF8Encoding]::new($false)
+    )
+    Assert-Throws {
+        Get-AtlasoTestVmCleanupIdentityHash -VmxPath $cleanupIdentityVmx
+    } 'A malformed duplicate cleanup identity must remain ambiguous.'
+}
+finally {
+    Remove-Item -LiteralPath $cleanupIdentityRoot -Recurse -Force -ErrorAction SilentlyContinue
+}
 if (
     $firstBootSource -notmatch 'function Write-AtlasoWorkstationDurableVmxLines' -or
     $firstBootSource -notmatch '\[System\.IO\.FileOptions\]::WriteThrough' -or

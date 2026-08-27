@@ -1209,21 +1209,100 @@ Exact invocation-owned VMX that VMware may replace during power-on.
 
 .PARAMETER Identity
 Fresh lowercase hexadecimal identity generated for this VM invocation.
+
+.PARAMETER ExpectedVmxIdentity
+Filesystem identity captured before acquiring the mutation lock.
 #>
 function Set-AtlasoTestVmCleanupIdentity {
     param(
         [Parameter(Mandatory = $true)][string]$VmxPath,
-        [Parameter(Mandatory = $true)][string]$Identity
+        [Parameter(Mandatory = $true)][string]$Identity,
+        [Parameter(Mandatory = $true)][string]$ExpectedVmxIdentity
     )
 
     if ($Identity -cnotmatch '^[0-9a-f]{32}$') {
         throw 'The VMware cleanup identity is invalid.'
     }
+    if ($ExpectedVmxIdentity -cnotmatch '^[0-9A-F]{8}:[0-9A-F]{16}$') {
+        throw 'The VMware cleanup filesystem identity is invalid.'
+    }
+    $resolvedVmxPath = (Resolve-Path -LiteralPath $VmxPath).Path
     $pattern = '^\s*guestinfo\.atlaso\.test_vm_cleanup_identity\s*='
     $line = 'guestinfo.atlaso.test_vm_cleanup_identity = ' + (ConvertTo-AtlasoVmxString -Value $Identity)
-    $content = @(Get-Content -LiteralPath $VmxPath | Where-Object { $_ -notmatch $pattern })
-    $content += $line
-    Write-AtlasoWorkstationDurableVmxLines -VmxPath $VmxPath -Lines ([string[]]$content)
+    # Deny writers and deletion before validating the caller-bound file. This
+    # closes the same-path replacement window and retains one file object from
+    # validation through durable publication.
+    $stream = [System.IO.File]::Open(
+        $resolvedVmxPath,
+        [System.IO.FileMode]::Open,
+        [System.IO.FileAccess]::ReadWrite,
+        [System.IO.FileShare]::Read
+    )
+    try {
+        if ([Atlaso.WorkstationFileIdentity]::Get($resolvedVmxPath) -cne $ExpectedVmxIdentity) {
+            throw "The VMX changed before cleanup identity publication; the file was preserved: $resolvedVmxPath"
+        }
+        $identityAssignmentCount = 0
+        $reader = [System.IO.StreamReader]::new(
+            $stream,
+            [System.Text.UTF8Encoding]::new($false),
+            $true,
+            1024,
+            $true
+        )
+        try {
+            while (-not $reader.EndOfStream) {
+                if ($reader.ReadLine() -match $pattern) {
+                    $identityAssignmentCount++
+                }
+            }
+        }
+        finally {
+            $reader.Dispose()
+        }
+        if ($identityAssignmentCount -ne 0) {
+            throw "The VMX already carries a cleanup identity before marker publication: $resolvedVmxPath"
+        }
+        $originalLength = $stream.Length
+        $separator = ''
+        if ($originalLength -gt 0) {
+            $stream.Position = $originalLength - 1
+            if ($stream.ReadByte() -notin @(10, 13)) {
+                $separator = "`r`n"
+            }
+        }
+        $bytes = [System.Text.UTF8Encoding]::new($false).GetBytes(
+            "$separator$line`r`n"
+        )
+        $stream.Position = $originalLength
+        try {
+            # Append-only publication preserves every original VMX byte if the
+            # host loses power before the cleanup marker becomes durable.
+            $stream.Write($bytes, 0, $bytes.Length)
+            $stream.Flush($true)
+        }
+        catch {
+            $writeError = $_
+            try {
+                $stream.SetLength($originalLength)
+                $stream.Flush($true)
+            }
+            catch {
+                throw "Cleanup identity publication failed and tail rollback could not be proven: $resolvedVmxPath"
+            }
+            throw $writeError
+        }
+    }
+    finally {
+        $stream.Dispose()
+    }
+    if (
+        [Atlaso.WorkstationFileIdentity]::Get($resolvedVmxPath) -cne $ExpectedVmxIdentity -or
+        (Get-AtlasoTestVmCleanupIdentityHash -VmxPath $resolvedVmxPath) -cne
+        (Get-AtlasoCleanupIdentityHash -Value $Identity)
+    ) {
+        throw "The cleanup identity could not be proven in the VMX: $resolvedVmxPath"
+    }
 }
 
 <#
@@ -1236,13 +1315,22 @@ Exact VMX whose stable cleanup binding must be verified.
 function Get-AtlasoTestVmCleanupIdentityHash {
     param([Parameter(Mandatory = $true)][string]$VmxPath)
 
-    $identityMatches = @(Select-String -LiteralPath $VmxPath -Pattern (
-            '^\s*guestinfo\.atlaso\.test_vm_cleanup_identity\s*=\s*"([0-9a-f]{32})"\s*$'
-        ))
-    if ($identityMatches.Count -ne 1) {
+    $assignmentPattern = '^\s*guestinfo\.atlaso\.test_vm_cleanup_identity\s*='
+    $valuePattern = '^\s*guestinfo\.atlaso\.test_vm_cleanup_identity\s*=\s*"(?<identity>[0-9a-f]{32})"\s*$'
+    # Count every assignment before validating the value. One valid line plus
+    # a malformed duplicate is still ambiguous and must fail closed.
+    $identityLines = @(
+        Get-Content -LiteralPath $VmxPath |
+            Where-Object { $_ -match $assignmentPattern }
+    )
+    if ($identityLines.Count -ne 1) {
         throw 'The VMX does not contain exactly one valid non-secret cleanup identity.'
     }
-    return Get-AtlasoCleanupIdentityHash -Value $identityMatches[0].Matches[0].Groups[1].Value
+    $identityMatch = [regex]::Match($identityLines[0], $valuePattern)
+    if (-not $identityMatch.Success) {
+        throw 'The VMX does not contain exactly one valid non-secret cleanup identity.'
+    }
+    return Get-AtlasoCleanupIdentityHash -Value $identityMatch.Groups['identity'].Value
 }
 
 <#
@@ -1400,7 +1488,11 @@ function New-AtlasoDevelopmentCaCleanupMarker {
     # Publish a non-secret VM-owned binding before the durable marker. VMware
     # preserves this assignment when it atomically replaces the VMX at power-on.
     $cleanupIdentity = [guid]::NewGuid().ToString('N')
-    Set-AtlasoTestVmCleanupIdentity -VmxPath $resolvedVmxPath -Identity $cleanupIdentity
+    $vmxIdentity = [Atlaso.WorkstationFileIdentity]::Get($resolvedVmxPath)
+    Set-AtlasoTestVmCleanupIdentity `
+        -VmxPath $resolvedVmxPath `
+        -Identity $cleanupIdentity `
+        -ExpectedVmxIdentity $vmxIdentity
     $cleanupIdentityHash = Get-AtlasoCleanupIdentityHash -Value $cleanupIdentity
     if (-not (Test-Path -LiteralPath $MarkerRoot -PathType Container)) {
         New-Item -ItemType Directory -Path $MarkerRoot -Force | Out-Null
@@ -1423,7 +1515,7 @@ function New-AtlasoDevelopmentCaCleanupMarker {
         HostBootIdentity = (Get-AtlasoHostBootIdentity)
         Name = $Name
         VmxPath = $resolvedVmxPath
-        VmxIdentity = [Atlaso.WorkstationFileIdentity]::Get($resolvedVmxPath)
+        VmxIdentity = $vmxIdentity
         CleanupIdentityHash = $cleanupIdentityHash
         OutputDirectory = $resolvedOutputDirectory
         QuarantineDirectory = $quarantineDirectory
