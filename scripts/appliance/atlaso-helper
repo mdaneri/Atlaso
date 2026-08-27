@@ -13,6 +13,7 @@ import ctypes
 import ctypes.util
 import hashlib
 import hmac
+import html
 import json
 import os
 import re
@@ -105,6 +106,8 @@ COMMANDS: dict[str, set[str]] = {
         "guard-release",
         "recover-release",
         "complete-committed-release",
+        "status-publish",
+        "status-finish",
     },
     "automation": {"run"},
     "appliance-power": {"reboot", "shutdown"},
@@ -202,6 +205,8 @@ NON_PATH_ARGUMENT_ACTIONS = {
     ("vcf-offline-depot", "apply-ceip"),
     ("network", "dhcp-dns"),
     ("management-handoff", "acknowledge"),
+    ("appliance-update", "status-publish"),
+    ("appliance-update", "status-finish"),
 }
 ATLASO_SERVICE_USER = "atlaso"
 ATLASO_STATE_DIR = Path("/var/lib/atlaso")
@@ -242,6 +247,13 @@ SYSTEMD_NETWORK_INTERFACE_DIR = Path("/sys/class/net")
 SYSTEMD_NETWORK_LEASE_DIR = Path("/run/systemd/netif/leases")
 ATLASO_UPDATE_FINALIZER_PATH = ATLASO_STATE_DIR / "apply/appliance-update/finalizer-status.json"
 ATLASO_UPDATE_MAINTENANCE_PATH = Path("/run/atlaso-update-maintenance")
+ATLASO_UPDATE_STATUS_MARKER_PATH = Path("/run/atlaso-appliance-update-status")
+ATLASO_UPDATE_STATUS_DIR = ATLASO_PRIVILEGED_STATE_DIR / "appliance-update-status"
+ATLASO_UPDATE_STATUS_PATH = ATLASO_UPDATE_STATUS_DIR / "status.json"
+ATLASO_UPDATE_STATUS_HTML_PATH = Path("/run/atlaso-appliance-update-status.html")
+ATLASO_UPDATE_STATUS_NGINX_INCLUDE_PATH = Path(
+    "/etc/atlaso/nginx/includes/appliance-update-status.conf"
+)
 ATLASO_UPDATE_RESTART_GATE_PATH = Path("/run/atlaso-release-restart-gate")
 ATLASO_WORKER_STARTUP_STATUS_PATH = ATLASO_STATE_DIR / "worker-startup.json"
 ATLASO_POWERSHELL_HOME = ATLASO_STATE_DIR / "powershell"
@@ -11649,7 +11661,9 @@ def _write_update_info(info: dict) -> None:
     tmp_path = APPLIANCE_UPDATE_INFO_PATH.with_suffix(".tmp")
     tmp_path.write_text(json.dumps(info, indent=2, sort_keys=True) + "\n", encoding="utf-8")
     tmp_path.chmod(0o644)
-    tmp_path.replace(APPLIANCE_UPDATE_INFO_PATH)
+    _fsync_file(tmp_path)
+    os.replace(tmp_path, APPLIANCE_UPDATE_INFO_PATH)
+    _fsync_directory(APPLIANCE_UPDATE_INFO_PATH.parent)
 
 
 def _powershell_encoded_command(script: str) -> str:
@@ -13856,6 +13870,9 @@ def _recover_interrupted_release_transaction() -> dict:
 
 def _guard_interrupted_release_startup() -> dict:
     """Hold the management front door before services start for stale release work."""
+    status_guard = _guard_appliance_update_status_startup()
+    if status_guard.get("success") is not True:
+        return status_guard
     try:
         parsed = json.loads(ATLASO_UPDATE_FINALIZER_PATH.read_text(encoding="utf-8"))
     except FileNotFoundError:
@@ -14136,6 +14153,941 @@ def _esx_storage_resolved_by_id_device(value: str) -> Path:
     return identity.resolve(strict=True)
 
 
+def _appliance_update_status_task(
+    job_id: str,
+    *,
+    allow_terminal: bool = False,
+) -> dict[str, object]:
+    """Read one bounded Appliance Update hierarchy from the durable database.
+
+    Args:
+        job_id: Exact Appliance Update parent identifier.
+        allow_terminal: Whether terminal reconciliation may read the task.
+
+    Raises:
+        ValueError: If the identifier or durable task contract is invalid.
+    """
+    if re.fullmatch(r"job_[0-9a-f]{12}", job_id) is None:
+        raise ValueError("appliance update status task id is invalid")
+    if not ATLASO_DATABASE_PATH.is_file():
+        raise ValueError("appliance update database is unavailable")
+    connection = sqlite3.connect(f"file:{ATLASO_DATABASE_PATH}?mode=ro", uri=True)
+    connection.row_factory = sqlite3.Row
+    try:
+        job = connection.execute(
+            "select id, type, status, progress_percent, created_at, started_at, finished_at, "
+            "task_config_json from jobs where id = ?",
+            (job_id,),
+        ).fetchone()
+        if job is None or str(job["type"]) != "appliance-update":
+            raise ValueError("appliance update status task was not found")
+        steps = connection.execute(
+            "select id, component_key, label, position, status, progress_percent, result, "
+            "created_at, started_at, finished_at from job_steps where job_id = ? order by position, id",
+            (job_id,),
+        ).fetchall()
+    finally:
+        connection.close()
+    try:
+        config = json.loads(str(job["task_config_json"] or "{}"))
+    except json.JSONDecodeError as exc:
+        raise ValueError("appliance update task contract is invalid") from exc
+    if not isinstance(config, dict):
+        raise ValueError("appliance update task contract is invalid")
+    if int(config.get("schema_version") or 0) != 2 or str(config.get("mode") or "") != "run":
+        raise ValueError("appliance update status requires a current installation task")
+    transaction_id = str(config.get("status_transaction_id") or "")
+    if re.fullmatch(r"[0-9a-f]{32}", transaction_id) is None:
+        raise ValueError("appliance update task has no durable status transaction identity")
+    allowed_streams = {"photon_os", "powershell_modules", "atlaso_release"}
+    selected = config.get("selected_streams")
+    execution_order = config.get("execution_order")
+    if (
+        not isinstance(selected, list)
+        or not isinstance(execution_order, list)
+        or not 1 <= len(selected) <= 3
+        or len(set(str(value) for value in selected)) != len(selected)
+        or set(str(value) for value in selected) != set(str(value) for value in execution_order)
+        or any(str(value) not in allowed_streams for value in selected)
+    ):
+        raise ValueError("appliance update status stream contract is invalid")
+    expected_order = [str(value) for value in execution_order]
+    if expected_order != [
+        stream
+        for stream in ("photon_os", "powershell_modules", "atlaso_release")
+        if stream in set(expected_order)
+    ]:
+        raise ValueError("appliance update status execution order is invalid")
+    children: list[dict[str, object]] = []
+    for step in steps:
+        component = str(step["component_key"] or "")
+        if component not in allowed_streams:
+            raise ValueError("appliance update task contains an unexpected status child")
+        try:
+            step_result = json.loads(str(step["result"] or "{}"))
+        except json.JSONDecodeError:
+            step_result = {}
+        children.append(
+            {
+                "id": str(step["id"]),
+                "component_key": component,
+                "label": str(step["label"] or component)[:80],
+                "position": int(step["position"] or 0),
+                "status": str(step["status"] or "pending"),
+                "progress_percent": max(0, min(100, int(step["progress_percent"] or 0))),
+                "created_at": str(step["created_at"] or ""),
+                "started_at": str(step["started_at"] or ""),
+                "finished_at": str(step["finished_at"] or ""),
+                "apply_started": bool(
+                    isinstance(step_result, dict) and step_result.get("apply_started") is True
+                ),
+            }
+        )
+    if not children:
+        raise ValueError("appliance update task has no status children")
+    if (
+        [str(child["component_key"]) for child in children] != expected_order
+        or [int(child["position"]) for child in children] != list(range(1, len(children) + 1))
+        or any(
+            str(child["id"]) != f"{job_id}:{child['component_key']}"
+            for child in children
+        )
+        or any(
+            str(child["status"]) not in {"pending", "running", "succeeded", "failed", "skipped"}
+            for child in children
+        )
+    ):
+        raise ValueError("appliance update status child hierarchy is invalid")
+    parent_status = str(job["status"] or "pending")
+    if parent_status not in {"pending", "running", "succeeded", "failed"}:
+        raise ValueError("appliance update status parent state is invalid")
+    if parent_status in {"succeeded", "failed"} and not allow_terminal:
+        raise ValueError("terminal appliance update status may only be reconciled")
+    running_component = next(
+        (str(child["component_key"]) for child in children if child["status"] == "running"),
+        "",
+    )
+    phase = {
+        "photon_os": "installing_photon_os",
+        "powershell_modules": "installing_powershell_modules",
+        "atlaso_release": "activating_atlaso_release",
+    }.get(running_component, "preparing")
+    try:
+        finalizer = json.loads(ATLASO_UPDATE_FINALIZER_PATH.read_text(encoding="utf-8"))
+    except (OSError, UnicodeDecodeError, json.JSONDecodeError):
+        finalizer = {}
+    if isinstance(finalizer, dict) and str(finalizer.get("job_id") or "") == job_id:
+        finalizer_status = str(finalizer.get("status") or "")
+        if finalizer_status in {"restart_pending", "activation_committed"}:
+            phase = "restarting_or_recovering"
+        elif finalizer_status == "rollback_pending":
+            phase = "rolling_back"
+    if parent_status == "succeeded":
+        phase = "succeeded"
+    elif parent_status == "failed":
+        phase = "failed"
+    active_release = ""
+    try:
+        if ATLASO_CURRENT_LINK.is_symlink():
+            active_release = ATLASO_CURRENT_LINK.resolve(strict=True).name[:80]
+    except OSError:
+        active_release = ""
+    return {
+        "schema_version": 1,
+        "task_id": job_id,
+        "transaction_id": transaction_id,
+        "status": parent_status,
+        "phase": phase,
+        "progress_percent": max(0, min(100, int(job["progress_percent"] or 0))),
+        "created_at": str(job["created_at"] or ""),
+        "started_at": str(job["started_at"] or ""),
+        "finished_at": str(job["finished_at"] or ""),
+        "active_release": active_release,
+        "children": children,
+        "terminal": parent_status in {"succeeded", "failed"},
+    }
+
+
+def _render_appliance_update_status_html(snapshot: dict[str, object]) -> str:
+    """Render the self-contained, public-safe update-only status document.
+
+    Args:
+        snapshot: Validated bounded status snapshot.
+    """
+    phase_labels = {
+        "preparing": "Preparing appliance update",
+        "installing_photon_os": "Installing Photon OS",
+        "installing_powershell_modules": "Installing PowerShell Modules",
+        "activating_atlaso_release": "Activating Atlaso Release",
+        "restarting_or_recovering": "Restarting and reconciling Atlaso",
+        "rolling_back": "Rolling back Atlaso Release",
+        "succeeded": "Appliance update succeeded",
+        "failed": "Appliance update failed",
+    }
+    phase = str(snapshot.get("phase") or "preparing")
+    rows = []
+    for child in snapshot.get("children", []):
+        if not isinstance(child, dict):
+            continue
+        rows.append(
+            "<li class=\"step\"><span><strong>"
+            + html.escape(str(child.get("label") or "Update stream"))
+            + "</strong><small>"
+            + html.escape(str(child.get("status") or "pending"))
+            + "</small></span><span class=\"percent\">"
+            + str(max(0, min(100, int(child.get("progress_percent") or 0))))
+            + "%</span></li>"
+        )
+    task_id = html.escape(str(snapshot.get("task_id") or ""))
+    progress = max(0, min(100, int(snapshot.get("progress_percent") or 0)))
+    title = html.escape(phase_labels.get(phase, "Appliance update in progress"))
+    return f"""<!doctype html>
+<html lang=\"en\"><head><meta charset=\"utf-8\"><meta name=\"viewport\" content=\"width=device-width,initial-scale=1\">
+<meta http-equiv=\"refresh\" content=\"3\"><title>{title} · Atlaso</title>
+<style>:root{{color-scheme:dark;background:#07121f;color:#f4f7fb;font:16px system-ui,sans-serif}}body{{margin:0;min-height:100vh;display:grid;place-items:center;background:radial-gradient(circle at top,#17334f,#07121f 55%)}}main{{width:min(42rem,calc(100% - 2rem));background:#0d2033;border:1px solid #31506b;border-radius:1rem;padding:clamp(1.25rem,4vw,2.5rem);box-shadow:0 1rem 3rem #0008}}.brand{{font-weight:800;letter-spacing:.12em;color:#73d6ff}}h1{{font-size:clamp(1.5rem,4vw,2.25rem);margin:.75rem 0 .5rem}}p{{color:#bfd0df}}code{{word-break:break-all;color:#dff6ff}}progress{{width:100%;height:1rem;accent-color:#35bff5}}ol{{list-style:none;padding:0;margin:1.5rem 0 0;display:grid;gap:.65rem}}.step{{display:flex;justify-content:space-between;gap:1rem;align-items:center;border-top:1px solid #29445d;padding:.85rem 0}}small{{display:block;color:#a9bdcf;text-transform:capitalize;margin-top:.2rem}}.percent{{font-variant-numeric:tabular-nums}}footer{{font-size:.875rem;color:#9eb1c1;margin-top:1.5rem}}@media (prefers-contrast:more){{main{{border-width:2px}}}}</style></head>
+<body><main aria-labelledby=\"update-title\"><div class=\"brand\">ATLASO</div><h1 id=\"update-title\">{title}</h1>
+<p>The appliance control plane is temporarily unavailable while this durable task completes.</p><p>Task <code>{task_id}</code></p>
+<progress max=\"100\" value=\"{progress}\" aria-label=\"Parent task progress\">{progress}%</progress><p>{progress}% complete</p>
+<ol aria-label=\"Ordered update streams\">{''.join(rows)}</ol><footer role=\"status\">This page refreshes every 3 seconds. Retry ordinary appliance actions after the task becomes terminal.</footer></main></body></html>\n"""
+
+
+def _write_appliance_update_status_files(snapshot: dict[str, object]) -> dict[str, object]:
+    """Atomically publish one monotonic root-owned status snapshot and page.
+
+    Args:
+        snapshot: Bounded task hierarchy read from the durable database.
+    """
+    ATLASO_UPDATE_STATUS_DIR.parent.mkdir(parents=True, exist_ok=True)
+    parent_metadata = ATLASO_UPDATE_STATUS_DIR.parent.lstat()
+    enforce_root_owner = bool(
+        os.name == "posix"
+        and getattr(os, "geteuid", lambda: 0)() == 0
+    )
+    if (
+        ATLASO_UPDATE_STATUS_DIR.parent.is_symlink()
+        or not stat.S_ISDIR(parent_metadata.st_mode)
+        or (enforce_root_owner and parent_metadata.st_uid != 0)
+        or (os.name == "posix" and parent_metadata.st_mode & 0o022)
+    ):
+        raise ValueError("appliance update status parent directory is unsafe")
+    if ATLASO_UPDATE_STATUS_DIR.is_symlink():
+        raise ValueError("appliance update status directory is unsafe")
+    ATLASO_UPDATE_STATUS_DIR.mkdir(mode=0o700, exist_ok=True)
+    directory_metadata = ATLASO_UPDATE_STATUS_DIR.lstat()
+    if not stat.S_ISDIR(directory_metadata.st_mode):
+        raise ValueError("appliance update status directory is unsafe")
+    if enforce_root_owner and (
+        directory_metadata.st_uid != 0 or directory_metadata.st_mode & 0o077
+    ):
+        raise ValueError("appliance update status directory is not root-controlled")
+    os.chmod(ATLASO_UPDATE_STATUS_DIR, 0o700)
+    existing: dict[str, object] = {}
+    try:
+        flags = os.O_RDONLY
+        if hasattr(os, "O_NOFOLLOW"):
+            flags |= os.O_NOFOLLOW
+        descriptor = os.open(ATLASO_UPDATE_STATUS_PATH, flags)
+        try:
+            metadata = os.fstat(descriptor)
+            if (
+                not stat.S_ISREG(metadata.st_mode)
+                or metadata.st_nlink != 1
+                or metadata.st_size > 1024 * 1024
+                or (enforce_root_owner and metadata.st_uid != 0)
+            ):
+                raise ValueError("appliance update status snapshot is unsafe")
+            with os.fdopen(descriptor, "r", encoding="utf-8", closefd=False) as stream:
+                parsed = json.load(stream)
+        finally:
+            os.close(descriptor)
+        existing = parsed if isinstance(parsed, dict) else {}
+    except FileNotFoundError:
+        existing = {}
+    except (OSError, UnicodeDecodeError, json.JSONDecodeError) as exc:
+        raise ValueError("appliance update status snapshot is unsafe") from exc
+    existing_task = str(existing.get("task_id") or "")
+    if existing_task and existing_task != snapshot["task_id"] and existing.get("terminal") is not True:
+        raise ValueError("another appliance update status transaction is still active")
+    if existing_task == snapshot["task_id"]:
+        if str(existing.get("transaction_id") or "") != snapshot["transaction_id"]:
+            raise ValueError("appliance update status transaction identity changed")
+        sequence = int(existing.get("sequence") or 0) + 1
+    else:
+        sequence = 1
+    published = {
+        **snapshot,
+        "sequence": sequence,
+        "generated_at": datetime.now(timezone.utc).isoformat(),
+    }
+    if existing_task == snapshot["task_id"] and "ui_restoration" not in published:
+        restoration = existing.get("ui_restoration")
+        if isinstance(restoration, dict):
+            published["ui_restoration"] = restoration
+    if published.get("terminal") is not True and "ui_restoration" not in published:
+        published["ui_restoration"] = {
+            "state": "held",
+            "updated_at": datetime.now(timezone.utc).isoformat(),
+        }
+    for destination, content, mode in (
+        (
+            ATLASO_UPDATE_STATUS_PATH,
+            json.dumps(published, indent=2, sort_keys=True) + "\n",
+            0o600,
+        ),
+        (
+            ATLASO_UPDATE_STATUS_HTML_PATH,
+            _render_appliance_update_status_html(published),
+            0o644,
+        ),
+    ):
+        destination.parent.mkdir(parents=True, exist_ok=True)
+        temporary = destination.with_name(f".{destination.name}.{os.getpid()}.{uuid.uuid4().hex}.tmp")
+        flags = os.O_WRONLY | os.O_CREAT | os.O_EXCL
+        if hasattr(os, "O_NOFOLLOW"):
+            flags |= os.O_NOFOLLOW
+        descriptor = os.open(temporary, flags, mode)
+        try:
+            with os.fdopen(descriptor, "w", encoding="utf-8") as stream:
+                stream.write(content)
+                stream.flush()
+                os.fsync(stream.fileno())
+        except Exception:
+            temporary.unlink(missing_ok=True)
+            raise
+        os.replace(temporary, destination)
+        os.chmod(destination, mode)
+    _fsync_directory(ATLASO_UPDATE_STATUS_DIR)
+    if ATLASO_UPDATE_STATUS_HTML_PATH.parent != ATLASO_UPDATE_STATUS_DIR:
+        _fsync_directory(ATLASO_UPDATE_STATUS_HTML_PATH.parent)
+    return published
+
+
+def _nginx_block_end(text: str, opening: int) -> int:
+    """Return the end offset for one brace-delimited nginx block.
+
+    Args:
+        text: Nginx configuration text.
+        opening: Offset of the opening brace.
+    """
+    depth = 0
+    for index in range(opening, len(text)):
+        if text[index] == "{":
+            depth += 1
+        elif text[index] == "}":
+            depth -= 1
+            if depth == 0:
+                return index + 1
+    raise ValueError("nginx configuration contains an unterminated block")
+
+
+def _write_appliance_update_runtime_file(
+    destination: Path,
+    content: str,
+    *,
+    mode: int = 0o644,
+) -> None:
+    """Atomically replace one root-owned status/runtime file without following links.
+
+    Args:
+        destination: Exact root-controlled destination.
+        content: UTF-8 text to persist.
+        mode: Final POSIX permission bits.
+    """
+    destination.parent.mkdir(parents=True, exist_ok=True)
+    parent_metadata = destination.parent.lstat()
+    if (
+        destination.parent.is_symlink()
+        or not stat.S_ISDIR(parent_metadata.st_mode)
+        or (
+            os.name == "posix"
+            and getattr(os, "geteuid", lambda: 0)() == 0
+            and parent_metadata.st_uid != 0
+        )
+        or (os.name == "posix" and parent_metadata.st_mode & 0o022)
+    ):
+        raise ValueError("appliance update runtime parent is unsafe")
+    temporary = destination.with_name(
+        f".{destination.name}.{os.getpid()}.{uuid.uuid4().hex}.tmp"
+    )
+    flags = os.O_WRONLY | os.O_CREAT | os.O_EXCL
+    if hasattr(os, "O_NOFOLLOW"):
+        flags |= os.O_NOFOLLOW
+    descriptor = os.open(temporary, flags, mode)
+    try:
+        with os.fdopen(descriptor, "w", encoding="utf-8") as stream:
+            stream.write(content)
+            stream.flush()
+            os.fsync(stream.fileno())
+        os.replace(temporary, destination)
+        os.chmod(destination, mode)
+        _fsync_directory(destination.parent)
+    except Exception:
+        temporary.unlink(missing_ok=True)
+        raise
+
+
+def _read_appliance_update_runtime_file(path: Path, *, limit: int = 4096) -> str:
+    """Read one bounded root-owned runtime file without following links.
+
+    Args:
+        path: Exact runtime path.
+        limit: Maximum accepted file size.
+    """
+    flags = os.O_RDONLY
+    if hasattr(os, "O_NOFOLLOW"):
+        flags |= os.O_NOFOLLOW
+    descriptor = os.open(path, flags)
+    try:
+        metadata = os.fstat(descriptor)
+        if (
+            not stat.S_ISREG(metadata.st_mode)
+            or metadata.st_nlink != 1
+            or metadata.st_size > limit
+            or (
+                os.name == "posix"
+                and getattr(os, "geteuid", lambda: 0)() == 0
+                and metadata.st_uid != 0
+            )
+        ):
+            raise ValueError("appliance update runtime file is unsafe")
+        with os.fdopen(descriptor, "r", encoding="utf-8", closefd=False) as stream:
+            return stream.read()
+    finally:
+        os.close(descriptor)
+
+
+def _site_with_update_status_guards(text: str, *, default_management: bool) -> str:
+    """Add update-only routing to every browser UI server block.
+
+    Args:
+        text: Applied nginx site text.
+        default_management: Whether catch-all locations expose the management listener.
+    """
+    guarded = text
+    if default_management:
+        for server, end in reversed(_management_site_server_ranges(guarded)):
+            block = guarded[server.start():end]
+            if "/ui/management" in block:
+                continue
+            catchall = re.search(r"(?m)^(?P<indent>[ \t]*)location[ \t]+/[ \t]*\{[ \t]*$", block)
+            if catchall is None:
+                raise ValueError("management nginx server has no catch-all location")
+            absolute_start = server.start() + catchall.start()
+            opening = guarded.find("{", absolute_start)
+            absolute_end = _nginx_block_end(guarded, opening)
+            original = guarded[absolute_start:absolute_end]
+            indent = catchall.group("indent")
+            newline = "\r\n" if "\r\n" in guarded else "\n"
+            clones: list[str] = []
+            for path in ("= /ui/management", "^~ /ui/management/", "= /ui/public", "^~ /ui/public/"):
+                clone = re.sub(
+                    r"(?m)^[ \t]*location[ \t]+/[ \t]*\{[ \t]*$",
+                    f"{indent}location {path} {{",
+                    original,
+                    count=1,
+                )
+                clones.append(clone)
+            guarded = guarded[:absolute_start] + (newline + newline).join(clones) + newline + newline + guarded[absolute_start:]
+    condition_pattern = re.compile(
+        r"(?m)^(?P<line>(?P<indent>[ \t]*)location[ \t]+(?:=[ \t]+|\^~[ \t]+)?"
+        r"/ui/(?:management|public)/?[ \t]*\{[ \t]*)$"
+        rf"(?!\r?\n[ \t]*if \(-f {re.escape(str(ATLASO_UPDATE_STATUS_MARKER_PATH))}\))"
+    )
+
+    def add_condition(match: re.Match[str]) -> str:
+        """Insert the marker check at the start of one human UI location."""
+        condition = (
+            f"{match.group('indent')}  if (-f {ATLASO_UPDATE_STATUS_MARKER_PATH}) "
+            "{ return 418; }"
+        )
+        return f"{match.group('line')}\n{condition}"
+
+    guarded = condition_pattern.sub(add_condition, guarded)
+    include_line = f"include {ATLASO_UPDATE_STATUS_NGINX_INCLUDE_PATH};"
+    for server, end in reversed(_management_site_server_ranges(guarded)):
+        block = guarded[server.start():end]
+        if "/ui/management" not in block and "/ui/public" not in block:
+            continue
+        line_end = guarded.find("\n", server.end())
+        insertion = len(guarded) if line_end < 0 else line_end + 1
+        indent = f"{server.group('indent')}  "
+        server_condition = (
+            f"{indent}if (-f {ATLASO_UPDATE_STATUS_MARKER_PATH}) {{ return 418; }}"
+        )
+        additions = []
+        if include_line not in block:
+            additions.append(f"{indent}{include_line}")
+        if re.search(rf"(?m)^{re.escape(server_condition)}$", block) is None:
+            additions.append(server_condition)
+        if additions:
+            guarded = (
+                guarded[:insertion]
+                + "\n".join(additions)
+                + "\n"
+                + guarded[insertion:]
+            )
+    return guarded
+
+
+def _write_update_status_nginx_include() -> None:
+    """Install the fixed internal location used by update-only UI responses."""
+    content = "\n".join(
+        [
+            "# Managed by Atlaso. Local changes may be overwritten.",
+            "error_page 418 =503 /__atlaso_appliance_update_status;",
+            "location = /__atlaso_appliance_update_status {",
+            "  internal;",
+            f"  alias {ATLASO_UPDATE_STATUS_HTML_PATH};",
+            "  default_type text/html;",
+            '  add_header Cache-Control "no-store, no-cache, must-revalidate" always;',
+            '  add_header Pragma "no-cache" always;',
+            '  add_header Retry-After "3" always;',
+            '  add_header X-Atlaso-Update-Mode "active" always;',
+            "}",
+            "",
+        ]
+    )
+    _write_appliance_update_runtime_file(
+        ATLASO_UPDATE_STATUS_NGINX_INCLUDE_PATH,
+        content,
+    )
+
+
+def _update_status_probe_urls(site_text: str) -> tuple[tuple[str, bool], ...]:
+    """Return every applied browser-listener URL that must serve status.
+
+    Args:
+        site_text: Guarded nginx site configuration.
+    """
+    probes: list[tuple[str, bool]] = []
+    for server, end in _management_site_server_ranges(site_text):
+        block = site_text[server.start():end]
+        paths = [
+            path
+            for path in ("/ui/management", "/ui/public")
+            if re.search(rf"location\s+(?:=\s+|\^~\s+)?{re.escape(path)}(?:/)?\s*\{{", block)
+        ]
+        if not paths:
+            continue
+        for listener in re.finditer(
+            r"(?m)^\s*listen\s+(?P<endpoint>\S+)(?P<options>[^;]*);",
+            block,
+        ):
+            endpoint = listener.group("endpoint")
+            options = listener.group("options").split()
+            ssl_enabled = "ssl" in options
+            port_match = re.search(r"(?P<port>\d+)$", endpoint)
+            if port_match is None:
+                continue
+            port = int(port_match.group("port"))
+            raw_host = endpoint[: port_match.start()].rstrip(":")
+            raw_host = raw_host.strip("[]")
+            if raw_host == "::":
+                raw_host = "::1"
+            elif raw_host in {"", "*", "0.0.0.0"}:
+                raw_host = "127.0.0.1"
+            try:
+                parsed_host = ip_address(raw_host)
+            except ValueError:
+                continue
+            host = f"[{parsed_host}]" if parsed_host.version == 6 else str(parsed_host)
+            scheme = "https" if ssl_enabled else "http"
+            default_port = 443 if ssl_enabled else 80
+            authority = host if port == default_port else f"{host}:{port}"
+            for path in paths:
+                probe = (f"{scheme}://{authority}{path}", ssl_enabled)
+                if probe not in probes:
+                    probes.append(probe)
+    return tuple(probes)
+
+
+def _verify_update_status_responses(site_texts: list[str]) -> dict[str, object]:
+    """Require consecutive 503 responses from every applied browser listener.
+
+    Args:
+        site_texts: Guarded management and public-service nginx sites.
+    """
+    curl = shutil.which("curl")
+    if curl is None:
+        raise ValueError("curl is unavailable for update-only listener proof")
+    probes: list[tuple[str, bool]] = []
+    for site_text in site_texts:
+        for probe in _update_status_probe_urls(site_text):
+            if probe not in probes:
+                probes.append(probe)
+    if not probes:
+        raise ValueError("no applied browser listeners were found for update-only proof")
+    statuses: dict[str, str] = {}
+    consecutive = 0
+    for attempt in range(10):
+        statuses = {
+            url: _console_management_http_status(curl, url, insecure=insecure)
+            for url, insecure in probes
+        }
+        if all(status == "503" for status in statuses.values()):
+            consecutive += 1
+            if consecutive >= 3:
+                return {
+                    "listener_count": len(statuses),
+                    "stable_samples": consecutive,
+                    "attempts": attempt + 1,
+                }
+        else:
+            consecutive = 0
+        time.sleep(0.2)
+    raise ValueError("not every applied browser listener returned a stable update-only response")
+
+
+def _publish_appliance_update_status(job_id: str) -> dict[str, object]:
+    """Publish and activate the update-only browser surface for one task.
+
+    Args:
+        job_id: Exact Appliance Update parent identifier.
+    """
+    snapshot = _write_appliance_update_status_files(_appliance_update_status_task(job_id))
+    _write_update_status_nginx_include()
+    originals: dict[Path, str] = {}
+    guarded_sites: list[str] = []
+    try:
+        for path, default_management in (
+            (NGINX_MANAGEMENT_SITE_PATH, True),
+            (NGINX_PUBLIC_SERVICES_SITE_PATH, False),
+        ):
+            if not path.is_file():
+                if default_management:
+                    raise ValueError("applied management nginx site is unavailable")
+                continue
+            original = path.read_text(encoding="utf-8")
+            originals[path] = original
+            guarded = _site_with_update_status_guards(
+                original,
+                default_management=default_management,
+            )
+            if guarded != original:
+                _write_appliance_update_runtime_file(path, guarded)
+            guarded_sites.append(guarded)
+        _write_appliance_update_runtime_file(
+            ATLASO_UPDATE_STATUS_MARKER_PATH,
+            job_id + "\n",
+        )
+        validation = _nginx_test_command()
+        if validation.returncode != 0:
+            raise ValueError("update-only nginx configuration did not validate")
+        reload_result = _service_command("reload", "nginx.service")
+        if reload_result.get("success") is not True:
+            raise ValueError("update-only nginx configuration did not reload")
+        snapshot["listener_proof"] = _verify_update_status_responses(guarded_sites)
+    except Exception:
+        for path, original in originals.items():
+            _write_appliance_update_runtime_file(path, original)
+        validation = _nginx_test_command()
+        reload_result = (
+            _service_command("reload", "nginx.service")
+            if validation.returncode == 0
+            else {"success": False}
+        )
+        if validation.returncode == 0 and reload_result.get("success") is True:
+            ATLASO_UPDATE_STATUS_MARKER_PATH.unlink(missing_ok=True)
+            _fsync_directory(ATLASO_UPDATE_STATUS_MARKER_PATH.parent)
+        raise
+    return snapshot
+
+
+def _verify_release_status_completion(
+    snapshot: dict[str, object],
+    job_id: str,
+) -> None:
+    """Require definitive release evidence before restoring ordinary UIs.
+
+    Args:
+        snapshot: Terminal bounded task hierarchy.
+        job_id: Exact Appliance Update parent identifier.
+    """
+    release_child = next(
+        (
+            child
+            for child in snapshot.get("children", [])
+            if isinstance(child, dict) and child.get("component_key") == "atlaso_release"
+        ),
+        None,
+    )
+    if release_child is None or release_child.get("apply_started") is not True:
+        return
+    try:
+        finalizer = json.loads(ATLASO_UPDATE_FINALIZER_PATH.read_text(encoding="utf-8"))
+    except FileNotFoundError:
+        services = _service_command(
+            "is-active",
+            "atlaso.service",
+            "atlaso-worker.service",
+            "atlaso-console.service",
+            "nginx.service",
+        )
+        if (
+            release_child.get("status") in {"failed", "skipped"}
+            and services.get("success") is True
+            and not ATLASO_UPDATE_MAINTENANCE_PATH.exists()
+            and not ATLASO_UPDATE_RESTART_GATE_PATH.exists()
+        ):
+            return
+        raise ValueError(
+            "release transaction evidence is unavailable at status completion"
+        ) from None
+    except (OSError, UnicodeDecodeError, json.JSONDecodeError) as exc:
+        raise ValueError("release transaction evidence is unavailable at status completion") from exc
+    try:
+        update_info = json.loads(APPLIANCE_UPDATE_INFO_PATH.read_text(encoding="utf-8"))
+    except (OSError, UnicodeDecodeError, json.JSONDecodeError) as exc:
+        raise ValueError("release update-info is unavailable at status completion") from exc
+    if not isinstance(finalizer, dict) or not isinstance(update_info, dict):
+        raise ValueError("release transaction evidence is invalid at status completion")
+    finalizer_status = str(finalizer.get("status") or "")
+    definitive = finalizer_status == "succeeded" or (
+        finalizer_status == "failed"
+        and finalizer.get("rolled_back") is True
+        and finalizer.get("rollback_health") is True
+    )
+    if not definitive or str(finalizer.get("job_id") or "") != job_id:
+        raise ValueError("release finalizer does not match terminal task bookkeeping")
+    if (
+        str(update_info.get("job_id") or "") != job_id
+        or str(update_info.get("status") or "") not in {"succeeded", "failed"}
+    ):
+        raise ValueError("release update-info does not match terminal task bookkeeping")
+    if ATLASO_UPDATE_RESTART_GATE_PATH.exists():
+        raise ValueError("release restart gate remains active at status completion")
+    active_root = _active_release_root()
+    expected_version = (
+        str(finalizer.get("previous_version") or "")
+        if finalizer.get("rolled_back") is True
+        else str(finalizer.get("candidate_version") or finalizer.get("release") or "")
+    )
+    if not expected_version or _release_root_version(active_root) != expected_version:
+        raise ValueError("active release does not match definitive transaction evidence")
+    if finalizer_status == "succeeded":
+        try:
+            receipt = json.loads((active_root / ".release-manifest.json").read_text(encoding="utf-8"))
+        except (OSError, UnicodeDecodeError, json.JSONDecodeError) as exc:
+            raise ValueError("active release receipt is unavailable") from exc
+        if not isinstance(receipt, dict):
+            raise ValueError("active release receipt is invalid")
+        receipt_hash = hashlib.sha256(
+            json.dumps(receipt, separators=(",", ":"), sort_keys=True).encode("utf-8")
+        ).hexdigest()
+        if (
+            receipt_hash != str(finalizer.get("release_manifest_sha256") or "")
+            or str((receipt.get("bundle") or {}).get("sha256") or "")
+            != str(finalizer.get("bundle_sha256") or "")
+            or str(receipt.get("git_commit") or "")
+            != str(finalizer.get("git_commit") or "")
+        ):
+            raise ValueError("active release receipt does not match definitive evidence")
+        verification = finalizer.get("active_release_verification")
+        if not isinstance(verification, dict) or verification.get("success") is not True:
+            raise ValueError("release activation verification is not definitive")
+        if finalizer.get("no_change") is not True:
+            worker_restart = finalizer.get("worker_restart")
+            if not isinstance(worker_restart, dict) or worker_restart.get("success") is not True:
+                raise ValueError("candidate worker startup identity is not definitive")
+    services = _service_command(
+        "is-active",
+        "atlaso.service",
+        "atlaso-worker.service",
+        "atlaso-console.service",
+        "nginx.service",
+    )
+    if services.get("success") is not True:
+        raise ValueError("required appliance services are not active at status completion")
+
+
+def _ordinary_update_ui_probe_sites() -> list[str]:
+    """Return the currently applied browser-listener configurations."""
+    sites = []
+    for path in (NGINX_MANAGEMENT_SITE_PATH, NGINX_PUBLIC_SERVICES_SITE_PATH):
+        if path.is_file():
+            sites.append(path.read_text(encoding="utf-8"))
+    return sites
+
+
+def _verify_ordinary_update_ui_responses(site_texts: list[str]) -> dict[str, object]:
+    """Prove restored browser listeners no longer return gateway/maintenance failures.
+
+    Args:
+        site_texts: Applied management/public nginx configurations.
+    """
+    curl = shutil.which("curl")
+    if curl is None:
+        raise ValueError("curl is unavailable for ordinary UI restoration proof")
+    probes = [probe for text in site_texts for probe in _update_status_probe_urls(text)]
+    if not probes:
+        raise ValueError("no browser listeners were found for ordinary UI restoration proof")
+    statuses = {
+        url: _console_management_http_status(curl, url, insecure=insecure)
+        for url, insecure in dict.fromkeys(probes)
+    }
+    if any(status in {"000", "418", "500", "502", "503", "504"} for status in statuses.values()):
+        raise ValueError("ordinary browser listeners are not healthy after update restoration")
+    return {"listener_count": len(statuses), "status_classes": sorted(set(statuses.values()))}
+
+
+def _finish_appliance_update_status(job_id: str) -> dict[str, object]:
+    """Restore ordinary browser UIs after definitive task completion.
+
+    Args:
+        job_id: Exact Appliance Update parent identifier.
+    """
+    snapshot = _write_appliance_update_status_files(
+        _appliance_update_status_task(job_id, allow_terminal=True)
+    )
+    if snapshot.get("terminal") is not True:
+        raise ValueError("appliance update status cannot finish before the parent is terminal")
+    _verify_release_status_completion(snapshot, job_id)
+    try:
+        marker_job = _read_appliance_update_runtime_file(
+            ATLASO_UPDATE_STATUS_MARKER_PATH
+        ).strip()
+    except FileNotFoundError:
+        restoration = snapshot.get("ui_restoration")
+        if isinstance(restoration, dict) and restoration.get("state") == "restored":
+            return {**snapshot, "ordinary_ui_restored": True, "already_restored": True}
+        _write_appliance_update_runtime_file(
+            ATLASO_UPDATE_STATUS_MARKER_PATH,
+            job_id + "\n",
+        )
+        marker_job = job_id
+    except OSError as exc:
+        raise ValueError("update-only status marker is unavailable") from exc
+    if marker_job != job_id:
+        raise ValueError("update-only status marker belongs to another task")
+    snapshot["ui_restoration"] = {
+        "state": "pending",
+        "updated_at": datetime.now(timezone.utc).isoformat(),
+    }
+    snapshot = _write_appliance_update_status_files(snapshot)
+    ATLASO_UPDATE_STATUS_MARKER_PATH.unlink()
+    _fsync_directory(ATLASO_UPDATE_STATUS_MARKER_PATH.parent)
+    validation = _nginx_test_command()
+    if validation.returncode != 0:
+        _write_appliance_update_runtime_file(
+            ATLASO_UPDATE_STATUS_MARKER_PATH,
+            job_id + "\n",
+        )
+        raise ValueError("nginx validation failed while restoring ordinary browser UIs")
+    reload_result = _service_command("reload", "nginx.service")
+    if reload_result.get("success") is not True:
+        _write_appliance_update_runtime_file(
+            ATLASO_UPDATE_STATUS_MARKER_PATH,
+            job_id + "\n",
+        )
+        raise ValueError("nginx reload failed while restoring ordinary browser UIs")
+    try:
+        restoration_proof = _verify_ordinary_update_ui_responses(
+            _ordinary_update_ui_probe_sites()
+        )
+    except (OSError, ValueError):
+        _write_appliance_update_runtime_file(
+            ATLASO_UPDATE_STATUS_MARKER_PATH,
+            job_id + "\n",
+        )
+        _service_command("reload", "nginx.service")
+        raise
+    snapshot["ui_restoration"] = {
+        "state": "restored",
+        "updated_at": datetime.now(timezone.utc).isoformat(),
+        "listener_proof": restoration_proof,
+    }
+    snapshot = _write_appliance_update_status_files(snapshot)
+    return snapshot
+
+
+def _guard_appliance_update_status_startup() -> dict[str, object]:
+    """Recreate the update-only UI hold before nginx starts after reboot."""
+    if not ATLASO_UPDATE_STATUS_PATH.is_file():
+        return {"success": True, "status": "not_required"}
+    try:
+        recorded = json.loads(ATLASO_UPDATE_STATUS_PATH.read_text(encoding="utf-8"))
+        if not isinstance(recorded, dict):
+            raise ValueError("status snapshot is not an object")
+        job_id = str(recorded.get("task_id") or "")
+        current = _appliance_update_status_task(job_id, allow_terminal=True)
+        if str(recorded.get("transaction_id") or "") != current.get("transaction_id"):
+            raise ValueError("status transaction identity does not match the durable task")
+        restoration = recorded.get("ui_restoration")
+        restored = bool(
+            isinstance(restoration, dict) and restoration.get("state") == "restored"
+        )
+        if current.get("terminal") is True and restored:
+            ATLASO_UPDATE_STATUS_MARKER_PATH.unlink(missing_ok=True)
+            return {"success": True, "status": "terminal_restored"}
+        _write_appliance_update_status_files(current)
+        _write_update_status_nginx_include()
+        for path, default_management in (
+            (NGINX_MANAGEMENT_SITE_PATH, True),
+            (NGINX_PUBLIC_SERVICES_SITE_PATH, False),
+        ):
+            if not path.is_file():
+                if default_management:
+                    raise ValueError("applied management nginx site is unavailable")
+                continue
+            original = path.read_text(encoding="utf-8")
+            guarded = _site_with_update_status_guards(
+                original,
+                default_management=default_management,
+            )
+            if guarded != original:
+                _write_appliance_update_runtime_file(path, guarded)
+        _write_appliance_update_runtime_file(
+            ATLASO_UPDATE_STATUS_MARKER_PATH,
+            job_id + "\n",
+        )
+        validation = _nginx_test_command()
+        if validation.returncode != 0:
+            raise ValueError("update-only nginx configuration did not validate at startup")
+        return {
+            "success": True,
+            "status": (
+                "terminal_pending_restoration"
+                if current.get("terminal") is True
+                else "guarded"
+            ),
+            "task_id": job_id,
+        }
+    except (OSError, ValueError, sqlite3.Error, json.JSONDecodeError) as exc:
+        generic = {
+            "phase": "failed",
+            "task_id": "recovery-required",
+            "progress_percent": 0,
+            "children": [],
+        }
+        _write_appliance_update_runtime_file(
+            ATLASO_UPDATE_STATUS_HTML_PATH,
+            _render_appliance_update_status_html(generic),
+        )
+        _write_update_status_nginx_include()
+        for path, default_management in (
+            (NGINX_MANAGEMENT_SITE_PATH, True),
+            (NGINX_PUBLIC_SERVICES_SITE_PATH, False),
+        ):
+            if not path.is_file():
+                continue
+            guarded = _site_with_update_status_guards(
+                path.read_text(encoding="utf-8"),
+                default_management=default_management,
+            )
+            _write_appliance_update_runtime_file(path, guarded)
+        _write_appliance_update_runtime_file(
+            ATLASO_UPDATE_STATUS_MARKER_PATH,
+            "recovery-required\n",
+        )
+        validation = _nginx_test_command()
+        return {
+            "success": validation.returncode == 0,
+            "status": "recovery_failed",
+            "mutation_blocked": True,
+            "error": f"Update-only status recovery requires attention: {type(exc).__name__}.",
+        }
+
+
 def _set_release_maintenance(
     enabled: bool,
     *,
@@ -14292,13 +15244,19 @@ def _restore_release_maintenance_preflight(previous: str | None) -> dict:
     }
 
 
-def _release_maintenance_condition(*, indent: str = "  ") -> str:
+def _release_maintenance_condition(*, indent: str = "  ", response_code: int = 503) -> str:
     """Return the nginx condition that closes one management server block.
 
     Args:
         indent: Whitespace used to indent the condition inside its server block.
+        response_code: Internal response selected for the active maintenance marker.
     """
-    return f"{indent}if (-f {ATLASO_UPDATE_MAINTENANCE_PATH}) {{ return 503; }}"
+    if response_code not in {418, 503}:
+        raise ValueError("release maintenance response code is invalid")
+    return (
+        f"{indent}if (-f {ATLASO_UPDATE_MAINTENANCE_PATH}) "
+        f"{{ return {response_code}; }}"
+    )
 
 
 def _management_site_server_ranges(text: str) -> list[tuple[re.Match[str], int]]:
@@ -14330,17 +15288,33 @@ def _management_site_with_release_maintenance_guards(text: str) -> str:
     """
     condition_pattern = re.compile(
         rf"(?m)^\s*if\s+\(-f\s+{re.escape(str(ATLASO_UPDATE_MAINTENANCE_PATH))}\)\s*"
-        r"\{\s*return\s+503;\s*\}\s*$"
+        r"\{\s*return\s+(?:418|503);\s*\}\s*$"
     )
     guarded = text
     for match, end in reversed(_management_site_server_ranges(text)):
         block = text[match.start():end]
-        if condition_pattern.search(block):
+        update_status_active = (
+            str(ATLASO_UPDATE_STATUS_NGINX_INCLUDE_PATH) in block
+            and str(ATLASO_UPDATE_STATUS_MARKER_PATH) in block
+        )
+        response_code = 418 if update_status_active else 503
+        existing = condition_pattern.search(block)
+        if existing is not None:
+            replacement = _release_maintenance_condition(
+                indent=re.match(r"^\s*", existing.group(0)).group(0),
+                response_code=response_code,
+            )
+            absolute_start = match.start() + existing.start()
+            absolute_end = match.start() + existing.end()
+            guarded = guarded[:absolute_start] + replacement + guarded[absolute_end:]
             continue
         line_end = text.find("\n", match.end())
         insertion = len(text) if line_end < 0 else line_end + 1
         newline = "\r\n" if "\r\n" in text else "\n"
-        condition = _release_maintenance_condition(indent=f"{match.group('indent')}  ")
+        condition = _release_maintenance_condition(
+            indent=f"{match.group('indent')}  ",
+            response_code=response_code,
+        )
         guarded = guarded[:insertion] + condition + newline + guarded[insertion:]
     return guarded
 
@@ -15687,7 +16661,57 @@ def _apply_appliance_update(
     attempted: dict[str, object] = {}
     reboot_recommended = False
     restart_required = False
-    if "atlaso_release" in selected:
+    if "photon_os" in selected:
+        tdnf = _command_path("tdnf") or "tdnf"
+        commands.append(_command_payload([tdnf, "-y", "makecache"]))
+        transaction = _command_payload([tdnf, "-y", "update", "--testonly"])
+        transaction["inspection_only"] = True
+        commands.append(transaction)
+        compatibility = _photon_python_compatibility()
+        commands.append(compatibility)
+        previous_abi = _current_python_abi()
+        update_command: dict | None = None
+        if all(command.get("success") for command in commands):
+            update_command = _command_payload([tdnf, "-y", "update"])
+            commands.append(update_command)
+        if all(command.get("success") for command in commands):
+            rebuild_commands, rebuilt = _rebuild_active_release_for_python(previous_abi)
+            commands.extend(rebuild_commands)
+            restart_required = restart_required or rebuilt
+            if not rebuilt:
+                commands.append(_service_command("restart", "atlaso.service", "atlaso-console.service"))
+                commands.append(_wait_for_atlaso_health())
+                commands.append(
+                    _service_command(
+                        "is-active",
+                        "atlaso.service",
+                        "atlaso-worker.service",
+                        "atlaso-console.service",
+                    )
+                )
+        photon_succeeded = all(command.get("success") for command in commands)
+        attempted["photon_os"] = {
+            "message": (
+                "Photon OS packages updated and Atlaso health checks passed."
+                if photon_succeeded
+                else "Photon OS maintenance did not leave Atlaso healthy; automatic RPM rollback was not attempted."
+            ),
+            "python_compatibility": compatibility.get("compatibility", {}),
+            "transaction_inspected": transaction.get("success", False),
+            "packages_installed": bool(update_command and update_command.get("success")),
+            "automatic_rpm_rollback": False,
+            "recovery": (
+                ""
+                if photon_succeeded
+                else "Review tdnf history, the recorded command output, and Atlaso service journals before manual recovery."
+            ),
+        }
+        reboot_recommended = bool(update_command and update_command.get("success"))
+    if "powershell_modules" in selected and all(command.get("success") for command in commands):
+        powershell_commands = _apply_powershell_modules(payload, credentials)
+        commands.extend(powershell_commands)
+        attempted["powershell_modules"] = "Managed PowerShell modules updated from the configured repository."
+    if "atlaso_release" in selected and all(command.get("success") for command in commands):
         channel, release, release_commands = _apply_atlaso_release(
             payload,
             credentials,
@@ -15704,62 +16728,6 @@ def _apply_appliance_update(
             "rolled_back": False,
         }
         restart_required = True
-    if "powershell_modules" in selected:
-        powershell_commands = _apply_powershell_modules(payload, credentials)
-        commands.extend(powershell_commands)
-        attempted["powershell_modules"] = "Managed PowerShell modules updated from the configured repository."
-    if "photon_os" in selected:
-        if not all(command.get("success") for command in commands):
-            attempted["photon_os"] = {
-                "message": "Photon OS update was not started because an earlier selected stream failed.",
-                "automatic_rpm_rollback": False,
-            }
-        else:
-            tdnf = _command_path("tdnf") or "tdnf"
-            commands.append(_command_payload([tdnf, "-y", "makecache"]))
-            transaction = _command_payload([tdnf, "-y", "update", "--testonly"])
-            transaction["inspection_only"] = True
-            commands.append(transaction)
-            compatibility = _photon_python_compatibility()
-            commands.append(compatibility)
-            previous_abi = _current_python_abi()
-            update_command: dict | None = None
-            if all(command.get("success") for command in commands):
-                update_command = _command_payload([tdnf, "-y", "update"])
-                commands.append(update_command)
-            if all(command.get("success") for command in commands):
-                rebuild_commands, rebuilt = _rebuild_active_release_for_python(previous_abi)
-                commands.extend(rebuild_commands)
-                restart_required = restart_required or rebuilt
-                if not rebuilt:
-                    commands.append(_service_command("restart", "atlaso.service", "atlaso-console.service"))
-                    commands.append(_wait_for_atlaso_health())
-                    commands.append(
-                        _service_command(
-                            "is-active",
-                            "atlaso.service",
-                            "atlaso-worker.service",
-                            "atlaso-console.service",
-                        )
-                    )
-            photon_succeeded = all(command.get("success") for command in commands)
-            attempted["photon_os"] = {
-                "message": (
-                    "Photon OS packages updated and Atlaso health checks passed."
-                    if photon_succeeded
-                    else "Photon OS maintenance did not leave Atlaso healthy; automatic RPM rollback was not attempted."
-                ),
-                "python_compatibility": compatibility.get("compatibility", {}),
-                "transaction_inspected": transaction.get("success", False),
-                "packages_installed": bool(update_command and update_command.get("success")),
-                "automatic_rpm_rollback": False,
-                "recovery": (
-                    ""
-                    if photon_succeeded
-                    else "Review tdnf history, the recorded command output, and Atlaso service journals before manual recovery."
-                ),
-            }
-            reboot_recommended = bool(update_command and update_command.get("success"))
     succeeded = all(command.get("success") for command in commands)
     result = {
         "status": "succeeded" if succeeded else "failed",
@@ -20159,6 +21127,32 @@ def _handle_appliance_update(action: str, args: list[str]) -> int:
         action: Action consumed by handle appliance update.
         args: Parsed command-line options consumed by the operation.
     """
+    if action in {"status-publish", "status-finish"}:
+        if len(args) != 1:
+            print(f"{action} requires exactly one task id", file=sys.stderr)
+            return 2
+        try:
+            result = (
+                _publish_appliance_update_status(args[0])
+                if action == "status-publish"
+                else _finish_appliance_update_status(args[0])
+            )
+        except (OSError, ValueError, sqlite3.Error) as exc:
+            print(f"Appliance Update status transition failed: {type(exc).__name__}.", file=sys.stderr)
+            return 1
+        print(
+            json.dumps(
+                {
+                    "status": result.get("status"),
+                    "phase": result.get("phase"),
+                    "task_id": result.get("task_id"),
+                    "sequence": result.get("sequence"),
+                },
+                sort_keys=True,
+            )
+        )
+        return 0
+
     if action == "guard-release":
         if args:
             print("guard-release does not accept arguments", file=sys.stderr)

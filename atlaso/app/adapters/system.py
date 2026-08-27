@@ -983,6 +983,40 @@ class SystemAdapter:
         """
         return self._helper_result("appliance-update", "restart-service", config_path, dry_run_message="dry-run: Atlaso service restart command recorded")
 
+    def publish_appliance_update_status(self, job_id: str) -> AdapterResult:
+        """Publish the root-owned update-only browser surface.
+
+        Args:
+            job_id: Exact Appliance Update parent identifier.
+
+        Returns:
+            The privileged status publication result.
+        """
+        return self._helper_result(
+            "appliance-update",
+            "status-publish",
+            job_id,
+            dry_run_message="dry-run: Appliance Update status publication recorded",
+            timeout_seconds=180,
+        )
+
+    def finish_appliance_update_status(self, job_id: str) -> AdapterResult:
+        """Restore ordinary browser UIs after terminal update bookkeeping.
+
+        Args:
+            job_id: Exact Appliance Update parent identifier.
+
+        Returns:
+            The privileged status completion result.
+        """
+        return self._helper_result(
+            "appliance-update",
+            "status-finish",
+            job_id,
+            dry_run_message="dry-run: Appliance Update status completion recorded",
+            timeout_seconds=180,
+        )
+
     def run_automation_script(
         self,
         script_path: str,

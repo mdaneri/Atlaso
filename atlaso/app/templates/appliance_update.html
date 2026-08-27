@@ -160,7 +160,7 @@
       <div class="panel-head compact">
         <div>
           <h2>Update Streams</h2>
-          <p class="muted appliance-update-action-guidance">Checking is read-only. Installing runs the selected maintenance streams.</p>
+          <p class="muted appliance-update-action-guidance">Checking is read-only. Installation runs Photon OS first, PowerShell Modules second, and Atlaso Release last among the selected streams.</p>
           <p class="muted appliance-update-schedule-guidance">For recurring maintenance, <a class="text-link" href="{{ management_ui_root }}/automation">schedule update checks or installations in Automation</a>.</p>
           <p id="appliance-update-action-status" class="muted appliance-update-action-guidance {{ 'hidden' if not appliance_update_install_reason else '' }}" role="status" data-appliance-update-action-status>{{ appliance_update_install_reason }}</p>
         </div>

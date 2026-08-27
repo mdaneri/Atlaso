@@ -7,6 +7,7 @@ import logging
 from datetime import datetime, timezone
 from pathlib import Path
 
+import pytest
 from sqlalchemy import select
 
 from atlaso.app.adapters.system import AdapterResult
@@ -1191,6 +1192,44 @@ def test_no_change_release_does_not_schedule_an_unverified_restart():
     assert result["restart_after_commit"] is False
 
 
+def test_release_last_worker_handoff_suppresses_the_photon_delayed_restart():
+    """Do not kill the candidate worker after release-last terminal bookkeeping."""
+    from atlaso.app.ui import aggregate_appliance_update_results
+
+    result = aggregate_appliance_update_results(
+        selected_stream_ids=["photon_os", "atlaso_release"],
+        settings={},
+        actor="admin",
+        mode="run",
+        stream_results=[
+            {
+                "unit_id": "photon_os",
+                "status": "succeeded",
+                "success": True,
+                "dry_run": False,
+                "commands": [],
+            },
+            {
+                "unit_id": "atlaso_release",
+                "status": "succeeded",
+                "success": True,
+                "dry_run": False,
+                "commands": [],
+                "release_transaction": {
+                    "status": "succeeded",
+                    "worker_restart": {"success": True},
+                    "active_release_verification": {"success": True},
+                },
+            },
+        ],
+        job_id="job-release-last",
+    )
+
+    assert result["success"] is True
+    assert result["release_worker_restarted"] is True
+    assert result["restart_after_commit"] is False
+
+
 def test_appliance_update_page_and_dry_run_job(client):
     """Verify that appliance update page and dry run job.
 
@@ -1216,7 +1255,10 @@ def test_appliance_update_page_and_dry_run_job(client):
     assert "Atlaso Release" in page.text
     assert "Check for updates" in page.text
     assert "Install updates" in page.text
-    assert "Checking is read-only. Installing runs the selected maintenance streams." in page.text
+    assert (
+        "Checking is read-only. Installation runs Photon OS first, PowerShell Modules second, "
+        "and Atlaso Release last among the selected streams."
+    ) in page.text
     assert 'href="/ui/management/automation"' in page.text
     assert "schedule update checks or installations in Automation" in page.text
     assert 'formaction="/ui/management/appliance-update/check" title="Check the selected streams without installing changes"' in page.text
@@ -1287,8 +1329,8 @@ def test_appliance_update_page_and_dry_run_job(client):
     assert "appliance-update-task-card" not in refreshed_page.text
     assert payload["dry_run"] is True
     assert [(step.component_key, step.status) for step in steps] == [
-        ("atlaso_release", "succeeded"),
         ("photon_os", "succeeded"),
+        ("atlaso_release", "succeeded"),
     ]
     assert set(payload["stream_results"]) == {"atlaso_release", "photon_os"}
     task_payload = client.get(f"/tasks/{job.id}/status").json()["task"]
@@ -1863,8 +1905,8 @@ def test_appliance_update_check_runs_every_child_after_failure(client, monkeypat
         ]
 
 
-def test_appliance_update_install_skips_photon_after_earlier_failure(client, monkeypatch):
-    """Verify that appliance update install skips photon after earlier failure.
+def test_appliance_update_install_skips_later_streams_after_photon_failure(client, monkeypatch):
+    """Verify that installation stops after Photon fails.
 
     Args:
         client: HTTP test client used to exercise the Atlaso application.
@@ -1888,7 +1930,7 @@ def test_appliance_update_install_skips_photon_after_earlier_failure(client, mon
         """
         stream = kwargs["selected_stream_ids"][0]
         calls.append(stream)
-        succeeded = stream != "atlaso_release"
+        succeeded = stream != "photon_os"
         return {
             "unit_id": stream,
             "label": stream,
@@ -1902,7 +1944,7 @@ def test_appliance_update_install_skips_photon_after_earlier_failure(client, mon
             "commands": [],
             "config_path": "",
             "config_preview": "",
-            "error": "" if succeeded else "release install failed",
+            "error": "" if succeeded else "Photon install failed",
         }
 
     monkeypatch.setattr(ui, "execute_appliance_update_job", fake_execute)
@@ -1913,7 +1955,13 @@ def test_appliance_update_install_skips_photon_after_earlier_failure(client, mon
             status=JobStatus.PENDING.value,
             created_by="admin",
             task_config_json=json.dumps(
-                {"selected_streams": selected, "settings": {}, "mode": "run"}
+                {
+                    "schema_version": 2,
+                    "selected_streams": selected,
+                    "execution_order": selected,
+                    "settings": {},
+                    "mode": "run",
+                }
             ),
             result="{}",
         )
@@ -1923,7 +1971,7 @@ def test_appliance_update_install_skips_photon_after_earlier_failure(client, mon
         db.commit()
 
     assert run_worker_once() == "job_update_install_children"
-    assert calls == ["atlaso_release", "powershell_modules"]
+    assert calls == ["photon_os"]
     with SessionLocal() as db:
         job = db.get(Job, "job_update_install_children")
         steps = db.execute(
@@ -1931,11 +1979,183 @@ def test_appliance_update_install_skips_photon_after_earlier_failure(client, mon
         ).scalars().all()
         assert job.status == "failed"
         assert [(step.component_key, step.status) for step in steps] == [
-            ("atlaso_release", "failed"),
-            ("powershell_modules", "succeeded"),
-            ("photon_os", "skipped"),
+            ("photon_os", "failed"),
+            ("powershell_modules", "skipped"),
+            ("atlaso_release", "skipped"),
         ]
-        assert "earlier selected update stream failed" in (steps[-1].error or "")
+        assert "earlier selected update stream failed" in (steps[1].error or "")
+        assert "earlier selected update stream failed" in (steps[2].error or "")
+
+
+def test_appliance_update_status_publication_failure_prevents_all_mutation(client, monkeypatch):
+    """Fail terminally without invoking a stream when listener proof is unavailable."""
+    import atlaso.app.ui as ui
+    import atlaso.app.worker as worker
+    from atlaso.app.database import SessionLocal
+    from atlaso.app.models import Job, JobStatus, JobStep
+    from atlaso.app.services.appliance_update import ensure_appliance_update_job_steps
+
+    client.get("/login")
+    calls = []
+    status_calls = []
+    monkeypatch.setattr(
+        ui,
+        "execute_appliance_update_job",
+        lambda **kwargs: calls.append(kwargs) or {},
+    )
+    monkeypatch.setattr(
+        worker,
+        "_publish_appliance_update_status",
+        lambda job_id, *, finish=False: status_calls.append((job_id, finish)) or False,
+    )
+    selected = ["photon_os", "powershell_modules", "atlaso_release"]
+    with SessionLocal() as db:
+        job = Job(
+            id="job_0123456789ab",
+            type="appliance-update",
+            status=JobStatus.PENDING.value,
+            created_by="admin",
+            task_config_json=json.dumps(
+                {
+                    "schema_version": 2,
+                    "mode": "run",
+                    "selected_streams": selected,
+                    "execution_order": selected,
+                    "status_transaction_id": "a" * 32,
+                    "settings": {},
+                }
+            ),
+            result="{}",
+        )
+        db.add(job)
+        db.flush()
+        ensure_appliance_update_job_steps(db, job=job, selected_streams=selected)
+        db.commit()
+
+    assert worker.run_worker_once() == "job_0123456789ab"
+    assert calls == []
+    assert status_calls[0] == ("job_0123456789ab", False)
+    with SessionLocal() as db:
+        job = db.get(Job, "job_0123456789ab")
+        steps = db.execute(
+            select(JobStep).where(JobStep.job_id == job.id).order_by(JobStep.position)
+        ).scalars().all()
+        assert job.status == "failed"
+        assert all(step.status == "skipped" for step in steps)
+        assert "status surface could not be proven continuously" in (job.error or "")
+
+
+def test_appliance_update_recovery_requeues_only_a_safe_pending_suffix(client):
+    """Resume schema-two work interrupted strictly between terminal children."""
+    import atlaso.app.worker as worker
+    from atlaso.app.database import SessionLocal
+    from atlaso.app.models import Job, JobStatus, JobStep
+    from atlaso.app.services.appliance_update import ensure_appliance_update_job_steps
+
+    client.get("/login")
+    selected = ["photon_os", "powershell_modules", "atlaso_release"]
+    with SessionLocal() as db:
+        job = Job(
+            id="job_fedcba987654",
+            type="appliance-update",
+            status=JobStatus.RUNNING.value,
+            created_by="admin",
+            task_config_json=json.dumps(
+                {
+                    "schema_version": 2,
+                    "mode": "run",
+                    "selected_streams": selected,
+                    "execution_order": selected,
+                    "status_transaction_id": "b" * 32,
+                }
+            ),
+            result="{}",
+        )
+        db.add(job)
+        db.flush()
+        steps = ensure_appliance_update_job_steps(db, job=job, selected_streams=selected)
+        steps[0].status = JobStatus.SUCCEEDED.value
+        steps[0].progress_percent = 100
+        steps[0].result = json.dumps(
+            {"unit_id": "photon_os", "status": "succeeded", "success": True}
+        )
+        db.commit()
+
+        assert worker.recover_interrupted_worker_jobs(db) == 1
+        recovered = db.get(Job, job.id)
+        recovered_steps = db.execute(
+            select(JobStep).where(JobStep.job_id == job.id).order_by(JobStep.position)
+        ).scalars().all()
+
+        assert recovered.status == JobStatus.PENDING.value
+        assert json.loads(recovered.result)["worker_recovery"] == "between_streams"
+        assert [step.status for step in recovered_steps] == [
+            "succeeded",
+            "pending",
+            "pending",
+        ]
+
+
+@pytest.mark.parametrize(
+    ("selected", "expected"),
+    [
+        (["photon_os"], ["photon_os"]),
+        (["powershell_modules"], ["powershell_modules"]),
+        (["atlaso_release"], ["atlaso_release"]),
+        (["photon_os", "powershell_modules"], ["photon_os", "powershell_modules"]),
+        (["photon_os", "atlaso_release"], ["photon_os", "atlaso_release"]),
+        (["powershell_modules", "atlaso_release"], ["powershell_modules", "atlaso_release"]),
+        (
+            ["photon_os", "powershell_modules", "atlaso_release"],
+            ["photon_os", "powershell_modules", "atlaso_release"],
+        ),
+    ],
+)
+def test_appliance_update_new_tasks_persist_every_subset_in_safe_order(
+    client,
+    selected,
+    expected,
+):
+    """Persist each installation subset in Photon, PowerShell, Atlaso order.
+
+    Args:
+        client: HTTP test client used to initialize an isolated database.
+        selected: Selected update streams for the task.
+        expected: Expected immutable child order.
+    """
+    from atlaso.app.database import SessionLocal
+    from atlaso.app.models import Job
+    from atlaso.app.services.appliance_update import ensure_appliance_update_job_steps
+
+    client.get("/login")
+    with SessionLocal() as db:
+        job = Job(
+            id="job_subset_order",
+            type="appliance-update",
+            status="pending",
+            created_by="admin",
+            task_config_json=json.dumps(
+                {
+                    "schema_version": 2,
+                    "selected_streams": selected,
+                    "execution_order": expected,
+                    "status_transaction_id": "a" * 32,
+                    "settings": {},
+                    "mode": "run",
+                }
+            ),
+            result="{}",
+        )
+        db.add(job)
+        db.flush()
+        steps = ensure_appliance_update_job_steps(
+            db,
+            job=job,
+            selected_streams=selected,
+        )
+
+        assert [step.component_key for step in steps] == expected
+        assert [step.position for step in steps] == list(range(1, len(expected) + 1))
 
 
 def test_appliance_update_service_version_helpers():

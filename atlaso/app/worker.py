@@ -5,8 +5,10 @@ from __future__ import annotations
 import json
 import logging
 import os
+import re
 import signal
 import time
+from datetime import datetime
 from functools import partial
 from pathlib import Path
 from secrets import compare_digest
@@ -36,6 +38,7 @@ from atlaso.app.models import (
 from atlaso.app.services.appliance_update import (
     APPLIANCE_UPDATE_EXECUTION_ORDER,
     APPLIANCE_UPDATE_FINALIZER_PATH,
+    APPLIANCE_UPDATE_LEGACY_EXECUTION_ORDER,
     APPLIANCE_UPDATE_RESTART_GATE_PATH,
     ATLASO_CURRENT_RELEASE_PATH,
     UPDATE_STREAM_LABELS,
@@ -63,6 +66,7 @@ TERMINAL_CHILD_HANDOFF_MINIMUM_VERSION = (0, 9, 163)
 AUTOMATION_STAGE_DIR = Path("/var/lib/atlaso/automation/scripts")
 AUTOMATION_VAULT_STAGE_DIR = Path("/run/atlaso-automation-vaults")
 WORKER_STARTUP_STATUS_PATH = Path("/var/lib/atlaso/worker-startup.json")
+APPLIANCE_UPDATE_STATUS_MARKER_PATH = Path("/run/atlaso-appliance-update-status")
 WORKER_JOB_TYPES = {
     "appliance-update",
     "vcf-depot-download",
@@ -476,6 +480,41 @@ def recover_interrupted_worker_jobs(
         )
         update_steps = list(job.steps) if job.type == "appliance-update" else []
         if update_steps:
+            config = _job_config(job)
+            resumable_between_children = bool(
+                not recovered
+                and int(config.get("schema_version") or 0) >= 2
+                and any(step.status == JobStatus.PENDING.value for step in update_steps)
+                and all(step.status != JobStatus.RUNNING.value for step in update_steps)
+                and all(
+                    step.status == JobStatus.SUCCEEDED.value
+                    for step in update_steps
+                    if step.status != JobStatus.PENDING.value
+                )
+            )
+            if resumable_between_children:
+                job.status = JobStatus.PENDING.value
+                job.finished_at = None
+                job.error = None
+                completed_steps = sum(
+                    step.status == JobStatus.SUCCEEDED.value for step in update_steps
+                )
+                job.progress_percent = int((completed_steps / len(update_steps)) * 90)
+                try:
+                    resumed_result = json.loads(job.result or "{}")
+                except json.JSONDecodeError:
+                    resumed_result = {}
+                resumed_result.update(
+                    {
+                        "status": JobStatus.PENDING.value,
+                        "success": False,
+                        "worker_recovery": "between_streams",
+                    }
+                )
+                resumed_result.pop("error", None)
+                job.result = json.dumps(resumed_result, indent=2, sort_keys=True)
+                db.add(job)
+                continue
             release_step = next(
                 (step for step in update_steps if step.component_key == "atlaso_release"),
                 None,
@@ -610,7 +649,6 @@ def recover_interrupted_worker_jobs(
                 complete_appliance_update_task,
             )
 
-            config = _job_config(job)
             selected = [str(value) for value in config.get("selected_streams", [])]
             stream_results = []
             for step in update_steps:
@@ -660,6 +698,17 @@ def recover_interrupted_worker_jobs(
                         if stream_result.get("worker_recovery") == "interrupted":
                             stream_result["availability"] = dict(interrupted_availability)
             complete_appliance_update_task(db, job=job, update_result=update_result)
+            if str(config.get("status_transaction_id") or ""):
+                if not _publish_appliance_update_status(job.id, finish=True):
+                    if job.status == JobStatus.SUCCEEDED.value:
+                        _fail_job(
+                            db,
+                            job,
+                            RuntimeError(
+                                "The release transaction completed, but ordinary browser UIs "
+                                "could not be safely restored."
+                            ),
+                        )
             continue
         else:
             job.status = finalizer_status if recovered else JobStatus.FAILED.value
@@ -729,6 +778,80 @@ def _appliance_update_result_error(result: dict[str, Any]) -> str:
         if detail:
             return detail[-2000:]
     return "This appliance update stream reported a failure."
+
+
+def _publish_appliance_update_status(job_id: str, *, finish: bool = False) -> bool:
+    """Synchronize the root-owned update-only browser surface.
+
+    Args:
+        job_id: Exact Appliance Update parent identifier.
+        finish: Whether terminal bookkeeping should restore ordinary UIs.
+    """
+    adapter = SystemAdapter()
+    result = (
+        adapter.finish_appliance_update_status(job_id)
+        if finish
+        else adapter.publish_appliance_update_status(job_id)
+    )
+    if result.returncode == 0:
+        return True
+    LOGGER.error(
+        "Appliance Update status %s failed for %s; privileged details omitted.",
+        "completion" if finish else "publication",
+        job_id,
+    )
+    return False
+
+
+def _reconcile_appliance_update_status_surface() -> bool:
+    """Restore a terminal update surface or block unrelated mutation safely.
+
+    Returns:
+        Whether the worker may claim another durable task.
+    """
+    try:
+        marker_job_id = APPLIANCE_UPDATE_STATUS_MARKER_PATH.read_text(
+            encoding="utf-8"
+        ).strip()
+    except FileNotFoundError:
+        return True
+    except OSError:
+        LOGGER.error(
+            "Appliance Update status marker is unreadable; worker admission remains blocked"
+        )
+        return False
+    if re.fullmatch(r"job_[0-9a-f]{12}", marker_job_id) is None:
+        LOGGER.error("Appliance Update status recovery requires privileged attention")
+        return False
+    with SessionLocal() as db:
+        job = db.get(Job, marker_job_id)
+        if job is None or job.type != "appliance-update":
+            LOGGER.error("Appliance Update status marker has no matching durable task")
+            return False
+        terminal = job.status in {
+            JobStatus.SUCCEEDED.value,
+            JobStatus.FAILED.value,
+        }
+        finished_at = job.finished_at
+        try:
+            result = json.loads(job.result or "{}")
+        except json.JSONDecodeError:
+            result = {}
+    if not terminal:
+        return True
+    if isinstance(result, dict) and result.get("restart_after_commit") is True:
+        try:
+            startup = json.loads(WORKER_STARTUP_STATUS_PATH.read_text(encoding="utf-8"))
+            started_at = datetime.fromisoformat(str(startup.get("started_at") or ""))
+        except (OSError, ValueError, json.JSONDecodeError, AttributeError):
+            return False
+        if (
+            int(startup.get("pid") or 0) != os.getpid()
+            or finished_at is None
+            or started_at <= finished_at
+        ):
+            return False
+    return _publish_appliance_update_status(marker_job_id, finish=True)
 
 
 def _set_appliance_update_step_running(job_id: str, stream: str, *, completed: int, total: int) -> None:
@@ -868,6 +991,7 @@ def _run_appliance_update(job_id: str) -> None:
     )
 
     terminal_stream_results: dict[str, dict[str, Any]] = {}
+    status_surface_required = False
     with SessionLocal() as db:
         job = db.get(Job, job_id)
         if job is None:
@@ -876,10 +1000,29 @@ def _run_appliance_update(job_id: str) -> None:
         selected = [str(value) for value in config.get("selected_streams", [])]
         settings = config.get("settings") if isinstance(config.get("settings"), dict) else appliance_update_settings(db)
         mode = str(config.get("mode") or "check")
+        status_surface_required = bool(
+            mode == "run" and str(config.get("status_transaction_id") or "")
+        )
         actor = job.created_by
         credentials = update_source_credentials(db)
         if mode != "source_sync":
-            steps = ensure_appliance_update_job_steps(db, job=job, selected_streams=selected)
+            stored_order = config.get("execution_order")
+            if not isinstance(stored_order, list):
+                stored_order = [
+                    stream
+                    for stream in APPLIANCE_UPDATE_LEGACY_EXECUTION_ORDER
+                    if stream in selected
+                ]
+            steps = ensure_appliance_update_job_steps(
+                db,
+                job=job,
+                selected_streams=selected,
+                execution_order=(
+                    [str(stream) for stream in stored_order]
+                    if isinstance(stored_order, list)
+                    else None
+                ),
+            )
             for step in steps:
                 if step.status not in {
                     JobStatus.SUCCEEDED.value,
@@ -894,6 +1037,9 @@ def _run_appliance_update(job_id: str) -> None:
                 if isinstance(parsed_result, dict) and str(parsed_result.get("status") or "") == step.status:
                     terminal_stream_results[step.component_key] = parsed_result
             db.commit()
+    status_surface_failed = bool(
+        status_surface_required and not _publish_appliance_update_status(job_id)
+    )
     if mode == "source_sync":
         try:
             update_result = execute_appliance_update_job(
@@ -914,14 +1060,31 @@ def _run_appliance_update(job_id: str) -> None:
                 exc=exc,
             )
     else:
-        execution_streams = [stream for stream in APPLIANCE_UPDATE_EXECUTION_ORDER if stream in selected]
+        stored_order = config.get("execution_order")
+        if not isinstance(stored_order, list):
+            stored_order = [
+                stream
+                for stream in APPLIANCE_UPDATE_LEGACY_EXECUTION_ORDER
+                if stream in selected
+            ]
+        execution_order = (
+            [str(stream) for stream in stored_order]
+            if isinstance(stored_order, list)
+            and set(str(stream) for stream in stored_order) == set(selected)
+            and len(stored_order) == len(selected)
+            else list(APPLIANCE_UPDATE_EXECUTION_ORDER)
+        )
+        execution_streams = [stream for stream in execution_order if stream in selected]
         stream_results: list[dict[str, Any]] = []
-        earlier_failed = False
+        earlier_failed = status_surface_failed
         for index, stream in enumerate(execution_streams, start=1):
             if stream in terminal_stream_results:
                 stream_result = terminal_stream_results[stream]
-            elif mode == "run" and stream == "photon_os" and earlier_failed:
-                skip_reason = "Photon OS was not started because an earlier selected update stream failed."
+            elif mode == "run" and earlier_failed:
+                skip_reason = (
+                    f"{UPDATE_STREAM_LABELS[stream]} was not started because an earlier "
+                    "selected update stream failed."
+                )
                 stream_result = {
                     "unit_id": stream,
                     "label": UPDATE_STREAM_LABELS[stream],
@@ -946,25 +1109,50 @@ def _run_appliance_update(job_id: str) -> None:
                     completed=index - 1,
                     total=len(execution_streams),
                 )
-                try:
-                    stream_result = execute_appliance_update_job(
-                        selected_stream_ids=[stream],
-                        settings=settings,
-                        actor=actor,
-                        mode=mode,
-                        job_id=job_id,
-                        credentials=credentials,
-                        before_apply=partial(_mark_appliance_update_apply_started, job_id, stream),
+                if status_surface_required and not _publish_appliance_update_status(job_id):
+                    status_surface_failed = True
+                    earlier_failed = True
+                    skip_reason = (
+                        f"{UPDATE_STREAM_LABELS[stream]} was not started because the "
+                        "update-only status surface could not be proven on every browser listener."
                     )
-                except Exception as exc:  # noqa: BLE001 - each child step must reach a terminal state.
-                    LOGGER.exception("Appliance update stream %s for job %s failed before helper completion", stream, job_id)
-                    stream_result = appliance_update_exception_result(
-                        selected_stream_ids=[stream],
-                        settings=settings,
-                        actor=actor,
-                        mode=mode,
-                        exc=exc,
-                    )
+                    stream_result = {
+                        "unit_id": stream,
+                        "label": UPDATE_STREAM_LABELS[stream],
+                        "mode": mode,
+                        "selected_streams": [stream],
+                        "selected_labels": [UPDATE_STREAM_LABELS[stream]],
+                        "status": JobStatus.FAILED.value,
+                        "success": False,
+                        "skipped": True,
+                        "skip_reason": skip_reason,
+                        "dry_run": False,
+                        "restart_after_commit": False,
+                        "commands": [],
+                        "config_path": "",
+                        "config_preview": "",
+                        "error": skip_reason,
+                    }
+                else:
+                    try:
+                        stream_result = execute_appliance_update_job(
+                            selected_stream_ids=[stream],
+                            settings=settings,
+                            actor=actor,
+                            mode=mode,
+                            job_id=job_id,
+                            credentials=credentials,
+                            before_apply=partial(_mark_appliance_update_apply_started, job_id, stream),
+                        )
+                    except Exception as exc:  # noqa: BLE001 - each child step must reach a terminal state.
+                        LOGGER.exception("Appliance update stream %s for job %s failed before helper completion", stream, job_id)
+                        stream_result = appliance_update_exception_result(
+                            selected_stream_ids=[stream],
+                            settings=settings,
+                            actor=actor,
+                            mode=mode,
+                            exc=exc,
+                        )
             stream_results.append(stream_result)
             earlier_failed = earlier_failed or not bool(stream_result.get("success"))
             if stream not in terminal_stream_results:
@@ -975,6 +1163,9 @@ def _run_appliance_update(job_id: str) -> None:
                     completed=index,
                     total=len(execution_streams),
                 )
+                if status_surface_required and not _publish_appliance_update_status(job_id):
+                    status_surface_failed = True
+                    earlier_failed = True
         update_result = aggregate_appliance_update_results(
             selected_stream_ids=selected,
             settings=settings,
@@ -988,6 +1179,27 @@ def _run_appliance_update(job_id: str) -> None:
         if job is None:
             return
         complete_appliance_update_task(db, job=job, update_result=update_result)
+        if status_surface_failed:
+            _fail_job(
+                db,
+                job,
+                RuntimeError(
+                    "The update stream results were preserved, but the update-only browser "
+                    "status surface could not be proven continuously."
+                ),
+            )
+    if status_surface_required and not bool(update_result.get("restart_after_commit")):
+        if not _publish_appliance_update_status(job_id, finish=True):
+            with SessionLocal() as db:
+                job = db.get(Job, job_id)
+                if job is not None and job.status == JobStatus.SUCCEEDED.value:
+                    _fail_job(
+                        db,
+                        job,
+                        RuntimeError(
+                            "The update completed, but ordinary browser UIs could not be safely restored."
+                        ),
+                    )
 
 
 def _automation_stage_path(job_id: str, interpreter: str) -> Path:
@@ -1269,6 +1481,8 @@ def run_worker_once() -> str | None:
     Raises:
         ValueError: If an input value is invalid.
     """
+    if not _reconcile_appliance_update_status_surface():
+        return None
     with SessionLocal() as db:
         enqueue_due_schedules(db)
         job = claim_next_job(db)

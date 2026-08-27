@@ -517,13 +517,32 @@ Terminal order:
   wheel streams.
 - Represent every manual or scheduled Appliance Update check/install as one parent job with ordered `JobStep` children
   for the selected Atlaso Release, PowerShell Modules, and Photon OS streams. Checks run every selected child for
-  complete diagnostics. Installs preserve release, PowerShell, then Photon ordering; Photon is explicitly skipped when
-  an earlier selected stream fails. After a definitive release worker handoff, resume only untouched pending children
-  when the restored worker can preserve terminal child results, and never rerun a child that had started. If rollback
-  restores an older worker without that capability, explicitly skip untouched children and fail the parent rather than
-  requeueing terminal work. Keep child output, compatibility evidence, and errors independent, and
+  complete diagnostics. New installs preserve Photon OS, PowerShell Modules, then Atlaso Release ordering and skip every
+  later selected stream after the first installation failure. Persist the exact order and a random status-transaction
+  identity before the parent becomes visible. Legacy in-flight tasks retain their recorded release-first order; never
+  reorder an already-created hierarchy. A current-protocol worker interrupted safely between children requeues only the
+  untouched pending suffix and never reruns a child that started. Release-last owns the only selected release worker
+  handoff, so no pending post-release child remains and a proven candidate worker restart suppresses the older delayed
+  Photon restart. If rollback restores an older worker without terminal-child capability, explicitly skip untouched
+  children and fail the parent rather than requeueing terminal work. Keep child output, compatibility evidence, and
+  errors independent, and
   derive the parent outcome from all selected children. Give privileged PowerShell update work the root-owned
   persistent home `/var/lib/atlaso/powershell`; do not point it at the service's read-only `/root` view.
+- Before any real installation child starts, atomically publish a root-owned, no-store update-only browser surface from
+  the exact durable parent/child hierarchy and prove HTTP 503 on every applied management and public browser listener.
+  While its runtime marker exists, nginx must serve the bounded self-contained page without Atlaso, authentication,
+  sessions, JavaScript, or ordinary static assets; the canonical browser prefixes, `/` dispatcher, and legacy human
+  bookmarks must not reach the control plane. Machine and protocol route paths remain unchanged and may return the same
+  maintenance 503 while their upstream is unavailable; they must not return 502. Store the durable snapshot and
+  monotonic restoration state beneath the root-only privileged state directory, publish only the sanitized HTML in
+  `/run`, reject symlinks, non-root ownership, stale/cross-task identities, malformed hierarchy, and non-install tasks,
+  and use no-follow atomic replacement plus file and directory sync. Recreate a nonterminal or terminal-pending hold in
+  nginx pre-start after reboot. Corrupt evidence must serve a generic no-detail recovery 503 and block worker admission,
+  not prevent nginx from starting. Restore ordinary UIs only after the parent is terminal, every selected child is
+  terminal, any started release has definitive finalizer/update-info/current-link/signed-receipt/worker/service evidence,
+  and any scheduled Photon worker restart has completed in the new worker process. Persist `pending` before removing the
+  marker and `restored` only after nginx reload and listener proof; startup and the worker must retry an interrupted
+  restoration idempotently.
 - Submit manual Appliance Update checks and installations asynchronously from Update Streams. Refresh only the embedded
   shared Tasks grid, highlight the newly created task, and keep both task actions disabled until the active Appliance
   Update task reaches a terminal state; do not restore a separate submission-result card.
@@ -629,8 +648,9 @@ Terminal order:
   evidence. A failed final front-door probe or evidence write must restore maintenance without making the snapshot
   eligible for replay. Fail both release child and parent. After a verified healthy
   rollback, preserve the terminal failed release child and requeue untouched children without rerunning it. Requeue a
-  mixed terminal/pending set after another worker restart while preserving every terminal result; retain the
-  normal rule that independently runnable PowerShell Modules proceeds while Photon OS skips after an earlier failure.
+  mixed terminal/pending set after another worker restart while preserving every terminal result; for legacy
+  release-first tasks retain their recorded compatibility behavior, while current release-last tasks skip the untouched
+  suffix after any earlier failure.
   Worker startup must reject
   a success finalizer that disagrees with the durable active release or running version. On the first transition from
   the legacy updater, recognize only its bounded successful service-health or no-change finalizer shape and reconcile

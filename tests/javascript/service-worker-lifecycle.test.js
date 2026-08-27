@@ -26,6 +26,7 @@ function lifecycleScenario(failureMode = null) {
   let skipWaitingCalls = 0;
   let claimCalls = 0;
   let networkUnavailable = false;
+  let navigationResponse = null;
 
   function cacheKey(request) {
     return typeof request === "string" ? request : new URL(request.url).pathname + new URL(request.url).search;
@@ -58,6 +59,7 @@ function lifecycleScenario(failureMode = null) {
     caches,
     fetch: async (asset) => {
       if (networkUnavailable) throw new Error("simulated offline state");
+      if (typeof asset === "object" && navigationResponse) return navigationResponse;
       if (asset === requiredFailureAsset && failureMode === "network") {
         throw new Error("simulated network failure");
       }
@@ -113,11 +115,34 @@ function lifecycleScenario(failureMode = null) {
     dispatch,
     dispatchFetch,
     entries,
+    setNavigationResponse(value) { navigationResponse = value; },
     setNetworkUnavailable(value) { networkUnavailable = value; },
     get skipWaitingCalls() { return skipWaitingCalls; },
     get claimCalls() { return claimCalls; },
   };
 }
+
+test("controlled update 503 remains authoritative instead of using the offline shell", async () => {
+  const scenario = lifecycleScenario();
+  await scenario.dispatch("install");
+  await scenario.dispatch("activate");
+  const controlled = {
+    status: 503,
+    headers: { get(name) { return name === "X-Atlaso-Update-Mode" ? "active" : null; } },
+    source: "update-only",
+  };
+  scenario.setNavigationResponse(controlled);
+
+  const response = await scenario.dispatchFetch({
+    method: "GET",
+    mode: "navigate",
+    url: "https://atlaso.example/ui/management/appliance-update",
+    headers: { get() { return "text/html"; } },
+  });
+
+  assert.equal(response, controlled);
+  assert.equal(response.source, "update-only");
+});
 
 for (const failureMode of ["network", "http", "cache-put"]) {
   test(`required ${failureMode} failure rejects installation and preserves the complete cache`, async () => {

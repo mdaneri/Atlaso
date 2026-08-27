@@ -30,6 +30,297 @@ def load_helper_module():
     return module
 
 
+def test_update_status_guards_every_browser_server_without_changing_route_paths():
+    """Guard browser servers while preserving stable machine-route locations."""
+    helper = load_helper_module()
+    management = """server {
+  listen 80 default_server;
+  server_name _;
+  location / {
+    proxy_pass http://127.0.0.1:8000;
+  }
+}
+"""
+    public = """server {
+  listen 192.0.2.10:443 ssl;
+  server_name _;
+  location = /ui/public {
+    proxy_pass http://127.0.0.1:8000;
+  }
+  location ^~ /ui/public/ {
+    proxy_pass http://127.0.0.1:8000;
+  }
+  location ^~ /ca/ {
+    proxy_pass http://127.0.0.1:8000;
+  }
+}
+"""
+
+    guarded_management = helper._site_with_update_status_guards(
+        management,
+        default_management=True,
+    )
+    guarded_public = helper._site_with_update_status_guards(
+        public,
+        default_management=False,
+    )
+
+    assert guarded_management.count(str(helper.ATLASO_UPDATE_STATUS_NGINX_INCLUDE_PATH)) == 1
+    assert guarded_management.count(str(helper.ATLASO_UPDATE_STATUS_MARKER_PATH)) == 5
+    assert "location = /ui/management" in guarded_management
+    assert "location ^~ /ui/public/" in guarded_management
+    assert guarded_public.count(str(helper.ATLASO_UPDATE_STATUS_NGINX_INCLUDE_PATH)) == 1
+    assert guarded_public.count(str(helper.ATLASO_UPDATE_STATUS_MARKER_PATH)) == 3
+    assert "location ^~ /ca/" in guarded_public
+    assert "proxy_pass http://127.0.0.1:8000;" in guarded_public
+    assert helper._site_with_update_status_guards(
+        guarded_management,
+        default_management=True,
+    ) == guarded_management
+
+
+def test_update_status_page_escapes_bounded_task_content():
+    """Render a self-contained semantic hierarchy without HTML injection."""
+    helper = load_helper_module()
+    rendered = helper._render_appliance_update_status_html(
+        {
+            "task_id": "job_0123456789ab<script>",
+            "phase": "installing_photon_os",
+            "progress_percent": 30,
+            "children": [
+                {
+                    "label": "Photon <OS>",
+                    "status": "running",
+                    "progress_percent": 12,
+                }
+            ],
+        }
+    )
+
+    assert "Installing Photon OS" in rendered
+    assert "job_0123456789ab&lt;script&gt;" in rendered
+    assert "Photon &lt;OS&gt;" in rendered
+    assert "<script>" not in rendered
+    assert 'http-equiv="refresh" content="3"' in rendered
+    assert "<progress" in rendered
+
+
+def test_update_status_snapshot_is_monotonic_and_rejects_cross_task_reuse(monkeypatch, tmp_path):
+    """Bind durable status publication to one task transaction and sequence."""
+    helper = load_helper_module()
+    status_dir = tmp_path / "status"
+    monkeypatch.setattr(helper, "ATLASO_UPDATE_STATUS_DIR", status_dir)
+    monkeypatch.setattr(helper, "ATLASO_UPDATE_STATUS_PATH", status_dir / "status.json")
+    monkeypatch.setattr(helper, "ATLASO_UPDATE_STATUS_HTML_PATH", status_dir / "index.html")
+    snapshot = {
+        "schema_version": 1,
+        "task_id": "job_0123456789ab",
+        "transaction_id": "a" * 32,
+        "status": "running",
+        "phase": "preparing",
+        "progress_percent": 0,
+        "created_at": "",
+        "started_at": "",
+        "finished_at": "",
+        "active_release": "0.9.218",
+        "children": [
+            {
+                "id": "job_0123456789ab:photon_os",
+                "component_key": "photon_os",
+                "label": "Photon OS",
+                "position": 1,
+                "status": "pending",
+                "progress_percent": 0,
+                "created_at": "",
+                "started_at": "",
+                "finished_at": "",
+            }
+        ],
+        "terminal": False,
+    }
+
+    first = helper._write_appliance_update_status_files(snapshot)
+    second = helper._write_appliance_update_status_files(snapshot)
+    assert first["sequence"] == 1
+    assert second["sequence"] == 2
+    assert json.loads((status_dir / "status.json").read_text(encoding="utf-8"))["sequence"] == 2
+    with pytest.raises(ValueError, match="another appliance update status transaction"):
+        helper._write_appliance_update_status_files(
+            {**snapshot, "task_id": "job_fedcba987654", "transaction_id": "b" * 32}
+        )
+
+
+def test_update_status_rejects_a_precreated_status_directory_symlink(monkeypatch, tmp_path):
+    """Do not let the privileged writer follow an attacker-controlled status directory."""
+    helper = load_helper_module()
+    status_dir = tmp_path / "status"
+    status_dir.mkdir()
+    monkeypatch.setattr(helper, "ATLASO_UPDATE_STATUS_DIR", status_dir)
+    monkeypatch.setattr(helper, "ATLASO_UPDATE_STATUS_PATH", status_dir / "status.json")
+    original_is_symlink = helper.Path.is_symlink
+    monkeypatch.setattr(
+        helper.Path,
+        "is_symlink",
+        lambda path: path == status_dir or original_is_symlink(path),
+    )
+
+    with pytest.raises(ValueError, match="status directory is unsafe"):
+        helper._write_appliance_update_status_files(
+            {
+                "task_id": "job_0123456789ab",
+                "transaction_id": "a" * 32,
+                "terminal": False,
+            }
+        )
+
+
+def test_update_status_probe_covers_management_and_public_listeners(monkeypatch):
+    """Require stable maintenance responses from each applied browser listener."""
+    helper = load_helper_module()
+    site = """server {
+  listen 80 default_server;
+  listen [::]:80 default_server;
+  location = /ui/management { return 418; }
+  location = /ui/public { return 418; }
+}
+server {
+  listen 192.0.2.10:443 ssl;
+  location ^~ /ui/public/ { return 418; }
+}
+"""
+    observed = []
+    monkeypatch.setattr(helper.shutil, "which", lambda _name: "curl")
+    monkeypatch.setattr(
+        helper,
+        "_console_management_http_status",
+        lambda _curl, url, *, insecure: observed.append((url, insecure)) or "503",
+    )
+    monkeypatch.setattr(helper.time, "sleep", lambda _seconds: None)
+
+    result = helper._verify_update_status_responses([site])
+
+    assert result["listener_count"] == 5
+    assert result["stable_samples"] == 3
+    assert ("http://127.0.0.1/ui/management", False) in observed
+    assert ("http://127.0.0.1/ui/public", False) in observed
+    assert ("http://[::1]/ui/management", False) in observed
+    assert ("http://[::1]/ui/public", False) in observed
+    assert ("https://192.0.2.10/ui/public", True) in observed
+
+
+def test_update_status_task_requires_current_install_contract(monkeypatch, tmp_path):
+    """Reject stale checks and terminal publication while accepting the exact hierarchy."""
+    helper = load_helper_module()
+    database = tmp_path / "atlaso.db"
+    connection = helper.sqlite3.connect(database)
+    connection.executescript(
+        """
+        create table jobs (
+          id text primary key, type text, status text, progress_percent integer,
+          created_at text, started_at text, finished_at text, task_config_json text
+        );
+        create table job_steps (
+          id text primary key, job_id text, component_key text, label text,
+          position integer, status text, progress_percent integer, result text,
+          created_at text, started_at text, finished_at text
+        );
+        """
+    )
+    config = {
+        "schema_version": 2,
+        "mode": "run",
+        "selected_streams": ["photon_os", "atlaso_release"],
+        "execution_order": ["photon_os", "atlaso_release"],
+        "status_transaction_id": "a" * 32,
+    }
+    connection.execute(
+        "insert into jobs values (?, ?, ?, ?, ?, ?, ?, ?)",
+        (
+            "job_0123456789ab",
+            "appliance-update",
+            "running",
+            30,
+            "2026-08-26T00:00:00Z",
+            "2026-08-26T00:00:01Z",
+            "",
+            json.dumps(config),
+        ),
+    )
+    for position, stream in enumerate(config["execution_order"], start=1):
+        connection.execute(
+            "insert into job_steps values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            (
+                f"job_0123456789ab:{stream}",
+                "job_0123456789ab",
+                stream,
+                stream,
+                position,
+                "running" if position == 1 else "pending",
+                10 if position == 1 else 0,
+                "{}",
+                "",
+                "",
+                "",
+            ),
+        )
+    connection.commit()
+    connection.close()
+    monkeypatch.setattr(helper, "ATLASO_DATABASE_PATH", database)
+    monkeypatch.setattr(helper, "ATLASO_UPDATE_FINALIZER_PATH", tmp_path / "finalizer.json")
+
+    snapshot = helper._appliance_update_status_task("job_0123456789ab")
+
+    assert snapshot["transaction_id"] == "a" * 32
+    assert [child["component_key"] for child in snapshot["children"]] == [
+        "photon_os",
+        "atlaso_release",
+    ]
+    with helper.sqlite3.connect(database) as update_connection:
+        update_connection.execute(
+            "update jobs set status = 'failed', finished_at = '2026-08-26T00:01:00Z'"
+        )
+    with pytest.raises(ValueError, match="terminal appliance update status"):
+        helper._appliance_update_status_task("job_0123456789ab")
+    assert helper._appliance_update_status_task(
+        "job_0123456789ab",
+        allow_terminal=True,
+    )["terminal"] is True
+
+
+def test_release_status_completion_accepts_only_a_proven_pretransaction_failure(
+    monkeypatch,
+    tmp_path,
+):
+    """Restore after release preflight failure only while ordinary services are healthy."""
+    helper = load_helper_module()
+    monkeypatch.setattr(helper, "ATLASO_UPDATE_FINALIZER_PATH", tmp_path / "finalizer.json")
+    monkeypatch.setattr(helper, "ATLASO_UPDATE_MAINTENANCE_PATH", tmp_path / "maintenance")
+    monkeypatch.setattr(helper, "ATLASO_UPDATE_RESTART_GATE_PATH", tmp_path / "gate")
+    monkeypatch.setattr(
+        helper,
+        "_service_command",
+        lambda *_args: {"success": True},
+    )
+    snapshot = {
+        "children": [
+            {
+                "component_key": "atlaso_release",
+                "status": "failed",
+                "apply_started": True,
+            }
+        ]
+    }
+
+    helper._verify_release_status_completion(snapshot, "job_0123456789ab")
+    monkeypatch.setattr(
+        helper,
+        "_service_command",
+        lambda *_args: {"success": False},
+    )
+    with pytest.raises(ValueError, match="transaction evidence is unavailable"):
+        helper._verify_release_status_completion(snapshot, "job_0123456789ab")
+
+
 def test_management_handoff_applies_and_restores_coupled_wan(monkeypatch):
     """Apply candidate WAN intent and restore its last-applied config through one helper path.
 

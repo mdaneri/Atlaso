@@ -49,15 +49,47 @@ Atlaso has three update streams:
 The appliance never performs a broad runtime `pip --upgrade` and never contacts PyPI during a Atlaso release update.
 Application dependencies and bootstrap tools are exact, hash-locked wheels inside the release bundle.
 
-Checks execute every selected child even when another check fails, which keeps diagnostics independent. Installations
-preserve the safety order Atlaso Release, PowerShell Modules, then Photon OS. After a successful transactional release
-handoff, the restarted candidate worker resumes only the untouched pending module and OS children; it never reruns a
-child that had already started. If rollback restores an older worker that cannot preserve terminal child results,
-Atlaso leaves untouched children explicitly skipped and the parent failed instead of allowing that worker to rerun the
-rejected release; submit those independent streams separately after reviewing the rollback. PowerShell remains
-independently observable after a release failure when the restored worker supports the handoff, while Photon is
-marked **skipped** with an explicit reason if either earlier selected stream failed. The parent succeeds only when every
-selected child succeeds.
+Checks execute every selected child even when another check fails, which keeps diagnostics independent. New
+installations preserve the safety order Photon OS, PowerShell Modules, then Atlaso Release among the selected streams.
+Any failed installation child leaves every later selected child explicitly **skipped**, while preserving every earlier
+terminal result. Atlaso records that exact order and a random update-status transaction identity with the parent before
+the task becomes visible. A task created by an older updater retains its original recorded order during recovery rather
+than being silently reordered. A current task interrupted safely between children resumes only its untouched pending
+suffix; a child that started is never replayed. Atlaso Release runs last, so its verified candidate-worker handoff has
+no pending post-release child and suppresses the former extra Photon-triggered delayed restart. The parent succeeds only
+when every selected child succeeds and all required restoration evidence is durable.
+
+## Update-only browser surface
+
+A real installation replaces the ordinary management and public browser experiences with a self-contained status page
+before the first child may mutate the appliance. The page reuses the Tasks parent/child hierarchy and Appliance Apply
+status language: it shows only the bounded task identifier, phase, percentage, ordered stream labels and states, and
+timestamps. It does not expose command lines, helper output, credentials, sessions, source URLs, error details, or raw
+database content. Nginx serves it directly with HTTP 503, `Retry-After: 3`, `Cache-Control: no-store`, and
+`X-Atlaso-Update-Mode: active`; it has no Atlaso, authentication, JavaScript, service-worker, or ordinary static-asset
+dependency. The canonical UI prefixes, `/` requested-interface dispatcher, and supported legacy browser bookmarks
+therefore never become a 502 page while Atlaso, the worker, or release-owned services restart. API, OpenAPI, OIDC, CA,
+PXE, registry, `/PROD/`, and static paths remain at their stable URLs; while their control-plane upstream is unavailable
+they may receive the same bounded maintenance 503 rather than a gateway error.
+
+The durable status snapshot lives in the root-only privileged state directory; only the generated public-safe HTML is
+placed in `/run` for nginx. Publication rejects symlinks, unsafe ownership, malformed or duplicate children, non-install
+tasks, stale terminal tasks, and a transaction ID that does not match the active snapshot. Nginx configuration and
+runtime files use no-follow atomic replacement and file/directory synchronization. Every applied IPv4 and IPv6 browser
+listener must return three consecutive 503 samples before installation begins. If publication cannot be proven, no
+selected stream starts and the task fails terminally.
+
+Parent completion does not by itself reopen ordinary UIs. For a started release child, restoration independently
+requires the matching definitive finalizer, `/etc/atlaso/update-info`, active-release link, signed receipt identity,
+cleared restart gate, candidate-worker identity, and active service state; a verified healthy rollback satisfies the
+corresponding previous-release contract. A skipped release or a pre-transaction release failure may restore only when
+the ordinary services are proven active and no release maintenance or restart gate remains. Photon-only work that
+schedules a worker restart leaves the status hold active until the new worker publishes a startup timestamp after the
+terminal parent. Restoration first persists `pending`, removes the runtime marker, validates and reloads nginx, proves
+ordinary browser responses contain no 500/502/503/504 gateway or maintenance status, and only then persists `restored`.
+If reboot or process interruption occurs at any boundary, nginx pre-start recreates the hold and the worker retries the
+same terminal restoration. Corrupt or cross-task evidence yields a generic no-detail recovery 503 and blocks new worker
+mutation instead of leaving nginx unavailable.
 
 Every completed check also records bounded operational availability under
 `appliance_update.availability.v1`. Each stream keeps its latest attempt and its latest successful confirmation
@@ -349,10 +381,11 @@ privileged helper
 removes and flushes any staged
 source-credential file before restarting the calling worker. The definitive finalizer retains sanitized helper command
 evidence so startup recovery can run the same child completion, parent completion, terminal task-log, and audit
-bookkeeping as an uninterrupted update. After a verified healthy release rollback, recovery preserves the failed
-release child and requeues untouched children: PowerShell Modules still runs independently, while Photon OS is skipped
-under the normal earlier-failure rule. A second worker restart requeues any remaining pending children while preserving
-terminal child results. The failed release and completed children are never rerun implicitly. The helper then requires
+bookkeeping as an uninterrupted update. Current release-last tasks have no untouched later stream after the release
+child. Recovery preserves the failed release and all earlier terminal children, and the parent fails. Legacy
+release-first tasks retain their recorded compatibility behavior without silently changing child positions. A second
+worker restart requeues only a current-protocol task's proven untouched pending suffix while preserving terminal child
+results. The failed release and completed children are never rerun implicitly. The helper then requires
 `current`, the compatibility virtualenv, the signed release receipt, internal `/openapi.json`, and the applied HTTP or
 HTTPS nginx management front door to report the exact candidate version. The finalizer retains the candidate and
 previous versions, receipt identity, active-release verification, internal and front-door versions, and sanitized

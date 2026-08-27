@@ -12283,11 +12283,11 @@ def aggregate_appliance_update_results(
         "apply_started": any(bool(result.get("apply_started")) for result in ordered_results),
         "restart_after_commit": mode == "run"
         and succeeded
+        and not release_worker_restarted
         and (
             "photon_os" in selected
             or (
                 "atlaso_release" in selected
-                and not release_worker_restarted
                 and not release_no_change
             )
         ),
@@ -12424,6 +12424,9 @@ def complete_appliance_update_task(db: Session, *, job: Job, update_result: dict
     if update_result.get("restart_after_commit"):
         restart_result = SystemAdapter().restart_appliance_after_update(str(update_result["config_path"]))
         update_result["commands"].append(adapter_result_to_payload(restart_result))
+        update_result["restart_scheduled"] = restart_result.returncode == 0
+        if restart_result.returncode != 0:
+            update_result["restart_after_commit"] = False
         update_result["success"] = bool(update_result["success"]) and restart_result.returncode == 0
         update_result["status"] = JobStatus.SUCCEEDED.value if update_result["success"] else JobStatus.FAILED.value
         job.status = update_result["status"]
@@ -14578,7 +14581,16 @@ def submit_appliance_update(
             },
             status_code=409,
         )
-    task_config = {"selected_streams": selected, "settings": settings, "mode": mode}
+    task_config = {
+        "schema_version": 2,
+        "selected_streams": selected,
+        "execution_order": [
+            stream for stream in APPLIANCE_UPDATE_EXECUTION_ORDER if stream in selected
+        ],
+        "status_transaction_id": uuid4().hex,
+        "settings": settings,
+        "mode": mode,
+    }
     update_result = {
         "unit_id": "appliance_update",
         "label": _appliance_update_task_label(mode),

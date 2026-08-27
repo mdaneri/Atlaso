@@ -24,7 +24,10 @@ from atlaso.app.models import (
     VcfDepotDownloadProfile,
     utcnow,
 )
-from atlaso.app.services.appliance_update import ensure_appliance_update_job_steps
+from atlaso.app.services.appliance_update import (
+    APPLIANCE_UPDATE_EXECUTION_ORDER,
+    ensure_appliance_update_job_steps,
+)
 from atlaso.app.services.vaults import vault_scope_identity
 from atlaso.app.services.vcf_depot_downloads import (
     ActiveVcfDepotDownloadError,
@@ -53,6 +56,23 @@ MAX_SCRIPT_CONTENT_BYTES = 1024 * 1024
 MAX_SCRIPT_ARGUMENTS = 64
 MAX_SCRIPT_ARGUMENT_BYTES = 4096
 MAX_SCRIPT_ARGUMENTS_BYTES = 16 * 1024
+
+
+def _prepare_appliance_update_task_config(config: dict[str, Any]) -> None:
+    """Bind one scheduled update task to the current durable execution contract.
+
+    Args:
+        config: Fresh per-run copy of the saved schedule configuration.
+    """
+    selected = [str(value) for value in config.get("selected_streams", [])]
+    config["schema_version"] = 2
+    config["execution_order"] = [
+        stream for stream in APPLIANCE_UPDATE_EXECUTION_ORDER if stream in selected
+    ]
+    if config.get("mode") == "run":
+        config["status_transaction_id"] = uuid4().hex
+    else:
+        config.pop("status_transaction_id", None)
 
 
 def normalize_script_content(content: str, interpreter: str) -> str:
@@ -512,6 +532,8 @@ def enqueue_schedule_now(db: Session, *, schedule: Schedule, actor: str, now: da
         config["mode"] = "check"
     elif schedule.task_type == "appliance_update_install":
         config["mode"] = "run"
+    if schedule.task_type in {"appliance_update_check", "appliance_update_install"}:
+        _prepare_appliance_update_task_config(config)
     config["_schedule_id"] = schedule.id
     config["_schedule_name"] = schedule.name
     if schedule.task_type == "vcf_depot_download":
@@ -529,7 +551,11 @@ def enqueue_schedule_now(db: Session, *, schedule: Schedule, actor: str, now: da
         )
     else:
         job = Job(
-            id=f"job_schedule_{schedule.id}_{uuid4().hex[:12]}",
+            id=(
+                f"job_{uuid4().hex[:12]}"
+                if SCHEDULE_JOB_TYPES[schedule.task_type] == "appliance-update"
+                else f"job_schedule_{schedule.id}_{uuid4().hex[:12]}"
+            ),
             type=SCHEDULE_JOB_TYPES[schedule.task_type],
             status=JobStatus.PENDING.value,
             created_by=actor,
@@ -617,6 +643,8 @@ def enqueue_due_schedules(db: Session, *, now: datetime | None = None) -> list[J
             config["mode"] = "check"
         elif schedule.task_type == "appliance_update_install":
             config["mode"] = "run"
+        if schedule.task_type in {"appliance_update_check", "appliance_update_install"}:
+            _prepare_appliance_update_task_config(config)
         config["_schedule_id"] = schedule.id
         config["_schedule_name"] = schedule.name
         if schedule.task_type == "vcf_depot_download":
@@ -703,7 +731,11 @@ def enqueue_due_schedules(db: Session, *, now: datetime | None = None) -> list[J
                     db.flush()
         else:
             job = Job(
-                id=f"job_schedule_{schedule.id}_{int(current.timestamp())}",
+                id=(
+                    f"job_{uuid4().hex[:12]}"
+                    if SCHEDULE_JOB_TYPES[schedule.task_type] == "appliance-update"
+                    else f"job_schedule_{schedule.id}_{int(current.timestamp())}"
+                ),
                 type=SCHEDULE_JOB_TYPES[schedule.task_type],
                 status=JobStatus.PENDING.value,
                 created_by=f"scheduler:{schedule.name}",

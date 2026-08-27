@@ -37,6 +37,14 @@ dialog was closed.
 Pending and running tasks are not proof that appliance state changed. Treat only a successful terminal result plus the
 service-specific verification as success.
 
+During a real Appliance Update installation, nginx temporarily replaces ordinary management and public browser pages
+with the update-only status surface. That page is a bounded projection of this same parent/child hierarchy, including
+the exact task ID, ordered Photon OS, PowerShell Modules, and Atlaso Release children that were selected, their states,
+and parent progress. It intentionally omits logs, commands, credentials, source locations, and detailed errors. A
+terminal page is not yet proof that ordinary UIs can reopen: Atlaso first reconciles release/finalizer evidence, any
+scheduled worker restart, nginx reload, and browser-listener health. If the appliance reboots during that interval, the
+same durable task identity remains on the status page until restoration is proven.
+
 VCF Offline Depot downloads use the same task type for profile-row starts and Automation starts. Their result records
 identify the profile, trigger, optional schedule, planned time, and sanitized task log. A scheduled VCFDT overlap is a
 terminal **skipped** task linked to the already-active profile download, Software Depot ID task, or VCF Offline Depot
