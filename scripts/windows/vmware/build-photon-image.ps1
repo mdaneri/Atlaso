@@ -25,6 +25,12 @@ CPython 3.10 through 3.13 executable used by the locked Windows 1Password SDK
 runtime when either credential is omitted.
 .PARAMETER CredentialTimeoutSeconds
 Bounded timeout for each 1Password SDK preparation and retrieval operation.
+.PARAMETER ImageBuildTimeoutSeconds
+Bounded deadline for the isolated plaintext-consuming Photon/Packer child.
+.PARAMETER CredentialBundlePath
+Internal current-user DPAPI credential bundle used only by the isolated child.
+.PARAMETER CredentialChild
+Internal marker proving the current process is the isolated image-build child.
 .PARAMETER VmName
 Builder virtual-machine name.
 .PARAMETER OutputDirectory
@@ -99,6 +105,11 @@ Reject ISO-only preparation because the retained ISO would contain reusable cred
     'OnePasswordPython',
     Justification = 'Executable selector for the isolated SDK runtime, not a password.'
 )]
+[Diagnostics.CodeAnalysis.SuppressMessageAttribute(
+    'PSAvoidUsingPlainTextForPassword',
+    'CredentialBundlePath',
+    Justification = 'Path to current-user DPAPI ciphertext, not a plaintext password.'
+)]
 [CmdletBinding()]
 param(
     [Parameter()]
@@ -116,6 +127,10 @@ param(
     [string]$OnePasswordPython = '',
     [ValidateRange(1, 3600)]
     [int]$CredentialTimeoutSeconds = 300,
+    [ValidateRange(300, 86400)]
+    [int]$ImageBuildTimeoutSeconds = 21600,
+    [string]$CredentialBundlePath = '',
+    [switch]$CredentialChild,
     [string]$VmName = 'Atlaso-Photon-Builder-VMware',
     [string]$OutputDirectory = '',
     [string]$SshHost = '',
@@ -166,30 +181,133 @@ Import-Module (Join-Path $PSScriptRoot 'Atlaso.VmwarePayload.psm1') -Force
 Import-Module (Join-Path $PSScriptRoot 'Atlaso.WorkstationBuildMonitor.psm1') -Force
 
 $repoRoot = (Resolve-Path -LiteralPath (Join-Path $PSScriptRoot '..\..\..')).Path
-$needsOnePasswordDefaults = $null -eq $SshPassword -or $null -eq $BootstrapAdminPassword
-$resolvedEnvironmentId = ''
-if ($needsOnePasswordDefaults) {
-    $resolvedEnvironmentId = Resolve-AtlasoOnePasswordEnvironmentId `
-        -EnvironmentId $OnePasswordEnvironmentId `
-        -EnvironmentIdFile $EnvironmentIdFile `
-        -RepositoryRoot $repoRoot `
-        -ConsumerDescription 'VMware Photon image building'
+if ($CredentialChild) {
+    if ($SshPassword -or $BootstrapAdminPassword -or
+        [string]::IsNullOrWhiteSpace($CredentialBundlePath) -or
+        -not (Test-Path -LiteralPath $CredentialBundlePath -PathType Leaf)) {
+        throw 'The isolated Photon credential bundle is unavailable or invalid.'
+    }
+    try {
+        $credentialBundle = Get-Content -LiteralPath $CredentialBundlePath -Raw | ConvertFrom-Json
+        $bundleProperties = @($credentialBundle.PSObject.Properties.Name)
+        if ($bundleProperties.Count -ne 2 -or
+            'AdminPasswordCiphertext' -notin $bundleProperties -or
+            'RootPasswordCiphertext' -notin $bundleProperties) {
+            throw 'The isolated Photon credential bundle is invalid.'
+        }
+        $BootstrapAdminPassword = ConvertTo-SecureString $credentialBundle.AdminPasswordCiphertext
+        $SshPassword = ConvertTo-SecureString $credentialBundle.RootPasswordCiphertext
+    }
+    catch {
+        throw 'The isolated Photon credential bundle is unavailable or invalid.'
+    }
+    $credentialBundle = $null
 }
+else {
+    $needsOnePasswordDefaults = $null -eq $SshPassword -or $null -eq $BootstrapAdminPassword
+    $resolvedEnvironmentId = ''
+    if ($needsOnePasswordDefaults) {
+        $resolvedEnvironmentId = Resolve-AtlasoOnePasswordEnvironmentId `
+            -EnvironmentId $OnePasswordEnvironmentId `
+            -EnvironmentIdFile $EnvironmentIdFile `
+            -RepositoryRoot $repoRoot `
+            -ConsumerDescription 'VMware Photon image building'
+    }
 
-# Credential preflight and DPAPI bridge cleanup complete before VMware network
-# discovery, output cleanup, ISO remastering, Packer initialization, or build work.
-$credentialPair = Get-AtlasoOnePasswordCredentialPair `
-    -RepositoryRoot $repoRoot `
-    -EnvironmentId $resolvedEnvironmentId `
-    -OnePasswordAccount $OnePasswordAccount `
-    -OnePasswordPython $OnePasswordPython `
-    -AdminPassword $BootstrapAdminPassword `
-    -RootPassword $SshPassword `
-    -TimeoutSeconds $CredentialTimeoutSeconds `
-    -ConsumerDescription 'VMware Photon image build'
-$SshPassword = $credentialPair.RootPassword
-$BootstrapAdminPassword = $credentialPair.AdminPassword
-$credentialPair = $null
+    # Credential preflight completes before the isolated child can perform any
+    # network, cleanup, ISO, Packer, or image mutation.
+    $credentialPair = Get-AtlasoOnePasswordCredentialPair `
+        -RepositoryRoot $repoRoot `
+        -EnvironmentId $resolvedEnvironmentId `
+        -OnePasswordAccount $OnePasswordAccount `
+        -OnePasswordPython $OnePasswordPython `
+        -AdminPassword $BootstrapAdminPassword `
+        -RootPassword $SshPassword `
+        -TimeoutSeconds $CredentialTimeoutSeconds `
+        -ConsumerDescription 'VMware Photon image build'
+    $credentialRoot = Join-Path ([System.IO.Path]::GetTempPath()) (
+        "atlaso-photon-build-credentials-$([guid]::NewGuid().ToString('N'))"
+    )
+    [void][System.IO.Directory]::CreateDirectory($credentialRoot)
+    $childCredentialBundlePath = Join-Path $credentialRoot 'credentials.json'
+    try {
+        $credentialPayload = [ordered]@{
+            AdminPasswordCiphertext = ConvertFrom-SecureString -SecureString $credentialPair.AdminPassword
+            RootPasswordCiphertext  = ConvertFrom-SecureString -SecureString $credentialPair.RootPassword
+        }
+        [System.IO.File]::WriteAllText(
+            $childCredentialBundlePath,
+            ($credentialPayload | ConvertTo-Json -Compress),
+            [System.Text.UTF8Encoding]::new($false)
+        )
+        $credentialPayload = $null
+        $credentialPair = $null
+        $SshPassword = $null
+        $BootstrapAdminPassword = $null
+
+        $childArguments = @(
+            '-NoLogo', '-NoProfile', '-NonInteractive',
+            '-File', $PSCommandPath,
+            '-CredentialChild',
+            '-CredentialBundlePath', $childCredentialBundlePath
+        )
+        $excludedParameters = @(
+            'SshPassword', 'BootstrapAdminPassword',
+            'OnePasswordEnvironmentId', 'EnvironmentIdFile',
+            'OnePasswordAccount', 'OnePasswordPython',
+            'CredentialTimeoutSeconds', 'ImageBuildTimeoutSeconds',
+            'CredentialBundlePath', 'CredentialChild'
+        )
+        foreach ($entry in $PSBoundParameters.GetEnumerator()) {
+            if ($entry.Key -in $excludedParameters) {
+                continue
+            }
+            if ($entry.Value -is [switch]) {
+                if ($entry.Value.IsPresent) {
+                    $childArguments += "-$($entry.Key)"
+                }
+                continue
+            }
+            $childArguments += "-$($entry.Key)"
+            if ($entry.Value -is [array]) {
+                $childArguments += @($entry.Value | ForEach-Object { $_.ToString() })
+            }
+            else {
+                $childArguments += $entry.Value.ToString()
+            }
+        }
+        $childOutput = Invoke-AtlasoBoundedProcess `
+            -FilePath (Get-Process -Id $PID).Path `
+            -ArgumentList $childArguments `
+            -TimeoutSeconds $ImageBuildTimeoutSeconds `
+            -Action 'The isolated VMware Photon image build'
+        if ($childOutput) {
+            Write-Host -NoNewline $childOutput
+        }
+    }
+    finally {
+        $credentialPair = $null
+        $SshPassword = $null
+        $BootstrapAdminPassword = $null
+        $resolvedCredentialRoot = [System.IO.Path]::GetFullPath($credentialRoot)
+        $resolvedTempRoot = [System.IO.Path]::GetFullPath([System.IO.Path]::GetTempPath())
+        if (-not $resolvedCredentialRoot.StartsWith($resolvedTempRoot, [StringComparison]::OrdinalIgnoreCase) -or
+            -not (Split-Path -Leaf $resolvedCredentialRoot).StartsWith('atlaso-photon-build-credentials-')) {
+            throw 'Refusing to clean an invalid Photon credential bridge root.'
+        }
+        if (Test-Path -LiteralPath $resolvedCredentialRoot) {
+            $rootItem = Get-Item -LiteralPath $resolvedCredentialRoot -Force
+            if ($rootItem.Attributes -band [System.IO.FileAttributes]::ReparsePoint) {
+                throw 'Refusing to clean a reparse-point Photon credential bridge root.'
+            }
+            [System.IO.Directory]::Delete($resolvedCredentialRoot, $true)
+        }
+        if (Test-Path -LiteralPath $resolvedCredentialRoot) {
+            throw 'Photon credential bridge cleanup did not remove its exact task-created root.'
+        }
+    }
+    return
+}
 
 <#
 .SYNOPSIS

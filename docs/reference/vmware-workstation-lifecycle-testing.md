@@ -116,6 +116,9 @@ independently authoritative. The bridge returns only current-user DPAPI cipherte
 before the wrapper performs network discovery or preparation, output cleanup, ISO remastering, Packer initialization,
 or other image mutation. It rejects caller `DEFAULT_*` variables, local `.env` inputs, ambiguous or non-concealed
 variables, invalid exact bytes, unavailable authorization, and timeouts without printing the Environment ID or values.
+The parent passes only DPAPI ciphertext to a separately bounded image-build child; only that child unwraps values for
+kickstart and Packer serialization. `-ImageBuildTimeoutSeconds` selects the whole-child deadline and defaults to six
+hours.
 
 The wrapper uses the shared Photon ISO remastering, kickstart rendering, checksum validation, and Packer var-file
 generation. `image/common/source` holds the original Photon ISO download cache. The canonical image installs

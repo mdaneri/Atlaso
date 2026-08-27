@@ -957,7 +957,9 @@ Terminal order:
   account, SDK, uniqueness, concealment, value, and cleanup preflight before network discovery or preparation, output
   cleanup, ISO remastering, Packer initialization, or any other image mutation. Keep plaintext out of the PowerShell
   parent, arguments, caller environment, durable files, output, logs, Packer diagnostics, and provenance, and preserve
-  exact-byte validation plus sensitive kickstart, ISO, and Packer-variable cleanup.
+  exact-byte validation plus sensitive kickstart, ISO, and Packer-variable cleanup. Run the complete
+  plaintext-consuming image workflow in a separately bounded PowerShell child; the parent may pass only current-user
+  DPAPI ciphertext and must verify its task-owned bundle is removed after the child exits.
   Before persisting rollback state, reject configured data disks that repeat the same descriptor, hard-linked alias, or
   shared extent by filesystem identity. Before deleting a completed marker, write-through transition it to a
   non-actionable tombstone so a post-crash

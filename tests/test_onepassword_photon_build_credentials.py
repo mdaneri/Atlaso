@@ -57,12 +57,18 @@ def test_photon_wrapper_preflights_credentials_before_image_mutation() -> None:
     assert "Read-Host" not in wrapper
     assert "-AdminPassword $BootstrapAdminPassword" in wrapper
     assert "-RootPassword $SshPassword" in wrapper
-    assert "$SshPassword = $credentialPair.RootPassword" in wrapper
-    assert "$BootstrapAdminPassword = $credentialPair.AdminPassword" in wrapper
+    assert "if ($CredentialChild) {" in wrapper
+    assert "AdminPasswordCiphertext = ConvertFrom-SecureString" in wrapper
+    assert "RootPasswordCiphertext  = ConvertFrom-SecureString" in wrapper
+    assert "-Action 'The isolated VMware Photon image build'" in wrapper
 
     credential_preflight = wrapper.index(
         "$credentialPair = Get-AtlasoOnePasswordCredentialPair `"
     )
+    isolated_child = wrapper.index(
+        "-Action 'The isolated VMware Photon image build'"
+    )
+    parent_return = wrapper.index("    return\n}", isolated_child)
     network_discovery = wrapper.index("if (-not $SkipNetworkCheck) {")
     network_preparation = wrapper.index(
         "& (Join-Path $PSScriptRoot 'prepare-networks.ps1') @networkArgs"
@@ -73,6 +79,8 @@ def test_photon_wrapper_preflights_credentials_before_image_mutation() -> None:
     assert credential_preflight < network_preparation
     assert credential_preflight < output_cleanup
     assert credential_preflight < image_build
+    assert credential_preflight < isolated_child < parent_return < network_discovery
+    assert parent_return < image_build
 
     assert "$env:DEFAULT_ADMIN_PASSWORD -or $env:DEFAULT_ROOT_PASSWORD" in module
     assert "ConvertFrom-SecureString -SecureString $AdminPassword" in module

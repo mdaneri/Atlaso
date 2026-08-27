@@ -215,7 +215,10 @@ default independently. Caller `DEFAULT_*` variables, local `.env` files, reposit
 prompts, ambiguous or non-concealed variables, and invalid values are rejected. The child returns only current-user
 DPAPI ciphertext, and its task-owned files are removed before network preparation, output cleanup, ISO remastering,
 Packer initialization, or other image mutation. Sanitized failures do not print the Environment ID, account input, or
-credential values.
+credential values. The parent then launches the complete plaintext-consuming image workflow in a separately bounded
+PowerShell child, passes only a second current-user DPAPI bundle, and verifies bundle removal afterward. Only that
+child unwraps values for kickstart and Packer serialization. The default six-hour deadline is configurable through
+`-ImageBuildTimeoutSeconds`.
 
 The supported VMware Workstation wrapper treats the Photon build password as opaque data. It encodes the
 credential before inserting it into generated kickstart or Packer shell commands, then decode it directly to standard

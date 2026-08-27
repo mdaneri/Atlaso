@@ -530,7 +530,8 @@ The following cross-cutting boundaries always apply:
   `DEFAULT_ADMIN_PASSWORD`. Explicit `SecureString` values remain independently authoritative. Complete credential
   preflight and task-owned bridge cleanup before network discovery or preparation, output cleanup, ISO remastering,
   Packer initialization, or other image mutation; retain exact-byte validation and all sensitive ISO/Packer-variable
-  cleanup.
+  cleanup. Run the complete plaintext-consuming image workflow in a separately bounded PowerShell child; the parent
+  may pass only current-user DPAPI ciphertext and must verify its task-owned bundle is removed after child exit.
   The wrapper also owns the sole development-root exception to per-appliance CA generation: require the exact `Atlaso`
   1Password Environment's concealed `ATLASO_DEVELOPMENT_ROOT_CA_PRIVATE_KEY`, validate it against the checked-in public
   `Atlaso Development Root CA` before mutation, pin and verify the exact Environment ID by SHA-256 before invoking `op`,

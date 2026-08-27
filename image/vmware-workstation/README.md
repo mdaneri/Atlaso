@@ -142,9 +142,11 @@ is an alias. Omitted values also require an approved `-OnePasswordAccount` and a
 There are no interactive prompts, caller-environment fallbacks, repository password defaults, or local `.env` inputs.
 Missing, ambiguous, non-concealed, invalid, unauthorized, or timed-out 1Password state fails with sanitized guidance
 before VMware network preparation, output cleanup, ISO remastering, Packer initialization, or other image mutation.
-The bounded bridge returns only current-user DPAPI ciphertext to the PowerShell parent and deletes its task-owned
-temporary root before image work begins. The shared builder unwraps validated `SecureString` values only at the
-kickstart and Packer serialization boundary and preserves the existing exact-byte checks and cleanup of the kickstart,
+The retrieval bridge returns only current-user DPAPI ciphertext to the PowerShell parent. That parent starts the whole
+plaintext-consuming image workflow as a separately bounded PowerShell child, passes credentials only through a second
+current-user DPAPI bundle, and verifies removal of both task-owned roots. Only the child unwraps validated
+`SecureString` values at the kickstart and Packer serialization boundary. `-ImageBuildTimeoutSeconds` bounds the whole
+child and defaults to six hours. The child preserves the existing exact-byte checks and cleanup of the kickstart,
 remastered ISO, and secret-bearing Packer variable file.
 
 The wrapper does not build or embed Inventory Linux. New templates leave it uninstalled so an administrator can use
