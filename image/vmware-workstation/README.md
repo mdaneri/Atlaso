@@ -199,22 +199,25 @@ test appliance with:
 .\scripts\windows\vmware\deploy-wheel.ps1 -IpAddress 192.168.167.10
 ```
 
-For the password-backed path, first authenticate the local 1Password integration, verify that exactly one Environment
-named `Atlaso` exists, and confirm that it contains the concealed `DEFAULT_ADMIN_PASSWORD` variable without reading its
-value. Copy that Environment's opaque ID from 1Password and pass only the ID to the supported Windows bridge:
+For the password-backed path, first authenticate the local 1Password desktop integration, verify that exactly one
+Environment named `Atlaso` exists, and confirm that it contains the concealed `DEFAULT_ADMIN_PASSWORD` variable without
+reading its value. Copy that Environment's opaque ID, identify the approved 1Password account name or ID, and select an
+explicit CPython 3.10 through 3.13 executable for the supported Windows SDK bridge:
 
 ```powershell
 .\scripts\windows\vmware\deploy-wheel.ps1 `
   -IpAddress 192.168.167.10 `
-  -OnePasswordEnvironmentId '<atlaso-environment-id>'
+  -OnePasswordEnvironmentId '<atlaso-environment-id>' `
+  -OnePasswordAccount '<account-name-or-id>' `
+  -OnePasswordPython '<path-to-python-3.13.exe>'
 ```
 
-The bridge requires a 1Password CLI build that supports `op run --environment`; it starts the deployment script as the
-single bounded child process and keeps the concealed value in that process environment and the existing password-backed
-SSH stdin channel. It fails closed when the CLI, authorization, exact Environment, or variable is unavailable. Do not
-set `DEFAULT_ADMIN_PASSWORD`, pass a password argument, create a local `.env` file, or use the retired
-`ATLASO_DEPLOY_SSH_PASSWORD` fallback. Password-backed Paramiko connections load the user's SSH known-hosts database
-and reject unknown host keys; approve the VM host key through the normal verified SSH workflow before deployment.
+The supported 1Password Python SDK uses desktop authorization and a locked, offline SDK/Paramiko runtime. The
+[canonical VMware Workstation workflow](../../docs/reference/full-technical-reference.md#vmware-workstation-workflow)
+documents its isolation, dependency, failure, and host-trust boundaries. The 1Password CLI is not part of this
+password-deployment path, and the concealed password is not placed in the deployment process environment. Do not set
+`DEFAULT_ADMIN_PASSWORD`, pass a password argument, create a local `.env` file, or use the retired
+`ATLASO_DEPLOY_SSH_PASSWORD` fallback.
 
 When the IP should be resolved from VMware Tools, pass the VMX path as a named argument:
 

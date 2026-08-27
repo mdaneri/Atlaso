@@ -1973,6 +1973,9 @@ def test_vmware_deploy_wheel_supports_secure_onepassword_password_deploy():
     """Verify that VMware deploy wheel uses a concealed 1Password Environment handoff."""
     script = Path("scripts/windows/vmware/deploy-wheel.ps1").read_text(encoding="utf-8")
     readme = Path("docs/reference/full-technical-reference.md").read_text(encoding="utf-8")
+    image_readme = Path("image/vmware-workstation/README.md").read_text(encoding="utf-8")
+    image_password_docs = image_readme.split("## Local Wheel Deploy", 1)[1].split("## OVF / OVA Export", 1)[0]
+    image_password_docs = " ".join(image_password_docs.split())
 
     assert "[string]$OnePasswordEnvironmentId = ''" in script
     assert "[string]$OnePasswordAccount = ''" in script
@@ -2057,6 +2060,10 @@ def test_vmware_deploy_wheel_supports_secure_onepassword_password_deploy():
     assert "pinned 1Password SDK" in readme
     assert "Without `-OnePasswordEnvironmentId`, the helper preserves" in readme
     assert "`scp`/`ssh` key or agent workflow" in readme
+    assert "-OnePasswordEnvironmentId '<atlaso-environment-id>'" in image_password_docs
+    assert "-OnePasswordAccount '<account-name-or-id>'" in image_password_docs
+    assert "-OnePasswordPython '<path-to-python-3.13.exe>'" in image_password_docs
+    assert "../../docs/reference/full-technical-reference.md#vmware-workstation-workflow" in image_password_docs
 
 
 def test_vmware_deploy_wheel_remote_path_contract():
