@@ -602,8 +602,9 @@ def build_router(dependencies: SettingsBackupUiDependencies) -> SettingsBackupUi
             )
             if previous_service_dns_target_naming != settings.service_dns_target_naming:
                 reconcile_service_dns_aliases(db, actor=identity.username)
+        reconciled_service_aliases: list[str] = []
         if reconciled_service_identities:
-            reconcile_service_dns_aliases(db, actor=identity.username)
+            reconciled_service_aliases = reconcile_service_dns_aliases(db, actor=None)
         db.add(settings)
         db.commit()
         record_audit(
@@ -612,6 +613,14 @@ def build_router(dependencies: SettingsBackupUiDependencies) -> SettingsBackupUi
             action="update_appliance_settings",
             resource_type="settings",
             resource_id=str(settings.id),
+            detail=(
+                "factory_service_identities="
+                f"{','.join(sorted(reconciled_service_identities))}; "
+                "service_dns_aliases="
+                f"{','.join(sorted(reconciled_service_aliases))}"
+                if reconciled_service_identities
+                else None
+            ),
         )
         if request.headers.get("X-Atlaso-Autosave") == "1":
             context = appliance_settings_context(

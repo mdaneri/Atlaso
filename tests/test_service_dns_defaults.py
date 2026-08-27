@@ -124,6 +124,17 @@ def test_reconcile_factory_identities_preserves_operator_state_and_dns_conflicts
                 chain_path="/etc/atlaso/depot.atlaso.internal-chain.pem",
             )
         )
+        db.add(
+            CaCertificate(
+                common_name="depot.atlaso.internal",
+                subject_alt_names="depot.atlaso.internal",
+                status="issued",
+                managed_owner="vcf_offline_depot:https",
+                cert_path="/etc/atlaso/newest/depot.atlaso.internal.crt",
+                key_path="/etc/atlaso/newest/depot.atlaso.internal.key",
+                chain_path="/etc/atlaso/newest/depot.atlaso.internal-chain.pem",
+            )
+        )
         db.add_all(
             [
                 DnsRecord(
@@ -163,6 +174,12 @@ def test_reconcile_factory_identities_preserves_operator_state_and_dns_conflicts
                     description=ESX_STORAGE_DNS_DESCRIPTION,
                 ),
                 DnsRecord(
+                    hostname="nfs.lab.internal",
+                    record_type="CNAME",
+                    address="stale-app-target.atlaso.internal",
+                    description=ESX_STORAGE_DNS_DESCRIPTION,
+                ),
+                DnsRecord(
                     hostname="esxi-pxe.atlaso.internal",
                     record_type="A",
                     address="192.0.2.50",
@@ -188,18 +205,21 @@ def test_reconcile_factory_identities_preserves_operator_state_and_dns_conflicts
         assert oidc.hostname == "oidc.lab.internal"
         assert oidc.issuer_url == "https://oidc.lab.internal/identity"
         assert ldap.hostname == "directory.operator.example"
-        certificate = db.execute(
+        certificates = db.execute(
             select(CaCertificate).where(
                 CaCertificate.managed_owner == "vcf_offline_depot:https"
-            )
-        ).scalar_one()
+            ).order_by(CaCertificate.id.desc())
+        ).scalars().all()
+        certificate = certificates[0]
         assert certificate.common_name == "depot.lab.internal"
-        assert certificate.subject_alt_names.splitlines() == [
-            "depot.lab.internal",
-            "unchanged.operator.example",
-        ]
+        assert certificate.subject_alt_names.splitlines() == ["depot.lab.internal"]
         assert certificate.status == "planned"
         assert "depot.lab.internal" in certificate.cert_path
+        assert certificates[1].common_name == "depot.atlaso.internal"
+        assert certificates[1].subject_alt_names.splitlines() == [
+            "depot.atlaso.internal",
+            "unchanged.operator.example",
+        ]
 
         records = db.execute(select(DnsRecord)).scalars().all()
         keyed = {(row.hostname, row.record_type, row.address, row.description) for row in records}
@@ -228,6 +248,12 @@ def test_reconcile_factory_identities_preserves_operator_state_and_dns_conflicts
         )
         assert any(row.hostname == "manual.atlaso.internal" for row in records)
         assert any(row.hostname == "nfs.lab.internal" for row in records)
+        assert not any(
+            row.hostname == "nfs.lab.internal"
+            and row.record_type == "CNAME"
+            and row.description == ESX_STORAGE_DNS_DESCRIPTION
+            for row in records
+        )
         assert any(
             row.hostname == "esxi-pxe.lab.internal"
             and row.record_type == "CNAME"
@@ -334,13 +360,17 @@ def test_appliance_domain_change_reconciles_only_previous_factory_domain():
         assert ldap.hostname == "ldap.legacy.example"
 
 
-def test_appliance_settings_autosave_reconciles_factory_service_desired_state(client):
+def test_appliance_settings_autosave_reconciles_factory_service_desired_state(
+    client, monkeypatch
+):
     """A valid appliance-domain change leaves every factory service truthfully pending.
 
     Args:
         client: Authenticated Atlaso test client with an isolated database.
+        monkeypatch: Pytest fixture used to observe the alias reconciliation boundary.
     """
 
+    from atlaso.app import ui as ui_module
     from atlaso.app.database import SessionLocal
     from atlaso.app.models import (
         CaSettings,
@@ -355,6 +385,25 @@ def test_appliance_settings_autosave_reconciles_factory_service_desired_state(cl
     )
     from atlaso.app.ui import appliance_apply_units
     from tests.routers.ui.helpers import login
+
+    alias_actors: list[str | None] = []
+    original_alias_reconciler = ui_module.reconcile_service_dns_aliases
+
+    def observe_alias_reconciliation(db, actor=None):
+        """Record the audit boundary while preserving real UI alias reconciliation.
+
+        Args:
+            db: Active database session.
+            actor: Optional audit actor passed to the alias reconciler.
+        """
+        alias_actors.append(actor)
+        return original_alias_reconciler(db, actor=actor)
+
+    monkeypatch.setattr(
+        ui_module,
+        "reconcile_service_dns_aliases",
+        observe_alias_reconciliation,
+    )
 
     with SessionLocal() as db:
         db.add(
@@ -416,6 +465,7 @@ def test_appliance_settings_autosave_reconciles_factory_service_desired_state(cl
             "vcf_private_registry",
         }:
             assert units[unit_id]["changed"] is True
+    assert alias_actors == [None]
 
 
 def test_settings_restore_reconciles_legacy_factory_service_domain(client):

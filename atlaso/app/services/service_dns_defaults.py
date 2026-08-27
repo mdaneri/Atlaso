@@ -23,6 +23,7 @@ from atlaso.app.models import (
     utcnow,
 )
 from atlaso.app.services.appliance_settings import normalize_fqdn
+from atlaso.app.services.ca import managed_certificate_for_owner
 
 FACTORY_APPLIANCE_FQDN = "core.atlaso.internal"
 FACTORY_APPLIANCE_DOMAIN = "atlaso.internal"
@@ -218,6 +219,8 @@ def _migrate_owned_dns_records(
         select(DnsRecord).where(DnsRecord.description == description)
     ).scalars().all()
     for record in records:
+        if record in db.deleted:
+            continue
         renamed_hostname = _renamed_service_record_hostname(
             record.hostname, old_hostname, new_hostname
         )
@@ -248,6 +251,20 @@ def _migrate_owned_dns_records(
             changed += 1
             conflicts += 1
             continue
+        stale_type_conflicts = [
+            candidate
+            for candidate in destination_records
+            if candidate.description == description
+            and candidate.record_type != record.record_type
+        ]
+        for candidate in stale_type_conflicts:
+            db.delete(candidate)
+            changed += 1
+        destination_records = [
+            candidate
+            for candidate in destination_records
+            if candidate not in stale_type_conflicts
+        ]
         duplicate = next(
             (
                 candidate
@@ -283,11 +300,7 @@ def _reconcile_managed_certificate(
         new_hostname: Replacement factory-owned service hostname.
     """
 
-    from atlaso.app.models import CaCertificate
-
-    certificate = db.execute(
-        select(CaCertificate).where(CaCertificate.managed_owner == owner)
-    ).scalar_one_or_none()
+    certificate = managed_certificate_for_owner(db, owner)
     if certificate is None:
         return False
     changed = False
