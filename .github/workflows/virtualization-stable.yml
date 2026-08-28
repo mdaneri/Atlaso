@@ -313,7 +313,7 @@ jobs:
           PIP_CONFIG_FILE: /dev/null
         run: |
           sudo apt-get update
-          sudo apt-get install --yes --no-install-recommends libguestfs-tools qemu-utils
+          sudo apt-get install --yes --no-install-recommends cpio libguestfs-tools qemu-utils rpm rpm2cpio
           python -m pip install --require-hashes --requirement requirements-release-tools.lock
       - uses: actions/download-artifact@v8
         with:
