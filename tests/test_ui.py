@@ -1032,7 +1032,7 @@ def test_pwa_manifest_service_worker_and_offline_shell(client):
     assert "ATLASO_CACHE" in service_worker.text
     assert "atlaso-management-pwa-v" in service_worker.text
     assert "ATLASO_CACHE_PREFIX" in service_worker.text
-    assert 'const ATLASO_CACHE = `${ATLASO_CACHE_PREFIX}289`;' in service_worker.text
+    assert 'const ATLASO_CACHE = `${ATLASO_CACHE_PREFIX}290`;' in service_worker.text
     assert 'fetch(asset, { cache: "reload" })' in service_worker.text
     assert "Required precache request failed" in service_worker.text
     assert "key.startsWith(ATLASO_CACHE_PREFIX)" in service_worker.text
@@ -1052,7 +1052,7 @@ def test_pwa_manifest_service_worker_and_offline_shell(client):
     assert "/static/ui-patterns.js?v=atlaso-ui-foundation-20260726-10" in service_worker.text
     assert "/static/appliance-apply-polling.js?v=issue-420-6" in service_worker.text
     assert "/static/ui-routes.js?v=issue-287-1" in service_worker.text
-    assert "/static/app.js?v=issues-515-519-11-513-328-1-595-1" in service_worker.text
+    assert "/static/app.js?v=issues-515-519-11-513-328-1-595-2" in service_worker.text
     assert "/static/terminal.js?v=issue-287-2" in service_worker.text
     assert "/static/pwa.js?v=issue-287-2" in service_worker.text
     assert "vcfdt-configuration-248-20260807-14" not in service_worker.text
@@ -1106,8 +1106,8 @@ def test_shared_ui_pattern_shell_and_wizard_contracts(client):
     base = (templates / "base.html").read_text(encoding="utf-8")
     public_base = (templates / "public_portal_base.html").read_text(encoding="utf-8")
     for shell, app_asset in (
-        (base, "/static/app.js?v=issues-515-519-11-513-328-1-595-1"),
-        (public_base, "/static/app.js?v=issues-515-519-11-513-328-1-595-1"),
+        (base, "/static/app.js?v=issues-515-519-11-513-328-1-595-2"),
+        (public_base, "/static/app.js?v=issues-515-519-11-513-328-1-595-2"),
         (base, "/static/appliance-apply-polling.js?v=issue-420-6"),
     ):
         assert shell.index("/static/vendor/tabulator/tabulator.min.js") < shell.index(
@@ -1761,7 +1761,7 @@ def test_monitor_page_renders_template_and_browser_assets(client):
     assert "swagger-link-icon" in page.text
     assert "/static/app.css?v=issues-515-519-9" in page.text
     assert "/static/ui-patterns.js?v=atlaso-ui-foundation-20260726-10" in page.text
-    assert "/static/app.js?v=issues-515-519-11-513-328-1-595-1" in page.text
+    assert "/static/app.js?v=issues-515-519-11-513-328-1-595-2" in page.text
     app_css = client.get("/static/app.css")
     assert app_css.status_code == 200
     assert ".split-workspace > .wide-panel" in app_css.text
@@ -17326,6 +17326,10 @@ def test_vcf_helper_page_renders_domain_dropdown(client):
     assert "disk_provisioning: form.elements.disk_provisioning.value" in app_js
     assert "[data-vcf-sddc-trust-mode-row]" not in app_js
     assert "showTlsConfirmation(data.fingerprint || \"\", handleDiscover)" in app_js
+    assert "const destinationSelections = new Map(" in app_js
+    assert "const networkSelections = new Map(" in app_js
+    assert "restoreVcfInventorySelect(form.elements[name], value)" in app_js
+    assert "restoreVcfInventorySelect(control, networkSelections.get(control.dataset.ovaNetwork))" in app_js
     assert "await action()" in app_js
     assert "parseEndpoint" in app_js
     assert 'next.textContent = "Next"' in app_js

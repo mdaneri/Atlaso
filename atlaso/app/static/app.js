@@ -18544,6 +18544,12 @@ function fillVcfInventorySelect(select, rows, emptyLabel = "") {
   (Array.isArray(rows) ? rows : []).forEach((row) => select.append(new Option(row.name || row.id, row.id)));
 }
 
+function restoreVcfInventorySelect(select, selectedValue) {
+  if (!(select instanceof HTMLSelectElement)) return;
+  const value = String(selectedValue ?? "");
+  if ([...select.options].some((option) => option.value === value)) select.value = value;
+}
+
 function initializeVcfSddcDeployment() {
   const form = document.querySelector("[data-vcf-sddc-deploy-form]");
   const dialog = document.getElementById("vcf-sddc-deploy-modal");
@@ -18795,6 +18801,12 @@ function initializeVcfSddcDeployment() {
   syncPostPowerOptions();
   const handleDiscover = async () => {
     if (!(await wizard.validate("source"))) return false;
+    const destinationSelections = new Map(
+      ["resource_pool_id", "datastore_id", "folder_id", "host_id"].map((name) => [name, form.elements[name]?.value]),
+    );
+    const networkSelections = new Map(
+      [...form.querySelectorAll("[data-ova-network]")].map((control) => [control.dataset.ovaNetwork, control.value]),
+    );
     showError(""); showConfirmation("");
     if (next instanceof HTMLButtonElement) {
       next.disabled = true;
@@ -18813,6 +18825,10 @@ function initializeVcfSddcDeployment() {
       fillVcfInventorySelect(form.elements.host_id, data.inventory?.hosts, "Automatic placement");
       renderDeploymentOptions(data.ova);
       renderNetworks(data.ova?.networks, data.inventory?.networks);
+      destinationSelections.forEach((value, name) => restoreVcfInventorySelect(form.elements[name], value));
+      form.querySelectorAll("[data-ova-network]").forEach((control) => {
+        restoreVcfInventorySelect(control, networkSelections.get(control.dataset.ovaNetwork));
+      });
       renderProperties(data.ova?.properties);
       showConfirmation((data.ova?.warnings || []).join(" "));
       wizard.setHighestStep("followup");
