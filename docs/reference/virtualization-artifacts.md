@@ -45,7 +45,7 @@ runner, and requires `/usr/bin/python3.14` plus the complete
 `photon-repos` package sources; updating them requires an explicit reviewed source change. It also requires the active
 virtualenv Python link to resolve only to that authenticated CPython 3.14 interpreter and every Atlaso console script to
 match its signed-wheel entry point and canonical pip launcher. The finalizer opens both payload disks and compares every
-release-refreshed helper, service unit, drop-in,
+Atlaso-provisioned privileged helper, service unit, drop-in,
 console setting, vault profile, complete PowerShell global profile, and boot-branding asset with its exact bytes from the
 admitted software-release commit. The producer replaces that global profile with the canonical Atlaso import instead
 of preserving workstation-controlled commands. Before comparing bytes, the finalizer also requires each privileged

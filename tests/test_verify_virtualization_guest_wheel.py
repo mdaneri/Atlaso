@@ -722,6 +722,24 @@ def test_deployed_system_sources_exist_in_the_checkout() -> None:
         *verifier.DEPLOYED_TEXT_FILES.values(),
         *verifier.DEPLOYED_BINARY_FILES.values(),
     }
+    provisioned_privileged_files = {
+        "image/common/systemd/atlaso.service": "/etc/systemd/system/atlaso.service",
+        "image/common/systemd/atlaso-console.service": "/etc/systemd/system/atlaso-console.service",
+        "image/common/systemd/atlaso-worker.service": "/etc/systemd/system/atlaso-worker.service",
+        "image/common/systemd/atlaso-data-disks.service": "/etc/systemd/system/atlaso-data-disks.service",
+        "image/common/systemd/atlaso-guest-agent-select.service": "/etc/systemd/system/atlaso-guest-agent-select.service",
+        "image/common/systemd/atlaso-bootstrap-https.service": "/etc/systemd/system/atlaso-bootstrap-https.service",
+        "image/vmware-workstation/systemd/atlaso-vmware-ovf-customize.service": "/etc/systemd/system/atlaso-vmware-ovf-customize.service",
+        "image/common/sudoers.d/atlaso-helper": "/etc/sudoers.d/atlaso-helper",
+        "scripts/appliance/atlaso-helper": "/opt-atlaso/bin/atlaso-helper",
+        "scripts/appliance/atlaso-install-boot-branding": "/opt-atlaso/bin/atlaso-install-boot-branding",
+        "scripts/appliance/atlaso-mount-data-disks": "/opt-atlaso/bin/atlaso-mount-data-disks",
+        "scripts/appliance/atlaso-select-guest-agent": "/opt-atlaso/bin/atlaso-select-guest-agent",
+        "scripts/appliance/atlaso-initialize-machine-identity.py": "/opt-atlaso/bin/atlaso-initialize-machine-identity.py",
+        "scripts/appliance/atlaso-bootstrap-https": "/opt-atlaso/bin/atlaso-bootstrap-https",
+        "scripts/appliance/atlaso-vmware-ovf-customize.py": "/opt-atlaso/bin/atlaso-vmware-ovf-customize.py",
+    }
+    assert provisioned_privileged_files.items() <= verifier.DEPLOYED_TEXT_FILES.items()
 
 
 def test_rejects_multiple_or_non_ext_payload_filesystems(
