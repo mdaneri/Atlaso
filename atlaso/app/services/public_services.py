@@ -272,7 +272,7 @@ def render_public_services_nginx_config(
             lines.extend(
                 _oidc_https_server_lines(
                     address,
-                    hostnames[0] if hostnames else "oidc.atlaso.internal",
+                    hostnames[0] if hostnames else "",
                     certificate_path=oidc_certificate_path,
                     key_path=oidc_key_path,
                     upstream_host=upstream_host,

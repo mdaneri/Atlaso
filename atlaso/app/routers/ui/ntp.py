@@ -20,7 +20,6 @@ from atlaso.app.services.dnsmasq import (
     split_servers,
 )
 from atlaso.app.services.ntp import (
-    NTP_DEFAULT_HOSTNAME,
     NTP_STAGED_CONFIG_PATH,
     dump_ntp_upstream_sources,
     duplicate_ntp_upstream_source,
@@ -137,7 +136,7 @@ def build_router(dependencies: NtpUiDependencies) -> NtpUiRouter:
     def update_ntp_settings_from_ui(
         request: Request,
         enabled: str | None = Form(None),
-        hostname: str = Form(NTP_DEFAULT_HOSTNAME),
+        hostname: str = Form(""),
         listen_interfaces: list[str] = Form(default_factory=list),
         listen_addresses: list[str] = Form(default_factory=list),
         listen_interfaces_present: str | None = Form(None),
@@ -215,7 +214,7 @@ def build_router(dependencies: NtpUiDependencies) -> NtpUiRouter:
         )
         settings.enabled = enabled == "on"
         settings.hostname = dependencies.normalize_dns_hostname(
-            hostname.strip() or NTP_DEFAULT_HOSTNAME
+            hostname.strip() or settings.hostname
         )
         settings.listen_interface = selected_interfaces
         settings.listen_address = selected_addresses

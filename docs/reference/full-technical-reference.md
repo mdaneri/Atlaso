@@ -34,7 +34,8 @@ simplifying deployment, maintenance, and validation.
 Its product pillars are **Infrastructure • Connectivity • Automation**.
 
 Fresh appliances use `core.atlaso.internal` as the management identity and `atlaso.internal` as the default managed DNS
-zone. Service names include `ca.atlaso.internal`, `kms.atlaso.internal`, and `depot.atlaso.internal`. Future clustered
+zone. Factory service names use the appliance FQDN's domain portion, including `ca.<appliance-domain>`,
+`kms.<appliance-domain>`, and `depot.<appliance-domain>`. Future clustered
 deployments are expected to use `core-01`, `core-02`, and `core-vip`; clustering is not implemented in 0.9.18.
 
 Atlaso 0.9.18 is a clean break. Existing appliances from the retired product must be redeployed; Atlaso provides no
@@ -764,9 +765,9 @@ NTS client sources. Appliance Settings and Web Terminal autosave do not own or m
 Certificate Authority stores CA and leaf private keys
 encrypted in the database with `ATLASO_SECRETS_KEY`, auto-ensures VCF/KMS/service certificates when enabled, and stages
 `/var/lib/atlaso/apply/ca/atlaso-ca.json`; the helper writes public bundles and service certificate/key files under
-`/etc/atlaso`. The public CA portal defaults to `ca.atlaso.internal`: `/ui/public/ca` shows public trust material and
-`/ui/public/ca/requests` is the authenticated certificate request/revocation workflow. The management console keeps CA
-configuration under `/ui/management/certificate-authority`, with its request list under
+`/etc/atlaso`. The public CA portal factory hostname is `ca.<appliance-domain>`: `/ui/public/ca` shows public trust
+material and `/ui/public/ca/requests` is the authenticated certificate request/revocation workflow. The management
+console keeps CA configuration under `/ui/management/certificate-authority`, with its request list under
 `/ui/management/ca/requests`. Root-level browser paths remain temporary compatibility entries.
 
 ESXi PXE stores Kickstart source files in the Atlaso database. The database is the source of truth; generated files
@@ -884,8 +885,8 @@ The dedicated `/ui/management/openid-connect` page contains Atlaso's constrained
 Signing Keys,
 Group Mappings, and Stable Subjects tabs in the main column while its editable settings remain in the standard
 right-hand service column. Provider readiness appears inline rather than in a separate validation frame. The
-service-owned hostname defaults to
-`oidc.atlaso.internal`; listeners are selectable addressed access or routed interfaces and enabled VLANs, with a
+factory service-owned hostname is
+`oidc.<appliance-domain>`; listeners are selectable addressed access or routed interfaces and enabled VLANs, with a
 configurable HTTPS port. Atlaso derives listener addresses and app-owned DNS records from those selections. The
 provider implements Authorization Code with
 confidential `client_secret_basic`, mandatory PKCE S256, exact redirects, required state and nonce, signed secure

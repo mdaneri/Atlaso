@@ -84,6 +84,38 @@ def test_openapi_contains_only_the_versioned_management_api(client):
     assert "/dashboard" not in schema["paths"]
 
 
+def test_service_responses_keep_persisted_identity_fields_non_nullable(client):
+    """Keep optional update omission semantics out of stable service responses.
+
+    Args:
+        client: HTTP test client used to inspect the generated OpenAPI document.
+    """
+    schemas = client.get("/openapi.json").json()["components"]["schemas"]
+    update = schemas["OidcProviderSettingsUpdate"]
+    response = schemas["OidcProviderSettingsResponse"]
+
+    for field_name in ("hostname", "issuer_url"):
+        assert field_name not in update.get("required", [])
+        assert {entry.get("type") for entry in update["properties"][field_name]["anyOf"]} == {
+            "string",
+            "null",
+        }
+        assert field_name in response["required"]
+        assert response["properties"][field_name]["type"] == "string"
+        assert "anyOf" not in response["properties"][field_name]
+
+    ldap_update = schemas["LdapSettingsUpdate"]
+    ldap_response = schemas["LdapSettingsResponse"]
+    assert "hostname" not in ldap_update.get("required", [])
+    assert {
+        entry.get("type")
+        for entry in ldap_update["properties"]["hostname"]["anyOf"]
+    } == {"string", "null"}
+    assert "hostname" in ldap_response["required"]
+    assert ldap_response["properties"]["hostname"]["type"] == "string"
+    assert "anyOf" not in ldap_response["properties"]["hostname"]
+
+
 def test_non_versioned_protocol_and_ui_routes_remain_registered():
     """Verify that non versioned protocol and ui routes remain registered."""
     assert "/identity/.well-known/openid-configuration" in {route.path for route in oidc_public_router.routes}

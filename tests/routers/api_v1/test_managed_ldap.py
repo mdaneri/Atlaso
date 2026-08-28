@@ -299,3 +299,37 @@ def test_ldap_api_settings_reject_management_and_accept_addressed_access_interfa
     assert payload["port"] == 1636
     assert payload["ldap_enabled"] is True
     assert payload["ldap_port"] == 1389
+
+
+def test_ldap_api_missing_settings_uses_appliance_domain(client):
+    """Derive a lazily created LDAP hostname from the canonical appliance FQDN.
+
+    Args:
+        client: HTTP test client used to exercise the Atlaso application.
+    """
+    from sqlalchemy import delete, select
+
+    from atlaso.app.database import SessionLocal
+    from atlaso.app.models import ApplianceSettings, LdapSettings
+
+    with SessionLocal() as db:
+        appliance = db.execute(select(ApplianceSettings)).scalar_one()
+        appliance.fqdn = "atlaso.lab.internal"
+        db.execute(delete(LdapSettings))
+        db.commit()
+
+    token = api_token(client, ["read:ldap", "write:ldap"])
+    response = client.patch(
+        "/api/v1/ldap/settings",
+        headers={"Authorization": f"Bearer {token}"},
+        json={
+            "enabled": False,
+            "listen_interfaces": [],
+            "listen_addresses": [],
+            "port": 636,
+            "password_policy": {},
+        },
+    )
+
+    assert response.status_code == 200, response.text
+    assert response.json()["hostname"] == "ldap.lab.internal"

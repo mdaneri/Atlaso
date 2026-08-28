@@ -37,6 +37,12 @@ management connectivity or SSH policy. Routine field changes autosave, but they 
 
 The review modal may include other changed units. Unselect unrelated work before submission.
 
+Changing the domain portion of the appliance FQDN also reconciles factory-derived service identities. Atlaso derives
+each factory hostname from the new appliance domain, updates coupled OIDC issuer and managed-certificate desired state,
+and safely refreshes app-owned DNS aliases. Explicitly customized service hostnames and operator-owned DNS records are
+preserved. Review every affected service, Certificate Authority, DNS/DHCP, Firewall, and Public Services unit shown as
+pending; autosave changes desired state but does not apply those units to the host.
+
 The root SSH preference controls whether the root account may log in remotely; it does not control ordinary
 bootstrap-administrator SSH. Firewall admission for that administrator follows the effective management listener,
 including a flagged access physical interface or VLAN, while unflagged access networks remain closed on TCP/22.

@@ -391,7 +391,7 @@ def build_router(dependencies: IdentityUiDependencies) -> IdentityUiRouter:
     def update_oidc_provider_from_ui(
         request: Request,
         enabled: bool = Form(False),
-        hostname: str = Form(OIDC_DEFAULT_HOSTNAME),
+        hostname: str = Form(""),
         listen_interfaces: list[str] = Form(default_factory=list),
         listen_interfaces_present: str | None = Form(None),
         port: int = Form(443),
@@ -434,7 +434,9 @@ def build_router(dependencies: IdentityUiDependencies) -> IdentityUiRouter:
         provider = ensure_oidc_provider_settings(db)
         previous_hostname = provider.hostname
         try:
-            normalized_hostname = normalize_dns_hostname(hostname)
+            normalized_hostname = normalize_dns_hostname(
+                hostname.strip() or provider.hostname
+            )
             if not normalized_hostname or "." not in normalized_hostname:
                 raise OidcConfigurationError(
                     "OIDC hostname must be a fully qualified DNS name."

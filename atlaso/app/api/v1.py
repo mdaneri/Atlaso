@@ -179,6 +179,10 @@ from atlaso.app.services.networking import (
     normalize_interface_role,
 )
 from atlaso.app.services.ntp import default_ntp_upstream_fields
+from atlaso.app.services.service_dns_defaults import (
+    factory_service_hostname,
+    reconcile_factory_service_identities,
+)
 from atlaso.app.services.service_registry import (
     SERVICE_SYSTEMD_UNITS,
 )
@@ -433,7 +437,10 @@ def get_kms_settings_row(db: Session) -> KmsSettings:
     """
     settings = db.execute(select(KmsSettings)).scalar_one_or_none()
     if settings is None:
-        settings = KmsSettings()
+        hostname = factory_service_hostname(
+            "kms", get_appliance_settings(db).fqdn
+        )
+        settings = KmsSettings(hostname=hostname, server_certificate=hostname)
         db.add(settings)
         db.commit()
         db.refresh(settings)
@@ -450,6 +457,9 @@ def get_ntp_settings(db: Session) -> NtpSettings:
     if settings is None:
         ntp_upstreams = default_ntp_upstream_fields()
         settings = NtpSettings(
+            hostname=factory_service_hostname(
+                "ntp", get_appliance_settings(db).fqdn
+            ),
             upstream_servers=ntp_upstreams["upstream_servers"],
             upstream_sources_json=ntp_upstreams["upstream_sources_json"],
         )
@@ -589,7 +599,13 @@ def get_vcf_private_registry_settings(db: Session) -> VcfPrivateRegistrySettings
     """
     settings = db.execute(select(VcfPrivateRegistrySettings)).scalar_one_or_none()
     if settings is None:
-        settings = VcfPrivateRegistrySettings()
+        hostname = factory_service_hostname(
+            "registry", get_appliance_settings(db).fqdn
+        )
+        settings = VcfPrivateRegistrySettings(
+            hostname=hostname,
+            server_certificate=hostname,
+        )
         db.add(settings)
         db.commit()
         db.refresh(settings)
@@ -604,7 +620,13 @@ def get_vcf_offline_depot_settings(db: Session) -> VcfOfflineDepotSettings:
     """
     settings = db.execute(select(VcfOfflineDepotSettings)).scalar_one_or_none()
     if settings is None:
-        settings = VcfOfflineDepotSettings()
+        hostname = factory_service_hostname(
+            "depot", get_appliance_settings(db).fqdn
+        )
+        settings = VcfOfflineDepotSettings(
+            hostname=hostname,
+            server_certificate=hostname,
+        )
         db.add(settings)
         db.commit()
         db.refresh(settings)
@@ -1127,18 +1149,49 @@ create_job = _operations_api.endpoints["create_job"]
 get_job = _operations_api.endpoints["get_job"]
 cancel_job = _operations_api.endpoints["cancel_job"]
 
-def _ensure_settings_ca_state(db: Session) -> list[str]:
+def _ensure_settings_ca_state(
+    db: Session, *, commit: bool = True
+) -> list[str]:
     """Use the stable UI facade's CA compatibility helper.
 
     Args:
         db: Active database session.
+        commit: Whether CA reconciliation may commit before returning.
 
     Returns:
         Public-safe CA validation errors.
     """
     from atlaso.app import ui as ui_module
 
-    return ui_module.ensure_ca_state(db)
+    return ui_module.ensure_ca_state(db, commit=commit)
+
+
+def _ensure_settings_dns_state(
+    db: Session,
+    settings: ApplianceSettings,
+    *,
+    previous_fqdn: str,
+    actor: str | None,
+) -> str | None:
+    """Use the stable UI facade's appliance-DNS compatibility helper.
+
+    Args:
+        db: Active database session.
+        settings: Desired appliance settings being reconciled.
+        previous_fqdn: Appliance FQDN before the current update.
+        actor: Optional audit actor passed to the DNS reconciler.
+
+    Returns:
+        Consolidated appliance-DNS reconciliation action, when any.
+    """
+    from atlaso.app import ui as ui_module
+
+    return ui_module.ensure_dns_for_appliance_settings(
+        db,
+        settings,
+        previous_fqdn=previous_fqdn,
+        actor=actor,
+    )
 
 
 _settings_api = build_settings_api_router(
@@ -1150,6 +1203,11 @@ _settings_api = build_settings_api_router(
             *args, **kwargs
         ),
         ensure_ca_state=_ensure_settings_ca_state,
+        ensure_dns_for_appliance_settings=_ensure_settings_dns_state,
+        reconcile_factory_service_identities=reconcile_factory_service_identities,
+        reconcile_service_dns_aliases=lambda *args, **kwargs: refresh_interface_service_dns_aliases(
+            *args, **kwargs
+        ),
     )
 )
 settings_router = _settings_api.router
@@ -1182,9 +1240,12 @@ def get_esx_storage_settings(db: Session) -> EsxStorageSettings:
     """
     row = db.execute(select(EsxStorageSettings).order_by(EsxStorageSettings.id)).scalars().first()
     if row is None:
-        dns = db.execute(select(DnsSettings).order_by(DnsSettings.id)).scalars().first()
-        domain = (dns.domain if dns else "atlaso.internal").splitlines()[0].strip().strip(".")
-        row = EsxStorageSettings(enabled=False, hostname=f"nfs.{domain}")
+        row = EsxStorageSettings(
+            enabled=False,
+            hostname=factory_service_hostname(
+                "nfs", get_appliance_settings(db).fqdn
+            ),
+        )
         db.add(row)
         db.flush()
     return row

@@ -320,7 +320,7 @@ class EsxStorageSettingsUpdate(BaseModel):
     """
 
     enabled: Annotated[bool, Field(description='Whether the resource is enabled in saved Atlaso state.')] = False
-    hostname: Annotated[str, Field(description='DNS hostname associated with the resource, normalized according to the endpoint contract.')] = Field(default="nfs.atlaso.internal", min_length=1, max_length=253)
+    hostname: Annotated[str | None, Field(description='DNS hostname associated with the resource, normalized according to the endpoint contract. Omit it to preserve the current factory-derived or operator-customized hostname.')] = Field(default=None, min_length=1, max_length=253)
 
 
 class EsxStorageVolumeCreate(BaseModel):
@@ -738,7 +738,7 @@ class LdapSettingsUpdate(BaseModel):
     """
 
     enabled: Annotated[bool, Field(description='Whether the resource is enabled in saved Atlaso state.')] = False
-    hostname: Annotated[str, Field(description='DNS hostname associated with the resource, normalized according to the endpoint contract.')] = Field(default="ldap.atlaso.internal", min_length=1, max_length=180)
+    hostname: Annotated[str | None, Field(description='DNS hostname associated with the resource, normalized according to the endpoint contract. Omit it to preserve the current factory-derived or operator-customized hostname.')] = Field(default=None, min_length=1, max_length=180)
     listen_interfaces: Annotated[list[str], Field(description='Saved access interfaces or enabled VLANs used as service bind targets.')] = Field(default_factory=list)
     listen_addresses: Annotated[list[str], Field(description='Derived IPv4 and IPv6 listener addresses for the selected interfaces.')] = Field(default_factory=list)
     ldaps_enabled: Annotated[bool, Field(description='Whether LDAPs enabled is enabled for this ldap settings resource.')] = True
@@ -770,6 +770,7 @@ class LdapSettingsResponse(LdapSettingsUpdate):
         updated_at: UTC timestamp when the resource was last updated.
     """
 
+    hostname: Annotated[str, Field(description='Persisted DNS hostname used by the LDAP service response.')] = Field(min_length=1, max_length=180)
     id: Annotated[int, Field(description='Unique database identifier assigned to this resource.')]
     config_path: Annotated[str, Field(description='Appliance path where the rendered configuration is staged or installed; it is not a free-form input.')]
     certificate_path: Annotated[str, Field(description='Canonical filesystem or HTTP certificate path used by Atlaso; callers must not treat it as an unrestricted path.')]
@@ -2430,10 +2431,10 @@ class OidcProviderSettingsUpdate(BaseModel):
     """
 
     enabled: Annotated[bool, Field(description='Whether the resource is enabled in saved Atlaso state.')] = False
-    hostname: Annotated[str, Field(description='DNS hostname associated with the resource, normalized according to the endpoint contract.')] = Field(default="oidc.atlaso.internal", min_length=1, max_length=180)
+    hostname: Annotated[str | None, Field(description='DNS hostname associated with the resource, normalized according to the endpoint contract. Omit it to preserve the current factory-derived or operator-customized hostname.')] = Field(default=None, min_length=1, max_length=180)
     listen_interfaces: Annotated[list[str], Field(description='Saved access interfaces or enabled VLANs used as service bind targets.')] = Field(default_factory=list)
     port: Annotated[int, Field(description='TCP or UDP port in the valid 1 through 65535 range.')] = Field(default=443, ge=1, le=65535)
-    issuer_url: Annotated[str, Field(description='Validated issuer url used for this oidc provider settings integration.')] = Field(default="https://oidc.atlaso.internal/identity", min_length=1, max_length=500)
+    issuer_url: Annotated[str | None, Field(description='Validated issuer URL for this OIDC provider. Atlaso derives it from the effective hostname and port when omitted.')] = Field(default=None, min_length=1, max_length=500)
     access_token_lifetime_seconds: Annotated[int, Field(description='Access token lifetime seconds, measured in seconds, for this oidc provider settings resource.')] = Field(default=300, ge=60, le=3600)
     id_token_lifetime_seconds: Annotated[int, Field(description='Id token lifetime seconds, measured in seconds, for this oidc provider settings resource.')] = Field(default=300, ge=60, le=3600)
     authorization_code_lifetime_seconds: Annotated[int, Field(description='Authorization code lifetime seconds, measured in seconds, for this oidc provider settings resource.')] = Field(default=60, ge=30, le=300)
@@ -2462,6 +2463,8 @@ class OidcProviderSettingsResponse(OidcProviderSettingsUpdate):
             resource.
     """
 
+    hostname: Annotated[str, Field(description='Persisted DNS hostname used by the OIDC provider response.')] = Field(min_length=1, max_length=180)
+    issuer_url: Annotated[str, Field(description='Persisted issuer URL used by the OIDC provider response.')] = Field(min_length=1, max_length=500)
     listen_addresses: Annotated[list[str], Field(description='Derived IPv4 and IPv6 listener addresses for the selected interfaces.')] = Field(default_factory=list)
     authorization_flow_available: Annotated[bool, Field(description='Whether authorization flow available is enabled for this oidc provider settings resource.')]
     valid: Annotated[bool, Field(description='Whether the represented desired state passed Atlaso validation.')]
