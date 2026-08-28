@@ -190,7 +190,8 @@ function Select-AtlasoOnePasswordPythonFromLauncherInventory {
 
     $candidates = foreach ($line in @($LauncherOutput -split "`r?`n")) {
         if ($line -match '^\s*-V:(?:[^/]+/)?CPython(3\.1[0-3])(?:\.\d+)?\s+\*?\s*(.+?\.exe)\s*\*?\s*$' -or
-            $line -match '^\s*-V:(3\.1[0-3])(?:\.\d+)?\s+\*?\s*(.+?\.exe)\s*\*?\s*$') {
+            $line -match '^\s*-V:(3\.1[0-3])(?:\.\d+)?\s+\*?\s*(.+?\.exe)\s*\*?\s*$' -or
+            $line -match '^\s*-(3\.1[0-3])(?:-(?:32|64|arm64))?\s+\*?\s*(.+?\.exe)\s*\*?\s*$') {
             [pscustomobject]@{
                 Version = [version]$Matches[1]
                 Path    = $Matches[2].Trim()
