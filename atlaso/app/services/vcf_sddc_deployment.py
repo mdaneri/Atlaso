@@ -570,20 +570,26 @@ def _parse_vsphere_ovf_descriptor(
 
 
 def complete_property_mapping(descriptor: OvaDescriptor, submitted: dict[str, str]) -> dict[str, str]:
-    """Build an exact mapping for every reviewed target-deployable OVF property.
+    """Require an exact operator-reviewed mapping for the target OVF contract.
 
     Args:
         descriptor: Target-authoritative deployable OVF metadata.
         submitted: Operator-reviewed property values keyed by OVF identifier.
     """
     properties = {item.key: item for item in descriptor.properties}
+    missing = sorted(set(properties) - set(submitted))
     unknown = sorted(set(submitted) - set(properties))
-    if unknown:
-        raise VcfSddcDeploymentError(f"The submitted OVF property keys are not accepted by vSphere: {', '.join(unknown)}.")
-    return {
-        key: str(submitted[key]) if key in submitted else str(property_info.default or "")
-        for key, property_info in properties.items()
-    }
+    if missing or unknown:
+        differences = []
+        if missing:
+            differences.append(f"missing reviewed keys: {', '.join(missing)}")
+        if unknown:
+            differences.append(f"no longer accepted keys: {', '.join(unknown)}")
+        raise VcfSddcDeploymentError(
+            "The vSphere OVF property contract changed after review; rediscover the destination and review every "
+            f"property again ({'; '.join(differences)})."
+        )
+    return {key: str(submitted[key]) for key in properties}
 
 
 def connect_vsphere(address: str, username: str, password: str, *, port: int = 443, expected_fingerprint: str = "") -> Any:

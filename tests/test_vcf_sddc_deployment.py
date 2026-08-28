@@ -336,13 +336,19 @@ def test_vsphere_descriptor_controls_properties_defaults_options_and_warnings(tm
     assert authoritative.selected_deployment_option == "small"
     assert authoritative.deployment_options[0].description == "Lab footprint"
     assert "sddc.example.test" not in " ".join(authoritative.warnings)
-    assert complete_property_mapping(authoritative, {"ROOT_PASSWORD": "one-time-secret"}) == {
+    submitted = {
         "ROOT_PASSWORD": "one-time-secret",
         "vami.hostname": "",
         "target_only": "enabled",
     }
-    with pytest.raises(VcfSddcDeploymentError, match="not accepted"):
-        complete_property_mapping(authoritative, {"unknown": "value"})
+    assert complete_property_mapping(authoritative, submitted) == submitted
+    with pytest.raises(VcfSddcDeploymentError, match="changed after review") as missing:
+        complete_property_mapping(authoritative, {"ROOT_PASSWORD": "one-time-secret", "vami.hostname": ""})
+    assert "target_only" in str(missing.value)
+    assert "one-time-secret" not in str(missing.value)
+    with pytest.raises(VcfSddcDeploymentError, match="changed after review") as unknown:
+        complete_property_mapping(authoritative, {**submitted, "unknown": "value"})
+    assert "unknown" in str(unknown.value)
 
 
 def test_imported_ovf_verification_requires_all_keys_and_transport():
@@ -587,7 +593,7 @@ def test_deploy_ova_binds_standalone_host_and_preserves_vcenter_automatic_placem
             datastore_id="datastore-1",
             network_ids={"Network 1": "network-1"},
             vm_name="sddc-test",
-            property_values={"ROOT_PASSWORD": "one-time-secret"},
+            property_values={"ROOT_PASSWORD": "one-time-secret", "vami.hostname": "target.example.test"},
             deployment_option="small",
             power_on=False,
         )

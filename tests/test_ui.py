@@ -3,6 +3,7 @@
 import json
 import os
 import re
+from dataclasses import replace
 from pathlib import Path
 
 import pytest
@@ -18531,6 +18532,43 @@ def test_vcf_sddc_deploy_job_persists_no_passwords(client, monkeypatch):
     assert "thick" in persisted
     assert "power_on" in persisted
 
+    changed_descriptor = replace(
+        descriptor,
+        properties=[
+            *descriptor.properties,
+            OvfProperty("target_added", "string", "Target added", "New target property", "enabled", "", False, True),
+        ],
+    )
+    monkeypatch.setattr(
+        "atlaso.app.routers.ui.vcf_workflows.vsphere_ovf_descriptor",
+        lambda *_args, **_kwargs: changed_descriptor,
+    )
+    queued.clear()
+    changed_contract = client.post(
+        "/vcf-helper/sddc-manager/deploy",
+        json={
+            "csrf": csrf,
+            "address": "vc.example",
+            "port": 443,
+            "username": "administrator",
+            "password": "vsphere-secret",
+            "confirmed_tls_fingerprint": "AA:BB",
+            "ova_path": descriptor.path,
+            "vm_name": "sddc-test-contract-change",
+            "properties": {"ROOT_PASSWORD": "root-secret", "LOCAL_USER_PASSWORD": "local-secret", "vami.hostname": "sddc.example"},
+            "destination": {"resource_pool_id": "resgroup-1", "datastore_id": "datastore-1", "network_ids": {"Network 1": "network-1"}},
+        },
+    )
+    assert changed_contract.status_code == 422
+    assert "changed after review" in changed_contract.json()["detail"]
+    assert "target_added" in changed_contract.json()["detail"]
+    assert "root-secret" not in changed_contract.text
+    assert queued == {}
+    monkeypatch.setattr(
+        "atlaso.app.routers.ui.vcf_workflows.vsphere_ovf_descriptor",
+        lambda *_args, **_kwargs: descriptor,
+    )
+
     powered_off_dns = client.post(
         "/vcf-helper/sddc-manager/deploy",
         json={
@@ -18702,6 +18740,10 @@ def test_vcf_sddc_deploy_requires_ipv4_ova_properties(client, monkeypatch):
                 "LOCAL_USER_PASSWORD": "LocalPassword123!",
                 "vami.hostname": "sddc.example",
                 "ip_address_version": "IPv4",
+                "ip0": "",
+                "netmask0": "",
+                "gateway": "",
+                "DNS": "",
             },
             "destination": {"resource_pool_id": "resgroup-1", "datastore_id": "datastore-1", "network_ids": {"Network 1": "network-1"}},
             "options": {},
