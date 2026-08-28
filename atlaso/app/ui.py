@@ -7417,6 +7417,7 @@ VCF_HELPER_TARGET_OPTIONS = [
 VCF_HELPER_TARGET_LABELS = {target["value"]: target["label"] for target in VCF_HELPER_TARGET_OPTIONS}
 VCF_HELPER_TARGET_HOSTS = {target["value"]: set(target["hosts"]) for target in VCF_HELPER_TARGET_OPTIONS}
 VCF_HELPER_DEFAULT_TARGET = "vcf-9.1"
+VCF_HELPER_HOST_LABEL_PATTERN = re.compile(r"^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?$")
 
 
 def normalize_vcf_helper_target(target: str) -> str:
@@ -7461,7 +7462,78 @@ def vcf_generated_host_label(base_host: str, prefix: str, suffix: str) -> str:
     return f"{prefix.strip().lower()}{base_host}{suffix.strip().lower()}"
 
 
-def vcf_generated_fqdn_preview(domain: str, prefix: str = "", suffix: str = "", target: str = VCF_HELPER_DEFAULT_TARGET) -> list[dict[str, str]]:
+def validate_vcf_helper_hostname_entries(
+    target: str,
+    component_keys: list[str],
+    hostnames: list[str],
+) -> tuple[dict[str, str], list[str]]:
+    """Normalize and validate an exact component-keyed hostname mapping.
+
+    Args:
+        target: Resource targeted by the operation.
+        component_keys: Catalog component keys submitted by the caller.
+        hostnames: Reviewed hostname labels paired with the submitted component keys.
+
+    Returns:
+        The normalized mapping and any validation errors.
+    """
+    normalized_target = normalize_vcf_helper_target(target)
+    components = vcf_helper_target_components(normalized_target)
+    if not components:
+        return {}, [f"VCF Helper target {target or '(blank)'} is not supported."]
+    expected_keys = [component["host"] for component in components]
+    expected_set = set(expected_keys)
+    all_component_keys = {component["host"] for component in VCF_GENERATED_FQDN_COMPONENTS}
+    errors: list[str] = []
+    if len(component_keys) != len(hostnames):
+        errors.append("Every submitted VCF component must have exactly one hostname.")
+
+    normalized_mapping: dict[str, str] = {}
+    for raw_key, raw_hostname in zip(component_keys, hostnames, strict=False):
+        component_key = raw_key.strip().lower()
+        if component_key != raw_key:
+            errors.append(f"VCF component key {raw_key or '(blank)'} is malformed.")
+            continue
+        if component_key in normalized_mapping:
+            errors.append(f"VCF component key {component_key or '(blank)'} was submitted more than once.")
+            continue
+        if component_key not in all_component_keys:
+            errors.append(f"VCF component key {component_key or '(blank)'} is unknown.")
+            continue
+        if component_key not in expected_set:
+            errors.append(f"VCF component key {component_key} is not part of {VCF_HELPER_TARGET_LABELS[normalized_target]}.")
+            continue
+        hostname = raw_hostname.strip().lower()
+        if not hostname:
+            errors.append(f"{component_key} hostname cannot be empty.")
+        elif not VCF_HELPER_HOST_LABEL_PATTERN.fullmatch(hostname):
+            errors.append(
+                f"{component_key} hostname {hostname} must be one DNS label of 1 to 63 letters, numbers, or hyphens and cannot start or end with a hyphen."
+            )
+        normalized_mapping[component_key] = hostname
+
+    missing_keys = [key for key in expected_keys if key not in normalized_mapping]
+    if missing_keys:
+        errors.append(f"VCF hostname mapping is missing components: {', '.join(missing_keys)}.")
+    duplicate_hostnames = sorted(
+        hostname
+        for hostname in set(normalized_mapping.values())
+        if list(normalized_mapping.values()).count(hostname) > 1
+    )
+    if duplicate_hostnames:
+        errors.append(f"VCF hostname mapping contains duplicate hostnames: {', '.join(duplicate_hostnames)}.")
+    if set(normalized_mapping) != expected_set:
+        return {}, errors
+    return normalized_mapping, errors
+
+
+def vcf_generated_fqdn_preview(
+    domain: str,
+    prefix: str = "",
+    suffix: str = "",
+    target: str = VCF_HELPER_DEFAULT_TARGET,
+    hostnames: dict[str, str] | None = None,
+) -> list[dict[str, str]]:
     """Return vcf generated fqdn preview.
 
     Args:
@@ -7469,12 +7541,22 @@ def vcf_generated_fqdn_preview(domain: str, prefix: str = "", suffix: str = "", 
         prefix: Prefix consumed by VCF generated FQDN preview.
         suffix: Suffix consumed by VCF generated FQDN preview.
         target: Target resource or location affected by the operation.
+        hostnames: Optional reviewed hostname labels keyed by immutable catalog component.
     """
     return [
         {
             "host": component["host"],
-            "host_label": vcf_generated_host_label(component["host"], prefix, suffix),
-            "fqdn": normalize_dns_hostname(vcf_generated_host_label(component["host"], prefix, suffix), domain),
+            "host_label": (hostnames or {}).get(
+                component["host"],
+                vcf_generated_host_label(component["host"], prefix, suffix),
+            ),
+            "fqdn": normalize_dns_hostname(
+                (hostnames or {}).get(
+                    component["host"],
+                    vcf_generated_host_label(component["host"], prefix, suffix),
+                ),
+                domain,
+            ),
             "description": component["description"],
         }
         for component in vcf_helper_target_components(target)
@@ -7591,6 +7673,8 @@ def allocate_vcf_generated_records(
     suffix: str,
     start_ipv4: str,
     network_prefix: str,
+    component_keys: list[str],
+    hostnames: list[str],
 ) -> tuple[list[dict[str, str]], list[dict[str, str]], list[str]]:
     """Return allocate vcf generated records.
 
@@ -7602,6 +7686,8 @@ def allocate_vcf_generated_records(
         suffix: Suffix supplied by the caller.
         start_ipv4: Start ipv4 supplied by the caller.
         network_prefix: Network prefix supplied by the caller.
+        component_keys: Catalog component keys submitted by the caller.
+        hostnames: Reviewed hostname labels paired with the submitted component keys.
     """
     domains = dns_domains_for_settings(get_dns_settings_row(db))
     normalized_domain = domain.strip().strip(".").lower()
@@ -7610,12 +7696,25 @@ def allocate_vcf_generated_records(
     normalized_target = normalize_vcf_helper_target(target)
     if normalized_target not in VCF_HELPER_TARGET_LABELS:
         return [], [], [f"VCF Helper target {target or '(blank)'} is not supported."]
+    hostname_mapping, hostname_errors = validate_vcf_helper_hostname_entries(
+        normalized_target,
+        component_keys,
+        hostnames,
+    )
+    if hostname_errors:
+        return [], [], hostname_errors
     start_address, network, network_error = vcf_helper_start_network(start_ipv4, network_prefix)
     if network_error or start_address is None or network is None:
         return [], [], [network_error or "Starting IP / prefix is invalid."]
     record_type = "AAAA" if isinstance(start_address, IPv6Address) else "A"
 
-    preview_rows = vcf_generated_fqdn_preview(normalized_domain, prefix, suffix, normalized_target)
+    preview_rows = vcf_generated_fqdn_preview(
+        normalized_domain,
+        prefix,
+        suffix,
+        normalized_target,
+        hostname_mapping,
+    )
     errors: list[str] = []
     for row in preview_rows:
         if not row["host_label"]:
@@ -7667,6 +7766,8 @@ def create_vcf_generated_dns_records(
     suffix: str,
     start_ipv4: str,
     network_prefix: str,
+    component_keys: list[str],
+    hostnames: list[str],
     actor: str,
 ) -> tuple[list[dict[str, str]], list[dict[str, str]], list[str]]:
     """Create vcf generated dns records.
@@ -7679,6 +7780,8 @@ def create_vcf_generated_dns_records(
         suffix: Suffix supplied by the caller.
         start_ipv4: Start ipv4 supplied by the caller.
         network_prefix: Network prefix supplied by the caller.
+        component_keys: Catalog component keys submitted by the caller.
+        hostnames: Reviewed hostname labels paired with the submitted component keys.
         actor: Authenticated identity attributed to the audit record.
 
     Returns:
@@ -7692,6 +7795,8 @@ def create_vcf_generated_dns_records(
         suffix=suffix,
         start_ipv4=start_ipv4,
         network_prefix=network_prefix,
+        component_keys=component_keys,
+        hostnames=hostnames,
     )
     if errors:
         return [], skipped, errors
@@ -7705,7 +7810,11 @@ def create_vcf_generated_dns_records(
                 record_data_json=dump_dns_record_data(
                     record_type,
                     row["address"],
-                    {"source": "vcf_helper", "component": row["host"]},
+                    {
+                        "source": "vcf_helper",
+                        "component": row["host"],
+                        "host_label": row["host_label"],
+                    },
                 ),
                 description=row["description"],
                 enabled=True,
@@ -7733,6 +7842,8 @@ def delete_vcf_generated_dns_records(
     domain: str,
     prefix: str,
     suffix: str,
+    component_keys: list[str],
+    hostnames: list[str],
     actor: str,
 ) -> tuple[list[dict[str, str]], list[dict[str, str]], list[str]]:
     """Remove vcf generated dns records.
@@ -7743,6 +7854,8 @@ def delete_vcf_generated_dns_records(
         domain: Managed DNS domain affected by the operation.
         prefix: Prefix supplied by the caller.
         suffix: Suffix supplied by the caller.
+        component_keys: Catalog component keys submitted by the caller.
+        hostnames: Reviewed hostname labels paired with the submitted component keys.
         actor: Authenticated identity attributed to the audit record.
 
     Returns:
@@ -7756,7 +7869,20 @@ def delete_vcf_generated_dns_records(
     if normalized_target not in VCF_HELPER_TARGET_LABELS:
         return [], [], [f"VCF Helper target {target or '(blank)'} is not supported."]
 
-    preview_rows = vcf_generated_fqdn_preview(normalized_domain, prefix, suffix, normalized_target)
+    hostname_mapping, hostname_errors = validate_vcf_helper_hostname_entries(
+        normalized_target,
+        component_keys,
+        hostnames,
+    )
+    if hostname_errors:
+        return [], [], hostname_errors
+    preview_rows = vcf_generated_fqdn_preview(
+        normalized_domain,
+        prefix,
+        suffix,
+        normalized_target,
+        hostname_mapping,
+    )
     rows_by_fqdn = {row["fqdn"]: row for row in preview_rows}
     matching_records = db.execute(
         select(DnsRecord).where(
@@ -7771,10 +7897,13 @@ def delete_vcf_generated_dns_records(
         if row is None:
             continue
         metadata = record_data(record)
-        helper_owned = metadata.get("source") == "vcf_helper"
-        legacy_helper_record = not metadata and (record.description or "") == row["description"]
+        helper_owned = (
+            metadata.get("source") == "vcf_helper"
+            and metadata.get("component") == row["host"]
+            and metadata.get("host_label", row["host_label"]) == row["host_label"]
+        )
         result_row = {**row, "address": record.address, "record_type": record.record_type.strip().upper()}
-        if helper_owned or legacy_helper_record:
+        if helper_owned:
             db.delete(record)
             deleted.append(result_row)
         else:
@@ -7808,6 +7937,8 @@ def vcf_helper_context(db: Session) -> dict[str, Any]:
         "vcf_helper_default_target": VCF_HELPER_DEFAULT_TARGET,
         "vcf_helper_target_components": vcf_helper_target_component_map(),
         "vcf_helper_default_domain": default_domain,
+        "vcf_helper_default_prefix": "",
+        "vcf_helper_default_suffix": "",
         "vcf_helper_rows": vcf_generated_fqdn_preview(default_domain, target=VCF_HELPER_DEFAULT_TARGET),
         "vcf_helper_existing_fqdns": sorted(record.hostname.strip().strip(".").lower() for record in records),
         "vcf_helper_existing_address_records": vcf_helper_existing_address_records(records),
@@ -16449,6 +16580,7 @@ _vcf_workflows_ui = build_vcf_workflows_ui_router(
         vcf_depot_submit_lock=VCF_DEPOT_SUBMIT_LOCK,
         vcf_depot_vdt_log_path=VCF_DEPOT_VDT_LOG_PATH,
         vcf_helper_default_target=VCF_HELPER_DEFAULT_TARGET,
+        vcf_generated_fqdn_preview=vcf_generated_fqdn_preview,
         job_payload=_job_payload,
         normalize_vcf_trust_address=_normalize_vcf_trust_address,
         task_row=_task_row,
