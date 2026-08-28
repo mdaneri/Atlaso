@@ -86,11 +86,22 @@ Open agent-authored pull requests ready for review. The ready event starts the i
 duplicate opening `@codex review`. For every later commit, complete a commit-push-review cycle before starting another
 change: push the commit, verify it is the pull request's exact head, and post one `@codex review` request.
 
-The originating task remains responsible for the pull request after opening. Monitor all exact-head checks, comments,
-reviews, and authoritative review threads. Address actionable feedback, reply and resolve handled threads, and repeat
-focused validation plus the commit-push-review cycle after every fix. Completion requires successful current-head
-checks and no unanswered actionable comment or unresolved non-outdated review thread. Escalate decisions or external
-failures that require maintainer action.
+The originating task remains responsible for the pull request after opening. Create or update exactly one current-task heartbeat.
+Run it every four minutes for one bounded reconciliation pass, then exit cleanly. Do not vary the cadence or create
+duplicate automations. Normal monitoring prohibits persistent GitHub polling loops that combine `gh` with `sleep`;
+use them only for explicitly requested, short-lived local debugging.
+
+Retain the exact-head SHA and seen comment and review IDs in the task context. Every run inspects checks, pull-request
+state, mergeability and conflicts, top-level pull-request comments, inline review comments, review submissions and
+requested changes, and authoritative review threads. Read and evaluate every new item, marking informational items seen.
+Actionable feedback requires the focused validation and commit-push-review cycle, replies and resolved handled threads,
+and continued monitoring on the same heartbeat.
+
+Treat merged, closed, or merge-ready as terminal pull-request states. After a merge, continue the same heartbeat through
+required merge, linked-issue, `origin/main`, and applicable post-merge workflow verification, then pause it. Pause
+immediately for an unmerged closed pull request, or for a merge-ready pull request with a successful current head, every
+item seen, no requested changes or actionable feedback, and no unresolved non-outdated review thread. Pause and
+escalate decisions or external failures requiring maintainer action. Merge-ready status does not grant merge authority.
 
 `main` accepts squash merges only after required checks pass. Do not commit directly to `main`.
 
