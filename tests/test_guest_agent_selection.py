@@ -135,6 +135,17 @@ exec /usr/bin/rm "$@"
 """,
     )
     _write_executable(
+        command_dir / "python3",
+        """#!/bin/sh
+set -eu
+if [ -n "${FAKE_SWAP_TEST_ROOT_TARGET:-}" ]; then
+  /usr/bin/mv -- "$ATLASO_GUEST_AGENT_TEST_ROOT" "$FAKE_SWAP_TEST_ROOT_ORIGINAL"
+  /usr/bin/ln -s -- "$FAKE_SWAP_TEST_ROOT_TARGET" "$ATLASO_GUEST_AGENT_TEST_ROOT"
+fi
+exec /usr/bin/python3 "$@"
+""",
+    )
+    _write_executable(
         command_dir / "shred",
         """#!/bin/sh
 set -eu
@@ -628,13 +639,55 @@ def test_test_override_cleanup_quarantines_without_recursive_deletion(tmp_path: 
     result = _run_selector(environment)
 
     assert result.returncode == 0, result.stderr
-    retained = list(tmp_path.glob(".atlaso-guest-agent-retained.*"))
-    assert len(retained) == 1
-    assert (retained[0] / "staging" / "qemu" / "qemu.rpm").is_file()
-    assert (retained[0] / "runtime").is_dir()
-    assert (retained[0] / "package-cache" / "metadata").read_text(encoding="utf-8") == "first-boot-cache\n"
+    retained_staging = list(tmp_path.glob(".first-boot-packages.atlaso-retained.*"))
+    retained_runtime = list(tmp_path.glob(".runtime.atlaso-retained.*"))
+    retained_cache = list(tmp_path.glob(".tdnf-cache.atlaso-retained.*"))
+    assert len(retained_staging) == 1
+    assert len(retained_runtime) == 1
+    assert len(retained_cache) == 1
+    assert (retained_staging[0] / "qemu" / "qemu.rpm").is_file()
+    assert retained_runtime[0].is_dir()
+    assert (retained_cache[0] / "metadata").read_text(encoding="utf-8") == "first-boot-cache\n"
     assert not Path(environment["ATLASO_GUEST_AGENT_STAGING"]).exists()
     assert not any(Path(environment["ATLASO_GUEST_AGENT_PACKAGE_CACHE"]).iterdir())
+
+
+def test_test_override_cleanup_uses_pinned_root_after_path_swap(tmp_path: Path) -> None:
+    """A root-path replacement cannot redirect retained-artifact renames.
+
+    Args:
+        tmp_path: Temporary directory provided by pytest.
+    """
+
+    environment = _prepare_runtime(tmp_path, platform="kvm", dmi="QEMU", packages=("open-vm-tools",))
+    first = _run_selector(environment)
+    assert first.returncode == 0, first.stderr
+
+    staging = Path(environment["ATLASO_GUEST_AGENT_STAGING"])
+    staging.mkdir(mode=0o700)
+    (staging / "retry.rpm").write_text("retry\n", encoding="utf-8")
+    replacement = tmp_path.parent / f"{tmp_path.name}-replacement"
+    replacement.mkdir(mode=0o700)
+    replacement_staging = replacement / staging.name
+    replacement_staging.mkdir(mode=0o700)
+    sentinel = replacement_staging / "preserve.rpm"
+    sentinel.write_text("preserve\n", encoding="utf-8")
+    original = tmp_path.parent / f"{tmp_path.name}-pinned"
+    environment["FAKE_SWAP_TEST_ROOT_TARGET"] = str(replacement)
+    environment["FAKE_SWAP_TEST_ROOT_ORIGINAL"] = str(original)
+
+    try:
+        retry = _run_selector(environment)
+
+        assert retry.returncode == 0, retry.stderr
+        assert sentinel.read_text(encoding="utf-8") == "preserve\n"
+        assert replacement_staging.is_dir()
+        assert list(original.glob(".first-boot-packages.atlaso-retained.*"))
+    finally:
+        if tmp_path.is_symlink():
+            tmp_path.unlink()
+        if original.exists():
+            original.rename(tmp_path)
 
 
 def test_hyperv_access_cleanup_reloads_kvp_after_record_removal(tmp_path: Path) -> None:

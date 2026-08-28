@@ -181,10 +181,11 @@ test identity; every overridden cleanup target must be a strict, non-overlapping
 non-symlink ancestry, no mount anywhere in the explicit test root, and no multiply linked regular file. The selector
 revalidates those boundaries, ownership, and
 permissions immediately before every cleanup attempt, including a retry after the durable success marker exists.
-Test-override cleanup atomically renames staging, runtime, and package-cache artifacts into a private retained directory
-beneath the isolated root, then recreates an empty cache. It never recursively traverses or erases same-identity paths,
-so a mount added after validation makes the rename fail closed instead of redirecting deletion outside the boundary; the
-test harness owns eventual cleanup of retained artifacts. Production retains secure erasure on its fixed paths.
+Test-override cleanup pins the validated isolated-root identity, opens every target ancestor relative to that descriptor,
+and atomically renames staging, runtime, and package-cache artifacts to randomized siblings before recreating an empty
+cache. It never recursively traverses or erases same-identity paths, so a root or ancestor replacement cannot redirect
+cleanup and a mount added after validation fails closed; the test harness owns eventual cleanup of retained artifacts.
+Production retains secure erasure on its fixed paths.
 The selector's success marker is the only first-boot transaction commit. It is stored under the root-only
 `/var/lib/atlaso-privileged/guest-agent` boundary, whose ownership and mode are revalidated before the marker is trusted.
 An interruption before that commit reruns
