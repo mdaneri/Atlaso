@@ -157,6 +157,41 @@ def test_secure_boot_declarations_fail_closed(
 
 
 @pytest.mark.parametrize(
+    ("replacement", "accepted"),
+    [
+        (b'<vmw:Config ovf:required="false" vmw:key="firmware" vmw:value="EFI" />', True),
+        (
+            b'<vmw:Config ovf:required="false" vmw:key="firmware" vmw:value="efi" />\n'
+            b'      <vmw:Config ovf:required="false" vmw:key="firmware" vmw:value="EFI" />',
+            False,
+        ),
+    ],
+)
+def test_firmware_requires_one_case_insensitive_efi_declaration(
+    tmp_path: Path,
+    replacement: bytes,
+    accepted: bool,
+) -> None:
+    """Firmware remains case-insensitive without admitting duplicate declarations.
+
+    Args:
+        tmp_path: Temporary directory provided by pytest.
+        replacement: Firmware declaration bytes replacing the canonical declaration.
+        accepted: Whether the replacement retains the exact firmware contract.
+    """
+
+    declaration = b'<vmw:Config ovf:required="false" vmw:key="firmware" vmw:value="efi" />'
+    ovf_path = tmp_path / "atlaso.ovf"
+    ovf_path.write_bytes(_ovf().replace(declaration, replacement, 1))
+
+    if accepted:
+        assert validator.validate_ovf(ovf_path)["machine"] == validator.EXPECTED_MACHINE
+    else:
+        with pytest.raises(validator.OvaValidationError, match="require UEFI firmware"):
+            validator.validate_ovf(ovf_path)
+
+
+@pytest.mark.parametrize(
     ("members", "message"),
     [
         (_members(manifest_mismatch=True), "manifest verification failed"),

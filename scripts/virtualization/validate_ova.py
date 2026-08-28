@@ -193,7 +193,8 @@ def _validate_machine(items: list[ET.Element], root: ET.Element) -> None:
     for element in root.findall(f".//{{{VMW}}}Config"):
         key = element.get(f"{{{VMW}}}key", "")
         configs.setdefault(key, []).append(element.get(f"{{{VMW}}}value", ""))
-    if configs.get("firmware") != ["efi"]:
+    firmware_values = configs.get("firmware", [])
+    if len(firmware_values) != 1 or firmware_values[0].lower() != "efi":
         raise OvaValidationError("OVF must require UEFI firmware.")
     secure_boot_values = [
         value.lower()
