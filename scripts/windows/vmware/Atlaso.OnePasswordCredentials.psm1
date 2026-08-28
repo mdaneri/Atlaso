@@ -243,12 +243,30 @@ function Select-AtlasoOnePasswordPythonFromLauncherInventory {
     param([Parameter(Mandatory = $true)][AllowEmptyString()][string]$LauncherOutput)
 
     $candidates = foreach ($line in @($LauncherOutput -split "`r?`n")) {
-        if ($line -match '^\s*-V:(?:[^/]+/)?CPython(3\.1[0-3])(?:\.\d+)?\s+\*?\s*(.+?\.exe)\s*\*?\s*$' -or
-            $line -match '^\s*-V:(3\.1[0-3])(?:\.\d+)?\s+\*?\s*(.+?\.exe)\s*\*?\s*$' -or
-            $line -match '^\s*-(3\.1[0-3])(?:-(?:32|64|arm64))?\s+\*?\s*(.+?\.exe)\s*\*?\s*$') {
+        $versionText = ''
+        $architecture = ''
+        $executablePath = ''
+        if ($line -match '^\s*-V:(?:[^/]+/)?CPython(3\.1[0-3])(?:\.\d+)?\s+\*?\s*(.+?\.exe)\s*\*?\s*$') {
+            $versionText = $Matches[1]
+            $executablePath = $Matches[2]
+        }
+        elseif ($line -match '^\s*-V:(3\.1[0-3])(?:\.\d+)?(?:-(32|64|arm64))?\s+\*?\s*(.+?\.exe)\s*\*?\s*$') {
+            $versionText = $Matches[1]
+            $architecture = $Matches[2]
+            $executablePath = $Matches[3]
+        }
+        elseif ($line -match '^\s*-(3\.1[0-3])(?:-(32|64|arm64))?\s+\*?\s*(.+?\.exe)\s*\*?\s*$') {
+            $versionText = $Matches[1]
+            $architecture = $Matches[2]
+            $executablePath = $Matches[3]
+        }
+        # The locked 1Password SDK publishes Windows wheels for x64 and ARM64,
+        # but not x86. Reject a known 32-bit launcher entry before version ranking.
+        if (-not [string]::IsNullOrWhiteSpace($executablePath) -and $architecture -cne '32') {
             [pscustomobject]@{
-                Version = [version]$Matches[1]
-                Path    = $Matches[2].Trim()
+                Version      = [version]$versionText
+                Architecture = $architecture
+                Path         = $executablePath.Trim()
             }
         }
     }

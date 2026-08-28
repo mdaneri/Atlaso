@@ -82,6 +82,20 @@ try {
     if ($selectedPython.Path -cne $python313Path) {
         throw 'The highest compatible tagged or legacy Python runtime was not selected after removing default markers.'
     }
+    $unsupportedPythonPath = Join-Path $pythonInventoryRoot 'python313x86.exe'
+    [System.IO.File]::WriteAllBytes($unsupportedPythonPath, [byte[]](1))
+    $architectureInventory = @(
+        " -3.13-32 $unsupportedPythonPath",
+        " -3.12-64 $python312Path"
+    ) -join "`n"
+    $architectureSelectedPython = & $credentialModule {
+        param([string]$InventoryOutput)
+        Select-AtlasoOnePasswordPythonFromLauncherInventory -LauncherOutput $InventoryOutput
+    } $architectureInventory
+    if ($architectureSelectedPython.Path -cne $python312Path -or
+        $architectureSelectedPython.Architecture -cne '64') {
+        throw 'A newer unsupported x86 runtime outranked the compatible 64-bit runtime.'
+    }
 }
 finally {
     [System.IO.Directory]::Delete($pythonInventoryRoot, $true)
