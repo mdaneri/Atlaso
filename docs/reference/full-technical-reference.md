@@ -426,10 +426,11 @@ Do not edit only one version source. `python scripts/version.py check` verifies 
 `--base-root` are mutually exclusive, and an explicit target cannot skip a patch or change the major or minor version.
 Updating an older pull request from `main` lets the workflow recalculate the next unused patch version.
 
-For ordinary agent-authored same-repository pull requests, implementation, fix, **solve**, delivery, and similar
-requests authorize preparation and publication of a ready pull request but do not authorize merging it. The agent
-requires an explicit merge instruction for that pull request and otherwise leaves it open after every delivery and
-follow-through gate passes. Human-authored pull requests, forks, drafts, review-only work, and private vulnerability
+For ordinary same-repository pull requests within the active task's scope, implementation, fix, **solve**, delivery,
+and similar requests grant default merge authority, including for an existing ordinary pull request that the agent is
+explicitly asked to work on. A separate merge instruction is not required. An explicit merge hold such as **do not
+merge**, **leave the pull request open**, **pull request only**, or **wait for approval** overrides that authority until
+the user or maintainer withdraws it. Forks, drafts, review-only or diagnostic work, and private vulnerability
 remediation are excluded. An authorized direct agent merge requires both an expected-head guard and the active
 ruleset's strict up-to-date required checks to bind the validated base; agents do not use an administrative bypass and
 fail closed without invoking `gh pr merge` when a merge queue is required. Repository auto-merge remains a separate

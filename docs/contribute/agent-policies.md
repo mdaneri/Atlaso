@@ -136,18 +136,17 @@ runtime.
   current-head checks with no unanswered actionable comment or unresolved non-outdated review thread. Escalate genuine
   maintainer decisions or external failures rather than guessing or reporting completion.
 
-### Explicit merge authorization
+### Default merge authorization
 
-- Preparing a change and merging it are separate authorities. An implementation, fix, **solve**, pull-request delivery,
-  or similar request authorizes preparation and publication of a ready-for-review pull request but does not authorize
-  merging it.
-- Require an explicit merge instruction for the ordinary same-repository pull request authored and owned by the active
-  task. The instruction may be part of the original request or a later direction. Without one, leave the pull request
-  open after delivery and follow-through are complete. Do not infer merge authority for human-authored pull requests,
-  forks, drafts, review-only or diagnostic tasks, or private vulnerability remediation. GitHub auto-merge remains a
-  separate explicit maintainer choice.
+- Preparing a change and merging it remain separate delivery stages. An implementation, fix, **solve**, pull-request
+  delivery, or similar request grants default merge authority for the ordinary same-repository pull request within the
+  active task's scope, including an existing ordinary pull request that the agent is explicitly asked to work on.
+- Default merge authority permits merging only after every eligibility and safety gate below passes. It does not grant
+  authority over forks, drafts, review-only or diagnostic tasks, or private vulnerability remediation. Do not require a
+  separate merge instruction. GitHub auto-merge remains a separate explicit maintainer choice.
 - Treat **do not merge**, **leave the pull request open**, **pull request only**, **wait for approval**, and equivalent
-  instructions as holds until explicitly withdrawn and the merge is authorized.
+  instructions as an explicit merge hold. The hold overrides default merge authority until the user or maintainer
+  explicitly withdraws it. With no hold, proceed to merge once every required gate passes.
 - Immediately before an authorized merge, re-fetch the pull request and `main`, then verify the linked issue and type label,
   documentation, synchronized patch version, all applicable exact-head checks, answered actionable feedback, resolved
   non-outdated `reviewThreads`, and conflict-free merge state. If the base or head changes, stop, update and revalidate

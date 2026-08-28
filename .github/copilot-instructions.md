@@ -27,12 +27,13 @@ New Tabulators must use `window.AtlasoUiPatterns.createGrid(...)`; every new or 
   after every later commit is pushed as the exact head;
 - keep the task active to monitor exact-head checks, comments, reviews, and authoritative review threads through a
   successful current head with no unresolved actionable feedback;
-- apply the **Explicit merge authorization** policy to ordinary agent-authored internal pull requests: implementation,
-  fix, solve, delivery, and similar requests authorize a ready pull request but do not authorize merging it; require an
-  explicit merge instruction for that pull request and otherwise leave it open after every delivery gate passes;
-  preserve explicit holds, require strict up-to-date required checks to bind the validated base, also guard the head
-  SHA, never use an administrative bypass, fail closed instead of invoking `gh pr merge` when a merge queue is required,
-  and keep GitHub auto-merge as a separate explicit maintainer choice;
+- apply the **Default merge authorization** policy to ordinary same-repository pull requests within the active task's
+  scope: implementation, fix, solve, delivery, and similar requests grant default merge authority, including for an
+  existing ordinary pull request the agent is explicitly asked to work on; do not require a separate merge instruction;
+  preserve an explicit merge hold until the user or maintainer withdraws it, require strict up-to-date required checks
+  to bind the validated base, also guard the head SHA, never use an administrative bypass, fail closed instead of
+  invoking `gh pr merge` when a merge queue is required, and keep GitHub auto-merge as a separate explicit maintainer
+  choice;
 - after an authorized merge and all remaining activity, send the primary-checkout controller a `cleanup-ready` handoff
   and require the ordered terminal states `remote_branch_absent`, `worktree_removed`, and `task_title_done`; delete only
   the task-owned GitHub branch with an atomic expected-SHA lease such as

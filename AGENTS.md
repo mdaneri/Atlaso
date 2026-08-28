@@ -157,19 +157,18 @@ monitoring for the new exact head. Do not report completion while current-head c
 actionable comment is unanswered, or a non-outdated review thread remains unresolved. Escalate genuine maintainer
 decisions and external failures instead of guessing or claiming completion.
 
-### Explicit merge authorization
+### Default merge authorization
 
-Preparing a change and merging it are separate authorities. An implementation, fix, **solve**, pull-request delivery,
-or similar request authorizes an automated contributor to prepare and publish a ready-for-review pull request, but does
-not authorize merging it. Merge the ordinary same-repository pull request authored and owned by the active task only
-when the user or maintainer gives an explicit merge instruction for that pull request. The instruction may be included
-in the original request or given later. If no explicit merge instruction exists, leave the pull request open after all
-delivery and follow-through gates pass and report its ready state. This policy does not grant authority over
-human-authored pull requests, forks, drafts, review-only or diagnostic tasks, or private vulnerability remediation.
-GitHub auto-merge remains a separate explicit maintainer choice.
+Preparing a change and merging it remain separate delivery stages. An implementation, fix, **solve**, pull-request
+delivery, or similar request grants default merge authority for the ordinary same-repository pull request within the
+active task's scope. This includes an existing ordinary pull request that the agent is explicitly asked to work on.
+Default merge authority permits merging only after every eligibility and safety gate below passes; it does not grant
+authority over forks, drafts, review-only or diagnostic tasks, or private vulnerability remediation. Do not require a
+separate merge instruction. GitHub auto-merge remains a separate explicit maintainer choice.
 
-An instruction such as **do not merge**, **leave the pull request open**, **pull request only**, **wait for approval**,
-or an equivalent hold blocks merging until the user or maintainer explicitly withdraws it and authorizes the merge.
+An explicit merge hold such as **do not merge**, **leave the pull request open**, **pull request only**, **wait for
+approval**, or an equivalent instruction overrides default merge authority. The hold remains authoritative until the
+user or maintainer explicitly withdraws it. With no hold, proceed to merge once every required gate passes.
 Before any authorized merge, re-fetch the pull request and `main`, then verify that the linked issue and type label,
 documentation, synchronized patch version, applicable exact-head checks, actionable comments, authoritative
 `reviewThreads`, and conflict-free merge state are all complete for the current head. If the base or head changes, stop
