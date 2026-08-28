@@ -175,6 +175,9 @@ from atlaso.app.services.routes_wan import (
     validate_nat_source,
     validate_wan_state,
 )
+from atlaso.app.services.service_dns_defaults import (
+    reconcile_factory_service_identities,
+)
 from atlaso.app.services.service_registry import SERVICE_STATE_IDS
 from atlaso.app.services.update_sources import (
     UPDATE_SOURCE_KINDS,
@@ -1557,6 +1560,7 @@ def _restore_settings_archive_data(db: Session, data: dict[str, Any]) -> dict[st
     counts["automation_scripts"] = _restore_automation_scripts(db, data.get("automation_scripts", []))
     counts["schedules"] = _restore_schedules(db, data.get("schedules", []))
     counts["settings"] = _insert_rows(db, Setting, [row for row in data.get("settings", []) if row.get("key") in SAFE_SETTING_KEYS])
+    reconcile_factory_service_identities(db)
     _disable_startup_example_seed(db)
     return counts
 

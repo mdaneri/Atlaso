@@ -49,7 +49,7 @@ from atlaso.app.services.dnsmasq import (
     validate_dns_record,
 )
 from atlaso.app.services.esxi_pxe import ESXI_PXE_NATIVE_UEFI_HTTP_ENABLED_KEY
-from atlaso.app.services.ldap import LDAP_DEFAULT_HOSTNAME, LDAP_STAGED_CONFIG_PATH
+from atlaso.app.services.ldap import LDAP_STAGED_CONFIG_PATH
 from atlaso.app.services.local_users import (
     DEFAULT_LOCAL_USER_SHELL,
     POWERSHELL_LOCAL_USER_SHELL,
@@ -62,11 +62,14 @@ from atlaso.app.services.networking import (
     normalize_ipv4_method,
 )
 from atlaso.app.services.ntp import (
-    NTP_DEFAULT_HOSTNAME,
     NTP_STAGED_CONFIG_PATH,
     default_ntp_upstream_fields,
     dump_ntp_upstream_sources,
     ntp_upstream_sources,
+)
+from atlaso.app.services.service_dns_defaults import (
+    factory_service_hostname,
+    reconcile_factory_service_identities,
 )
 from atlaso.app.services.service_registry import (
     RETIRED_SERVICE_IDS,
@@ -438,7 +441,7 @@ def seed_initial_data(
     if ntp_settings is None:
         ntp_upstreams = default_ntp_upstream_fields()
         ntp_settings = NtpSettings(
-            hostname=NTP_DEFAULT_HOSTNAME,
+            hostname=factory_service_hostname("ntp", appliance_settings.fqdn),
             upstream_servers=ntp_upstreams["upstream_servers"],
             upstream_sources_json=ntp_upstreams["upstream_sources_json"],
             config_path=NTP_STAGED_CONFIG_PATH,
@@ -456,7 +459,7 @@ def seed_initial_data(
         db.add(
             LdapSettings(
                 enabled=False,
-                hostname=LDAP_DEFAULT_HOSTNAME,
+                hostname=factory_service_hostname("ldap", appliance_settings.fqdn),
                 config_path=LDAP_STAGED_CONFIG_PATH,
             )
         )
@@ -563,7 +566,7 @@ def seed_initial_data(
         db.add(
             CaSettings(
                 enabled=appliance_mode,
-                portal_hostname="ca.atlaso.internal",
+                portal_hostname=factory_service_hostname("ca", appliance_settings.fqdn),
                 root_common_name="Atlaso Internal Root CA",
                 organization="Atlaso",
                 organizational_unit="Lab Infrastructure",
@@ -618,8 +621,8 @@ def seed_initial_data(
                 listen_interface="eth2" if include_examples else "",
                 listen_address="192.168.50.1" if include_examples else "",
                 port=5696,
-                hostname="kms.atlaso.internal",
-                server_certificate="kms.atlaso.internal",
+                hostname=factory_service_hostname("kms", appliance_settings.fqdn),
+                server_certificate=factory_service_hostname("kms", appliance_settings.fqdn),
                 ca_certificate_path="/etc/atlaso/ca/root.crt",
                 database_path="/var/lib/atlaso/kmip/store.db",
                 config_path="/etc/atlaso/kmip/server.json",
@@ -645,9 +648,21 @@ def seed_initial_data(
             )
         )
     if db.execute(select(VcfPrivateRegistrySettings)).first() is None:
-        db.add(VcfPrivateRegistrySettings())
+        registry_hostname = factory_service_hostname("registry", appliance_settings.fqdn)
+        db.add(
+            VcfPrivateRegistrySettings(
+                hostname=registry_hostname,
+                server_certificate=registry_hostname,
+            )
+        )
     if db.execute(select(VcfOfflineDepotSettings)).first() is None:
-        db.add(VcfOfflineDepotSettings())
+        depot_hostname = factory_service_hostname("depot", appliance_settings.fqdn)
+        db.add(
+            VcfOfflineDepotSettings(
+                hostname=depot_hostname,
+                server_certificate=depot_hostname,
+            )
+        )
     if (
         not factory_defaults
         and factory_reset_marker is None
@@ -689,6 +704,7 @@ def seed_initial_data(
         )
 
     seed_update_sources(db)
+    reconcile_factory_service_identities(db)
     if not commit:
         db.flush()
         return

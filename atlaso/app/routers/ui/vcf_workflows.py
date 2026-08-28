@@ -86,7 +86,6 @@ from atlaso.app.services.vcf_offline_depot import (
     VCF_DEPOT_APPLICATION_PROPERTIES_SOURCE_KEY,
     VCF_DEPOT_APPLICATION_PROPERTIES_UPDATED_AT_KEY,
     VCF_DEPOT_DEFAULT_CONFIG_PATH,
-    VCF_DEPOT_DEFAULT_HOSTNAME,
     VCF_DEPOT_DEFAULT_STORE_PATH,
     VCF_DEPOT_DEFAULT_USERNAME,
     VCF_DEPOT_TOKEN_NAME_KEY,
@@ -96,7 +95,6 @@ from atlaso.app.services.vcf_offline_depot import (
 )
 from atlaso.app.services.vcf_private_registry import (
     VCF_REGISTRY_DEFAULT_CONFIG_PATH,
-    VCF_REGISTRY_DEFAULT_HOSTNAME,
     VCF_REGISTRY_DEFAULT_PROJECT,
     VCF_REGISTRY_DEFAULT_STORAGE_PATH,
     default_target_reference,
@@ -1911,7 +1909,7 @@ def build_router(dependencies: VcfWorkflowsUiDependencies) -> VcfWorkflowsUiRout
     def update_vcf_offline_depot_settings_from_ui(
         request: Request,
         enabled: str | None = Form(None),
-        hostname: str = Form(VCF_DEPOT_DEFAULT_HOSTNAME),
+        hostname: str = Form(""),
         listen_interfaces: list[str] = Form(default_factory=list),
         listen_addresses: list[str] = Form(default_factory=list),
         listen_interfaces_present: str | None = Form(None),
@@ -1978,7 +1976,7 @@ def build_router(dependencies: VcfWorkflowsUiDependencies) -> VcfWorkflowsUiRout
         )
 
         settings.enabled = enabled == "on"
-        settings.hostname = hostname.strip() or VCF_DEPOT_DEFAULT_HOSTNAME
+        settings.hostname = hostname.strip() or settings.hostname
         settings.listen_interface = selected_interfaces
         settings.listen_address = selected_addresses
         settings.port = port
@@ -3260,7 +3258,7 @@ def build_router(dependencies: VcfWorkflowsUiDependencies) -> VcfWorkflowsUiRout
     def update_vcf_private_registry_settings_from_ui(
         request: Request,
         enabled: str | None = Form(None),
-        hostname: str = Form(VCF_REGISTRY_DEFAULT_HOSTNAME),
+        hostname: str = Form(""),
         listen_interfaces: list[str] = Form(default_factory=list),
         listen_addresses: list[str] = Form(default_factory=list),
         listen_interfaces_present: str | None = Form(None),
@@ -3269,7 +3267,7 @@ def build_router(dependencies: VcfWorkflowsUiDependencies) -> VcfWorkflowsUiRout
         listen_address: str = Form(""),
         port: int = Form(443),
         harbor_project: str = Form(VCF_REGISTRY_DEFAULT_PROJECT),
-        server_certificate: str = Form(VCF_REGISTRY_DEFAULT_HOSTNAME),
+        server_certificate: str = Form(""),
         robot_account: str = Form("robot$vcf-supervisor-services"),
         relocation_dry_run: str | None = Form(None),
         ca_bundle_file: UploadFile | None = File(None),
@@ -3315,7 +3313,7 @@ def build_router(dependencies: VcfWorkflowsUiDependencies) -> VcfWorkflowsUiRout
             listen_addresses_present=listen_addresses_present,
         )
         settings.enabled = enabled == "on"
-        settings.hostname = hostname.strip() or VCF_REGISTRY_DEFAULT_HOSTNAME
+        settings.hostname = hostname.strip() or settings.hostname
         settings.listen_interface = selected_interfaces
         settings.listen_address = selected_addresses
         settings.port = port

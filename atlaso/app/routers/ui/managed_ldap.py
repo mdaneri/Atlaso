@@ -41,7 +41,6 @@ from atlaso.app.models import (
 )
 from atlaso.app.security import Identity, require_session_identity
 from atlaso.app.services.ldap import (
-    LDAP_DEFAULT_HOSTNAME,
     LDAP_DEFAULT_PLAINTEXT_PORT,
     LDAP_DEFAULT_PORT,
     LDAP_GROUP_PATTERN,
@@ -164,7 +163,7 @@ def build_router(dependencies: ManagedLdapUiDependencies) -> ManagedLdapUiRouter
     def update_ldap_settings_from_ui(
         request: Request,
         enabled: str | None = Form(None),
-        hostname: str = Form(LDAP_DEFAULT_HOSTNAME),
+        hostname: str = Form(""),
         listen_interfaces: list[str] = Form(default_factory=list),
         listen_interfaces_present: str | None = Form(None),
         ldaps_enabled: str | None = Form(None),
@@ -229,7 +228,7 @@ def build_router(dependencies: ManagedLdapUiDependencies) -> ManagedLdapUiRouter
         )
         settings.enabled = enabled is not None
         settings.hostname = dependencies.normalize_dns_hostname(
-            hostname or LDAP_DEFAULT_HOSTNAME
+            hostname.strip() or settings.hostname
         )
         settings.listen_interface = selected_interfaces
         settings.listen_address = selected_addresses

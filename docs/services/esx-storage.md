@@ -70,7 +70,8 @@ records use the existing dnsmasq `host-record` renderer and therefore receive no
 
 ## DNS names
 
-The normal canonical alias is `nfs.<domain>`. Atlaso follows Appliance Settings’ global target-naming mode:
+The normal canonical alias is `nfs.<domain>`, where a factory-derived name uses the domain portion of the appliance
+FQDN. Atlaso follows Appliance Settings’ global target-naming mode:
 
 - IP mode generates names such as `nfs-192-168-87-254.<domain>` and `nfs-2001-db8-87-0-0-0-0-fe.<domain>`;
 - interface mode generates an interface-derived target name with A and/or AAAA records.

@@ -42,7 +42,6 @@ from atlaso.app.security import (
     require_session_identity,
 )
 from atlaso.app.services.ca import (
-    CA_DEFAULT_PORTAL_HOSTNAME,
     ca_certificate_can_delete,
     ca_certificate_can_edit,
     ca_certificate_to_dict,
@@ -1096,7 +1095,7 @@ def build_routers(
     def update_ca_settings_from_ui(
         request: Request,
         enabled: str | None = Form(None),
-        portal_hostname: str = Form(CA_DEFAULT_PORTAL_HOSTNAME),
+        portal_hostname: str = Form(""),
         listen_interfaces: list[str] = Form(default_factory=list),
         listen_addresses: list[str] = Form(default_factory=list),
         listen_interfaces_present: str | None = Form(None),
@@ -1162,7 +1161,7 @@ def build_routers(
         )
         settings.enabled = enabled == "on"
         settings.portal_hostname = normalize_dns_hostname(
-            portal_hostname.strip() or CA_DEFAULT_PORTAL_HOSTNAME
+            portal_hostname.strip() or settings.portal_hostname
         )
         settings.listen_interface = selected_interfaces
         settings.listen_address = selected_addresses
@@ -1747,7 +1746,7 @@ def build_routers(
         listen_interfaces_present: str | None = Form(None),
         listen_addresses_present: str | None = Form(None),
         port: int = Form(5696),
-        hostname: str = Form("kms.atlaso.internal"),
+        hostname: str = Form(""),
         csrf: str = Form(...),
         identity: Identity = Depends(require_session_identity),
         db: Session = Depends(get_db),
@@ -1789,7 +1788,7 @@ def build_routers(
         settings.port = port
         try:
             settings.hostname = normalize_vsphere_service_hostname(
-                hostname.strip() or "kms.atlaso.internal"
+                hostname.strip() or settings.hostname
             )
         except ValueError:
             raise HTTPException(

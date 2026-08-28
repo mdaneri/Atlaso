@@ -1081,7 +1081,7 @@ Terminal order:
   certificate/key files under `/etc/atlaso`, and must not print private keys in stdout, stderr, previews, jobs, docs, or
   final responses. CA custody and managed certificate deployment do not require a public listen interface. Selecting a
   CA interface is the explicit publication boundary for the portal, DNS, firewall, and public-service configuration.
-  The public CA portal defaults to `ca.atlaso.internal`: `/ui/public/ca` shows public trust material and
+  The public CA portal factory hostname is `ca.<appliance-domain>`: `/ui/public/ca` shows public trust material and
   `/ui/public/ca/requests` is the authenticated certificate request/revocation workflow. Do not put Certificate
   Requests in the primary Atlaso sidebar; link it from CA-associated surfaces instead. Every selected NTS server apply
   automatically includes the CA material unit and preserves CA-before-NTP execution order, even when the CA baseline
@@ -1488,7 +1488,7 @@ Terminal order:
   registry.
 - The registry listen targets must follow the same service binding rule as VCF Backups: access physical interfaces with
   IPs and VLAN interfaces with IPs; exclude trunk physical interfaces.
-- The default registry hostname is `registry.atlaso.internal`, and the default Harbor project is
+- The factory registry hostname is `registry.<appliance-domain>`, and the default Harbor project is
   `vcf-supervisor-services`.
 - The registry storage path is a fixed appliance volume mount, currently `/mnt/atlaso-vcf-registry`; do not make this a
   routine UI-configurable field.

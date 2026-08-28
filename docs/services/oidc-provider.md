@@ -31,8 +31,8 @@ under `/api/v1` belong to the generated REST contract.
 
 ## Architecture and trust boundaries
 
-The canonical issuer is derived as `https://<oidc-hostname>[:port]/identity`; the default hostname is
-`oidc.atlaso.internal` and port 443 is omitted. It is never inferred from `Host`, `Forwarded`, or `X-Forwarded-*`
+The canonical issuer is derived as `https://<oidc-hostname>[:port]/identity`; the factory hostname is
+`oidc.<appliance-domain>` and port 443 is omitted. It is never inferred from `Host`, `Forwarded`, or `X-Forwarded-*`
 request headers. IP issuers, query strings, fragments, user information, and path or trailing-slash variants are
 rejected. Readiness parses the issued CA-managed `oidc:https` certificate and requires its DNS SAN to cover the exact
 hostname and its IP SANs to cover every selected listener address. Global Appliance Apply installs that certificate,

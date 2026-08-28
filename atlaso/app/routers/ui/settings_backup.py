@@ -62,6 +62,7 @@ class SettingsBackupUiDependencies:
     ca_managed_certificate_paths: Endpoint
     ca_certificate_available: Endpoint
     ensure_dns_for_appliance_settings: Endpoint
+    reconcile_factory_service_identities: Endpoint
     reconcile_service_dns_aliases: Endpoint
     save_logging_preferences: Endpoint
     configure_operational_logging: Endpoint
@@ -134,6 +135,9 @@ def build_router(dependencies: SettingsBackupUiDependencies) -> SettingsBackupUi
     ca_managed_certificate_paths = dependencies.ca_managed_certificate_paths
     ca_certificate_available = dependencies.ca_certificate_available
     ensure_dns_for_appliance_settings = dependencies.ensure_dns_for_appliance_settings
+    reconcile_factory_service_identities = (
+        dependencies.reconcile_factory_service_identities
+    )
     reconcile_service_dns_aliases = dependencies.reconcile_service_dns_aliases
     save_logging_preferences = dependencies.save_logging_preferences
     configure_operational_logging = dependencies.configure_operational_logging
@@ -557,13 +561,17 @@ def build_router(dependencies: SettingsBackupUiDependencies) -> SettingsBackupUi
             management_https_cert_available=True,
             web_terminal_options=terminal_options,
         )
+        reconciled_service_identities = reconcile_factory_service_identities(
+            db,
+            previous_appliance_fqdn=previous_fqdn,
+        )
         ca_state_errors: list[str] = []
         if (
             settings.management_https_enabled
             and ca_settings.enabled
             and not preflight_errors
         ):
-            ca_state_errors = ensure_ca_state(db)
+            ca_state_errors = ensure_ca_state(db, commit=False)
             management = appliance_settings_management_context(db)
             ca_settings = get_ca_settings_row(db)
         (
@@ -588,20 +596,38 @@ def build_router(dependencies: SettingsBackupUiDependencies) -> SettingsBackupUi
         )
         validation_errors = [*ca_state_errors, *validation_errors]
         dns_record_action = None
+        reconciled_service_aliases: list[str] = []
         if not validation_errors:
             dns_record_action = ensure_dns_for_appliance_settings(
-                db, settings, previous_fqdn=previous_fqdn, actor=identity.username
+                db, settings, previous_fqdn=previous_fqdn, actor=None
             )
-            if previous_service_dns_target_naming != settings.service_dns_target_naming:
-                reconcile_service_dns_aliases(db, actor=identity.username)
+        if (
+            previous_service_dns_target_naming != settings.service_dns_target_naming
+            or reconciled_service_identities
+        ):
+            reconciled_service_aliases = reconcile_service_dns_aliases(db, actor=None)
         db.add(settings)
         db.commit()
+        audit_details: list[str] = []
+        if dns_record_action:
+            audit_details.append(f"appliance_dns={dns_record_action}")
+        if reconciled_service_identities:
+            audit_details.append(
+                "factory_service_identities="
+                f"{','.join(sorted(reconciled_service_identities))}"
+            )
+        if reconciled_service_aliases:
+            audit_details.append(
+                "service_dns_aliases="
+                f"{','.join(sorted(reconciled_service_aliases))}"
+            )
         record_audit(
             db,
             actor=identity.username,
             action="update_appliance_settings",
             resource_type="settings",
             resource_id=str(settings.id),
+            detail="; ".join(audit_details) or None,
         )
         if request.headers.get("X-Atlaso-Autosave") == "1":
             context = appliance_settings_context(

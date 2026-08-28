@@ -6,7 +6,7 @@ from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 from typing import Annotated, Any
 
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
@@ -40,6 +40,9 @@ class SettingsApiDependencies:
     appliance_settings_response: Endpoint
     get_appliance_settings: Endpoint
     ensure_ca_state: Endpoint
+    ensure_dns_for_appliance_settings: Endpoint
+    reconcile_factory_service_identities: Endpoint
+    reconcile_service_dns_aliases: Endpoint
 
 
 @dataclass(frozen=True)
@@ -63,6 +66,13 @@ def build_router(dependencies: SettingsApiDependencies) -> SettingsApiRouter:
     appliance_settings_response = dependencies.appliance_settings_response
     get_appliance_settings = dependencies.get_appliance_settings
     ensure_ca_state = dependencies.ensure_ca_state
+    ensure_dns_for_appliance_settings = (
+        dependencies.ensure_dns_for_appliance_settings
+    )
+    reconcile_factory_service_identities = (
+        dependencies.reconcile_factory_service_identities
+    )
+    reconcile_service_dns_aliases = dependencies.reconcile_service_dns_aliases
 
     @router.get(
         "/settings",
@@ -111,6 +121,7 @@ def build_router(dependencies: SettingsApiDependencies) -> SettingsApiRouter:
             settings: Current Atlaso settings used to configure the operation.
         """
         desired = get_appliance_settings(db)
+        previous_fqdn = desired.fqdn
         desired.fqdn = normalize_fqdn(payload.appliance_fqdn)
         desired.management_https_enabled = payload.management_https_enabled
         desired.web_terminal_enabled = payload.web_terminal_enabled
@@ -148,19 +159,51 @@ def build_router(dependencies: SettingsApiDependencies) -> SettingsApiRouter:
         )
         desired.config_path = APPLIANCE_SETTINGS_STAGED_CONFIG_PATH
         desired.updated_at = utcnow()
+        reconciled_service_identities = reconcile_factory_service_identities(
+            db,
+            previous_appliance_fqdn=previous_fqdn,
+        )
+        appliance_dns_action = ensure_dns_for_appliance_settings(
+            db,
+            desired,
+            previous_fqdn=previous_fqdn,
+            actor=None,
+        )
+        reconciled_service_aliases: list[str] = []
+        if reconciled_service_identities:
+            reconciled_service_aliases = reconcile_service_dns_aliases(db, actor=None)
+        ca_settings = db.execute(select(CaSettings)).scalar_one_or_none()
+        if desired.management_https_enabled and ca_settings and ca_settings.enabled:
+            ca_state_errors = ensure_ca_state(db, commit=False)
+            if ca_state_errors:
+                db.rollback()
+                raise HTTPException(
+                    status_code=422,
+                    detail=" ".join(ca_state_errors),
+                )
         db.add(desired)
         db.commit()
         db.refresh(desired)
-        ca_settings = db.execute(select(CaSettings)).scalar_one_or_none()
-        if desired.management_https_enabled and ca_settings and ca_settings.enabled:
-            ensure_ca_state(db)
-            db.refresh(desired)
+        audit_details: list[str] = []
+        if reconciled_service_identities:
+            audit_details.append(
+                "factory_service_identities="
+                f"{','.join(sorted(reconciled_service_identities))}"
+            )
+        if appliance_dns_action:
+            audit_details.append(f"appliance_dns={appliance_dns_action}")
+        if reconciled_service_aliases:
+            audit_details.append(
+                "service_dns_aliases="
+                f"{','.join(sorted(reconciled_service_aliases))}"
+            )
         record_audit(
             db,
             actor=identity.username,
             action="update_appliance_settings",
             resource_type="settings",
             resource_id=str(desired.id),
+            detail="; ".join(audit_details) or None,
         )
         return appliance_settings_response(db, settings)
 

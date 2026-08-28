@@ -125,7 +125,7 @@ def build_router(dependencies: EsxStorageUiDependencies) -> EsxStorageUiRouter:
     def update_esx_storage_settings_from_ui(
         request: Request,
         enabled: str | None = Form(None),
-        hostname: str = Form("nfs.atlaso.internal"),
+        hostname: str = Form(""),
         csrf: str = Form(...),
         identity: Identity = Depends(require_session_identity),
         db: Session = Depends(get_db),
@@ -150,7 +150,9 @@ def build_router(dependencies: EsxStorageUiDependencies) -> EsxStorageUiRouter:
         require_esx_storage_write(identity)
         settings = dependencies.get_esx_storage_settings_row(db)
         previous_hostname = settings.hostname
-        normalized_hostname = dependencies.normalize_dns_hostname(hostname)
+        normalized_hostname = dependencies.normalize_dns_hostname(
+            hostname.strip() or settings.hostname
+        )
         if not normalized_hostname or "." not in normalized_hostname:
             raise HTTPException(
                 status_code=400,

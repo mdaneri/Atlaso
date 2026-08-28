@@ -779,3 +779,8 @@ The following cross-cutting boundaries always apply:
   management interface's systemd-networkd DHCP lease. Reject loopback, unscoped IPv6 link-local, duplicate, malformed,
   and other-interface lease values, preserve explicit upstream precedence, and fail both desired-state and helper
   validation when DHCP fallback is required but unavailable.
+- Derive every factory-owned service hostname from the domain portion of the canonical appliance FQDN. Reconcile fresh
+  seed, OVF first boot, appliance-domain changes, settings restore, factory reset, and existing development state through
+  one registry. Migrate only the packaged default or the exact prior factory domain, preserve customized hostnames and
+  operator-owned DNS rows, remove stale exact-marker app-owned A/AAAA/CNAME aliases on conflict, and keep coupled issuer,
+  certificate, endpoint, and Appliance Apply desired state coherent.

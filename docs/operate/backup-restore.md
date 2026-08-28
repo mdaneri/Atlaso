@@ -176,6 +176,13 @@ global LDAP apply. If validation or a later restore phase fails, Atlaso rolls ba
 any separately staged LDAP recovery import metadata and in-memory payload available. A successful settings restore or
 factory reset intentionally clears that staged LDAP recovery material.
 
+After archive rows are restored, Atlaso reconciles only provably factory-derived service names to the domain portion of
+the restored appliance FQDN. This upgrades legacy packaged `*.atlaso.internal` defaults and their exact app-owned A,
+AAAA, and CNAME records while preserving customized service hostnames and unrelated or conflicting operator-owned DNS
+records. Coupled OIDC issuer and managed-certificate desired state follow the reconciled hostname. Factory reset uses
+the same derivation from its factory appliance FQDN; restored service and DNS changes remain desired state until their
+documented Appliance Apply units succeed.
+
 OIDC group mappings are preflighted in their effective global, client, and managed-LDAP organization contexts. A
 client-specific mapping may replace the global mapping for the same source, but effective external group names must
 remain unique case-insensitively within every context before current desired state is removed. Mapping source fields and

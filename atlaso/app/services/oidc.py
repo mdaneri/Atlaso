@@ -60,6 +60,10 @@ from atlaso.app.services.networking import (
     normalize_interface_mode,
     normalize_interface_role,
 )
+from atlaso.app.services.service_dns_defaults import (
+    factory_oidc_issuer,
+    factory_service_hostname,
+)
 
 OIDC_ISSUER_PATH = "/identity"
 OIDC_SCOPES = ("openid", "profile", "email", "groups")
@@ -193,7 +197,11 @@ def ensure_provider_settings(db: Session) -> OidcProviderSettings:
     """
     row = db.execute(select(OidcProviderSettings)).scalar_one_or_none()
     if row is None:
-        row = OidcProviderSettings()
+        hostname = factory_service_hostname("oidc", _appliance_settings(db).fqdn)
+        row = OidcProviderSettings(
+            hostname=hostname,
+            issuer_url=factory_oidc_issuer(hostname),
+        )
         db.add(row)
         db.flush()
     normalized_hostname = normalize_fqdn(row.hostname or OIDC_DEFAULT_HOSTNAME)
