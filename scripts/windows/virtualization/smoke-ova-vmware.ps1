@@ -142,7 +142,94 @@ function Get-AtlasoVmwareInventoryPathById {
     }
 }
 
+<#
+.SYNOPSIS
+Wait for a unique VMware management neighbor bound to ethernet0 and its vmnet.
+.PARAMETER VmxPath
+Exact invocation-owned VMX file.
+.PARAMETER ManagementVmnet
+Expected vmnet mapped to ethernet0.
+.PARAMETER ServiceVmnet
+Expected vmnet mapped to ethernet1.
+.PARAMETER ExpectedIdentity
+Previously captured VMX and address identity that must remain unchanged.
+.PARAMETER Deadline
+Absolute readiness deadline for host-neighbor discovery.
+#>
+function Wait-AtlasoVmwareSmokeNetworkIdentity {
+    param(
+        [Parameter(Mandatory = $true)][string]$VmxPath,
+        [Parameter(Mandatory = $true)][string]$ManagementVmnet,
+        [Parameter(Mandatory = $true)][string]$ServiceVmnet,
+        [Parameter(Mandatory = $true)][object]$ExpectedIdentity,
+        [Parameter(Mandatory = $true)][DateTimeOffset]$Deadline
+    )
+
+    while ([DateTimeOffset]::UtcNow -lt $Deadline) {
+        $vmxIdentity = Get-AtlasoVmwareSmokeVmxNetworkIdentity `
+            -VmxPath $VmxPath `
+            -ManagementVmnet $ManagementVmnet `
+            -ServiceVmnet $ServiceVmnet `
+            -ExpectedIdentity $ExpectedIdentity
+        $networkAdapters = @(Get-NetAdapter -IncludeHidden -ErrorAction Stop)
+        $neighbors = @(Get-NetNeighbor -AddressFamily IPv4 -ErrorAction SilentlyContinue)
+        $identity = Resolve-AtlasoVmwareSmokeAddressIdentity `
+            -VmxIdentity $vmxIdentity `
+            -NetworkAdapters $networkAdapters `
+            -Neighbors $neighbors `
+            -ExpectedIdentity $ExpectedIdentity `
+            -AllowMissingAddress
+        if ($identity.Address) {
+            return $identity
+        }
+
+        # A clean runner may have no neighbor entry yet. VMware DHCP leases provide
+        # candidates only; the subsequent interface-scoped ARP evidence remains the
+        # trust boundary that binds an address to ethernet0's exact MAC.
+        $leaseRoot = Join-Path ([Environment]::GetFolderPath('CommonApplicationData')) 'VMware'
+        $leaseText = @()
+        if (Test-Path -LiteralPath $leaseRoot -PathType Container) {
+            $leaseFiles = @(Get-ChildItem -LiteralPath $leaseRoot -Filter '*.leases' -File -Recurse `
+                    -ErrorAction SilentlyContinue | Where-Object {
+                    ($_.Attributes -band [System.IO.FileAttributes]::ReparsePoint) -eq 0
+                })
+            $leaseText = @($leaseFiles | ForEach-Object {
+                    Get-Content -LiteralPath $_.FullName -ErrorAction SilentlyContinue
+                })
+        }
+        $leaseAddresses = @(Get-AtlasoVmwareDhcpLeaseAddress `
+                -LeaseText $leaseText `
+                -ManagementMac $vmxIdentity.ManagementMac)
+        $sourceAddresses = @(Get-AtlasoSmokeUsableIPv4Address -Addresses @(
+                Get-NetIPAddress -AddressFamily IPv4 `
+                    -InterfaceIndex $identity.HostInterfaceIndex `
+                    -ErrorAction SilentlyContinue | ForEach-Object { [string]$_.IPAddress }
+            ))
+        if ($sourceAddresses.Count -gt 1) {
+            throw 'The VMware management vmnet has ambiguous host IPv4 source addresses.'
+        }
+        if ($sourceAddresses.Count -eq 1 -and $leaseAddresses.Count -gt 0) {
+            $ping = Join-Path $env:SystemRoot 'System32\PING.EXE'
+            foreach ($leaseAddress in $leaseAddresses) {
+                & $ping -4 -S $sourceAddresses[0] -n 1 -w 1000 $leaseAddress 2>$null | Out-Null
+            }
+            $identity = Resolve-AtlasoVmwareSmokeAddressIdentity `
+                -VmxIdentity $vmxIdentity `
+                -NetworkAdapters $networkAdapters `
+                -Neighbors @(Get-NetNeighbor -AddressFamily IPv4 -ErrorAction SilentlyContinue) `
+                -ExpectedIdentity $ExpectedIdentity `
+                -AllowMissingAddress
+            if ($identity.Address) {
+                return $identity
+            }
+        }
+        Start-Sleep -Seconds 5
+    }
+    throw 'The VMware ethernet0 management MAC did not resolve to one usable IPv4 neighbor before the deadline.'
+}
+
 $repoRoot = (Resolve-Path -LiteralPath (Join-Path $PSScriptRoot '..\..\..')).Path
+Import-Module (Join-Path $PSScriptRoot 'Atlaso.VirtualizationSmokeIdentity.psm1') -Force
 if ($Name -notmatch '^[A-Za-z0-9][A-Za-z0-9_.-]{0,63}$') {
     throw 'VMware smoke-test Name must be one safe filesystem component.'
 }
@@ -287,6 +374,10 @@ try {
     $vmxId = Get-AtlasoWindowsFileId -Path $vmxPath
     Assert-AtlasoVmwareVmIdentity -DirectoryPath $vmRoot -VmxPath $vmxPath `
         -Name $Name -DirectoryId $vmRootId -VmxId $vmxId
+    $providerIdentity = Get-AtlasoVmwareSmokeVmxNetworkIdentity `
+        -VmxPath $vmxPath `
+        -ManagementVmnet $ManagementVmnet `
+        -ServiceVmnet $ServiceVmnet
     & $vmrun -T ws start $vmxPath nogui | Out-Null
     if ($LASTEXITCODE -ne 0) {
         throw 'vmrun could not start the imported OVA.'
@@ -306,20 +397,64 @@ try {
     if ($expectedHostKey -notmatch '^ssh-ed25519 [A-Za-z0-9+/]+={0,2}$') {
         throw 'VMware guest-info did not publish the regenerated Ed25519 SSH host key.'
     }
-    $address = [string](& $vmrun -T ws getGuestIPAddress $vmxPath -wait)
-    $address = $address.Trim()
-    if ($LASTEXITCODE -ne 0 -or $address -notmatch '^\d{1,3}(?:\.\d{1,3}){3}$') {
-        throw 'VMware Tools did not report a usable management IPv4 address.'
-    }
+    $networkIdentity = Wait-AtlasoVmwareSmokeNetworkIdentity `
+        -VmxPath $vmxPath `
+        -ManagementVmnet $ManagementVmnet `
+        -ServiceVmnet $ServiceVmnet `
+        -ExpectedIdentity $providerIdentity `
+        -Deadline ([DateTimeOffset]::UtcNow.AddMinutes(15))
+    $vmxIdentity = Get-AtlasoVmwareSmokeVmxNetworkIdentity `
+        -VmxPath $vmxPath `
+        -ManagementVmnet $ManagementVmnet `
+        -ServiceVmnet $ServiceVmnet `
+        -ExpectedIdentity $networkIdentity
+    $networkIdentity = Resolve-AtlasoVmwareSmokeAddressIdentity `
+        -VmxIdentity $vmxIdentity `
+        -NetworkAdapters @(Get-NetAdapter -IncludeHidden -ErrorAction Stop) `
+        -Neighbors @(Get-NetNeighbor -AddressFamily IPv4 -ErrorAction Stop) `
+        -ExpectedIdentity $networkIdentity
     $secret = @{
         username = $Credential.UserName
         password = $Credential.GetNetworkCredential().Password
     } | ConvertTo-Json -Compress
-    $secret | & $python (Join-Path $repoRoot 'scripts\virtualization\smoke_guest_ssh.py') `
-        '--host' $address '--host-key' $expectedHostKey '--platform' 'vmware'
+    $initialOutput = @($secret | & $python (Join-Path $repoRoot 'scripts\virtualization\smoke_guest_ssh.py') `
+            '--host' ([string]$networkIdentity.Address) `
+            '--host-key' $expectedHostKey `
+            '--platform' 'vmware' `
+            '--phase' 'initial')
     if ($LASTEXITCODE -ne 0) {
-        throw 'VMware OVA guest validation failed.'
+        throw 'Initial VMware OVA guest validation failed.'
     }
+    $tlsFingerprint = [string]($initialOutput | Select-Object -Last 1)
+    if ($tlsFingerprint -notmatch '^[0-9a-f]{64}$') {
+        throw 'Initial VMware guest validation did not return one canonical TLS fingerprint.'
+    }
+    $networkIdentity = Wait-AtlasoVmwareSmokeNetworkIdentity `
+        -VmxPath $vmxPath `
+        -ManagementVmnet $ManagementVmnet `
+        -ServiceVmnet $ServiceVmnet `
+        -ExpectedIdentity $networkIdentity `
+        -Deadline ([DateTimeOffset]::UtcNow.AddMinutes(15))
+    $postOutput = @($secret | & $python (Join-Path $repoRoot 'scripts\virtualization\smoke_guest_ssh.py') `
+            '--host' ([string]$networkIdentity.Address) `
+            '--host-key' $expectedHostKey `
+            '--platform' 'vmware' `
+            '--phase' 'post-reboot' `
+            '--expected-tls-fingerprint' $tlsFingerprint)
+    if ($LASTEXITCODE -ne 0 -or
+        ($postOutput -join "`n") -notmatch 'Atlaso vmware guest smoke test passed\.') {
+        throw 'Post-reboot VMware OVA guest validation failed.'
+    }
+    $vmxIdentity = Get-AtlasoVmwareSmokeVmxNetworkIdentity `
+        -VmxPath $vmxPath `
+        -ManagementVmnet $ManagementVmnet `
+        -ServiceVmnet $ServiceVmnet `
+        -ExpectedIdentity $networkIdentity
+    Resolve-AtlasoVmwareSmokeAddressIdentity `
+        -VmxIdentity $vmxIdentity `
+        -NetworkAdapters @(Get-NetAdapter -IncludeHidden -ErrorAction Stop) `
+        -Neighbors @(Get-NetNeighbor -AddressFamily IPv4 -ErrorAction Stop) `
+        -ExpectedIdentity $networkIdentity | Out-Null
 }
 finally {
     $vmRootSafeToRemove = $true

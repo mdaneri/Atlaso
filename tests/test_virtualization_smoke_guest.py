@@ -17,6 +17,67 @@ HOST_KEY = "ssh-ed25519 " + base64.b64encode(
 ).decode()
 
 
+class _FakeChannel:
+    """Provide the bounded channel methods used by the reboot command."""
+
+    def shutdown_write(self) -> None:
+        """Accept the helper's standard-input shutdown."""
+
+    def recv_exit_status(self) -> int:
+        """Return a successful fixed reboot command status."""
+
+        return 0
+
+
+class _FakeInput:
+    """Capture credential input without retaining its value in assertions."""
+
+    def __init__(self) -> None:
+        """Initialize one fake command input stream."""
+
+        self.channel = _FakeChannel()
+
+    def write(self, _value: str) -> None:
+        """Accept one command input write.
+
+        Args:
+            _value: Input text intentionally ignored by the fixture.
+        """
+
+
+class _FakeOutput:
+    """Expose the fake reboot command channel."""
+
+    def __init__(self) -> None:
+        """Initialize one fake command output stream."""
+
+        self.channel = _FakeChannel()
+
+
+class _FakeClient:
+    """Record whether the initial phase requested the fixed reboot command."""
+
+    def __init__(self) -> None:
+        """Initialize an unused command record."""
+
+        self.command = ""
+
+    def exec_command(self, command: str, *, timeout: int) -> tuple[object, object, object]:
+        """Return fixed streams for the expected reboot command.
+
+        Args:
+            command: Exact remote command.
+            timeout: Bounded command timeout.
+        """
+
+        assert timeout == 30
+        self.command = command
+        return _FakeInput(), _FakeOutput(), object()
+
+    def close(self) -> None:
+        """Accept client cleanup."""
+
+
 def test_secret_input_accepts_only_exact_stdin_schema(monkeypatch: pytest.MonkeyPatch) -> None:
     """Credentials are accepted only from the exact standard-input envelope.
 
@@ -90,6 +151,9 @@ def test_windows_smoke_wrappers_keep_credentials_out_of_child_arguments() -> Non
         assert "ConvertTo-Json -Compress" in source
         assert "smoke_guest_ssh.py" in source
         assert "'--host-key' $expectedHostKey" in source
+        assert "'--phase' 'initial'" in source
+        assert "'--phase' 'post-reboot'" in source
+        assert "'--expected-tls-fingerprint' $tlsFingerprint" in source
         assert "-pw" not in source
         assert "Remove-Item -LiteralPath" in source
 
@@ -97,3 +161,60 @@ def test_windows_smoke_wrappers_keep_credentials_out_of_child_arguments() -> Non
     assert "paramiko.RejectPolicy()" in helper
     assert "paramiko.AutoAddPolicy()" not in helper
     assert "client.get_host_keys().add(host, key_type, trusted_key)" in helper
+    assert 'choices=("initial", "post-reboot")' in helper
+
+
+def test_initial_and_post_reboot_phases_split_provider_revalidation(
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """The provider wrapper receives a revalidation boundary between phases.
+
+    Args:
+        monkeypatch: Pytest fixture used to replace remote operations.
+        capsys: Pytest fixture used to inspect bounded phase output.
+    """
+
+    fingerprint = "a" * 64
+    client = _FakeClient()
+    waited: list[str] = []
+    monkeypatch.setattr(smoke, "load_secret_input", lambda: smoke.SecretInput("admin", "fixture"))
+    monkeypatch.setattr(smoke, "parse_host_public_key", lambda _value: ("ssh-ed25519", b"fixture"))
+    monkeypatch.setattr(smoke, "_connect", lambda *_args, **_kwargs: client)
+    monkeypatch.setattr(smoke, "_run_root", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr(smoke, "_front_door_fingerprint", lambda _host: fingerprint)
+    monkeypatch.setattr(smoke, "_wait_for_reboot", lambda host: waited.append(host))
+
+    assert smoke.main(
+        [
+            "--host",
+            "192.0.2.20",
+            "--host-key",
+            HOST_KEY,
+            "--platform",
+            "hyperv",
+            "--phase",
+            "initial",
+        ]
+    ) == 0
+    assert client.command == "sudo -S -p '' systemctl reboot"
+    assert waited == ["192.0.2.20"]
+    assert capsys.readouterr().out.strip() == fingerprint
+
+    client.command = ""
+    assert smoke.main(
+        [
+            "--host",
+            "192.0.2.20",
+            "--host-key",
+            HOST_KEY,
+            "--platform",
+            "hyperv",
+            "--phase",
+            "post-reboot",
+            "--expected-tls-fingerprint",
+            fingerprint,
+        ]
+    ) == 0
+    assert client.command == ""
+    assert "Atlaso hyperv guest smoke test passed." in capsys.readouterr().out
