@@ -6,6 +6,7 @@ import base64
 import hashlib
 import json
 import os
+import zipfile
 from pathlib import Path
 
 import pytest
@@ -15,6 +16,34 @@ from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
 from scripts import build_virtualization_artifact_index as builder
 from scripts import verify_virtualization_artifact_index as verifier
 from tests.test_virtualization_ova import _members, _write_ova
+
+ROOT = Path(__file__).resolve().parents[1]
+
+
+@pytest.fixture(autouse=True)
+def _trusted_release_source(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Use repository helper bytes and deterministic VHDX metadata in fixtures.
+
+    Args:
+        monkeypatch: Pytest fixture used to isolate external git and qemu tooling.
+    """
+
+    monkeypatch.setattr(
+        builder,
+        "_git_blob",
+        lambda _commit, repository_path: (ROOT / repository_path).read_bytes(),
+    )
+    sizes = {
+        "photon-os.vhdx": 40 * 1024**3,
+        "atlaso-system.vhdx": 20 * 1024**3,
+        "vcf-offline-depot.vhdx": builder.HYPERV_DATA_DISK_BYTES,
+        "vcf-backups.vhdx": builder.HYPERV_DATA_DISK_BYTES,
+    }
+    monkeypatch.setattr(
+        builder,
+        "_inspect_vhdx",
+        lambda path: {"format": "vhdx", "virtual-size": sizes[path.name]},
+    )
 
 
 def test_operator_verification_bootstraps_with_standard_tools() -> None:
@@ -91,22 +120,76 @@ def _assets(path: Path, version: str = "0.9.217") -> None:
     for name, content in members.items():
         (path / name).write_bytes(content)
     _write_ova(path / f"atlaso-v{version}.ova", members)
-    for name in (
-        f"atlaso-v{version}-hyperv-x86_64.zip",
-        "import-atlaso-proxmox.sh",
-        "import-atlaso-kvm.sh",
-        "validate_ova.py",
-        "normalize_libvirt.py",
-        "verify_virtualization_artifact_index.py",
-        "virtualization-source.json",
-        "windows-smoke-evidence.json",
-    ):
-        (path / name).write_bytes(f"asset:{name}\n".encode())
+    for name, repository_path in builder.RELEASE_HELPERS.items():
+        (path / name).write_bytes((ROOT / repository_path).read_bytes())
     (path / "virtualization-source.json").write_text(
         json.dumps(source), encoding="utf-8"
     )
     ova = path / f"atlaso-v{version}.ova"
     hyperv = path / f"atlaso-v{version}-hyperv-x86_64.zip"
+    hyperv_members = {
+        "Import-Atlaso.ps1": (
+            ROOT / "scripts/windows/virtualization/templates/Import-Atlaso.ps1"
+        ).read_bytes(),
+        "photon-os.vhdx": b"test-photon-vhdx",
+        "atlaso-system.vhdx": b"test-system-vhdx",
+        "vcf-offline-depot.vhdx": b"test-depot-vhdx",
+        "vcf-backups.vhdx": b"test-backups-vhdx",
+    }
+    roles = {
+        "photon-os.vhdx": ("photon_os", 0, 40 * 1024**3),
+        "atlaso-system.vhdx": ("atlaso_system", 1, 20 * 1024**3),
+        "vcf-offline-depot.vhdx": (
+            "vcf_offline_depot",
+            2,
+            builder.HYPERV_DATA_DISK_BYTES,
+        ),
+        "vcf-backups.vhdx": (
+            "vcf_backups",
+            3,
+            builder.HYPERV_DATA_DISK_BYTES,
+        ),
+    }
+    manifest = {
+        "schema_version": 1,
+        "kind": "atlaso-hyperv-artifact",
+        "product_version": version,
+        "source": {
+            "kind": "atlaso-validated-ova",
+            "commit": "a" * 40,
+            "ova_name": ova.name,
+            "ova_sha256": hashlib.sha256(ova.read_bytes()).hexdigest(),
+            "ova_validator": 1,
+        },
+        "machine": {
+            "firmware": "uefi",
+            "secure_boot": False,
+            "cpu_count": 4,
+            "memory_mib": 4096,
+            "nic_count": 2,
+            "disk_bus": "scsi",
+        },
+        "disks": [
+            {
+                "role": role,
+                "scsi_slot": slot,
+                "file": name,
+                "format": "vhdx",
+                "virtual_size_bytes": virtual_size,
+                "bytes": len(hyperv_members[name]),
+                "sha256": hashlib.sha256(hyperv_members[name]).hexdigest(),
+            }
+            for name, (role, slot, virtual_size) in roles.items()
+        ],
+    }
+    hyperv_members["manifest.json"] = (json.dumps(manifest) + "\n").encode()
+    hyperv_members["checksums.sha256"] = "".join(
+        f"{hashlib.sha256(content).hexdigest()}  {name}\n"
+        for name, content in sorted(hyperv_members.items())
+    ).encode()
+    with zipfile.ZipFile(hyperv, mode="w") as archive:
+        for name, content in hyperv_members.items():
+            archive.writestr(name, content)
     windows = {
         "schema_version": 1,
         "kind": "atlaso-windows-virtualization-smoke",
@@ -369,6 +452,142 @@ def test_rejects_tampered_ova_even_when_smoke_digest_is_updated(tmp_path: Path) 
         )
 
 
+def test_rejects_tampered_hyperv_even_when_smoke_digest_is_updated(
+    tmp_path: Path,
+) -> None:
+    """Protected signing opens the Hyper-V ZIP instead of trusting producer evidence.
+
+    Args:
+        tmp_path: Temporary directory provided by pytest.
+    """
+
+    assets = tmp_path / "assets"
+    _assets(assets)
+    _key(tmp_path / "key.pem")
+    hyperv = assets / "atlaso-v0.9.217-hyperv-x86_64.zip"
+    hyperv.write_bytes(b"producer-controlled invalid archive")
+    evidence_path = assets / "windows-smoke-evidence.json"
+    evidence = json.loads(evidence_path.read_text(encoding="utf-8"))
+    evidence["hyperv_sha256"] = hashlib.sha256(hyperv.read_bytes()).hexdigest()
+    evidence_path.write_text(json.dumps(evidence), encoding="utf-8")
+
+    with pytest.raises(SystemExit, match="valid ZIP archive"):
+        builder.main(
+            [
+                "--assets",
+                str(assets),
+                "--version",
+                "0.9.217",
+                "--commit",
+                "a" * 40,
+                "--classification",
+                "prerelease",
+                "--release-tag",
+                "virtualization-v0.9.217-rc.1",
+                "--source-release-manifest-sha256",
+                "b" * 64,
+                "--application-wheel-sha256",
+                "c" * 64,
+                "--signing-key",
+                str(tmp_path / "key.pem"),
+                "--signing-key-id",
+                "test-key",
+            ]
+        )
+
+
+def test_rejects_release_helper_not_from_admitted_commit(tmp_path: Path) -> None:
+    """Protected signing does not trust producer-supplied executable helpers.
+
+    Args:
+        tmp_path: Temporary directory provided by pytest.
+    """
+
+    assets = tmp_path / "assets"
+    _assets(assets)
+    _key(tmp_path / "key.pem")
+    (assets / "import-atlaso-kvm.sh").write_bytes(b"producer-controlled helper")
+
+    with pytest.raises(SystemExit, match="does not match admitted source commit"):
+        builder.main(
+            [
+                "--assets",
+                str(assets),
+                "--version",
+                "0.9.217",
+                "--commit",
+                "a" * 40,
+                "--classification",
+                "prerelease",
+                "--release-tag",
+                "virtualization-v0.9.217-rc.1",
+                "--source-release-manifest-sha256",
+                "b" * 64,
+                "--application-wheel-sha256",
+                "c" * 64,
+                "--signing-key",
+                str(tmp_path / "key.pem"),
+                "--signing-key-id",
+                "test-key",
+            ]
+        )
+
+
+def test_rejects_hyperv_import_helper_not_from_admitted_commit(tmp_path: Path) -> None:
+    """A self-consistent ZIP cannot replace the admitted Hyper-V import helper.
+
+    Args:
+        tmp_path: Temporary directory provided by pytest.
+    """
+
+    assets = tmp_path / "assets"
+    _assets(assets)
+    _key(tmp_path / "key.pem")
+    hyperv = assets / "atlaso-v0.9.217-hyperv-x86_64.zip"
+    with zipfile.ZipFile(hyperv) as archive:
+        members = {
+            member.filename: archive.read(member.filename)
+            for member in archive.infolist()
+            if member.filename != "checksums.sha256"
+        }
+    members["Import-Atlaso.ps1"] = b"producer-controlled import helper"
+    members["checksums.sha256"] = "".join(
+        f"{hashlib.sha256(content).hexdigest()}  {name}\n"
+        for name, content in sorted(members.items())
+    ).encode()
+    with zipfile.ZipFile(hyperv, mode="w") as archive:
+        for name, content in members.items():
+            archive.writestr(name, content)
+    evidence_path = assets / "windows-smoke-evidence.json"
+    evidence = json.loads(evidence_path.read_text(encoding="utf-8"))
+    evidence["hyperv_sha256"] = hashlib.sha256(hyperv.read_bytes()).hexdigest()
+    evidence_path.write_text(json.dumps(evidence), encoding="utf-8")
+
+    with pytest.raises(SystemExit, match="Hyper-V import helper"):
+        builder.main(
+            [
+                "--assets",
+                str(assets),
+                "--version",
+                "0.9.217",
+                "--commit",
+                "a" * 40,
+                "--classification",
+                "prerelease",
+                "--release-tag",
+                "virtualization-v0.9.217-rc.1",
+                "--source-release-manifest-sha256",
+                "b" * 64,
+                "--application-wheel-sha256",
+                "c" * 64,
+                "--signing-key",
+                str(tmp_path / "key.pem"),
+                "--signing-key-id",
+                "test-key",
+            ]
+        )
+
+
 def test_stable_index_requires_both_linux_platform_proofs(tmp_path: Path) -> None:
     """Stable classification fails closed until Proxmox and KVM evidence exists.
 
@@ -469,7 +688,9 @@ def test_refuses_incomplete_or_oversized_artifact_set(
     with pytest.raises(SystemExit, match="missing import-atlaso-kvm.sh"):
         builder.main(arguments)
 
-    (assets / "import-atlaso-kvm.sh").write_bytes(b"helper")
+    (assets / "import-atlaso-kvm.sh").write_bytes(
+        (ROOT / builder.RELEASE_HELPERS["import-atlaso-kvm.sh"]).read_bytes()
+    )
     ova = assets / "atlaso-v0.9.217.ova"
     real_stat = Path.stat
 

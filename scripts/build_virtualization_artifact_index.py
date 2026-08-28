@@ -8,7 +8,11 @@ import base64
 import hashlib
 import json
 import re
+import shutil
+import subprocess
 import sys
+import tempfile
+import zipfile
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
@@ -34,6 +38,15 @@ PRERELEASE_TAG_PATTERN = re.compile(
     r"^virtualization-v([0-9]+\.[0-9]+\.[0-9]+)-rc\.([1-9][0-9]*)$"
 )
 STABLE_TAG_PATTERN = re.compile(r"^virtualization-v([0-9]+\.[0-9]+\.[0-9]+)$")
+HYPERV_DATA_DISK_BYTES = 536_870_912_000
+MAXIMUM_HYPERV_METADATA_BYTES = 1_048_576
+RELEASE_HELPERS = {
+    "import-atlaso-proxmox.sh": "scripts/virtualization/templates/import-atlaso-proxmox.sh",
+    "import-atlaso-kvm.sh": "scripts/virtualization/templates/import-atlaso-kvm.sh",
+    "validate_ova.py": "scripts/virtualization/validate_ova.py",
+    "normalize_libvirt.py": "scripts/virtualization/normalize_libvirt.py",
+    "verify_virtualization_artifact_index.py": "scripts/verify_virtualization_artifact_index.py",
+}
 
 
 def _sha256(path: Path) -> str:
@@ -189,6 +202,244 @@ def _json_object(path: Path, label: str) -> dict[str, Any]:
     return value
 
 
+def _git_blob(commit: str, repository_path: str) -> bytes:
+    """Read one non-executable reference blob from the admitted source commit.
+
+    Args:
+        commit: Exact admitted source commit.
+        repository_path: POSIX repository-relative path to read.
+    """
+
+    result = subprocess.run(
+        ["git", "-C", str(ROOT), "show", f"{commit}:{repository_path}"],
+        check=False,
+        capture_output=True,
+    )
+    if result.returncode != 0:
+        raise SystemExit(
+            f"could not read trusted release helper {repository_path} at {commit}"
+        )
+    return result.stdout
+
+
+def _verify_release_helpers(asset_root: Path, commit: str) -> None:
+    """Require shipped executable helpers to equal the admitted source blobs.
+
+    Args:
+        asset_root: Flat candidate asset directory.
+        commit: Exact admitted source commit.
+    """
+
+    for asset_name, repository_path in RELEASE_HELPERS.items():
+        if (asset_root / asset_name).read_bytes() != _git_blob(
+            commit, repository_path
+        ):
+            raise SystemExit(
+                f"release helper {asset_name} does not match admitted source commit"
+            )
+
+
+def _inspect_vhdx(path: Path) -> dict[str, Any]:
+    """Return qemu-img's independent format and virtual-capacity inspection.
+
+    Args:
+        path: Extracted VHDX member to inspect.
+    """
+
+    qemu_img = shutil.which("qemu-img")
+    if qemu_img is None:
+        raise SystemExit("qemu-img is required to validate the Hyper-V archive")
+    result = subprocess.run(
+        [qemu_img, "info", "--output=json", str(path)],
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+    if result.returncode != 0:
+        raise SystemExit(f"qemu-img rejected Hyper-V disk {path.name}")
+    try:
+        value = json.loads(result.stdout)
+    except json.JSONDecodeError as exc:
+        raise SystemExit(
+            f"qemu-img returned invalid metadata for Hyper-V disk {path.name}"
+        ) from exc
+    if not isinstance(value, dict):
+        raise SystemExit(f"qemu-img returned invalid metadata for Hyper-V disk {path.name}")
+    return value
+
+
+def _validate_hyperv_archive(
+    archive_path: Path,
+    *,
+    version: str,
+    commit: str,
+    ova_sha256: str,
+    ova_payloads: list[dict[str, Any]],
+) -> None:
+    """Open and independently validate the complete Hyper-V package contract.
+
+    Args:
+        archive_path: Candidate Hyper-V ZIP.
+        version: Expected Atlaso version.
+        commit: Exact admitted source commit.
+        ova_sha256: Digest of the admitted canonical OVA.
+        ova_payloads: Verified payload topology from OVA provenance.
+    """
+
+    disk_contract: dict[str, tuple[str, int, Any]] = {
+        "photon-os.vhdx": ("photon_os", 0, None),
+        "atlaso-system.vhdx": ("atlaso_system", 1, None),
+        "vcf-offline-depot.vhdx": (
+            "vcf_offline_depot",
+            2,
+            HYPERV_DATA_DISK_BYTES,
+        ),
+        "vcf-backups.vhdx": ("vcf_backups", 3, HYPERV_DATA_DISK_BYTES),
+    }
+    payload_sizes = {
+        str(item.get("role")): item.get("virtual_size_bytes") for item in ova_payloads
+    }
+    disk_contract["photon-os.vhdx"] = (
+        "photon_os",
+        0,
+        payload_sizes.get("photon_os"),
+    )
+    disk_contract["atlaso-system.vhdx"] = (
+        "atlaso_system",
+        1,
+        payload_sizes.get("atlaso_system"),
+    )
+    expected_names = set(disk_contract) | {
+        "Import-Atlaso.ps1",
+        "manifest.json",
+        "checksums.sha256",
+    }
+    try:
+        archive = zipfile.ZipFile(archive_path)
+    except (OSError, zipfile.BadZipFile) as exc:
+        raise SystemExit(f"Hyper-V package is not a valid ZIP archive: {exc}") from exc
+    with archive, tempfile.TemporaryDirectory(prefix="atlaso-hyperv-verify-") as temporary:
+        members = archive.infolist()
+        names = [member.filename for member in members]
+        if len(names) != len(set(names)) or set(names) != expected_names:
+            raise SystemExit("Hyper-V ZIP does not contain the exact package member set")
+        for member in members:
+            unix_mode = member.external_attr >> 16
+            if (
+                member.is_dir()
+                or member.filename != Path(member.filename).name
+                or "\\" in member.filename
+                or member.flag_bits & 0x1
+                or (unix_mode and (unix_mode & 0o170000) not in (0, 0o100000))
+                or member.file_size <= 0
+                or member.file_size >= MAXIMUM_GITHUB_ASSET_BYTES
+                or (
+                    member.filename not in disk_contract
+                    and member.file_size > MAXIMUM_HYPERV_METADATA_BYTES
+                )
+            ):
+                raise SystemExit(f"Hyper-V ZIP contains an unsafe member: {member.filename}")
+        try:
+            manifest = json.loads(archive.read("manifest.json"))
+        except (UnicodeDecodeError, json.JSONDecodeError, KeyError) as exc:
+            raise SystemExit(f"Hyper-V manifest is unreadable: {exc}") from exc
+        if not isinstance(manifest, dict):
+            raise SystemExit("Hyper-V manifest must be a JSON object")
+        expected_source = {
+            "kind": "atlaso-validated-ova",
+            "commit": commit,
+            "ova_name": archive_path.name.replace("-hyperv-x86_64.zip", ".ova"),
+            "ova_sha256": ova_sha256,
+            "ova_validator": 1,
+        }
+        expected_machine = {
+            "firmware": "uefi",
+            "secure_boot": False,
+            "cpu_count": 4,
+            "memory_mib": 4096,
+            "nic_count": 2,
+            "disk_bus": "scsi",
+        }
+        if (
+            set(manifest)
+            != {
+                "schema_version",
+                "kind",
+                "product_version",
+                "source",
+                "machine",
+                "disks",
+            }
+            or manifest.get("schema_version") != 1
+            or manifest.get("kind") != "atlaso-hyperv-artifact"
+            or manifest.get("product_version") != version
+            or manifest.get("source") != expected_source
+            or manifest.get("machine") != expected_machine
+            or not isinstance(manifest.get("disks"), list)
+        ):
+            raise SystemExit("Hyper-V manifest does not match the admitted release")
+        records = manifest["disks"]
+        if len(records) != len(disk_contract):
+            raise SystemExit("Hyper-V manifest does not contain the exact disk topology")
+        records_by_name = {
+            str(record.get("file")): record
+            for record in records
+            if isinstance(record, dict)
+        }
+        if set(records_by_name) != set(disk_contract) or len(records_by_name) != len(
+            records
+        ):
+            raise SystemExit("Hyper-V manifest does not contain the exact disk topology")
+        checksum_lines = archive.read("checksums.sha256").decode("utf-8").splitlines()
+        checksums: dict[str, str] = {}
+        for line in checksum_lines:
+            match = re.fullmatch(r"([0-9a-f]{64})  ([^/\\]+)", line)
+            if match is None or match.group(2) in checksums:
+                raise SystemExit("Hyper-V checksum manifest contains an invalid entry")
+            checksums[match.group(2)] = match.group(1)
+        if set(checksums) != expected_names - {"checksums.sha256"}:
+            raise SystemExit("Hyper-V checksum manifest does not cover the exact package")
+        if archive.read("Import-Atlaso.ps1") != _git_blob(
+            commit, "scripts/windows/virtualization/templates/Import-Atlaso.ps1"
+        ):
+            raise SystemExit(
+                "Hyper-V import helper does not match admitted source commit"
+            )
+        extraction_root = Path(temporary)
+        for name in sorted(expected_names - {"checksums.sha256"}):
+            digest = hashlib.sha256()
+            destination = extraction_root / name
+            with archive.open(name) as source, destination.open("wb") as output:
+                while block := source.read(1024 * 1024):
+                    digest.update(block)
+                    output.write(block)
+            if digest.hexdigest() != checksums[name]:
+                raise SystemExit(f"Hyper-V package failed checksum verification: {name}")
+        for name, (role, slot, virtual_size) in disk_contract.items():
+            record = records_by_name[name]
+            member = archive.getinfo(name)
+            if (
+                virtual_size is None
+                or record
+                != {
+                    "role": role,
+                    "scsi_slot": slot,
+                    "file": name,
+                    "format": "vhdx",
+                    "virtual_size_bytes": virtual_size,
+                    "bytes": member.file_size,
+                    "sha256": checksums[name],
+                }
+            ):
+                raise SystemExit(f"Hyper-V disk manifest is invalid for {name}")
+            inspected = _inspect_vhdx(extraction_root / name)
+            if (
+                inspected.get("format") != "vhdx"
+                or inspected.get("virtual-size") != virtual_size
+            ):
+                raise SystemExit(f"Hyper-V disk topology is invalid for {name}")
+
+
 def _validate_evidence(
     asset_root: Path,
     version: str,
@@ -268,6 +519,14 @@ def _validate_evidence(
         )
     ova = next(asset_root.glob("*.ova"))
     hyperv = asset_root / f"atlaso-v{version}-hyperv-x86_64.zip"
+    _verify_release_helpers(asset_root, commit)
+    _validate_hyperv_archive(
+        hyperv,
+        version=version,
+        commit=commit,
+        ova_sha256=_sha256(ova),
+        ova_payloads=provenance.get("payloads", []),
+    )
     windows = _json_object(
         asset_root / "windows-smoke-evidence.json", "Windows smoke evidence"
     )

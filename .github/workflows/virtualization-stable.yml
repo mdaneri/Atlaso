@@ -209,7 +209,10 @@ jobs:
       - name: Install locked release tooling
         env:
           PIP_CONFIG_FILE: /dev/null
-        run: python -m pip install --require-hashes --requirement requirements-release-tools.lock
+        run: |
+          sudo apt-get update
+          sudo apt-get install --yes --no-install-recommends qemu-utils
+          python -m pip install --require-hashes --requirement requirements-release-tools.lock
       - uses: actions/download-artifact@v8
         with:
           name: virtualization-candidate-${{ needs.admit.outputs.release_sha }}
