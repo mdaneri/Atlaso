@@ -31,9 +31,10 @@ surfaces.
 - [ ] For an ordinary pull request, exactly one current-task heartbeat ran every four minutes and each run exited after
   one bounded reconciliation; no persistent GitHub polling loops combined `gh` with `sleep` outside explicitly
   requested short-lived debugging.
-- [ ] The task retained the exact-head SHA and seen comment and review IDs, and every new top-level pull-request comment,
-  inline review comment, review submission and requested change was evaluated. The heartbeat continued after fixes and
-  was paused only when the pull request was merged, closed, or merge-ready with every item seen and no open feedback.
+- [ ] For an ordinary pull request, the task retained the exact-head SHA and seen comment and review IDs, and every new
+  top-level pull-request comment, inline review comment, review submission and requested change was evaluated. The
+  heartbeat continued after fixes and was paused only when the pull request was merged, closed, or merge-ready with a
+  successful current head, every item seen, and no open feedback.
 - [ ] For an agent-authored internal pull request, the Explicit merge authorization policy was checked: an implementation
   or delivery request alone was not treated as an explicit merge instruction, and the pull request remains open without
   one. Before any authorized squash merge, explicit holds, strict up-to-date required checks that bind the base, an
