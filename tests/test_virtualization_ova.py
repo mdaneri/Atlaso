@@ -12,87 +12,13 @@ import pytest
 
 from scripts.virtualization import validate_ova as validator
 
-
-def _item(resource_type: str, **values: str) -> str:
-    """Return one compact OVF hardware item.
-
-    Args:
-        resource_type: RASD resource type value.
-        **values: Additional RASD child values.
-    """
-
-    children = [f"<rasd:ResourceType>{resource_type}</rasd:ResourceType>"]
-    children.extend(f"<rasd:{name}>{value}</rasd:{name}>" for name, value in values.items())
-    return f"<Item>{''.join(children)}</Item>"
+OVFTOOL_FIXTURE = Path("tests/fixtures/virtualization/ovftool-secure-boot-disabled.ovf")
 
 
 def _ovf() -> bytes:
-    """Return a complete four-disk Atlaso OVF fixture."""
+    """Return the supported OVF Tool-shaped four-disk Atlaso fixture."""
 
-    items = [
-        _item("3", VirtualQuantity="4"),
-        _item("4", VirtualQuantity="4096", AllocationUnits="byte * 2^20"),
-        _item("6", InstanceID="5", ResourceSubType="VirtualSCSI"),
-        _item("10", ElementName="Network adapter 1", Connection="Atlaso Management Network"),
-        _item("10", ElementName="Network adapter 2", Connection="Atlaso Services Network"),
-        _item(
-            "17",
-            Parent="5",
-            AddressOnParent="0",
-            ElementName="Hard disk 1 - Photon OS",
-            HostResource="ovf:/disk/photon",
-        ),
-        _item(
-            "17",
-            Parent="5",
-            AddressOnParent="1",
-            ElementName="Hard disk 2 - Atlaso System Content",
-            HostResource="ovf:/disk/system",
-        ),
-        _item(
-            "17",
-            Parent="5",
-            AddressOnParent="2",
-            ElementName="Hard disk 3 - VCF Offline Depot",
-            HostResource="ovf:/disk/atlaso-depot",
-        ),
-        _item(
-            "17",
-            Parent="5",
-            AddressOnParent="3",
-            ElementName="Hard disk 4 - VCF Backups",
-            HostResource="ovf:/disk/atlaso-backups",
-        ),
-    ]
-    return f"""<?xml version="1.0" encoding="UTF-8"?>
-<Envelope xmlns="{validator.OVF}" xmlns:ovf="{validator.OVF}" xmlns:rasd="{validator.RASD}" xmlns:vmw="{validator.VMW}">
-  <References>
-    <File ovf:id="file0" ovf:href="photon.vmdk"/>
-    <File ovf:id="file1" ovf:href="system.vmdk"/>
-  </References>
-  <DiskSection>
-    <Info>Atlaso disks</Info>
-    <Disk ovf:diskId="photon" ovf:fileRef="file0" ovf:capacity="42949672960" ovf:format="vmdk"/>
-    <Disk ovf:diskId="system" ovf:fileRef="file1" ovf:capacity="21474836480" ovf:format="vmdk"/>
-    <Disk ovf:diskId="atlaso-depot" ovf:capacity="500" ovf:capacityAllocationUnits="byte * 2^30" ovf:format="vmdk"/>
-    <Disk ovf:diskId="atlaso-backups" ovf:capacity="500" ovf:capacityAllocationUnits="byte * 2^30" ovf:format="vmdk"/>
-  </DiskSection>
-  <NetworkSection>
-    <Info>Atlaso networks</Info>
-    <Network ovf:name="Atlaso Management Network"><Description>Management</Description></Network>
-    <Network ovf:name="Atlaso Services Network"><Description>Services</Description></Network>
-  </NetworkSection>
-  <VirtualSystem ovf:id="atlaso">
-    <Info>Atlaso</Info>
-    <VirtualHardwareSection>
-      <Info>Atlaso hardware</Info>
-      <vmw:Config vmw:key="firmware" vmw:value="efi"/>
-      <vmw:Config vmw:key="uefi.secureBoot.enabled" vmw:value="false"/>
-      {''.join(items)}
-    </VirtualHardwareSection>
-  </VirtualSystem>
-</Envelope>
-""".encode()
+    return OVFTOOL_FIXTURE.read_bytes()
 
 
 def _members(*, manifest_mismatch: bool = False, provenance_mismatch: bool = False) -> dict[str, bytes]:
@@ -177,6 +103,92 @@ def test_validates_and_extracts_canonical_ova(tmp_path: Path) -> None:
     assert "ssh_host_ed25519_public_key" not in result
     assert result["machine"] == validator.EXPECTED_MACHINE
     assert [payload["role"] for payload in result["payloads"]] == ["photon_os", "atlaso_system"]
+
+
+@pytest.mark.parametrize(
+    ("replacement", "message"),
+    [
+        (b'<vmw:Config ovf:required="false" vmw:key="uefi.secureBoot.enabled" vmw:value="false" />', None),
+        (
+            b'<vmw:Config ovf:required="false" vmw:key="bootOptions.efiSecureBootEnabled" vmw:value="false" />\n'
+            b'      <vmw:Config ovf:required="false" vmw:key="uefi.secureBoot.enabled" vmw:value="false" />',
+            None,
+        ),
+        (b"", "explicitly disable Secure Boot"),
+        (
+            b'<vmw:Config ovf:required="false" vmw:key="bootOptions.efiSecureBootEnabled" vmw:value="true" />',
+            "Secure Boot must be disabled",
+        ),
+        (
+            b'<vmw:Config ovf:required="false" vmw:key="bootOptions.efiSecureBootEnabled" vmw:value="disabled" />',
+            "Secure Boot must be disabled",
+        ),
+        (
+            b'<vmw:Config ovf:required="false" vmw:key="bootOptions.efiSecureBootEnabled" vmw:value="false" />\n'
+            b'      <vmw:Config ovf:required="false" vmw:key="uefi.secureBoot.enabled" vmw:value="true" />',
+            "Secure Boot must be disabled",
+        ),
+    ],
+)
+def test_secure_boot_declarations_fail_closed(
+    tmp_path: Path,
+    replacement: bytes,
+    message: str | None,
+) -> None:
+    """OVF Tool and legacy declarations are accepted only when explicitly and consistently false.
+
+    Args:
+        tmp_path: Temporary directory provided by pytest.
+        replacement: Secure Boot declaration bytes replacing the OVF Tool-shaped declaration.
+        message: Expected rejection diagnostic, or ``None`` for an accepted declaration.
+    """
+
+    declaration = (
+        b'<vmw:Config ovf:required="false" vmw:key="bootOptions.efiSecureBootEnabled" vmw:value="false" />'
+    )
+    ovf_path = tmp_path / "atlaso.ovf"
+    ovf_path.write_bytes(_ovf().replace(declaration, replacement, 1))
+
+    if message is None:
+        assert validator.validate_ovf(ovf_path)["machine"] == validator.EXPECTED_MACHINE
+    else:
+        with pytest.raises(validator.OvaValidationError, match=message):
+            validator.validate_ovf(ovf_path)
+
+
+@pytest.mark.parametrize(
+    ("replacement", "accepted"),
+    [
+        (b'<vmw:Config ovf:required="false" vmw:key="firmware" vmw:value="EFI" />', True),
+        (
+            b'<vmw:Config ovf:required="false" vmw:key="firmware" vmw:value="efi" />\n'
+            b'      <vmw:Config ovf:required="false" vmw:key="firmware" vmw:value="EFI" />',
+            False,
+        ),
+    ],
+)
+def test_firmware_requires_one_case_insensitive_efi_declaration(
+    tmp_path: Path,
+    replacement: bytes,
+    accepted: bool,
+) -> None:
+    """Firmware remains case-insensitive without admitting duplicate declarations.
+
+    Args:
+        tmp_path: Temporary directory provided by pytest.
+        replacement: Firmware declaration bytes replacing the canonical declaration.
+        accepted: Whether the replacement retains the exact firmware contract.
+    """
+
+    declaration = b'<vmw:Config ovf:required="false" vmw:key="firmware" vmw:value="efi" />'
+    ovf_path = tmp_path / "atlaso.ovf"
+    ovf_path.write_bytes(_ovf().replace(declaration, replacement, 1))
+
+    if accepted:
+        assert validator.validate_ovf(ovf_path)["machine"] == validator.EXPECTED_MACHINE
+    else:
+        with pytest.raises(validator.OvaValidationError, match="require UEFI firmware"):
+            validator.validate_ovf(ovf_path)
 
 
 @pytest.mark.parametrize(
@@ -277,13 +289,13 @@ def test_rejects_reordered_or_ambiguous_network_roles(tmp_path: Path) -> None:
     ("old", "new", "message"),
     [
         (
-            b'<File ovf:id="file1" ovf:href="system.vmdk"/>',
-            b'<File ovf:id="file0" ovf:href="system.vmdk"/>',
+            b'<File ovf:id="file1" ovf:href="system.vmdk" />',
+            b'<File ovf:id="file0" ovf:href="system.vmdk" />',
             "uniquely identified flat payload files",
         ),
         (
-            b'<File ovf:id="file1" ovf:href="system.vmdk"/>',
-            b'<File ovf:id="file1" ovf:href="../system.vmdk"/>',
+            b'<File ovf:id="file1" ovf:href="system.vmdk" />',
+            b'<File ovf:id="file1" ovf:href="../system.vmdk" />',
             "uniquely identified flat payload files",
         ),
         (
@@ -330,8 +342,8 @@ def test_rejects_payload_reference_not_carried_by_ova(tmp_path: Path) -> None:
 
     members = _members()
     members["atlaso.ovf"] = members["atlaso.ovf"].replace(
-        b'<File ovf:id="file1" ovf:href="system.vmdk"/>',
-        b'<File ovf:id="file1" ovf:href="unused.vmdk"/>',
+        b'<File ovf:id="file1" ovf:href="system.vmdk" />',
+        b'<File ovf:id="file1" ovf:href="unused.vmdk" />',
         1,
     )
     covered = {name: content for name, content in members.items() if name != "atlaso.mf"}
@@ -368,7 +380,7 @@ def test_rejects_archive_traversal_without_writing_outside_destination(tmp_path:
     ("old", "new", "message"),
     [
         (
-            b'<vmw:Config vmw:key="uefi.secureBoot.enabled" vmw:value="false"/>',
+            b'<vmw:Config ovf:required="false" vmw:key="bootOptions.efiSecureBootEnabled" vmw:value="false" />',
             b"",
             "explicitly disable Secure Boot",
         ),

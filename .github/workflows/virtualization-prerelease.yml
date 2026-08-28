@@ -83,7 +83,7 @@ jobs:
           PIP_CONFIG_FILE: /dev/null
         run: |
           sudo apt-get update
-          sudo apt-get install --yes --no-install-recommends qemu-utils
+          sudo apt-get install --yes --no-install-recommends libguestfs-tools qemu-utils
           python -m pip install --require-hashes --requirement requirements-release-tools.lock
       - name: Download and validate release assets
         env:
@@ -129,6 +129,11 @@ jobs:
           pathlib.Path('source.env').write_text(
               f'SOURCE_MANIFEST_SHA256={manifest}\nAPPLICATION_WHEEL_SHA256={wheel}\n', encoding='utf-8')
           PY
+          APPLICATION_WHEEL="verified-source/$(jq -r .application_wheel candidate/virtualization-source.json)"
+          LIBGUESTFS_BACKEND=direct python scripts/verify_virtualization_guest_wheel.py \
+            --assets candidate \
+            --wheel "$APPLICATION_WHEEL" \
+            --expected-digest "$(jq -r .application_wheel_sha256 candidate/virtualization-source.json)"
       - name: Materialize the protected signing key
         if: steps.identity.outputs.already_published != 'true'
         env:

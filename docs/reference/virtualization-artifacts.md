@@ -27,6 +27,17 @@ controller, and four ordered disks:
 3. 500 GiB VCF Offline Depot at SCSI slot 2; and
 4. 500 GiB VCF Backups at SCSI slot 3.
 
+The canonical VMware OVF declaration emitted by Atlaso's supported OVF Tool is
+`vmw:key="bootOptions.efiSecureBootEnabled" vmw:value="false"`. The validator also recognizes the older
+`uefi.secureBoot.enabled` spelling for compatible artifacts, but every present supported declaration must explicitly
+evaluate to false. A missing, enabled, malformed, or conflicting declaration blocks export and import. Export validates
+the normalized descriptor's complete machine contract before writing provenance that records `secure_boot: false`.
+
+Before either virtualization index is signed, the protected GitHub-hosted finalizer opens the OVA-validated
+system-content VMDK read-only with libguestfs. It resolves the active CPython 3.14 environment and requires every hashed
+member installed from the Atlaso wheel to match the exact wheel extracted from the signed `vX.Y.Z` software bundle.
+Producer-authored provenance and smoke evidence cannot substitute for this independent payload check.
+
 The OVA contains files for the two payload disks. Its two 500 GiB data disks are fileless declarations. Import helpers
 retain fileless disks when the platform creates them, create only missing data disks, and reject reordered or
 conflicting disks.

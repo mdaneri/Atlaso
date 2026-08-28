@@ -36,6 +36,10 @@ EXPECTED_EMPTY_DISKS = {
     3: ("atlaso-backups", "Hard disk 4 - VCF Backups"),
 }
 EXPECTED_NETWORKS = ("Atlaso Management Network", "Atlaso Services Network")
+SECURE_BOOT_CONFIG_KEYS = (
+    "bootOptions.efiSecureBootEnabled",
+    "uefi.secureBoot.enabled",
+)
 
 
 class OvaValidationError(ValueError):
@@ -185,16 +189,21 @@ def _validate_machine(items: list[ET.Element], root: ET.Element) -> None:
     ):
         raise OvaValidationError("OVF must declare one VMware Paravirtual SCSI controller.")
 
-    configs = {
-        element.get(f"{{{VMW}}}key", ""): element.get(f"{{{VMW}}}value", "")
-        for element in root.findall(f".//{{{VMW}}}Config")
-    }
-    if configs.get("firmware", "").lower() != "efi":
+    configs: dict[str, list[str]] = {}
+    for element in root.findall(f".//{{{VMW}}}Config"):
+        key = element.get(f"{{{VMW}}}key", "")
+        configs.setdefault(key, []).append(element.get(f"{{{VMW}}}value", ""))
+    firmware_values = configs.get("firmware", [])
+    if len(firmware_values) != 1 or firmware_values[0].lower() != "efi":
         raise OvaValidationError("OVF must require UEFI firmware.")
-    if "uefi.secureBoot.enabled" not in configs:
+    secure_boot_values = [
+        value.lower()
+        for key in SECURE_BOOT_CONFIG_KEYS
+        for value in configs.get(key, [])
+    ]
+    if not secure_boot_values:
         raise OvaValidationError("OVF must explicitly disable Secure Boot.")
-    secure_boot = configs["uefi.secureBoot.enabled"].lower()
-    if secure_boot not in {"false", "0"}:
+    if any(value not in {"false", "0"} for value in secure_boot_values):
         raise OvaValidationError("OVF Secure Boot must be disabled.")
 
 
@@ -290,6 +299,26 @@ def _validate_topology(ovf_path: Path) -> dict[int, dict[str, Any]]:
         ):
             raise OvaValidationError(f"OVF empty data disk at SCSI slot {slot} violates the 500 GiB role contract.")
     return by_slot
+
+
+def validate_ovf(ovf_path: Path) -> dict[str, Any]:
+    """Validate one canonical OVF descriptor before provenance is written.
+
+    Args:
+        ovf_path: Canonical OVF descriptor emitted by the supported OVF Tool.
+    """
+
+    if not ovf_path.is_file() or ovf_path.is_symlink():
+        raise OvaValidationError("OVF source must be a regular file and not a symlink.")
+    ovf_path = ovf_path.resolve(strict=True)
+    topology = _validate_topology(ovf_path)
+    return {
+        "schema_version": 1,
+        "kind": "atlaso-validated-ovf",
+        "ovf": ovf_path.name,
+        "machine": EXPECTED_MACHINE,
+        "payload_files": [str(topology[slot]["file"]) for slot in EXPECTED_PAYLOADS],
+    }
 
 
 def _validate_provenance(path: Path, topology: dict[int, dict[str, Any]], directory: Path) -> dict[str, Any]:
@@ -398,16 +427,25 @@ def main(argv: list[str] | None = None) -> int:
     """
 
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("ova", type=Path, help="Canonical Atlaso OVA to verify.")
+    parser.add_argument("ova", nargs="?", type=Path, help="Canonical Atlaso OVA to verify.")
+    parser.add_argument("--ovf", type=Path, help="Canonical OVF descriptor to verify before provenance is written.")
     parser.add_argument(
         "--extract-directory",
-        required=True,
         type=Path,
         help="Empty destination that receives verified flat OVA members.",
     )
     args = parser.parse_args(argv)
+    if (args.ova is None) == (args.ovf is None):
+        parser.error("provide exactly one OVA path or --ovf descriptor path.")
     try:
-        result = validate_ova(args.ova, extraction_directory=args.extract_directory)
+        if args.ovf is not None:
+            if args.extract_directory is not None:
+                parser.error("--extract-directory cannot be used with --ovf.")
+            result = validate_ovf(args.ovf)
+        else:
+            if args.extract_directory is None:
+                parser.error("--extract-directory is required when validating an OVA.")
+            result = validate_ova(args.ova, extraction_directory=args.extract_directory)
     except (OSError, tarfile.TarError, OvaValidationError) as exc:
         parser.error(str(exc))
     print(json.dumps(result, sort_keys=True, separators=(",", ":")))

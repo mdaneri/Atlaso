@@ -216,7 +216,7 @@ jobs:
           PIP_CONFIG_FILE: /dev/null
         run: |
           sudo apt-get update
-          sudo apt-get install --yes --no-install-recommends qemu-utils
+          sudo apt-get install --yes --no-install-recommends libguestfs-tools qemu-utils
           python -m pip install --require-hashes --requirement requirements-release-tools.lock
       - uses: actions/download-artifact@v8
         with:
@@ -249,6 +249,23 @@ jobs:
           print('APPLICATION_WHEEL_SHA256=' + source['application_wheel_sha256'])
           PY
           . ./source.env
+          mkdir software-release verified-source
+          gh release download "v$VERSION" --dir software-release \
+            --pattern "atlaso-appliance-$VERSION.tar.gz" \
+            --pattern release-manifest.json \
+            --pattern release-manifest.json.sig
+          python scripts/prepare_virtualization_source.py \
+            --manifest software-release/release-manifest.json \
+            --signature software-release/release-manifest.json.sig \
+            --bundle "software-release/atlaso-appliance-$VERSION.tar.gz" \
+            --trust-key image/common/update-trust/atlaso-release-2026-01.pem \
+            --output verified-source --expected-version "$VERSION" --expected-commit "$RELEASE_SHA"
+          cmp --silent verified-source/virtualization-source.json candidate/virtualization-source.json
+          APPLICATION_WHEEL="verified-source/$(jq -r .application_wheel candidate/virtualization-source.json)"
+          LIBGUESTFS_BACKEND=direct python scripts/verify_virtualization_guest_wheel.py \
+            --assets candidate \
+            --wheel "$APPLICATION_WHEEL" \
+            --expected-digest "$APPLICATION_WHEEL_SHA256"
           python scripts/build_virtualization_artifact_index.py \
             --assets candidate --version "$VERSION" --commit "$RELEASE_SHA" \
             --classification stable --release-tag "$STABLE_TAG" \
