@@ -252,28 +252,33 @@ function Select-AtlasoOnePasswordPythonFromLauncherInventory {
         [scriptblock]$ArchitectureResolver
     )
 
+    $launcherPatterns = @(
+        ('^\s*-V:(?:[^/]+/)?CPython(?<Version>3\.1[0-3])(?:\.\d+)?' +
+        '(?:(?:-(?<Architecture>32|64|arm64))|(?:\[-(?<Architecture>32|64|arm64)\]))?' +
+        '\s+\*?\s*(?<Path>.+?\.exe)\s*\*?\s*$'),
+        ('^\s*-V:(?<Version>3\.1[0-3])(?:\.\d+)?' +
+        '(?:(?:-(?<Architecture>32|64|arm64))|(?:\[-(?<Architecture>32|64|arm64)\]))?' +
+        '\s+\*?\s*(?<Path>.+?\.exe)\s*\*?\s*$'),
+        ('^\s*-(?<Version>3\.1[0-3])' +
+        '(?:(?:-(?<Architecture>32|64|arm64))|(?:\[-(?<Architecture>32|64|arm64)\]))?' +
+        '\s+\*?\s*(?<Path>.+?\.exe)\s*\*?\s*$')
+    )
     $candidates = foreach ($line in @($LauncherOutput -split "`r?`n")) {
         $versionText = ''
         $architecture = ''
         $executablePath = ''
-        if ($line -match '^\s*-V:(?:[^/]+/)?CPython(3\.1[0-3])(?:\.\d+)?\s+\*?\s*(.+?\.exe)\s*\*?\s*$') {
-            $versionText = $Matches[1]
-            $executablePath = $Matches[2]
-        }
-        elseif ($line -match '^\s*-V:(3\.1[0-3])(?:\.\d+)?(?:-(32|64|arm64))?\s+\*?\s*(.+?\.exe)\s*\*?\s*$') {
-            $versionText = $Matches[1]
-            $architecture = $Matches[2]
-            $executablePath = $Matches[3]
-        }
-        elseif ($line -match '^\s*-(3\.1[0-3])(?:-(32|64|arm64))?\s+\*?\s*(.+?\.exe)\s*\*?\s*$') {
-            $versionText = $Matches[1]
-            $architecture = $Matches[2]
-            $executablePath = $Matches[3]
+        foreach ($launcherPattern in $launcherPatterns) {
+            if ($line -match $launcherPattern) {
+                $versionText = $Matches['Version']
+                $architecture = $Matches['Architecture']
+                $executablePath = $Matches['Path']
+                break
+            }
         }
         if (-not [string]::IsNullOrWhiteSpace($executablePath)) {
             [pscustomobject]@{
                 Version      = [version]$versionText
-                Architecture = $architecture
+                Architecture = ([string]$architecture).ToLowerInvariant()
                 Path         = $executablePath.Trim()
             }
         }

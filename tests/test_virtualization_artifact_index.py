@@ -79,6 +79,12 @@ def test_qemu_content_boundary_uses_explicit_formats_and_sparse_reference(
     commands: list[list[str]] = []
 
     def run(arguments: list[str], **_kwargs: object) -> SimpleNamespace:
+        """Record one subprocess invocation.
+
+        Args:
+            arguments: Complete command vector.
+            **_kwargs: Ignored subprocess keyword arguments.
+        """
         commands.append(arguments)
         return SimpleNamespace(returncode=0)
 
@@ -572,6 +578,15 @@ def test_hyperv_disks_match_ova_payloads_and_blank_data_references(
         target_format: str,
         label: str,
     ) -> None:
+        """Record one virtual-disk comparison.
+
+        Args:
+            source: Source virtual disk.
+            source_format: Explicit source format.
+            target: Target virtual disk.
+            target_format: Explicit target format.
+            label: Payload role label.
+        """
         comparisons.append(
             (
                 source.name,
@@ -657,6 +672,15 @@ def test_rejects_hyperv_payload_content_not_matching_admitted_ova(
         _target_format: str,
         label: str,
     ) -> None:
+        """Reject one altered system-content disk.
+
+        Args:
+            _source: Unused source virtual disk.
+            _source_format: Unused explicit source format.
+            _target: Unused target virtual disk.
+            _target_format: Unused explicit target format.
+            label: Payload role label.
+        """
         if label == "atlaso_system":
             raise SystemExit("Hyper-V disk content does not match atlaso_system")
 

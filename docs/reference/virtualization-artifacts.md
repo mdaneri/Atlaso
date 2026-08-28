@@ -36,9 +36,14 @@ the normalized descriptor's complete machine contract before writing provenance 
 Before either virtualization index is signed, the protected GitHub-hosted finalizer opens the OVA-validated
 system-content VMDK read-only with libguestfs. It resolves the active CPython 3.14 environment, requires every hashed
 member installed from the Atlaso wheel and complete signed wheelhouse to match, and rejects unexpected active files
-except bounded pip and CPython metadata. It also requires the active virtualenv Python link to resolve only to Photon's
-CPython 3.14 interpreter and every Atlaso console script to match its signed-wheel entry point and canonical pip
-launcher. The finalizer opens both payload disks and compares every release-refreshed helper, service unit, drop-in,
+except bounded pip and CPython metadata. The image retains the exact Photon RPM closure that owns the interpreter and
+standard library. The finalizer authenticates every retained RPM against the Photon package keys pinned in the admitted
+Atlaso commit, extracts those signed payloads on the hosted runner, and requires `/usr/bin/python3.14` plus the complete
+`/usr/lib/python3.14` tree in the guest to match byte for byte. The pinned keys originate from Photon OS's
+`photon-repos` package sources; updating them requires an explicit reviewed source change. It also requires the active
+virtualenv Python link to resolve only to that authenticated CPython 3.14 interpreter and every Atlaso console script to
+match its signed-wheel entry point and canonical pip launcher. The finalizer opens both payload disks and compares every
+release-refreshed helper, service unit, drop-in,
 console setting, vault profile, and boot-branding asset with its exact bytes from the admitted software-release commit.
 It also requires the installed update-trust directory to contain exactly that commit's public PEM set, rejecting both
 altered files and injected trust keys. Producer-authored provenance and smoke evidence cannot substitute for these

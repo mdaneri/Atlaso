@@ -147,18 +147,17 @@ runtime.
   review thread. Pause and escalate genuine maintainer decisions or external failures. Merge-ready status does not
   grant merge authority, and unchanged runs must not repeat prior reports.
 
-### Explicit merge authorization
+### Default merge authorization
 
-- Preparing a change and merging it are separate authorities. An implementation, fix, **solve**, pull-request delivery,
-  or similar request authorizes preparation and publication of a ready-for-review pull request but does not authorize
-  merging it.
-- Require an explicit merge instruction for the ordinary same-repository pull request authored and owned by the active
-  task. The instruction may be part of the original request or a later direction. Without one, leave the pull request
-  open after delivery and follow-through are complete. Do not infer merge authority for human-authored pull requests,
-  forks, drafts, review-only or diagnostic tasks, or private vulnerability remediation. GitHub auto-merge remains a
-  separate explicit maintainer choice.
+- Preparing a change and merging it remain separate delivery stages. An implementation, fix, **solve**, pull-request
+  delivery, or similar request grants default merge authority for the ordinary same-repository pull request within the
+  active task's scope, including an existing ordinary pull request that the agent is explicitly asked to work on.
+- Default merge authority permits merging only after every eligibility and safety gate below passes. It does not grant
+  authority over forks, drafts, review-only or diagnostic tasks, or private vulnerability remediation. Do not require a
+  separate merge instruction. GitHub auto-merge remains a separate explicit maintainer choice.
 - Treat **do not merge**, **leave the pull request open**, **pull request only**, **wait for approval**, and equivalent
-  instructions as holds until explicitly withdrawn and the merge is authorized.
+  instructions as an explicit merge hold. The hold overrides default merge authority until the user or maintainer
+  explicitly withdraws it. With no hold, proceed to merge once every required gate passes.
 - Immediately before an authorized merge, re-fetch the pull request and `main`, then verify the linked issue and type label,
   documentation, synchronized patch version, all applicable exact-head checks, answered actionable feedback, resolved
   non-outdated `reviewThreads`, and conflict-free merge state. If the base or head changes, stop, update and revalidate
@@ -190,9 +189,11 @@ runtime.
   the repository, task identifier and current title, pull-request number, task-owned branch, absolute worktree path,
   pull-request head SHA, and merge commit SHA. The controller waits for the task to be idle and unpinned and treats the
   handoff only as evidence to revalidate.
-- Re-fetch GitHub and Git state. Require the exact merged pull request and closed issue, completed post-merge activity,
-  and exclusive task ownership of the branch and checkout. Identify and verify a primary checkout first and exempt it
-  from removable-worktree and Codex-root checks. Only a non-primary target must be a registered, clean, unlocked,
+- Re-fetch GitHub and Git state. Require the exact merged pull request and closed issue plus completed post-merge
+  activity. Evaluate remote-branch ownership independently from local checkout/worktree ownership, requiring exclusive
+  task ownership before a destructive step or external ownership for the corresponding non-destructive exception
+  below. Identify and verify a primary checkout first and exempt it from removable-worktree and Codex-root checks. Only
+  a non-primary target must be a registered, clean, unlocked,
   non-reparse-point worktree beneath the resolved Codex worktree root. Never remove the primary checkout, a permanent
   or user-created worktree, or an ambiguous target.
 
@@ -216,22 +217,31 @@ Terminal order:
   affected-repository stale-registration pruning, and verify that both the absolute path and registration are absent.
   Then require the exact local task branch to be unreferenced by every registered worktree, delete only that ref when
   present, and verify `local_task_branch_absent` before recording `worktree_removed`. If interrupted after the path and
-  registration disappear but before local-ref deletion, `worktree_removal_resume` requires the remote ref, path, and
-  registration to remain absent and the same task ownership, recorded head, and merge evidence to prove that the exact
-  unreferenced local branch is safely deletable or already absent. A primary-checkout task records the
+  registration disappear but before local-ref deletion, `worktree_removal_resume` requires the path and registration
+  to remain absent, the worktree removal remote branch gate is either verified absent or recorded not applicable through
+  `non_task_owned_remote_branch_preserved`, and the same task ownership, recorded head, and merge evidence to prove
+  that the exact unreferenced local branch is safely deletable or already absent. A primary-checkout task records the
   gate as not applicable only after a clean checkout still at the recorded task head fetches current `origin/main`,
   switches to local `main` without force, fast-forwards exactly to `origin/main`, verifies HEAD, deletes only a local
   task branch that still equals the recorded pull-request head and is checked out nowhere, and records
   `primary_checkout_restored`. If interrupted after the switch, `primary_checkout_resume` requires a clean local
-  `main`, a fresh fetch and non-forced fast-forward to exact current `origin/main`, an absent remote task ref, and the
-  local task branch either still equal to the recorded head and checked out nowhere or already absent under the same
-  ownership and merge evidence. Delete it when present, then record the restored state. Never remove the primary
-  checkout.
+  `main` plus a fresh fetch and non-forced fast-forward to exact current `origin/main`. The
+  primary checkout remote branch gate is either verified absent or recorded not applicable through
+  `non_task_owned_remote_branch_preserved`; the local task branch must still equal the recorded head and be checked out
+  nowhere or already be absent under the same ownership and merge evidence. Delete it when present, then record the
+  restored state. Never remove the primary checkout.
 - Complete `task_title_done` last by using supported title controls to append the exact suffix " · Done" once while
   preserving description and issue/pull-request traceability. Keep the task unarchived unless archival is separately
   requested. If the runtime exposes no supported mutable title control, record `task_title_done` as verified not applicable
   with capability evidence, omit the visible suffix, and allow otherwise-complete cleanup to finish. Any failure or
   ambiguity in an available control blocks the title transition and leaves an actionable retry condition.
+- For an existing ordinary pull request, evaluate remote and local ownership separately after verifying the exact
+  merge, reachable merge commit, closed issue, and completed post-merge activity. For a non-task-owned remote branch,
+  preserve it, record `non_task_owned_remote_branch_preserved`, and record `remote_branch_absent` as verified not
+  applicable; a task-owned local worktree still follows normal removal. For a non-task-owned local checkout or
+  worktree, preserve it and its refs and metadata, record `non_task_owned_checkout_preserved`, and record
+  `worktree_removed` as verified not applicable; a task-owned remote branch still follows normal deletion. Apply these
+  decisions in terminal order. Ambiguous ownership blocks the affected transition and the Done suffix.
 - A squash-merged head that is not an ancestor of `main` is eligible only when the worktree HEAD equals the recorded
   pull-request head SHA and the recorded merge commit is reachable from current `origin/main`.
 - The daily Codex cleanup automation reconciles missed handoffs and partial transitions with these same gates. Its
@@ -976,8 +986,11 @@ Terminal order:
   1Password SDK pattern to retrieve only the corresponding exact, unique, concealed `DEFAULT_ADMIN_PASSWORD` or
   `DEFAULT_ROOT_PASSWORD` from that same verified Environment. Preserve each explicit `SecureString` independently.
   When account or Python selectors are omitted, resolve exactly one local 1Password CLI account and select the highest
-  compatible CPython 3.10 through 3.13 runtime registered with the Windows launcher. Explicit selectors remain
-  authoritative. Zero or multiple accounts and a missing compatible runtime must fail before mutation.
+  compatible CPython 3.10 through 3.13 runtime registered with the Windows launcher. Accept current Python Install
+  Manager bracketed architecture selectors while retaining legacy launcher and vendor-tagged registrations. Reject
+  known x86, unsupported architectures, malformed entries, missing executables, and unsupported versions without
+  masking a lower compatible runtime. Explicit selectors remain authoritative. Zero or multiple accounts and a missing
+  compatible runtime must fail before mutation.
   Keep plaintext out of the PowerShell parent, arguments, caller-controlled environment, logs, output, markers,
   evidence, documentation, and GitHub surfaces by exchanging only current-user DPAPI ciphertext between bounded
   children. Never accept caller environment variables, repository defaults, local `.env` files, or interactive password
@@ -1458,6 +1471,13 @@ Terminal order:
   current targets are
   `VCF 9.1` with all 17 catalog components and `VVF 9.1` with `vc01`, `ops01`, `vsp01`, `fleetlcm`, `shared01`, and
   `license`.
+- VCF Installer OVA deployment must treat the destination `OvfManager.ParseDescriptor` result as authoritative for
+  deployable properties, defaults, deployment options, warnings, and errors. Pass the complete reviewed property
+  mapping to `CreateImportSpec`; sanitize warnings against every submitted value. Bind a direct `HostAgent` connection
+  to its one host while preserving vCenter automatic placement unless a host was selected. Before power-on or follow-up
+  DNS, trust, or depot work, require the imported VM to retain every mapped vApp property and a supported OVF environment
+  transport. Verification failure must remove only the exact task-created VM; cleanup failure remains a truthful partial
+  deployment.
 - Domain choices must come from managed DNS zones. Prefix and suffix are optional hostname fragments; normalize them
   consistently and validate every generated FQDN before writing any records.
 - Starting address input is one IPv4 or IPv6 CIDR. IPv4 creates A records and IPv6 creates AAAA records. Allocate

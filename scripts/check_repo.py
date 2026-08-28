@@ -162,8 +162,9 @@ REQUIRED_POLICY_MARKERS = {
         "review submissions",
         "merged, closed, or merge-ready",
         "### Unrelated issue discoveries",
-        "### Explicit merge authorization",
-        "explicit merge instruction",
+        "### Default merge authorization",
+        "default merge authority",
+        "explicit merge hold",
         "strict up-to-date required checks",
         "no merge queue is required",
         "--match-head-commit <head-sha>",
@@ -173,6 +174,8 @@ REQUIRED_POLICY_MARKERS = {
         "`remote_branch_absent`",
         "`worktree_removed`",
         "`task_title_done`",
+        "`non_task_owned_remote_branch_preserved`",
+        "`non_task_owned_checkout_preserved`",
         '" · Done"',
         "AtlasoUiPatterns.createGrid",
         "AtlasoUiPatterns.createWizard",
@@ -200,8 +203,9 @@ REQUIRED_POLICY_MARKERS = {
         "review submissions",
         "merged, closed, or merge-ready",
         "### Unrelated issue discoveries",
-        "### Explicit merge authorization",
-        "explicit merge instruction",
+        "### Default merge authorization",
+        "default merge authority",
+        "explicit merge hold",
         "strict up-to-date required checks",
         "no required merge queue",
         "AtlasoUiPatterns.createGrid",
@@ -214,6 +218,8 @@ REQUIRED_POLICY_MARKERS = {
         "`remote_branch_absent`",
         "`worktree_removed`",
         "`task_title_done`",
+        "`non_task_owned_remote_branch_preserved`",
+        "`non_task_owned_checkout_preserved`",
         '" · Done"',
     ),
     Path(".github/copilot-instructions.md"): (
@@ -238,8 +244,9 @@ REQUIRED_POLICY_MARKERS = {
         "inline review comments",
         "review submissions",
         "merged, closed, or merge-ready",
-        "Explicit merge authorization",
-        "explicit merge instruction",
+        "Default merge authorization",
+        "default merge authority",
+        "explicit merge hold",
         "strict up-to-date required checks",
         "when a merge queue is required",
         "evidence-backed unrelated problem",
@@ -252,6 +259,8 @@ REQUIRED_POLICY_MARKERS = {
         "`remote_branch_absent`",
         "`worktree_removed`",
         "`task_title_done`",
+        "`non_task_owned_remote_branch_preserved`",
+        "`non_task_owned_checkout_preserved`",
         '" · Done"',
     ),
     Path("SECURITY.md"): (
@@ -300,8 +309,9 @@ REQUIRED_POLICY_MARKERS = {
         "review submissions",
         "merged, closed, or merge-ready",
         "outside that scope is discovered",
-        "### Explicit merge authorization",
-        "explicit merge instruction",
+        "### Default merge authorization",
+        "default merge authority",
+        "explicit merge hold",
         "strict up-to-date required checks",
         "no required merge queue",
         "### Completed task cleanup",
@@ -309,6 +319,8 @@ REQUIRED_POLICY_MARKERS = {
         "`remote_branch_absent`",
         "`worktree_removed`",
         "`task_title_done`",
+        "`non_task_owned_remote_branch_preserved`",
+        "`non_task_owned_checkout_preserved`",
         '" · Done"',
     ),
     Path(".github/pull_request_template.md"): (
@@ -328,8 +340,9 @@ REQUIRED_POLICY_MARKERS = {
         "inline review comment",
         "review submission",
         "merged, closed, or merge-ready",
-        "Explicit merge authorization",
-        "explicit merge instruction",
+        "Default merge authorization",
+        "default merge authority",
+        "explicit merge hold",
         "strict up-to-date required checks",
         "no merge queue is required",
         "Evidence-backed issues discovered outside",
@@ -344,6 +357,8 @@ REQUIRED_POLICY_MARKERS = {
         "`remote_branch_absent`",
         "`worktree_removed`",
         "`task_title_done`",
+        "`non_task_owned_remote_branch_preserved`",
+        "`non_task_owned_checkout_preserved`",
         '" · Done"',
     ),
     Path("docs/contribute/ui-design-guide.md"): (
@@ -359,6 +374,16 @@ REQUIRED_POLICY_MARKERS = {
         "explicit maintainer approval",
         "AtlasoUiPatterns.createGrid",
         "AtlasoUiPatterns.createWizard",
+    ),
+    Path("docs/reference/full-technical-reference.md"): (
+        "default merge authority",
+        "explicit merge hold",
+        "strict up-to-date required checks",
+        "when a merge queue is required",
+        "`non_task_owned_remote_branch_preserved`",
+        "`non_task_owned_checkout_preserved`",
+        "worktree removal remote branch gate is either verified absent or recorded not applicable",
+        "primary checkout remote branch gate is either verified absent or recorded not applicable",
     ),
 }
 
@@ -396,7 +421,19 @@ PRIMARY_CHECKOUT_RESUME_MARKER = "`primary_checkout_resume`"
 LOCAL_TASK_BRANCH_ABSENT_MARKER = "`local_task_branch_absent`"
 REMOTE_BRANCH_LEASE_MARKER = "`--force-with-lease=refs/heads/BRANCH:HEAD_SHA`"
 WORKTREE_REMOVAL_RESUME_MARKER = "`worktree_removal_resume`"
+WORKTREE_REMOVAL_REMOTE_GATE_MARKER = (
+    "worktree removal remote branch gate is either verified absent "
+    "or recorded not applicable"
+)
+PRIMARY_CHECKOUT_REMOTE_GATE_MARKER = (
+    "primary checkout remote branch gate is either verified absent "
+    "or recorded not applicable"
+)
 TITLE_CONTROL_UNAVAILABLE_MARKER = "`task_title_done` as verified not applicable"
+NON_TASK_OWNED_REMOTE_BRANCH_PRESERVED_MARKER = (
+    "`non_task_owned_remote_branch_preserved`"
+)
+NON_TASK_OWNED_CHECKOUT_PRESERVED_MARKER = "`non_task_owned_checkout_preserved`"
 TERMINAL_CLEANUP_SECTION_MARKERS = {
     path: (
         "`cleanup-ready`",
@@ -407,7 +444,11 @@ TERMINAL_CLEANUP_SECTION_MARKERS = {
         LOCAL_TASK_BRANCH_ABSENT_MARKER,
         REMOTE_BRANCH_LEASE_MARKER,
         WORKTREE_REMOVAL_RESUME_MARKER,
+        WORKTREE_REMOVAL_REMOTE_GATE_MARKER,
+        PRIMARY_CHECKOUT_REMOTE_GATE_MARKER,
         TITLE_CONTROL_UNAVAILABLE_MARKER,
+        NON_TASK_OWNED_REMOTE_BRANCH_PRESERVED_MARKER,
+        NON_TASK_OWNED_CHECKOUT_PRESERVED_MARKER,
         PRIVATE_REMEDIATION_CLEANUP_MARKER,
         PRIVATE_REMEDIATION_REMOTE_MARKER,
     )

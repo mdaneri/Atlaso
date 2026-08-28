@@ -67,6 +67,8 @@ try {
     $python312Path = Join-Path $pythonInventoryRoot 'python312.exe'
     $python313Path = Join-Path $pythonInventoryRoot 'python313.exe'
     $python311Path = Join-Path $pythonInventoryRoot 'python311.exe'
+    $python310Path = Join-Path $pythonInventoryRoot 'python310.exe'
+    [System.IO.File]::WriteAllBytes($python310Path, [byte[]](1))
     [System.IO.File]::WriteAllBytes($python311Path, [byte[]](1))
     [System.IO.File]::WriteAllBytes($python312Path, [byte[]](1))
     [System.IO.File]::WriteAllBytes($python313Path, [byte[]](1))
@@ -82,6 +84,31 @@ try {
     if ($selectedPython.Path -cne $python313Path) {
         throw 'The highest compatible tagged or legacy Python runtime was not selected after removing default markers.'
     }
+    $python314Path = Join-Path $pythonInventoryRoot 'python314.exe'
+    [System.IO.File]::WriteAllBytes($python314Path, [byte[]](1))
+    $bracketedInventory = @(
+        " -V:3.14[-64] * $python314Path",
+        " -V:3.13[-64] * $python313Path",
+        " -V:3.12[-arm64] $python312Path *",
+        " -V:3.11[-32] $python311Path",
+        " -V:3.10[-64] $python310Path"
+    ) -join "`n"
+    $bracketedSelectedPython = & $credentialModule {
+        param([string]$InventoryOutput)
+        Select-AtlasoOnePasswordPythonFromLauncherInventory -LauncherOutput $InventoryOutput
+    } $bracketedInventory
+    if ($bracketedSelectedPython.Path -cne $python313Path -or
+        $bracketedSelectedPython.Architecture -cne '64') {
+        throw 'The highest compatible Python Install Manager bracketed runtime was not selected.'
+    }
+    $bracketedArmSelectedPython = & $credentialModule {
+        param([string]$InventoryOutput)
+        Select-AtlasoOnePasswordPythonFromLauncherInventory -LauncherOutput $InventoryOutput
+    } " -V:3.12[-arm64] $python312Path *"
+    if ($bracketedArmSelectedPython.Path -cne $python312Path -or
+        $bracketedArmSelectedPython.Architecture -cne 'arm64') {
+        throw 'A supported bracketed ARM64 runtime was not admitted.'
+    }
     $unsupportedPythonPath = Join-Path $pythonInventoryRoot 'python313x86.exe'
     [System.IO.File]::WriteAllBytes($unsupportedPythonPath, [byte[]](1))
     $architectureInventory = @(
@@ -95,6 +122,17 @@ try {
     if ($architectureSelectedPython.Path -cne $python312Path -or
         $architectureSelectedPython.Architecture -cne '64') {
         throw 'A newer unsupported x86 runtime outranked the compatible 64-bit runtime.'
+    }
+    $bracketedArchitectureInventory = @(
+        " -V:3.13[-32] $unsupportedPythonPath",
+        " -V:3.12[-64] $python312Path"
+    ) -join "`n"
+    $bracketedArchitectureSelectedPython = & $credentialModule {
+        param([string]$InventoryOutput)
+        Select-AtlasoOnePasswordPythonFromLauncherInventory -LauncherOutput $InventoryOutput
+    } $bracketedArchitectureInventory
+    if ($bracketedArchitectureSelectedPython.Path -cne $python312Path) {
+        throw 'A bracketed x86 runtime outranked a compatible bracketed 64-bit runtime.'
     }
     $vendorPythonPath = Join-Path $pythonInventoryRoot 'python313vendor.exe'
     [System.IO.File]::WriteAllBytes($vendorPythonPath, [byte[]](1))
@@ -114,6 +152,25 @@ try {
     }
     if ($vendorArchitectureSelectedPython.Path -cne $python312Path) {
         throw 'An architecture-unspecified vendor x86 runtime outranked the compatible 64-bit runtime.'
+    }
+    $missingPythonPath = Join-Path $pythonInventoryRoot 'missing-python.exe'
+    foreach ($invalidInventory in @(
+            " -V:3.14[-64] $python314Path",
+            " -V:3.9[-64] $python310Path",
+            " -V:3.13[-32] $unsupportedPythonPath",
+            " -V:3.13[-x64] $python313Path",
+            " -V:3.13[-64 $python313Path",
+            " -V:3.13[-64] $missingPythonPath",
+            " -V:3.13[-64] $python313Path.txt",
+            " malformed -V:3.13[-64] $python313Path"
+        )) {
+        $invalidSelectedPython = @(& $credentialModule {
+                param([string]$InventoryOutput)
+                Select-AtlasoOnePasswordPythonFromLauncherInventory -LauncherOutput $InventoryOutput
+            } $invalidInventory)
+        if ($invalidSelectedPython.Count -ne 0) {
+            throw 'An unsupported, malformed, x86, or missing Python inventory entry was accepted.'
+        }
     }
 }
 finally {

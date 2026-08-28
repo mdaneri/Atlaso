@@ -36,11 +36,12 @@ surfaces.
   merged, closed, or merge-ready terminal states, the heartbeat continued after a merge through required post-merge
   verification and otherwise paused only for an unmerged closure or a merge-ready successful current head with every
   item seen and no open feedback.
-- [ ] For an agent-authored internal pull request, the Explicit merge authorization policy was checked: an implementation
-  or delivery request alone was not treated as an explicit merge instruction, and the pull request remains open without
-  one. Before any authorized squash merge, explicit holds, strict up-to-date required checks that bind the base, an
-  expected-head guard without administrative bypass, and confirmation that no merge queue is required were checked; or
-  this pull request is outside that policy.
+- [ ] For an ordinary same-repository pull request within the active task's scope, the Default merge authorization
+  policy was checked: implementation, fix, solve, delivery, and similar requests grant default merge authority without
+  a separate merge instruction. Any explicit merge hold remains authoritative until the user or maintainer withdraws
+  it. Before any authorized squash merge, strict up-to-date required checks that bind the base, an expected-head guard
+  without administrative bypass, and confirmation that no merge queue is required were checked; or this pull request is
+  outside that policy.
 - [ ] After any authorized merge and remaining post-merge activity, the originating task will send a `cleanup-ready`
   handoff and remain incomplete until `remote_branch_absent`, `worktree_removed`, and `task_title_done` occur in order;
   an existing remote ref will be deleted only with an atomic expected-SHA lease such as
@@ -48,16 +49,25 @@ surfaces.
   then may supported title controls append the exact suffix " · Done" once. If no supported mutable title control exists,
   `task_title_done` as verified not applicable requires capability evidence and omits the visible suffix.
 
+  For an existing ordinary pull request, remote-branch ownership and local checkout/worktree ownership are evaluated
+  separately after merge and lifecycle verification. `non_task_owned_remote_branch_preserved` marks only
+  `remote_branch_absent` not applicable; `non_task_owned_checkout_preserved` marks only `worktree_removed` not
+  applicable. Every task-owned side is cleaned up normally in terminal order, and ambiguous ownership blocks the
+  affected transition and `task_title_done`.
+
   A non-primary task records `worktree_removed` only after removing and pruning its worktree, verifying path and
   registration absence, deleting only the exact unreferenced local task branch that still equals the recorded head,
-  and verifying `local_task_branch_absent`. An interrupted `worktree_removal_resume` requires the remote ref, path, and
-  registration absent plus the same ownership, head, and merge evidence before deleting that local ref or accepting it
-  as already absent.
+  and verifying `local_task_branch_absent`. An interrupted `worktree_removal_resume` requires the path and registration
+  absent. The worktree removal remote branch gate is either verified absent or recorded not applicable through
+  `non_task_owned_remote_branch_preserved`, and the same ownership, head, and merge evidence before deleting that local
+  ref or accepting it as already absent.
 
   A primary-checkout task records `primary_checkout_restored` only after switching a clean exact-head checkout to
   current `origin/main`, verifying HEAD, and deleting only the exact unreferenced local task branch.
-  An interrupted `primary_checkout_resume` requires clean local `main` freshly fast-forwarded to current `origin/main`,
-  the remote ref absent, and the exact local task branch safely deletable or already absent under the same evidence.
+  An interrupted `primary_checkout_resume` requires clean local `main` freshly fast-forwarded to current `origin/main`.
+  The primary checkout remote branch gate is either verified absent or recorded not applicable through
+  `non_task_owned_remote_branch_preserved`; the exact local task branch must still be safely deletable or already absent
+  under the same evidence.
 
   Terminal order:
 

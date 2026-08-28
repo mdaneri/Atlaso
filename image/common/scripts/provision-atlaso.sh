@@ -41,6 +41,7 @@ MACHINE_IDENTITY_INITIALIZER_SOURCE="$ATLASO_SRC/scripts/appliance/atlaso-initia
 IMAGE_BUILD_FINALIZER_SOURCE="$ATLASO_SRC/image/common/scripts/finalize-image-build.sh"
 GUEST_AGENT_UNIT_SOURCE="$ATLASO_SRC/image/common/systemd/atlaso-guest-agent-select.service"
 GUEST_AGENT_STAGING="$ATLASO_STATE/first-boot-packages"
+PYTHON_RUNTIME_STAGING="$ATLASO_STATE/python-runtime-packages"
 
 log_step() {
   printf '\n==> Atlaso appliance: %s\n' "$1"
@@ -345,6 +346,28 @@ pwsh -NoLogo -NoProfile -NonInteractive -Command \
 
 log_step "verifying Photon OS updates after package install"
 run_tdnf "Photon OS update verification" update
+
+# Preserve the exact signed Photon packages that own the appliance interpreter.
+# The protected hosted finalizer authenticates these RPMs against Atlaso's
+# admitted Photon keys and compares their payload to the read-only guest disk;
+# a Windows producer therefore cannot substitute Python or its standard library.
+log_step "staging signed Photon Python runtime packages for protected verification"
+rm -rf "$PYTHON_RUNTIME_STAGING"
+install -d -o root -g root -m 0700 "$PYTHON_RUNTIME_STAGING"
+run_tdnf "Photon Python runtime signed package closure" \
+  install --downloadonly --downloaddir "$PYTHON_RUNTIME_STAGING" --alldeps \
+  python3 python3-pip python3-virtualenv python3-curses
+if [ "$(find "$PYTHON_RUNTIME_STAGING" -maxdepth 1 -type f -name '*.rpm' | wc -l)" -eq 0 ]; then
+  echo "Photon Python runtime package closure is empty." >&2
+  exit 2
+fi
+find "$PYTHON_RUNTIME_STAGING" -type f -name '*.rpm' -exec chown root:root {} + -exec chmod 0600 {} +
+(
+  cd "$PYTHON_RUNTIME_STAGING"
+  find . -maxdepth 1 -type f -name '*.rpm' -printf '%f\n' | LC_ALL=C sort | xargs sha256sum >SHA256SUMS
+)
+chown root:root "$PYTHON_RUNTIME_STAGING/SHA256SUMS"
+chmod 0600 "$PYTHON_RUNTIME_STAGING/SHA256SUMS"
 
 log_step "leaving only Photon NTPsec available for desired-state activation"
 systemctl disable --now ntpd.service 2>/dev/null || true

@@ -39,10 +39,19 @@ DEPLOYED_TEXT_FILES = {
 DEPLOYED_BINARY_FILES = {
     "image/common/boot/grub/atlaso.png": "/boot/grub2/themes/atlaso/atlaso.png",
 }
+PHOTON_RPM_KEY_PATHS = (
+    "image/common/photon-rpm-gpg/VMWARE-RPM-GPG-KEY",
+    "image/common/photon-rpm-gpg/VMWARE-RPM-GPG-KEY-4096",
+)
+PYTHON_RUNTIME_PACKAGE_PATH = "/var/lib/atlaso/python-runtime-packages"
 
 
 def _sha256(path: Path) -> str:
-    """Return the lowercase SHA-256 digest of one file."""
+    """Return the lowercase SHA-256 digest of one file.
+
+    Args:
+        path: Regular file to hash.
+    """
 
     digest = hashlib.sha256()
     with path.open("rb") as handle:
@@ -52,7 +61,12 @@ def _sha256(path: Path) -> str:
 
 
 def _guestfish(disk: Path, commands: list[str]) -> list[str]:
-    """Run bounded read-only libguestfs commands against one payload disk."""
+    """Run bounded read-only libguestfs commands against one payload disk.
+
+    Args:
+        disk: Virtual disk opened read-only.
+        commands: Guestfish commands issued after appliance startup.
+    """
 
     executable = shutil.which("guestfish")
     if executable is None:
@@ -72,7 +86,11 @@ def _guestfish(disk: Path, commands: list[str]) -> list[str]:
 
 
 def _filesystem(disk: Path) -> str:
-    """Return the sole ext filesystem exposed by the system-content VMDK."""
+    """Return the sole ext filesystem exposed by the system-content VMDK.
+
+    Args:
+        disk: Virtual disk whose filesystems are inspected.
+    """
 
     lines = _guestfish(disk, ["list-filesystems"])
     filesystems = []
@@ -88,7 +106,12 @@ def _filesystem(disk: Path) -> str:
 
 
 def _installed_path(name: str, data_prefix: str) -> str:
-    """Map one safe wheel member to its site-packages installation path."""
+    """Map one safe wheel member to its site-packages installation path.
+
+    Args:
+        name: Safe wheel member name.
+        data_prefix: Wheel data-directory prefix.
+    """
 
     for category in ("purelib", "platlib"):
         prefix = f"{data_prefix}/{category}/"
@@ -100,7 +123,11 @@ def _installed_path(name: str, data_prefix: str) -> str:
 
 
 def _wheel_records(wheel: Path) -> tuple[str, dict[str, tuple[str, int]]]:
-    """Return one wheel's dist-info name and installed site-packages records."""
+    """Return one wheel's dist-info name and installed site-packages records.
+
+    Args:
+        wheel: Signed wheel archive to inspect.
+    """
 
     try:
         with zipfile.ZipFile(wheel) as archive:
@@ -166,7 +193,11 @@ def _wheel_records(wheel: Path) -> tuple[str, dict[str, tuple[str, int]]]:
 
 
 def _wheel_console_scripts(wheel: Path) -> dict[str, tuple[str, str]]:
-    """Return the application wheel's bounded console-script entry points."""
+    """Return the application wheel's bounded console-script entry points.
+
+    Args:
+        wheel: Signed Atlaso wheel archive.
+    """
 
     try:
         with zipfile.ZipFile(wheel) as archive:
@@ -192,7 +223,11 @@ def _wheel_console_scripts(wheel: Path) -> dict[str, tuple[str, str]]:
 
 
 def _payload_vmdks(asset_root: Path) -> dict[str, Path]:
-    """Resolve the OVA-validated Photon and system-content VMDKs."""
+    """Resolve the OVA-validated Photon and system-content VMDKs.
+
+    Args:
+        asset_root: Flat candidate asset directory.
+    """
 
     provenance_paths = sorted(asset_root.glob("*-provenance.json"))
     if len(provenance_paths) != 1:
@@ -222,7 +257,13 @@ def _payload_vmdks(asset_root: Path) -> dict[str, Path]:
 
 
 def _git_source_bytes(repo_root: Path, source_commit: str, source_path: str) -> bytes:
-    """Read one immutable source file from the admitted release commit."""
+    """Read one immutable source file from the admitted release commit.
+
+    Args:
+        repo_root: Atlaso checkout containing the admitted commit.
+        source_commit: Exact successful-main commit.
+        source_path: Repository-relative file path.
+    """
 
     result = subprocess.run(
         ["git", "-C", str(repo_root), "show", f"{source_commit}:{source_path}"],
@@ -236,7 +277,12 @@ def _git_source_bytes(repo_root: Path, source_commit: str, source_path: str) -> 
 
 
 def _git_trust_key_paths(repo_root: Path, source_commit: str) -> list[str]:
-    """List the exact public update-trust keys in the admitted release commit."""
+    """List the exact public update-trust keys in the admitted release commit.
+
+    Args:
+        repo_root: Atlaso checkout containing the admitted commit.
+        source_commit: Exact successful-main commit.
+    """
 
     directory = "image/common/update-trust"
     result = subprocess.run(
@@ -257,7 +303,14 @@ def _git_trust_key_paths(repo_root: Path, source_commit: str) -> list[str]:
 def _download_guest_file(
     disk: Path, filesystem: str, guest_path: str, destination: Path
 ) -> bytes:
-    """Download one required regular file from a read-only payload disk."""
+    """Download one required regular file from a read-only payload disk.
+
+    Args:
+        disk: Read-only virtual disk.
+        filesystem: Guest filesystem mounted as root.
+        guest_path: Absolute guest file path.
+        destination: Private host-side destination.
+    """
 
     _guestfish(
         disk,
@@ -274,7 +327,13 @@ def _download_guest_file(
 def _verify_deployed_system_content(
     asset_root: Path, source_commit: str, repo_root: Path
 ) -> int:
-    """Bind every release-refreshed non-wheel file to the admitted commit."""
+    """Bind every release-refreshed non-wheel file to the admitted commit.
+
+    Args:
+        asset_root: Flat candidate asset directory.
+        source_commit: Exact successful-main commit.
+        repo_root: Atlaso checkout containing that commit.
+    """
 
     if SOURCE_COMMIT_PATTERN.fullmatch(source_commit) is None:
         raise SystemExit("source commit must be a full lowercase Git SHA")
@@ -342,7 +401,13 @@ def _verify_deployed_system_content(
 def _expected_environment(
     wheel: Path, wheelhouse: Path, expected_digest: str
 ) -> tuple[dict[str, tuple[str, int]], set[str]]:
-    """Build the collision-free installed inventory from every signed wheel."""
+    """Build the collision-free installed inventory from every signed wheel.
+
+    Args:
+        wheel: Signed Atlaso application wheel.
+        wheelhouse: Signed dependency-wheel directory.
+        expected_digest: Manifest-authenticated Atlaso wheel digest.
+    """
 
     if DIGEST_PATTERN.fullmatch(expected_digest) is None:
         raise SystemExit("expected Atlaso wheel digest is invalid")
@@ -374,7 +439,11 @@ def _expected_environment(
 
 
 def _normalized_tar_name(name: str) -> str:
-    """Return one safe site-packages-relative tar member name."""
+    """Return one safe site-packages-relative tar member name.
+
+    Args:
+        name: Raw tar member name.
+    """
 
     while name.startswith("./"):
         name = name[2:]
@@ -387,7 +456,13 @@ def _normalized_tar_name(name: str) -> str:
 def _allowed_generated_file(
     name: str, records: dict[str, tuple[str, int]], dist_infos: set[str]
 ) -> bool:
-    """Return whether pip or CPython may generate this non-wheel file."""
+    """Return whether pip or CPython may generate this non-wheel file.
+
+    Args:
+        name: Installed path absent from signed wheel records.
+        records: Signed installed-file records.
+        dist_infos: Signed distribution metadata directories.
+    """
 
     parent = PurePosixPath(name).parent.as_posix()
     if parent in dist_infos and PurePosixPath(name).name in {
@@ -410,7 +485,13 @@ def _verify_site_packages_archive(
     records: dict[str, tuple[str, int]],
     dist_infos: set[str],
 ) -> None:
-    """Verify the exact active-environment inventory and immutable file bytes."""
+    """Verify the exact active-environment inventory and immutable file bytes.
+
+    Args:
+        archive_path: Guest site-packages tar archive.
+        records: Signed installed-file records.
+        dist_infos: Signed distribution metadata directories.
+    """
 
     found: set[str] = set()
     try:
@@ -456,7 +537,11 @@ def _verify_site_packages_archive(
 
 
 def _runtime_venv(site_packages: PurePosixPath) -> PurePosixPath:
-    """Return the active release virtualenv containing one site-packages path."""
+    """Return the active release virtualenv containing one site-packages path.
+
+    Args:
+        site_packages: Resolved active site-packages path.
+    """
 
     suffix = PurePosixPath("lib/python3.14/site-packages")
     if tuple(site_packages.parts[-len(suffix.parts) :]) != suffix.parts:
@@ -472,7 +557,13 @@ def _runtime_venv(site_packages: PurePosixPath) -> PurePosixPath:
 def _console_script_bytes(
     python: str, module: str, function: str
 ) -> bytes:
-    """Return pip's canonical POSIX console-script bytes for one entry point."""
+    """Return pip's canonical POSIX console-script bytes for one entry point.
+
+    Args:
+        python: Absolute interpreter path embedded in the launcher.
+        module: Entry-point module.
+        function: Entry-point function.
+    """
 
     return (
         f"#!{python}\n"
@@ -491,7 +582,13 @@ def _verify_runtime_archive(
     venv: PurePosixPath,
     console_scripts: dict[str, tuple[str, str]],
 ) -> None:
-    """Verify the active interpreter link and signed-wheel console scripts."""
+    """Verify the active interpreter link and signed-wheel console scripts.
+
+    Args:
+        archive_path: Guest virtualenv bin tar archive.
+        venv: Resolved active virtualenv path.
+        console_scripts: Signed console-script entry points.
+    """
 
     try:
         with tarfile.open(archive_path, mode="r:") as archive:
@@ -539,6 +636,261 @@ def _verify_runtime_archive(
         raise SystemExit("guest virtualenv bin directory could not be read safely") from exc
 
 
+def _extract_runtime_package_archive(archive_path: Path, destination: Path) -> list[Path]:
+    """Extract one bounded guest RPM closure without trusting producer paths.
+
+    Args:
+        archive_path: Guestfish tar archive containing the staged package closure.
+        destination: Empty private directory that receives authenticated candidates.
+
+    Returns:
+        Sorted RPM paths whose bytes match the staged digest inventory.
+    """
+
+    try:
+        with tarfile.open(archive_path, mode="r:") as archive:
+            members = [member for member in archive if not member.isdir()]
+            if not members or len(members) > 129:
+                raise SystemExit("guest Python runtime package closure has an invalid size")
+            for member in members:
+                name = _normalized_tar_name(member.name)
+                if "/" in name or not member.isfile() or member.size > 256 * 1024 * 1024:
+                    raise SystemExit("guest Python runtime package closure is unsafe")
+                source = archive.extractfile(member)
+                if source is None:
+                    raise SystemExit("guest Python runtime package closure is unreadable")
+                target = destination / name
+                with target.open("xb") as output:
+                    shutil.copyfileobj(source, output, length=1024 * 1024)
+    except (OSError, tarfile.TarError) as exc:
+        raise SystemExit("guest Python runtime package closure could not be read") from exc
+    manifest = destination / "SHA256SUMS"
+    if not manifest.is_file():
+        raise SystemExit("guest Python runtime package closure has no digest inventory")
+    expected: dict[str, str] = {}
+    for line in manifest.read_text(encoding="ascii").splitlines():
+        digest, separator, name = line.partition("  ")
+        if (
+            separator != "  "
+            or DIGEST_PATTERN.fullmatch(digest) is None
+            or PurePosixPath(name).name != name
+            or not name.endswith(".rpm")
+            or name in expected
+        ):
+            raise SystemExit("guest Python runtime package digest inventory is invalid")
+        expected[name] = digest
+    packages = sorted(destination.glob("*.rpm"))
+    if not packages or {path.name for path in packages} != set(expected):
+        raise SystemExit("guest Python runtime package inventory is incomplete")
+    if any(_sha256(path) != expected[path.name] for path in packages):
+        raise SystemExit("guest Python runtime package digest does not match")
+    return packages
+
+
+def _run_runtime_tool(arguments: list[str], *, cwd: Path | None = None) -> str:
+    """Run one bounded host-side RPM verification command.
+
+    Args:
+        arguments: Complete executable and argument vector.
+        cwd: Optional private extraction directory.
+
+    Returns:
+        Combined standard output and error for semantic checks.
+    """
+
+    try:
+        result = subprocess.run(
+            arguments,
+            cwd=cwd,
+            text=True,
+            capture_output=True,
+            check=False,
+            timeout=120,
+        )
+    except (OSError, subprocess.TimeoutExpired) as exc:
+        raise SystemExit("Photon Python runtime verification tool failed") from exc
+    output = "\n".join((result.stdout, result.stderr)).strip()
+    if result.returncode:
+        raise SystemExit(f"Photon Python runtime verification failed: {output[-2000:]}")
+    return output
+
+
+def _authenticate_and_extract_runtime_packages(
+    packages: list[Path], source_commit: str, repo_root: Path, destination: Path
+) -> None:
+    """Authenticate Photon RPMs with admitted keys and extract their payloads.
+
+    Args:
+        packages: Staged Photon RPM closure from the read-only guest disk.
+        source_commit: Exact successful-main commit admitted for publication.
+        repo_root: Checkout containing that immutable commit.
+        destination: Private directory that receives signed RPM payloads.
+    """
+
+    tools = {name: shutil.which(name) for name in ("rpm", "rpmkeys", "rpm2cpio", "cpio")}
+    if any(path is None for path in tools.values()):
+        raise SystemExit("rpm, rpmkeys, rpm2cpio, and cpio are required for runtime verification")
+    database = destination.parent / "rpmdb"
+    database.mkdir()
+    _run_runtime_tool([str(tools["rpm"]), "--dbpath", str(database), "--initdb"])
+    for index, source_path in enumerate(PHOTON_RPM_KEY_PATHS):
+        key_path = destination.parent / f"photon-key-{index}"
+        key_path.write_bytes(_git_source_bytes(repo_root, source_commit, source_path))
+        _run_runtime_tool(
+            [str(tools["rpm"]), "--dbpath", str(database), "--import", str(key_path)]
+        )
+    owns_interpreter = False
+    owns_stdlib = False
+    for package in packages:
+        signature = _run_runtime_tool(
+            [
+                str(tools["rpmkeys"]),
+                "--dbpath",
+                str(database),
+                "--checksig",
+                "--verbose",
+                str(package),
+            ]
+        )
+        if "signatures OK" not in signature:
+            raise SystemExit(f"Photon runtime RPM is not signed by an admitted key: {package.name}")
+        paths = _run_runtime_tool([str(tools["rpm"]), "-qpl", str(package)]).splitlines()
+        owns_interpreter = owns_interpreter or "/usr/bin/python3.14" in paths
+        owns_stdlib = owns_stdlib or any(path.startswith("/usr/lib/python3.14/") for path in paths)
+        try:
+            producer = subprocess.Popen(
+                [str(tools["rpm2cpio"]), str(package)],
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+            )
+            consumer = subprocess.run(
+                [
+                    str(tools["cpio"]),
+                    "--extract",
+                    "--make-directories",
+                    "--quiet",
+                    "--no-absolute-filenames",
+                ],
+                cwd=destination,
+                stdin=producer.stdout,
+                capture_output=True,
+                check=False,
+                timeout=120,
+            )
+            if producer.stdout is not None:
+                producer.stdout.close()
+            producer_error = producer.communicate(timeout=30)[1]
+        except (OSError, subprocess.TimeoutExpired) as exc:
+            raise SystemExit("signed Photon runtime RPM extraction failed") from exc
+        if producer.returncode or consumer.returncode:
+            diagnostic = (producer_error + consumer.stderr)[-2000:].decode(errors="replace")
+            raise SystemExit(f"signed Photon runtime RPM extraction failed: {diagnostic}")
+    if not owns_interpreter or not owns_stdlib:
+        raise SystemExit("signed Photon RPM closure does not own Python 3.14 runtime files")
+
+
+def _runtime_tree_manifest(archive_path: Path) -> dict[str, tuple[str, str]]:
+    """Return immutable records for one Python standard-library tar archive.
+
+    Args:
+        archive_path: Tar archive created by guestfish or from signed RPM payloads.
+
+    Returns:
+        Relative member names mapped to file digests or symbolic-link targets.
+    """
+
+    records: dict[str, tuple[str, str]] = {}
+    try:
+        with tarfile.open(archive_path, mode="r:") as archive:
+            for member in archive:
+                name = _normalized_tar_name(member.name)
+                if name.startswith("python3.14/"):
+                    name = name.removeprefix("python3.14/")
+                if not name or member.isdir():
+                    continue
+                if name in records:
+                    raise SystemExit("Python standard-library archive has duplicate paths")
+                if member.issym():
+                    records[name] = ("symlink", member.linkname)
+                elif member.isfile():
+                    source = archive.extractfile(member)
+                    if source is None:
+                        raise SystemExit("Python standard-library archive is unreadable")
+                    digest = hashlib.sha256()
+                    while chunk := source.read(1024 * 1024):
+                        digest.update(chunk)
+                    records[name] = ("file", digest.hexdigest())
+                else:
+                    raise SystemExit("Python standard-library archive contains an unsafe entry")
+    except (OSError, tarfile.TarError) as exc:
+        raise SystemExit("Python standard-library archive could not be read") from exc
+    if not records:
+        raise SystemExit("Python standard-library archive is empty")
+    return records
+
+
+def _verify_python_runtime(
+    disk: Path, filesystem: str, source_commit: str, repo_root: Path
+) -> int:
+    """Authenticate the guest interpreter and stdlib from signed Photon RPMs.
+
+    Args:
+        disk: Read-only Photon OS VMDK.
+        filesystem: Sole ext filesystem mounted from that disk.
+        source_commit: Exact successful-main commit admitted for publication.
+        repo_root: Checkout containing the admitted Photon package keys.
+
+    Returns:
+        Number of independently authenticated runtime roots.
+    """
+
+    with tempfile.TemporaryDirectory(prefix="atlaso-python-runtime-") as temporary:
+        root = Path(temporary)
+        package_archive = root / "packages.tar"
+        _guestfish(
+            disk,
+            [
+                f"mount-ro {filesystem} /",
+                f"tar-out {PYTHON_RUNTIME_PACKAGE_PATH} {package_archive.as_posix()}",
+            ],
+        )
+        package_root = root / "packages"
+        package_root.mkdir()
+        packages = _extract_runtime_package_archive(package_archive, package_root)
+        expected_root = root / "expected"
+        expected_root.mkdir()
+        _authenticate_and_extract_runtime_packages(
+            packages, source_commit, repo_root, expected_root
+        )
+        expected_python = expected_root / "usr/bin/python3.14"
+        if expected_python.is_symlink() or not expected_python.is_file():
+            raise SystemExit("signed Photon RPM closure has no regular Python 3.14 interpreter")
+        guest_python = root / "guest-python3.14"
+        actual_python = _download_guest_file(
+            disk, filesystem, "/usr/bin/python3.14", guest_python
+        )
+        if actual_python != expected_python.read_bytes():
+            raise SystemExit("guest Python interpreter does not match signed Photon RPMs")
+        guest_stdlib = root / "guest-stdlib.tar"
+        expected_stdlib = root / "expected-stdlib.tar"
+        _guestfish(
+            disk,
+            [
+                f"mount-ro {filesystem} /",
+                f"tar-out /usr/lib/python3.14 {guest_stdlib.as_posix()}",
+            ],
+        )
+        with tarfile.open(expected_stdlib, mode="w") as archive:
+            archive.add(
+                expected_root / "usr/lib/python3.14",
+                arcname="python3.14",
+                recursive=True,
+            )
+        if _runtime_tree_manifest(guest_stdlib) != _runtime_tree_manifest(expected_stdlib):
+            raise SystemExit("guest Python standard library does not match signed Photon RPMs")
+    return 2
+
+
 def verify_installed_environment(
     asset_root: Path,
     wheel: Path,
@@ -547,7 +899,16 @@ def verify_installed_environment(
     source_commit: str,
     repo_root: Path,
 ) -> dict[str, Any]:
-    """Verify the complete signed wheel set in the active guest environment."""
+    """Verify the complete signed wheel set in the active guest environment.
+
+    Args:
+        asset_root: Flat candidate asset directory.
+        wheel: Signed Atlaso application wheel.
+        wheelhouse: Signed dependency-wheel directory.
+        expected_digest: Manifest-authenticated Atlaso wheel digest.
+        source_commit: Exact successful-main commit.
+        repo_root: Atlaso checkout containing that commit.
+    """
 
     records, dist_infos = _expected_environment(wheel, wheelhouse, expected_digest)
     console_scripts = _wheel_console_scripts(wheel)
@@ -581,6 +942,13 @@ def verify_installed_environment(
     system_files_verified = _verify_deployed_system_content(
         resolved_assets, source_commit, repo_root.resolve(strict=True)
     )
+    payloads = _payload_vmdks(resolved_assets)
+    python_runtime_files_verified = _verify_python_runtime(
+        payloads["photon_os"],
+        _filesystem(payloads["photon_os"]),
+        source_commit,
+        repo_root.resolve(strict=True),
+    )
     return {
         "schema_version": 1,
         "kind": "atlaso-installed-environment-verification",
@@ -589,11 +957,16 @@ def verify_installed_environment(
         "files_verified": len(records),
         "console_scripts_verified": len(console_scripts),
         "system_files_verified": system_files_verified,
+        "python_runtime_files_verified": python_runtime_files_verified,
     }
 
 
 def main(argv: list[str] | None = None) -> int:
-    """Run the protected installed-wheel verification command."""
+    """Run the protected installed-wheel verification command.
+
+    Args:
+        argv: Optional command-line argument vector.
+    """
 
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--assets", required=True, type=Path)

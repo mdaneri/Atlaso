@@ -148,7 +148,9 @@ The image wrapper uses the same exact Atlaso Environment selector contract as no
 `-SshPassword` or `-BootstrapAdminPassword` is omitted, the bounded Windows SDK bridge retrieves only that value's
 unique concealed `DEFAULT_ROOT_PASSWORD` or `DEFAULT_ADMIN_PASSWORD`. Explicit `SecureString` parameters remain
 independently authoritative. With no explicit selectors, the bridge uses the single local 1Password CLI account and
-the highest compatible CPython 3.10 through 3.13 runtime registered with the Windows launcher. Zero or multiple
+the highest compatible CPython 3.10 through 3.13 runtime registered with the Windows launcher, including current Python
+Install Manager bracketed architecture selectors. Legacy launcher and vendor-tagged registrations remain compatible;
+known x86 and unsupported or malformed entries remain ineligible. Zero or multiple
 accounts and a missing compatible runtime fail closed; `-OnePasswordAccount` and `-OnePasswordPython` remain explicit
 overrides. The bridge returns only current-user DPAPI ciphertext and removes its temporary files
 before the wrapper performs network discovery or preparation, output cleanup, ISO remastering, Packer initialization,
@@ -397,7 +399,8 @@ VMware reports the exact empty runtime sentinel, the wrapper stops the exact VM,
 signing-key assignment, restarts it, and requires three empty runtime readbacks before retiring the marker.
 The wrapper injects the same complete DHCP-first OVF environment before power-on. Use `-FirstBootFqdn` for the test
 identity. The wrapper uses the single local 1Password CLI account and the highest compatible CPython 3.10 through 3.13
-runtime registered with the Windows launcher. Use `-OnePasswordAccount` or `-OnePasswordPython` only when an explicit
+runtime registered with the Windows launcher, including bracketed Python Install Manager architecture selectors. Use
+`-OnePasswordAccount` or `-OnePasswordPython` only when an explicit
 override is required; zero or multiple accounts and a missing compatible runtime fail before VMware mutation.
 `-AdminPassword` and `-RootPassword` accept only
 `SecureString` objects. When either parameter is omitted, the wrapper retrieves only that credential's exact concealed

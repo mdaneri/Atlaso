@@ -3,6 +3,7 @@
 import json
 import os
 import re
+from dataclasses import replace
 from pathlib import Path
 
 import pytest
@@ -1032,7 +1033,7 @@ def test_pwa_manifest_service_worker_and_offline_shell(client):
     assert "ATLASO_CACHE" in service_worker.text
     assert "atlaso-management-pwa-v" in service_worker.text
     assert "ATLASO_CACHE_PREFIX" in service_worker.text
-    assert 'const ATLASO_CACHE = `${ATLASO_CACHE_PREFIX}288`;' in service_worker.text
+    assert 'const ATLASO_CACHE = `${ATLASO_CACHE_PREFIX}294`;' in service_worker.text
     assert 'fetch(asset, { cache: "reload" })' in service_worker.text
     assert "Required precache request failed" in service_worker.text
     assert "key.startsWith(ATLASO_CACHE_PREFIX)" in service_worker.text
@@ -1052,7 +1053,7 @@ def test_pwa_manifest_service_worker_and_offline_shell(client):
     assert "/static/ui-patterns.js?v=atlaso-ui-foundation-20260726-10" in service_worker.text
     assert "/static/appliance-apply-polling.js?v=issue-420-6" in service_worker.text
     assert "/static/ui-routes.js?v=issue-287-1" in service_worker.text
-    assert "/static/app.js?v=issues-515-519-11" in service_worker.text
+    assert "/static/app.js?v=issues-515-519-11-513-328-1-595-6" in service_worker.text
     assert "/static/terminal.js?v=issue-287-2" in service_worker.text
     assert "/static/pwa.js?v=issue-287-2" in service_worker.text
     assert "vcfdt-configuration-248-20260807-14" not in service_worker.text
@@ -1106,8 +1107,8 @@ def test_shared_ui_pattern_shell_and_wizard_contracts(client):
     base = (templates / "base.html").read_text(encoding="utf-8")
     public_base = (templates / "public_portal_base.html").read_text(encoding="utf-8")
     for shell, app_asset in (
-        (base, "/static/app.js?v=issues-515-519-11"),
-        (public_base, "/static/app.js?v=issues-515-519-11"),
+        (base, "/static/app.js?v=issues-515-519-11-513-328-1-595-6"),
+        (public_base, "/static/app.js?v=issues-515-519-11-513-328-1-595-6"),
         (base, "/static/appliance-apply-polling.js?v=issue-420-6"),
     ):
         assert shell.index("/static/vendor/tabulator/tabulator.min.js") < shell.index(
@@ -1761,7 +1762,7 @@ def test_monitor_page_renders_template_and_browser_assets(client):
     assert "swagger-link-icon" in page.text
     assert "/static/app.css?v=issues-515-519-9" in page.text
     assert "/static/ui-patterns.js?v=atlaso-ui-foundation-20260726-10" in page.text
-    assert "/static/app.js?v=issues-515-519-11" in page.text
+    assert "/static/app.js?v=issues-515-519-11-513-328-1-595-6" in page.text
     app_css = client.get("/static/app.css")
     assert app_css.status_code == 200
     assert ".split-workspace > .wide-panel" in app_css.text
@@ -17326,6 +17327,39 @@ def test_vcf_helper_page_renders_domain_dropdown(client):
     assert "disk_provisioning: form.elements.disk_provisioning.value" in app_js
     assert "[data-vcf-sddc-trust-mode-row]" not in app_js
     assert "showTlsConfirmation(data.fingerprint || \"\", handleDiscover)" in app_js
+    assert "const destinationSelections = new Map(" in app_js
+    assert "const networkSelections = new Map(" in app_js
+    assert "restoreVcfInventorySelect(form.elements[name], value)" in app_js
+    assert "restoreVcfInventorySelect(control, networkSelections.get(control.dataset.ovaNetwork))" in app_js
+    assert "const requestId = ++discoveryRequestId" in app_js
+    assert "const discoveryPayload = basePayload()" in app_js
+    assert 'const selectedOption = ova?.selected_deployment_option || ova?.default_deployment_option || ""' in app_js
+    assert 'new Option("Default appliance profile", "")' in app_js
+    assert "options[0]?.key" not in app_js
+    assert "let discoveryPending = false" in app_js
+    assert "let discoveryReady = false" in app_js
+    assert "const invalidateDiscovery = () =>" in app_js
+    assert 'form.querySelectorAll("[data-atlaso-wizard-nav], [data-atlaso-wizard-submit]")' in app_js
+    assert '["ova_path", "address", "username", "password", "credential_vault_id", "credential_entry_id"]' in app_js
+    assert 'addEventListener("input", invalidateDiscovery)' in app_js
+    assert "if (discoveryPending || !discoveryReady)" in app_js
+    assert "const discoveryIdentityFields = [" in app_js
+    for field in (
+        "ova_path",
+        "address",
+        "port",
+        "username",
+        "password",
+        "credential_vault_id",
+        "credential_entry_id",
+        "confirmed_tls_fingerprint",
+        "deployment_option",
+    ):
+        assert f'      "{field}",' in app_js
+    assert "requestId !== discoveryRequestId" in app_js
+    assert "const currentDiscoveryPayload = basePayload()" in app_js
+    assert "currentDiscoveryPayload[field] !== discoveryPayload[field]" in app_js
+    assert "if (requestId === discoveryRequestId && next instanceof HTMLButtonElement)" in app_js
     assert "await action()" in app_js
     assert "parseEndpoint" in app_js
     assert 'next.textContent = "Next"' in app_js
@@ -18467,6 +18501,7 @@ def test_vcf_sddc_deploy_job_persists_no_passwords(client, monkeypatch):
     queued = {}
     monkeypatch.setattr("atlaso.app.routers.ui.vcf_workflows.tls_sha256_fingerprint", lambda *_args, **_kwargs: "AA:BB")
     monkeypatch.setattr("atlaso.app.routers.ui.vcf_workflows.inspect_ova", lambda *_args, **_kwargs: descriptor)
+    monkeypatch.setattr("atlaso.app.routers.ui.vcf_workflows.vsphere_ovf_descriptor", lambda *_args, **_kwargs: descriptor)
     monkeypatch.setattr(ui, "queue_vcf_sddc_deployment_job", lambda job_id, **kwargs: queued.update({"job_id": job_id, **kwargs}))
     response = client.post(
         "/vcf-helper/sddc-manager/deploy",
@@ -18496,6 +18531,43 @@ def test_vcf_sddc_deploy_job_persists_no_passwords(client, monkeypatch):
     assert "local-secret" not in persisted
     assert "thick" in persisted
     assert "power_on" in persisted
+
+    changed_descriptor = replace(
+        descriptor,
+        properties=[
+            *descriptor.properties,
+            OvfProperty("target_added", "string", "Target added", "New target property", "enabled", "", False, True),
+        ],
+    )
+    monkeypatch.setattr(
+        "atlaso.app.routers.ui.vcf_workflows.vsphere_ovf_descriptor",
+        lambda *_args, **_kwargs: changed_descriptor,
+    )
+    queued.clear()
+    changed_contract = client.post(
+        "/vcf-helper/sddc-manager/deploy",
+        json={
+            "csrf": csrf,
+            "address": "vc.example",
+            "port": 443,
+            "username": "administrator",
+            "password": "vsphere-secret",
+            "confirmed_tls_fingerprint": "AA:BB",
+            "ova_path": descriptor.path,
+            "vm_name": "sddc-test-contract-change",
+            "properties": {"ROOT_PASSWORD": "root-secret", "LOCAL_USER_PASSWORD": "local-secret", "vami.hostname": "sddc.example"},
+            "destination": {"resource_pool_id": "resgroup-1", "datastore_id": "datastore-1", "network_ids": {"Network 1": "network-1"}},
+        },
+    )
+    assert changed_contract.status_code == 422
+    assert "changed after review" in changed_contract.json()["detail"]
+    assert "target_added" in changed_contract.json()["detail"]
+    assert "root-secret" not in changed_contract.text
+    assert queued == {}
+    monkeypatch.setattr(
+        "atlaso.app.routers.ui.vcf_workflows.vsphere_ovf_descriptor",
+        lambda *_args, **_kwargs: descriptor,
+    )
 
     powered_off_dns = client.post(
         "/vcf-helper/sddc-manager/deploy",
@@ -18649,6 +18721,7 @@ def test_vcf_sddc_deploy_requires_ipv4_ova_properties(client, monkeypatch):
     queued = {}
     monkeypatch.setattr("atlaso.app.routers.ui.vcf_workflows.tls_sha256_fingerprint", lambda *_args, **_kwargs: "AA:BB")
     monkeypatch.setattr("atlaso.app.routers.ui.vcf_workflows.inspect_ova", lambda *_args, **_kwargs: descriptor)
+    monkeypatch.setattr("atlaso.app.routers.ui.vcf_workflows.vsphere_ovf_descriptor", lambda *_args, **_kwargs: descriptor)
     monkeypatch.setattr(ui, "queue_vcf_sddc_deployment_job", lambda job_id, **kwargs: queued.update({"job_id": job_id, **kwargs}))
 
     response = client.post(
@@ -18667,6 +18740,10 @@ def test_vcf_sddc_deploy_requires_ipv4_ova_properties(client, monkeypatch):
                 "LOCAL_USER_PASSWORD": "LocalPassword123!",
                 "vami.hostname": "sddc.example",
                 "ip_address_version": "IPv4",
+                "ip0": "",
+                "netmask0": "",
+                "gateway": "",
+                "DNS": "",
             },
             "destination": {"resource_pool_id": "resgroup-1", "datastore_id": "datastore-1", "network_ids": {"Network 1": "network-1"}},
             "options": {},
