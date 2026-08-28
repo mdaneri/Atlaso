@@ -284,23 +284,44 @@ cleanup_staging() {
   cleanup_required=0
   if [ -d "$STAGING_DIRECTORY" ]; then
     cleanup_required=1
-    if [ -n "$TEST_ROOT" ]; then
-      # Test overrides share an identity with their harness. Unlink files
-      # without overwriting their inodes so a concurrently added outside hard
-      # link cannot turn cleanup into an out-of-bound data modification.
-      find "$STAGING_DIRECTORY" -type f -delete
-    else
+    if [ -z "$TEST_ROOT" ]; then
       find "$STAGING_DIRECTORY" -type f -exec shred -u -z -- {} + 2>/dev/null ||
         find "$STAGING_DIRECTORY" -type f -delete
     fi
   fi
   [ ! -e "$RUNTIME_DIRECTORY" ] && [ ! -L "$RUNTIME_DIRECTORY" ] || cleanup_required=1
-  rm -rf "$STAGING_DIRECTORY" "$RUNTIME_DIRECTORY"
-  if [ "$cleanup_required" -eq 1 ]; then
-    if [ -e "$PACKAGE_CACHE_DIRECTORY" ] || [ -L "$PACKAGE_CACHE_DIRECTORY" ]; then
+  if [ -n "$TEST_ROOT" ]; then
+    # A same-identity harness can add a bind or FUSE mount after validation.
+    # Atomic renames never traverse those trees: a raced mount makes the move
+    # fail closed, while ordinary artifacts remain beneath the harness-owned
+    # root for its eventual cleanup.
+    retained_directory=$(mktemp -d "$TEST_ROOT/.atlaso-guest-agent-retained.XXXXXX") ||
+      fail "Guest-agent test artifacts cannot be retained safely."
+    chmod 0700 "$retained_directory"
+    if [ -e "$STAGING_DIRECTORY" ] || [ -L "$STAGING_DIRECTORY" ]; then
+      mv -- "$STAGING_DIRECTORY" "$retained_directory/staging" ||
+        fail "Guest-agent test staging cannot be retained safely."
+    fi
+    if [ -e "$RUNTIME_DIRECTORY" ] || [ -L "$RUNTIME_DIRECTORY" ]; then
+      mv -- "$RUNTIME_DIRECTORY" "$retained_directory/runtime" ||
+        fail "Guest-agent test runtime cannot be retained safely."
+    fi
+    if [ "$cleanup_required" -eq 1 ] &&
+      { [ -e "$PACKAGE_CACHE_DIRECTORY" ] || [ -L "$PACKAGE_CACHE_DIRECTORY" ]; }; then
       [ -d "$PACKAGE_CACHE_DIRECTORY" ] && [ ! -L "$PACKAGE_CACHE_DIRECTORY" ] ||
         fail "Guest-agent package cache must be an ordinary directory."
-      find "$PACKAGE_CACHE_DIRECTORY" -mindepth 1 -maxdepth 1 -exec rm -rf -- {} +
+      mv -- "$PACKAGE_CACHE_DIRECTORY" "$retained_directory/package-cache" ||
+        fail "Guest-agent test package cache cannot be retained safely."
+      install -d -o "$expected_owner" -g "$expected_group" -m 0700 "$PACKAGE_CACHE_DIRECTORY"
+    fi
+  else
+    rm -rf "$STAGING_DIRECTORY" "$RUNTIME_DIRECTORY"
+    if [ "$cleanup_required" -eq 1 ]; then
+      if [ -e "$PACKAGE_CACHE_DIRECTORY" ] || [ -L "$PACKAGE_CACHE_DIRECTORY" ]; then
+        [ -d "$PACKAGE_CACHE_DIRECTORY" ] && [ ! -L "$PACKAGE_CACHE_DIRECTORY" ] ||
+          fail "Guest-agent package cache must be an ordinary directory."
+        find "$PACKAGE_CACHE_DIRECTORY" -mindepth 1 -maxdepth 1 -exec rm -rf -- {} +
+      fi
     fi
   fi
   sync

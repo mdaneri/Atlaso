@@ -109,6 +109,32 @@ esac
     )
     _write_executable(command_dir / "tdnf", "#!/bin/sh\nexit 91\n")
     _write_executable(
+        command_dir / "find",
+        """#!/bin/sh
+set -eu
+if [ -n "${FAKE_REJECT_RECURSIVE_CLEANUP:-}" ]; then
+  for argument in "$@"; do
+    [ "$argument" != "-delete" ] || exit 94
+  done
+fi
+exec /usr/bin/find "$@"
+""",
+    )
+    _write_executable(
+        command_dir / "rm",
+        """#!/bin/sh
+set -eu
+if [ -n "${FAKE_REJECT_RECURSIVE_CLEANUP:-}" ]; then
+  for argument in "$@"; do
+    case "$argument" in
+      -r|-R|-rf|-fr|-r[f]*) exit 95 ;;
+    esac
+  done
+fi
+exec /usr/bin/rm "$@"
+""",
+    )
+    _write_executable(
         command_dir / "shred",
         """#!/bin/sh
 set -eu
@@ -587,6 +613,28 @@ def test_test_override_cleanup_never_shreds_after_link_count_validation(tmp_path
     assert retry.returncode == 0, retry.stderr
     assert not outside_alias.exists()
     assert not staging.exists()
+
+
+def test_test_override_cleanup_quarantines_without_recursive_deletion(tmp_path: Path) -> None:
+    """A post-validation mount race cannot redirect recursive cleanup.
+
+    Args:
+        tmp_path: Temporary directory provided by pytest.
+    """
+
+    environment = _prepare_runtime(tmp_path, platform="kvm", dmi="QEMU", packages=("open-vm-tools",))
+    environment["FAKE_REJECT_RECURSIVE_CLEANUP"] = "1"
+
+    result = _run_selector(environment)
+
+    assert result.returncode == 0, result.stderr
+    retained = list(tmp_path.glob(".atlaso-guest-agent-retained.*"))
+    assert len(retained) == 1
+    assert (retained[0] / "staging" / "qemu" / "qemu.rpm").is_file()
+    assert (retained[0] / "runtime").is_dir()
+    assert (retained[0] / "package-cache" / "metadata").read_text(encoding="utf-8") == "first-boot-cache\n"
+    assert not Path(environment["ATLASO_GUEST_AGENT_STAGING"]).exists()
+    assert not any(Path(environment["ATLASO_GUEST_AGENT_PACKAGE_CACHE"]).iterdir())
 
 
 def test_hyperv_access_cleanup_reloads_kvp_after_record_removal(tmp_path: Path) -> None:
