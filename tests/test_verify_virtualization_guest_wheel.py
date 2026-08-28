@@ -403,6 +403,58 @@ def test_rejects_unexpected_active_pth_file(
         )
 
 
+def test_rejects_generated_active_bytecode(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    bypass_system_content: None,
+) -> None:
+    """The protected inventory rejects executable bytecode absent from wheels.
+
+    Args:
+        tmp_path: Temporary directory provided by pytest.
+        monkeypatch: Pytest fixture used to emulate guestfish.
+        bypass_system_content: Fixture isolating wheel verification.
+    """
+
+    assets = tmp_path / "assets"
+    _assets(assets)
+    wheel, members = _wheel(tmp_path / "atlaso-0.9.242-py3-none-any.whl")
+    wheelhouse = tmp_path / "wheelhouse"
+    wheelhouse.mkdir()
+    _, dependencies = _dependency_wheel(
+        wheelhouse / "authlib-1.6.4-py2.py3-none-any.whl"
+    )
+
+    def fake_guestfish(_disk: Path, commands: list[str]) -> list[str]:
+        """Return producer-generated active bytecode beside signed source."""
+
+        if commands == ["list-filesystems"]:
+            return ["/dev/sda: ext4"]
+        if commands[-1].startswith("realpath "):
+            return [
+                "/opt-atlaso/releases/bootstrap-0.9.242/.venv/lib/python3.14/site-packages"
+            ]
+        tar_command = next(
+            command for command in commands if command.startswith("tar-out ")
+        )
+        source = tar_command.split(" ", 2)[1]
+        destination = tar_command.rsplit(" ", 1)[1]
+        _write_guest_archive(
+            Path(destination),
+            source,
+            {**members, **dependencies},
+            extra={"atlaso/__pycache__/__init__.cpython-314.pyc": b"producer-bytecode"},
+        )
+        return []
+
+    monkeypatch.setattr(verifier, "_guestfish", fake_guestfish)
+    digest = hashlib.sha256(wheel.read_bytes()).hexdigest()
+    with pytest.raises(SystemExit, match="unexpected file: atlaso/__pycache__"):
+        verifier.verify_installed_environment(
+            assets, wheel, wheelhouse, digest, SOURCE_COMMIT, tmp_path
+        )
+
+
 @pytest.mark.parametrize(
     ("python_target", "altered_script", "message"),
     [

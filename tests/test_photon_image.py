@@ -1341,7 +1341,9 @@ def test_photon_image_optional_pip_global_index_configuration():
     assert 'ln -sfn "current/.venv" "$ATLASO_HOME/.venv"' in script
     assert 'write_pip_config "$ATLASO_HOME/.venv/pip.conf"' in script
     assert '--requirement "$ATLASO_HOME/requirements-appliance.lock"' in script
-    assert 'pip install --no-deps "$ATLASO_HOME"' in script
+    assert 'pip install --no-compile --no-deps "$ATLASO_HOME"' in script
+    assert "Atlaso site-packages resolved outside the expected release environment." in script
+    assert 'find "$ATLASO_SITE_PACKAGES" -type f -name \'*.pyc\' -delete' in script
     assert "/etc/atlaso/update-trust.d" in script
     assert 'trust_source_dir="$ATLASO_HOME/image/common/update-trust"' in script
     assert 'for trust_key in "$trust_source_dir"/*.pem' in script
@@ -1884,8 +1886,13 @@ def test_vmware_deploy_wheel_supports_secure_onepassword_password_deploy():
     assert "'-m', 'pip', 'wheel', '.', '-w', $generatedRuntimeDependencyRoot" in script
     assert "Remove-Item -LiteralPath $generatedRuntimeDependencyRoot -Recurse -Force" in script
     assert "Matched local and remote runtime dependency wheels are required." in script
-    assert '"$python" -m pip install --force-reinstall --no-deps "$runtime_dependency_path"' in script
-    assert '"$python" -m pip install --force-reinstall --no-deps "$wheel"' in script
+    assert (
+        '"$python" -m pip install --force-reinstall --no-compile --no-deps '
+        '"$runtime_dependency_path"'
+    ) in script
+    assert '"$python" -m pip install --force-reinstall --no-compile --no-deps "$wheel"' in script
+    assert "Atlaso site-packages resolved outside the active environment." in script
+    assert 'find "$site_packages" -type f -name \'*.pyc\' -delete' in script
     assert "/etc/systemd/system/atlaso.service.d/atlaso-data-disks.conf" in script
     assert "/etc/systemd/system/nginx.service.d/atlaso-data-disks.conf" in script
     assert "systemctl enable atlaso-worker.service" in script

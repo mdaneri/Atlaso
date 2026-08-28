@@ -590,14 +590,11 @@ def _normalized_tar_name(name: str) -> str:
     return name
 
 
-def _allowed_generated_file(
-    name: str, records: dict[str, tuple[str, int]], dist_infos: set[str]
-) -> bool:
-    """Return whether pip or CPython may generate this non-wheel file.
+def _allowed_generated_file(name: str, dist_infos: set[str]) -> bool:
+    """Return whether pip may generate this inert non-wheel metadata file.
 
     Args:
         name: Installed path absent from signed wheel records.
-        records: Signed installed-file records.
         dist_infos: Signed distribution metadata directories.
     """
 
@@ -609,12 +606,7 @@ def _allowed_generated_file(
         "direct_url.json",
     }:
         return True
-    match = re.fullmatch(
-        r"(.+)/__pycache__/([^/]+)\.cpython-314(?:\.opt-[12])?\.pyc", name
-    )
-    if match is None:
-        return False
-    return f"{match.group(1)}/{match.group(2)}.py" in records
+    return False
 
 
 def _verify_site_packages_archive(
@@ -662,7 +654,7 @@ def _verify_site_packages_archive(
                             f"installed wheel member does not match: {name}"
                         )
                     found.add(name)
-                elif not _allowed_generated_file(name, records, dist_infos):
+                elif not _allowed_generated_file(name, dist_infos):
                     raise SystemExit(
                         f"guest site-packages contains an unexpected file: {name}"
                     )

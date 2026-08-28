@@ -1267,10 +1267,17 @@ fi
 old_ifs="$IFS"
 IFS=:
 for runtime_dependency_path in $runtime_dependency_paths; do
-    "$python" -m pip install --force-reinstall --no-deps "$runtime_dependency_path"
+    "$python" -m pip install --force-reinstall --no-compile --no-deps "$runtime_dependency_path"
 done
 IFS="$old_ifs"
-"$python" -m pip install --force-reinstall --no-deps "$wheel"
+"$python" -m pip install --force-reinstall --no-compile --no-deps "$wheel"
+site_packages="$("$python" -c 'import sysconfig; print(sysconfig.get_path("purelib"))')"
+if [ "$site_packages" != "$venv/lib/python3.14/site-packages" ]; then
+    echo "Atlaso site-packages resolved outside the active environment." >&2
+    exit 2
+fi
+find "$site_packages" -type f -name '*.pyc' -delete
+find "$site_packages" -depth -type d -name __pycache__ -empty -delete
 atlaso_was_active=false
 worker_was_active=false
 if systemctl is-active --quiet atlaso.service; then

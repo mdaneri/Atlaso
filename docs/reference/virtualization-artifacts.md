@@ -43,7 +43,9 @@ the normalized descriptor's complete machine contract before writing provenance 
 Before either virtualization index is signed, the protected GitHub-hosted finalizer opens the OVA-validated
 system-content VMDK read-only with libguestfs. It resolves the active CPython 3.14 environment, requires every hashed
 member installed from the Atlaso wheel and complete signed wheelhouse to match, and rejects unexpected active files
-except bounded pip and CPython metadata. The image retains the exact Photon RPM closure that owns the interpreter and
+except bounded inert pip metadata. Both image provisioning and release deployment disable bytecode compilation and
+remove retained package bytecode; the protected finalizer rejects every active `.pyc` file rather than trusting
+producer-generated compilation. The image retains the exact Photon RPM closure that owns the interpreter and
 standard library. The finalizer authenticates every retained RPM against the Photon package keys pinned in the admitted
 Atlaso commit, requires its exact name, epoch, version, release, architecture, and SHA-256 digest to remain present in
 the current official Photon 5.0 release or updates repository metadata, extracts those signed payloads on the hosted
