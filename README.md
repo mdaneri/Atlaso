@@ -175,9 +175,11 @@ password-backed sudo policy. First boot publishes only the test VM's public Ed25
 guest-info; the wrapper prints the exact key and SHA-256 fingerprint for explicit `known_hosts` verification without
 trusting `ssh-keyscan`.
 The wrapper binds its durable development-CA cleanup marker to a non-secret identity stored in the VMX, so VMware's
-power-on VMX replacement cannot break exact-VM recovery. After encrypted import is proven, it stops that exact VM,
-removes and verifies the powered-off signing-key assignment, restarts the VM, and proves runtime guest-info remains
-empty before reporting success.
+power-on VMX replacement cannot break exact-VM recovery. It treats the marker path as recovery state only after the
+write-through rename succeeds; a failure before any credential or signer child starts preserves the original error and
+rolls back only invocation-owned artifacts. After encrypted import is proven, it stops that exact VM, removes and
+verifies the powered-off signing-key assignment, restarts the VM, and proves runtime guest-info remains empty before
+reporting success.
 Before it prints ready state or connection endpoints, the wrapper also proves one identity tuple across the exact
 running VMX, management NIC MAC, injected hostname, guest-published actual hostname, VMware Tools address, and Windows
 neighbor cache. Every running guest must answer the address inventory query. A static address also claimed by another

@@ -632,12 +632,17 @@ $conditionalRestore = $wrapperSource.LastIndexOf(
     'if ($quarantineDirectory -and -not $removalTreeUnproven)',
     [System.StringComparison]::Ordinal
 )
+$markerlessUnprovenCapture = $wrapperSource.LastIndexOf(
+    '$removalTreeUnproven = $true',
+    [System.StringComparison]::Ordinal
+)
 if (
     $removalChildPhase -lt $rollbackCatch -or
     $rollbackRemoval -lt $removalChildPhase -or
+    $markerlessUnprovenCapture -lt $rollbackRemoval -or
     $conditionalRestore -lt $rollbackRemoval
 ) {
-    throw 'Rollback must persist removal-child activity and withhold quarantined disks until termination is proven.'
+    throw 'Rollback must retain markerless and durable removal-child activity and withhold quarantined disks until termination is proven.'
 }
 if ($wrapperSource -notmatch '\$runtimeSignerScrubError\s*=\s*\$_\.Exception\.Message' -or
     $wrapperSource -notmatch '\$stopped\s*=\s*\$true') {
@@ -673,14 +678,99 @@ try {
             -MarkerPathReference ([ref]$blockedMarkerPath)
     } 'A pre-existing VMX cleanup identity must block marker publication.'
     if (
-        [string]::IsNullOrWhiteSpace($blockedMarkerPath) -or
+        -not [string]::IsNullOrWhiteSpace($blockedMarkerPath) -or
         (Test-Path -LiteralPath $blockedMarkerPath) -or
-        -not ([System.IO.Path]::GetDirectoryName($blockedMarkerPath)).Equals(
-            [System.IO.Path]::GetFullPath($markerRoot),
-            [System.StringComparison]::OrdinalIgnoreCase
-        )
+        @(Get-ChildItem -LiteralPath $markerRoot -Filter '*.json' -ErrorAction SilentlyContinue).Count -ne 0
     ) {
-        throw 'A marker-publication failure did not preserve its unbound path for fail-closed rollback.'
+        throw 'A marker-publication failure was incorrectly exposed as durable recovery state.'
+    }
+
+    # Run the production declarations as one file-backed child script. The
+    # existing isolated-function tests intentionally dot-source extracted
+    # definitions and therefore cannot reproduce script-local command lookup.
+    $scriptScopeRoot = Join-Path $markerTestRoot 'script-scope'
+    New-Item -ItemType Directory -Path $scriptScopeRoot | Out-Null
+    $scriptScopeHarness = Join-Path $scriptScopeRoot 'marker-script-scope.ps1'
+    $wrapperLines = Get-Content -LiteralPath $wrapperPath
+    $lastFunctionEndLine = ($ast.FindAll({
+                param($node)
+                $node -is [System.Management.Automation.Language.FunctionDefinitionAst]
+            }, $true) | Measure-Object -Property {
+                $_.Extent.EndLineNumber
+            } -Maximum).Maximum
+    $wrapperScriptRootLiteral = "'$((Split-Path -Parent $wrapperPath).Replace("'", "''"))'"
+    $productionDeclarations = ($wrapperLines[0..($lastFunctionEndLine - 1)] -join "`r`n").Replace(
+        '$PSScriptRoot',
+        $wrapperScriptRootLiteral
+    )
+    $scriptScopeExercise = @'
+
+$scopeRoot = Join-Path ([System.IO.Path]::GetTempPath()) (
+    "atlaso-marker-script-scope-$([guid]::NewGuid().ToString('N'))"
+)
+try {
+    $vmRoot = Join-Path $scopeRoot 'vm'
+    $markerRoot = Join-Path $scopeRoot 'markers'
+    New-Item -ItemType Directory -Path $vmRoot | Out-Null
+    $vmxPath = Join-Path $vmRoot 'Atlaso-Script-Scope.vmx'
+    [System.IO.File]::WriteAllText(
+        $vmxPath,
+        'config.version = "8"',
+        [System.Text.UTF8Encoding]::new($false)
+    )
+    $publishedMarkerPath = ''
+    $returnedMarkerPath = New-AtlasoDevelopmentCaCleanupMarker `
+        -VmxPath $vmxPath `
+        -Name 'Atlaso-Script-Scope' `
+        -OutputDirectory $vmRoot `
+        -DataDiskStates @() `
+        -MarkerRoot $markerRoot `
+        -MarkerPathReference ([ref]$publishedMarkerPath)
+    if (
+        [string]::IsNullOrWhiteSpace($publishedMarkerPath) -or
+        $returnedMarkerPath -cne $publishedMarkerPath -or
+        -not (Test-Path -LiteralPath $publishedMarkerPath -PathType Leaf)
+    ) {
+        throw 'The file-backed wrapper scope did not durably publish its cleanup marker.'
+    }
+}
+finally {
+    Remove-Item -LiteralPath $scopeRoot -Recurse -Force -ErrorAction SilentlyContinue
+}
+'@
+    [System.IO.File]::WriteAllText(
+        $scriptScopeHarness,
+        "$productionDeclarations$scriptScopeExercise",
+        [System.Text.UTF8Encoding]::new($false)
+    )
+    $scriptScopeResult = & (Get-Process -Id $PID).Path `
+        -NoLogo `
+        -NoProfile `
+        -NonInteractive `
+        -File $scriptScopeHarness 2>&1
+    if ($LASTEXITCODE -ne 0) {
+        throw "The file-backed script-local marker regression failed: $($scriptScopeResult -join ' ')"
+    }
+    $markerFunctionStart = $wrapperSource.IndexOf(
+        'function New-AtlasoDevelopmentCaCleanupMarker',
+        [System.StringComparison]::Ordinal
+    )
+    $durableActionCall = $wrapperSource.IndexOf(
+        '-DurableIdentityAction $publishMarker',
+        $markerFunctionStart,
+        [System.StringComparison]::Ordinal
+    )
+    $publishedPathAssignment = $wrapperSource.IndexOf(
+        '$MarkerPathReference.Value = $markerPath',
+        $markerFunctionStart,
+        [System.StringComparison]::Ordinal
+    )
+    if (
+        $markerFunctionStart -lt 0 -or
+        $durableActionCall -lt $markerFunctionStart -or
+        $publishedPathAssignment -lt $durableActionCall
+    ) {
+        throw 'The caller-visible marker path must follow successful durable publication.'
     }
     [System.IO.File]::WriteAllText($markerVmx, 'config.version = "8"')
     [System.IO.File]::WriteAllText(

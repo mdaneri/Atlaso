@@ -386,7 +386,10 @@ mutation. The wrapper verifies its SHA-256 identity against the repository pin w
 Environments-enabled beta 1Password CLI under `C:\Program Files\1Password CLI`; a stable CLI without
 `op run --environment` fails before Environment access. A wrong Environment ID or signer fails before new VM mutation.
 The cleanup marker uses a non-secret identity stored in the VMX, not the VMX file ID alone, because Workstation may
-replace the VMX during power-on. After first boot proves encrypted import and VMware reports the exact empty runtime
+replace the VMX during power-on. The wrapper exposes the marker path as recovery state only after its write-through
+rename succeeds. If publication fails before a credential or signer child starts, it preserves the original actionable
+error and rolls back only the VM artifacts created by that invocation; a durable child-active or unproven marker still
+blocks destructive rollback. After first boot proves encrypted import and VMware reports the exact empty runtime
 sentinel, the wrapper stops the exact VM, removes and verifies the powered-off signing-key assignment, restarts it, and
 requires three empty runtime readbacks before retiring the marker.
 The wrapper injects the same complete DHCP-first OVF environment before power-on. Use `-FirstBootFqdn` for the test

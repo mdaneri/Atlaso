@@ -562,7 +562,11 @@ The following cross-cutting boundaries always apply:
   scrubbed normal-wrapper guest-info value. First boot must stage it mode `0600`, prove guest-info scrub, encrypt it with
   the VM-unique secrets key, remove staging even when encrypted import fails, and issue a unique HTTPS leaf. Commit a
   durable non-secret cleanup marker through a Windows write-through atomic rename before staging. Bind it to a
-  non-secret VMX identity that survives VMware's legitimate power-on file replacement. After encrypted import proof,
+  non-secret VMX identity that survives VMware's legitimate power-on file replacement. Expose its marker path to
+  rollback only after durable publication succeeds. A pre-publication failure before any
+  secret child starts must preserve the original actionable error and remove only invocation-owned artifacts; actual
+  child-active or unproven state remains fail-closed.
+  After encrypted import proof,
   stop the exact VM, prove the powered-off VMX signer assignment absent, restart it, and prove runtime guest-info remains
   empty before retiring the marker. Later normal-wrapper invocations must retry its exact identity-bound stop, VMX
   scrub, artifact removal, and data-disk restoration before

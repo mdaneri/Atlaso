@@ -1454,8 +1454,8 @@ Pre-existing data-disk identities that destructive retry must preserve.
 Per-user marker directory; override only for focused tests.
 
 .PARAMETER MarkerPathReference
-Optional caller-owned path reference populated before VMX mutation so a
-publication failure cannot enter unbound automatic rollback.
+Optional caller-owned path reference populated only after the cleanup marker is
+durably published and bound to the VMX cleanup identity.
 #>
 function New-AtlasoDevelopmentCaCleanupMarker {
     param(
@@ -1488,9 +1488,6 @@ function New-AtlasoDevelopmentCaCleanupMarker {
     $markerId = [guid]::NewGuid().ToString('N')
     $markerPath = Join-Path $MarkerRoot "$markerId.json"
     $temporaryPath = Join-Path $MarkerRoot "$markerId.tmp"
-    if ($null -ne $MarkerPathReference) {
-        $MarkerPathReference.Value = $markerPath
-    }
     # Keep preserved data on the VM artifact volume so quarantine uses a
     # same-volume rename and retains the recorded filesystem identity.
     $quarantineDirectory = Join-Path `
@@ -1520,6 +1517,13 @@ function New-AtlasoDevelopmentCaCleanupMarker {
     $bytes = [System.Text.UTF8Encoding]::new($false).GetBytes(
         ($payload | ConvertTo-Json -Depth 4 -Compress)
     )
+    # GetNewClosure() captures values but does not retain this script's command
+    # lookup scope. Capture the script-local helper itself so normal wrapper
+    # execution cannot depend on ambient or global function state.
+    $durableMarkerMoveAction = ${function:Move-AtlasoDurableCleanupMarkerFile}
+    if ($null -eq $durableMarkerMoveAction) {
+        throw 'The durable cleanup-marker rename helper is unavailable.'
+    }
     $publishMarker = {
         $markerStream = [System.IO.FileStream]::new(
             $temporaryPath,
@@ -1538,7 +1542,7 @@ function New-AtlasoDevelopmentCaCleanupMarker {
         }
         # Keep the VMX write-excluding handle through durable marker rename so
         # the marker can never bind an unproven same-path replacement.
-        Move-AtlasoDurableCleanupMarkerFile `
+        & $durableMarkerMoveAction `
             -SourcePath $temporaryPath `
             -DestinationPath $markerPath
     }.GetNewClosure()
@@ -1548,6 +1552,11 @@ function New-AtlasoDevelopmentCaCleanupMarker {
             -Identity $cleanupIdentity `
             -ExpectedVmxIdentity $vmxIdentity `
             -DurableIdentityAction $publishMarker
+        if ($null -ne $MarkerPathReference) {
+            # A caller-known intended pathname is not durable recovery state.
+            # Expose it only after the write-through rename succeeds.
+            $MarkerPathReference.Value = $markerPath
+        }
         return $markerPath
     }
     finally {
@@ -3040,6 +3049,7 @@ if (-not $WhatIfPreference) {
         if ($createdThisInvocation -and (Test-Path -LiteralPath $targetVmx -PathType Leaf)) {
             $rollbackErrors = [System.Collections.Generic.List[string]]::new()
             $quarantineDirectory = ''
+            $removalTreeUnproven = $false
             $runtimeSignerScrubbed = $false
             $runtimeSignerScrubError = ''
             $stopped = $false
@@ -3093,9 +3103,20 @@ if (-not $WhatIfPreference) {
                         -Phase stopped-vmx-scrubbed
                 }
                 if ($rollbackDataDiskStates.Count -gt 0) {
+                    $rollbackQuarantineId = if ($developmentCaCleanupMarkerPath) {
+                        [System.IO.Path]::GetFileNameWithoutExtension(
+                            $developmentCaCleanupMarkerPath
+                        )
+                    }
+                    else {
+                        # Marker publication never became durable, so allocate a
+                        # fresh invocation-local quarantine identity instead of
+                        # deriving an ambiguous shared path from an empty marker.
+                        [guid]::NewGuid().ToString('N')
+                    }
                     $quarantineDirectory = Join-Path `
                         (Split-Path -Parent $resolvedOutputDirectory) `
-                        ".atlaso-development-ca-cleanup-$([System.IO.Path]::GetFileNameWithoutExtension($developmentCaCleanupMarkerPath))"
+                        ".atlaso-development-ca-cleanup-$rollbackQuarantineId"
                     Move-AtlasoRollbackDataDisksToQuarantine `
                         -DataDiskStates $rollbackDataDiskStates `
                         -QuarantineDirectory $quarantineDirectory
@@ -3123,6 +3144,15 @@ if (-not $WhatIfPreference) {
                 catch {
                     $removalFailure = $_
                     if (
+                        $removalFailure.Exception.Data['AtlasoProcessTreeTerminationUnproven'] -eq $true
+                    ) {
+                        # Marker publication may have failed before this
+                        # invocation-owned VM reached rollback. Retain the
+                        # quarantine independently so a surviving removal tree
+                        # can never race restored data disks.
+                        $removalTreeUnproven = $true
+                    }
+                    if (
                         $developmentCaCleanupMarkerPath -and
                         $removalFailure.Exception.Data['AtlasoProcessTreeTerminationUnproven'] -ne $true
                     ) {
@@ -3144,12 +3174,15 @@ if (-not $WhatIfPreference) {
                 $rollbackErrors.Add($_.Exception.Message)
             }
             finally {
-                $removalTreeUnproven = (
+                $durableRemovalTreeUnproven = (
                     $developmentCaCleanupMarkerPath -and
                     (Test-Path -LiteralPath $developmentCaCleanupMarkerPath -PathType Leaf) -and
                     (Read-AtlasoDevelopmentCaCleanupMarker `
                         -MarkerPath $developmentCaCleanupMarkerPath `
                         -MarkerRoot (Get-AtlasoDevelopmentCaCleanupMarkerRoot)).Phase -ceq 'removal-child-active'
+                )
+                $removalTreeUnproven = (
+                    $removalTreeUnproven -or $durableRemovalTreeUnproven
                 )
                 if ($quarantineDirectory -and -not $removalTreeUnproven) {
                     try {
