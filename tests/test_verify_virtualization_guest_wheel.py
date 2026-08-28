@@ -600,6 +600,17 @@ def test_verifies_every_release_refreshed_non_wheel_file(
     assert verified == len(source_bytes)
 
 
+def test_deployed_system_sources_exist_in_the_checkout() -> None:
+    """Every trusted deployed-file mapping names a tracked source file."""
+
+    sources = {
+        *verifier.DEPLOYED_TEXT_FILES,
+        *verifier.DEPLOYED_BINARY_FILES,
+    }
+    missing = sorted(source for source in sources if not Path(source).is_file())
+    assert missing == []
+
+
 def test_rejects_multiple_or_non_ext_payload_filesystems(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:

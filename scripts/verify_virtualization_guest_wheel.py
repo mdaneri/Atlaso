@@ -35,7 +35,7 @@ DEPLOYED_TEXT_FILES = {
     "image/common/powershell/atlaso-vault-profile.ps1": "/opt-atlaso/bin/atlaso-vault-profile.ps1",
     "image/common/powershell/profile.ps1": "/opt/microsoft/powershell/7/profile.ps1",
     "image/common/systemd/atlaso-console-manager.conf": "/etc/systemd/system.conf.d/atlaso-console.conf",
-    "image/vmware-workstation/systemd/atlaso.service": "/etc/systemd/system/atlaso.service",
+    "image/common/systemd/atlaso.service": "/etc/systemd/system/atlaso.service",
     "image/common/systemd/atlaso-worker.service": "/etc/systemd/system/atlaso-worker.service",
     "image/common/systemd/atlaso-require-data-disks.conf": "/etc/systemd/system/atlaso.service.d/atlaso-data-disks.conf",
     "image/common/systemd/nginx-atlaso-data-disks.conf": "/etc/systemd/system/nginx.service.d/atlaso-data-disks.conf",
