@@ -705,13 +705,14 @@ The following cross-cutting boundaries always apply:
   other secret-bearing data remain sensitive; content-integrity hashes of non-secret material and one-way
   change-detection hashes of encrypted-at-rest ciphertext do not. Treat an identifier as sensitive when it is embedded
   in or paired with authentication or cryptographic material.
-- Use the 1Password MCP and the exact `Atlaso` Environment for every user password and for every newly created
-  user or key secret, including passwords, tokens, API keys, and private keys. Authenticate through the MCP, verify the
-  named Environment before access, and store secret values there as concealed variables. For supported Windows
+- Use the installed 1Password plugin and the exact `Atlaso` Environment as the required agent-facing integration for
+  every user password and for every newly created user or key secret, including passwords, tokens, API keys, and private
+  keys. Authenticate through the plugin, verify the named Environment before access, and store secret values there as
+  concealed variables. For supported Windows
   subprocess use, bind that exact Environment by its opaque ID through the supported 1Password SDK inside the bounded
   child process; never read the value into agent-visible output. Never fall back to chat, repository files, local
   `.env` files, shell arguments, jobs,
-  audits, logs, screenshots, or documentation; if the 1Password MCP or the `Atlaso` Environment is unavailable, stop
+  audits, logs, screenshots, or documentation; if the 1Password plugin or the `Atlaso` Environment is unavailable, stop
   and request maintainer direction.
   DEFAULT_ROOT_PASSWORD contains the default root password for any new deployed environment.
   DEFAULT_ADMIN_PASSWORD contains the default admin password for any new deployed environment.
