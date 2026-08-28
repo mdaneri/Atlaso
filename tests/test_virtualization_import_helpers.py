@@ -2,8 +2,10 @@
 
 from __future__ import annotations
 
+import shlex
 import shutil
 import subprocess
+import sys
 from pathlib import Path
 
 import pytest
@@ -75,6 +77,9 @@ def test_kvm_imports_the_unchanged_ova_and_normalizes_exact_contract() -> None:
     assert "--remove-all-storage" not in script
     assert 'virsh vol-pool "$disk_path"' in script
     assert '"$name"-*' in script
+    assert 'grep -Eq "^${name}-"' not in script
+    assert script.count("volume_list_contains_domain_namespace") == 3
+    assert script.count('volume_name_belongs_to_domain "$volume_name"') == 3
     assert 'virsh vol-delete --pool "$pool" "$volume_name"' in script
     assert 'virsh vol-list "$pool" --name' in script
     assert 'atlaso-kvm-domain-${name}.lock' in script
@@ -87,7 +92,7 @@ def test_kvm_imports_the_unchanged_ova_and_normalizes_exact_contract() -> None:
     domain_inventory = script.index('domain_names=$(virsh list --all --name')
     domain_absence = script.index('grep -Fxq -- "$name"', domain_inventory)
     volume_inventory = script.index('volumes=$(virsh vol-list "$pool" --name', domain_absence)
-    volume_absence = script.index('grep -Eq "^${name}-"', volume_inventory)
+    volume_absence = script.index("volume_list_contains_domain_namespace", volume_inventory)
     ownership = script.index('created=1')
     assert domain_inventory < domain_absence < volume_inventory < volume_absence < ownership
     assert "could not prove domain name $name is available" in script
@@ -102,6 +107,49 @@ def test_kvm_imports_the_unchanged_ova_and_normalizes_exact_contract() -> None:
     assert "exact domain absence could not be proved" in cleanup
     assert "photon-os.qcow2" not in script
     assert script.count('rm -rf -- "$validation_root"') == 2
+
+
+@pytest.mark.parametrize(
+    ("volume", "expected_match"),
+    (
+        ("atlaso.test-disk0", True),
+        ("atlasoXtest-disk0", False),
+    ),
+)
+def test_kvm_volume_namespace_prefix_is_literal(volume: str, expected_match: bool) -> None:
+    """Dotted domain names own only volumes with their exact literal prefix.
+
+    Args:
+        volume: Libvirt volume name to evaluate.
+        expected_match: Whether the inventory contains the domain's namespace.
+    """
+
+    bash = shutil.which("bash")
+    if bash is None:
+        pytest.skip("bash is unavailable")
+    if sys.platform == "win32":
+        pytest.skip("native Bash function execution is unavailable through the Windows WSL launcher")
+    script = KVM_HELPER.read_text(encoding="utf-8")
+    functions = script.split("volume_name_belongs_to_domain() {", 1)[1].split(
+        'for value in "$name"', 1
+    )[0]
+    candidate = shlex.quote(volume)
+    result = subprocess.run(
+        [
+            bash,
+            "-c",
+            "name='atlaso.test'\n"
+            "volume_name_belongs_to_domain() {"
+            f"{functions}"
+            f"volume_name_belongs_to_domain {candidate}",
+            "atlaso-kvm-volume-match",
+        ],
+        cwd=ROOT,
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+    assert (result.returncode == 0) is expected_match, result.stderr
 
 
 def test_proxmox_imports_the_unchanged_ova_and_rejects_conflicting_disks() -> None:

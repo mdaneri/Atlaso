@@ -128,7 +128,9 @@ Arguments are the OVA, an unused domain name, active storage pool, management ne
 The helper imports with `virt-v2v -i ova`, creates only missing 500 GiB data volumes, verifies the resulting disk order
 and capacities, and normalizes the inactive libvirt definition. The resulting domain remains shut off for inspection.
 
-The helper serializes each pool/domain namespace and rejects an existing domain or matching storage namespace.
+The helper serializes each pool/domain namespace and rejects an existing domain or storage volume with the exact
+literal `<domain-name>-` prefix. Dots remain valid in domain names and do not match other characters when storage
+ownership is checked.
 Rollback removes only the domain and matching volumes created after that locked preflight, including partial
 `virt-v2v` volumes left before a domain definition exists.
 
