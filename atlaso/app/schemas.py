@@ -770,6 +770,7 @@ class LdapSettingsResponse(LdapSettingsUpdate):
         updated_at: UTC timestamp when the resource was last updated.
     """
 
+    hostname: Annotated[str, Field(description='Persisted DNS hostname used by the LDAP service response.')] = Field(min_length=1, max_length=180)
     id: Annotated[int, Field(description='Unique database identifier assigned to this resource.')]
     config_path: Annotated[str, Field(description='Appliance path where the rendered configuration is staged or installed; it is not a free-form input.')]
     certificate_path: Annotated[str, Field(description='Canonical filesystem or HTTP certificate path used by Atlaso; callers must not treat it as an unrestricted path.')]

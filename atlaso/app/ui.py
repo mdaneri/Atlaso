@@ -6088,7 +6088,21 @@ def ensure_interface_dns_alias(
             DnsRecord.record_type.in_(["A", "AAAA", "CNAME"]),
         )
     ).scalars().all()
-    canonical_conflict = any(record.description != description for record in canonical_records)
+    canonical_record_conflict = any(
+        record.description != description for record in canonical_records
+    )
+    generated_target_conflict = False
+    for target in targets:
+        target_records = db.execute(
+            select(DnsRecord).where(
+                DnsRecord.hostname == target["hostname"],
+                DnsRecord.record_type.in_([target["record_type"], "CNAME"]),
+            )
+        ).scalars().all()
+        if any(record.description != description for record in target_records):
+            generated_target_conflict = True
+            break
+    canonical_conflict = canonical_record_conflict or generated_target_conflict
     if canonical_conflict:
         actions.append("conflict")
 
@@ -6104,6 +6118,12 @@ def ensure_interface_dns_alias(
             actions.append("removed-old")
             if actor:
                 record_audit(db, actor=actor, action=f"delete_dns_record_from_{audit_prefix}_cname", resource_type="dns_record", resource_id=str(record.id), detail=f"{record.hostname} {record.record_type}")
+            continue
+        if record.hostname in target_hostnames and record.record_type == "CNAME":
+            db.delete(record)
+            actions.append("removed-stale")
+            if actor:
+                record_audit(db, actor=actor, action=f"delete_dns_record_from_{audit_prefix}_stale_target_alias", resource_type="dns_record", resource_id=str(record.id), detail=f"{record.hostname} CNAME -> {record.address}")
             continue
         if record.hostname.startswith(label_prefix) and record.hostname not in target_hostnames:
             db.delete(record)
@@ -6144,10 +6164,26 @@ def ensure_interface_dns_alias(
         target_hostname = target["hostname"]
         if validate_dns_record(target_hostname, record_type, address):
             continue
-        existing = db.execute(select(DnsRecord).where(DnsRecord.hostname == target_hostname, DnsRecord.record_type == record_type)).scalar_one_or_none()
-        if existing and existing.description != description:
+        matching_records = db.execute(
+            select(DnsRecord).where(
+                DnsRecord.hostname == target_hostname,
+                DnsRecord.record_type.in_([record_type, "CNAME"]),
+            )
+        ).scalars().all()
+        matching_records = [
+            record for record in matching_records if record not in db.deleted
+        ]
+        if any(record.description != description for record in matching_records):
             actions.append("conflict")
             continue
+        existing = next(
+            (
+                record
+                for record in matching_records
+                if record.record_type == record_type
+            ),
+            None,
+        )
         if existing:
             if existing.address == address and existing.enabled:
                 actions.append("unchanged")

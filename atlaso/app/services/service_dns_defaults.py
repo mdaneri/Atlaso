@@ -247,6 +247,13 @@ def _migrate_owned_dns_records(
             )
         ).scalars().all()
         if any(candidate.description != description for candidate in destination_records):
+            # An operator-owned destination prevents this factory migration from
+            # claiming the name. Remove exact-marker destination rows as well as
+            # the source so mixed ownership cannot leave incompatible DNS types.
+            for candidate in destination_records:
+                if candidate.description == description:
+                    db.delete(candidate)
+                    changed += 1
             if (
                 record.record_type in {"A", "AAAA"}
                 and record.hostname != old_hostname

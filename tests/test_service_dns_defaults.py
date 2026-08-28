@@ -375,6 +375,106 @@ def test_reconcile_factory_identities_preserves_operator_state_and_dns_conflicts
         ).scalars().all() == []
 
 
+def test_domain_reconciliation_does_not_recreate_alias_for_conflicting_target():
+    """Remove mixed app state and preserve an operator-owned generated target."""
+
+    from atlaso.app.models import (
+        ApplianceSettings,
+        DnsRecord,
+        PhysicalInterface,
+        VcfPrivateRegistrySettings,
+    )
+    from atlaso.app.seed import seed_initial_data
+    from atlaso.app.services.service_dns_defaults import (
+        VCF_REGISTRY_DNS_DESCRIPTION,
+        reconcile_factory_service_identities,
+    )
+    from atlaso.app.ui import refresh_interface_service_dns_aliases
+
+    with _session_factory()() as db:
+        seed_initial_data(db, include_examples=False, commit=False)
+        appliance = db.execute(select(ApplianceSettings)).scalar_one()
+        appliance.fqdn = "atlaso.lab.internal"
+        appliance.service_dns_target_naming = "interface"
+        registry = db.execute(select(VcfPrivateRegistrySettings)).scalar_one()
+        registry.enabled = True
+        registry.hostname = "registry.atlaso.internal"
+        registry.server_certificate = "registry.atlaso.internal"
+        registry.listen_interface = "eth9"
+        registry.listen_address = "192.0.2.70"
+        db.add(
+            PhysicalInterface(
+                name="eth9",
+                mac_address="02:00:00:00:57:09",
+                ip_cidr="192.0.2.70/24",
+                role="access",
+                mode="access",
+                admin_state="up",
+                oper_state="up",
+            )
+        )
+        db.add_all(
+            [
+                DnsRecord(
+                    hostname="registry.atlaso.internal",
+                    record_type="CNAME",
+                    address="registry-eth9.atlaso.internal",
+                    description=VCF_REGISTRY_DNS_DESCRIPTION,
+                ),
+                DnsRecord(
+                    hostname="registry-eth9.atlaso.internal",
+                    record_type="A",
+                    address="192.0.2.70",
+                    description=VCF_REGISTRY_DNS_DESCRIPTION,
+                ),
+                DnsRecord(
+                    hostname="registry-eth9.lab.internal",
+                    record_type="A",
+                    address="192.0.2.99",
+                    description="Operator-owned record",
+                ),
+                DnsRecord(
+                    hostname="registry-eth9.lab.internal",
+                    record_type="CNAME",
+                    address="stale-app-target.lab.internal",
+                    description=VCF_REGISTRY_DNS_DESCRIPTION,
+                ),
+            ]
+        )
+        db.flush()
+
+        changes = reconcile_factory_service_identities(
+            db,
+            previous_appliance_fqdn="core.atlaso.internal",
+        )
+        refreshed = refresh_interface_service_dns_aliases(db, actor=None)
+        db.commit()
+
+        assert changes["vcf_private_registry"]["dns_conflicts"] == 1
+        assert "VCF Private Registry" not in refreshed
+        records = db.execute(
+            select(DnsRecord).where(
+                DnsRecord.hostname.in_(
+                    [
+                        "registry.lab.internal",
+                        "registry-eth9.lab.internal",
+                    ]
+                )
+            )
+        ).scalars().all()
+        assert {
+            (record.hostname, record.record_type, record.address, record.description)
+            for record in records
+        } == {
+            (
+                "registry-eth9.lab.internal",
+                "A",
+                "192.0.2.99",
+                "Operator-owned record",
+            )
+        }
+
+
 def test_factory_reset_seed_restores_coherent_factory_service_domain(monkeypatch):
     """Factory replacement ignores deployment overrides and restores one factory domain.
 
