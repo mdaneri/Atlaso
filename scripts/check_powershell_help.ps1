@@ -133,6 +133,132 @@ function Get-PowerShellScopeHelpFinding {
     return $findings
 }
 
+<#
+.SYNOPSIS
+Return comment-help tokens immediately preceding one PowerShell scope.
+
+.PARAMETER Tokens
+Parser tokens for the complete source file.
+
+.PARAMETER SourceText
+Exact source text used to validate whitespace between comments and the scope.
+
+.PARAMETER StartOffset
+Source offset where the associated script parameter block or function begins.
+#>
+function Get-AdjacentPowerShellHelpComment {
+    param(
+        [Parameter(Mandatory = $true)]
+        [System.Management.Automation.Language.Token[]]$Tokens,
+        [Parameter(Mandatory = $true)]
+        [string]$SourceText,
+        [Parameter(Mandatory = $true)]
+        [int]$StartOffset
+    )
+
+    $comments = @($Tokens | Where-Object {
+            $_.Kind -eq [System.Management.Automation.Language.TokenKind]::Comment -and
+            $_.Text -match '(?im)^\s*\.SYNOPSIS\s*$' -and
+            $_.Extent.EndOffset -le $StartOffset
+        } | Sort-Object { $_.Extent.StartOffset } -Descending)
+    $adjacent = [System.Collections.Generic.List[System.Management.Automation.Language.Token]]::new()
+    $cursor = $StartOffset
+    foreach ($comment in $comments) {
+        $gapLength = $cursor - $comment.Extent.EndOffset
+        $gap = $SourceText.Substring($comment.Extent.EndOffset, $gapLength)
+        if ($gap -notmatch '^\s*$') {
+            break
+        }
+        $adjacent.Insert(0, $comment)
+        $cursor = $comment.Extent.StartOffset
+    }
+    return @($adjacent)
+}
+
+<#
+.SYNOPSIS
+Return duplicate adjacent comment-help findings for one parsed PowerShell file.
+
+.PARAMETER Ast
+Complete parsed script AST.
+
+.PARAMETER Tokens
+Parser tokens for the complete source file.
+
+.PARAMETER SourceText
+Exact source text used for comment adjacency checks.
+
+.PARAMETER RelativePath
+Repository-relative file path included in findings.
+#>
+function Get-DuplicatePowerShellHelpFinding {
+    param(
+        [Parameter(Mandatory = $true)]
+        [System.Management.Automation.Language.ScriptBlockAst]$Ast,
+        [Parameter(Mandatory = $true)]
+        [System.Management.Automation.Language.Token[]]$Tokens,
+        [Parameter(Mandatory = $true)]
+        [string]$SourceText,
+        [Parameter(Mandatory = $true)]
+        [string]$RelativePath
+    )
+
+    $findings = [System.Collections.Generic.List[string]]::new()
+    $topLevelStatements = @($Ast.EndBlock.Statements)
+    $firstStatement = $topLevelStatements | Select-Object -First 1
+    $scriptAnchor = $null
+    if ($null -ne $Ast.ParamBlock) {
+        $parameterAttributes = @($Ast.ParamBlock.Attributes)
+        $scriptAnchor = if ($parameterAttributes.Count -gt 0) {
+            $parameterAttributes[0].Extent.StartOffset
+        }
+        else {
+            $Ast.ParamBlock.Extent.StartOffset
+        }
+    }
+    elseif ($null -ne $firstStatement -and
+        $firstStatement -isnot [System.Management.Automation.Language.FunctionDefinitionAst]) {
+        $scriptAnchor = $firstStatement.Extent.StartOffset
+    }
+    if ($null -ne $scriptAnchor) {
+        $scriptComments = @(Get-AdjacentPowerShellHelpComment `
+                -Tokens $Tokens `
+                -SourceText $SourceText `
+                -StartOffset $scriptAnchor)
+        if ($scriptComments.Count -gt 1) {
+            $lines = $scriptComments | ForEach-Object { $_.Extent.StartLineNumber }
+            $findings.Add("$RelativePath has multiple adjacent script help blocks at lines $($lines -join ', ').")
+        }
+    }
+
+    $functions = @($Ast.FindAll(
+            { param($node) $node -is [System.Management.Automation.Language.FunctionDefinitionAst] },
+            $true
+        ))
+    foreach ($function in $functions) {
+        $functionComments = @(Get-AdjacentPowerShellHelpComment `
+                -Tokens $Tokens `
+                -SourceText $SourceText `
+                -StartOffset $function.Extent.StartOffset)
+        if ($null -eq $Ast.ParamBlock -and
+            $firstStatement -eq $function -and
+            $null -ne $Ast.GetHelpContent() -and
+            $functionComments.Count -gt 0) {
+            # A script without a param block may place file help immediately
+            # before the first function's own help. PowerShell assigns the
+            # earliest block to the script, so it is not a function duplicate.
+            $functionComments = @($functionComments | Select-Object -Skip 1)
+        }
+        if ($functionComments.Count -gt 1) {
+            $lines = $functionComments | ForEach-Object { $_.Extent.StartLineNumber }
+            $findings.Add(
+                "${RelativePath}:$($function.Extent.StartLineNumber) function $($function.Name) has multiple adjacent help blocks at lines $($lines -join ', ')."
+            )
+        }
+    }
+    return $findings
+}
+
 $candidateRoot = (Resolve-Path -LiteralPath $Root).Path
 $baseCheckoutRoot = (Resolve-Path -LiteralPath $BaseRoot).Path
 $findings = [System.Collections.Generic.List[string]]::new()
@@ -145,6 +271,7 @@ foreach ($relativePath in Get-TrackedPowerShellPath -RepositoryRoot $candidateRo
         continue
     }
     $checkedFiles++
+    $sourceText = [System.IO.File]::ReadAllText($candidatePath)
     $tokens = $null
     $parseErrors = $null
     $ast = [System.Management.Automation.Language.Parser]::ParseFile(
@@ -157,6 +284,14 @@ foreach ($relativePath in Get-TrackedPowerShellPath -RepositoryRoot $candidateRo
     }
     if (@($parseErrors).Count -gt 0) {
         continue
+    }
+
+    foreach ($finding in Get-DuplicatePowerShellHelpFinding `
+            -Ast $ast `
+            -Tokens $tokens `
+            -SourceText $sourceText `
+            -RelativePath $relativePath) {
+        $findings.Add($finding)
     }
 
     foreach ($finding in Get-PowerShellScopeHelpFinding -Scope $ast -DisplayName $relativePath) {

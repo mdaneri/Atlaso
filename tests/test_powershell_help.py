@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 import shutil
 import subprocess
 from pathlib import Path
@@ -34,7 +35,9 @@ def test_powershell_help_policy_is_wired_to_exact_base_ci() -> None:
         assert repository_job.index(whole_tree_check) < base_checkout
     assert base_checkout < powershell_check
     assert "Every new or changed `.ps1` or `.psm1` file" in contributing
+    assert "exactly one canonical help block" in contributing
     assert "comment-based help and rationale-focused comments" in agent_policies
+    assert "exactly one canonical help block" in agent_policies
 
 
 def _initialize_checkout(path: Path, script_text: str) -> None:
@@ -170,3 +173,124 @@ function Invoke-Sample([string]$Value) {}
     assert invalid.returncode != 0
     assert "function Invoke-Sample parameter" in invalid.stderr
     assert "'Value' has no .PARAMETER entry" in invalid.stderr
+
+
+@pytest.mark.skipif(shutil.which("pwsh") is None, reason="PowerShell is not installed")
+def test_powershell_help_policy_rejects_adjacent_duplicate_function_help(
+    tmp_path: Path,
+) -> None:
+    """Reject merged duplicate help even when the first block masks placeholders.
+
+    Args:
+        tmp_path: Isolated filesystem root.
+    """
+    base = tmp_path / "base"
+    candidate = tmp_path / "candidate"
+    _initialize_checkout(base, "Write-Host 'base'\n")
+    duplicate = """<#
+.SYNOPSIS
+Run the sample script.
+#>
+
+<#
+.SYNOPSIS
+Run one meaningful sample operation.
+.PARAMETER Value
+Value consumed by the sample operation.
+#>
+<#
+.SYNOPSIS
+Invoke Sample.
+.PARAMETER Value
+Value value.
+#>
+function Invoke-Sample { param([string]$Value) }
+"""
+    _initialize_checkout(candidate, duplicate)
+
+    invalid = _run_help_check(candidate, base)
+    assert invalid.returncode != 0
+    assert "function Invoke-Sample has multiple adjacent help blocks" in invalid.stderr
+
+
+@pytest.mark.skipif(shutil.which("pwsh") is None, reason="PowerShell is not installed")
+def test_powershell_help_policy_distinguishes_file_and_first_function_help(
+    tmp_path: Path,
+) -> None:
+    """Allow file help, first-function help, and ordinary rationale comments.
+
+    Args:
+        tmp_path: Isolated filesystem root.
+    """
+    base = tmp_path / "base"
+    candidate = tmp_path / "candidate"
+    _initialize_checkout(base, "Write-Host 'base'\n")
+    documented = """<#
+.SYNOPSIS
+Run the sample script.
+#>
+
+<#
+.SYNOPSIS
+Run one meaningful sample operation.
+.PARAMETER Value
+Value consumed by the sample operation.
+#>
+function Invoke-Sample {
+    param([string]$Value)
+    # Preserve the value because the downstream tool owns normalization.
+    Write-Output $Value
+}
+"""
+    _initialize_checkout(candidate, documented)
+
+    valid = _run_help_check(candidate, base)
+    assert valid.returncode == 0, valid.stderr
+
+
+@pytest.mark.skipif(shutil.which("pwsh") is None, reason="PowerShell is not installed")
+def test_corrected_vmware_help_resolves_to_canonical_documentation() -> None:
+    """Verify PowerShell resolves the retained purpose-specific help blocks."""
+    command = r"""& {
+        param($Path, $FunctionName)
+        $tokens = $null
+        $errors = $null
+        $ast = [System.Management.Automation.Language.Parser]::ParseFile(
+            (Resolve-Path $Path),
+            [ref]$tokens,
+            [ref]$errors
+        )
+        $function = $ast.Find(
+            {
+                param($node)
+                $node -is [System.Management.Automation.Language.FunctionDefinitionAst] -and
+                    $node.Name -ceq $FunctionName
+            },
+            $true
+        )
+        [pscustomobject]@{
+            Script = $ast.GetHelpContent().Synopsis.Trim()
+            Function = $function.GetHelpContent().Synopsis.Trim()
+            GhPath = [string]$function.GetHelpContent().Parameters['GHPATH']
+        } | ConvertTo-Json -Compress
+    }"""
+    result = subprocess.run(
+        [
+            "pwsh",
+            "-NoProfile",
+            "-Command",
+            command,
+            "scripts/windows/vmware/export-ovf.ps1",
+            "Publish-AtlasoReleaseAssets",
+        ],
+        check=False,
+        text=True,
+        capture_output=True,
+    )
+    assert result.returncode == 0, result.stderr
+    help_content = json.loads(result.stdout)
+    assert help_content == {
+        "Script": "Export a VMware VMX into a validated Atlaso OVF/OVA package.",
+        "Function": "Publish OVF release assets to GitHub after validation.",
+        "GhPath": "Path to the GitHub CLI binary.\n",
+    }
