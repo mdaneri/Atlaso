@@ -1540,6 +1540,17 @@
 </li>
       
         <li class="md-nav__item">
+  <a href="#factory-service-identities" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Factory service identities
+      </span>
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
   <a href="#zone-file-import-and-export" class="md-nav__link">
     <span class="md-ellipsis">
       <span class="md-typeset">
@@ -3505,6 +3516,17 @@
 </li>
       
         <li class="md-nav__item">
+  <a href="#factory-service-identities" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Factory service identities
+      </span>
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
   <a href="#zone-file-import-and-export" class="md-nav__link">
     <span class="md-ellipsis">
       <span class="md-typeset">
@@ -3771,6 +3793,18 @@ DNS record rows.</p>
 <p>Atlaso owns one shared monotonic SOA serial. Zone creation/deletion, record create/update/delete/import,
 generated-record changes, and authoritative settings or listen-target changes advance it. The serial is exposed
 read-only in the UI and public DNS settings response and is included in backup/restore and desired-state comparisons.</p>
+<h2 id="factory-service-identities">Factory service identities<a class="headerlink" href="#factory-service-identities" title="Permanent link">&para;</a></h2>
+<p>Factory-derived service names use the domain portion of the canonical appliance FQDN. For example, an appliance FQDN
+of <code>atlaso.lab.internal</code> produces <code>ca.lab.internal</code>, <code>kms.lab.internal</code>, <code>ldap.lab.internal</code>, <code>ntp.lab.internal</code>,
+<code>oidc.lab.internal</code>, <code>nfs.lab.internal</code>, <code>esxi-pxe.lab.internal</code>, <code>registry.lab.internal</code>, and
+<code>depot.lab.internal</code>. Fresh seed, OVF first boot, factory reset, settings restore, and later appliance-domain changes
+all use this rule.</p>
+<p>When the appliance domain changes, Atlaso migrates only a packaged default or the exact factory name under the
+immediately previous appliance domain. A different service hostname is treated as operator-owned and remains unchanged.
+Atlaso renames or removes only DNS rows carrying that service's exact app-owned marker, including generated IPv4 and
+IPv6 targets. If the destination name already has an operator-owned record of the same type, Atlaso preserves the
+operator record and removes the stale app-owned alias instead of overwriting it. The affected service and DNS desired
+state remain pending until submitted through Appliance Apply.</p>
 <h2 id="zone-file-import-and-export">Zone-file import and export<a class="headerlink" href="#zone-file-import-and-export" title="Permanent link">&para;</a></h2>
 <p>Zone-file export includes <code>$ORIGIN</code>, <code>$TTL</code>, generated SOA/NS/glue, and all enabled operator records. Import supports A,
 AAAA, CNAME, TXT, SRV, MX, CAA, and PTR records. Matching SOA, NS, and glue are accepted and ignored rather than

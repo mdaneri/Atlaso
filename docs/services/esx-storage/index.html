@@ -3777,7 +3777,8 @@ IPv4 client in the IPv6 list.</p>
 <p>Also query Atlaso DNS directly and confirm the IPv4 target returns A and the IPv6 target returns AAAA. App-owned A/AAAA
 records use the existing dnsmasq <code>host-record</code> renderer and therefore receive normal generated PTR answers.</p>
 <h2 id="dns-names">DNS names<a class="headerlink" href="#dns-names" title="Permanent link">&para;</a></h2>
-<p>The normal canonical alias is <code>nfs.&lt;domain&gt;</code>. Atlaso follows Appliance Settings’ global target-naming mode:</p>
+<p>The normal canonical alias is <code>nfs.&lt;domain&gt;</code>, where a factory-derived name uses the domain portion of the appliance
+FQDN. Atlaso follows Appliance Settings’ global target-naming mode:</p>
 <ul>
 <li>IP mode generates names such as <code>nfs-192-168-87-254.&lt;domain&gt;</code> and <code>nfs-2001-db8-87-0-0-0-0-fe.&lt;domain&gt;</code>;</li>
 <li>interface mode generates an interface-derived target name with A and/or AAAA records.</li>

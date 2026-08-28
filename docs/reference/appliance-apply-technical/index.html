@@ -4854,14 +4854,14 @@ enabled and should be treated as temporary troubleshooting because it can expose
 <h4 id="service-endpoint-records">Service endpoint records<a class="headerlink" href="#service-endpoint-records" title="Permanent link">&para;</a></h4>
 <p>Service-owned endpoint DNS uses a canonical alias plus generated target records. When a service such as KMS, ESXi PXE,
 VCF Offline Depot, or VCF Private Registry selects one or more listen interfaces, Atlaso creates direct A/AAAA records
-for each selected listener target and makes the main service name, such as <code>depot.atlaso.internal</code>, a CNAME to the first
-selected target. This alias is created even for a single selected interface. Appliance Settings controls generated
-target names globally: the default <code>ip</code> mode creates names such as <code>depot-192-168-87-12.atlaso.internal</code>, while
-<code>interface</code> mode preserves the older style such as <code>depot-eth2.atlaso.internal</code>. Operators can use the canonical name by
-default and use the generated target names for networks that cannot reach the first selected listener. Atlaso does not
-create a multi-A default for the canonical service name because clients may resolve an unreachable address. If the first
-selected interface is removed, interface order changes, or the target naming mode changes, the CNAME target moves to the
-next first valid selected target and stale app-owned generated records are removed.</p>
+for each selected listener target and makes the main service name, such as <code>depot.&lt;appliance-domain&gt;</code>, a CNAME to the
+first selected target. This alias is created even for a single selected interface. Appliance Settings controls generated
+target names globally: the default <code>ip</code> mode creates names such as <code>depot-192-168-87-12.&lt;appliance-domain&gt;</code>, while
+<code>interface</code> mode preserves the older style such as <code>depot-eth2.&lt;appliance-domain&gt;</code>. Operators can use the canonical
+name by default and use the generated target names for networks that cannot reach the first selected listener. Atlaso
+does not create a multi-A default for the canonical service name because clients may resolve an unreachable address.
+If the first selected interface is removed, interface order changes, or the target naming mode changes, the CNAME
+target moves to the next first valid selected target and stale app-owned generated records are removed.</p>
 <h4 id="operator-records-and-resolver-fallback">Operator records and resolver fallback<a class="headerlink" href="#operator-records-and-resolver-fallback" title="Permanent link">&para;</a></h4>
 <p>Operator-managed DNS records support A, AAAA, CNAME, TXT, SRV, MX, CAA, and explicit PTR records. A and AAAA records
 still generate matching dnsmasq PTR answers through <code>host-record</code>; explicit PTR rows are for custom reverse names that
@@ -4996,7 +4996,7 @@ service unit that changed when the global apply page shows both as pending.</p>
 <code>/etc/atlaso/nginx/sites.d/public-services.conf</code>. It renders HTTP server blocks only for non-management interface IPs
 where ESXi PXE is enabled, redirects <code>/pxe/esxi</code> to <code>/pxe/esxi/</code>, proxies dynamic PXE requests to Atlaso, and serves
 remaining <code>/pxe/esxi/</code> boot artifacts from the narrow PXE HTTP alias. It also renders hostname-specific HTTPS/SNI server
-blocks for the CA portal using the CA-managed <code>ca_portal:https</code> certificate, so <code>ca.atlaso.internal</code> and other HTTPS
+blocks for the CA portal using the CA-managed <code>ca_portal:https</code> certificate, so <code>ca.&lt;appliance-domain&gt;</code> and other HTTPS
 service names can share an IP without sharing a leaf certificate. It must not expose VCF Offline Depot, management,
 broad depot roots, or <code>/registry</code> proxy locations over HTTP. The app-owned public service directory at <code>/</code> defaults
 service cards to hostnames, offers a Name/IP toggle stored in the <code>atlaso_public_address_mode</code> cookie, and builds card

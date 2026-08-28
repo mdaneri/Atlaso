@@ -3789,8 +3789,8 @@ and protocol readiness.</p>
 this guide. They remain operational and are intentionally absent from Swagger; only OIDC administration operations
 under <code>/api/v1</code> belong to the generated REST contract.</p>
 <h2 id="architecture-and-trust-boundaries">Architecture and trust boundaries<a class="headerlink" href="#architecture-and-trust-boundaries" title="Permanent link">&para;</a></h2>
-<p>The canonical issuer is derived as <code>https://&lt;oidc-hostname&gt;[:port]/identity</code>; the default hostname is
-<code>oidc.atlaso.internal</code> and port 443 is omitted. It is never inferred from <code>Host</code>, <code>Forwarded</code>, or <code>X-Forwarded-*</code>
+<p>The canonical issuer is derived as <code>https://&lt;oidc-hostname&gt;[:port]/identity</code>; the factory hostname is
+<code>oidc.&lt;appliance-domain&gt;</code> and port 443 is omitted. It is never inferred from <code>Host</code>, <code>Forwarded</code>, or <code>X-Forwarded-*</code>
 request headers. IP issuers, query strings, fragments, user information, and path or trailing-slash variants are
 rejected. Readiness parses the issued CA-managed <code>oidc:https</code> certificate and requires its DNS SAN to cover the exact
 hostname and its IP SANs to cover every selected listener address. Global Appliance Apply installs that certificate,

@@ -4091,7 +4091,8 @@ environments, isolated network labs, and WAN simulation testing. Atlaso supports
 simplifying deployment, maintenance, and validation.</p>
 <p>Its product pillars are <strong>Infrastructure • Connectivity • Automation</strong>.</p>
 <p>Fresh appliances use <code>core.atlaso.internal</code> as the management identity and <code>atlaso.internal</code> as the default managed DNS
-zone. Service names include <code>ca.atlaso.internal</code>, <code>kms.atlaso.internal</code>, and <code>depot.atlaso.internal</code>. Future clustered
+zone. Factory service names use the appliance FQDN's domain portion, including <code>ca.&lt;appliance-domain&gt;</code>,
+<code>kms.&lt;appliance-domain&gt;</code>, and <code>depot.&lt;appliance-domain&gt;</code>. Future clustered
 deployments are expected to use <code>core-01</code>, <code>core-02</code>, and <code>core-vip</code>; clustering is not implemented in 0.9.18.</p>
 <p>Atlaso 0.9.18 is a clean break. Existing appliances from the retired product must be redeployed; Atlaso provides no
 data, configuration, certificate, or update-channel migration.</p>
@@ -4702,9 +4703,9 @@ NTS client sources. Appliance Settings and Web Terminal autosave do not own or m
 Certificate Authority stores CA and leaf private keys
 encrypted in the database with <code>ATLASO_SECRETS_KEY</code>, auto-ensures VCF/KMS/service certificates when enabled, and stages
 <code>/var/lib/atlaso/apply/ca/atlaso-ca.json</code>; the helper writes public bundles and service certificate/key files under
-<code>/etc/atlaso</code>. The public CA portal defaults to <code>ca.atlaso.internal</code>: <code>/ui/public/ca</code> shows public trust material and
-<code>/ui/public/ca/requests</code> is the authenticated certificate request/revocation workflow. The management console keeps CA
-configuration under <code>/ui/management/certificate-authority</code>, with its request list under
+<code>/etc/atlaso</code>. The public CA portal factory hostname is <code>ca.&lt;appliance-domain&gt;</code>: <code>/ui/public/ca</code> shows public trust
+material and <code>/ui/public/ca/requests</code> is the authenticated certificate request/revocation workflow. The management
+console keeps CA configuration under <code>/ui/management/certificate-authority</code>, with its request list under
 <code>/ui/management/ca/requests</code>. Root-level browser paths remain temporary compatibility entries.</p>
 <p>ESXi PXE stores Kickstart source files in the Atlaso database. The database is the source of truth; generated files
 under <code>/var/lib/atlaso/pxe/http/esxi/ks/&lt;id&gt;.cfg</code> are runtime copies for drift/apply bookkeeping, while boot-time
@@ -4814,8 +4815,8 @@ confirmation as its trust decision, but Atlaso does not import groups or assign 
 Signing Keys,
 Group Mappings, and Stable Subjects tabs in the main column while its editable settings remain in the standard
 right-hand service column. Provider readiness appears inline rather than in a separate validation frame. The
-service-owned hostname defaults to
-<code>oidc.atlaso.internal</code>; listeners are selectable addressed access or routed interfaces and enabled VLANs, with a
+factory service-owned hostname is
+<code>oidc.&lt;appliance-domain&gt;</code>; listeners are selectable addressed access or routed interfaces and enabled VLANs, with a
 configurable HTTPS port. Atlaso derives listener addresses and app-owned DNS records from those selections. The
 provider implements Authorization Code with
 confidential <code>client_secret_basic</code>, mandatory PKCE S256, exact redirects, required state and nonce, signed secure
