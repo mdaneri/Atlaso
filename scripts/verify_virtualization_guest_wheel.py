@@ -12,6 +12,7 @@ import io
 import json
 import re
 import shutil
+import stat
 import subprocess
 import tarfile
 import tempfile
@@ -43,6 +44,19 @@ DEPLOYED_TEXT_FILES = {
 }
 DEPLOYED_BINARY_FILES = {
     "image/common/boot/grub/atlaso.png": "/boot/grub2/themes/atlaso/atlaso.png",
+}
+DEPLOYED_FILE_MODES = {
+    "/opt-atlaso/bin/atlaso-helper": 0o755,
+    "/opt-atlaso/bin/atlaso-install-boot-branding": 0o755,
+    "/opt-atlaso/bin/atlaso-vault-profile.ps1": 0o644,
+    "/opt/microsoft/powershell/7/profile.ps1": 0o644,
+    "/etc/systemd/system.conf.d/atlaso-console.conf": 0o644,
+    "/etc/systemd/system/atlaso.service": 0o644,
+    "/etc/systemd/system/atlaso-worker.service": 0o644,
+    "/etc/systemd/system/atlaso.service.d/atlaso-data-disks.conf": 0o644,
+    "/etc/systemd/system/nginx.service.d/atlaso-data-disks.conf": 0o644,
+    "/boot/grub2/themes/atlaso/theme.txt": 0o644,
+    "/boot/grub2/themes/atlaso/atlaso.png": 0o644,
 }
 PHOTON_RPM_KEY_PATHS = (
     "image/common/photon-rpm-gpg/VMWARE-RPM-GPG-KEY",
@@ -335,6 +349,85 @@ def _download_guest_file(
         raise SystemExit(f"deployed system file is unreadable: {guest_path}") from exc
 
 
+def _guest_path_metadata(
+    disk: Path, filesystem: str, file_modes: dict[str, int]
+) -> dict[str, tuple[int, int, int]]:
+    """Return no-follow metadata for privileged files and every ancestor.
+
+    Args:
+        disk: Read-only virtual disk containing the paths.
+        filesystem: Guest filesystem mounted as root.
+        file_modes: Absolute regular-file paths and their exact permission modes.
+    """
+
+    paths: set[str] = set()
+    for path in file_modes:
+        candidate = PurePosixPath(path)
+        if not candidate.is_absolute() or ".." in candidate.parts:
+            raise SystemExit("deployed system metadata contains an unsafe path")
+        paths.add(candidate.as_posix())
+        paths.update(parent.as_posix() for parent in candidate.parents)
+    ordered = sorted(paths, key=lambda path: (len(PurePosixPath(path).parts), path))
+    commands = [f"mount-ro {filesystem} /"]
+    for path in ordered:
+        commands.extend((f"echo ATLASO-METADATA:{path}", f"lstatns {path}"))
+    lines = _guestfish(disk, commands)
+    records: dict[str, dict[str, int]] = {}
+    current = ""
+    for line in lines:
+        if line.startswith("ATLASO-METADATA:"):
+            current = line.removeprefix("ATLASO-METADATA:")
+            if current not in paths or current in records:
+                raise SystemExit("guest path metadata returned an unexpected path")
+            records[current] = {}
+            continue
+        key, separator, value = line.partition(":")
+        canonical_key = {
+            "mode": "st_mode",
+            "uid": "st_uid",
+            "gid": "st_gid",
+            "st_mode": "st_mode",
+            "st_uid": "st_uid",
+            "st_gid": "st_gid",
+        }.get(key)
+        if not current or separator != ":" or canonical_key is None:
+            continue
+        try:
+            records[current][canonical_key] = int(value.strip(), 0)
+        except ValueError as exc:
+            raise SystemExit("guest path metadata is malformed") from exc
+    required = {"st_mode", "st_uid", "st_gid"}
+    if set(records) != paths or any(set(record) != required for record in records.values()):
+        raise SystemExit("guest path metadata is incomplete")
+    return {
+        path: (record["st_mode"], record["st_uid"], record["st_gid"])
+        for path, record in records.items()
+    }
+
+
+def _verify_guest_path_metadata(
+    disk: Path, filesystem: str, file_modes: dict[str, int]
+) -> None:
+    """Require root-owned files and non-writable root-owned ancestry.
+
+    Args:
+        disk: Read-only virtual disk containing the paths.
+        filesystem: Guest filesystem mounted as root.
+        file_modes: Absolute regular-file paths and their exact permission modes.
+    """
+
+    records = _guest_path_metadata(disk, filesystem, file_modes)
+    for path, (mode, uid, gid) in records.items():
+        if uid != 0 or gid != 0:
+            raise SystemExit(f"privileged guest path is not root-owned: {path}")
+        permissions = stat.S_IMODE(mode)
+        if path in file_modes:
+            if not stat.S_ISREG(mode) or permissions != file_modes[path]:
+                raise SystemExit(f"privileged guest file has unsafe metadata: {path}")
+        elif not stat.S_ISDIR(mode) or permissions & 0o022:
+            raise SystemExit(f"privileged guest ancestry is unsafe: {path}")
+
+
 def _verify_deployed_system_content(
     asset_root: Path, source_commit: str, repo_root: Path
 ) -> int:
@@ -361,9 +454,33 @@ def _verify_deployed_system_content(
         source: ("photon_os", target)
         for source, target in DEPLOYED_BINARY_FILES.items()
     }
+    static_modes = {
+        target: DEPLOYED_FILE_MODES[target]
+        for target in {*DEPLOYED_TEXT_FILES.values(), *DEPLOYED_BINARY_FILES.values()}
+    }
     verified = 0
     with tempfile.TemporaryDirectory(prefix="atlaso-system-content-") as temporary:
         temporary_root = Path(temporary)
+        trust_paths = _git_trust_key_paths(repo_root, source_commit)
+        trust_names = [PurePosixPath(path).name for path in trust_paths]
+        observed_names = _guestfish(
+            payloads["photon_os"],
+            [
+                f"mount-ro {filesystems['photon_os']} /",
+                "ls /etc/atlaso/update-trust.d",
+            ],
+        )
+        if observed_names != trust_names:
+            raise SystemExit(
+                "deployed update-trust key set does not match admitted commit"
+            )
+        role_modes = {"photon_os": {}, "atlaso_system": {}}
+        for _source, (role, target) in {**text_targets, **binary_targets}.items():
+            role_modes[role][target] = static_modes[target]
+        for name in trust_names:
+            role_modes["photon_os"][f"/etc/atlaso/update-trust.d/{name}"] = 0o644
+        for role, modes in role_modes.items():
+            _verify_guest_path_metadata(payloads[role], filesystems[role], modes)
         for source, (role, target) in {**text_targets, **binary_targets}.items():
             expected = _git_source_bytes(repo_root, source_commit, source)
             if source in text_targets:
@@ -379,19 +496,6 @@ def _verify_deployed_system_content(
                     f"deployed system file does not match admitted commit: {target}"
                 )
             verified += 1
-        trust_paths = _git_trust_key_paths(repo_root, source_commit)
-        trust_names = [PurePosixPath(path).name for path in trust_paths]
-        observed_names = _guestfish(
-            payloads["photon_os"],
-            [
-                f"mount-ro {filesystems['photon_os']} /",
-                "ls /etc/atlaso/update-trust.d",
-            ],
-        )
-        if observed_names != trust_names:
-            raise SystemExit(
-                "deployed update-trust key set does not match admitted commit"
-            )
         for source, name in zip(trust_paths, trust_names, strict=True):
             expected = _git_source_bytes(repo_root, source_commit, source)
             target = f"/etc/atlaso/update-trust.d/{name}"

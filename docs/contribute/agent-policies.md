@@ -1642,8 +1642,11 @@ Terminal order:
 - Treat comment-based help and rationale-focused comments as the PowerShell authoring standard. Every new or changed
   `.ps1` or `.psm1` file requires file/module help and help for every function, including nested helpers, with a concise
   `.SYNOPSIS` and one `.PARAMETER` entry per declared parameter. Keep exactly one canonical help block per script,
-  module, or function; do not place generated and purpose-specific blocks beside the same scope. Explain non-obvious
-  safety ordering, trust boundaries, and platform behavior without narrating self-evident commands. Run
+  module, or function; do not place generated and purpose-specific blocks beside the same scope. The incremental checker
+  enforces this before explicit `dynamicparam`, `begin`, `process`, `end`, and `clean` blocks as well as ordinary
+  statements.
+  Explain non-obvious safety ordering, trust boundaries, and platform behavior without narrating self-evident commands.
+  Run
   `scripts/check_powershell_help.ps1` against the
   base checkout; CI applies the same incremental whole-file gate to every changed PowerShell source.
 - Pin PowerShell static analysis to PSScriptAnalyzer `1.25.0` and run `scripts/check_powershell_analysis.ps1` before

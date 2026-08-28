@@ -7,15 +7,45 @@ import csv
 import hashlib
 import io
 import json
+import stat
 import tarfile
 import zipfile
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 
 import pytest
 
 from scripts import verify_virtualization_guest_wheel as verifier
 
 SOURCE_COMMIT = "a" * 40
+
+
+def _metadata_output(
+    commands: list[str], overrides: dict[str, tuple[int, int, int]] | None = None
+) -> list[str] | None:
+    """Return guestfish lstatns output for one bounded metadata query.
+
+    Args:
+        commands: Guestfish commands issued by the verifier.
+        overrides: Optional path-specific mode, uid, and gid records.
+    """
+
+    if not any(command.startswith("lstatns ") for command in commands):
+        return None
+    overrides = overrides or {}
+    lines: list[str] = []
+    for command in commands:
+        if command.startswith("echo ATLASO-METADATA:"):
+            lines.append(command.removeprefix("echo "))
+        elif command.startswith("lstatns "):
+            path = command.removeprefix("lstatns ")
+            is_file = path in verifier.DEPLOYED_FILE_MODES or path.startswith(
+                "/etc/atlaso/update-trust.d/"
+            )
+            file_mode = verifier.DEPLOYED_FILE_MODES.get(path, 0o644)
+            default_mode = (stat.S_IFREG | file_mode) if is_file else (stat.S_IFDIR | 0o755)
+            mode, uid, gid = overrides.get(path, (default_mode, 0, 0))
+            lines.extend((f"st_mode: {mode}", f"st_uid: {uid}", f"st_gid: {gid}"))
+    return lines
 
 
 @pytest.fixture
@@ -526,6 +556,9 @@ def test_rejects_altered_non_wheel_system_content(
             if extra_trust_key:
                 names.append("producer.pem")
             return names
+        metadata = _metadata_output(commands)
+        if metadata is not None:
+            return metadata
         download = commands[-1].split(" ", 2)
         assert download[0] == "download"
         Path(download[2]).write_bytes(guest_bytes[download[1]])
@@ -567,6 +600,7 @@ def test_verifies_every_release_refreshed_non_wheel_file(
             trust_source
         ],
     }
+    metadata_queries: set[str] = set()
     monkeypatch.setattr(
         verifier,
         "_git_source_bytes",
@@ -589,6 +623,14 @@ def test_verifies_every_release_refreshed_non_wheel_file(
             return ["/dev/sda: ext4"]
         if commands[-1] == "ls /etc/atlaso/update-trust.d":
             return ["atlaso-release-test.pem"]
+        metadata = _metadata_output(commands)
+        if metadata is not None:
+            metadata_queries.update(
+                command.removeprefix("lstatns ")
+                for command in commands
+                if command.startswith("lstatns ")
+            )
+            return metadata
         download = commands[-1].split(" ", 2)
         Path(download[2]).write_bytes(guest_bytes[download[1]])
         return []
@@ -598,6 +640,73 @@ def test_verifies_every_release_refreshed_non_wheel_file(
         assets, SOURCE_COMMIT, tmp_path
     )
     assert verified == len(source_bytes)
+    expected_metadata = {
+        *verifier.DEPLOYED_FILE_MODES,
+        "/etc/atlaso/update-trust.d/atlaso-release-test.pem",
+    }
+    expected_metadata.update(
+        parent.as_posix()
+        for path in tuple(expected_metadata)
+        for parent in PurePosixPath(path).parents
+    )
+    assert metadata_queries == expected_metadata
+
+
+@pytest.mark.parametrize(
+    ("path", "metadata", "message"),
+    [
+        (
+            "/opt-atlaso/bin/atlaso-helper",
+            (stat.S_IFREG | 0o755, 1000, 0),
+            "not root-owned",
+        ),
+        (
+            "/opt-atlaso/bin/atlaso-helper",
+            (stat.S_IFLNK | 0o777, 0, 0),
+            "file has unsafe metadata",
+        ),
+        (
+            "/opt-atlaso/bin/atlaso-helper",
+            (stat.S_IFREG | 0o775, 0, 0),
+            "file has unsafe metadata",
+        ),
+        (
+            "/opt-atlaso/bin",
+            (stat.S_IFDIR | 0o775, 0, 0),
+            "ancestry is unsafe",
+        ),
+    ],
+)
+def test_rejects_unsafe_privileged_guest_metadata(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    path: str,
+    metadata: tuple[int, int, int],
+    message: str,
+) -> None:
+    """Protected signing rejects mutable files and ancestry.
+
+    Args:
+        tmp_path: Temporary directory provided by pytest.
+        monkeypatch: Pytest fixture used to emulate guestfish metadata.
+        path: Guest path whose metadata is unsafe.
+        metadata: Mode, uid, and gid returned for the path.
+        message: Expected fail-closed diagnostic.
+    """
+
+    disk = tmp_path / "system.vmdk"
+    disk.write_bytes(b"vmdk")
+    monkeypatch.setattr(
+        verifier,
+        "_guestfish",
+        lambda _disk, commands: _metadata_output(commands, {path: metadata}) or [],
+    )
+    with pytest.raises(SystemExit, match=message):
+        verifier._verify_guest_path_metadata(
+            disk,
+            "/dev/sda",
+            {"/opt-atlaso/bin/atlaso-helper": 0o755},
+        )
 
 
 def test_deployed_system_sources_exist_in_the_checkout() -> None:
@@ -609,6 +718,10 @@ def test_deployed_system_sources_exist_in_the_checkout() -> None:
     }
     missing = sorted(source for source in sources if not Path(source).is_file())
     assert missing == []
+    assert set(verifier.DEPLOYED_FILE_MODES) == {
+        *verifier.DEPLOYED_TEXT_FILES.values(),
+        *verifier.DEPLOYED_BINARY_FILES.values(),
+    }
 
 
 def test_rejects_multiple_or_non_ext_payload_filesystems(
