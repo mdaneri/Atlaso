@@ -651,7 +651,7 @@ function Invoke-AtlasoVirtualizationPrerelease {
         ($releaseState.tagName -cne $tag -or -not $releaseState.isPrerelease)) {
         throw "Existing virtualization Release $tag is misclassified."
     }
-    if ($null -ne $releaseState -and -not $releaseState.isDraft -and -not $CandidateOnly) {
+    if ($null -ne $releaseState -and -not $releaseState.isDraft) {
         $remoteTag = @(& git -C $RepoRoot ls-remote --tags origin "refs/tags/$tag" "refs/tags/$tag^{}")
         if ($LASTEXITCODE -ne 0) {
             throw "Could not inspect remote tag $tag."
@@ -663,6 +663,9 @@ function Invoke-AtlasoVirtualizationPrerelease {
         # Published assets are immutable. A finalizer retry re-downloads and
         # verifies those exact bytes, so rebuilding a nondeterministic OVA here
         # would be both unnecessary and unsafe.
+        if ($CandidateOnly) {
+            return $tag
+        }
         Invoke-AtlasoVirtualizationPrereleaseFinalizer `
             -Repository $repository `
             -Tag $tag `

@@ -214,6 +214,7 @@ foreach ($required in @(
         "'--verify-existing', `$candidate",
         'Retained virtualization candidate verification failed',
         'Published assets are immutable',
+        'if ($CandidateOnly) {',
         'Invoke-AtlasoVirtualizationPrereleaseFinalizer',
         'Assert-AtlasoVmwarePayloadProvenance -VmxPath $vmx',
         'The retained VMware image is incomplete and will be rebuilt',
@@ -247,6 +248,15 @@ $exportIndex = $releaseModule.IndexOf("'scripts\windows\vmware\export-ovf.ps1'")
 if ($candidateVerificationIndex -lt 0 -or $exportIndex -lt 0 -or
     $candidateVerificationIndex -gt $exportIndex) {
     throw 'Retained candidate verification must run before any OVA export on retry.'
+}
+$publishedResumeIndex = $releaseModule.IndexOf(
+    'if ($null -ne $releaseState -and -not $releaseState.isDraft)'
+)
+$candidateOnlyResumeIndex = $releaseModule.IndexOf('if ($CandidateOnly) {', $publishedResumeIndex)
+$candidateReuseIndex = $releaseModule.IndexOf('$reuseCandidate = Test-Path', $publishedResumeIndex)
+if ($publishedResumeIndex -lt 0 -or $candidateOnlyResumeIndex -lt 0 -or
+    $candidateReuseIndex -lt 0 -or $candidateOnlyResumeIndex -gt $candidateReuseIndex) {
+    throw 'Candidate-only published retries must stop before rebuilding or reusing local bytes.'
 }
 foreach ($forbidden in @('--clobber', 'RELEASE_SIGNING_PRIVATE_KEY')) {
     if ($releaseModule.Contains($forbidden)) {

@@ -1321,6 +1321,10 @@ def test_release_workflows_use_successful_main_sha_and_promote_without_rebuildin
     assert "ATLASO_ONEPASSWORD_ACCOUNT" in windows_job
     assert "ATLASO_ONEPASSWORD_PYTHON" in windows_job
     assert "uses: ./.github/workflows/virtualization-prerelease.yml" in windows_candidate
+    assert "already_published: ${{ steps.target.outputs.already_published }}" in windows_candidate
+    assert windows_candidate.count("if: needs.admit.outputs.already_published != 'true'") == 2
+    assert "needs.admit.outputs.already_published == 'true'" in windows_candidate
+    assert "needs.stage_draft.result == 'success'" in windows_candidate
     assert "ref: ${{ steps.identity.outputs.release_sha }}" not in virtualization
     assert "ref: ${{ needs.admit.outputs.release_sha }}" not in virtualization
     assert virtualization.count("ref: refs/heads/main") == 4
