@@ -183,9 +183,91 @@ function Assert-AtlasoVmwarePayloadProvenance {
     return $provenance
 }
 
+<#
+.SYNOPSIS
+Refresh role-bound VMware provenance after an admitted software deployment.
+.PARAMETER VmxPath
+VMX file whose current payload bytes are recorded.
+.PARAMETER DeploymentSourcePath
+Verified virtualization-source metadata that identifies the deployed software.
+.PARAMETER ProvenancePath
+Optional explicit provenance document path.
+#>
+function Update-AtlasoVmwarePayloadProvenance {
+    param(
+        [Parameter(Mandatory = $true)][string]$VmxPath,
+        [Parameter(Mandatory = $true)][string]$DeploymentSourcePath,
+        [string]$ProvenancePath = ''
+    )
+
+    $vmx = Get-Item -LiteralPath $VmxPath -ErrorAction Stop
+    $source = Get-Item -LiteralPath $DeploymentSourcePath -ErrorAction Stop
+    if ($source.PSIsContainer) {
+        throw 'VMware deployment-source provenance must identify one file.'
+    }
+    if ([string]::IsNullOrWhiteSpace($ProvenancePath)) {
+        $ProvenancePath = [System.IO.Path]::ChangeExtension($vmx.FullName, 'provenance.json')
+    }
+    try {
+        $previous = Get-Content -LiteralPath $ProvenancePath -Raw -ErrorAction Stop | ConvertFrom-Json
+    }
+    catch {
+        throw "VMware build provenance cannot be refreshed: $($_.Exception.Message)"
+    }
+    if ($previous.schema_version -ne 2 -or
+        [string]$previous.source_commit -notmatch '^[0-9a-f]{40}$' -or
+        $null -eq $previous.tracked_source_dirty) {
+        throw 'VMware build provenance cannot be refreshed because its source identity is invalid.'
+    }
+
+    $payloadLayout = @(Get-AtlasoVmwarePayloadLayout -VmxPath $vmx.FullName -RequireExactlyTwoVmdks)
+    $provenance = [ordered]@{
+        schema_version                   = 2
+        source_commit                    = [string]$previous.source_commit
+        tracked_source_dirty             = [bool]$previous.tracked_source_dirty
+        payload_state                    = 'software-deployed'
+        deployment_source_name           = $source.Name
+        deployment_source_sha256         = (Get-FileHash -LiteralPath $source.FullName -Algorithm SHA256).Hash.ToLowerInvariant()
+        vmx                              = [ordered]@{
+            name   = $vmx.Name
+            bytes  = $vmx.Length
+            sha256 = (Get-FileHash -LiteralPath $vmx.FullName -Algorithm SHA256).Hash.ToLowerInvariant()
+        }
+        payload_disks                    = @($payloadLayout | ForEach-Object {
+                [ordered]@{
+                    role           = $_.Role
+                    scsi_unit      = $_.ScsiUnit
+                    name           = $_.File.Name
+                    capacity_bytes = $_.CapacityBytes
+                    bytes          = $_.File.Length
+                    sha256         = (Get-FileHash -LiteralPath $_.File.FullName -Algorithm SHA256).Hash.ToLowerInvariant()
+                }
+            })
+    }
+    $temporaryPath = "$ProvenancePath.$([guid]::NewGuid().ToString('N')).tmp"
+    try {
+        [System.IO.File]::WriteAllText(
+            $temporaryPath,
+            (($provenance | ConvertTo-Json -Depth 5) + "`n"),
+            [System.Text.UTF8Encoding]::new($false)
+        )
+        Move-Item -LiteralPath $temporaryPath -Destination $ProvenancePath -Force
+    }
+    finally {
+        if (Test-Path -LiteralPath $temporaryPath) {
+            Remove-Item -LiteralPath $temporaryPath -Force
+        }
+    }
+    $result = Assert-AtlasoVmwarePayloadProvenance `
+        -VmxPath $vmx.FullName `
+        -ProvenancePath $ProvenancePath
+    return $result
+}
+
 Export-ModuleMember -Function @(
     'Assert-AtlasoVmwarePayloadProvenance',
     'Get-AtlasoVmxValue',
     'Get-AtlasoVmwarePayloadLayout',
-    'Get-AtlasoVmdkCapacityBytes'
+    'Get-AtlasoVmdkCapacityBytes',
+    'Update-AtlasoVmwarePayloadProvenance'
 )

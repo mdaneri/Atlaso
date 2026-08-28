@@ -194,4 +194,29 @@ catch {
     }
 }
 
+$provenancePath = Write-TestProvenance -VmxPath $vmxPath -Layout $layout
+$deploymentSourcePath = Join-Path $OutputDirectory 'virtualization-source.json'
+[System.IO.File]::WriteAllText(
+    $deploymentSourcePath,
+    "{`"schema_version`":1}`n",
+    [System.Text.UTF8Encoding]::new($false)
+)
+[System.IO.File]::AppendAllText(
+    $systemDisk,
+    'deployed-application-wheel',
+    [System.Text.UTF8Encoding]::new($false)
+)
+$refreshed = Update-AtlasoVmwarePayloadProvenance `
+    -VmxPath $vmxPath `
+    -DeploymentSourcePath $deploymentSourcePath `
+    -ProvenancePath $provenancePath
+if ($refreshed.payload_state -cne 'software-deployed' -or
+    $refreshed.deployment_source_name -cne 'virtualization-source.json' -or
+    $refreshed.deployment_source_sha256 -cne (
+        Get-FileHash -LiteralPath $deploymentSourcePath -Algorithm SHA256
+    ).Hash.ToLowerInvariant()) {
+    throw 'Refreshed VMware payload provenance did not bind the deployed source metadata.'
+}
+$null = Assert-AtlasoVmwarePayloadProvenance -VmxPath $vmxPath -ProvenancePath $provenancePath
+
 Write-Output 'Atlaso VMware payload layout and provenance tests passed.'

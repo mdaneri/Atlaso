@@ -10,6 +10,7 @@ sign and publish them.
 
 Set-StrictMode -Version Latest
 $ErrorActionPreference = 'Stop'
+Import-Module (Join-Path $PSScriptRoot '..\vmware\Atlaso.VmwarePayload.psm1') -Force
 
 <#
 .SYNOPSIS
@@ -477,7 +478,20 @@ function Invoke-AtlasoVirtualizationPrerelease {
     $buildRoot = Join-Path $operation 'vmware-build'
     $vmName = "Atlaso-Photon-Builder-VMware-$($identity.Version)"
     $vmx = Join-Path $buildRoot "$vmName.vmx"
-    if (-not (Test-Path -LiteralPath $vmx -PathType Leaf)) {
+    $requiresBuild = -not (Test-Path -LiteralPath $vmx -PathType Leaf)
+    $existingProvenance = $null
+    if (-not $requiresBuild) {
+        try {
+            $existingProvenance = Assert-AtlasoVmwarePayloadProvenance -VmxPath $vmx
+        }
+        catch {
+            # Re-entering the wrapper is required so it can recover any durable
+            # sensitive-build marker before replacing the partial output.
+            Write-Warning "The retained VMware image is incomplete and will be rebuilt: $($_.Exception.Message)"
+            $requiresBuild = $true
+        }
+    }
+    if ($requiresBuild) {
         $buildArguments = @(
             '-VmName', $vmName, '-OutputDirectory', $buildRoot,
             '-Headless', '-EnableRealSystemAdapters',
@@ -489,24 +503,47 @@ function Invoke-AtlasoVirtualizationPrerelease {
         if ($LASTEXITCODE -ne 0) {
             throw 'Canonical VMware image build failed.'
         }
+        $existingProvenance = Assert-AtlasoVmwarePayloadProvenance -VmxPath $vmx
     }
     $wheel = Join-Path $sourceInput ([string]$source.application_wheel -replace '/', '\')
-    $deployArguments = @{
-        RepoRoot = $RepoRoot
-        VmxPath = $vmx
-        SkipBuild = $true
-        WheelPath = $wheel
-        RuntimeDependencyDirectory = (Join-Path $sourceInput 'wheelhouse\cp314')
-        SkipInventoryLinuxSync = $true
+    $sourceMetadataSha256 = (Get-FileHash -LiteralPath $sourceMetadata -Algorithm SHA256).Hash.ToLowerInvariant()
+    $payloadStateProperty = $existingProvenance.PSObject.Properties['payload_state']
+    $sourceNameProperty = $existingProvenance.PSObject.Properties['deployment_source_name']
+    $sourceHashProperty = $existingProvenance.PSObject.Properties['deployment_source_sha256']
+    $alreadyDeployed = (
+        $null -ne $payloadStateProperty -and
+        $payloadStateProperty.Value -ceq 'software-deployed' -and
+        $null -ne $sourceNameProperty -and
+        $sourceNameProperty.Value -ceq (Split-Path -Leaf $sourceMetadata) -and
+        $null -ne $sourceHashProperty -and
+        $sourceHashProperty.Value -ceq $sourceMetadataSha256
+    )
+    if ($null -ne $payloadStateProperty -and -not $alreadyDeployed) {
+        throw 'The retained VMware image is bound to different deployed software-source metadata.'
     }
-    if ($OnePasswordEnvironmentId) {
-        $deployArguments.OnePasswordEnvironmentId = $OnePasswordEnvironmentId
-        $deployArguments.OnePasswordAccount = $OnePasswordAccount
-        $deployArguments.OnePasswordPython = $OnePasswordPython
-    }
-    & (Join-Path $RepoRoot 'scripts\windows\vmware\deploy-wheel.ps1') @deployArguments
-    if ($LASTEXITCODE -ne 0) {
-        throw 'Exact published application-wheel deployment failed.'
+    if (-not $alreadyDeployed) {
+        $deployArguments = @{
+            RepoRoot = $RepoRoot
+            VmxPath = $vmx
+            SkipBuild = $true
+            WheelPath = $wheel
+            RuntimeDependencyDirectory = (Join-Path $sourceInput 'wheelhouse\cp314')
+            SkipInventoryLinuxSync = $true
+        }
+        if ($OnePasswordEnvironmentId) {
+            $deployArguments.OnePasswordEnvironmentId = $OnePasswordEnvironmentId
+            $deployArguments.OnePasswordAccount = $OnePasswordAccount
+            $deployArguments.OnePasswordPython = $OnePasswordPython
+        }
+        & (Join-Path $RepoRoot 'scripts\windows\vmware\deploy-wheel.ps1') @deployArguments
+        if ($LASTEXITCODE -ne 0) {
+            throw 'Exact published application-wheel deployment failed.'
+        }
+        # Deployment mutates the system-content VMDK. Publish its new exact bytes
+        # before export so the exporter never validates stale build-time hashes.
+        $existingProvenance = Update-AtlasoVmwarePayloadProvenance `
+            -VmxPath $vmx `
+            -DeploymentSourcePath $sourceMetadata
     }
     $name = "atlaso-v$($identity.Version)"
     & (Join-Path $RepoRoot 'scripts\windows\vmware\export-ovf.ps1') `

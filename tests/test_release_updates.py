@@ -1301,7 +1301,8 @@ def test_release_workflows_use_successful_main_sha_and_promote_without_rebuildin
     assert "RELEASE_SIGNING_PRIVATE_KEY" not in windows_job
     assert "-CandidateOnly" in windows_job
     assert "ref: ${{ inputs.release_sha }}" not in windows_candidate
-    assert windows_candidate.count("ref: refs/heads/main") == 3
+    assert "ref: ${{ needs.admit.outputs.release_sha }}" in windows_job
+    assert windows_candidate.count("ref: refs/heads/main") == 2
     assert "comm -23" in windows_candidate
     assert "ATLASO_ONEPASSWORD_ENVIRONMENT_ID" in windows_job
     assert "ATLASO_ONEPASSWORD_ACCOUNT" in windows_job
