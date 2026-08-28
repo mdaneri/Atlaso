@@ -212,9 +212,18 @@ function Get-PowerShellFunctionHelpComment {
         }
     }
     else {
-        $firstBodyStatement = @($body.EndBlock.Statements) | Select-Object -First 1
-        $bodyStartAnchor = if ($null -ne $firstBodyStatement) {
-            $firstBodyStatement.Extent.StartOffset
+        $namedBlocks = @(
+            $body.DynamicParamBlock
+            $body.BeginBlock
+            $body.ProcessBlock
+            $body.EndBlock
+            $body.CleanBlock
+        ) | Where-Object { $null -ne $_ } | Sort-Object { $_.Extent.StartOffset }
+        $firstNamedBlock = $namedBlocks | Select-Object -First 1
+        $bodyStartAnchor = if ($null -ne $firstNamedBlock) {
+            # Non-End named blocks do not populate EndBlock.Statements, so the
+            # earliest parsed block is the reliable leading-body anchor.
+            $firstNamedBlock.Extent.StartOffset
         }
         else {
             $body.Extent.EndOffset - 1
