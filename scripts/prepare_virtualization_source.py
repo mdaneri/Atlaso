@@ -57,6 +57,28 @@ def _ordinary_file(path: Path, label: str) -> Path:
     return path.resolve(strict=True)
 
 
+def _verified_tree(path: Path) -> dict[str, tuple[int, str]]:
+    """Return the exact ordinary-file identity of a verified source tree.
+
+    Args:
+        path: Existing directory whose complete contents must be ordinary.
+    """
+
+    if path.is_symlink() or not path.is_dir():
+        raise SystemExit("cached virtualization source must be an ordinary directory")
+    files: dict[str, tuple[int, str]] = {}
+    for candidate in sorted(path.rglob("*")):
+        if candidate.is_symlink():
+            raise SystemExit("cached virtualization source contains a symbolic link")
+        if candidate.is_dir():
+            continue
+        if not candidate.is_file():
+            raise SystemExit("cached virtualization source contains a non-file entry")
+        relative = candidate.relative_to(path).as_posix()
+        files[relative] = (candidate.stat().st_size, _sha256(candidate))
+    return files
+
+
 def _safe_member_name(name: str) -> str:
     """Validate and normalize one bundle member name.
 
@@ -146,12 +168,14 @@ def prepare(
         raise SystemExit(
             "signed release manifest contains an invalid content hash record"
         )
+    existing_output = False
     if output.exists():
-        if output.is_symlink() or not output.is_dir() or any(output.iterdir()):
-            raise SystemExit(
-                "virtualization source output must be an empty ordinary directory"
-            )
-        output.rmdir()
+        if output.is_symlink() or not output.is_dir():
+            raise SystemExit("virtualization source output must be an ordinary directory")
+        if any(output.iterdir()):
+            existing_output = True
+        else:
+            output.rmdir()
     output.parent.mkdir(parents=True, exist_ok=True)
     output_parent = output.parent.resolve(strict=True)
     staging_root = Path(
@@ -247,9 +271,15 @@ def prepare(
             encoding="utf-8",
             newline="\n",
         )
-        # The final directory appears only after every byte and digest has passed.
-        # An interrupted extraction therefore leaves the resumable target absent.
-        os.replace(staging_root, output)
+        if existing_output:
+            if _verified_tree(output) != _verified_tree(staging_root):
+                raise SystemExit(
+                    "cached virtualization source does not exactly match the signed bundle"
+                )
+        else:
+            # The final directory appears only after every byte and digest has passed.
+            # An interrupted extraction therefore leaves the resumable target absent.
+            os.replace(staging_root, output)
     finally:
         if staging_root.exists():
             shutil.rmtree(staging_root)

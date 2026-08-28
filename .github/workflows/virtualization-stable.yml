@@ -18,7 +18,9 @@ on:
         type: string
 
 concurrency:
-  group: virtualization-stable-${{ inputs.prerelease_tag }}
+  # All stable promotions are serialized because different rc.N tags for one
+  # version target the same immutable stable tag and Release.
+  group: atlaso-virtualization-stable
   cancel-in-progress: false
 
 jobs:

@@ -205,6 +205,8 @@ foreach ($required in @(
         'PrereleaseIdentifier must be an explicit rc.N',
         'show-ref --verify --quiet',
         'cat-file -t',
+        'Always reconstruct the signed source',
+        '-OutputRoot $hypervRoot -Force',
         "'release', 'create', `$tag",
         "'--verify-tag'",
         "'release', 'upload', `$Tag",

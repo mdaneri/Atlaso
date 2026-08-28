@@ -135,8 +135,8 @@ def test_extracts_exact_signed_cp314_inputs_and_records_digests(tmp_path: Path) 
     )
 
 
-def test_rejects_changed_bundle_and_nonempty_resume_destination(tmp_path: Path) -> None:
-    """Digest mismatches and ambiguous local recovery fail before extraction.
+def test_rejects_changed_bundle_and_changed_resume_destination(tmp_path: Path) -> None:
+    """Digest mismatches and changed cached release inputs fail closed.
 
     Args:
         tmp_path: Temporary directory provided by pytest.
@@ -160,7 +160,7 @@ def test_rejects_changed_bundle_and_nonempty_resume_destination(tmp_path: Path) 
     fresh_root = tmp_path / "fresh"
     fresh_root.mkdir()
     manifest, signature, bundle, trust = _release_fixture(fresh_root)
-    with pytest.raises(SystemExit, match="empty ordinary directory"):
+    with pytest.raises(SystemExit, match="does not exactly match"):
         source_preparer.prepare(
             manifest_path=manifest,
             signature_path=signature,
@@ -170,6 +170,33 @@ def test_rejects_changed_bundle_and_nonempty_resume_destination(tmp_path: Path) 
             expected_version=VERSION,
             expected_commit=COMMIT,
         )
+
+
+def test_exact_cached_source_is_revalidated_and_reused(tmp_path: Path) -> None:
+    """An exact retained source is accepted, while later byte drift is rejected.
+
+    Args:
+        tmp_path: Temporary directory provided by pytest.
+    """
+
+    manifest, signature, bundle, trust = _release_fixture(tmp_path)
+    output = tmp_path / "verified"
+    arguments = {
+        "manifest_path": manifest,
+        "signature_path": signature,
+        "bundle_path": bundle,
+        "trust_key_path": trust,
+        "output": output,
+        "expected_version": VERSION,
+        "expected_commit": COMMIT,
+    }
+    first = source_preparer.prepare(**arguments)
+    second = source_preparer.prepare(**arguments)
+    assert second == first
+
+    Path(first["application_wheel"]).write_bytes(b"locally changed wheel")
+    with pytest.raises(SystemExit, match="does not exactly match"):
+        source_preparer.prepare(**arguments)
 
 
 def test_rejects_signed_unsafe_archive_member(tmp_path: Path) -> None:

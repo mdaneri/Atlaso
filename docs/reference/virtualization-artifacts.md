@@ -265,7 +265,8 @@ clobbering, and waits for the exact newly dispatched hosted-finalizer run to suc
 Keep `StagingRoot` until stable verification; cleanup is a separate explicit operator action. The three 1Password
 selectors are required so both the fresh image build and exact wheel deployment use the same approved credential
 source; the values are forwarded to the existing isolated SDK bridges and are never uploaded as evidence. A
-conflicting candidate requires a new explicit `rc.N`.
+conflicting candidate requires a new explicit `rc.N`. Every retry reconstructs and byte-validates the complete cached
+software source against the signed bundle, re-exports the OVA, and rebuilds Hyper-V from that current OVA.
 
 Stable promotion never rebuilds:
 
@@ -280,7 +281,8 @@ Bring the uniquely labelled Proxmox and KVM `--ephemeral` runners online only fo
 or sanitize them after the job. They receive read-only Actions/contents permissions, no signing secret, and no
 write-capable token. Define the repository variables named by `.github/workflows/virtualization-stable.yml` for storage
 and networks. The workstation waits for the exact promotion run it dispatched, rather than accepting an older stable
-Release with the same version. Signing and Release writes occur only in the protected GitHub-hosted finalizer.
+Release with the same version. Stable promotions are serialized repository-wide so two release candidates cannot race
+one immutable stable tag. Signing and Release writes occur only in the protected GitHub-hosted finalizer.
 For the optional ephemeral-Windows workflow, also define `ATLASO_ONEPASSWORD_ENVIRONMENT_ID`,
 `ATLASO_ONEPASSWORD_ACCOUNT`, and `ATLASO_ONEPASSWORD_PYTHON` as repository variables. They are non-secret selectors;
 the disposable runner must still complete its local 1Password authorization and receives no signing key.

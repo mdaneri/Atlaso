@@ -450,24 +450,22 @@ function Invoke-AtlasoVirtualizationPrerelease {
         }
     }
     $sourceMetadata = Join-Path $sourceInput 'virtualization-source.json'
-    if (-not (Test-Path -LiteralPath $sourceMetadata -PathType Leaf)) {
-        # The preparer publishes this directory with one atomic rename only after
-        # complete signature, archive, and digest validation. An interrupted run
-        # therefore leaves this exact destination absent and safely resumable.
-        $prepareArguments = @(
-            (Join-Path $RepoRoot 'scripts\prepare_virtualization_source.py'),
-            '--manifest', (Join-Path $sourceDownloads 'release-manifest.json'),
-            '--signature', (Join-Path $sourceDownloads 'release-manifest.json.sig'),
-            '--bundle', (Join-Path $sourceDownloads "atlaso-appliance-$($identity.Version).tar.gz"),
-            '--trust-key', (Join-Path $RepoRoot 'image\common\update-trust\atlaso-release-2026-01.pem'),
-            '--output', $sourceInput,
-            '--expected-version', $identity.Version,
-            '--expected-commit', $identity.Commit
-        )
-        $sourceJson = & python @prepareArguments
-        if ($LASTEXITCODE -ne 0) {
-            throw 'Automatic software Release verification failed.'
-        }
+    # Always reconstruct the signed source in private staging. The preparer
+    # publishes an absent destination atomically or requires an existing cache
+    # to match the complete reconstructed tree byte for byte.
+    $prepareArguments = @(
+        (Join-Path $RepoRoot 'scripts\prepare_virtualization_source.py'),
+        '--manifest', (Join-Path $sourceDownloads 'release-manifest.json'),
+        '--signature', (Join-Path $sourceDownloads 'release-manifest.json.sig'),
+        '--bundle', (Join-Path $sourceDownloads "atlaso-appliance-$($identity.Version).tar.gz"),
+        '--trust-key', (Join-Path $RepoRoot 'image\common\update-trust\atlaso-release-2026-01.pem'),
+        '--output', $sourceInput,
+        '--expected-version', $identity.Version,
+        '--expected-commit', $identity.Commit
+    )
+    $sourceJson = & python @prepareArguments
+    if ($LASTEXITCODE -ne 0) {
+        throw 'Automatic software Release verification failed.'
     }
     $source = Get-Content -LiteralPath $sourceMetadata -Raw | ConvertFrom-Json
     $buildRoot = Join-Path $operation 'vmware-build'
@@ -516,12 +514,10 @@ function Invoke-AtlasoVirtualizationPrerelease {
         -Source $ovaPath `
         -Destination (Join-Path $ovaRoot "$name.ova")
     $hypervRoot = Join-Path $RepoRoot "artifacts\virtualization\$tag"
-    $expectedHypervZip = Join-Path $hypervRoot "atlaso-v$($identity.Version)-hyperv-x86_64.zip"
-    if (-not (Test-Path -LiteralPath $expectedHypervZip -PathType Leaf)) {
-        & (Join-Path $RepoRoot 'scripts\windows\virtualization\export-artifacts.ps1') -OvaPath $ovaPath -OutputRoot $hypervRoot
-        if ($LASTEXITCODE -ne 0) {
-            throw 'Exact OVA-to-Hyper-V conversion failed.'
-        }
+    & (Join-Path $RepoRoot 'scripts\windows\virtualization\export-artifacts.ps1') `
+        -OvaPath $ovaPath -OutputRoot $hypervRoot -Force
+    if ($LASTEXITCODE -ne 0) {
+        throw 'Exact OVA-to-Hyper-V conversion failed.'
     }
     $hypervZip = @(Get-ChildItem -LiteralPath $hypervRoot -Filter '*-hyperv-x86_64.zip' -File)
     if ($hypervZip.Count -ne 1) {

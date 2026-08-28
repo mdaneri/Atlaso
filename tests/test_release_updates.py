@@ -1278,6 +1278,8 @@ def test_release_workflows_use_successful_main_sha_and_promote_without_rebuildin
     )[0]
     assert "gh release edit \"$STABLE_TAG\" --draft=false" in virtualization
     assert "run-name: Promote ${{ inputs.prerelease_tag }}" in virtualization
+    assert "group: atlaso-virtualization-stable" in virtualization
+    assert "group: virtualization-stable-${{ inputs.prerelease_tag }}" not in virtualization
     assert 'test "$(jq -r .isPrerelease <<<"$STATE")" = false' in virtualization
     assert "cmp --silent" in virtualization
     assert "gh-pages" not in virtualization
