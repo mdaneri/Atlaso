@@ -77,8 +77,12 @@ interval from monitored Packer process start to SSH provisioning, including fail
 exists; `-PackerHeartbeatSeconds 30` controls the heartbeat interval. When `-SshHost` is explicit, TCP/22 diagnostics
 probe that Packer communicator endpoint instead of the temporary static builder address. A timeout terminates only the
 Packer process tree and
-routes `-PackerOnError cleanup` through the checked exact-root cleanup. Other failure modes preserve the builder
-artifacts for diagnosis. Raw Packer debug-log environment variables are removed from the monitored child because those
+routes `-PackerOnError cleanup` through the checked exact-root cleanup. `-KeepExistingOutput` protects an output root
+that existed before this invocation, and an ordinary replacement does not become parent-cleanup-owned until the child
+durably claims it immediately before checked removal. A newly created partial root is still removed after a proven
+outer timeout.
+Other failure modes preserve the builder artifacts for diagnosis. Raw Packer debug-log environment variables are
+removed from the monitored child because those
 logs bypass output redaction. Console lines that can contain generated connection credentials are redacted before they
 are displayed. Workstation may atomically rewrite the VMX during power-on; the monitor accepts a new file identity only
 when exact provider inventory proves that the expected VMX path is the running builder.
@@ -125,13 +129,38 @@ destination would make Packer nest the source directory and leave the provisione
 pwsh -ExecutionPolicy Bypass `
   -File scripts/windows/vmware/build-photon-image.ps1 `
   -IsoUrl "https://packages.vmware.com/photon/5.0/GA/iso/photon-5.0-dde71ec57.x86_64.iso" `
-  -IsoChecksum "sha512:<checksum>"
+  -IsoChecksum "sha512:<checksum>" `
+  -OnePasswordAccount "<approved-account-name-or-id>" `
+  -OnePasswordPython "<python-3.10-through-3.13>"
 ```
 
-`-SshPassword` and `-BootstrapAdminPassword` accept only `SecureString` values and have no repository defaults. Omit
-them for interactive `Read-Host -AsSecureString` prompts, or collect each value securely in the current PowerShell
-process before invoking the wrapper. The shared builder unwraps them only for kickstart and Packer serialization and
-removes the temporary secret-bearing Packer variable file after the bounded child exits.
+`-SshPassword` and `-BootstrapAdminPassword` accept only `SecureString` values and remain independently authoritative.
+When either is omitted, the wrapper verifies the exact Atlaso 1Password Environment selected by an explicit
+`-OnePasswordEnvironmentId` or by the checkout-local, Git-ignored
+`.atlaso-local/onepassword-environment-id` file, then retrieves only the corresponding concealed
+`DEFAULT_ROOT_PASSWORD` or `DEFAULT_ADMIN_PASSWORD` through the bounded Windows 1Password SDK bridge. A custom
+single-line selector file may be passed with `-EnvironmentIdFile`; the legacy `-OnePasswordEnvironmentIdFile` spelling
+is an alias. Omitted values also require an approved `-OnePasswordAccount` and an SDK-supported CPython 3.10 through
+3.13 executable through `-OnePasswordPython`.
+
+There are no interactive prompts, caller-environment fallbacks, repository password defaults, or local `.env` inputs.
+Missing, ambiguous, non-concealed, invalid, unauthorized, or timed-out 1Password state fails with sanitized guidance
+before VMware network preparation, output cleanup, ISO remastering, Packer initialization, or other image mutation.
+The retrieval bridge returns only current-user DPAPI ciphertext to the PowerShell parent. That parent starts the whole
+plaintext-consuming image workflow as a separately bounded PowerShell child, passes credentials only through a second
+current-user DPAPI bundle, and verifies removal of both task-owned roots. Only the child unwraps validated
+`SecureString` values at the kickstart and Packer serialization boundary. The wrapper places the kickstart, remastered
+ISO, and secret-bearing Packer variable file inside that exact task-owned root, so parent cleanup still removes and
+verifies them after a whole-tree timeout kills the child before its normal `finally` blocks can run.
+`-ImageBuildTimeoutSeconds` bounds the whole child and defaults to six hours.
+If Windows cannot prove whole-tree termination, the wrapper retains the root plus a non-secret checkout-local cleanup
+marker and fails closed. Restart Windows and rerun the wrapper; the changed boot identity proves the prior tree is
+inactive, allowing exact-root cleanup and marker removal before any new credential access or image mutation.
+The shared SDK bridge uses the same boot-bound recovery rule. Both marker types are write-through flushed and
+atomically renamed before a plaintext child starts. After root removal, the wrapper flushes deletion metadata through
+the root parent's Windows directory handle on that same volume before it durably records root absence and a retired
+tombstone in the marker. A crash therefore cannot preserve marker retirement while resurrecting credential-bearing
+files from a different volume.
 
 The wrapper does not build or embed Inventory Linux. New templates leave it uninstalled so an administrator can use
 **Download latest** to retrieve the signed independent release when needed. Contributors building Inventory Linux

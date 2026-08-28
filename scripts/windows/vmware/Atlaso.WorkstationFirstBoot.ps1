@@ -14,6 +14,497 @@ omit it.
 
 <#
 .SYNOPSIS
+Load the native Windows process-job boundary once per PowerShell process.
+#>
+function Initialize-AtlasoWorkstationProcessJobType {
+    if (-not $IsWindows) {
+        throw 'Bounded process-tree jobs require Windows.'
+    }
+    if (-not ('Atlaso.WorkstationProcessJob' -as [type])) {
+        Add-Type -TypeDefinition @'
+using System;
+using System.ComponentModel;
+using System.Diagnostics;
+using System.Runtime.InteropServices;
+
+namespace Atlaso
+{
+    public sealed class WorkstationProcessJob : IDisposable
+    {
+        private const uint JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE = 0x00002000;
+        private IntPtr handle;
+
+        [StructLayout(LayoutKind.Sequential)]
+        private struct BasicLimitInformation
+        {
+            public long PerProcessUserTimeLimit;
+            public long PerJobUserTimeLimit;
+            public uint LimitFlags;
+            public UIntPtr MinimumWorkingSetSize;
+            public UIntPtr MaximumWorkingSetSize;
+            public uint ActiveProcessLimit;
+            public UIntPtr Affinity;
+            public uint PriorityClass;
+            public uint SchedulingClass;
+        }
+
+        [StructLayout(LayoutKind.Sequential)]
+        private struct IoCounters
+        {
+            public ulong ReadOperationCount;
+            public ulong WriteOperationCount;
+            public ulong OtherOperationCount;
+            public ulong ReadTransferCount;
+            public ulong WriteTransferCount;
+            public ulong OtherTransferCount;
+        }
+
+        [StructLayout(LayoutKind.Sequential)]
+        private struct ExtendedLimitInformation
+        {
+            public BasicLimitInformation BasicLimitInformation;
+            public IoCounters IoInfo;
+            public UIntPtr ProcessMemoryLimit;
+            public UIntPtr JobMemoryLimit;
+            public UIntPtr PeakProcessMemoryUsed;
+            public UIntPtr PeakJobMemoryUsed;
+        }
+
+        [StructLayout(LayoutKind.Sequential)]
+        private struct BasicAccountingInformation
+        {
+            public long TotalUserTime;
+            public long TotalKernelTime;
+            public long ThisPeriodTotalUserTime;
+            public long ThisPeriodTotalKernelTime;
+            public uint TotalPageFaultCount;
+            public uint TotalProcesses;
+            public uint ActiveProcesses;
+            public uint TotalTerminatedProcesses;
+        }
+
+        [StructLayout(LayoutKind.Sequential, CharSet = CharSet.Unicode)]
+        private struct StartupInformation
+        {
+            public uint Size;
+            public string Reserved;
+            public string Desktop;
+            public string Title;
+            public uint X;
+            public uint Y;
+            public uint XSize;
+            public uint YSize;
+            public uint XCountChars;
+            public uint YCountChars;
+            public uint FillAttribute;
+            public uint Flags;
+            public ushort ShowWindow;
+            public ushort Reserved2;
+            public IntPtr Reserved2Pointer;
+            public IntPtr StandardInput;
+            public IntPtr StandardOutput;
+            public IntPtr StandardError;
+        }
+
+        [StructLayout(LayoutKind.Sequential)]
+        private struct ProcessInformation
+        {
+            public IntPtr Process;
+            public IntPtr Thread;
+            public uint ProcessId;
+            public uint ThreadId;
+        }
+
+        [DllImport("kernel32.dll", CharSet = CharSet.Unicode, SetLastError = true)]
+        private static extern IntPtr CreateJobObject(IntPtr securityAttributes, string name);
+
+        [DllImport("kernel32.dll", CharSet = CharSet.Unicode, SetLastError = true)]
+        private static extern bool CreateProcess(
+            string applicationName,
+            System.Text.StringBuilder commandLine,
+            IntPtr processAttributes,
+            IntPtr threadAttributes,
+            bool inheritHandles,
+            uint creationFlags,
+            IntPtr environment,
+            string currentDirectory,
+            ref StartupInformation startupInformation,
+            out ProcessInformation processInformation);
+
+        [DllImport("kernel32.dll", SetLastError = true)]
+        private static extern bool SetInformationJobObject(
+            IntPtr job,
+            int informationClass,
+            ref ExtendedLimitInformation information,
+            uint informationLength);
+
+        [DllImport("kernel32.dll", SetLastError = true)]
+        private static extern bool AssignProcessToJobObject(IntPtr job, IntPtr process);
+
+        [DllImport("kernel32.dll", SetLastError = true)]
+        private static extern bool TerminateJobObject(IntPtr job, uint exitCode);
+
+        [DllImport("kernel32.dll", SetLastError = true)]
+        private static extern bool TerminateProcess(IntPtr process, uint exitCode);
+
+        [DllImport("kernel32.dll", SetLastError = true)]
+        private static extern uint ResumeThread(IntPtr thread);
+
+        [DllImport("kernel32.dll", SetLastError = true)]
+        private static extern uint WaitForSingleObject(IntPtr handle, uint milliseconds);
+
+        [DllImport("kernel32.dll", SetLastError = true)]
+        private static extern bool QueryInformationJobObject(
+            IntPtr job,
+            int informationClass,
+            out BasicAccountingInformation information,
+            uint informationLength,
+            IntPtr returnLength);
+
+        [DllImport("kernel32.dll", SetLastError = true)]
+        private static extern bool CloseHandle(IntPtr handle);
+
+        public Process RootProcess { get; private set; }
+
+        private WorkstationProcessJob(IntPtr jobHandle, Process rootProcess)
+        {
+            handle = jobHandle;
+            RootProcess = rootProcess;
+        }
+
+        private static string QuoteArgument(string value)
+        {
+            if (value.Length != 0 && value.IndexOfAny(new[] { ' ', '\t', '\n', '\v', '\r', '"' }) < 0)
+            {
+                return value;
+            }
+            System.Text.StringBuilder quoted = new System.Text.StringBuilder();
+            quoted.Append('"');
+            int backslashes = 0;
+            foreach (char character in value)
+            {
+                if (character == '\\')
+                {
+                    backslashes++;
+                    continue;
+                }
+                if (character == '"')
+                {
+                    quoted.Append('\\', backslashes * 2 + 1);
+                    quoted.Append('"');
+                    backslashes = 0;
+                    continue;
+                }
+                quoted.Append('\\', backslashes);
+                backslashes = 0;
+                quoted.Append(character);
+            }
+            quoted.Append('\\', backslashes * 2);
+            quoted.Append('"');
+            return quoted.ToString();
+        }
+
+        public static WorkstationProcessJob StartSuspended(string filePath, string[] arguments)
+        {
+            const uint CREATE_SUSPENDED = 0x00000004;
+            IntPtr job = CreateJobObject(IntPtr.Zero, null);
+            if (job == IntPtr.Zero)
+            {
+                throw new Win32Exception(Marshal.GetLastWin32Error(), "Windows process job creation failed.");
+            }
+            ProcessInformation processInformation = new ProcessInformation();
+            try
+            {
+                ExtendedLimitInformation limits = new ExtendedLimitInformation();
+                limits.BasicLimitInformation.LimitFlags = JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE;
+                if (!SetInformationJobObject(job, 9, ref limits, (uint)Marshal.SizeOf(limits)))
+                {
+                    throw new Win32Exception(Marshal.GetLastWin32Error(), "Windows process job limits could not be established.");
+                }
+                System.Text.StringBuilder commandLine = new System.Text.StringBuilder(QuoteArgument(filePath));
+                foreach (string argument in arguments)
+                {
+                    commandLine.Append(' ');
+                    commandLine.Append(QuoteArgument(argument));
+                }
+                StartupInformation startup = new StartupInformation();
+                startup.Size = (uint)Marshal.SizeOf(typeof(StartupInformation));
+                if (!CreateProcess(
+                    filePath,
+                    commandLine,
+                    IntPtr.Zero,
+                    IntPtr.Zero,
+                    false,
+                    CREATE_SUSPENDED,
+                    IntPtr.Zero,
+                    null,
+                    ref startup,
+                    out processInformation))
+                {
+                    throw new Win32Exception(Marshal.GetLastWin32Error(), "The bounded process could not be created suspended.");
+                }
+                if (!AssignProcessToJobObject(job, processInformation.Process))
+                {
+                    throw new Win32Exception(Marshal.GetLastWin32Error(), "The bounded process could not be assigned to its Windows job.");
+                }
+                Process rootProcess = Process.GetProcessById((int)processInformation.ProcessId);
+                IntPtr managedProcessHandle = rootProcess.Handle;
+                if (ResumeThread(processInformation.Thread) == UInt32.MaxValue)
+                {
+                    rootProcess.Dispose();
+                    throw new Win32Exception(Marshal.GetLastWin32Error(), "The bounded process could not be resumed after job assignment.");
+                }
+                CloseHandle(processInformation.Thread);
+                processInformation.Thread = IntPtr.Zero;
+                CloseHandle(processInformation.Process);
+                processInformation.Process = IntPtr.Zero;
+                return new WorkstationProcessJob(job, rootProcess);
+            }
+            catch
+            {
+                if (processInformation.Process != IntPtr.Zero)
+                {
+                    TerminateProcess(processInformation.Process, 1);
+                    WaitForSingleObject(processInformation.Process, 10000);
+                    CloseHandle(processInformation.Process);
+                }
+                if (processInformation.Thread != IntPtr.Zero)
+                {
+                    CloseHandle(processInformation.Thread);
+                }
+                CloseHandle(job);
+                throw;
+            }
+        }
+
+        public static Process StartBreakaway(string filePath, string[] arguments)
+        {
+            const uint CREATE_BREAKAWAY_FROM_JOB = 0x01000000;
+            ProcessInformation processInformation = new ProcessInformation();
+            try
+            {
+                System.Text.StringBuilder commandLine = new System.Text.StringBuilder(QuoteArgument(filePath));
+                foreach (string argument in arguments)
+                {
+                    commandLine.Append(' ');
+                    commandLine.Append(QuoteArgument(argument));
+                }
+                StartupInformation startup = new StartupInformation();
+                startup.Size = (uint)Marshal.SizeOf(typeof(StartupInformation));
+                if (!CreateProcess(
+                    filePath,
+                    commandLine,
+                    IntPtr.Zero,
+                    IntPtr.Zero,
+                    false,
+                    CREATE_BREAKAWAY_FROM_JOB,
+                    IntPtr.Zero,
+                    null,
+                    ref startup,
+                    out processInformation))
+                {
+                    throw new Win32Exception(Marshal.GetLastWin32Error(), "The verified breakaway process could not be created.");
+                }
+                Process process = Process.GetProcessById((int)processInformation.ProcessId);
+                IntPtr managedProcessHandle = process.Handle;
+                CloseHandle(processInformation.Thread);
+                processInformation.Thread = IntPtr.Zero;
+                CloseHandle(processInformation.Process);
+                processInformation.Process = IntPtr.Zero;
+                return process;
+            }
+            catch
+            {
+                if (processInformation.Process != IntPtr.Zero)
+                {
+                    TerminateProcess(processInformation.Process, 1);
+                    WaitForSingleObject(processInformation.Process, 10000);
+                    CloseHandle(processInformation.Process);
+                }
+                if (processInformation.Thread != IntPtr.Zero)
+                {
+                    CloseHandle(processInformation.Thread);
+                }
+                throw;
+            }
+        }
+
+        public void TerminateAndWait(int timeoutMilliseconds)
+        {
+            if (!TerminateJobObject(handle, 1))
+            {
+                throw new Win32Exception(Marshal.GetLastWin32Error(), "Windows process-job termination failed.");
+            }
+            Stopwatch deadline = Stopwatch.StartNew();
+            while (deadline.ElapsedMilliseconds <= timeoutMilliseconds)
+            {
+                BasicAccountingInformation accounting;
+                if (!QueryInformationJobObject(
+                    handle,
+                    1,
+                    out accounting,
+                    (uint)Marshal.SizeOf(typeof(BasicAccountingInformation)),
+                    IntPtr.Zero))
+                {
+                    throw new Win32Exception(Marshal.GetLastWin32Error(), "Windows process-job accounting failed.");
+                }
+                if (accounting.ActiveProcesses == 0)
+                {
+                    return;
+                }
+                System.Threading.Thread.Sleep(50);
+            }
+            throw new TimeoutException("A process-job descendant remained active after termination.");
+        }
+
+        public void CompleteAndWait(int timeoutMilliseconds)
+        {
+            BasicAccountingInformation accounting;
+            if (!QueryInformationJobObject(
+                handle,
+                1,
+                out accounting,
+                (uint)Marshal.SizeOf(typeof(BasicAccountingInformation)),
+                IntPtr.Zero))
+            {
+                throw new Win32Exception(Marshal.GetLastWin32Error(), "Windows process-job accounting failed.");
+            }
+            if (accounting.ActiveProcesses != 0)
+            {
+                TerminateAndWait(timeoutMilliseconds);
+            }
+        }
+
+        public void Dispose()
+        {
+            if (handle != IntPtr.Zero)
+            {
+                CloseHandle(handle);
+                handle = IntPtr.Zero;
+            }
+            GC.SuppressFinalize(this);
+        }
+    }
+}
+'@
+    }
+}
+
+<#
+.SYNOPSIS
+Create a suspended process, assign its Windows job, and only then resume it.
+
+.PARAMETER FilePath
+Exact executable to start without shell interpretation.
+
+.PARAMETER ArgumentList
+Individual process arguments encoded through the Windows argv contract.
+#>
+function New-AtlasoBoundedProcessJob {
+    param(
+        [Parameter(Mandatory = $true)][string]$FilePath,
+        [Parameter(Mandatory = $true)][AllowEmptyString()][string[]]$ArgumentList
+    )
+
+    Initialize-AtlasoWorkstationProcessJobType
+    try {
+        return [Atlaso.WorkstationProcessJob]::StartSuspended($FilePath, $ArgumentList)
+    }
+    catch {
+        $assignmentFailure = [System.InvalidOperationException]::new(
+            'The bounded process could not establish whole-process-tree ownership.',
+            $_.Exception
+        )
+        $assignmentFailure.Data['AtlasoProcessTreeTerminationUnproven'] = $true
+        throw $assignmentFailure
+    }
+}
+
+<#
+.SYNOPSIS
+Terminate a bounded process tree and prove every captured descendant exited.
+
+.PARAMETER Process
+Started root process whose descendants must be terminated.
+
+.PARAMETER Job
+Owned Windows job tracking the root and every descendant.
+
+.PARAMETER TimeoutSeconds
+Configured deadline included in sanitized failure messages.
+
+.PARAMETER Action
+Safe action description used in the sanitized timeout failure.
+#>
+function Stop-AtlasoBoundedProcessTree {
+    param(
+        [Parameter(Mandatory = $true)][System.Diagnostics.Process]$Process,
+        [Parameter(Mandatory = $true)][object]$Job,
+        [Parameter(Mandatory = $true)][ValidateRange(1, 86400)][int]$TimeoutSeconds,
+        [Parameter(Mandatory = $true)][string]$Action
+    )
+
+    try {
+        # Job accounting is the authoritative descendant set. Immediate-child
+        # exit alone does not prove that Packer or plugin consumers are inactive.
+        $Job.TerminateAndWait(10000)
+        if (-not $Process.WaitForExit(10000)) {
+            throw 'The bounded root remained active after process-job termination.'
+        }
+    }
+    catch {
+        $terminationFailure = [System.TimeoutException]::new(
+            "$Action exceeded its $TimeoutSeconds-second deadline and whole-process-tree cleanup could not be proven.",
+            $_.Exception
+        )
+        $terminationFailure.Data['AtlasoProcessTreeTerminationUnproven'] = $true
+        throw $terminationFailure
+    }
+    $deadlineFailure = [System.TimeoutException]::new(
+        "$Action exceeded its $TimeoutSeconds-second deadline after proven whole-process-tree termination."
+    )
+    $deadlineFailure.Data['AtlasoProcessTreeTerminationProven'] = $true
+    throw $deadlineFailure
+}
+
+<#
+.SYNOPSIS
+Prove a normally exited bounded root has no remaining job descendants.
+
+.PARAMETER Process
+Exited root process whose job must be empty.
+
+.PARAMETER Job
+Owned Windows job tracking the root and every descendant.
+
+.PARAMETER Action
+Safe action description used in sanitized failure messages.
+#>
+function Complete-AtlasoBoundedProcessTree {
+    param(
+        [Parameter(Mandatory = $true)][System.Diagnostics.Process]$Process,
+        [Parameter(Mandatory = $true)][object]$Job,
+        [Parameter(Mandatory = $true)][string]$Action
+    )
+
+    try {
+        if (-not $Process.HasExited) {
+            throw 'The bounded root had not exited before completion proof.'
+        }
+        $Job.CompleteAndWait(10000)
+    }
+    catch {
+        $completionFailure = [System.InvalidOperationException]::new(
+            "$Action exited but whole-process-tree cleanup could not be proven.",
+            $_.Exception
+        )
+        $completionFailure.Data['AtlasoProcessTreeTerminationUnproven'] = $true
+        throw $completionFailure
+    }
+}
+
+<#
+.SYNOPSIS
 Run one external process with a deadline and whole-tree termination.
 
 .PARAMETER FilePath
@@ -32,7 +523,7 @@ function Invoke-AtlasoBoundedProcess {
     param(
         [Parameter(Mandatory = $true)][string]$FilePath,
         [Parameter(Mandatory = $true)][AllowEmptyString()][string[]]$ArgumentList,
-        [Parameter(Mandatory = $true)][ValidateRange(1, 3600)][int]$TimeoutSeconds,
+        [Parameter(Mandatory = $true)][ValidateRange(1, 86400)][int]$TimeoutSeconds,
         [Parameter(Mandatory = $true)][string]$Action
     )
 
@@ -63,7 +554,7 @@ function Invoke-AtlasoBoundedProcess {
             }
             catch {
                 $terminationFailure = [System.TimeoutException]::new(
-                    "$Action exceeded its deadline and whole-process-tree cleanup could not be proven.",
+                    "$Action exceeded its $TimeoutSeconds-second deadline and whole-process-tree cleanup could not be proven.",
                     $_.Exception
                 )
                 $terminationFailure.Data['AtlasoProcessTreeTerminationUnproven'] = $true
@@ -80,6 +571,287 @@ function Invoke-AtlasoBoundedProcess {
     }
     finally {
         $process.Dispose()
+    }
+}
+
+<#
+.SYNOPSIS
+Run one external process with live inherited diagnostics and a deadline.
+
+.PARAMETER FilePath
+Exact executable to start without shell interpretation.
+
+.PARAMETER ArgumentList
+Individual process arguments added without command-line interpolation.
+
+.PARAMETER TimeoutSeconds
+Positive deadline for the external process.
+
+.PARAMETER Action
+Safe action description used in failure messages.
+#>
+function Invoke-AtlasoBoundedStreamingProcess {
+    param(
+        [Parameter(Mandatory = $true)][string]$FilePath,
+        [Parameter(Mandatory = $true)][AllowEmptyString()][string[]]$ArgumentList,
+        [Parameter(Mandatory = $true)][ValidateRange(1, 86400)][int]$TimeoutSeconds,
+        [Parameter(Mandatory = $true)][string]$Action
+    )
+
+    # The isolated image child owns redaction. Inheriting the console preserves
+    # its sanitized Packer heartbeats and diagnostics without copying plaintext
+    # credentials or buffered output into the PowerShell parent.
+    $processJob = New-AtlasoBoundedProcessJob `
+        -FilePath $FilePath `
+        -ArgumentList $ArgumentList
+    $process = $processJob.RootProcess
+    $jobCompletionProven = $false
+    try {
+        if (-not $process.WaitForExit($TimeoutSeconds * 1000)) {
+            Stop-AtlasoBoundedProcessTree `
+                -Process $process `
+                -Job $processJob `
+                -TimeoutSeconds $TimeoutSeconds `
+                -Action $Action
+        }
+        Complete-AtlasoBoundedProcessTree `
+            -Process $process `
+            -Job $processJob `
+            -Action $Action
+        $jobCompletionProven = $true
+        if ($process.ExitCode -ne 0) {
+            throw "$Action failed with exit code $($process.ExitCode)."
+        }
+    }
+    finally {
+        try {
+            if (-not $jobCompletionProven) {
+                # Ctrl+C and other pipeline interruptions can bypass the normal
+                # timeout/completion branches. Prove the job empty before its
+                # kill-on-close handle is released and sensitive cleanup resumes.
+                $processJob.TerminateAndWait(10000)
+                if (-not $process.WaitForExit(10000)) {
+                    throw 'The bounded root remained active after interruption cleanup.'
+                }
+                $jobCompletionProven = $true
+            }
+        }
+        catch {
+            $interruptionFailure = [System.InvalidOperationException]::new(
+                "$Action was interrupted and whole-process-tree cleanup could not be proven.",
+                $_.Exception
+            )
+            $interruptionFailure.Data['AtlasoProcessTreeTerminationUnproven'] = $true
+            throw $interruptionFailure
+        }
+        finally {
+            $processJob.Dispose()
+            $process.Dispose()
+        }
+    }
+}
+
+<#
+.SYNOPSIS
+Return a stable identity for the current Windows boot.
+#>
+function Get-AtlasoWindowsBootIdentity {
+    $operatingSystem = Get-CimInstance -ClassName Win32_OperatingSystem -ErrorAction Stop
+    return $operatingSystem.LastBootUpTime.ToUniversalTime().ToString('o')
+}
+
+<#
+.SYNOPSIS
+Atomically rename one file with Windows write-through durability.
+
+.PARAMETER SourcePath
+Exact flushed temporary file.
+
+.PARAMETER DestinationPath
+Exact destination in the same directory.
+
+.PARAMETER Replace
+Replace an existing destination during a validated state transition.
+#>
+function Move-AtlasoDurableFile {
+    param(
+        [Parameter(Mandatory = $true)][string]$SourcePath,
+        [Parameter(Mandatory = $true)][string]$DestinationPath,
+        [switch]$Replace
+    )
+
+    if (-not $IsWindows) {
+        throw 'Durable file replacement requires Windows.'
+    }
+    $resolvedSourcePath = (Resolve-Path -LiteralPath $SourcePath).Path
+    $resolvedDestinationPath = [System.IO.Path]::GetFullPath($DestinationPath)
+    if (-not ('Atlaso.WorkstationDurableFile' -as [type])) {
+        Add-Type -TypeDefinition @'
+using System.Runtime.InteropServices;
+
+namespace Atlaso
+{
+    public static class WorkstationDurableFile
+    {
+        [DllImport("kernel32.dll", CharSet = CharSet.Unicode, SetLastError = true)]
+        public static extern bool MoveFileEx(string existingPath, string newPath, uint flags);
+    }
+}
+'@
+    }
+    [uint32]$flags = 0x00000008
+    if ($Replace) {
+        $flags = $flags -bor 0x00000001
+    }
+    if (-not [Atlaso.WorkstationDurableFile]::MoveFileEx(
+            $resolvedSourcePath,
+            $resolvedDestinationPath,
+            $flags
+        )) {
+        $errorCode = [System.Runtime.InteropServices.Marshal]::GetLastWin32Error()
+        throw [System.ComponentModel.Win32Exception]::new(
+            $errorCode,
+            'Durable write-through file replacement failed.'
+        )
+    }
+    if ((Test-Path -LiteralPath $resolvedSourcePath) -or
+        -not (Test-Path -LiteralPath $resolvedDestinationPath -PathType Leaf)) {
+        throw 'Durable write-through file replacement could not be proven.'
+    }
+}
+
+<#
+.SYNOPSIS
+Flush directory metadata through an exact Windows directory handle.
+
+.PARAMETER DirectoryPath
+Existing non-reparse-point directory whose metadata changes must reach its own volume.
+#>
+function Sync-AtlasoDirectoryMetadata {
+    param([Parameter(Mandatory = $true)][string]$DirectoryPath)
+
+    if (-not $IsWindows) {
+        throw 'Durable directory metadata synchronization requires Windows.'
+    }
+    $resolvedDirectoryPath = (Resolve-Path -LiteralPath $DirectoryPath).Path
+    $directoryItem = Get-Item -LiteralPath $resolvedDirectoryPath -Force -ErrorAction Stop
+    if (-not $directoryItem.PSIsContainer -or
+        ($directoryItem.Attributes -band [System.IO.FileAttributes]::ReparsePoint)) {
+        throw 'Durable directory metadata synchronization requires a non-reparse-point directory.'
+    }
+    if (-not ('Atlaso.WorkstationDurableDirectory' -as [type])) {
+        Add-Type -TypeDefinition @'
+using System;
+using System.Runtime.InteropServices;
+using Microsoft.Win32.SafeHandles;
+
+namespace Atlaso
+{
+    public static class WorkstationDurableDirectory
+    {
+        [DllImport("kernel32.dll", CharSet = CharSet.Unicode, SetLastError = true)]
+        public static extern SafeFileHandle CreateFileW(
+            string path,
+            uint desiredAccess,
+            uint shareMode,
+            IntPtr securityAttributes,
+            uint creationDisposition,
+            uint flagsAndAttributes,
+            IntPtr templateFile
+        );
+
+        [DllImport("kernel32.dll", SetLastError = true)]
+        [return: MarshalAs(UnmanagedType.Bool)]
+        public static extern bool FlushFileBuffers(SafeFileHandle handle);
+    }
+}
+'@
+    }
+    # FILE_FLAG_BACKUP_SEMANTICS permits an ordinary directory handle, while
+    # WRITE_THROUGH and FlushFileBuffers commit its metadata on this volume.
+    [uint32]$directoryFlags = 0x02000000
+    $directoryFlags = $directoryFlags -bor [uint32]::Parse(
+        '80000000',
+        [System.Globalization.NumberStyles]::HexNumber
+    )
+    $directoryHandle = [Atlaso.WorkstationDurableDirectory]::CreateFileW(
+        $resolvedDirectoryPath,
+        [uint32]0x40000000,
+        [uint32]0x00000007,
+        [IntPtr]::Zero,
+        [uint32]0x00000003,
+        $directoryFlags,
+        [IntPtr]::Zero
+    )
+    try {
+        if ($directoryHandle.IsInvalid) {
+            $errorCode = [System.Runtime.InteropServices.Marshal]::GetLastWin32Error()
+            throw [System.ComponentModel.Win32Exception]::new(
+                $errorCode,
+                'Opening the directory for durable metadata synchronization failed.'
+            )
+        }
+        if (-not [Atlaso.WorkstationDurableDirectory]::FlushFileBuffers($directoryHandle)) {
+            $errorCode = [System.Runtime.InteropServices.Marshal]::GetLastWin32Error()
+            throw [System.ComponentModel.Win32Exception]::new(
+                $errorCode,
+                'Durable directory metadata synchronization failed.'
+            )
+        }
+    }
+    finally {
+        $directoryHandle.Dispose()
+    }
+}
+
+<#
+.SYNOPSIS
+Durably publish one non-secret JSON ownership marker.
+
+.PARAMETER Path
+Exact marker path.
+
+.PARAMETER Payload
+Validated non-secret payload to serialize.
+
+.PARAMETER Replace
+Replace an existing marker during a validated state transition.
+#>
+function Write-AtlasoDurableJsonFile {
+    param(
+        [Parameter(Mandatory = $true)][string]$Path,
+        [Parameter(Mandatory = $true)][object]$Payload,
+        [switch]$Replace
+    )
+
+    $resolvedPath = [System.IO.Path]::GetFullPath($Path)
+    $temporaryPath = "$resolvedPath.$([guid]::NewGuid().ToString('N')).tmp"
+    $bytes = [System.Text.UTF8Encoding]::new($false).GetBytes(
+        ($Payload | ConvertTo-Json -Depth 4 -Compress)
+    )
+    try {
+        $stream = [System.IO.FileStream]::new(
+            $temporaryPath,
+            [System.IO.FileMode]::CreateNew,
+            [System.IO.FileAccess]::Write,
+            [System.IO.FileShare]::None,
+            4096,
+            [System.IO.FileOptions]::WriteThrough
+        )
+        try {
+            $stream.Write($bytes, 0, $bytes.Length)
+            $stream.Flush($true)
+        }
+        finally {
+            $stream.Dispose()
+        }
+        Move-AtlasoDurableFile `
+            -SourcePath $temporaryPath `
+            -DestinationPath $resolvedPath `
+            -Replace:$Replace
+    }
+    finally {
+        Remove-Item -LiteralPath $temporaryPath -Force -ErrorAction SilentlyContinue
     }
 }
 

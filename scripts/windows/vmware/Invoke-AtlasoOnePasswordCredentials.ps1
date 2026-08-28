@@ -1,26 +1,20 @@
 <#
 .SYNOPSIS
-Prepare or stage normal-test-VM first-boot credentials in a bounded child.
+Resolve Atlaso default credentials inside a bounded 1Password child.
 
 .DESCRIPTION
-Keeps plaintext credentials outside the create-atlaso-test-vm.ps1 parent.
-Prepare resolves only omitted defaults through the supported 1Password SDK,
-combines them with DPAPI-protected explicit SecureString overrides, validates
-the existing Atlaso OVF contract, and writes a DPAPI-protected OVF bundle.
-Stage decrypts that bundle only long enough to update the exact new VMX.
-
-.PARAMETER Action
-Prepare the protected OVF bundle or stage it into the exact new VMX.
+Combines current-user DPAPI ciphertext for explicit SecureString overrides with
+only the requested concealed defaults from the exact Atlaso Environment. The
+helper validates both credentials and writes only DPAPI-protected output.
 
 .PARAMETER RequestPath
-Private JSON request containing non-secret OVF inputs and optional DPAPI
-ciphertext for explicit SecureString overrides.
+Private JSON request containing optional DPAPI ciphertext for explicit values.
 
 .PARAMETER StatusPath
-Private JSON status written with safe machine-readable outcome codes.
+Private JSON status written with a safe machine-readable outcome code.
 
-.PARAMETER OvfBundlePath
-DPAPI-protected complete OVF environment exchanged between bounded children.
+.PARAMETER CredentialBundlePath
+DPAPI-protected credential bundle returned to the PowerShell caller.
 
 .PARAMETER PythonCommand
 Approved CPython 3.10 through 3.13 executable for omitted-value retrieval.
@@ -32,10 +26,7 @@ Isolated, hash-locked 1Password SDK dependency directory.
 Non-secret 1Password account name or ID used for desktop authorization.
 
 .PARAMETER EnvironmentId
-Opaque ID of the already pinned and verified Atlaso Environment.
-
-.PARAMETER VmxPath
-Exact newly created VMX that receives the protected OVF environment.
+Opaque ID of the pinned and verified Atlaso Environment.
 
 .PARAMETER TimeoutSeconds
 Bounded SDK authorization and Environment retrieval deadline.
@@ -45,57 +36,36 @@ Bounded SDK authorization and Environment retrieval deadline.
     'OnePasswordAccount',
     Justification = 'Desktop authorization account identifier, not an account password.'
 )]
+[Diagnostics.CodeAnalysis.SuppressMessageAttribute(
+    'PSAvoidUsingPlainTextForPassword',
+    'CredentialBundlePath',
+    Justification = 'Path to a current-user DPAPI ciphertext bundle, not a plaintext password.'
+)]
 [CmdletBinding()]
 param(
-    [Parameter(Mandatory = $true)][ValidateSet('Prepare', 'Stage')][string]$Action,
-    [string]$RequestPath = '',
+    [Parameter(Mandatory = $true)][string]$RequestPath,
     [Parameter(Mandatory = $true)][string]$StatusPath,
-    [Parameter(Mandatory = $true)][string]$OvfBundlePath,
+    [Parameter(Mandatory = $true)][string]$CredentialBundlePath,
     [string]$PythonCommand = '',
     [string]$DependencyPath = '',
     [string]$OnePasswordAccount = '',
     [string]$EnvironmentId = '',
-    [string]$VmxPath = '',
     [ValidateRange(1, 3600)][int]$TimeoutSeconds = 300
 )
 
 $ErrorActionPreference = 'Stop'
-. (Join-Path $PSScriptRoot 'Atlaso.WorkstationFirstBoot.ps1')
-
 $status = [ordered]@{
     Success = $false
     Code    = 'credential_bridge_failed'
 }
-$defaultBundlePath = ''
+$defaultsPath = ''
 $pythonChildPath = ''
 $adminPasswordText = $null
 $rootPasswordText = $null
-$ovfEnvironment = $null
 
 try {
-    if ($Action -eq 'Stage') {
-        if (
-            [string]::IsNullOrWhiteSpace($VmxPath) -or
-            -not (Test-Path -LiteralPath $VmxPath -PathType Leaf) -or
-            -not (Test-Path -LiteralPath $OvfBundlePath -PathType Leaf)
-        ) {
-            $status.Code = 'stage_input_invalid'
-            return
-        }
-        $ovfCiphertext = [System.IO.File]::ReadAllText($OvfBundlePath)
-        $ovfSecureString = ConvertTo-SecureString -String $ovfCiphertext
-        $ovfEnvironment = ConvertFrom-SecureString -SecureString $ovfSecureString -AsPlainText
-        Set-AtlasoWorkstationOvfEnvironment -VmxPath $VmxPath -OvfEnvironment $ovfEnvironment
-        $status.Success = $true
-        $status.Code = 'staged'
-        return
-    }
-
-    if (
-        [string]::IsNullOrWhiteSpace($RequestPath) -or
-        -not (Test-Path -LiteralPath $RequestPath -PathType Leaf)
-    ) {
-        $status.Code = 'prepare_request_invalid'
+    if (-not (Test-Path -LiteralPath $RequestPath -PathType Leaf)) {
+        $status.Code = 'request_invalid'
         return
     }
     $request = [System.IO.File]::ReadAllText($RequestPath) | ConvertFrom-Json
@@ -115,8 +85,8 @@ try {
             return
         }
         $bridgeDirectory = [System.IO.Path]::GetDirectoryName($StatusPath)
-        $defaultBundlePath = Join-Path $bridgeDirectory 'onepassword-defaults.json'
-        $pythonChildPath = Join-Path $bridgeDirectory 'atlaso-test-vm-onepassword.py'
+        $defaultsPath = Join-Path $bridgeDirectory 'onepassword-defaults.json'
+        $pythonChildPath = Join-Path $bridgeDirectory 'atlaso-onepassword-defaults.py'
         $pythonSource = @'
 import argparse
 import asyncio
@@ -275,7 +245,7 @@ if __name__ == "__main__":
             '--onepassword-account', $OnePasswordAccount,
             '--onepassword-environment-id', $EnvironmentId,
             '--request', $RequestPath,
-            '--output', $defaultBundlePath,
+            '--output', $defaultsPath,
             '--timeout', "$TimeoutSeconds"
         ) 2>$null
         $pythonExitCode = $LASTEXITCODE
@@ -293,7 +263,7 @@ if __name__ == "__main__":
         if ($pythonExitCode -ne 0) {
             return
         }
-        $defaults = [System.IO.File]::ReadAllText($defaultBundlePath) | ConvertFrom-Json
+        $defaults = [System.IO.File]::ReadAllText($defaultsPath) | ConvertFrom-Json
         if ($needsAdminDefault) {
             $adminCiphertext = [string]$defaults.AdminPasswordCiphertext
         }
@@ -313,54 +283,56 @@ if __name__ == "__main__":
     try {
         $adminPassword = ConvertTo-SecureString -String $adminCiphertext
         $rootPassword = ConvertTo-SecureString -String $rootCiphertext
+        $adminPasswordText = ConvertFrom-SecureString -SecureString $adminPassword -AsPlainText
+        $rootPasswordText = ConvertFrom-SecureString -SecureString $rootPassword -AsPlainText
     }
     catch {
         $status.Code = 'credential_ciphertext_invalid'
         return
     }
 
-    try {
-        $ovfEnvironment = New-AtlasoWorkstationOvfEnvironment `
-            -Fqdn ([string]$request.Fqdn) `
-            -AdminPassword $adminPassword `
-            -RootPassword $rootPassword `
-            -RootSshEnabled:([bool]$request.RootSshEnabled) `
-            -NormalTestVm `
-            -DevelopmentAdminSshPublicKey ([string]$request.DevelopmentAdminSshPublicKey) `
-            -DevelopmentRootCaCertificatePem ([string]$request.DevelopmentRootCaCertificatePem)
-    }
-    catch {
-        $message = $_.Exception.Message
-        if ($message.StartsWith('AdminPassword', [System.StringComparison]::Ordinal)) {
-            $status.Code = 'admin_password_invalid'
+    foreach ($passwordInput in @(
+            @{ Name = 'AdminPassword'; Value = $adminPasswordText; Code = 'admin_password_invalid' },
+            @{ Name = 'RootPassword'; Value = $rootPasswordText; Code = 'root_password_invalid' }
+        )) {
+        if (
+            $passwordInput.Value.Length -lt 12 -or
+            $passwordInput.Value -ne $passwordInput.Value.Trim() -or
+            $passwordInput.Value -match "[`t`r`n]"
+        ) {
+            $status.Code = $passwordInput.Code
+            return
         }
-        elseif ($message.StartsWith('RootPassword', [System.StringComparison]::Ordinal)) {
-            $status.Code = 'root_password_invalid'
+        try {
+            [void][System.Xml.XmlConvert]::VerifyXmlChars($passwordInput.Value)
         }
-        else {
-            $status.Code = 'ovf_input_invalid'
+        catch {
+            $status.Code = $passwordInput.Code
+            return
         }
-        return
     }
-    $ovfSecureString = [SecureString]::new()
-    foreach ($character in $ovfEnvironment.ToCharArray()) {
-        $ovfSecureString.AppendChar($character)
+
+    $bundle = [ordered]@{
+        AdminPasswordCiphertext = $adminCiphertext
+        RootPasswordCiphertext  = $rootCiphertext
     }
-    $ovfCiphertext = ConvertFrom-SecureString -SecureString $ovfSecureString
-    [System.IO.File]::WriteAllText($OvfBundlePath, $ovfCiphertext)
+    [System.IO.File]::WriteAllText(
+        $CredentialBundlePath,
+        ($bundle | ConvertTo-Json -Compress),
+        [System.Text.UTF8Encoding]::new($false)
+    )
     $status.Success = $true
     $status.Code = 'prepared'
 }
 catch {
     $status.Success = $false
-    $status.Code = if ($Action -eq 'Stage') { 'stage_failed' } else { 'prepare_failed' }
+    $status.Code = 'credential_bridge_failed'
 }
 finally {
     $adminPasswordText = $null
     $rootPasswordText = $null
-    $ovfEnvironment = $null
-    if ($defaultBundlePath -and (Test-Path -LiteralPath $defaultBundlePath -PathType Leaf)) {
-        [System.IO.File]::Delete($defaultBundlePath)
+    if ($defaultsPath -and (Test-Path -LiteralPath $defaultsPath -PathType Leaf)) {
+        [System.IO.File]::Delete($defaultsPath)
     }
     if ($pythonChildPath -and (Test-Path -LiteralPath $pythonChildPath -PathType Leaf)) {
         [System.IO.File]::Delete($pythonChildPath)

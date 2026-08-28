@@ -6,9 +6,39 @@ Pinned Photon source URL or local path.
 .PARAMETER IsoChecksum
 Expected Photon ISO checksum.
 .PARAMETER SshPassword
-Temporary Packer SSH password. The wrapper prompts securely when omitted.
+Optional temporary Packer SSH password override. When omitted, the wrapper
+retrieves DEFAULT_ROOT_PASSWORD from the exact Atlaso 1Password Environment.
 .PARAMETER BootstrapAdminPassword
-Initial appliance administrator password. The wrapper prompts securely when omitted.
+Optional initial administrator password override. When omitted, the wrapper
+retrieves DEFAULT_ADMIN_PASSWORD from the exact Atlaso 1Password Environment.
+.PARAMETER OnePasswordEnvironmentId
+Opaque ID of the exact Atlaso 1Password Environment. When omitted, the wrapper
+reads the checkout-local onepassword-environment-id selector.
+.PARAMETER EnvironmentIdFile
+Optional single-line Atlaso Environment ID file. The legacy
+OnePasswordEnvironmentIdFile name remains available as an alias.
+.PARAMETER OnePasswordAccount
+1Password account name or ID approved for desktop SDK authorization when either
+credential is omitted.
+.PARAMETER OnePasswordPython
+CPython 3.10 through 3.13 executable used by the locked Windows 1Password SDK
+runtime when either credential is omitted.
+.PARAMETER CredentialTimeoutSeconds
+Bounded timeout for each 1Password SDK preparation and retrieval operation.
+.PARAMETER ImageBuildTimeoutSeconds
+Bounded deadline for the isolated plaintext-consuming Photon/Packer child.
+.PARAMETER CredentialBundlePath
+Internal current-user DPAPI credential bundle used only by the isolated child.
+.PARAMETER CredentialChild
+Internal marker proving the current process is the isolated image-build child.
+.PARAMETER BuilderStaticDnsJson
+Internal JSON transport for the non-secret builder DNS server array.
+.PARAMETER BuilderStaticDnsBound
+Internal marker preserving whether the caller explicitly bound the builder DNS array.
+.PARAMETER SensitiveBuildDirectory
+Internal task-owned directory containing all plaintext image-build artifacts.
+.PARAMETER OutputCleanupClaimPath
+Internal durable marker proving the isolated child claimed a pre-existing output root.
 .PARAMETER VmName
 Builder virtual-machine name.
 .PARAMETER OutputDirectory
@@ -68,6 +98,26 @@ Validate Packer inputs without building.
 .PARAMETER PrepareIsoOnly
 Reject ISO-only preparation because the retained ISO would contain reusable credentials.
 #>
+[Diagnostics.CodeAnalysis.SuppressMessageAttribute(
+    'PSAvoidUsingPlainTextForPassword',
+    'OnePasswordEnvironmentId',
+    Justification = 'Opaque Environment identifier; bounded children retrieve concealed values.'
+)]
+[Diagnostics.CodeAnalysis.SuppressMessageAttribute(
+    'PSAvoidUsingPlainTextForPassword',
+    'OnePasswordAccount',
+    Justification = 'Desktop authorization account identifier, not an account password.'
+)]
+[Diagnostics.CodeAnalysis.SuppressMessageAttribute(
+    'PSAvoidUsingPlainTextForPassword',
+    'OnePasswordPython',
+    Justification = 'Executable selector for the isolated SDK runtime, not a password.'
+)]
+[Diagnostics.CodeAnalysis.SuppressMessageAttribute(
+    'PSAvoidUsingPlainTextForPassword',
+    'CredentialBundlePath',
+    Justification = 'Path to current-user DPAPI ciphertext, not a plaintext password.'
+)]
 [CmdletBinding()]
 param(
     [Parameter()]
@@ -78,6 +128,21 @@ param(
 
     [SecureString]$SshPassword,
     [SecureString]$BootstrapAdminPassword,
+    [string]$OnePasswordEnvironmentId = '',
+    [Alias('OnePasswordEnvironmentIdFile')]
+    [string]$EnvironmentIdFile = '',
+    [string]$OnePasswordAccount = '',
+    [string]$OnePasswordPython = '',
+    [ValidateRange(1, 3600)]
+    [int]$CredentialTimeoutSeconds = 300,
+    [ValidateRange(300, 86400)]
+    [int]$ImageBuildTimeoutSeconds = 21600,
+    [string]$CredentialBundlePath = '',
+    [switch]$CredentialChild,
+    [string]$BuilderStaticDnsJson = '',
+    [switch]$BuilderStaticDnsBound,
+    [string]$SensitiveBuildDirectory = '',
+    [string]$OutputCleanupClaimPath = '',
     [string]$VmName = 'Atlaso-Photon-Builder-VMware',
     [string]$OutputDirectory = '',
     [string]$SshHost = '',
@@ -120,18 +185,394 @@ if ($PrepareIsoOnly) {
     throw 'PrepareIsoOnly is not supported because a retained remastered ISO would contain reusable build credentials. Run Packer validation or a build so the ISO can be deleted after the bounded consumer exits.'
 }
 
-# Passwords have no repository defaults; resolve them before network or build mutation.
-if ($null -eq $SshPassword) {
-    $SshPassword = Read-Host -Prompt 'Temporary Photon builder SSH password' -AsSecureString
-}
-if ($null -eq $BootstrapAdminPassword) {
-    $BootstrapAdminPassword = Read-Host -Prompt 'Atlaso bootstrap administrator password' -AsSecureString
-}
-
+. (Join-Path $PSScriptRoot 'Atlaso.WorkstationFirstBoot.ps1')
+Import-Module (Join-Path $PSScriptRoot 'Atlaso.OnePasswordCredentials.psm1') -Force
 Import-Module (Join-Path $PSScriptRoot '..\common\Atlaso.PhotonImage.psm1') -Force
 Import-Module (Join-Path $PSScriptRoot 'Atlaso.WorkstationCleanup.psm1') -Force
 Import-Module (Join-Path $PSScriptRoot 'Atlaso.VmwarePayload.psm1') -Force
 Import-Module (Join-Path $PSScriptRoot 'Atlaso.WorkstationBuildMonitor.psm1') -Force
+
+<#
+.SYNOPSIS
+Remove a proven-inactive Photon root and durably retire its marker.
+
+.PARAMETER MarkerPath
+Exact non-secret cleanup marker path.
+
+.PARAMETER Marker
+Validated marker payload owning the exact root.
+
+.PARAMETER ExpectedRootPath
+Exact task-created root that the marker must still own.
+#>
+function Complete-AtlasoPhotonBuildCleanup {
+    param(
+        [Parameter(Mandatory = $true)][string]$MarkerPath,
+        [Parameter(Mandatory = $true)][object]$Marker,
+        [Parameter(Mandatory = $true)][string]$ExpectedRootPath
+    )
+
+    $markerProperties = @($Marker.PSObject.Properties.Name)
+    if ($markerProperties.Count -ne 4 -or
+        'Schema' -notin $markerProperties -or
+        'RootPath' -notin $markerProperties -or
+        'BootIdentity' -notin $markerProperties -or
+        'Phase' -notin $markerProperties -or
+        $Marker.Schema -ne 1 -or
+        $Marker.Phase -notin @('active', 'root-absent', 'retired')) {
+        throw 'Invalid cleanup marker schema.'
+    }
+    $resolvedRoot = [System.IO.Path]::GetFullPath([string]$Marker.RootPath)
+    $resolvedExpectedRoot = [System.IO.Path]::GetFullPath($ExpectedRootPath)
+    $rootLeaf = Split-Path -Leaf $resolvedRoot
+    if (-not $resolvedRoot.Equals($resolvedExpectedRoot, [StringComparison]::OrdinalIgnoreCase) -or
+        $rootLeaf -notmatch '^atlaso-photon-build-credentials-[0-9a-f]{32}$') {
+        throw 'Cleanup marker root does not match the exact task-created Photon root.'
+    }
+    if (Test-Path -LiteralPath $resolvedRoot) {
+        $rootItem = Get-Item -LiteralPath $resolvedRoot -Force -ErrorAction Stop
+        if ($rootItem.Attributes -band [System.IO.FileAttributes]::ReparsePoint) {
+            throw 'Invalid cleanup root type.'
+        }
+        [System.IO.Directory]::Delete($resolvedRoot, $true)
+    }
+    if (Test-Path -LiteralPath $resolvedRoot) {
+        throw 'Retained Photon credential artifact cleanup did not complete.'
+    }
+    # Flush the parent on the sensitive root's own volume before a marker on a
+    # different volume is allowed to claim that the deletion is durable.
+    Sync-AtlasoDirectoryMetadata -DirectoryPath (Split-Path -Parent $resolvedRoot)
+    $Marker.Phase = 'root-absent'
+    Write-AtlasoDurableJsonFile -Path $MarkerPath -Payload $Marker -Replace
+    $Marker.Phase = 'retired'
+    Write-AtlasoDurableJsonFile -Path $MarkerPath -Payload $Marker -Replace
+    Remove-Item -LiteralPath $MarkerPath -Force -ErrorAction Stop
+    if (Test-Path -LiteralPath $MarkerPath) {
+        throw 'Retained Photon cleanup marker removal did not complete.'
+    }
+}
+
+<#
+.SYNOPSIS
+Recover a retained Photon sensitive-build root after a proven host restart.
+
+.PARAMETER MarkerPath
+Exact non-secret cleanup marker path.
+#>
+function Invoke-AtlasoPhotonBuildCleanupRecovery {
+    param([Parameter(Mandatory = $true)][string]$MarkerPath)
+
+    if (-not (Test-Path -LiteralPath $MarkerPath -PathType Leaf)) {
+        return
+    }
+    try {
+        $marker = Get-Content -LiteralPath $MarkerPath -Raw -ErrorAction Stop | ConvertFrom-Json
+        $markerProperties = @($marker.PSObject.Properties.Name)
+        if ($markerProperties.Count -ne 4 -or
+            'Schema' -notin $markerProperties -or
+            'RootPath' -notin $markerProperties -or
+            'BootIdentity' -notin $markerProperties -or
+            'Phase' -notin $markerProperties -or
+            $marker.Schema -ne 1) {
+            throw 'Invalid cleanup marker schema.'
+        }
+        $resolvedRoot = [System.IO.Path]::GetFullPath([string]$marker.RootPath)
+        $resolvedTempRoot = [System.IO.Path]::GetFullPath([System.IO.Path]::GetTempPath())
+        $tempRootPrefix = $resolvedTempRoot.TrimEnd(
+            [System.IO.Path]::DirectorySeparatorChar,
+            [System.IO.Path]::AltDirectorySeparatorChar
+        ) + [System.IO.Path]::DirectorySeparatorChar
+        if (-not $resolvedRoot.StartsWith($tempRootPrefix, [StringComparison]::OrdinalIgnoreCase) -or
+            (Split-Path -Leaf $resolvedRoot) -notmatch '^atlaso-photon-build-credentials-[0-9a-f]{32}$') {
+            throw 'Invalid cleanup root.'
+        }
+        if ($marker.Phase -notin @('active', 'root-absent', 'retired')) {
+            throw 'Invalid cleanup marker phase.'
+        }
+        if ($marker.Phase -ceq 'active' -and
+            [string]$marker.BootIdentity -ceq (Get-AtlasoWindowsBootIdentity)) {
+            throw 'A Windows restart is required before retained Photon credential artifacts can be cleaned safely.'
+        }
+        Complete-AtlasoPhotonBuildCleanup `
+            -MarkerPath $MarkerPath `
+            -Marker $marker `
+            -ExpectedRootPath $resolvedRoot
+    }
+    catch {
+        throw 'A prior Photon image build has unresolved sensitive cleanup. Restart Windows, then rerun this wrapper.'
+    }
+}
+
+$repoRoot = (Resolve-Path -LiteralPath (Join-Path $PSScriptRoot '..\..\..')).Path
+$cleanupMarkerPath = Join-Path $repoRoot '.atlaso-local\photon-image-build-cleanup.json'
+if ($CredentialChild) {
+    if ($SshPassword -or $BootstrapAdminPassword -or
+        [string]::IsNullOrWhiteSpace($CredentialBundlePath) -or
+        -not (Test-Path -LiteralPath $CredentialBundlePath -PathType Leaf)) {
+        throw 'The isolated Photon credential bundle is unavailable or invalid.'
+    }
+    $credentialBundleRoot = [System.IO.Path]::GetFullPath((Split-Path -Parent $CredentialBundlePath))
+    $resolvedOutputCleanupClaimPath = if ([string]::IsNullOrWhiteSpace($OutputCleanupClaimPath)) {
+        ''
+    }
+    else {
+        [System.IO.Path]::GetFullPath($OutputCleanupClaimPath)
+    }
+    $sensitiveBuildRoot = if ([string]::IsNullOrWhiteSpace($SensitiveBuildDirectory)) {
+        ''
+    }
+    else {
+        [System.IO.Path]::GetFullPath($SensitiveBuildDirectory)
+    }
+    $credentialRootPrefix = $credentialBundleRoot.TrimEnd(
+        [System.IO.Path]::DirectorySeparatorChar,
+        [System.IO.Path]::AltDirectorySeparatorChar
+    ) + [System.IO.Path]::DirectorySeparatorChar
+    if ([string]::IsNullOrWhiteSpace($sensitiveBuildRoot) -or
+        -not $sensitiveBuildRoot.StartsWith($credentialRootPrefix, [StringComparison]::OrdinalIgnoreCase)) {
+        throw 'The isolated Photon sensitive-build root is unavailable or invalid.'
+    }
+    if ([string]::IsNullOrWhiteSpace($resolvedOutputCleanupClaimPath) -or
+        -not $resolvedOutputCleanupClaimPath.StartsWith(
+            $credentialRootPrefix,
+            [StringComparison]::OrdinalIgnoreCase
+        ) -or
+        (Split-Path -Leaf $resolvedOutputCleanupClaimPath) -cne 'output-cleanup-claimed.json') {
+        throw 'The isolated Photon output-cleanup claim path is unavailable or invalid.'
+    }
+    if (-not [string]::IsNullOrWhiteSpace($PreparedIsoPath)) {
+        $resolvedChildPreparedIsoPath = [System.IO.Path]::GetFullPath($PreparedIsoPath)
+        $sensitiveBuildPrefix = $sensitiveBuildRoot.TrimEnd(
+            [System.IO.Path]::DirectorySeparatorChar,
+            [System.IO.Path]::AltDirectorySeparatorChar
+        ) + [System.IO.Path]::DirectorySeparatorChar
+        if (-not $resolvedChildPreparedIsoPath.StartsWith(
+                $sensitiveBuildPrefix,
+                [StringComparison]::OrdinalIgnoreCase
+            )) {
+            throw 'The isolated Photon prepared-ISO path is unavailable or invalid.'
+        }
+    }
+    try {
+        $credentialBundle = Get-Content -LiteralPath $CredentialBundlePath -Raw | ConvertFrom-Json
+        $bundleProperties = @($credentialBundle.PSObject.Properties.Name)
+        if ($bundleProperties.Count -ne 2 -or
+            'AdminPasswordCiphertext' -notin $bundleProperties -or
+            'RootPasswordCiphertext' -notin $bundleProperties) {
+            throw 'The isolated Photon credential bundle is invalid.'
+        }
+        $BootstrapAdminPassword = ConvertTo-SecureString $credentialBundle.AdminPasswordCiphertext
+        $SshPassword = ConvertTo-SecureString $credentialBundle.RootPasswordCiphertext
+    }
+    catch {
+        throw 'The isolated Photon credential bundle is unavailable or invalid.'
+    }
+    $credentialBundle = $null
+    if (-not [string]::IsNullOrWhiteSpace($BuilderStaticDnsJson)) {
+        try {
+            $transportedDns = @(ConvertFrom-Json -InputObject $BuilderStaticDnsJson)
+            if (@($transportedDns | Where-Object { $_ -isnot [string] }).Count -ne 0) {
+                throw 'Invalid builder DNS transport.'
+            }
+            $BuilderStaticDns = @($transportedDns)
+        }
+        catch {
+            throw 'The isolated Photon builder DNS transport is invalid.'
+        }
+    }
+}
+else {
+    # Recovery precedes new credential access or image mutation. A changed boot
+    # identity is the fail-closed proof that an untracked descendant cannot
+    # recreate credential-bearing files after absence verification.
+    Invoke-AtlasoPhotonBuildCleanupRecovery -MarkerPath $cleanupMarkerPath
+    $needsOnePasswordDefaults = $null -eq $SshPassword -or $null -eq $BootstrapAdminPassword
+    $resolvedEnvironmentId = ''
+    if ($needsOnePasswordDefaults) {
+        $resolvedEnvironmentId = Resolve-AtlasoOnePasswordEnvironmentId `
+            -EnvironmentId $OnePasswordEnvironmentId `
+            -EnvironmentIdFile $EnvironmentIdFile `
+            -RepositoryRoot $repoRoot `
+            -ConsumerDescription 'VMware Photon image building'
+    }
+
+    # Credential preflight completes before the isolated child can perform any
+    # network, cleanup, ISO, Packer, or image mutation.
+    $credentialPair = Get-AtlasoOnePasswordCredentialPair `
+        -RepositoryRoot $repoRoot `
+        -EnvironmentId $resolvedEnvironmentId `
+        -OnePasswordAccount $OnePasswordAccount `
+        -OnePasswordPython $OnePasswordPython `
+        -AdminPassword $BootstrapAdminPassword `
+        -RootPassword $SshPassword `
+        -TimeoutSeconds $CredentialTimeoutSeconds `
+        -ConsumerDescription 'VMware Photon image build'
+    $credentialRoot = Join-Path ([System.IO.Path]::GetTempPath()) (
+        "atlaso-photon-build-credentials-$([guid]::NewGuid().ToString('N'))"
+    )
+    # Resolve every operator-controlled output and child path before publishing
+    # an active cleanup marker, so a normalization failure cannot strand it.
+    $childCredentialBundlePath = Join-Path $credentialRoot 'credentials.json'
+    $childSensitiveBuildDirectory = Join-Path $credentialRoot 'sensitive-build'
+    $childOutputCleanupClaimPath = Join-Path $credentialRoot 'output-cleanup-claimed.json'
+    $outerCleanupPackerDirectory = if ([string]::IsNullOrWhiteSpace($PackerDirectory)) {
+        Join-Path $PSScriptRoot '..\..\..\image\vmware-workstation'
+    }
+    else {
+        $PackerDirectory
+    }
+    $outerCleanupOutputDirectory = Resolve-WorkstationOutputDirectory `
+        -PackerDirectory $outerCleanupPackerDirectory `
+        -OutputDirectory $OutputDirectory
+    $outerCleanupOutputExistedBeforeChild = Test-Path -LiteralPath $outerCleanupOutputDirectory
+    $preparedIsoLeaf = if ($PSBoundParameters.ContainsKey('PreparedIsoPath') -and
+        -not [string]::IsNullOrWhiteSpace($PreparedIsoPath)) {
+        [System.IO.Path]::GetFileName($PreparedIsoPath)
+    }
+    else {
+        'atlaso-photon-with-kickstart.iso'
+    }
+    if ([string]::IsNullOrWhiteSpace($preparedIsoLeaf)) {
+        $preparedIsoLeaf = 'atlaso-photon-with-kickstart.iso'
+    }
+    $childPreparedIsoPath = Join-Path (Join-Path $childSensitiveBuildDirectory 'kickstart') $preparedIsoLeaf
+    if (-not $Headless -and -not $ValidateOnly) {
+        # This parent is outside the sensitive Windows job and owns the only
+        # permitted Workstation UI launch; descendants receive no breakaway right.
+        $parentVmrunPath = Resolve-WorkstationVmrunPath -Path $VmrunPath
+        $null = Initialize-AtlasoWorkstationGui -VmrunPath $parentVmrunPath
+    }
+    [void][System.IO.Directory]::CreateDirectory($credentialRoot)
+    $cleanupMarkerDirectory = Split-Path -Parent $cleanupMarkerPath
+    [void][System.IO.Directory]::CreateDirectory($cleanupMarkerDirectory)
+    $cleanupMarkerPayload = [ordered]@{
+        Schema       = 1
+        RootPath     = [System.IO.Path]::GetFullPath($credentialRoot)
+        BootIdentity = Get-AtlasoWindowsBootIdentity
+        Phase        = 'active'
+    }
+    Write-AtlasoDurableJsonFile -Path $cleanupMarkerPath -Payload $cleanupMarkerPayload
+    if (-not (Test-Path -LiteralPath $cleanupMarkerPath -PathType Leaf)) {
+        throw 'Photon sensitive-cleanup ownership could not be established.'
+    }
+    $cleanupMarkerPayload = $null
+    $processTreeTerminationUnproven = $false
+    try {
+        $credentialPayload = [ordered]@{
+            AdminPasswordCiphertext = ConvertFrom-SecureString -SecureString $credentialPair.AdminPassword
+            RootPasswordCiphertext  = ConvertFrom-SecureString -SecureString $credentialPair.RootPassword
+        }
+        [System.IO.File]::WriteAllText(
+            $childCredentialBundlePath,
+            ($credentialPayload | ConvertTo-Json -Compress),
+            [System.Text.UTF8Encoding]::new($false)
+        )
+        $credentialPayload = $null
+        $credentialPair = $null
+        $SshPassword = $null
+        $BootstrapAdminPassword = $null
+
+        $childArguments = @(
+            '-NoLogo', '-NoProfile', '-NonInteractive',
+            '-File', $PSCommandPath,
+            '-CredentialChild',
+            '-CredentialBundlePath', $childCredentialBundlePath,
+            '-SensitiveBuildDirectory', $childSensitiveBuildDirectory,
+            '-OutputCleanupClaimPath', $childOutputCleanupClaimPath,
+            '-PreparedIsoPath', $childPreparedIsoPath
+        )
+        $excludedParameters = @(
+            'SshPassword', 'BootstrapAdminPassword',
+            'OnePasswordEnvironmentId', 'EnvironmentIdFile',
+            'OnePasswordAccount', 'OnePasswordPython',
+            'CredentialTimeoutSeconds', 'ImageBuildTimeoutSeconds',
+            'CredentialBundlePath', 'CredentialChild',
+            'BuilderStaticDnsJson', 'BuilderStaticDnsBound',
+            'SensitiveBuildDirectory', 'OutputCleanupClaimPath', 'PreparedIsoPath'
+        )
+        foreach ($entry in $PSBoundParameters.GetEnumerator()) {
+            if ($entry.Key -in $excludedParameters) {
+                continue
+            }
+            if ($entry.Value -is [switch]) {
+                if ($entry.Value.IsPresent) {
+                    $childArguments += "-$($entry.Key)"
+                }
+                continue
+            }
+            if ($entry.Key -ceq 'BuilderStaticDns' -and
+                ($null -eq $entry.Value -or $entry.Value -is [array])) {
+                $transportedDns = if ($null -eq $entry.Value) { @() } else { @($entry.Value) }
+                $childArguments += '-BuilderStaticDnsJson'
+                $childArguments += ConvertTo-Json -InputObject $transportedDns -Compress
+                $childArguments += '-BuilderStaticDnsBound'
+                continue
+            }
+            if ($entry.Value -is [array]) {
+                if ($entry.Key -cne 'BuilderStaticDns') {
+                    throw "Unsupported isolated Photon array parameter: $($entry.Key)."
+                }
+            }
+            else {
+                if ($null -eq $entry.Value) {
+                    throw "Unsupported null isolated Photon parameter: $($entry.Key)."
+                }
+                $childArguments += "-$($entry.Key)"
+                $childArguments += $entry.Value.ToString()
+            }
+        }
+        try {
+            Invoke-AtlasoBoundedStreamingProcess `
+                -FilePath (Get-Process -Id $PID).Path `
+                -ArgumentList $childArguments `
+                -TimeoutSeconds $ImageBuildTimeoutSeconds `
+                -Action 'The isolated VMware Photon image build'
+        }
+        catch {
+            if ($_.Exception.Data['AtlasoProcessTreeTerminationUnproven']) {
+                $processTreeTerminationUnproven = $true
+                throw 'The isolated VMware Photon image build could not prove whole-tree termination. Restart Windows, then rerun this wrapper to complete sensitive cleanup.'
+            }
+            if ($_.Exception.Data['AtlasoProcessTreeTerminationProven'] -and
+                $PackerOnError -eq 'cleanup' -and (
+                    -not $outerCleanupOutputExistedBeforeChild -or
+                    (-not $KeepExistingOutput -and
+                        (Test-Path -LiteralPath $childOutputCleanupClaimPath -PathType Leaf))
+                )) {
+                if (Test-Path -LiteralPath $outerCleanupOutputDirectory) {
+                    $cleanupVmrunPath = Resolve-WorkstationVmrunPath -Path $VmrunPath
+                    Write-Host 'The outer image deadline selected checked VMware artifact cleanup.'
+                    Remove-AtlasoWorkstationArtifactRoot `
+                        -VmrunPath $cleanupVmrunPath `
+                        -ExpectedRemovalRoot $outerCleanupOutputDirectory `
+                        -RemovalRoot $outerCleanupOutputDirectory `
+                        -Confirm:$false
+                }
+            }
+            throw
+        }
+    }
+    finally {
+        $credentialPair = $null
+        $SshPassword = $null
+        $BootstrapAdminPassword = $null
+        $resolvedCredentialRoot = [System.IO.Path]::GetFullPath($credentialRoot)
+        $resolvedTempRoot = [System.IO.Path]::GetFullPath([System.IO.Path]::GetTempPath())
+        if (-not $resolvedCredentialRoot.StartsWith($resolvedTempRoot, [StringComparison]::OrdinalIgnoreCase) -or
+            (Split-Path -Leaf $resolvedCredentialRoot) -notmatch '^atlaso-photon-build-credentials-[0-9a-f]{32}$') {
+            throw 'Refusing to clean an invalid Photon credential bridge root.'
+        }
+        if (-not $processTreeTerminationUnproven) {
+            $cleanupMarker = Get-Content -LiteralPath $cleanupMarkerPath -Raw -ErrorAction Stop |
+                ConvertFrom-Json
+            Complete-AtlasoPhotonBuildCleanup `
+                -MarkerPath $cleanupMarkerPath `
+                -Marker $cleanupMarker `
+                -ExpectedRootPath $credentialRoot
+        }
+    }
+    return
+}
 
 <#
 .SYNOPSIS
@@ -443,7 +884,6 @@ if ([string]::IsNullOrWhiteSpace($PackerDirectory)) {
     $PackerDirectory = Join-Path $PSScriptRoot '..\..\..\image\vmware-workstation'
 }
 $workstationOutputDirectory = Resolve-WorkstationOutputDirectory -PackerDirectory $PackerDirectory -OutputDirectory $OutputDirectory
-$repoRoot = (Resolve-Path -LiteralPath (Join-Path $PSScriptRoot '..\..\..')).Path
 
 $VmnetName = ConvertTo-WorkstationVmnetName -Name $VmnetName -ParameterName 'VmnetName'
 $ServiceVmnetName = ConvertTo-WorkstationVmnetName -Name $ServiceVmnetName -ParameterName 'ServiceVmnetName'
@@ -451,7 +891,7 @@ $ServiceVmnetName = ConvertTo-WorkstationVmnetName -Name $ServiceVmnetName -Para
 $builderIpWasPassed = $PSBoundParameters.ContainsKey('BuilderStaticIp')
 $builderNetmaskWasPassed = $PSBoundParameters.ContainsKey('BuilderStaticNetmask')
 $builderGatewayWasPassed = $PSBoundParameters.ContainsKey('BuilderStaticGateway')
-$builderDnsWasPassed = $PSBoundParameters.ContainsKey('BuilderStaticDns')
+$builderDnsWasPassed = $PSBoundParameters.ContainsKey('BuilderStaticDns') -or $BuilderStaticDnsBound
 $finalAddressWasPassed = $PSBoundParameters.ContainsKey('FinalMgmtAddress')
 $finalGatewayWasPassed = $PSBoundParameters.ContainsKey('FinalMgmtGateway')
 
@@ -521,6 +961,13 @@ $packerBuildInvoker = $null
 if (-not $ValidateOnly -and -not $PrepareIsoOnly) {
     $resolvedVmrunPath = Resolve-WorkstationVmrunPath -Path $VmrunPath
     if (-not $KeepExistingOutput) {
+        # Claim a pre-existing output only after all network preparation has
+        # completed and immediately before checked removal begins. The bounded
+        # parent may finish that exact removal after proven child termination.
+        Write-AtlasoDurableJsonFile -Path $resolvedOutputCleanupClaimPath -Payload ([ordered]@{
+            Schema = 1
+            OutputPath = $workstationOutputDirectory
+        })
         Remove-AtlasoWorkstationArtifactRoot `
             -VmrunPath $resolvedVmrunPath `
             -ExpectedRemovalRoot $workstationOutputDirectory `
@@ -560,7 +1007,13 @@ if (-not $ValidateOnly -and -not $PrepareIsoOnly) {
         # ISO preparation and Packer initialization can be lengthy, so prove the
         # GUI provider is responsive at the last safe point before Packer starts.
         if (-not $Headless) {
-            $null = Initialize-AtlasoWorkstationGui -VmrunPath $resolvedVmrunPath
+            $requireExistingUi = {
+                param($FilePath)
+                throw 'The parent-launched VMware Workstation UI is no longer available.'
+            }.GetNewClosure()
+            $null = Initialize-AtlasoWorkstationGui `
+                -VmrunPath $resolvedVmrunPath `
+                -ProcessLauncher $requireExistingUi
         }
         $packerPath = (Get-Command packer -ErrorAction Stop).Source
         Invoke-AtlasoMonitoredPackerBuild `
@@ -597,6 +1050,7 @@ Invoke-AtlasoPhotonImageBuild `
     -PipGlobalIndex $PipGlobalIndex `
     -PipGlobalIndexUrl $PipGlobalIndexUrl `
     -PreparedIsoPath $PreparedIsoPath `
+    -SensitiveBuildDirectory $SensitiveBuildDirectory `
     -PackerOnError $PackerOnError `
     -GuestPackages @('open-vm-tools', 'hyper-v') `
     -GuestPostInstallCommands @(

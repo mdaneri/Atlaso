@@ -571,9 +571,10 @@ if (
 if ($wrapperSource.IndexOf('Remove-AtlasoDevelopmentCaCleanupMarker', $importProof) -lt $importProof) {
     throw 'The durable cleanup marker must remain until encrypted-import proof succeeds.'
 }
-if ($firstBootSource -notmatch '\$process\.Kill\(\$true\)' -or
+if ($firstBootSource -notmatch '\$Job\.TerminateAndWait\(10000\)' -or
+    $firstBootSource -notmatch 'accounting\.ActiveProcesses == 0' -or
     $wrapperSource -notmatch '-TimeoutSeconds \$TimeoutSeconds') {
-    throw 'The 1Password child must enforce a deadline and terminate its complete process tree.'
+    throw 'The 1Password child must enforce a deadline and prove its Windows process job is inactive.'
 }
 if ($firstBootSource -notmatch "AtlasoProcessTreeTerminationUnproven") {
     throw 'Unproven process-tree termination must carry a machine-readable failure marker.'

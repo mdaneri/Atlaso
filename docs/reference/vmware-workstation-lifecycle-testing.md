@@ -139,8 +139,41 @@ pwsh -ExecutionPolicy Bypass `
   -File scripts/windows/vmware/build-photon-image.ps1 `
   -IsoUrl "<photon-iso-url-or-path>" `
   -IsoChecksum "<packer-checksum>" `
+  -OnePasswordAccount "<approved-account-name-or-id>" `
+  -OnePasswordPython "<python-3.10-through-3.13>" `
   -EnableRealSystemAdapters
 ```
+
+The image wrapper uses the same exact Atlaso Environment selector contract as normal test-VM creation: an explicit
+`-OnePasswordEnvironmentId` takes precedence over the checkout-local, Git-ignored
+`.atlaso-local/onepassword-environment-id`, and `-EnvironmentIdFile` selects a different single-line file. When
+`-SshPassword` or `-BootstrapAdminPassword` is omitted, the bounded Windows SDK bridge retrieves only that value's
+unique concealed `DEFAULT_ROOT_PASSWORD` or `DEFAULT_ADMIN_PASSWORD`. Explicit `SecureString` parameters remain
+independently authoritative. The bridge returns only current-user DPAPI ciphertext and removes its temporary files
+before the wrapper performs network discovery or preparation, output cleanup, ISO remastering, Packer initialization,
+or other image mutation. It rejects caller `DEFAULT_*` variables, local `.env` inputs, ambiguous or non-concealed
+variables, invalid exact bytes, unavailable authorization, and timeouts without printing the Environment ID or values.
+The parent passes only DPAPI ciphertext to a separately bounded image-build child; only that child unwraps values for
+kickstart and Packer serialization. Every plaintext kickstart, remastered ISO, and Packer variable file is placed under
+the same exact task-owned temporary root. The parent creates the child suspended, assigns it to a Windows process job,
+and resumes it only after the job owns every future Packer or plugin descendant. Both ordinary child exit and deadline
+termination require job accounting to prove zero active processes. A proven deadline also applies checked exact-output
+cleanup when `-PackerOnError cleanup` owns replacement output. `-KeepExistingOutput` preserves a root that existed
+before the child started. An ordinary replacement claims that pre-existing root durably only after network preparation
+and immediately before checked removal; until then, an outer timeout preserves it. A partial root created by this
+invocation remains cleanup-owned. The parent then removes the
+sensitive root and verifies its absence before returning.
+`-ImageBuildTimeoutSeconds` selects the deadline and defaults to six hours.
+If whole-tree termination itself cannot be proven, the wrapper retains the root and a non-secret
+`.atlaso-local/photon-image-build-cleanup.json` ownership marker and blocks further work. Restart Windows and rerun the
+wrapper; only a changed boot identity permits the recovery path to remove and verify the exact root and then its marker
+before new credential access or image mutation. Ordinary completion also requires the reloaded marker root to equal the
+in-memory task-created root before recursive removal.
+The shared SDK credential bridge follows the same recovery ownership. Each non-secret marker is flushed with
+write-through semantics and atomically renamed before a plaintext child starts. Cleanup flushes the sensitive root
+parent's directory metadata on the root's own volume before it durably records `root-absent` and `retired` phases and
+deletes the marker. A resurrected post-crash marker remains non-actionable while still forcing another exact-root
+absence check.
 
 The wrapper uses the shared Photon ISO remastering, kickstart rendering, checksum validation, and Packer var-file
 generation. `image/common/source` holds the original Photon ISO download cache. The canonical image installs
@@ -149,13 +182,15 @@ The Workstation build wrapper opens a visible VMware console by default. Use `-H
 is preferred.
 The shared builder removes and verifies the absence of its plaintext kickstart source, generated Packer variable file,
 and remastered credential-bearing ISO after the bounded Packer consumer exits. The cleanup covers validation, build,
-failure, and fallback ISO paths; an ACL, file-lock, or endpoint-protection cleanup failure terminates the build instead
-of reporting success with a credential-bearing artifact left behind. `-PrepareIsoOnly` is rejected because retaining
-that ISO would retain a reusable build credential.
+failure, fallback ISO paths, and forced whole-child timeout through the parent-owned root; an ACL, file-lock, or
+endpoint-protection cleanup failure terminates the build instead of reporting success with a credential-bearing
+artifact left behind. `-PrepareIsoOnly` is rejected because retaining that ISO would retain a reusable build credential.
 
 GUI builds start or reuse a responsive VMware Workstation UI as a process separate from Packer before invoking the
-VMware builder. This preserves the visible console while preventing an already-running VM from leaving Packer blocked
-inside the synchronous `vmrun` start transition. Until SSH provisioning begins, the wrapper reports sanitized,
+VMware builder. The parent starts the exact resolved `vmware.exe` before creating the bounded image-build child, then
+the child verifies that UI remains responsive immediately before Packer starts. This preserves the visible console
+while keeping the sensitive job non-breakaway; Packer, plugins, and their VM consumers cannot leave that job. Until SSH
+provisioning begins, the wrapper reports sanitized,
 exact-VMX startup heartbeats and applies a 45-minute default timeout matching Packer's SSH communicator allowance. The
 interval begins at monitored Packer process start, including pre-VMX and pre-power-on failures. Use
 `-PackerStartupTimeoutSeconds` to select a different bounded start-to-provisioning interval and
@@ -163,8 +198,10 @@ interval begins at monitored Packer process start, including pre-VMX and pre-pow
 so the probe matches Packer's communicator endpoint. A
 heartbeat distinguishes output identity, provider inventory, exact running state, TCP/22 reachability, Workstation
 handoff, and SSH authentication; it never reads or reports VMX contents or connection credentials. With
-`-PackerOnError cleanup`, a timeout uses the same checked exact-root cleanup as an ordinary replacement build. Other
-failure selections preserve the exact output for investigation.
+`-PackerOnError cleanup`, either the monitored startup timeout or the outer whole-image deadline uses the same checked
+exact-root cleanup as an ordinary replacement build. `-KeepExistingOutput` preserves a root that predated the build,
+but not a new partial root created by this invocation; other failure selections preserve output when the wrapper cannot
+claim replacement ownership.
 
 For Workstation, Photon installation is bound to VMware SCSI identity `0:0:0` through kickstart preinstall discovery,
 not `/dev/sda` enumeration. Provisioning then proves the complete root dependency chain reaches that disk and proves

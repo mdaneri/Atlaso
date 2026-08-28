@@ -192,6 +192,7 @@ $waitForIpEnabled = if ($PSBoundParameters.ContainsKey('WaitForIp')) {
 }
 
 . (Join-Path $PSScriptRoot 'Atlaso.WorkstationFirstBoot.ps1')
+Import-Module (Join-Path $PSScriptRoot 'Atlaso.OnePasswordCredentials.psm1') -Force
 Import-Module (Join-Path $PSScriptRoot 'Atlaso.WorkstationCleanup.psm1') -Force
 Import-Module (Join-Path $PSScriptRoot 'Atlaso.VmwarePayload.psm1') -Force
 
@@ -274,21 +275,11 @@ function Resolve-OnePasswordDevelopmentCaEnvironmentId {
         [Parameter(Mandatory = $true)][string]$RepositoryRoot
     )
 
-    if (-not [string]::IsNullOrWhiteSpace($EnvironmentId)) {
-        return $EnvironmentId
-    }
-    $resolvedEnvironmentIdFile = $EnvironmentIdFile
-    if ([string]::IsNullOrWhiteSpace($resolvedEnvironmentIdFile)) {
-        $resolvedEnvironmentIdFile = Join-Path $RepositoryRoot '.atlaso-local\onepassword-environment-id'
-    }
-    if (-not (Test-Path -LiteralPath $resolvedEnvironmentIdFile -PathType Leaf)) {
-        throw 'OnePasswordEnvironmentId is required for normal VMware test VM creation. Pass it explicitly or store it as the only line in .atlaso-local\onepassword-environment-id.'
-    }
-    $environmentIdLines = [System.IO.File]::ReadAllLines($resolvedEnvironmentIdFile)
-    if ($environmentIdLines.Count -ne 1 -or [string]::IsNullOrWhiteSpace($environmentIdLines[0])) {
-        throw 'The local 1Password Environment ID file must contain exactly one non-empty line.'
-    }
-    return $environmentIdLines[0].Trim()
+    return Resolve-AtlasoOnePasswordEnvironmentId `
+        -EnvironmentId $EnvironmentId `
+        -EnvironmentIdFile $EnvironmentIdFile `
+        -RepositoryRoot $RepositoryRoot `
+        -ConsumerDescription 'normal VMware test VM creation'
 }
 
 <#
@@ -316,21 +307,11 @@ function Assert-OnePasswordDevelopmentCaBridge {
         [ValidateRange(1, 3600)][int]$TimeoutSeconds = 30
     )
 
-    if ($EnvironmentId -notmatch '^[A-Za-z0-9_-]{8,128}$') {
-        throw 'OnePasswordEnvironmentId is required and must be the opaque ID of the exact Atlaso Environment.'
-    }
-    # Verify the non-secret repository pin before invoking op so a different
-    # Environment cannot become trusted merely by copying the signer variable.
-    $environmentIdDigest = [System.Security.Cryptography.SHA256]::HashData(
-        [System.Text.Encoding]::UTF8.GetBytes($EnvironmentId)
-    )
-    $expectedEnvironmentIdDigest = [Convert]::FromHexString($ExpectedEnvironmentIdSha256)
-    if (-not [System.Security.Cryptography.CryptographicOperations]::FixedTimeEquals(
-            $environmentIdDigest,
-            $expectedEnvironmentIdDigest
-        )) {
-        throw 'OnePasswordEnvironmentId does not identify the exact Atlaso Environment.'
-    }
+    # Verify the shared non-secret repository pin before invoking op so a
+    # different Environment cannot become trusted by copying the signer name.
+    Assert-AtlasoOnePasswordEnvironmentId `
+        -EnvironmentId $EnvironmentId `
+        -ExpectedEnvironmentIdSha256 $ExpectedEnvironmentIdSha256
     if ($env:ATLASO_DEVELOPMENT_ROOT_CA_PRIVATE_KEY) {
         throw 'ATLASO_DEVELOPMENT_ROOT_CA_PRIVATE_KEY must come only from the exact 1Password Environment bridge.'
     }
@@ -404,9 +385,7 @@ Validate the non-secret 1Password account selector used by desktop authorization
 function Assert-OnePasswordTestVmAccount {
     param([Parameter(Mandatory = $true)][string]$Account)
 
-    if ([string]::IsNullOrWhiteSpace($Account) -or $Account.Length -gt 255 -or $Account -match '[\x00-\x1f\x7f]') {
-        throw 'OnePasswordAccount is required and must be a bounded 1Password account name or ID.'
-    }
+    Assert-AtlasoOnePasswordAccount -Account $Account
 }
 
 <#
@@ -425,20 +404,10 @@ function Resolve-OnePasswordTestVmPython {
         [Parameter(Mandatory = $true)][ValidateRange(1, 3600)][int]$TimeoutSeconds
     )
 
-    $command = Get-Command -Name $PythonCommand -CommandType Application -ErrorAction SilentlyContinue
-    if (-not $command) {
-        throw "The 1Password SDK Python executable was not found: $PythonCommand."
-    }
-    $resolvedCommand = $command.Source
-    $version = (Invoke-AtlasoBoundedProcess `
-            -FilePath $resolvedCommand `
-            -ArgumentList @('-I', '-S', '-c', 'import sys; print(f"{sys.version_info.major}.{sys.version_info.minor}")') `
-            -TimeoutSeconds ([Math]::Min($TimeoutSeconds, 30)) `
-            -Action 'The 1Password SDK Python version probe').Trim()
-    if ($version -notmatch '^3\.1[0-3]$') {
-        throw 'Omitted VMware test-VM credentials require CPython 3.10 through 3.13 for the locked 1Password SDK Windows runtime.'
-    }
-    return $resolvedCommand
+    return Resolve-AtlasoOnePasswordPython `
+        -PythonCommand $PythonCommand `
+        -TimeoutSeconds $TimeoutSeconds `
+        -ConsumerDescription 'Omitted VMware test-VM credentials'
 }
 
 <#
@@ -465,44 +434,11 @@ function Initialize-OnePasswordTestVmSdkRuntime {
         [Parameter(Mandatory = $true)][ValidateRange(1, 3600)][int]$TimeoutSeconds
     )
 
-    $lockPath = Join-Path $RepositoryRoot 'requirements-onepassword-deploy.lock'
-    if (-not (Test-Path -LiteralPath $lockPath -PathType Leaf)) {
-        throw "The vetted 1Password deployment lock is unavailable: $lockPath."
-    }
-    $wheelDirectory = Join-Path $BridgeRoot 'wheels'
-    $dependencyDirectory = Join-Path $BridgeRoot 'python-dependencies'
-    [void][System.IO.Directory]::CreateDirectory($wheelDirectory)
-    [void][System.IO.Directory]::CreateDirectory($dependencyDirectory)
-
-    # Download is the only index-enabled step. Installation is deliberately
-    # offline from the exact hash-verified wheel set, matching deploy-wheel.ps1.
-    Invoke-AtlasoBoundedProcess `
-        -FilePath $PythonCommand `
-        -ArgumentList @(
-            '-I', '-m', 'pip', 'download',
-            '--disable-pip-version-check',
-            '--index-url', 'https://pypi.org/simple',
-            '--require-hashes',
-            '--only-binary=:all:',
-            '--dest', $wheelDirectory,
-            '-r', $lockPath
-        ) `
-        -TimeoutSeconds $TimeoutSeconds `
-        -Action 'The hash-verified 1Password SDK wheel download' | Out-Null
-    Invoke-AtlasoBoundedProcess `
-        -FilePath $PythonCommand `
-        -ArgumentList @(
-            '-I', '-m', 'pip', 'install',
-            '--disable-pip-version-check',
-            '--no-index',
-            '--find-links', $wheelDirectory,
-            '--require-hashes',
-            '--target', $dependencyDirectory,
-            '-r', $lockPath
-        ) `
-        -TimeoutSeconds $TimeoutSeconds `
-        -Action 'The isolated offline 1Password SDK runtime preparation' | Out-Null
-    return $dependencyDirectory
+    return Initialize-AtlasoOnePasswordSdkRuntime `
+        -PythonCommand $PythonCommand `
+        -RepositoryRoot $RepositoryRoot `
+        -BridgeRoot $BridgeRoot `
+        -TimeoutSeconds $TimeoutSeconds
 }
 
 <#

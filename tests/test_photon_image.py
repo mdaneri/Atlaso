@@ -1428,10 +1428,10 @@ def test_vmware_builder_uses_nat_gateway_dns_by_default():
 
     assert "[SecureString]$SshPassword" in wrapper
     assert "[SecureString]$BootstrapAdminPassword" in wrapper
-    assert "if ($null -eq $BootstrapAdminPassword)" in wrapper
+    assert "$needsOnePasswordDefaults = $null -eq $SshPassword -or $null -eq $BootstrapAdminPassword" in wrapper
     assert "PrepareIsoOnly is not supported because a retained remastered ISO" in wrapper
-    assert "Read-Host -Prompt 'Temporary Photon builder SSH password' -AsSecureString" in wrapper
-    assert "Read-Host -Prompt 'Atlaso bootstrap administrator password' -AsSecureString" in wrapper
+    assert "Read-Host" not in wrapper
+    assert "Get-AtlasoOnePasswordCredentialPair" in wrapper
     assert "$builderDnsWasPassed = $PSBoundParameters.ContainsKey('BuilderStaticDns')" in wrapper
     assert "-not $builderDnsWasPassed -and $BuilderStaticDns.Count -eq 0 -and $management.Type -eq 'nat'" in wrapper
     assert "$BuilderStaticDns = @($managementGateway)" in wrapper
@@ -1511,6 +1511,9 @@ def test_create_atlaso_vmware_test_vm_wrapper_uses_common_helpers():
     vm_script = Path("scripts/windows/vmware/create-atlaso-vm.ps1").read_text(encoding="utf-8")
     nics_script = Path("scripts/windows/vmware/set-test-nics.ps1").read_text(encoding="utf-8")
     build_script = Path("scripts/windows/vmware/build-photon-image.ps1").read_text(encoding="utf-8")
+    build_monitor = Path(
+        "scripts/windows/vmware/Atlaso.WorkstationBuildMonitor.psm1"
+    ).read_text(encoding="utf-8")
     packer_template = Path("image/vmware-workstation/atlaso-photon.pkr.hcl").read_text(encoding="utf-8")
     docs = Path("image/vmware-workstation/README.md").read_text(encoding="utf-8")
 
@@ -1527,7 +1530,8 @@ def test_create_atlaso_vmware_test_vm_wrapper_uses_common_helpers():
     assert "[string]$EnvironmentIdFile = ''" in script
     assert "[Alias('OnePasswordEnvironmentIdFile')]" in script
     assert "ExpectedEnvironmentIdSha256" in script
-    assert "environmentIdDigest" in script
+    assert "Assert-AtlasoOnePasswordEnvironmentId" in script
+    assert "Atlaso.OnePasswordCredentials.psm1" in script
     assert ".atlaso-local\\onepassword-environment-id" in script
     assert "/.atlaso-local/" in Path(".gitignore").read_text(encoding="utf-8")
     assert script.index("Invoke-PendingAtlasoDevelopmentCaCleanup `") < script.index(
@@ -1629,10 +1633,16 @@ def test_create_atlaso_vmware_test_vm_wrapper_uses_common_helpers():
     assert explicit_ssh_probe in build_script
     assert static_builder_probe in build_script
     assert build_script.index(explicit_ssh_probe) < build_script.index(static_builder_probe)
-    assert build_script.count("Initialize-AtlasoWorkstationGui -VmrunPath $resolvedVmrunPath") == 1
-    assert build_script.index("$packerBuildInvoker = {") < build_script.index(
-        "Initialize-AtlasoWorkstationGui -VmrunPath $resolvedVmrunPath"
-    ) < build_script.index("Invoke-AtlasoMonitoredPackerBuild")
+    assert build_script.count("Initialize-AtlasoWorkstationGui `") == 1
+    assert "-ProcessLauncher $requireExistingUi" in build_script
+    assert "Start-AtlasoWorkstationUiBreakawayProcess -FilePath $FilePath" not in build_script
+    assert "Initialize-AtlasoWorkstationGui -VmrunPath $parentVmrunPath" in build_script
+    assert "[scriptblock]$ProcessLauncher" in build_monitor
+    assert "The VMware Workstation UI launcher returned an unexpected executable identity." in build_monitor
+    child_gui_check = build_script.index("Initialize-AtlasoWorkstationGui `")
+    assert build_script.index("$packerBuildInvoker = {") < child_gui_check < build_script.index(
+        "Invoke-AtlasoMonitoredPackerBuild"
+    )
 
     lifecycle_script = Path(
         "scripts/windows/vmware/run-lifecycle-test.ps1"

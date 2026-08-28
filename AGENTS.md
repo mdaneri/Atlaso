@@ -525,6 +525,20 @@ The following cross-cutting boundaries always apply:
   documentation, and GitHub surfaces; use current-user DPAPI between bounded children. Reject caller environment
   fallbacks, repository defaults, local `.env` files, and interactive password prompts. Credential failure must precede
   network preparation, cleanup, disk reset, and cloning, while `-WhatIf` remains credential-free.
+  The VMware Photon image wrapper reuses this exact pinned Environment selector and bounded SDK/DPAPI foundation for
+  omitted `-SshPassword` and `-BootstrapAdminPassword`, mapped respectively to concealed `DEFAULT_ROOT_PASSWORD` and
+  `DEFAULT_ADMIN_PASSWORD`. Explicit `SecureString` values remain independently authoritative. Complete credential
+  preflight and task-owned bridge cleanup before network discovery or preparation, output cleanup, ISO remastering,
+  Packer initialization, or other image mutation; retain exact-byte validation and all sensitive ISO/Packer-variable
+  cleanup. Run the complete plaintext-consuming image workflow in a separately bounded PowerShell child; the parent
+  may pass only current-user DPAPI ciphertext. Place every plaintext kickstart, remastered ISO, and Packer variable
+  artifact inside the exact task-owned child root, and require the parent to remove and verify that root after ordinary
+  exit or whole-tree termination so a killed child cannot bypass sensitive cleanup. If whole-tree termination is
+  unproven, retain the exact root plus a non-secret cleanup marker, block same-boot reuse, and permit exact-root cleanup
+  only after a changed Windows boot identity proves the prior tree inactive; remove the marker only after root absence
+  is verified. Apply the same boot-bound recovery ownership to the shared SDK credential bridge. Durably publish each
+  marker with write-through file and rename semantics before starting a child that can consume plaintext, then durably
+  transition through root absence and a non-actionable retired tombstone before deleting the marker.
   The wrapper also owns the sole development-root exception to per-appliance CA generation: require the exact `Atlaso`
   1Password Environment's concealed `ATLASO_DEVELOPMENT_ROOT_CA_PRIVATE_KEY`, validate it against the checked-in public
   `Atlaso Development Root CA` before mutation, pin and verify the exact Environment ID by SHA-256 before invoking `op`,
