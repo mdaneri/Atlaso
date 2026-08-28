@@ -651,21 +651,33 @@ function Invoke-AtlasoVirtualizationPrerelease {
             throw "Remote tag $tag is not one annotated tag for the exact source commit."
         }
     }
-    $releaseExists = $true
+    $releaseState = $null
     try {
-        Invoke-AtlasoReleaseGh -Arguments @('release', 'view', $tag, '--repo', $repository, '--json', 'tagName') | Out-Null
+        $releaseState = ((Invoke-AtlasoReleaseGh -Arguments @(
+            'release', 'view', $tag, '--repo', $repository,
+            '--json', 'tagName,isDraft,isPrerelease'
+        )) -join [Environment]::NewLine) | ConvertFrom-Json
     }
     catch {
-        $releaseExists = $false
+        $releaseState = $null
     }
-    if (-not $releaseExists) {
+    if ($null -eq $releaseState) {
         Invoke-AtlasoReleaseGh -Arguments @(
             'release', 'create', $tag, '--repo', $repository, '--draft', '--prerelease',
             '--verify-tag', '--title', "Atlaso Virtualization v$($identity.Version) $PrereleaseIdentifier",
             '--notes', 'Windows-produced OVA and Hyper-V candidate for protected hosted finalization.'
         ) | Out-Null
+        Publish-AtlasoVirtualizationDraftAssets -Repository $repository -Tag $tag -AssetDirectory $candidate
     }
-    Publish-AtlasoVirtualizationDraftAssets -Repository $repository -Tag $tag -AssetDirectory $candidate
+    elseif ($releaseState.tagName -cne $tag -or -not $releaseState.isPrerelease) {
+        throw "Existing virtualization Release $tag is misclassified."
+    }
+    elseif ($releaseState.isDraft) {
+        Publish-AtlasoVirtualizationDraftAssets -Repository $repository -Tag $tag -AssetDirectory $candidate
+    }
+    # A published prerelease may need hosted attestation or live-verification
+    # recovery. Its immutable assets are left untouched while the idempotent
+    # protected finalizer is dispatched again.
     Invoke-AtlasoReleaseWorkflow `
         -Repository $repository `
         -Workflow 'virtualization-prerelease.yml' `
