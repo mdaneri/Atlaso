@@ -200,6 +200,60 @@ def test_verifies_retained_complete_candidate_without_rebuilding(tmp_path: Path)
         )
 
 
+def test_interrupted_staging_never_publishes_partial_candidate(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A failed copy leaves the final candidate absent and retryable.
+
+    Args:
+        tmp_path: Temporary directory provided by pytest.
+        monkeypatch: Pytest fixture used to interrupt one staging copy.
+    """
+
+    ova_root = tmp_path / "ova"
+    _ova_package(ova_root)
+    hyperv = tmp_path / "atlaso-v0.9.216-hyperv-x86_64.zip"
+    hyperv.write_bytes(b"hyperv-package")
+    output = tmp_path / "release"
+    real_copy = staging.shutil.copy2
+    copies = 0
+
+    def interrupt_copy(source: Path, destination: Path) -> None:
+        """Fail after one successful partial-directory copy.
+
+        Args:
+            source: Exact source asset.
+            destination: Invocation-owned partial destination.
+        """
+
+        nonlocal copies
+        copies += 1
+        if copies == 2:
+            raise OSError("simulated interruption")
+        real_copy(source, destination)
+
+    monkeypatch.setattr(staging.shutil, "copy2", interrupt_copy)
+    with pytest.raises(OSError, match="simulated interruption"):
+        staging.stage(
+            ova_directory=ova_root,
+            hyperv_zip=hyperv,
+            output=output,
+            version="0.9.216",
+            commit="a" * 40,
+        )
+    assert not output.exists()
+    assert not list(tmp_path.glob(".release.partial-*"))
+
+    monkeypatch.setattr(staging.shutil, "copy2", real_copy)
+    assert staging.stage(
+        ova_directory=ova_root,
+        hyperv_zip=hyperv,
+        output=output,
+        version="0.9.216",
+        commit="a" * 40,
+    )
+
+
 def test_staging_command_is_directly_executable() -> None:
     """The workflow entry point resolves sibling release validation when run by path."""
 

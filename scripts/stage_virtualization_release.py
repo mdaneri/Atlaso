@@ -9,6 +9,7 @@ import json
 import re
 import shutil
 import sys
+import tempfile
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -206,25 +207,51 @@ def stage(
 
     if output.exists() and (output.is_symlink() or not output.is_dir()):
         raise SystemExit("release staging output must be an ordinary directory")
-    output.mkdir(parents=True, exist_ok=True)
-    output_root = output.resolve(strict=True)
-    if output_root == ova_root or ova_root in output_root.parents:
+    output_parent = output.parent
+    output_parent.mkdir(parents=True, exist_ok=True)
+    if output_parent.is_symlink() or not output_parent.is_dir():
+        raise SystemExit("release staging parent must be an ordinary directory")
+    resolved_parent = output_parent.resolve(strict=True)
+    prospective_output = resolved_parent / output.name
+    if prospective_output == ova_root or ova_root in prospective_output.parents:
         raise SystemExit(
             "release staging output cannot be the OVA source or its descendant"
         )
-    existing_names = {entry.name for entry in output_root.iterdir()}
-    unexpected_names = sorted(existing_names - expected_names)
-    if unexpected_names:
-        raise SystemExit(
-            f"release staging output contains unexpected assets: {unexpected_names}"
-        )
-    for source in sources:
-        _copy_exact(source, output_root / source.name)
-    staged_names = {entry.name for entry in output_root.iterdir()}
-    if staged_names != expected_names:
-        raise SystemExit(
-            "release staging output does not contain the exact virtualization asset set"
-        )
+    if output.exists():
+        output_root = output.resolve(strict=True)
+        existing_names = {entry.name for entry in output_root.iterdir()}
+        unexpected_names = sorted(existing_names - expected_names)
+        if unexpected_names:
+            raise SystemExit(
+                f"release staging output contains unexpected assets: {unexpected_names}"
+            )
+        for source in sources:
+            _copy_exact(source, output_root / source.name)
+        staged_names = {entry.name for entry in output_root.iterdir()}
+        if staged_names != expected_names:
+            raise SystemExit(
+                "release staging output does not contain the exact virtualization asset set"
+            )
+        return sorted(expected_names)
+
+    partial = Path(
+        tempfile.mkdtemp(prefix=f".{output.name}.partial-", dir=resolved_parent)
+    )
+    try:
+        for source in sources:
+            _copy_exact(source, partial / source.name)
+        staged_names = {entry.name for entry in partial.iterdir()}
+        if staged_names != expected_names:
+            raise SystemExit(
+                "release staging output does not contain the exact virtualization asset set"
+            )
+        # The final directory appears only after every byte and name has passed.
+        # Same-directory rename prevents interruption from publishing a partial
+        # candidate that would wedge the documented retry path.
+        partial.replace(prospective_output)
+    except BaseException:
+        shutil.rmtree(partial, ignore_errors=True)
+        raise
     return sorted(expected_names)
 
 
