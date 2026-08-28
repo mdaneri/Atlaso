@@ -18804,8 +18804,17 @@ function initializeVcfSddcDeployment() {
     if (!(await wizard.validate("source"))) return false;
     const requestId = ++discoveryRequestId;
     const discoveryPayload = basePayload();
-    const requestedOvaPath = discoveryPayload.ova_path;
-    const requestedDeploymentOption = discoveryPayload.deployment_option;
+    const discoveryIdentityFields = [
+      "ova_path",
+      "address",
+      "port",
+      "username",
+      "password",
+      "credential_vault_id",
+      "credential_entry_id",
+      "confirmed_tls_fingerprint",
+      "deployment_option",
+    ];
     const destinationSelections = new Map(
       ["resource_pool_id", "datastore_id", "folder_id", "host_id"].map((name) => [name, form.elements[name]?.value]),
     );
@@ -18819,10 +18828,10 @@ function initializeVcfSddcDeployment() {
     }
     try {
       const { response, data } = await vcfHelperJson(managementUiPath("/vcf-helper/sddc-manager/inventory"), "POST", discoveryPayload);
+      const currentDiscoveryPayload = basePayload();
       if (
         requestId !== discoveryRequestId
-        || form.elements.ova_path.value !== requestedOvaPath
-        || (deploymentOption instanceof HTMLSelectElement && deploymentOption.value !== requestedDeploymentOption)
+        || discoveryIdentityFields.some((field) => currentDiscoveryPayload[field] !== discoveryPayload[field])
       ) return false;
       if (response.status === 409 && data.status === "tls-confirmation-required") {
         showTlsConfirmation(data.fingerprint || "", handleDiscover);

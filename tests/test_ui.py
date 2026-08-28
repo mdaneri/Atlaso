@@ -1032,7 +1032,7 @@ def test_pwa_manifest_service_worker_and_offline_shell(client):
     assert "ATLASO_CACHE" in service_worker.text
     assert "atlaso-management-pwa-v" in service_worker.text
     assert "ATLASO_CACHE_PREFIX" in service_worker.text
-    assert 'const ATLASO_CACHE = `${ATLASO_CACHE_PREFIX}292`;' in service_worker.text
+    assert 'const ATLASO_CACHE = `${ATLASO_CACHE_PREFIX}293`;' in service_worker.text
     assert 'fetch(asset, { cache: "reload" })' in service_worker.text
     assert "Required precache request failed" in service_worker.text
     assert "key.startsWith(ATLASO_CACHE_PREFIX)" in service_worker.text
@@ -1052,7 +1052,7 @@ def test_pwa_manifest_service_worker_and_offline_shell(client):
     assert "/static/ui-patterns.js?v=atlaso-ui-foundation-20260726-10" in service_worker.text
     assert "/static/appliance-apply-polling.js?v=issue-420-6" in service_worker.text
     assert "/static/ui-routes.js?v=issue-287-1" in service_worker.text
-    assert "/static/app.js?v=issues-515-519-11-513-328-1-595-4" in service_worker.text
+    assert "/static/app.js?v=issues-515-519-11-513-328-1-595-5" in service_worker.text
     assert "/static/terminal.js?v=issue-287-2" in service_worker.text
     assert "/static/pwa.js?v=issue-287-2" in service_worker.text
     assert "vcfdt-configuration-248-20260807-14" not in service_worker.text
@@ -1106,8 +1106,8 @@ def test_shared_ui_pattern_shell_and_wizard_contracts(client):
     base = (templates / "base.html").read_text(encoding="utf-8")
     public_base = (templates / "public_portal_base.html").read_text(encoding="utf-8")
     for shell, app_asset in (
-        (base, "/static/app.js?v=issues-515-519-11-513-328-1-595-4"),
-        (public_base, "/static/app.js?v=issues-515-519-11-513-328-1-595-4"),
+        (base, "/static/app.js?v=issues-515-519-11-513-328-1-595-5"),
+        (public_base, "/static/app.js?v=issues-515-519-11-513-328-1-595-5"),
         (base, "/static/appliance-apply-polling.js?v=issue-420-6"),
     ):
         assert shell.index("/static/vendor/tabulator/tabulator.min.js") < shell.index(
@@ -1761,7 +1761,7 @@ def test_monitor_page_renders_template_and_browser_assets(client):
     assert "swagger-link-icon" in page.text
     assert "/static/app.css?v=issues-515-519-9" in page.text
     assert "/static/ui-patterns.js?v=atlaso-ui-foundation-20260726-10" in page.text
-    assert "/static/app.js?v=issues-515-519-11-513-328-1-595-4" in page.text
+    assert "/static/app.js?v=issues-515-519-11-513-328-1-595-5" in page.text
     app_css = client.get("/static/app.css")
     assert app_css.status_code == 200
     assert ".split-workspace > .wide-panel" in app_css.text
@@ -17332,10 +17332,22 @@ def test_vcf_helper_page_renders_domain_dropdown(client):
     assert "restoreVcfInventorySelect(control, networkSelections.get(control.dataset.ovaNetwork))" in app_js
     assert "const requestId = ++discoveryRequestId" in app_js
     assert "const discoveryPayload = basePayload()" in app_js
-    assert "const requestedOvaPath = discoveryPayload.ova_path" in app_js
+    assert "const discoveryIdentityFields = [" in app_js
+    for field in (
+        "ova_path",
+        "address",
+        "port",
+        "username",
+        "password",
+        "credential_vault_id",
+        "credential_entry_id",
+        "confirmed_tls_fingerprint",
+        "deployment_option",
+    ):
+        assert f'      "{field}",' in app_js
     assert "requestId !== discoveryRequestId" in app_js
-    assert "form.elements.ova_path.value !== requestedOvaPath" in app_js
-    assert "deploymentOption.value !== requestedDeploymentOption" in app_js
+    assert "const currentDiscoveryPayload = basePayload()" in app_js
+    assert "currentDiscoveryPayload[field] !== discoveryPayload[field]" in app_js
     assert "if (requestId === discoveryRequestId && next instanceof HTMLButtonElement)" in app_js
     assert "await action()" in app_js
     assert "parseEndpoint" in app_js
