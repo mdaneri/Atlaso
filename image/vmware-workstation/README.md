@@ -201,8 +201,9 @@ root block-device dependency chain, requires the Photon root disk at `0:0:0`, re
 layout fails the image build before it can become a reusable artifact.
 The two 500 GiB application data disks remain empty OVF declarations, so the reusable builder contains no large blank
 data-disk payloads. After compatibility validation, the build removes the QEMU build toolchain with TDNF dependency
-auto-removal disabled. It then requires valid `/etc/os-release` and `/etc/photon-release` files, verifies TDNF's exact
-configured `distroverpkg` RPM plus the Photon, RPM, TDNF, Python, PowerShell, and VMware guest-agent runtime packages,
+auto-removal disabled. It then requires valid `/etc/os-release` and `/etc/photon-release` files, verifies TDNF's
+effective `distroverpkg` RPM (the explicit setting or Photon's `photon-release` default) plus the Photon, RPM, TDNF,
+Python, PowerShell, and VMware guest-agent runtime packages,
 and performs a fatal cache cleanup, repository refresh, and final Photon update before checking that runtime state
 again. Only then does it clear build caches and staged sources, zero-fill free blocks on both payload filesystems while
 retaining a 512 MiB safety reserve, delete the fill files, request TRIM, and let Packer compact both payload VMDKs.

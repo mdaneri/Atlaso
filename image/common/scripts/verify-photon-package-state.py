@@ -11,6 +11,7 @@ from collections.abc import Callable, Sequence
 from pathlib import Path
 
 PACKAGE_NAME_PATTERN = re.compile(r"[A-Za-z0-9][A-Za-z0-9+._:-]*\Z")
+PHOTON_DEFAULT_DISTROVERPKG = "photon-release"
 REQUIRED_RUNTIME_PACKAGES = ("photon-release", "rpm", "tdnf", "python3", "powershell")
 
 
@@ -48,9 +49,9 @@ def read_distroverpkg(path: Path) -> str:
         parser.read(path, encoding="utf-8")
     except configparser.Error as exc:
         raise ValueError(f"TDNF configuration is invalid: {path}") from exc
-    if not parser.has_option("main", "distroverpkg"):
-        raise ValueError("TDNF configuration does not define main.distroverpkg")
-    package = parser.get("main", "distroverpkg").strip()
+    package = parser.get(
+        "main", "distroverpkg", fallback=PHOTON_DEFAULT_DISTROVERPKG
+    ).strip()
     if not PACKAGE_NAME_PATTERN.fullmatch(package):
         raise ValueError("TDNF main.distroverpkg is not a valid RPM package identity")
     return package

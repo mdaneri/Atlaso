@@ -117,20 +117,33 @@ def test_package_cleanup_transaction_rejects_autoremoved_release_identity(
 
 
 @pytest.mark.parametrize(
-    ("config", "message"),
+    ("config", "expected"),
     [
-        ("[main]\n", "does not define main.distroverpkg"),
-        ("[main]\ndistroverpkg=../../unsafe\n", "not a valid RPM package identity"),
+        ("[main]\n", "photon-release"),
+        (
+            "[main]\ndistroverpkg=photon-release-5.0-6.ph5.noarch\n",
+            "photon-release-5.0-6.ph5.noarch",
+        ),
     ],
 )
-def test_package_cleanup_rejects_invalid_distroverpkg(
-    tmp_path: Path, config: str, message: str
+def test_package_cleanup_resolves_effective_distroverpkg(
+    tmp_path: Path, config: str, expected: str
 ) -> None:
-    """Require one safe configured TDNF distribution-version package."""
+    """Resolve an explicit package or Photon's shipped default."""
 
     verifier = load_verifier()
     _, _, tdnf_config = write_release_state(tmp_path)
     tdnf_config.write_text(config, encoding="utf-8")
 
-    with pytest.raises(ValueError, match=message):
+    assert verifier.read_distroverpkg(tdnf_config) == expected
+
+
+def test_package_cleanup_rejects_unsafe_distroverpkg(tmp_path: Path) -> None:
+    """Reject an explicit package identity that cannot be queried safely."""
+
+    verifier = load_verifier()
+    _, _, tdnf_config = write_release_state(tmp_path)
+    tdnf_config.write_text("[main]\ndistroverpkg=../../unsafe\n", encoding="utf-8")
+
+    with pytest.raises(ValueError, match="not a valid RPM package identity"):
         verifier.read_distroverpkg(tdnf_config)
