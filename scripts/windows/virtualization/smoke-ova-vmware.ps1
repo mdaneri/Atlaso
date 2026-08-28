@@ -171,15 +171,57 @@ function Wait-AtlasoVmwareSmokeNetworkIdentity {
             -ManagementVmnet $ManagementVmnet `
             -ServiceVmnet $ServiceVmnet `
             -ExpectedIdentity $ExpectedIdentity
+        $networkAdapters = @(Get-NetAdapter -IncludeHidden -ErrorAction Stop)
         $neighbors = @(Get-NetNeighbor -AddressFamily IPv4 -ErrorAction SilentlyContinue)
         $identity = Resolve-AtlasoVmwareSmokeAddressIdentity `
             -VmxIdentity $vmxIdentity `
-            -NetworkAdapters @(Get-NetAdapter -IncludeHidden -ErrorAction Stop) `
+            -NetworkAdapters $networkAdapters `
             -Neighbors $neighbors `
             -ExpectedIdentity $ExpectedIdentity `
             -AllowMissingAddress
         if ($identity.Address) {
             return $identity
+        }
+
+        # A clean runner may have no neighbor entry yet. VMware DHCP leases provide
+        # candidates only; the subsequent interface-scoped ARP evidence remains the
+        # trust boundary that binds an address to ethernet0's exact MAC.
+        $leaseRoot = Join-Path ([Environment]::GetFolderPath('CommonApplicationData')) 'VMware'
+        $leaseText = @()
+        if (Test-Path -LiteralPath $leaseRoot -PathType Container) {
+            $leaseFiles = @(Get-ChildItem -LiteralPath $leaseRoot -Filter '*.leases' -File -Recurse `
+                    -ErrorAction SilentlyContinue | Where-Object {
+                    ($_.Attributes -band [System.IO.FileAttributes]::ReparsePoint) -eq 0
+                })
+            $leaseText = @($leaseFiles | ForEach-Object {
+                    Get-Content -LiteralPath $_.FullName -ErrorAction SilentlyContinue
+                })
+        }
+        $leaseAddresses = @(Get-AtlasoVmwareDhcpLeaseAddress `
+                -LeaseText $leaseText `
+                -ManagementMac $vmxIdentity.ManagementMac)
+        $sourceAddresses = @(Get-AtlasoSmokeUsableIPv4Address -Addresses @(
+                Get-NetIPAddress -AddressFamily IPv4 `
+                    -InterfaceIndex $identity.HostInterfaceIndex `
+                    -ErrorAction SilentlyContinue | ForEach-Object { [string]$_.IPAddress }
+            ))
+        if ($sourceAddresses.Count -gt 1) {
+            throw 'The VMware management vmnet has ambiguous host IPv4 source addresses.'
+        }
+        if ($sourceAddresses.Count -eq 1 -and $leaseAddresses.Count -gt 0) {
+            $ping = Join-Path $env:SystemRoot 'System32\PING.EXE'
+            foreach ($leaseAddress in $leaseAddresses) {
+                & $ping -4 -S $sourceAddresses[0] -n 1 -w 1000 $leaseAddress 2>$null | Out-Null
+            }
+            $identity = Resolve-AtlasoVmwareSmokeAddressIdentity `
+                -VmxIdentity $vmxIdentity `
+                -NetworkAdapters $networkAdapters `
+                -Neighbors @(Get-NetNeighbor -AddressFamily IPv4 -ErrorAction SilentlyContinue) `
+                -ExpectedIdentity $ExpectedIdentity `
+                -AllowMissingAddress
+            if ($identity.Address) {
+                return $identity
+            }
         }
         Start-Sleep -Seconds 5
     }

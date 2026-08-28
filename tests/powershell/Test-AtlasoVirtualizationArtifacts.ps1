@@ -77,6 +77,19 @@ catch {
 
 $vmxFixture = Join-Path ([IO.Path]::GetTempPath()) ('atlaso-smoke-identity-' + [guid]::NewGuid().ToString('N') + '.vmx')
 try {
+    $leaseAddresses = @(Get-AtlasoVmwareDhcpLeaseAddress `
+            -LeaseText @(
+                'lease 198.51.100.20 {',
+                '  hardware ethernet 00:0c:29:44:55:66;',
+                '}',
+                'lease 192.0.2.20 {',
+                '  hardware ethernet 00:0c:29:11:22:33;',
+                '}'
+            ) `
+            -ManagementMac '00:0c:29:11:22:33')
+    if ($leaseAddresses.Count -ne 1 -or $leaseAddresses[0] -ne '192.0.2.20') {
+        throw 'VMware DHCP lease parsing did not retain only the ethernet0 management address candidate.'
+    }
     [IO.File]::WriteAllLines($vmxFixture, @(
             'ethernet0.vnet = "VMnet8"',
             'ethernet0.generatedAddress = "00:0c:29:11:22:33"',
@@ -311,6 +324,8 @@ foreach ($required in @(
         'Get-AtlasoVmwareSmokeVmxNetworkIdentity',
         'Resolve-AtlasoVmwareSmokeAddressIdentity',
         'Wait-AtlasoVmwareSmokeNetworkIdentity',
+        'Get-AtlasoVmwareDhcpLeaseAddress',
+        '& $ping -4 -S',
         'Get-NetNeighbor -AddressFamily IPv4',
         "'--phase' 'post-reboot'"
     )) {

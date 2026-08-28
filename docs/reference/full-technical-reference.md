@@ -1230,7 +1230,9 @@ virtualization artifacts](virtualization-artifacts.md).
 
 Protected smoke validation carries the provider-side management and services NIC identities into guest discovery.
 Hyper-V uses its named adapter, KVM and Proxmox match QEMU guest-agent rows by provider MAC, and VMware binds
-`ethernet0` to its exact management vmnet and host-neighbor MAC. SSH and host-facing OpenAPI probes fail closed when
+`ethernet0` to its exact management vmnet and host-neighbor MAC. VMware DHCP leases seed interface-scoped neighbor
+discovery on a clean runner, but only the resulting exact vmnet/MAC neighbor binding selects the probe address. SSH and
+host-facing OpenAPI probes fail closed when
 that identity is missing, ambiguous, mismatched, or changes across the reboot check.
 
 These packages are distribution compatibility targets, not independent image-build or lifecycle environments. Keep

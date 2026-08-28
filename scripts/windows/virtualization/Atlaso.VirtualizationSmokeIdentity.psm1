@@ -59,6 +59,39 @@ function Get-AtlasoSmokeUsableIPv4Address {
 
 <#
 .SYNOPSIS
+Return DHCP lease addresses bound to one exact VMware management MAC.
+
+.PARAMETER LeaseText
+Raw VMware DHCP lease-file content.
+
+.PARAMETER ManagementMac
+Expected ethernet0 management adapter MAC address.
+#>
+function Get-AtlasoVmwareDhcpLeaseAddress {
+    param(
+        [Parameter(Mandatory = $true)][AllowEmptyCollection()][string[]]$LeaseText,
+        [Parameter(Mandatory = $true)][string]$ManagementMac
+    )
+
+    $expectedMac = ConvertTo-AtlasoSmokeMacAddress -MacAddress $ManagementMac
+    $leasePattern = [regex]::new(
+        '(?ms)\blease\s+(?<address>\d{1,3}(?:\.\d{1,3}){3})\s*\{(?<body>.*?)\}'
+    )
+    $macPattern = [regex]::new(
+        '(?im)^\s*hardware\s+ethernet\s+(?<mac>[0-9a-f]{2}(?::[0-9a-f]{2}){5})\s*;'
+    )
+    $addresses = foreach ($lease in $leasePattern.Matches(($LeaseText -join "`n"))) {
+        $macMatch = $macPattern.Match($lease.Groups['body'].Value)
+        if ($macMatch.Success -and
+            (ConvertTo-AtlasoSmokeMacAddress -MacAddress $macMatch.Groups['mac'].Value) -eq $expectedMac) {
+            $lease.Groups['address'].Value
+        }
+    }
+    return @(Get-AtlasoSmokeUsableIPv4Address -Addresses @($addresses))
+}
+
+<#
+.SYNOPSIS
 Resolve the Hyper-V management adapter and its unique usable IPv4 address.
 
 .PARAMETER Adapters
@@ -321,6 +354,7 @@ function Resolve-AtlasoVmwareSmokeAddressIdentity {
 Export-ModuleMember -Function @(
     'ConvertTo-AtlasoSmokeMacAddress',
     'Get-AtlasoSmokeUsableIPv4Address',
+    'Get-AtlasoVmwareDhcpLeaseAddress',
     'Get-AtlasoVmwareSmokeVmxNetworkIdentity',
     'Resolve-AtlasoHyperVSmokeNetworkIdentity',
     'Resolve-AtlasoVmwareSmokeAddressIdentity'
