@@ -20,11 +20,33 @@
     {% if vcf_helper_result %}
       <div class="alert success">
         Created {{ vcf_helper_result.created|length }} DNS records{% if vcf_helper_result.skipped %}; skipped {{ vcf_helper_result.skipped|length }} existing records{% endif %}.
+        <details>
+          <summary>Reviewed generated FQDN results</summary>
+          <ul>
+            {% for row in vcf_helper_result.created %}
+              <li>{{ row.description }}: {{ row.fqdn }} — {{ row.address }} created</li>
+            {% endfor %}
+            {% for row in vcf_helper_result.skipped %}
+              <li>{{ row.description }}: {{ row.fqdn }}{% if row.address %} — {{ row.address }}{% endif %} skipped</li>
+            {% endfor %}
+          </ul>
+        </details>
       </div>
     {% endif %}
     {% if vcf_helper_delete_result %}
       <div class="alert success">
         Deleted {{ vcf_helper_delete_result.deleted|length }} VCF Helper DNS records{% if vcf_helper_delete_result.preserved %}; preserved {{ vcf_helper_delete_result.preserved|length }} unrelated records{% endif %}.
+        <details>
+          <summary>Reviewed generated FQDN deletion results</summary>
+          <ul>
+            {% for row in vcf_helper_delete_result.deleted %}
+              <li>{{ row.description }}: {{ row.fqdn }} — {{ row.address }} deleted</li>
+            {% endfor %}
+            {% for row in vcf_helper_delete_result.preserved %}
+              <li>{{ row.description }}: {{ row.fqdn }} — {{ row.address }} preserved</li>
+            {% endfor %}
+          </ul>
+        </details>
       </div>
     {% endif %}
     <div class="vcf-helper-subjects">
@@ -121,11 +143,11 @@
         </label>
         <label>
           <span class="field-label"><span>Prefix</span><button class="help-icon" type="button" data-help="Optional text added before every generated VCF hostname. The resulting name is saved only as DNS desired state.">i</button></span>
-          <input name="prefix" placeholder="prefix" data-vcf-fqdn-prefix>
+          <input name="prefix" value="{{ vcf_helper_default_prefix }}" placeholder="prefix" data-vcf-fqdn-prefix>
         </label>
         <label>
           <span class="field-label"><span>Suffix</span><button class="help-icon" type="button" data-help="Optional text added after every generated VCF hostname, before the selected DNS domain.">i</button></span>
-          <input name="suffix" placeholder="suffix" data-vcf-fqdn-suffix>
+          <input name="suffix" value="{{ vcf_helper_default_suffix }}" placeholder="suffix" data-vcf-fqdn-suffix>
         </label>
         <label>
           <span class="field-label"><span>Domain Name</span><button class="help-icon" type="button" data-help="Managed DNS zone that receives the generated VCF A or AAAA records. Add zones on the DNS page.">i</button></span>
@@ -152,7 +174,7 @@
       <div class="alert success hidden" data-vcf-fqdn-result></div>
       <table class="data-table compact vcf-fqdn-table">
         <thead>
-          <tr><th>Component</th><th>Generated FQDN</th><th>Assigned IP</th></tr>
+          <tr><th>Component</th><th>Hostname</th><th>Generated FQDN</th><th>Assigned IP</th></tr>
         </thead>
         <tbody
           data-vcf-fqdn-rows
@@ -162,11 +184,26 @@
           data-existing-address-records='{{ vcf_helper_existing_address_records | tojson }}'
         >
           {% for row in vcf_helper_rows %}
-            <tr>
+            <tr data-vcf-fqdn-row="{{ row.host }}">
               <td>{{ row.description }}</td>
-              <td>{{ row.fqdn }}</td>
+              <td>
+                <input type="hidden" name="component_key" value="{{ row.host }}">
+                <label class="sr-only" for="vcf-fqdn-hostname-{{ row.host }}">Hostname for {{ row.description }}</label>
+                <input
+                  id="vcf-fqdn-hostname-{{ row.host }}"
+                  class="compact-input"
+                  name="hostname"
+                  value="{{ row.host_label }}"
+                  autocomplete="off"
+                  spellcheck="false"
+                  aria-describedby="vcf-fqdn-hostname-error-{{ row.host }}"
+                  data-vcf-fqdn-hostname="{{ row.host }}"
+                >
+                <small id="vcf-fqdn-hostname-error-{{ row.host }}" class="field-error hidden" data-vcf-fqdn-hostname-error></small>
+              </td>
+              <td data-vcf-fqdn-value>{{ row.fqdn }}</td>
               {% set existing_addresses = vcf_helper_existing_address_records.get(row.fqdn, []) %}
-              <td{% if not existing_addresses %} class="muted"{% endif %}>{{ existing_addresses|join(", ") if existing_addresses else ("existing record skipped" if row.fqdn in vcf_helper_existing_fqdns else "allocated on confirm") }}</td>
+              <td data-vcf-fqdn-status{% if not existing_addresses %} class="muted"{% endif %}>{{ existing_addresses|join(", ") if existing_addresses else ("existing record skipped" if row.fqdn in vcf_helper_existing_fqdns else "allocated on confirm") }}</td>
             </tr>
           {% endfor %}
         </tbody>

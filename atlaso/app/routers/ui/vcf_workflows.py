@@ -129,6 +129,7 @@ class VcfWorkflowsUiDependencies:
     vcf_depot_submit_lock: Lock
     vcf_depot_vdt_log_path: PurePosixPath
     vcf_helper_default_target: str
+    vcf_generated_fqdn_preview: Endpoint
     job_payload: Endpoint
     normalize_vcf_trust_address: Endpoint
     task_row: Endpoint
@@ -215,6 +216,7 @@ def build_router(dependencies: VcfWorkflowsUiDependencies) -> VcfWorkflowsUiRout
     VCF_DEPOT_SUBMIT_LOCK = dependencies.vcf_depot_submit_lock
     VCF_DEPOT_VDT_LOG_PATH = dependencies.vcf_depot_vdt_log_path
     VCF_HELPER_DEFAULT_TARGET = dependencies.vcf_helper_default_target
+    vcf_generated_fqdn_preview = dependencies.vcf_generated_fqdn_preview
     _job_payload = dependencies.job_payload
     _normalize_vcf_trust_address = dependencies.normalize_vcf_trust_address
     _task_row = dependencies.task_row
@@ -412,6 +414,57 @@ def build_router(dependencies: VcfWorkflowsUiDependencies) -> VcfWorkflowsUiRout
             "appliance_apply_status": dnsmasq_apply_status(db, dns_context),
             **(extra or {}),
         }
+
+    def vcf_submitted_fqdn_page_context(
+        db: Session,
+        identity: Identity,
+        *,
+        target: str,
+        domain: str,
+        prefix: str,
+        suffix: str,
+        start_ipv4: str,
+        component_keys: list[str],
+        hostnames: list[str],
+    ) -> dict[str, Any]:
+        """Preserve the submitted FQDN review in the server-rendered fallback.
+
+        Args:
+            db: Active database session.
+            identity: Authenticated identity authorizing the request.
+            target: Resource targeted by the operation.
+            domain: Managed DNS domain affected by the operation.
+            prefix: Prefix supplied by the caller.
+            suffix: Suffix supplied by the caller.
+            start_ipv4: Start ipv4 supplied by the caller.
+            component_keys: Catalog component keys submitted by the caller.
+            hostnames: Reviewed hostname labels paired with the submitted component keys.
+
+        Returns:
+            Page context retaining the submitted review fields and rows.
+        """
+        mapping = {
+            component_key.strip().lower(): hostname.strip().lower()
+            for component_key, hostname in zip(component_keys, hostnames, strict=False)
+        }
+        context = vcf_helper_page_context(db, identity)
+        context.update(
+            {
+                "vcf_helper_default_target": target.strip().lower(),
+                "vcf_helper_default_domain": domain.strip().strip(".").lower(),
+                "vcf_helper_default_prefix": prefix,
+                "vcf_helper_default_suffix": suffix,
+                "vcf_helper_default_start_ipv4": start_ipv4,
+                "vcf_helper_rows": vcf_generated_fqdn_preview(
+                    domain,
+                    prefix,
+                    suffix,
+                    target,
+                    mapping,
+                ),
+            }
+        )
+        return context
 
     async def _vcf_helper_json(request: Request) -> dict[str, Any]:
         """Return vcf helper json.
@@ -1609,6 +1662,8 @@ def build_router(dependencies: VcfWorkflowsUiDependencies) -> VcfWorkflowsUiRout
         suffix: str = Form(""),
         start_ipv4: str = Form(...),
         network_prefix: str = Form(""),
+        component_key: list[str] | None = Form(None),
+        hostname: list[str] | None = Form(None),
         csrf: str = Form(...),
         identity: Identity = Depends(require_session_identity),
         db: Session = Depends(get_db),
@@ -1623,6 +1678,8 @@ def build_router(dependencies: VcfWorkflowsUiDependencies) -> VcfWorkflowsUiRout
             suffix: Suffix supplied by the caller.
             start_ipv4: Start ipv4 supplied by the caller.
             network_prefix: Network prefix supplied by the caller.
+            component_key: Catalog component keys submitted by the caller.
+            hostname: Reviewed hostname labels paired with the submitted component keys.
             csrf: Validated CSRF token authorizing the request.
             identity: Authenticated identity authorizing the request.
             db: Active database session.
@@ -1639,6 +1696,8 @@ def build_router(dependencies: VcfWorkflowsUiDependencies) -> VcfWorkflowsUiRout
             suffix=suffix,
             start_ipv4=start_ipv4,
             network_prefix=network_prefix,
+            component_keys=component_key or [],
+            hostnames=hostname or [],
             actor=identity.username,
         )
         if request.headers.get("X-Atlaso-VCF-Helper") == "1":
@@ -1651,7 +1710,17 @@ def build_router(dependencies: VcfWorkflowsUiDependencies) -> VcfWorkflowsUiRout
                 },
                 status_code=422 if errors else 200,
             )
-        page_context = vcf_helper_page_context(db, identity)
+        page_context = vcf_submitted_fqdn_page_context(
+            db,
+            identity,
+            target=target,
+            domain=domain,
+            prefix=prefix,
+            suffix=suffix,
+            start_ipv4=start_ipv4,
+            component_keys=component_key or [],
+            hostnames=hostname or [],
+        )
         if errors:
             return render(
                 request,
@@ -1675,6 +1744,8 @@ def build_router(dependencies: VcfWorkflowsUiDependencies) -> VcfWorkflowsUiRout
         domain: str = Form(...),
         prefix: str = Form(""),
         suffix: str = Form(""),
+        component_key: list[str] | None = Form(None),
+        hostname: list[str] | None = Form(None),
         csrf: str = Form(...),
         identity: Identity = Depends(require_session_identity),
         db: Session = Depends(get_db),
@@ -1687,6 +1758,8 @@ def build_router(dependencies: VcfWorkflowsUiDependencies) -> VcfWorkflowsUiRout
             domain: Managed DNS domain affected by the operation.
             prefix: Prefix supplied by the caller.
             suffix: Suffix supplied by the caller.
+            component_key: Catalog component keys submitted by the caller.
+            hostname: Reviewed hostname labels paired with the submitted component keys.
             csrf: Validated CSRF token authorizing the request.
             identity: Authenticated identity authorizing the request.
             db: Active database session.
@@ -1701,6 +1774,8 @@ def build_router(dependencies: VcfWorkflowsUiDependencies) -> VcfWorkflowsUiRout
             domain=domain,
             prefix=prefix,
             suffix=suffix,
+            component_keys=component_key or [],
+            hostnames=hostname or [],
             actor=identity.username,
         )
         if request.headers.get("X-Atlaso-VCF-Helper") == "1":
@@ -1713,7 +1788,17 @@ def build_router(dependencies: VcfWorkflowsUiDependencies) -> VcfWorkflowsUiRout
                 },
                 status_code=422 if errors else 200,
             )
-        page_context = vcf_helper_page_context(db, identity)
+        page_context = vcf_submitted_fqdn_page_context(
+            db,
+            identity,
+            target=target,
+            domain=domain,
+            prefix=prefix,
+            suffix=suffix,
+            start_ipv4="",
+            component_keys=component_key or [],
+            hostnames=hostname or [],
+        )
         if errors:
             return render(
                 request,
