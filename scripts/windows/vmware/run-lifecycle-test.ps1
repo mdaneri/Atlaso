@@ -235,10 +235,7 @@ Resolve the vmrun path from a user override or common install locations.
 .PARAMETER VmrunPath
 Optional vmrun.exe path or install directory.
 #>
-<#
-.SYNOPSIS
-Resolve vmrun from an override or supported installation location.
-#>
+
 function Resolve-VmrunPath {
     if ($VmrunPath) {
         if (-not (Test-Path -LiteralPath $VmrunPath)) {
@@ -385,10 +382,7 @@ function Invoke-VmrunBounded {
 .SYNOPSIS
 Generate a randomized static MAC in VMware OUI space.
 #>
-<#
-.SYNOPSIS
-Generate a randomized static MAC in VMware OUI space.
-#>
+
 function New-StaticVmwareMac {
     $bytes = [guid]::NewGuid().ToByteArray()
     return ('00:50:56:{0:x2}:{1:x2}:{2:x2}' -f (0x20 -bor ($bytes[0] -band 0x1f)), $bytes[1], $bytes[2])
