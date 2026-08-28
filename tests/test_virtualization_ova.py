@@ -12,7 +12,6 @@ import pytest
 
 from scripts.virtualization import validate_ova as validator
 
-
 OVFTOOL_FIXTURE = Path("tests/fixtures/virtualization/ovftool-secure-boot-disabled.ovf")
 
 
