@@ -3645,6 +3645,11 @@ controller, and four ordered disks:</p>
 <li>500 GiB VCF Offline Depot at SCSI slot 2; and</li>
 <li>500 GiB VCF Backups at SCSI slot 3.</li>
 </ol>
+<p>The canonical VMware OVF declaration emitted by Atlaso's supported OVF Tool is
+<code>vmw:key="bootOptions.efiSecureBootEnabled" vmw:value="false"</code>. The validator also recognizes the older
+<code>uefi.secureBoot.enabled</code> spelling for compatible artifacts, but every present supported declaration must explicitly
+evaluate to false. A missing, enabled, malformed, or conflicting declaration blocks export and import. Export validates
+the normalized descriptor's complete machine contract before writing provenance that records <code>secure_boot: false</code>.</p>
 <p>The OVA contains files for the two payload disks. Its two 500 GiB data disks are fileless declarations. Import helpers
 retain fileless disks when the platform creates them, create only missing data disks, and reject reordered or
 conflicting disks.</p>
