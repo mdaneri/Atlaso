@@ -331,6 +331,12 @@ vSphere/ESXi import: `Atlaso Management Network` for the first adapter, which re
 `Atlaso Services Network` for the second adapter used by DNS, DHCP, CA, depot, PXE, KMS, and other Atlaso-managed
 services.
 
+Supported OVF Tool exports declare disabled Secure Boot with
+`vmw:key="bootOptions.efiSecureBootEnabled" vmw:value="false"`. Atlaso validates that normalized descriptor before it
+writes `atlaso-provenance.json`; the compatibility spelling `uefi.secureBoot.enabled` is accepted only when every
+present supported declaration is explicitly false. Missing, enabled, malformed, or conflicting declarations fail the
+export before provenance, manifest, OVA packaging, or publication can claim a usable artifact.
+
 To upload the deployable OVF package to an existing stable GitHub Release, authenticate GitHub CLI and select release
 publication:
 
