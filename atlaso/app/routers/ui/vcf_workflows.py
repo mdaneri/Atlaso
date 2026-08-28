@@ -102,10 +102,12 @@ from atlaso.app.services.vcf_private_registry import (
 )
 from atlaso.app.services.vcf_sddc_deployment import (
     VcfSddcDeploymentError,
+    complete_property_mapping,
     inspect_ova,
     normalize_disk_provisioning,
     tls_sha256_fingerprint,
     vsphere_inventory,
+    vsphere_ovf_descriptor,
 )
 from atlaso.app.services.vcf_trust import (
     VcfTrustCredentials,
@@ -922,10 +924,16 @@ def build_router(dependencies: VcfWorkflowsUiDependencies) -> VcfWorkflowsUiRout
                 detail="Target address, username, and password are required.",
             )
         try:
-            inventory = vsphere_inventory(
-                address, username, password, port=port, expected_fingerprint=fingerprint
-            )
             descriptor = inspect_ova(str(payload.get("ova_path") or ""))
+            inventory = vsphere_inventory(
+                address,
+                username,
+                password,
+                port=port,
+                expected_fingerprint=fingerprint,
+                descriptor=descriptor,
+                deployment_option=str(payload.get("deployment_option") or ""),
+            )
         except VcfSddcDeploymentError as exc:
             raise HTTPException(
                 status_code=422,
@@ -936,7 +944,7 @@ def build_router(dependencies: VcfWorkflowsUiDependencies) -> VcfWorkflowsUiRout
                 "status": "ready",
                 "tls_fingerprint": fingerprint,
                 "inventory": inventory,
-                "ova": descriptor.public_dict(),
+                "ova": inventory.pop("ova", descriptor.public_dict()),
             }
         )
 
@@ -993,12 +1001,25 @@ def build_router(dependencies: VcfWorkflowsUiDependencies) -> VcfWorkflowsUiRout
             raise HTTPException(
                 status_code=422, detail="OVA properties must be an object."
             )
-        allowed_keys = {item.key for item in descriptor.properties}
-        property_values = {
-            str(key): str(value)
-            for key, value in raw_properties.items()
-            if str(key) in allowed_keys
-        }
+        submitted_properties = {str(key): str(value) for key, value in raw_properties.items()}
+        deployment_option = str(payload.get("deployment_option") or "")
+        try:
+            descriptor = vsphere_ovf_descriptor(
+                address,
+                username,
+                password,
+                descriptor,
+                port=port,
+                expected_fingerprint=str(payload.get("confirmed_tls_fingerprint") or ""),
+                deployment_option=deployment_option,
+                property_values=submitted_properties,
+            )
+            property_values = complete_property_mapping(descriptor, submitted_properties)
+        except VcfSddcDeploymentError as exc:
+            raise HTTPException(
+                status_code=422,
+                detail=redact_secret_values(str(exc), [password, *submitted_properties.values()]),
+            ) from exc
         invalid_properties = _validate_vcf_sddc_property_values(
             descriptor, property_values
         )
@@ -1070,6 +1091,7 @@ def build_router(dependencies: VcfWorkflowsUiDependencies) -> VcfWorkflowsUiRout
                     "vm_name": vm_name,
                     "endpoint": address,
                     "disk_provisioning": disk_provisioning,
+                    "deployment_option": descriptor.selected_deployment_option,
                     "power_on": power_on,
                     "property_keys": sorted(property_values),
                     "password_property_keys": sorted(
@@ -1098,6 +1120,7 @@ def build_router(dependencies: VcfWorkflowsUiDependencies) -> VcfWorkflowsUiRout
             destination={**destination, "port": port},
             vm_name=vm_name,
             disk_provisioning=disk_provisioning,
+            deployment_option=descriptor.selected_deployment_option,
             power_on=power_on,
             property_values=property_values,
             add_dns=add_dns,

@@ -491,6 +491,11 @@ The following cross-cutting boundaries always apply:
   real envelope to replace the non-OVF marker and enter the full validation/customization path. Clear consumed
   `guestinfo.ovfEnv` with an explicit empty value. Once pending success is durable, retry credential scrub and marker
   promotion directly with the review handshake cleared; never route finalization failure back to network correction.
+- VCF Helper VCF Installer imports use the destination `OvfManager.ParseDescriptor` contract and a complete reviewed
+  property mapping. Direct standalone ESXi imports bind deterministically to the endpoint's single host. Before power-on
+  or DNS, trust, and depot follow-up, verify that the exact imported VM retained every mapped vApp property and a
+  supported OVF environment transport; remove only that task-created VM if verification fails, and report cleanup
+  failure as a partial deployment. Sanitize parser and import warnings against all submitted property values.
 - VMware release images use separate compacted Photon OS and required Atlaso system-content payload VMDKs, followed by
   empty 500 GiB depot and backup disks. Preserve `/opt/atlaso` and appliance-wide PowerShell modules on the UUID-mounted
   system-content disk, size-gate individual OVF release assets below 2 GiB, and publish the aggregate OVA only when it

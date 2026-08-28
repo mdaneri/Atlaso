@@ -8903,6 +8903,7 @@ def run_vcf_sddc_deployment_job(
     destination: dict[str, Any],
     vm_name: str,
     disk_provisioning: str,
+    deployment_option: str = "",
     power_on: bool,
     property_values: dict[str, str],
     add_dns: bool,
@@ -8922,6 +8923,7 @@ def run_vcf_sddc_deployment_job(
         destination: Destination path, address, or resource.
         vm_name: Vm name supplied by the caller.
         disk_provisioning: Disk provisioning supplied by the caller.
+        deployment_option: Target-supported OVF deployment option key.
         power_on: Power on supplied by the caller.
         property_values: Property values supplied by the caller.
         add_dns: Add dns supplied by the caller.
@@ -8975,6 +8977,7 @@ def run_vcf_sddc_deployment_job(
                 progress=update,
                 expected_fingerprint=endpoint_fingerprint,
                 disk_provisioning=disk_provisioning,
+                deployment_option=deployment_option,
                 power_on=power_on,
                 cancelled=cancelled,
             )

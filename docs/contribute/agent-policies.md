@@ -1458,6 +1458,13 @@ Terminal order:
   changes preserve deliberate overrides for retained components, and clearing the pattern restores catalog hostnames.
   Submit the exact component-keyed mapping to creation and deletion, reject missing, duplicate, unknown, out-of-catalog,
   empty, or malformed entries, and derive and validate every FQDN on the server before writing any records.
+- VCF Installer OVA deployment must treat the destination `OvfManager.ParseDescriptor` result as authoritative for
+  deployable properties, defaults, deployment options, warnings, and errors. Pass the complete reviewed property
+  mapping to `CreateImportSpec`; sanitize warnings against every submitted value. Bind a direct `HostAgent` connection
+  to its one host while preserving vCenter automatic placement unless a host was selected. Before power-on or follow-up
+  DNS, trust, or depot work, require the imported VM to retain every mapped vApp property and a supported OVF environment
+  transport. Verification failure must remove only the exact task-created VM; cleanup failure remains a truthful partial
+  deployment.
 - Starting address input is one IPv4 or IPv6 CIDR. IPv4 creates A records and IPv6 creates AAAA records. Allocate
   sequential usable addresses inside that network, skip occupied DNS addresses of the selected family, and also skip
   IPv4 DHCP reservation addresses.
