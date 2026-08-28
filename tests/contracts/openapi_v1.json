@@ -6016,18 +6016,11 @@
             "type": "string"
           },
           "hostname": {
-            "anyOf": [
-              {
-                "maxLength": 180,
-                "minLength": 1,
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "description": "DNS hostname associated with the resource, normalized according to the endpoint contract. Omit it to preserve the current factory-derived or operator-customized hostname.",
-            "title": "Hostname"
+            "description": "Persisted DNS hostname used by the OIDC provider response.",
+            "maxLength": 180,
+            "minLength": 1,
+            "title": "Hostname",
+            "type": "string"
           },
           "id_token_lifetime_seconds": {
             "default": 300,
@@ -6038,18 +6031,11 @@
             "type": "integer"
           },
           "issuer_url": {
-            "anyOf": [
-              {
-                "maxLength": 500,
-                "minLength": 1,
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "description": "Validated issuer URL for this OIDC provider. Atlaso derives it from the effective hostname and port when omitted.",
-            "title": "Issuer Url"
+            "description": "Persisted issuer URL used by the OIDC provider response.",
+            "maxLength": 500,
+            "minLength": 1,
+            "title": "Issuer Url",
+            "type": "string"
           },
           "jwks_uri": {
             "description": "Returned jwks uri value for this oidc provider settings resource.",
@@ -6113,6 +6099,8 @@
           }
         },
         "required": [
+          "hostname",
+          "issuer_url",
           "authorization_flow_available",
           "valid",
           "discovery_url",

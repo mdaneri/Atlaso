@@ -2462,6 +2462,8 @@ class OidcProviderSettingsResponse(OidcProviderSettingsUpdate):
             resource.
     """
 
+    hostname: Annotated[str, Field(description='Persisted DNS hostname used by the OIDC provider response.')] = Field(min_length=1, max_length=180)
+    issuer_url: Annotated[str, Field(description='Persisted issuer URL used by the OIDC provider response.')] = Field(min_length=1, max_length=500)
     listen_addresses: Annotated[list[str], Field(description='Derived IPv4 and IPv6 listener addresses for the selected interfaces.')] = Field(default_factory=list)
     authorization_flow_available: Annotated[bool, Field(description='Whether authorization flow available is enabled for this oidc provider settings resource.')]
     valid: Annotated[bool, Field(description='Whether the represented desired state passed Atlaso validation.')]

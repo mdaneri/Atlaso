@@ -40,6 +40,7 @@ class SettingsApiDependencies:
     appliance_settings_response: Endpoint
     get_appliance_settings: Endpoint
     ensure_ca_state: Endpoint
+    ensure_dns_for_appliance_settings: Endpoint
     reconcile_factory_service_identities: Endpoint
     reconcile_service_dns_aliases: Endpoint
 
@@ -65,6 +66,9 @@ def build_router(dependencies: SettingsApiDependencies) -> SettingsApiRouter:
     appliance_settings_response = dependencies.appliance_settings_response
     get_appliance_settings = dependencies.get_appliance_settings
     ensure_ca_state = dependencies.ensure_ca_state
+    ensure_dns_for_appliance_settings = (
+        dependencies.ensure_dns_for_appliance_settings
+    )
     reconcile_factory_service_identities = (
         dependencies.reconcile_factory_service_identities
     )
@@ -159,6 +163,12 @@ def build_router(dependencies: SettingsApiDependencies) -> SettingsApiRouter:
             db,
             previous_appliance_fqdn=previous_fqdn,
         )
+        appliance_dns_action = ensure_dns_for_appliance_settings(
+            db,
+            desired,
+            previous_fqdn=previous_fqdn,
+            actor=None,
+        )
         reconciled_service_aliases: list[str] = []
         if reconciled_service_identities:
             reconciled_service_aliases = reconcile_service_dns_aliases(db, actor=None)
@@ -174,20 +184,26 @@ def build_router(dependencies: SettingsApiDependencies) -> SettingsApiRouter:
         db.add(desired)
         db.commit()
         db.refresh(desired)
+        audit_details: list[str] = []
+        if reconciled_service_identities:
+            audit_details.append(
+                "factory_service_identities="
+                f"{','.join(sorted(reconciled_service_identities))}"
+            )
+        if appliance_dns_action:
+            audit_details.append(f"appliance_dns={appliance_dns_action}")
+        if reconciled_service_aliases:
+            audit_details.append(
+                "service_dns_aliases="
+                f"{','.join(sorted(reconciled_service_aliases))}"
+            )
         record_audit(
             db,
             actor=identity.username,
             action="update_appliance_settings",
             resource_type="settings",
             resource_id=str(desired.id),
-            detail=(
-                "factory_service_identities="
-                f"{','.join(sorted(reconciled_service_identities))}; "
-                "service_dns_aliases="
-                f"{','.join(sorted(reconciled_service_aliases))}"
-                if reconciled_service_identities
-                else None
-            ),
+            detail="; ".join(audit_details) or None,
         )
         return appliance_settings_response(db, settings)
 

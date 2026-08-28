@@ -56,26 +56,35 @@ def test_settings_api_reconciles_factory_service_identities(client, monkeypatch)
     """
     from sqlalchemy import select
 
+    from atlaso.app import ui as ui_module
     from atlaso.app.api import v1
     from atlaso.app.database import SessionLocal
     from atlaso.app.models import (
         AuditEvent,
         CaSettings,
+        DnsRecord,
+        DnsSettings,
         EsxStorageSettings,
         KmsSettings,
         LdapSettings,
         NtpSettings,
         OidcProviderSettings,
+        PhysicalInterface,
         Setting,
         VcfOfflineDepotSettings,
         VcfPrivateRegistrySettings,
+    )
+    from atlaso.app.services.appliance_settings import (
+        APPLIANCE_DNS_RECORD_DESCRIPTION,
     )
     from atlaso.app.services.oidc import ensure_provider_settings
     from atlaso.app.services.service_dns_defaults import ESXI_PXE_HOSTNAME_KEY
     from atlaso.app.ui import get_esx_storage_settings_row
 
     alias_actors: list[str | None] = []
+    appliance_dns_calls: list[tuple[str, str, str | None]] = []
     original_alias_refresher = v1.refresh_interface_service_dns_aliases
+    original_appliance_dns_reconciler = ui_module.ensure_dns_for_appliance_settings
 
     def observe_alias_refresh(db, actor=None):
         """Record the audit boundary while preserving the real alias reconciliation.
@@ -89,10 +98,66 @@ def test_settings_api_reconciles_factory_service_identities(client, monkeypatch)
 
     monkeypatch.setattr(v1, "refresh_interface_service_dns_aliases", observe_alias_refresh)
 
+    def observe_appliance_dns_reconciliation(
+        db, appliance_settings, *, previous_fqdn, actor
+    ):
+        """Record API appliance-DNS inputs while preserving real reconciliation.
+
+        Args:
+            db: Active database session.
+            appliance_settings: Desired appliance settings supplied by the API.
+            previous_fqdn: Appliance FQDN before the update.
+            actor: Optional audit actor passed to the DNS reconciler.
+        """
+        appliance_dns_calls.append(
+            (previous_fqdn, appliance_settings.fqdn, actor)
+        )
+        return original_appliance_dns_reconciler(
+            db,
+            appliance_settings,
+            previous_fqdn=previous_fqdn,
+            actor=actor,
+        )
+
+    monkeypatch.setattr(
+        ui_module,
+        "ensure_dns_for_appliance_settings",
+        observe_appliance_dns_reconciliation,
+    )
+
     with SessionLocal() as db:
         ensure_provider_settings(db)
         get_esx_storage_settings_row(db)
         db.add(Setting(key=ESXI_PXE_HOSTNAME_KEY, value="esxi-pxe.atlaso.internal"))
+        db.add(
+            PhysicalInterface(
+                name="api-mgmt",
+                mac_address="02:00:00:00:57:04",
+                ip_cidr="192.0.2.57/24",
+                ipv6_enabled=True,
+                ipv6_cidr="2001:db8::57/64",
+                role="management",
+                mode="dedicated",
+            )
+        )
+        db.add_all(
+            [
+                DnsRecord(
+                    hostname="core.atlaso.internal",
+                    record_type="A",
+                    address="192.0.2.57",
+                    description=APPLIANCE_DNS_RECORD_DESCRIPTION,
+                    enabled=True,
+                ),
+                DnsRecord(
+                    hostname="core.atlaso.internal",
+                    record_type="AAAA",
+                    address="2001:db8::57",
+                    description=APPLIANCE_DNS_RECORD_DESCRIPTION,
+                    enabled=True,
+                ),
+            ]
+        )
         db.commit()
 
     token, _metadata = create_token(client, scopes=["admin:all", "read:dashboard"])
@@ -133,6 +198,26 @@ def test_settings_api_reconciles_factory_service_identities(client, monkeypatch)
             select(Setting).where(Setting.key == ESXI_PXE_HOSTNAME_KEY)
         ).scalar_one()
         assert pxe.value == "esxi-pxe.lab.internal"
+        dns_settings = db.execute(select(DnsSettings)).scalar_one()
+        assert "lab.internal" in dns_settings.domain.split()
+        appliance_records = db.execute(
+            select(DnsRecord)
+            .where(
+                DnsRecord.description == APPLIANCE_DNS_RECORD_DESCRIPTION,
+            )
+            .order_by(DnsRecord.record_type)
+        ).scalars().all()
+        appliance_record_values = {
+            (record.hostname, record.record_type, record.address)
+            for record in appliance_records
+        }
+        assert {
+            ("api.lab.internal", "A", "192.0.2.57"),
+            ("api.lab.internal", "AAAA", "2001:db8::57"),
+        }.issubset(appliance_record_values)
+        assert {record.hostname for record in appliance_records} == {
+            "api.lab.internal"
+        }
         audit = db.execute(
             select(AuditEvent)
             .where(AuditEvent.action == "update_appliance_settings")
@@ -140,7 +225,11 @@ def test_settings_api_reconciles_factory_service_identities(client, monkeypatch)
         ).scalars().first()
         assert audit is not None
         assert "factory_service_identities=" in (audit.detail or "")
+        assert "appliance_dns=" in (audit.detail or "")
     assert alias_actors == [None]
+    assert appliance_dns_calls == [
+        ("core.atlaso.internal", "api.lab.internal", None)
+    ]
 
 
 def test_settings_api_retains_read_and_admin_scope_boundaries(client):

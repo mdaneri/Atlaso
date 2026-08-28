@@ -1166,6 +1166,34 @@ def _ensure_settings_ca_state(
     return ui_module.ensure_ca_state(db, commit=commit)
 
 
+def _ensure_settings_dns_state(
+    db: Session,
+    settings: ApplianceSettings,
+    *,
+    previous_fqdn: str,
+    actor: str | None,
+) -> str | None:
+    """Use the stable UI facade's appliance-DNS compatibility helper.
+
+    Args:
+        db: Active database session.
+        settings: Desired appliance settings being reconciled.
+        previous_fqdn: Appliance FQDN before the current update.
+        actor: Optional audit actor passed to the DNS reconciler.
+
+    Returns:
+        Consolidated appliance-DNS reconciliation action, when any.
+    """
+    from atlaso.app import ui as ui_module
+
+    return ui_module.ensure_dns_for_appliance_settings(
+        db,
+        settings,
+        previous_fqdn=previous_fqdn,
+        actor=actor,
+    )
+
+
 _settings_api = build_settings_api_router(
     SettingsApiDependencies(
         appliance_settings_response=lambda *args, **kwargs: appliance_settings_response(
@@ -1175,6 +1203,7 @@ _settings_api = build_settings_api_router(
             *args, **kwargs
         ),
         ensure_ca_state=_ensure_settings_ca_state,
+        ensure_dns_for_appliance_settings=_ensure_settings_dns_state,
         reconcile_factory_service_identities=reconcile_factory_service_identities,
         reconcile_service_dns_aliases=lambda *args, **kwargs: refresh_interface_service_dns_aliases(
             *args, **kwargs
