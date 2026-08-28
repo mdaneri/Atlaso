@@ -226,7 +226,8 @@ sensitive root even when the child could not run its own cleanup. The default si
 `-ImageBuildTimeoutSeconds`.
 An unproven whole-tree termination retains that root and a non-secret checkout-local ownership marker. Same-boot
 invocations fail closed; after Windows restarts, the changed boot identity proves the prior tree inactive and recovery
-removes the exact root followed by its marker before new credential or image work.
+removes the exact root followed by its marker before new credential or image work. Ordinary completion requires the
+reloaded marker root to equal the in-memory task-created root before recursive removal.
 The shared SDK bridge uses the same boot-bound ownership. Marker bytes and atomic publication are write-through durable
 before plaintext consumption. After root deletion, the parent flushes directory metadata through the root parent's
 Windows handle on that same volume before durable `root-absent` and `retired` transitions precede marker deletion, so
@@ -1273,10 +1274,11 @@ appliance provisioning. The original Photon source ISO cache is under `image/com
 installs VMware Tools and stages locked offline RPM closures for the QEMU and Hyper-V guest agents. A provider-neutral
 first-boot service verifies the closure and retains or replaces VMware Tools only after identifying the runtime platform.
 
-The supported GUI wrapper starts or reuses a responsive VMware Workstation UI in a separate process before Packer asks
-`vmrun` to power on the builder. This keeps the visible console without allowing the GUI start transition to retain
-Packer's redirected output handles after the VM is already live. Only the exact resolved `vmware.exe` may use the
-verified Windows Job Object breakaway boundary; Packer, plugins, and VM consumers remain bound to the sensitive job.
+The supported GUI wrapper starts or reuses a responsive VMware Workstation UI from the parent before creating the
+bounded image-build child, then verifies that exact UI immediately before Packer asks `vmrun` to power on the builder.
+This keeps the visible console without allowing the GUI start transition to retain Packer's redirected output handles
+after the VM is already live. The sensitive Job Object permits no breakaway, so Packer, plugins, and VM consumers remain
+bound to it.
 Sanitized startup heartbeats bind provider inventory,
 running state, and TCP/22 reachability to the expected VMX filesystem identity until SSH provisioning begins. The
 default 2700-second start-to-provisioning timeout matches Packer's 45-minute SSH communicator allowance and performs

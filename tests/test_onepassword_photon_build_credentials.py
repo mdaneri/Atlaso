@@ -155,10 +155,11 @@ def test_photon_wrapper_preflights_credentials_before_image_mutation() -> None:
     assert "FILE_FLAG_BACKUP_SEMANTICS" in runner
     assert "StartSuspended($FilePath, $ArgumentList)" in runner
     assert "ResumeThread(processInformation.Thread)" in runner
-    assert "JOB_OBJECT_LIMIT_BREAKAWAY_OK" in runner
+    assert "JOB_OBJECT_LIMIT_BREAKAWAY_OK" not in runner
     assert "CREATE_BREAKAWAY_FROM_JOB" in runner
-    assert "Start-AtlasoWorkstationUiBreakawayProcess" in runner
-    assert "Only the exact VMware Workstation UI" in runner
+    assert "Start-AtlasoWorkstationUiBreakawayProcess" not in runner
+    assert "-ExpectedRootPath $credentialRoot" in wrapper
+    assert "Cleanup marker root does not match the exact task-created Photon root." in wrapper
     assert "$Job.TerminateAndWait(10000)" in runner
     assert "$Job.CompleteAndWait(10000)" in runner
     assert "accounting.ActiveProcesses == 0" in runner

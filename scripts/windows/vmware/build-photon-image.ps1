@@ -201,14 +201,34 @@ Exact non-secret cleanup marker path.
 
 .PARAMETER Marker
 Validated marker payload owning the exact root.
+
+.PARAMETER ExpectedRootPath
+Exact task-created root that the marker must still own.
 #>
 function Complete-AtlasoPhotonBuildCleanup {
     param(
         [Parameter(Mandatory = $true)][string]$MarkerPath,
-        [Parameter(Mandatory = $true)][object]$Marker
+        [Parameter(Mandatory = $true)][object]$Marker,
+        [Parameter(Mandatory = $true)][string]$ExpectedRootPath
     )
 
+    $markerProperties = @($Marker.PSObject.Properties.Name)
+    if ($markerProperties.Count -ne 4 -or
+        'Schema' -notin $markerProperties -or
+        'RootPath' -notin $markerProperties -or
+        'BootIdentity' -notin $markerProperties -or
+        'Phase' -notin $markerProperties -or
+        $Marker.Schema -ne 1 -or
+        $Marker.Phase -notin @('active', 'root-absent', 'retired')) {
+        throw 'Invalid cleanup marker schema.'
+    }
     $resolvedRoot = [System.IO.Path]::GetFullPath([string]$Marker.RootPath)
+    $resolvedExpectedRoot = [System.IO.Path]::GetFullPath($ExpectedRootPath)
+    $rootLeaf = Split-Path -Leaf $resolvedRoot
+    if (-not $resolvedRoot.Equals($resolvedExpectedRoot, [StringComparison]::OrdinalIgnoreCase) -or
+        $rootLeaf -notmatch '^atlaso-photon-build-credentials-[0-9a-f]{32}$') {
+        throw 'Cleanup marker root does not match the exact task-created Photon root.'
+    }
     if (Test-Path -LiteralPath $resolvedRoot) {
         $rootItem = Get-Item -LiteralPath $resolvedRoot -Force -ErrorAction Stop
         if ($rootItem.Attributes -band [System.IO.FileAttributes]::ReparsePoint) {
@@ -273,7 +293,10 @@ function Invoke-AtlasoPhotonBuildCleanupRecovery {
             [string]$marker.BootIdentity -ceq (Get-AtlasoWindowsBootIdentity)) {
             throw 'A Windows restart is required before retained Photon credential artifacts can be cleaned safely.'
         }
-        Complete-AtlasoPhotonBuildCleanup -MarkerPath $MarkerPath -Marker $marker
+        Complete-AtlasoPhotonBuildCleanup `
+            -MarkerPath $MarkerPath `
+            -Marker $marker `
+            -ExpectedRootPath $resolvedRoot
     }
     catch {
         throw 'A prior Photon image build has unresolved sensitive cleanup. Restart Windows, then rerun this wrapper.'
@@ -413,6 +436,12 @@ else {
         $preparedIsoLeaf = 'atlaso-photon-with-kickstart.iso'
     }
     $childPreparedIsoPath = Join-Path (Join-Path $childSensitiveBuildDirectory 'kickstart') $preparedIsoLeaf
+    if (-not $Headless -and -not $ValidateOnly) {
+        # This parent is outside the sensitive Windows job and owns the only
+        # permitted Workstation UI launch; descendants receive no breakaway right.
+        $parentVmrunPath = Resolve-WorkstationVmrunPath -Path $VmrunPath
+        $null = Initialize-AtlasoWorkstationGui -VmrunPath $parentVmrunPath
+    }
     [void][System.IO.Directory]::CreateDirectory($credentialRoot)
     $cleanupMarkerDirectory = Split-Path -Parent $cleanupMarkerPath
     [void][System.IO.Directory]::CreateDirectory($cleanupMarkerDirectory)
@@ -530,7 +559,7 @@ else {
         $resolvedCredentialRoot = [System.IO.Path]::GetFullPath($credentialRoot)
         $resolvedTempRoot = [System.IO.Path]::GetFullPath([System.IO.Path]::GetTempPath())
         if (-not $resolvedCredentialRoot.StartsWith($resolvedTempRoot, [StringComparison]::OrdinalIgnoreCase) -or
-            -not (Split-Path -Leaf $resolvedCredentialRoot).StartsWith('atlaso-photon-build-credentials-')) {
+            (Split-Path -Leaf $resolvedCredentialRoot) -notmatch '^atlaso-photon-build-credentials-[0-9a-f]{32}$') {
             throw 'Refusing to clean an invalid Photon credential bridge root.'
         }
         if (-not $processTreeTerminationUnproven) {
@@ -538,7 +567,8 @@ else {
                 ConvertFrom-Json
             Complete-AtlasoPhotonBuildCleanup `
                 -MarkerPath $cleanupMarkerPath `
-                -Marker $cleanupMarker
+                -Marker $cleanupMarker `
+                -ExpectedRootPath $credentialRoot
         }
     }
     return
@@ -977,13 +1007,13 @@ if (-not $ValidateOnly -and -not $PrepareIsoOnly) {
         # ISO preparation and Packer initialization can be lengthy, so prove the
         # GUI provider is responsive at the last safe point before Packer starts.
         if (-not $Headless) {
-            $breakawayUiLauncher = {
+            $requireExistingUi = {
                 param($FilePath)
-                Start-AtlasoWorkstationUiBreakawayProcess -FilePath $FilePath
+                throw 'The parent-launched VMware Workstation UI is no longer available.'
             }.GetNewClosure()
             $null = Initialize-AtlasoWorkstationGui `
                 -VmrunPath $resolvedVmrunPath `
-                -ProcessLauncher $breakawayUiLauncher
+                -ProcessLauncher $requireExistingUi
         }
         $packerPath = (Get-Command packer -ErrorAction Stop).Source
         Invoke-AtlasoMonitoredPackerBuild `

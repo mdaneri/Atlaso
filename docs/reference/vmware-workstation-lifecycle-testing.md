@@ -167,7 +167,8 @@ sensitive root and verifies its absence before returning.
 If whole-tree termination itself cannot be proven, the wrapper retains the root and a non-secret
 `.atlaso-local/photon-image-build-cleanup.json` ownership marker and blocks further work. Restart Windows and rerun the
 wrapper; only a changed boot identity permits the recovery path to remove and verify the exact root and then its marker
-before new credential access or image mutation.
+before new credential access or image mutation. Ordinary completion also requires the reloaded marker root to equal the
+in-memory task-created root before recursive removal.
 The shared SDK credential bridge follows the same recovery ownership. Each non-secret marker is flushed with
 write-through semantics and atomically renamed before a plaintext child starts. Cleanup flushes the sensitive root
 parent's directory metadata on the root's own volume before it durably records `root-absent` and `retired` phases and
@@ -186,10 +187,10 @@ endpoint-protection cleanup failure terminates the build instead of reporting su
 artifact left behind. `-PrepareIsoOnly` is rejected because retaining that ISO would retain a reusable build credential.
 
 GUI builds start or reuse a responsive VMware Workstation UI as a process separate from Packer before invoking the
-VMware builder. This preserves the visible console while preventing an already-running VM from leaving Packer blocked
-inside the synchronous `vmrun` start transition. When the UI is not already open, only the exact resolved `vmware.exe`
-may cross the sensitive-consumer Job Object through the verified Windows breakaway flag; Packer, plugins, and their VM
-consumers remain in the bounded job. Until SSH provisioning begins, the wrapper reports sanitized,
+VMware builder. The parent starts the exact resolved `vmware.exe` before creating the bounded image-build child, then
+the child verifies that UI remains responsive immediately before Packer starts. This preserves the visible console
+while keeping the sensitive job non-breakaway; Packer, plugins, and their VM consumers cannot leave that job. Until SSH
+provisioning begins, the wrapper reports sanitized,
 exact-VMX startup heartbeats and applies a 45-minute default timeout matching Packer's SSH communicator allowance. The
 interval begins at monitored Packer process start, including pre-VMX and pre-power-on failures. Use
 `-PackerStartupTimeoutSeconds` to select a different bounded start-to-provisioning interval and

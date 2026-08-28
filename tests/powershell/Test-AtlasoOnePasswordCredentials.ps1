@@ -183,25 +183,36 @@ $breakawayArguments = @(
     '-NoLogo', '-NoProfile', '-NonInteractive', '-Command',
     'Start-Sleep -Seconds 30', '__ATLASO_BREAKAWAY_TOKEN__'
 )
-$breakaway = [Atlaso.WorkstationProcessJob]::StartBreakaway(
-    '__ATLASO_POWERSHELL_PATH__',
-    $breakawayArguments
-)
-$breakaway.Dispose()
+try {
+    $breakaway = [Atlaso.WorkstationProcessJob]::StartBreakaway(
+        '__ATLASO_POWERSHELL_PATH__',
+        $breakawayArguments
+    )
+    $breakaway.Dispose()
+}
+catch {
+    exit 23
+}
 '@.Replace('__ATLASO_RUNNER_PATH__', $escapedRunnerPath).
     Replace('__ATLASO_POWERSHELL_PATH__', $escapedPowerShellPath).
     Replace('__ATLASO_BREAKAWAY_TOKEN__', $breakawayToken)
 $encodedBreakawaySource = [Convert]::ToBase64String([Text.Encoding]::Unicode.GetBytes($breakawaySource))
-Invoke-AtlasoBoundedStreamingProcess `
-    -FilePath (Get-Process -Id $PID).Path `
-    -ArgumentList @('-NoLogo', '-NoProfile', '-NonInteractive', '-EncodedCommand', $encodedBreakawaySource) `
-    -TimeoutSeconds 10 `
-    -Action 'Focused verified-breakaway test'
+$breakawayWasRejected = $false
+try {
+    Invoke-AtlasoBoundedStreamingProcess `
+        -FilePath (Get-Process -Id $PID).Path `
+        -ArgumentList @('-NoLogo', '-NoProfile', '-NonInteractive', '-EncodedCommand', $encodedBreakawaySource) `
+        -TimeoutSeconds 10 `
+        -Action 'Focused denied-breakaway test'
+}
+catch {
+    $breakawayWasRejected = $true
+}
 $breakawayProcesses = @(Get-CimInstance -ClassName Win32_Process |
     Where-Object { $_.CommandLine -like "*$breakawayToken*" })
 try {
-    if ($breakawayProcesses.Count -ne 1) {
-        throw 'The verified breakaway process did not outlive its sensitive-consumer job exactly once.'
+    if (-not $breakawayWasRejected -or $breakawayProcesses.Count -ne 0) {
+        throw 'A sensitive-consumer descendant was able to leave its Windows job.'
     }
 }
 finally {

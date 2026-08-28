@@ -32,7 +32,6 @@ namespace Atlaso
     public sealed class WorkstationProcessJob : IDisposable
     {
         private const uint JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE = 0x00002000;
-        private const uint JOB_OBJECT_LIMIT_BREAKAWAY_OK = 0x00000800;
         private IntPtr handle;
 
         [StructLayout(LayoutKind.Sequential)]
@@ -217,8 +216,7 @@ namespace Atlaso
             try
             {
                 ExtendedLimitInformation limits = new ExtendedLimitInformation();
-                limits.BasicLimitInformation.LimitFlags =
-                    JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE | JOB_OBJECT_LIMIT_BREAKAWAY_OK;
+                limits.BasicLimitInformation.LimitFlags = JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE;
                 if (!SetInformationJobObject(job, 9, ref limits, (uint)Marshal.SizeOf(limits)))
                 {
                     throw new Win32Exception(Marshal.GetLastWin32Error(), "Windows process job limits could not be established.");
@@ -420,27 +418,6 @@ function New-AtlasoBoundedProcessJob {
         $assignmentFailure.Data['AtlasoProcessTreeTerminationUnproven'] = $true
         throw $assignmentFailure
     }
-}
-
-<#
-.SYNOPSIS
-Start the exact VMware Workstation UI outside the sensitive-consumer Windows job.
-
-.PARAMETER FilePath
-Exact executable that is allowed to outlive the sensitive consumer.
-
-#>
-function Start-AtlasoWorkstationUiBreakawayProcess {
-    param(
-        [Parameter(Mandatory = $true)][string]$FilePath
-    )
-
-    Initialize-AtlasoWorkstationProcessJobType
-    $resolvedFilePath = (Resolve-Path -LiteralPath $FilePath -ErrorAction Stop).Path
-    if ((Split-Path -Leaf $resolvedFilePath) -cne 'vmware.exe') {
-        throw 'Only the exact VMware Workstation UI may cross the sensitive-consumer job boundary.'
-    }
-    return [Atlaso.WorkstationProcessJob]::StartBreakaway($resolvedFilePath, @())
 }
 
 <#
