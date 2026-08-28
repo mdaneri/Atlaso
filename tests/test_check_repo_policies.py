@@ -5,7 +5,10 @@ from pathlib import Path
 from scripts.check_repo import (
     LEGACY_TABULATOR_MARKER,
     LOCAL_TASK_BRANCH_ABSENT_MARKER,
+    NON_TASK_OWNED_CHECKOUT_PRESERVED_MARKER,
+    NON_TASK_OWNED_REMOTE_BRANCH_PRESERVED_MARKER,
     ORDERED_TERMINAL_CLEANUP_MARKERS,
+    PRIMARY_CHECKOUT_REMOTE_GATE_MARKER,
     PRIMARY_CHECKOUT_RESTORED_MARKER,
     PRIMARY_CHECKOUT_RESUME_MARKER,
     PRIVATE_REMEDIATION_CLEANUP_MARKER,
@@ -21,6 +24,7 @@ from scripts.check_repo import (
     TERMINAL_CLEANUP_SECTION_ANCHORS,
     TERMINAL_CLEANUP_SECTION_MARKERS,
     TITLE_CONTROL_UNAVAILABLE_MARKER,
+    WORKTREE_REMOVAL_REMOTE_GATE_MARKER,
     WORKTREE_REMOVAL_RESUME_MARKER,
     check_agent_policy_gate,
     check_spark_worker_agent,
@@ -658,21 +662,21 @@ def test_agent_policy_gate_rejects_missing_scheduled_pr_monitoring_contract(
             )
 
 
-def test_agent_policy_gate_rejects_missing_explicit_merge_authorization(
+def test_agent_policy_gate_rejects_missing_default_merge_authorization(
     tmp_path: Path,
 ) -> None:
-    """Verify that every agent entry point requires explicit merge authorization.
+    """Verify that every agent entry point retains default merge authorization.
 
     Args:
         tmp_path: Temporary directory provided by pytest for isolated filesystem state.
     """
     required_entry_markers = {
-        Path("AGENTS.md"): "### Explicit merge authorization",
-        Path("CONTRIBUTING.md"): "### Explicit merge authorization",
-        Path(".github/copilot-instructions.md"): "Explicit merge authorization",
-        Path(".github/pull_request_template.md"): "Explicit merge authorization",
+        Path("AGENTS.md"): "### Default merge authorization",
+        Path("CONTRIBUTING.md"): "### Default merge authorization",
+        Path(".github/copilot-instructions.md"): "Default merge authorization",
+        Path(".github/pull_request_template.md"): "Default merge authorization",
         Path("docs/contribute/agent-policies.md"): (
-            "### Explicit merge authorization"
+            "### Default merge authorization"
         ),
     }
 
@@ -693,10 +697,10 @@ def test_agent_policy_gate_rejects_missing_explicit_merge_authorization(
         )
 
 
-def test_agent_policy_gate_rejects_missing_explicit_merge_instruction(
+def test_agent_policy_gate_rejects_missing_default_merge_authority_contract(
     tmp_path: Path,
 ) -> None:
-    """Verify that agent entry points require an explicit merge instruction.
+    """Verify that policy surfaces grant default merge authority.
 
     Args:
         tmp_path: Temporary directory provided by pytest for isolated filesystem state.
@@ -707,8 +711,9 @@ def test_agent_policy_gate_rejects_missing_explicit_merge_instruction(
         Path(".github/copilot-instructions.md"),
         Path(".github/pull_request_template.md"),
         Path("docs/contribute/agent-policies.md"),
+        Path("docs/reference/full-technical-reference.md"),
     )
-    marker = "explicit merge instruction"
+    marker = "default merge authority"
 
     for relative_path in required_entry_points:
         write_policy_files(tmp_path)
@@ -778,6 +783,7 @@ def test_agent_policy_gate_rejects_missing_merge_base_guard(tmp_path: Path) -> N
         Path(".github/copilot-instructions.md"),
         Path(".github/pull_request_template.md"),
         Path("docs/contribute/agent-policies.md"),
+        Path("docs/reference/full-technical-reference.md"),
     )
     marker = "strict up-to-date required checks"
 
@@ -796,6 +802,124 @@ def test_agent_policy_gate_rejects_missing_merge_base_guard(tmp_path: Path) -> N
         assert findings[0].message == (
             f"required agent policy marker is missing: {marker}"
         )
+
+
+def test_agent_policy_gate_rejects_missing_explicit_merge_hold(
+    tmp_path: Path,
+) -> None:
+    """Verify that policy surfaces retain the explicit merge hold override.
+
+    Args:
+        tmp_path: Temporary directory provided by pytest for isolated filesystem state.
+    """
+    required_entry_points = (
+        Path("AGENTS.md"),
+        Path("CONTRIBUTING.md"),
+        Path(".github/copilot-instructions.md"),
+        Path(".github/pull_request_template.md"),
+        Path("docs/contribute/agent-policies.md"),
+        Path("docs/reference/full-technical-reference.md"),
+    )
+    marker = "explicit merge hold"
+
+    for relative_path in required_entry_points:
+        write_policy_files(tmp_path)
+        path = tmp_path / relative_path
+        path.write_text(
+            path.read_text(encoding="utf-8").replace(marker, ""),
+            encoding="utf-8",
+        )
+
+        findings = check_agent_policy_gate(tmp_path)
+
+        assert len(findings) == 1
+        assert findings[0].path == path
+        assert findings[0].message == (
+            f"required agent policy marker is missing: {marker}"
+        )
+
+
+def test_agent_policy_gate_rejects_missing_non_task_owned_cleanup_contract(
+    tmp_path: Path,
+) -> None:
+    """Verify that existing owner branches retain non-destructive cleanup.
+
+    Args:
+        tmp_path: Temporary directory provided by pytest for isolated filesystem state.
+    """
+    required_entry_points = (
+        Path("AGENTS.md"),
+        Path("CONTRIBUTING.md"),
+        Path(".github/copilot-instructions.md"),
+        Path(".github/pull_request_template.md"),
+        Path("docs/contribute/agent-policies.md"),
+        Path("docs/reference/full-technical-reference.md"),
+    )
+
+    markers = (
+        NON_TASK_OWNED_REMOTE_BRANCH_PRESERVED_MARKER,
+        NON_TASK_OWNED_CHECKOUT_PRESERVED_MARKER,
+    )
+
+    for marker in markers:
+        for relative_path in required_entry_points:
+            write_policy_files(tmp_path)
+            path = tmp_path / relative_path
+            path.write_text(
+                path.read_text(encoding="utf-8").replace(marker, "", 1),
+                encoding="utf-8",
+            )
+
+            findings = check_agent_policy_gate(tmp_path)
+
+            assert len(findings) == 1
+            assert findings[0].path == path
+            assert findings[0].message == (
+                f"required agent policy marker is missing: {marker}"
+            )
+
+
+def test_agent_policy_gate_rejects_missing_preserved_remote_resume_contract(
+    tmp_path: Path,
+) -> None:
+    """Verify interrupted cleanup accepts a verified preserved remote.
+
+    Args:
+        tmp_path: Temporary directory provided by pytest for isolated filesystem state.
+    """
+    required_entry_points = (
+        Path("AGENTS.md"),
+        Path("CONTRIBUTING.md"),
+        Path(".github/copilot-instructions.md"),
+        Path(".github/pull_request_template.md"),
+        Path("docs/contribute/agent-policies.md"),
+        Path("docs/reference/full-technical-reference.md"),
+    )
+
+    resume_markers = (
+        WORKTREE_REMOVAL_REMOTE_GATE_MARKER,
+        PRIMARY_CHECKOUT_REMOTE_GATE_MARKER,
+    )
+
+    for marker in resume_markers:
+        for relative_path in required_entry_points:
+            write_policy_files(tmp_path)
+            path = tmp_path / relative_path
+            path.write_text(
+                path.read_text(encoding="utf-8").replace(marker, "", 1),
+                encoding="utf-8",
+            )
+
+            findings = check_agent_policy_gate(tmp_path)
+
+            assert len(findings) == 1
+            assert findings[0].path == path
+            expected_prefix = (
+                "completed-task cleanup section marker is missing: "
+                if relative_path in TERMINAL_CLEANUP_SECTION_MARKERS
+                else "required agent policy marker is missing: "
+            )
+            assert findings[0].message == expected_prefix + marker
 
 
 def test_agent_policy_gate_rejects_missing_merge_queue_guard(tmp_path: Path) -> None:

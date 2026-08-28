@@ -426,10 +426,11 @@ Do not edit only one version source. `python scripts/version.py check` verifies 
 `--base-root` are mutually exclusive, and an explicit target cannot skip a patch or change the major or minor version.
 Updating an older pull request from `main` lets the workflow recalculate the next unused patch version.
 
-For ordinary agent-authored same-repository pull requests, implementation, fix, **solve**, delivery, and similar
-requests authorize preparation and publication of a ready pull request but do not authorize merging it. The agent
-requires an explicit merge instruction for that pull request and otherwise leaves it open after every delivery and
-follow-through gate passes. Human-authored pull requests, forks, drafts, review-only work, and private vulnerability
+For ordinary same-repository pull requests within the active task's scope, implementation, fix, **solve**, delivery,
+and similar requests grant default merge authority, including for an existing ordinary pull request that the agent is
+explicitly asked to work on. A separate merge instruction is not required. An explicit merge hold such as **do not
+merge**, **leave the pull request open**, **pull request only**, or **wait for approval** overrides that authority until
+the user or maintainer withdraws it. Forks, drafts, review-only or diagnostic work, and private vulnerability
 remediation are excluded. An authorized direct agent merge requires both an expected-head guard and the active
 ruleset's strict up-to-date required checks to bind the validated base; agents do not use an administrative bypass and
 fail closed without invoking `gh pr merge` when a merge queue is required. Repository auto-merge remains a separate
@@ -438,6 +439,22 @@ explicit maintainer choice per pull request. A `main` push runs
 that have auto-merge enabled and report `BEHIND`. Each request includes the observed head SHA, so a concurrent contributor
 push causes GitHub to reject the stale update instead of merging over it. Forks, conflicted branches, and pull requests
 without auto-merge are never updated by this workflow.
+
+Post-merge cleanup never assumes ownership merely because default merge authority applied. For an existing ordinary
+pull request, the controller verifies the exact merge, reachable merge commit, closed issue, and completed post-merge
+activity, then evaluates remote-branch ownership independently from local checkout/worktree ownership. It preserves a
+non-task-owned remote branch, records `non_task_owned_remote_branch_preserved`, and marks only `remote_branch_absent`
+not applicable. It separately preserves a non-task-owned checkout or worktree plus its local refs and metadata, records
+`non_task_owned_checkout_preserved`, and marks only `worktree_removed` not applicable. Every task-owned side follows
+normal cleanup in terminal order. Ambiguous ownership blocks the affected transition and `task_title_done`.
+An interrupted `worktree_removal_resume` for a task-owned local worktree accepts the following alternate state: the
+worktree removal remote branch gate is either verified absent or recorded not applicable through
+`non_task_owned_remote_branch_preserved`; path, registration,
+ownership, head, and merge evidence must still independently pass.
+The `primary_checkout_resume` path applies the same independent exception: the
+primary checkout remote branch gate is either verified absent or recorded not applicable through
+`non_task_owned_remote_branch_preserved`, while clean current `main` plus local-branch ownership, head, and reference
+evidence remain mandatory.
 
 An internal branch update performed with `GITHUB_TOKEN` also creates a `pull_request` CI run that GitHub may hold for
 approval. Those approval-gated jobs have diagnostic names and are not required contexts. Because a token-authenticated
