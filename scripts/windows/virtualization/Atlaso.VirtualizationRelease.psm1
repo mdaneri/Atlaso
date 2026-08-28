@@ -431,41 +431,47 @@ function Invoke-AtlasoVirtualizationPrerelease {
     $identity = Get-AtlasoVirtualizationSourceIdentity -RepoRoot $RepoRoot -Repository $repository
     $tag = "virtualization-v$($identity.Version)-$PrereleaseIdentifier"
     $operation = Resolve-AtlasoVirtualizationStagingDirectory -StagingRoot $StagingRoot -Tag $tag
-    $sourceDownloads = Join-Path $operation 'software-release'
     $sourceInput = Join-Path $operation 'verified-source'
-    if (-not (Test-Path -LiteralPath $sourceDownloads)) {
-        New-Item -ItemType Directory -Path $sourceDownloads | Out-Null
-    }
-    foreach ($pattern in @(
-        'release-manifest.json',
-        'release-manifest.json.sig',
-        "atlaso-appliance-$($identity.Version).tar.gz"
-    )) {
-        $path = Join-Path $sourceDownloads $pattern
-        if (-not (Test-Path -LiteralPath $path -PathType Leaf)) {
+    $sourceDownloads = Join-Path $operation (
+        '.software-release-download-' + [guid]::NewGuid().ToString('N')
+    )
+    New-Item -ItemType Directory -Path $sourceDownloads | Out-Null
+    try {
+        foreach ($pattern in @(
+                'release-manifest.json',
+                'release-manifest.json.sig',
+                "atlaso-appliance-$($identity.Version).tar.gz"
+            )) {
             Invoke-AtlasoReleaseGh -Arguments @(
                 'release', 'download', $identity.SoftwareTag, '--repo', $repository,
                 '--pattern', $pattern, '--dir', $sourceDownloads
             ) | Out-Null
         }
+        $sourceMetadata = Join-Path $sourceInput 'virtualization-source.json'
+        # Always reconstruct the signed source in private staging. The preparer
+        # publishes an absent destination atomically or requires an existing cache
+        # to match the complete reconstructed tree byte for byte.
+        $prepareArguments = @(
+            (Join-Path $RepoRoot 'scripts\prepare_virtualization_source.py'),
+            '--manifest', (Join-Path $sourceDownloads 'release-manifest.json'),
+            '--signature', (Join-Path $sourceDownloads 'release-manifest.json.sig'),
+            '--bundle', (Join-Path $sourceDownloads "atlaso-appliance-$($identity.Version).tar.gz"),
+            '--trust-key', (Join-Path $RepoRoot 'image\common\update-trust\atlaso-release-2026-01.pem'),
+            '--output', $sourceInput,
+            '--expected-version', $identity.Version,
+            '--expected-commit', $identity.Commit
+        )
+        $sourceJson = & python @prepareArguments
+        if ($LASTEXITCODE -ne 0) {
+            throw 'Automatic software Release verification failed.'
+        }
     }
-    $sourceMetadata = Join-Path $sourceInput 'virtualization-source.json'
-    # Always reconstruct the signed source in private staging. The preparer
-    # publishes an absent destination atomically or requires an existing cache
-    # to match the complete reconstructed tree byte for byte.
-    $prepareArguments = @(
-        (Join-Path $RepoRoot 'scripts\prepare_virtualization_source.py'),
-        '--manifest', (Join-Path $sourceDownloads 'release-manifest.json'),
-        '--signature', (Join-Path $sourceDownloads 'release-manifest.json.sig'),
-        '--bundle', (Join-Path $sourceDownloads "atlaso-appliance-$($identity.Version).tar.gz"),
-        '--trust-key', (Join-Path $RepoRoot 'image\common\update-trust\atlaso-release-2026-01.pem'),
-        '--output', $sourceInput,
-        '--expected-version', $identity.Version,
-        '--expected-commit', $identity.Commit
-    )
-    $sourceJson = & python @prepareArguments
-    if ($LASTEXITCODE -ne 0) {
-        throw 'Automatic software Release verification failed.'
+    finally {
+        # This invocation owns only its unpredictable fresh download directory.
+        # A retry never trusts retained pre-verification network bytes.
+        if (Test-Path -LiteralPath $sourceDownloads) {
+            Remove-Item -LiteralPath $sourceDownloads -Recurse -Force
+        }
     }
     $source = Get-Content -LiteralPath $sourceMetadata -Raw | ConvertFrom-Json
     $buildRoot = Join-Path $operation 'vmware-build'

@@ -206,6 +206,8 @@ foreach ($required in @(
         'show-ref --verify --quiet',
         'cat-file -t',
         'Always reconstruct the signed source',
+        "'.software-release-download-' + [guid]::NewGuid().ToString('N')",
+        'A retry never trusts retained pre-verification network bytes',
         '-OutputRoot $hypervRoot -Force',
         "'release', 'create', `$tag",
         "'--verify-tag'",
