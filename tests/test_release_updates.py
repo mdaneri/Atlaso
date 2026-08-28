@@ -1284,6 +1284,12 @@ def test_release_workflows_use_successful_main_sha_and_promote_without_rebuildin
     assert "group: atlaso-virtualization-stable" in virtualization
     assert "group: virtualization-stable-${{ inputs.prerelease_tag }}" not in virtualization
     assert 'test "$(jq -r .isPrerelease <<<"$STATE")" = false' in virtualization
+    assert "already_published: ${{ steps.identity.outputs.already_published }}" in virtualization
+    assert "if: needs.admit.outputs.already_published == 'true'" in virtualization
+    assert "name: Live-verify an existing stable release" in virtualization
+    assert "ref: ${{ needs.admit.outputs.release_sha }}" in virtualization
+    assert "cmp --silent \"stable/atlaso-v${VERSION}.ova\"" in virtualization
+    assert "needs.admit.outputs.already_published != 'true'" in virtualization
     assert "cmp --silent" in virtualization
     assert "gh-pages" not in virtualization
     assert "environment: appliance-release" in prerelease
@@ -1342,7 +1348,6 @@ def test_release_workflows_use_successful_main_sha_and_promote_without_rebuildin
     assert "existing virtualization draft has unexpected assets" in windows_candidate
     assert "needs.stage_draft.result == 'success'" in windows_candidate
     assert "ref: ${{ steps.identity.outputs.release_sha }}" not in virtualization
-    assert "ref: ${{ needs.admit.outputs.release_sha }}" not in virtualization
     assert virtualization.count("ref: refs/heads/main") == 4
     assert 'test "$PROXMOX_RUNNER_LABEL" = "atlaso-proxmox-$LABEL_SUFFIX"' in virtualization
     assert 'test "$KVM_RUNNER_LABEL" = "atlaso-kvm-$LABEL_SUFFIX"' in virtualization

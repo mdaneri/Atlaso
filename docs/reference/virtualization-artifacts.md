@@ -324,7 +324,11 @@ or sanitize them after the job. They receive read-only Actions/contents permissi
 write-capable token. Define the repository variables named by `.github/workflows/virtualization-stable.yml` for storage
 and networks. The workstation waits for the exact promotion run it dispatched, rather than accepting an older stable
 Release with the same version. Stable promotions are serialized repository-wide so two release candidates cannot race
-one immutable stable tag. Signing and Release writes occur only in the protected GitHub-hosted finalizer.
+one immutable stable tag. Signing and Release writes occur only in the protected GitHub-hosted finalizer. If stable
+publication completed but its final live verification did not, an exact retry detects the published stable Release
+during admission and verifies its signed index, source binding, attestations, and byte identity with the selected
+prerelease directly on GitHub-hosted Linux. It does not schedule Proxmox or KVM again, rebuild the signed index, or
+modify the immutable Release.
 For the optional ephemeral-Windows workflow, also define `ATLASO_ONEPASSWORD_ENVIRONMENT_ID`,
 `ATLASO_ONEPASSWORD_ACCOUNT`, and `ATLASO_ONEPASSWORD_PYTHON` as repository variables. They are non-secret selectors;
 the disposable runner must still complete its local 1Password authorization and receives no signing key.

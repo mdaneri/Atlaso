@@ -33,6 +33,7 @@ jobs:
       release_sha: ${{ steps.identity.outputs.release_sha }}
       stable_tag: ${{ steps.identity.outputs.stable_tag }}
       version: ${{ steps.identity.outputs.version }}
+      already_published: ${{ steps.identity.outputs.already_published }}
     steps:
       - name: Resolve and validate the annotated prerelease tag
         id: identity
@@ -57,25 +58,47 @@ jobs:
           test "$(jq -r .tagName <<<"$RELEASE")" = "$PRERELEASE_TAG"
           test "$(jq -r .isDraft <<<"$RELEASE")" = false
           test "$(jq -r .isPrerelease <<<"$RELEASE")" = true
+          STABLE_TAG="virtualization-v$VERSION"
+          ALREADY_PUBLISHED=false
+          STATE="$(gh api graphql \
+            -f query='query($owner:String!,$name:String!,$tag:String!){repository(owner:$owner,name:$name){release(tagName:$tag){tagName isDraft isPrerelease}}}' \
+            -f owner="${GITHUB_REPOSITORY%%/*}" -f name="${GITHUB_REPOSITORY#*/}" \
+            -f tag="$STABLE_TAG" --jq '.data.repository.release')"
+          if test "$STATE" != null; then
+            test "$(jq -r .tagName <<<"$STATE")" = "$STABLE_TAG"
+            test "$(jq -r .isPrerelease <<<"$STATE")" = false
+            if test "$(jq -r .isDraft <<<"$STATE")" = false; then
+              TAG_OBJECT="$(gh api "repos/${{ github.repository }}/git/ref/tags/$STABLE_TAG" --jq '.object.type + " " + .object.sha')"
+              test "${TAG_OBJECT%% *}" = tag
+              STABLE_SHA="$(gh api "repos/${{ github.repository }}/git/tags/${TAG_OBJECT#* }" --jq .object.sha)"
+              test "$STABLE_SHA" = "$RELEASE_SHA"
+              ALREADY_PUBLISHED=true
+            fi
+          fi
           echo "release_sha=$RELEASE_SHA" >> "$GITHUB_OUTPUT"
-          echo "stable_tag=virtualization-v$VERSION" >> "$GITHUB_OUTPUT"
+          echo "stable_tag=$STABLE_TAG" >> "$GITHUB_OUTPUT"
           echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+          echo "already_published=$ALREADY_PUBLISHED" >> "$GITHUB_OUTPUT"
       - name: Check out trusted release tooling
+        if: steps.identity.outputs.already_published != 'true'
         uses: actions/checkout@v7
         with:
           ref: refs/heads/main
           fetch-depth: 0
           persist-credentials: false
       - name: Set up Python
+        if: steps.identity.outputs.already_published != 'true'
         uses: actions/setup-python@v7
         with:
           python-version: '3.14'
           cache: pip
       - name: Install locked release tooling
+        if: steps.identity.outputs.already_published != 'true'
         env:
           PIP_CONFIG_FILE: /dev/null
         run: python -m pip install --require-hashes --requirement requirements-release-tools.lock
       - name: Verify the signed prerelease and exact asset set
+        if: steps.identity.outputs.already_published != 'true'
         env:
           GH_TOKEN: ${{ github.token }}
           PRERELEASE_TAG: ${{ inputs.prerelease_tag }}
@@ -110,6 +133,7 @@ jobs:
           gh attestation verify candidate/*-hyperv-x86_64.zip --repo "${{ github.repository }}"
           gh attestation verify candidate/virtualization-artifact-index.json --repo "${{ github.repository }}"
       - name: Upload transport-only candidates
+        if: steps.identity.outputs.already_published != 'true'
         uses: actions/upload-artifact@v7
         with:
           name: virtualization-candidate-${{ steps.identity.outputs.release_sha }}
@@ -117,9 +141,76 @@ jobs:
           if-no-files-found: error
           retention-days: 7
 
+  recover_published:
+    name: Live-verify an existing stable release
+    needs: admit
+    if: needs.admit.outputs.already_published == 'true'
+    runs-on: ubuntu-latest
+    permissions:
+      attestations: read
+      contents: read
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: ${{ needs.admit.outputs.release_sha }}
+          persist-credentials: false
+      - uses: actions/setup-python@v7
+        with:
+          python-version: '3.14'
+          cache: pip
+      - name: Install locked release tooling
+        env:
+          PIP_CONFIG_FILE: /dev/null
+        run: python -m pip install --require-hashes --requirement requirements-release-tools.lock
+      - name: Download and live-verify published stable bytes
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PRERELEASE_TAG: ${{ inputs.prerelease_tag }}
+          RELEASE_SHA: ${{ needs.admit.outputs.release_sha }}
+          STABLE_TAG: ${{ needs.admit.outputs.stable_tag }}
+          VERSION: ${{ needs.admit.outputs.version }}
+        run: |
+          set -euo pipefail
+          mkdir stable prerelease software-release verified-source
+          gh release download "$STABLE_TAG" --dir stable
+          gh release download "$PRERELEASE_TAG" --dir prerelease
+          python scripts/verify_virtualization_artifact_index.py \
+            --index stable/virtualization-artifact-index.json \
+            --signature stable/virtualization-artifact-index.json.sig \
+            --trust-key image/common/update-trust/atlaso-release-2026-01.pem \
+            --asset-directory stable --expected-version "$VERSION" \
+            --expected-commit "$RELEASE_SHA" --expected-classification stable \
+            --expected-release-tag "$STABLE_TAG"
+          python scripts/verify_virtualization_artifact_index.py \
+            --index prerelease/virtualization-artifact-index.json \
+            --signature prerelease/virtualization-artifact-index.json.sig \
+            --trust-key image/common/update-trust/atlaso-release-2026-01.pem \
+            --asset-directory prerelease --expected-version "$VERSION" \
+            --expected-commit "$RELEASE_SHA" --expected-classification prerelease \
+            --expected-release-tag "$PRERELEASE_TAG"
+          gh release download "v$VERSION" --dir software-release \
+            --pattern "atlaso-appliance-$VERSION.tar.gz" \
+            --pattern release-manifest.json \
+            --pattern release-manifest.json.sig
+          python scripts/prepare_virtualization_source.py \
+            --manifest software-release/release-manifest.json \
+            --signature software-release/release-manifest.json.sig \
+            --bundle "software-release/atlaso-appliance-$VERSION.tar.gz" \
+            --trust-key image/common/update-trust/atlaso-release-2026-01.pem \
+            --output verified-source --expected-version "$VERSION" --expected-commit "$RELEASE_SHA"
+          cmp --silent verified-source/virtualization-source.json stable/virtualization-source.json
+          cmp --silent stable/virtualization-source.json prerelease/virtualization-source.json
+          cmp --silent "stable/atlaso-v${VERSION}.ova" "prerelease/atlaso-v${VERSION}.ova"
+          cmp --silent "stable/atlaso-v${VERSION}-hyperv-x86_64.zip" \
+            "prerelease/atlaso-v${VERSION}-hyperv-x86_64.zip"
+          gh attestation verify "stable/atlaso-v${VERSION}.ova" --repo "${{ github.repository }}"
+          gh attestation verify "stable/atlaso-v${VERSION}-hyperv-x86_64.zip" --repo "${{ github.repository }}"
+          gh attestation verify stable/virtualization-artifact-index.json --repo "${{ github.repository }}"
+
   proxmox_smoke:
     name: Proxmox exact-byte smoke
     needs: admit
+    if: needs.admit.outputs.already_published != 'true'
     runs-on: [self-hosted, Linux, X64, "${{ inputs.proxmox_runner_label }}"]
     permissions:
       actions: read
@@ -158,6 +249,7 @@ jobs:
   kvm_smoke:
     name: KVM exact-byte smoke
     needs: admit
+    if: needs.admit.outputs.already_published != 'true'
     runs-on: [self-hosted, Linux, X64, "${{ inputs.kvm_runner_label }}"]
     permissions:
       actions: read
@@ -196,6 +288,11 @@ jobs:
   publish:
     name: Sign and publish stable virtualization release
     needs: [admit, proxmox_smoke, kvm_smoke]
+    if: >-
+      ${{ always() && needs.admit.result == 'success' &&
+          needs.admit.outputs.already_published != 'true' &&
+          needs.proxmox_smoke.result == 'success' &&
+          needs.kvm_smoke.result == 'success' }}
     runs-on: ubuntu-latest
     environment: appliance-release
     permissions:
