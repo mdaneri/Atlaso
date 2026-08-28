@@ -91,12 +91,14 @@ DEFAULT_ROOT_PASSWORD variables. When omitted, the wrapper reads the single-line
 .atlaso-local\onepassword-environment-id file from the checkout.
 
 .PARAMETER OnePasswordAccount
-1Password account name or ID approved for desktop SDK authorization when either
-first-boot credential is omitted.
+Optional 1Password account name or ID approved for desktop SDK authorization
+when either first-boot credential is omitted. The single CLI account is used
+when this selector is omitted.
 
 .PARAMETER OnePasswordPython
-CPython 3.10 through 3.13 executable used by the supported Windows 1Password SDK
-bridge when either first-boot credential is omitted.
+Optional CPython 3.10 through 3.13 executable used by the supported Windows
+1Password SDK bridge. The highest compatible Windows-registered runtime is used
+when this selector is omitted.
 
 .PARAMETER EnvironmentIdFile
 Optional path to a single-line local Environment ID file. The checkout-local,
@@ -383,9 +385,30 @@ Validate the non-secret 1Password account selector used by desktop authorization
 1Password account name or ID.
 #>
 function Assert-OnePasswordTestVmAccount {
-    param([Parameter(Mandatory = $true)][string]$Account)
+    param([Parameter(Mandatory = $true)][AllowEmptyString()][string]$Account)
 
     Assert-AtlasoOnePasswordAccount -Account $Account
+}
+
+<#
+.SYNOPSIS
+Resolve the explicit or unique installed 1Password account selector.
+
+.PARAMETER Account
+Optional explicit 1Password account name or ID.
+
+.PARAMETER TimeoutSeconds
+Positive deadline for bounded account discovery.
+#>
+function Resolve-OnePasswordTestVmAccount {
+    param(
+        [AllowEmptyString()][string]$Account = '',
+        [Parameter(Mandatory = $true)][ValidateRange(1, 3600)][int]$TimeoutSeconds
+    )
+
+    return Resolve-AtlasoOnePasswordAccount `
+        -Account $Account `
+        -TimeoutSeconds $TimeoutSeconds
 }
 
 <#
@@ -400,7 +423,7 @@ Positive deadline for the version probe.
 #>
 function Resolve-OnePasswordTestVmPython {
     param(
-        [Parameter(Mandatory = $true)][string]$PythonCommand,
+        [Parameter(Mandatory = $true)][AllowEmptyString()][string]$PythonCommand,
         [Parameter(Mandatory = $true)][ValidateRange(1, 3600)][int]$TimeoutSeconds
     )
 
@@ -632,12 +655,12 @@ function New-AtlasoTestVmCredentialBridgeState {
         )
 
         $resolvedPython = ''
+        $resolvedAccount = ''
         $dependencyPath = ''
         if ($needsDefaults) {
-            Assert-OnePasswordTestVmAccount -Account $OnePasswordAccount
-            if ([string]::IsNullOrWhiteSpace($OnePasswordPython)) {
-                throw 'OnePasswordPython is required when AdminPassword or RootPassword is omitted.'
-            }
+            $resolvedAccount = Resolve-OnePasswordTestVmAccount `
+                -Account $OnePasswordAccount `
+                -TimeoutSeconds $TimeoutSeconds
             $resolvedPython = Resolve-OnePasswordTestVmPython `
                 -PythonCommand $OnePasswordPython `
                 -TimeoutSeconds $TimeoutSeconds
@@ -661,7 +684,7 @@ function New-AtlasoTestVmCredentialBridgeState {
             $arguments += @(
                 '-PythonCommand', $resolvedPython,
                 '-DependencyPath', $dependencyPath,
-                '-OnePasswordAccount', $OnePasswordAccount,
+                '-OnePasswordAccount', $resolvedAccount,
                 '-EnvironmentId', $EnvironmentId
             )
         }

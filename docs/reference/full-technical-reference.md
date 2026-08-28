@@ -202,9 +202,7 @@ is attached as a local remastered ISO instead of depending on early installer ne
 pwsh -ExecutionPolicy Bypass `
   -File scripts/windows/vmware/build-photon-image.ps1 `
   -IsoUrl "https://packages.broadcom.com/photon/5.0/GA/iso/photon-5.0-dde71ec57.x86_64.iso" `
-  -IsoChecksum "sha512:6a7a258399a258da742032987c043ab25503698d35edafaf1ae000f12127da1a161d8b84caa17fd8f23d129e81e1faa7ab087c20ab9229772a643f8f9475305f" `
-  -OnePasswordAccount "<approved-account-name-or-id>" `
-  -OnePasswordPython "<python-3.10-through-3.13>"
+  -IsoChecksum "sha512:6a7a258399a258da742032987c043ab25503698d35edafaf1ae000f12127da1a161d8b84caa17fd8f23d129e81e1faa7ab087c20ab9229772a643f8f9475305f"
 ```
 
 The wrapper resolves an explicit `-OnePasswordEnvironmentId` first and otherwise reads the only line from the
@@ -212,7 +210,10 @@ checkout-local, Git-ignored `.atlaso-local/onepassword-environment-id`; use `-En
 file. When `-SshPassword` and/or `-BootstrapAdminPassword` is omitted, it retrieves only the corresponding exact,
 unique, concealed `DEFAULT_ROOT_PASSWORD` and/or `DEFAULT_ADMIN_PASSWORD` through the supported bounded Windows
 1Password SDK desktop integration. Both explicit parameters accept `SecureString` and override their own Environment
-default independently. Caller `DEFAULT_*` variables, local `.env` files, repository password defaults, interactive
+default independently. With no account or Python selectors, the bridge uses the single local 1Password CLI account and
+the highest compatible CPython 3.10 through 3.13 runtime registered with the Windows launcher. Explicit
+`-OnePasswordAccount` and `-OnePasswordPython` values remain authoritative. Caller `DEFAULT_*` variables, local `.env`
+files, repository password defaults, interactive
 prompts, ambiguous or non-concealed variables, and invalid values are rejected. The child returns only current-user
 DPAPI ciphertext, and its task-owned files are removed before network preparation, output cleanup, ISO remastering,
 Packer initialization, or other image mutation. Sanitized failures do not print the Environment ID, account input, or
@@ -1389,8 +1390,6 @@ Then run:
 ```powershell
 pwsh -ExecutionPolicy Bypass `
   -File scripts/windows/vmware/create-atlaso-test-vm.ps1 `
-  -OnePasswordAccount '<account-name-or-id>' `
-  -OnePasswordPython '<path-to-python-3.13.exe>' `
   -Redeploy `
   -ResetDataDisks
 ```
@@ -1409,8 +1408,10 @@ repository SHA-256 pin before invoking `op`, requires the Environments-enabled b
 `C:\Program Files\1Password CLI`, validates `op run --environment`, and cryptographically verifies the retrieved
 certificate/key pair before mutation. For each omitted `-AdminPassword` or `-RootPassword`, it independently retrieves
 only the corresponding exact concealed default through the supported 1Password SDK desktop integration. An explicit
-`SecureString` remains authoritative for that credential. Pass the approved account name or ID with
-`-OnePasswordAccount` and an SDK-supported CPython 3.10 through 3.13 executable with `-OnePasswordPython`. The parent
+`SecureString` remains authoritative for that credential. By default, the wrapper selects the single local 1Password
+CLI account and the highest compatible CPython 3.10 through 3.13 runtime registered with the Windows launcher.
+`-OnePasswordAccount` and `-OnePasswordPython` remain explicit overrides; zero or multiple accounts and a missing
+compatible runtime fail before VMware mutation. The parent
 receives only current-user DPAPI ciphertext; a second bounded child stages the DPAPI-protected OVF environment into the
 exact new VMX. There are no interactive password prompts, caller-environment fallbacks, repository defaults, or local
 `.env` inputs. SDK or credential failure occurs before network preparation, cleanup, disk reset, or cloning, and

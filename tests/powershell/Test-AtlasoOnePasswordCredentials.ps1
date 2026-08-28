@@ -17,6 +17,69 @@ $ErrorActionPreference = 'Stop'
 $repositoryRoot = (Resolve-Path -LiteralPath (Join-Path $PSScriptRoot '..\..')).Path
 . (Join-Path $repositoryRoot 'scripts\windows\vmware\Atlaso.WorkstationFirstBoot.ps1')
 Import-Module (Join-Path $repositoryRoot 'scripts\windows\vmware\Atlaso.OnePasswordCredentials.psm1') -Force
+$credentialModule = Get-Module -Name 'Atlaso.OnePasswordCredentials'
+$explicitAccount = Resolve-AtlasoOnePasswordAccount `
+    -Account 'atlaso-test-account' `
+    -TimeoutSeconds 30
+if ($explicitAccount -cne 'atlaso-test-account') {
+    throw 'The explicit 1Password account selector was not authoritative.'
+}
+try {
+    Assert-AtlasoOnePasswordAccount -Account ''
+    throw 'An empty 1Password account selector was accepted.'
+}
+catch {
+    if ($_.Exception.Message -notlike 'OnePasswordAccount is required*') {
+        throw
+    }
+}
+$inventoryAccount = & $credentialModule {
+    param([string]$InventoryJson)
+    ConvertFrom-AtlasoOnePasswordAccountInventory -AccountOutput $InventoryJson
+} '[{"account_uuid":"TESTACCOUNT1234567890123456"}]'
+if ($inventoryAccount -cne 'TESTACCOUNT1234567890123456') {
+    throw 'The unique 1Password account inventory was not selected.'
+}
+foreach ($invalidInventory in @(
+        '[]',
+        '[{"account_uuid":"ONE"},{"account_uuid":"TWO"}]',
+        'not-json'
+    )) {
+    try {
+        & $credentialModule {
+            param([string]$InventoryJson)
+            ConvertFrom-AtlasoOnePasswordAccountInventory -AccountOutput $InventoryJson
+        } $invalidInventory | Out-Null
+        throw 'An unavailable or ambiguous 1Password account inventory was accepted.'
+    }
+    catch {
+        if ($_.Exception.Message -notlike '*1Password account inventory*' -and
+            $_.Exception.Message -notlike '*exactly one discoverable 1Password account*') {
+            throw
+        }
+    }
+}
+$pythonInventoryRoot = Join-Path ([System.IO.Path]::GetTempPath()) (
+    "atlaso-python-inventory-$([guid]::NewGuid().ToString('N'))"
+)
+[void][System.IO.Directory]::CreateDirectory($pythonInventoryRoot)
+try {
+    $python312Path = Join-Path $pythonInventoryRoot 'python312.exe'
+    $python313Path = Join-Path $pythonInventoryRoot 'python313.exe'
+    [System.IO.File]::WriteAllBytes($python312Path, [byte[]](1))
+    [System.IO.File]::WriteAllBytes($python313Path, [byte[]](1))
+    $pythonInventory = " -V:Astral/CPython3.12.1 $python312Path`n -V:Astral/CPython3.13.2 $python313Path"
+    $selectedPython = & $credentialModule {
+        param([string]$InventoryOutput)
+        Select-AtlasoOnePasswordPythonFromLauncherInventory -LauncherOutput $InventoryOutput
+    } $pythonInventory
+    if ($selectedPython.Path -cne $python313Path) {
+        throw 'The highest compatible registered Python runtime was not selected.'
+    }
+}
+finally {
+    [System.IO.Directory]::Delete($pythonInventoryRoot, $true)
+}
 $cleanupMarkerPath = Join-Path $repositoryRoot '.atlaso-local\onepassword-credential-cleanup.json'
 if (Test-Path -LiteralPath $cleanupMarkerPath) {
     throw 'A focused credential test cannot start with retained cleanup ownership.'

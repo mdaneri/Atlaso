@@ -98,11 +98,109 @@ Validate the non-secret 1Password account selector used by desktop authorization
 1Password account name or ID.
 #>
 function Assert-AtlasoOnePasswordAccount {
-    param([Parameter(Mandatory = $true)][string]$Account)
+    param([Parameter(Mandatory = $true)][AllowEmptyString()][string]$Account)
 
     if ([string]::IsNullOrWhiteSpace($Account) -or $Account.Length -gt 255 -or $Account -match '[\x00-\x1f\x7f]') {
         throw 'OnePasswordAccount is required and must be a bounded 1Password account name or ID.'
     }
+}
+
+<#
+.SYNOPSIS
+Select one bounded account ID from the 1Password CLI inventory.
+
+.PARAMETER AccountOutput
+JSON returned by the bounded 1Password CLI account inventory.
+#>
+function ConvertFrom-AtlasoOnePasswordAccountInventory {
+    param([Parameter(Mandatory = $true)][AllowEmptyString()][string]$AccountOutput)
+
+    try {
+        $accounts = @($AccountOutput | ConvertFrom-Json)
+    }
+    catch {
+        throw 'The 1Password account inventory is unavailable. Sign in to 1Password CLI or pass -OnePasswordAccount explicitly.'
+    }
+    if ($accounts.Count -ne 1) {
+        throw 'Omitted Atlaso credentials require exactly one discoverable 1Password account. Pass -OnePasswordAccount explicitly when zero or multiple accounts are configured.'
+    }
+    $resolvedAccount = [string]$accounts[0].account_uuid
+    Assert-AtlasoOnePasswordAccount -Account $resolvedAccount
+    return $resolvedAccount
+}
+
+<#
+.SYNOPSIS
+Resolve the 1Password account used by desktop SDK authorization.
+
+.PARAMETER Account
+Optional explicit 1Password account name or ID.
+
+.PARAMETER TimeoutSeconds
+Positive deadline for the bounded account inventory.
+#>
+function Resolve-AtlasoOnePasswordAccount {
+    param(
+        [AllowEmptyString()][string]$Account = '',
+        [Parameter(Mandatory = $true)][ValidateRange(1, 3600)][int]$TimeoutSeconds
+    )
+
+    if (-not [string]::IsNullOrWhiteSpace($Account)) {
+        Assert-AtlasoOnePasswordAccount -Account $Account
+        return $Account
+    }
+
+    $candidatePaths = @(
+        (Join-Path ([Environment]::GetFolderPath('ProgramFiles')) '1Password CLI\op.exe'),
+        (Join-Path ([Environment]::GetFolderPath('LocalApplicationData')) 'Microsoft\WinGet\Links\op.exe')
+    )
+    $opCommand = Get-Command -Name 'op' -CommandType Application -ErrorAction SilentlyContinue
+    $opPath = if ($opCommand) {
+        $opCommand.Source
+    }
+    else {
+        @($candidatePaths | Where-Object { Test-Path -LiteralPath $_ -PathType Leaf }) | Select-Object -First 1
+    }
+    if ([string]::IsNullOrWhiteSpace($opPath)) {
+        throw 'Omitted Atlaso credentials require one discoverable 1Password account. Install 1Password CLI or pass -OnePasswordAccount explicitly.'
+    }
+
+    try {
+        $accountOutput = Invoke-AtlasoBoundedProcess `
+            -FilePath $opPath `
+            -ArgumentList @('account', 'list', '--format', 'json') `
+            -TimeoutSeconds ([Math]::Min($TimeoutSeconds, 30)) `
+            -Action 'The bounded 1Password account inventory'
+    }
+    catch {
+        throw 'The 1Password account inventory is unavailable. Sign in to 1Password CLI or pass -OnePasswordAccount explicitly.'
+    }
+    return ConvertFrom-AtlasoOnePasswordAccountInventory -AccountOutput $accountOutput
+}
+
+<#
+.SYNOPSIS
+Select the highest compatible registered Python runtime.
+
+.PARAMETER LauncherOutput
+Text returned by the bounded Windows Python launcher inventory.
+#>
+function Select-AtlasoOnePasswordPythonFromLauncherInventory {
+    param([Parameter(Mandatory = $true)][AllowEmptyString()][string]$LauncherOutput)
+
+    $candidates = foreach ($line in @($LauncherOutput -split "`r?`n")) {
+        if ($line -match '^\s*-V:(?:[^/]+/)?CPython(3\.1[0-3])(?:\.\d+)?\s+(.+\.exe)\s*$' -or
+            $line -match '^\s*-V:(3\.1[0-3])(?:\.\d+)?\s+(.+\.exe)\s*$') {
+            [pscustomobject]@{
+                Version = [version]$Matches[1]
+                Path    = $Matches[2].Trim()
+            }
+        }
+    }
+    return @($candidates |
+        Where-Object { Test-Path -LiteralPath $_.Path -PathType Leaf } |
+        Sort-Object -Property @{ Expression = 'Version'; Descending = $true }, @{ Expression = 'Path'; Descending = $false } |
+        Select-Object -First 1)
 }
 
 <#
@@ -120,16 +218,40 @@ Sanitized workflow name used in unsupported-runtime guidance.
 #>
 function Resolve-AtlasoOnePasswordPython {
     param(
-        [Parameter(Mandatory = $true)][string]$PythonCommand,
+        [Parameter(Mandatory = $true)][AllowEmptyString()][string]$PythonCommand,
         [Parameter(Mandatory = $true)][ValidateRange(1, 3600)][int]$TimeoutSeconds,
         [string]$ConsumerDescription = 'Atlaso credentials'
     )
 
-    $command = Get-Command -Name $PythonCommand -CommandType Application -ErrorAction SilentlyContinue
-    if (-not $command) {
-        throw "The 1Password SDK Python executable was not found: $PythonCommand."
+    $resolvedCommand = ''
+    if ([string]::IsNullOrWhiteSpace($PythonCommand)) {
+        $launcherPath = Join-Path $env:WINDIR 'py.exe'
+        if (-not (Test-Path -LiteralPath $launcherPath -PathType Leaf)) {
+            throw "$ConsumerDescription requires a Windows-registered CPython 3.10 through 3.13 runtime or an explicit -OnePasswordPython path."
+        }
+        try {
+            $launcherOutput = Invoke-AtlasoBoundedProcess `
+                -FilePath $launcherPath `
+                -ArgumentList @('-0p') `
+                -TimeoutSeconds ([Math]::Min($TimeoutSeconds, 30)) `
+                -Action 'The registered Python runtime inventory'
+        }
+        catch {
+            throw "$ConsumerDescription could not inventory Windows-registered Python runtimes; pass -OnePasswordPython explicitly."
+        }
+        $selected = @(Select-AtlasoOnePasswordPythonFromLauncherInventory -LauncherOutput $launcherOutput)
+        if ($selected.Count -ne 1) {
+            throw "$ConsumerDescription requires a Windows-registered CPython 3.10 through 3.13 runtime or an explicit -OnePasswordPython path."
+        }
+        $resolvedCommand = $selected[0].Path
     }
-    $resolvedCommand = $command.Source
+    else {
+        $command = Get-Command -Name $PythonCommand -CommandType Application -ErrorAction SilentlyContinue
+        if (-not $command) {
+            throw "The 1Password SDK Python executable was not found: $PythonCommand."
+        }
+        $resolvedCommand = $command.Source
+    }
     $version = (Invoke-AtlasoBoundedProcess `
             -FilePath $resolvedCommand `
             -ArgumentList @('-I', '-S', '-c', 'import sys; print(f"{sys.version_info.major}.{sys.version_info.minor}")') `
@@ -482,10 +604,9 @@ function Get-AtlasoOnePasswordCredentialPair {
         $dependencyPath = ''
         if ($needsDefaults) {
             Assert-AtlasoOnePasswordEnvironmentId -EnvironmentId $EnvironmentId
-            Assert-AtlasoOnePasswordAccount -Account $OnePasswordAccount
-            if ([string]::IsNullOrWhiteSpace($OnePasswordPython)) {
-                throw 'OnePasswordPython is required when an Atlaso credential is omitted.'
-            }
+            $resolvedAccount = Resolve-AtlasoOnePasswordAccount `
+                -Account $OnePasswordAccount `
+                -TimeoutSeconds $TimeoutSeconds
             $resolvedPython = Resolve-AtlasoOnePasswordPython `
                 -PythonCommand $OnePasswordPython `
                 -TimeoutSeconds $TimeoutSeconds `
@@ -509,7 +630,7 @@ function Get-AtlasoOnePasswordCredentialPair {
             $arguments += @(
                 '-PythonCommand', $resolvedPython,
                 '-DependencyPath', $dependencyPath,
-                '-OnePasswordAccount', $OnePasswordAccount,
+                '-OnePasswordAccount', $resolvedAccount,
                 '-EnvironmentId', $EnvironmentId
             )
         }
@@ -569,6 +690,7 @@ Export-ModuleMember -Function @(
     'Resolve-AtlasoOnePasswordEnvironmentId',
     'Assert-AtlasoOnePasswordEnvironmentId',
     'Assert-AtlasoOnePasswordAccount',
+    'Resolve-AtlasoOnePasswordAccount',
     'Resolve-AtlasoOnePasswordPython',
     'Initialize-AtlasoOnePasswordSdkRuntime',
     'Get-AtlasoOnePasswordCredentialBridgeError',
