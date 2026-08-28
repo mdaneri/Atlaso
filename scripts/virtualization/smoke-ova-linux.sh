@@ -286,6 +286,7 @@ guest_ipv4() {
 }
 
 validate_guest() {
+  expected_address=${1:-}
   qga_exec '
     set -eu
     test "$(find /sys/class/net -mindepth 1 -maxdepth 1 ! -name lo | wc -l)" -eq 2
@@ -318,8 +319,13 @@ validate_guest() {
     echo "The provider-bound management IPv4 changed immediately before the front-door probe." >&2
     return 2
   }
+  if [ -n "$expected_address" ] && [ "$confirmed_address" != "$expected_address" ]; then
+    echo "The provider-bound management IPv4 changed across the reboot check." >&2
+    return 2
+  fi
   curl --fail --silent --show-error --insecure --max-time 30 \
     "https://$confirmed_address/openapi.json" >/dev/null
+  validated_address=$confirmed_address
 }
 
 case "$provider" in
@@ -414,9 +420,11 @@ case "$provider" in
 esac
 
 wait_for_qga
-validate_guest
+validated_address=''
+validate_guest ''
+initial_management_address=$validated_address
 qga_exec 'systemctl reboot' >/dev/null 2>&1 || true
 wait_for_qga_outage
 wait_for_qga
-validate_guest
+validate_guest "$initial_management_address"
 printf 'Atlaso %s OVA smoke test passed for %s.\n' "$provider" "$identifier"

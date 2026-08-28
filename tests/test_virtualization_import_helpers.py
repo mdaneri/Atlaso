@@ -192,6 +192,9 @@ def test_linux_smoke_imports_reboots_validates_and_bounds_cleanup() -> None:
     assert 'select_management_ipv4.py' in script
     assert '--management-mac "$management_mac"' in script
     assert '--service-mac "$service_mac"' in script
+    assert "initial_management_address=$validated_address" in script
+    assert 'validate_guest "$initial_management_address"' in script
+    assert "changed across the reboot check" in script
     assert "qga_exec 'systemctl reboot'" in script
     assert script.count("validate_guest") == 3
 
