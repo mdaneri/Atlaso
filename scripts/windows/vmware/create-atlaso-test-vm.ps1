@@ -91,12 +91,14 @@ DEFAULT_ROOT_PASSWORD variables. When omitted, the wrapper reads the single-line
 .atlaso-local\onepassword-environment-id file from the checkout.
 
 .PARAMETER OnePasswordAccount
-1Password account name or ID approved for desktop SDK authorization when either
-first-boot credential is omitted.
+Optional 1Password account name or ID approved for desktop SDK authorization
+when either first-boot credential is omitted. The single CLI account is used
+when this selector is omitted.
 
 .PARAMETER OnePasswordPython
-CPython 3.10 through 3.13 executable used by the supported Windows 1Password SDK
-bridge when either first-boot credential is omitted.
+Optional CPython 3.10 through 3.13 executable used by the supported Windows
+1Password SDK bridge. The highest compatible Windows-registered runtime is used
+when this selector is omitted.
 
 .PARAMETER EnvironmentIdFile
 Optional path to a single-line local Environment ID file. The checkout-local,
@@ -226,33 +228,10 @@ function Resolve-OnePasswordCliPath {
         }
     )
 
-    # Prefer the explicit beta installation because a stable CLI earlier on
-    # PATH cannot provide the required Environment bridge.
-    foreach ($candidate in $CandidatePaths) {
-        if ($candidate -and (Test-Path -LiteralPath $candidate -PathType Leaf)) {
-            return (Resolve-Path -LiteralPath $candidate).Path
-        }
-    }
-    $command = & $CommandResolver 'op.exe'
-    if (-not $command) {
-        $command = & $CommandResolver 'op'
-    }
-    if (-not $command) {
-        if ($PackageRoot -and (Test-Path -LiteralPath $PackageRoot -PathType Container)) {
-            $packageCandidates = @(Get-ChildItem -LiteralPath $PackageRoot -Directory |
-                Where-Object { $_.Name -like 'AgileBits.1Password.CLI_*' } |
-                ForEach-Object { Join-Path $_.FullName 'op.exe' } |
-                Where-Object { Test-Path -LiteralPath $_ -PathType Leaf })
-            if ($packageCandidates.Count -eq 1) {
-                return (Resolve-Path -LiteralPath $packageCandidates[0]).Path
-            }
-            if ($packageCandidates.Count -gt 1) {
-                throw 'Multiple 1Password CLI package executables were found; repair WinGet links or pass a single supported CLI on PATH.'
-            }
-        }
-        throw 'The 1Password CLI (op.exe) is required for normal VMware test VM creation.'
-    }
-    return $command.Source
+    return Resolve-AtlasoOnePasswordCliPath `
+        -CandidatePaths $CandidatePaths `
+        -PackageRoot $PackageRoot `
+        -CommandResolver $CommandResolver
 }
 
 <#
@@ -383,9 +362,35 @@ Validate the non-secret 1Password account selector used by desktop authorization
 1Password account name or ID.
 #>
 function Assert-OnePasswordTestVmAccount {
-    param([Parameter(Mandatory = $true)][string]$Account)
+    param([Parameter(Mandatory = $true)][AllowEmptyString()][string]$Account)
 
     Assert-AtlasoOnePasswordAccount -Account $Account
+}
+
+<#
+.SYNOPSIS
+Resolve the explicit or unique installed 1Password account selector.
+
+.PARAMETER Account
+Optional explicit 1Password account name or ID.
+
+.PARAMETER TimeoutSeconds
+Positive deadline for bounded account discovery.
+
+.PARAMETER CliPath
+Optional exact CLI path already verified by the development-CA preflight.
+#>
+function Resolve-OnePasswordTestVmAccount {
+    param(
+        [AllowEmptyString()][string]$Account = '',
+        [Parameter(Mandatory = $true)][ValidateRange(1, 3600)][int]$TimeoutSeconds,
+        [string]$CliPath = ''
+    )
+
+    return Resolve-AtlasoOnePasswordAccount `
+        -Account $Account `
+        -TimeoutSeconds $TimeoutSeconds `
+        -CliPath $CliPath
 }
 
 <#
@@ -400,7 +405,7 @@ Positive deadline for the version probe.
 #>
 function Resolve-OnePasswordTestVmPython {
     param(
-        [Parameter(Mandatory = $true)][string]$PythonCommand,
+        [Parameter(Mandatory = $true)][AllowEmptyString()][string]$PythonCommand,
         [Parameter(Mandatory = $true)][ValidateRange(1, 3600)][int]$TimeoutSeconds
     )
 
@@ -559,6 +564,9 @@ Account name or ID used for desktop SDK authorization when a default is needed.
 .PARAMETER OnePasswordPython
 CPython 3.10 through 3.13 executable used when a default is needed.
 
+.PARAMETER OnePasswordCliPath
+Exact CLI path already verified by the development-CA preflight.
+
 .PARAMETER AdminPassword
 Optional explicit administrator SecureString override.
 
@@ -581,11 +589,17 @@ Checked-in public development root certificate.
 Positive deadline for dependency and credential children.
 #>
 function New-AtlasoTestVmCredentialBridgeState {
+    [Diagnostics.CodeAnalysis.SuppressMessageAttribute(
+        'PSAvoidUsingPlainTextForPassword',
+        'OnePasswordCliPath',
+        Justification = 'Path to the approved 1Password CLI executable, not a password.'
+    )]
     param(
         [Parameter(Mandatory = $true)][string]$RepositoryRoot,
         [Parameter(Mandatory = $true)][string]$EnvironmentId,
         [string]$OnePasswordAccount = '',
         [string]$OnePasswordPython = '',
+        [string]$OnePasswordCliPath = '',
         [SecureString]$AdminPassword,
         [SecureString]$RootPassword,
         [Parameter(Mandatory = $true)][string]$Fqdn,
@@ -632,12 +646,13 @@ function New-AtlasoTestVmCredentialBridgeState {
         )
 
         $resolvedPython = ''
+        $resolvedAccount = ''
         $dependencyPath = ''
         if ($needsDefaults) {
-            Assert-OnePasswordTestVmAccount -Account $OnePasswordAccount
-            if ([string]::IsNullOrWhiteSpace($OnePasswordPython)) {
-                throw 'OnePasswordPython is required when AdminPassword or RootPassword is omitted.'
-            }
+            $resolvedAccount = Resolve-OnePasswordTestVmAccount `
+                -Account $OnePasswordAccount `
+                -TimeoutSeconds $TimeoutSeconds `
+                -CliPath $OnePasswordCliPath
             $resolvedPython = Resolve-OnePasswordTestVmPython `
                 -PythonCommand $OnePasswordPython `
                 -TimeoutSeconds $TimeoutSeconds
@@ -661,7 +676,7 @@ function New-AtlasoTestVmCredentialBridgeState {
             $arguments += @(
                 '-PythonCommand', $resolvedPython,
                 '-DependencyPath', $dependencyPath,
-                '-OnePasswordAccount', $OnePasswordAccount,
+                '-OnePasswordAccount', $resolvedAccount,
                 '-EnvironmentId', $EnvironmentId
             )
         }
@@ -2714,6 +2729,7 @@ if (-not $WhatIfPreference) {
         -EnvironmentId $OnePasswordEnvironmentId `
         -OnePasswordAccount $OnePasswordAccount `
         -OnePasswordPython $OnePasswordPython `
+        -OnePasswordCliPath $resolvedOpPath `
         -AdminPassword $AdminPassword `
         -RootPassword $RootPassword `
         -Fqdn $FirstBootFqdn `

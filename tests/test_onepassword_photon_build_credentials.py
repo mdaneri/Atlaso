@@ -186,7 +186,43 @@ def test_environment_selector_and_sdk_runtime_are_shared_with_test_vm() -> None:
     assert "Resolve-AtlasoOnePasswordEnvironmentId" in wrapper
     assert "Resolve-AtlasoOnePasswordEnvironmentId" in test_vm
     assert "Assert-AtlasoOnePasswordEnvironmentId" in test_vm
+    assert "Resolve-AtlasoOnePasswordAccount" in test_vm
+    assert "Resolve-AtlasoOnePasswordPython" in test_vm
     assert "Initialize-AtlasoOnePasswordSdkRuntime" in test_vm
+
+
+def test_omitted_nonsecret_sdk_selectors_are_discovered_fail_closed() -> None:
+    """Keep the documented no-selector command deterministic and pre-mutation."""
+    module = Path(
+        "scripts/windows/vmware/Atlaso.OnePasswordCredentials.psm1"
+    ).read_text(encoding="utf-8")
+    test_vm = Path("scripts/windows/vmware/create-atlaso-test-vm.ps1").read_text(
+        encoding="utf-8"
+    )
+    image_wrapper = Path("scripts/windows/vmware/build-photon-image.ps1").read_text(
+        encoding="utf-8"
+    )
+
+    assert "function Resolve-AtlasoOnePasswordAccount" in module
+    assert "function Resolve-AtlasoOnePasswordCliPath" in module
+    assert "'account', 'list', '--format', 'json'" in module
+    assert "AgileBits.1Password.CLI_*" in module
+    assert "if ($accounts.Count -ne 1)" in module
+    assert "exactly one discoverable 1Password account" in module
+    assert "Join-Path $env:WINDIR 'py.exe'" in module
+    assert "Get-Command -Name 'py' -CommandType Application" in module
+    assert "-ArgumentList @('-0p')" in module
+    assert "\\*?\\s*(.+?\\.exe)\\s*\\*?" in module
+    assert "(?:-(32|64|arm64))?" in module
+    assert "$candidate.Architecture -ceq '32'" in module
+    assert "struct.calcsize(\"P\") * 8" in module
+    assert "CPython(3\\.1[0-3])" in module
+    assert "highest compatible" in image_wrapper
+    assert "highest compatible" in test_vm
+    assert "Resolve-OnePasswordTestVmAccount" in test_vm
+    assert "-OnePasswordCliPath $resolvedOpPath" in test_vm
+    assert "'-OnePasswordAccount', $resolvedAccount" in test_vm
+    assert "'-OnePasswordAccount', $resolvedAccount" in module
 
 
 def test_shared_credential_bridge_explicit_and_fail_closed_cases() -> None:

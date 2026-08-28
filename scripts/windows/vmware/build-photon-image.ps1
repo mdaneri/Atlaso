@@ -18,11 +18,13 @@ reads the checkout-local onepassword-environment-id selector.
 Optional single-line Atlaso Environment ID file. The legacy
 OnePasswordEnvironmentIdFile name remains available as an alias.
 .PARAMETER OnePasswordAccount
-1Password account name or ID approved for desktop SDK authorization when either
-credential is omitted.
+Optional 1Password account name or ID approved for desktop SDK authorization
+when either credential is omitted. The single CLI account is used when this
+selector is omitted.
 .PARAMETER OnePasswordPython
-CPython 3.10 through 3.13 executable used by the locked Windows 1Password SDK
-runtime when either credential is omitted.
+Optional CPython 3.10 through 3.13 executable used by the locked Windows
+1Password SDK runtime. The highest compatible Windows-registered runtime is
+used when this selector is omitted.
 .PARAMETER CredentialTimeoutSeconds
 Bounded timeout for each 1Password SDK preparation and retrieval operation.
 .PARAMETER ImageBuildTimeoutSeconds
