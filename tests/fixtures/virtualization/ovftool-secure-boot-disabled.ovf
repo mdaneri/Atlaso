@@ -1,0 +1,40 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<Envelope
+  xmlns="http://schemas.dmtf.org/ovf/envelope/1"
+  xmlns:ovf="http://schemas.dmtf.org/ovf/envelope/1"
+  xmlns:rasd="http://schemas.dmtf.org/wbem/wscim/1/cim-schema/2/CIM_ResourceAllocationSettingData"
+  xmlns:vmw="http://www.vmware.com/schema/ovf">
+  <References>
+    <File ovf:id="file0" ovf:href="photon.vmdk" />
+    <File ovf:id="file1" ovf:href="system.vmdk" />
+  </References>
+  <DiskSection>
+    <Info>Atlaso disks</Info>
+    <Disk ovf:diskId="photon" ovf:fileRef="file0" ovf:capacity="42949672960" ovf:format="vmdk" />
+    <Disk ovf:diskId="system" ovf:fileRef="file1" ovf:capacity="21474836480" ovf:format="vmdk" />
+    <Disk ovf:diskId="atlaso-depot" ovf:capacity="500" ovf:capacityAllocationUnits="byte * 2^30" ovf:format="vmdk" />
+    <Disk ovf:diskId="atlaso-backups" ovf:capacity="500" ovf:capacityAllocationUnits="byte * 2^30" ovf:format="vmdk" />
+  </DiskSection>
+  <NetworkSection>
+    <Info>Atlaso networks</Info>
+    <Network ovf:name="Atlaso Management Network"><Description>Management</Description></Network>
+    <Network ovf:name="Atlaso Services Network"><Description>Services</Description></Network>
+  </NetworkSection>
+  <VirtualSystem ovf:id="atlaso">
+    <Info>Atlaso</Info>
+    <VirtualHardwareSection>
+      <Info>Atlaso hardware</Info>
+      <vmw:Config ovf:required="false" vmw:key="firmware" vmw:value="efi" />
+      <vmw:Config ovf:required="false" vmw:key="bootOptions.efiSecureBootEnabled" vmw:value="false" />
+      <Item><rasd:ResourceType>3</rasd:ResourceType><rasd:VirtualQuantity>4</rasd:VirtualQuantity></Item>
+      <Item><rasd:ResourceType>4</rasd:ResourceType><rasd:VirtualQuantity>4096</rasd:VirtualQuantity><rasd:AllocationUnits>byte * 2^20</rasd:AllocationUnits></Item>
+      <Item><rasd:ResourceType>6</rasd:ResourceType><rasd:InstanceID>5</rasd:InstanceID><rasd:ResourceSubType>VirtualSCSI</rasd:ResourceSubType></Item>
+      <Item><rasd:ResourceType>10</rasd:ResourceType><rasd:ElementName>Network adapter 1</rasd:ElementName><rasd:Connection>Atlaso Management Network</rasd:Connection></Item>
+      <Item><rasd:ResourceType>10</rasd:ResourceType><rasd:ElementName>Network adapter 2</rasd:ElementName><rasd:Connection>Atlaso Services Network</rasd:Connection></Item>
+      <Item><rasd:ResourceType>17</rasd:ResourceType><rasd:Parent>5</rasd:Parent><rasd:AddressOnParent>0</rasd:AddressOnParent><rasd:ElementName>Hard disk 1 - Photon OS</rasd:ElementName><rasd:HostResource>ovf:/disk/photon</rasd:HostResource></Item>
+      <Item><rasd:ResourceType>17</rasd:ResourceType><rasd:Parent>5</rasd:Parent><rasd:AddressOnParent>1</rasd:AddressOnParent><rasd:ElementName>Hard disk 2 - Atlaso System Content</rasd:ElementName><rasd:HostResource>ovf:/disk/system</rasd:HostResource></Item>
+      <Item><rasd:ResourceType>17</rasd:ResourceType><rasd:Parent>5</rasd:Parent><rasd:AddressOnParent>2</rasd:AddressOnParent><rasd:ElementName>Hard disk 3 - VCF Offline Depot</rasd:ElementName><rasd:HostResource>ovf:/disk/atlaso-depot</rasd:HostResource></Item>
+      <Item><rasd:ResourceType>17</rasd:ResourceType><rasd:Parent>5</rasd:Parent><rasd:AddressOnParent>3</rasd:AddressOnParent><rasd:ElementName>Hard disk 4 - VCF Backups</rasd:ElementName><rasd:HostResource>ovf:/disk/atlaso-backups</rasd:HostResource></Item>
+    </VirtualHardwareSection>
+  </VirtualSystem>
+</Envelope>

@@ -224,12 +224,18 @@ foreach ($required in @(
         'Write-AtlasoOvaProvenance',
         'atlaso-provenance.json',
         'atlaso-vmware-ova-provenance',
+        'Assert-AtlasoCanonicalOvf',
         'Assert-AtlasoCanonicalOva',
         'scripts\virtualization\validate_ova.py'
     )) {
     if (-not $ovaExporter.Contains($required)) {
         throw "The canonical OVA exporter is missing provenance or validation marker: $required"
     }
+}
+$ovfValidationIndex = $ovaExporter.IndexOf('Assert-AtlasoCanonicalOvf -RepoRoot $repoRoot -OvfPath $ovfPath')
+$provenanceIndex = $ovaExporter.IndexOf('$provenancePath = Write-AtlasoOvaProvenance')
+if ($ovfValidationIndex -lt 0 -or $provenanceIndex -lt 0 -or $ovfValidationIndex -gt $provenanceIndex) {
+    throw 'The canonical OVF machine contract must validate before OVA provenance is written.'
 }
 foreach ($required in @(
         "'atlaso-hyperv-artifact'",
