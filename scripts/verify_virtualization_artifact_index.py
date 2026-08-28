@@ -65,6 +65,42 @@ def _sha256(path: Path) -> str:
     return digest.hexdigest()
 
 
+def _asset_role(name: str) -> str:
+    """Return the only permitted signed role for one asset name.
+
+    Args:
+        name: Flat virtualization release asset name.
+    """
+
+    lower = name.lower()
+    suffix_roles = (
+        ("-hyperv-x86_64.zip", "hyperv_package"),
+        (".ova", "canonical_ova"),
+        (".ovf", "canonical_ovf"),
+        (".mf", "ovf_manifest"),
+        (".vmdk", "ova_payload_disk"),
+        ("-provenance.json", "ova_provenance"),
+    )
+    for suffix, role in suffix_roles:
+        if lower.endswith(suffix):
+            return role
+    exact_roles = {
+        "import-atlaso-proxmox.sh": "proxmox_import_helper",
+        "import-atlaso-kvm.sh": "kvm_import_helper",
+        "validate_ova.py": "ova_validator",
+        "normalize_libvirt.py": "libvirt_normalizer",
+        "verify_virtualization_artifact_index.py": "artifact_index_verifier",
+        "virtualization-source.json": "software_release_source",
+        "windows-smoke-evidence.json": "windows_smoke_evidence",
+        "proxmox-smoke-evidence.json": "proxmox_smoke_evidence",
+        "kvm-smoke-evidence.json": "kvm_smoke_evidence",
+    }
+    try:
+        return exact_roles[lower]
+    except KeyError as exc:
+        raise SystemExit(f"unsupported virtualization release asset: {name}") from exc
+
+
 def verify(
     *,
     index_path: Path,
@@ -193,7 +229,7 @@ def verify(
         size = asset.stat().st_size
         if (
             not isinstance(record.get("role"), str)
-            or not record["role"]
+            or record["role"] != _asset_role(name)
             or not isinstance(record.get("size"), int)
             or record["size"] != size
             or not isinstance(record.get("sha256"), str)

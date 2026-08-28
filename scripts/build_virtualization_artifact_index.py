@@ -105,7 +105,7 @@ def _asset_role(name: str) -> str:
         return "proxmox_smoke_evidence"
     if lower == "kvm-smoke-evidence.json":
         return "kvm_smoke_evidence"
-    return "release_asset"
+    raise SystemExit(f"unsupported virtualization release asset: {name}")
 
 
 def _require_virtualization_set(

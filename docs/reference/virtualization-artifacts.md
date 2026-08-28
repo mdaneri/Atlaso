@@ -253,13 +253,18 @@ successful software-release SHA, run:
   -PrereleaseIdentifier rc.1 `
   -StagingRoot 'D:\Atlaso-Releases' `
   -ManagementSwitch 'Atlaso Management' `
-  -ServiceSwitch 'Atlaso Services'
+  -ServiceSwitch 'Atlaso Services' `
+  -OnePasswordEnvironmentId '<atlaso-environment-id>' `
+  -OnePasswordAccount '<account-name-or-id>' `
+  -OnePasswordPython '<path-to-python-3.13.exe>'
 ```
 
 The command verifies and extracts the exact published software bundle, builds the canonical VMware template, derives
 Hyper-V from that OVA, runs both Windows smokes, creates the annotated tag before the draft Release, uploads without
 clobbering, and waits for hosted signing and publication. Keep `StagingRoot` until stable verification; cleanup is a
-separate explicit operator action. A conflicting candidate requires a new explicit `rc.N`.
+separate explicit operator action. The three 1Password selectors are required so both the fresh image build and exact
+wheel deployment use the same approved credential source; the values are forwarded to the existing isolated SDK
+bridges and are never uploaded as evidence. A conflicting candidate requires a new explicit `rc.N`.
 
 Stable promotion never rebuilds:
 
@@ -274,6 +279,9 @@ Bring the uniquely labelled Proxmox and KVM `--ephemeral` runners online only fo
 or sanitize them after the job. They receive read-only Actions/contents permissions, no signing secret, and no
 write-capable token. Define the repository variables named by `.github/workflows/virtualization-stable.yml` for storage
 and networks. Signing and Release writes occur only in the protected GitHub-hosted finalizer.
+For the optional ephemeral-Windows workflow, also define `ATLASO_ONEPASSWORD_ENVIRONMENT_ID`,
+`ATLASO_ONEPASSWORD_ACCOUNT`, and `ATLASO_ONEPASSWORD_PYTHON` as repository variables. They are non-secret selectors;
+the disposable runner must still complete its local 1Password authorization and receives no signing key.
 
 The workstation requires PowerShell 7.4 or newer, VMware Workstation, Packer, OVF Tool, Hyper-V, `qemu-img`, and two
 operator-owned virtual switches. The Proxmox and KVM runners require the host tools listed in their import sections.

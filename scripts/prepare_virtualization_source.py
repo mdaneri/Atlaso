@@ -6,9 +6,12 @@ from __future__ import annotations
 import argparse
 import hashlib
 import json
+import os
 import re
+import shutil
 import sys
 import tarfile
+import tempfile
 from pathlib import Path, PurePosixPath
 from urllib.parse import urlparse
 
@@ -88,7 +91,7 @@ def prepare(
         signature_path: Detached manifest signature.
         bundle_path: Immutable appliance bundle named by the manifest.
         trust_key_path: Selected checked-in Ed25519 public key.
-        output: Empty destination for verified release inputs.
+        output: Absent or empty destination for verified release inputs.
         expected_version: Exact synchronized Atlaso version.
         expected_commit: Exact successful-main commit.
     """
@@ -148,92 +151,111 @@ def prepare(
             raise SystemExit(
                 "virtualization source output must be an empty ordinary directory"
             )
-    else:
-        output.mkdir(parents=True)
-    output_root = output.resolve(strict=True)
-    selected_names: set[str] = set()
-    wheel_names: list[str] = []
-    with tarfile.open(bundle_file, mode="r:gz") as archive:
-        archive_files: dict[str, tarfile.TarInfo] = {}
-        for member in archive.getmembers():
-            name = _safe_member_name(member.name)
-            if member.isdir():
-                continue
-            if (
-                not member.isfile()
-                or member.size <= 0
-                or member.size >= MAXIMUM_MEMBER_BYTES
-            ):
-                raise SystemExit(
-                    f"release bundle member is not a bounded regular file: {name}"
-                )
-            if name in archive_files:
-                raise SystemExit(f"release bundle contains a duplicate member: {name}")
-            archive_files[name] = member
-        if set(archive_files) != set(content_hashes):
-            raise SystemExit(
-                "release bundle members do not exactly match the signed content hashes"
-            )
-        for name, member in sorted(archive_files.items()):
-            if not (
-                name.startswith("packages/")
-                or name.startswith("wheelhouse/cp314/")
-                or name in {"requirements-appliance.lock", "bundle-metadata.json"}
-            ):
-                continue
-            extracted = archive.extractfile(member)
-            if extracted is None:
-                raise SystemExit(f"release bundle member is unreadable: {name}")
-            destination = output_root.joinpath(*PurePosixPath(name).parts)
-            destination.parent.mkdir(parents=True, exist_ok=True)
-            digest = hashlib.sha256()
-            with destination.open("xb") as target:
-                remaining = member.size
-                while remaining:
-                    block = extracted.read(min(1024 * 1024, remaining))
-                    if not block:
-                        raise SystemExit(f"release bundle member ended early: {name}")
-                    target.write(block)
-                    digest.update(block)
-                    remaining -= len(block)
-                if extracted.read(1):
-                    raise SystemExit(
-                        f"release bundle member exceeds its declared size: {name}"
-                    )
-            if digest.hexdigest() != content_hashes[name]:
-                raise SystemExit(f"release bundle member digest mismatch: {name}")
-            selected_names.add(name)
-            if name.startswith("packages/") and name.endswith(".whl"):
-                wheel_names.append(name)
-    if len(wheel_names) != 1 or not wheel_names[0].startswith(
-        f"packages/atlaso-{expected_version}-"
-    ):
-        raise SystemExit(
-            "release bundle must contain exactly one versioned Atlaso application wheel"
-        )
-    required_prefixes = {"wheelhouse/cp314/requirements-wheelhouse.lock"}
-    if not required_prefixes.issubset(selected_names):
-        raise SystemExit("release bundle is missing the CPython 3.14 wheelhouse lock")
-    wheel_path = output_root.joinpath(*PurePosixPath(wheel_names[0]).parts)
-    source = {
-        "schema_version": 1,
-        "kind": "atlaso-virtualization-source",
-        "version": expected_version,
-        "source_commit": expected_commit,
-        "source_software_tag": f"v{expected_version}",
-        "release_manifest_sha256": hashlib.sha256(raw_manifest).hexdigest(),
-        "release_bundle_sha256": bundle["sha256"],
-        "application_wheel": wheel_names[0],
-        "application_wheel_sha256": _sha256(wheel_path),
-        "python_abi": "cp314",
-    }
-    source_path = output_root / "virtualization-source.json"
-    source_path.write_text(
-        json.dumps(source, sort_keys=True, separators=(",", ":"), ensure_ascii=True)
-        + "\n",
-        encoding="utf-8",
-        newline="\n",
+        output.rmdir()
+    output.parent.mkdir(parents=True, exist_ok=True)
+    output_parent = output.parent.resolve(strict=True)
+    staging_root = Path(
+        tempfile.mkdtemp(prefix=f".{output.name}.partial-", dir=output_parent)
     )
+    try:
+        selected_names: set[str] = set()
+        wheel_names: list[str] = []
+        with tarfile.open(bundle_file, mode="r:gz") as archive:
+            archive_files: dict[str, tarfile.TarInfo] = {}
+            for member in archive.getmembers():
+                name = _safe_member_name(member.name)
+                if member.isdir():
+                    continue
+                if (
+                    not member.isfile()
+                    or member.size <= 0
+                    or member.size >= MAXIMUM_MEMBER_BYTES
+                ):
+                    raise SystemExit(
+                        f"release bundle member is not a bounded regular file: {name}"
+                    )
+                if name in archive_files:
+                    raise SystemExit(
+                        f"release bundle contains a duplicate member: {name}"
+                    )
+                archive_files[name] = member
+            if set(archive_files) != set(content_hashes):
+                raise SystemExit(
+                    "release bundle members do not exactly match the signed content hashes"
+                )
+            for name, member in sorted(archive_files.items()):
+                if not (
+                    name.startswith("packages/")
+                    or name.startswith("wheelhouse/cp314/")
+                    or name in {"requirements-appliance.lock", "bundle-metadata.json"}
+                ):
+                    continue
+                extracted = archive.extractfile(member)
+                if extracted is None:
+                    raise SystemExit(f"release bundle member is unreadable: {name}")
+                destination = staging_root.joinpath(*PurePosixPath(name).parts)
+                destination.parent.mkdir(parents=True, exist_ok=True)
+                digest = hashlib.sha256()
+                with destination.open("xb") as target:
+                    remaining = member.size
+                    while remaining:
+                        block = extracted.read(min(1024 * 1024, remaining))
+                        if not block:
+                            raise SystemExit(
+                                f"release bundle member ended early: {name}"
+                            )
+                        target.write(block)
+                        digest.update(block)
+                        remaining -= len(block)
+                    if extracted.read(1):
+                        raise SystemExit(
+                            f"release bundle member exceeds its declared size: {name}"
+                        )
+                if digest.hexdigest() != content_hashes[name]:
+                    raise SystemExit(f"release bundle member digest mismatch: {name}")
+                selected_names.add(name)
+                if name.startswith("packages/") and name.endswith(".whl"):
+                    wheel_names.append(name)
+        if len(wheel_names) != 1 or not wheel_names[0].startswith(
+            f"packages/atlaso-{expected_version}-"
+        ):
+            raise SystemExit(
+                "release bundle must contain exactly one versioned Atlaso application wheel"
+            )
+        required_prefixes = {"wheelhouse/cp314/requirements-wheelhouse.lock"}
+        if not required_prefixes.issubset(selected_names):
+            raise SystemExit("release bundle is missing the CPython 3.14 wheelhouse lock")
+        wheel_path = staging_root.joinpath(*PurePosixPath(wheel_names[0]).parts)
+        source = {
+            "schema_version": 1,
+            "kind": "atlaso-virtualization-source",
+            "version": expected_version,
+            "source_commit": expected_commit,
+            "source_software_tag": f"v{expected_version}",
+            "release_manifest_sha256": hashlib.sha256(raw_manifest).hexdigest(),
+            "release_bundle_sha256": bundle["sha256"],
+            "application_wheel": wheel_names[0],
+            "application_wheel_sha256": _sha256(wheel_path),
+            "python_abi": "cp314",
+        }
+        source_path = staging_root / "virtualization-source.json"
+        source_path.write_text(
+            json.dumps(
+                source, sort_keys=True, separators=(",", ":"), ensure_ascii=True
+            )
+            + "\n",
+            encoding="utf-8",
+            newline="\n",
+        )
+        # The final directory appears only after every byte and digest has passed.
+        # An interrupted extraction therefore leaves the resumable target absent.
+        os.replace(staging_root, output)
+    finally:
+        if staging_root.exists():
+            shutil.rmtree(staging_root)
+    output_root = output.resolve(strict=True)
+    source_path = output_root / "virtualization-source.json"
+    wheel_path = output_root.joinpath(*PurePosixPath(wheel_names[0]).parts)
     return {
         "source_metadata": str(source_path),
         "application_wheel": str(wheel_path),

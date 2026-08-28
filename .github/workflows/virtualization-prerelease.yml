@@ -36,6 +36,7 @@ jobs:
       id-token: write
     steps:
       - name: Validate dispatch identity
+        id: identity
         env:
           GH_TOKEN: ${{ github.token }}
           RELEASE_SHA: ${{ inputs.release_sha }}
@@ -59,12 +60,16 @@ jobs:
           test "$COUNT" -ge 1
           RELEASE="$(gh release view "$RELEASE_TAG" --json isDraft,isPrerelease,tagName)"
           test "$(jq -r .tagName <<<"$RELEASE")" = "$RELEASE_TAG"
-          test "$(jq -r .isDraft <<<"$RELEASE")" = true
           test "$(jq -r .isPrerelease <<<"$RELEASE")" = true
-      - name: Check out the exact source commit
+          if test "$(jq -r .isDraft <<<"$RELEASE")" = true; then
+            echo 'already_published=false' >> "$GITHUB_OUTPUT"
+          else
+            echo 'already_published=true' >> "$GITHUB_OUTPUT"
+          fi
+      - name: Check out trusted release tooling
         uses: actions/checkout@v7
         with:
-          ref: ${{ inputs.release_sha }}
+          ref: refs/heads/main
           fetch-depth: 0
           persist-credentials: false
       - name: Set up Python
@@ -76,8 +81,9 @@ jobs:
         env:
           PIP_CONFIG_FILE: /dev/null
         run: python -m pip install --require-hashes --requirement requirements-release-tools.lock
-      - name: Download and validate draft assets
+      - name: Download and validate release assets
         env:
+          ALREADY_PUBLISHED: ${{ steps.identity.outputs.already_published }}
           GH_TOKEN: ${{ github.token }}
           RELEASE_SHA: ${{ inputs.release_sha }}
           RELEASE_TAG: ${{ inputs.prerelease_tag }}
@@ -85,9 +91,15 @@ jobs:
           set -euo pipefail
           mkdir candidate
           gh release download "$RELEASE_TAG" --dir candidate
-          test ! -e candidate/virtualization-artifact-index.json
-          test ! -e candidate/virtualization-artifact-index.json.sig
-          VERSION="$(python scripts/version.py get)"
+          INDEX_COUNT=0
+          test ! -e candidate/virtualization-artifact-index.json || INDEX_COUNT=$((INDEX_COUNT + 1))
+          test ! -e candidate/virtualization-artifact-index.json.sig || INDEX_COUNT=$((INDEX_COUNT + 1))
+          test "$INDEX_COUNT" -eq 0 -o "$INDEX_COUNT" -eq 2
+          if test "$ALREADY_PUBLISHED" = true; then
+            test "$INDEX_COUNT" -eq 2
+          fi
+          VERSION="${RELEASE_TAG#virtualization-v}"
+          VERSION="${VERSION%-rc.*}"
           test "$RELEASE_TAG" = "virtualization-v${VERSION}-""$(printf '%s' "$RELEASE_TAG" | sed "s/^virtualization-v${VERSION}-//")"
           mkdir software-release verified-source
           gh release download "v$VERSION" --dir software-release \
@@ -114,6 +126,7 @@ jobs:
               f'SOURCE_MANIFEST_SHA256={manifest}\nAPPLICATION_WHEEL_SHA256={wheel}\n', encoding='utf-8')
           PY
       - name: Materialize the protected signing key
+        if: steps.identity.outputs.already_published != 'true'
         env:
           RELEASE_SIGNING_PRIVATE_KEY: ${{ secrets.RELEASE_SIGNING_PRIVATE_KEY }}
         run: |
@@ -121,13 +134,15 @@ jobs:
           umask 077
           printf '%s\n' "$RELEASE_SIGNING_PRIVATE_KEY" > "$RUNNER_TEMP/release-signing-key.pem"
       - name: Sign the prerelease virtualization index
+        if: steps.identity.outputs.already_published != 'true'
         env:
           RELEASE_SHA: ${{ inputs.release_sha }}
           RELEASE_TAG: ${{ inputs.prerelease_tag }}
         run: |
           set -euo pipefail
           . ./source.env
-          VERSION="$(python scripts/version.py get)"
+          VERSION="${RELEASE_TAG#virtualization-v}"
+          VERSION="${VERSION%-rc.*}"
           BUILT_AT="$(git show -s --format=%cI "$RELEASE_SHA")"
           python scripts/build_virtualization_artifact_index.py \
             --assets candidate \
@@ -141,6 +156,7 @@ jobs:
             --signing-key "$RUNNER_TEMP/release-signing-key.pem" \
             --signing-key-id atlaso-release-2026-01
       - name: Upload signed index without replacing bytes
+        if: steps.identity.outputs.already_published != 'true'
         env:
           GH_TOKEN: ${{ github.token }}
           RELEASE_TAG: ${{ inputs.prerelease_tag }}
@@ -155,6 +171,7 @@ jobs:
             fi
           done
       - name: Attest exact virtualization candidates
+        if: steps.identity.outputs.already_published != 'true'
         uses: actions/attest-build-provenance@v4
         with:
           subject-path: |
@@ -166,12 +183,16 @@ jobs:
           GH_TOKEN: ${{ github.token }}
           RELEASE_SHA: ${{ inputs.release_sha }}
           RELEASE_TAG: ${{ inputs.prerelease_tag }}
+          ALREADY_PUBLISHED: ${{ steps.identity.outputs.already_published }}
         run: |
           set -euo pipefail
-          gh release edit "$RELEASE_TAG" --draft=false --prerelease --verify-tag
+          if test "$ALREADY_PUBLISHED" != true; then
+            gh release edit "$RELEASE_TAG" --draft=false --prerelease --verify-tag
+          fi
           mkdir published
           gh release download "$RELEASE_TAG" --dir published
-          VERSION="$(python scripts/version.py get)"
+          VERSION="${RELEASE_TAG#virtualization-v}"
+          VERSION="${VERSION%-rc.*}"
           python scripts/verify_virtualization_artifact_index.py \
             --index published/virtualization-artifact-index.json \
             --signature published/virtualization-artifact-index.json.sig \

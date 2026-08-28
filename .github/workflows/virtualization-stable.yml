@@ -52,10 +52,11 @@ jobs:
           echo "release_sha=$RELEASE_SHA" >> "$GITHUB_OUTPUT"
           echo "stable_tag=virtualization-v$VERSION" >> "$GITHUB_OUTPUT"
           echo "version=$VERSION" >> "$GITHUB_OUTPUT"
-      - name: Check out exact source
+      - name: Check out trusted release tooling
         uses: actions/checkout@v7
         with:
-          ref: ${{ steps.identity.outputs.release_sha }}
+          ref: refs/heads/main
+          fetch-depth: 0
           persist-credentials: false
       - name: Set up Python
         uses: actions/setup-python@v7
@@ -118,7 +119,7 @@ jobs:
     steps:
       - uses: actions/checkout@v7
         with:
-          ref: ${{ needs.admit.outputs.release_sha }}
+          ref: refs/heads/main
           persist-credentials: false
       - uses: actions/download-artifact@v8
         with:
@@ -156,7 +157,7 @@ jobs:
     steps:
       - uses: actions/checkout@v7
         with:
-          ref: ${{ needs.admit.outputs.release_sha }}
+          ref: refs/heads/main
           persist-credentials: false
       - uses: actions/download-artifact@v8
         with:
@@ -196,7 +197,7 @@ jobs:
     steps:
       - uses: actions/checkout@v7
         with:
-          ref: ${{ needs.admit.outputs.release_sha }}
+          ref: refs/heads/main
           fetch-depth: 0
       - uses: actions/setup-python@v7
         with:

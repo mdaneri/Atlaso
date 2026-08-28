@@ -46,14 +46,14 @@ jobs:
       actions: read
       contents: read
     outputs:
+      release_sha: ${{ steps.target.outputs.release_sha }}
       prerelease_tag: ${{ steps.target.outputs.prerelease_tag }}
       version: ${{ steps.target.outputs.version }}
     steps:
       - uses: actions/checkout@v7
         with:
-          ref: ${{ inputs.release_sha }}
+          ref: refs/heads/main
           fetch-depth: 0
-          persist-credentials: false
       - name: Validate exact main CI and software Release
         id: target
         env:
@@ -70,6 +70,7 @@ jobs:
               raise SystemExit("prerelease_identifier must be rc.N")
           PY
           git fetch origin main --no-tags
+          test "$(git rev-parse HEAD)" = "$(git rev-parse origin/main)"
           git merge-base --is-ancestor "$RELEASE_SHA" origin/main
           test "$(git rev-parse HEAD)" = "$RELEASE_SHA"
           COUNT="$(gh api --method GET "repos/${{ github.repository }}/actions/workflows/ci.yml/runs" \
@@ -80,6 +81,7 @@ jobs:
           test "$(gh api "repos/${{ github.repository }}/commits/v$VERSION" --jq .sha)" = "$RELEASE_SHA"
           gh release view "v$VERSION" --json isDraft,isPrerelease \
             --jq 'select(.isDraft == false and .isPrerelease == false)' >/dev/null
+          echo "release_sha=$RELEASE_SHA" >> "$GITHUB_OUTPUT"
           echo "version=$VERSION" >> "$GITHUB_OUTPUT"
           echo "prerelease_tag=virtualization-v${VERSION}-${RC}" >> "$GITHUB_OUTPUT"
 
@@ -93,7 +95,7 @@ jobs:
     steps:
       - uses: actions/checkout@v7
         with:
-          ref: ${{ inputs.release_sha }}
+          ref: refs/heads/main
           fetch-depth: 0
           persist-credentials: false
       - uses: actions/setup-python@v7
@@ -107,19 +109,32 @@ jobs:
         shell: pwsh
         env:
           GH_TOKEN: ${{ github.token }}
+          RELEASE_SHA: ${{ needs.admit.outputs.release_sha }}
           PRERELEASE_IDENTIFIER: ${{ inputs.prerelease_identifier }}
           MANAGEMENT_VMNET: ${{ inputs.management_vmnet }}
           SERVICE_VMNET: ${{ inputs.service_vmnet }}
           MANAGEMENT_SWITCH: ${{ inputs.management_switch }}
           SERVICE_SWITCH: ${{ inputs.service_switch }}
+          ONEPASSWORD_ENVIRONMENT_ID: ${{ vars.ATLASO_ONEPASSWORD_ENVIRONMENT_ID }}
+          ONEPASSWORD_ACCOUNT: ${{ vars.ATLASO_ONEPASSWORD_ACCOUNT }}
+          ONEPASSWORD_PYTHON: ${{ vars.ATLASO_ONEPASSWORD_PYTHON }}
         run: |
+          if ((git rev-parse HEAD).Trim() -cne $env:RELEASE_SHA) {
+            throw 'The trusted Windows checkout no longer matches the admitted main head.'
+          }
+          if (-not $env:ONEPASSWORD_ENVIRONMENT_ID -or -not $env:ONEPASSWORD_ACCOUNT -or -not $env:ONEPASSWORD_PYTHON) {
+            throw 'The approved 1Password selector variables are required for Windows production.'
+          }
           ./scripts/windows/vmware/export-ovf.ps1 -Prerelease -CandidateOnly `
             -PrereleaseIdentifier $env:PRERELEASE_IDENTIFIER `
             -StagingRoot (Join-Path $env:RUNNER_TEMP 'atlaso-virtualization') `
             -ManagementVmnet $env:MANAGEMENT_VMNET `
             -ServiceVmnet $env:SERVICE_VMNET `
             -ManagementSwitch $env:MANAGEMENT_SWITCH `
-            -ServiceSwitch $env:SERVICE_SWITCH
+            -ServiceSwitch $env:SERVICE_SWITCH `
+            -OnePasswordEnvironmentId $env:ONEPASSWORD_ENVIRONMENT_ID `
+            -OnePasswordAccount $env:ONEPASSWORD_ACCOUNT `
+            -OnePasswordPython $env:ONEPASSWORD_PYTHON
       - uses: actions/upload-artifact@v7
         with:
           name: windows-virtualization-${{ inputs.release_sha }}-${{ inputs.prerelease_identifier }}
@@ -137,8 +152,9 @@ jobs:
     steps:
       - uses: actions/checkout@v7
         with:
-          ref: ${{ inputs.release_sha }}
+          ref: refs/heads/main
           fetch-depth: 0
+          persist-credentials: false
       - uses: actions/download-artifact@v8
         with:
           name: windows-virtualization-${{ inputs.release_sha }}-${{ inputs.prerelease_identifier }}
@@ -146,7 +162,7 @@ jobs:
       - name: Create or resume exact annotated tag and draft assets
         env:
           GH_TOKEN: ${{ github.token }}
-          RELEASE_SHA: ${{ inputs.release_sha }}
+          RELEASE_SHA: ${{ needs.admit.outputs.release_sha }}
           RELEASE_TAG: ${{ needs.admit.outputs.prerelease_tag }}
           VERSION: ${{ needs.admit.outputs.version }}
         run: |
@@ -166,16 +182,35 @@ jobs:
               --title "Atlaso Virtualization v$VERSION ${{ inputs.prerelease_identifier }}" \
               --notes 'Ephemeral-Windows candidate awaiting protected hosted finalization.'
           fi
-          test "$(gh release view "$RELEASE_TAG" --json isDraft --jq .isDraft)" = true
+          STATE="$(gh release view "$RELEASE_TAG" --json assets,isDraft,isPrerelease)"
+          test "$(jq -r .isPrerelease <<<"$STATE")" = true
+          ALREADY_PUBLISHED=false
+          if test "$(jq -r .isDraft <<<"$STATE")" = false; then
+            ALREADY_PUBLISHED=true
+          fi
           mkdir "$RUNNER_TEMP/existing"
+          if test "$(jq '.assets | length' <<<"$STATE")" -gt 0; then
+            gh release download "$RELEASE_TAG" --dir "$RUNNER_TEMP/existing"
+          fi
+          {
+            find candidate -maxdepth 1 -type f -printf '%f\n'
+            printf '%s\n' virtualization-artifact-index.json virtualization-artifact-index.json.sig
+          } | sort -u > "$RUNNER_TEMP/allowed-assets"
+          find "$RUNNER_TEMP/existing" -maxdepth 1 -type f -printf '%f\n' | sort > "$RUNNER_TEMP/existing-assets"
+          test -z "$(comm -23 "$RUNNER_TEMP/existing-assets" "$RUNNER_TEMP/allowed-assets")"
           for asset in candidate/*; do
             name="$(basename "$asset")"
-            if gh release download "$RELEASE_TAG" --pattern "$name" --dir "$RUNNER_TEMP/existing" 2>/dev/null; then
+            if test -f "$RUNNER_TEMP/existing/$name"; then
               cmp --silent "$asset" "$RUNNER_TEMP/existing/$name"
             else
+              test "$ALREADY_PUBLISHED" = false
               gh release upload "$RELEASE_TAG" "$asset"
             fi
           done
+          if test "$ALREADY_PUBLISHED" = true; then
+            test -f "$RUNNER_TEMP/existing/virtualization-artifact-index.json"
+            test -f "$RUNNER_TEMP/existing/virtualization-artifact-index.json.sig"
+          fi
 
   finalize:
     name: Protected hosted finalization
@@ -187,6 +222,6 @@ jobs:
       id-token: write
     uses: ./.github/workflows/virtualization-prerelease.yml
     with:
-      release_sha: ${{ inputs.release_sha }}
+      release_sha: ${{ needs.admit.outputs.release_sha }}
       prerelease_tag: ${{ needs.admit.outputs.prerelease_tag }}
     secrets: inherit

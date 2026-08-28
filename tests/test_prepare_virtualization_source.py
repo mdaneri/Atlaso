@@ -192,3 +192,44 @@ def test_rejects_signed_unsafe_archive_member(tmp_path: Path) -> None:
             expected_version=VERSION,
             expected_commit=COMMIT,
         )
+    assert not (tmp_path / "verified").exists()
+
+
+def test_atomic_publication_failure_leaves_resumable_destination_absent(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """An interrupted final rename cannot expose a partial verified source.
+
+    Args:
+        tmp_path: Temporary directory provided by pytest.
+        monkeypatch: Pytest helper for injecting the interrupted rename.
+    """
+
+    manifest, signature, bundle, trust = _release_fixture(tmp_path)
+    output = tmp_path / "verified"
+
+    def interrupted_replace(source: Path, destination: Path) -> None:
+        """Simulate interruption at the final atomic publication boundary.
+
+        Args:
+            source: Complete temporary extraction directory.
+            destination: Final verified-source directory.
+        """
+
+        assert source.is_dir()
+        assert destination == output
+        raise OSError("interrupted atomic publication")
+
+    monkeypatch.setattr(source_preparer.os, "replace", interrupted_replace)
+    with pytest.raises(OSError, match="interrupted atomic publication"):
+        source_preparer.prepare(
+            manifest_path=manifest,
+            signature_path=signature,
+            bundle_path=bundle,
+            trust_key_path=trust,
+            output=output,
+            expected_version=VERSION,
+            expected_commit=COMMIT,
+        )
+    assert not output.exists()
+    assert not list(tmp_path.glob(".verified.partial-*"))

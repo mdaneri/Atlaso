@@ -333,6 +333,9 @@ function Invoke-AtlasoVirtualizationPrerelease {
     if ($PrereleaseIdentifier -notmatch '^rc\.[1-9]\d*$') {
         throw 'PrereleaseIdentifier must be an explicit rc.N value with N greater than zero.'
     }
+    if (-not $OnePasswordEnvironmentId -or -not $OnePasswordAccount -or -not $OnePasswordPython) {
+        throw 'Virtualization production requires OnePasswordEnvironmentId, OnePasswordAccount, and OnePasswordPython.'
+    }
     $repository = Get-AtlasoReleaseRepository -RepoRoot $RepoRoot
     $identity = Get-AtlasoVirtualizationSourceIdentity -RepoRoot $RepoRoot -Repository $repository
     $tag = "virtualization-v$($identity.Version)-$PrereleaseIdentifier"
@@ -357,6 +360,9 @@ function Invoke-AtlasoVirtualizationPrerelease {
     }
     $sourceMetadata = Join-Path $sourceInput 'virtualization-source.json'
     if (-not (Test-Path -LiteralPath $sourceMetadata -PathType Leaf)) {
+        # The preparer publishes this directory with one atomic rename only after
+        # complete signature, archive, and digest validation. An interrupted run
+        # therefore leaves this exact destination absent and safely resumable.
         $prepareArguments = @(
             (Join-Path $RepoRoot 'scripts\prepare_virtualization_source.py'),
             '--manifest', (Join-Path $sourceDownloads 'release-manifest.json'),
@@ -379,7 +385,10 @@ function Invoke-AtlasoVirtualizationPrerelease {
     if (-not (Test-Path -LiteralPath $vmx -PathType Leaf)) {
         $buildArguments = @(
             '-VmName', $vmName, '-OutputDirectory', $buildRoot,
-            '-Headless', '-EnableRealSystemAdapters'
+            '-Headless', '-EnableRealSystemAdapters',
+            '-OnePasswordEnvironmentId', $OnePasswordEnvironmentId,
+            '-OnePasswordAccount', $OnePasswordAccount,
+            '-OnePasswordPython', $OnePasswordPython
         )
         & (Join-Path $RepoRoot 'scripts\windows\vmware\build-photon-image.ps1') @buildArguments
         if ($LASTEXITCODE -ne 0) {
@@ -415,10 +424,13 @@ function Invoke-AtlasoVirtualizationPrerelease {
     Copy-AtlasoVirtualizationExactAsset `
         -Source $ovaPath `
         -Destination (Join-Path $ovaRoot "$name.ova")
-    $hypervRoot = Join-Path $operation 'hyperv'
-    & (Join-Path $RepoRoot 'scripts\windows\virtualization\export-artifacts.ps1') -OvaPath $ovaPath -OutputRoot $hypervRoot
-    if ($LASTEXITCODE -ne 0) {
-        throw 'Exact OVA-to-Hyper-V conversion failed.'
+    $hypervRoot = Join-Path $RepoRoot "artifacts\virtualization\$tag"
+    $expectedHypervZip = Join-Path $hypervRoot "atlaso-v$($identity.Version)-hyperv-x86_64.zip"
+    if (-not (Test-Path -LiteralPath $expectedHypervZip -PathType Leaf)) {
+        & (Join-Path $RepoRoot 'scripts\windows\virtualization\export-artifacts.ps1') -OvaPath $ovaPath -OutputRoot $hypervRoot
+        if ($LASTEXITCODE -ne 0) {
+            throw 'Exact OVA-to-Hyper-V conversion failed.'
+        }
     }
     $hypervZip = @(Get-ChildItem -LiteralPath $hypervRoot -Filter '*-hyperv-x86_64.zip' -File)
     if ($hypervZip.Count -ne 1) {
@@ -434,11 +446,12 @@ function Invoke-AtlasoVirtualizationPrerelease {
         }
         $smokePassword.MakeReadOnly()
         $smokeCredential = [PSCredential]::new('admin', $smokePassword)
-        & (Join-Path $RepoRoot 'scripts\windows\virtualization\smoke-ova-vmware.ps1') -OvaPath $ovaPath -Credential $smokeCredential -ManagementVmnet $ManagementVmnet -ServiceVmnet $ServiceVmnet -OutputRoot (Join-Path $operation 'vmware-smoke')
+        $smokeRoot = Join-Path $RepoRoot "artifacts\virtualization-smoke\$tag"
+        & (Join-Path $RepoRoot 'scripts\windows\virtualization\smoke-ova-vmware.ps1') -OvaPath $ovaPath -Credential $smokeCredential -ManagementVmnet $ManagementVmnet -ServiceVmnet $ServiceVmnet -OutputRoot (Join-Path $smokeRoot 'vmware')
         if ($LASTEXITCODE -ne 0) {
             throw 'VMware smoke failed.'
         }
-        & (Join-Path $RepoRoot 'scripts\windows\virtualization\smoke-hyperv.ps1') -ZipPath $hypervZip[0].FullName -ManagementSwitch $ManagementSwitch -ServiceSwitch $ServiceSwitch -OutputRoot (Join-Path $operation 'hyperv-smoke')
+        & (Join-Path $RepoRoot 'scripts\windows\virtualization\smoke-hyperv.ps1') -ZipPath $hypervZip[0].FullName -ManagementSwitch $ManagementSwitch -ServiceSwitch $ServiceSwitch -OutputRoot (Join-Path $smokeRoot 'hyperv')
         if ($LASTEXITCODE -ne 0) {
             throw 'Hyper-V smoke failed.'
         }

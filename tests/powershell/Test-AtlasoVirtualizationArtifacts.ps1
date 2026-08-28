@@ -204,6 +204,9 @@ foreach ($required in @(
         "'--verify-tag'",
         "'release', 'upload', `$Tag",
         'already contains different bytes',
+        "'-OnePasswordEnvironmentId', `$OnePasswordEnvironmentId",
+        'artifacts\virtualization\$tag',
+        'artifacts\virtualization-smoke\$tag',
         "'workflow', 'run', 'virtualization-prerelease.yml'",
         "'workflow', 'run', 'virtualization-stable.yml'"
     )) {
@@ -219,6 +222,8 @@ foreach ($forbidden in @('--clobber', 'RELEASE_SIGNING_PRIVATE_KEY')) {
 foreach ($required in @(
         'environment: appliance-release',
         '--classification prerelease',
+        'already_published=true',
+        "steps.identity.outputs.already_published != 'true'",
         'gh release edit "$RELEASE_TAG" --draft=false --prerelease --verify-tag'
     )) {
     if (-not $prereleaseWorkflow.Contains($required)) {
@@ -236,6 +241,10 @@ foreach ($required in @(
     if (-not $stableWorkflow.Contains($required)) {
         throw "Stable virtualization promotion is missing required marker: $required"
     }
+}
+if ($stableWorkflow.Contains('ref: ${{ steps.identity.outputs.release_sha }}') -or
+    $stableWorkflow.Contains('ref: ${{ needs.admit.outputs.release_sha }}')) {
+    throw 'Stable promotion executes release-selected source on a hosted or self-hosted runner.'
 }
 if ($prereleaseWorkflow.Contains('gh-pages') -or $stableWorkflow.Contains('gh-pages')) {
     throw 'A virtualization workflow may not mutate the appliance update site.'

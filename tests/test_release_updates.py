@@ -1282,6 +1282,10 @@ def test_release_workflows_use_successful_main_sha_and_promote_without_rebuildin
     assert "environment: appliance-release" in prerelease
     assert "--classification prerelease" in prerelease
     assert "gh release edit \"$RELEASE_TAG\" --draft=false --prerelease --verify-tag" in prerelease
+    assert "already_published=true" in prerelease
+    assert "steps.identity.outputs.already_published != 'true'" in prerelease
+    assert "ref: ${{ inputs.release_sha }}" not in prerelease
+    assert "ref: refs/heads/main" in prerelease
     assert "gh-pages" not in prerelease
     windows_job = windows_candidate.split("  produce:\n", 1)[1].split(
         "  stage_draft:\n", 1
@@ -1291,7 +1295,16 @@ def test_release_workflows_use_successful_main_sha_and_promote_without_rebuildin
     assert "contents: write" not in windows_job
     assert "RELEASE_SIGNING_PRIVATE_KEY" not in windows_job
     assert "-CandidateOnly" in windows_job
+    assert "ref: ${{ inputs.release_sha }}" not in windows_candidate
+    assert windows_candidate.count("ref: refs/heads/main") == 3
+    assert "comm -23" in windows_candidate
+    assert "ATLASO_ONEPASSWORD_ENVIRONMENT_ID" in windows_job
+    assert "ATLASO_ONEPASSWORD_ACCOUNT" in windows_job
+    assert "ATLASO_ONEPASSWORD_PYTHON" in windows_job
     assert "uses: ./.github/workflows/virtualization-prerelease.yml" in windows_candidate
+    assert "ref: ${{ steps.identity.outputs.release_sha }}" not in virtualization
+    assert "ref: ${{ needs.admit.outputs.release_sha }}" not in virtualization
+    assert virtualization.count("ref: refs/heads/main") == 4
     assert "python-version: '3.14'" in publication
     assert "python-version: '3.14'" in promotion
     assert ci.count("python-version: '3.14'") == 3

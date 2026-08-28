@@ -193,6 +193,83 @@ def test_builds_verifiable_index_covering_complete_release_set(tmp_path: Path) -
         )
 
 
+def test_rejects_unknown_assets_and_signed_role_mismatches(tmp_path: Path) -> None:
+    """Only the canonical named asset set and its exact roles may be signed.
+
+    Args:
+        tmp_path: Temporary directory provided by pytest.
+    """
+
+    assets = tmp_path / "assets"
+    _assets(assets)
+    key = _key(tmp_path / "key.pem")
+    arguments = [
+        "--assets",
+        str(assets),
+        "--version",
+        "0.9.217",
+        "--commit",
+        "a" * 40,
+        "--classification",
+        "prerelease",
+        "--release-tag",
+        "virtualization-v0.9.217-rc.1",
+        "--source-release-manifest-sha256",
+        "b" * 64,
+        "--application-wheel-sha256",
+        "c" * 64,
+        "--built-at",
+        "2026-08-26T00:00:00Z",
+        "--signing-key",
+        str(tmp_path / "key.pem"),
+        "--signing-key-id",
+        "test-key",
+    ]
+    unexpected = assets / "manually-uploaded.txt"
+    unexpected.write_text("unexpected", encoding="utf-8")
+    with pytest.raises(SystemExit, match="unsupported virtualization release asset"):
+        builder.main(arguments)
+    unexpected.unlink()
+    assert builder.main(arguments) == 0
+
+    index_path = assets / builder.INDEX_NAME
+    index = json.loads(index_path.read_text(encoding="utf-8"))
+    ova_record = next(
+        record for record in index["assets"] if record["role"] == "canonical_ova"
+    )
+    ova_record["role"] = "hyperv_package"
+    index_bytes = (
+        json.dumps(index, sort_keys=True, separators=(",", ":"), ensure_ascii=True)
+        + "\n"
+    ).encode()
+    index_path.write_bytes(index_bytes)
+    signature = {
+        "schema_version": 1,
+        "algorithm": "ed25519",
+        "key_id": "test-key",
+        "signature": base64.b64encode(key.sign(index_bytes)).decode("ascii"),
+    }
+    signature_bytes = (
+        json.dumps(signature, sort_keys=True, separators=(",", ":"), ensure_ascii=True)
+        + "\n"
+    ).encode()
+    (assets / builder.SIGNATURE_NAME).write_bytes(signature_bytes)
+    trust_key = tmp_path / "test-key.pem"
+    trust_key.write_bytes(
+        key.public_key().public_bytes(
+            encoding=serialization.Encoding.PEM,
+            format=serialization.PublicFormat.SubjectPublicKeyInfo,
+        )
+    )
+    with pytest.raises(SystemExit, match="size, hash, or role"):
+        verifier.verify(
+            index_path=index_path,
+            signature_path=assets / builder.SIGNATURE_NAME,
+            trust_key_path=trust_key,
+            asset_directory=assets,
+        )
+
+
 def test_stable_index_requires_both_linux_platform_proofs(tmp_path: Path) -> None:
     """Stable classification fails closed until Proxmox and KVM evidence exists.
 
