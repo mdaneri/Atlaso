@@ -72,6 +72,22 @@ validate_cleanup_boundaries() {
     [ "$current_cache" = "$validated_cache" ] ||
     fail "Guest-agent cleanup paths changed after validation."
 
+  if [ -n "$TEST_ROOT" ]; then
+    current_test_root=$(canonical_managed_path "$TEST_ROOT" "Guest-agent isolated test root")
+    [ "$current_test_root" = "$validated_test_root" ] ||
+      fail "Guest-agent isolated test root changed after validation."
+    [ -d "$TEST_ROOT" ] && [ ! -L "$TEST_ROOT" ] ||
+      fail "Guest-agent isolated test root must be an ordinary directory."
+    [ "$(stat -c '%U:%G:%a' "$TEST_ROOT")" = "$expected_owner:$expected_group:700" ] ||
+      fail "Guest-agent isolated test root ownership or mode is unsafe."
+    # A mount between the isolated root and a cleanup target redirects the
+    # target despite its lexical descendant path. Reject every mounted entry
+    # in the explicit test boundary before inspecting individual targets.
+    if find "$TEST_ROOT" -xdev -exec mountpoint -q -- {} \; -print -quit | grep -q .; then
+      fail "Guest-agent isolated test root cannot contain a mount point."
+    fi
+  fi
+
   for cleanup_directory in "$STAGING_DIRECTORY" "$RUNTIME_DIRECTORY" "$PACKAGE_CACHE_DIRECTORY"; do
     if [ -e "$cleanup_directory" ] || [ -L "$cleanup_directory" ]; then
       [ -d "$cleanup_directory" ] && [ ! -L "$cleanup_directory" ] ||

@@ -178,8 +178,8 @@ closure available for automatic retry while the Atlaso front door and applicatio
 Production cleanup is fixed to the Atlaso staging, runtime, marker, and TDNF cache paths. The selector rejects path
 overrides unless an isolated test invocation also supplies one ordinary mode-`0700` test root owned by the expected
 test identity; every overridden cleanup target must be a strict, non-overlapping descendant with canonical,
-non-symlink ancestry, no mounted target or descendant, and no multiply linked regular file. The selector revalidates
-those boundaries, ownership, and
+non-symlink ancestry, no mount anywhere in the explicit test root, and no multiply linked regular file. The selector
+revalidates those boundaries, ownership, and
 permissions immediately before every cleanup attempt, including a retry after the durable success marker exists.
 The selector's success marker is the only first-boot transaction commit. It is stored under the root-only
 `/var/lib/atlaso-privileged/guest-agent` boundary, whose ownership and mode are revalidated before the marker is trusted.

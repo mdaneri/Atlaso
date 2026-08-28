@@ -467,6 +467,33 @@ def test_success_marker_retry_rejects_mount_backed_cleanup_target(tmp_path: Path
     assert sentinel.read_text(encoding="utf-8") == "preserve\n"
 
 
+def test_success_marker_retry_rejects_mounted_cleanup_ancestor(tmp_path: Path) -> None:
+    """A mounted ancestor between the test root and target blocks cleanup.
+
+    Args:
+        tmp_path: Temporary directory provided by pytest.
+    """
+
+    environment = _prepare_runtime(tmp_path, platform="kvm", dmi="QEMU", packages=("open-vm-tools",))
+    first = _run_selector(environment)
+    assert first.returncode == 0, first.stderr
+
+    mounted_ancestor = tmp_path / "mounted-backing"
+    mounted_ancestor.mkdir(mode=0o700)
+    staging = mounted_ancestor / "staging"
+    staging.mkdir(mode=0o700)
+    sentinel = staging / "preserve.rpm"
+    sentinel.write_text("preserve\n", encoding="utf-8")
+    environment["ATLASO_GUEST_AGENT_STAGING"] = str(staging)
+    environment["FAKE_MOUNT_TARGET"] = str(mounted_ancestor)
+
+    retry = _run_selector(environment)
+
+    assert retry.returncode == 2
+    assert "isolated test root cannot contain a mount point" in retry.stderr
+    assert sentinel.read_text(encoding="utf-8") == "preserve\n"
+
+
 def test_success_marker_retry_rejects_mount_backed_cleanup_file(tmp_path: Path) -> None:
     """A mounted file cannot redirect shredding to unrelated backing storage.
 
