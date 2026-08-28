@@ -269,29 +269,52 @@ function Get-DuplicatePowerShellHelpFinding {
     $findings = [System.Collections.Generic.List[string]]::new()
     $topLevelStatements = @($Ast.EndBlock.Statements)
     $firstStatement = $topLevelStatements | Select-Object -First 1
-    $scriptAnchor = $null
+    $scriptAnchors = [System.Collections.Generic.List[int]]::new()
     if ($null -ne $Ast.ParamBlock) {
         $parameterAttributes = @($Ast.ParamBlock.Attributes)
-        $scriptAnchor = if ($parameterAttributes.Count -gt 0) {
+        $scriptStartAnchor = if ($parameterAttributes.Count -gt 0) {
             $parameterAttributes[0].Extent.StartOffset
         }
         else {
             $Ast.ParamBlock.Extent.StartOffset
         }
+        $scriptAnchors.Add($scriptStartAnchor)
     }
     elseif ($null -ne $firstStatement -and
         $firstStatement -isnot [System.Management.Automation.Language.FunctionDefinitionAst]) {
-        $scriptAnchor = $firstStatement.Extent.StartOffset
+        $scriptAnchors.Add($firstStatement.Extent.StartOffset)
     }
-    if ($null -ne $scriptAnchor) {
-        $scriptComments = @(Get-AdjacentPowerShellHelpComment `
+
+    # File help may also follow the final statement. Inspect both supported
+    # edges and deduplicate a comment-only script found from both anchors.
+    $scriptAnchors.Add($Ast.Extent.EndOffset)
+    $scriptCommentsByOffset = @{}
+    foreach ($anchor in $scriptAnchors) {
+        foreach ($comment in Get-AdjacentPowerShellHelpComment `
                 -Tokens $Tokens `
                 -SourceText $SourceText `
-                -StartOffset $scriptAnchor)
-        if ($scriptComments.Count -gt 1) {
-            $lines = $scriptComments | ForEach-Object { $_.Extent.StartLineNumber }
-            $findings.Add("$RelativePath has multiple adjacent script help blocks at lines $($lines -join ', ').")
+                -StartOffset $anchor) {
+            $scriptCommentsByOffset[$comment.Extent.StartOffset] = $comment
         }
+    }
+    if ($null -eq $Ast.ParamBlock -and
+        $firstStatement -is [System.Management.Automation.Language.FunctionDefinitionAst] -and
+        $null -ne $Ast.GetHelpContent()) {
+        $firstFunctionComments = @(Get-AdjacentPowerShellHelpComment `
+                -Tokens $Tokens `
+                -SourceText $SourceText `
+                -StartOffset $firstStatement.Extent.StartOffset)
+        if ($firstFunctionComments.Count -gt 0) {
+            # PowerShell assigns the earliest of adjacent file/function help
+            # blocks to the script when the file has no parameter block.
+            $fileComment = $firstFunctionComments | Select-Object -First 1
+            $scriptCommentsByOffset[$fileComment.Extent.StartOffset] = $fileComment
+        }
+    }
+    $scriptComments = @($scriptCommentsByOffset.Values | Sort-Object { $_.Extent.StartOffset })
+    if ($scriptComments.Count -gt 1) {
+        $lines = $scriptComments | ForEach-Object { $_.Extent.StartLineNumber }
+        $findings.Add("$RelativePath has multiple adjacent script help blocks at lines $($lines -join ', ').")
     }
 
     $functions = @($Ast.FindAll(

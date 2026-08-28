@@ -258,6 +258,41 @@ function Invoke-Sample {{
 
 
 @pytest.mark.skipif(shutil.which("pwsh") is None, reason="PowerShell is not installed")
+@pytest.mark.parametrize("placement", ["trailing", "split"])
+def test_powershell_help_policy_rejects_trailing_script_help_duplicates(
+    tmp_path: Path,
+    placement: str,
+) -> None:
+    """Reject duplicate script help that uses the supported end-of-file location.
+
+    Args:
+        tmp_path: Isolated filesystem root.
+        placement: Whether both blocks trail the code or span both file edges.
+    """
+    base = tmp_path / "base"
+    candidate = tmp_path / "candidate"
+    _initialize_checkout(base, "Write-Host 'base'\n")
+    meaningful_help = """<#
+.SYNOPSIS
+Run the meaningful sample script.
+#>"""
+    generated_help = """<#
+.SYNOPSIS
+Run Sample.
+#>"""
+    documented = (
+        f"param()\nWrite-Output 'sample'\n{meaningful_help}\n{generated_help}\n"
+        if placement == "trailing"
+        else f"{meaningful_help}\nparam()\nWrite-Output 'sample'\n{generated_help}\n"
+    )
+    _initialize_checkout(candidate, documented)
+
+    invalid = _run_help_check(candidate, base)
+    assert invalid.returncode != 0
+    assert "sample.ps1 has multiple adjacent script help blocks" in invalid.stderr
+
+
+@pytest.mark.skipif(shutil.which("pwsh") is None, reason="PowerShell is not installed")
 def test_powershell_help_policy_distinguishes_file_and_first_function_help(
     tmp_path: Path,
 ) -> None:
