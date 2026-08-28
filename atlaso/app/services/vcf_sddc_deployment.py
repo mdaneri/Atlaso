@@ -11,7 +11,7 @@ import tarfile
 import threading
 import time
 import xml.etree.ElementTree as ET
-from dataclasses import asdict, dataclass
+from dataclasses import asdict, dataclass, field, replace
 from pathlib import Path
 from typing import Any, Callable
 from urllib.parse import urlsplit, urlunsplit
@@ -43,7 +43,7 @@ class VcfSddcPostImportError(VcfSddcDeploymentError):
     Attributes:
         vm_result: Vm result maintained by this vcfsddcpostimporterror.
     """
-    def __init__(self, message: str, vm_result: dict[str, str]) -> None:
+    def __init__(self, message: str, vm_result: dict[str, Any]) -> None:
         """Initialize the vcf sddc post import error.
 
         Args:
@@ -134,6 +134,15 @@ class OvfProperty:
 
 
 @dataclass(frozen=True)
+class OvfDeploymentOption:
+    """Describe one target-supported OVF deployment option."""
+
+    key: str
+    label: str
+    description: str
+
+
+@dataclass(frozen=True)
 class OvaDescriptor:
     """Represent ova descriptor.
 
@@ -159,11 +168,19 @@ class OvaDescriptor:
     networks: list[str]
     properties: list[OvfProperty]
     files: list[dict[str, Any]]
+    deployment_options: list[OvfDeploymentOption] = field(default_factory=list)
+    default_deployment_option: str = ""
+    selected_deployment_option: str = ""
+    ovf_environment_transports: list[str] = field(default_factory=list)
+    warnings: list[str] = field(default_factory=list)
+    product: str = ""
+    product_version: str = ""
 
     def public_dict(self) -> dict[str, Any]:
         """Return public dict."""
         payload = asdict(self)
         payload["properties"] = [asdict(item) for item in self.properties]
+        payload["deployment_options"] = [asdict(item) for item in self.deployment_options]
         return payload
 
 
@@ -258,6 +275,13 @@ def inspect_ova(value: str | Path, *, root: Path = SDDC_MANAGER_OVA_ROOT) -> Ova
                 )
             networks = [_attribute(item, "name") for item in root_element.findall(f".//{OVF}NetworkSection/{OVF}Network")]
             vm_name = (root_element.findtext(f".//{OVF}VirtualSystem/{OVF}Name") or path.stem).strip()
+            product = (root_element.findtext(f".//{OVF}ProductSection/{OVF}Product") or "").strip()
+            product_version = (root_element.findtext(f".//{OVF}ProductSection/{OVF}Version") or "").strip()
+            transports: list[str] = []
+            for section in root_element.findall(f".//{OVF}VirtualHardwareSection"):
+                for transport in re.split(r"[\s,]+", _attribute(section, "transport")):
+                    if transport and transport not in transports:
+                        transports.append(transport)
     except (OSError, tarfile.TarError, ET.ParseError, ValueError) as exc:
         if isinstance(exc, VcfSddcDeploymentError):
             raise
@@ -273,6 +297,9 @@ def inspect_ova(value: str | Path, *, root: Path = SDDC_MANAGER_OVA_ROOT) -> Ova
         networks=[name for name in networks if name],
         properties=properties,
         files=referenced,
+        ovf_environment_transports=transports,
+        product=product,
+        product_version=product_version,
     )
 
 
@@ -408,6 +435,161 @@ def _safe_vsphere_message(exc: Exception) -> str:
         message = str(exc)
     message = re.sub(r"\s+", " ", message).strip()
     return message or exc.__class__.__name__
+
+
+def _ovf_descriptor_text(descriptor: OvaDescriptor) -> str:
+    """Read the manifest-selected OVF descriptor without extracting the OVA.
+
+    Args:
+        descriptor: Validated OVA metadata naming the descriptor member.
+    """
+    try:
+        with tarfile.open(descriptor.path, "r") as archive:
+            source = archive.extractfile(descriptor.ovf_member)
+            if source is None:
+                raise VcfSddcDeploymentError("The OVA descriptor could not be read.")
+            return source.read().decode("utf-8", errors="strict")
+    except (OSError, tarfile.TarError, UnicodeDecodeError) as exc:
+        raise VcfSddcDeploymentError("The OVA descriptor could not be read for vSphere validation.") from exc
+
+
+def _redact_ovf_property_values(message: str, values: list[str] | tuple[str, ...]) -> str:
+    """Remove every submitted OVF property value from a diagnostic string.
+
+    Args:
+        message: Diagnostic text returned by vSphere.
+        values: Submitted OVF values that must not appear in diagnostics.
+    """
+    redacted = str(message or "")
+    unique_values = sorted({str(value) for value in values if str(value)}, key=len, reverse=True)
+    for value in unique_values:
+        redacted = re.sub(re.escape(value), "[redacted]", redacted, flags=re.IGNORECASE)
+    return re.sub(r"\s+", " ", redacted).strip()
+
+
+def _ovf_diagnostic_messages(items: Any, *, property_values: dict[str, str] | None = None) -> list[str]:
+    """Return bounded, value-redacted VMware OVF diagnostics.
+
+    Args:
+        items: VMware warning or error objects to render.
+        property_values: Reviewed OVF mapping whose values must be redacted.
+    """
+    values = list((property_values or {}).values())
+    messages: list[str] = []
+    for item in list(items or []):
+        safe = _redact_ovf_property_values(_safe_vsphere_message(item), values)
+        fault = getattr(item, "fault", None)
+        fault_name = (fault or item).__class__.__name__
+        rendered = f"{fault_name}: {safe}" if safe and safe != fault_name else fault_name
+        if rendered not in messages:
+            messages.append(rendered[:1000])
+    return messages
+
+
+def _parse_vsphere_ovf_descriptor(
+    content: Any,
+    descriptor: OvaDescriptor,
+    *,
+    deployment_option: str = "",
+    property_values: dict[str, str] | None = None,
+) -> OvaDescriptor:
+    """Merge VMware's authoritative descriptor result into local OVA metadata.
+
+    Args:
+        content: Connected vSphere service content.
+        descriptor: Locally inspected OVA metadata to validate against the target.
+        deployment_option: Requested VMware deployment-option key.
+        property_values: Reviewed OVF mapping used to redact target diagnostics.
+    """
+    from pyVmomi import vim
+
+    params = vim.OvfManager.ParseDescriptorParams(
+        locale="",
+        deploymentOption=str(deployment_option or ""),
+    )
+    try:
+        parsed = content.ovfManager.ParseDescriptor(_ovf_descriptor_text(descriptor), params)
+    except Exception as exc:  # pyVmomi exposes version-specific fault types.
+        message = _redact_ovf_property_values(_safe_vsphere_message(exc), list((property_values or {}).values()))
+        raise VcfSddcDeploymentError(f"vSphere could not parse the OVA descriptor: {message}") from exc
+    errors = _ovf_diagnostic_messages(getattr(parsed, "error", None), property_values=property_values)
+    if errors:
+        raise VcfSddcDeploymentError(f"vSphere rejected the OVA descriptor: {'; '.join(errors)}")
+
+    local_properties = {item.key: item for item in descriptor.properties}
+    properties: list[OvfProperty] = []
+    for item in list(getattr(parsed, "property", None) or []):
+        if getattr(item, "userConfigurable", None) is False:
+            continue
+        key = str(getattr(item, "id", "") or "").strip()
+        if not key:
+            raise VcfSddcDeploymentError("vSphere returned an OVF property without an identifier.")
+        local = local_properties.get(key)
+        value_type = str(getattr(item, "type", "") or (local.value_type if local else "string"))
+        password = value_type.lower() == "password" or bool(local and local.password)
+        default = "" if password else str(getattr(item, "defaultValue", "") or "")
+        properties.append(
+            OvfProperty(
+                key=key,
+                value_type=value_type,
+                label=str(getattr(item, "label", "") or (local.label if local else key)),
+                description=str(getattr(item, "description", "") or (local.description if local else "")),
+                default=default,
+                qualifiers=local.qualifiers if local else "",
+                password=password,
+                user_configurable=True,
+            )
+        )
+    if descriptor.properties and not properties:
+        raise VcfSddcDeploymentError("vSphere did not return any deployable OVF properties for this appliance.")
+
+    options = [
+        OvfDeploymentOption(
+            key=str(getattr(item, "key", "") or ""),
+            label=str(getattr(item, "label", "") or getattr(item, "key", "") or ""),
+            description=str(getattr(item, "description", "") or ""),
+        )
+        for item in list(getattr(parsed, "deploymentOption", None) or [])
+        if str(getattr(item, "key", "") or "")
+    ]
+    default_option = str(getattr(parsed, "defaultDeploymentOption", "") or "")
+    option_keys = {item.key for item in options}
+    selected_option = str(deployment_option or default_option)
+    if selected_option and selected_option not in option_keys:
+        raise VcfSddcDeploymentError("The selected OVF deployment option is no longer accepted by vSphere.")
+    warnings = _ovf_diagnostic_messages(getattr(parsed, "warning", None), property_values=property_values)
+    return replace(
+        descriptor,
+        vm_name=str(getattr(parsed, "defaultEntityName", "") or descriptor.vm_name),
+        properties=properties,
+        deployment_options=options,
+        default_deployment_option=default_option,
+        selected_deployment_option=selected_option,
+        warnings=warnings,
+    )
+
+
+def complete_property_mapping(descriptor: OvaDescriptor, submitted: dict[str, str]) -> dict[str, str]:
+    """Require an exact operator-reviewed mapping for the target OVF contract.
+
+    Args:
+        descriptor: Target-authoritative deployable OVF metadata.
+        submitted: Operator-reviewed property values keyed by OVF identifier.
+    """
+    properties = {item.key: item for item in descriptor.properties}
+    missing = sorted(set(properties) - set(submitted))
+    unknown = sorted(set(submitted) - set(properties))
+    if missing or unknown:
+        differences = []
+        if missing:
+            differences.append(f"missing reviewed keys: {', '.join(missing)}")
+        if unknown:
+            differences.append(f"no longer accepted keys: {', '.join(unknown)}")
+        raise VcfSddcDeploymentError(
+            "The vSphere OVF property contract changed after review; rediscover the destination and review every "
+            f"property again ({'; '.join(differences)})."
+        )
+    return {key: str(submitted[key]) for key in properties}
 
 
 def connect_vsphere(address: str, username: str, password: str, *, port: int = 443, expected_fingerprint: str = "") -> Any:
@@ -565,6 +747,70 @@ def _lease_imported_entity(lease: Any) -> Any:
     return entity
 
 
+def _verify_imported_ovf_environment(
+    vm: Any,
+    descriptor: OvaDescriptor,
+    property_values: dict[str, str],
+) -> dict[str, Any]:
+    """Prove imported vApp metadata and guest OVF transport before power-on.
+
+    Args:
+        vm: Exact virtual machine returned by the current import lease.
+        descriptor: Target-authoritative OVF metadata used for the import.
+        property_values: Complete reviewed mapping submitted to vSphere.
+    """
+    config = getattr(vm, "config", None)
+    vapp_config = getattr(config, "vAppConfig", None)
+    if vapp_config is None:
+        raise VcfSddcDeploymentError("The imported VM has no vApp/OVF configuration metadata.")
+    expected_keys = set(property_values)
+    actual_values = {
+        str(getattr(item, "id", "") or ""): str(getattr(item, "value", "") or "")
+        for item in list(getattr(vapp_config, "property", None) or [])
+        if str(getattr(item, "id", "") or "")
+    }
+    actual_keys = set(actual_values)
+    missing_keys = sorted(expected_keys - actual_keys)
+    if missing_keys:
+        raise VcfSddcDeploymentError(
+            f"The imported VM is missing reviewed OVF property metadata for keys: {', '.join(missing_keys)}."
+        )
+    mismatched_keys = sorted(key for key, expected in property_values.items() if actual_values[key] != expected)
+    if mismatched_keys:
+        raise VcfSddcDeploymentError(
+            f"The imported VM did not retain reviewed OVF property values for keys: {', '.join(mismatched_keys)}."
+        )
+    expected_transports = set(descriptor.ovf_environment_transports)
+    actual_transports = {
+        str(item)
+        for item in list(getattr(vapp_config, "ovfEnvironmentTransport", None) or [])
+        if str(item)
+    }
+    if expected_keys and not expected_transports:
+        raise VcfSddcDeploymentError("The OVA does not declare an OVF environment transport for its deployment properties.")
+    supported_transports = {"com.vmware.guestInfo", "iso"}
+    if expected_keys and not actual_transports.intersection(expected_transports, supported_transports):
+        raise VcfSddcDeploymentError("The imported VM retained no supported OVF environment transport declared by the OVA.")
+    return {
+        "property_keys": sorted(actual_keys),
+        "transports": sorted(actual_transports),
+    }
+
+
+def _destroy_imported_vm(vm: Any) -> None:
+    """Remove only the exact VM reference returned by the current NFC lease.
+
+    Args:
+        vm: Exact virtual machine returned by the current import lease.
+    """
+    try:
+        _wait_task(vm.Destroy_Task(), timeout=900.0)
+    except Exception as exc:
+        if isinstance(exc, VcfSddcDeploymentError):
+            raise
+        raise VcfSddcDeploymentError(f"vSphere could not remove the incomplete imported VM: {_safe_vsphere_message(exc)}") from exc
+
+
 def _datastore_row(item: Any) -> dict[str, Any]:
     """Return datastore row.
 
@@ -587,7 +833,16 @@ def _datastore_row(item: Any) -> dict[str, Any]:
     return row
 
 
-def vsphere_inventory(address: str, username: str, password: str, *, port: int = 443, expected_fingerprint: str = "") -> dict[str, Any]:
+def vsphere_inventory(
+    address: str,
+    username: str,
+    password: str,
+    *,
+    port: int = 443,
+    expected_fingerprint: str = "",
+    descriptor: OvaDescriptor | None = None,
+    deployment_option: str = "",
+) -> dict[str, Any]:
     """Return vsphere inventory.
 
     Args:
@@ -596,6 +851,8 @@ def vsphere_inventory(address: str, username: str, password: str, *, port: int =
         password: Password supplied for the immediate authenticated operation.
         port: TCP or UDP port of the target service.
         expected_fingerprint: Certificate fingerprint explicitly confirmed by the operator.
+        descriptor: Optional OVA descriptor to parse through the target OVF manager.
+        deployment_option: Target-supported OVF deployment option key.
     """
     from pyVim.connect import Disconnect
     from pyVmomi import vim
@@ -616,7 +873,56 @@ def vsphere_inventory(address: str, username: str, password: str, *, port: int =
         for key, vim_type in type_map.items():
             rows = _walk_inventory(content, [vim_type])
             result[key] = [_datastore_row(item) if key == "datastores" else {"id": str(item._moId), "name": str(getattr(item, "name", item._moId))} for item in rows]
+        if descriptor is not None:
+            result["ova"] = _parse_vsphere_ovf_descriptor(
+                content,
+                descriptor,
+                deployment_option=deployment_option,
+            ).public_dict()
         return result
+    finally:
+        Disconnect(service_instance)
+
+
+def vsphere_ovf_descriptor(
+    address: str,
+    username: str,
+    password: str,
+    descriptor: OvaDescriptor,
+    *,
+    port: int = 443,
+    expected_fingerprint: str = "",
+    deployment_option: str = "",
+    property_values: dict[str, str] | None = None,
+) -> OvaDescriptor:
+    """Parse one OVA with the exact target vSphere OVF manager.
+
+    Args:
+        address: Network address of the target vSphere endpoint.
+        username: Account name used for target authentication.
+        password: Password supplied for the immediate target operation.
+        descriptor: Locally inspected OVA metadata to validate.
+        port: TCP port of the vSphere endpoint.
+        expected_fingerprint: Certificate fingerprint confirmed by the operator.
+        deployment_option: Requested VMware deployment-option key.
+        property_values: Reviewed OVF mapping used to redact diagnostics.
+    """
+    from pyVim.connect import Disconnect
+
+    service_instance = connect_vsphere(
+        address,
+        username,
+        password,
+        port=port,
+        expected_fingerprint=expected_fingerprint,
+    )
+    try:
+        return _parse_vsphere_ovf_descriptor(
+            service_instance.RetrieveContent(),
+            descriptor,
+            deployment_option=deployment_option,
+            property_values=property_values,
+        )
     finally:
         Disconnect(service_instance)
 
@@ -736,9 +1042,10 @@ def deploy_ova(
     progress: Progress | None = None,
     expected_fingerprint: str = "",
     disk_provisioning: str = "thin",
+    deployment_option: str = "",
     power_on: bool = True,
     cancelled: CancelCheck | None = None,
-) -> dict[str, str]:
+) -> dict[str, Any]:
     """Return deploy ova.
 
     Args:
@@ -757,6 +1064,7 @@ def deploy_ova(
         progress: Progress supplied by the caller.
         expected_fingerprint: Certificate fingerprint explicitly confirmed by the operator.
         disk_provisioning: Disk provisioning supplied by the caller.
+        deployment_option: Target-supported OVF deployment option key.
         power_on: Power on supplied by the caller.
         cancelled: Callback that reports whether cancellation was requested.
 
@@ -771,16 +1079,32 @@ def deploy_ova(
     disk_provisioning = normalize_disk_provisioning(disk_provisioning)
     service_instance = connect_vsphere(endpoint, username, password, port=port, expected_fingerprint=expected_fingerprint)
     lease = None
-    imported_vm_result: dict[str, str] | None = None
+    imported_vm_result: dict[str, Any] | None = None
     try:
         content = service_instance.RetrieveContent()
         _check_cancelled(cancelled)
+        descriptor = _parse_vsphere_ovf_descriptor(
+            content,
+            descriptor,
+            deployment_option=deployment_option,
+            property_values=property_values,
+        )
+        property_values = complete_property_mapping(descriptor, property_values)
         if any(str(item.name).lower() == vm_name.strip().lower() for item in _walk_inventory(content, [vim.VirtualMachine])):
             raise VcfSddcDeploymentError(f"A virtual machine named {vm_name} already exists.")
         resource_pool = _find_object(content, vim.ResourcePool, resource_pool_id, "resource pool")
         datastore = _find_object(content, vim.Datastore, datastore_id, "datastore")
         folder = _find_object(content, vim.Folder, folder_id, "VM folder") if folder_id else None
         host = _find_object(content, vim.HostSystem, host_id, "host") if host_id else None
+        api_type = str(getattr(getattr(content, "about", None), "apiType", "") or "")
+        if api_type == "HostAgent":
+            hosts = _walk_inventory(content, [vim.HostSystem])
+            if len(hosts) != 1:
+                raise VcfSddcDeploymentError("Standalone ESXi inventory did not contain exactly one target host.")
+            direct_host = hosts[0]
+            if host is not None and str(host._moId) != str(direct_host._moId):
+                raise VcfSddcDeploymentError("The selected host does not belong to the standalone ESXi endpoint.")
+            host = direct_host
         network_mappings = []
         for source_name in descriptor.networks:
             network_id = network_ids.get(source_name, "")
@@ -788,20 +1112,30 @@ def deploy_ova(
                 raise VcfSddcDeploymentError(f"Map OVA network {source_name} before deployment.")
             network = _find_object(content, vim.Network, network_id, "network")
             network_mappings.append(vim.OvfManager.NetworkMapping(name=source_name, network=network))
-        params = vim.OvfManager.CreateImportSpecParams(
-            entityName=vm_name,
-            diskProvisioning=disk_provisioning,
-            networkMapping=network_mappings,
-            propertyMapping=[vim.KeyValue(key=key, value=value) for key, value in property_values.items()],
-        )
+        parameter_values: dict[str, Any] = {
+            "entityName": vm_name,
+            "diskProvisioning": disk_provisioning,
+            "deploymentOption": descriptor.selected_deployment_option,
+            "networkMapping": network_mappings,
+            "propertyMapping": [vim.KeyValue(key=key, value=value) for key, value in property_values.items()],
+        }
+        if host is not None:
+            parameter_values["hostSystem"] = host
+        params = vim.OvfManager.CreateImportSpecParams(**parameter_values)
+        import_warnings = list(descriptor.warnings)
         with tarfile.open(descriptor.path, "r") as archive:
             ovf_source = archive.extractfile(descriptor.ovf_member)
             if ovf_source is None:
                 raise VcfSddcDeploymentError("The OVA descriptor could not be read for deployment.")
             spec = content.ovfManager.CreateImportSpec(ovf_source.read().decode("utf-8"), resource_pool, datastore, params)
             if spec.error:
-                messages = "; ".join(str(getattr(item, "localizedMessage", item)) for item in spec.error)
+                messages = "; ".join(_ovf_diagnostic_messages(spec.error, property_values=property_values))
                 raise VcfSddcDeploymentError(f"vSphere rejected the OVA import specification: {messages}")
+            for warning in _ovf_diagnostic_messages(getattr(spec, "warning", None), property_values=property_values):
+                if warning not in import_warnings:
+                    import_warnings.append(warning)
+            if import_warnings and progress:
+                progress(10, "reviewed-import-warnings")
             member_sizes, required_bytes = _ova_file_item_sizes(list(spec.fileItem), archive)
             _ensure_datastore_free_space(datastore, required_bytes)
             lease = resource_pool.ImportVApp(spec.importSpec, folder, host)
@@ -838,7 +1172,31 @@ def deploy_ova(
                 )
             vm = _lease_imported_entity(lease)
             lease.HttpNfcLeaseComplete()
-        imported_vm_result = {"vm_id": str(vm._moId), "vm_name": str(vm.name), "guest_ip": ""}
+        imported_vm_result = {
+            "vm_id": str(vm._moId),
+            "vm_name": str(vm.name),
+            "guest_ip": "",
+            "warnings": import_warnings,
+            "api_type": api_type,
+            "deployment_option": descriptor.selected_deployment_option,
+        }
+        try:
+            imported_vm_result["ovf_verification"] = _verify_imported_ovf_environment(vm, descriptor, property_values)
+        except Exception as verification_exc:
+            message = (
+                str(verification_exc)
+                if isinstance(verification_exc, VcfSddcDeploymentError)
+                else f"Could not verify the imported OVF environment: {_safe_vsphere_message(verification_exc)}"
+            )
+            try:
+                _destroy_imported_vm(vm)
+            except VcfSddcDeploymentError as cleanup_exc:
+                raise VcfSddcPostImportError(
+                    f"{message} Automatic rollback of the exact incomplete VM also failed: {cleanup_exc}",
+                    imported_vm_result,
+                ) from verification_exc
+            imported_vm_result = None
+            raise VcfSddcDeploymentError(f"{message} The exact incomplete VM was removed before power-on.") from verification_exc
         if not power_on:
             if progress:
                 progress(100, "deployed-powered-off")
