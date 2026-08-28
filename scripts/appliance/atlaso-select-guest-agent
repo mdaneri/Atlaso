@@ -9,6 +9,7 @@ DMI_ROOT="${ATLASO_DMI_ROOT:-/sys/class/dmi/id}"
 EXPECTED_STAGING_IDENTITY="${ATLASO_GUEST_AGENT_STAGING_IDENTITY:-root:root:700}"
 PACKAGE_CACHE_DIRECTORY="${ATLASO_GUEST_AGENT_PACKAGE_CACHE:-/var/cache/tdnf}"
 MACHINE_IDENTITY_INITIALIZER="${ATLASO_MACHINE_IDENTITY_INITIALIZER:-/opt/atlaso/bin/atlaso-initialize-machine-identity.py}"
+TEST_ROOT="${ATLASO_GUEST_AGENT_TEST_ROOT:-}"
 
 log() {
   printf 'atlaso-select-guest-agent: %s\n' "$1"
@@ -26,6 +27,121 @@ esac
 expected_owner=${EXPECTED_STAGING_IDENTITY%%:*}
 expected_group_and_mode=${EXPECTED_STAGING_IDENTITY#*:}
 expected_group=${expected_group_and_mode%%:*}
+
+canonical_managed_path() {
+  managed_path="$1"
+  managed_label="$2"
+  case "$managed_path" in
+    /*) ;;
+    *) fail "$managed_label must be absolute." ;;
+  esac
+  [ "$managed_path" != "/" ] || fail "$managed_label cannot identify the filesystem root."
+  managed_parent=$(dirname -- "$managed_path")
+  managed_name=$(basename -- "$managed_path")
+  case "$managed_name" in ''|.|..) fail "$managed_label is not a canonical path." ;; esac
+  [ -d "$managed_parent" ] && [ ! -L "$managed_parent" ] ||
+    fail "$managed_label parent is missing or unsafe."
+  resolved_parent=$(readlink -f -- "$managed_parent") || fail "$managed_label parent cannot be resolved."
+  [ "$resolved_parent" = "$managed_parent" ] || fail "$managed_label cannot use symbolic-link or noncanonical ancestry."
+  [ ! -L "$managed_path" ] || fail "$managed_label cannot be a symbolic link."
+  if [ "$resolved_parent" = "/" ]; then
+    printf '/%s\n' "$managed_name"
+  else
+    printf '%s/%s\n' "$resolved_parent" "$managed_name"
+  fi
+}
+
+paths_overlap() {
+  first_path="$1"
+  second_path="$2"
+  [ "$first_path" = "$second_path" ] && return 0
+  case "$first_path" in "$second_path"/*) return 0 ;; esac
+  case "$second_path" in "$first_path"/*) return 0 ;; esac
+  return 1
+}
+
+validate_cleanup_boundaries() {
+  command -v mountpoint >/dev/null 2>&1 || fail "Guest-agent cleanup requires mount-point validation."
+  current_staging=$(canonical_managed_path "$STAGING_DIRECTORY" "Guest-agent staging path")
+  current_runtime=$(canonical_managed_path "$RUNTIME_DIRECTORY" "Guest-agent runtime path")
+  current_marker=$(canonical_managed_path "$SUCCESS_MARKER" "Guest-agent success marker")
+  current_cache=$(canonical_managed_path "$PACKAGE_CACHE_DIRECTORY" "Guest-agent package cache")
+  [ "$current_staging" = "$validated_staging" ] &&
+    [ "$current_runtime" = "$validated_runtime" ] &&
+    [ "$current_marker" = "$validated_marker" ] &&
+    [ "$current_cache" = "$validated_cache" ] ||
+    fail "Guest-agent cleanup paths changed after validation."
+
+  if [ -n "$TEST_ROOT" ]; then
+    current_test_root=$(canonical_managed_path "$TEST_ROOT" "Guest-agent isolated test root")
+    [ "$current_test_root" = "$validated_test_root" ] ||
+      fail "Guest-agent isolated test root changed after validation."
+    [ -d "$TEST_ROOT" ] && [ ! -L "$TEST_ROOT" ] ||
+      fail "Guest-agent isolated test root must be an ordinary directory."
+    [ "$(stat -c '%U:%G:%a' "$TEST_ROOT")" = "$expected_owner:$expected_group:700" ] ||
+      fail "Guest-agent isolated test root ownership or mode is unsafe."
+    # A mount between the isolated root and a cleanup target redirects the
+    # target despite its lexical descendant path. Reject every mounted entry
+    # in the explicit test boundary before inspecting individual targets.
+    if find "$TEST_ROOT" -xdev -exec mountpoint -q -- {} \; -print -quit | grep -q .; then
+      fail "Guest-agent isolated test root cannot contain a mount point."
+    fi
+  fi
+
+  for cleanup_directory in "$STAGING_DIRECTORY" "$RUNTIME_DIRECTORY" "$PACKAGE_CACHE_DIRECTORY"; do
+    if [ -e "$cleanup_directory" ] || [ -L "$cleanup_directory" ]; then
+      [ -d "$cleanup_directory" ] && [ ! -L "$cleanup_directory" ] ||
+        fail "Guest-agent cleanup target must be an ordinary directory."
+      if find "$cleanup_directory" -maxdepth 0 \( ! -user "$expected_owner" -o ! -group "$expected_group" -o -perm /022 \) -print -quit |
+        grep -q .; then
+        fail "Guest-agent cleanup target ownership or mode is unsafe."
+      fi
+      # A lexical descendant can still be a bind/FUSE mount backed by an
+      # unrelated tree or file. Inspect the target and every reachable entry
+      # while refusing cross-device descent, then reject any mount boundary.
+      if find "$cleanup_directory" -xdev -exec mountpoint -q -- {} \; -print -quit | grep -q .; then
+        fail "Guest-agent cleanup target cannot contain a mount point."
+      fi
+      # Shredding a hard link would overwrite the shared inode outside this
+      # path boundary. Every regular cleanup file must have one directory link.
+      if find "$cleanup_directory" -xdev -type f ! -links 1 -print -quit | grep -q .; then
+        fail "Guest-agent cleanup target cannot contain hard-linked files."
+      fi
+    fi
+  done
+}
+
+validated_staging=$(canonical_managed_path "$STAGING_DIRECTORY" "Guest-agent staging path")
+validated_runtime=$(canonical_managed_path "$RUNTIME_DIRECTORY" "Guest-agent runtime path")
+validated_marker=$(canonical_managed_path "$SUCCESS_MARKER" "Guest-agent success marker")
+validated_cache=$(canonical_managed_path "$PACKAGE_CACHE_DIRECTORY" "Guest-agent package cache")
+
+if [ -z "$TEST_ROOT" ]; then
+  [ "$validated_staging" = "/var/lib/atlaso/first-boot-packages" ] &&
+    [ "$validated_runtime" = "/run/atlaso-guest-agent" ] &&
+    [ "$validated_marker" = "/var/lib/atlaso-privileged/guest-agent/guest-agent.applied" ] &&
+    [ "$validated_cache" = "/var/cache/tdnf" ] ||
+    fail "Guest-agent cleanup path overrides require an explicit isolated test root."
+else
+  validated_test_root=$(canonical_managed_path "$TEST_ROOT" "Guest-agent isolated test root")
+  [ -d "$TEST_ROOT" ] && [ ! -L "$TEST_ROOT" ] || fail "Guest-agent isolated test root must be an ordinary directory."
+  [ "$(stat -c '%U:%G:%a' "$TEST_ROOT")" = "$expected_owner:$expected_group:700" ] ||
+    fail "Guest-agent isolated test root ownership or mode is unsafe."
+  for cleanup_path in "$validated_staging" "$validated_runtime" "$validated_marker" "$validated_cache"; do
+    case "$cleanup_path" in
+      "$validated_test_root"/*) ;;
+      *) fail "Guest-agent test cleanup paths must be strict descendants of the isolated test root." ;;
+    esac
+  done
+fi
+
+paths_overlap "$validated_staging" "$validated_runtime" && fail "Guest-agent cleanup paths must not overlap."
+paths_overlap "$validated_staging" "$validated_marker" && fail "Guest-agent cleanup paths must not overlap."
+paths_overlap "$validated_staging" "$validated_cache" && fail "Guest-agent cleanup paths must not overlap."
+paths_overlap "$validated_runtime" "$validated_marker" && fail "Guest-agent cleanup paths must not overlap."
+paths_overlap "$validated_runtime" "$validated_cache" && fail "Guest-agent cleanup paths must not overlap."
+paths_overlap "$validated_marker" "$validated_cache" && fail "Guest-agent cleanup paths must not overlap."
+
 marker_parent=$(dirname -- "$SUCCESS_MARKER")
 [ -d "$marker_parent" ] && [ ! -L "$marker_parent" ] ||
   fail "Guest-agent success marker parent is missing or unsafe."
@@ -162,19 +278,130 @@ verify_absent() {
 }
 
 cleanup_staging() {
+  if [ -n "$TEST_ROOT" ]; then
+    # Pin the isolated root before validation. Every later test-mode mutation
+    # is relative to this descriptor rather than a replaceable path string.
+    exec 9<"$TEST_ROOT" || fail "Guest-agent isolated test root cannot be pinned."
+  fi
+  # Re-resolve every destructive boundary immediately before cleanup, including
+  # durable-marker retries, so environment or ancestry changes fail closed.
+  validate_cleanup_boundaries
   cleanup_required=0
   if [ -d "$STAGING_DIRECTORY" ]; then
     cleanup_required=1
-    find "$STAGING_DIRECTORY" -type f -exec shred -u -z -- {} + 2>/dev/null ||
-      find "$STAGING_DIRECTORY" -type f -delete
+    if [ -z "$TEST_ROOT" ]; then
+      find "$STAGING_DIRECTORY" -type f -exec shred -u -z -- {} + 2>/dev/null ||
+        find "$STAGING_DIRECTORY" -type f -delete
+    fi
   fi
   [ ! -e "$RUNTIME_DIRECTORY" ] && [ ! -L "$RUNTIME_DIRECTORY" ] || cleanup_required=1
-  rm -rf "$STAGING_DIRECTORY" "$RUNTIME_DIRECTORY"
-  if [ "$cleanup_required" -eq 1 ]; then
-    if [ -e "$PACKAGE_CACHE_DIRECTORY" ] || [ -L "$PACKAGE_CACHE_DIRECTORY" ]; then
-      [ -d "$PACKAGE_CACHE_DIRECTORY" ] && [ ! -L "$PACKAGE_CACHE_DIRECTORY" ] ||
-        fail "Guest-agent package cache must be an ordinary directory."
-      find "$PACKAGE_CACHE_DIRECTORY" -mindepth 1 -maxdepth 1 -exec rm -rf -- {} +
+  if [ -n "$TEST_ROOT" ]; then
+    pinned_identity=$(stat -Lc '%d:%i' /proc/self/fd/9) ||
+      fail "Guest-agent isolated test root identity cannot be read."
+    current_identity=$(stat -c '%d:%i' "$TEST_ROOT") ||
+      fail "Guest-agent isolated test root identity cannot be revalidated."
+    [ "$pinned_identity" = "$current_identity" ] ||
+      fail "Guest-agent isolated test root changed after it was pinned."
+    staging_relative=${validated_staging#"$validated_test_root"/}
+    runtime_relative=${validated_runtime#"$validated_test_root"/}
+    cache_relative=${validated_cache#"$validated_test_root"/}
+    # The helper opens each ancestor relative to the pinned root and requires
+    # the same mount identity. Atomic sibling renames never traverse contents;
+    # a raced mount or symlink therefore fails closed.
+    python3 - "$staging_relative" "$runtime_relative" "$cache_relative" "$cleanup_required" 9<&9 <<'PY'
+import os
+import secrets
+import stat
+import sys
+
+
+def mount_id(descriptor: int) -> int:
+    """Return the Linux mount identity for one open descriptor."""
+    with open(f"/proc/self/fdinfo/{descriptor}", encoding="utf-8") as fdinfo:
+        for line in fdinfo:
+            if line.startswith("mnt_id:"):
+                return int(line.split(":", 1)[1])
+    raise RuntimeError("an open cleanup descriptor has no mount identity")
+
+
+root_fd = os.dup(9)
+root_mount = mount_id(root_fd)
+
+
+def open_parent(relative_path: str) -> tuple[int, str]:
+    """Open a target parent beneath the pinned root without following links."""
+    components = relative_path.split("/")
+    if not components or any(component in {"", ".", ".."} for component in components):
+        raise RuntimeError("a cleanup target is not a strict canonical descendant")
+    parent_fd = os.dup(root_fd)
+    try:
+        for component in components[:-1]:
+            child_fd = os.open(
+                component,
+                os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW | os.O_CLOEXEC,
+                dir_fd=parent_fd,
+            )
+            os.close(parent_fd)
+            parent_fd = child_fd
+            if mount_id(parent_fd) != root_mount:
+                raise RuntimeError("a cleanup ancestor crossed a mount boundary")
+        return parent_fd, components[-1]
+    except BaseException:
+        os.close(parent_fd)
+        raise
+
+
+def retain_target(relative_path: str, *, recreate: bool) -> None:
+    """Rename one target beside itself through its pinned parent descriptor."""
+    parent_fd, name = open_parent(relative_path)
+    try:
+        try:
+            entry_fd = os.open(name, os.O_PATH | os.O_NOFOLLOW | os.O_CLOEXEC, dir_fd=parent_fd)
+        except FileNotFoundError:
+            return
+        try:
+            metadata = os.fstat(entry_fd)
+            if not stat.S_ISDIR(metadata.st_mode):
+                raise RuntimeError("a cleanup target is no longer an ordinary directory")
+            if mount_id(entry_fd) != root_mount:
+                raise RuntimeError("a cleanup target crossed a mount boundary")
+        finally:
+            os.close(entry_fd)
+        for _ in range(32):
+            retained_name = f".{name}.atlaso-retained.{secrets.token_hex(8)}"
+            try:
+                os.rename(name, retained_name, src_dir_fd=parent_fd, dst_dir_fd=parent_fd)
+                break
+            except FileExistsError:
+                continue
+        else:
+            raise RuntimeError("a unique retained-artifact name could not be allocated")
+        if recreate:
+            os.mkdir(name, mode=0o700, dir_fd=parent_fd)
+    finally:
+        os.close(parent_fd)
+
+
+try:
+    retain_target(sys.argv[1], recreate=False)
+    retain_target(sys.argv[2], recreate=False)
+    if sys.argv[4] == "1":
+        retain_target(sys.argv[3], recreate=True)
+except BaseException as error:
+    print(f"atlaso-select-guest-agent: test cleanup failed closed: {error}", file=sys.stderr)
+    raise SystemExit(2) from None
+finally:
+    os.close(root_fd)
+PY
+    exec 9<&-
+  else
+    rm -rf "$STAGING_DIRECTORY" "$RUNTIME_DIRECTORY"
+    if [ "$cleanup_required" -eq 1 ]; then
+      if [ -e "$PACKAGE_CACHE_DIRECTORY" ] || [ -L "$PACKAGE_CACHE_DIRECTORY" ]; then
+        [ -d "$PACKAGE_CACHE_DIRECTORY" ] && [ ! -L "$PACKAGE_CACHE_DIRECTORY" ] ||
+          fail "Guest-agent package cache must be an ordinary directory."
+        find "$PACKAGE_CACHE_DIRECTORY" -mindepth 1 -maxdepth 1 -exec rm -rf -- {} +
+      fi
     fi
   fi
   sync

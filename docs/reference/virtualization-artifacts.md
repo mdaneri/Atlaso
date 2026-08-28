@@ -175,6 +175,17 @@ target selection and the physical-hardware disk-safety contract.
 Successful selection proves that only the expected agent is installed, then securely removes the RPM staging tree,
 checksum manifest, package-manager cache, and runtime scratch directory. Failure leaves the verified persistent RPM
 closure available for automatic retry while the Atlaso front door and application remain stopped.
+Production cleanup is fixed to the Atlaso staging, runtime, marker, and TDNF cache paths. The selector rejects path
+overrides unless an isolated test invocation also supplies one ordinary mode-`0700` test root owned by the expected
+test identity; every overridden cleanup target must be a strict, non-overlapping descendant with canonical,
+non-symlink ancestry, no mount anywhere in the explicit test root, and no multiply linked regular file. The selector
+revalidates those boundaries, ownership, and
+permissions immediately before every cleanup attempt, including a retry after the durable success marker exists.
+Test-override cleanup pins the validated isolated-root identity, opens every target ancestor relative to that descriptor,
+and atomically renames staging, runtime, and package-cache artifacts to randomized siblings before recreating an empty
+cache. It never recursively traverses or erases same-identity paths, so a root or ancestor replacement cannot redirect
+cleanup and a mount added after validation fails closed; the test harness owns eventual cleanup of retained artifacts.
+Production retains secure erasure on its fixed paths.
 The selector's success marker is the only first-boot transaction commit. It is stored under the root-only
 `/var/lib/atlaso-privileged/guest-agent` boundary, whose ownership and mode are revalidated before the marker is trusted.
 An interruption before that commit reruns
