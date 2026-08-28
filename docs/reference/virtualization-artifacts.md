@@ -266,7 +266,9 @@ Keep `StagingRoot` until stable verification; cleanup is a separate explicit ope
 selectors are required so both the fresh image build and exact wheel deployment use the same approved credential
 source; the values are forwarded to the existing isolated SDK bridges and are never uploaded as evidence. A
 conflicting candidate requires a new explicit `rc.N`. Every retry reconstructs and byte-validates the complete cached
-software source against the signed bundle, re-exports the OVA, and rebuilds Hyper-V from that current OVA.
+software source against the signed bundle, re-exports the OVA, and rebuilds Hyper-V from that current OVA. Before
+signing, the hosted finalizer requires the OVA provenance's software tag, manifest, bundle, application-wheel, and
+Python-ABI fields to exactly match the verified software-source sidecar.
 
 Stable promotion never rebuilds:
 

@@ -88,6 +88,22 @@ def _assets(path: Path, version: str = "0.9.217") -> None:
     (path / "virtualization-source.json").write_text(
         json.dumps(source), encoding="utf-8"
     )
+    provenance = {
+        "schema_version": 1,
+        "kind": "atlaso-vmware-ova-provenance",
+        "product_version": version,
+        "source_commit": "a" * 40,
+        "software_release_source": {
+            "tag": source["source_software_tag"],
+            "release_manifest_sha256": source["release_manifest_sha256"],
+            "release_bundle_sha256": source["release_bundle_sha256"],
+            "application_wheel_sha256": source["application_wheel_sha256"],
+            "python_abi": source["python_abi"],
+        },
+    }
+    (path / f"atlaso-v{version}-provenance.json").write_text(
+        json.dumps(provenance), encoding="utf-8"
+    )
     ova = path / f"atlaso-v{version}.ova"
     hyperv = path / f"atlaso-v{version}-hyperv-x86_64.zip"
     windows = {
@@ -267,6 +283,46 @@ def test_rejects_unknown_assets_and_signed_role_mismatches(tmp_path: Path) -> No
             signature_path=assets / builder.SIGNATURE_NAME,
             trust_key_path=trust_key,
             asset_directory=assets,
+        )
+
+
+def test_rejects_ova_provenance_not_bound_to_software_source(tmp_path: Path) -> None:
+    """Signing fails when OVA provenance disagrees with the signed source sidecar.
+
+    Args:
+        tmp_path: Temporary directory provided by pytest.
+    """
+
+    assets = tmp_path / "assets"
+    _assets(assets)
+    _key(tmp_path / "key.pem")
+    provenance_path = assets / "atlaso-v0.9.217-provenance.json"
+    provenance = json.loads(provenance_path.read_text(encoding="utf-8"))
+    provenance["software_release_source"]["application_wheel_sha256"] = "e" * 64
+    provenance_path.write_text(json.dumps(provenance), encoding="utf-8")
+
+    with pytest.raises(SystemExit, match="does not bind the exact software-release"):
+        builder.main(
+            [
+                "--assets",
+                str(assets),
+                "--version",
+                "0.9.217",
+                "--commit",
+                "a" * 40,
+                "--classification",
+                "prerelease",
+                "--release-tag",
+                "virtualization-v0.9.217-rc.1",
+                "--source-release-manifest-sha256",
+                "b" * 64,
+                "--application-wheel-sha256",
+                "c" * 64,
+                "--signing-key",
+                str(tmp_path / "key.pem"),
+                "--signing-key-id",
+                "test-key",
+            ]
         )
 
 

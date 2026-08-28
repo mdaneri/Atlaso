@@ -221,6 +221,27 @@ def _validate_evidence(
         raise SystemExit(
             "software-release source evidence does not match the release identity"
         )
+    provenance_paths = sorted(asset_root.glob("*-provenance.json"))
+    if len(provenance_paths) != 1:
+        raise SystemExit("virtualization release requires one OVA provenance document")
+    provenance = _json_object(provenance_paths[0], "OVA provenance")
+    if (
+        provenance.get("schema_version") != 1
+        or provenance.get("kind") != "atlaso-vmware-ova-provenance"
+        or provenance.get("product_version") != version
+        or provenance.get("source_commit") != commit
+        or provenance.get("software_release_source")
+        != {
+            "tag": source["source_software_tag"],
+            "release_manifest_sha256": source["release_manifest_sha256"],
+            "release_bundle_sha256": source["release_bundle_sha256"],
+            "application_wheel_sha256": source["application_wheel_sha256"],
+            "python_abi": source["python_abi"],
+        }
+    ):
+        raise SystemExit(
+            "OVA provenance does not bind the exact software-release source evidence"
+        )
     ova = next(asset_root.glob("*.ova"))
     hyperv = asset_root / f"atlaso-v{version}-hyperv-x86_64.zip"
     windows = _json_object(
