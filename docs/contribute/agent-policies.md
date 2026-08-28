@@ -178,10 +178,11 @@ runtime.
   the repository, task identifier and current title, pull-request number, task-owned branch, absolute worktree path,
   pull-request head SHA, and merge commit SHA. The controller waits for the task to be idle and unpinned and treats the
   handoff only as evidence to revalidate.
-- Re-fetch GitHub and Git state. Require the exact merged pull request and closed issue, completed post-merge activity,
-  and either exclusive task ownership of the branch and checkout or the external ownership required by the
-  non-destructive exception below. Identify and verify a primary checkout first and exempt it from removable-worktree
-  and Codex-root checks. Only a non-primary target must be a registered, clean, unlocked,
+- Re-fetch GitHub and Git state. Require the exact merged pull request and closed issue plus completed post-merge
+  activity. Evaluate remote-branch ownership independently from local checkout/worktree ownership, requiring exclusive
+  task ownership before a destructive step or external ownership for the corresponding non-destructive exception
+  below. Identify and verify a primary checkout first and exempt it from removable-worktree and Codex-root checks. Only
+  a non-primary target must be a registered, clean, unlocked,
   non-reparse-point worktree beneath the resolved Codex worktree root. Never remove the primary checkout, a permanent
   or user-created worktree, or an ambiguous target.
 
@@ -221,11 +222,13 @@ Terminal order:
   requested. If the runtime exposes no supported mutable title control, record `task_title_done` as verified not applicable
   with capability evidence, omit the visible suffix, and allow otherwise-complete cleanup to finish. Any failure or
   ambiguity in an available control blocks the title transition and leaves an actionable retry condition.
-- For an existing ordinary pull request with a non-task-owned branch or checkout, preserve the owner's remote and local
-  refs, checkout, worktree, and metadata. After verifying the exact merge, reachable merge commit, closed issue,
-  completed post-merge activity, and external ownership, record `non_task_owned_branch_preserved`. Then record
-  `remote_branch_absent` and `worktree_removed` as verified not applicable, in that order and without changing preserved
-  state, before evaluating `task_title_done`. Ambiguous ownership blocks this exception and the Done suffix.
+- For an existing ordinary pull request, evaluate remote and local ownership separately after verifying the exact
+  merge, reachable merge commit, closed issue, and completed post-merge activity. For a non-task-owned remote branch,
+  preserve it, record `non_task_owned_remote_branch_preserved`, and record `remote_branch_absent` as verified not
+  applicable; a task-owned local worktree still follows normal removal. For a non-task-owned local checkout or
+  worktree, preserve it and its refs and metadata, record `non_task_owned_checkout_preserved`, and record
+  `worktree_removed` as verified not applicable; a task-owned remote branch still follows normal deletion. Apply these
+  decisions in terminal order. Ambiguous ownership blocks the affected transition and the Done suffix.
 - A squash-merged head that is not an ancestor of `main` is eligible only when the worktree HEAD equals the recorded
   pull-request head SHA and the recorded merge commit is reachable from current `origin/main`.
 - The daily Codex cleanup automation reconciles missed handoffs and partial transitions with these same gates. Its

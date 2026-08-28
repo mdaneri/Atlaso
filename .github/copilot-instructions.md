@@ -43,10 +43,12 @@ New Tabulators must use `window.AtlasoUiPatterns.createGrid(...)`; every new or 
   record `task_title_done` as verified not applicable with capability evidence, omit the visible suffix, and do not block
   otherwise-complete cleanup;
 
-  For an existing ordinary pull request with a non-task-owned branch or checkout, preserve all owner refs, checkouts,
-  worktrees, and metadata. After verifying merge and lifecycle completion plus external ownership, record
-  `non_task_owned_branch_preserved`, then record `remote_branch_absent` and `worktree_removed` as verified not applicable
-  in terminal order without changing preserved state. Ambiguous ownership blocks this exception and `task_title_done`.
+  For an existing ordinary pull request, evaluate remote-branch ownership separately from local checkout/worktree
+  ownership after merge and lifecycle verification. Preserve a non-task-owned remote branch, record
+  `non_task_owned_remote_branch_preserved`, and mark only `remote_branch_absent` not applicable. Preserve a
+  non-task-owned checkout or worktree and its local refs and metadata, record `non_task_owned_checkout_preserved`, and
+  mark only `worktree_removed` not applicable. Clean up every task-owned side normally and keep terminal order;
+  ambiguous ownership blocks the affected transition and `task_title_done`.
 
   For a non-primary worktree, record `worktree_removed` only after `git worktree remove`, stale-registration pruning,
   path and registration absence, deletion of the exact unreferenced local task branch that still equals the recorded

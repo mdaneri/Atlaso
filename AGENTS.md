@@ -208,9 +208,10 @@ the repository, task identifier and current title, pull-request number, task-own
 pull-request head SHA, and merge commit SHA. A handoff is evidence to revalidate, never authority to skip a gate.
 
 The primary-checkout controller must wait until the originating task is idle and unpinned, then independently re-fetch
-task, GitHub, and Git worktree state. It must verify the exact merged pull request, completed post-merge activity, and
-exclusive task ownership of the branch and checkout, or establish the external ownership required by the
-non-destructive exception below. Require a closed linked issue for ordinary work or privately revalidate every
+task, GitHub, and Git worktree state. It must verify the exact merged pull request and completed post-merge activity,
+then determine remote-branch ownership and local checkout/worktree ownership independently. Require exclusive task
+ownership before a destructive step or establish the external ownership required by the corresponding non-destructive
+exception below. Require a closed linked issue for ordinary work or privately revalidate every
 `advisory_cleanup_ready` criterion against the corresponding advisory record. Determine first whether
 the task uses the repository's primary checkout and verify that identity separately. Only a non-primary target must be
 a registered, clean, unlocked, non-reparse-point worktree beneath the resolved Codex worktree root. Never remove the primary
@@ -256,12 +257,14 @@ requests archival. Only when the runtime exposes no supported mutable task-title
 record `task_title_done` as verified not applicable with the capability evidence; do not append or claim a visible Done
 suffix, and do not block otherwise-complete cleanup on the unavailable control.
 
-For an existing ordinary pull request with a non-task-owned branch or checkout, never adopt, delete, move, remove, or
-prune that owner's refs, checkout, worktree, or metadata. After independently verifying the exact merged pull request,
-reachable merge commit, closed linked issue, completed post-merge activity, and established external ownership, record
-`non_task_owned_branch_preserved`. Then record `remote_branch_absent` and `worktree_removed` as verified not applicable,
-in that order, without changing the preserved state, before evaluating `task_title_done`. Ambiguous ownership blocks
-this exception and the Done suffix.
+For an existing ordinary pull request, evaluate remote and local ownership separately after independently verifying the
+exact merge, reachable merge commit, closed linked issue, and completed post-merge activity. When the remote branch is
+non-task-owned, preserve it, record `non_task_owned_remote_branch_preserved`, and record `remote_branch_absent` as
+verified not applicable; this does not exempt a task-owned local worktree from normal removal. When the local checkout
+or worktree is non-task-owned, preserve it and its local refs and metadata, record
+`non_task_owned_checkout_preserved`, and record `worktree_removed` as verified not applicable; this does not exempt a
+task-owned remote branch from normal deletion. Apply these decisions in terminal order. Ambiguous ownership blocks the
+affected transition and the Done suffix.
 
 Any failed or ambiguous gate blocks `task_title_done`; leave the task actionable and report the exact retry condition.
 The daily Codex cleanup automation is the reconciliation backstop for missed handoffs and partially completed terminal

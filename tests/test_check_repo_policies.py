@@ -5,7 +5,8 @@ from pathlib import Path
 from scripts.check_repo import (
     LEGACY_TABULATOR_MARKER,
     LOCAL_TASK_BRANCH_ABSENT_MARKER,
-    NON_TASK_OWNED_BRANCH_PRESERVED_MARKER,
+    NON_TASK_OWNED_CHECKOUT_PRESERVED_MARKER,
+    NON_TASK_OWNED_REMOTE_BRANCH_PRESERVED_MARKER,
     ORDERED_TERMINAL_CLEANUP_MARKERS,
     PRIMARY_CHECKOUT_RESTORED_MARKER,
     PRIMARY_CHECKOUT_RESUME_MARKER,
@@ -787,25 +788,27 @@ def test_agent_policy_gate_rejects_missing_non_task_owned_cleanup_contract(
         Path("docs/reference/full-technical-reference.md"),
     )
 
-    for relative_path in required_entry_points:
-        write_policy_files(tmp_path)
-        path = tmp_path / relative_path
-        path.write_text(
-            path.read_text(encoding="utf-8").replace(
-                NON_TASK_OWNED_BRANCH_PRESERVED_MARKER,
-                "",
-            ),
-            encoding="utf-8",
-        )
+    markers = (
+        NON_TASK_OWNED_REMOTE_BRANCH_PRESERVED_MARKER,
+        NON_TASK_OWNED_CHECKOUT_PRESERVED_MARKER,
+    )
 
-        findings = check_agent_policy_gate(tmp_path)
+    for marker in markers:
+        for relative_path in required_entry_points:
+            write_policy_files(tmp_path)
+            path = tmp_path / relative_path
+            path.write_text(
+                path.read_text(encoding="utf-8").replace(marker, ""),
+                encoding="utf-8",
+            )
 
-        assert len(findings) == 1
-        assert findings[0].path == path
-        assert findings[0].message == (
-            "required agent policy marker is missing: "
-            f"{NON_TASK_OWNED_BRANCH_PRESERVED_MARKER}"
-        )
+            findings = check_agent_policy_gate(tmp_path)
+
+            assert len(findings) == 1
+            assert findings[0].path == path
+            assert findings[0].message == (
+                f"required agent policy marker is missing: {marker}"
+            )
 
 
 def test_agent_policy_gate_rejects_missing_merge_queue_guard(tmp_path: Path) -> None:
