@@ -39,6 +39,7 @@ QEMU_GUEST_AGENT_BUILDER="$ATLASO_SRC/image/common/scripts/build-qemu-guest-agen
 GUEST_AGENT_SELECTOR_SOURCE="$ATLASO_SRC/scripts/appliance/atlaso-select-guest-agent"
 MACHINE_IDENTITY_INITIALIZER_SOURCE="$ATLASO_SRC/scripts/appliance/atlaso-initialize-machine-identity.py"
 IMAGE_BUILD_FINALIZER_SOURCE="$ATLASO_SRC/image/common/scripts/finalize-image-build.sh"
+PHOTON_PACKAGE_STATE_VERIFIER="$ATLASO_SRC/image/common/scripts/verify-photon-package-state.py"
 GUEST_AGENT_UNIT_SOURCE="$ATLASO_SRC/image/common/systemd/atlaso-guest-agent-select.service"
 GUEST_AGENT_STAGING="$ATLASO_STATE/first-boot-packages"
 PYTHON_RUNTIME_STAGING="$ATLASO_STATE/python-runtime-packages"
@@ -253,7 +254,7 @@ if [ ! -r "$DATA_DISK_POLICY_SOURCE" ]; then
 fi
 if [ ! -r "$QEMU_GUEST_AGENT_BUILDER" ] || [ ! -r "$GUEST_AGENT_SELECTOR_SOURCE" ] ||
   [ ! -r "$MACHINE_IDENTITY_INITIALIZER_SOURCE" ] || [ ! -r "$IMAGE_BUILD_FINALIZER_SOURCE" ] ||
-  [ ! -r "$GUEST_AGENT_UNIT_SOURCE" ]; then
+  [ ! -r "$PHOTON_PACKAGE_STATE_VERIFIER" ] || [ ! -r "$GUEST_AGENT_UNIT_SOURCE" ]; then
   echo "Provider-neutral guest-agent build or first-boot assets are missing from staged Atlaso sources." >&2
   exit 2
 fi
@@ -883,15 +884,22 @@ rm -f /root/.bash_history "/home/$BOOTSTRAP_USERNAME/.bash_history"
 sync
 
 log_step "removing build-only packages and caches"
-run_tdnf "Build-only package removal" remove python3-devel python3-setuptools rpm-build gcc binutils linux-api-headers make glib-devel systemd-devel ninja-build pkg-config
+# Photon enables clean_requirements_on_remove, which can otherwise prune RPM,
+# systemd, and the release package while removing this temporary toolchain.
+run_tdnf "Build-only package removal" --noautoremove remove python3-devel python3-setuptools rpm-build gcc binutils linux-api-headers make glib-devel systemd-devel ninja-build pkg-config
 command -v python3 >/dev/null
 command -v pwsh >/dev/null
 command -v vmtoolsd >/dev/null 2>&1 || [ "$ATLASO_GUEST_PLATFORM" != "vmware" ]
 "$ATLASO_HOME/.venv/bin/python" -c 'import atlaso'
 pwsh -NoLogo -NoProfile -NonInteractive -Command \
   '$ErrorActionPreference = "Stop"; Import-Module VCF.PowerCLI -RequiredVersion $env:ATLASO_POWERCLI_VERSION -Force'
+python3 "$PHOTON_PACKAGE_STATE_VERIFIER" --guest-platform "$ATLASO_GUEST_PLATFORM"
 
-tdnf -y clean all || true
+run_tdnf "Final Photon package cache cleanup" clean all
+run_tdnf "Final Photon repository refresh" makecache
+run_tdnf "Final Photon OS update verification" update
+python3 "$PHOTON_PACKAGE_STATE_VERIFIER" --guest-platform "$ATLASO_GUEST_PLATFORM"
+run_tdnf "Final Photon package cache cleanup" clean all
 rm -rf /var/cache/tdnf/* "$PIP_CACHE_DIR" /root/.cache/pip \
   /root/.cache/powershell /root/.local/share/powershell/PowerShellGet
 rm -rf "$ATLASO_SRC"

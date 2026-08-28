@@ -1402,8 +1402,19 @@ def test_photon_provisioning_prepares_attached_data_disks():
     assert "x-systemd.requires-mounts-for=%s" in provision
     assert 'mount --bind "$ATLASO_SYSTEM_CONTENT_MOUNT/opt-atlaso" "$ATLASO_HOME"' in provision
     assert "powershell-modules" in provision
-    assert 'run_tdnf "Build-only package removal" remove python3-devel' in provision
-    assert "tdnf -y clean all" in provision
+    assert (
+        'run_tdnf "Build-only package removal" --noautoremove remove python3-devel'
+        in provision
+    )
+    assert provision.count(
+        'run_tdnf "Final Photon package cache cleanup" clean all'
+    ) == 2
+    assert 'run_tdnf "Final Photon repository refresh" makecache' in provision
+    assert 'run_tdnf "Final Photon OS update verification" update' in provision
+    assert provision.count(
+        'python3 "$PHOTON_PACKAGE_STATE_VERIFIER" --guest-platform '
+        '"$ATLASO_GUEST_PLATFORM"'
+    ) == 2
     assert "zero_fill_free_space / \"Photon OS filesystem\"" in provision
     assert 'zero_fill_free_space "$ATLASO_SYSTEM_CONTENT_MOUNT" "Atlaso system-content filesystem"' in provision
     assert "reserve_kib=524288" in provision
@@ -1653,7 +1664,9 @@ def test_photon_build_installs_the_complete_qemu_build_toolchain() -> None:
     package_removal = next(
         line.strip()
         for line in provision.splitlines()
-        if line.strip().startswith('run_tdnf "Build-only package removal" remove ')
+        if line.strip().startswith(
+            'run_tdnf "Build-only package removal" --noautoremove remove '
+        )
     )
 
     assert " gcc " in f" {package_install} "

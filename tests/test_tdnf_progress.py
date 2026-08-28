@@ -9,7 +9,9 @@ from pathlib import Path
 SCRIPT = Path("scripts/run_tdnf_with_progress.py").resolve()
 
 
-def run_progress_wrapper(tmp_path: Path, child_source: str, *extra_args: str) -> subprocess.CompletedProcess[str]:
+def run_progress_wrapper(
+    tmp_path: Path, child_source: str, *extra_args: str
+) -> subprocess.CompletedProcess[str]:
     """Run progress wrapper.
 
     Args:
@@ -91,3 +93,18 @@ def test_progress_wrapper_replays_bounded_normalized_tail_on_failure(tmp_path):
     assert "line-204" in result.stderr
     assert "final failure" in result.stderr
     assert "line-202" not in result.stderr
+
+
+def test_progress_wrapper_rejects_tdnf_error_with_zero_exit_status(tmp_path):
+    """Treat a repository error reported with status zero as fatal."""
+
+    result = run_progress_wrapper(
+        tmp_path,
+        "print(\"Error: Failed to synchronize cache for repo 'photon-updates'\"); "
+        "print(\"Disabling Repo: 'photon-updates'\")",
+    )
+
+    assert result.returncode == 1
+    assert "reported an error despite exit status 0" in result.stderr
+    assert "Failed to synchronize cache" in result.stderr
+    assert "Disabling Repo" in result.stderr

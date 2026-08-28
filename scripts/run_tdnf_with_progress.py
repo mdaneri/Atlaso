@@ -14,6 +14,7 @@ import time
 from pathlib import Path
 
 ANSI_ESCAPE_RE = re.compile(r"\x1b\[[0-?]*[ -/]*[@-~]")
+TDNF_ERROR_LINE_RE = re.compile(r"^(?:Error(?:\(\d+\))?\s*:|Disabling Repo:)")
 
 
 def _format_duration(seconds: float) -> str:
@@ -92,6 +93,19 @@ def _failure_tail(path: Path, line_limit: int) -> list[str]:
     return lines[-line_limit:]
 
 
+def _reported_tdnf_failure(path: Path) -> bool:
+    """Return whether TDNF reported an error while returning success."""
+
+    try:
+        text = path.read_bytes().decode("utf-8", errors="replace")
+    except OSError:
+        return True
+    normalized = ANSI_ESCAPE_RE.sub("", text).replace("\r", "\n")
+    return any(
+        TDNF_ERROR_LINE_RE.match(line.strip()) for line in normalized.splitlines()
+    )
+
+
 def run(
     command: list[str],
     *,
@@ -119,7 +133,9 @@ def run(
         flush=True,
     )
 
-    with tempfile.NamedTemporaryFile(prefix="atlaso-tdnf-", suffix=".log", delete=False) as output:
+    with tempfile.NamedTemporaryFile(
+        prefix="atlaso-tdnf-", suffix=".log", delete=False
+    ) as output:
         output_path = Path(output.name)
         process = subprocess.Popen(
             command,
@@ -165,12 +181,18 @@ def run(
             signal.signal(signum, handler)
 
     elapsed = _format_duration(time.monotonic() - started)
-    if status == 0:
+    reported_failure = status == 0 and _reported_tdnf_failure(output_path)
+    if status == 0 and not reported_failure:
         print(f"==> Atlaso appliance: {label} completed in {elapsed}", flush=True)
     else:
+        failure_reason = (
+            "reported an error despite exit status 0"
+            if reported_failure
+            else f"exit status {status}"
+        )
         print(
             f"==> Atlaso appliance: {label} failed after {elapsed} "
-            f"(exit status {status}); last TDNF output:",
+            f"({failure_reason}); last TDNF output:",
             file=sys.stderr,
             flush=True,
         )
@@ -181,7 +203,7 @@ def run(
         output_path.unlink()
     except OSError:
         pass
-    return status
+    return 1 if reported_failure else status
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -195,7 +217,9 @@ def main(argv: list[str] | None = None) -> int:
         The main result.
     """
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--label", required=True, help="Operator-facing operation name.")
+    parser.add_argument(
+        "--label", required=True, help="Operator-facing operation name."
+    )
     parser.add_argument("--cache-dir", type=Path, default=Path("/var/cache/tdnf"))
     parser.add_argument("--heartbeat-seconds", type=float, default=30)
     parser.add_argument("--failure-tail-lines", type=int, default=200)
