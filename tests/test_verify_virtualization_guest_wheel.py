@@ -654,6 +654,35 @@ def test_runtime_package_archive_requires_exact_digest_inventory(tmp_path: Path)
         verifier._extract_runtime_package_archive(bad_archive, bad_destination)
 
 
+def test_runtime_package_requires_current_official_repository_identity(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A broadly signed historical RPM is not an admitted runtime package.
+
+    Args:
+        tmp_path: Temporary directory provided by pytest.
+        monkeypatch: Pytest fixture used to isolate RPM header inspection.
+    """
+
+    package = tmp_path / "python3.rpm"
+    package.write_bytes(b"current-official-rpm")
+    identity = ("python3", "0", "3.14.5", "2.ph5", "x86_64")
+    monkeypatch.setattr(
+        verifier,
+        "_run_runtime_tool",
+        lambda _arguments: "ATLASO\t" + "\t".join(identity),
+    )
+    admitted = {(*identity, hashlib.sha256(package.read_bytes()).hexdigest())}
+    verifier._require_admitted_runtime_package(package, "/usr/bin/rpm", admitted)
+
+    with pytest.raises(SystemExit, match="current official metadata"):
+        verifier._require_admitted_runtime_package(
+            package,
+            "/usr/bin/rpm",
+            {(*identity, hashlib.sha256(b"historical-rpm").hexdigest())},
+        )
+
+
 def test_runtime_tree_manifest_detects_altered_standard_library(tmp_path: Path) -> None:
     """Standard-library comparison binds every regular file and symbolic link.
 

@@ -38,7 +38,9 @@ system-content VMDK read-only with libguestfs. It resolves the active CPython 3.
 member installed from the Atlaso wheel and complete signed wheelhouse to match, and rejects unexpected active files
 except bounded pip and CPython metadata. The image retains the exact Photon RPM closure that owns the interpreter and
 standard library. The finalizer authenticates every retained RPM against the Photon package keys pinned in the admitted
-Atlaso commit, extracts those signed payloads on the hosted runner, and requires `/usr/bin/python3.14` plus the complete
+Atlaso commit, requires its exact name, epoch, version, release, architecture, and SHA-256 digest to remain present in
+the current official Photon 5.0 release or updates repository metadata, extracts those signed payloads on the hosted
+runner, and requires `/usr/bin/python3.14` plus the complete
 `/usr/lib/python3.14` tree in the guest to match byte for byte. The pinned keys originate from Photon OS's
 `photon-repos` package sources; updating them requires an explicit reviewed source change. It also requires the active
 virtualenv Python link to resolve only to that authenticated CPython 3.14 interpreter and every Atlaso console script to
@@ -51,6 +53,8 @@ independent payload checks. The
 same boundary uses `qemu-img compare` to require both Hyper-V payload VHDX disks to
 expose the same guest-visible bytes as the admitted OVA VMDKs and both 500 GiB Hyper-V data disks to match an
 independent all-zero sparse reference.
+The protected index signer also requires the exact versioned OVA name and the canonical OVF, manifest, provenance, and
+two payload-VMDK names; suffix-compatible aliases are not publishable assets.
 
 The OVA contains files for the two payload disks. Its two 500 GiB data disks are fileless declarations. Import helpers
 retain fileless disks when the platform creates them, create only missing data disks, and reject reordered or

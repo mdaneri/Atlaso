@@ -6,6 +6,7 @@ import argparse
 import base64
 import configparser
 import csv
+import gzip
 import hashlib
 import io
 import json
@@ -14,6 +15,9 @@ import shutil
 import subprocess
 import tarfile
 import tempfile
+import urllib.parse
+import urllib.request
+import xml.etree.ElementTree as ET
 import zipfile
 from pathlib import Path, PurePosixPath
 from typing import Any
@@ -44,6 +48,12 @@ PHOTON_RPM_KEY_PATHS = (
     "image/common/photon-rpm-gpg/VMWARE-RPM-GPG-KEY-4096",
 )
 PYTHON_RUNTIME_PACKAGE_PATH = "/var/lib/atlaso/python-runtime-packages"
+PHOTON_REPOSITORY_URLS = (
+    "https://packages.broadcom.com/photon/5.0/photon_release_5.0_x86_64/",
+    "https://packages.broadcom.com/photon/5.0/photon_updates_5.0_x86_64/",
+)
+REPOSITORY_METADATA_NAMESPACE = "http://linux.duke.edu/metadata/repo"
+REPOSITORY_COMMON_NAMESPACE = "http://linux.duke.edu/metadata/common"
 
 
 def _sha256(path: Path) -> str:
@@ -715,6 +725,139 @@ def _run_runtime_tool(arguments: list[str], *, cwd: Path | None = None) -> str:
     return output
 
 
+def _download_photon_repository_document(url: str, maximum_bytes: int) -> bytes:
+    """Download one bounded document from the admitted Photon repository.
+
+    Args:
+        url: Exact HTTPS metadata URL under the Photon 5.0 repository.
+        maximum_bytes: Maximum accepted response length.
+
+    Returns:
+        Complete response bytes.
+    """
+
+    request = urllib.request.Request(url, headers={"User-Agent": "Atlaso-release-verifier"})
+    try:
+        with urllib.request.urlopen(request, timeout=30) as response:  # noqa: S310 - exact host is revalidated below.
+            final = urllib.parse.urlsplit(response.geturl())
+            if (
+                final.scheme != "https"
+                or final.hostname != "packages.broadcom.com"
+                or not final.path.startswith("/photon/5.0/")
+            ):
+                raise SystemExit("Photon repository metadata redirected outside the admitted origin")
+            content = response.read(maximum_bytes + 1)
+    except (OSError, ValueError) as exc:
+        raise SystemExit("Photon repository metadata could not be downloaded") from exc
+    if not content or len(content) > maximum_bytes:
+        raise SystemExit("Photon repository metadata exceeds its bounded size")
+    return content
+
+
+def _photon_repository_inventory() -> set[tuple[str, str, str, str, str, str]]:
+    """Return exact RPM identities and digests from current official Photon metadata."""
+
+    inventory: set[tuple[str, str, str, str, str, str]] = set()
+    repository_namespace = {"repo": REPOSITORY_METADATA_NAMESPACE}
+    common_namespace = {"common": REPOSITORY_COMMON_NAMESPACE}
+    for repository_url in PHOTON_REPOSITORY_URLS:
+        repomd = _download_photon_repository_document(
+            urllib.parse.urljoin(repository_url, "repodata/repomd.xml"), 1024 * 1024
+        )
+        try:
+            root = ET.fromstring(repomd)
+            primary = next(
+                node
+                for node in root.findall("repo:data", repository_namespace)
+                if node.get("type") == "primary"
+            )
+            checksum_node = primary.find("repo:checksum", repository_namespace)
+            open_checksum_node = primary.find("repo:open-checksum", repository_namespace)
+            location_node = primary.find("repo:location", repository_namespace)
+            open_size_node = primary.find("repo:open-size", repository_namespace)
+            if (
+                checksum_node is None
+                or checksum_node.get("type") != "sha256"
+                or DIGEST_PATTERN.fullmatch(checksum_node.text or "") is None
+                or open_checksum_node is None
+                or open_checksum_node.get("type") != "sha256"
+                or DIGEST_PATTERN.fullmatch(open_checksum_node.text or "") is None
+                or location_node is None
+                or open_size_node is None
+                or int(open_size_node.text or "0") > 64 * 1024 * 1024
+            ):
+                raise ValueError("invalid primary metadata identity")
+            location = location_node.get("href", "")
+            if not location.startswith("repodata/") or ".." in location.split("/"):
+                raise ValueError("unsafe primary metadata location")
+        except (ET.ParseError, StopIteration, TypeError, ValueError) as exc:
+            raise SystemExit("Photon repository index is invalid") from exc
+        compressed = _download_photon_repository_document(
+            urllib.parse.urljoin(repository_url, location), 16 * 1024 * 1024
+        )
+        if hashlib.sha256(compressed).hexdigest() != checksum_node.text:
+            raise SystemExit("Photon primary metadata digest does not match its index")
+        try:
+            with gzip.GzipFile(fileobj=io.BytesIO(compressed)) as archive:
+                document = archive.read(64 * 1024 * 1024 + 1)
+        except (OSError, EOFError) as exc:
+            raise SystemExit("Photon primary metadata is not valid gzip") from exc
+        if (
+            len(document) > 64 * 1024 * 1024
+            or hashlib.sha256(document).hexdigest() != open_checksum_node.text
+        ):
+            raise SystemExit("Photon primary metadata content digest does not match")
+        try:
+            primary_root = ET.fromstring(document)
+            for package in primary_root.findall("common:package", common_namespace):
+                name = package.findtext("common:name", namespaces=common_namespace)
+                arch = package.findtext("common:arch", namespaces=common_namespace)
+                version = package.find("common:version", common_namespace)
+                checksum = package.find("common:checksum", common_namespace)
+                if (
+                    not name
+                    or not arch
+                    or version is None
+                    or checksum is None
+                    or checksum.get("type") != "sha256"
+                    or DIGEST_PATTERN.fullmatch(checksum.text or "") is None
+                ):
+                    raise ValueError("incomplete package identity")
+                inventory.add(
+                    (
+                        name,
+                        version.get("epoch", "0"),
+                        version.get("ver", ""),
+                        version.get("rel", ""),
+                        arch,
+                        checksum.text or "",
+                    )
+                )
+        except (ET.ParseError, ValueError) as exc:
+            raise SystemExit("Photon primary package metadata is invalid") from exc
+    if not inventory:
+        raise SystemExit("Photon repositories contain no admitted packages")
+    return inventory
+
+
+def _require_admitted_runtime_package(
+    package: Path,
+    rpm_tool: str,
+    inventory: set[tuple[str, str, str, str, str, str]],
+) -> None:
+    """Require one staged RPM identity and digest in official Photon metadata."""
+
+    query = _run_runtime_tool(
+        [rpm_tool, "-qp", "--qf", "ATLASO\\t%{NAME}\\t%{EPOCHNUM}\\t%{VERSION}\\t%{RELEASE}\\t%{ARCH}\\n", str(package)]
+    )
+    identities = [line.split("\t")[1:] for line in query.splitlines() if line.startswith("ATLASO\t")]
+    if len(identities) != 1 or len(identities[0]) != 5:
+        raise SystemExit("Photon runtime RPM identity is ambiguous")
+    identity = tuple([*identities[0], _sha256(package)])
+    if identity not in inventory:
+        raise SystemExit("Photon runtime RPM is not admitted by current official metadata")
+
+
 def _authenticate_and_extract_runtime_packages(
     packages: list[Path], source_commit: str, repo_root: Path, destination: Path
 ) -> None:
@@ -741,6 +884,7 @@ def _authenticate_and_extract_runtime_packages(
         )
     owns_interpreter = False
     owns_stdlib = False
+    repository_inventory = _photon_repository_inventory()
     for package in packages:
         signature = _run_runtime_tool(
             [
@@ -754,6 +898,9 @@ def _authenticate_and_extract_runtime_packages(
         )
         if "signatures OK" not in signature:
             raise SystemExit(f"Photon runtime RPM is not signed by an admitted key: {package.name}")
+        _require_admitted_runtime_package(
+            package, str(tools["rpm"]), repository_inventory
+        )
         paths = _run_runtime_tool([str(tools["rpm"]), "-qpl", str(package)]).splitlines()
         owns_interpreter = owns_interpreter or "/usr/bin/python3.14" in paths
         owns_stdlib = owns_stdlib or any(path.startswith("/usr/lib/python3.14/") for path in paths)

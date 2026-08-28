@@ -430,6 +430,23 @@ def test_rejects_unknown_assets_and_signed_role_mismatches(tmp_path: Path) -> No
         )
 
 
+def test_rejects_noncanonical_vmware_release_names(tmp_path: Path) -> None:
+    """Protected signing rejects suffix-compatible producer asset aliases.
+
+    Args:
+        tmp_path: Temporary directory provided by pytest.
+    """
+
+    assets = tmp_path / "assets"
+    _assets(assets)
+    (assets / "candidate.ova").write_bytes((assets / "atlaso-v0.9.217.ova").read_bytes())
+    (assets / "atlaso-v0.9.217.ova").unlink()
+    with pytest.raises(SystemExit, match="canonical VMware asset names"):
+        builder._require_virtualization_set(
+            {path.name for path in assets.iterdir()}, "0.9.217", "prerelease"
+        )
+
+
 def test_rejects_ova_provenance_not_bound_to_software_source(tmp_path: Path) -> None:
     """Signing fails when OVA provenance disagrees with the signed source sidecar.
 

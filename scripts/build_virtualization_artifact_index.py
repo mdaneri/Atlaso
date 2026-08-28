@@ -141,31 +141,27 @@ def _require_virtualization_set(
         classification: Prerelease or stable publication class.
     """
 
-    requirements = {
-        "canonical OVA": [name for name in names if name.lower().endswith(".ova")],
-        "canonical OVF": [name for name in names if name.lower().endswith(".ovf")],
-        "OVF manifest": [name for name in names if name.lower().endswith(".mf")],
-        "OVA provenance": [
-            name for name in names if name.lower().endswith("-provenance.json")
-        ],
-        "two payload VMDKs": [name for name in names if name.lower().endswith(".vmdk")],
-        "Hyper-V ZIP": [
-            name for name in names if name == f"atlaso-v{version}-hyperv-x86_64.zip"
-        ],
+    canonical_vmware = {
+        f"atlaso-v{version}.ova",
+        "atlaso.ovf",
+        "atlaso.mf",
+        "atlaso-provenance.json",
+        "photon.vmdk",
+        "system.vmdk",
     }
-    expected_counts = {
-        "canonical OVA": 1,
-        "canonical OVF": 1,
-        "OVF manifest": 1,
-        "OVA provenance": 1,
-        "two payload VMDKs": 2,
-        "Hyper-V ZIP": 1,
+    actual_vmware = {
+        name
+        for name in names
+        if name.lower().endswith((".ova", ".ovf", ".mf", ".vmdk", "-provenance.json"))
     }
-    for label, matches in requirements.items():
-        if len(matches) != expected_counts[label]:
-            raise SystemExit(
-                f"virtualization release requires {label}; found {sorted(matches)}"
-            )
+    if actual_vmware != canonical_vmware:
+        raise SystemExit(
+            "virtualization release requires canonical VMware asset names; "
+            f"expected {sorted(canonical_vmware)}, found {sorted(actual_vmware)}"
+        )
+    expected_hyperv = f"atlaso-v{version}-hyperv-x86_64.zip"
+    if expected_hyperv not in names:
+        raise SystemExit(f"virtualization release requires {expected_hyperv}")
     for helper in (
         "import-atlaso-proxmox.sh",
         "import-atlaso-kvm.sh",

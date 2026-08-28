@@ -28,6 +28,7 @@ jobs:
     name: Admit exact prerelease bytes
     runs-on: ubuntu-latest
     permissions:
+      attestations: read
       contents: read
     outputs:
       release_sha: ${{ steps.identity.outputs.release_sha }}

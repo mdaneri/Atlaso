@@ -1290,6 +1290,8 @@ def test_release_workflows_use_successful_main_sha_and_promote_without_rebuildin
     assert "cmp --silent \"stable/atlaso-v${VERSION}.ova\"" in virtualization
     assert "needs.admit.outputs.already_published != 'true'" in virtualization
     assert "cpio libguestfs-tools qemu-utils rpm rpm2cpio" in virtualization
+    admit_job = virtualization.split("  admit:\n", 1)[1].split("  recover_published:\n", 1)[0]
+    assert "attestations: read" in admit_job
     assert "cmp --silent" in virtualization
     assert "gh-pages" not in virtualization
     assert "environment: appliance-release" in prerelease
