@@ -7191,9 +7191,30 @@ textarea {
   table-layout: fixed;
 }
 
+.vcf-fqdn-modal .vcf-fqdn-table th:nth-child(1) {
+  width: 24%;
+}
+
+.vcf-fqdn-modal .vcf-fqdn-table th:nth-child(2) {
+  width: 22%;
+}
+
+.vcf-fqdn-modal .vcf-fqdn-table th:nth-child(3) {
+  width: 34%;
+}
+
+.vcf-fqdn-modal .vcf-fqdn-table th:nth-child(4) {
+  width: 20%;
+}
+
 .vcf-fqdn-modal .vcf-fqdn-table th,
 .vcf-fqdn-modal .vcf-fqdn-table td {
   overflow-wrap: anywhere;
+}
+
+.vcf-fqdn-modal .vcf-fqdn-table input[name="hostname"] {
+  min-width: 0;
+  width: 100%;
 }
 
 .vcf-fqdn-controls > label:first-child .help-icon::after {
@@ -7226,7 +7247,7 @@ textarea {
   font-size: 15px;
 }
 
-.vcf-fqdn-table td:nth-child(2) {
+.vcf-fqdn-table td:nth-child(3) {
   font-weight: 600;
 }
 

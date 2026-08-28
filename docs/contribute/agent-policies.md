@@ -1471,6 +1471,11 @@ Terminal order:
   current targets are
   `VCF 9.1` with all 17 catalog components and `VVF 9.1` with `vc01`, `ops01`, `vsp01`, `fleetlcm`, `shared01`, and
   `license`.
+- Domain choices must come from managed DNS zones. Prefix and suffix are optional defaulting fragments. Keep one
+  editable reviewed hostname label per selected catalog component; pattern changes update untouched defaults, catalog
+  changes preserve deliberate overrides for retained components, and clearing the pattern restores catalog hostnames.
+  Submit the exact component-keyed mapping to creation and deletion, reject missing, duplicate, unknown, out-of-catalog,
+  empty, or malformed entries, and derive and validate every FQDN on the server before writing any records.
 - VCF Installer OVA deployment must treat the destination `OvfManager.ParseDescriptor` result as authoritative for
   deployable properties, defaults, deployment options, warnings, and errors. Pass the complete reviewed property
   mapping to `CreateImportSpec`; sanitize warnings against every submitted value. Bind a direct `HostAgent` connection
@@ -1478,8 +1483,6 @@ Terminal order:
   DNS, trust, or depot work, require the imported VM to retain every mapped vApp property and a supported OVF environment
   transport. Verification failure must remove only the exact task-created VM; cleanup failure remains a truthful partial
   deployment.
-- Domain choices must come from managed DNS zones. Prefix and suffix are optional hostname fragments; normalize them
-  consistently and validate every generated FQDN before writing any records.
 - Starting address input is one IPv4 or IPv6 CIDR. IPv4 creates A records and IPv6 creates AAAA records. Allocate
   sequential usable addresses inside that network, skip occupied DNS addresses of the selected family, and also skip
   IPv4 DHCP reservation addresses.
@@ -1487,11 +1490,11 @@ Terminal order:
   capacity or any validation error must create no records. Return created and skipped rows with assigned or existing
   A/AAAA addresses in fetch responses.
 - Keep component descriptions role-specific, such as `vCenter` and `VCF Automation`. Store helper ownership separately
-  in structured DNS record metadata with source `vcf_helper` and the component hostname; do not replace role
-  descriptions with a generic generated-by label.
-- Deletion must require shared modal confirmation and remove only matching helper-owned A/AAAA records for the selected
-  deployment, prefix, suffix, and domain. Preserve unrelated/manual records. Legacy records without metadata may be
-  removed only when their description exactly matches the expected component description.
+  in structured DNS record metadata with source `vcf_helper`, the immutable catalog component key, and the reviewed
+  generated host label; do not replace role descriptions with a generic generated-by label.
+- Deletion must require shared modal confirmation and remove only A/AAAA records proven helper-owned for the exact
+  submitted component and reviewed hostname mapping. Preserve unrelated, manual, mismatched, and legacy
+  description-only records even when their names or descriptions match the current catalog.
 - The FQDN modal stays open after creation so assigned addresses remain reviewable. When every displayed FQDN has an A
   or AAAA address, replace the create action with `Done` and hide `Cancel`. Enable deletion only when at least one
   displayed FQDN has an associated address.
