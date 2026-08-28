@@ -981,8 +981,11 @@ Terminal order:
   1Password SDK pattern to retrieve only the corresponding exact, unique, concealed `DEFAULT_ADMIN_PASSWORD` or
   `DEFAULT_ROOT_PASSWORD` from that same verified Environment. Preserve each explicit `SecureString` independently.
   When account or Python selectors are omitted, resolve exactly one local 1Password CLI account and select the highest
-  compatible CPython 3.10 through 3.13 runtime registered with the Windows launcher. Explicit selectors remain
-  authoritative. Zero or multiple accounts and a missing compatible runtime must fail before mutation.
+  compatible CPython 3.10 through 3.13 runtime registered with the Windows launcher. Accept current Python Install
+  Manager bracketed architecture selectors while retaining legacy launcher and vendor-tagged registrations. Reject
+  known x86, unsupported architectures, malformed entries, missing executables, and unsupported versions without
+  masking a lower compatible runtime. Explicit selectors remain authoritative. Zero or multiple accounts and a missing
+  compatible runtime must fail before mutation.
   Keep plaintext out of the PowerShell parent, arguments, caller-controlled environment, logs, output, markers,
   evidence, documentation, and GitHub surfaces by exchanging only current-user DPAPI ciphertext between bounded
   children. Never accept caller environment variables, repository defaults, local `.env` files, or interactive password
