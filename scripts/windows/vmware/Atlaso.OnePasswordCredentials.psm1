@@ -238,9 +238,19 @@ Select the highest compatible registered Python runtime.
 
 .PARAMETER LauncherOutput
 Text returned by the bounded Windows Python launcher inventory.
+
+.PARAMETER TimeoutSeconds
+Positive deadline for an architecture probe when launcher metadata omits it.
+
+.PARAMETER ArchitectureResolver
+Optional architecture-probe callback used by focused tests.
 #>
 function Select-AtlasoOnePasswordPythonFromLauncherInventory {
-    param([Parameter(Mandatory = $true)][AllowEmptyString()][string]$LauncherOutput)
+    param(
+        [Parameter(Mandatory = $true)][AllowEmptyString()][string]$LauncherOutput,
+        [ValidateRange(1, 3600)][int]$TimeoutSeconds = 30,
+        [scriptblock]$ArchitectureResolver
+    )
 
     $candidates = foreach ($line in @($LauncherOutput -split "`r?`n")) {
         $versionText = ''
@@ -260,9 +270,7 @@ function Select-AtlasoOnePasswordPythonFromLauncherInventory {
             $architecture = $Matches[2]
             $executablePath = $Matches[3]
         }
-        # The locked 1Password SDK publishes Windows wheels for x64 and ARM64,
-        # but not x86. Reject a known 32-bit launcher entry before version ranking.
-        if (-not [string]::IsNullOrWhiteSpace($executablePath) -and $architecture -cne '32') {
+        if (-not [string]::IsNullOrWhiteSpace($executablePath)) {
             [pscustomobject]@{
                 Version      = [version]$versionText
                 Architecture = $architecture
@@ -270,10 +278,39 @@ function Select-AtlasoOnePasswordPythonFromLauncherInventory {
             }
         }
     }
-    return @($candidates |
+    $rankedCandidates = @($candidates |
         Where-Object { Test-Path -LiteralPath $_.Path -PathType Leaf } |
-        Sort-Object -Property @{ Expression = 'Version'; Descending = $true }, @{ Expression = 'Path'; Descending = $false } |
-        Select-Object -First 1)
+        Sort-Object -Property @{ Expression = 'Version'; Descending = $true }, @{ Expression = 'Path'; Descending = $false })
+    foreach ($candidate in $rankedCandidates) {
+        # The locked 1Password SDK publishes Windows wheels for x64 and ARM64,
+        # but not x86. Vendor tags can omit architecture, so probe those
+        # executables in an isolated bounded child before selecting by version.
+        if ($candidate.Architecture -ceq '32') {
+            continue
+        }
+        if ([string]::IsNullOrWhiteSpace($candidate.Architecture)) {
+            try {
+                $pointerWidth = if ($ArchitectureResolver) {
+                    & $ArchitectureResolver $candidate.Path $TimeoutSeconds
+                }
+                else {
+                    Invoke-AtlasoBoundedProcess `
+                        -FilePath $candidate.Path `
+                        -ArgumentList @('-I', '-S', '-c', 'import struct; print(struct.calcsize("P") * 8)') `
+                        -TimeoutSeconds ([Math]::Min($TimeoutSeconds, 30)) `
+                        -Action 'The registered Python architecture probe'
+                }
+            }
+            catch {
+                continue
+            }
+            if (([string]$pointerWidth).Trim() -cne '64') {
+                continue
+            }
+        }
+        return @($candidate)
+    }
+    return @()
 }
 
 <#
@@ -320,7 +357,9 @@ function Resolve-AtlasoOnePasswordPython {
         catch {
             throw "$ConsumerDescription could not inventory Windows-registered Python runtimes; pass -OnePasswordPython explicitly."
         }
-        $selected = @(Select-AtlasoOnePasswordPythonFromLauncherInventory -LauncherOutput $launcherOutput)
+        $selected = @(Select-AtlasoOnePasswordPythonFromLauncherInventory `
+                -LauncherOutput $launcherOutput `
+                -TimeoutSeconds $TimeoutSeconds)
         if ($selected.Count -ne 1) {
             throw "$ConsumerDescription requires a Windows-registered CPython 3.10 through 3.13 runtime or an explicit -OnePasswordPython path."
         }

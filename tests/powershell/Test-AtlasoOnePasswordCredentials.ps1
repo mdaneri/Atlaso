@@ -96,6 +96,25 @@ try {
         $architectureSelectedPython.Architecture -cne '64') {
         throw 'A newer unsupported x86 runtime outranked the compatible 64-bit runtime.'
     }
+    $vendorPythonPath = Join-Path $pythonInventoryRoot 'python313vendor.exe'
+    [System.IO.File]::WriteAllBytes($vendorPythonPath, [byte[]](1))
+    $vendorArchitectureInventory = @(
+        " -V:Astral/CPython3.13.1 $vendorPythonPath",
+        " -3.12-64 $python312Path"
+    ) -join "`n"
+    $vendorArchitectureSelectedPython = & $credentialModule {
+        param([string]$InventoryOutput, [scriptblock]$ArchitectureProbe)
+        Select-AtlasoOnePasswordPythonFromLauncherInventory `
+            -LauncherOutput $InventoryOutput `
+            -ArchitectureResolver $ArchitectureProbe
+    } $vendorArchitectureInventory {
+        param([string]$CandidatePath, [int]$TimeoutSeconds)
+        if ([System.IO.Path]::GetFileName($CandidatePath) -ceq 'python313vendor.exe' -and
+            $TimeoutSeconds -eq 30) { '32' } else { '64' }
+    }
+    if ($vendorArchitectureSelectedPython.Path -cne $python312Path) {
+        throw 'An architecture-unspecified vendor x86 runtime outranked the compatible 64-bit runtime.'
+    }
 }
 finally {
     [System.IO.Directory]::Delete($pythonInventoryRoot, $true)
