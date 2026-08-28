@@ -1,4 +1,5 @@
 name: Finalize virtualization prerelease
+run-name: Finalize ${{ inputs.prerelease_tag }}
 
 on:
   workflow_call:

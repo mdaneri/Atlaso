@@ -1,4 +1,5 @@
 name: Promote stable virtualization release
+run-name: Promote ${{ inputs.prerelease_tag }}
 
 on:
   workflow_dispatch:
@@ -271,8 +272,8 @@ jobs:
               --notes "Stable exact-byte OVA and Hyper-V promotion from ${{ inputs.prerelease_tag }}."
           fi
           STATE="$(gh release view "$STABLE_TAG" --json isDraft,isPrerelease)"
+          test "$(jq -r .isPrerelease <<<"$STATE")" = false
           if test "$(jq -r .isDraft <<<"$STATE")" = false; then
-            test "$(jq -r .isPrerelease <<<"$STATE")" = false
             mkdir "$RUNNER_TEMP/published-existing"
             gh release download "$STABLE_TAG" --dir "$RUNNER_TEMP/published-existing"
             test -z "$(comm -3 \

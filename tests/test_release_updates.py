@@ -1277,9 +1277,12 @@ def test_release_workflows_use_successful_main_sha_and_promote_without_rebuildin
         "  publish:", 1
     )[0]
     assert "gh release edit \"$STABLE_TAG\" --draft=false" in virtualization
+    assert "run-name: Promote ${{ inputs.prerelease_tag }}" in virtualization
+    assert 'test "$(jq -r .isPrerelease <<<"$STATE")" = false' in virtualization
     assert "cmp --silent" in virtualization
     assert "gh-pages" not in virtualization
     assert "environment: appliance-release" in prerelease
+    assert "run-name: Finalize ${{ inputs.prerelease_tag }}" in prerelease
     assert "--classification prerelease" in prerelease
     assert "gh release edit \"$RELEASE_TAG\" --draft=false --prerelease --verify-tag" in prerelease
     assert "already_published=true" in prerelease

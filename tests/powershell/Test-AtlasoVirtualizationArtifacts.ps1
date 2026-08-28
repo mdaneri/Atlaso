@@ -199,7 +199,12 @@ foreach ($required in @(
         '[switch]$CandidateOnly',
         'Invoke-AtlasoVirtualizationPrerelease',
         'Invoke-AtlasoVirtualizationStablePromotion',
+        'Invoke-AtlasoReleaseWorkflow',
+        "'--json', 'databaseId,displayTitle'",
+        '[string]$run.conclusion -cne ''success''',
         'PrereleaseIdentifier must be an explicit rc.N',
+        'show-ref --verify --quiet',
+        'cat-file -t',
         "'release', 'create', `$tag",
         "'--verify-tag'",
         "'release', 'upload', `$Tag",
@@ -207,8 +212,8 @@ foreach ($required in @(
         "'-OnePasswordEnvironmentId', `$OnePasswordEnvironmentId",
         'artifacts\virtualization\$tag',
         'artifacts\virtualization-smoke\$tag',
-        "'workflow', 'run', 'virtualization-prerelease.yml'",
-        "'workflow', 'run', 'virtualization-stable.yml'"
+        "-Workflow 'virtualization-prerelease.yml'",
+        "-Workflow 'virtualization-stable.yml'"
     )) {
     if (-not $releaseModule.Contains($required) -and -not $ovaExporter.Contains($required)) {
         throw "Virtualization release orchestration is missing required marker: $required"

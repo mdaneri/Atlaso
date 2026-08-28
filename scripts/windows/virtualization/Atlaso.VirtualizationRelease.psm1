@@ -30,6 +30,97 @@ function Invoke-AtlasoReleaseGh {
 
 <#
 .SYNOPSIS
+Dispatches and optionally waits for one exact GitHub Actions workflow run.
+.PARAMETER Repository
+GitHub name-with-owner.
+.PARAMETER Workflow
+Workflow filename dispatched through GitHub CLI.
+.PARAMETER DisplayTitle
+Exact run title declared by the workflow's run-name contract.
+.PARAMETER Fields
+Workflow dispatch fields in name=value form.
+.PARAMETER TimeoutHours
+Maximum bounded wait for discovery and successful completion.
+.PARAMETER NoWait
+Return immediately after GitHub accepts the dispatch.
+#>
+function Invoke-AtlasoReleaseWorkflow {
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory = $true)][string]$Repository,
+        [Parameter(Mandatory = $true)][string]$Workflow,
+        [Parameter(Mandatory = $true)][string]$DisplayTitle,
+        [Parameter(Mandatory = $true)][string[]]$Fields,
+        [ValidateRange(1, 24)][int]$TimeoutHours,
+        [switch]$NoWait
+    )
+
+    $knownRunIds = @{}
+    if (-not $NoWait) {
+        $knownJson = (Invoke-AtlasoReleaseGh -Arguments @(
+            'run', 'list', '--repo', $Repository, '--workflow', $Workflow,
+            '--event', 'workflow_dispatch', '--limit', '100', '--json', 'databaseId'
+        )) -join [Environment]::NewLine
+        foreach ($run in @($knownJson | ConvertFrom-Json)) {
+            $knownRunIds[[string]$run.databaseId] = $true
+        }
+    }
+    $dispatchArguments = @('workflow', 'run', $Workflow, '--repo', $Repository)
+    foreach ($field in $Fields) {
+        $dispatchArguments += @('-f', $field)
+    }
+    Invoke-AtlasoReleaseGh -Arguments $dispatchArguments | Out-Null
+    if ($NoWait) {
+        return
+    }
+
+    $deadline = [DateTime]::UtcNow.AddHours($TimeoutHours)
+    $runId = $null
+    do {
+        Start-Sleep -Seconds 5
+        $runsJson = (Invoke-AtlasoReleaseGh -Arguments @(
+            'run', 'list', '--repo', $Repository, '--workflow', $Workflow,
+            '--event', 'workflow_dispatch', '--limit', '100',
+            '--json', 'databaseId,displayTitle'
+        )) -join [Environment]::NewLine
+        $candidateRuns = @($runsJson | ConvertFrom-Json | Where-Object {
+                [string]$_.displayTitle -ceq $DisplayTitle -and
+                -not $knownRunIds.ContainsKey([string]$_.databaseId)
+            })
+        if ($candidateRuns.Count -gt 1) {
+            throw "Workflow dispatch is ambiguous for ${Workflow}: $DisplayTitle."
+        }
+        if ($candidateRuns.Count -eq 1) {
+            $runId = [long]$candidateRuns[0].databaseId
+            break
+        }
+    } while ([DateTime]::UtcNow -lt $deadline)
+    if ($null -eq $runId) {
+        throw "GitHub did not expose the dispatched ${Workflow} run before the timeout."
+    }
+
+    do {
+        $runJson = (Invoke-AtlasoReleaseGh -Arguments @(
+            'run', 'view', [string]$runId, '--repo', $Repository,
+            '--json', 'databaseId,displayTitle,status,conclusion,url'
+        )) -join [Environment]::NewLine
+        $run = $runJson | ConvertFrom-Json
+        if ([long]$run.databaseId -ne $runId -or [string]$run.displayTitle -cne $DisplayTitle) {
+            throw "GitHub returned a different workflow run while waiting for $runId."
+        }
+        if ([string]$run.status -ceq 'completed') {
+            if ([string]$run.conclusion -cne 'success') {
+                throw "Workflow run $runId concluded $($run.conclusion): $($run.url)"
+            }
+            return $runId
+        }
+        Start-Sleep -Seconds 15
+    } while ([DateTime]::UtcNow -lt $deadline)
+    throw "Workflow run $runId did not complete within $TimeoutHours hour(s)."
+}
+
+<#
+.SYNOPSIS
 Returns the current repository name-with-owner.
 .PARAMETER RepoRoot
 Exact Atlaso checkout root.
@@ -491,9 +582,24 @@ function Invoke-AtlasoVirtualizationPrerelease {
         throw "Could not inspect remote tag $tag."
     }
     if ($remoteTag.Count -eq 0) {
-        & git -C $RepoRoot -c user.name=github-actions[bot] -c user.email=41898282+github-actions[bot]@users.noreply.github.com tag -a $tag -m "Atlaso virtualization prerelease $tag" $identity.Commit
-        if ($LASTEXITCODE -ne 0) {
-            throw "Could not create annotated tag $tag."
+        & git -C $RepoRoot show-ref --verify --quiet "refs/tags/$tag"
+        $localTagStatus = $LASTEXITCODE
+        if ($localTagStatus -eq 0) {
+            $localType = [string](& git -C $RepoRoot cat-file -t "refs/tags/$tag")
+            $localCommit = [string](& git -C $RepoRoot rev-parse "refs/tags/$tag^{}")
+            if ($LASTEXITCODE -ne 0 -or $localType.Trim() -cne 'tag' -or
+                $localCommit.Trim() -cne $identity.Commit) {
+                throw "Local tag $tag is not one annotated tag for the exact source commit."
+            }
+        }
+        elseif ($localTagStatus -eq 1) {
+            & git -C $RepoRoot -c user.name=github-actions[bot] -c user.email=41898282+github-actions[bot]@users.noreply.github.com tag -a $tag -m "Atlaso virtualization prerelease $tag" $identity.Commit
+            if ($LASTEXITCODE -ne 0) {
+                throw "Could not create annotated tag $tag."
+            }
+        }
+        else {
+            throw "Could not inspect local tag $tag."
         }
         & git -C $RepoRoot push origin "refs/tags/$tag"
         if ($LASTEXITCODE -ne 0) {
@@ -521,22 +627,20 @@ function Invoke-AtlasoVirtualizationPrerelease {
         ) | Out-Null
     }
     Publish-AtlasoVirtualizationDraftAssets -Repository $repository -Tag $tag -AssetDirectory $candidate
-    Invoke-AtlasoReleaseGh -Arguments @(
-        'workflow', 'run', 'virtualization-prerelease.yml', '--repo', $repository,
-        '-f', "release_sha=$($identity.Commit)", '-f', "prerelease_tag=$tag"
-    ) | Out-Null
+    Invoke-AtlasoReleaseWorkflow `
+        -Repository $repository `
+        -Workflow 'virtualization-prerelease.yml' `
+        -DisplayTitle "Finalize $tag" `
+        -Fields @("release_sha=$($identity.Commit)", "prerelease_tag=$tag") `
+        -TimeoutHours 2 `
+        -NoWait:$NoWait | Out-Null
     if (-not $NoWait) {
-        $deadline = [DateTime]::UtcNow.AddHours(2)
-        do {
-            Start-Sleep -Seconds 15
-            $state = ((Invoke-AtlasoReleaseGh -Arguments @(
-                'release', 'view', $tag, '--repo', $repository, '--json', 'isDraft,isPrerelease'
-            )) -join [Environment]::NewLine) | ConvertFrom-Json
-            if (-not $state.isDraft -and $state.isPrerelease) {
-                return $tag
-            }
-        } while ([DateTime]::UtcNow -lt $deadline)
-        throw "Hosted finalization did not publish $tag within two hours."
+        $state = ((Invoke-AtlasoReleaseGh -Arguments @(
+            'release', 'view', $tag, '--repo', $repository, '--json', 'isDraft,isPrerelease'
+        )) -join [Environment]::NewLine) | ConvertFrom-Json
+        if ($state.isDraft -or -not $state.isPrerelease) {
+            throw "Successful hosted finalization did not publish $tag as a prerelease."
+        }
     }
     return $tag
 }
@@ -588,38 +692,33 @@ function Invoke-AtlasoVirtualizationStablePromotion {
     if ($release.isDraft -or -not $release.isPrerelease) {
         throw "$FromPrerelease is not a published prerelease."
     }
-    Invoke-AtlasoReleaseGh -Arguments @(
-        'workflow', 'run', 'virtualization-stable.yml', '--repo', $repository,
-        '-f', "prerelease_tag=$FromPrerelease",
-        '-f', "proxmox_runner_label=$ProxmoxRunnerLabel",
-        '-f', "kvm_runner_label=$KvmRunnerLabel"
-    ) | Out-Null
+    Invoke-AtlasoReleaseWorkflow `
+        -Repository $repository `
+        -Workflow 'virtualization-stable.yml' `
+        -DisplayTitle "Promote $FromPrerelease" `
+        -Fields @(
+            "prerelease_tag=$FromPrerelease",
+            "proxmox_runner_label=$ProxmoxRunnerLabel",
+            "kvm_runner_label=$KvmRunnerLabel"
+        ) `
+        -TimeoutHours 4 `
+        -NoWait:$NoWait | Out-Null
     $stableTag = "virtualization-v$version"
     if (-not $NoWait) {
-        $deadline = [DateTime]::UtcNow.AddHours(4)
-        do {
-            Start-Sleep -Seconds 20
-            try {
-                $stable = ((Invoke-AtlasoReleaseGh -Arguments @(
-                    'release', 'view', $stableTag, '--repo', $repository,
-                    '--json', 'isDraft,isPrerelease'
-                )) -join [Environment]::NewLine) | ConvertFrom-Json
-                if (-not $stable.isDraft -and -not $stable.isPrerelease) {
-                    return $stableTag
-                }
-            }
-            catch {
-                # Absence is expected until both Linux smoke jobs finish.
-                Write-Verbose "Stable Release $stableTag is not published yet."
-            }
-        } while ([DateTime]::UtcNow -lt $deadline)
-        throw "Stable promotion did not publish $stableTag within four hours."
+        $stable = ((Invoke-AtlasoReleaseGh -Arguments @(
+            'release', 'view', $stableTag, '--repo', $repository,
+            '--json', 'isDraft,isPrerelease'
+        )) -join [Environment]::NewLine) | ConvertFrom-Json
+        if ($stable.isDraft -or $stable.isPrerelease) {
+            throw "Successful promotion did not publish $stableTag as a stable Release."
+        }
     }
     return $stableTag
 }
 
 Export-ModuleMember -Function @(
     'Get-AtlasoVirtualizationSourceIdentity',
+    'Invoke-AtlasoReleaseWorkflow',
     'Invoke-AtlasoVirtualizationPrerelease',
     'Invoke-AtlasoVirtualizationStablePromotion',
     'Publish-AtlasoVirtualizationDraftAssets',
