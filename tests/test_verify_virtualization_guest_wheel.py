@@ -15,6 +15,17 @@ import pytest
 
 from scripts import verify_virtualization_guest_wheel as verifier
 
+SOURCE_COMMIT = "a" * 40
+
+
+@pytest.fixture
+def bypass_system_content(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Keep wheel-focused tests scoped to their existing guest archives."""
+
+    monkeypatch.setattr(
+        verifier, "_verify_deployed_system_content", lambda *_arguments: 0
+    )
+
 
 def _wheel(path: Path) -> tuple[Path, dict[str, bytes]]:
     """Create a small valid Atlaso wheel and return its installed members."""
@@ -147,6 +158,7 @@ def _assets(path: Path) -> None:
 
     path.mkdir()
     (path / "atlaso-system.vmdk").write_bytes(b"vmdk")
+    (path / "photon.vmdk").write_bytes(b"vmdk")
     (path / "atlaso-v0.9.242-provenance.json").write_text(
         json.dumps(
             {
@@ -161,7 +173,9 @@ def _assets(path: Path) -> None:
 
 
 def test_verifies_every_hashed_wheel_member_in_active_venv(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    bypass_system_content: None,
 ) -> None:
     """Installed Atlaso files must match the exact signed-release wheel."""
 
@@ -192,14 +206,18 @@ def test_verifies_every_hashed_wheel_member_in_active_venv(
 
     monkeypatch.setattr(verifier, "_guestfish", fake_guestfish)
     digest = hashlib.sha256(wheel.read_bytes()).hexdigest()
-    result = verifier.verify_installed_environment(assets, wheel, wheelhouse, digest)
+    result = verifier.verify_installed_environment(
+        assets, wheel, wheelhouse, digest, SOURCE_COMMIT, tmp_path
+    )
     assert result["wheel_sha256"] == digest
     assert result["distributions_verified"] == 2
     assert result["files_verified"] == len(installed)
 
 
 def test_rejects_altered_installed_wheel_member(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    bypass_system_content: None,
 ) -> None:
     """A producer cannot substitute guest package bytes and retain signing."""
 
@@ -232,11 +250,15 @@ def test_rejects_altered_installed_wheel_member(
     monkeypatch.setattr(verifier, "_guestfish", fake_guestfish)
     digest = hashlib.sha256(wheel.read_bytes()).hexdigest()
     with pytest.raises(SystemExit, match="installed wheel member does not match"):
-        verifier.verify_installed_environment(assets, wheel, wheelhouse, digest)
+        verifier.verify_installed_environment(
+            assets, wheel, wheelhouse, digest, SOURCE_COMMIT, tmp_path
+        )
 
 
 def test_rejects_unexpected_active_pth_file(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    bypass_system_content: None,
 ) -> None:
     """The protected inventory rejects producer-injected active environment files."""
 
@@ -272,7 +294,9 @@ def test_rejects_unexpected_active_pth_file(
     monkeypatch.setattr(verifier, "_guestfish", fake_guestfish)
     digest = hashlib.sha256(wheel.read_bytes()).hexdigest()
     with pytest.raises(SystemExit, match="unexpected file: producer-injected.pth"):
-        verifier.verify_installed_environment(assets, wheel, wheelhouse, digest)
+        verifier.verify_installed_environment(
+            assets, wheel, wheelhouse, digest, SOURCE_COMMIT, tmp_path
+        )
 
 
 @pytest.mark.parametrize(
@@ -288,6 +312,7 @@ def test_rejects_altered_runtime_executables(
     python_target: str,
     altered_script: str,
     message: str,
+    bypass_system_content: None,
 ) -> None:
     """Protected signing rejects replaced Python and console launchers."""
 
@@ -325,7 +350,135 @@ def test_rejects_altered_runtime_executables(
     monkeypatch.setattr(verifier, "_guestfish", fake_guestfish)
     digest = hashlib.sha256(wheel.read_bytes()).hexdigest()
     with pytest.raises(SystemExit, match=message):
-        verifier.verify_installed_environment(assets, wheel, wheelhouse, digest)
+        verifier.verify_installed_environment(
+            assets, wheel, wheelhouse, digest, SOURCE_COMMIT, tmp_path
+        )
+
+
+@pytest.mark.parametrize(
+    ("altered_target", "extra_trust_key", "message"),
+    [
+        (
+            "/opt-atlaso/bin/atlaso-helper",
+            False,
+            "does not match admitted commit",
+        ),
+        ("", True, "update-trust key set does not match admitted commit"),
+    ],
+)
+def test_rejects_altered_non_wheel_system_content(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    altered_target: str,
+    extra_trust_key: bool,
+    message: str,
+) -> None:
+    """Protected signing binds deployed helpers and the complete trust-key set."""
+
+    assets = tmp_path / "assets"
+    _assets(assets)
+    trust_source = "image/common/update-trust/atlaso-release-test.pem"
+    source_bytes = {
+        **{source: f"source:{source}\n".encode() for source in verifier.DEPLOYED_TEXT_FILES},
+        **{source: f"binary:{source}".encode() for source in verifier.DEPLOYED_BINARY_FILES},
+        trust_source: b"public trust key\n",
+    }
+    guest_bytes = {
+        **{
+            target: source_bytes[source]
+            for source, target in verifier.DEPLOYED_TEXT_FILES.items()
+        },
+        **{
+            target: source_bytes[source]
+            for source, target in verifier.DEPLOYED_BINARY_FILES.items()
+        },
+        "/etc/atlaso/update-trust.d/atlaso-release-test.pem": source_bytes[
+            trust_source
+        ],
+    }
+    if altered_target:
+        guest_bytes[altered_target] = b"producer-controlled\n"
+
+    monkeypatch.setattr(
+        verifier,
+        "_git_source_bytes",
+        lambda _root, _commit, source: source_bytes[source],
+    )
+    monkeypatch.setattr(
+        verifier,
+        "_git_trust_key_paths",
+        lambda _root, _commit: [trust_source],
+    )
+
+    def fake_guestfish(_disk: Path, commands: list[str]) -> list[str]:
+        if commands == ["list-filesystems"]:
+            return ["/dev/sda: ext4"]
+        if commands[-1] == "ls /etc/atlaso/update-trust.d":
+            names = ["atlaso-release-test.pem"]
+            if extra_trust_key:
+                names.append("producer.pem")
+            return names
+        download = commands[-1].split(" ", 2)
+        assert download[0] == "download"
+        Path(download[2]).write_bytes(guest_bytes[download[1]])
+        return []
+
+    monkeypatch.setattr(verifier, "_guestfish", fake_guestfish)
+    with pytest.raises(SystemExit, match=message):
+        verifier._verify_deployed_system_content(assets, SOURCE_COMMIT, tmp_path)
+
+
+def test_verifies_every_release_refreshed_non_wheel_file(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The admitted commit supplies every expected deployed system byte."""
+
+    assets = tmp_path / "assets"
+    _assets(assets)
+    trust_source = "image/common/update-trust/atlaso-release-test.pem"
+    source_bytes = {
+        **{source: f"source:{source}\n".encode() for source in verifier.DEPLOYED_TEXT_FILES},
+        **{source: f"binary:{source}".encode() for source in verifier.DEPLOYED_BINARY_FILES},
+        trust_source: b"public trust key\n",
+    }
+    guest_bytes = {
+        **{
+            target: source_bytes[source]
+            for source, target in verifier.DEPLOYED_TEXT_FILES.items()
+        },
+        **{
+            target: source_bytes[source]
+            for source, target in verifier.DEPLOYED_BINARY_FILES.items()
+        },
+        "/etc/atlaso/update-trust.d/atlaso-release-test.pem": source_bytes[
+            trust_source
+        ],
+    }
+    monkeypatch.setattr(
+        verifier,
+        "_git_source_bytes",
+        lambda _root, _commit, source: source_bytes[source],
+    )
+    monkeypatch.setattr(
+        verifier,
+        "_git_trust_key_paths",
+        lambda _root, _commit: [trust_source],
+    )
+
+    def fake_guestfish(_disk: Path, commands: list[str]) -> list[str]:
+        if commands == ["list-filesystems"]:
+            return ["/dev/sda: ext4"]
+        if commands[-1] == "ls /etc/atlaso/update-trust.d":
+            return ["atlaso-release-test.pem"]
+        download = commands[-1].split(" ", 2)
+        Path(download[2]).write_bytes(guest_bytes[download[1]])
+        return []
+
+    monkeypatch.setattr(verifier, "_guestfish", fake_guestfish)
+    verified = verifier._verify_deployed_system_content(
+        assets, SOURCE_COMMIT, tmp_path
+    )
+    assert verified == len(source_bytes)
 
 
 def test_rejects_multiple_or_non_ext_payload_filesystems(

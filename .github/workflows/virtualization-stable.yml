@@ -267,7 +267,8 @@ jobs:
             --assets candidate \
             --wheel "$APPLICATION_WHEEL" \
             --wheelhouse verified-source/wheelhouse/cp314 \
-            --expected-digest "$APPLICATION_WHEEL_SHA256"
+            --expected-digest "$APPLICATION_WHEEL_SHA256" \
+            --source-commit "$RELEASE_SHA"
           python scripts/build_virtualization_artifact_index.py \
             --assets candidate --version "$VERSION" --commit "$RELEASE_SHA" \
             --classification stable --release-tag "$STABLE_TAG" \

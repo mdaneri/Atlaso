@@ -135,7 +135,8 @@ jobs:
             --assets candidate \
             --wheel "$APPLICATION_WHEEL" \
             --wheelhouse verified-source/wheelhouse/cp314 \
-            --expected-digest "$(jq -r .application_wheel_sha256 candidate/virtualization-source.json)"
+            --expected-digest "$(jq -r .application_wheel_sha256 candidate/virtualization-source.json)" \
+            --source-commit "$RELEASE_SHA"
       - name: Materialize the protected signing key
         if: steps.identity.outputs.already_published != 'true'
         env:

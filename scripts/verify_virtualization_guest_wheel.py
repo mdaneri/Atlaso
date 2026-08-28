@@ -24,6 +24,21 @@ CONSOLE_SCRIPT_NAME_PATTERN = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]*$")
 ENTRY_POINT_PATTERN = re.compile(
     r"^([A-Za-z_][A-Za-z0-9_.]*):([A-Za-z_][A-Za-z0-9_]*)$"
 )
+SOURCE_COMMIT_PATTERN = re.compile(r"^[0-9a-f]{40}$")
+DEPLOYED_TEXT_FILES = {
+    "scripts/appliance/atlaso-helper": "/opt-atlaso/bin/atlaso-helper",
+    "scripts/appliance/atlaso-install-boot-branding": "/opt-atlaso/bin/atlaso-install-boot-branding",
+    "image/common/powershell/atlaso-vault-profile.ps1": "/opt-atlaso/bin/atlaso-vault-profile.ps1",
+    "image/common/systemd/atlaso-console-manager.conf": "/etc/systemd/system.conf.d/atlaso-console.conf",
+    "image/vmware-workstation/systemd/atlaso.service": "/etc/systemd/system/atlaso.service",
+    "image/common/systemd/atlaso-worker.service": "/etc/systemd/system/atlaso-worker.service",
+    "image/common/systemd/atlaso-require-data-disks.conf": "/etc/systemd/system/atlaso.service.d/atlaso-data-disks.conf",
+    "image/common/systemd/nginx-atlaso-data-disks.conf": "/etc/systemd/system/nginx.service.d/atlaso-data-disks.conf",
+    "image/common/boot/grub/theme.txt": "/boot/grub2/themes/atlaso/theme.txt",
+}
+DEPLOYED_BINARY_FILES = {
+    "image/common/boot/grub/atlaso.png": "/boot/grub2/themes/atlaso/atlaso.png",
+}
 
 
 def _sha256(path: Path) -> str:
@@ -176,8 +191,8 @@ def _wheel_console_scripts(wheel: Path) -> dict[str, tuple[str, str]]:
     return scripts
 
 
-def _system_vmdk(asset_root: Path) -> Path:
-    """Resolve the OVA-validated system-content VMDK from provenance."""
+def _payload_vmdks(asset_root: Path) -> dict[str, Path]:
+    """Resolve the OVA-validated Photon and system-content VMDKs."""
 
     provenance_paths = sorted(asset_root.glob("*-provenance.json"))
     if len(provenance_paths) != 1:
@@ -186,20 +201,142 @@ def _system_vmdk(asset_root: Path) -> Path:
         provenance: Any = json.loads(provenance_paths[0].read_text(encoding="utf-8"))
     except (OSError, UnicodeDecodeError, json.JSONDecodeError) as exc:
         raise SystemExit("OVA provenance is not valid JSON") from exc
-    matches = [
-        record
-        for record in provenance.get("payloads", [])
-        if isinstance(record, dict) and record.get("role") == "atlaso_system"
-    ]
-    if len(matches) != 1 or not isinstance(matches[0].get("file"), str):
-        raise SystemExit("OVA provenance does not identify one system-content VMDK")
-    name = matches[0]["file"]
-    if PurePosixPath(name).name != name:
-        raise SystemExit("OVA provenance contains an unsafe system-content filename")
-    path = asset_root / name
-    if path.is_symlink() or not path.is_file():
-        raise SystemExit("OVA system-content VMDK is missing or unsafe")
-    return path
+    payloads: dict[str, Path] = {}
+    records = provenance.get("payloads", [])
+    for role in ("photon_os", "atlaso_system"):
+        matches = [
+            record
+            for record in records
+            if isinstance(record, dict) and record.get("role") == role
+        ]
+        if len(matches) != 1 or not isinstance(matches[0].get("file"), str):
+            raise SystemExit(f"OVA provenance does not identify one {role} VMDK")
+        name = matches[0]["file"]
+        if PurePosixPath(name).name != name:
+            raise SystemExit("OVA provenance contains an unsafe payload filename")
+        path = asset_root / name
+        if path.is_symlink() or not path.is_file():
+            raise SystemExit(f"OVA {role} VMDK is missing or unsafe")
+        payloads[role] = path
+    return payloads
+
+
+def _git_source_bytes(repo_root: Path, source_commit: str, source_path: str) -> bytes:
+    """Read one immutable source file from the admitted release commit."""
+
+    result = subprocess.run(
+        ["git", "-C", str(repo_root), "show", f"{source_commit}:{source_path}"],
+        capture_output=True,
+        check=False,
+        timeout=30,
+    )
+    if result.returncode:
+        raise SystemExit(f"admitted commit is missing deployed source: {source_path}")
+    return result.stdout
+
+
+def _git_trust_key_paths(repo_root: Path, source_commit: str) -> list[str]:
+    """List the exact public update-trust keys in the admitted release commit."""
+
+    directory = "image/common/update-trust"
+    result = subprocess.run(
+        ["git", "-C", str(repo_root), "ls-tree", "-r", "--name-only", source_commit, directory],
+        capture_output=True,
+        text=True,
+        check=False,
+        timeout=30,
+    )
+    paths = [line for line in result.stdout.splitlines() if line.endswith(".pem")]
+    if result.returncode or not paths or any(
+        PurePosixPath(path).parent.as_posix() != directory for path in paths
+    ):
+        raise SystemExit("admitted commit has no safe update-trust key set")
+    return sorted(paths)
+
+
+def _download_guest_file(
+    disk: Path, filesystem: str, guest_path: str, destination: Path
+) -> bytes:
+    """Download one required regular file from a read-only payload disk."""
+
+    _guestfish(
+        disk,
+        [f"mount-ro {filesystem} /", f"download {guest_path} {destination.as_posix()}"],
+    )
+    try:
+        if destination.is_symlink() or not destination.is_file():
+            raise SystemExit(f"deployed system file is missing or unsafe: {guest_path}")
+        return destination.read_bytes()
+    except OSError as exc:
+        raise SystemExit(f"deployed system file is unreadable: {guest_path}") from exc
+
+
+def _verify_deployed_system_content(
+    asset_root: Path, source_commit: str, repo_root: Path
+) -> int:
+    """Bind every release-refreshed non-wheel file to the admitted commit."""
+
+    if SOURCE_COMMIT_PATTERN.fullmatch(source_commit) is None:
+        raise SystemExit("source commit must be a full lowercase Git SHA")
+    payloads = _payload_vmdks(asset_root)
+    filesystems = {role: _filesystem(disk) for role, disk in payloads.items()}
+    text_targets = {
+        source: (
+            "atlaso_system" if target.startswith("/opt-atlaso/") else "photon_os",
+            target,
+        )
+        for source, target in DEPLOYED_TEXT_FILES.items()
+    }
+    binary_targets = {
+        source: ("photon_os", target)
+        for source, target in DEPLOYED_BINARY_FILES.items()
+    }
+    verified = 0
+    with tempfile.TemporaryDirectory(prefix="atlaso-system-content-") as temporary:
+        temporary_root = Path(temporary)
+        for source, (role, target) in {**text_targets, **binary_targets}.items():
+            expected = _git_source_bytes(repo_root, source_commit, source)
+            if source in text_targets:
+                expected = expected.replace(b"\r\n", b"\n")
+            actual = _download_guest_file(
+                payloads[role],
+                filesystems[role],
+                target,
+                temporary_root / f"file-{verified}",
+            )
+            if actual != expected:
+                raise SystemExit(
+                    f"deployed system file does not match admitted commit: {target}"
+                )
+            verified += 1
+        trust_paths = _git_trust_key_paths(repo_root, source_commit)
+        trust_names = [PurePosixPath(path).name for path in trust_paths]
+        observed_names = _guestfish(
+            payloads["photon_os"],
+            [
+                f"mount-ro {filesystems['photon_os']} /",
+                "ls /etc/atlaso/update-trust.d",
+            ],
+        )
+        if observed_names != trust_names:
+            raise SystemExit(
+                "deployed update-trust key set does not match admitted commit"
+            )
+        for source, name in zip(trust_paths, trust_names, strict=True):
+            expected = _git_source_bytes(repo_root, source_commit, source)
+            target = f"/etc/atlaso/update-trust.d/{name}"
+            actual = _download_guest_file(
+                payloads["photon_os"],
+                filesystems["photon_os"],
+                target,
+                temporary_root / f"file-{verified}",
+            )
+            if actual != expected:
+                raise SystemExit(
+                    f"deployed system file does not match admitted commit: {target}"
+                )
+            verified += 1
+    return verified
 
 
 def _expected_environment(
@@ -403,13 +540,19 @@ def _verify_runtime_archive(
 
 
 def verify_installed_environment(
-    asset_root: Path, wheel: Path, wheelhouse: Path, expected_digest: str
+    asset_root: Path,
+    wheel: Path,
+    wheelhouse: Path,
+    expected_digest: str,
+    source_commit: str,
+    repo_root: Path,
 ) -> dict[str, Any]:
     """Verify the complete signed wheel set in the active guest environment."""
 
     records, dist_infos = _expected_environment(wheel, wheelhouse, expected_digest)
     console_scripts = _wheel_console_scripts(wheel)
-    disk = _system_vmdk(asset_root.resolve(strict=True))
+    resolved_assets = asset_root.resolve(strict=True)
+    disk = _payload_vmdks(resolved_assets)["atlaso_system"]
     filesystem = _filesystem(disk)
     mount = f"mount-ro {filesystem} /"
     site_lines = _guestfish(
@@ -435,6 +578,9 @@ def verify_installed_environment(
             [mount, f"tar-out {(venv / 'bin').as_posix()} {runtime_archive_path.as_posix()}"],
         )
         _verify_runtime_archive(runtime_archive_path, venv, console_scripts)
+    system_files_verified = _verify_deployed_system_content(
+        resolved_assets, source_commit, repo_root.resolve(strict=True)
+    )
     return {
         "schema_version": 1,
         "kind": "atlaso-installed-environment-verification",
@@ -442,6 +588,7 @@ def verify_installed_environment(
         "distributions_verified": len(dist_infos),
         "files_verified": len(records),
         "console_scripts_verified": len(console_scripts),
+        "system_files_verified": system_files_verified,
     }
 
 
@@ -453,9 +600,15 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--wheel", required=True, type=Path)
     parser.add_argument("--wheelhouse", required=True, type=Path)
     parser.add_argument("--expected-digest", required=True)
+    parser.add_argument("--source-commit", required=True)
     args = parser.parse_args(argv)
     result = verify_installed_environment(
-        args.assets, args.wheel, args.wheelhouse, args.expected_digest
+        args.assets,
+        args.wheel,
+        args.wheelhouse,
+        args.expected_digest,
+        args.source_commit,
+        Path(__file__).resolve().parents[1],
     )
     print(json.dumps(result, sort_keys=True, separators=(",", ":")))
     return 0
