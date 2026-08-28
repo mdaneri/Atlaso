@@ -2037,6 +2037,15 @@ def test_vmware_password_deploy_omits_absent_optional_native_arguments():
     assert "$deployArguments += $optionalPathPair" in optional_arguments
 
 
+def test_vmware_deploy_wheel_uses_canonical_common_service_unit():
+    """Verify live wheel deployment sources the guest-neutral Atlaso unit."""
+    script = Path("scripts/windows/vmware/deploy-wheel.ps1").read_text(encoding="utf-8")
+
+    assert "image\\common\\systemd\\atlaso.service" in script
+    assert "image\\vmware-workstation\\systemd\\atlaso.service" not in script
+    assert Path("image/common/systemd/atlaso.service").is_file()
+
+
 def test_vmware_lifecycle_cleanup_only_removes_existing_lifecycle_vms():
     """Verify that vmware lifecycle cleanup only removes existing lifecycle vms."""
     wrapper = Path("scripts/windows/vmware/invoke-lifecycle-test.ps1").read_text(encoding="utf-8")

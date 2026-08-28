@@ -448,7 +448,7 @@ function Publish-AtlasoVirtualizationDraftAssets {
         $existing[[string]$asset.name] = $true
     }
     $candidateAssets = @(Get-ChildItem -LiteralPath $AssetDirectory -File | Sort-Object Name)
-    $allowedNames = @{} 
+    $allowedNames = @{}
     foreach ($asset in $candidateAssets) {
         $allowedNames[$asset.Name] = $true
     }
