@@ -18804,6 +18804,7 @@ function initializeVcfSddcDeployment() {
     if (!(await wizard.validate("source"))) return false;
     const requestId = ++discoveryRequestId;
     const discoveryPayload = basePayload();
+    const requestedOvaPath = discoveryPayload.ova_path;
     const requestedDeploymentOption = discoveryPayload.deployment_option;
     const destinationSelections = new Map(
       ["resource_pool_id", "datastore_id", "folder_id", "host_id"].map((name) => [name, form.elements[name]?.value]),
@@ -18820,6 +18821,7 @@ function initializeVcfSddcDeployment() {
       const { response, data } = await vcfHelperJson(managementUiPath("/vcf-helper/sddc-manager/inventory"), "POST", discoveryPayload);
       if (
         requestId !== discoveryRequestId
+        || form.elements.ova_path.value !== requestedOvaPath
         || (deploymentOption instanceof HTMLSelectElement && deploymentOption.value !== requestedDeploymentOption)
       ) return false;
       if (response.status === 409 && data.status === "tls-confirmation-required") {
