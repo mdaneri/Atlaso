@@ -109,6 +109,26 @@ esac
     )
     _write_executable(command_dir / "tdnf", "#!/bin/sh\nexit 91\n")
     _write_executable(
+        command_dir / "shred",
+        """#!/bin/sh
+set -eu
+if [ -n "${FAKE_SHRED_LINK_TARGET:-}" ]; then
+  after_separator=0
+  for argument in "$@"; do
+    if [ "$after_separator" -eq 1 ]; then
+      ln -- "$argument" "$FAKE_SHRED_LINK_TARGET"
+      printf 'overwritten by shred\\n' >"$argument"
+      rm -f -- "$argument"
+      exit 0
+    fi
+    [ "$argument" = "--" ] && after_separator=1
+  done
+  exit 93
+fi
+exec /usr/bin/shred "$@"
+""",
+    )
+    _write_executable(
         command_dir / "mountpoint",
         """#!/bin/sh
 set -eu
@@ -542,6 +562,31 @@ def test_success_marker_retry_rejects_hard_linked_cleanup_file(tmp_path: Path) -
     assert "cannot contain hard-linked files" in retry.stderr
     assert outside.read_text(encoding="utf-8") == "preserve\n"
     assert alias.read_text(encoding="utf-8") == "preserve\n"
+
+
+def test_test_override_cleanup_never_shreds_after_link_count_validation(tmp_path: Path) -> None:
+    """A post-validation hard link cannot turn cleanup into an inode overwrite.
+
+    Args:
+        tmp_path: Temporary directory provided by pytest.
+    """
+
+    environment = _prepare_runtime(tmp_path, platform="kvm", dmi="QEMU", packages=("open-vm-tools",))
+    first = _run_selector(environment)
+    assert first.returncode == 0, first.stderr
+
+    staging = Path(environment["ATLASO_GUEST_AGENT_STAGING"])
+    staging.mkdir(mode=0o700)
+    sentinel = staging / "preserve.rpm"
+    sentinel.write_text("preserve\n", encoding="utf-8")
+    outside_alias = tmp_path.parent / f"{tmp_path.name}-outside.rpm"
+    environment["FAKE_SHRED_LINK_TARGET"] = str(outside_alias)
+
+    retry = _run_selector(environment)
+
+    assert retry.returncode == 0, retry.stderr
+    assert not outside_alias.exists()
+    assert not staging.exists()
 
 
 def test_hyperv_access_cleanup_reloads_kvp_after_record_removal(tmp_path: Path) -> None:

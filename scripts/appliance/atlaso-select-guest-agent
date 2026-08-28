@@ -284,8 +284,15 @@ cleanup_staging() {
   cleanup_required=0
   if [ -d "$STAGING_DIRECTORY" ]; then
     cleanup_required=1
-    find "$STAGING_DIRECTORY" -type f -exec shred -u -z -- {} + 2>/dev/null ||
+    if [ -n "$TEST_ROOT" ]; then
+      # Test overrides share an identity with their harness. Unlink files
+      # without overwriting their inodes so a concurrently added outside hard
+      # link cannot turn cleanup into an out-of-bound data modification.
       find "$STAGING_DIRECTORY" -type f -delete
+    else
+      find "$STAGING_DIRECTORY" -type f -exec shred -u -z -- {} + 2>/dev/null ||
+        find "$STAGING_DIRECTORY" -type f -delete
+    fi
   fi
   [ ! -e "$RUNTIME_DIRECTORY" ] && [ ! -L "$RUNTIME_DIRECTORY" ] || cleanup_required=1
   rm -rf "$STAGING_DIRECTORY" "$RUNTIME_DIRECTORY"
