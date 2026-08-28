@@ -61,6 +61,7 @@ paths_overlap() {
 }
 
 validate_cleanup_boundaries() {
+  command -v mountpoint >/dev/null 2>&1 || fail "Guest-agent cleanup requires mount-point validation."
   current_staging=$(canonical_managed_path "$STAGING_DIRECTORY" "Guest-agent staging path")
   current_runtime=$(canonical_managed_path "$RUNTIME_DIRECTORY" "Guest-agent runtime path")
   current_marker=$(canonical_managed_path "$SUCCESS_MARKER" "Guest-agent success marker")
@@ -78,6 +79,12 @@ validate_cleanup_boundaries() {
       if find "$cleanup_directory" -maxdepth 0 \( ! -user "$expected_owner" -o ! -group "$expected_group" -o -perm /022 \) -print -quit |
         grep -q .; then
         fail "Guest-agent cleanup target ownership or mode is unsafe."
+      fi
+      # A lexical descendant can still be a bind/FUSE mount backed by an
+      # unrelated tree. Inspect the target and every reachable directory while
+      # refusing cross-device descent, then reject any mount boundary at all.
+      if find "$cleanup_directory" -xdev -type d -exec mountpoint -q -- {} \; -print -quit | grep -q .; then
+        fail "Guest-agent cleanup target cannot contain a mount point."
       fi
     fi
   done

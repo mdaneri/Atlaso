@@ -108,6 +108,17 @@ esac
 """,
     )
     _write_executable(command_dir / "tdnf", "#!/bin/sh\nexit 91\n")
+    _write_executable(
+        command_dir / "mountpoint",
+        """#!/bin/sh
+set -eu
+candidate=""
+for argument in "$@"; do
+  candidate="$argument"
+done
+[ -n "${FAKE_MOUNT_TARGET:-}" ] && [ "$candidate" = "$FAKE_MOUNT_TARGET" ]
+""",
+    )
     initializer = tmp_path / "atlaso-initialize-machine-identity"
     _write_executable(
         initializer,
@@ -429,6 +440,30 @@ def test_cleanup_target_rejects_symlinked_ancestry(tmp_path: Path) -> None:
 
     assert result.returncode == 2
     assert "parent is missing or unsafe" in result.stderr
+    assert sentinel.read_text(encoding="utf-8") == "preserve\n"
+
+
+def test_success_marker_retry_rejects_mount_backed_cleanup_target(tmp_path: Path) -> None:
+    """A mount boundary cannot redirect cleanup to unrelated backing storage.
+
+    Args:
+        tmp_path: Temporary directory provided by pytest.
+    """
+
+    environment = _prepare_runtime(tmp_path, platform="kvm", dmi="QEMU", packages=("open-vm-tools",))
+    first = _run_selector(environment)
+    assert first.returncode == 0, first.stderr
+
+    runtime = Path(environment["ATLASO_GUEST_AGENT_RUNTIME"])
+    runtime.mkdir(mode=0o700)
+    sentinel = runtime / "preserve.txt"
+    sentinel.write_text("preserve\n", encoding="utf-8")
+    environment["FAKE_MOUNT_TARGET"] = str(runtime)
+
+    retry = _run_selector(environment)
+
+    assert retry.returncode == 2
+    assert "cannot contain a mount point" in retry.stderr
     assert sentinel.read_text(encoding="utf-8") == "preserve\n"
 
 
