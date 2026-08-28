@@ -14,6 +14,7 @@ from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
 
 from scripts import build_virtualization_artifact_index as builder
 from scripts import verify_virtualization_artifact_index as verifier
+from tests.test_virtualization_ova import _members, _write_ova
 
 
 def test_operator_verification_bootstraps_with_standard_tools() -> None:
@@ -56,23 +57,6 @@ def _assets(path: Path, version: str = "0.9.217") -> None:
     """
 
     path.mkdir()
-    for name in (
-        f"atlaso-v{version}.ova",
-        f"atlaso-v{version}.ovf",
-        f"atlaso-v{version}.mf",
-        f"atlaso-v{version}-photon.vmdk",
-        f"atlaso-v{version}-system.vmdk",
-        f"atlaso-v{version}-provenance.json",
-        f"atlaso-v{version}-hyperv-x86_64.zip",
-        "import-atlaso-proxmox.sh",
-        "import-atlaso-kvm.sh",
-        "validate_ova.py",
-        "normalize_libvirt.py",
-        "verify_virtualization_artifact_index.py",
-        "virtualization-source.json",
-        "windows-smoke-evidence.json",
-    ):
-        (path / name).write_bytes(f"asset:{name}\n".encode())
     source = {
         "schema_version": 1,
         "kind": "atlaso-virtualization-source",
@@ -85,24 +69,41 @@ def _assets(path: Path, version: str = "0.9.217") -> None:
         "application_wheel_sha256": "c" * 64,
         "python_abi": "cp314",
     }
+    members = _members()
+    provenance = json.loads(members.pop("atlaso-provenance.json"))
+    provenance["product_version"] = version
+    provenance["software_release_source"] = {
+        "tag": source["source_software_tag"],
+        "release_manifest_sha256": source["release_manifest_sha256"],
+        "release_bundle_sha256": source["release_bundle_sha256"],
+        "application_wheel_sha256": source["application_wheel_sha256"],
+        "python_abi": source["python_abi"],
+    }
+    members["atlaso-provenance.json"] = (
+        json.dumps(provenance, sort_keys=True) + "\n"
+    ).encode()
+    manifest_lines = [
+        f"SHA256({name})= {hashlib.sha256(content).hexdigest()}\n"
+        for name, content in sorted(members.items())
+        if not name.endswith(".mf")
+    ]
+    members["atlaso.mf"] = "".join(manifest_lines).encode()
+    for name, content in members.items():
+        (path / name).write_bytes(content)
+    _write_ova(path / f"atlaso-v{version}.ova", members)
+    for name in (
+        f"atlaso-v{version}-hyperv-x86_64.zip",
+        "import-atlaso-proxmox.sh",
+        "import-atlaso-kvm.sh",
+        "validate_ova.py",
+        "normalize_libvirt.py",
+        "verify_virtualization_artifact_index.py",
+        "virtualization-source.json",
+        "windows-smoke-evidence.json",
+    ):
+        (path / name).write_bytes(f"asset:{name}\n".encode())
     (path / "virtualization-source.json").write_text(
         json.dumps(source), encoding="utf-8"
-    )
-    provenance = {
-        "schema_version": 1,
-        "kind": "atlaso-vmware-ova-provenance",
-        "product_version": version,
-        "source_commit": "a" * 40,
-        "software_release_source": {
-            "tag": source["source_software_tag"],
-            "release_manifest_sha256": source["release_manifest_sha256"],
-            "release_bundle_sha256": source["release_bundle_sha256"],
-            "application_wheel_sha256": source["application_wheel_sha256"],
-            "python_abi": source["python_abi"],
-        },
-    }
-    (path / f"atlaso-v{version}-provenance.json").write_text(
-        json.dumps(provenance), encoding="utf-8"
     )
     ova = path / f"atlaso-v{version}.ova"
     hyperv = path / f"atlaso-v{version}-hyperv-x86_64.zip"
@@ -296,12 +297,54 @@ def test_rejects_ova_provenance_not_bound_to_software_source(tmp_path: Path) -> 
     assets = tmp_path / "assets"
     _assets(assets)
     _key(tmp_path / "key.pem")
-    provenance_path = assets / "atlaso-v0.9.217-provenance.json"
+    provenance_path = assets / "atlaso-provenance.json"
     provenance = json.loads(provenance_path.read_text(encoding="utf-8"))
     provenance["software_release_source"]["application_wheel_sha256"] = "e" * 64
     provenance_path.write_text(json.dumps(provenance), encoding="utf-8")
 
-    with pytest.raises(SystemExit, match="does not bind the exact software-release"):
+    with pytest.raises(SystemExit, match="manifest verification"):
+        builder.main(
+            [
+                "--assets",
+                str(assets),
+                "--version",
+                "0.9.217",
+                "--commit",
+                "a" * 40,
+                "--classification",
+                "prerelease",
+                "--release-tag",
+                "virtualization-v0.9.217-rc.1",
+                "--source-release-manifest-sha256",
+                "b" * 64,
+                "--application-wheel-sha256",
+                "c" * 64,
+                "--signing-key",
+                str(tmp_path / "key.pem"),
+                "--signing-key-id",
+                "test-key",
+            ]
+        )
+
+
+def test_rejects_tampered_ova_even_when_smoke_digest_is_updated(tmp_path: Path) -> None:
+    """Protected signing opens the OVA instead of trusting producer evidence.
+
+    Args:
+        tmp_path: Temporary directory provided by pytest.
+    """
+
+    assets = tmp_path / "assets"
+    _assets(assets)
+    _key(tmp_path / "key.pem")
+    ova = assets / "atlaso-v0.9.217.ova"
+    ova.write_bytes(b"producer-controlled invalid archive")
+    evidence_path = assets / "windows-smoke-evidence.json"
+    evidence = json.loads(evidence_path.read_text(encoding="utf-8"))
+    evidence["ova_sha256"] = hashlib.sha256(ova.read_bytes()).hexdigest()
+    evidence_path.write_text(json.dumps(evidence), encoding="utf-8")
+
+    with pytest.raises(SystemExit, match="valid tar archive"):
         builder.main(
             [
                 "--assets",

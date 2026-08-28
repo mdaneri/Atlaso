@@ -8,12 +8,21 @@ import base64
 import hashlib
 import json
 import re
+import sys
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
 from cryptography.hazmat.primitives import serialization
 from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
+
+ROOT = Path(__file__).resolve().parents[1]
+if not __package__:
+    sys.path.insert(0, str(ROOT))
+
+from scripts.publish_release import (  # noqa: E402 - Script path bootstrap precedes the local import.
+    verify_vmware_release_assets,
+)
 
 MAXIMUM_GITHUB_ASSET_BYTES = 2_147_483_647
 INDEX_NAME = "virtualization-artifact-index.json"
@@ -199,6 +208,21 @@ def _validate_evidence(
         application_wheel_sha256: Expected embedded Atlaso wheel digest.
     """
 
+    vmware_names = {
+        path.name
+        for path in asset_root.iterdir()
+        if path.name.lower().endswith((".ova", ".ovf", ".mf", ".vmdk", "-provenance.json"))
+    }
+    # The protected signer independently opens the OVA, validates its manifest,
+    # topology, payload digests, and embedded provenance, and requires every
+    # archived member to match the loose candidate bytes before trusting the
+    # producer-supplied smoke evidence or provenance sidecar below.
+    verify_vmware_release_assets(
+        asset_root,
+        vmware_names,
+        expected_version=version,
+        expected_commit=commit,
+    )
     source = _json_object(
         asset_root / "virtualization-source.json", "software-release source evidence"
     )

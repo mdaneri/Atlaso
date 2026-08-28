@@ -48,7 +48,7 @@ jobs:
           TAG_OBJECT="$(gh api "repos/${{ github.repository }}/git/ref/tags/$PRERELEASE_TAG" --jq '.object.type + " " + .object.sha')"
           test "${TAG_OBJECT%% *}" = tag
           RELEASE_SHA="$(gh api "repos/${{ github.repository }}/git/tags/${TAG_OBJECT#* }" --jq .object.sha)"
-          RELEASE="$(gh release view "$PRERELEASE_TAG" --json isDraft,isPrerelease,tagName)"
+          RELEASE="$(gh release view "$PRERELEASE_TAG" --repo "${{ github.repository }}" --json isDraft,isPrerelease,tagName)"
           test "$(jq -r .tagName <<<"$RELEASE")" = "$PRERELEASE_TAG"
           test "$(jq -r .isDraft <<<"$RELEASE")" = false
           test "$(jq -r .isPrerelease <<<"$RELEASE")" = true

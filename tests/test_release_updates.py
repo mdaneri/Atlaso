@@ -1210,6 +1210,9 @@ def test_release_workflows_use_successful_main_sha_and_promote_without_rebuildin
     windows_candidate = (
         ROOT / ".github/workflows/virtualization-windows-candidate.yml"
     ).read_text(encoding="utf-8")
+    index_builder = (
+        ROOT / "scripts/build_virtualization_artifact_index.py"
+    ).read_text(encoding="utf-8")
     inventory = (ROOT / ".github/workflows/inventory-linux-release.yml").read_text(
         encoding="utf-8"
     )
@@ -1289,6 +1292,15 @@ def test_release_workflows_use_successful_main_sha_and_promote_without_rebuildin
     assert "gh release edit \"$RELEASE_TAG\" --draft=false --prerelease --verify-tag" in prerelease
     assert "already_published=true" in prerelease
     assert "steps.identity.outputs.already_published != 'true'" in prerelease
+    assert (
+        'gh release view "$RELEASE_TAG" --repo "${{ github.repository }}"'
+        in prerelease
+    )
+    assert (
+        'gh release view "$PRERELEASE_TAG" --repo "${{ github.repository }}"'
+        in virtualization
+    )
+    assert "verify_vmware_release_assets(" in index_builder
     assert "ref: ${{ inputs.release_sha }}" not in prerelease
     assert "ref: refs/heads/main" in prerelease
     assert "gh-pages" not in prerelease
