@@ -766,6 +766,33 @@ try {
     if ($recoveryMarker.Phase -cne 'stopped-vmx-scrubbed') {
         throw 'Pre-secret rollback did not durably bind its existing VMX cleanup identity.'
     }
+    $absentIdentityRoot = Join-Path $scopeRoot 'absent-identity-markers'
+    $absentIdentityVmxPath = Join-Path $vmRoot 'Atlaso-Script-Scope-Absent-Identity.vmx'
+    New-Item -ItemType Directory -Path $absentIdentityRoot | Out-Null
+    [System.IO.File]::WriteAllText(
+        $absentIdentityVmxPath,
+        'config.version = "8"',
+        [System.Text.UTF8Encoding]::new($false)
+    )
+    $absentIdentityMarker = Find-AtlasoDevelopmentCaCleanupMarker `
+        -VmxPath $absentIdentityVmxPath `
+        -Name 'Atlaso-Script-Scope-Absent-Identity' `
+        -OutputDirectory $vmRoot `
+        -MarkerRoot $absentIdentityRoot
+    if ($null -ne $absentIdentityMarker) {
+        throw 'An empty marker root was incorrectly treated as a renamed durable marker.'
+    }
+    $absentIdentityFallbackPath = New-AtlasoDevelopmentCaCleanupMarker `
+        -VmxPath $absentIdentityVmxPath `
+        -Name 'Atlaso-Script-Scope-Absent-Identity' `
+        -OutputDirectory $vmRoot `
+        -DataDiskStates @() `
+        -MarkerRoot $absentIdentityRoot `
+        -InitialPhase stopped-vmx-scrubbed `
+        -AllowExistingCleanupIdentity
+    if (-not (Test-Path -LiteralPath $absentIdentityFallbackPath -PathType Leaf)) {
+        throw 'An absent VMX cleanup identity did not admit fresh durable fallback publication.'
+    }
     $reconciliationRoot = Join-Path $scopeRoot 'reconciliation-markers'
     $reconciliationVmxPath = Join-Path $vmRoot 'Atlaso-Script-Scope-Reconciliation.vmx'
     [System.IO.File]::WriteAllText(

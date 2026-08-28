@@ -1927,11 +1927,17 @@ function Find-AtlasoDevelopmentCaCleanupMarker {
         -FailureMessage 'Refusing a development-CA marker directory through a reparse point'
     $resolvedVmxPath = (Resolve-Path -LiteralPath $VmxPath).Path
     $resolvedOutputDirectory = (Resolve-Path -LiteralPath $OutputDirectory).Path
-    $cleanupIdentityHash = Get-AtlasoTestVmCleanupIdentityHash -VmxPath $resolvedVmxPath
     $markerFiles = @(Get-ChildItem -LiteralPath $MarkerRoot -File -Force)
     if (@($markerFiles | Where-Object Extension -ne '.json').Count -gt 0) {
         throw 'Cleanup-marker publication outcome is ambiguous; preserve the VM artifacts for retry.'
     }
+    if ($markerFiles.Count -eq 0) {
+        # A clean rollback of the VMX append leaves no identity and no durable
+        # destination. Avoid demanding an identity until a marker exists that
+        # could have crossed the write-through rename boundary.
+        return $null
+    }
+    $cleanupIdentityHash = Get-AtlasoTestVmCleanupIdentityHash -VmxPath $resolvedVmxPath
     $matchingMarkers = @(
         foreach ($markerFile in $markerFiles) {
             $marker = Read-AtlasoDevelopmentCaCleanupMarker `
@@ -1955,12 +1961,9 @@ function Find-AtlasoDevelopmentCaCleanupMarker {
     if ($matchingMarkers.Count -eq 1 -and $markerFiles.Count -eq 1) {
         return $matchingMarkers[0]
     }
-    if ($markerFiles.Count -gt 0) {
-        # Never publish a second marker when any durable destination cannot be
-        # proven to be the one identity-bound result of this invocation.
-        throw 'Cleanup-marker publication outcome is ambiguous; preserve the VM artifacts for retry.'
-    }
-    return $null
+    # Never publish a second marker when any durable destination cannot be
+    # proven to be the one identity-bound result of this invocation.
+    throw 'Cleanup-marker publication outcome is ambiguous; preserve the VM artifacts for retry.'
 }
 
 <#
