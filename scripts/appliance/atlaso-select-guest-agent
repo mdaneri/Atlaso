@@ -81,9 +81,9 @@ validate_cleanup_boundaries() {
         fail "Guest-agent cleanup target ownership or mode is unsafe."
       fi
       # A lexical descendant can still be a bind/FUSE mount backed by an
-      # unrelated tree. Inspect the target and every reachable directory while
-      # refusing cross-device descent, then reject any mount boundary at all.
-      if find "$cleanup_directory" -xdev -type d -exec mountpoint -q -- {} \; -print -quit | grep -q .; then
+      # unrelated tree or file. Inspect the target and every reachable entry
+      # while refusing cross-device descent, then reject any mount boundary.
+      if find "$cleanup_directory" -xdev -exec mountpoint -q -- {} \; -print -quit | grep -q .; then
         fail "Guest-agent cleanup target cannot contain a mount point."
       fi
     fi
