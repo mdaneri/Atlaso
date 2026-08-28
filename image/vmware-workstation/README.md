@@ -129,9 +129,7 @@ destination would make Packer nest the source directory and leave the provisione
 pwsh -ExecutionPolicy Bypass `
   -File scripts/windows/vmware/build-photon-image.ps1 `
   -IsoUrl "https://packages.vmware.com/photon/5.0/GA/iso/photon-5.0-dde71ec57.x86_64.iso" `
-  -IsoChecksum "sha512:<checksum>" `
-  -OnePasswordAccount "<approved-account-name-or-id>" `
-  -OnePasswordPython "<python-3.10-through-3.13>"
+  -IsoChecksum "sha512:<checksum>"
 ```
 
 `-SshPassword` and `-BootstrapAdminPassword` accept only `SecureString` values and remain independently authoritative.
@@ -140,8 +138,10 @@ When either is omitted, the wrapper verifies the exact Atlaso 1Password Environm
 `.atlaso-local/onepassword-environment-id` file, then retrieves only the corresponding concealed
 `DEFAULT_ROOT_PASSWORD` or `DEFAULT_ADMIN_PASSWORD` through the bounded Windows 1Password SDK bridge. A custom
 single-line selector file may be passed with `-EnvironmentIdFile`; the legacy `-OnePasswordEnvironmentIdFile` spelling
-is an alias. Omitted values also require an approved `-OnePasswordAccount` and an SDK-supported CPython 3.10 through
-3.13 executable through `-OnePasswordPython`.
+is an alias. The wrapper uses the single account returned by the local 1Password CLI and the highest compatible
+CPython 3.10 through 3.13 runtime registered with the Windows launcher. Pass `-OnePasswordAccount` or
+`-OnePasswordPython` only to override that deterministic discovery. Zero or multiple accounts and a missing compatible
+runtime fail closed before image mutation.
 
 There are no interactive prompts, caller-environment fallbacks, repository password defaults, or local `.env` inputs.
 Missing, ambiguous, non-concealed, invalid, unauthorized, or timed-out 1Password state fails with sanitized guidance
@@ -491,8 +491,6 @@ Create and start a normal Workstation test appliance from the latest built VMX w
 ```powershell
 pwsh -ExecutionPolicy Bypass `
   -File scripts/windows/vmware/create-atlaso-test-vm.ps1 `
-  -OnePasswordAccount '<account-name-or-id>' `
-  -OnePasswordPython '<path-to-python-3.13.exe>' `
   -Redeploy `
   -ResetDataDisks `
   -TrustRootCa
@@ -605,9 +603,10 @@ machine identity, the customizer publishes the VM's public Ed25519 SSH host key 
 clones the same fail-closed initialization contract as an OVA deployment instead of leaving the customizer waiting for
 properties
 that only an OVF deployment normally supplies. A generated non-secret deployment identifier distinguishes each raw
-clone attempt during pending-marker crash recovery. For ordinary creation, pass the approved 1Password account name or
-ID through `-OnePasswordAccount` and an SDK-supported CPython 3.10 through 3.13 executable through
-`-OnePasswordPython`. When `-AdminPassword` or `-RootPassword` is omitted, the wrapper independently retrieves only that
+clone attempt during pending-marker crash recovery. For ordinary creation, the wrapper discovers the single local
+1Password CLI account and the highest compatible CPython 3.10 through 3.13 runtime registered with the Windows
+launcher. `-OnePasswordAccount` and `-OnePasswordPython` remain explicit overrides. When `-AdminPassword` or
+`-RootPassword` is omitted, the wrapper independently retrieves only that
 credential's exact concealed default through the supported 1Password SDK desktop integration. An explicitly supplied
 `SecureString` remains authoritative for that credential, so either password can be overridden without changing the
 other. SDK preparation, authorization, Environment access, uniqueness, concealment, or validation failure stops before

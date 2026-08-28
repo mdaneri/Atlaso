@@ -139,8 +139,6 @@ pwsh -ExecutionPolicy Bypass `
   -File scripts/windows/vmware/build-photon-image.ps1 `
   -IsoUrl "<photon-iso-url-or-path>" `
   -IsoChecksum "<packer-checksum>" `
-  -OnePasswordAccount "<approved-account-name-or-id>" `
-  -OnePasswordPython "<python-3.10-through-3.13>" `
   -EnableRealSystemAdapters
 ```
 
@@ -149,7 +147,10 @@ The image wrapper uses the same exact Atlaso Environment selector contract as no
 `.atlaso-local/onepassword-environment-id`, and `-EnvironmentIdFile` selects a different single-line file. When
 `-SshPassword` or `-BootstrapAdminPassword` is omitted, the bounded Windows SDK bridge retrieves only that value's
 unique concealed `DEFAULT_ROOT_PASSWORD` or `DEFAULT_ADMIN_PASSWORD`. Explicit `SecureString` parameters remain
-independently authoritative. The bridge returns only current-user DPAPI ciphertext and removes its temporary files
+independently authoritative. With no explicit selectors, the bridge uses the single local 1Password CLI account and
+the highest compatible CPython 3.10 through 3.13 runtime registered with the Windows launcher. Zero or multiple
+accounts and a missing compatible runtime fail closed; `-OnePasswordAccount` and `-OnePasswordPython` remain explicit
+overrides. The bridge returns only current-user DPAPI ciphertext and removes its temporary files
 before the wrapper performs network discovery or preparation, output cleanup, ISO remastering, Packer initialization,
 or other image mutation. It rejects caller `DEFAULT_*` variables, local `.env` inputs, ambiguous or non-concealed
 variables, invalid exact bytes, unavailable authorization, and timeouts without printing the Environment ID or values.
@@ -367,8 +368,6 @@ Then use the ordinary command without an ID argument:
 ```powershell
 pwsh -ExecutionPolicy Bypass `
   -File scripts/windows/vmware/create-atlaso-test-vm.ps1 `
-  -OnePasswordAccount '<account-name-or-id>' `
-  -OnePasswordPython '<path-to-python-3.13.exe>' `
   -Redeploy `
   -ResetDataDisks `
   -WaitForIp `
@@ -391,8 +390,10 @@ replace the VMX during power-on. After first boot proves encrypted import and VM
 sentinel, the wrapper stops the exact VM, removes and verifies the powered-off signing-key assignment, restarts it, and
 requires three empty runtime readbacks before retiring the marker.
 The wrapper injects the same complete DHCP-first OVF environment before power-on. Use `-FirstBootFqdn` for the test
-identity. Pass the approved 1Password account name or ID through `-OnePasswordAccount` and an SDK-supported CPython
-3.10 through 3.13 executable through `-OnePasswordPython`. `-AdminPassword` and `-RootPassword` accept only
+identity. The wrapper uses the single local 1Password CLI account and the highest compatible CPython 3.10 through 3.13
+runtime registered with the Windows launcher. Use `-OnePasswordAccount` or `-OnePasswordPython` only when an explicit
+override is required; zero or multiple accounts and a missing compatible runtime fail before VMware mutation.
+`-AdminPassword` and `-RootPassword` accept only
 `SecureString` objects. When either parameter is omitted, the wrapper retrieves only that credential's exact concealed
 `DEFAULT_ADMIN_PASSWORD` or `DEFAULT_ROOT_PASSWORD` from the already verified Environment through the supported
 1Password SDK desktop integration. Each explicit parameter remains independently authoritative; there are no password
