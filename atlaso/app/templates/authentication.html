@@ -389,6 +389,7 @@
     data-tokens='{{ api_token_rows | tojson }}'
     data-csrf="{{ csrf_token }}"
     data-fallback-id="api-tokens-fallback"
+    data-max-lifetime-days="{{ api_token_max_lifetime_days }}"
   ></div>
   <table id="api-tokens-fallback" class="data-table">
     <thead>
@@ -433,6 +434,7 @@
 ) %}
   <input type="hidden" name="csrf" value="{{ csrf_token }}">
   <input type="hidden" name="record_id" value="">
+  <input type="hidden" name="expires_at" value="">
   <section data-atlaso-wizard-step="identity">
     <div class="form-stack">
       <label>
@@ -462,7 +464,7 @@
   </section>
   <section class="hidden" data-atlaso-wizard-step="review">
     <div class="settings-list" data-atlaso-resource-review></div>
-    <div class="alert warning">The token becomes valid immediately and its plaintext value is shown only once. No appliance apply is required.</div>
+    <div class="alert warning">The token becomes valid immediately and its plaintext value is shown only once. The configured maximum is {{ api_token_max_lifetime_days }} days; existing tokens are unchanged when that policy changes. No appliance apply is required.</div>
   </section>
 {% endcall %}
 {% endif %}

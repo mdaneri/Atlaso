@@ -593,6 +593,8 @@ class ApplianceSettings(Base):
         vmware_ceip_enabled: Whether vmware ceip is enabled.
         service_dns_target_naming: Persisted service dns target naming for the appliancesettings
             resource.
+        browser_session_idle_timeout_minutes: Maximum authenticated browser inactivity in minutes.
+        api_token_max_lifetime_days: Maximum lifetime for newly issued API bearer tokens in days.
         external_dns_servers: Persisted external dns servers for the appliancesettings resource.
         config_path: Filesystem path used for config.
         updated_at: UTC timestamp when the resource was last updated.
@@ -607,9 +609,33 @@ class ApplianceSettings(Base):
     root_ssh_enabled: Mapped[bool] = mapped_column(Boolean, default=False)
     vmware_ceip_enabled: Mapped[bool] = mapped_column(Boolean, default=False)
     service_dns_target_naming: Mapped[str] = mapped_column(String(20), default="ip")
+    browser_session_idle_timeout_minutes: Mapped[int] = mapped_column(Integer, default=30)
+    api_token_max_lifetime_days: Mapped[int] = mapped_column(Integer, default=90)
     external_dns_servers: Mapped[str] = mapped_column(Text, default="1.1.1.1\n9.9.9.9")
     config_path: Mapped[str] = mapped_column(String(240), default="/var/lib/atlaso/apply/appliance-settings/atlaso-settings.json")
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+
+
+class BrowserSession(Base):
+    """Track server-owned authenticated browser-session activity.
+
+    Attributes:
+        id: Opaque identifier stored only inside the signed browser session.
+        user_id: Atlaso user owning the authenticated session.
+        issued_at: UTC timestamp when authentication established the session.
+        last_interactive_at: UTC timestamp of the latest deliberate browser activity.
+        expired_at: UTC timestamp when Atlaso terminally invalidated the session.
+        expiry_reason: Sanitized reason for terminal invalidation.
+    """
+
+    __tablename__ = "browser_sessions"
+
+    id: Mapped[str] = mapped_column(String(64), primary_key=True, default=lambda: uuid4().hex)
+    user_id: Mapped[int] = mapped_column(Integer, ForeignKey("users.id", ondelete="CASCADE"), index=True)
+    issued_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+    last_interactive_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow, index=True)
+    expired_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    expiry_reason: Mapped[str | None] = mapped_column(String(40), nullable=True)
 
 
 class NtpSettings(Base):

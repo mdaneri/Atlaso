@@ -29,6 +29,12 @@ Every effective management listener, including a flagged access physical interfa
 Group-filtered TCP/22 for ordinary bootstrap-administrator recovery together with TCP/80 and TCP/443; unflagged access
 networks do not gain SSH admission, and root SSH remains a separate explicit appliance setting.
 
+Appliance Settings also owns immediate authentication-lifetime policy. Authenticated browser sessions default to a
+30-minute inactivity timeout enforced by server-owned activity state across management, public, and protocol browser
+planes; passive polling and static assets do not extend it. Newly issued API tokens default to the configured 90-day
+maximum, while an explicit timezone-aware expiry may be shorter. Policy changes never rewrite or resurrect credentials
+that already reached their terminal expiry.
+
 ![Atlaso — Everything your virtualization lab needs](docs/assets/brand/atlaso-docs-header-dark-1600x400.png)
 
 **Everything your virtualization lab needs.**
@@ -59,7 +65,8 @@ brings infrastructure, storage, identity, networking, and lifecycle workflows in
   choose exclusive Any-source behavior, validate explicit address/CIDR/nested-group tags individually, review their
   Firewall, managed-rule, and NAT consumers, and return to an in-progress rule wizard without losing its tab-local draft.
 - [Use the Atlaso API](docs/operate/api.md) — create least-privilege tokens, call the versioned REST contract safely,
-  and interpret responses, request IDs, locks, and apply boundaries. Typed physical-interface PATCH requests reconcile
+  use the configured issuance lifetime, and interpret responses, request IDs, locks, and apply boundaries. Typed
+  physical-interface PATCH requests reconcile
   dependent service, ESX Storage, Web Terminal, DHCP, Network Boot, and management-gateway route intent in the same
   desired-state transaction; terminal management-plane eligibility stays on the last-applied Network binding.
 - [Appliance Update](docs/operate/appliance-update.md) — inspect configured Photon, PowerShell, and signed Atlaso

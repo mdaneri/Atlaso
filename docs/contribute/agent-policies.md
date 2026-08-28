@@ -1634,6 +1634,12 @@ Terminal order:
   After factory reset, only `eth0` should be desired admin up; other physical NICs should be desired admin down until
   an operator enables them. Disabled service settings should have blank listen interfaces and addresses until an
   operator selects a valid bind target.
+- Authentication lifetime policy is immediate application state, not an Appliance Apply unit. Settings archives retain
+  the configured browser inactivity timeout and maximum new-token lifetime but exclude server-owned browser-session
+  activity and API-token rows. Browser expiry must be decided from persisted server activity before protected handlers;
+  background polling and assets cannot extend it. Token policy is an issuance ceiling only, and never rewrites existing
+  absolute expirations. Factory reset restores the packaged lifetime defaults while invalidating all earlier browser
+  sessions and bearer tokens.
 - Before replacing the database, complete factory reset must persist a bounded, non-secret journal/marker outside the
   database, construct and validate a private candidate database, preflight generated nginx, network, firewall, resolver,
   systemd, and service configuration, and quiesce Atlaso database writers. The same marker drives idempotent boot resume.

@@ -23,7 +23,7 @@ import urllib.error
 import urllib.parse
 import urllib.request
 from dataclasses import dataclass, field
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from ipaddress import ip_address, ip_interface
 from pathlib import Path
 from typing import Any, TextIO
@@ -868,6 +868,100 @@ def authenticated_ui_client(client: HttpClient, args: argparse.Namespace) -> Htt
     api_login(fresh_client, args)
     ui_login(fresh_client, args)
     return fresh_client
+
+
+def authentication_lifetime_policy_check(
+    client: HttpClient, args: argparse.Namespace
+) -> dict[str, Any]:
+    """Verify immediate authentication policy and token issuance on the deployed appliance.
+
+    Args:
+        client: Lifecycle client used to reach the appliance.
+        args: Parsed lifecycle credentials and endpoint options.
+
+    Returns:
+        Sanitized policy and expiration evidence without bearer-token material.
+
+    Raises:
+        LifecycleError: If the deployed policy or issuance boundary disagrees with the contract.
+    """
+    policy_client = authenticated_ui_client(client, args)
+    original = policy_client.json_request("GET", "/api/v1/settings")
+    status, settings_page, _headers = policy_client.request("GET", "/settings")
+    if status >= 400:
+        raise LifecycleError(f"Authentication lifetime settings page failed with HTTP {status}.")
+    csrf = extract_csrf(settings_page)
+
+    def save_policy(idle_minutes: int, token_days: int) -> None:
+        save_status, save_body, _save_headers = policy_client.request(
+            "POST",
+            "/settings/authentication-lifetimes",
+            form={
+                "browser_session_idle_timeout_minutes": idle_minutes,
+                "api_token_max_lifetime_days": token_days,
+                "csrf": csrf,
+            },
+            headers={"X-Atlaso-Autosave": "1"},
+        )
+        if save_status >= 400:
+            raise LifecycleError(
+                f"Authentication lifetime policy save failed with HTTP {save_status}: {save_body[:500]}"
+            )
+
+    try:
+        save_policy(5, 7)
+        persisted = policy_client.json_request("GET", "/api/v1/settings")
+        if persisted.get("browser_session_idle_timeout_minutes") != 5:
+            raise LifecycleError("Deployed browser inactivity policy did not persist immediately.")
+        if persisted.get("api_token_max_lifetime_days") != 7:
+            raise LifecycleError("Deployed API-token lifetime policy did not persist immediately.")
+
+        issuance_client = HttpClient(client.base_url)
+        login_path = (
+            "/api/v1/auth/login?"
+            + urllib.parse.urlencode(
+                {"username": args.username, "password": args.password}
+            )
+        )
+        issued_at = datetime.now(timezone.utc)
+        created = issuance_client.json_request(
+            "POST",
+            login_path,
+            json_body={
+                "name": "authentication lifetime lifecycle",
+                "scopes": ["read:dashboard"],
+            },
+        )
+        expires_at = datetime.fromisoformat(created["token"]["expires_at"])
+        if expires_at.tzinfo is None:
+            expires_at = expires_at.replace(tzinfo=timezone.utc)
+        lifetime = expires_at - issued_at
+        if not timedelta(days=7) <= lifetime <= timedelta(days=7, seconds=30):
+            raise LifecycleError("Omitted API-token expiry did not use the deployed seven-day policy.")
+
+        too_late = (issued_at + timedelta(days=8)).isoformat()
+        rejected_status, rejected_body, _rejected_headers = issuance_client.request(
+            "POST",
+            login_path,
+            json_body={
+                "name": "authentication lifetime rejection lifecycle",
+                "scopes": ["read:dashboard"],
+                "expires_at": too_late,
+            },
+        )
+        if rejected_status != 422 or "configured maximum lifetime of 7 days" not in rejected_body:
+            raise LifecycleError("Deployed token issuance did not reject an expiry beyond policy.")
+        return {
+            "browser_session_idle_timeout_minutes": 5,
+            "api_token_max_lifetime_days": 7,
+            "issued_lifetime_seconds": round(lifetime.total_seconds()),
+            "excess_expiry_status": rejected_status,
+        }
+    finally:
+        save_policy(
+            int(original["browser_session_idle_timeout_minutes"]),
+            int(original["api_token_max_lifetime_days"]),
+        )
 
 
 def configure_network(client: HttpClient, args: argparse.Namespace) -> dict[str, Any]:
@@ -4734,6 +4828,13 @@ def run_full_lifecycle(results: list[StepResult], client: HttpClient, args: argp
         args: Parsed command-line options consumed by the operation.
     """
     run_step(results, "appliance-health", appliance_health, client, args)
+    run_step(
+        results,
+        "authentication-lifetime-policy-check",
+        authentication_lifetime_policy_check,
+        client,
+        args,
+    )
     run_step(results, "configure-network", configure_network, client, args)
     run_step(results, "configure-dns-dhcp", configure_dns_dhcp, client, args)
     run_step(results, "configure-esx-storage", configure_esx_storage, client, args)
@@ -4835,6 +4936,13 @@ def run_restored_lifecycle(results: list[StepResult], client: HttpClient, args: 
         raise LifecycleError("--restored-state-run requires --restore-settings-backup.")
     run_step(results, "appliance-health", appliance_health, client, args)
     run_step(results, "restore-settings-backup", restore_settings_backup, client, args)
+    run_step(
+        results,
+        "authentication-lifetime-policy-check",
+        authentication_lifetime_policy_check,
+        client,
+        args,
+    )
     if args.pxe_test_mode == "esxi":
         # Settings restore intentionally excludes vaults, so recreate the
         # runtime secret before the restored Kickstart marker is validated.

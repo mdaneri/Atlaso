@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass
+from datetime import datetime
 from typing import Any
 
 from fastapi import APIRouter, Depends, Form, HTTPException, Request
@@ -16,6 +17,7 @@ from atlaso.app.config import get_settings
 from atlaso.app.database import get_db
 from atlaso.app.models import (
     ApiToken,
+    ApplianceSettings,
     DnsRecord,
     LdapGroup,
     LdapOrganization,
@@ -251,11 +253,17 @@ def build_router(dependencies: IdentityUiDependencies) -> IdentityUiRouter:
         if not identity.has_role(Role.ADMIN.value):
             query = query.where(ApiToken.owner_user_id == identity.user_id)
         tokens = db.execute(query).scalars().all()
+        lifetime_policy = db.execute(
+            select(ApplianceSettings).order_by(ApplianceSettings.id)
+        ).scalars().first()
         context: dict[str, Any] = {
             "identity": identity,
             "tokens": tokens,
             "api_token_rows": [api_token_grid_row(token) for token in tokens],
             "api_token_scope_options": sorted(scopes_for_roles(identity.roles)),
+            "api_token_max_lifetime_days": (
+                lifetime_policy.api_token_max_lifetime_days if lifetime_policy else 90
+            ),
             "raw_token": raw_token,
             "oidc_page": oidc_page,
             "oidc_admin": identity.has_role(Role.ADMIN.value),
@@ -1233,6 +1241,7 @@ def build_router(dependencies: IdentityUiDependencies) -> IdentityUiRouter:
         name: str = Form(...),
         description: str = Form(""),
         scopes: str = Form("read:dashboard read:routes read:wan"),
+        expires_at: datetime | None = Form(None),
         csrf: str = Form(...),
         identity: Identity = Depends(require_session_identity),
         db: Session = Depends(get_db),
@@ -1244,6 +1253,7 @@ def build_router(dependencies: IdentityUiDependencies) -> IdentityUiRouter:
             name: Name of the target object.
             description: Human-readable description of the resource.
             scopes: Permission scopes to evaluate or grant.
+            expires_at: Optional timezone-aware expiry reviewed by the operator.
             csrf: Validated CSRF token authorizing the request.
             identity: Authenticated identity authorizing the request.
             db: Active database session.
@@ -1262,7 +1272,10 @@ def build_router(dependencies: IdentityUiDependencies) -> IdentityUiRouter:
             db,
             user=user,
             create=ApiTokenCreate(
-                name=name, description=description or None, scopes=scopes.split()
+                name=name,
+                description=description or None,
+                scopes=scopes.split(),
+                expires_at=expires_at,
             ),
             settings=get_settings(),
             actor=identity.username,

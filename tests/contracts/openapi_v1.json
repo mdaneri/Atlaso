@@ -2,7 +2,7 @@
   "components": {
     "schemas": {
       "ApiTokenCreate": {
-        "description": "Fields accepted when creating a api token resource.\n\nAttributes:\n    name: Stable operator-facing name of this resource.\n    description: Operator-facing purpose or context for this resource.\n    expires_at: UTC timestamp after which the resource or credential is no longer accepted.\n    scopes: Normalized Atlaso API scopes granted to the identity or token.",
+        "description": "Fields accepted when creating a api token resource.\n\nAttributes:\n    name: Stable operator-facing name of this resource.\n    description: Operator-facing purpose or context for this resource.\n    expires_at: Optional timezone-aware expiration for the token. When omitted, Atlaso uses\n        the configured maximum lifetime for a newly issued token.\n    scopes: Normalized Atlaso API scopes granted to the identity or token.",
         "properties": {
           "description": {
             "anyOf": [
@@ -26,7 +26,7 @@
                 "type": "null"
               }
             ],
-            "description": "UTC timestamp after which the resource or credential is no longer accepted.",
+            "description": "Optional timezone-aware expiration for the new token. Omit to use the configured maximum API token lifetime; an explicit value must be in the future and no later than that maximum.",
             "title": "Expires At"
           },
           "name": {
@@ -7037,8 +7037,16 @@
         "type": "object"
       },
       "SettingsResponse": {
-        "description": "Fields returned by the Atlaso settings API.\n\nAttributes:\n    app_name: Returned app name value for this settings resource.\n    appliance_hostname: Returned appliance hostname value for this settings resource.\n    dry_run_system_adapters: Whether dry run system adapters is enabled for this settings\n        resource.\n    repository_path: Canonical filesystem or HTTP repository path used by Atlaso; callers must\n        not treat it as an unrestricted path.\n    vcf_backup_path: Canonical filesystem or HTTP VCF backup path used by Atlaso; callers must\n        not treat it as an unrestricted path.\n    appliance_fqdn: Returned appliance fqdn value for this settings resource.\n    management_https_enabled: Whether management https enabled is enabled for this settings\n        resource.\n    management_https_cert_available: Whether management https cert available is enabled for this\n        settings resource.\n    web_terminal_enabled: Whether web terminal enabled is enabled for this settings resource.\n    web_terminal_interfaces: Ordered collection of web terminal interfaces values represented by\n        this settings schema.\n    root_ssh_enabled: Whether root ssh enabled is enabled for this settings resource.\n    external_dns_servers: Ordered collection of external dns servers values represented by this\n        settings schema.\n    appliance_settings_config_path: Canonical filesystem or HTTP appliance settings config path\n        used by Atlaso; callers must not treat it as an unrestricted path.\n    local_dns_enabled: Whether local dns enabled is enabled for this settings resource.\n    management_interface: Returned management interface value for this settings resource.\n    management_ip: Returned management ip value for this settings resource.\n    valid: Whether the represented desired state passed Atlaso validation.\n    validation_errors: Actionable validation failures that must be corrected before the state\n        can be applied.\n    validation_warnings: Non-blocking validation warnings that the operator should review.\n    config_preview: Redacted rendered configuration preview for operator review; secret values\n        are never included.",
+        "description": "Fields returned by the Atlaso settings API.\n\nAttributes:\n    app_name: Returned app name value for this settings resource.\n    appliance_hostname: Returned appliance hostname value for this settings resource.\n    dry_run_system_adapters: Whether dry run system adapters is enabled for this settings\n        resource.\n    repository_path: Canonical filesystem or HTTP repository path used by Atlaso; callers must\n        not treat it as an unrestricted path.\n    vcf_backup_path: Canonical filesystem or HTTP VCF backup path used by Atlaso; callers must\n        not treat it as an unrestricted path.\n    appliance_fqdn: Returned appliance fqdn value for this settings resource.\n    management_https_enabled: Whether management https enabled is enabled for this settings\n        resource.\n    management_https_cert_available: Whether management https cert available is enabled for this\n        settings resource.\n    web_terminal_enabled: Whether web terminal enabled is enabled for this settings resource.\n    web_terminal_interfaces: Ordered collection of web terminal interfaces values represented by\n        this settings schema.\n    root_ssh_enabled: Whether root ssh enabled is enabled for this settings resource.\n    browser_session_idle_timeout_minutes: Maximum browser inactivity before Atlaso expires the session.\n    api_token_max_lifetime_days: Maximum lifetime allowed for newly issued API tokens.\n    external_dns_servers: Ordered collection of external dns servers values represented by this\n        settings schema.\n    appliance_settings_config_path: Canonical filesystem or HTTP appliance settings config path\n        used by Atlaso; callers must not treat it as an unrestricted path.\n    local_dns_enabled: Whether local dns enabled is enabled for this settings resource.\n    management_interface: Returned management interface value for this settings resource.\n    management_ip: Returned management ip value for this settings resource.\n    valid: Whether the represented desired state passed Atlaso validation.\n    validation_errors: Actionable validation failures that must be corrected before the state\n        can be applied.\n    validation_warnings: Non-blocking validation warnings that the operator should review.\n    config_preview: Redacted rendered configuration preview for operator review; secret values\n        are never included.",
         "properties": {
+          "api_token_max_lifetime_days": {
+            "default": 90,
+            "description": "Maximum lifetime, in days, applied to newly issued API bearer tokens; existing tokens are unchanged.",
+            "maximum": 365.0,
+            "minimum": 1.0,
+            "title": "Api Token Max Lifetime Days",
+            "type": "integer"
+          },
           "app_name": {
             "description": "Returned app name value for this settings resource.",
             "title": "App Name",
@@ -7058,6 +7066,14 @@
             "description": "Canonical filesystem or HTTP appliance settings config path used by Atlaso; callers must not treat it as an unrestricted path.",
             "title": "Appliance Settings Config Path",
             "type": "string"
+          },
+          "browser_session_idle_timeout_minutes": {
+            "default": 30,
+            "description": "Maximum period of authenticated browser inactivity, in minutes, before Atlaso expires the session on its next protected request.",
+            "maximum": 1440.0,
+            "minimum": 5.0,
+            "title": "Browser Session Idle Timeout Minutes",
+            "type": "integer"
           },
           "config_preview": {
             "description": "Redacted rendered configuration preview for operator review; secret values are never included.",
@@ -7175,8 +7191,16 @@
         "type": "object"
       },
       "SettingsUpdate": {
-        "description": "Fields accepted when updating or operating on a settings resource.\n\nAttributes:\n    appliance_fqdn: Requested appliance fqdn value for this settings resource.\n    management_https_enabled: Whether management https enabled is enabled for this settings\n        resource.\n    web_terminal_enabled: Whether web terminal enabled is enabled for this settings resource.\n    web_terminal_interfaces: Ordered collection of web terminal interfaces values represented by\n        this settings schema.\n    root_ssh_enabled: Whether root ssh enabled is enabled for this settings resource.\n    external_dns_servers: Ordered collection of external dns servers values represented by this\n        settings schema.",
+        "description": "Fields accepted when updating or operating on a settings resource.\n\nAttributes:\n    appliance_fqdn: Requested appliance fqdn value for this settings resource.\n    management_https_enabled: Whether management https enabled is enabled for this settings\n        resource.\n    web_terminal_enabled: Whether web terminal enabled is enabled for this settings resource.\n    web_terminal_interfaces: Ordered collection of web terminal interfaces values represented by\n        this settings schema.\n    root_ssh_enabled: Whether root ssh enabled is enabled for this settings resource.\n    browser_session_idle_timeout_minutes: Maximum browser inactivity before Atlaso expires the session.\n    api_token_max_lifetime_days: Maximum lifetime allowed for newly issued API tokens.\n    external_dns_servers: Ordered collection of external dns servers values represented by this\n        settings schema.",
         "properties": {
+          "api_token_max_lifetime_days": {
+            "default": 90,
+            "description": "Maximum lifetime, in days, applied to newly issued API bearer tokens; existing tokens are unchanged.",
+            "maximum": 365.0,
+            "minimum": 1.0,
+            "title": "Api Token Max Lifetime Days",
+            "type": "integer"
+          },
           "appliance_fqdn": {
             "default": "core.atlaso.internal",
             "description": "Requested appliance fqdn value for this settings resource.",
@@ -7184,6 +7208,14 @@
             "minLength": 1,
             "title": "Appliance Fqdn",
             "type": "string"
+          },
+          "browser_session_idle_timeout_minutes": {
+            "default": 30,
+            "description": "Maximum period of authenticated browser inactivity, in minutes, before Atlaso expires the session on its next protected request.",
+            "maximum": 1440.0,
+            "minimum": 5.0,
+            "title": "Browser Session Idle Timeout Minutes",
+            "type": "integer"
           },
           "external_dns_servers": {
             "description": "Ordered collection of external dns servers values represented by this settings schema.",
@@ -8796,7 +8828,7 @@
         ]
       },
       "post": {
-        "description": "Create Api Token.\n\nRequires the `read:dashboard` API scope. The operation changes saved Atlaso application state;\nany appliance host enforcement remains subject to the documented apply or task boundary for the\nresource.",
+        "description": "Create Api Token.\n\nRequires the `read:dashboard` API scope. An omitted expiration uses the current maximum API\ntoken lifetime from Appliance Settings. An explicit expiration must be timezone-aware, in the\nfuture, and no later than that current maximum. The selected absolute expiration is immutable\nwhen the policy changes later. The operation changes Atlaso application state immediately and\nreturns the plaintext bearer token only once.",
         "operationId": "createApiToken",
         "requestBody": {
           "content": {

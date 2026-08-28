@@ -9435,6 +9435,7 @@ function initializeApiTokensTable() {
   const element = document.getElementById("api-tokens-table");
   if (!(element instanceof HTMLElement)) return;
   const csrf = element.dataset.csrf || "";
+  const maximumLifetimeDays = Number.parseInt(element.dataset.maxLifetimeDays || "90", 10);
   const revokeToken = async (row) => {
     const data = row.getData();
     const confirmed = await requestConfirmation({
@@ -9488,6 +9489,8 @@ function initializeApiTokensTable() {
       { id: "review", title: "Review immediate issuance", description: "Confirm the token scope and one-time secret handling." },
     ],
     onOpen: ({ form }) => {
+      const expiresAt = new Date(Date.now() + maximumLifetimeDays * 24 * 60 * 60 * 1000);
+      form.elements.expires_at.value = expiresAt.toISOString();
       const selected = new Set(String(form.elements.scopes.value || "read:dashboard").split(/\s+/).filter(Boolean));
       form.querySelectorAll('input[name="scope_choices"]').forEach((input) => {
         input.checked = selected.has(input.value);
@@ -9508,6 +9511,8 @@ function initializeApiTokensTable() {
       { label: "Token", field: "name" },
       { label: "Purpose", field: "description" },
       { label: "Scopes", value: (form) => [...form.querySelectorAll('input[name="scope_choices"]:checked')].map((input) => input.value).join(" ") },
+      { label: "Maximum lifetime", value: () => `${maximumLifetimeDays} days` },
+      { label: "Expires", value: (form) => new Date(form.elements.expires_at.value).toLocaleString() },
       { label: "Enforcement", value: () => "Immediate application state" },
     ],
     extraActions: [
@@ -22975,6 +22980,41 @@ function initializeNetworkBootPage() {
   });
 }
 
+function initializeBrowserSessionActivity() {
+  const csrf = document.querySelector('meta[name="atlaso-csrf-token"]')?.content || "";
+  if (!csrf) return;
+  const routes = window.AtlasoRoutes || {
+    managementRoot: "/ui/management",
+    publicRoot: "/ui/public",
+  };
+  const root = window.location.pathname.startsWith(routes.publicRoot)
+    ? routes.publicRoot
+    : routes.managementRoot;
+  let lastSentAt = 0;
+  let inFlight = false;
+  const refresh = async () => {
+    const now = Date.now();
+    if (document.hidden || inFlight || now - lastSentAt < 60_000) return;
+    lastSentAt = now;
+    inFlight = true;
+    try {
+      const response = await fetch(`${root}/session/activity`, {
+        method: "POST",
+        headers: { "X-CSRF-Token": csrf, Accept: "application/json" },
+        credentials: "same-origin",
+      });
+      if (response.status === 401) window.location.assign(window.location.href);
+    } catch (_error) {
+      // The next deliberate event or protected navigation retries without extending the server timeout.
+    } finally {
+      inFlight = false;
+    }
+  };
+  document.addEventListener("pointerdown", refresh, { passive: true });
+  document.addEventListener("keydown", refresh);
+}
+
+document.addEventListener("DOMContentLoaded", initializeBrowserSessionActivity);
 document.addEventListener("DOMContentLoaded", initializeDashboard);
 document.addEventListener("DOMContentLoaded", () => initializePrimaryNavigation());
 document.addEventListener("DOMContentLoaded", initializeNetworkBootWorkspace);

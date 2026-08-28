@@ -844,6 +844,16 @@ The following cross-cutting boundaries always apply:
   UI/API, audit, job, problem, or log data. The exact pending boot protocol response may carry only its own claim.
 - Browser navigation to a globally disabled Web Terminal must render the authenticated Atlaso unavailable-state page;
   reserve JSON and protocol errors for ticket, API, and WebSocket consumers.
+- Browser inactivity is server-authoritative across management, public, and protocol browser planes. Evaluate the
+  configured 5-to-1,440-minute timeout before protected handlers; refresh only for deliberate navigation, submitted
+  actions, or the CSRF-protected activity heartbeat, never static assets or passive polling. Terminal expiry clears
+  identity and CSRF state, emits only sanitized account/session-class/reason audit context, returns `401` to fetch/API
+  consumers, and routes human navigation to the same-plane login notice. A later policy increase must never resurrect
+  an expired session.
+- New API-token issuance uses the current 1-to-365-day maximum from Appliance Settings. Omitted expiry means exactly
+  that lifetime from server issuance time; explicit expiry must be timezone-aware, future, and no later than the
+  maximum. Preserve every existing token's absolute expiry when policy changes, and show the configured lifetime plus
+  absolute expiry in the shared token wizard review.
 - Classify Web Terminal management page, ticket, and WebSocket eligibility from the last-applied Network binding,
   including flagged access physical and VLAN listeners. Pending desired edits must not reclassify the applied listener;
   handoff commit moves all three surfaces, rollback retains the old listener, and explicit extra listeners stay public.

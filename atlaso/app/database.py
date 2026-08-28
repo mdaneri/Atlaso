@@ -421,6 +421,23 @@ def init_db() -> None:
                         "ADD COLUMN domain_descriptions_json TEXT NOT NULL DEFAULT '{}'"
                     )
                 )
+            appliance_settings_columns = {
+                row[1]
+                for row in connection.execute(
+                    text("PRAGMA table_info(appliance_settings)")
+                ).all()
+            }
+            appliance_settings_additions = {
+                "browser_session_idle_timeout_minutes": "INTEGER NOT NULL DEFAULT 30",
+                "api_token_max_lifetime_days": "INTEGER NOT NULL DEFAULT 90",
+            }
+            for name, definition in appliance_settings_additions.items():
+                if name not in appliance_settings_columns:
+                    connection.execute(
+                        text(
+                            f"ALTER TABLE appliance_settings ADD COLUMN {name} {definition}"
+                        )
+                    )
             user_columns = {
                 row[1]
                 for row in connection.execute(

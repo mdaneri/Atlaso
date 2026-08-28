@@ -12,9 +12,21 @@ from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
+from atlaso.app.audit import record_audit
 from atlaso.app.config import Settings, get_settings
 from atlaso.app.database import get_db
-from atlaso.app.models import ApiToken, Role, Setting, User, utcnow
+from atlaso.app.models import (
+    ApiToken,
+    ApplianceSettings,
+    BrowserSession,
+    Role,
+    Setting,
+    User,
+    utcnow,
+)
+from atlaso.app.services.authentication_lifetimes import (
+    BROWSER_SESSION_IDLE_TIMEOUT_DEFAULT_MINUTES,
+)
 from atlaso.app.services.bootstrap_credentials import bootstrap_admin_password_matches
 from atlaso.app.ui_routes import MANAGEMENT_UI_ROOT, PUBLIC_UI_ROOT
 
@@ -63,6 +75,8 @@ ALL_SCOPES = {
     "admin:all",
 }
 
+BROWSER_SESSION_ID_KEY = "browser_session_id"
+BROWSER_SESSION_EXPIRED_KEY = "browser_session_expired"
 ROLE_SCOPES = {
     Role.ADMIN.value: ALL_SCOPES,
     Role.NETWORK_ADMIN.value: {
@@ -555,13 +569,54 @@ def get_session_identity(
     if not user_id:
         return None
     if request.session.get(SESSION_APPLIANCE_INSTANCE_SESSION_KEY) != ensure_appliance_instance_id(db):
+        browser_session_id = str(request.session.get(BROWSER_SESSION_ID_KEY) or "")
+        browser_session = db.get(BrowserSession, browser_session_id) if browser_session_id else None
+        if browser_session is not None and browser_session.expired_at is None:
+            browser_session.expired_at = utcnow()
+            browser_session.expiry_reason = "appliance_reset"
+            db.add(browser_session)
         request.session.clear()
         db.commit()
         return None
-    user = db.get(User, user_id)
-    if not user or not user.enabled:
+    browser_session_id = str(request.session.get(BROWSER_SESSION_ID_KEY) or "")
+    browser_session = db.get(BrowserSession, browser_session_id) if browser_session_id else None
+    if browser_session is None or browser_session.user_id != user_id or browser_session.expired_at is not None:
         request.session.clear()
         return None
+    user = db.get(User, user_id)
+    if not user or not user.enabled:
+        browser_session.expired_at = utcnow()
+        browser_session.expiry_reason = "account_unavailable"
+        db.add(browser_session)
+        db.commit()
+        request.session.clear()
+        return None
+    now = utcnow()
+    desired = db.execute(select(ApplianceSettings).order_by(ApplianceSettings.id)).scalars().first()
+    timeout_minutes = int(
+        desired.browser_session_idle_timeout_minutes
+        if desired is not None
+        else BROWSER_SESSION_IDLE_TIMEOUT_DEFAULT_MINUTES
+    )
+    last_interactive_at = ensure_aware(browser_session.last_interactive_at)
+    if now >= last_interactive_at + timedelta(minutes=timeout_minutes):
+        browser_session.expired_at = now
+        browser_session.expiry_reason = "inactivity"
+        db.add(browser_session)
+        record_audit(
+            db,
+            actor=user.username,
+            action="browser_session_expired",
+            resource_type="auth",
+            detail="session_class=browser; reason=inactivity",
+        )
+        request.session.clear()
+        request.session[BROWSER_SESSION_EXPIRED_KEY] = True
+        return None
+    if browser_request_is_interactive(request):
+        browser_session.last_interactive_at = now
+        db.add(browser_session)
+        db.commit()
     roles = user_roles(user)
     identity = Identity(
         username=user.username,
@@ -573,6 +628,54 @@ def get_session_identity(
     )
     enforce_ui_path_permission(request, identity)
     return identity
+
+
+def browser_request_is_interactive(request: Request) -> bool:
+    """Return whether a protected browser request represents deliberate user activity."""
+    if request.method.upper() not in {"GET", "HEAD", "OPTIONS"}:
+        return True
+    fetch_mode = request.headers.get("Sec-Fetch-Mode", "").strip().lower()
+    if fetch_mode:
+        return fetch_mode == "navigate"
+    accept = request.headers.get("Accept", "").lower()
+    return "text/html" in accept
+
+
+def start_browser_session(request: Request, db: Session, user: User) -> BrowserSession:
+    """Create server-owned activity state for a newly authenticated browser session."""
+    now = utcnow()
+    browser_session = BrowserSession(
+        id=token_urlsafe(32),
+        user_id=user.id,
+        issued_at=now,
+        last_interactive_at=now,
+    )
+    db.add(browser_session)
+    db.commit()
+    request.session.clear()
+    request.session["user_id"] = user.id
+    request.session[BROWSER_SESSION_ID_KEY] = browser_session.id
+    request.session[SESSION_APPLIANCE_INSTANCE_SESSION_KEY] = ensure_appliance_instance_id(db)
+    return browser_session
+
+
+def end_browser_session(request: Request, db: Session, *, reason: str = "logout") -> None:
+    """Terminally invalidate the current server-owned browser session and clear its cookie state."""
+    browser_session_id = str(request.session.get(BROWSER_SESSION_ID_KEY) or "")
+    browser_session = db.get(BrowserSession, browser_session_id) if browser_session_id else None
+    if browser_session is not None and browser_session.expired_at is None:
+        browser_session.expired_at = utcnow()
+        browser_session.expiry_reason = reason
+        db.add(browser_session)
+        db.commit()
+    request.session.clear()
+
+
+def consume_browser_session_expired_notice(request: Request) -> str | None:
+    """Consume the one-time inactivity-expiry notice carried to a login surface."""
+    if request.session.pop(BROWSER_SESSION_EXPIRED_KEY, False) is True:
+        return "Session expired due to inactivity"
+    return None
 
 
 def require_session_identity(identity: Annotated[Identity | None, Depends(get_session_identity)]) -> Identity:
@@ -693,16 +796,6 @@ def enforce_ui_path_permission(request: Request, identity: Identity) -> None:
             if not identity.can(required):
                 raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail=f"Missing required scope: {required}")
             return
-
-
-def default_expiration(settings: Settings | None = None) -> datetime:
-    """Return the configured expiration time for a newly issued API token.
-
-    Args:
-        settings: Current Atlaso settings used to configure the operation.
-    """
-    settings = settings or get_settings()
-    return utcnow() + timedelta(days=settings.api_token_ttl_days)
 
 
 def ensure_aware(value: datetime) -> datetime:

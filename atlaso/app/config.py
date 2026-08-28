@@ -21,7 +21,6 @@ class Settings(BaseSettings):
         csrf_cookie_name: Configured csrf cookie name used by the Atlaso application.
         jwt_issuer: Configured jwt issuer used by the Atlaso application.
         jwt_audience: Configured jwt audience used by the Atlaso application.
-        api_token_ttl_days: Api token ttl duration in days.
         bootstrap_admin_username: Configured bootstrap admin username used by the Atlaso
             application.
         bootstrap_admin_password: Configured bootstrap admin password used by the Atlaso
@@ -60,7 +59,6 @@ class Settings(BaseSettings):
     csrf_cookie_name: str = "atlaso_csrf"
     jwt_issuer: str = "atlaso"
     jwt_audience: str = "atlaso-api"
-    api_token_ttl_days: int = 90
     bootstrap_admin_username: str = "admin"
     bootstrap_admin_password: str = "atlaso-admin"
     appliance_fqdn: str = "core.atlaso.internal"
