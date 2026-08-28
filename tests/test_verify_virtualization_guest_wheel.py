@@ -23,6 +23,13 @@ def _wheel(path: Path) -> tuple[Path, dict[str, bytes]]:
         "atlaso/__init__.py": b'__version__ = "0.9.242"\n',
         "atlaso-0.9.242.dist-info/METADATA": b"Metadata-Version: 2.4\nName: Atlaso\nVersion: 0.9.242\n",
         "atlaso-0.9.242.dist-info/WHEEL": b"Wheel-Version: 1.0\nRoot-Is-Purelib: true\nTag: py3-none-any\n",
+        "atlaso-0.9.242.dist-info/entry_points.txt": (
+            b"[console_scripts]\n"
+            b"atlaso-console = atlaso.app.appliance_console:main\n"
+            b"atlaso-kmip = atlaso.app.kmip.server:main\n"
+            b"atlaso-vault = atlaso.app.vault_cli:main\n"
+            b"atlaso-worker = atlaso.app.worker:main\n"
+        ),
     }
     rows: list[list[str]] = []
     for name, content in members.items():
@@ -82,6 +89,59 @@ def _site_archive(
             archive.addfile(info, io.BytesIO(content))
 
 
+def _runtime_archive(
+    path: Path,
+    *,
+    python_target: str = "/usr/bin/python3.14",
+    altered_script: str = "",
+) -> None:
+    """Write a guestfish-shaped active virtualenv bin tar archive."""
+
+    scripts = {
+        "atlaso-console": ("atlaso.app.appliance_console", "main"),
+        "atlaso-kmip": ("atlaso.app.kmip.server", "main"),
+        "atlaso-vault": ("atlaso.app.vault_cli", "main"),
+        "atlaso-worker": ("atlaso.app.worker", "main"),
+    }
+    with tarfile.open(path, "w") as archive:
+        python = tarfile.TarInfo("python")
+        python.type = tarfile.SYMTYPE
+        python.linkname = python_target
+        python.mode = 0o777
+        archive.addfile(python)
+        for name, (module, function) in scripts.items():
+            content = verifier._console_script_bytes(
+                "/opt/atlaso/.venv/bin/python", module, function
+            )
+            if name == altered_script:
+                content = b"#!/bin/sh\nexec producer-controlled\n"
+            info = tarfile.TarInfo(name)
+            info.size = len(content)
+            info.mode = 0o755
+            archive.addfile(info, io.BytesIO(content))
+
+
+def _write_guest_archive(
+    destination: Path,
+    source: str,
+    installed: dict[str, bytes],
+    *,
+    extra: dict[str, bytes] | None = None,
+    python_target: str = "/usr/bin/python3.14",
+    altered_script: str = "",
+) -> None:
+    """Write the requested site-packages or virtualenv-bin guest archive."""
+
+    if source.endswith("/bin"):
+        _runtime_archive(
+            destination,
+            python_target=python_target,
+            altered_script=altered_script,
+        )
+    else:
+        _site_archive(destination, installed, extra)
+
+
 def _assets(path: Path) -> None:
     """Create the minimum system-content provenance fixture."""
 
@@ -125,8 +185,9 @@ def test_verifies_every_hashed_wheel_member_in_active_venv(
         tar_command = next(
             command for command in commands if command.startswith("tar-out ")
         )
+        source = tar_command.split(" ", 2)[1]
         destination = tar_command.rsplit(" ", 1)[1]
-        _site_archive(Path(destination), installed)
+        _write_guest_archive(Path(destination), source, installed)
         return []
 
     monkeypatch.setattr(verifier, "_guestfish", fake_guestfish)
@@ -162,9 +223,10 @@ def test_rejects_altered_installed_wheel_member(
         tar_command = next(
             command for command in commands if command.startswith("tar-out ")
         )
+        source = tar_command.split(" ", 2)[1]
         destination = tar_command.rsplit(" ", 1)[1]
         altered = {**installed, "authlib/__init__.py": b"substituted"}
-        _site_archive(Path(destination), altered)
+        _write_guest_archive(Path(destination), source, altered)
         return []
 
     monkeypatch.setattr(verifier, "_guestfish", fake_guestfish)
@@ -197,17 +259,72 @@ def test_rejects_unexpected_active_pth_file(
         tar_command = next(
             command for command in commands if command.startswith("tar-out ")
         )
+        source = tar_command.split(" ", 2)[1]
         destination = tar_command.rsplit(" ", 1)[1]
-        _site_archive(
+        _write_guest_archive(
             Path(destination),
+            source,
             {**members, **dependencies},
-            {"producer-injected.pth": b"import os\n"},
+            extra={"producer-injected.pth": b"import os\n"},
         )
         return []
 
     monkeypatch.setattr(verifier, "_guestfish", fake_guestfish)
     digest = hashlib.sha256(wheel.read_bytes()).hexdigest()
     with pytest.raises(SystemExit, match="unexpected file: producer-injected.pth"):
+        verifier.verify_installed_environment(assets, wheel, wheelhouse, digest)
+
+
+@pytest.mark.parametrize(
+    ("python_target", "altered_script", "message"),
+    [
+        ("/tmp/producer-python", "", "untrusted interpreter"),
+        ("/usr/bin/python3.14", "atlaso-console", "does not match the signed wheel"),
+    ],
+)
+def test_rejects_altered_runtime_executables(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    python_target: str,
+    altered_script: str,
+    message: str,
+) -> None:
+    """Protected signing rejects replaced Python and console launchers."""
+
+    assets = tmp_path / "assets"
+    _assets(assets)
+    wheel, members = _wheel(tmp_path / "atlaso-0.9.242-py3-none-any.whl")
+    wheelhouse = tmp_path / "wheelhouse"
+    wheelhouse.mkdir()
+    _, dependencies = _dependency_wheel(
+        wheelhouse / "authlib-1.6.4-py2.py3-none-any.whl"
+    )
+    installed = {**members, **dependencies}
+
+    def fake_guestfish(_disk: Path, commands: list[str]) -> list[str]:
+        if commands == ["list-filesystems"]:
+            return ["/dev/sda: ext4"]
+        if commands[-1].startswith("realpath "):
+            return [
+                "/opt-atlaso/releases/bootstrap-0.9.242/.venv/lib/python3.14/site-packages"
+            ]
+        tar_command = next(
+            command for command in commands if command.startswith("tar-out ")
+        )
+        source = tar_command.split(" ", 2)[1]
+        destination = Path(tar_command.rsplit(" ", 1)[1])
+        _write_guest_archive(
+            destination,
+            source,
+            installed,
+            python_target=python_target,
+            altered_script=altered_script,
+        )
+        return []
+
+    monkeypatch.setattr(verifier, "_guestfish", fake_guestfish)
+    digest = hashlib.sha256(wheel.read_bytes()).hexdigest()
+    with pytest.raises(SystemExit, match=message):
         verifier.verify_installed_environment(assets, wheel, wheelhouse, digest)
 
 

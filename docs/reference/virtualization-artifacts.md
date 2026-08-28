@@ -36,8 +36,10 @@ the normalized descriptor's complete machine contract before writing provenance 
 Before either virtualization index is signed, the protected GitHub-hosted finalizer opens the OVA-validated
 system-content VMDK read-only with libguestfs. It resolves the active CPython 3.14 environment, requires every hashed
 member installed from the Atlaso wheel and complete signed wheelhouse to match, and rejects unexpected active files
-except bounded pip and CPython metadata. Producer-authored provenance and smoke evidence cannot substitute for this
-independent payload check. The same boundary uses `qemu-img compare` to require both Hyper-V payload VHDX disks to
+except bounded pip and CPython metadata. It also requires the active virtualenv Python link to resolve only to Photon's
+CPython 3.14 interpreter and every Atlaso console script to match its signed-wheel entry point and canonical pip
+launcher. Producer-authored provenance and smoke evidence cannot substitute for this independent payload check. The
+same boundary uses `qemu-img compare` to require both Hyper-V payload VHDX disks to
 expose the same guest-visible bytes as the admitted OVA VMDKs and both 500 GiB Hyper-V data disks to match an
 independent all-zero sparse reference.
 

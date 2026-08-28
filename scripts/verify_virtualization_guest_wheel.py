@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import argparse
 import base64
+import configparser
 import csv
 import hashlib
 import io
@@ -19,6 +20,10 @@ from typing import Any
 
 DIGEST_PATTERN = re.compile(r"^[0-9a-f]{64}$")
 DIST_INFO_PATTERN = re.compile(r"^[A-Za-z0-9_.]+-[A-Za-z0-9_.+!]+\.dist-info$")
+CONSOLE_SCRIPT_NAME_PATTERN = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]*$")
+ENTRY_POINT_PATTERN = re.compile(
+    r"^([A-Za-z_][A-Za-z0-9_.]*):([A-Za-z_][A-Za-z0-9_]*)$"
+)
 
 
 def _sha256(path: Path) -> str:
@@ -143,6 +148,32 @@ def _wheel_records(wheel: Path) -> tuple[str, dict[str, tuple[str, int]]]:
         raise SystemExit(
             "Atlaso application wheel is not a valid wheel archive"
         ) from exc
+
+
+def _wheel_console_scripts(wheel: Path) -> dict[str, tuple[str, str]]:
+    """Return the application wheel's bounded console-script entry points."""
+
+    try:
+        with zipfile.ZipFile(wheel) as archive:
+            names = [name for name in archive.namelist() if name.endswith(".dist-info/entry_points.txt")]
+            if len(names) != 1:
+                raise SystemExit("Atlaso wheel must contain one entry-points document")
+            parser = configparser.ConfigParser(interpolation=None, strict=True)
+            parser.optionxform = str
+            parser.read_string(archive.read(names[0]).decode("utf-8"))
+    except (configparser.Error, OSError, UnicodeDecodeError, zipfile.BadZipFile) as exc:
+        raise SystemExit("Atlaso wheel entry points are unreadable") from exc
+    if not parser.has_section("console_scripts"):
+        raise SystemExit("Atlaso wheel contains no console-script entry points")
+    scripts: dict[str, tuple[str, str]] = {}
+    for name, target in parser.items("console_scripts"):
+        match = ENTRY_POINT_PATTERN.fullmatch(target.strip())
+        if CONSOLE_SCRIPT_NAME_PATTERN.fullmatch(name) is None or match is None:
+            raise SystemExit("Atlaso wheel contains an unsafe console-script entry point")
+        scripts[name] = (match.group(1), match.group(2))
+    if not scripts:
+        raise SystemExit("Atlaso wheel contains no console-script entry points")
+    return scripts
 
 
 def _system_vmdk(asset_root: Path) -> Path:
@@ -287,12 +318,97 @@ def _verify_site_packages_archive(
         raise SystemExit(f"installed wheel member is missing: {missing[0]}")
 
 
+def _runtime_venv(site_packages: PurePosixPath) -> PurePosixPath:
+    """Return the active release virtualenv containing one site-packages path."""
+
+    suffix = PurePosixPath("lib/python3.14/site-packages")
+    if tuple(site_packages.parts[-len(suffix.parts) :]) != suffix.parts:
+        raise SystemExit("active Atlaso site-packages path has an invalid ABI layout")
+    venv = site_packages.parents[2]
+    if venv.name != ".venv" or not venv.as_posix().startswith(
+        "/opt-atlaso/releases/"
+    ):
+        raise SystemExit("active Atlaso virtualenv path is missing or unsafe")
+    return venv
+
+
+def _console_script_bytes(
+    python: str, module: str, function: str
+) -> bytes:
+    """Return pip's canonical POSIX console-script bytes for one entry point."""
+
+    return (
+        f"#!{python}\n"
+        "# -*- coding: utf-8 -*-\n"
+        "import re\n"
+        "import sys\n"
+        "if __name__ == '__main__':\n"
+        f"    from {module} import {function}\n"
+        "    sys.argv[0] = re.sub(r'(-script\\.pyw|\\.exe)?$', '', sys.argv[0])\n"
+        f"    sys.exit({function}())\n"
+    ).encode("utf-8")
+
+
+def _verify_runtime_archive(
+    archive_path: Path,
+    venv: PurePosixPath,
+    console_scripts: dict[str, tuple[str, str]],
+) -> None:
+    """Verify the active interpreter link and signed-wheel console scripts."""
+
+    try:
+        with tarfile.open(archive_path, mode="r:") as archive:
+            members: dict[str, tarfile.TarInfo] = {}
+            for member in archive:
+                name = _normalized_tar_name(member.name)
+                if "/" in name or name in members:
+                    raise SystemExit("guest virtualenv bin archive is unsafe")
+                members[name] = member
+            current = "python"
+            visited: set[str] = set()
+            while True:
+                if current in visited:
+                    raise SystemExit("active virtualenv Python link contains a cycle")
+                visited.add(current)
+                member = members.get(current)
+                if member is None or not member.issym():
+                    raise SystemExit("active virtualenv Python is not a trusted symlink")
+                target = member.linkname
+                if target == "/usr/bin/python3.14":
+                    break
+                if target not in {"python", "python3", "python3.14"}:
+                    raise SystemExit("active virtualenv Python targets an untrusted interpreter")
+                current = target
+            runtime_venv = venv.as_posix().replace("/opt-atlaso/", "/opt/atlaso/", 1)
+            interpreters = {
+                "/opt/atlaso/.venv/bin/python",
+                f"{runtime_venv}/bin/python",
+            }
+            for name, (module, function) in console_scripts.items():
+                member = members.get(name)
+                if member is None or not member.isfile() or member.mode & 0o111 == 0:
+                    raise SystemExit(f"active console script is missing or unsafe: {name}")
+                source = archive.extractfile(member)
+                if source is None:
+                    raise SystemExit(f"active console script is unreadable: {name}")
+                content = source.read(16 * 1024 + 1)
+                expected = {
+                    _console_script_bytes(python, module, function)
+                    for python in interpreters
+                }
+                if content not in expected:
+                    raise SystemExit(f"active console script does not match the signed wheel: {name}")
+    except (OSError, tarfile.TarError) as exc:
+        raise SystemExit("guest virtualenv bin directory could not be read safely") from exc
+
+
 def verify_installed_environment(
     asset_root: Path, wheel: Path, wheelhouse: Path, expected_digest: str
 ) -> dict[str, Any]:
     """Verify the complete signed wheel set in the active guest environment."""
 
     records, dist_infos = _expected_environment(wheel, wheelhouse, expected_digest)
+    console_scripts = _wheel_console_scripts(wheel)
     disk = _system_vmdk(asset_root.resolve(strict=True))
     filesystem = _filesystem(disk)
     mount = f"mount-ro {filesystem} /"
@@ -303,6 +419,7 @@ def verify_installed_environment(
     if len(site_lines) != 1 or not site_lines[0].startswith("/opt-atlaso/releases/"):
         raise SystemExit("active Atlaso site-packages path is missing or unsafe")
     site_packages = PurePosixPath(site_lines[0])
+    venv = _runtime_venv(site_packages)
     with tempfile.TemporaryDirectory(
         prefix="atlaso-installed-environment-"
     ) as temporary:
@@ -312,12 +429,19 @@ def verify_installed_environment(
             [mount, f"tar-out {site_packages.as_posix()} {archive_path.as_posix()}"],
         )
         _verify_site_packages_archive(archive_path, records, dist_infos)
+        runtime_archive_path = Path(temporary) / "bin.tar"
+        _guestfish(
+            disk,
+            [mount, f"tar-out {(venv / 'bin').as_posix()} {runtime_archive_path.as_posix()}"],
+        )
+        _verify_runtime_archive(runtime_archive_path, venv, console_scripts)
     return {
         "schema_version": 1,
         "kind": "atlaso-installed-environment-verification",
         "wheel_sha256": expected_digest,
         "distributions_verified": len(dist_infos),
         "files_verified": len(records),
+        "console_scripts_verified": len(console_scripts),
     }
 
 
