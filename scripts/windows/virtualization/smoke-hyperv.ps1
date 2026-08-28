@@ -95,7 +95,46 @@ function Get-AtlasoHyperVSmokeDescendantIdentity {
     return ,$identity
 }
 
+<#
+.SYNOPSIS
+Wait for one provider-bound Hyper-V management IPv4 identity.
+.PARAMETER Vm
+Exact invocation-owned Hyper-V virtual machine.
+.PARAMETER ManagementSwitch
+Expected switch for the named Management adapter.
+.PARAMETER ServiceSwitch
+Expected switch for the named Services adapter.
+.PARAMETER ExpectedIdentity
+Previously captured network identity that must remain unchanged.
+.PARAMETER Deadline
+Absolute readiness deadline for provider address discovery.
+#>
+function Wait-AtlasoHyperVSmokeNetworkIdentity {
+    param(
+        [Parameter(Mandatory = $true)][object]$Vm,
+        [Parameter(Mandatory = $true)][string]$ManagementSwitch,
+        [Parameter(Mandatory = $true)][string]$ServiceSwitch,
+        [Parameter(Mandatory = $true)][object]$ExpectedIdentity,
+        [Parameter(Mandatory = $true)][DateTimeOffset]$Deadline
+    )
+
+    while ([DateTimeOffset]::UtcNow -lt $Deadline) {
+        $identity = Resolve-AtlasoHyperVSmokeNetworkIdentity `
+            -Adapters @(Get-VMNetworkAdapter -VM $Vm -ErrorAction Stop) `
+            -ManagementSwitch $ManagementSwitch `
+            -ServiceSwitch $ServiceSwitch `
+            -ExpectedIdentity $ExpectedIdentity `
+            -AllowMissingAddress
+        if ($identity.Address) {
+            return $identity
+        }
+        Start-Sleep -Seconds 5
+    }
+    throw 'The provider-bound Hyper-V Management adapter did not report one usable IPv4 before the deadline.'
+}
+
 $repoRoot = (Resolve-Path -LiteralPath (Join-Path $PSScriptRoot '..\..\..')).Path
+Import-Module (Join-Path $PSScriptRoot 'Atlaso.VirtualizationSmokeIdentity.psm1') -Force
 $sourceZip = Get-Item -LiteralPath $ZipPath -Force -ErrorAction Stop
 if ($sourceZip.PSIsContainer -or
     ($sourceZip.Attributes -band [System.IO.FileAttributes]::ReparsePoint) -ne 0) {
@@ -156,21 +195,34 @@ try {
     }
     $createdVm = $createdVmMatches[0]
     $vmCreated = $true
+    $providerIdentity = Resolve-AtlasoHyperVSmokeNetworkIdentity `
+        -Adapters @(Get-VMNetworkAdapter -VM $createdVm -ErrorAction Stop) `
+        -ManagementSwitch $ManagementSwitch `
+        -ServiceSwitch $ServiceSwitch `
+        -AllowMissingAddress
     $deadline = [DateTimeOffset]::UtcNow.AddMinutes(15)
-    $address = ''
     $access = $null
-    while ([DateTimeOffset]::UtcNow -lt $deadline -and (-not $address -or $null -eq $access)) {
-        $address = @(Get-VMNetworkAdapter -VMName $Name | ForEach-Object IPAddresses |
-                Where-Object { $_ -match '^\d{1,3}(?:\.\d{1,3}){3}$' -and $_ -notlike '169.254.*' } |
-                Select-Object -First 1)
+    $networkIdentity = $null
+    while ([DateTimeOffset]::UtcNow -lt $deadline -and ($null -eq $networkIdentity -or $null -eq $access)) {
+        $networkIdentity = Wait-AtlasoHyperVSmokeNetworkIdentity `
+            -Vm $createdVm `
+            -ManagementSwitch $ManagementSwitch `
+            -ServiceSwitch $ServiceSwitch `
+            -ExpectedIdentity $providerIdentity `
+            -Deadline $deadline
         $access = Get-AtlasoHyperVFirstBootAccess -VmId $createdVm.Id
-        if (-not $address -or $null -eq $access) {
+        if ($null -eq $access) {
             Start-Sleep -Seconds 5
         }
     }
-    if (-not $address -or $null -eq $access) {
+    if ($null -eq $networkIdentity -or $null -eq $access) {
         throw 'Hyper-V KVP did not report both management IPv4 and one-time access within 15 minutes.'
     }
+    $networkIdentity = Resolve-AtlasoHyperVSmokeNetworkIdentity `
+        -Adapters @(Get-VMNetworkAdapter -VM $createdVm -ErrorAction Stop) `
+        -ManagementSwitch $ManagementSwitch `
+        -ServiceSwitch $ServiceSwitch `
+        -ExpectedIdentity $networkIdentity
     $expectedHostKey = [string]$access.ssh_host_key
     if ([string]$access.username -notmatch '^[a-z_][a-z0-9_-]*$' -or
         [string]$access.password -notmatch '^.{12,}$' -or
@@ -181,11 +233,39 @@ try {
         username = [string]$access.username
         password = [string]$access.password
     } | ConvertTo-Json -Compress
-    $secret | & $python (Join-Path $repoRoot 'scripts\virtualization\smoke_guest_ssh.py') `
-        '--host' ([string]$address) '--host-key' $expectedHostKey '--platform' 'hyperv'
+    $initialOutput = @($secret | & $python (Join-Path $repoRoot 'scripts\virtualization\smoke_guest_ssh.py') `
+            '--host' ([string]$networkIdentity.Address) `
+            '--host-key' $expectedHostKey `
+            '--platform' 'hyperv' `
+            '--phase' 'initial')
     if ($LASTEXITCODE -ne 0) {
-        throw 'Hyper-V guest validation failed.'
+        throw 'Initial Hyper-V guest validation failed.'
     }
+    $tlsFingerprint = [string]($initialOutput | Select-Object -Last 1)
+    if ($tlsFingerprint -notmatch '^[0-9a-f]{64}$') {
+        throw 'Initial Hyper-V guest validation did not return one canonical TLS fingerprint.'
+    }
+    $networkIdentity = Wait-AtlasoHyperVSmokeNetworkIdentity `
+        -Vm $createdVm `
+        -ManagementSwitch $ManagementSwitch `
+        -ServiceSwitch $ServiceSwitch `
+        -ExpectedIdentity $networkIdentity `
+        -Deadline ([DateTimeOffset]::UtcNow.AddMinutes(15))
+    $postOutput = @($secret | & $python (Join-Path $repoRoot 'scripts\virtualization\smoke_guest_ssh.py') `
+            '--host' ([string]$networkIdentity.Address) `
+            '--host-key' $expectedHostKey `
+            '--platform' 'hyperv' `
+            '--phase' 'post-reboot' `
+            '--expected-tls-fingerprint' $tlsFingerprint)
+    if ($LASTEXITCODE -ne 0 -or
+        ($postOutput -join "`n") -notmatch 'Atlaso hyperv guest smoke test passed\.') {
+        throw 'Post-reboot Hyper-V guest validation failed.'
+    }
+    Resolve-AtlasoHyperVSmokeNetworkIdentity `
+        -Adapters @(Get-VMNetworkAdapter -VM $createdVm -ErrorAction Stop) `
+        -ManagementSwitch $ManagementSwitch `
+        -ServiceSwitch $ServiceSwitch `
+        -ExpectedIdentity $networkIdentity | Out-Null
 }
 finally {
     $cleanupFailure = ''

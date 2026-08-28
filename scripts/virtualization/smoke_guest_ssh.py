@@ -7,6 +7,7 @@ import base64
 import hashlib
 import http.client
 import json
+import re
 import socket
 import ssl
 import struct
@@ -215,7 +216,7 @@ def _wait_for_reboot(host: str) -> None:
 
 
 def main(argv: list[str] | None = None) -> int:
-    """Run guest validation, reboot, and repeat validation with pinned identities.
+    """Run one reboot phase of guest validation with pinned identities.
 
     Args:
         argv: Optional command-line argument sequence.
@@ -225,7 +226,16 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--host", required=True)
     parser.add_argument("--host-key", required=True)
     parser.add_argument("--platform", choices=("vmware", "hyperv"), required=True)
+    parser.add_argument("--phase", choices=("initial", "post-reboot"), required=True)
+    parser.add_argument("--expected-tls-fingerprint")
     args = parser.parse_args(argv)
+    if args.phase == "initial" and args.expected_tls_fingerprint is not None:
+        parser.error("The initial phase cannot accept a prior TLS fingerprint.")
+    if args.phase == "post-reboot" and (
+        args.expected_tls_fingerprint is None
+        or not re.fullmatch(r"[0-9a-f]{64}", args.expected_tls_fingerprint)
+    ):
+        parser.error("The post-reboot phase requires one canonical TLS fingerprint.")
     secret = load_secret_input()
     expected_host_key = parse_host_public_key(args.host_key)
     try:
@@ -234,19 +244,20 @@ def main(argv: list[str] | None = None) -> int:
             script = _validation_script(args.platform)
             _run_root(client, secret, script)
             certificate = _front_door_fingerprint(args.host)
-            _stdin, stdout, _stderr = client.exec_command("sudo -S -p '' systemctl reboot", timeout=30)
-            _stdin.write(secret.password + "\n")
-            _stdin.channel.shutdown_write()
-            stdout.channel.recv_exit_status()
+            if args.phase == "initial":
+                _stdin, stdout, _stderr = client.exec_command(
+                    "sudo -S -p '' systemctl reboot", timeout=30
+                )
+                _stdin.write(secret.password + "\n")
+                _stdin.channel.shutdown_write()
+                stdout.channel.recv_exit_status()
         finally:
             client.close()
-        _wait_for_reboot(args.host)
-        client = _connect(args.host, secret, expected_key=expected_host_key)
-        try:
-            _run_root(client, secret, script)
-        finally:
-            client.close()
-        if _front_door_fingerprint(args.host) != certificate:
+        if args.phase == "initial":
+            _wait_for_reboot(args.host)
+            print(certificate)
+            return 0
+        if certificate != args.expected_tls_fingerprint:
             raise SmokeError("The host-facing TLS identity changed across the appliance reboot.")
     except SmokeError as exc:
         parser.error(str(exc))

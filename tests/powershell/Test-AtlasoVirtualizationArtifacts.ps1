@@ -13,12 +13,14 @@ Set-StrictMode -Version Latest
 $ErrorActionPreference = 'Stop'
 
 $modulePath = Join-Path $RepositoryRoot 'scripts\windows\virtualization\Atlaso.VirtualizationArtifacts.psm1'
+$smokeIdentityModulePath = Join-Path $RepositoryRoot 'scripts\windows\virtualization\Atlaso.VirtualizationSmokeIdentity.psm1'
 $exporterPath = Join-Path $RepositoryRoot 'scripts\windows\virtualization\export-artifacts.ps1'
 $importerPath = Join-Path $RepositoryRoot 'scripts\windows\virtualization\templates\Import-Atlaso.ps1'
 $hyperVSmokePath = Join-Path $RepositoryRoot 'scripts\windows\virtualization\smoke-hyperv.ps1'
 $vmwareSmokePath = Join-Path $RepositoryRoot 'scripts\windows\virtualization\smoke-ova-vmware.ps1'
 $ovaExporterPath = Join-Path $RepositoryRoot 'scripts\windows\vmware\export-ovf.ps1'
 Import-Module $modulePath -Force
+Import-Module $smokeIdentityModulePath -Force
 
 $head = [string](& git -C $RepositoryRoot rev-parse HEAD)
 if ($LASTEXITCODE -ne 0 -or $head -notmatch '^[0-9a-f]{40}$') {
@@ -27,6 +29,128 @@ if ($LASTEXITCODE -ne 0 -or $head -notmatch '^[0-9a-f]{40}$') {
 $version = Get-AtlasoTemplateVersion -RepoRoot $RepositoryRoot -SourceCommit $head
 if ($version -notmatch '^\d+\.\d+\.\d+$') {
     throw 'The source-commit version resolver did not return a semantic version.'
+}
+
+$hyperVAdapters = @(
+    [pscustomobject]@{
+        Name = 'Services'; Id = 'service-id'; SwitchName = 'Services';
+        MacAddress = '00155D445566'; IPAddresses = @('198.51.100.20')
+    },
+    [pscustomobject]@{
+        Name = 'Management'; Id = 'management-id'; SwitchName = 'Management';
+        MacAddress = '00155D112233'; IPAddresses = @('192.0.2.20')
+    }
+)
+$hyperVIdentity = Resolve-AtlasoHyperVSmokeNetworkIdentity `
+    -Adapters $hyperVAdapters `
+    -ManagementSwitch 'Management' `
+    -ServiceSwitch 'Services'
+if ($hyperVIdentity.Address -ne '192.0.2.20' -or
+    $hyperVIdentity.ManagementMac -ne '00:15:5d:11:22:33') {
+    throw 'Services-first Hyper-V evidence did not select the named Management adapter address.'
+}
+try {
+    $changedHyperVAdapters = @($hyperVAdapters | ForEach-Object { $_.PSObject.Copy() })
+    $changedHyperVAdapters[1].MacAddress = '00155DAABBCC'
+    Resolve-AtlasoHyperVSmokeNetworkIdentity `
+        -Adapters $changedHyperVAdapters `
+        -ManagementSwitch 'Management' `
+        -ServiceSwitch 'Services' `
+        -ExpectedIdentity $hyperVIdentity | Out-Null
+    throw 'Changed Hyper-V management MAC evidence was accepted.'
+}
+catch {
+    if ($_.Exception.Message -eq 'Changed Hyper-V management MAC evidence was accepted.') { throw }
+}
+try {
+    $duplicateHyperVAdapters = @($hyperVAdapters | ForEach-Object { $_.PSObject.Copy() })
+    $duplicateHyperVAdapters[0].IPAddresses = @('192.0.2.20')
+    Resolve-AtlasoHyperVSmokeNetworkIdentity `
+        -Adapters $duplicateHyperVAdapters `
+        -ManagementSwitch 'Management' `
+        -ServiceSwitch 'Services' | Out-Null
+    throw 'Duplicate Hyper-V management address evidence was accepted.'
+}
+catch {
+    if ($_.Exception.Message -eq 'Duplicate Hyper-V management address evidence was accepted.') { throw }
+}
+
+$vmxFixture = Join-Path ([IO.Path]::GetTempPath()) ('atlaso-smoke-identity-' + [guid]::NewGuid().ToString('N') + '.vmx')
+try {
+    $leaseAddresses = @(Get-AtlasoVmwareDhcpLeaseAddress `
+            -LeaseText @(
+                'lease 198.51.100.20 {',
+                '  hardware ethernet 00:0c:29:44:55:66;',
+                '}',
+                'lease 192.0.2.20 {',
+                '  hardware ethernet 00:0c:29:11:22:33;',
+                '}'
+            ) `
+            -ManagementMac '00:0c:29:11:22:33')
+    if ($leaseAddresses.Count -ne 1 -or $leaseAddresses[0] -ne '192.0.2.20') {
+        throw 'VMware DHCP lease parsing did not retain only the ethernet0 management address candidate.'
+    }
+    [IO.File]::WriteAllLines($vmxFixture, @(
+            'ethernet0.vnet = "VMnet8"',
+            'ethernet0.generatedAddress = "00:0c:29:11:22:33"',
+            'ethernet1.vnet = "VMnet1"',
+            'ethernet1.generatedAddress = "00:0c:29:44:55:66"'
+        ))
+    $vmxIdentity = Get-AtlasoVmwareSmokeVmxNetworkIdentity `
+        -VmxPath $vmxFixture `
+        -ManagementVmnet 'VMnet8' `
+        -ServiceVmnet 'VMnet1'
+    $vmwareIdentity = Resolve-AtlasoVmwareSmokeAddressIdentity `
+        -VmxIdentity $vmxIdentity `
+        -NetworkAdapters @(
+            [pscustomobject]@{
+                Name = 'VMware Network Adapter VMnet8';
+                InterfaceDescription = 'VMware Virtual Ethernet Adapter for VMnet8';
+                ifIndex = 8; Status = 'Up'
+            }
+        ) `
+        -Neighbors @(
+            [pscustomobject]@{
+                InterfaceIndex = 8; IPAddress = '198.51.100.20';
+                LinkLayerAddress = '00-0c-29-44-55-66'; State = 'Reachable'
+            },
+            [pscustomobject]@{
+                InterfaceIndex = 8; IPAddress = '192.0.2.20';
+                LinkLayerAddress = '00-0c-29-11-22-33'; State = 'Reachable'
+            }
+        ) `
+        -ExpectedIdentity $vmxIdentity
+    if ($vmwareIdentity.Address -ne '192.0.2.20' -or
+        $vmwareIdentity.ManagementMac -ne '00:0c:29:11:22:33') {
+        throw 'Services-first VMware neighbor evidence did not select ethernet0 on the management vmnet.'
+    }
+    try {
+        $driftedVmwareIdentity = $vmwareIdentity.PSObject.Copy()
+        $driftedVmwareIdentity.Address = '192.0.2.21'
+        Resolve-AtlasoVmwareSmokeAddressIdentity `
+            -VmxIdentity $vmxIdentity `
+            -NetworkAdapters @(
+                [pscustomobject]@{
+                    Name = 'VMware Network Adapter VMnet8';
+                    InterfaceDescription = 'VMware Virtual Ethernet Adapter for VMnet8';
+                    ifIndex = 8; Status = 'Up'
+                }
+            ) `
+            -Neighbors @(
+                [pscustomobject]@{
+                    InterfaceIndex = 8; IPAddress = '192.0.2.20';
+                    LinkLayerAddress = '00-0c-29-11-22-33'; State = 'Reachable'
+                }
+            ) `
+            -ExpectedIdentity $driftedVmwareIdentity | Out-Null
+        throw 'Changed VMware management address evidence was accepted.'
+    }
+    catch {
+        if ($_.Exception.Message -eq 'Changed VMware management address evidence was accepted.') { throw }
+    }
+}
+finally {
+    Remove-Item -LiteralPath $vmxFixture -Force -ErrorAction SilentlyContinue
 }
 
 $resolvedRoot = Resolve-AtlasoHyperVOutputRoot -RepoRoot $RepositoryRoot
@@ -168,6 +292,10 @@ foreach ($required in @(
         '$ownedDescendantIds.ContainsKey($_)',
         'root identity changed before filesystem deletion',
         'descendant identity changed before filesystem deletion',
+        'Atlaso.VirtualizationSmokeIdentity.psm1',
+        'Resolve-AtlasoHyperVSmokeNetworkIdentity',
+        'Wait-AtlasoHyperVSmokeNetworkIdentity',
+        "'--phase' 'post-reboot'",
         'its files were preserved'
     )) {
     if (-not $hyperVSmoke.Contains($required)) {
@@ -187,6 +315,26 @@ if (($hyperVSmoke.Split('Get-VM -ErrorAction Stop | Where-Object Name -eq $Name'
 if ($hyperVSmoke.Contains('-Start | Out-Null') -or
     $hyperVSmoke.Contains('$createdVmMatches = @(Get-VM -Name $Name')) {
     throw 'Hyper-V smoke discards the importer-owned VM identity and reacquires it by name.'
+}
+if ($hyperVSmoke.Contains('ForEach-Object IPAddresses')) {
+    throw 'Hyper-V smoke still flattens addresses across the Management and Services adapters.'
+}
+foreach ($required in @(
+        'Atlaso.VirtualizationSmokeIdentity.psm1',
+        'Get-AtlasoVmwareSmokeVmxNetworkIdentity',
+        'Resolve-AtlasoVmwareSmokeAddressIdentity',
+        'Wait-AtlasoVmwareSmokeNetworkIdentity',
+        'Get-AtlasoVmwareDhcpLeaseAddress',
+        '& $ping -4 -S',
+        'Get-NetNeighbor -AddressFamily IPv4',
+        "'--phase' 'post-reboot'"
+    )) {
+    if (-not $vmwareSmoke.Contains($required)) {
+        throw "VMware smoke is missing a provider-bound management identity marker: $required"
+    }
+}
+if ($vmwareSmoke.Contains('getGuestIPAddress')) {
+    throw 'VMware smoke still trusts the unqualified VMware Tools guest address result.'
 }
 
 Write-Host 'Hyper-V virtualization artifact contract test passed.'
