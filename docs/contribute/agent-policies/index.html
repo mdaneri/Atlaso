@@ -5491,6 +5491,13 @@ runtime.</p>
   current targets are
   <code>VCF 9.1</code> with all 17 catalog components and <code>VVF 9.1</code> with <code>vc01</code>, <code>ops01</code>, <code>vsp01</code>, <code>fleetlcm</code>, <code>shared01</code>, and
   <code>license</code>.</li>
+<li>VCF Installer OVA deployment must treat the destination <code>OvfManager.ParseDescriptor</code> result as authoritative for
+  deployable properties, defaults, deployment options, warnings, and errors. Pass the complete reviewed property
+  mapping to <code>CreateImportSpec</code>; sanitize warnings against every submitted value. Bind a direct <code>HostAgent</code> connection
+  to its one host while preserving vCenter automatic placement unless a host was selected. Before power-on or follow-up
+  DNS, trust, or depot work, require the imported VM to retain every mapped vApp property and a supported OVF environment
+  transport. Verification failure must remove only the exact task-created VM; cleanup failure remains a truthful partial
+  deployment.</li>
 <li>Domain choices must come from managed DNS zones. Prefix and suffix are optional hostname fragments; normalize them
   consistently and validate every generated FQDN before writing any records.</li>
 <li>Starting address input is one IPv4 or IPv6 CIDR. IPv4 creates A records and IPv6 creates AAAA records. Allocate
