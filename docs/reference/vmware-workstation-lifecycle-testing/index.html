@@ -3718,16 +3718,17 @@ desktop and responsive update-only page; redact sessions, credentials, keys, sou
 </span><span id="__span-2-2"><a id="__codelineno-2-2" name="__codelineno-2-2" href="#__codelineno-2-2"></a>  <span class="o">-File</span> <span class="n">scripts</span><span class="p">/</span><span class="n">windows</span><span class="p">/</span><span class="n">vmware</span><span class="p">/</span><span class="n">build-photon-image</span><span class="p">.</span><span class="n">ps1</span> <span class="p">`</span>
 </span><span id="__span-2-3"><a id="__codelineno-2-3" name="__codelineno-2-3" href="#__codelineno-2-3"></a>  <span class="n">-IsoUrl</span> <span class="s2">&quot;&lt;photon-iso-url-or-path&gt;&quot;</span> <span class="p">`</span>
 </span><span id="__span-2-4"><a id="__codelineno-2-4" name="__codelineno-2-4" href="#__codelineno-2-4"></a>  <span class="n">-IsoChecksum</span> <span class="s2">&quot;&lt;packer-checksum&gt;&quot;</span> <span class="p">`</span>
-</span><span id="__span-2-5"><a id="__codelineno-2-5" name="__codelineno-2-5" href="#__codelineno-2-5"></a>  <span class="n">-OnePasswordAccount</span> <span class="s2">&quot;&lt;approved-account-name-or-id&gt;&quot;</span> <span class="p">`</span>
-</span><span id="__span-2-6"><a id="__codelineno-2-6" name="__codelineno-2-6" href="#__codelineno-2-6"></a>  <span class="n">-OnePasswordPython</span> <span class="s2">&quot;&lt;python-3.10-through-3.13&gt;&quot;</span> <span class="p">`</span>
-</span><span id="__span-2-7"><a id="__codelineno-2-7" name="__codelineno-2-7" href="#__codelineno-2-7"></a>  <span class="n">-EnableRealSystemAdapters</span>
+</span><span id="__span-2-5"><a id="__codelineno-2-5" name="__codelineno-2-5" href="#__codelineno-2-5"></a>  <span class="n">-EnableRealSystemAdapters</span>
 </span></code></pre></div>
 <p>The image wrapper uses the same exact Atlaso Environment selector contract as normal test-VM creation: an explicit
 <code>-OnePasswordEnvironmentId</code> takes precedence over the checkout-local, Git-ignored
 <code>.atlaso-local/onepassword-environment-id</code>, and <code>-EnvironmentIdFile</code> selects a different single-line file. When
 <code>-SshPassword</code> or <code>-BootstrapAdminPassword</code> is omitted, the bounded Windows SDK bridge retrieves only that value's
 unique concealed <code>DEFAULT_ROOT_PASSWORD</code> or <code>DEFAULT_ADMIN_PASSWORD</code>. Explicit <code>SecureString</code> parameters remain
-independently authoritative. The bridge returns only current-user DPAPI ciphertext and removes its temporary files
+independently authoritative. With no explicit selectors, the bridge uses the single local 1Password CLI account and
+the highest compatible CPython 3.10 through 3.13 runtime registered with the Windows launcher. Zero or multiple
+accounts and a missing compatible runtime fail closed; <code>-OnePasswordAccount</code> and <code>-OnePasswordPython</code> remain explicit
+overrides. The bridge returns only current-user DPAPI ciphertext and removes its temporary files
 before the wrapper performs network discovery or preparation, output cleanup, ISO remastering, Packer initialization,
 or other image mutation. It rejects caller <code>DEFAULT_*</code> variables, local <code>.env</code> inputs, ambiguous or non-concealed
 variables, invalid exact bytes, unavailable authorization, and timeouts without printing the Environment ID or values.
@@ -3914,12 +3915,10 @@ the checkout-local, Git-ignored configuration file. The prompt is masked and the
 <p>Then use the ordinary command without an ID argument:</p>
 <div class="language-powershell highlight"><pre><span></span><code><span id="__span-6-1"><a id="__codelineno-6-1" name="__codelineno-6-1" href="#__codelineno-6-1"></a><span class="n">pwsh</span> <span class="n">-ExecutionPolicy</span> <span class="n">Bypass</span> <span class="p">`</span>
 </span><span id="__span-6-2"><a id="__codelineno-6-2" name="__codelineno-6-2" href="#__codelineno-6-2"></a>  <span class="o">-File</span> <span class="n">scripts</span><span class="p">/</span><span class="n">windows</span><span class="p">/</span><span class="n">vmware</span><span class="p">/</span><span class="n">create-atlaso-test-vm</span><span class="p">.</span><span class="n">ps1</span> <span class="p">`</span>
-</span><span id="__span-6-3"><a id="__codelineno-6-3" name="__codelineno-6-3" href="#__codelineno-6-3"></a>  <span class="n">-OnePasswordAccount</span> <span class="s1">&#39;&lt;account-name-or-id&gt;&#39;</span> <span class="p">`</span>
-</span><span id="__span-6-4"><a id="__codelineno-6-4" name="__codelineno-6-4" href="#__codelineno-6-4"></a>  <span class="n">-OnePasswordPython</span> <span class="s1">&#39;&lt;path-to-python-3.13.exe&gt;&#39;</span> <span class="p">`</span>
-</span><span id="__span-6-5"><a id="__codelineno-6-5" name="__codelineno-6-5" href="#__codelineno-6-5"></a>  <span class="n">-Redeploy</span> <span class="p">`</span>
-</span><span id="__span-6-6"><a id="__codelineno-6-6" name="__codelineno-6-6" href="#__codelineno-6-6"></a>  <span class="n">-ResetDataDisks</span> <span class="p">`</span>
-</span><span id="__span-6-7"><a id="__codelineno-6-7" name="__codelineno-6-7" href="#__codelineno-6-7"></a>  <span class="n">-WaitForIp</span> <span class="p">`</span>
-</span><span id="__span-6-8"><a id="__codelineno-6-8" name="__codelineno-6-8" href="#__codelineno-6-8"></a>  <span class="n">-TrustRootCa</span>
+</span><span id="__span-6-3"><a id="__codelineno-6-3" name="__codelineno-6-3" href="#__codelineno-6-3"></a>  <span class="n">-Redeploy</span> <span class="p">`</span>
+</span><span id="__span-6-4"><a id="__codelineno-6-4" name="__codelineno-6-4" href="#__codelineno-6-4"></a>  <span class="n">-ResetDataDisks</span> <span class="p">`</span>
+</span><span id="__span-6-5"><a id="__codelineno-6-5" name="__codelineno-6-5" href="#__codelineno-6-5"></a>  <span class="n">-WaitForIp</span> <span class="p">`</span>
+</span><span id="__span-6-6"><a id="__codelineno-6-6" name="__codelineno-6-6" href="#__codelineno-6-6"></a>  <span class="n">-TrustRootCa</span>
 </span></code></pre></div>
 <p>It defaults to the management vmnet only; pass <code>-IncludeLabNetworkAdapters</code> after creating the SiteA, WAN/SiteB, and
 trunk-like vmnets.
@@ -3937,8 +3936,10 @@ replace the VMX during power-on. After first boot proves encrypted import and VM
 sentinel, the wrapper stops the exact VM, removes and verifies the powered-off signing-key assignment, restarts it, and
 requires three empty runtime readbacks before retiring the marker.
 The wrapper injects the same complete DHCP-first OVF environment before power-on. Use <code>-FirstBootFqdn</code> for the test
-identity. Pass the approved 1Password account name or ID through <code>-OnePasswordAccount</code> and an SDK-supported CPython
-3.10 through 3.13 executable through <code>-OnePasswordPython</code>. <code>-AdminPassword</code> and <code>-RootPassword</code> accept only
+identity. The wrapper uses the single local 1Password CLI account and the highest compatible CPython 3.10 through 3.13
+runtime registered with the Windows launcher. Use <code>-OnePasswordAccount</code> or <code>-OnePasswordPython</code> only when an explicit
+override is required; zero or multiple accounts and a missing compatible runtime fail before VMware mutation.
+<code>-AdminPassword</code> and <code>-RootPassword</code> accept only
 <code>SecureString</code> objects. When either parameter is omitted, the wrapper retrieves only that credential's exact concealed
 <code>DEFAULT_ADMIN_PASSWORD</code> or <code>DEFAULT_ROOT_PASSWORD</code> from the already verified Environment through the supported
 1Password SDK desktop integration. Each explicit parameter remains independently authoritative; there are no password

@@ -4236,16 +4236,17 @@ is attached as a local remastered ISO instead of depending on early installer ne
 <div class="language-powershell highlight"><pre><span></span><code><span id="__span-2-1"><a id="__codelineno-2-1" name="__codelineno-2-1" href="#__codelineno-2-1"></a><span class="n">pwsh</span> <span class="n">-ExecutionPolicy</span> <span class="n">Bypass</span> <span class="p">`</span>
 </span><span id="__span-2-2"><a id="__codelineno-2-2" name="__codelineno-2-2" href="#__codelineno-2-2"></a>  <span class="o">-File</span> <span class="n">scripts</span><span class="p">/</span><span class="n">windows</span><span class="p">/</span><span class="n">vmware</span><span class="p">/</span><span class="n">build-photon-image</span><span class="p">.</span><span class="n">ps1</span> <span class="p">`</span>
 </span><span id="__span-2-3"><a id="__codelineno-2-3" name="__codelineno-2-3" href="#__codelineno-2-3"></a>  <span class="n">-IsoUrl</span> <span class="s2">&quot;https://packages.broadcom.com/photon/5.0/GA/iso/photon-5.0-dde71ec57.x86_64.iso&quot;</span> <span class="p">`</span>
-</span><span id="__span-2-4"><a id="__codelineno-2-4" name="__codelineno-2-4" href="#__codelineno-2-4"></a>  <span class="n">-IsoChecksum</span> <span class="s2">&quot;sha512:6a7a258399a258da742032987c043ab25503698d35edafaf1ae000f12127da1a161d8b84caa17fd8f23d129e81e1faa7ab087c20ab9229772a643f8f9475305f&quot;</span> <span class="p">`</span>
-</span><span id="__span-2-5"><a id="__codelineno-2-5" name="__codelineno-2-5" href="#__codelineno-2-5"></a>  <span class="n">-OnePasswordAccount</span> <span class="s2">&quot;&lt;approved-account-name-or-id&gt;&quot;</span> <span class="p">`</span>
-</span><span id="__span-2-6"><a id="__codelineno-2-6" name="__codelineno-2-6" href="#__codelineno-2-6"></a>  <span class="n">-OnePasswordPython</span> <span class="s2">&quot;&lt;python-3.10-through-3.13&gt;&quot;</span>
+</span><span id="__span-2-4"><a id="__codelineno-2-4" name="__codelineno-2-4" href="#__codelineno-2-4"></a>  <span class="n">-IsoChecksum</span> <span class="s2">&quot;sha512:6a7a258399a258da742032987c043ab25503698d35edafaf1ae000f12127da1a161d8b84caa17fd8f23d129e81e1faa7ab087c20ab9229772a643f8f9475305f&quot;</span>
 </span></code></pre></div>
 <p>The wrapper resolves an explicit <code>-OnePasswordEnvironmentId</code> first and otherwise reads the only line from the
 checkout-local, Git-ignored <code>.atlaso-local/onepassword-environment-id</code>; use <code>-EnvironmentIdFile</code> for another selector
 file. When <code>-SshPassword</code> and/or <code>-BootstrapAdminPassword</code> is omitted, it retrieves only the corresponding exact,
 unique, concealed <code>DEFAULT_ROOT_PASSWORD</code> and/or <code>DEFAULT_ADMIN_PASSWORD</code> through the supported bounded Windows
 1Password SDK desktop integration. Both explicit parameters accept <code>SecureString</code> and override their own Environment
-default independently. Caller <code>DEFAULT_*</code> variables, local <code>.env</code> files, repository password defaults, interactive
+default independently. With no account or Python selectors, the bridge uses the single local 1Password CLI account and
+the highest compatible CPython 3.10 through 3.13 runtime registered with the Windows launcher. Explicit
+<code>-OnePasswordAccount</code> and <code>-OnePasswordPython</code> values remain authoritative. Caller <code>DEFAULT_*</code> variables, local <code>.env</code>
+files, repository password defaults, interactive
 prompts, ambiguous or non-concealed variables, and invalid values are rejected. The child returns only current-user
 DPAPI ciphertext, and its task-owned files are removed before network preparation, output cleanup, ISO remastering,
 Packer initialization, or other image mutation. Sanitized failures do not print the Environment ID, account input, or
@@ -5244,10 +5245,8 @@ checkout-local, Git-ignored configuration file. Input is masked and is never pri
 <p>Then run:</p>
 <div class="language-powershell highlight"><pre><span></span><code><span id="__span-30-1"><a id="__codelineno-30-1" name="__codelineno-30-1" href="#__codelineno-30-1"></a><span class="n">pwsh</span> <span class="n">-ExecutionPolicy</span> <span class="n">Bypass</span> <span class="p">`</span>
 </span><span id="__span-30-2"><a id="__codelineno-30-2" name="__codelineno-30-2" href="#__codelineno-30-2"></a>  <span class="o">-File</span> <span class="n">scripts</span><span class="p">/</span><span class="n">windows</span><span class="p">/</span><span class="n">vmware</span><span class="p">/</span><span class="n">create-atlaso-test-vm</span><span class="p">.</span><span class="n">ps1</span> <span class="p">`</span>
-</span><span id="__span-30-3"><a id="__codelineno-30-3" name="__codelineno-30-3" href="#__codelineno-30-3"></a>  <span class="n">-OnePasswordAccount</span> <span class="s1">&#39;&lt;account-name-or-id&gt;&#39;</span> <span class="p">`</span>
-</span><span id="__span-30-4"><a id="__codelineno-30-4" name="__codelineno-30-4" href="#__codelineno-30-4"></a>  <span class="n">-OnePasswordPython</span> <span class="s1">&#39;&lt;path-to-python-3.13.exe&gt;&#39;</span> <span class="p">`</span>
-</span><span id="__span-30-5"><a id="__codelineno-30-5" name="__codelineno-30-5" href="#__codelineno-30-5"></a>  <span class="n">-Redeploy</span> <span class="p">`</span>
-</span><span id="__span-30-6"><a id="__codelineno-30-6" name="__codelineno-30-6" href="#__codelineno-30-6"></a>  <span class="n">-ResetDataDisks</span>
+</span><span id="__span-30-3"><a id="__codelineno-30-3" name="__codelineno-30-3" href="#__codelineno-30-3"></a>  <span class="n">-Redeploy</span> <span class="p">`</span>
+</span><span id="__span-30-4"><a id="__codelineno-30-4" name="__codelineno-30-4" href="#__codelineno-30-4"></a>  <span class="n">-ResetDataDisks</span>
 </span></code></pre></div>
 <p>The normal wrapper resolves the current Windows user's existing <code>.ssh/id_ed25519.pub</code> before any cleanup or VM
 creation, validates it as one canonical Ed25519 public key, and provisions it for the bootstrap <code>admin</code> account with a
@@ -5263,8 +5262,10 @@ repository SHA-256 pin before invoking <code>op</code>, requires the Environment
 <code>C:\Program Files\1Password CLI</code>, validates <code>op run --environment</code>, and cryptographically verifies the retrieved
 certificate/key pair before mutation. For each omitted <code>-AdminPassword</code> or <code>-RootPassword</code>, it independently retrieves
 only the corresponding exact concealed default through the supported 1Password SDK desktop integration. An explicit
-<code>SecureString</code> remains authoritative for that credential. Pass the approved account name or ID with
-<code>-OnePasswordAccount</code> and an SDK-supported CPython 3.10 through 3.13 executable with <code>-OnePasswordPython</code>. The parent
+<code>SecureString</code> remains authoritative for that credential. By default, the wrapper selects the single local 1Password
+CLI account and the highest compatible CPython 3.10 through 3.13 runtime registered with the Windows launcher.
+<code>-OnePasswordAccount</code> and <code>-OnePasswordPython</code> remain explicit overrides; zero or multiple accounts and a missing
+compatible runtime fail before VMware mutation. The parent
 receives only current-user DPAPI ciphertext; a second bounded child stages the DPAPI-protected OVF environment into the
 exact new VMX. There are no interactive password prompts, caller-environment fallbacks, repository defaults, or local
 <code>.env</code> inputs. SDK or credential failure occurs before network preparation, cleanup, disk reset, or cloning, and
