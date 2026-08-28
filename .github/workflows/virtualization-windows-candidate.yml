@@ -50,6 +50,7 @@ jobs:
       prerelease_tag: ${{ steps.target.outputs.prerelease_tag }}
       version: ${{ steps.target.outputs.version }}
       already_published: ${{ steps.target.outputs.already_published }}
+      existing_draft_ready: ${{ steps.target.outputs.existing_draft_ready }}
     steps:
       - uses: actions/checkout@v7
         with:
@@ -88,8 +89,9 @@ jobs:
           EXPECTED_WINDOWS_LABEL="atlaso-windows-$(printf '%s' "$PRERELEASE_TAG" | tr '[:upper:]' '[:lower:]' | tr -c 'a-z0-9_-' '-')"
           test "$WINDOWS_RUNNER_LABEL" = "$EXPECTED_WINDOWS_LABEL"
           ALREADY_PUBLISHED=false
+          EXISTING_DRAFT_READY=false
           STATE="$(gh api graphql \
-            -f query='query($owner:String!,$name:String!,$tag:String!){repository(owner:$owner,name:$name){release(tagName:$tag){tagName isDraft isPrerelease}}}' \
+            -f query='query($owner:String!,$name:String!,$tag:String!){repository(owner:$owner,name:$name){release(tagName:$tag){tagName isDraft isPrerelease releaseAssets(first:100){nodes{name} pageInfo{hasNextPage}}}}}' \
             -f owner="${GITHUB_REPOSITORY%%/*}" -f name="${GITHUB_REPOSITORY#*/}" \
             -f tag="$PRERELEASE_TAG" --jq '.data.repository.release')"
           if test "$STATE" != null; then
@@ -97,17 +99,62 @@ jobs:
             test "$(jq -r .isPrerelease <<<"$STATE")" = true
             if test "$(jq -r .isDraft <<<"$STATE")" = false; then
               ALREADY_PUBLISHED=true
+            else
+              printf '%s' "$STATE" > "$RUNNER_TEMP/prerelease-state.json"
+              python - "$RUNNER_TEMP/prerelease-state.json" "$VERSION" <<'PY'
+          import json, pathlib, sys
+
+          state = json.loads(pathlib.Path(sys.argv[1]).read_text(encoding="utf-8"))
+          assets = state.get("releaseAssets") or {}
+          if (assets.get("pageInfo") or {}).get("hasNextPage") is not False:
+              raise SystemExit("existing virtualization draft asset inventory is incomplete")
+          names = [node.get("name") for node in assets.get("nodes", []) if isinstance(node, dict)]
+          if len(names) != len(set(names)) or any(not isinstance(name, str) for name in names):
+              raise SystemExit("existing virtualization draft has invalid asset names")
+          version = sys.argv[2]
+          requirements = {
+              "OVA": [name for name in names if name.lower().endswith(".ova")],
+              "OVF": [name for name in names if name.lower().endswith(".ovf")],
+              "manifest": [name for name in names if name.lower().endswith(".mf")],
+              "provenance": [name for name in names if name.lower().endswith("-provenance.json")],
+              "payload VMDKs": [name for name in names if name.lower().endswith(".vmdk")],
+              "Hyper-V ZIP": [name for name in names if name == f"atlaso-v{version}-hyperv-x86_64.zip"],
+          }
+          expected_counts = {"OVA": 1, "OVF": 1, "manifest": 1, "provenance": 1, "payload VMDKs": 2, "Hyper-V ZIP": 1}
+          for label, matches in requirements.items():
+              if len(matches) != expected_counts[label]:
+                  raise SystemExit(f"existing virtualization draft requires {label}")
+          required = {
+              "import-atlaso-proxmox.sh",
+              "import-atlaso-kvm.sh",
+              "validate_ova.py",
+              "normalize_libvirt.py",
+              "verify_virtualization_artifact_index.py",
+              "virtualization-source.json",
+              "windows-smoke-evidence.json",
+          }
+          if not required.issubset(names):
+              raise SystemExit("existing virtualization draft is missing candidate assets")
+          candidate = required | {name for matches in requirements.values() for name in matches}
+          indexes = {"virtualization-artifact-index.json", "virtualization-artifact-index.json.sig"}
+          if not set(names) <= candidate | indexes:
+              raise SystemExit("existing virtualization draft has unexpected assets")
+          PY
+              EXISTING_DRAFT_READY=true
             fi
           fi
           echo "release_sha=$RELEASE_SHA" >> "$GITHUB_OUTPUT"
           echo "version=$VERSION" >> "$GITHUB_OUTPUT"
           echo "prerelease_tag=$PRERELEASE_TAG" >> "$GITHUB_OUTPUT"
           echo "already_published=$ALREADY_PUBLISHED" >> "$GITHUB_OUTPUT"
+          echo "existing_draft_ready=$EXISTING_DRAFT_READY" >> "$GITHUB_OUTPUT"
 
   produce:
     name: Build and smoke OVA and Hyper-V candidate
     needs: admit
-    if: needs.admit.outputs.already_published != 'true'
+    if: >-
+      ${{ needs.admit.outputs.already_published != 'true' &&
+          needs.admit.outputs.existing_draft_ready != 'true' }}
     runs-on: [self-hosted, Windows, X64, "${{ inputs.windows_runner_label }}"]
     permissions:
       actions: read
@@ -165,7 +212,9 @@ jobs:
   stage_draft:
     name: Create immutable draft from hosted runner
     needs: [admit, produce]
-    if: needs.admit.outputs.already_published != 'true'
+    if: >-
+      ${{ needs.admit.outputs.already_published != 'true' &&
+          needs.admit.outputs.existing_draft_ready != 'true' }}
     runs-on: ubuntu-latest
     permissions:
       actions: read
@@ -240,6 +289,7 @@ jobs:
     if: >-
       ${{ always() && needs.admit.result == 'success' &&
           (needs.admit.outputs.already_published == 'true' ||
+           needs.admit.outputs.existing_draft_ready == 'true' ||
            needs.stage_draft.result == 'success') }}
     permissions:
       actions: read

@@ -346,4 +346,7 @@ As an optional alternative, **Produce virtualization candidate on ephemeral Wind
 `atlaso-windows-virtualization-vX-Y-Z-rc-N`. The Windows job has read-only repository authority
 and no signing material. A GitHub-hosted job alone creates the annotated tag and draft, then calls the same protected
 hosted prerelease finalizer. Keep that runner offline except for an approved default-branch dispatch and destroy or
-sanitize it after its single `--ephemeral` job.
+sanitize it after its single `--ephemeral` job. If a retry finds a complete existing draft, hosted admission validates
+its exact candidate asset inventory and routes it directly back to protected finalization; it never schedules a fresh
+ephemeral Windows build whose timestamp-bearing bytes could conflict with the retained draft. An incomplete or
+unexpected draft fails closed for explicit operator recovery.
