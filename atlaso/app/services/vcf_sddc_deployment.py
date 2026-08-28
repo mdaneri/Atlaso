@@ -726,15 +726,21 @@ def _verify_imported_ovf_environment(
     if vapp_config is None:
         raise VcfSddcDeploymentError("The imported VM has no vApp/OVF configuration metadata.")
     expected_keys = set(property_values)
-    actual_keys = {
-        str(getattr(item, "id", "") or "")
+    actual_values = {
+        str(getattr(item, "id", "") or ""): str(getattr(item, "value", "") or "")
         for item in list(getattr(vapp_config, "property", None) or [])
         if str(getattr(item, "id", "") or "")
     }
+    actual_keys = set(actual_values)
     missing_keys = sorted(expected_keys - actual_keys)
     if missing_keys:
         raise VcfSddcDeploymentError(
             f"The imported VM is missing reviewed OVF property metadata for keys: {', '.join(missing_keys)}."
+        )
+    mismatched_keys = sorted(key for key, expected in property_values.items() if actual_values[key] != expected)
+    if mismatched_keys:
+        raise VcfSddcDeploymentError(
+            f"The imported VM did not retain reviewed OVF property values for keys: {', '.join(mismatched_keys)}."
         )
     expected_transports = set(descriptor.ovf_environment_transports)
     actual_transports = {

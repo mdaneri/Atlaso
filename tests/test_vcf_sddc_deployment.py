@@ -347,7 +347,10 @@ def test_imported_ovf_verification_requires_all_keys_and_transport():
     complete_vm = SimpleNamespace(
         config=SimpleNamespace(
             vAppConfig=SimpleNamespace(
-                property=[SimpleNamespace(id="ROOT_PASSWORD"), SimpleNamespace(id="vami.hostname")],
+                property=[
+                    SimpleNamespace(id="ROOT_PASSWORD", value="secret"),
+                    SimpleNamespace(id="vami.hostname", value="sddc.example.test"),
+                ],
                 ovfEnvironmentTransport=["com.vmware.guestInfo"],
             )
         )
@@ -376,6 +379,25 @@ def test_imported_ovf_verification_requires_all_keys_and_transport():
             descriptor,
             {"ROOT_PASSWORD": "secret", "vami.hostname": "sddc.example.test"},
         )
+
+    rewritten_vm = SimpleNamespace(
+        config=SimpleNamespace(
+            vAppConfig=SimpleNamespace(
+                property=[
+                    SimpleNamespace(id="ROOT_PASSWORD", value="rewritten-secret"),
+                    SimpleNamespace(id="vami.hostname", value="sddc.example.test"),
+                ],
+                ovfEnvironmentTransport=["com.vmware.guestInfo"],
+            )
+        )
+    )
+    with pytest.raises(VcfSddcDeploymentError, match="ROOT_PASSWORD") as mismatch:
+        _verify_imported_ovf_environment(
+            rewritten_vm,
+            descriptor,
+            {"ROOT_PASSWORD": "secret", "vami.hostname": "sddc.example.test"},
+        )
+    assert "secret" not in str(mismatch.value)
 
 
 @pytest.mark.parametrize(
@@ -412,7 +434,10 @@ def test_deploy_ova_binds_standalone_host_and_preserves_vcenter_automatic_placem
         name = "sddc-test"
         config = SimpleNamespace(
             vAppConfig=SimpleNamespace(
-                property=[SimpleNamespace(id="ROOT_PASSWORD"), SimpleNamespace(id="vami.hostname")],
+                property=[
+                    SimpleNamespace(id="ROOT_PASSWORD", value="one-time-secret"),
+                    SimpleNamespace(id="vami.hostname", value="target.example.test"),
+                ],
                 ovfEnvironmentTransport=["com.vmware.guestInfo"] if complete_metadata else [],
             )
         )
