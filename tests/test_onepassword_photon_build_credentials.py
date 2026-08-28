@@ -208,7 +208,9 @@ def test_omitted_nonsecret_sdk_selectors_are_discovered_fail_closed() -> None:
     assert "if ($accounts.Count -ne 1)" in module
     assert "exactly one discoverable 1Password account" in module
     assert "Join-Path $env:WINDIR 'py.exe'" in module
+    assert "Get-Command -Name 'py' -CommandType Application" in module
     assert "-ArgumentList @('-0p')" in module
+    assert "\\*?\\s*(.+?\\.exe)\\s*\\*?" in module
     assert "CPython(3\\.1[0-3])" in module
     assert "highest compatible" in image_wrapper
     assert "highest compatible" in test_vm

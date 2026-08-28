@@ -68,13 +68,13 @@ try {
     $python313Path = Join-Path $pythonInventoryRoot 'python313.exe'
     [System.IO.File]::WriteAllBytes($python312Path, [byte[]](1))
     [System.IO.File]::WriteAllBytes($python313Path, [byte[]](1))
-    $pythonInventory = " -V:Astral/CPython3.12.1 $python312Path`n -V:Astral/CPython3.13.2 $python313Path"
+    $pythonInventory = " -V:Astral/CPython3.12.1 $python312Path *`n -V:Astral/CPython3.13.2 * $python313Path"
     $selectedPython = & $credentialModule {
         param([string]$InventoryOutput)
         Select-AtlasoOnePasswordPythonFromLauncherInventory -LauncherOutput $InventoryOutput
     } $pythonInventory
     if ($selectedPython.Path -cne $python313Path) {
-        throw 'The highest compatible registered Python runtime was not selected.'
+        throw 'The highest compatible registered Python runtime was not selected after removing default markers.'
     }
 }
 finally {

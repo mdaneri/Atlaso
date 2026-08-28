@@ -189,8 +189,8 @@ function Select-AtlasoOnePasswordPythonFromLauncherInventory {
     param([Parameter(Mandatory = $true)][AllowEmptyString()][string]$LauncherOutput)
 
     $candidates = foreach ($line in @($LauncherOutput -split "`r?`n")) {
-        if ($line -match '^\s*-V:(?:[^/]+/)?CPython(3\.1[0-3])(?:\.\d+)?\s+(.+\.exe)\s*$' -or
-            $line -match '^\s*-V:(3\.1[0-3])(?:\.\d+)?\s+(.+\.exe)\s*$') {
+        if ($line -match '^\s*-V:(?:[^/]+/)?CPython(3\.1[0-3])(?:\.\d+)?\s+\*?\s*(.+?\.exe)\s*\*?\s*$' -or
+            $line -match '^\s*-V:(3\.1[0-3])(?:\.\d+)?\s+\*?\s*(.+?\.exe)\s*\*?\s*$') {
             [pscustomobject]@{
                 Version = [version]$Matches[1]
                 Path    = $Matches[2].Trim()
@@ -225,8 +225,16 @@ function Resolve-AtlasoOnePasswordPython {
 
     $resolvedCommand = ''
     if ([string]::IsNullOrWhiteSpace($PythonCommand)) {
-        $launcherPath = Join-Path $env:WINDIR 'py.exe'
-        if (-not (Test-Path -LiteralPath $launcherPath -PathType Leaf)) {
+        $launcherCommand = Get-Command -Name 'py' -CommandType Application -ErrorAction SilentlyContinue
+        $systemLauncherPath = Join-Path $env:WINDIR 'py.exe'
+        $launcherPath = if ($launcherCommand) {
+            $launcherCommand.Source
+        }
+        elseif (Test-Path -LiteralPath $systemLauncherPath -PathType Leaf) {
+            $systemLauncherPath
+        }
+        else { '' }
+        if ([string]::IsNullOrWhiteSpace($launcherPath)) {
             throw "$ConsumerDescription requires a Windows-registered CPython 3.10 through 3.13 runtime or an explicit -OnePasswordPython path."
         }
         try {
