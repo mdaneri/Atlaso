@@ -238,6 +238,10 @@ profile opens a server-bound contextual schedule wizard without leaving the depo
 VCF Offline Depot browser login returns only to validated canonical `/PROD` paths; unsupported destinations fall back
 to the depot root.
 
+VCF Helper validates VCF Installer OVAs against the selected vCenter or standalone ESXi target, passes the complete
+reviewed OVF property contract, and verifies retained vApp metadata and OVF environment transport before power-on or
+post-deployment actions. Failed verification removes only the VM created by that deployment task.
+
 The integrated CA can maintain trust and deploy managed service certificates without publishing its public portal on
 an access interface. Selecting a CA listen interface is the explicit portal-publication boundary. When NTS server
 changes are selected, global appliance apply automatically runs Certificate Authority before NTP/NTS so missing or

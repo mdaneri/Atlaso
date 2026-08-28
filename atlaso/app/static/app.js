@@ -18544,6 +18544,12 @@ function fillVcfInventorySelect(select, rows, emptyLabel = "") {
   (Array.isArray(rows) ? rows : []).forEach((row) => select.append(new Option(row.name || row.id, row.id)));
 }
 
+function restoreVcfInventorySelect(select, selectedValue) {
+  if (!(select instanceof HTMLSelectElement)) return;
+  const value = String(selectedValue ?? "");
+  if ([...select.options].some((option) => option.value === value)) select.value = value;
+}
+
 function initializeVcfSddcDeployment() {
   const form = document.querySelector("[data-vcf-sddc-deploy-form]");
   const dialog = document.getElementById("vcf-sddc-deploy-modal");
@@ -18570,6 +18576,8 @@ function initializeVcfSddcDeployment() {
   const assignmentMode = form.querySelector("[data-vcf-sddc-assignment-mode]");
   const dhcpZoneRow = form.querySelector("[data-vcf-sddc-dhcp-zone-row]");
   const dhcpZoneSelect = form.querySelector("[data-vcf-sddc-dhcp-zone]");
+  const deploymentOptionRow = form.querySelector("[data-vcf-sddc-deployment-option-row]");
+  const deploymentOption = form.querySelector("[data-vcf-sddc-deployment-option]");
   const autoHostnameRow = form.querySelector("[data-vcf-sddc-auto-hostname-row]");
   const autoHostname = form.querySelector("[data-vcf-sddc-auto-hostname]");
   const autoIpRow = form.querySelector("[data-vcf-sddc-auto-ip-row]");
@@ -18583,6 +18591,9 @@ function initializeVcfSddcDeployment() {
   let autoHostnameTouched = false;
   let pendingTlsAction = null;
   let pendingTlsFingerprint = "";
+  let discoveryRequestId = 0;
+  let discoveryPending = false;
+  let discoveryReady = false;
   let wizard;
   const steps = [
     { id: "source", title: "vCenter / ESXi information", description: "Choose the SDDC Manager OVA and the vSphere endpoint used for discovery and import." },
@@ -18723,6 +18734,19 @@ function initializeVcfSddcDeployment() {
       fillVcfInventorySelect(select, inventoryNetworks); label.append(select); networkContainer.append(label);
     });
   };
+  const renderDeploymentOptions = (ova) => {
+    if (!(deploymentOption instanceof HTMLSelectElement)) return;
+    const options = Array.isArray(ova?.deployment_options) ? ova.deployment_options : [];
+    const selectedOption = ova?.selected_deployment_option || ova?.default_deployment_option || "";
+    deploymentOption.replaceChildren();
+    if (!selectedOption || !options.length) deploymentOption.append(new Option("Default appliance profile", ""));
+    options.forEach((option) => {
+      const label = option.description ? `${option.label || option.key} — ${option.description}` : (option.label || option.key);
+      deploymentOption.append(new Option(label, option.key));
+    });
+    deploymentOption.value = selectedOption;
+    deploymentOptionRow?.classList.toggle("hidden", deploymentOption.options.length <= 1);
+  };
   const parseEndpoint = () => {
     const raw = String(form.elements.address.value || "").trim();
     const endpoint = raw.replace(/^https?:\/\//i, "");
@@ -18752,7 +18776,15 @@ function initializeVcfSddcDeployment() {
       credential_vault_id: form.elements.credential_vault_id.value,
       credential_entry_id: form.elements.credential_entry_id.value,
       confirmed_tls_fingerprint: form.elements.confirmed_tls_fingerprint.value,
+      deployment_option: deploymentOption instanceof HTMLSelectElement ? deploymentOption.value : "",
     };
+  };
+  const invalidateDiscovery = () => {
+    discoveryReady = false;
+    form.querySelectorAll("[data-atlaso-wizard-nav], [data-atlaso-wizard-submit]").forEach((control) => {
+      if (control instanceof HTMLButtonElement) control.disabled = true;
+    });
+    if (next instanceof HTMLButtonElement) next.disabled = discoveryPending || wizard?.currentStepId !== "source";
   };
   const poll = async () => {
     if (!activeJob) return;
@@ -18766,6 +18798,9 @@ function initializeVcfSddcDeployment() {
     } catch (error) { showTaskError(error.message); }
   };
 
+  ["ova_path", "address", "username", "password", "credential_vault_id", "credential_entry_id"].forEach((name) => {
+    form.elements[name]?.addEventListener("input", invalidateDiscovery);
+  });
   ovaSelect?.addEventListener("change", syncOva);
   vmName?.addEventListener("input", () => {
     if (assignmentMode?.value === "automatic" && !autoHostnameTouched) applyDhcpAssignment({ refreshHostname: true, refreshIp: false });
@@ -18780,13 +18815,39 @@ function initializeVcfSddcDeployment() {
   syncPostPowerOptions();
   const handleDiscover = async () => {
     if (!(await wizard.validate("source"))) return false;
+    const requestId = ++discoveryRequestId;
+    const discoveryPayload = basePayload();
+    discoveryPending = true;
+    invalidateDiscovery();
+    const discoveryIdentityFields = [
+      "ova_path",
+      "address",
+      "port",
+      "username",
+      "password",
+      "credential_vault_id",
+      "credential_entry_id",
+      "confirmed_tls_fingerprint",
+      "deployment_option",
+    ];
+    const destinationSelections = new Map(
+      ["resource_pool_id", "datastore_id", "folder_id", "host_id"].map((name) => [name, form.elements[name]?.value]),
+    );
+    const networkSelections = new Map(
+      [...form.querySelectorAll("[data-ova-network]")].map((control) => [control.dataset.ovaNetwork, control.value]),
+    );
     showError(""); showConfirmation("");
     if (next instanceof HTMLButtonElement) {
       next.disabled = true;
       next.textContent = "Discovering…";
     }
     try {
-      const { response, data } = await vcfHelperJson(managementUiPath("/vcf-helper/sddc-manager/inventory"), "POST", basePayload());
+      const { response, data } = await vcfHelperJson(managementUiPath("/vcf-helper/sddc-manager/inventory"), "POST", discoveryPayload);
+      const currentDiscoveryPayload = basePayload();
+      if (
+        requestId !== discoveryRequestId
+        || discoveryIdentityFields.some((field) => currentDiscoveryPayload[field] !== discoveryPayload[field])
+      ) return false;
       if (response.status === 409 && data.status === "tls-confirmation-required") {
         showTlsConfirmation(data.fingerprint || "", handleDiscover);
         return;
@@ -18796,8 +18857,15 @@ function initializeVcfSddcDeployment() {
       fillVcfInventorySelect(form.elements.datastore_id, data.inventory?.datastores);
       fillVcfInventorySelect(form.elements.folder_id, data.inventory?.folders, "Default VM folder");
       fillVcfInventorySelect(form.elements.host_id, data.inventory?.hosts, "Automatic placement");
+      renderDeploymentOptions(data.ova);
       renderNetworks(data.ova?.networks, data.inventory?.networks);
+      destinationSelections.forEach((value, name) => restoreVcfInventorySelect(form.elements[name], value));
+      form.querySelectorAll("[data-ova-network]").forEach((control) => {
+        restoreVcfInventorySelect(control, networkSelections.get(control.dataset.ovaNetwork));
+      });
       renderProperties(data.ova?.properties);
+      showConfirmation((data.ova?.warnings || []).join(" "));
+      discoveryReady = true;
       wizard.setHighestStep("followup");
       wizard.showStep("resources", { unlock: true });
       return true;
@@ -18805,13 +18873,18 @@ function initializeVcfSddcDeployment() {
       showError(error.message);
       return false;
     } finally {
-      if (next instanceof HTMLButtonElement) {
-        next.disabled = false;
+      if (requestId === discoveryRequestId && next instanceof HTMLButtonElement) {
+        discoveryPending = false;
+        next.disabled = !discoveryReady && wizard?.currentStepId !== "source";
         next.textContent = "Next";
       }
     }
   };
+  deploymentOption?.addEventListener("change", () => { invalidateDiscovery(); handleDiscover(); });
   const handleSubmit = async () => {
+    if (discoveryPending || !discoveryReady) {
+      return { ok: false, message: "Wait for vSphere discovery to finish before deploying." };
+    }
     showError(""); showTaskError("");
     const properties = {}; form.querySelectorAll("[data-ovf-key]").forEach((control) => { properties[control.dataset.ovfKey] = control.value; });
     const networkIds = {}; form.querySelectorAll("[data-ova-network]").forEach((control) => { networkIds[control.dataset.ovaNetwork] = control.value; });
@@ -18847,6 +18920,7 @@ function initializeVcfSddcDeployment() {
     },
     onOpen: () => {
       syncOva();
+      invalidateDiscovery();
       autoHostnameTouched = false;
       hideTlsConfirmation();
       showError("");
