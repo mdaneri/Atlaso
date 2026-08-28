@@ -231,12 +231,34 @@ Exact Atlaso checkout root.
 function Get-AtlasoReleaseRepository {
     param([Parameter(Mandatory = $true)][string]$RepoRoot)
 
+    $remote = [string](& git -C $RepoRoot remote get-url origin)
+    if ($LASTEXITCODE -ne 0) {
+        throw 'Could not resolve the origin remote from the Atlaso checkout.'
+    }
+    $remote = $remote.Trim()
+    $repository = ''
+    foreach ($prefix in @(
+            'https://github.com/',
+            'git@github.com:',
+            'ssh://git@github.com/'
+        )) {
+        if ($remote.StartsWith($prefix, [StringComparison]::OrdinalIgnoreCase)) {
+            $repository = $remote.Substring($prefix.Length).TrimEnd('/')
+            break
+        }
+    }
+    if ($repository.EndsWith('.git', [StringComparison]::OrdinalIgnoreCase)) {
+        $repository = $repository.Substring(0, $repository.Length - 4)
+    }
+    if ($repository -notmatch '^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$') {
+        throw 'The Atlaso checkout origin is not a supported GitHub repository URL.'
+    }
     $value = [string](Invoke-AtlasoReleaseGh -Arguments @(
-        'repo', 'view', '--json', 'nameWithOwner', '--jq', '.nameWithOwner'
+        'repo', 'view', $repository, '--json', 'nameWithOwner', '--jq', '.nameWithOwner'
     ))
     $value = $value.Trim()
-    if ($value -notmatch '^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$') {
-        throw 'GitHub CLI returned an invalid repository identity.'
+    if ($value -cne $repository) {
+        throw 'GitHub CLI returned a repository identity that differs from the checkout origin.'
     }
     return $value
 }
