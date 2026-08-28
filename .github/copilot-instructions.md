@@ -25,8 +25,16 @@ New Tabulators must use `window.AtlasoUiPatterns.createGrid(...)`; every new or 
 - run locally only focused tests and applicable checks; the complete Python test suite belongs to GitHub CI;
 - open pull requests ready for review without a duplicate opening `@codex review`, then request one `@codex review`
   after every later commit is pushed as the exact head;
-- keep the task active to monitor exact-head checks, comments, reviews, and authoritative review threads through a
-  successful current head with no unresolved actionable feedback;
+- keep the task active with exactly one current-task heartbeat running every four minutes; each run must perform one
+  bounded reconciliation and exit, and persistent GitHub polling loops that combine `gh` with `sleep` are forbidden
+  outside explicitly requested short-lived debugging;
+- retain the exact-head SHA and seen comment and review IDs in task context; every run must read and evaluate new
+  top-level pull-request comments, inline review comments, review submissions and requested changes, exact-head checks,
+  mergeability and conflicts, and authoritative review threads;
+- treat merged, closed, or merge-ready as terminal states; keep the same heartbeat after actionable feedback and its
+  focused commit-push-review cycle, keep it running after a merge through required post-merge verification, and pause it
+  for an unmerged closure or a merge-ready successful current head only when every item is seen and no actionable
+  feedback or unresolved non-outdated review thread remains;
 - apply the **Explicit merge authorization** policy to ordinary agent-authored internal pull requests: implementation,
   fix, solve, delivery, and similar requests authorize a ready pull request but do not authorize merging it; require an
   explicit merge instruction for that pull request and otherwise leave it open after every delivery gate passes;

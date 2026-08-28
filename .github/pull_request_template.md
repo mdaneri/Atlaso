@@ -28,6 +28,14 @@ surfaces.
   a duplicate opening `@codex review` comment.
 - [ ] For an ordinary pull request, each post-opening pushed commit received one `@codex review` request as the exact
   head, and current-head checks, comments, reviews, and authoritative review threads were followed through.
+- [ ] For an ordinary pull request, exactly one current-task heartbeat ran every four minutes and each run exited after
+  one bounded reconciliation; no persistent GitHub polling loops combined `gh` with `sleep` outside explicitly
+  requested short-lived debugging.
+- [ ] For an ordinary pull request, the task retained the exact-head SHA and seen comment and review IDs, and every new
+  top-level pull-request comment, inline review comment, review submission and requested change was evaluated. For
+  merged, closed, or merge-ready terminal states, the heartbeat continued after a merge through required post-merge
+  verification and otherwise paused only for an unmerged closure or a merge-ready successful current head with every
+  item seen and no open feedback.
 - [ ] For an agent-authored internal pull request, the Explicit merge authorization policy was checked: an implementation
   or delivery request alone was not treated as an explicit merge instruction, and the pull request remains open without
   one. Before any authorized squash merge, explicit holds, strict up-to-date required checks that bind the base, an

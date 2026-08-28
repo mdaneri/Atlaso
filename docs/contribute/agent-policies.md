@@ -129,12 +129,23 @@ runtime.
 - After the pull request is open, use a separate commit-push-review cycle for every later branch change. Push one
   commit, verify that it is the pull request's exact head, post one `@codex review` request, and only then begin another
   commit.
-- Keep the originating task active while GitHub evaluates the pull request. Monitor every check for the current exact
-  head and inspect pull-request comments, reviews, and authoritative `reviewThreads`.
+- Keep the originating task active while GitHub evaluates the pull request and create or update exactly one
+  current-task heartbeat. Run it every four minutes. Each run performs one bounded reconciliation pass and exits
+  cleanly. Never vary the cadence or create a duplicate automation. Ordinary monitoring forbids
+  persistent GitHub polling loops that combine `gh` with `sleep`; reserve them for explicitly requested, short-lived
+  local debugging.
+- Retain the current exact-head SHA and seen comment and review IDs in the task context. Every run inspects pull-request
+  state, exact-head checks, mergeability and conflicts, top-level pull-request comments, and inline review comments.
+  Inspect review submissions and requested changes plus authoritative `reviewThreads`. Read each newly discovered item,
+  then record informational items as seen.
 - Address actionable feedback, reply and resolve each handled thread, rerun focused local validation, then commit,
-  push, request `@codex review`, and restart monitoring for the new exact head. Completion requires successful
-  current-head checks with no unanswered actionable comment or unresolved non-outdated review thread. Escalate genuine
-  maintainer decisions or external failures rather than guessing or reporting completion.
+  push, verify the new exact head, request `@codex review`, and continue the same heartbeat.
+- Treat merged, closed, or merge-ready as terminal pull-request states. After a merge, continue the same heartbeat
+  through required merge, linked-issue, `origin/main`, and applicable post-merge workflow verification, then pause it.
+  Pause immediately for an unmerged closed pull request, or for a merge-ready pull request with a successful current
+  head, every comment and review seen, no requested changes or actionable feedback, and no unresolved non-outdated
+  review thread. Pause and escalate genuine maintainer decisions or external failures. Merge-ready status does not
+  grant merge authority, and unchanged runs must not repeat prior reports.
 
 ### Explicit merge authorization
 
