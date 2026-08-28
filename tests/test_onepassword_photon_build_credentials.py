@@ -82,7 +82,7 @@ def test_photon_wrapper_preflights_credentials_before_image_mutation() -> None:
         in wrapper
     )
     assert "'-SensitiveBuildDirectory', $childSensitiveBuildDirectory" in wrapper
-    assert "'SensitiveBuildDirectory', 'PreparedIsoPath'" in wrapper
+    assert "'SensitiveBuildDirectory', 'OutputCleanupClaimPath', 'PreparedIsoPath'" in wrapper
     assert "-SensitiveBuildDirectory $SensitiveBuildDirectory" in wrapper
     assert "[System.IO.Directory]::Delete($resolvedRoot, $true)" in wrapper
     assert "photon-image-build-cleanup.json" in wrapper
@@ -97,7 +97,14 @@ def test_photon_wrapper_preflights_credentials_before_image_mutation() -> None:
     assert "Restart Windows, then rerun this wrapper" in wrapper
     assert "The outer image deadline selected checked VMware artifact cleanup." in wrapper
     assert "$outerCleanupOutputExistedBeforeChild = Test-Path" in wrapper
-    assert "(-not $KeepExistingOutput -or -not $outerCleanupOutputExistedBeforeChild)" in wrapper
+    assert "Test-Path -LiteralPath $childOutputCleanupClaimPath -PathType Leaf" in wrapper
+    assert "output-cleanup-claimed.json" in wrapper
+    assert wrapper.index("$outerCleanupOutputDirectory = Resolve-WorkstationOutputDirectory") < wrapper.index(
+        "Write-AtlasoDurableJsonFile -Path $cleanupMarkerPath"
+    )
+    output_claim = "Write-AtlasoDurableJsonFile -Path $resolvedOutputCleanupClaimPath"
+    output_removal = "Remove-AtlasoWorkstationArtifactRoot `"
+    assert wrapper.index(output_claim) < wrapper.index(output_removal, wrapper.index(output_claim))
     assert wrapper.index("[System.IO.Directory]::Delete($resolvedRoot, $true)") < wrapper.index(
         "Remove-Item -LiteralPath $MarkerPath"
     )

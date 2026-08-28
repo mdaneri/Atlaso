@@ -158,8 +158,10 @@ kickstart and Packer serialization. Every plaintext kickstart, remastered ISO, a
 the same exact task-owned temporary root. The parent creates the child suspended, assigns it to a Windows process job,
 and resumes it only after the job owns every future Packer or plugin descendant. Both ordinary child exit and deadline
 termination require job accounting to prove zero active processes. A proven deadline also applies checked exact-output
-cleanup when `-PackerOnError cleanup` owns replacement output. `-KeepExistingOutput` preserves only a root that existed
-before the child started; a partial root created by this invocation remains cleanup-owned. The parent then removes the
+cleanup when `-PackerOnError cleanup` owns replacement output. `-KeepExistingOutput` preserves a root that existed
+before the child started. An ordinary replacement claims that pre-existing root durably only after network preparation
+and immediately before checked removal; until then, an outer timeout preserves it. A partial root created by this
+invocation remains cleanup-owned. The parent then removes the
 sensitive root and verifies its absence before returning.
 `-ImageBuildTimeoutSeconds` selects the deadline and defaults to six hours.
 If whole-tree termination itself cannot be proven, the wrapper retains the root and a non-secret

@@ -247,8 +247,10 @@ paths. ISO-only preparation is rejected because retaining the remastered ISO wou
 Build runs pass Packer's `-force`
 flag by default so the fixed output directory can be rebuilt in one command. Use `-OutputDirectory <path>` to keep
 multiple artifacts or `-KeepExistingOutput` when you want Packer to fail instead of replacing an output directory that
-already existed before the build. A new partial output created by the current invocation remains cleanup-owned after a
-proven outer timeout. Use `-PackerOnError abort` to keep a failed builder VM for debugging, or `-PackerOnError ask` to
+already existed before the build. Without that switch, the child durably claims a pre-existing root only after network
+preparation and immediately before checked removal, so an earlier outer timeout preserves it. A new partial output
+created by the current invocation remains cleanup-owned after a proven outer timeout. Use `-PackerOnError abort` to
+keep a failed builder VM for debugging, or `-PackerOnError ask` to
 choose the failure action interactively. During provisioning, the shared Photon path reads `[project].version` from the
 staged `pyproject.toml` with Python's TOML parser and validates the repository's strict `X.Y.Z` release format before creating
 the bootstrap release directory. Missing, unreadable, malformed, or invalid version metadata fails the build with the

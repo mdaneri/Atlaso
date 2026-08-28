@@ -77,8 +77,10 @@ interval from monitored Packer process start to SSH provisioning, including fail
 exists; `-PackerHeartbeatSeconds 30` controls the heartbeat interval. When `-SshHost` is explicit, TCP/22 diagnostics
 probe that Packer communicator endpoint instead of the temporary static builder address. A timeout terminates only the
 Packer process tree and
-routes `-PackerOnError cleanup` through the checked exact-root cleanup. `-KeepExistingOutput` protects only an output
-root that existed before this invocation; a newly created partial root is still removed after a proven outer timeout.
+routes `-PackerOnError cleanup` through the checked exact-root cleanup. `-KeepExistingOutput` protects an output root
+that existed before this invocation, and an ordinary replacement does not become parent-cleanup-owned until the child
+durably claims it immediately before checked removal. A newly created partial root is still removed after a proven
+outer timeout.
 Other failure modes preserve the builder artifacts for diagnosis. Raw Packer debug-log environment variables are
 removed from the monitored child because those
 logs bypass output redaction. Console lines that can contain generated connection credentials are redacted before they

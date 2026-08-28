@@ -37,6 +37,8 @@ Internal JSON transport for the non-secret builder DNS server array.
 Internal marker preserving whether the caller explicitly bound the builder DNS array.
 .PARAMETER SensitiveBuildDirectory
 Internal task-owned directory containing all plaintext image-build artifacts.
+.PARAMETER OutputCleanupClaimPath
+Internal durable marker proving the isolated child claimed a pre-existing output root.
 .PARAMETER VmName
 Builder virtual-machine name.
 .PARAMETER OutputDirectory
@@ -140,6 +142,7 @@ param(
     [string]$BuilderStaticDnsJson = '',
     [switch]$BuilderStaticDnsBound,
     [string]$SensitiveBuildDirectory = '',
+    [string]$OutputCleanupClaimPath = '',
     [string]$VmName = 'Atlaso-Photon-Builder-VMware',
     [string]$OutputDirectory = '',
     [string]$SshHost = '',
@@ -286,6 +289,12 @@ if ($CredentialChild) {
         throw 'The isolated Photon credential bundle is unavailable or invalid.'
     }
     $credentialBundleRoot = [System.IO.Path]::GetFullPath((Split-Path -Parent $CredentialBundlePath))
+    $resolvedOutputCleanupClaimPath = if ([string]::IsNullOrWhiteSpace($OutputCleanupClaimPath)) {
+        ''
+    }
+    else {
+        [System.IO.Path]::GetFullPath($OutputCleanupClaimPath)
+    }
     $sensitiveBuildRoot = if ([string]::IsNullOrWhiteSpace($SensitiveBuildDirectory)) {
         ''
     }
@@ -299,6 +308,14 @@ if ($CredentialChild) {
     if ([string]::IsNullOrWhiteSpace($sensitiveBuildRoot) -or
         -not $sensitiveBuildRoot.StartsWith($credentialRootPrefix, [StringComparison]::OrdinalIgnoreCase)) {
         throw 'The isolated Photon sensitive-build root is unavailable or invalid.'
+    }
+    if ([string]::IsNullOrWhiteSpace($resolvedOutputCleanupClaimPath) -or
+        -not $resolvedOutputCleanupClaimPath.StartsWith(
+            $credentialRootPrefix,
+            [StringComparison]::OrdinalIgnoreCase
+        ) -or
+        (Split-Path -Leaf $resolvedOutputCleanupClaimPath) -cne 'output-cleanup-claimed.json') {
+        throw 'The isolated Photon output-cleanup claim path is unavailable or invalid.'
     }
     if (-not [string]::IsNullOrWhiteSpace($PreparedIsoPath)) {
         $resolvedChildPreparedIsoPath = [System.IO.Path]::GetFullPath($PreparedIsoPath)
@@ -370,22 +387,11 @@ else {
     $credentialRoot = Join-Path ([System.IO.Path]::GetTempPath()) (
         "atlaso-photon-build-credentials-$([guid]::NewGuid().ToString('N'))"
     )
-    [void][System.IO.Directory]::CreateDirectory($credentialRoot)
-    $cleanupMarkerDirectory = Split-Path -Parent $cleanupMarkerPath
-    [void][System.IO.Directory]::CreateDirectory($cleanupMarkerDirectory)
-    $cleanupMarkerPayload = [ordered]@{
-        Schema       = 1
-        RootPath     = [System.IO.Path]::GetFullPath($credentialRoot)
-        BootIdentity = Get-AtlasoWindowsBootIdentity
-        Phase        = 'active'
-    }
-    Write-AtlasoDurableJsonFile -Path $cleanupMarkerPath -Payload $cleanupMarkerPayload
-    if (-not (Test-Path -LiteralPath $cleanupMarkerPath -PathType Leaf)) {
-        throw 'Photon sensitive-cleanup ownership could not be established.'
-    }
-    $cleanupMarkerPayload = $null
+    # Resolve every operator-controlled output and child path before publishing
+    # an active cleanup marker, so a normalization failure cannot strand it.
     $childCredentialBundlePath = Join-Path $credentialRoot 'credentials.json'
     $childSensitiveBuildDirectory = Join-Path $credentialRoot 'sensitive-build'
+    $childOutputCleanupClaimPath = Join-Path $credentialRoot 'output-cleanup-claimed.json'
     $outerCleanupPackerDirectory = if ([string]::IsNullOrWhiteSpace($PackerDirectory)) {
         Join-Path $PSScriptRoot '..\..\..\image\vmware-workstation'
     }
@@ -407,6 +413,20 @@ else {
         $preparedIsoLeaf = 'atlaso-photon-with-kickstart.iso'
     }
     $childPreparedIsoPath = Join-Path (Join-Path $childSensitiveBuildDirectory 'kickstart') $preparedIsoLeaf
+    [void][System.IO.Directory]::CreateDirectory($credentialRoot)
+    $cleanupMarkerDirectory = Split-Path -Parent $cleanupMarkerPath
+    [void][System.IO.Directory]::CreateDirectory($cleanupMarkerDirectory)
+    $cleanupMarkerPayload = [ordered]@{
+        Schema       = 1
+        RootPath     = [System.IO.Path]::GetFullPath($credentialRoot)
+        BootIdentity = Get-AtlasoWindowsBootIdentity
+        Phase        = 'active'
+    }
+    Write-AtlasoDurableJsonFile -Path $cleanupMarkerPath -Payload $cleanupMarkerPayload
+    if (-not (Test-Path -LiteralPath $cleanupMarkerPath -PathType Leaf)) {
+        throw 'Photon sensitive-cleanup ownership could not be established.'
+    }
+    $cleanupMarkerPayload = $null
     $processTreeTerminationUnproven = $false
     try {
         $credentialPayload = [ordered]@{
@@ -429,6 +449,7 @@ else {
             '-CredentialChild',
             '-CredentialBundlePath', $childCredentialBundlePath,
             '-SensitiveBuildDirectory', $childSensitiveBuildDirectory,
+            '-OutputCleanupClaimPath', $childOutputCleanupClaimPath,
             '-PreparedIsoPath', $childPreparedIsoPath
         )
         $excludedParameters = @(
@@ -438,7 +459,7 @@ else {
             'CredentialTimeoutSeconds', 'ImageBuildTimeoutSeconds',
             'CredentialBundlePath', 'CredentialChild',
             'BuilderStaticDnsJson', 'BuilderStaticDnsBound',
-            'SensitiveBuildDirectory', 'PreparedIsoPath'
+            'SensitiveBuildDirectory', 'OutputCleanupClaimPath', 'PreparedIsoPath'
         )
         foreach ($entry in $PSBoundParameters.GetEnumerator()) {
             if ($entry.Key -in $excludedParameters) {
@@ -484,8 +505,11 @@ else {
                 throw 'The isolated VMware Photon image build could not prove whole-tree termination. Restart Windows, then rerun this wrapper to complete sensitive cleanup.'
             }
             if ($_.Exception.Data['AtlasoProcessTreeTerminationProven'] -and
-                $PackerOnError -eq 'cleanup' -and
-                (-not $KeepExistingOutput -or -not $outerCleanupOutputExistedBeforeChild)) {
+                $PackerOnError -eq 'cleanup' -and (
+                    -not $outerCleanupOutputExistedBeforeChild -or
+                    (-not $KeepExistingOutput -and
+                        (Test-Path -LiteralPath $childOutputCleanupClaimPath -PathType Leaf))
+                )) {
                 if (Test-Path -LiteralPath $outerCleanupOutputDirectory) {
                     $cleanupVmrunPath = Resolve-WorkstationVmrunPath -Path $VmrunPath
                     Write-Host 'The outer image deadline selected checked VMware artifact cleanup.'
@@ -907,6 +931,13 @@ $packerBuildInvoker = $null
 if (-not $ValidateOnly -and -not $PrepareIsoOnly) {
     $resolvedVmrunPath = Resolve-WorkstationVmrunPath -Path $VmrunPath
     if (-not $KeepExistingOutput) {
+        # Claim a pre-existing output only after all network preparation has
+        # completed and immediately before checked removal begins. The bounded
+        # parent may finish that exact removal after proven child termination.
+        Write-AtlasoDurableJsonFile -Path $resolvedOutputCleanupClaimPath -Payload ([ordered]@{
+            Schema = 1
+            OutputPath = $workstationOutputDirectory
+        })
         Remove-AtlasoWorkstationArtifactRoot `
             -VmrunPath $resolvedVmrunPath `
             -ExpectedRemovalRoot $workstationOutputDirectory `
