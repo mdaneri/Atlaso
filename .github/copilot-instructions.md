@@ -31,9 +31,10 @@ New Tabulators must use `window.AtlasoUiPatterns.createGrid(...)`; every new or 
 - retain the exact-head SHA and seen comment and review IDs in task context; every run must read and evaluate new
   top-level pull-request comments, inline review comments, review submissions and requested changes, exact-head checks,
   mergeability and conflicts, and authoritative review threads;
-- continue the same heartbeat after actionable feedback and its focused commit-push-review cycle, then pause it when
-  the pull request is merged, closed, or merge-ready with a successful current head, every item seen, and no remaining
-  actionable feedback or unresolved non-outdated review thread;
+- treat merged, closed, or merge-ready as terminal states; keep the same heartbeat after actionable feedback and its
+  focused commit-push-review cycle, keep it running after a merge through required post-merge verification, and pause it
+  for an unmerged closure or a merge-ready successful current head only when every item is seen and no actionable
+  feedback or unresolved non-outdated review thread remains;
 - apply the **Explicit merge authorization** policy to ordinary agent-authored internal pull requests: implementation,
   fix, solve, delivery, and similar requests authorize a ready pull request but do not authorize merging it; require an
   explicit merge instruction for that pull request and otherwise leave it open after every delivery gate passes;

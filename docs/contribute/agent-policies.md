@@ -140,10 +140,12 @@ runtime.
   then record informational items as seen.
 - Address actionable feedback, reply and resolve each handled thread, rerun focused local validation, then commit,
   push, verify the new exact head, request `@codex review`, and continue the same heartbeat.
-- Pause the heartbeat when the pull request is merged, closed, or merge-ready with a successful current head, every
-  comment and review seen, no requested changes or actionable feedback, and no unresolved non-outdated review thread.
-  Pause and escalate genuine maintainer decisions or external failures. Merge-ready status does not grant merge
-  authority, and unchanged runs must not repeat prior reports.
+- Treat merged, closed, or merge-ready as terminal pull-request states. After a merge, continue the same heartbeat
+  through required merge, linked-issue, `origin/main`, and applicable post-merge workflow verification, then pause it.
+  Pause immediately for an unmerged closed pull request, or for a merge-ready pull request with a successful current
+  head, every comment and review seen, no requested changes or actionable feedback, and no unresolved non-outdated
+  review thread. Pause and escalate genuine maintainer decisions or external failures. Merge-ready status does not
+  grant merge authority, and unchanged runs must not repeat prior reports.
 
 ### Explicit merge authorization
 

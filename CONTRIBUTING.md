@@ -97,9 +97,11 @@ requested changes, and authoritative review threads. Read and evaluate every new
 Actionable feedback requires the focused validation and commit-push-review cycle, replies and resolved handled threads,
 and continued monitoring on the same heartbeat.
 
-Pause the heartbeat when the pull request is merged, closed, or merge-ready with a successful current head, every item
-seen, no requested changes or actionable feedback, and no unresolved non-outdated review thread. Pause and escalate
-decisions or external failures requiring maintainer action. Merge-ready status does not grant merge authority.
+Treat merged, closed, or merge-ready as terminal pull-request states. After a merge, continue the same heartbeat through
+required merge, linked-issue, `origin/main`, and applicable post-merge workflow verification, then pause it. Pause
+immediately for an unmerged closed pull request, or for a merge-ready pull request with a successful current head, every
+item seen, no requested changes or actionable feedback, and no unresolved non-outdated review thread. Pause and
+escalate decisions or external failures requiring maintainer action. Merge-ready status does not grant merge authority.
 
 `main` accepts squash merges only after required checks pass. Do not commit directly to `main`.
 
