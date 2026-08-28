@@ -1896,6 +1896,75 @@ function Read-AtlasoDevelopmentCaCleanupMarker {
 
 <#
 .SYNOPSIS
+Reconcile a durably published cleanup marker whose caller path was not exposed.
+
+.PARAMETER VmxPath
+Exact invocation-owned VMX whose non-secret cleanup identity binds the marker.
+
+.PARAMETER Name
+Exact normal-test VM name recorded by the interrupted publication.
+
+.PARAMETER OutputDirectory
+Exact invocation-owned VM artifact directory recorded by the marker.
+
+.PARAMETER MarkerRoot
+Per-user marker directory that may contain the interrupted publication.
+#>
+function Find-AtlasoDevelopmentCaCleanupMarker {
+    param(
+        [Parameter(Mandatory = $true)][string]$VmxPath,
+        [Parameter(Mandatory = $true)][string]$Name,
+        [Parameter(Mandatory = $true)][string]$OutputDirectory,
+        [string]$MarkerRoot = (Get-AtlasoDevelopmentCaCleanupMarkerRoot)
+    )
+
+    if (-not (Test-Path -LiteralPath $MarkerRoot -PathType Container)) {
+        return $null
+    }
+    Assert-AtlasoStrictDescendantPath `
+        -ParentPath (Split-Path -Parent $MarkerRoot) `
+        -ChildPath $MarkerRoot `
+        -FailureMessage 'Refusing a development-CA marker directory through a reparse point'
+    $resolvedVmxPath = (Resolve-Path -LiteralPath $VmxPath).Path
+    $resolvedOutputDirectory = (Resolve-Path -LiteralPath $OutputDirectory).Path
+    $cleanupIdentityHash = Get-AtlasoTestVmCleanupIdentityHash -VmxPath $resolvedVmxPath
+    $markerFiles = @(Get-ChildItem -LiteralPath $MarkerRoot -File -Force)
+    if (@($markerFiles | Where-Object Extension -ne '.json').Count -gt 0) {
+        throw 'Cleanup-marker publication outcome is ambiguous; preserve the VM artifacts for retry.'
+    }
+    $matchingMarkers = @(
+        foreach ($markerFile in $markerFiles) {
+            $marker = Read-AtlasoDevelopmentCaCleanupMarker `
+                -MarkerPath $markerFile.FullName `
+                -MarkerRoot $MarkerRoot
+            if (
+                $marker.Schema -eq 3 -and
+                $marker.Phase -ceq 'secret-child-active' -and
+                $marker.Name -ceq $Name -and
+                $marker.VmxPath.Equals($resolvedVmxPath, [System.StringComparison]::OrdinalIgnoreCase) -and
+                $marker.OutputDirectory.Equals(
+                    $resolvedOutputDirectory,
+                    [System.StringComparison]::OrdinalIgnoreCase
+                ) -and
+                $marker.CleanupIdentityHash -ceq $cleanupIdentityHash
+            ) {
+                $marker
+            }
+        }
+    )
+    if ($matchingMarkers.Count -eq 1 -and $markerFiles.Count -eq 1) {
+        return $matchingMarkers[0]
+    }
+    if ($markerFiles.Count -gt 0) {
+        # Never publish a second marker when any durable destination cannot be
+        # proven to be the one identity-bound result of this invocation.
+        throw 'Cleanup-marker publication outcome is ambiguous; preserve the VM artifacts for retry.'
+    }
+    return $null
+}
+
+<#
+.SYNOPSIS
 Rebind one legacy staged marker after a proven VMware VMX replacement.
 
 .PARAMETER MarkerPath
@@ -3128,17 +3197,34 @@ if (-not $WhatIfPreference) {
                     throw 'The powered-off development signer could not be proven scrubbed; destructive rollback was deferred.'
                 }
                 if (-not $developmentCaCleanupMarkerPath) {
-                    # A pre-secret marker failure may leave only the exact
-                    # invocation-owned VMX identity. Publish boot-bound rollback
-                    # ownership before any removal child can outlive this process.
-                    New-AtlasoDevelopmentCaCleanupMarker `
+                    # The atomic rename may have succeeded before a later VMX
+                    # readback or handle disposal failed. Reconcile that exact
+                    # identity-bound destination before considering a fallback.
+                    $publishedCleanupMarker = Find-AtlasoDevelopmentCaCleanupMarker `
                         -VmxPath $targetVmx `
                         -Name $Name `
-                        -OutputDirectory $resolvedOutputDirectory `
-                        -DataDiskStates $rollbackDataDiskStates `
-                        -MarkerPathReference ([ref]$developmentCaCleanupMarkerPath) `
-                        -InitialPhase stopped-vmx-scrubbed `
-                        -AllowExistingCleanupIdentity | Out-Null
+                        -OutputDirectory $resolvedOutputDirectory
+                    if ($null -ne $publishedCleanupMarker) {
+                        $developmentCaCleanupMarkerPath = $publishedCleanupMarker.MarkerPath
+                        Set-AtlasoDevelopmentCaCleanupMarkerPhase `
+                            -MarkerPath $developmentCaCleanupMarkerPath `
+                            -ExpectedPhase secret-child-active `
+                            -Phase stopped-vmx-scrubbed
+                    }
+                    else {
+                        # A pre-secret failure before rename may leave only the
+                        # exact invocation-owned VMX identity. Publish boot-bound
+                        # rollback ownership before any removal child can outlive
+                        # this process.
+                        New-AtlasoDevelopmentCaCleanupMarker `
+                            -VmxPath $targetVmx `
+                            -Name $Name `
+                            -OutputDirectory $resolvedOutputDirectory `
+                            -DataDiskStates $rollbackDataDiskStates `
+                            -MarkerPathReference ([ref]$developmentCaCleanupMarkerPath) `
+                            -InitialPhase stopped-vmx-scrubbed `
+                            -AllowExistingCleanupIdentity | Out-Null
+                    }
                 }
                 else {
                     Set-AtlasoDevelopmentCaCleanupMarkerPhase `

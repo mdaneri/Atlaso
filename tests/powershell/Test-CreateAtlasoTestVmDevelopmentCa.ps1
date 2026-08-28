@@ -641,8 +641,14 @@ $preSecretRollbackMarker = $wrapperSource.LastIndexOf(
     '-AllowExistingCleanupIdentity | Out-Null',
     [System.StringComparison]::Ordinal
 )
+$preSecretMarkerReconciliation = $wrapperSource.LastIndexOf(
+    'Find-AtlasoDevelopmentCaCleanupMarker',
+    [System.StringComparison]::Ordinal
+)
 if (
     $removalChildPhase -lt $rollbackCatch -or
+    $preSecretMarkerReconciliation -lt $rollbackCatch -or
+    $preSecretMarkerReconciliation -gt $preSecretRollbackMarker -or
     $preSecretRollbackMarker -lt $rollbackCatch -or
     $preSecretRollbackMarker -gt $removalChildPhase -or
     $rollbackRemoval -lt $removalChildPhase -or
@@ -759,6 +765,33 @@ try {
         -MarkerRoot $markerRoot
     if ($recoveryMarker.Phase -cne 'stopped-vmx-scrubbed') {
         throw 'Pre-secret rollback did not durably bind its existing VMX cleanup identity.'
+    }
+    $reconciliationRoot = Join-Path $scopeRoot 'reconciliation-markers'
+    $reconciliationVmxPath = Join-Path $vmRoot 'Atlaso-Script-Scope-Reconciliation.vmx'
+    [System.IO.File]::WriteAllText(
+        $reconciliationVmxPath,
+        'config.version = "8"',
+        [System.Text.UTF8Encoding]::new($false)
+    )
+    $renamedMarkerPath = New-AtlasoDevelopmentCaCleanupMarker `
+        -VmxPath $reconciliationVmxPath `
+        -Name 'Atlaso-Script-Scope-Reconciliation' `
+        -OutputDirectory $vmRoot `
+        -DataDiskStates @() `
+        -MarkerRoot $reconciliationRoot
+    # Model the post-rename failure window: durable state exists, but the
+    # caller-owned marker reference was never exposed.
+    $reconciledMarker = Find-AtlasoDevelopmentCaCleanupMarker `
+        -VmxPath $reconciliationVmxPath `
+        -Name 'Atlaso-Script-Scope-Reconciliation' `
+        -OutputDirectory $vmRoot `
+        -MarkerRoot $reconciliationRoot
+    if (
+        $null -eq $reconciledMarker -or
+        $reconciledMarker.MarkerPath -cne $renamedMarkerPath -or
+        @(Get-ChildItem -LiteralPath $reconciliationRoot -Filter '*.json').Count -ne 1
+    ) {
+        throw 'Post-rename cleanup-marker reconciliation did not recover the exact durable destination.'
     }
 }
 finally {

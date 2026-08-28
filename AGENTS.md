@@ -566,8 +566,9 @@ The following cross-cutting boundaries always apply:
   rollback only after durable publication succeeds. A pre-publication failure before any
   secret child starts must preserve the original actionable error and remove only invocation-owned artifacts. Before
   launching rollback removal, durably bind the exact stopped VMX identity, quarantine path, and boot-bound child phase;
-  if that fallback publication fails, preserve the VM artifacts and do not start a removal child. Actual child-active
-  or unproven state remains fail-closed across same-boot reruns.
+  first reconcile any exact identity-bound destination left by a completed rename whose caller reference was not
+  published. If reconciliation is ambiguous or fallback publication fails, preserve the VM artifacts and do not start
+  a removal child. Actual child-active or unproven state remains fail-closed across same-boot reruns.
   After encrypted import proof,
   stop the exact VM, prove the powered-off VMX signer assignment absent, restart it, and prove runtime guest-info remains
   empty before retiring the marker. Later normal-wrapper invocations must retry its exact identity-bound stop, VMX
