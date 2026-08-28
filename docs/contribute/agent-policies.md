@@ -444,9 +444,10 @@ Terminal order:
   to strict, non-reparse-point descendants of `image/vmware-workstation/ovf`; repository, image, output, filesystem, and
   external roots are never removal targets. Stable and prerelease publication modes implicitly replace only the
   canonical derived destination. Every explicitly supplied existing destination requires `-Force`, and `-Force` does
-  not expand the deletion boundary. Prerelease publication requires exactly one annotated
-  `vX.Y.Z-<prerelease>` tag at the clean checkout commit and an existing published non-draft GitHub prerelease; it must
-  not create, retag, or reclassify a release.
+  not expand the deletion boundary. Low-level OVF export never changes GitHub. Manual virtualization orchestration
+  through `-Prerelease` may create only the exact annotated `virtualization-vX.Y.Z-rc.N` tag and hidden draft after
+  VMware and Hyper-V smoke pass; it never publishes or reclassifies that draft. Only the protected hosted finalizer may
+  sign, attest, and publish the prerelease.
 - Remove only proven build-only packages after runtime and Photon compatibility checks. Preserve all appliance
   capabilities, clean package/download caches and staged build sources, zero-fill both payload filesystems with a
   bounded free-space reserve, remove the fill files, request TRIM, and emit bounded before/after footprint evidence

@@ -1303,6 +1303,7 @@ def test_release_workflows_use_successful_main_sha_and_promote_without_rebuildin
     assert "ref: ${{ inputs.release_sha }}" not in windows_candidate
     assert "ref: ${{ needs.admit.outputs.release_sha }}" in windows_job
     assert windows_candidate.count("ref: refs/heads/main") == 2
+    assert 'git checkout --detach "$RELEASE_SHA"' in windows_candidate
     assert "comm -23" in windows_candidate
     assert "ATLASO_ONEPASSWORD_ENVIRONMENT_ID" in windows_job
     assert "ATLASO_ONEPASSWORD_ACCOUNT" in windows_job

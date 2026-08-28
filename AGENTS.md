@@ -482,8 +482,10 @@ The following cross-cutting boundaries always apply:
   independently fits that limit. OVF export may recursively replace only a strict, non-reparse-point descendant of the
   repository OVF output root. `-Release` and `-Prerelease` provide implicit replacement only for the canonical derived
   destination; an explicitly supplied existing destination still requires `-Force`, which never widens the approved
-  deletion boundary. Prerelease publication requires exactly one annotated `vX.Y.Z-<prerelease>` tag at the clean
-  checkout commit and an existing published non-draft GitHub prerelease; the exporter never creates or reclassifies it.
+  deletion boundary. Low-level OVF export never changes GitHub. Manual virtualization orchestration through
+  `-Prerelease` may create only the exact annotated `virtualization-vX.Y.Z-rc.N` tag and hidden draft after both Windows
+  smokes pass; it never publishes or reclassifies that draft. Only the protected hosted finalizer may sign, attest, and
+  publish the prerelease.
 - First-boot depot and backup initialization requires the root-owned image policy, exact platform SCSI identities,
   topology-derived `atlaso-path-*` links, and exact 500 GiB capacities. Complete an all-disk preflight before `mkfs` and
   fail closed for missing, extra, reordered, ambiguous, read-only, in-use, or identity/capacity-mismatched disks.

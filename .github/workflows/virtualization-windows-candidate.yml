@@ -72,6 +72,7 @@ jobs:
           git fetch origin main --no-tags
           test "$(git rev-parse HEAD)" = "$(git rev-parse origin/main)"
           git merge-base --is-ancestor "$RELEASE_SHA" origin/main
+          git checkout --detach "$RELEASE_SHA"
           test "$(git rev-parse HEAD)" = "$RELEASE_SHA"
           COUNT="$(gh api --method GET "repos/${{ github.repository }}/actions/workflows/ci.yml/runs" \
             -f head_sha="$RELEASE_SHA" -f branch=main -f event=push -f status=success \
