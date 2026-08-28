@@ -1046,19 +1046,51 @@ if ($UsePasswordDeploy) {
     throw '-OnePasswordAccount and -OnePasswordPython require -OnePasswordEnvironmentId.'
 }
 
+$generatedRuntimeDependencyRoot = ''
+$generatedWheelPath = ''
 if (-not $SkipBuild) {
     New-Item -ItemType Directory -Force -Path (Join-Path $resolvedRepoRoot 'dist') | Out-Null
+    # Dependency selection must not inherit stale wheels from an earlier version.
+    $generatedRuntimeDependencyRoot = Join-Path (
+        [System.IO.Path]::GetTempPath()
+    ) "atlaso-runtime-wheels-$([guid]::NewGuid().ToString('N'))"
+    New-Item -ItemType Directory -Path $generatedRuntimeDependencyRoot | Out-Null
     Write-Host "Building Atlaso wheel..."
-    Invoke-CheckedCommand -FilePath $Python -Arguments @('-m', 'pip', 'wheel', '.', '-w', 'dist') -WorkingDirectory $resolvedRepoRoot
+    try {
+        Invoke-CheckedCommand -FilePath $Python -Arguments @(
+            '-m', 'pip', 'wheel', '.', '-w', $generatedRuntimeDependencyRoot
+        ) -WorkingDirectory $resolvedRepoRoot
+        $generatedWheels = @(
+            Get-ChildItem -LiteralPath $generatedRuntimeDependencyRoot -Filter 'atlaso-*.whl' -File
+        )
+        if ($generatedWheels.Count -ne 1) {
+            throw "The fresh wheel build produced $($generatedWheels.Count) Atlaso wheels; exactly one is required."
+        }
+        $generatedWheelPath = Join-Path $resolvedRepoRoot "dist\$($generatedWheels[0].Name)"
+        Copy-Item -LiteralPath $generatedWheels[0].FullName -Destination $generatedWheelPath -Force
+    } catch {
+        Remove-Item -LiteralPath $generatedRuntimeDependencyRoot -Recurse -Force -ErrorAction SilentlyContinue
+        throw
+    }
     if ($UsePasswordDeploy) {
         Stage-PasswordDeployPythonWheels -PythonCommand $resolvedOnePasswordPython -WorkingDirectory $resolvedRepoRoot
     }
 }
 
-$resolvedWheelPath = Get-WheelPath -Path $WheelPath -Root $resolvedRepoRoot
+$resolvedWheelPath = if ($generatedWheelPath -and [string]::IsNullOrWhiteSpace($WheelPath)) {
+    $generatedWheelPath
+}
+else {
+    Get-WheelPath -Path $WheelPath -Root $resolvedRepoRoot
+}
 $wheelName = Split-Path -Leaf $resolvedWheelPath
 $runtimeDependencyRoot = if ([string]::IsNullOrWhiteSpace($RuntimeDependencyDirectory)) {
-    Join-Path $resolvedRepoRoot 'dist'
+    if ($generatedRuntimeDependencyRoot) {
+        $generatedRuntimeDependencyRoot
+    }
+    else {
+        Join-Path $resolvedRepoRoot 'dist'
+    }
 }
 else {
     $candidate = Get-Item -LiteralPath $RuntimeDependencyDirectory -ErrorAction Stop
@@ -1642,4 +1674,7 @@ try {
     }
     Remove-Item -LiteralPath $tempDeployDirectory -Recurse -Force -ErrorAction SilentlyContinue
     Remove-Item -LiteralPath $sshControlPath -Force -ErrorAction SilentlyContinue
+    if ($generatedRuntimeDependencyRoot) {
+        Remove-Item -LiteralPath $generatedRuntimeDependencyRoot -Recurse -Force -ErrorAction SilentlyContinue
+    }
 }

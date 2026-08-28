@@ -175,7 +175,8 @@ jobs:
         with:
           ref: refs/heads/main
           fetch-depth: 0
-          persist-credentials: false
+          # This hosted, write-authorized job alone creates the admitted tag.
+          persist-credentials: true
       - uses: actions/download-artifact@v8
         with:
           name: windows-virtualization-${{ inputs.release_sha }}-${{ inputs.prerelease_identifier }}

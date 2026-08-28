@@ -61,6 +61,29 @@ def version() -> str:
     return result.stdout.strip()
 
 
+def virtualization_asset_names(names: set[str]) -> set[str]:
+    """Return names reserved for the separate virtualization lifecycle.
+
+    Args:
+        names: GitHub Release or local asset names to classify.
+    """
+    return {
+        name
+        for name in names
+        if name.lower().endswith((".ovf", ".mf", ".vmdk", ".ova", "-provenance.json"))
+        or name.endswith("-hyperv-x86_64.zip")
+        or name.startswith("virtualization-")
+        or name
+        in {
+            "import-atlaso-proxmox.sh",
+            "import-atlaso-kvm.sh",
+            "validate_ova.py",
+            "normalize_libvirt.py",
+            "verify_virtualization_artifact_index.py",
+        }
+    }
+
+
 def verify_vmware_ovf_topology(path: Path, asset_names: set[str]) -> None:
     """Validate vmware ovf topology.
 
@@ -262,24 +285,7 @@ def main(argv: list[str] | None = None) -> int:
     release_version = version()
     tag = f"v{release_version}"
     asset_names = {path.name for path in assets}
-    vmware_names = {
-        name
-        for name in asset_names
-        if name.lower().endswith((".ovf", ".mf", ".vmdk", ".ova", "-provenance.json"))
-    }
-    virtualization_names = vmware_names | {
-        name
-        for name in asset_names
-        if name.endswith("-hyperv-x86_64.zip")
-        or name.startswith("virtualization-")
-        or name in {
-            "import-atlaso-proxmox.sh",
-            "import-atlaso-kvm.sh",
-            "validate_ova.py",
-            "normalize_libvirt.py",
-            "verify_virtualization_artifact_index.py",
-        }
-    }
+    virtualization_names = virtualization_asset_names(asset_names)
     if virtualization_names:
         raise SystemExit(
             f"software Release v{release_version} cannot contain virtualization assets: "
@@ -319,6 +325,12 @@ def main(argv: list[str] | None = None) -> int:
             raise SystemExit(f"GitHub Release lookup returned the wrong tag for {tag}")
         expected_names = {path.name for path in assets}
         actual_names = {item["name"] for item in release.get("assets", [])}
+        remote_virtualization_names = virtualization_asset_names(actual_names)
+        if remote_virtualization_names:
+            raise SystemExit(
+                f"software Release {tag} already contains virtualization assets: "
+                f"{sorted(remote_virtualization_names)}"
+            )
         missing_names = expected_names - actual_names
         extra_names = actual_names - expected_names
         if missing_names:
@@ -336,7 +348,7 @@ def main(argv: list[str] | None = None) -> int:
             if mismatches:
                 raise SystemExit(f"{tag} already contains mismatched assets: {', '.join(mismatches)}")
             if extra_names:
-                verify_vmware_release_assets(temp, extra_names)
+                raise SystemExit(f"{tag} contains unexpected assets: {sorted(extra_names)}")
         print(json.dumps({"tag": tag, "commit": args.commit, "result": "already-published"}, sort_keys=True))
         return 0
 

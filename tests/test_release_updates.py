@@ -1321,6 +1321,11 @@ def test_release_workflows_use_successful_main_sha_and_promote_without_rebuildin
     assert "ATLASO_ONEPASSWORD_ACCOUNT" in windows_job
     assert "ATLASO_ONEPASSWORD_PYTHON" in windows_job
     assert "uses: ./.github/workflows/virtualization-prerelease.yml" in windows_candidate
+    stage_draft = windows_candidate.split("  stage_draft:\n", 1)[1].split(
+        "  finalize:\n", 1
+    )[0]
+    assert "contents: write" in stage_draft
+    assert "persist-credentials: true" in stage_draft
     assert "already_published: ${{ steps.target.outputs.already_published }}" in windows_candidate
     assert "gh api graphql" in windows_candidate
     assert "if test \"$STATE\" != null" in windows_candidate

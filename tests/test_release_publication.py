@@ -272,11 +272,11 @@ def test_vmware_release_assets_accept_byte_equivalent_ova(tmp_path: Path):
     )
 
 
-def test_release_recovery_accepts_manifest_verified_vmware_assets(
+def test_release_recovery_rejects_legacy_vmware_assets(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ):
-    """Verify that release recovery accepts manifest verified vmware assets.
+    """Verify that software release recovery rejects remote virtualization assets.
 
     Args:
         tmp_path: Temporary directory provided by pytest for isolated filesystem state.
@@ -334,7 +334,8 @@ def test_release_recovery_accepts_manifest_verified_vmware_assets(
 
     monkeypatch.setattr(publish_release, "run", fake_run)
 
-    assert publish_release.main(["--commit", commit, "--assets", str(core)]) == 0
+    with pytest.raises(SystemExit, match="already contains virtualization assets"):
+        publish_release.main(["--commit", commit, "--assets", str(core)])
 
 
 def test_release_note_categories_keep_dependencies_out_of_enhancements():
