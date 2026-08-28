@@ -216,7 +216,8 @@ foreach ($required in @(
         'Published assets are immutable',
         'if ($CandidateOnly) {',
         'Invoke-AtlasoVirtualizationPrereleaseFinalizer',
-        'Assert-AtlasoVmwarePayloadProvenance -VmxPath $vmx',
+        '-ExpectedSourceCommit $identity.Commit',
+        '-RequireCleanSource',
         'The retained VMware image is incomplete and will be rebuilt',
         'Update-AtlasoVmwarePayloadProvenance',
         "Value -ceq 'software-deployed'",
@@ -244,6 +245,13 @@ foreach ($required in @(
     if (-not $releaseModule.Contains($required) -and -not $ovaExporter.Contains($required)) {
         throw "Virtualization release orchestration is missing required marker: $required"
     }
+}
+$releaseSourceChecks = ([regex]::Matches(
+        $releaseModule,
+        '-ExpectedSourceCommit \$identity\.Commit\s+`\s*\r?\n\s*-RequireCleanSource'
+    )).Count
+if ($releaseSourceChecks -ne 2) {
+    throw 'Virtualization production must enforce exact clean build provenance on reuse and after build.'
 }
 $candidateVerificationIndex = $releaseModule.IndexOf("'--verify-existing', `$candidate")
 $exportIndex = $releaseModule.IndexOf("'scripts\windows\vmware\export-ovf.ps1'")

@@ -134,11 +134,17 @@ Verify role-bound payload provenance against current artifact bytes.
 VMX file whose provenance is validated.
 .PARAMETER ProvenancePath
 Optional explicit provenance document path.
+.PARAMETER ExpectedSourceCommit
+Optional exact source commit required by a release caller.
+.PARAMETER RequireCleanSource
+Reject provenance recorded from a dirty tracked source tree.
 #>
 function Assert-AtlasoVmwarePayloadProvenance {
     param(
         [Parameter(Mandatory = $true)][string]$VmxPath,
-        [string]$ProvenancePath = ''
+        [string]$ProvenancePath = '',
+        [string]$ExpectedSourceCommit = '',
+        [switch]$RequireCleanSource
     )
 
     $vmx = Get-Item -LiteralPath $VmxPath -ErrorAction Stop
@@ -156,6 +162,16 @@ function Assert-AtlasoVmwarePayloadProvenance {
     }
     if ($provenance.schema_version -ne 2) {
         throw 'VMware build provenance does not contain verified payload-disk roles.'
+    }
+    if ([string]$provenance.source_commit -notmatch '^[0-9a-f]{40}$' -or
+        $null -eq $provenance.tracked_source_dirty) {
+        throw 'VMware build provenance does not contain a valid source identity.'
+    }
+    if ($ExpectedSourceCommit -and [string]$provenance.source_commit -cne $ExpectedSourceCommit) {
+        throw "VMware build provenance does not identify expected source commit $ExpectedSourceCommit."
+    }
+    if ($RequireCleanSource -and [bool]$provenance.tracked_source_dirty) {
+        throw 'VMware build provenance records a dirty tracked source tree.'
     }
     if ($provenance.vmx.name -ne $vmx.Name -or
         [long]$provenance.vmx.bytes -ne $vmx.Length -or

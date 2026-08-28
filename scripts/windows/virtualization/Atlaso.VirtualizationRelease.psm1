@@ -695,7 +695,10 @@ function Invoke-AtlasoVirtualizationPrerelease {
     $existingProvenance = $null
     if (-not $requiresBuild) {
         try {
-            $existingProvenance = Assert-AtlasoVmwarePayloadProvenance -VmxPath $vmx
+            $existingProvenance = Assert-AtlasoVmwarePayloadProvenance `
+                -VmxPath $vmx `
+                -ExpectedSourceCommit $identity.Commit `
+                -RequireCleanSource
         }
         catch {
             # Re-entering the wrapper is required so it can recover any durable
@@ -716,7 +719,10 @@ function Invoke-AtlasoVirtualizationPrerelease {
         if ($LASTEXITCODE -ne 0) {
             throw 'Canonical VMware image build failed.'
         }
-        $existingProvenance = Assert-AtlasoVmwarePayloadProvenance -VmxPath $vmx
+        $existingProvenance = Assert-AtlasoVmwarePayloadProvenance `
+            -VmxPath $vmx `
+            -ExpectedSourceCommit $identity.Commit `
+            -RequireCleanSource
     }
     $wheel = Join-Path $sourceInput ([string]$source.application_wheel -replace '/', '\')
     $sourceMetadataSha256 = (Get-FileHash -LiteralPath $sourceMetadata -Algorithm SHA256).Hash.ToLowerInvariant()
