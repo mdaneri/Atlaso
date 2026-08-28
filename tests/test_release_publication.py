@@ -178,7 +178,12 @@ def test_publish_release_requests_generated_notes_and_keeps_provenance(
 def test_software_release_refuses_virtualization_assets(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """The automatic vX.Y.Z publisher cannot absorb OVA or Hyper-V assets."""
+    """The automatic vX.Y.Z publisher cannot absorb OVA or Hyper-V assets.
+
+    Args:
+        tmp_path: Temporary directory provided by pytest.
+        monkeypatch: Pytest helper for isolating publisher dependencies.
+    """
 
     (tmp_path / "release-manifest.json").write_text("{}", encoding="utf-8")
     (tmp_path / "atlaso-v0.9.30.ova").write_bytes(b"ova")

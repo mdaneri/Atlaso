@@ -194,7 +194,11 @@ def test_builds_verifiable_index_covering_complete_release_set(tmp_path: Path) -
 
 
 def test_stable_index_requires_both_linux_platform_proofs(tmp_path: Path) -> None:
-    """Stable classification fails closed until Proxmox and KVM evidence exists."""
+    """Stable classification fails closed until Proxmox and KVM evidence exists.
+
+    Args:
+        tmp_path: Temporary directory provided by pytest.
+    """
 
     assets = tmp_path / "assets"
     _assets(assets)

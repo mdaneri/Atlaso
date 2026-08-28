@@ -21,7 +21,11 @@ KEY_ID = "test-release-key"
 
 
 def _canonical(value: object) -> bytes:
-    """Return canonical signed JSON bytes."""
+    """Return canonical signed JSON bytes.
+
+    Args:
+        value: JSON-compatible value to serialize.
+    """
 
     return (json.dumps(value, sort_keys=True, separators=(",", ":")) + "\n").encode()
 
@@ -29,7 +33,12 @@ def _canonical(value: object) -> bytes:
 def _release_fixture(
     tmp_path: Path, *, unsafe_member: str = ""
 ) -> tuple[Path, Path, Path, Path]:
-    """Create one minimal valid signed software Release fixture."""
+    """Create one minimal valid signed software Release fixture.
+
+    Args:
+        tmp_path: Temporary directory provided by pytest.
+        unsafe_member: Optional unsafe archive member to include.
+    """
 
     members = {
         f"packages/atlaso-{VERSION}-py3-none-any.whl": b"exact-application-wheel",
@@ -92,7 +101,11 @@ def _release_fixture(
 
 
 def test_extracts_exact_signed_cp314_inputs_and_records_digests(tmp_path: Path) -> None:
-    """The producer consumes the published wheel and wheelhouse without rebuilding."""
+    """The producer consumes the published wheel and wheelhouse without rebuilding.
+
+    Args:
+        tmp_path: Temporary directory provided by pytest.
+    """
 
     manifest, signature, bundle, trust = _release_fixture(tmp_path)
     output = tmp_path / "verified"
@@ -123,7 +136,11 @@ def test_extracts_exact_signed_cp314_inputs_and_records_digests(tmp_path: Path) 
 
 
 def test_rejects_changed_bundle_and_nonempty_resume_destination(tmp_path: Path) -> None:
-    """Digest mismatches and ambiguous local recovery fail before extraction."""
+    """Digest mismatches and ambiguous local recovery fail before extraction.
+
+    Args:
+        tmp_path: Temporary directory provided by pytest.
+    """
 
     manifest, signature, bundle, trust = _release_fixture(tmp_path)
     bundle.write_bytes(bundle.read_bytes() + b"changed")
@@ -156,7 +173,11 @@ def test_rejects_changed_bundle_and_nonempty_resume_destination(tmp_path: Path) 
 
 
 def test_rejects_signed_unsafe_archive_member(tmp_path: Path) -> None:
-    """A valid signature cannot authorize path traversal during extraction."""
+    """A valid signature cannot authorize path traversal during extraction.
+
+    Args:
+        tmp_path: Temporary directory provided by pytest.
+    """
 
     manifest, signature, bundle, trust = _release_fixture(
         tmp_path, unsafe_member="../escape.whl"
