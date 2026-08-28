@@ -6,7 +6,7 @@ from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 from typing import Annotated, Any
 
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
@@ -162,13 +162,18 @@ def build_router(dependencies: SettingsApiDependencies) -> SettingsApiRouter:
         reconciled_service_aliases: list[str] = []
         if reconciled_service_identities:
             reconciled_service_aliases = reconcile_service_dns_aliases(db, actor=None)
+        ca_settings = db.execute(select(CaSettings)).scalar_one_or_none()
+        if desired.management_https_enabled and ca_settings and ca_settings.enabled:
+            ca_state_errors = ensure_ca_state(db, commit=False)
+            if ca_state_errors:
+                db.rollback()
+                raise HTTPException(
+                    status_code=422,
+                    detail=" ".join(ca_state_errors),
+                )
         db.add(desired)
         db.commit()
         db.refresh(desired)
-        ca_settings = db.execute(select(CaSettings)).scalar_one_or_none()
-        if desired.management_https_enabled and ca_settings and ca_settings.enabled:
-            ensure_ca_state(db)
-            db.refresh(desired)
         record_audit(
             db,
             actor=identity.username,

@@ -1149,18 +1149,21 @@ create_job = _operations_api.endpoints["create_job"]
 get_job = _operations_api.endpoints["get_job"]
 cancel_job = _operations_api.endpoints["cancel_job"]
 
-def _ensure_settings_ca_state(db: Session) -> list[str]:
+def _ensure_settings_ca_state(
+    db: Session, *, commit: bool = True
+) -> list[str]:
     """Use the stable UI facade's CA compatibility helper.
 
     Args:
         db: Active database session.
+        commit: Whether CA reconciliation may commit before returning.
 
     Returns:
         Public-safe CA validation errors.
     """
     from atlaso.app import ui as ui_module
 
-    return ui_module.ensure_ca_state(db)
+    return ui_module.ensure_ca_state(db, commit=commit)
 
 
 _settings_api = build_settings_api_router(

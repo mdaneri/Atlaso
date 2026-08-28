@@ -166,3 +166,101 @@ def test_settings_api_retains_read_and_admin_scope_boundaries(client):
         ).status_code
         == 403
     )
+
+
+def test_settings_api_keeps_ca_reconciliation_in_request_transaction(
+    client, monkeypatch
+):
+    """Run successful API CA reconciliation without an independent commit.
+
+    Args:
+        client: HTTP test client used to exercise the Atlaso application.
+        monkeypatch: Pytest fixture used to observe the CA transaction boundary.
+    """
+    from sqlalchemy import select
+
+    from atlaso.app import ui as ui_module
+    from atlaso.app.database import SessionLocal
+    from atlaso.app.models import CaSettings
+
+    commit_modes: list[bool] = []
+    original_ensure_ca_state = ui_module.ensure_ca_state
+
+    def observe_ca_state(db, *, commit=True):
+        """Record and preserve the requested CA transaction mode.
+
+        Args:
+            db: Active database session.
+            commit: Whether CA reconciliation may commit independently.
+        """
+        commit_modes.append(commit)
+        return original_ensure_ca_state(db, commit=commit)
+
+    monkeypatch.setattr(ui_module, "ensure_ca_state", observe_ca_state)
+    with SessionLocal() as db:
+        ca_settings = db.execute(select(CaSettings)).scalar_one()
+        ca_settings.enabled = True
+        db.commit()
+
+    token, _metadata = create_token(client, scopes=["admin:all", "read:dashboard"])
+    response = client.patch(
+        "/api/v1/settings",
+        headers={"Authorization": f"Bearer {token}"},
+        json={
+            "appliance_fqdn": "api.lab.internal",
+            "management_https_enabled": True,
+            "root_ssh_enabled": False,
+            "external_dns_servers": [],
+        },
+    )
+
+    assert response.status_code == 200, response.text
+    assert commit_modes == [False]
+
+
+def test_settings_api_rolls_back_domain_when_ca_reconciliation_fails(
+    client, monkeypatch
+):
+    """Reject CA errors without persisting any coupled domain mutation.
+
+    Args:
+        client: HTTP test client used to exercise the Atlaso application.
+        monkeypatch: Pytest fixture used to inject a CA validation failure.
+    """
+    from sqlalchemy import select
+
+    from atlaso.app import ui as ui_module
+    from atlaso.app.database import SessionLocal
+    from atlaso.app.models import ApplianceSettings, CaSettings, NtpSettings
+
+    with SessionLocal() as db:
+        ca_settings = db.execute(select(CaSettings)).scalar_one()
+        ca_settings.enabled = True
+        db.commit()
+
+    monkeypatch.setattr(
+        ui_module,
+        "ensure_ca_state",
+        lambda db, *, commit=True: ["CA certificate reconciliation failed."],
+    )
+    token, _metadata = create_token(client, scopes=["admin:all", "read:dashboard"])
+    response = client.patch(
+        "/api/v1/settings",
+        headers={"Authorization": f"Bearer {token}"},
+        json={
+            "appliance_fqdn": "api.lab.internal",
+            "management_https_enabled": True,
+            "root_ssh_enabled": False,
+            "external_dns_servers": [],
+        },
+    )
+
+    assert response.status_code == 422, response.text
+    assert response.json()["detail"] == "CA certificate reconciliation failed."
+    with SessionLocal() as db:
+        assert db.execute(select(ApplianceSettings)).scalar_one().fqdn == (
+            "core.atlaso.internal"
+        )
+        assert db.execute(select(NtpSettings)).scalar_one().hostname == (
+            "ntp.atlaso.internal"
+        )
