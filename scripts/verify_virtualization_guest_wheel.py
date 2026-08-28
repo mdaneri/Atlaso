@@ -11,13 +11,14 @@ import json
 import re
 import shutil
 import subprocess
+import tarfile
 import tempfile
 import zipfile
 from pathlib import Path, PurePosixPath
 from typing import Any
 
 DIGEST_PATTERN = re.compile(r"^[0-9a-f]{64}$")
-DIST_INFO_PATTERN = re.compile(r"^atlaso-[^/]+\.dist-info$")
+DIST_INFO_PATTERN = re.compile(r"^[A-Za-z0-9_.]+-[A-Za-z0-9_.+!]+\.dist-info$")
 
 
 def _sha256(path: Path) -> str:
@@ -66,8 +67,20 @@ def _filesystem(disk: Path) -> str:
     return filesystems[0]
 
 
+def _installed_path(name: str, data_prefix: str) -> str:
+    """Map one safe wheel member to its site-packages installation path."""
+
+    for category in ("purelib", "platlib"):
+        prefix = f"{data_prefix}/{category}/"
+        if name.startswith(prefix):
+            return name.removeprefix(prefix)
+    if name.startswith(f"{data_prefix}/"):
+        raise SystemExit("wheel contains data outside the active site-packages tree")
+    return name
+
+
 def _wheel_records(wheel: Path) -> tuple[str, dict[str, tuple[str, int]]]:
-    """Return the wheel dist-info name and its immutable installed-file records."""
+    """Return one wheel's dist-info name and installed site-packages records."""
 
     try:
         with zipfile.ZipFile(wheel) as archive:
@@ -82,6 +95,7 @@ def _wheel_records(wheel: Path) -> tuple[str, dict[str, tuple[str, int]]]:
             if DIST_INFO_PATTERN.fullmatch(dist_info) is None:
                 raise SystemExit("Atlaso wheel RECORD has an unexpected dist-info path")
             records: dict[str, tuple[str, int]] = {}
+            data_prefix = f"{dist_info.removesuffix('.dist-info')}.data"
             rows = csv.reader(io.StringIO(archive.read(record_name).decode("utf-8")))
             for row in rows:
                 if len(row) != 3:
@@ -94,6 +108,7 @@ def _wheel_records(wheel: Path) -> tuple[str, dict[str, tuple[str, int]]]:
                     or member.as_posix() != name
                 ):
                     raise SystemExit("Atlaso wheel RECORD contains an unsafe path")
+                installed_name = _installed_path(name, data_prefix)
                 if name == record_name:
                     if encoded_digest or size_text:
                         raise SystemExit(
@@ -116,15 +131,13 @@ def _wheel_records(wheel: Path) -> tuple[str, dict[str, tuple[str, int]]]:
                     raise SystemExit(
                         "Atlaso wheel RECORD contains an invalid digest"
                     ) from exc
-                if len(digest) != 64 or name in records:
+                if len(digest) != 64 or installed_name in records:
                     raise SystemExit(
                         "Atlaso wheel RECORD contains an invalid or duplicate entry"
                     )
-                records[name] = (digest, int(size_text))
-            if not records or not any(name.startswith("atlaso/") for name in records):
-                raise SystemExit(
-                    "Atlaso wheel RECORD does not cover the Atlaso package"
-                )
+                records[installed_name] = (digest, int(size_text))
+            if not records:
+                raise SystemExit("wheel RECORD contains no immutable installed files")
             return dist_info, records
     except (OSError, UnicodeDecodeError, zipfile.BadZipFile) as exc:
         raise SystemExit(
@@ -158,16 +171,128 @@ def _system_vmdk(asset_root: Path) -> Path:
     return path
 
 
-def verify_installed_wheel(
-    asset_root: Path, wheel: Path, expected_digest: str
-) -> dict[str, Any]:
-    """Verify wheel-member bytes in the active venv on the system-content disk."""
+def _expected_environment(
+    wheel: Path, wheelhouse: Path, expected_digest: str
+) -> tuple[dict[str, tuple[str, int]], set[str]]:
+    """Build the collision-free installed inventory from every signed wheel."""
 
     if DIGEST_PATTERN.fullmatch(expected_digest) is None:
         raise SystemExit("expected Atlaso wheel digest is invalid")
     if wheel.is_symlink() or not wheel.is_file() or _sha256(wheel) != expected_digest:
         raise SystemExit("Atlaso application wheel does not match the signed digest")
-    dist_info, records = _wheel_records(wheel)
+    if wheelhouse.is_symlink() or not wheelhouse.is_dir():
+        raise SystemExit("signed CPython 3.14 wheelhouse is missing or unsafe")
+    dependency_wheels = sorted(wheelhouse.glob("*.whl"))
+    if not dependency_wheels or any(path.is_symlink() for path in dependency_wheels):
+        raise SystemExit("signed CPython 3.14 wheelhouse contains no safe wheels")
+    records: dict[str, tuple[str, int]] = {}
+    dist_infos: set[str] = set()
+    for candidate in [*dependency_wheels, wheel]:
+        dist_info, candidate_records = _wheel_records(candidate)
+        if candidate == wheel and not any(
+            name.startswith("atlaso/") for name in candidate_records
+        ):
+            raise SystemExit("Atlaso wheel RECORD does not cover the Atlaso package")
+        if dist_info in dist_infos:
+            raise SystemExit(
+                f"signed wheel set contains duplicate distribution: {dist_info}"
+            )
+        dist_infos.add(dist_info)
+        for name, record in candidate_records.items():
+            if name in records:
+                raise SystemExit(f"signed wheel installation paths collide: {name}")
+            records[name] = record
+    return records, dist_infos
+
+
+def _normalized_tar_name(name: str) -> str:
+    """Return one safe site-packages-relative tar member name."""
+
+    while name.startswith("./"):
+        name = name[2:]
+    path = PurePosixPath(name)
+    if not name or path.is_absolute() or ".." in path.parts or path.as_posix() != name:
+        raise SystemExit("guest site-packages archive contains an unsafe path")
+    return name
+
+
+def _allowed_generated_file(
+    name: str, records: dict[str, tuple[str, int]], dist_infos: set[str]
+) -> bool:
+    """Return whether pip or CPython may generate this non-wheel file."""
+
+    parent = PurePosixPath(name).parent.as_posix()
+    if parent in dist_infos and PurePosixPath(name).name in {
+        "INSTALLER",
+        "RECORD",
+        "REQUESTED",
+        "direct_url.json",
+    }:
+        return True
+    match = re.fullmatch(
+        r"(.+)/__pycache__/([^/]+)\.cpython-314(?:\.opt-[12])?\.pyc", name
+    )
+    if match is None:
+        return False
+    return f"{match.group(1)}/{match.group(2)}.py" in records
+
+
+def _verify_site_packages_archive(
+    archive_path: Path,
+    records: dict[str, tuple[str, int]],
+    dist_infos: set[str],
+) -> None:
+    """Verify the exact active-environment inventory and immutable file bytes."""
+
+    found: set[str] = set()
+    try:
+        with tarfile.open(archive_path, mode="r:") as archive:
+            for member in archive:
+                name = _normalized_tar_name(member.name)
+                if member.isdir():
+                    continue
+                if not member.isfile():
+                    raise SystemExit(
+                        f"guest site-packages contains an unsafe entry: {name}"
+                    )
+                if name in records:
+                    if name in found:
+                        raise SystemExit(
+                            f"guest site-packages contains a duplicate file: {name}"
+                        )
+                    expected_digest, expected_size = records[name]
+                    source = archive.extractfile(member)
+                    if source is None:
+                        raise SystemExit(
+                            f"guest site-packages file is unreadable: {name}"
+                        )
+                    digest = hashlib.sha256()
+                    size = 0
+                    while chunk := source.read(1024 * 1024):
+                        size += len(chunk)
+                        digest.update(chunk)
+                    if size != expected_size or digest.hexdigest() != expected_digest:
+                        raise SystemExit(
+                            f"installed wheel member does not match: {name}"
+                        )
+                    found.add(name)
+                elif not _allowed_generated_file(name, records, dist_infos):
+                    raise SystemExit(
+                        f"guest site-packages contains an unexpected file: {name}"
+                    )
+    except (OSError, tarfile.TarError) as exc:
+        raise SystemExit("guest site-packages could not be read safely") from exc
+    missing = sorted(set(records) - found)
+    if missing:
+        raise SystemExit(f"installed wheel member is missing: {missing[0]}")
+
+
+def verify_installed_environment(
+    asset_root: Path, wheel: Path, wheelhouse: Path, expected_digest: str
+) -> dict[str, Any]:
+    """Verify the complete signed wheel set in the active guest environment."""
+
+    records, dist_infos = _expected_environment(wheel, wheelhouse, expected_digest)
     disk = _system_vmdk(asset_root.resolve(strict=True))
     filesystem = _filesystem(disk)
     mount = f"mount-ro {filesystem} /"
@@ -178,32 +303,20 @@ def verify_installed_wheel(
     if len(site_lines) != 1 or not site_lines[0].startswith("/opt-atlaso/releases/"):
         raise SystemExit("active Atlaso site-packages path is missing or unsafe")
     site_packages = PurePosixPath(site_lines[0])
-    with tempfile.TemporaryDirectory(prefix="atlaso-installed-wheel-") as temporary:
-        output_root = Path(temporary)
-        commands = [mount]
-        destinations: dict[str, Path] = {}
-        for index, name in enumerate(sorted(records)):
-            destination = output_root / str(index)
-            destinations[name] = destination
-            guest_path = (site_packages / PurePosixPath(name)).as_posix()
-            commands.append(f"download {guest_path} {destination.as_posix()}")
-        _guestfish(disk, commands)
-        for name, (expected_file_digest, expected_size) in records.items():
-            installed = destinations[name]
-            if (
-                installed.is_symlink()
-                or not installed.is_file()
-                or installed.stat().st_size != expected_size
-                or _sha256(installed) != expected_file_digest
-            ):
-                raise SystemExit(
-                    f"installed Atlaso wheel member does not match: {name}"
-                )
+    with tempfile.TemporaryDirectory(
+        prefix="atlaso-installed-environment-"
+    ) as temporary:
+        archive_path = Path(temporary) / "site-packages.tar"
+        _guestfish(
+            disk,
+            [mount, f"tar-out {site_packages.as_posix()} {archive_path.as_posix()}"],
+        )
+        _verify_site_packages_archive(archive_path, records, dist_infos)
     return {
         "schema_version": 1,
-        "kind": "atlaso-installed-wheel-verification",
+        "kind": "atlaso-installed-environment-verification",
         "wheel_sha256": expected_digest,
-        "dist_info": dist_info,
+        "distributions_verified": len(dist_infos),
         "files_verified": len(records),
     }
 
@@ -214,9 +327,12 @@ def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--assets", required=True, type=Path)
     parser.add_argument("--wheel", required=True, type=Path)
+    parser.add_argument("--wheelhouse", required=True, type=Path)
     parser.add_argument("--expected-digest", required=True)
     args = parser.parse_args(argv)
-    result = verify_installed_wheel(args.assets, args.wheel, args.expected_digest)
+    result = verify_installed_environment(
+        args.assets, args.wheel, args.wheelhouse, args.expected_digest
+    )
     print(json.dumps(result, sort_keys=True, separators=(",", ":")))
     return 0
 

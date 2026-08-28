@@ -232,6 +232,7 @@ jobs:
           path: candidate
       - name: Build the stable signed index
         env:
+          GH_TOKEN: ${{ github.token }}
           RELEASE_SIGNING_PRIVATE_KEY: ${{ secrets.RELEASE_SIGNING_PRIVATE_KEY }}
           RELEASE_SHA: ${{ needs.admit.outputs.release_sha }}
           STABLE_TAG: ${{ needs.admit.outputs.stable_tag }}
@@ -265,6 +266,7 @@ jobs:
           LIBGUESTFS_BACKEND=direct python scripts/verify_virtualization_guest_wheel.py \
             --assets candidate \
             --wheel "$APPLICATION_WHEEL" \
+            --wheelhouse verified-source/wheelhouse/cp314 \
             --expected-digest "$APPLICATION_WHEEL_SHA256"
           python scripts/build_virtualization_artifact_index.py \
             --assets candidate --version "$VERSION" --commit "$RELEASE_SHA" \

@@ -34,9 +34,10 @@ evaluate to false. A missing, enabled, malformed, or conflicting declaration blo
 the normalized descriptor's complete machine contract before writing provenance that records `secure_boot: false`.
 
 Before either virtualization index is signed, the protected GitHub-hosted finalizer opens the OVA-validated
-system-content VMDK read-only with libguestfs. It resolves the active CPython 3.14 environment and requires every hashed
-member installed from the Atlaso wheel to match the exact wheel extracted from the signed `vX.Y.Z` software bundle.
-Producer-authored provenance and smoke evidence cannot substitute for this independent payload check.
+system-content VMDK read-only with libguestfs. It resolves the active CPython 3.14 environment, requires every hashed
+member installed from the Atlaso wheel and complete signed wheelhouse to match, and rejects unexpected active files
+except bounded pip and CPython metadata. Producer-authored provenance and smoke evidence cannot substitute for this
+independent payload check.
 
 The OVA contains files for the two payload disks. Its two 500 GiB data disks are fileless declarations. Import helpers
 retain fileless disks when the platform creates them, create only missing data disks, and reject reordered or
