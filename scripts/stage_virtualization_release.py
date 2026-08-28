@@ -228,6 +228,111 @@ def stage(
     return sorted(expected_names)
 
 
+def verify_staged_candidate(
+    *,
+    candidate: Path,
+    version: str,
+    commit: str,
+    source_metadata: Path,
+) -> list[str]:
+    """Verify a retained candidate without rebuilding or replacing its bytes.
+
+    Args:
+        candidate: Existing flat candidate asset directory.
+        version: Atlaso semantic version.
+        commit: Full source commit.
+        source_metadata: Freshly verified automatic software-release metadata.
+    """
+
+    if (
+        SEMVER_PATTERN.fullmatch(version) is None
+        or COMMIT_PATTERN.fullmatch(commit) is None
+    ):
+        raise SystemExit("version or source commit has an invalid release identity")
+    if candidate.is_symlink() or not candidate.is_dir():
+        raise SystemExit("retained candidate must be an ordinary directory")
+    root = candidate.resolve(strict=True)
+    entries = sorted(root.iterdir(), key=lambda path: path.name)
+    if any(not path.is_file() or path.is_symlink() for path in entries):
+        raise SystemExit("retained candidate contains a non-file or symlink entry")
+
+    names = {path.name for path in entries}
+    vmware_names = {
+        name for name in names if name.lower().endswith(VMWARE_SUFFIXES)
+    }
+    verify_vmware_release_assets(
+        root,
+        vmware_names,
+        expected_version=version,
+        expected_commit=commit,
+    )
+    hyperv_name = f"atlaso-v{version}-hyperv-x86_64.zip"
+    fixed_names = {
+        hyperv_name,
+        "virtualization-source.json",
+        "windows-smoke-evidence.json",
+        *(path.name for path in RELEASE_HELPERS),
+    }
+    expected_names = vmware_names | fixed_names
+    if names != expected_names:
+        raise SystemExit(
+            "retained candidate contains an incomplete or unexpected asset set: "
+            f"{sorted(names)}"
+        )
+    for entry in entries:
+        _ordinary_asset(entry, "retained virtualization candidate asset")
+
+    expected_source = _ordinary_asset(
+        source_metadata, "fresh software release source metadata"
+    )
+    retained_source = root / "virtualization-source.json"
+    if _sha256(expected_source) != _sha256(retained_source):
+        raise SystemExit(
+            "retained candidate software release source metadata has different bytes"
+        )
+    source_document = _json_object(
+        retained_source, "retained software release source metadata"
+    )
+    if (
+        source_document.get("schema_version") != 1
+        or source_document.get("kind") != "atlaso-virtualization-source"
+        or source_document.get("version") != version
+        or source_document.get("source_commit") != commit
+        or source_document.get("source_software_tag") != f"v{version}"
+        or source_document.get("python_abi") != "cp314"
+    ):
+        raise SystemExit(
+            "retained software release source metadata does not match the candidate identity"
+        )
+
+    for helper in RELEASE_HELPERS:
+        helper_source = _ordinary_asset(helper, "virtualization import helper")
+        if _sha256(helper_source) != _sha256(root / helper.name):
+            raise SystemExit(
+                f"retained candidate contains different helper bytes: {helper.name}"
+            )
+
+    ova = next(path for path in entries if path.suffix.lower() == ".ova")
+    hyperv = root / hyperv_name
+    evidence = _json_object(
+        root / "windows-smoke-evidence.json", "retained Windows smoke evidence"
+    )
+    if (
+        evidence.get("schema_version") != 1
+        or evidence.get("kind") != "atlaso-windows-virtualization-smoke"
+        or evidence.get("version") != version
+        or evidence.get("source_commit") != commit
+        or evidence.get("vmware") != "success"
+        or evidence.get("hyperv") != "success"
+        or evidence.get("ova_sha256") != _sha256(ova)
+        or evidence.get("hyperv_sha256") != _sha256(hyperv)
+    ):
+        raise SystemExit(
+            "retained Windows smoke evidence does not bind the exact candidate assets"
+        )
+    return sorted(names)
+
+
 def _ordinary_sources(paths: list[Path]) -> list[Path]:
     """Validate and return an ordered collection of ordinary source assets.
 
@@ -246,23 +351,45 @@ def main(argv: list[str] | None = None) -> int:
     """
 
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--ova-directory", type=Path, required=True)
-    parser.add_argument("--hyperv-zip", type=Path, required=True)
-    parser.add_argument("--output", type=Path, required=True)
+    mode = parser.add_mutually_exclusive_group(required=True)
+    mode.add_argument("--ova-directory", type=Path)
+    mode.add_argument("--verify-existing", type=Path)
+    parser.add_argument("--hyperv-zip", type=Path)
+    parser.add_argument("--output", type=Path)
     parser.add_argument("--version", required=True)
     parser.add_argument("--commit", required=True)
     parser.add_argument("--source-metadata", type=Path, required=True)
-    parser.add_argument("--windows-smoke-evidence", type=Path, required=True)
+    parser.add_argument("--windows-smoke-evidence", type=Path)
     args = parser.parse_args(argv)
-    staged = stage(
-        ova_directory=args.ova_directory,
-        hyperv_zip=args.hyperv_zip,
-        output=args.output,
-        version=args.version,
-        commit=args.commit,
-        source_metadata=args.source_metadata,
-        windows_smoke_evidence=args.windows_smoke_evidence,
-    )
+    if args.verify_existing is not None:
+        if args.hyperv_zip is not None or args.output is not None:
+            parser.error("--verify-existing cannot be combined with staging outputs")
+        staged = verify_staged_candidate(
+            candidate=args.verify_existing,
+            version=args.version,
+            commit=args.commit,
+            source_metadata=args.source_metadata,
+        )
+    else:
+        if (
+            args.ova_directory is None
+            or args.hyperv_zip is None
+            or args.output is None
+            or args.windows_smoke_evidence is None
+        ):
+            parser.error(
+                "staging requires --ova-directory, --hyperv-zip, --output, "
+                "and --windows-smoke-evidence"
+            )
+        staged = stage(
+            ova_directory=args.ova_directory,
+            hyperv_zip=args.hyperv_zip,
+            output=args.output,
+            version=args.version,
+            commit=args.commit,
+            source_metadata=args.source_metadata,
+            windows_smoke_evidence=args.windows_smoke_evidence,
+        )
     print(json.dumps({"assets": staged, "count": len(staged)}, sort_keys=True))
     return 0
 

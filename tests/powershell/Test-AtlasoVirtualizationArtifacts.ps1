@@ -208,6 +208,10 @@ foreach ($required in @(
         'Always reconstruct the signed source',
         "'.software-release-download-' + [guid]::NewGuid().ToString('N')",
         'A retry never trusts retained pre-verification network bytes',
+        "'--verify-existing', `$candidate",
+        'Retained virtualization candidate verification failed',
+        'Published assets are immutable',
+        'Invoke-AtlasoVirtualizationPrereleaseFinalizer',
         'Assert-AtlasoVmwarePayloadProvenance -VmxPath $vmx',
         'The retained VMware image is incomplete and will be rebuilt',
         'Update-AtlasoVmwarePayloadProvenance',
@@ -234,6 +238,12 @@ foreach ($required in @(
     if (-not $releaseModule.Contains($required) -and -not $ovaExporter.Contains($required)) {
         throw "Virtualization release orchestration is missing required marker: $required"
     }
+}
+$candidateVerificationIndex = $releaseModule.IndexOf("'--verify-existing', `$candidate")
+$exportIndex = $releaseModule.IndexOf("'scripts\windows\vmware\export-ovf.ps1'")
+if ($candidateVerificationIndex -lt 0 -or $exportIndex -lt 0 -or
+    $candidateVerificationIndex -gt $exportIndex) {
+    throw 'Retained candidate verification must run before any OVA export on retry.'
 }
 foreach ($forbidden in @('--clobber', 'RELEASE_SIGNING_PRIVATE_KEY')) {
     if ($releaseModule.Contains($forbidden)) {

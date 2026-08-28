@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import hashlib
+import json
 import subprocess
 import sys
 from pathlib import Path
@@ -129,6 +131,75 @@ def test_refuses_stale_or_unrelated_staging_assets(tmp_path: Path) -> None:
         )
 
 
+def test_verifies_retained_complete_candidate_without_rebuilding(tmp_path: Path) -> None:
+    """A retry accepts only the exact previously smoked candidate bytes.
+
+    Args:
+        tmp_path: Temporary directory provided by pytest.
+    """
+
+    ova_root = tmp_path / "ova"
+    ova = _ova_package(ova_root)
+    hyperv = tmp_path / "atlaso-v0.9.216-hyperv-x86_64.zip"
+    hyperv.write_bytes(b"hyperv-package")
+    source = tmp_path / "virtualization-source.json"
+    source.write_text(
+        json.dumps(
+            {
+                "schema_version": 1,
+                "kind": "atlaso-virtualization-source",
+                "version": "0.9.216",
+                "source_commit": "a" * 40,
+                "source_software_tag": "v0.9.216",
+                "python_abi": "cp314",
+            }
+        ),
+        encoding="utf-8",
+    )
+    evidence = tmp_path / "windows-smoke-evidence.json"
+    evidence.write_text(
+        json.dumps(
+            {
+                "schema_version": 1,
+                "kind": "atlaso-windows-virtualization-smoke",
+                "version": "0.9.216",
+                "source_commit": "a" * 40,
+                "ova_sha256": hashlib.sha256(ova.read_bytes()).hexdigest(),
+                "hyperv_sha256": hashlib.sha256(hyperv.read_bytes()).hexdigest(),
+                "vmware": "success",
+                "hyperv": "success",
+            }
+        ),
+        encoding="utf-8",
+    )
+    output = tmp_path / "release"
+    staged = staging.stage(
+        ova_directory=ova_root,
+        hyperv_zip=hyperv,
+        output=output,
+        version="0.9.216",
+        commit="a" * 40,
+        source_metadata=source,
+        windows_smoke_evidence=evidence,
+    )
+
+    assert staging.verify_staged_candidate(
+        candidate=output,
+        version="0.9.216",
+        commit="a" * 40,
+        source_metadata=source,
+    ) == staged
+
+    (output / "atlaso-v0.9.216-hyperv-x86_64.zip").write_bytes(b"changed")
+    with pytest.raises(SystemExit, match="smoke evidence"):
+        staging.verify_staged_candidate(
+            candidate=output,
+            version="0.9.216",
+            commit="a" * 40,
+            source_metadata=source,
+        )
+
+
 def test_staging_command_is_directly_executable() -> None:
     """The workflow entry point resolves sibling release validation when run by path."""
 
@@ -141,3 +212,4 @@ def test_staging_command_is_directly_executable() -> None:
     )
     assert result.returncode == 0, result.stderr
     assert "--ova-directory" in result.stdout
+    assert "--verify-existing" in result.stdout

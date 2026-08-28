@@ -466,6 +466,43 @@ function Publish-AtlasoVirtualizationDraftAssets {
 
 <#
 .SYNOPSIS
+Dispatches protected prerelease finalization and verifies publication.
+.PARAMETER Repository
+GitHub name-with-owner.
+.PARAMETER Tag
+Exact virtualization prerelease tag.
+.PARAMETER Commit
+Exact admitted successful-main commit.
+.PARAMETER NoWait
+Return after workflow dispatch instead of waiting for publication.
+#>
+function Invoke-AtlasoVirtualizationPrereleaseFinalizer {
+    param(
+        [Parameter(Mandatory = $true)][string]$Repository,
+        [Parameter(Mandatory = $true)][string]$Tag,
+        [Parameter(Mandatory = $true)][string]$Commit,
+        [switch]$NoWait
+    )
+
+    Invoke-AtlasoReleaseWorkflow `
+        -Repository $Repository `
+        -Workflow 'virtualization-prerelease.yml' `
+        -DisplayTitle "Finalize $Tag" `
+        -Fields @("release_sha=$Commit", "prerelease_tag=$Tag") `
+        -TimeoutHours 2 `
+        -NoWait:$NoWait | Out-Null
+    if (-not $NoWait) {
+        $state = ((Invoke-AtlasoReleaseGh -Arguments @(
+            'release', 'view', $Tag, '--repo', $Repository, '--json', 'isDraft,isPrerelease'
+        )) -join [Environment]::NewLine) | ConvertFrom-Json
+        if ($state.isDraft -or -not $state.isPrerelease) {
+            throw "Successful hosted finalization did not publish $Tag as a prerelease."
+        }
+    }
+}
+
+<#
+.SYNOPSIS
 Creates, smokes, and stages one local virtualization prerelease.
 .PARAMETER RepoRoot
 Exact Atlaso checkout root.
@@ -577,6 +614,55 @@ function Invoke-AtlasoVirtualizationPrerelease {
         }
     }
     $source = Get-Content -LiteralPath $sourceMetadata -Raw | ConvertFrom-Json
+    $candidate = Join-Path $operation 'candidate'
+    $releaseState = $null
+    try {
+        $releaseState = ((Invoke-AtlasoReleaseGh -Arguments @(
+            'release', 'view', $tag, '--repo', $repository,
+            '--json', 'tagName,isDraft,isPrerelease'
+        )) -join [Environment]::NewLine) | ConvertFrom-Json
+    }
+    catch {
+        $releaseState = $null
+    }
+    if ($null -ne $releaseState -and
+        ($releaseState.tagName -cne $tag -or -not $releaseState.isPrerelease)) {
+        throw "Existing virtualization Release $tag is misclassified."
+    }
+    if ($null -ne $releaseState -and -not $releaseState.isDraft -and -not $CandidateOnly) {
+        $remoteTag = @(& git -C $RepoRoot ls-remote --tags origin "refs/tags/$tag" "refs/tags/$tag^{}")
+        if ($LASTEXITCODE -ne 0) {
+            throw "Could not inspect remote tag $tag."
+        }
+        $peeled = @($remoteTag | Where-Object { $_ -match '\^\{\}$' })
+        if ($peeled.Count -ne 1 -or ([string]$peeled[0] -split '\s+')[0] -ne $identity.Commit) {
+            throw "Remote tag $tag is not one annotated tag for the exact source commit."
+        }
+        # Published assets are immutable. A finalizer retry re-downloads and
+        # verifies those exact bytes, so rebuilding a nondeterministic OVA here
+        # would be both unnecessary and unsafe.
+        Invoke-AtlasoVirtualizationPrereleaseFinalizer `
+            -Repository $repository `
+            -Tag $tag `
+            -Commit $identity.Commit `
+            -NoWait:$NoWait
+        return $tag
+    }
+    $reuseCandidate = Test-Path -LiteralPath $candidate
+    if ($reuseCandidate) {
+        $verifyArguments = @(
+            (Join-Path $RepoRoot 'scripts\stage_virtualization_release.py'),
+            '--verify-existing', $candidate,
+            '--source-metadata', $sourceMetadata,
+            '--version', $identity.Version,
+            '--commit', $identity.Commit
+        )
+        & python @verifyArguments
+        if ($LASTEXITCODE -ne 0) {
+            throw 'Retained virtualization candidate verification failed.'
+        }
+    }
+    if (-not $reuseCandidate) {
     $buildRoot = Join-Path $operation 'vmware-build'
     $vmName = "Atlaso-Photon-Builder-VMware-$($identity.Version)"
     $vmx = Join-Path $buildRoot "$vmName.vmx"
@@ -724,7 +810,6 @@ function Invoke-AtlasoVirtualizationPrerelease {
         vmware = 'success'
         hyperv = 'success'
     } | ConvertTo-Json | Set-Content -LiteralPath $evidencePath -Encoding utf8NoBOM
-    $candidate = Join-Path $operation 'candidate'
     $stageArguments = @(
         (Join-Path $RepoRoot 'scripts\stage_virtualization_release.py'),
         '--ova-directory', $ovaRoot, '--hyperv-zip', $hypervZip[0].FullName,
@@ -734,6 +819,7 @@ function Invoke-AtlasoVirtualizationPrerelease {
     & python @stageArguments
     if ($LASTEXITCODE -ne 0) {
         throw 'Virtualization candidate staging failed.'
+    }
     }
     if ($CandidateOnly) {
         return $candidate
@@ -773,16 +859,6 @@ function Invoke-AtlasoVirtualizationPrerelease {
             throw "Remote tag $tag is not one annotated tag for the exact source commit."
         }
     }
-    $releaseState = $null
-    try {
-        $releaseState = ((Invoke-AtlasoReleaseGh -Arguments @(
-            'release', 'view', $tag, '--repo', $repository,
-            '--json', 'tagName,isDraft,isPrerelease'
-        )) -join [Environment]::NewLine) | ConvertFrom-Json
-    }
-    catch {
-        $releaseState = $null
-    }
     if ($null -eq $releaseState) {
         Invoke-AtlasoReleaseGh -Arguments @(
             'release', 'create', $tag, '--repo', $repository, '--draft', '--prerelease',
@@ -791,30 +867,17 @@ function Invoke-AtlasoVirtualizationPrerelease {
         ) | Out-Null
         Publish-AtlasoVirtualizationDraftAssets -Repository $repository -Tag $tag -AssetDirectory $candidate
     }
-    elseif ($releaseState.tagName -cne $tag -or -not $releaseState.isPrerelease) {
-        throw "Existing virtualization Release $tag is misclassified."
-    }
     elseif ($releaseState.isDraft) {
         Publish-AtlasoVirtualizationDraftAssets -Repository $repository -Tag $tag -AssetDirectory $candidate
     }
     # A published prerelease may need hosted attestation or live-verification
     # recovery. Its immutable assets are left untouched while the idempotent
     # protected finalizer is dispatched again.
-    Invoke-AtlasoReleaseWorkflow `
+    Invoke-AtlasoVirtualizationPrereleaseFinalizer `
         -Repository $repository `
-        -Workflow 'virtualization-prerelease.yml' `
-        -DisplayTitle "Finalize $tag" `
-        -Fields @("release_sha=$($identity.Commit)", "prerelease_tag=$tag") `
-        -TimeoutHours 2 `
-        -NoWait:$NoWait | Out-Null
-    if (-not $NoWait) {
-        $state = ((Invoke-AtlasoReleaseGh -Arguments @(
-            'release', 'view', $tag, '--repo', $repository, '--json', 'isDraft,isPrerelease'
-        )) -join [Environment]::NewLine) | ConvertFrom-Json
-        if ($state.isDraft -or -not $state.isPrerelease) {
-            throw "Successful hosted finalization did not publish $tag as a prerelease."
-        }
-    }
+        -Tag $tag `
+        -Commit $identity.Commit `
+        -NoWait:$NoWait
     return $tag
 }
 
