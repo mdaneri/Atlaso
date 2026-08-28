@@ -5014,6 +5014,22 @@ runtime.</p>
   artifact removal, and data-disk restoration before
   1Password preflight or any new mutation. Persist the
   stopped/scrubbed phase before artifact removal so a retry can safely resume restoration from an absent artifact root.
+  The VMware Photon image wrapper uses that same pinned selector and bounded SDK/DPAPI credential foundation. For each
+  omitted <code>-SshPassword</code> or <code>-BootstrapAdminPassword</code>, retrieve only the exact concealed <code>DEFAULT_ROOT_PASSWORD</code> or
+  <code>DEFAULT_ADMIN_PASSWORD</code>, while preserving each explicit <code>SecureString</code> independently. Complete Environment,
+  account, SDK, uniqueness, concealment, value, and cleanup preflight before network discovery or preparation, output
+  cleanup, ISO remastering, Packer initialization, or any other image mutation. Keep plaintext out of the PowerShell
+  parent, arguments, caller environment, durable files, output, logs, Packer diagnostics, and provenance, and preserve
+  exact-byte validation plus sensitive kickstart, ISO, and Packer-variable cleanup. Run the complete
+  plaintext-consuming image workflow in a separately bounded PowerShell child; the parent may pass only current-user
+  DPAPI ciphertext. Place every plaintext kickstart, remastered ISO, and Packer variable artifact inside the exact
+  task-owned child root, and require the parent to remove and verify that root after ordinary exit or whole-tree
+  termination so a killed child cannot bypass sensitive cleanup. If whole-tree termination is unproven, retain the
+  exact root plus a non-secret cleanup marker, block same-boot reuse, and permit exact-root cleanup only after a changed
+  Windows boot identity proves the prior tree inactive; remove the marker only after root absence is verified. Apply
+  the same boot-bound recovery ownership to the shared SDK credential bridge. Durably publish each marker with
+  write-through file and rename semantics before starting a child that can consume plaintext, then durably transition
+  through root absence and a non-actionable retired tombstone before deleting the marker.
   Before persisting rollback state, reject configured data disks that repeat the same descriptor, hard-linked alias, or
   shared extent by filesystem identity. Before deleting a completed marker, write-through transition it to a
   non-actionable tombstone so a post-crash

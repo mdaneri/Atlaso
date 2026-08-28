@@ -4237,9 +4237,35 @@ is attached as a local remastered ISO instead of depending on early installer ne
 </span><span id="__span-2-2"><a id="__codelineno-2-2" name="__codelineno-2-2" href="#__codelineno-2-2"></a>  <span class="o">-File</span> <span class="n">scripts</span><span class="p">/</span><span class="n">windows</span><span class="p">/</span><span class="n">vmware</span><span class="p">/</span><span class="n">build-photon-image</span><span class="p">.</span><span class="n">ps1</span> <span class="p">`</span>
 </span><span id="__span-2-3"><a id="__codelineno-2-3" name="__codelineno-2-3" href="#__codelineno-2-3"></a>  <span class="n">-IsoUrl</span> <span class="s2">&quot;https://packages.broadcom.com/photon/5.0/GA/iso/photon-5.0-dde71ec57.x86_64.iso&quot;</span> <span class="p">`</span>
 </span><span id="__span-2-4"><a id="__codelineno-2-4" name="__codelineno-2-4" href="#__codelineno-2-4"></a>  <span class="n">-IsoChecksum</span> <span class="s2">&quot;sha512:6a7a258399a258da742032987c043ab25503698d35edafaf1ae000f12127da1a161d8b84caa17fd8f23d129e81e1faa7ab087c20ab9229772a643f8f9475305f&quot;</span> <span class="p">`</span>
-</span><span id="__span-2-5"><a id="__codelineno-2-5" name="__codelineno-2-5" href="#__codelineno-2-5"></a>  <span class="n">-SshPassword</span> <span class="s2">&quot;&lt;one-time-build-root-password&gt;&quot;</span> <span class="p">`</span>
-</span><span id="__span-2-6"><a id="__codelineno-2-6" name="__codelineno-2-6" href="#__codelineno-2-6"></a>  <span class="n">-BootstrapAdminPassword</span> <span class="s2">&quot;&lt;initial-atlaso-admin-password&gt;&quot;</span>
+</span><span id="__span-2-5"><a id="__codelineno-2-5" name="__codelineno-2-5" href="#__codelineno-2-5"></a>  <span class="n">-OnePasswordAccount</span> <span class="s2">&quot;&lt;approved-account-name-or-id&gt;&quot;</span> <span class="p">`</span>
+</span><span id="__span-2-6"><a id="__codelineno-2-6" name="__codelineno-2-6" href="#__codelineno-2-6"></a>  <span class="n">-OnePasswordPython</span> <span class="s2">&quot;&lt;python-3.10-through-3.13&gt;&quot;</span>
 </span></code></pre></div>
+<p>The wrapper resolves an explicit <code>-OnePasswordEnvironmentId</code> first and otherwise reads the only line from the
+checkout-local, Git-ignored <code>.atlaso-local/onepassword-environment-id</code>; use <code>-EnvironmentIdFile</code> for another selector
+file. When <code>-SshPassword</code> and/or <code>-BootstrapAdminPassword</code> is omitted, it retrieves only the corresponding exact,
+unique, concealed <code>DEFAULT_ROOT_PASSWORD</code> and/or <code>DEFAULT_ADMIN_PASSWORD</code> through the supported bounded Windows
+1Password SDK desktop integration. Both explicit parameters accept <code>SecureString</code> and override their own Environment
+default independently. Caller <code>DEFAULT_*</code> variables, local <code>.env</code> files, repository password defaults, interactive
+prompts, ambiguous or non-concealed variables, and invalid values are rejected. The child returns only current-user
+DPAPI ciphertext, and its task-owned files are removed before network preparation, output cleanup, ISO remastering,
+Packer initialization, or other image mutation. Sanitized failures do not print the Environment ID, account input, or
+credential values. The parent then launches the complete plaintext-consuming image workflow in a separately bounded
+PowerShell child, passes only a second current-user DPAPI bundle, and verifies bundle removal afterward. Only that
+child unwraps values for kickstart and Packer serialization. All plaintext kickstart, remastered ISO, and Packer
+variable artifacts live under that exact task-owned root. The parent creates the child suspended, assigns its Windows
+process job, and resumes it only after every future Packer or plugin descendant is bound to that job. Both ordinary
+child exit and deadline termination require job accounting to report zero active processes. A proven deadline then
+applies checked exact-output cleanup when the selected policy owns replacement output and removes and verifies the
+sensitive root even when the child could not run its own cleanup. The default six-hour deadline is configurable through
+<code>-ImageBuildTimeoutSeconds</code>.
+An unproven whole-tree termination retains that root and a non-secret checkout-local ownership marker. Same-boot
+invocations fail closed; after Windows restarts, the changed boot identity proves the prior tree inactive and recovery
+removes the exact root followed by its marker before new credential or image work. Ordinary completion requires the
+reloaded marker root to equal the in-memory task-created root before recursive removal.
+The shared SDK bridge uses the same boot-bound ownership. Marker bytes and atomic publication are write-through durable
+before plaintext consumption. After root deletion, the parent flushes directory metadata through the root parent's
+Windows handle on that same volume before durable <code>root-absent</code> and <code>retired</code> transitions precede marker deletion, so
+cross-volume crash recovery cannot mistake a resurrected marker or root for active secret material.</p>
 <p>The supported VMware Workstation wrapper treats the Photon build password as opaque data. It encodes the
 credential before inserting it into generated kickstart or Packer shell commands, then decode it directly to standard
 input. Printable passwords containing apostrophes and common PowerShell or POSIX shell metacharacters therefore retain
@@ -4253,10 +4279,13 @@ sensitive artifact: the wrapper removes it and verifies its absence after Packer
 paths. ISO-only preparation is rejected because retaining the remastered ISO would retain a reusable build credential.
 Build runs pass Packer's <code>-force</code>
 flag by default so the fixed output directory can be rebuilt in one command. Use <code>-OutputDirectory &lt;path&gt;</code> to keep
-multiple artifacts or <code>-KeepExistingOutput</code> when you want Packer to fail instead of replacing an existing output
-directory. Use <code>-PackerOnError abort</code> to keep a failed builder VM for debugging, or <code>-PackerOnError ask</code> to choose the
-failure action interactively. During provisioning, the shared Photon path reads <code>[project].version</code> from the staged
-<code>pyproject.toml</code> with Python's TOML parser and validates the repository's strict <code>X.Y.Z</code> release format before creating
+multiple artifacts or <code>-KeepExistingOutput</code> when you want Packer to fail instead of replacing an output directory that
+already existed before the build. Without that switch, the child durably claims a pre-existing root only after network
+preparation and immediately before checked removal, so an earlier outer timeout preserves it. A new partial output
+created by the current invocation remains cleanup-owned after a proven outer timeout. Use <code>-PackerOnError abort</code> to
+keep a failed builder VM for debugging, or <code>-PackerOnError ask</code> to
+choose the failure action interactively. During provisioning, the shared Photon path reads <code>[project].version</code> from the
+staged <code>pyproject.toml</code> with Python's TOML parser and validates the repository's strict <code>X.Y.Z</code> release format before creating
 the bootstrap release directory. Missing, unreadable, malformed, or invalid version metadata fails the build with the
 specific version-policy error instead of an ambiguous shell match failure. The Photon Packer target stages
 <code>requirements-appliance.lock</code> with the application source so bootstrap dependency installation can retain
@@ -5126,9 +5155,12 @@ deployed-behavior development and canonical lifecycle evidence on VMware Worksta
 appliance provisioning. The original Photon source ISO cache is under <code>image/common/source</code>. The canonical image
 installs VMware Tools and stages locked offline RPM closures for the QEMU and Hyper-V guest agents. A provider-neutral
 first-boot service verifies the closure and retains or replaces VMware Tools only after identifying the runtime platform.</p>
-<p>The supported GUI wrapper starts or reuses a responsive VMware Workstation UI in a separate process before Packer asks
-<code>vmrun</code> to power on the builder. This keeps the visible console without allowing the GUI start transition to retain
-Packer's redirected output handles after the VM is already live. Sanitized startup heartbeats bind provider inventory,
+<p>The supported GUI wrapper starts or reuses a responsive VMware Workstation UI from the parent before creating the
+bounded image-build child, then verifies that exact UI immediately before Packer asks <code>vmrun</code> to power on the builder.
+This keeps the visible console without allowing the GUI start transition to retain Packer's redirected output handles
+after the VM is already live. The sensitive Job Object permits no breakaway, so Packer, plugins, and VM consumers remain
+bound to it.
+Sanitized startup heartbeats bind provider inventory,
 running state, and TCP/22 reachability to the expected VMX filesystem identity until SSH provisioning begins. The
 default 2700-second start-to-provisioning timeout matches Packer's 45-minute SSH communicator allowance and performs
 checked exact-root cleanup only for
