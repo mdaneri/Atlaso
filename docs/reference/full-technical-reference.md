@@ -239,6 +239,8 @@ The supported VMware Workstation wrapper treats the Photon build password as opa
 credential before inserting it into generated kickstart or Packer shell commands, then decode it directly to standard
 input. Printable passwords containing apostrophes and common PowerShell or POSIX shell metacharacters therefore retain
 their exact credential bytes without becoming shell syntax. Caller-side PowerShell quoting still applies.
+The parent loads its local output-directory and `vmrun` resolvers before credential preflight so path validation and
+the optional Workstation GUI handoff cannot fail because a checked-in helper has not yet been declared.
 
 Run the wrapper from PowerShell 7 with VMware Workstation installed. It resolves the selected VMware management network
 before changing build output. The wrapper writes `photon-ks.json`, embeds it into a remastered Photon ISO, replaces the

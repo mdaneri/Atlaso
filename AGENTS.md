@@ -272,7 +272,9 @@ update affected pages and media manifests whenever behavior or UI changes. Follo
 
 Every new or changed PowerShell script or module must provide comment-based help at file/module scope and for every
 function, including nested helpers. Include a concise `.SYNOPSIS`, document every declared parameter with `.PARAMETER`,
-and add rationale comments for non-obvious safety ordering, trust boundaries, and platform behavior. Run
+and keep exactly one canonical help block per script, module, or function; never stack a generated help block beside the
+purpose-specific block. Add rationale comments for non-obvious safety ordering, trust boundaries, and platform
+behavior. Run
 `scripts/check_powershell_help.ps1` against the base checkout; the incremental gate requires complete compliance for
 each touched PowerShell file without forcing unrelated legacy rewrites. Install PSScriptAnalyzer `1.25.0` and run
 `scripts/check_powershell_analysis.ps1`; every tracked PowerShell source must pass the repository profile. Real password

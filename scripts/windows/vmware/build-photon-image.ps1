@@ -305,6 +305,63 @@ function Invoke-AtlasoPhotonBuildCleanupRecovery {
     }
 }
 
+<#
+.SYNOPSIS
+Resolve the VMware Workstation vmrun executable.
+.PARAMETER Path
+Optional explicit executable path.
+#>
+function Resolve-WorkstationVmrunPath {
+    param([string]$Path)
+
+    if ($Path) {
+        if (-not (Test-Path -LiteralPath $Path)) {
+            throw "vmrun.exe not found: $Path"
+        }
+        return (Resolve-Path -LiteralPath $Path).Path
+    }
+
+    $candidates = @(
+        'C:\Program Files\VMware\VMware Workstation\vmrun.exe',
+        'C:\Program Files (x86)\VMware\VMware Workstation\vmrun.exe'
+    )
+    foreach ($candidate in $candidates) {
+        if (Test-Path -LiteralPath $candidate) {
+            return $candidate
+        }
+    }
+
+    $command = Get-Command vmrun -ErrorAction SilentlyContinue
+    if ($command) {
+        return $command.Source
+    }
+    throw 'vmrun.exe was not found. Install VMware Workstation Pro or pass -VmrunPath.'
+}
+
+<#
+.SYNOPSIS
+Resolve the guarded VMware build output directory.
+.PARAMETER PackerDirectory
+VMware Packer template directory.
+.PARAMETER OutputDirectory
+Optional explicit artifact directory.
+#>
+function Resolve-WorkstationOutputDirectory {
+    param(
+        [Parameter(Mandatory = $true)][string]$PackerDirectory,
+        [string]$OutputDirectory
+    )
+
+    $effectiveOutput = if ([string]::IsNullOrWhiteSpace($OutputDirectory)) {
+        Join-Path $PackerDirectory 'output\atlaso-photon-vmware-workstation'
+    } elseif ([System.IO.Path]::IsPathRooted($OutputDirectory)) {
+        $OutputDirectory
+    } else {
+        Join-Path $PackerDirectory $OutputDirectory
+    }
+    return $ExecutionContext.SessionState.Path.GetUnresolvedProviderPathFromPSPath($effectiveOutput)
+}
+
 $repoRoot = (Resolve-Path -LiteralPath (Join-Path $PSScriptRoot '..\..\..')).Path
 $cleanupMarkerPath = Join-Path $repoRoot '.atlaso-local\photon-image-build-cleanup.json'
 if ($CredentialChild) {
@@ -707,63 +764,6 @@ function Get-Ipv4AddressFromSubnetOffset {
     )
 
     return (Get-Ipv4CidrFromSubnetOffset -Subnet $Subnet -Netmask $Netmask -HostOffset $HostOffset) -split '/', 2 | Select-Object -First 1
-}
-
-<#
-.SYNOPSIS
-Resolve the VMware Workstation vmrun executable.
-.PARAMETER Path
-Optional explicit executable path.
-#>
-function Resolve-WorkstationVmrunPath {
-    param([string]$Path)
-
-    if ($Path) {
-        if (-not (Test-Path -LiteralPath $Path)) {
-            throw "vmrun.exe not found: $Path"
-        }
-        return (Resolve-Path -LiteralPath $Path).Path
-    }
-
-    $candidates = @(
-        'C:\Program Files\VMware\VMware Workstation\vmrun.exe',
-        'C:\Program Files (x86)\VMware\VMware Workstation\vmrun.exe'
-    )
-    foreach ($candidate in $candidates) {
-        if (Test-Path -LiteralPath $candidate) {
-            return $candidate
-        }
-    }
-
-    $command = Get-Command vmrun -ErrorAction SilentlyContinue
-    if ($command) {
-        return $command.Source
-    }
-    throw 'vmrun.exe was not found. Install VMware Workstation Pro or pass -VmrunPath.'
-}
-
-<#
-.SYNOPSIS
-Resolve the guarded VMware build output directory.
-.PARAMETER PackerDirectory
-VMware Packer template directory.
-.PARAMETER OutputDirectory
-Optional explicit artifact directory.
-#>
-function Resolve-WorkstationOutputDirectory {
-    param(
-        [Parameter(Mandatory = $true)][string]$PackerDirectory,
-        [string]$OutputDirectory
-    )
-
-    $effectiveOutput = if ([string]::IsNullOrWhiteSpace($OutputDirectory)) {
-        Join-Path $PackerDirectory 'output\atlaso-photon-vmware-workstation'
-    } elseif ([System.IO.Path]::IsPathRooted($OutputDirectory)) {
-        $OutputDirectory
-    } else {
-        Join-Path $PackerDirectory $OutputDirectory
-    }
-    return $ExecutionContext.SessionState.Path.GetUnresolvedProviderPathFromPSPath($effectiveOutput)
 }
 
 <#

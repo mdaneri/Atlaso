@@ -241,9 +241,10 @@ must not fall back to custom interactive native tables; retain semantic tables o
 ## PowerShell contributions
 
 Every new or changed `.ps1` or `.psm1` file must use comment-based help at file/module scope and before every function,
-including nested helpers. Provide a concise `.SYNOPSIS` and one `.PARAMETER` entry for every declared parameter. Add
-ordinary comments where they preserve non-obvious intent, safety ordering, trust boundaries, or platform-specific
-reasoning; comments should explain why the code is structured that way rather than restating the command.
+including nested helpers. Provide a concise `.SYNOPSIS` and one `.PARAMETER` entry for every declared parameter. Keep
+exactly one canonical help block for each script, module, or function; adjacent generated and purpose-specific help
+blocks are invalid. Add ordinary comments where they preserve non-obvious intent, safety ordering, trust boundaries, or
+platform-specific reasoning; comments should explain why the code is structured that way rather than restating the command.
 
 Run `pwsh -NoProfile -File scripts/check_powershell_help.ps1 -BaseRoot <base-checkout>` before committing PowerShell
 changes. CI compares the candidate with the exact pull-request base, so untouched legacy files remain valid until their

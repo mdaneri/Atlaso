@@ -99,7 +99,15 @@ def test_photon_wrapper_preflights_credentials_before_image_mutation() -> None:
     assert "$outerCleanupOutputExistedBeforeChild = Test-Path" in wrapper
     assert "Test-Path -LiteralPath $childOutputCleanupClaimPath -PathType Leaf" in wrapper
     assert "output-cleanup-claimed.json" in wrapper
-    assert wrapper.index("$outerCleanupOutputDirectory = Resolve-WorkstationOutputDirectory") < wrapper.index(
+    parent_output_resolution = wrapper.index(
+        "$outerCleanupOutputDirectory = Resolve-WorkstationOutputDirectory"
+    )
+    parent_vmrun_resolution = wrapper.index(
+        "$parentVmrunPath = Resolve-WorkstationVmrunPath -Path $VmrunPath"
+    )
+    assert wrapper.index("function Resolve-WorkstationOutputDirectory {") < parent_output_resolution
+    assert wrapper.index("function Resolve-WorkstationVmrunPath {") < parent_vmrun_resolution
+    assert parent_output_resolution < wrapper.index(
         "Write-AtlasoDurableJsonFile -Path $cleanupMarkerPath"
     )
     output_claim = "Write-AtlasoDurableJsonFile -Path $resolvedOutputCleanupClaimPath"
