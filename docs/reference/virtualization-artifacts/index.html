@@ -3795,6 +3795,15 @@ retired Hyper-V template-build and lifecycle environment is not restored.</p>
 <p>The protected smoke jobs retrieve each booted VM's regenerated Ed25519 public host key and unique credential through
 its authenticated hypervisor metadata channel before SSH authentication. They reject an unknown or changed host and
 never use trust-on-first-use host-key acceptance. Artifact provenance intentionally contains no reusable host identity.</p>
+<p>Each smoke also captures both provider-side NIC identities before probing the guest. Hyper-V binds the address to the
+named <strong>Management</strong> adapter and its exact switch, KVM and Proxmox match QEMU guest-agent interface data to the
+management MAC from the ordered provider topology, and VMware resolves <code>ethernet0</code> only through its mapped management
+vmnet and exact MAC. On a clean Windows runner, the VMware smoke uses the exact management MAC to obtain DHCP lease
+candidates and sends an interface-scoped probe to populate neighbor evidence; a lease is never accepted without the
+matching management-vmnet neighbor entry. Services-first enumeration cannot choose the probe target. Missing, duplicate,
+mismatched, or
+changing management MAC/address evidence fails the smoke run before the SSH or <code>/openapi.json</code> result is accepted, and
+the same binding is revalidated after reboot.</p>
 <h2 id="validate-and-recover">Validate and recover<a class="headerlink" href="#validate-and-recover" title="Permanent link">&para;</a></h2>
 <p>After first boot, verify all of the following before adopting the VM:</p>
 <ul>
