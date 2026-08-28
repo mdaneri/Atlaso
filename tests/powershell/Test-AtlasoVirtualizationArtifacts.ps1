@@ -19,8 +19,12 @@ $importerPath = Join-Path $RepositoryRoot 'scripts\windows\virtualization\templa
 $hyperVSmokePath = Join-Path $RepositoryRoot 'scripts\windows\virtualization\smoke-hyperv.ps1'
 $vmwareSmokePath = Join-Path $RepositoryRoot 'scripts\windows\virtualization\smoke-ova-vmware.ps1'
 $ovaExporterPath = Join-Path $RepositoryRoot 'scripts\windows\vmware\export-ovf.ps1'
+$releaseModulePath = Join-Path $RepositoryRoot 'scripts\windows\virtualization\Atlaso.VirtualizationRelease.psm1'
+$prereleaseWorkflowPath = Join-Path $RepositoryRoot '.github\workflows\virtualization-prerelease.yml'
+$stableWorkflowPath = Join-Path $RepositoryRoot '.github\workflows\virtualization-stable.yml'
 Import-Module $modulePath -Force
 Import-Module $smokeIdentityModulePath -Force
+Import-Module $releaseModulePath -Force
 
 $head = [string](& git -C $RepositoryRoot rev-parse HEAD)
 if ($LASTEXITCODE -ne 0 -or $head -notmatch '^[0-9a-f]{40}$') {
@@ -174,9 +178,67 @@ $module = Get-Content -Raw -LiteralPath $modulePath
 $ovaExporter = Get-Content -Raw -LiteralPath $ovaExporterPath
 $hyperVSmoke = Get-Content -Raw -LiteralPath $hyperVSmokePath
 $vmwareSmoke = Get-Content -Raw -LiteralPath $vmwareSmokePath
+$releaseModule = Get-Content -Raw -LiteralPath $releaseModulePath
+$prereleaseWorkflow = Get-Content -Raw -LiteralPath $prereleaseWorkflowPath
+$stableWorkflow = Get-Content -Raw -LiteralPath $stableWorkflowPath
 if ($vmwareSmoke.Contains('"--prop:atlaso.admin_password=$passwordText"') -or
     $vmwareSmoke.Contains('"--prop:atlaso.root_password=$passwordText"')) {
     throw 'VMware smoke still exposes the disposable credential through OVF Tool process arguments.'
+}
+try {
+    Resolve-AtlasoVirtualizationStagingDirectory -StagingRoot 'relative\release' -Tag 'virtualization-v0.9.237-rc.1' | Out-Null
+    throw 'A relative virtualization staging root was accepted.'
+}
+catch {
+    if ($_.Exception.Message -eq 'A relative virtualization staging root was accepted.') { throw }
+}
+foreach ($required in @(
+        '[string]$PrereleaseIdentifier',
+        '[string]$StagingRoot',
+        '[string]$FromPrerelease',
+        '[switch]$CandidateOnly',
+        'Invoke-AtlasoVirtualizationPrerelease',
+        'Invoke-AtlasoVirtualizationStablePromotion',
+        'PrereleaseIdentifier must be an explicit rc.N',
+        "'release', 'create', `$tag",
+        "'--verify-tag'",
+        "'release', 'upload', `$Tag",
+        'already contains different bytes',
+        "'workflow', 'run', 'virtualization-prerelease.yml'",
+        "'workflow', 'run', 'virtualization-stable.yml'"
+    )) {
+    if (-not $releaseModule.Contains($required) -and -not $ovaExporter.Contains($required)) {
+        throw "Virtualization release orchestration is missing required marker: $required"
+    }
+}
+foreach ($forbidden in @('--clobber', 'RELEASE_SIGNING_PRIVATE_KEY')) {
+    if ($releaseModule.Contains($forbidden)) {
+        throw "The Windows producer crosses a protected publication boundary: $forbidden"
+    }
+}
+foreach ($required in @(
+        'environment: appliance-release',
+        '--classification prerelease',
+        'gh release edit "$RELEASE_TAG" --draft=false --prerelease --verify-tag'
+    )) {
+    if (-not $prereleaseWorkflow.Contains($required)) {
+        throw "The hosted prerelease finalizer is missing required marker: $required"
+    }
+}
+foreach ($required in @(
+        'runs-on: [self-hosted, Linux, X64',
+        'actions: read',
+        'contents: read',
+        '--classification stable',
+        'cmp --silent',
+        'gh attestation verify'
+    )) {
+    if (-not $stableWorkflow.Contains($required)) {
+        throw "Stable virtualization promotion is missing required marker: $required"
+    }
+}
+if ($prereleaseWorkflow.Contains('gh-pages') -or $stableWorkflow.Contains('gh-pages')) {
+    throw 'A virtualization workflow may not mutate the appliance update site.'
 }
 foreach ($required in @(
         "Name -notmatch '^[A-Za-z0-9][A-Za-z0-9_.-]{0,63}$'",

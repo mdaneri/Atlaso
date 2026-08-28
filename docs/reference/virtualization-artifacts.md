@@ -13,6 +13,12 @@ Atlaso builds and validates one appliance template with VMware Workstation. A re
 canonical OVA for VMware, Proxmox VE, and KVM, plus one Hyper-V ZIP converted from the same OVA payload. The import
 helpers normalize target-specific VM configuration without changing the source OVA.
 
+Virtualization has its own immutable Release namespace. A maintainer's existing Windows workstation creates and smokes
+`virtualization-vX.Y.Z-rc.N`; a protected GitHub-hosted job signs and publishes it. Manual stable promotion runs that
+exact prerelease OVA on Proxmox and KVM before publishing the unchanged OVA and Hyper-V bytes as
+`virtualization-vX.Y.Z`. The software/update `vX.Y.Z` Release is the required source of the embedded wheel and CPython
+3.14 wheelhouse, but never contains virtualization assets.
+
 The shared machine contract is UEFI with Secure Boot disabled, four virtual CPUs, 4096 MiB RAM, two NICs, one SCSI
 controller, and four ordered disks:
 
@@ -33,7 +39,7 @@ release key ID is `atlaso-release-2026-01`; its SHA-256 fingerprint is
 signature, expected version, and every indexed asset before import:
 
 ```bash
-TAG=vX.Y.Z
+TAG=virtualization-vX.Y.Z
 ASSET_ROOT="atlaso-$TAG"
 mkdir -- "$ASSET_ROOT"
 gh release download "$TAG" --repo mdaneri/Atlaso --dir "$ASSET_ROOT"
@@ -42,9 +48,13 @@ curl --fail --location --output "$ASSET_ROOT/atlaso-release-2026-01.pem" \
 printf '%s  %s\n' \
   'b0bb5614342c4f432a01c53fc4c9aae54c1eeffb12806539a92babbcda74b58e' \
   "$ASSET_ROOT/atlaso-release-2026-01.pem" | sha256sum --check --strict
-jq -e --arg version "${TAG#v}" '
-  .schema_version == 1 and .kind == "atlaso-virtualization-artifacts" and
+jq -e --arg version "${TAG#virtualization-v}" --arg tag "$TAG" '
+  .schema_version == 2 and .kind == "atlaso-virtualization-artifacts" and
+  .classification == "stable" and .release_tag == $tag and
+  .source_software_tag == ("v" + $version) and
   .version == $version and .signing_key_id == "atlaso-release-2026-01" and
+  (.source_release_manifest_sha256 | test("^[0-9a-f]{64}$")) and
+  (.application_wheel_sha256 | test("^[0-9a-f]{64}$")) and
   (.source_commit | test("^[0-9a-f]{40}$")) and
   (.assets | type == "array" and length > 0 and
     all(.[]; (.name | test("^[A-Za-z0-9][A-Za-z0-9._-]*$")) and
@@ -235,16 +245,39 @@ and storage owned by that import attempt, correct the host prerequisite, and run
 
 ## Protected release runners
 
-Virtualization release jobs run only for the exact protected-main commit selected by the release workflow. The runner
-fleet must provide the dedicated `atlaso-vmware`, `atlaso-proxmox`, `atlaso-kvm`, and `atlaso-hyperv` labels; do not
-attach those labels to general-purpose or fork-accessible runners. Build credentials are disposable values generated
-inside the protected build job and are scrubbed before export. Define the repository variables named by
-`.github/workflows/release.yml` for VMware vmnets, Proxmox storage and bridges, KVM storage and networks, Hyper-V
-switches, and bounded test destinations.
+The primary Windows producer is a maintainer workstation, not a permanent GitHub runner. From a clean checkout of the
+successful software-release SHA, run:
 
-The VMware build runner requires Workstation, Packer, OVF Tool, and the existing Photon build prerequisites. The
-Proxmox and KVM runners require the same host tools listed in their import sections. The Hyper-V runner requires
-PowerShell 7.4 or newer, Hyper-V, `qemu-img`, and two operator-owned virtual switches. Every smoke identity and storage
+```powershell
+./scripts/windows/vmware/export-ovf.ps1 -Prerelease `
+  -PrereleaseIdentifier rc.1 `
+  -StagingRoot 'D:\Atlaso-Releases' `
+  -ManagementSwitch 'Atlaso Management' `
+  -ServiceSwitch 'Atlaso Services'
+```
+
+The command verifies and extracts the exact published software bundle, builds the canonical VMware template, derives
+Hyper-V from that OVA, runs both Windows smokes, creates the annotated tag before the draft Release, uploads without
+clobbering, and waits for hosted signing and publication. Keep `StagingRoot` until stable verification; cleanup is a
+separate explicit operator action. A conflicting candidate requires a new explicit `rc.N`.
+
+Stable promotion never rebuilds:
+
+```powershell
+./scripts/windows/vmware/export-ovf.ps1 -Release `
+  -FromPrerelease virtualization-vX.Y.Z-rc.1 `
+  -ProxmoxRunnerLabel atlaso-proxmox-virtualization-vX-Y-Z-rc-1 `
+  -KvmRunnerLabel atlaso-kvm-virtualization-vX-Y-Z-rc-1
+```
+
+Bring the uniquely labelled Proxmox and KVM `--ephemeral` runners online only for that approved promotion, then destroy
+or sanitize them after the job. They receive read-only Actions/contents permissions, no signing secret, and no
+write-capable token. Define the repository variables named by `.github/workflows/virtualization-stable.yml` for storage
+and networks. Signing and Release writes occur only in the protected GitHub-hosted finalizer.
+
+The workstation requires PowerShell 7.4 or newer, VMware Workstation, Packer, OVF Tool, Hyper-V, `qemu-img`, and two
+operator-owned virtual switches. The Proxmox and KVM runners require the host tools listed in their import sections.
+Every smoke identity and storage
 namespace is invocation-scoped: VMware generates a disposable per-run password, Proxmox serializes each VMID import,
 passes it to OVF Tool through a runner-only temporary configuration file instead of process arguments, and deletes that
 file immediately after import. Proxmox serializes each VMID import, and cleanup failures fail the active smoke job
@@ -255,6 +288,12 @@ rollback requires a final inventory proving its fixed VMID absent. Hyper-V
 cleanup removes only a VM whose exact ID was captured after successful import; an indeterminate import preserves files
 for diagnosis rather than claiming a later name match. KVM rollback preserves every imported volume unless a successful
 libvirt inventory proves that the exact domain is absent. Every smoke identity and storage namespace must be dedicated to
-CI so cleanup can remain limited to resources created by that invocation. Release
-publication waits for all four platform smoke tests and refuses an asset at or above the repository's existing 2 GiB
-limit rather than producing multipart output.
+the release invocation so cleanup can remain limited to resources created by that invocation. Stable publication waits
+for both Linux platform smokes and refuses an asset at or above the repository's existing 2 GiB limit rather than
+producing multipart output.
+
+As an optional alternative, **Produce virtualization candidate on ephemeral Windows** runs the same producer with
+`-CandidateOnly` on a uniquely labelled temporary Windows runner. The Windows job has read-only repository authority
+and no signing material. A GitHub-hosted job alone creates the annotated tag and draft, then calls the same protected
+hosted prerelease finalizer. Keep that runner offline except for an approved default-branch dispatch and destroy or
+sanitize it after its single `--ephemeral` job.

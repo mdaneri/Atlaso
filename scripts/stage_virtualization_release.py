@@ -58,7 +58,9 @@ def _ordinary_asset(path: Path, label: str) -> Path:
         raise SystemExit(f"{label} must be an ordinary file, not a symlink: {path}")
     size = path.stat().st_size
     if size <= 0 or size >= MAXIMUM_GITHUB_ASSET_BYTES:
-        raise SystemExit(f"{label} is empty or exceeds the GitHub asset limit: {path.name}")
+        raise SystemExit(
+            f"{label} is empty or exceeds the GitHub asset limit: {path.name}"
+        )
     return path.resolve(strict=True)
 
 
@@ -71,12 +73,37 @@ def _copy_exact(source: Path, destination: Path) -> None:
     """
 
     if destination.exists() or destination.is_symlink():
-        if not destination.is_file() or destination.is_symlink() or _sha256(source) != _sha256(destination):
-            raise SystemExit(f"release staging destination already contains different bytes: {destination.name}")
+        if (
+            not destination.is_file()
+            or destination.is_symlink()
+            or _sha256(source) != _sha256(destination)
+        ):
+            raise SystemExit(
+                f"release staging destination already contains different bytes: {destination.name}"
+            )
         return
     shutil.copy2(source, destination)
     if _sha256(source) != _sha256(destination):
-        raise SystemExit(f"release staging copy verification failed: {destination.name}")
+        raise SystemExit(
+            f"release staging copy verification failed: {destination.name}"
+        )
+
+
+def _json_object(path: Path, label: str) -> dict[str, object]:
+    """Load one candidate evidence document as a JSON object.
+
+    Args:
+        path: Evidence path.
+        label: Human-readable evidence role.
+    """
+
+    try:
+        value = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, UnicodeDecodeError, json.JSONDecodeError) as exc:
+        raise SystemExit(f"{label} is unreadable: {exc}") from exc
+    if not isinstance(value, dict):
+        raise SystemExit(f"{label} must be a JSON object")
+    return value
 
 
 def stage(
@@ -86,6 +113,8 @@ def stage(
     output: Path,
     version: str,
     commit: str,
+    source_metadata: Path | None = None,
+    windows_smoke_evidence: Path | None = None,
 ) -> list[str]:
     """Validate and stage the complete virtualization release asset set.
 
@@ -95,15 +124,22 @@ def stage(
         output: Exact release staging directory.
         version: Atlaso semantic version.
         commit: Full source commit.
+        source_metadata: Verified automatic software-release identity metadata.
+        windows_smoke_evidence: Bounded evidence from VMware and Hyper-V smoke.
     """
 
-    if SEMVER_PATTERN.fullmatch(version) is None or COMMIT_PATTERN.fullmatch(commit) is None:
+    if (
+        SEMVER_PATTERN.fullmatch(version) is None
+        or COMMIT_PATTERN.fullmatch(commit) is None
+    ):
         raise SystemExit("version or source commit has an invalid release identity")
     if ova_directory.is_symlink() or not ova_directory.is_dir():
         raise SystemExit("OVA package source must be an ordinary directory")
     ova_root = ova_directory.resolve(strict=True)
     vmware_sources = sorted(
-        path for path in ova_root.iterdir() if path.is_file() and path.name.lower().endswith(VMWARE_SUFFIXES)
+        path
+        for path in ova_root.iterdir()
+        if path.is_file() and path.name.lower().endswith(VMWARE_SUFFIXES)
     )
     vmware_names = {path.name for path in vmware_sources}
     verify_vmware_release_assets(
@@ -117,7 +153,53 @@ def stage(
     if hyperv_source.name != expected_hyperv_name:
         raise SystemExit(f"Hyper-V package must be named {expected_hyperv_name}")
     sources = [*_ordinary_sources(vmware_sources), hyperv_source]
-    sources.extend(_ordinary_asset(path, "virtualization import helper") for path in RELEASE_HELPERS)
+    sources.extend(
+        _ordinary_asset(path, "virtualization import helper")
+        for path in RELEASE_HELPERS
+    )
+    if source_metadata is not None:
+        source = _ordinary_asset(source_metadata, "software release source metadata")
+        if source.name != "virtualization-source.json":
+            raise SystemExit(
+                "software release source metadata must be named virtualization-source.json"
+            )
+        sources.append(source)
+        source_document = _json_object(source, "software release source metadata")
+        if (
+            source_document.get("schema_version") != 1
+            or source_document.get("kind") != "atlaso-virtualization-source"
+            or source_document.get("version") != version
+            or source_document.get("source_commit") != commit
+            or source_document.get("source_software_tag") != f"v{version}"
+            or source_document.get("python_abi") != "cp314"
+        ):
+            raise SystemExit(
+                "software release source metadata does not match the staged identity"
+            )
+    if windows_smoke_evidence is not None:
+        evidence = _ordinary_asset(windows_smoke_evidence, "Windows smoke evidence")
+        if evidence.name != "windows-smoke-evidence.json":
+            raise SystemExit(
+                "Windows smoke evidence must be named windows-smoke-evidence.json"
+            )
+        sources.append(evidence)
+        evidence_document = _json_object(evidence, "Windows smoke evidence")
+        ova_source = next(
+            path for path in vmware_sources if path.suffix.lower() == ".ova"
+        )
+        if (
+            evidence_document.get("schema_version") != 1
+            or evidence_document.get("kind") != "atlaso-windows-virtualization-smoke"
+            or evidence_document.get("version") != version
+            or evidence_document.get("source_commit") != commit
+            or evidence_document.get("vmware") != "success"
+            or evidence_document.get("hyperv") != "success"
+            or evidence_document.get("ova_sha256") != _sha256(ova_source)
+            or evidence_document.get("hyperv_sha256") != _sha256(hyperv_source)
+        ):
+            raise SystemExit(
+                "Windows smoke evidence does not bind the exact staged assets"
+            )
     expected_names = {source.name for source in sources}
     if len(expected_names) != len(sources):
         raise SystemExit("virtualization release sources must have unique flat names")
@@ -127,16 +209,22 @@ def stage(
     output.mkdir(parents=True, exist_ok=True)
     output_root = output.resolve(strict=True)
     if output_root == ova_root or ova_root in output_root.parents:
-        raise SystemExit("release staging output cannot be the OVA source or its descendant")
+        raise SystemExit(
+            "release staging output cannot be the OVA source or its descendant"
+        )
     existing_names = {entry.name for entry in output_root.iterdir()}
     unexpected_names = sorted(existing_names - expected_names)
     if unexpected_names:
-        raise SystemExit(f"release staging output contains unexpected assets: {unexpected_names}")
+        raise SystemExit(
+            f"release staging output contains unexpected assets: {unexpected_names}"
+        )
     for source in sources:
         _copy_exact(source, output_root / source.name)
     staged_names = {entry.name for entry in output_root.iterdir()}
     if staged_names != expected_names:
-        raise SystemExit("release staging output does not contain the exact virtualization asset set")
+        raise SystemExit(
+            "release staging output does not contain the exact virtualization asset set"
+        )
     return sorted(expected_names)
 
 
@@ -163,6 +251,8 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--output", type=Path, required=True)
     parser.add_argument("--version", required=True)
     parser.add_argument("--commit", required=True)
+    parser.add_argument("--source-metadata", type=Path, required=True)
+    parser.add_argument("--windows-smoke-evidence", type=Path, required=True)
     args = parser.parse_args(argv)
     staged = stage(
         ova_directory=args.ova_directory,
@@ -170,6 +260,8 @@ def main(argv: list[str] | None = None) -> int:
         output=args.output,
         version=args.version,
         commit=args.commit,
+        source_metadata=args.source_metadata,
+        windows_smoke_evidence=args.windows_smoke_evidence,
     )
     print(json.dumps({"assets": staged, "count": len(staged)}, sort_keys=True))
     return 0

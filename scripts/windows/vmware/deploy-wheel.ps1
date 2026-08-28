@@ -33,6 +33,8 @@ Leaves boot-branding assets unchanged.
 Leaves Inventory Linux unchanged.
 .PARAMETER WheelPath
 Explicit Atlaso wheel path.
+.PARAMETER RuntimeDependencyDirectory
+Directory containing the complete exact dependency wheelhouse used with an explicit release wheel.
 .PARAMETER OnePasswordEnvironmentId
 Opaque ID of the preverified Atlaso 1Password Environment.
 .PARAMETER OnePasswordAccount
@@ -77,6 +79,7 @@ param(
     [switch]$SkipBootBrandingSync,
     [switch]$SkipInventoryLinuxSync,
     [string]$WheelPath = '',
+    [string]$RuntimeDependencyDirectory = '',
     [string]$OnePasswordEnvironmentId = '',
     [string]$OnePasswordAccount = '',
     [string]$OnePasswordPython = '',
@@ -1054,21 +1057,40 @@ if (-not $SkipBuild) {
 
 $resolvedWheelPath = Get-WheelPath -Path $WheelPath -Root $resolvedRepoRoot
 $wheelName = Split-Path -Leaf $resolvedWheelPath
-$runtimeDependencies = @(
-    foreach ($runtimeDependencyPattern in @('authlib-*.whl', 'joserfc-*.whl', 'pycdlib-*.whl')) {
-        $runtimeDependency = Get-ChildItem -LiteralPath (Join-Path $resolvedRepoRoot 'dist') -Filter $runtimeDependencyPattern -File |
-            Sort-Object LastWriteTime -Descending |
-            Select-Object -First 1
-        if (-not $runtimeDependency) {
-            throw "The $runtimeDependencyPattern runtime dependency wheel was not found under $(Join-Path $resolvedRepoRoot 'dist'). Rerun without -SkipBuild."
-        }
-        $runtimeDependency
+$runtimeDependencyRoot = if ([string]::IsNullOrWhiteSpace($RuntimeDependencyDirectory)) {
+    Join-Path $resolvedRepoRoot 'dist'
+}
+else {
+    $candidate = Get-Item -LiteralPath $RuntimeDependencyDirectory -ErrorAction Stop
+    if (-not $candidate.PSIsContainer -or
+        ($candidate.Attributes -band [System.IO.FileAttributes]::ReparsePoint) -ne 0) {
+        throw 'RuntimeDependencyDirectory must be an ordinary directory, not a reparse point.'
     }
-)
+    $candidate.FullName
+}
+$runtimeDependencies = if ([string]::IsNullOrWhiteSpace($RuntimeDependencyDirectory)) {
+    @(
+        foreach ($runtimeDependencyPattern in @('authlib-*.whl', 'joserfc-*.whl', 'pycdlib-*.whl')) {
+            $runtimeDependency = @(Get-ChildItem -LiteralPath $runtimeDependencyRoot -Filter $runtimeDependencyPattern -File)
+            if ($runtimeDependency.Count -ne 1) {
+                throw "Exactly one $runtimeDependencyPattern runtime dependency wheel is required under $runtimeDependencyRoot. Rerun without -SkipBuild or provide the verified release wheelhouse."
+            }
+            $runtimeDependency[0]
+        }
+    )
+}
+else {
+    @(Get-ChildItem -LiteralPath $runtimeDependencyRoot -Filter '*.whl' -File | Sort-Object Name)
+}
 $runtimeDependencyPaths = @($runtimeDependencies | Select-Object -ExpandProperty FullName)
 $runtimeDependencyNames = @($runtimeDependencies | Select-Object -ExpandProperty Name)
-if ($runtimeDependencyPaths.Count -ne 3) {
-    throw 'Exactly the Authlib, joserfc, and pycdlib runtime dependency wheels are required.'
+if ($runtimeDependencyPaths.Count -lt 3 -or $runtimeDependencyNames.Count -ne (@($runtimeDependencyNames | Sort-Object -Unique)).Count) {
+    throw 'The runtime dependency wheel set is incomplete or contains duplicate file names.'
+}
+foreach ($runtimeDependencyPattern in @('authlib-*.whl', 'joserfc-*.whl', 'pycdlib-*.whl')) {
+    if (@($runtimeDependencies | Where-Object { $_.Name -like $runtimeDependencyPattern }).Count -ne 1) {
+        throw "The runtime dependency wheel set requires exactly one $runtimeDependencyPattern wheel."
+    }
 }
 $helperPath = Join-Path $resolvedRepoRoot 'scripts\appliance\atlaso-helper'
 $consoleManagerPath = Join-Path $resolvedRepoRoot 'image\common\systemd\atlaso-console-manager.conf'

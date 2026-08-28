@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import base64
+import hashlib
 import json
 import os
 from pathlib import Path
@@ -12,17 +13,20 @@ from cryptography.hazmat.primitives import serialization
 from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
 
 from scripts import build_virtualization_artifact_index as builder
-from scripts import publish_release
 from scripts import verify_virtualization_artifact_index as verifier
 
 
 def test_operator_verification_bootstraps_with_standard_tools() -> None:
     """The operator guide authenticates the index without executing fetched code."""
 
-    guide = Path("docs/reference/virtualization-artifacts.md").read_text(encoding="utf-8")
+    guide = Path("docs/reference/virtualization-artifacts.md").read_text(
+        encoding="utf-8"
+    )
     assert "verify-from-source.py" not in guide
     assert "openssl pkeyutl -verify -pubin -rawin" in guide
-    assert guide.index("sha256sum --check --strict") < guide.index("openssl pkeyutl -verify")
+    assert guide.index("sha256sum --check --strict") < guide.index(
+        "openssl pkeyutl -verify"
+    )
 
 
 def _key(path: Path) -> Ed25519PrivateKey:
@@ -65,8 +69,40 @@ def _assets(path: Path, version: str = "0.9.217") -> None:
         "validate_ova.py",
         "normalize_libvirt.py",
         "verify_virtualization_artifact_index.py",
+        "virtualization-source.json",
+        "windows-smoke-evidence.json",
     ):
         (path / name).write_bytes(f"asset:{name}\n".encode())
+    source = {
+        "schema_version": 1,
+        "kind": "atlaso-virtualization-source",
+        "version": version,
+        "source_commit": "a" * 40,
+        "source_software_tag": f"v{version}",
+        "release_manifest_sha256": "b" * 64,
+        "release_bundle_sha256": "d" * 64,
+        "application_wheel": f"packages/atlaso-{version}-py3-none-any.whl",
+        "application_wheel_sha256": "c" * 64,
+        "python_abi": "cp314",
+    }
+    (path / "virtualization-source.json").write_text(
+        json.dumps(source), encoding="utf-8"
+    )
+    ova = path / f"atlaso-v{version}.ova"
+    hyperv = path / f"atlaso-v{version}-hyperv-x86_64.zip"
+    windows = {
+        "schema_version": 1,
+        "kind": "atlaso-windows-virtualization-smoke",
+        "version": version,
+        "source_commit": "a" * 40,
+        "ova_sha256": hashlib.sha256(ova.read_bytes()).hexdigest(),
+        "hyperv_sha256": hashlib.sha256(hyperv.read_bytes()).hexdigest(),
+        "vmware": "success",
+        "hyperv": "success",
+    }
+    (path / "windows-smoke-evidence.json").write_text(
+        json.dumps(windows), encoding="utf-8"
+    )
 
 
 def test_builds_verifiable_index_covering_complete_release_set(tmp_path: Path) -> None:
@@ -89,6 +125,14 @@ def test_builds_verifiable_index_covering_complete_release_set(tmp_path: Path) -
                 "0.9.217",
                 "--commit",
                 "a" * 40,
+                "--classification",
+                "prerelease",
+                "--release-tag",
+                "virtualization-v0.9.217-rc.1",
+                "--source-release-manifest-sha256",
+                "b" * 64,
+                "--application-wheel-sha256",
+                "c" * 64,
                 "--built-at",
                 "2026-08-26T00:00:00Z",
                 "--signing-key",
@@ -102,10 +146,16 @@ def test_builds_verifiable_index_covering_complete_release_set(tmp_path: Path) -
 
     index_bytes = (assets / builder.INDEX_NAME).read_bytes()
     index = json.loads(index_bytes)
-    signature = json.loads((assets / builder.SIGNATURE_NAME).read_text(encoding="utf-8"))
-    key.public_key().verify(base64.b64decode(signature["signature"], validate=True), index_bytes)
+    signature = json.loads(
+        (assets / builder.SIGNATURE_NAME).read_text(encoding="utf-8")
+    )
+    key.public_key().verify(
+        base64.b64decode(signature["signature"], validate=True), index_bytes
+    )
     assert index["source_commit"] == "a" * 40
-    assert len(index["assets"]) == 12
+    assert index["classification"] == "prerelease"
+    assert index["release_tag"] == "virtualization-v0.9.217-rc.1"
+    assert len(index["assets"]) == 14
     assert {record["role"] for record in index["assets"]} >= {
         "canonical_ova",
         "hyperv_package",
@@ -128,8 +178,10 @@ def test_builds_verifiable_index_covering_complete_release_set(tmp_path: Path) -
         asset_directory=assets,
         expected_version="0.9.217",
         expected_commit="a" * 40,
+        expected_classification="prerelease",
+        expected_release_tag="virtualization-v0.9.217-rc.1",
     )
-    assert result["assets_verified"] == 12
+    assert result["assets_verified"] == 14
 
     (assets / "import-atlaso-kvm.sh").write_bytes(b"tampered")
     with pytest.raises(SystemExit, match="size, hash, or role"):
@@ -141,68 +193,68 @@ def test_builds_verifiable_index_covering_complete_release_set(tmp_path: Path) -
         )
 
 
-def test_publisher_verifies_signed_exact_coverage_index(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    """Publication trusts only an exact, signed artifact set for the expected release identity.
+def test_stable_index_requires_both_linux_platform_proofs(tmp_path: Path) -> None:
+    """Stable classification fails closed until Proxmox and KVM evidence exists."""
 
-    Args:
-        tmp_path: Temporary directory provided by pytest.
-        monkeypatch: Pytest fixture used to replace repository trust roots.
-    """
-
-    root = tmp_path / "root"
-    assets = root / "assets"
-    trust = root / "image" / "common" / "update-trust"
-    trust.mkdir(parents=True)
+    assets = tmp_path / "assets"
     _assets(assets)
-    key = _key(tmp_path / "key.pem")
-    (trust / "test-key.pem").write_bytes(
-        key.public_key().public_bytes(
-            encoding=serialization.Encoding.PEM,
-            format=serialization.PublicFormat.SubjectPublicKeyInfo,
-        )
+    _key(tmp_path / "key.pem")
+    arguments = [
+        "--assets",
+        str(assets),
+        "--version",
+        "0.9.217",
+        "--commit",
+        "a" * 40,
+        "--classification",
+        "stable",
+        "--release-tag",
+        "virtualization-v0.9.217",
+        "--source-release-manifest-sha256",
+        "b" * 64,
+        "--application-wheel-sha256",
+        "c" * 64,
+        "--signing-key",
+        str(tmp_path / "key.pem"),
+        "--signing-key-id",
+        "test-key",
+    ]
+    with pytest.raises(SystemExit, match="missing evidence"):
+        builder.main(arguments)
+    (assets / "proxmox-smoke-evidence.json").write_text(
+        json.dumps(
+            {
+                "kind": "atlaso-proxmox-smoke",
+                "ova_sha256": hashlib.sha256(
+                    (assets / "atlaso-v0.9.217.ova").read_bytes()
+                ).hexdigest(),
+                "schema_version": 1,
+                "source_commit": "a" * 40,
+                "status": "success",
+            }
+        ),
+        encoding="utf-8",
     )
-    assert (
-        builder.main(
-            [
-                "--assets",
-                str(assets),
-                "--version",
-                "0.9.217",
-                "--commit",
-                "a" * 40,
-                "--built-at",
-                "2026-08-26T00:00:00Z",
-                "--signing-key",
-                str(tmp_path / "key.pem"),
-                "--signing-key-id",
-                "test-key",
-            ]
-        )
-        == 0
+    (assets / "kvm-smoke-evidence.json").write_text(
+        json.dumps(
+            {
+                "kind": "atlaso-kvm-smoke",
+                "ova_sha256": hashlib.sha256(
+                    (assets / "atlaso-v0.9.217.ova").read_bytes()
+                ).hexdigest(),
+                "schema_version": 1,
+                "source_commit": "a" * 40,
+                "status": "success",
+            }
+        ),
+        encoding="utf-8",
     )
-    monkeypatch.setattr(publish_release, "ROOT", root)
-    # The application release manifest is validated by the ordinary release
-    # bundle contract and must not be pulled into the virtualization index.
-    (assets / "release-manifest.json").write_bytes(b"{}\n")
-    names = {path.name for path in assets.iterdir()}
-    publish_release.verify_virtualization_artifact_index(
-        assets,
-        names,
-        expected_version="0.9.217",
-        expected_commit="a" * 40,
-    )
-
-    (assets / "import-atlaso-kvm.sh").write_bytes(b"tampered")
-    with pytest.raises(SystemExit, match="size, hash, or role"):
-        publish_release.verify_virtualization_artifact_index(
-            assets,
-            names,
-            expected_version="0.9.217",
-            expected_commit="a" * 40,
-        )
+    assert builder.main(arguments) == 0
 
 
-def test_refuses_incomplete_or_oversized_artifact_set(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+def test_refuses_incomplete_or_oversized_artifact_set(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     """A missing helper or asset at the GitHub limit blocks index publication.
 
     Args:
@@ -221,6 +273,14 @@ def test_refuses_incomplete_or_oversized_artifact_set(tmp_path: Path, monkeypatc
         "0.9.217",
         "--commit",
         "a" * 40,
+        "--classification",
+        "prerelease",
+        "--release-tag",
+        "virtualization-v0.9.217-rc.1",
+        "--source-release-manifest-sha256",
+        "b" * 64,
+        "--application-wheel-sha256",
+        "c" * 64,
         "--signing-key",
         str(tmp_path / "key.pem"),
         "--signing-key-id",

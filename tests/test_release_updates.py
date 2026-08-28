@@ -1201,6 +1201,15 @@ def test_release_bundle_publishes_commit_subject_summary_and_release_link():
 def test_release_workflows_use_successful_main_sha_and_promote_without_rebuilding():
     """Verify that release workflows use successful main sha and promote without rebuilding."""
     publication = (ROOT / ".github/workflows/release.yml").read_text(encoding="utf-8")
+    prerelease = (ROOT / ".github/workflows/virtualization-prerelease.yml").read_text(
+        encoding="utf-8"
+    )
+    virtualization = (ROOT / ".github/workflows/virtualization-stable.yml").read_text(
+        encoding="utf-8"
+    )
+    windows_candidate = (
+        ROOT / ".github/workflows/virtualization-windows-candidate.yml"
+    ).read_text(encoding="utf-8")
     inventory = (ROOT / ".github/workflows/inventory-linux-release.yml").read_text(
         encoding="utf-8"
     )
@@ -1218,6 +1227,7 @@ def test_release_workflows_use_successful_main_sha_and_promote_without_rebuildin
         == 1
     )
     assert "github.event_name == 'workflow_dispatch'" in publication
+    assert "vars.AUTOMATIC_SOFTWARE_RELEASE_ENABLED == 'true'" in publication
     assert "-f head_sha=\"$RELEASE_SHA\"" in publication
     assert "-f status=success" in publication
     assert "has no successful main push CI run" in publication
@@ -1236,11 +1246,11 @@ def test_release_workflows_use_successful_main_sha_and_promote_without_rebuildin
     assert '--expected-version "$VERSION"' in publication_check
     assert '--expected-commit "$RELEASE_SHA"' in publication_check
     assert "<script" not in publication
-    assert publication.count("ref: ${{ needs.prepare.outputs.release_sha }}") == 9
+    assert publication.count("ref: ${{ needs.prepare.outputs.release_sha }}") == 2
     assert "actions/upload-artifact@v7" in publication
-    assert publication.count("actions/download-artifact@v8") == 9
+    assert publication.count("actions/download-artifact@v8") == 1
     for runner_label in ("atlaso-vmware", "atlaso-proxmox", "atlaso-kvm", "atlaso-hyperv"):
-        assert runner_label in publication
+        assert runner_label not in publication
     for job in (
         "vmware_ova_build",
         "vmware_ova_smoke",
@@ -1250,19 +1260,38 @@ def test_release_workflows_use_successful_main_sha_and_promote_without_rebuildin
         "hyperv_smoke",
         "virtualization_release",
     ):
-        assert f"  {job}:" in publication
+        assert f"  {job}:" not in publication
     ci_packer = ci.split("  deployment-packer:", 1)[1].split("  python-tests:", 1)[0]
     assert "Test-AtlasoVirtualizationArtifacts.ps1" in ci_packer
     assert "Test-AtlasoHyperVSecureString.ps1" not in ci_packer
-    signed_virtualization = publication.split("  virtualization_release:", 1)[1].split(
+    assert "build_virtualization_artifact_index.py" not in publication
+    assert "--require-virtualization-assets" not in publication
+    assert "runs-on: [self-hosted, Linux, X64" in virtualization
+    assert "proxmox_smoke" in virtualization
+    assert "kvm_smoke" in virtualization
+    assert "permissions: {}" not in virtualization
+    assert "RELEASE_SIGNING_PRIVATE_KEY" not in virtualization.split("  proxmox_smoke:", 1)[1].split(
+        "  kvm_smoke:", 1
+    )[0]
+    assert "RELEASE_SIGNING_PRIVATE_KEY" not in virtualization.split("  kvm_smoke:", 1)[1].split(
         "  publish:", 1
     )[0]
-    assert "vmware_ova_smoke" in signed_virtualization
-    assert "proxmox_ova_smoke" in signed_virtualization
-    assert "kvm_ova_smoke" in signed_virtualization
-    assert "hyperv_smoke" in signed_virtualization
-    assert "build_virtualization_artifact_index.py" in signed_virtualization
-    assert "--require-virtualization-assets" in publication
+    assert "gh release edit \"$STABLE_TAG\" --draft=false" in virtualization
+    assert "cmp --silent" in virtualization
+    assert "gh-pages" not in virtualization
+    assert "environment: appliance-release" in prerelease
+    assert "--classification prerelease" in prerelease
+    assert "gh release edit \"$RELEASE_TAG\" --draft=false --prerelease --verify-tag" in prerelease
+    assert "gh-pages" not in prerelease
+    windows_job = windows_candidate.split("  produce:\n", 1)[1].split(
+        "  stage_draft:\n", 1
+    )[0]
+    assert "runs-on: [self-hosted, Windows, X64" in windows_job
+    assert "contents: read" in windows_job
+    assert "contents: write" not in windows_job
+    assert "RELEASE_SIGNING_PRIVATE_KEY" not in windows_job
+    assert "-CandidateOnly" in windows_job
+    assert "uses: ./.github/workflows/virtualization-prerelease.yml" in windows_candidate
     assert "python-version: '3.14'" in publication
     assert "python-version: '3.14'" in promotion
     assert ci.count("python-version: '3.14'") == 3

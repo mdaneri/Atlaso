@@ -18,6 +18,11 @@ from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PublicKey
 SEMVER_PATTERN = re.compile(r"^[0-9]+\.[0-9]+\.[0-9]+$")
 COMMIT_PATTERN = re.compile(r"^[0-9a-f]{40}$")
 KEY_ID_PATTERN = re.compile(r"^[A-Za-z0-9_.-]+$")
+DIGEST_PATTERN = re.compile(r"^[0-9a-f]{64}$")
+PRERELEASE_TAG_PATTERN = re.compile(
+    r"^virtualization-v([0-9]+\.[0-9]+\.[0-9]+)-rc\.([1-9][0-9]*)$"
+)
+STABLE_TAG_PATTERN = re.compile(r"^virtualization-v([0-9]+\.[0-9]+\.[0-9]+)$")
 
 
 def _canonical_json(value: Any) -> bytes:
@@ -27,7 +32,10 @@ def _canonical_json(value: Any) -> bytes:
         value: JSON-compatible value to serialize.
     """
 
-    return (json.dumps(value, sort_keys=True, separators=(",", ":"), ensure_ascii=True) + "\n").encode()
+    return (
+        json.dumps(value, sort_keys=True, separators=(",", ":"), ensure_ascii=True)
+        + "\n"
+    ).encode()
 
 
 def _ordinary_file(path: Path, label: str) -> Path:
@@ -65,6 +73,8 @@ def verify(
     asset_directory: Path,
     expected_version: str = "",
     expected_commit: str = "",
+    expected_classification: str = "",
+    expected_release_tag: str = "",
 ) -> dict[str, Any]:
     """Verify the detached signature, release identity, and every indexed asset.
 
@@ -75,6 +85,8 @@ def verify(
         asset_directory: Directory containing every indexed asset.
         expected_version: Optional expected Atlaso version.
         expected_commit: Optional expected full source commit.
+        expected_classification: Optional expected prerelease or stable class.
+        expected_release_tag: Optional expected virtualization tag.
     """
 
     index_file = _ordinary_file(index_path, "artifact index")
@@ -96,8 +108,13 @@ def verify(
     version = index.get("version")
     source_commit = index.get("source_commit")
     key_id = index.get("signing_key_id")
+    classification = index.get("classification")
+    release_tag = index.get("release_tag")
+    tag_pattern = (
+        PRERELEASE_TAG_PATTERN if classification == "prerelease" else STABLE_TAG_PATTERN
+    )
     if (
-        index.get("schema_version") != 1
+        index.get("schema_version") != 2
         or index.get("kind") != "atlaso-virtualization-artifacts"
         or not isinstance(version, str)
         or SEMVER_PATTERN.fullmatch(version) is None
@@ -105,14 +122,31 @@ def verify(
         or COMMIT_PATTERN.fullmatch(source_commit) is None
         or not isinstance(key_id, str)
         or KEY_ID_PATTERN.fullmatch(key_id) is None
+        or classification not in {"prerelease", "stable"}
+        or not isinstance(release_tag, str)
+        or (tag_match := tag_pattern.fullmatch(release_tag)) is None
+        or tag_match.group(1) != version
+        or index.get("source_software_tag") != f"v{version}"
+        or not isinstance(index.get("source_release_manifest_sha256"), str)
+        or DIGEST_PATTERN.fullmatch(index["source_release_manifest_sha256"]) is None
+        or not isinstance(index.get("application_wheel_sha256"), str)
+        or DIGEST_PATTERN.fullmatch(index["application_wheel_sha256"]) is None
     ):
         raise SystemExit("artifact index identity is invalid")
     if expected_version and version != expected_version:
         raise SystemExit("artifact index version does not match --expected-version")
     if expected_commit and source_commit != expected_commit:
         raise SystemExit("artifact index commit does not match --expected-commit")
+    if expected_classification and classification != expected_classification:
+        raise SystemExit(
+            "artifact index classification does not match --expected-classification"
+        )
+    if expected_release_tag and release_tag != expected_release_tag:
+        raise SystemExit("artifact index tag does not match --expected-release-tag")
     if trust_key_file.stem != key_id:
-        raise SystemExit("trusted release public-key filename does not match the signed key identifier")
+        raise SystemExit(
+            "trusted release public-key filename does not match the signed key identifier"
+        )
     if (
         set(signature) != {"schema_version", "algorithm", "key_id", "signature"}
         or signature.get("schema_version") != 1
@@ -124,7 +158,9 @@ def verify(
         public_key = serialization.load_pem_public_key(trust_key_file.read_bytes())
         signature_bytes = base64.b64decode(str(signature["signature"]), validate=True)
     except (OSError, ValueError, TypeError) as exc:
-        raise SystemExit(f"artifact-index signature or trust key is invalid: {exc}") from exc
+        raise SystemExit(
+            f"artifact-index signature or trust key is invalid: {exc}"
+        ) from exc
     if not isinstance(public_key, Ed25519PublicKey):
         raise SystemExit("trusted release public key must be Ed25519")
     try:
@@ -137,11 +173,22 @@ def verify(
         raise SystemExit("artifact index contains no assets")
     verified_names: set[str] = set()
     for record in records:
-        if not isinstance(record, dict) or set(record) != {"name", "role", "size", "sha256"}:
+        if not isinstance(record, dict) or set(record) != {
+            "name",
+            "role",
+            "size",
+            "sha256",
+        }:
             raise SystemExit("artifact index contains an invalid asset record")
         name = record.get("name")
-        if not isinstance(name, str) or Path(name).name != name or name in verified_names:
-            raise SystemExit("artifact index contains an unsafe or duplicate asset name")
+        if (
+            not isinstance(name, str)
+            or Path(name).name != name
+            or name in verified_names
+        ):
+            raise SystemExit(
+                "artifact index contains an unsafe or duplicate asset name"
+            )
         asset = _ordinary_file(asset_root / name, f"indexed asset {name}")
         size = asset.stat().st_size
         if (
@@ -153,11 +200,22 @@ def verify(
             or re.fullmatch(r"[0-9a-f]{64}", record["sha256"]) is None
             or _sha256(asset) != record["sha256"]
         ):
-            raise SystemExit(f"indexed asset failed size, hash, or role verification: {name}")
+            raise SystemExit(
+                f"indexed asset failed size, hash, or role verification: {name}"
+            )
         verified_names.add(name)
+    actual_names = {
+        path.name
+        for path in asset_root.iterdir()
+        if path.name not in {index_file.name, signature_file.name}
+    }
+    if verified_names != actual_names:
+        raise SystemExit("artifact index does not cover the exact asset set")
     return {
         "version": version,
         "source_commit": source_commit,
+        "classification": classification,
+        "release_tag": release_tag,
         "signing_key_id": key_id,
         "assets_verified": len(verified_names),
     }
@@ -177,8 +235,15 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--asset-directory", type=Path, required=True)
     parser.add_argument("--expected-version", default="")
     parser.add_argument("--expected-commit", default="")
+    parser.add_argument(
+        "--expected-classification", choices=("prerelease", "stable"), default=""
+    )
+    parser.add_argument("--expected-release-tag", default="")
     args = parser.parse_args(argv)
-    if args.expected_version and SEMVER_PATTERN.fullmatch(args.expected_version) is None:
+    if (
+        args.expected_version
+        and SEMVER_PATTERN.fullmatch(args.expected_version) is None
+    ):
         parser.error("--expected-version must be a dotted semantic version")
     if args.expected_commit and COMMIT_PATTERN.fullmatch(args.expected_commit) is None:
         parser.error("--expected-commit must be a full lowercase hexadecimal commit")
@@ -189,6 +254,8 @@ def main(argv: list[str] | None = None) -> int:
         asset_directory=args.asset_directory,
         expected_version=args.expected_version,
         expected_commit=args.expected_commit,
+        expected_classification=args.expected_classification,
+        expected_release_tag=args.expected_release_tag,
     )
     print(json.dumps(result, sort_keys=True))
     return 0
