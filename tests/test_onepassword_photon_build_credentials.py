@@ -162,6 +162,10 @@ def test_photon_wrapper_preflights_credentials_before_image_mutation() -> None:
     assert "Cleanup marker root does not match the exact task-created Photon root." in wrapper
     assert "$Job.TerminateAndWait(10000)" in runner
     assert "$Job.CompleteAndWait(10000)" in runner
+    assert "$jobCompletionProven = $false" in runner
+    assert "if (-not $jobCompletionProven)" in runner
+    assert "$processJob.TerminateAndWait(10000)" in runner
+    assert "was interrupted and whole-process-tree cleanup could not be proven" in runner
     assert "accounting.ActiveProcesses == 0" in runner
     assert "AtlasoProcessTreeTerminationProven" in runner
     assert "Invoke-AtlasoBoundedStreamingProcess `" in module

@@ -605,6 +605,7 @@ function Invoke-AtlasoBoundedStreamingProcess {
         -FilePath $FilePath `
         -ArgumentList $ArgumentList
     $process = $processJob.RootProcess
+    $jobCompletionProven = $false
     try {
         if (-not $process.WaitForExit($TimeoutSeconds * 1000)) {
             Stop-AtlasoBoundedProcessTree `
@@ -617,13 +618,36 @@ function Invoke-AtlasoBoundedStreamingProcess {
             -Process $process `
             -Job $processJob `
             -Action $Action
+        $jobCompletionProven = $true
         if ($process.ExitCode -ne 0) {
             throw "$Action failed with exit code $($process.ExitCode)."
         }
     }
     finally {
-        $processJob.Dispose()
-        $process.Dispose()
+        try {
+            if (-not $jobCompletionProven) {
+                # Ctrl+C and other pipeline interruptions can bypass the normal
+                # timeout/completion branches. Prove the job empty before its
+                # kill-on-close handle is released and sensitive cleanup resumes.
+                $processJob.TerminateAndWait(10000)
+                if (-not $process.WaitForExit(10000)) {
+                    throw 'The bounded root remained active after interruption cleanup.'
+                }
+                $jobCompletionProven = $true
+            }
+        }
+        catch {
+            $interruptionFailure = [System.InvalidOperationException]::new(
+                "$Action was interrupted and whole-process-tree cleanup could not be proven.",
+                $_.Exception
+            )
+            $interruptionFailure.Data['AtlasoProcessTreeTerminationUnproven'] = $true
+            throw $interruptionFailure
+        }
+        finally {
+            $processJob.Dispose()
+            $process.Dispose()
+        }
     }
 }
 
