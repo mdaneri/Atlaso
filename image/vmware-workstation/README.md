@@ -269,6 +269,9 @@ password-deployment path, and the concealed password is not placed in the deploy
 `DEFAULT_ADMIN_PASSWORD`, pass a password argument, create a local `.env` file, or use the retired
 `ATLASO_DEPLOY_SSH_PASSWORD` fallback.
 
+The wrapper sources the guest-neutral Atlaso service unit from `image/common/systemd/atlaso.service`, matching the
+canonical image provisioning and release-bundle inputs.
+
 When the IP should be resolved from VMware Tools, pass the VMX path as a named argument:
 
 ```powershell

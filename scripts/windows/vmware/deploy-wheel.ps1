@@ -1081,7 +1081,7 @@ $trustKeyPaths = @(
         Sort-Object Name |
         Select-Object -ExpandProperty FullName
 )
-$atlasoServicePath = Join-Path $resolvedRepoRoot 'image\vmware-workstation\systemd\atlaso.service'
+$atlasoServicePath = Join-Path $resolvedRepoRoot 'image\common\systemd\atlaso.service'
 $workerServicePath = Join-Path $resolvedRepoRoot 'image\common\systemd\atlaso-worker.service'
 $atlasoServiceDropInPath = Join-Path $resolvedRepoRoot 'image\common\systemd\atlaso-require-data-disks.conf'
 $nginxServiceDropInPath = Join-Path $resolvedRepoRoot 'image\common\systemd\nginx-atlaso-data-disks.conf'
