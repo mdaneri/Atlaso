@@ -33,6 +33,7 @@ DEPLOYED_TEXT_FILES = {
     "scripts/appliance/atlaso-helper": "/opt-atlaso/bin/atlaso-helper",
     "scripts/appliance/atlaso-install-boot-branding": "/opt-atlaso/bin/atlaso-install-boot-branding",
     "image/common/powershell/atlaso-vault-profile.ps1": "/opt-atlaso/bin/atlaso-vault-profile.ps1",
+    "image/common/powershell/profile.ps1": "/opt/microsoft/powershell/7/profile.ps1",
     "image/common/systemd/atlaso-console-manager.conf": "/etc/systemd/system.conf.d/atlaso-console.conf",
     "image/vmware-workstation/systemd/atlaso.service": "/etc/systemd/system/atlaso.service",
     "image/common/systemd/atlaso-worker.service": "/etc/systemd/system/atlaso-worker.service",

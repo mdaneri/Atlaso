@@ -452,6 +452,11 @@ def test_rejects_altered_runtime_executables(
             False,
             "does not match admitted commit",
         ),
+        (
+            "/opt/microsoft/powershell/7/profile.ps1",
+            False,
+            "does not match admitted commit",
+        ),
         ("", True, "update-trust key set does not match admitted commit"),
     ],
 )

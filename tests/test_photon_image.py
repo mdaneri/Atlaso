@@ -823,9 +823,18 @@ def test_photon_provisioning_installs_default_nginx_management_proxy():
     assert 'ln -sfn "$ATLASO_HOME/.venv/bin/atlaso-vault" /usr/local/bin/atlaso-vault' in script
     assert 'ln -sfn "$ATLASO_HOME/.venv/bin/atlaso-vault" /usr/bin/atlaso-vault' in script
     assert '"$ATLASO_HOME/image/common/powershell/atlaso-vault-profile.ps1"' in script
+    assert '"$ATLASO_HOME/image/common/powershell/profile.ps1"' in script
+    assert '"$POWERSHELL_HOME/profile.ps1"' in script
+    assert 'touch "$POWERSHELL_HOME/profile.ps1"' not in script
+    assert '>>"$POWERSHELL_HOME/profile.ps1"' not in script
     profile = Path("image/common/powershell/atlaso-vault-profile.ps1").read_text(encoding="utf-8")
     assert "function global:Get-AtlasoVault" in profile
     assert "/opt/atlaso/.venv/bin/atlaso-vault" in profile
+    global_profile = Path("image/common/powershell/profile.ps1").read_text(encoding="utf-8")
+    assert global_profile == (
+        "<#\n.SYNOPSIS\nLoads the Atlaso vault helpers into PowerShell sessions.\n#>\n"
+        ". '/opt/atlaso/bin/atlaso-vault-profile.ps1'\n"
+    )
     assert '--shell "$BOOTSTRAP_SHELL"' in script
     assert "touch /etc/shells" in script
     assert 'grep -qxF "$BOOTSTRAP_SHELL" /etc/shells' in script

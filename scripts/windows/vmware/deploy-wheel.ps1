@@ -1428,6 +1428,10 @@ ln -sfn "$venv/bin/atlaso-vault" /usr/bin/atlaso-vault
 pwsh_path="$(command -v pwsh || true)"
 if [ -n "$pwsh_path" ]; then
     powershell_home="$(dirname "$(readlink -f "$pwsh_path")")"
+    if [ "$powershell_home" != "/opt/microsoft/powershell/7" ]; then
+        echo "PowerShell resolved to an unsupported global profile directory: $powershell_home" >&2
+        exit 2
+    fi
     cat >"/opt/atlaso/bin/atlaso-vault-profile.ps1" <<'ATLASO_POWERSHELL_PROFILE'
 function global:Get-AtlasoVault {
     [CmdletBinding()]
@@ -1445,10 +1449,15 @@ function global:Get-AtlasoVault {
 ATLASO_POWERSHELL_PROFILE
     chown root:root /opt/atlaso/bin/atlaso-vault-profile.ps1
     chmod 0644 /opt/atlaso/bin/atlaso-vault-profile.ps1
-    touch "$powershell_home/profile.ps1"
-    if ! grep -qxF ". '/opt/atlaso/bin/atlaso-vault-profile.ps1'" "$powershell_home/profile.ps1"; then
-        printf "\n. '/opt/atlaso/bin/atlaso-vault-profile.ps1'\n" >>"$powershell_home/profile.ps1"
-    fi
+    # Replace the complete Atlaso-owned global profile; preserving producer bytes
+    # would let unverified commands execute before the authenticated vault import.
+    cat >"$powershell_home/profile.ps1" <<'ATLASO_GLOBAL_POWERSHELL_PROFILE'
+<#
+.SYNOPSIS
+Loads the Atlaso vault helpers into PowerShell sessions.
+#>
+. '/opt/atlaso/bin/atlaso-vault-profile.ps1'
+ATLASO_GLOBAL_POWERSHELL_PROFILE
     chown root:root "$powershell_home/profile.ps1"
     chmod 0644 "$powershell_home/profile.ps1"
 fi
