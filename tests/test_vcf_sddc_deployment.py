@@ -343,7 +343,7 @@ def test_vsphere_descriptor_controls_properties_defaults_options_and_warnings(tm
 
 def test_imported_ovf_verification_requires_all_keys_and_transport():
     """Reject an imported VM that lost metadata or guest environment transport."""
-    descriptor = SimpleNamespace(ovf_environment_transports=["com.vmware.guestInfo"])
+    descriptor = SimpleNamespace(ovf_environment_transports=["com.vmware.guestInfo", "iso"])
     complete_vm = SimpleNamespace(
         config=SimpleNamespace(
             vAppConfig=SimpleNamespace(

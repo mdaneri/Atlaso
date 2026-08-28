@@ -750,13 +750,9 @@ def _verify_imported_ovf_environment(
     }
     if expected_keys and not expected_transports:
         raise VcfSddcDeploymentError("The OVA does not declare an OVF environment transport for its deployment properties.")
-    missing_transports = sorted(expected_transports - actual_transports)
-    if missing_transports:
-        raise VcfSddcDeploymentError(
-            f"The imported VM is missing OVF environment transport: {', '.join(missing_transports)}."
-        )
-    if expected_keys and not actual_transports.intersection({"com.vmware.guestInfo", "iso"}):
-        raise VcfSddcDeploymentError("The imported VM has no supported guest OVF environment transport.")
+    supported_transports = {"com.vmware.guestInfo", "iso"}
+    if expected_keys and not actual_transports.intersection(expected_transports, supported_transports):
+        raise VcfSddcDeploymentError("The imported VM retained no supported OVF environment transport declared by the OVA.")
     return {
         "property_keys": sorted(actual_keys),
         "transports": sorted(actual_transports),
