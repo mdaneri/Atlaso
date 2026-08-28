@@ -18467,6 +18467,7 @@ def test_vcf_sddc_deploy_job_persists_no_passwords(client, monkeypatch):
     queued = {}
     monkeypatch.setattr("atlaso.app.routers.ui.vcf_workflows.tls_sha256_fingerprint", lambda *_args, **_kwargs: "AA:BB")
     monkeypatch.setattr("atlaso.app.routers.ui.vcf_workflows.inspect_ova", lambda *_args, **_kwargs: descriptor)
+    monkeypatch.setattr("atlaso.app.routers.ui.vcf_workflows.vsphere_ovf_descriptor", lambda *_args, **_kwargs: descriptor)
     monkeypatch.setattr(ui, "queue_vcf_sddc_deployment_job", lambda job_id, **kwargs: queued.update({"job_id": job_id, **kwargs}))
     response = client.post(
         "/vcf-helper/sddc-manager/deploy",
@@ -18649,6 +18650,7 @@ def test_vcf_sddc_deploy_requires_ipv4_ova_properties(client, monkeypatch):
     queued = {}
     monkeypatch.setattr("atlaso.app.routers.ui.vcf_workflows.tls_sha256_fingerprint", lambda *_args, **_kwargs: "AA:BB")
     monkeypatch.setattr("atlaso.app.routers.ui.vcf_workflows.inspect_ova", lambda *_args, **_kwargs: descriptor)
+    monkeypatch.setattr("atlaso.app.routers.ui.vcf_workflows.vsphere_ovf_descriptor", lambda *_args, **_kwargs: descriptor)
     monkeypatch.setattr(ui, "queue_vcf_sddc_deployment_job", lambda job_id, **kwargs: queued.update({"job_id": job_id, **kwargs}))
 
     response = client.post(

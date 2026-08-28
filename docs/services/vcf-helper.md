@@ -66,15 +66,44 @@ and OVA appliance passwords remain separate fields and are never filled from thi
 
 `Deploy SDDC Manager` becomes available when a valid OVA is present beneath
 `/mnt/atlaso-vcf-offline-depot/PROD/COMP/SDDC_MANAGER_VCF`. Atlaso validates the OVA manifest, reads its
-user-configurable OVF properties, confirms the vCenter or ESXi TLS fingerprint, discovers destination inventory, and
-streams the disks through a vSphere NFC lease. The pre-authentication fingerprint probe requires TLS 1.2 or newer while
-preserving explicit fingerprint confirmation as the trust decision. It refuses duplicate VM names, powers on the VM,
-and waits up to 90 minutes for the VCF API.
+user-configurable OVF properties, confirms the vCenter or ESXi TLS fingerprint, and asks the selected target to parse
+the OVF descriptor. VMware's parsed properties, defaults, deployment options, errors, and sanitized warnings are the
+authoritative import contract. Atlaso reviews and passes a value for every target-deployable property. A direct
+standalone ESXi connection is bound to its single host; vCenter retains automatic placement unless an operator selected
+a host. Atlaso then streams the disks through a vSphere NFC lease.
+
+Before power-on or any DNS, trust, or depot follow-up, Atlaso verifies that the imported VM retained every mapped vApp
+property and a supported OVF environment transport (`com.vmware.guestInfo` or `iso`). If verification fails, Atlaso
+removes only the exact VM created by that task. A failed removal is reported as a partial deployment requiring manual
+cleanup. The pre-authentication fingerprint probe requires TLS 1.2 or newer while preserving explicit fingerprint
+confirmation as the trust decision. Atlaso refuses duplicate VM names and waits up to 90 minutes for the VCF API after
+a verified VM is powered on.
 
 The form can optionally add managed DNS desired state, deploy Atlaso CA trust, and configure the local offline depot.
 Trust uses the VCF API only and does not require a snapshot acknowledgement.
 Manually entered vSphere, OVF, VCF API, and depot passwords remain transient; a selected vault password remains
 encrypted at rest and is resolved only on the server for the request.
+
+### Standalone ESXi acceptance check
+
+Run this check in a lab that has the exact supported VCF Installer OVA and a directly connected standalone ESXi host.
+Use a disposable VM name and do not record credentials or OVF property values.
+
+1. Record the sanitized Atlaso version and Git SHA, OVA product/version identity, ESXi version and API type, selected
+   deployment option, and OVF property key names.
+2. In **Deploy SDDC Manager**, confirm the ESXi TLS fingerprint, select the deployment option and destination, review
+   every rendered property key, and deploy with power-on disabled first.
+3. Confirm the task reports `HostAgent`, the selected deployment option, sanitized parser/import warnings, every mapped
+   property key, and an accepted OVF environment transport. In ESXi, confirm the VM's vApp/OVF properties exist without
+   copying their values into the evidence record.
+4. Power on the verified VM and confirm the VCF Installer consumes its OVF environment and becomes usable. Repeat the
+   supported vCenter path as a regression check when a safe vCenter target is available.
+5. For a negative check, use a disposable controlled descriptor or test target that cannot retain the required
+   transport. Confirm Atlaso powers on nothing, runs no DNS/trust/depot follow-up, and removes only the task-created VM.
+
+Record only sanitized diagnostics and key names. Never capture passwords, vSphere credentials, private material,
+property values, or the complete VM configuration. If the lab result differs, attach the sanitized task diagnostics to
+issue #595 before approving the pull request.
 
 ## Configure VCF Offline Depot
 

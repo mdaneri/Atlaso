@@ -18570,6 +18570,8 @@ function initializeVcfSddcDeployment() {
   const assignmentMode = form.querySelector("[data-vcf-sddc-assignment-mode]");
   const dhcpZoneRow = form.querySelector("[data-vcf-sddc-dhcp-zone-row]");
   const dhcpZoneSelect = form.querySelector("[data-vcf-sddc-dhcp-zone]");
+  const deploymentOptionRow = form.querySelector("[data-vcf-sddc-deployment-option-row]");
+  const deploymentOption = form.querySelector("[data-vcf-sddc-deployment-option]");
   const autoHostnameRow = form.querySelector("[data-vcf-sddc-auto-hostname-row]");
   const autoHostname = form.querySelector("[data-vcf-sddc-auto-hostname]");
   const autoIpRow = form.querySelector("[data-vcf-sddc-auto-ip-row]");
@@ -18723,6 +18725,18 @@ function initializeVcfSddcDeployment() {
       fillVcfInventorySelect(select, inventoryNetworks); label.append(select); networkContainer.append(label);
     });
   };
+  const renderDeploymentOptions = (ova) => {
+    if (!(deploymentOption instanceof HTMLSelectElement)) return;
+    const options = Array.isArray(ova?.deployment_options) ? ova.deployment_options : [];
+    deploymentOption.replaceChildren();
+    options.forEach((option) => {
+      const label = option.description ? `${option.label || option.key} — ${option.description}` : (option.label || option.key);
+      deploymentOption.append(new Option(label, option.key));
+    });
+    if (!options.length) deploymentOption.append(new Option("Default appliance profile", ""));
+    deploymentOption.value = ova?.selected_deployment_option || ova?.default_deployment_option || options[0]?.key || "";
+    deploymentOptionRow?.classList.toggle("hidden", options.length <= 1);
+  };
   const parseEndpoint = () => {
     const raw = String(form.elements.address.value || "").trim();
     const endpoint = raw.replace(/^https?:\/\//i, "");
@@ -18752,6 +18766,7 @@ function initializeVcfSddcDeployment() {
       credential_vault_id: form.elements.credential_vault_id.value,
       credential_entry_id: form.elements.credential_entry_id.value,
       confirmed_tls_fingerprint: form.elements.confirmed_tls_fingerprint.value,
+      deployment_option: deploymentOption instanceof HTMLSelectElement ? deploymentOption.value : "",
     };
   };
   const poll = async () => {
@@ -18796,8 +18811,10 @@ function initializeVcfSddcDeployment() {
       fillVcfInventorySelect(form.elements.datastore_id, data.inventory?.datastores);
       fillVcfInventorySelect(form.elements.folder_id, data.inventory?.folders, "Default VM folder");
       fillVcfInventorySelect(form.elements.host_id, data.inventory?.hosts, "Automatic placement");
+      renderDeploymentOptions(data.ova);
       renderNetworks(data.ova?.networks, data.inventory?.networks);
       renderProperties(data.ova?.properties);
+      showConfirmation((data.ova?.warnings || []).join(" "));
       wizard.setHighestStep("followup");
       wizard.showStep("resources", { unlock: true });
       return true;
@@ -18811,6 +18828,7 @@ function initializeVcfSddcDeployment() {
       }
     }
   };
+  deploymentOption?.addEventListener("change", () => { handleDiscover(); });
   const handleSubmit = async () => {
     showError(""); showTaskError("");
     const properties = {}; form.querySelectorAll("[data-ovf-key]").forEach((control) => { properties[control.dataset.ovfKey] = control.value; });
