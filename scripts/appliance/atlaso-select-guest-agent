@@ -9,6 +9,7 @@ DMI_ROOT="${ATLASO_DMI_ROOT:-/sys/class/dmi/id}"
 EXPECTED_STAGING_IDENTITY="${ATLASO_GUEST_AGENT_STAGING_IDENTITY:-root:root:700}"
 PACKAGE_CACHE_DIRECTORY="${ATLASO_GUEST_AGENT_PACKAGE_CACHE:-/var/cache/tdnf}"
 MACHINE_IDENTITY_INITIALIZER="${ATLASO_MACHINE_IDENTITY_INITIALIZER:-/opt/atlaso/bin/atlaso-initialize-machine-identity.py}"
+TEST_ROOT="${ATLASO_GUEST_AGENT_TEST_ROOT:-}"
 
 log() {
   printf 'atlaso-select-guest-agent: %s\n' "$1"
@@ -26,6 +27,93 @@ esac
 expected_owner=${EXPECTED_STAGING_IDENTITY%%:*}
 expected_group_and_mode=${EXPECTED_STAGING_IDENTITY#*:}
 expected_group=${expected_group_and_mode%%:*}
+
+canonical_managed_path() {
+  managed_path="$1"
+  managed_label="$2"
+  case "$managed_path" in
+    /*) ;;
+    *) fail "$managed_label must be absolute." ;;
+  esac
+  [ "$managed_path" != "/" ] || fail "$managed_label cannot identify the filesystem root."
+  managed_parent=$(dirname -- "$managed_path")
+  managed_name=$(basename -- "$managed_path")
+  case "$managed_name" in ''|.|..) fail "$managed_label is not a canonical path." ;; esac
+  [ -d "$managed_parent" ] && [ ! -L "$managed_parent" ] ||
+    fail "$managed_label parent is missing or unsafe."
+  resolved_parent=$(readlink -f -- "$managed_parent") || fail "$managed_label parent cannot be resolved."
+  [ "$resolved_parent" = "$managed_parent" ] || fail "$managed_label cannot use symbolic-link or noncanonical ancestry."
+  [ ! -L "$managed_path" ] || fail "$managed_label cannot be a symbolic link."
+  if [ "$resolved_parent" = "/" ]; then
+    printf '/%s\n' "$managed_name"
+  else
+    printf '%s/%s\n' "$resolved_parent" "$managed_name"
+  fi
+}
+
+paths_overlap() {
+  first_path="$1"
+  second_path="$2"
+  [ "$first_path" = "$second_path" ] && return 0
+  case "$first_path" in "$second_path"/*) return 0 ;; esac
+  case "$second_path" in "$first_path"/*) return 0 ;; esac
+  return 1
+}
+
+validate_cleanup_boundaries() {
+  current_staging=$(canonical_managed_path "$STAGING_DIRECTORY" "Guest-agent staging path")
+  current_runtime=$(canonical_managed_path "$RUNTIME_DIRECTORY" "Guest-agent runtime path")
+  current_marker=$(canonical_managed_path "$SUCCESS_MARKER" "Guest-agent success marker")
+  current_cache=$(canonical_managed_path "$PACKAGE_CACHE_DIRECTORY" "Guest-agent package cache")
+  [ "$current_staging" = "$validated_staging" ] &&
+    [ "$current_runtime" = "$validated_runtime" ] &&
+    [ "$current_marker" = "$validated_marker" ] &&
+    [ "$current_cache" = "$validated_cache" ] ||
+    fail "Guest-agent cleanup paths changed after validation."
+
+  for cleanup_directory in "$STAGING_DIRECTORY" "$RUNTIME_DIRECTORY" "$PACKAGE_CACHE_DIRECTORY"; do
+    if [ -e "$cleanup_directory" ] || [ -L "$cleanup_directory" ]; then
+      [ -d "$cleanup_directory" ] && [ ! -L "$cleanup_directory" ] ||
+        fail "Guest-agent cleanup target must be an ordinary directory."
+      if find "$cleanup_directory" -maxdepth 0 \( ! -user "$expected_owner" -o ! -group "$expected_group" -o -perm /022 \) -print -quit |
+        grep -q .; then
+        fail "Guest-agent cleanup target ownership or mode is unsafe."
+      fi
+    fi
+  done
+}
+
+validated_staging=$(canonical_managed_path "$STAGING_DIRECTORY" "Guest-agent staging path")
+validated_runtime=$(canonical_managed_path "$RUNTIME_DIRECTORY" "Guest-agent runtime path")
+validated_marker=$(canonical_managed_path "$SUCCESS_MARKER" "Guest-agent success marker")
+validated_cache=$(canonical_managed_path "$PACKAGE_CACHE_DIRECTORY" "Guest-agent package cache")
+
+if [ -z "$TEST_ROOT" ]; then
+  [ "$validated_staging" = "/var/lib/atlaso/first-boot-packages" ] &&
+    [ "$validated_runtime" = "/run/atlaso-guest-agent" ] &&
+    [ "$validated_marker" = "/var/lib/atlaso-privileged/guest-agent/guest-agent.applied" ] &&
+    [ "$validated_cache" = "/var/cache/tdnf" ] ||
+    fail "Guest-agent cleanup path overrides require an explicit isolated test root."
+else
+  validated_test_root=$(canonical_managed_path "$TEST_ROOT" "Guest-agent isolated test root")
+  [ -d "$TEST_ROOT" ] && [ ! -L "$TEST_ROOT" ] || fail "Guest-agent isolated test root must be an ordinary directory."
+  [ "$(stat -c '%U:%G:%a' "$TEST_ROOT")" = "$expected_owner:$expected_group:700" ] ||
+    fail "Guest-agent isolated test root ownership or mode is unsafe."
+  for cleanup_path in "$validated_staging" "$validated_runtime" "$validated_marker" "$validated_cache"; do
+    case "$cleanup_path" in
+      "$validated_test_root"/*) ;;
+      *) fail "Guest-agent test cleanup paths must be strict descendants of the isolated test root." ;;
+    esac
+  done
+fi
+
+paths_overlap "$validated_staging" "$validated_runtime" && fail "Guest-agent cleanup paths must not overlap."
+paths_overlap "$validated_staging" "$validated_marker" && fail "Guest-agent cleanup paths must not overlap."
+paths_overlap "$validated_staging" "$validated_cache" && fail "Guest-agent cleanup paths must not overlap."
+paths_overlap "$validated_runtime" "$validated_marker" && fail "Guest-agent cleanup paths must not overlap."
+paths_overlap "$validated_runtime" "$validated_cache" && fail "Guest-agent cleanup paths must not overlap."
+paths_overlap "$validated_marker" "$validated_cache" && fail "Guest-agent cleanup paths must not overlap."
+
 marker_parent=$(dirname -- "$SUCCESS_MARKER")
 [ -d "$marker_parent" ] && [ ! -L "$marker_parent" ] ||
   fail "Guest-agent success marker parent is missing or unsafe."
@@ -162,6 +250,9 @@ verify_absent() {
 }
 
 cleanup_staging() {
+  # Re-resolve every destructive boundary immediately before cleanup, including
+  # durable-marker retries, so environment or ancestry changes fail closed.
+  validate_cleanup_boundaries
   cleanup_required=0
   if [ -d "$STAGING_DIRECTORY" ]; then
     cleanup_required=1

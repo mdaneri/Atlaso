@@ -38,6 +38,7 @@ def _prepare_runtime(tmp_path: Path, *, platform: str, dmi: str, packages: tuple
         packages: Initially installed package names.
     """
 
+    tmp_path.chmod(0o700)
     command_dir = tmp_path / "bin"
     command_dir.mkdir()
     state_path = tmp_path / "packages.txt"
@@ -149,6 +150,7 @@ esac
         "ATLASO_GUEST_AGENT_STAGING": str(staging),
         "ATLASO_GUEST_AGENT_RUNTIME": str(tmp_path / "runtime"),
         "ATLASO_GUEST_AGENT_MARKER": str(tmp_path / "guest-agent.applied"),
+        "ATLASO_GUEST_AGENT_TEST_ROOT": str(tmp_path),
         "ATLASO_DMI_ROOT": str(dmi_root),
         "ATLASO_GUEST_AGENT_STAGING_IDENTITY": f"{owner}:{group}:700",
         "ATLASO_GUEST_AGENT_PACKAGE_CACHE": str(package_cache),
@@ -330,6 +332,104 @@ def test_success_marker_is_revalidated_against_current_platform(tmp_path: Path) 
     conflict = _run_selector(environment)
     assert conflict.returncode == 2
     assert "conflicts with current evidence" in conflict.stderr
+
+
+@pytest.mark.parametrize(
+    "override_name",
+    [
+        "ATLASO_GUEST_AGENT_STAGING",
+        "ATLASO_GUEST_AGENT_RUNTIME",
+        "ATLASO_GUEST_AGENT_PACKAGE_CACHE",
+    ],
+)
+def test_success_marker_retry_rejects_unrelated_cleanup_target(tmp_path: Path, override_name: str) -> None:
+    """A durable marker cannot authorize cleanup outside the isolated root.
+
+    Args:
+        tmp_path: Temporary directory provided by pytest.
+        override_name: Destructive selector path redirected outside the admitted root.
+    """
+
+    isolated_root = tmp_path / "isolated"
+    isolated_root.mkdir(mode=0o700)
+    environment = _prepare_runtime(isolated_root, platform="kvm", dmi="QEMU", packages=("open-vm-tools",))
+    first = _run_selector(environment)
+    assert first.returncode == 0, first.stderr
+
+    victim = tmp_path / f"victim-{override_name.lower()}"
+    victim.mkdir(mode=0o700)
+    sentinel = victim / "preserve.txt"
+    sentinel.write_text("preserve\n", encoding="utf-8")
+    environment[override_name] = str(victim)
+
+    retry = _run_selector(environment)
+
+    assert retry.returncode == 2
+    assert "strict descendants" in retry.stderr
+    assert sentinel.read_text(encoding="utf-8") == "preserve\n"
+
+
+def test_cleanup_targets_cannot_overlap(tmp_path: Path) -> None:
+    """Nested cleanup boundaries are rejected before selector mutation.
+
+    Args:
+        tmp_path: Temporary directory provided by pytest.
+    """
+
+    environment = _prepare_runtime(tmp_path, platform="kvm", dmi="QEMU", packages=("open-vm-tools",))
+    staging = Path(environment["ATLASO_GUEST_AGENT_STAGING"])
+    environment["ATLASO_GUEST_AGENT_RUNTIME"] = str(staging / "runtime")
+
+    result = _run_selector(environment)
+
+    assert result.returncode == 2
+    assert "must not overlap" in result.stderr
+    assert staging.is_dir()
+    assert Path(environment["FAKE_PACKAGE_STATE"]).read_text(encoding="utf-8").splitlines() == ["open-vm-tools"]
+
+
+def test_cleanup_target_cannot_equal_isolated_root(tmp_path: Path) -> None:
+    """The admitted root itself is never a destructive target.
+
+    Args:
+        tmp_path: Temporary directory provided by pytest.
+    """
+
+    environment = _prepare_runtime(tmp_path, platform="kvm", dmi="QEMU", packages=("open-vm-tools",))
+    sentinel = tmp_path / "preserve.txt"
+    sentinel.write_text("preserve\n", encoding="utf-8")
+    environment["ATLASO_GUEST_AGENT_PACKAGE_CACHE"] = str(tmp_path)
+
+    result = _run_selector(environment)
+
+    assert result.returncode == 2
+    assert "strict descendants" in result.stderr
+    assert sentinel.read_text(encoding="utf-8") == "preserve\n"
+
+
+def test_cleanup_target_rejects_symlinked_ancestry(tmp_path: Path) -> None:
+    """A symlinked parent cannot redirect cleanup inside or outside the test root.
+
+    Args:
+        tmp_path: Temporary directory provided by pytest.
+    """
+
+    environment = _prepare_runtime(tmp_path, platform="kvm", dmi="QEMU", packages=("open-vm-tools",))
+    real_parent = tmp_path / "real-parent"
+    real_parent.mkdir(mode=0o700)
+    victim = real_parent / "runtime"
+    victim.mkdir(mode=0o700)
+    sentinel = victim / "preserve.txt"
+    sentinel.write_text("preserve\n", encoding="utf-8")
+    linked_parent = tmp_path / "linked-parent"
+    linked_parent.symlink_to(real_parent, target_is_directory=True)
+    environment["ATLASO_GUEST_AGENT_RUNTIME"] = str(linked_parent / "runtime")
+
+    result = _run_selector(environment)
+
+    assert result.returncode == 2
+    assert "parent is missing or unsafe" in result.stderr
+    assert sentinel.read_text(encoding="utf-8") == "preserve\n"
 
 
 def test_hyperv_access_cleanup_reloads_kvp_after_record_removal(tmp_path: Path) -> None:
