@@ -362,11 +362,16 @@ if (
 ) {
     throw 'Durable cleanup retry must precede 1Password preflight and every new VM/network mutation.'
 }
-$markerCreation = $wrapperSource.LastIndexOf(
-    'New-AtlasoDevelopmentCaCleanupMarker',
+$markerCreationScope = $wrapperSource.LastIndexOf(
+    '$createdThisInvocation = $false',
     [System.StringComparison]::Ordinal
 )
-if ($markerCreation -lt 0 -or $markerCreation -gt $stageStart) {
+$markerCreation = $wrapperSource.IndexOf(
+    'New-AtlasoDevelopmentCaCleanupMarker',
+    $markerCreationScope,
+    [System.StringComparison]::Ordinal
+)
+if ($markerCreationScope -lt 0 -or $markerCreation -lt $markerCreationScope -or $markerCreation -gt $stageStart) {
     throw 'A durable cleanup marker must be committed before development-signer staging.'
 }
 if (
@@ -632,12 +637,24 @@ $conditionalRestore = $wrapperSource.LastIndexOf(
     'if ($quarantineDirectory -and -not $removalTreeUnproven)',
     [System.StringComparison]::Ordinal
 )
+$preSecretRollbackMarker = $wrapperSource.LastIndexOf(
+    '-AllowExistingCleanupIdentity | Out-Null',
+    [System.StringComparison]::Ordinal
+)
+$preSecretMarkerReconciliation = $wrapperSource.LastIndexOf(
+    'Find-AtlasoDevelopmentCaCleanupMarker',
+    [System.StringComparison]::Ordinal
+)
 if (
     $removalChildPhase -lt $rollbackCatch -or
+    $preSecretMarkerReconciliation -lt $rollbackCatch -or
+    $preSecretMarkerReconciliation -gt $preSecretRollbackMarker -or
+    $preSecretRollbackMarker -lt $rollbackCatch -or
+    $preSecretRollbackMarker -gt $removalChildPhase -or
     $rollbackRemoval -lt $removalChildPhase -or
     $conditionalRestore -lt $rollbackRemoval
 ) {
-    throw 'Rollback must persist removal-child activity and withhold quarantined disks until termination is proven.'
+    throw 'Rollback must durably own pre-secret cleanup before removal and withhold quarantined disks until termination is proven.'
 }
 if ($wrapperSource -notmatch '\$runtimeSignerScrubError\s*=\s*\$_\.Exception\.Message' -or
     $wrapperSource -notmatch '\$stopped\s*=\s*\$true') {
@@ -673,14 +690,174 @@ try {
             -MarkerPathReference ([ref]$blockedMarkerPath)
     } 'A pre-existing VMX cleanup identity must block marker publication.'
     if (
-        [string]::IsNullOrWhiteSpace($blockedMarkerPath) -or
+        -not [string]::IsNullOrWhiteSpace($blockedMarkerPath) -or
         (Test-Path -LiteralPath $blockedMarkerPath) -or
-        -not ([System.IO.Path]::GetDirectoryName($blockedMarkerPath)).Equals(
-            [System.IO.Path]::GetFullPath($markerRoot),
-            [System.StringComparison]::OrdinalIgnoreCase
-        )
+        @(Get-ChildItem -LiteralPath $markerRoot -Filter '*.json' -ErrorAction SilentlyContinue).Count -ne 0
     ) {
-        throw 'A marker-publication failure did not preserve its unbound path for fail-closed rollback.'
+        throw 'A marker-publication failure was incorrectly exposed as durable recovery state.'
+    }
+
+    # Run the production declarations as one file-backed child script. The
+    # existing isolated-function tests intentionally dot-source extracted
+    # definitions and therefore cannot reproduce script-local command lookup.
+    $scriptScopeRoot = Join-Path $markerTestRoot 'script-scope'
+    New-Item -ItemType Directory -Path $scriptScopeRoot | Out-Null
+    $scriptScopeHarness = Join-Path $scriptScopeRoot 'marker-script-scope.ps1'
+    $wrapperLines = Get-Content -LiteralPath $wrapperPath
+    $lastFunctionEndLine = ($ast.FindAll({
+                param($node)
+                $node -is [System.Management.Automation.Language.FunctionDefinitionAst]
+            }, $true) | Measure-Object -Property {
+                $_.Extent.EndLineNumber
+            } -Maximum).Maximum
+    $wrapperScriptRootLiteral = "'$((Split-Path -Parent $wrapperPath).Replace("'", "''"))'"
+    $productionDeclarations = ($wrapperLines[0..($lastFunctionEndLine - 1)] -join "`r`n").Replace(
+        '$PSScriptRoot',
+        $wrapperScriptRootLiteral
+    )
+    $scriptScopeExercise = @'
+
+$scopeRoot = Join-Path ([System.IO.Path]::GetTempPath()) (
+    "atlaso-marker-script-scope-$([guid]::NewGuid().ToString('N'))"
+)
+try {
+    $vmRoot = Join-Path $scopeRoot 'vm'
+    $markerRoot = Join-Path $scopeRoot 'markers'
+    New-Item -ItemType Directory -Path $vmRoot | Out-Null
+    $vmxPath = Join-Path $vmRoot 'Atlaso-Script-Scope.vmx'
+    [System.IO.File]::WriteAllText(
+        $vmxPath,
+        'config.version = "8"',
+        [System.Text.UTF8Encoding]::new($false)
+    )
+    $publishedMarkerPath = ''
+    $returnedMarkerPath = New-AtlasoDevelopmentCaCleanupMarker `
+        -VmxPath $vmxPath `
+        -Name 'Atlaso-Script-Scope' `
+        -OutputDirectory $vmRoot `
+        -DataDiskStates @() `
+        -MarkerRoot $markerRoot `
+        -MarkerPathReference ([ref]$publishedMarkerPath)
+    if (
+        [string]::IsNullOrWhiteSpace($publishedMarkerPath) -or
+        $returnedMarkerPath -cne $publishedMarkerPath -or
+        -not (Test-Path -LiteralPath $publishedMarkerPath -PathType Leaf)
+    ) {
+        throw 'The file-backed wrapper scope did not durably publish its cleanup marker.'
+    }
+    $recoveryVmxPath = Join-Path $vmRoot 'Atlaso-Script-Scope-Recovery.vmx'
+    [System.IO.File]::WriteAllText(
+        $recoveryVmxPath,
+        "config.version = `"8`"`r`n" +
+        "guestinfo.atlaso.test_vm_cleanup_identity = `"$('e' * 32)`"`r`n",
+        [System.Text.UTF8Encoding]::new($false)
+    )
+    $recoveryMarkerPath = New-AtlasoDevelopmentCaCleanupMarker `
+        -VmxPath $recoveryVmxPath `
+        -Name 'Atlaso-Script-Scope-Recovery' `
+        -OutputDirectory $vmRoot `
+        -DataDiskStates @() `
+        -MarkerRoot $markerRoot `
+        -InitialPhase stopped-vmx-scrubbed `
+        -AllowExistingCleanupIdentity
+    $recoveryMarker = Read-AtlasoDevelopmentCaCleanupMarker `
+        -MarkerPath $recoveryMarkerPath `
+        -MarkerRoot $markerRoot
+    if ($recoveryMarker.Phase -cne 'stopped-vmx-scrubbed') {
+        throw 'Pre-secret rollback did not durably bind its existing VMX cleanup identity.'
+    }
+    $absentIdentityRoot = Join-Path $scopeRoot 'absent-identity-markers'
+    $absentIdentityVmxPath = Join-Path $vmRoot 'Atlaso-Script-Scope-Absent-Identity.vmx'
+    New-Item -ItemType Directory -Path $absentIdentityRoot | Out-Null
+    [System.IO.File]::WriteAllText(
+        $absentIdentityVmxPath,
+        'config.version = "8"',
+        [System.Text.UTF8Encoding]::new($false)
+    )
+    $absentIdentityMarker = Find-AtlasoDevelopmentCaCleanupMarker `
+        -VmxPath $absentIdentityVmxPath `
+        -Name 'Atlaso-Script-Scope-Absent-Identity' `
+        -OutputDirectory $vmRoot `
+        -MarkerRoot $absentIdentityRoot
+    if ($null -ne $absentIdentityMarker) {
+        throw 'An empty marker root was incorrectly treated as a renamed durable marker.'
+    }
+    $absentIdentityFallbackPath = New-AtlasoDevelopmentCaCleanupMarker `
+        -VmxPath $absentIdentityVmxPath `
+        -Name 'Atlaso-Script-Scope-Absent-Identity' `
+        -OutputDirectory $vmRoot `
+        -DataDiskStates @() `
+        -MarkerRoot $absentIdentityRoot `
+        -InitialPhase stopped-vmx-scrubbed `
+        -AllowExistingCleanupIdentity
+    if (-not (Test-Path -LiteralPath $absentIdentityFallbackPath -PathType Leaf)) {
+        throw 'An absent VMX cleanup identity did not admit fresh durable fallback publication.'
+    }
+    $reconciliationRoot = Join-Path $scopeRoot 'reconciliation-markers'
+    $reconciliationVmxPath = Join-Path $vmRoot 'Atlaso-Script-Scope-Reconciliation.vmx'
+    [System.IO.File]::WriteAllText(
+        $reconciliationVmxPath,
+        'config.version = "8"',
+        [System.Text.UTF8Encoding]::new($false)
+    )
+    $renamedMarkerPath = New-AtlasoDevelopmentCaCleanupMarker `
+        -VmxPath $reconciliationVmxPath `
+        -Name 'Atlaso-Script-Scope-Reconciliation' `
+        -OutputDirectory $vmRoot `
+        -DataDiskStates @() `
+        -MarkerRoot $reconciliationRoot
+    # Model the post-rename failure window: durable state exists, but the
+    # caller-owned marker reference was never exposed.
+    $reconciledMarker = Find-AtlasoDevelopmentCaCleanupMarker `
+        -VmxPath $reconciliationVmxPath `
+        -Name 'Atlaso-Script-Scope-Reconciliation' `
+        -OutputDirectory $vmRoot `
+        -MarkerRoot $reconciliationRoot
+    if (
+        $null -eq $reconciledMarker -or
+        $reconciledMarker.MarkerPath -cne $renamedMarkerPath -or
+        @(Get-ChildItem -LiteralPath $reconciliationRoot -Filter '*.json').Count -ne 1
+    ) {
+        throw 'Post-rename cleanup-marker reconciliation did not recover the exact durable destination.'
+    }
+}
+finally {
+    Remove-Item -LiteralPath $scopeRoot -Recurse -Force -ErrorAction SilentlyContinue
+}
+'@
+    [System.IO.File]::WriteAllText(
+        $scriptScopeHarness,
+        "$productionDeclarations$scriptScopeExercise",
+        [System.Text.UTF8Encoding]::new($false)
+    )
+    $scriptScopeResult = & (Get-Process -Id $PID).Path `
+        -NoLogo `
+        -NoProfile `
+        -NonInteractive `
+        -File $scriptScopeHarness 2>&1
+    if ($LASTEXITCODE -ne 0) {
+        throw "The file-backed script-local marker regression failed: $($scriptScopeResult -join ' ')"
+    }
+    $markerFunctionStart = $wrapperSource.IndexOf(
+        'function New-AtlasoDevelopmentCaCleanupMarker',
+        [System.StringComparison]::Ordinal
+    )
+    $durableActionCall = $wrapperSource.IndexOf(
+        '-DurableIdentityAction $publishMarker',
+        $markerFunctionStart,
+        [System.StringComparison]::Ordinal
+    )
+    $publishedPathAssignment = $wrapperSource.IndexOf(
+        '$MarkerPathReference.Value = $markerPath',
+        $markerFunctionStart,
+        [System.StringComparison]::Ordinal
+    )
+    if (
+        $markerFunctionStart -lt 0 -or
+        $durableActionCall -lt $markerFunctionStart -or
+        $publishedPathAssignment -lt $durableActionCall
+    ) {
+        throw 'The caller-visible marker path must follow successful durable publication.'
     }
     [System.IO.File]::WriteAllText($markerVmx, 'config.version = "8"')
     [System.IO.File]::WriteAllText(

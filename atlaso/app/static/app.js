@@ -18592,6 +18592,8 @@ function initializeVcfSddcDeployment() {
   let pendingTlsAction = null;
   let pendingTlsFingerprint = "";
   let discoveryRequestId = 0;
+  let discoveryPending = false;
+  let discoveryReady = false;
   let wizard;
   const steps = [
     { id: "source", title: "vCenter / ESXi information", description: "Choose the SDDC Manager OVA and the vSphere endpoint used for discovery and import." },
@@ -18735,14 +18737,15 @@ function initializeVcfSddcDeployment() {
   const renderDeploymentOptions = (ova) => {
     if (!(deploymentOption instanceof HTMLSelectElement)) return;
     const options = Array.isArray(ova?.deployment_options) ? ova.deployment_options : [];
+    const selectedOption = ova?.selected_deployment_option || ova?.default_deployment_option || "";
     deploymentOption.replaceChildren();
+    if (!selectedOption || !options.length) deploymentOption.append(new Option("Default appliance profile", ""));
     options.forEach((option) => {
       const label = option.description ? `${option.label || option.key} — ${option.description}` : (option.label || option.key);
       deploymentOption.append(new Option(label, option.key));
     });
-    if (!options.length) deploymentOption.append(new Option("Default appliance profile", ""));
-    deploymentOption.value = ova?.selected_deployment_option || ova?.default_deployment_option || options[0]?.key || "";
-    deploymentOptionRow?.classList.toggle("hidden", options.length <= 1);
+    deploymentOption.value = selectedOption;
+    deploymentOptionRow?.classList.toggle("hidden", deploymentOption.options.length <= 1);
   };
   const parseEndpoint = () => {
     const raw = String(form.elements.address.value || "").trim();
@@ -18776,6 +18779,13 @@ function initializeVcfSddcDeployment() {
       deployment_option: deploymentOption instanceof HTMLSelectElement ? deploymentOption.value : "",
     };
   };
+  const invalidateDiscovery = () => {
+    discoveryReady = false;
+    form.querySelectorAll("[data-atlaso-wizard-nav], [data-atlaso-wizard-submit]").forEach((control) => {
+      if (control instanceof HTMLButtonElement) control.disabled = true;
+    });
+    if (next instanceof HTMLButtonElement) next.disabled = discoveryPending || wizard?.currentStepId !== "source";
+  };
   const poll = async () => {
     if (!activeJob) return;
     try {
@@ -18788,6 +18798,9 @@ function initializeVcfSddcDeployment() {
     } catch (error) { showTaskError(error.message); }
   };
 
+  ["ova_path", "address", "username", "password", "credential_vault_id", "credential_entry_id"].forEach((name) => {
+    form.elements[name]?.addEventListener("input", invalidateDiscovery);
+  });
   ovaSelect?.addEventListener("change", syncOva);
   vmName?.addEventListener("input", () => {
     if (assignmentMode?.value === "automatic" && !autoHostnameTouched) applyDhcpAssignment({ refreshHostname: true, refreshIp: false });
@@ -18804,6 +18817,8 @@ function initializeVcfSddcDeployment() {
     if (!(await wizard.validate("source"))) return false;
     const requestId = ++discoveryRequestId;
     const discoveryPayload = basePayload();
+    discoveryPending = true;
+    invalidateDiscovery();
     const discoveryIdentityFields = [
       "ova_path",
       "address",
@@ -18850,6 +18865,7 @@ function initializeVcfSddcDeployment() {
       });
       renderProperties(data.ova?.properties);
       showConfirmation((data.ova?.warnings || []).join(" "));
+      discoveryReady = true;
       wizard.setHighestStep("followup");
       wizard.showStep("resources", { unlock: true });
       return true;
@@ -18858,13 +18874,17 @@ function initializeVcfSddcDeployment() {
       return false;
     } finally {
       if (requestId === discoveryRequestId && next instanceof HTMLButtonElement) {
-        next.disabled = false;
+        discoveryPending = false;
+        next.disabled = !discoveryReady && wizard?.currentStepId !== "source";
         next.textContent = "Next";
       }
     }
   };
-  deploymentOption?.addEventListener("change", () => { handleDiscover(); });
+  deploymentOption?.addEventListener("change", () => { invalidateDiscovery(); handleDiscover(); });
   const handleSubmit = async () => {
+    if (discoveryPending || !discoveryReady) {
+      return { ok: false, message: "Wait for vSphere discovery to finish before deploying." };
+    }
     showError(""); showTaskError("");
     const properties = {}; form.querySelectorAll("[data-ovf-key]").forEach((control) => { properties[control.dataset.ovfKey] = control.value; });
     const networkIds = {}; form.querySelectorAll("[data-ova-network]").forEach((control) => { networkIds[control.dataset.ovaNetwork] = control.value; });
@@ -18900,6 +18920,7 @@ function initializeVcfSddcDeployment() {
     },
     onOpen: () => {
       syncOva();
+      invalidateDiscovery();
       autoHostnameTouched = false;
       hideTlsConfirmation();
       showError("");
