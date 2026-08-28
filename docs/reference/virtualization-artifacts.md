@@ -19,6 +19,13 @@ exact prerelease OVA on Proxmox and KVM before publishing the unchanged OVA and 
 `virtualization-vX.Y.Z`. The software/update `vX.Y.Z` Release is the required source of the embedded wheel and CPython
 3.14 wheelhouse, but never contains virtualization assets.
 
+The maintainer workstation is a trusted release producer. An optional explicitly approved ephemeral Windows runner is
+trusted for the same single release while it is online. Neither receives the signing key. The protected hosted
+finalizer performs the independent checks below as defense in depth and retains exclusive signing and publication
+authority, but it is not a reproducible Photon image builder and does not claim to prove an entire root filesystem safe
+against a compromised producer. A producer compromise is therefore a release-security incident that requires stopping
+publication, rotating affected credentials, and rebuilding from a known-good trusted workstation.
+
 The shared machine contract is UEFI with Secure Boot disabled, four virtual CPUs, 4096 MiB RAM, two NICs, one SCSI
 controller, and four ordered disks:
 
@@ -337,6 +344,12 @@ publication completed but its final live verification did not, an exact retry de
 during admission and verifies its signed index, source binding, attestations, and byte identity with the selected
 prerelease directly on GitHub-hosted Linux. It does not schedule Proxmox or KVM again, rebuild the signed index, or
 modify the immutable Release.
+If an unpublished stable draft already contains both signed-index assets, the protected finalizer validates their
+signature, release identity, source binding, and complete asset set, then resumes with those exact retained bytes even
+when current `main` would render a different index. A draft containing only one index asset fails closed. After
+confirming that the draft is unpublished and the retained file is the sole incomplete index asset, a maintainer may
+rerun **Promote stable virtualization release** with `recover_incomplete_index` enabled; only that explicit protected
+recovery deletes the incomplete file and reconstructs the pair. Ordinary retries never delete or replace draft assets.
 For the optional ephemeral-Windows workflow, also define `ATLASO_ONEPASSWORD_ENVIRONMENT_ID`,
 `ATLASO_ONEPASSWORD_ACCOUNT`, and `ATLASO_ONEPASSWORD_PYTHON` as repository variables. They are non-secret selectors;
 the disposable runner must still complete its local 1Password authorization and receives no signing key.

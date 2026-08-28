@@ -1207,6 +1207,9 @@ def test_release_workflows_use_successful_main_sha_and_promote_without_rebuildin
     virtualization = (ROOT / ".github/workflows/virtualization-stable.yml").read_text(
         encoding="utf-8"
     )
+    virtualization_reference = (
+        ROOT / "docs/reference/virtualization-artifacts.md"
+    ).read_text(encoding="utf-8")
     windows_candidate = (
         ROOT / ".github/workflows/virtualization-windows-candidate.yml"
     ).read_text(encoding="utf-8")
@@ -1289,11 +1292,19 @@ def test_release_workflows_use_successful_main_sha_and_promote_without_rebuildin
     assert "name: Live-verify an existing stable release" in virtualization
     assert "cmp --silent \"stable/atlaso-v${VERSION}.ova\"" in virtualization
     assert "needs.admit.outputs.already_published != 'true'" in virtualization
+    assert "recover_incomplete_index:" in virtualization
+    assert "A complete retained pair is already the protected signer's durable" in virtualization
+    assert 'if test "$INDEX_COUNT" -eq 2' in virtualization
+    assert "python scripts/verify_virtualization_artifact_index.py" in virtualization
+    assert 'gh release delete-asset "$STABLE_TAG" "$INCOMPLETE_NAME" --yes' in virtualization
+    assert "rerun with recover_incomplete_index=true" in virtualization
     assert "cpio libguestfs-tools qemu-utils rpm rpm2cpio" in virtualization
     admit_job = virtualization.split("  admit:\n", 1)[1].split("  recover_published:\n", 1)[0]
     assert "attestations: read" in admit_job
     assert "cmp --silent" in virtualization
     assert "gh-pages" not in virtualization
+    assert "The maintainer workstation is a trusted release producer" in virtualization_reference
+    assert "does not claim to prove an entire root filesystem safe" in virtualization_reference
     assert "environment: appliance-release" in prerelease
     assert "run-name: Finalize ${{ inputs.prerelease_tag }}" in prerelease
     assert "--classification prerelease" in prerelease

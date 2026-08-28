@@ -16,6 +16,11 @@ on:
         description: Unique label of the approved ephemeral KVM runner
         required: true
         type: string
+      recover_incomplete_index:
+        description: Explicitly discard one incomplete stable-draft index asset and rebuild the pair
+        required: false
+        default: false
+        type: boolean
 
 concurrency:
   # All stable promotions are serialized because different rc.N tags for one
@@ -367,14 +372,58 @@ jobs:
             --wheelhouse verified-source/wheelhouse/cp314 \
             --expected-digest "$APPLICATION_WHEEL_SHA256" \
             --source-commit "$RELEASE_SHA"
-          python scripts/build_virtualization_artifact_index.py \
-            --assets candidate --version "$VERSION" --commit "$RELEASE_SHA" \
-            --classification stable --release-tag "$STABLE_TAG" \
-            --source-release-manifest-sha256 "$SOURCE_MANIFEST_SHA256" \
-            --application-wheel-sha256 "$APPLICATION_WHEEL_SHA256" \
-            --built-at "$(git show -s --format=%cI "$RELEASE_SHA")" \
-            --signing-key "$RUNNER_TEMP/release-signing-key.pem" \
-            --signing-key-id atlaso-release-2026-01
+          # A complete retained pair is already the protected signer's durable
+          # output, so retries validate and reuse those exact bytes even when
+          # current main would generate a different representation. A single
+          # retained file cannot authenticate a pair; deleting it is therefore
+          # restricted to the explicit protected recovery input.
+          mkdir "$RUNNER_TEMP/stable-index"
+          RELEASE_STATE="$(gh api graphql \
+            -f query='query($owner:String!,$name:String!,$tag:String!){repository(owner:$owner,name:$name){release(tagName:$tag){isDraft isPrerelease releaseAssets(first:100){nodes{name}}}}}' \
+            -f owner="${GITHUB_REPOSITORY%%/*}" -f name="${GITHUB_REPOSITORY#*/}" \
+            -f tag="$STABLE_TAG" --jq '.data.repository.release')"
+          INDEX_COUNT=0
+          if test "$RELEASE_STATE" != null; then
+            test "$(jq -r .isDraft <<<"$RELEASE_STATE")" = true
+            test "$(jq -r .isPrerelease <<<"$RELEASE_STATE")" = false
+            INDEX_COUNT="$(jq '[.releaseAssets.nodes[].name | select(. == "virtualization-artifact-index.json" or . == "virtualization-artifact-index.json.sig")] | length' <<<"$RELEASE_STATE")"
+            test "$INDEX_COUNT" -le 2
+            if test "$INDEX_COUNT" -gt 0; then
+              gh release download "$STABLE_TAG" --dir "$RUNNER_TEMP/stable-index" \
+                --pattern virtualization-artifact-index.json \
+                --pattern virtualization-artifact-index.json.sig
+            fi
+          fi
+          if test "$INDEX_COUNT" -eq 2; then
+            cp "$RUNNER_TEMP/stable-index/virtualization-artifact-index.json" candidate/
+            cp "$RUNNER_TEMP/stable-index/virtualization-artifact-index.json.sig" candidate/
+            python scripts/verify_virtualization_artifact_index.py \
+              --index candidate/virtualization-artifact-index.json \
+              --signature candidate/virtualization-artifact-index.json.sig \
+              --trust-key image/common/update-trust/atlaso-release-2026-01.pem \
+              --asset-directory candidate --expected-version "$VERSION" \
+              --expected-commit "$RELEASE_SHA" --expected-classification stable \
+              --expected-release-tag "$STABLE_TAG"
+          else
+            if test "$INDEX_COUNT" -eq 1; then
+              if test '${{ inputs.recover_incomplete_index }}' != true; then
+                echo 'Stable draft has one incomplete index asset; rerun with recover_incomplete_index=true.' >&2
+                exit 1
+              fi
+              INCOMPLETE_NAME="$(find "$RUNNER_TEMP/stable-index" -maxdepth 1 -type f -printf '%f\n')"
+              test "$INCOMPLETE_NAME" = virtualization-artifact-index.json -o \
+                "$INCOMPLETE_NAME" = virtualization-artifact-index.json.sig
+              gh release delete-asset "$STABLE_TAG" "$INCOMPLETE_NAME" --yes
+            fi
+            python scripts/build_virtualization_artifact_index.py \
+              --assets candidate --version "$VERSION" --commit "$RELEASE_SHA" \
+              --classification stable --release-tag "$STABLE_TAG" \
+              --source-release-manifest-sha256 "$SOURCE_MANIFEST_SHA256" \
+              --application-wheel-sha256 "$APPLICATION_WHEEL_SHA256" \
+              --built-at "$(git show -s --format=%cI "$RELEASE_SHA")" \
+              --signing-key "$RUNNER_TEMP/release-signing-key.pem" \
+              --signing-key-id atlaso-release-2026-01
+          fi
       - name: Create or resume immutable stable tag and draft
         id: stable_release
         env:
