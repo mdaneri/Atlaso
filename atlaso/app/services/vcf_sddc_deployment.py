@@ -438,7 +438,11 @@ def _safe_vsphere_message(exc: Exception) -> str:
 
 
 def _ovf_descriptor_text(descriptor: OvaDescriptor) -> str:
-    """Read the manifest-selected OVF descriptor without extracting the OVA."""
+    """Read the manifest-selected OVF descriptor without extracting the OVA.
+
+    Args:
+        descriptor: Validated OVA metadata naming the descriptor member.
+    """
     try:
         with tarfile.open(descriptor.path, "r") as archive:
             source = archive.extractfile(descriptor.ovf_member)
@@ -450,7 +454,12 @@ def _ovf_descriptor_text(descriptor: OvaDescriptor) -> str:
 
 
 def _redact_ovf_property_values(message: str, values: list[str] | tuple[str, ...]) -> str:
-    """Remove every submitted OVF property value from a diagnostic string."""
+    """Remove every submitted OVF property value from a diagnostic string.
+
+    Args:
+        message: Diagnostic text returned by vSphere.
+        values: Submitted OVF values that must not appear in diagnostics.
+    """
     redacted = str(message or "")
     unique_values = sorted({str(value) for value in values if str(value)}, key=len, reverse=True)
     for value in unique_values:
@@ -459,7 +468,12 @@ def _redact_ovf_property_values(message: str, values: list[str] | tuple[str, ...
 
 
 def _ovf_diagnostic_messages(items: Any, *, property_values: dict[str, str] | None = None) -> list[str]:
-    """Return bounded, value-redacted VMware OVF diagnostics."""
+    """Return bounded, value-redacted VMware OVF diagnostics.
+
+    Args:
+        items: VMware warning or error objects to render.
+        property_values: Reviewed OVF mapping whose values must be redacted.
+    """
     values = list((property_values or {}).values())
     messages: list[str] = []
     for item in list(items or []):
@@ -479,7 +493,14 @@ def _parse_vsphere_ovf_descriptor(
     deployment_option: str = "",
     property_values: dict[str, str] | None = None,
 ) -> OvaDescriptor:
-    """Merge VMware's authoritative descriptor result into local OVA metadata."""
+    """Merge VMware's authoritative descriptor result into local OVA metadata.
+
+    Args:
+        content: Connected vSphere service content.
+        descriptor: Locally inspected OVA metadata to validate against the target.
+        deployment_option: Requested VMware deployment-option key.
+        property_values: Reviewed OVF mapping used to redact target diagnostics.
+    """
     from pyVmomi import vim
 
     params = vim.OvfManager.ParseDescriptorParams(
@@ -549,7 +570,12 @@ def _parse_vsphere_ovf_descriptor(
 
 
 def complete_property_mapping(descriptor: OvaDescriptor, submitted: dict[str, str]) -> dict[str, str]:
-    """Build an exact mapping for every reviewed target-deployable OVF property."""
+    """Build an exact mapping for every reviewed target-deployable OVF property.
+
+    Args:
+        descriptor: Target-authoritative deployable OVF metadata.
+        submitted: Operator-reviewed property values keyed by OVF identifier.
+    """
     properties = {item.key: item for item in descriptor.properties}
     unknown = sorted(set(submitted) - set(properties))
     if unknown:
@@ -720,7 +746,13 @@ def _verify_imported_ovf_environment(
     descriptor: OvaDescriptor,
     property_values: dict[str, str],
 ) -> dict[str, Any]:
-    """Prove imported vApp metadata and guest OVF transport before power-on."""
+    """Prove imported vApp metadata and guest OVF transport before power-on.
+
+    Args:
+        vm: Exact virtual machine returned by the current import lease.
+        descriptor: Target-authoritative OVF metadata used for the import.
+        property_values: Complete reviewed mapping submitted to vSphere.
+    """
     config = getattr(vm, "config", None)
     vapp_config = getattr(config, "vAppConfig", None)
     if vapp_config is None:
@@ -760,7 +792,11 @@ def _verify_imported_ovf_environment(
 
 
 def _destroy_imported_vm(vm: Any) -> None:
-    """Remove only the exact VM reference returned by the current NFC lease."""
+    """Remove only the exact VM reference returned by the current NFC lease.
+
+    Args:
+        vm: Exact virtual machine returned by the current import lease.
+    """
     try:
         _wait_task(vm.Destroy_Task(), timeout=900.0)
     except Exception as exc:
@@ -853,7 +889,18 @@ def vsphere_ovf_descriptor(
     deployment_option: str = "",
     property_values: dict[str, str] | None = None,
 ) -> OvaDescriptor:
-    """Parse one OVA with the exact target vSphere OVF manager."""
+    """Parse one OVA with the exact target vSphere OVF manager.
+
+    Args:
+        address: Network address of the target vSphere endpoint.
+        username: Account name used for target authentication.
+        password: Password supplied for the immediate target operation.
+        descriptor: Locally inspected OVA metadata to validate.
+        port: TCP port of the vSphere endpoint.
+        expected_fingerprint: Certificate fingerprint confirmed by the operator.
+        deployment_option: Requested VMware deployment-option key.
+        property_values: Reviewed OVF mapping used to redact diagnostics.
+    """
     from pyVim.connect import Disconnect
 
     service_instance = connect_vsphere(

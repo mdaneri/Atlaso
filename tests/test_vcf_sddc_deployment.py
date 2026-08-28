@@ -300,7 +300,11 @@ def test_imported_entity_is_captured_before_lease_completion():
 
 
 def test_vsphere_descriptor_controls_properties_defaults_options_and_warnings(tmp_path):
-    """Use the target parser as the authoritative deployable-property contract."""
+    """Use the target parser as the authoritative deployable-property contract.
+
+    Args:
+        tmp_path: Temporary directory used to build the fixture OVA.
+    """
     ova = tmp_path / "SDDC.OVA"
     write_ova(ova)
     descriptor = inspect_ova(ova, root=tmp_path)
@@ -411,7 +415,15 @@ def test_deploy_ova_binds_standalone_host_and_preserves_vcenter_automatic_placem
     expected_host,
     complete_metadata,
 ):
-    """Pass complete mappings and deterministic direct-ESXi placement through import."""
+    """Pass complete mappings and deterministic direct-ESXi placement through import.
+
+    Args:
+        tmp_path: Temporary directory used to build the fixture OVA.
+        monkeypatch: Pytest helper used to isolate vSphere integration boundaries.
+        api_type: VMware endpoint API type exercised by this parameter set.
+        expected_host: Whether import placement must bind the standalone host.
+        complete_metadata: Whether the imported VM retains valid OVF metadata.
+    """
     from pyVmomi import vim
 
     ova = tmp_path / "SDDC.OVA"
@@ -472,7 +484,13 @@ def test_deploy_ova_binds_standalone_host_and_preserves_vcenter_automatic_placem
         _moId = "resgroup-1"
 
         def ImportVApp(self, import_spec, folder, selected_host):
-            """Return the prepared lease."""
+            """Return the prepared lease.
+
+            Args:
+                import_spec: VMware import specification under test.
+                folder: Destination folder supplied to the import call.
+                selected_host: Explicit standalone host or automatic placement.
+            """
             captured["import_spec"] = import_spec
             captured["folder"] = folder
             captured["import_host"] = selected_host
@@ -495,11 +513,23 @@ def test_deploy_ova_binds_standalone_host_and_preserves_vcenter_automatic_placem
         """Capture target parse and import-spec inputs."""
 
         def ParseDescriptor(self, _text, _params):
-            """Return the authoritative target contract."""
+            """Return the authoritative target contract.
+
+            Args:
+                _text: OVF descriptor text supplied to VMware.
+                _params: VMware descriptor parsing parameters.
+            """
             return parsed
 
         def CreateImportSpec(self, _text, _pool, _datastore, params):
-            """Return an import spec with one sanitized warning."""
+            """Return an import spec with one sanitized warning.
+
+            Args:
+                _text: OVF descriptor text supplied to VMware.
+                _pool: Destination resource pool.
+                _datastore: Destination datastore.
+                params: VMware import parameters under test.
+            """
             captured["params"] = params
             return SimpleNamespace(
                 error=[],
@@ -517,7 +547,12 @@ def test_deploy_ova_binds_standalone_host_and_preserves_vcenter_automatic_placem
     monkeypatch.setattr("pyVim.connect.Disconnect", lambda _instance: None)
 
     def walk(_content, vim_types):
-        """Return only the requested inventory objects."""
+        """Return only the requested inventory objects.
+
+        Args:
+            _content: Connected vSphere service content.
+            vim_types: Inventory object types requested by the deployment.
+        """
         if vim_types == [vim.VirtualMachine]:
             return []
         if vim_types == [vim.HostSystem]:
@@ -527,7 +562,14 @@ def test_deploy_ova_binds_standalone_host_and_preserves_vcenter_automatic_placem
     monkeypatch.setattr("atlaso.app.services.vcf_sddc_deployment._walk_inventory", walk)
 
     def find(_content, _vim_type, _object_id, label):
-        """Resolve the bounded test destination."""
+        """Resolve the bounded test destination.
+
+        Args:
+            _content: Connected vSphere service content.
+            _vim_type: Inventory type requested by the deployment.
+            _object_id: Managed-object identifier requested by the deployment.
+            label: Human-readable destination category.
+        """
         return {"resource pool": pool, "datastore": datastore, "network": network}[label]
 
     monkeypatch.setattr("atlaso.app.services.vcf_sddc_deployment._find_object", find)
