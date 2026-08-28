@@ -12120,6 +12120,33 @@ function vcfFqdnComponents() {
   }
 }
 
+function vcfFqdnAllComponents() {
+  const rows = vcfFqdnRowsElement();
+  if (!rows) {
+    return [];
+  }
+  try {
+    const targetComponents = JSON.parse(rows.dataset.targetComponents || "{}");
+    if (!targetComponents || typeof targetComponents !== "object" || Array.isArray(targetComponents)) {
+      return vcfFqdnComponents();
+    }
+    const components = new Map();
+    Object.values(targetComponents).forEach((catalog) => {
+      if (!Array.isArray(catalog)) {
+        return;
+      }
+      catalog.forEach((component) => {
+        if (component && typeof component.host === "string" && !components.has(component.host)) {
+          components.set(component.host, component);
+        }
+      });
+    });
+    return [...components.values()];
+  } catch {
+    return vcfFqdnComponents();
+  }
+}
+
 function vcfFqdnTargetLabel() {
   const target = document.querySelector("[data-vcf-fqdn-target]");
   if (!(target instanceof HTMLSelectElement)) {
@@ -12166,7 +12193,8 @@ function vcfFqdnDefaultHostLabel(component) {
 }
 
 function vcfFqdnEnsureHostnameState({ refreshDefaults = false } = {}) {
-  vcfFqdnComponents().forEach((component) => {
+  const components = refreshDefaults ? vcfFqdnAllComponents() : vcfFqdnComponents();
+  components.forEach((component) => {
     const current = vcfFqdnHostnameState.get(component.host);
     if (!current || (refreshDefaults && !current.overridden)) {
       vcfFqdnHostnameState.set(component.host, {

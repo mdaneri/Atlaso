@@ -85,6 +85,7 @@ function hostnameStateScenario() {
     `const vcfFqdnHostnameState = new Map();
      ${functionSource("vcfFqdnRowsElement")}
      ${functionSource("vcfFqdnComponents")}
+     ${functionSource("vcfFqdnAllComponents")}
      ${functionSource("vcfFqdnHostLabel")}
      ${functionSource("vcfFqdnPatternValues")}
      ${functionSource("vcfFqdnDefaultHostLabel")}
@@ -116,6 +117,14 @@ test("VCF hostname defaults follow pattern changes while deliberate overrides su
   assert.equal(context.reviewed("vc01"), "custom-vcenter");
   assert.equal(context.reviewed("ops01"), "prod-ops01-mgmt");
 
+  suffix.value = "-new";
+  context.ensure({ refreshDefaults: true });
+  target.value = "vcf-9.1";
+  context.ensure();
+  assert.equal(context.reviewed("vc01"), "custom-vcenter");
+  assert.equal(context.reviewed("nsx01"), "prod-nsx01-new");
+
+  target.value = "vvf-9.1";
   prefix.value = "";
   suffix.value = "";
   context.clear();
