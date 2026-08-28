@@ -447,6 +447,10 @@ non-task-owned remote branch, records `non_task_owned_remote_branch_preserved`, 
 not applicable. It separately preserves a non-task-owned checkout or worktree plus its local refs and metadata, records
 `non_task_owned_checkout_preserved`, and marks only `worktree_removed` not applicable. Every task-owned side follows
 normal cleanup in terminal order. Ambiguous ownership blocks the affected transition and `task_title_done`.
+An interrupted `worktree_removal_resume` for a task-owned local worktree accepts the following alternate state: the
+remote branch gate is either verified absent or recorded not applicable through
+`non_task_owned_remote_branch_preserved`; path, registration,
+ownership, head, and merge evidence must still independently pass.
 
 An internal branch update performed with `GITHUB_TOKEN` also creates a `pull_request` CI run that GitHub may hold for
 approval. Those approval-gated jobs have diagnostic names and are not required contexts. Because a token-authenticated

@@ -217,9 +217,10 @@ Terminal order:
   affected-repository stale-registration pruning, and verify that both the absolute path and registration are absent.
   Then require the exact local task branch to be unreferenced by every registered worktree, delete only that ref when
   present, and verify `local_task_branch_absent` before recording `worktree_removed`. If interrupted after the path and
-  registration disappear but before local-ref deletion, `worktree_removal_resume` requires the remote ref, path, and
-  registration to remain absent and the same task ownership, recorded head, and merge evidence to prove that the exact
-  unreferenced local branch is safely deletable or already absent. A primary-checkout task records the
+  registration disappear but before local-ref deletion, `worktree_removal_resume` requires the path and registration
+  to remain absent, the remote branch gate is either verified absent or recorded not applicable through
+  `non_task_owned_remote_branch_preserved`, and the same task ownership, recorded head, and merge evidence to prove
+  that the exact unreferenced local branch is safely deletable or already absent. A primary-checkout task records the
   gate as not applicable only after a clean checkout still at the recorded task head fetches current `origin/main`,
   switches to local `main` without force, fast-forwards exactly to `origin/main`, verifies HEAD, deletes only a local
   task branch that still equals the recorded pull-request head and is checked out nowhere, and records

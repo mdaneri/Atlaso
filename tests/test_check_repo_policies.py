@@ -23,6 +23,7 @@ from scripts.check_repo import (
     TERMINAL_CLEANUP_SECTION_ANCHORS,
     TERMINAL_CLEANUP_SECTION_MARKERS,
     TITLE_CONTROL_UNAVAILABLE_MARKER,
+    WORKTREE_REMOVAL_REMOTE_GATE_MARKER,
     WORKTREE_REMOVAL_RESUME_MARKER,
     check_agent_policy_gate,
     check_spark_worker_agent,
@@ -875,6 +876,48 @@ def test_agent_policy_gate_rejects_missing_non_task_owned_cleanup_contract(
             assert findings[0].message == (
                 f"required agent policy marker is missing: {marker}"
             )
+
+
+def test_agent_policy_gate_rejects_missing_preserved_remote_resume_contract(
+    tmp_path: Path,
+) -> None:
+    """Verify interrupted local cleanup accepts a verified preserved remote.
+
+    Args:
+        tmp_path: Temporary directory provided by pytest for isolated filesystem state.
+    """
+    required_entry_points = (
+        Path("AGENTS.md"),
+        Path("CONTRIBUTING.md"),
+        Path(".github/copilot-instructions.md"),
+        Path(".github/pull_request_template.md"),
+        Path("docs/contribute/agent-policies.md"),
+        Path("docs/reference/full-technical-reference.md"),
+    )
+
+    for relative_path in required_entry_points:
+        write_policy_files(tmp_path)
+        path = tmp_path / relative_path
+        path.write_text(
+            path.read_text(encoding="utf-8").replace(
+                WORKTREE_REMOVAL_REMOTE_GATE_MARKER,
+                "",
+            ),
+            encoding="utf-8",
+        )
+
+        findings = check_agent_policy_gate(tmp_path)
+
+        assert len(findings) == 1
+        assert findings[0].path == path
+        expected_prefix = (
+            "completed-task cleanup section marker is missing: "
+            if relative_path in TERMINAL_CLEANUP_SECTION_MARKERS
+            else "required agent policy marker is missing: "
+        )
+        assert findings[0].message == (
+            expected_prefix + WORKTREE_REMOVAL_REMOTE_GATE_MARKER
+        )
 
 
 def test_agent_policy_gate_rejects_missing_merge_queue_guard(tmp_path: Path) -> None:

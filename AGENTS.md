@@ -253,9 +253,11 @@ worktree. Use `git worktree remove`, prune only stale worktree metadata for the 
 path and registration are absent. Then require the local branch to be unreferenced by every registered worktree, delete
 only that exact ref when present, and verify `local_task_branch_absent` before recording `worktree_removed`. A retry
 interrupted after the path and registration disappeared but before local-ref deletion may enter
-`worktree_removal_resume` only when the remote ref remains absent, the path and registration remain absent, and the
-same task ownership, pull-request head, and merge evidence prove that the exact unreferenced local branch is safely
-deletable or already absent.
+`worktree_removal_resume` only when the path and registration remain absent. The
+remote branch gate is either verified absent or recorded not applicable through
+`non_task_owned_remote_branch_preserved`, and the same task ownership,
+pull-request head, and merge evidence prove that the exact unreferenced local branch is safely deletable or already
+absent.
 For a task running in the primary checkout, the initial path requires a clean checkout still at the recorded task head;
 fetch current `origin/main`, switch to local `main` without force, fast-forward it exactly to `origin/main`, and verify
 the resulting HEAD. A retry interrupted after that switch may enter `primary_checkout_resume` only when the checkout is

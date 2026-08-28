@@ -169,9 +169,10 @@ advisory state, and keep repository-wide automatic branch deletion disabled. The
 `git worktree remove`, prunes stale registration metadata, verifies that the worktree path and registration are absent,
 deletes only the exact local task branch after proving that it still equals the pull-request head and is unreferenced by
 every registered worktree, and verifies `local_task_branch_absent` before recording `worktree_removed`. An interrupted
-`worktree_removal_resume` may finish local-ref deletion only while the remote ref, path, and registration remain absent
-and the same task ownership, head, and merge evidence prove that the exact unreferenced local branch is safely
-deletable or already absent. A primary-checkout task records worktree removal as
+`worktree_removal_resume` may finish local-ref deletion only while the path and registration remain absent. The
+remote branch gate is either verified absent or recorded not applicable through
+`non_task_owned_remote_branch_preserved`, and the same task ownership, head, and merge evidence prove that the exact
+unreferenced local branch is safely deletable or already absent. A primary-checkout task records worktree removal as
 not applicable only after a clean exact-head checkout fetches current `origin/main`, switches to local `main` without
 force, fast-forwards exactly to `origin/main`, verifies HEAD, deletes only an exact matching unreferenced local task
 branch, and records `primary_checkout_restored`. An interrupted retry may use `primary_checkout_resume` only from a
