@@ -11,6 +11,108 @@ sign and publish them.
 Set-StrictMode -Version Latest
 $ErrorActionPreference = 'Stop'
 Import-Module (Join-Path $PSScriptRoot '..\vmware\Atlaso.VmwarePayload.psm1') -Force
+Import-Module (Join-Path $PSScriptRoot '..\vmware\Atlaso.WorkstationReadiness.psm1') -Force
+
+<#
+.SYNOPSIS
+Resolve VMware vmrun for bounded release-producer lifecycle operations.
+#>
+function Resolve-AtlasoVirtualizationVmrunPath {
+    foreach ($candidate in @(
+            'C:\Program Files\VMware\VMware Workstation\vmrun.exe',
+            'C:\Program Files (x86)\VMware\VMware Workstation\vmrun.exe'
+        )) {
+        if (Test-Path -LiteralPath $candidate -PathType Leaf) {
+            return $candidate
+        }
+    }
+    $command = Get-Command vmrun -CommandType Application -ErrorAction SilentlyContinue
+    if ($command) {
+        return $command.Source
+    }
+    throw 'vmrun.exe was not found for the virtualization release producer.'
+}
+
+<#
+.SYNOPSIS
+Start the exact release VM and return its bounded usable guest address.
+.PARAMETER VmrunPath
+Resolved vmrun executable.
+.PARAMETER VmxPath
+Exact canonical VMX to start and query.
+.PARAMETER TimeoutSeconds
+Shared upper bound for start and guest-address readiness.
+#>
+function Start-AtlasoVirtualizationDeploymentVm {
+    param(
+        [Parameter(Mandatory = $true)][string]$VmrunPath,
+        [Parameter(Mandatory = $true)][string]$VmxPath,
+        [ValidateRange(30, 900)][int]$TimeoutSeconds = 300
+    )
+
+    $resolvedVmx = (Resolve-Path -LiteralPath $VmxPath -ErrorAction Stop).Path
+    $deadline = (Get-Date).AddSeconds($TimeoutSeconds)
+    $running = @(Get-AtlasoWorkstationRunningVmxPath -VmrunPath $VmrunPath -Deadline $deadline)
+    if ($resolvedVmx -notin $running) {
+        $start = Invoke-AtlasoWorkstationVmrunBounded `
+            -VmrunPath $VmrunPath `
+            -Arguments @('-T', 'ws', 'start', $resolvedVmx, 'nogui') `
+            -Deadline $deadline
+        if ($start.TimedOut -or $start.ExitCode -ne 0) {
+            throw 'The canonical VMware release VM could not be started within the deployment deadline.'
+        }
+    }
+    $address = Invoke-AtlasoWorkstationVmrunBounded `
+        -VmrunPath $VmrunPath `
+        -Arguments @('-T', 'ws', 'getGuestIPAddress', $resolvedVmx, '-wait') `
+        -Deadline $deadline
+    $ip = $address.StdOut.Trim()
+    if ($address.TimedOut -or $address.ExitCode -ne 0 -or
+        $ip -notmatch '^\d+\.\d+\.\d+\.\d+$' -or $ip -like '169.254.*') {
+        throw 'The canonical VMware release VM did not report a usable IPv4 address within the deployment deadline.'
+    }
+    return $ip
+}
+
+<#
+.SYNOPSIS
+Shut down the exact release VM and prove it is no longer running.
+.PARAMETER VmrunPath
+Resolved vmrun executable.
+.PARAMETER VmxPath
+Exact canonical VMX whose shutdown is verified.
+.PARAMETER TimeoutSeconds
+Upper bound for soft shutdown and provider readback.
+#>
+function Stop-AtlasoVirtualizationDeploymentVm {
+    param(
+        [Parameter(Mandatory = $true)][string]$VmrunPath,
+        [Parameter(Mandatory = $true)][string]$VmxPath,
+        [ValidateRange(30, 600)][int]$TimeoutSeconds = 180
+    )
+
+    $resolvedVmx = (Resolve-Path -LiteralPath $VmxPath -ErrorAction Stop).Path
+    $deadline = (Get-Date).AddSeconds($TimeoutSeconds)
+    $running = @(Get-AtlasoWorkstationRunningVmxPath -VmrunPath $VmrunPath -Deadline $deadline)
+    if ($resolvedVmx -notin $running) {
+        return
+    }
+    $stop = Invoke-AtlasoWorkstationVmrunBounded `
+        -VmrunPath $VmrunPath `
+        -Arguments @('-T', 'ws', 'stop', $resolvedVmx, 'soft') `
+        -Deadline $deadline
+    if ($stop.TimedOut -or $stop.ExitCode -ne 0) {
+        throw 'The canonical VMware release VM did not accept bounded soft shutdown.'
+    }
+    do {
+        $running = @(Get-AtlasoWorkstationRunningVmxPath -VmrunPath $VmrunPath -Deadline $deadline)
+        if ($resolvedVmx -notin $running) {
+            return
+        }
+        Start-Sleep -Seconds 1
+    } while ((Get-Date) -lt $deadline)
+    throw 'The canonical VMware release VM remained running after bounded soft shutdown.'
+}
 
 <#
 .SYNOPSIS
@@ -522,6 +624,7 @@ function Invoke-AtlasoVirtualizationPrerelease {
         throw 'The retained VMware image is bound to different deployed software-source metadata.'
     }
     if (-not $alreadyDeployed) {
+        $deploymentVmrun = Resolve-AtlasoVirtualizationVmrunPath
         $deployArguments = @{
             RepoRoot = $RepoRoot
             VmxPath = $vmx
@@ -535,15 +638,34 @@ function Invoke-AtlasoVirtualizationPrerelease {
             $deployArguments.OnePasswordAccount = $OnePasswordAccount
             $deployArguments.OnePasswordPython = $OnePasswordPython
         }
-        & (Join-Path $RepoRoot 'scripts\windows\vmware\deploy-wheel.ps1') @deployArguments
-        if ($LASTEXITCODE -ne 0) {
-            throw 'Exact published application-wheel deployment failed.'
+        try {
+            $deployArguments.IpAddress = Start-AtlasoVirtualizationDeploymentVm `
+                -VmrunPath $deploymentVmrun `
+                -VmxPath $vmx
+            & (Join-Path $RepoRoot 'scripts\windows\vmware\deploy-wheel.ps1') @deployArguments
+            if ($LASTEXITCODE -ne 0) {
+                throw 'Exact published application-wheel deployment failed.'
+            }
+        }
+        finally {
+            # Proven shutdown is required before hashing or exporting mutable
+            # VMware disks, including after a failed deployment attempt.
+            Stop-AtlasoVirtualizationDeploymentVm `
+                -VmrunPath $deploymentVmrun `
+                -VmxPath $vmx
         }
         # Deployment mutates the system-content VMDK. Publish its new exact bytes
         # before export so the exporter never validates stale build-time hashes.
         $existingProvenance = Update-AtlasoVmwarePayloadProvenance `
             -VmxPath $vmx `
             -DeploymentSourcePath $sourceMetadata
+    }
+    else {
+        # A resumed post-deployment image must also remain powered off while its
+        # bound bytes are hashed and exported.
+        Stop-AtlasoVirtualizationDeploymentVm `
+            -VmrunPath (Resolve-AtlasoVirtualizationVmrunPath) `
+            -VmxPath $vmx
     }
     $name = "atlaso-v$($identity.Version)"
     & (Join-Path $RepoRoot 'scripts\windows\vmware\export-ovf.ps1') `
