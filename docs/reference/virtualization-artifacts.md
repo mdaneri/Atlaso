@@ -37,7 +37,9 @@ Before either virtualization index is signed, the protected GitHub-hosted finali
 system-content VMDK read-only with libguestfs. It resolves the active CPython 3.14 environment, requires every hashed
 member installed from the Atlaso wheel and complete signed wheelhouse to match, and rejects unexpected active files
 except bounded pip and CPython metadata. Producer-authored provenance and smoke evidence cannot substitute for this
-independent payload check.
+independent payload check. The same boundary uses `qemu-img compare` to require both Hyper-V payload VHDX disks to
+expose the same guest-visible bytes as the admitted OVA VMDKs and both 500 GiB Hyper-V data disks to match an
+independent all-zero sparse reference.
 
 The OVA contains files for the two payload disks. Its two 500 GiB data disks are fileless declarations. Import helpers
 retain fileless disks when the platform creates them, create only missing data disks, and reject reordered or
@@ -289,10 +291,13 @@ Keep `StagingRoot` until stable verification; cleanup is a separate explicit ope
 selectors are required so both the fresh image build and exact wheel deployment use the same approved credential
 source; the values are forwarded to the existing isolated SDK bridges and are never uploaded as evidence. A
 conflicting candidate requires a new explicit `rc.N`. Every retry reconstructs and byte-validates the complete cached
-software source against freshly downloaded signed Release assets, re-exports the OVA, and rebuilds Hyper-V from that
-current OVA. Pre-verification network downloads are invocation-temporary and never reused after interruption. Before
-signing, the hosted finalizer requires the OVA provenance's software tag, manifest, bundle, application-wheel, and
-Python-ABI fields to exactly match the verified software-source sidecar.
+software source against freshly downloaded signed Release assets. A complete retained candidate is independently
+revalidated and reused byte-for-byte; only an absent candidate enters the image-build, OVA-export, and Hyper-V
+conversion path. Pre-verification network downloads are invocation-temporary and never reused after interruption.
+Before signing, the hosted finalizer requires the OVA provenance's software tag, manifest, bundle, application-wheel, and
+Python-ABI fields to exactly match the verified software-source sidecar. A retry after only one signed-index file was
+uploaded reconstructs the deterministic pair, verifies the retained byte without clobbering it, and uploads only the
+missing counterpart.
 
 Stable promotion never rebuilds:
 

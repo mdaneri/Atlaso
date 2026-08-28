@@ -8,6 +8,7 @@ import json
 import os
 import zipfile
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 from cryptography.hazmat.primitives import serialization
@@ -18,6 +19,8 @@ from scripts import verify_virtualization_artifact_index as verifier
 from tests.test_virtualization_ova import _members, _write_ova
 
 ROOT = Path(__file__).resolve().parents[1]
+REAL_COMPARE_VIRTUAL_DISKS = builder._compare_virtual_disks
+REAL_CREATE_BLANK_RAW_DISK = builder._create_blank_raw_disk
 
 
 @pytest.fixture(autouse=True)
@@ -44,6 +47,10 @@ def _trusted_release_source(monkeypatch: pytest.MonkeyPatch) -> None:
         "_inspect_vhdx",
         lambda path: {"format": "vhdx", "virtual-size": sizes[path.name]},
     )
+    monkeypatch.setattr(builder, "_compare_virtual_disks", lambda *_args: None)
+    monkeypatch.setattr(
+        builder, "_create_blank_raw_disk", lambda path: path.write_bytes(b"")
+    )
 
 
 def test_operator_verification_bootstraps_with_standard_tools() -> None:
@@ -57,6 +64,53 @@ def test_operator_verification_bootstraps_with_standard_tools() -> None:
     assert guide.index("sha256sum --check --strict") < guide.index(
         "openssl pkeyutl -verify"
     )
+
+
+def test_qemu_content_boundary_uses_explicit_formats_and_sparse_reference(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The hosted disk boundary invokes qemu-img with explicit trusted formats.
+
+    Args:
+        tmp_path: Temporary directory provided by pytest.
+        monkeypatch: Pytest fixture used to isolate qemu-img execution.
+    """
+
+    commands: list[list[str]] = []
+
+    def run(arguments: list[str], **_kwargs: object) -> SimpleNamespace:
+        commands.append(arguments)
+        return SimpleNamespace(returncode=0)
+
+    monkeypatch.setattr(builder.shutil, "which", lambda _name: "/usr/bin/qemu-img")
+    monkeypatch.setattr(builder.subprocess, "run", run)
+    source = tmp_path / "source.vmdk"
+    target = tmp_path / "target.vhdx"
+    blank = tmp_path / "blank.raw"
+    REAL_COMPARE_VIRTUAL_DISKS(source, "vmdk", target, "vhdx", "photon_os")
+    REAL_CREATE_BLANK_RAW_DISK(blank)
+
+    assert commands == [
+        [
+            "/usr/bin/qemu-img",
+            "compare",
+            "-q",
+            "-f",
+            "vmdk",
+            "-F",
+            "vhdx",
+            str(source),
+            str(target),
+        ],
+        [
+            "/usr/bin/qemu-img",
+            "create",
+            "-f",
+            "raw",
+            str(blank),
+            str(builder.HYPERV_DATA_DISK_BYTES),
+        ],
+    ]
 
 
 def _key(path: Path) -> Ed25519PrivateKey:
@@ -472,6 +526,142 @@ def test_rejects_tampered_hyperv_even_when_smoke_digest_is_updated(
     evidence_path.write_text(json.dumps(evidence), encoding="utf-8")
 
     with pytest.raises(SystemExit, match="valid ZIP archive"):
+        builder.main(
+            [
+                "--assets",
+                str(assets),
+                "--version",
+                "0.9.217",
+                "--commit",
+                "a" * 40,
+                "--classification",
+                "prerelease",
+                "--release-tag",
+                "virtualization-v0.9.217-rc.1",
+                "--source-release-manifest-sha256",
+                "b" * 64,
+                "--application-wheel-sha256",
+                "c" * 64,
+                "--signing-key",
+                str(tmp_path / "key.pem"),
+                "--signing-key-id",
+                "test-key",
+            ]
+        )
+
+
+def test_hyperv_disks_match_ova_payloads_and_blank_data_references(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Protected signing compares every Hyper-V disk's guest-visible content.
+
+    Args:
+        tmp_path: Temporary directory provided by pytest.
+        monkeypatch: Pytest fixture used to record independent disk comparisons.
+    """
+
+    assets = tmp_path / "assets"
+    _assets(assets)
+    _key(tmp_path / "key.pem")
+    comparisons: list[tuple[str, str, str, str, str]] = []
+
+    def record_compare(
+        source: Path,
+        source_format: str,
+        target: Path,
+        target_format: str,
+        label: str,
+    ) -> None:
+        comparisons.append(
+            (
+                source.name,
+                source_format,
+                target.name,
+                target_format,
+                label,
+            )
+        )
+
+    monkeypatch.setattr(builder, "_compare_virtual_disks", record_compare)
+    assert (
+        builder.main(
+            [
+                "--assets",
+                str(assets),
+                "--version",
+                "0.9.217",
+                "--commit",
+                "a" * 40,
+                "--classification",
+                "prerelease",
+                "--release-tag",
+                "virtualization-v0.9.217-rc.1",
+                "--source-release-manifest-sha256",
+                "b" * 64,
+                "--application-wheel-sha256",
+                "c" * 64,
+                "--signing-key",
+                str(tmp_path / "key.pem"),
+                "--signing-key-id",
+                "test-key",
+            ]
+        )
+        == 0
+    )
+    assert comparisons[:2] == [
+        ("photon.vmdk", "vmdk", "photon-os.vhdx", "vhdx", "photon_os"),
+        (
+            "system.vmdk",
+            "vmdk",
+            "atlaso-system.vhdx",
+            "vhdx",
+            "atlaso_system",
+        ),
+    ]
+    assert comparisons[2:] == [
+        (
+            "blank-data-disk.raw",
+            "raw",
+            "vcf-offline-depot.vhdx",
+            "vhdx",
+            "vcf_offline_depot",
+        ),
+        (
+            "blank-data-disk.raw",
+            "raw",
+            "vcf-backups.vhdx",
+            "vhdx",
+            "vcf_backups",
+        ),
+    ]
+
+
+def test_rejects_hyperv_payload_content_not_matching_admitted_ova(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Producer-controlled VHDX bytes cannot replace the admitted OVA payload.
+
+    Args:
+        tmp_path: Temporary directory provided by pytest.
+        monkeypatch: Pytest fixture used to emulate qemu-img content mismatch.
+    """
+
+    assets = tmp_path / "assets"
+    _assets(assets)
+    _key(tmp_path / "key.pem")
+
+    def reject_system(
+        _source: Path,
+        _source_format: str,
+        _target: Path,
+        _target_format: str,
+        label: str,
+    ) -> None:
+        if label == "atlaso_system":
+            raise SystemExit("Hyper-V disk content does not match atlaso_system")
+
+    monkeypatch.setattr(builder, "_compare_virtual_disks", reject_system)
+    with pytest.raises(SystemExit, match="does not match atlaso_system"):
         builder.main(
             [
                 "--assets",

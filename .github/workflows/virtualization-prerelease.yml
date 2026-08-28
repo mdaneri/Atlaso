@@ -98,7 +98,8 @@ jobs:
           INDEX_COUNT=0
           test ! -e candidate/virtualization-artifact-index.json || INDEX_COUNT=$((INDEX_COUNT + 1))
           test ! -e candidate/virtualization-artifact-index.json.sig || INDEX_COUNT=$((INDEX_COUNT + 1))
-          test "$INDEX_COUNT" -eq 0 -o "$INDEX_COUNT" -eq 2
+          # An interrupted draft upload may retain either deterministic index file.
+          # The signing and no-clobber upload steps below reconstruct and verify both.
           if test "$ALREADY_PUBLISHED" = true; then
             test "$INDEX_COUNT" -eq 2
           fi

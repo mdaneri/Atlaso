@@ -268,9 +268,79 @@ def _inspect_vhdx(path: Path) -> dict[str, Any]:
     return value
 
 
+def _compare_virtual_disks(
+    source: Path,
+    source_format: str,
+    target: Path,
+    target_format: str,
+    label: str,
+) -> None:
+    """Require two virtual disks to expose identical guest-visible bytes.
+
+    Args:
+        source: Trusted source disk.
+        source_format: Explicit qemu-img format for the source disk.
+        target: Candidate disk to compare.
+        target_format: Explicit qemu-img format for the candidate disk.
+        label: Bounded disk identity used in failure diagnostics.
+    """
+
+    qemu_img = shutil.which("qemu-img")
+    if qemu_img is None:
+        raise SystemExit("qemu-img is required to validate the Hyper-V archive")
+    result = subprocess.run(
+        [
+            qemu_img,
+            "compare",
+            "-q",
+            "-f",
+            source_format,
+            "-F",
+            target_format,
+            str(source),
+            str(target),
+        ],
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+    if result.returncode == 1:
+        raise SystemExit(f"Hyper-V disk content does not match {label}")
+    if result.returncode != 0:
+        raise SystemExit(f"qemu-img could not compare Hyper-V disk {label}")
+
+
+def _create_blank_raw_disk(path: Path) -> None:
+    """Create one sparse all-zero raw disk with the Hyper-V data-disk capacity.
+
+    Args:
+        path: Invocation-owned reference disk path.
+    """
+
+    qemu_img = shutil.which("qemu-img")
+    if qemu_img is None:
+        raise SystemExit("qemu-img is required to validate the Hyper-V archive")
+    result = subprocess.run(
+        [
+            qemu_img,
+            "create",
+            "-f",
+            "raw",
+            str(path),
+            str(HYPERV_DATA_DISK_BYTES),
+        ],
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+    if result.returncode != 0:
+        raise SystemExit("qemu-img could not create the blank data-disk reference")
+
+
 def _validate_hyperv_archive(
     archive_path: Path,
     *,
+    ova_payload_root: Path,
     version: str,
     commit: str,
     ova_sha256: str,
@@ -280,6 +350,7 @@ def _validate_hyperv_archive(
 
     Args:
         archive_path: Candidate Hyper-V ZIP.
+        ova_payload_root: Directory containing the independently verified OVA payloads.
         version: Expected Atlaso version.
         commit: Exact admitted source commit.
         ova_sha256: Digest of the admitted canonical OVA.
@@ -299,6 +370,9 @@ def _validate_hyperv_archive(
     payload_sizes = {
         str(item.get("role")): item.get("virtual_size_bytes") for item in ova_payloads
     }
+    payload_files = {
+        str(item.get("role")): str(item.get("file")) for item in ova_payloads
+    }
     disk_contract["photon-os.vhdx"] = (
         "photon_os",
         0,
@@ -309,6 +383,8 @@ def _validate_hyperv_archive(
         1,
         payload_sizes.get("atlaso_system"),
     )
+    if set(payload_files) != {"photon_os", "atlaso_system"}:
+        raise SystemExit("OVA provenance does not contain the exact payload disk roles")
     expected_names = set(disk_contract) | {
         "Import-Atlaso.ps1",
         "manifest.json",
@@ -438,6 +514,36 @@ def _validate_hyperv_archive(
                 or inspected.get("virtual-size") != virtual_size
             ):
                 raise SystemExit(f"Hyper-V disk topology is invalid for {name}")
+        for name, role in (
+            ("photon-os.vhdx", "photon_os"),
+            ("atlaso-system.vhdx", "atlaso_system"),
+        ):
+            source_name = payload_files[role]
+            if Path(source_name).name != source_name:
+                raise SystemExit("OVA provenance contains an unsafe payload file name")
+            _compare_virtual_disks(
+                ova_payload_root / source_name,
+                "vmdk",
+                extraction_root / name,
+                "vhdx",
+                role,
+            )
+        # The OVA models data disks as fileless declarations. A sparse raw file
+        # therefore provides an independent all-zero reference without consuming
+        # the declared 500 GiB on the hosted runner.
+        blank_reference = extraction_root / "blank-data-disk.raw"
+        _create_blank_raw_disk(blank_reference)
+        for name, role in (
+            ("vcf-offline-depot.vhdx", "vcf_offline_depot"),
+            ("vcf-backups.vhdx", "vcf_backups"),
+        ):
+            _compare_virtual_disks(
+                blank_reference,
+                "raw",
+                extraction_root / name,
+                "vhdx",
+                role,
+            )
 
 
 def _validate_evidence(
@@ -522,6 +628,7 @@ def _validate_evidence(
     _verify_release_helpers(asset_root, commit)
     _validate_hyperv_archive(
         hyperv,
+        ova_payload_root=asset_root,
         version=version,
         commit=commit,
         ova_sha256=_sha256(ova),

@@ -1292,6 +1292,9 @@ def test_release_workflows_use_successful_main_sha_and_promote_without_rebuildin
     assert "gh release edit \"$RELEASE_TAG\" --draft=false --prerelease --verify-tag" in prerelease
     assert "already_published=true" in prerelease
     assert "steps.identity.outputs.already_published != 'true'" in prerelease
+    assert 'test "$INDEX_COUNT" -eq 0 -o "$INDEX_COUNT" -eq 2' not in prerelease
+    assert 'if test "$ALREADY_PUBLISHED" = true; then\n            test "$INDEX_COUNT" -eq 2' in prerelease
+    assert "An interrupted draft upload may retain either deterministic index file" in prerelease
     assert (
         'gh release view "$RELEASE_TAG" --repo "${{ github.repository }}"'
         in prerelease
