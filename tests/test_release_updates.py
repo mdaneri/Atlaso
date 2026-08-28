@@ -1322,12 +1322,18 @@ def test_release_workflows_use_successful_main_sha_and_promote_without_rebuildin
     assert "ATLASO_ONEPASSWORD_PYTHON" in windows_job
     assert "uses: ./.github/workflows/virtualization-prerelease.yml" in windows_candidate
     assert "already_published: ${{ steps.target.outputs.already_published }}" in windows_candidate
+    assert "gh api graphql" in windows_candidate
+    assert "if test \"$STATE\" != null" in windows_candidate
+    assert "2>/dev/null" not in windows_candidate.split("  produce:\n", 1)[0]
+    assert 'test "$WINDOWS_RUNNER_LABEL" = "$EXPECTED_WINDOWS_LABEL"' in windows_candidate
     assert windows_candidate.count("if: needs.admit.outputs.already_published != 'true'") == 2
     assert "needs.admit.outputs.already_published == 'true'" in windows_candidate
     assert "needs.stage_draft.result == 'success'" in windows_candidate
     assert "ref: ${{ steps.identity.outputs.release_sha }}" not in virtualization
     assert "ref: ${{ needs.admit.outputs.release_sha }}" not in virtualization
     assert virtualization.count("ref: refs/heads/main") == 4
+    assert 'test "$PROXMOX_RUNNER_LABEL" = "atlaso-proxmox-$LABEL_SUFFIX"' in virtualization
+    assert 'test "$KVM_RUNNER_LABEL" = "atlaso-kvm-$LABEL_SUFFIX"' in virtualization
     assert "python-version: '3.14'" in publication
     assert "python-version: '3.14'" in promotion
     assert ci.count("python-version: '3.14'") == 3

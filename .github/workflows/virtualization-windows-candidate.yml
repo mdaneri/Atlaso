@@ -61,6 +61,7 @@ jobs:
           GH_TOKEN: ${{ github.token }}
           RELEASE_SHA: ${{ inputs.release_sha }}
           RC: ${{ inputs.prerelease_identifier }}
+          WINDOWS_RUNNER_LABEL: ${{ inputs.windows_runner_label }}
         run: |
           set -euo pipefail
           test "${#RELEASE_SHA}" -eq 40
@@ -81,11 +82,17 @@ jobs:
           test "$COUNT" -ge 1
           VERSION="$(python scripts/version.py get)"
           test "$(gh api "repos/${{ github.repository }}/commits/v$VERSION" --jq .sha)" = "$RELEASE_SHA"
-          gh release view "v$VERSION" --json isDraft,isPrerelease \
+          gh release view "v$VERSION" --repo "${{ github.repository }}" --json isDraft,isPrerelease \
             --jq 'select(.isDraft == false and .isPrerelease == false)' >/dev/null
           PRERELEASE_TAG="virtualization-v${VERSION}-${RC}"
+          EXPECTED_WINDOWS_LABEL="atlaso-windows-$(printf '%s' "$PRERELEASE_TAG" | tr '[:upper:]' '[:lower:]' | tr -c 'a-z0-9_-' '-')"
+          test "$WINDOWS_RUNNER_LABEL" = "$EXPECTED_WINDOWS_LABEL"
           ALREADY_PUBLISHED=false
-          if STATE="$(gh release view "$PRERELEASE_TAG" --json tagName,isDraft,isPrerelease 2>/dev/null)"; then
+          STATE="$(gh api graphql \
+            -f query='query($owner:String!,$name:String!,$tag:String!){repository(owner:$owner,name:$name){release(tagName:$tag){tagName isDraft isPrerelease}}}' \
+            -f owner="${GITHUB_REPOSITORY%%/*}" -f name="${GITHUB_REPOSITORY#*/}" \
+            -f tag="$PRERELEASE_TAG" --jq '.data.repository.release')"
+          if test "$STATE" != null; then
             test "$(jq -r .tagName <<<"$STATE")" = "$PRERELEASE_TAG"
             test "$(jq -r .isPrerelease <<<"$STATE")" = true
             if test "$(jq -r .isDraft <<<"$STATE")" = false; then

@@ -945,6 +945,14 @@ function Invoke-AtlasoVirtualizationStablePromotion {
             throw "Runner label is invalid: $label"
         }
     }
+    $expectedProxmoxRunnerLabel = "atlaso-proxmox-$suffix"
+    $expectedKvmRunnerLabel = "atlaso-kvm-$suffix"
+    if ($ProxmoxRunnerLabel -ne $expectedProxmoxRunnerLabel) {
+        throw "ProxmoxRunnerLabel must be the release-specific label $expectedProxmoxRunnerLabel."
+    }
+    if ($KvmRunnerLabel -ne $expectedKvmRunnerLabel) {
+        throw "KvmRunnerLabel must be the release-specific label $expectedKvmRunnerLabel."
+    }
     $repository = Get-AtlasoReleaseRepository -RepoRoot $RepoRoot
     $release = ((Invoke-AtlasoReleaseGh -Arguments @(
         'release', 'view', $FromPrerelease, '--repo', $repository,

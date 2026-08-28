@@ -319,7 +319,8 @@ for both Linux platform smokes and refuses an asset at or above the repository's
 producing multipart output.
 
 As an optional alternative, **Produce virtualization candidate on ephemeral Windows** runs the same producer with
-`-CandidateOnly` on a uniquely labelled temporary Windows runner. The Windows job has read-only repository authority
+`-CandidateOnly` on a temporary Windows runner whose exact release-specific label is
+`atlaso-windows-virtualization-vX-Y-Z-rc-N`. The Windows job has read-only repository authority
 and no signing material. A GitHub-hosted job alone creates the annotated tag and draft, then calls the same protected
 hosted prerelease finalizer. Keep that runner offline except for an approved default-branch dispatch and destroy or
 sanitize it after its single `--ephemeral` job.

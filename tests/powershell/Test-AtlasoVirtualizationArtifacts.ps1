@@ -228,6 +228,8 @@ foreach ($required in @(
         'Existing virtualization Release $tag is misclassified',
         'A published prerelease may need hosted attestation',
         'elseif ($releaseState.isDraft)',
+        'ProxmoxRunnerLabel must be the release-specific label',
+        'KvmRunnerLabel must be the release-specific label',
         '-OutputRoot $hypervRoot -Force',
         "'release', 'create', `$tag",
         "'--verify-tag'",
@@ -279,6 +281,8 @@ foreach ($required in @(
         'actions: read',
         'contents: read',
         '--classification stable',
+        'test "$PROXMOX_RUNNER_LABEL" = "atlaso-proxmox-$LABEL_SUFFIX"',
+        'test "$KVM_RUNNER_LABEL" = "atlaso-kvm-$LABEL_SUFFIX"',
         'cmp --silent',
         'gh attestation verify'
     )) {

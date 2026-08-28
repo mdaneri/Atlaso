@@ -39,12 +39,17 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
           PRERELEASE_TAG: ${{ inputs.prerelease_tag }}
+          PROXMOX_RUNNER_LABEL: ${{ inputs.proxmox_runner_label }}
+          KVM_RUNNER_LABEL: ${{ inputs.kvm_runner_label }}
         run: |
           set -euo pipefail
           case "$PRERELEASE_TAG" in virtualization-v*-rc.*) ;; *) exit 1;; esac
           VERSION="${PRERELEASE_TAG#virtualization-v}"
           VERSION="${VERSION%-rc.*}"
           case "$VERSION" in *[!0-9.]*) exit 1;; esac
+          LABEL_SUFFIX="$(printf '%s' "$PRERELEASE_TAG" | tr '[:upper:]' '[:lower:]' | tr -c 'a-z0-9_-' '-')"
+          test "$PROXMOX_RUNNER_LABEL" = "atlaso-proxmox-$LABEL_SUFFIX"
+          test "$KVM_RUNNER_LABEL" = "atlaso-kvm-$LABEL_SUFFIX"
           TAG_OBJECT="$(gh api "repos/${{ github.repository }}/git/ref/tags/$PRERELEASE_TAG" --jq '.object.type + " " + .object.sha')"
           test "${TAG_OBJECT%% *}" = tag
           RELEASE_SHA="$(gh api "repos/${{ github.repository }}/git/tags/${TAG_OBJECT#* }" --jq .object.sha)"
