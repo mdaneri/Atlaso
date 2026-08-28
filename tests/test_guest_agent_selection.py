@@ -491,6 +491,32 @@ def test_success_marker_retry_rejects_mount_backed_cleanup_file(tmp_path: Path) 
     assert sentinel.read_text(encoding="utf-8") == "preserve\n"
 
 
+def test_success_marker_retry_rejects_hard_linked_cleanup_file(tmp_path: Path) -> None:
+    """A hard link cannot redirect shredding to an inode outside the test root.
+
+    Args:
+        tmp_path: Temporary directory provided by pytest.
+    """
+
+    environment = _prepare_runtime(tmp_path, platform="kvm", dmi="QEMU", packages=("open-vm-tools",))
+    first = _run_selector(environment)
+    assert first.returncode == 0, first.stderr
+
+    outside = tmp_path / "outside.rpm"
+    outside.write_text("preserve\n", encoding="utf-8")
+    staging = Path(environment["ATLASO_GUEST_AGENT_STAGING"])
+    staging.mkdir(mode=0o700)
+    alias = staging / "linked.rpm"
+    os.link(outside, alias)
+
+    retry = _run_selector(environment)
+
+    assert retry.returncode == 2
+    assert "cannot contain hard-linked files" in retry.stderr
+    assert outside.read_text(encoding="utf-8") == "preserve\n"
+    assert alias.read_text(encoding="utf-8") == "preserve\n"
+
+
 def test_hyperv_access_cleanup_reloads_kvp_after_record_removal(tmp_path: Path) -> None:
     """A completed Hyper-V boot reloads KVP only after access is cleared.
 

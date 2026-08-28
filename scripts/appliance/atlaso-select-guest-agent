@@ -86,6 +86,11 @@ validate_cleanup_boundaries() {
       if find "$cleanup_directory" -xdev -exec mountpoint -q -- {} \; -print -quit | grep -q .; then
         fail "Guest-agent cleanup target cannot contain a mount point."
       fi
+      # Shredding a hard link would overwrite the shared inode outside this
+      # path boundary. Every regular cleanup file must have one directory link.
+      if find "$cleanup_directory" -xdev -type f ! -links 1 -print -quit | grep -q .; then
+        fail "Guest-agent cleanup target cannot contain hard-linked files."
+      fi
     fi
   done
 }
