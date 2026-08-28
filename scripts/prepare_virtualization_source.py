@@ -16,7 +16,7 @@ ROOT = Path(__file__).resolve().parents[1]
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
-from atlaso.app.services.release_updates import (  # noqa: E402
+from atlaso.app.services.release_updates import (  # noqa: E402 - repository root is added before importing Atlaso.
     signature_document,
     verify_signed_json,
 )
