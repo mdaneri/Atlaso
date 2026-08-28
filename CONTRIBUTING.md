@@ -105,19 +105,18 @@ escalate decisions or external failures requiring maintainer action. Merge-ready
 
 `main` accepts squash merges only after required checks pass. Do not commit directly to `main`.
 
-### Explicit merge authorization
+### Default merge authorization
 
-Preparing a change and merging it are separate authorities. An implementation, fix, **solve**, pull-request delivery,
-or similar request authorizes an automated contributor to prepare and publish a ready-for-review pull request, but does
-not authorize merging it. Merge the ordinary same-repository pull request authored and owned by the active task only
-after an explicit merge instruction for that pull request. The instruction may be part of the original request or a
-later direction. Without an explicit merge instruction, leave the pull request open after delivery and follow-through
-are complete. This policy does not grant authority over human-authored pull requests, forks, drafts, review-only or
-diagnostic tasks, or private vulnerability remediation. GitHub auto-merge remains a separate explicit maintainer
-choice.
+Preparing a change and merging it remain separate delivery stages. An implementation, fix, **solve**, pull-request
+delivery, or similar request grants default merge authority for the ordinary same-repository pull request within the
+active task's scope, including an existing ordinary pull request that the agent is explicitly asked to work on. Default
+merge authority permits merging only after every eligibility and safety gate below passes. It does not grant authority
+over forks, drafts, review-only or diagnostic tasks, or private vulnerability remediation. Do not require a separate
+merge instruction. GitHub auto-merge remains a separate explicit maintainer choice.
 
-An explicit **do not merge**, **leave the pull request open**, **pull request only**, **wait for approval**, or equivalent
-hold blocks merging until it is explicitly withdrawn and the merge is authorized. Immediately before any authorized
+An explicit merge hold such as **do not merge**, **leave the pull request open**, **pull request only**, **wait for
+approval**, or an equivalent instruction overrides default merge authority until the user or maintainer explicitly
+withdraws it. With no hold, proceed to merge once every required gate passes. Immediately before any authorized
 merge, re-fetch the pull request and `main`; verify the linked issue and type label, documentation, synchronized patch
 version, all applicable checks for the exact head, answered actionable feedback, resolved non-outdated review threads,
 and a conflict-free merge state. If the base or head changes, stop, update and revalidate the branch, complete any
@@ -141,7 +140,9 @@ After all post-merge work is complete, a worktree-backed originating task sends 
 controller running from the primary checkout. The handoff identifies the repository, task and title, pull request,
 task-owned branch, absolute worktree path, pull-request head SHA, and merge commit SHA. The controller waits for an
 idle, unpinned task and independently revalidates the merged pull request, reachable merge commit, closed issue,
-completed post-merge activity, and branch/checkout ownership. It identifies and verifies a primary checkout first;
+completed post-merge activity, and branch/checkout ownership. It evaluates remote-branch ownership independently from
+local checkout/worktree ownership, requiring exclusive task ownership before a destructive step or external ownership
+for the corresponding non-destructive exception below. It identifies and verifies a primary checkout first;
 only a non-primary target must be a clean, registered, unlocked Codex worktree beneath the resolved Codex worktree root.
 
 Private remediation substitutes `advisory_cleanup_ready` for the ordinary closed-issue gate. Require an explicitly
@@ -168,18 +169,29 @@ advisory state, and keep repository-wide automatic branch deletion disabled. The
 `git worktree remove`, prunes stale registration metadata, verifies that the worktree path and registration are absent,
 deletes only the exact local task branch after proving that it still equals the pull-request head and is unreferenced by
 every registered worktree, and verifies `local_task_branch_absent` before recording `worktree_removed`. An interrupted
-`worktree_removal_resume` may finish local-ref deletion only while the remote ref, path, and registration remain absent
-and the same task ownership, head, and merge evidence prove that the exact unreferenced local branch is safely
-deletable or already absent. A primary-checkout task records worktree removal as
+`worktree_removal_resume` may finish local-ref deletion only while the path and registration remain absent. The
+worktree removal remote branch gate is either verified absent or recorded not applicable through
+`non_task_owned_remote_branch_preserved`, and the same task ownership, head, and merge evidence prove that the exact
+unreferenced local branch is safely deletable or already absent. A primary-checkout task records worktree removal as
 not applicable only after a clean exact-head checkout fetches current `origin/main`, switches to local `main` without
 force, fast-forwards exactly to `origin/main`, verifies HEAD, deletes only an exact matching unreferenced local task
 branch, and records `primary_checkout_restored`. An interrupted retry may use `primary_checkout_resume` only from a
-clean local `main` that freshly fast-forwards to current `origin/main`, with the remote ref absent and the exact local
-task branch either still safely deletable or already absent under the same ownership and merge proof. Finally,
+clean local `main` that freshly fast-forwards to current `origin/main`. The
+primary checkout remote branch gate is either verified absent or recorded not applicable through
+`non_task_owned_remote_branch_preserved`; the exact local task branch must still be safely deletable or already absent
+under the same ownership and merge proof. Finally,
 supported title controls append the exact suffix " · Done"
 once and leave the task unarchived unless archival is separately requested. If the runtime has no supported mutable
 title control, record `task_title_done` as verified not applicable with capability evidence, omit the visible suffix,
 and allow otherwise-complete cleanup to finish.
+
+For an existing ordinary pull request, evaluate remote and local ownership separately after revalidating the exact
+merge, reachable merge commit, closed issue, and completed post-merge activity. For a non-task-owned remote branch,
+preserve the branch, record `non_task_owned_remote_branch_preserved`, and record `remote_branch_absent` as verified not
+applicable; still remove a task-owned local worktree normally. For a non-task-owned local checkout or worktree, preserve
+it and its refs and metadata, record `non_task_owned_checkout_preserved`, and record `worktree_removed` as verified not
+applicable; still delete a task-owned remote branch normally. Apply these decisions in terminal order. Ambiguous
+ownership blocks the affected transition and the Done suffix.
 
 Failure or ambiguity at any gate blocks the " · Done" suffix and leaves an actionable retry condition. The daily Codex
 cleanup automation reconciles missed or partial transitions with the same fail-closed checks. A squash-merged head may

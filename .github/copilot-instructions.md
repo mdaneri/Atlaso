@@ -35,12 +35,13 @@ New Tabulators must use `window.AtlasoUiPatterns.createGrid(...)`; every new or 
   focused commit-push-review cycle, keep it running after a merge through required post-merge verification, and pause it
   for an unmerged closure or a merge-ready successful current head only when every item is seen and no actionable
   feedback or unresolved non-outdated review thread remains;
-- apply the **Explicit merge authorization** policy to ordinary agent-authored internal pull requests: implementation,
-  fix, solve, delivery, and similar requests authorize a ready pull request but do not authorize merging it; require an
-  explicit merge instruction for that pull request and otherwise leave it open after every delivery gate passes;
-  preserve explicit holds, require strict up-to-date required checks to bind the validated base, also guard the head
-  SHA, never use an administrative bypass, fail closed instead of invoking `gh pr merge` when a merge queue is required,
-  and keep GitHub auto-merge as a separate explicit maintainer choice;
+- apply the **Default merge authorization** policy to ordinary same-repository pull requests within the active task's
+  scope: implementation, fix, solve, delivery, and similar requests grant default merge authority, including for an
+  existing ordinary pull request the agent is explicitly asked to work on; do not require a separate merge instruction;
+  preserve an explicit merge hold until the user or maintainer withdraws it, require strict up-to-date required checks
+  to bind the validated base, also guard the head SHA, never use an administrative bypass, fail closed instead of
+  invoking `gh pr merge` when a merge queue is required, and keep GitHub auto-merge as a separate explicit maintainer
+  choice;
 - after an authorized merge and all remaining activity, send the primary-checkout controller a `cleanup-ready` handoff
   and require the ordered terminal states `remote_branch_absent`, `worktree_removed`, and `task_title_done`; delete only
   the task-owned GitHub branch with an atomic expected-SHA lease such as
@@ -50,16 +51,27 @@ New Tabulators must use `window.AtlasoUiPatterns.createGrid(...)`; every new or 
   record `task_title_done` as verified not applicable with capability evidence, omit the visible suffix, and do not block
   otherwise-complete cleanup;
 
+  For an existing ordinary pull request, evaluate remote-branch ownership separately from local checkout/worktree
+  ownership after merge and lifecycle verification. Preserve a non-task-owned remote branch, record
+  `non_task_owned_remote_branch_preserved`, and mark only `remote_branch_absent` not applicable. Preserve a
+  non-task-owned checkout or worktree and its local refs and metadata, record `non_task_owned_checkout_preserved`, and
+  mark only `worktree_removed` not applicable. Clean up every task-owned side normally and keep terminal order;
+  ambiguous ownership blocks the affected transition and `task_title_done`.
+
   For a non-primary worktree, record `worktree_removed` only after `git worktree remove`, stale-registration pruning,
   path and registration absence, deletion of the exact unreferenced local task branch that still equals the recorded
   head, and verified `local_task_branch_absent`. An interrupted `worktree_removal_resume` may finish that local-ref
-  deletion only when the remote ref, path, and registration remain absent and the same ownership, head, and merge
+  deletion only when the path and registration remain absent. The
+  worktree removal remote branch gate is either verified absent or recorded not applicable through
+  `non_task_owned_remote_branch_preserved`, and the same ownership, head, and merge
   evidence still proves the exact local branch safely deletable or already absent.
 
   A primary-checkout task must restore the clean checkout to current `origin/main`, verify HEAD, delete only the exact
   unreferenced local task branch, and record `primary_checkout_restored` before worktree removal becomes not applicable.
   An interrupted `primary_checkout_resume` is valid only from clean local `main` freshly fast-forwarded to current
-  `origin/main`, with the remote ref absent and the exact local task branch safely deletable or already absent.
+  `origin/main`. The primary checkout remote branch gate is either verified absent or recorded not applicable through
+  `non_task_owned_remote_branch_preserved`; the exact local task branch must still be safely deletable or already
+  absent.
 
   Terminal order:
 
