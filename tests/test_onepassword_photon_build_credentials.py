@@ -220,14 +220,17 @@ def test_omitted_nonsecret_sdk_selectors_are_discovered_fail_closed() -> None:
     assert "Join-Path $env:WINDIR 'py.exe'" in module
     assert "Get-Command -Name 'py' -CommandType Application" in module
     assert "-ArgumentList @('-0p')" in module
-    assert "\\*?\\s*(.+?\\.exe)\\s*\\*?" in module
-    assert "(?:-(32|64|arm64))?" in module
+    assert "\\*?\\s*(?<Path>.+?\\.exe)\\s*\\*?" in module
+    assert "\\[-(?<Architecture>32|64|arm64)\\]" in module
+    assert "-(?<Architecture>32|64|arm64)" in module
     assert "$candidate.Architecture -ceq '32'" in module
     assert "struct.calcsize(\"P\") * 8" in module
-    assert "CPython(3\\.1[0-3])" in module
+    assert "CPython(?<Version>3\\.1[0-3])" in module
     assert "highest compatible" in image_wrapper
     assert "highest compatible" in test_vm
     assert "Resolve-OnePasswordTestVmAccount" in test_vm
+    assert "return Resolve-AtlasoOnePasswordPython `" in test_vm
+    assert "-OnePasswordPython $OnePasswordPython `" in image_wrapper
     assert "-OnePasswordCliPath $resolvedOpPath" in test_vm
     assert "'-OnePasswordAccount', $resolvedAccount" in test_vm
     assert "'-OnePasswordAccount', $resolvedAccount" in module

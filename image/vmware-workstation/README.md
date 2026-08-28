@@ -139,7 +139,9 @@ When either is omitted, the wrapper verifies the exact Atlaso 1Password Environm
 `DEFAULT_ROOT_PASSWORD` or `DEFAULT_ADMIN_PASSWORD` through the bounded Windows 1Password SDK bridge. A custom
 single-line selector file may be passed with `-EnvironmentIdFile`; the legacy `-OnePasswordEnvironmentIdFile` spelling
 is an alias. The wrapper uses the single account returned by the local 1Password CLI and the highest compatible
-CPython 3.10 through 3.13 runtime registered with the Windows launcher. Pass `-OnePasswordAccount` or
+CPython 3.10 through 3.13 runtime registered with the Windows launcher. Discovery accepts current Python Install Manager
+inventory selectors such as `-V:3.13[-64]` while retaining legacy launcher and vendor-tagged runtime support; known x86
+runtimes and unsupported versions remain ineligible. Pass `-OnePasswordAccount` or
 `-OnePasswordPython` only to override that deterministic discovery. Zero or multiple accounts and a missing compatible
 runtime fail closed before image mutation.
 
@@ -616,7 +618,9 @@ properties
 that only an OVF deployment normally supplies. A generated non-secret deployment identifier distinguishes each raw
 clone attempt during pending-marker crash recovery. For ordinary creation, the wrapper discovers the single local
 1Password CLI account and the highest compatible CPython 3.10 through 3.13 runtime registered with the Windows
-launcher. `-OnePasswordAccount` and `-OnePasswordPython` remain explicit overrides. When `-AdminPassword` or
+launcher, including bracketed architecture selectors emitted by the current Python Install Manager. Legacy launcher
+and vendor-tagged registrations remain supported, while x86 and unsupported Python versions remain ineligible.
+`-OnePasswordAccount` and `-OnePasswordPython` remain explicit overrides. When `-AdminPassword` or
 `-RootPassword` is omitted, the wrapper independently retrieves only that
 credential's exact concealed default through the supported 1Password SDK desktop integration. An explicitly supplied
 `SecureString` remains authoritative for that credential, so either password can be overridden without changing the

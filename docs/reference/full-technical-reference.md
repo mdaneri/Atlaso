@@ -211,7 +211,9 @@ file. When `-SshPassword` and/or `-BootstrapAdminPassword` is omitted, it retrie
 unique, concealed `DEFAULT_ROOT_PASSWORD` and/or `DEFAULT_ADMIN_PASSWORD` through the supported bounded Windows
 1Password SDK desktop integration. Both explicit parameters accept `SecureString` and override their own Environment
 default independently. With no account or Python selectors, the bridge uses the single local 1Password CLI account and
-the highest compatible CPython 3.10 through 3.13 runtime registered with the Windows launcher. Explicit
+the highest compatible CPython 3.10 through 3.13 runtime registered with the Windows launcher. Current Python Install
+Manager bracketed architecture selectors are accepted alongside legacy launcher and vendor-tagged registrations;
+known x86, unsupported architectures or versions, malformed entries, and missing executables remain ineligible. Explicit
 `-OnePasswordAccount` and `-OnePasswordPython` values remain authoritative. Caller `DEFAULT_*` variables, local `.env`
 files, repository password defaults, interactive
 prompts, ambiguous or non-concealed variables, and invalid values are rejected. The child returns only current-user
@@ -1428,7 +1430,9 @@ repository SHA-256 pin before invoking `op`, requires the Environments-enabled b
 certificate/key pair before mutation. For each omitted `-AdminPassword` or `-RootPassword`, it independently retrieves
 only the corresponding exact concealed default through the supported 1Password SDK desktop integration. An explicit
 `SecureString` remains authoritative for that credential. By default, the wrapper selects the single local 1Password
-CLI account and the highest compatible CPython 3.10 through 3.13 runtime registered with the Windows launcher.
+CLI account and the highest compatible CPython 3.10 through 3.13 runtime registered with the Windows launcher. Current
+Python Install Manager bracketed architecture selectors, legacy launcher forms, and vendor tags remain supported;
+known x86 and unsupported or malformed entries remain ineligible.
 `-OnePasswordAccount` and `-OnePasswordPython` remain explicit overrides; zero or multiple accounts and a missing
 compatible runtime fail before VMware mutation. The parent
 receives only current-user DPAPI ciphertext; a second bounded child stages the DPAPI-protected OVF environment into the
