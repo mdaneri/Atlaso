@@ -129,7 +129,8 @@ After all post-merge work is complete, a worktree-backed originating task sends 
 controller running from the primary checkout. The handoff identifies the repository, task and title, pull request,
 task-owned branch, absolute worktree path, pull-request head SHA, and merge commit SHA. The controller waits for an
 idle, unpinned task and independently revalidates the merged pull request, reachable merge commit, closed issue,
-completed post-merge activity, and branch/checkout ownership. It identifies and verifies a primary checkout first;
+completed post-merge activity, and branch/checkout ownership. It establishes either exclusive task ownership or the
+external ownership required by the non-destructive exception below. It identifies and verifies a primary checkout first;
 only a non-primary target must be a clean, registered, unlocked Codex worktree beneath the resolved Codex worktree root.
 
 Private remediation substitutes `advisory_cleanup_ready` for the ordinary closed-issue gate. Require an explicitly
@@ -168,6 +169,12 @@ supported title controls append the exact suffix " · Done"
 once and leave the task unarchived unless archival is separately requested. If the runtime has no supported mutable
 title control, record `task_title_done` as verified not applicable with capability evidence, omit the visible suffix,
 and allow otherwise-complete cleanup to finish.
+
+For an existing ordinary pull request with a non-task-owned branch or checkout, preserve the owner's remote and local
+refs, checkout, worktree, and metadata. After revalidating the exact merge, reachable merge commit, closed issue,
+completed post-merge activity, and external ownership, record `non_task_owned_branch_preserved`. Then record
+`remote_branch_absent` and `worktree_removed` as verified not applicable, in that order and without changing preserved
+state, before evaluating `task_title_done`. Ambiguous ownership blocks this exception and the Done suffix.
 
 Failure or ambiguity at any gate blocks the " · Done" suffix and leaves an actionable retry condition. The daily Codex
 cleanup automation reconciles missed or partial transitions with the same fail-closed checks. A squash-merged head may

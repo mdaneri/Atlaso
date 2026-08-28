@@ -166,6 +166,7 @@ REQUIRED_POLICY_MARKERS = {
         "`remote_branch_absent`",
         "`worktree_removed`",
         "`task_title_done`",
+        "`non_task_owned_branch_preserved`",
         '" · Done"',
         "AtlasoUiPatterns.createGrid",
         "AtlasoUiPatterns.createWizard",
@@ -200,6 +201,7 @@ REQUIRED_POLICY_MARKERS = {
         "`remote_branch_absent`",
         "`worktree_removed`",
         "`task_title_done`",
+        "`non_task_owned_branch_preserved`",
         '" · Done"',
     ),
     Path(".github/copilot-instructions.md"): (
@@ -231,6 +233,7 @@ REQUIRED_POLICY_MARKERS = {
         "`remote_branch_absent`",
         "`worktree_removed`",
         "`task_title_done`",
+        "`non_task_owned_branch_preserved`",
         '" · Done"',
     ),
     Path("SECURITY.md"): (
@@ -281,6 +284,7 @@ REQUIRED_POLICY_MARKERS = {
         "`remote_branch_absent`",
         "`worktree_removed`",
         "`task_title_done`",
+        "`non_task_owned_branch_preserved`",
         '" · Done"',
     ),
     Path(".github/pull_request_template.md"): (
@@ -309,6 +313,7 @@ REQUIRED_POLICY_MARKERS = {
         "`remote_branch_absent`",
         "`worktree_removed`",
         "`task_title_done`",
+        "`non_task_owned_branch_preserved`",
         '" · Done"',
     ),
     Path("docs/contribute/ui-design-guide.md"): (
@@ -330,6 +335,7 @@ REQUIRED_POLICY_MARKERS = {
         "explicit merge hold",
         "strict up-to-date required checks",
         "when a merge queue is required",
+        "`non_task_owned_branch_preserved`",
     ),
 }
 
@@ -368,6 +374,7 @@ LOCAL_TASK_BRANCH_ABSENT_MARKER = "`local_task_branch_absent`"
 REMOTE_BRANCH_LEASE_MARKER = "`--force-with-lease=refs/heads/BRANCH:HEAD_SHA`"
 WORKTREE_REMOVAL_RESUME_MARKER = "`worktree_removal_resume`"
 TITLE_CONTROL_UNAVAILABLE_MARKER = "`task_title_done` as verified not applicable"
+NON_TASK_OWNED_BRANCH_PRESERVED_MARKER = "`non_task_owned_branch_preserved`"
 TERMINAL_CLEANUP_SECTION_MARKERS = {
     path: (
         "`cleanup-ready`",
@@ -379,6 +386,7 @@ TERMINAL_CLEANUP_SECTION_MARKERS = {
         REMOTE_BRANCH_LEASE_MARKER,
         WORKTREE_REMOVAL_RESUME_MARKER,
         TITLE_CONTROL_UNAVAILABLE_MARKER,
+        NON_TASK_OWNED_BRANCH_PRESERVED_MARKER,
         PRIVATE_REMEDIATION_CLEANUP_MARKER,
         PRIVATE_REMEDIATION_REMOTE_MARKER,
     )

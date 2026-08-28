@@ -41,6 +41,11 @@ surfaces.
   then may supported title controls append the exact suffix " · Done" once. If no supported mutable title control exists,
   `task_title_done` as verified not applicable requires capability evidence and omits the visible suffix.
 
+  For an existing ordinary pull request with a non-task-owned branch or checkout, the owner refs, checkout, worktree,
+  and metadata remain unchanged. After exact merge and lifecycle completion plus external ownership are verified,
+  `non_task_owned_branch_preserved` allows `remote_branch_absent` and `worktree_removed` to be recorded as verified not
+  applicable in terminal order. Ambiguous ownership blocks this exception and `task_title_done`.
+
   A non-primary task records `worktree_removed` only after removing and pruning its worktree, verifying path and
   registration absence, deleting only the exact unreferenced local task branch that still equals the recorded head,
   and verifying `local_task_branch_absent`. An interrupted `worktree_removal_resume` requires the remote ref, path, and

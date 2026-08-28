@@ -179,8 +179,9 @@ runtime.
   pull-request head SHA, and merge commit SHA. The controller waits for the task to be idle and unpinned and treats the
   handoff only as evidence to revalidate.
 - Re-fetch GitHub and Git state. Require the exact merged pull request and closed issue, completed post-merge activity,
-  and exclusive task ownership of the branch and checkout. Identify and verify a primary checkout first and exempt it
-  from removable-worktree and Codex-root checks. Only a non-primary target must be a registered, clean, unlocked,
+  and either exclusive task ownership of the branch and checkout or the external ownership required by the
+  non-destructive exception below. Identify and verify a primary checkout first and exempt it from removable-worktree
+  and Codex-root checks. Only a non-primary target must be a registered, clean, unlocked,
   non-reparse-point worktree beneath the resolved Codex worktree root. Never remove the primary checkout, a permanent
   or user-created worktree, or an ambiguous target.
 
@@ -220,6 +221,11 @@ Terminal order:
   requested. If the runtime exposes no supported mutable title control, record `task_title_done` as verified not applicable
   with capability evidence, omit the visible suffix, and allow otherwise-complete cleanup to finish. Any failure or
   ambiguity in an available control blocks the title transition and leaves an actionable retry condition.
+- For an existing ordinary pull request with a non-task-owned branch or checkout, preserve the owner's remote and local
+  refs, checkout, worktree, and metadata. After verifying the exact merge, reachable merge commit, closed issue,
+  completed post-merge activity, and external ownership, record `non_task_owned_branch_preserved`. Then record
+  `remote_branch_absent` and `worktree_removed` as verified not applicable, in that order and without changing preserved
+  state, before evaluating `task_title_done`. Ambiguous ownership blocks this exception and the Done suffix.
 - A squash-merged head that is not an ancestor of `main` is eligible only when the worktree HEAD equals the recorded
   pull-request head SHA and the recorded merge commit is reachable from current `origin/main`.
 - The daily Codex cleanup automation reconciles missed handoffs and partial transitions with these same gates. Its

@@ -440,6 +440,13 @@ that have auto-merge enabled and report `BEHIND`. Each request includes the obse
 push causes GitHub to reject the stale update instead of merging over it. Forks, conflicted branches, and pull requests
 without auto-merge are never updated by this workflow.
 
+Post-merge cleanup never assumes ownership merely because default merge authority applied. For an existing ordinary
+pull request with a non-task-owned branch or checkout, the controller verifies the exact merge, reachable merge commit,
+closed issue, completed post-merge activity, and external ownership, then records `non_task_owned_branch_preserved`.
+It preserves every owner ref, checkout, worktree, and metadata entry while recording `remote_branch_absent` and
+`worktree_removed` as verified not applicable in terminal order. Ambiguous ownership blocks that exception and
+`task_title_done`.
+
 An internal branch update performed with `GITHUB_TOKEN` also creates a `pull_request` CI run that GitHub may hold for
 approval. Those approval-gated jobs have diagnostic names and are not required contexts. Because a token-authenticated
 update does not trigger `pull_request_target`, the updater waits for GitHub's new head SHA and sends a typed repository
