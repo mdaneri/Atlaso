@@ -150,12 +150,25 @@ Codex review, so do not add a duplicate opening `@codex review` comment. After t
 commit-push-review cycle for every subsequent branch change: push one commit, verify that commit is the pull request's
 exact head, post one `@codex review` comment, and only then begin another commit.
 
-Keep the originating task active after opening the pull request. Monitor all checks for the current exact head and
-inspect pull-request comments, reviews, and authoritative `reviewThreads`. Address actionable feedback, reply and
-resolve each handled thread, rerun the focused local validation, then commit, push, request `@codex review`, and restart
-monitoring for the new exact head. Do not report completion while current-head checks are pending or failing, an
-actionable comment is unanswered, or a non-outdated review thread remains unresolved. Escalate genuine maintainer
-decisions and external failures instead of guessing or claiming completion.
+Keep the originating task active after opening the pull request and create or update exactly one current-task heartbeat
+that runs every four minutes. Each scheduled run performs one bounded reconciliation pass and exits cleanly; never vary
+the cadence or create a duplicate automation. Normal monitoring forbids persistent GitHub polling loops that combine
+`gh` with `sleep`. Use them only for short-lived local debugging when continuous polling is explicitly requested.
+
+Retain the current exact-head SHA and seen comment and review IDs in the task context. On every run, inspect the pull
+request state, exact-head checks, mergeability and conflicts, top-level pull-request comments, inline review comments,
+review submissions and requested changes, and authoritative `reviewThreads`. Read and evaluate every newly discovered
+comment or review; record informational items as seen so later runs do not treat them as new.
+
+Address actionable feedback, reply and resolve each handled thread, rerun the focused local validation, then commit,
+push, verify the new exact head, request `@codex review`, and continue the same heartbeat.
+Treat merged, closed, or merge-ready as terminal pull-request states.
+After a merge, continue the same heartbeat through required merge, linked-issue, `origin/main`, and applicable
+post-merge workflow verification, then pause it. Pause immediately for an
+unmerged closed pull request, or for a merge-ready pull request with a successful current head, every comment and review
+seen, no requested changes or actionable feedback, and no unresolved non-outdated review thread. Also pause and
+escalate genuine maintainer decisions or external failures. Merge-ready status does not grant merge authority, and no
+scheduled run may guess, repeatedly report unchanged state, or claim completion while a gate remains open.
 
 ### Explicit merge authorization
 

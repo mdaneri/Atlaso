@@ -592,6 +592,72 @@ def test_agent_policy_gate_rejects_missing_pr_follow_through_contract(
         )
 
 
+def test_agent_policy_gate_rejects_missing_scheduled_pr_monitoring_contract(
+    tmp_path: Path,
+) -> None:
+    """Verify that every agent entry point retains scheduled PR monitoring.
+
+    Args:
+        tmp_path: Temporary directory provided by pytest for isolated filesystem state.
+    """
+    shared_markers = (
+        "current-task heartbeat",
+        "four minutes",
+        "persistent GitHub polling loops",
+        "seen comment and review IDs",
+        "merged, closed, or merge-ready",
+    )
+    required_entry_markers = {
+        Path("AGENTS.md"): (
+            *shared_markers,
+            "top-level pull-request comments",
+            "inline review comments",
+            "review submissions",
+        ),
+        Path("CONTRIBUTING.md"): (
+            *shared_markers,
+            "top-level pull-request comments",
+            "inline review comments",
+            "review submissions",
+        ),
+        Path(".github/copilot-instructions.md"): (
+            *shared_markers,
+            "top-level pull-request comments",
+            "inline review comments",
+            "review submissions",
+        ),
+        Path(".github/pull_request_template.md"): (
+            *shared_markers,
+            "top-level pull-request comment",
+            "inline review comment",
+            "review submission",
+        ),
+        Path("docs/contribute/agent-policies.md"): (
+            *shared_markers,
+            "top-level pull-request comments",
+            "inline review comments",
+            "review submissions",
+        ),
+    }
+
+    for relative_path, markers in required_entry_markers.items():
+        for marker in markers:
+            write_policy_files(tmp_path)
+            path = tmp_path / relative_path
+            path.write_text(
+                path.read_text(encoding="utf-8").replace(marker, "", 1),
+                encoding="utf-8",
+            )
+
+            findings = check_agent_policy_gate(tmp_path)
+
+            assert len(findings) == 1
+            assert findings[0].path == path
+            assert findings[0].message == (
+                f"required agent policy marker is missing: {marker}"
+            )
+
+
 def test_agent_policy_gate_rejects_missing_explicit_merge_authorization(
     tmp_path: Path,
 ) -> None:
