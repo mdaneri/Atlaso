@@ -389,9 +389,11 @@ The cleanup marker uses a non-secret identity stored in the VMX, not the VMX fil
 replace the VMX during power-on. The wrapper exposes the marker path as recovery state only after its write-through
 rename succeeds. If publication fails before a credential or signer child starts, it preserves the original actionable
 error and rolls back only the VM artifacts created by that invocation; a durable child-active or unproven marker still
-blocks destructive rollback. After first boot proves encrypted import and VMware reports the exact empty runtime
-sentinel, the wrapper stops the exact VM, removes and verifies the powered-off signing-key assignment, restarts it, and
-requires three empty runtime readbacks before retiring the marker.
+blocks destructive rollback. Before a pre-secret rollback launches removal, it durably binds the exact stopped VMX,
+quarantine path, and current host boot; an unproven removal tree therefore blocks same-boot reruns, and failure to
+publish that ownership preserves the VM instead of starting removal. After first boot proves encrypted import and
+VMware reports the exact empty runtime sentinel, the wrapper stops the exact VM, removes and verifies the powered-off
+signing-key assignment, restarts it, and requires three empty runtime readbacks before retiring the marker.
 The wrapper injects the same complete DHCP-first OVF environment before power-on. Use `-FirstBootFqdn` for the test
 identity. The wrapper uses the single local 1Password CLI account and the highest compatible CPython 3.10 through 3.13
 runtime registered with the Windows launcher. Use `-OnePasswordAccount` or `-OnePasswordPython` only when an explicit

@@ -362,11 +362,16 @@ if (
 ) {
     throw 'Durable cleanup retry must precede 1Password preflight and every new VM/network mutation.'
 }
-$markerCreation = $wrapperSource.LastIndexOf(
-    'New-AtlasoDevelopmentCaCleanupMarker',
+$markerCreationScope = $wrapperSource.LastIndexOf(
+    '$createdThisInvocation = $false',
     [System.StringComparison]::Ordinal
 )
-if ($markerCreation -lt 0 -or $markerCreation -gt $stageStart) {
+$markerCreation = $wrapperSource.IndexOf(
+    'New-AtlasoDevelopmentCaCleanupMarker',
+    $markerCreationScope,
+    [System.StringComparison]::Ordinal
+)
+if ($markerCreationScope -lt 0 -or $markerCreation -lt $markerCreationScope -or $markerCreation -gt $stageStart) {
     throw 'A durable cleanup marker must be committed before development-signer staging.'
 }
 if (
@@ -632,17 +637,18 @@ $conditionalRestore = $wrapperSource.LastIndexOf(
     'if ($quarantineDirectory -and -not $removalTreeUnproven)',
     [System.StringComparison]::Ordinal
 )
-$markerlessUnprovenCapture = $wrapperSource.LastIndexOf(
-    '$removalTreeUnproven = $true',
+$preSecretRollbackMarker = $wrapperSource.LastIndexOf(
+    '-AllowExistingCleanupIdentity | Out-Null',
     [System.StringComparison]::Ordinal
 )
 if (
     $removalChildPhase -lt $rollbackCatch -or
+    $preSecretRollbackMarker -lt $rollbackCatch -or
+    $preSecretRollbackMarker -gt $removalChildPhase -or
     $rollbackRemoval -lt $removalChildPhase -or
-    $markerlessUnprovenCapture -lt $rollbackRemoval -or
     $conditionalRestore -lt $rollbackRemoval
 ) {
-    throw 'Rollback must retain markerless and durable removal-child activity and withhold quarantined disks until termination is proven.'
+    throw 'Rollback must durably own pre-secret cleanup before removal and withhold quarantined disks until termination is proven.'
 }
 if ($wrapperSource -notmatch '\$runtimeSignerScrubError\s*=\s*\$_\.Exception\.Message' -or
     $wrapperSource -notmatch '\$stopped\s*=\s*\$true') {
@@ -732,6 +738,27 @@ try {
         -not (Test-Path -LiteralPath $publishedMarkerPath -PathType Leaf)
     ) {
         throw 'The file-backed wrapper scope did not durably publish its cleanup marker.'
+    }
+    $recoveryVmxPath = Join-Path $vmRoot 'Atlaso-Script-Scope-Recovery.vmx'
+    [System.IO.File]::WriteAllText(
+        $recoveryVmxPath,
+        "config.version = `"8`"`r`n" +
+        "guestinfo.atlaso.test_vm_cleanup_identity = `"$('e' * 32)`"`r`n",
+        [System.Text.UTF8Encoding]::new($false)
+    )
+    $recoveryMarkerPath = New-AtlasoDevelopmentCaCleanupMarker `
+        -VmxPath $recoveryVmxPath `
+        -Name 'Atlaso-Script-Scope-Recovery' `
+        -OutputDirectory $vmRoot `
+        -DataDiskStates @() `
+        -MarkerRoot $markerRoot `
+        -InitialPhase stopped-vmx-scrubbed `
+        -AllowExistingCleanupIdentity
+    $recoveryMarker = Read-AtlasoDevelopmentCaCleanupMarker `
+        -MarkerPath $recoveryMarkerPath `
+        -MarkerRoot $markerRoot
+    if ($recoveryMarker.Phase -cne 'stopped-vmx-scrubbed') {
+        throw 'Pre-secret rollback did not durably bind its existing VMX cleanup identity.'
     }
 }
 finally {

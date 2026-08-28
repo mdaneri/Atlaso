@@ -564,8 +564,10 @@ The following cross-cutting boundaries always apply:
   durable non-secret cleanup marker through a Windows write-through atomic rename before staging. Bind it to a
   non-secret VMX identity that survives VMware's legitimate power-on file replacement. Expose its marker path to
   rollback only after durable publication succeeds. A pre-publication failure before any
-  secret child starts must preserve the original actionable error and remove only invocation-owned artifacts; actual
-  child-active or unproven state remains fail-closed.
+  secret child starts must preserve the original actionable error and remove only invocation-owned artifacts. Before
+  launching rollback removal, durably bind the exact stopped VMX identity, quarantine path, and boot-bound child phase;
+  if that fallback publication fails, preserve the VM artifacts and do not start a removal child. Actual child-active
+  or unproven state remains fail-closed across same-boot reruns.
   After encrypted import proof,
   stop the exact VM, prove the powered-off VMX signer assignment absent, restart it, and prove runtime guest-info remains
   empty before retiring the marker. Later normal-wrapper invocations must retry its exact identity-bound stop, VMX

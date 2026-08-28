@@ -577,7 +577,9 @@ Every post-staging VMware operation has its own process-tree deadline. Before st
 per-user cleanup marker through a Windows write-through atomic rename, so the marker reaches disk before the VMX signer
 assignment. The wrapper publishes the marker path to rollback only after that rename succeeds. A failure before any
 credential or signer child starts preserves the original error and rolls back only invocation-owned VM artifacts;
-durable child-active or unproven state remains fail-closed. An interrupted rollback blocks later normal-VM creation
+before removal it durably records the exact stopped VMX, quarantine path, and host-boot ownership. A failed fallback
+publication preserves the VM without launching removal, while durable child-active or unproven state remains
+fail-closed across same-boot reruns. An interrupted rollback blocks later normal-VM creation
 until the exact marked VM is stopped, its VMX signer
 value is scrubbed, its artifacts are removed, and preserved data disks are restored. This
 recovery runs before 1Password preflight and resumes from a durable stopped/scrubbed phase if VM removal completed

@@ -1167,13 +1167,18 @@ Filesystem identity captured before acquiring the mutation lock.
 .PARAMETER DurableIdentityAction
 Optional marker-publication action that must complete while the VMX remains
 locked against writers and same-path replacement.
+
+.PARAMETER AllowExistingIdentity
+Permit one exact matching cleanup identity to be rebound to a durable marker.
+Use only for pre-secret rollback of the invocation-owned VM.
 #>
 function Set-AtlasoTestVmCleanupIdentity {
     param(
         [Parameter(Mandatory = $true)][string]$VmxPath,
         [Parameter(Mandatory = $true)][string]$Identity,
         [Parameter(Mandatory = $true)][string]$ExpectedVmxIdentity,
-        [scriptblock]$DurableIdentityAction
+        [scriptblock]$DurableIdentityAction,
+        [switch]$AllowExistingIdentity
     )
 
     if ($Identity -cnotmatch '^[0-9a-f]{32}$') {
@@ -1216,37 +1221,42 @@ function Set-AtlasoTestVmCleanupIdentity {
         finally {
             $reader.Dispose()
         }
-        if ($identityAssignmentCount -ne 0) {
+        if ($identityAssignmentCount -ne 0 -and -not $AllowExistingIdentity) {
             throw "The VMX already carries a cleanup identity before marker publication: $resolvedVmxPath"
         }
-        $originalLength = $stream.Length
-        $separator = ''
-        if ($originalLength -gt 0) {
-            $stream.Position = $originalLength - 1
-            if ($stream.ReadByte() -notin @(10, 13)) {
-                $separator = "`r`n"
+        if ($identityAssignmentCount -eq 0) {
+            $originalLength = $stream.Length
+            $separator = ''
+            if ($originalLength -gt 0) {
+                $stream.Position = $originalLength - 1
+                if ($stream.ReadByte() -notin @(10, 13)) {
+                    $separator = "`r`n"
+                }
             }
-        }
-        $bytes = [System.Text.UTF8Encoding]::new($false).GetBytes(
-            "$separator$line`r`n"
-        )
-        $stream.Position = $originalLength
-        try {
-            # Append-only publication preserves every original VMX byte if the
-            # host loses power before the cleanup marker becomes durable.
-            $stream.Write($bytes, 0, $bytes.Length)
-            $stream.Flush($true)
-        }
-        catch {
-            $writeError = $_
+            $bytes = [System.Text.UTF8Encoding]::new($false).GetBytes(
+                "$separator$line`r`n"
+            )
+            $stream.Position = $originalLength
             try {
-                $stream.SetLength($originalLength)
+                # Append-only publication preserves every original VMX byte if
+                # the host loses power before the marker becomes durable.
+                $stream.Write($bytes, 0, $bytes.Length)
                 $stream.Flush($true)
             }
             catch {
-                throw "Cleanup identity publication failed and tail rollback could not be proven: $resolvedVmxPath"
+                $writeError = $_
+                try {
+                    $stream.SetLength($originalLength)
+                    $stream.Flush($true)
+                }
+                catch {
+                    throw "Cleanup identity publication failed and tail rollback could not be proven: $resolvedVmxPath"
+                }
+                throw $writeError
             }
-            throw $writeError
+        }
+        elseif ($identityAssignmentCount -ne 1) {
+            throw "The VMX does not carry one reusable cleanup identity: $resolvedVmxPath"
         }
         if (
             [Atlaso.WorkstationFileIdentity]::Get($resolvedVmxPath) -cne $ExpectedVmxIdentity -or
@@ -1456,6 +1466,13 @@ Per-user marker directory; override only for focused tests.
 .PARAMETER MarkerPathReference
 Optional caller-owned path reference populated only after the cleanup marker is
 durably published and bound to the VMX cleanup identity.
+
+.PARAMETER InitialPhase
+Initial durable cleanup phase. Pre-secret rollback uses stopped/scrubbed proof.
+
+.PARAMETER AllowExistingCleanupIdentity
+Reuse one exact cleanup identity already written by this invocation when its
+original marker publication failed before any secret child started.
 #>
 function New-AtlasoDevelopmentCaCleanupMarker {
     param(
@@ -1464,7 +1481,10 @@ function New-AtlasoDevelopmentCaCleanupMarker {
         [Parameter(Mandatory = $true)][string]$OutputDirectory,
         [Parameter(Mandatory = $true)][AllowEmptyCollection()][object[]]$DataDiskStates,
         [string]$MarkerRoot = (Get-AtlasoDevelopmentCaCleanupMarkerRoot),
-        [ref]$MarkerPathReference
+        [ref]$MarkerPathReference,
+        [ValidateSet('secret-child-active', 'stopped-vmx-scrubbed')]
+        [string]$InitialPhase = 'secret-child-active',
+        [switch]$AllowExistingCleanupIdentity
     )
 
     $resolvedVmxPath = (Resolve-Path -LiteralPath $VmxPath).Path
@@ -1475,7 +1495,18 @@ function New-AtlasoDevelopmentCaCleanupMarker {
         -FailureMessage 'Refusing to record development-CA cleanup outside the exact VM directory'
     # Publish a non-secret VM-owned binding before the durable marker. VMware
     # preserves this assignment when it atomically replaces the VMX at power-on.
-    $cleanupIdentity = [guid]::NewGuid().ToString('N')
+    $existingCleanupIdentity = if ($AllowExistingCleanupIdentity) {
+        Get-AtlasoTestVmCleanupIdentity -VmxPath $resolvedVmxPath -AllowAbsent
+    }
+    else {
+        ''
+    }
+    $cleanupIdentity = if ($existingCleanupIdentity) {
+        $existingCleanupIdentity
+    }
+    else {
+        [guid]::NewGuid().ToString('N')
+    }
     $vmxIdentity = [Atlaso.WorkstationFileIdentity]::Get($resolvedVmxPath)
     $cleanupIdentityHash = Get-AtlasoCleanupIdentityHash -Value $cleanupIdentity
     if (-not (Test-Path -LiteralPath $MarkerRoot -PathType Container)) {
@@ -1495,7 +1526,7 @@ function New-AtlasoDevelopmentCaCleanupMarker {
         ".atlaso-development-ca-cleanup-$markerId"
     $payload = [ordered]@{
         Schema = 3
-        Phase = 'secret-child-active'
+        Phase = $InitialPhase
         HostBootIdentity = (Get-AtlasoHostBootIdentity)
         Name = $Name
         VmxPath = $resolvedVmxPath
@@ -1551,7 +1582,8 @@ function New-AtlasoDevelopmentCaCleanupMarker {
             -VmxPath $resolvedVmxPath `
             -Identity $cleanupIdentity `
             -ExpectedVmxIdentity $vmxIdentity `
-            -DurableIdentityAction $publishMarker
+            -DurableIdentityAction $publishMarker `
+            -AllowExistingIdentity:$AllowExistingCleanupIdentity
         if ($null -ne $MarkerPathReference) {
             # A caller-known intended pathname is not durable recovery state.
             # Expose it only after the write-through rename succeeds.
@@ -3049,7 +3081,6 @@ if (-not $WhatIfPreference) {
         if ($createdThisInvocation -and (Test-Path -LiteralPath $targetVmx -PathType Leaf)) {
             $rollbackErrors = [System.Collections.Generic.List[string]]::new()
             $quarantineDirectory = ''
-            $removalTreeUnproven = $false
             $runtimeSignerScrubbed = $false
             $runtimeSignerScrubError = ''
             $stopped = $false
@@ -3096,24 +3127,29 @@ if (-not $WhatIfPreference) {
                     $rollbackErrors.Add($vmxSignerScrubError)
                     throw 'The powered-off development signer could not be proven scrubbed; destructive rollback was deferred.'
                 }
-                if ($developmentCaCleanupMarkerPath) {
+                if (-not $developmentCaCleanupMarkerPath) {
+                    # A pre-secret marker failure may leave only the exact
+                    # invocation-owned VMX identity. Publish boot-bound rollback
+                    # ownership before any removal child can outlive this process.
+                    New-AtlasoDevelopmentCaCleanupMarker `
+                        -VmxPath $targetVmx `
+                        -Name $Name `
+                        -OutputDirectory $resolvedOutputDirectory `
+                        -DataDiskStates $rollbackDataDiskStates `
+                        -MarkerPathReference ([ref]$developmentCaCleanupMarkerPath) `
+                        -InitialPhase stopped-vmx-scrubbed `
+                        -AllowExistingCleanupIdentity | Out-Null
+                }
+                else {
                     Set-AtlasoDevelopmentCaCleanupMarkerPhase `
                         -MarkerPath $developmentCaCleanupMarkerPath `
                         -ExpectedPhase staged `
                         -Phase stopped-vmx-scrubbed
                 }
                 if ($rollbackDataDiskStates.Count -gt 0) {
-                    $rollbackQuarantineId = if ($developmentCaCleanupMarkerPath) {
-                        [System.IO.Path]::GetFileNameWithoutExtension(
-                            $developmentCaCleanupMarkerPath
-                        )
-                    }
-                    else {
-                        # Marker publication never became durable, so allocate a
-                        # fresh invocation-local quarantine identity instead of
-                        # deriving an ambiguous shared path from an empty marker.
-                        [guid]::NewGuid().ToString('N')
-                    }
+                    $rollbackQuarantineId = [System.IO.Path]::GetFileNameWithoutExtension(
+                        $developmentCaCleanupMarkerPath
+                    )
                     $quarantineDirectory = Join-Path `
                         (Split-Path -Parent $resolvedOutputDirectory) `
                         ".atlaso-development-ca-cleanup-$rollbackQuarantineId"
@@ -3144,15 +3180,6 @@ if (-not $WhatIfPreference) {
                 catch {
                     $removalFailure = $_
                     if (
-                        $removalFailure.Exception.Data['AtlasoProcessTreeTerminationUnproven'] -eq $true
-                    ) {
-                        # Marker publication may have failed before this
-                        # invocation-owned VM reached rollback. Retain the
-                        # quarantine independently so a surviving removal tree
-                        # can never race restored data disks.
-                        $removalTreeUnproven = $true
-                    }
-                    if (
                         $developmentCaCleanupMarkerPath -and
                         $removalFailure.Exception.Data['AtlasoProcessTreeTerminationUnproven'] -ne $true
                     ) {
@@ -3174,15 +3201,12 @@ if (-not $WhatIfPreference) {
                 $rollbackErrors.Add($_.Exception.Message)
             }
             finally {
-                $durableRemovalTreeUnproven = (
+                $removalTreeUnproven = (
                     $developmentCaCleanupMarkerPath -and
                     (Test-Path -LiteralPath $developmentCaCleanupMarkerPath -PathType Leaf) -and
                     (Read-AtlasoDevelopmentCaCleanupMarker `
                         -MarkerPath $developmentCaCleanupMarkerPath `
                         -MarkerRoot (Get-AtlasoDevelopmentCaCleanupMarkerRoot)).Phase -ceq 'removal-child-active'
-                )
-                $removalTreeUnproven = (
-                    $removalTreeUnproven -or $durableRemovalTreeUnproven
                 )
                 if ($quarantineDirectory -and -not $removalTreeUnproven) {
                     try {
