@@ -1233,6 +1233,32 @@ function Write-AtlasoOvaProvenance {
 
 <#
 .SYNOPSIS
+Validate the normalized OVF through the provider-neutral machine contract.
+.PARAMETER RepoRoot
+Atlaso repository containing the validator.
+.PARAMETER OvfPath
+Normalized OVF descriptor to validate before provenance is written.
+#>
+function Assert-AtlasoCanonicalOvf {
+    param(
+        [Parameter(Mandatory = $true)][string]$RepoRoot,
+        [Parameter(Mandatory = $true)][string]$OvfPath
+    )
+
+    $python = Get-Command python -ErrorAction SilentlyContinue
+    if (-not $python) {
+        throw 'python was not found. Canonical OVF validation is mandatory.'
+    }
+    $output = @(& $python.Source (Join-Path $RepoRoot 'scripts\virtualization\validate_ova.py') `
+            '--ovf' $OvfPath 2>&1)
+    if ($LASTEXITCODE -ne 0) {
+        $tail = @($output | Select-Object -Last 20) -join [Environment]::NewLine
+        throw "Normalized OVF validation failed.$([Environment]::NewLine)$tail"
+    }
+}
+
+<#
+.SYNOPSIS
 Validate the final OVA through the provider-neutral Python contract.
 .PARAMETER RepoRoot
 Atlaso repository containing the validator.
@@ -1591,6 +1617,7 @@ $ovfPath = Get-OvfDescriptorPath -OutputDirectory $resolvedOutputDirectory
 $ovfPackageDirectory = Split-Path -Parent $ovfPath
 Add-AtlasoOvfProperties -OvfPath $ovfPath
 Assert-AtlasoOvfDiskTopology -OvfPath $ovfPath
+Assert-AtlasoCanonicalOvf -RepoRoot $repoRoot -OvfPath $ovfPath
 $provenancePath = Write-AtlasoOvaProvenance `
     -RepoRoot $repoRoot `
     -OvfPath $ovfPath `

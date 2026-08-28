@@ -18591,6 +18591,7 @@ function initializeVcfSddcDeployment() {
   let autoHostnameTouched = false;
   let pendingTlsAction = null;
   let pendingTlsFingerprint = "";
+  let discoveryRequestId = 0;
   let wizard;
   const steps = [
     { id: "source", title: "vCenter / ESXi information", description: "Choose the SDDC Manager OVA and the vSphere endpoint used for discovery and import." },
@@ -18801,6 +18802,9 @@ function initializeVcfSddcDeployment() {
   syncPostPowerOptions();
   const handleDiscover = async () => {
     if (!(await wizard.validate("source"))) return false;
+    const requestId = ++discoveryRequestId;
+    const discoveryPayload = basePayload();
+    const requestedDeploymentOption = discoveryPayload.deployment_option;
     const destinationSelections = new Map(
       ["resource_pool_id", "datastore_id", "folder_id", "host_id"].map((name) => [name, form.elements[name]?.value]),
     );
@@ -18813,7 +18817,11 @@ function initializeVcfSddcDeployment() {
       next.textContent = "Discovering…";
     }
     try {
-      const { response, data } = await vcfHelperJson(managementUiPath("/vcf-helper/sddc-manager/inventory"), "POST", basePayload());
+      const { response, data } = await vcfHelperJson(managementUiPath("/vcf-helper/sddc-manager/inventory"), "POST", discoveryPayload);
+      if (
+        requestId !== discoveryRequestId
+        || (deploymentOption instanceof HTMLSelectElement && deploymentOption.value !== requestedDeploymentOption)
+      ) return false;
       if (response.status === 409 && data.status === "tls-confirmation-required") {
         showTlsConfirmation(data.fingerprint || "", handleDiscover);
         return;
@@ -18838,7 +18846,7 @@ function initializeVcfSddcDeployment() {
       showError(error.message);
       return false;
     } finally {
-      if (next instanceof HTMLButtonElement) {
+      if (requestId === discoveryRequestId && next instanceof HTMLButtonElement) {
         next.disabled = false;
         next.textContent = "Next";
       }
