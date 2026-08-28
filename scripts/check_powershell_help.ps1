@@ -177,6 +177,69 @@ function Get-AdjacentPowerShellHelpComment {
 
 <#
 .SYNOPSIS
+Return comment-help tokens from every supported location for one function.
+
+.PARAMETER Function
+Parsed function whose comment-based help locations are inspected.
+
+.PARAMETER Tokens
+Parser tokens for the complete source file.
+
+.PARAMETER SourceText
+Exact source text used to validate whitespace between comments and anchors.
+#>
+function Get-PowerShellFunctionHelpComment {
+    param(
+        [Parameter(Mandatory = $true)]
+        [System.Management.Automation.Language.FunctionDefinitionAst]$Function,
+        [Parameter(Mandatory = $true)]
+        [System.Management.Automation.Language.Token[]]$Tokens,
+        [Parameter(Mandatory = $true)]
+        [string]$SourceText
+    )
+
+    $anchors = [System.Collections.Generic.List[int]]::new()
+    $anchors.Add($Function.Extent.StartOffset)
+
+    $body = $Function.Body
+    if ($null -ne $body.ParamBlock) {
+        $parameterAttributes = @($body.ParamBlock.Attributes)
+        $bodyStartAnchor = if ($parameterAttributes.Count -gt 0) {
+            $parameterAttributes[0].Extent.StartOffset
+        }
+        else {
+            $body.ParamBlock.Extent.StartOffset
+        }
+    }
+    else {
+        $firstBodyStatement = @($body.EndBlock.Statements) | Select-Object -First 1
+        $bodyStartAnchor = if ($null -ne $firstBodyStatement) {
+            $firstBodyStatement.Extent.StartOffset
+        }
+        else {
+            $body.Extent.EndOffset - 1
+        }
+    }
+    $anchors.Add($bodyStartAnchor)
+    # PowerShell also resolves help placed after the final statement and before
+    # the closing brace. A comment-only body shares both anchors, so findings
+    # are deduplicated by source offset below.
+    $anchors.Add($body.Extent.EndOffset - 1)
+
+    $commentsByOffset = @{}
+    foreach ($anchor in $anchors) {
+        foreach ($comment in Get-AdjacentPowerShellHelpComment `
+                -Tokens $Tokens `
+                -SourceText $SourceText `
+                -StartOffset $anchor) {
+            $commentsByOffset[$comment.Extent.StartOffset] = $comment
+        }
+    }
+    return @($commentsByOffset.Values | Sort-Object { $_.Extent.StartOffset })
+}
+
+<#
+.SYNOPSIS
 Return duplicate adjacent comment-help findings for one parsed PowerShell file.
 
 .PARAMETER Ast
@@ -236,10 +299,10 @@ function Get-DuplicatePowerShellHelpFinding {
             $true
         ))
     foreach ($function in $functions) {
-        $functionComments = @(Get-AdjacentPowerShellHelpComment `
+        $functionComments = @(Get-PowerShellFunctionHelpComment `
+                -Function $function `
                 -Tokens $Tokens `
-                -SourceText $SourceText `
-                -StartOffset $function.Extent.StartOffset)
+                -SourceText $SourceText)
         if ($null -eq $Ast.ParamBlock -and
             $firstStatement -eq $function -and
             $null -ne $Ast.GetHelpContent() -and

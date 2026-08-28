@@ -214,6 +214,50 @@ function Invoke-Sample { param([string]$Value) }
 
 
 @pytest.mark.skipif(shutil.which("pwsh") is None, reason="PowerShell is not installed")
+@pytest.mark.parametrize("placement", ["beginning", "end"])
+def test_powershell_help_policy_rejects_duplicate_in_body_function_help(
+    tmp_path: Path,
+    placement: str,
+) -> None:
+    """Reject adjacent duplicate help at either supported in-body location.
+
+    Args:
+        tmp_path: Isolated filesystem root.
+        placement: Function-body help location under test.
+    """
+    base = tmp_path / "base"
+    candidate = tmp_path / "candidate"
+    _initialize_checkout(base, "Write-Host 'base'\n")
+    duplicate_help = """<#
+.SYNOPSIS
+Run one meaningful sample operation.
+#>
+<#
+.SYNOPSIS
+Invoke Sample.
+#>"""
+    function_body = (
+        f"{duplicate_help}\n    Write-Output 'sample'"
+        if placement == "beginning"
+        else f"Write-Output 'sample'\n    {duplicate_help}"
+    )
+    documented = f"""<#
+.SYNOPSIS
+Run the sample script.
+#>
+
+function Invoke-Sample {{
+    {function_body}
+}}
+"""
+    _initialize_checkout(candidate, documented)
+
+    invalid = _run_help_check(candidate, base)
+    assert invalid.returncode != 0
+    assert "function Invoke-Sample has multiple adjacent help blocks" in invalid.stderr
+
+
+@pytest.mark.skipif(shutil.which("pwsh") is None, reason="PowerShell is not installed")
 def test_powershell_help_policy_distinguishes_file_and_first_function_help(
     tmp_path: Path,
 ) -> None:
