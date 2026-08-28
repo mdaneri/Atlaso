@@ -136,6 +136,17 @@ The preview updates as the deployment, prefix, suffix, or domain changes. A gene
 For example, prefix `lab-`, hostname `vc01`, suffix `-mgmt`, and domain `example.internal` produce
 `lab-vc01-mgmt.example.internal`.
 
+Each selected catalog component also has an editable **Hostname** in the review table. Prefix and suffix changes update
+rows that still use their generated defaults while preserving deliberate per-component edits. Changing the deployment
+catalog preserves edited hostnames for components that remain selected and initializes newly selected components from
+the current pattern. **Clear pattern** removes the prefix and suffix and restores every selected component to its
+catalog hostname.
+
+Atlaso normalizes reviewed hostnames to lowercase and accepts exactly one DNS label per component. Labels must contain
+1 to 63 letters, numbers, or hyphens and cannot begin or end with a hyphen. Every component in the selected catalog must
+appear exactly once, and two components cannot use the same reviewed hostname. The server derives each FQDN from the
+reviewed label and selected managed domain; it never trusts a browser-generated FQDN.
+
 Creating records requires confirmation. The modal remains open after creation so assigned addresses can be reviewed.
 When every displayed FQDN has an A or AAAA address, the primary action changes to `Done`; `Done` closes the modal.
 
@@ -185,13 +196,14 @@ anycast address and is not allocatable.
 ## Record Ownership And Deletion
 
 New records use the catalog component description, such as `vCenter` or `VCF Automation`, as the DNS record description.
-Helper ownership is stored separately in structured record metadata with source `vcf_helper` and the catalog component
-hostname.
+Helper ownership is stored separately in structured record metadata with source `vcf_helper`, the immutable catalog
+component key, and the reviewed generated hostname label.
 
 `Delete generated records` is enabled only when at least one displayed FQDN has an A or AAAA address. Deletion requires
-confirmation and removes only records owned by VCF Helper for the selected deployment, prefix, suffix, and domain.
-Unrelated or manually created records are preserved. Legacy helper records without ownership metadata are removed only
-when their description exactly matches the expected component description.
+confirmation and submits the same exact component-to-hostname mapping used by creation. Atlaso removes a record only
+when its FQDN and helper metadata prove ownership for that submitted component and reviewed hostname. Unrelated,
+manually created, mismatched, and legacy description-only records are preserved even when their names or descriptions
+match the current catalog.
 
 ## Routes And Responses
 
@@ -205,9 +217,9 @@ when their description exactly matches the expected component description.
 - `POST /ui/management/vcf-helper/offline-depot/configure` queues remote depot configuration.
 - `GET /ui/management/vcf-helper/offline-depot/tasks/{job_id}` reports configuration and sync progress.
 
-Fetch responses report created, skipped, deleted, and preserved rows with their assigned addresses, plus validation or
-allocation errors. All mutations use the existing authenticated session, CSRF validation, audit logging, and DNS desired
-state model.
+Fetch and no-JavaScript form responses report the current edited FQDN set as created, skipped, deleted, or preserved
+rows with assigned addresses, plus validation or allocation errors. All mutations use the existing authenticated
+session, CSRF validation, audit logging, and DNS desired state model.
 
 <!-- BEGIN GENERATED ADDITIONAL SCREENSHOTS -->
 ## Additional verified states
