@@ -309,7 +309,7 @@ def test_vsphere_descriptor_controls_properties_defaults_options_and_warnings(tm
         warning=[SimpleNamespace(localizedMessage="Ignored default sddc.example.test")],
         property=[
             SimpleNamespace(id="ROOT_PASSWORD", type="password", label="Root", description="Secret", defaultValue="", userConfigurable=True),
-            SimpleNamespace(id="vami.hostname", type="string", label="FQDN", description="Host", defaultValue="target.example.test", userConfigurable=True),
+            SimpleNamespace(id="vami.hostname", type="string", label="FQDN", description="Host", defaultValue="", userConfigurable=True),
             SimpleNamespace(id="target_only", type="string", label="Target only", description="Target property", defaultValue="enabled", userConfigurable=None),
             SimpleNamespace(id="hidden", type="string", label="Hidden", description="System", defaultValue="internal", userConfigurable=False),
         ],
@@ -327,14 +327,14 @@ def test_vsphere_descriptor_controls_properties_defaults_options_and_warnings(tm
 
     assert [item.key for item in authoritative.properties] == ["ROOT_PASSWORD", "vami.hostname", "target_only"]
     assert authoritative.properties[0].password is True
-    assert authoritative.properties[1].default == "target.example.test"
+    assert authoritative.properties[1].default == ""
     assert authoritative.default_deployment_option == "small"
     assert authoritative.selected_deployment_option == "small"
     assert authoritative.deployment_options[0].description == "Lab footprint"
     assert "sddc.example.test" not in " ".join(authoritative.warnings)
     assert complete_property_mapping(authoritative, {"ROOT_PASSWORD": "one-time-secret"}) == {
         "ROOT_PASSWORD": "one-time-secret",
-        "vami.hostname": "target.example.test",
+        "vami.hostname": "",
         "target_only": "enabled",
     }
     with pytest.raises(VcfSddcDeploymentError, match="not accepted"):

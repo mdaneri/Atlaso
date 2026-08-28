@@ -506,7 +506,7 @@ def _parse_vsphere_ovf_descriptor(
         local = local_properties.get(key)
         value_type = str(getattr(item, "type", "") or (local.value_type if local else "string"))
         password = value_type.lower() == "password" or bool(local and local.password)
-        default = "" if password else str(getattr(item, "defaultValue", "") or (local.default if local else ""))
+        default = "" if password else str(getattr(item, "defaultValue", "") or "")
         properties.append(
             OvfProperty(
                 key=key,
