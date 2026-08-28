@@ -8,6 +8,7 @@ from scripts.check_repo import (
     NON_TASK_OWNED_CHECKOUT_PRESERVED_MARKER,
     NON_TASK_OWNED_REMOTE_BRANCH_PRESERVED_MARKER,
     ORDERED_TERMINAL_CLEANUP_MARKERS,
+    PRIMARY_CHECKOUT_REMOTE_GATE_MARKER,
     PRIMARY_CHECKOUT_RESTORED_MARKER,
     PRIMARY_CHECKOUT_RESUME_MARKER,
     PRIVATE_REMEDIATION_CLEANUP_MARKER,
@@ -865,7 +866,7 @@ def test_agent_policy_gate_rejects_missing_non_task_owned_cleanup_contract(
             write_policy_files(tmp_path)
             path = tmp_path / relative_path
             path.write_text(
-                path.read_text(encoding="utf-8").replace(marker, ""),
+                path.read_text(encoding="utf-8").replace(marker, "", 1),
                 encoding="utf-8",
             )
 
@@ -881,7 +882,7 @@ def test_agent_policy_gate_rejects_missing_non_task_owned_cleanup_contract(
 def test_agent_policy_gate_rejects_missing_preserved_remote_resume_contract(
     tmp_path: Path,
 ) -> None:
-    """Verify interrupted local cleanup accepts a verified preserved remote.
+    """Verify interrupted cleanup accepts a verified preserved remote.
 
     Args:
         tmp_path: Temporary directory provided by pytest for isolated filesystem state.
@@ -895,29 +896,30 @@ def test_agent_policy_gate_rejects_missing_preserved_remote_resume_contract(
         Path("docs/reference/full-technical-reference.md"),
     )
 
-    for relative_path in required_entry_points:
-        write_policy_files(tmp_path)
-        path = tmp_path / relative_path
-        path.write_text(
-            path.read_text(encoding="utf-8").replace(
-                WORKTREE_REMOVAL_REMOTE_GATE_MARKER,
-                "",
-            ),
-            encoding="utf-8",
-        )
+    resume_markers = (
+        WORKTREE_REMOVAL_REMOTE_GATE_MARKER,
+        PRIMARY_CHECKOUT_REMOTE_GATE_MARKER,
+    )
 
-        findings = check_agent_policy_gate(tmp_path)
+    for marker in resume_markers:
+        for relative_path in required_entry_points:
+            write_policy_files(tmp_path)
+            path = tmp_path / relative_path
+            path.write_text(
+                path.read_text(encoding="utf-8").replace(marker, "", 1),
+                encoding="utf-8",
+            )
 
-        assert len(findings) == 1
-        assert findings[0].path == path
-        expected_prefix = (
-            "completed-task cleanup section marker is missing: "
-            if relative_path in TERMINAL_CLEANUP_SECTION_MARKERS
-            else "required agent policy marker is missing: "
-        )
-        assert findings[0].message == (
-            expected_prefix + WORKTREE_REMOVAL_REMOTE_GATE_MARKER
-        )
+            findings = check_agent_policy_gate(tmp_path)
+
+            assert len(findings) == 1
+            assert findings[0].path == path
+            expected_prefix = (
+                "completed-task cleanup section marker is missing: "
+                if relative_path in TERMINAL_CLEANUP_SECTION_MARKERS
+                else "required agent policy marker is missing: "
+            )
+            assert findings[0].message == expected_prefix + marker
 
 
 def test_agent_policy_gate_rejects_missing_merge_queue_guard(tmp_path: Path) -> None:

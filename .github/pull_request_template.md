@@ -58,14 +58,16 @@ surfaces.
   A non-primary task records `worktree_removed` only after removing and pruning its worktree, verifying path and
   registration absence, deleting only the exact unreferenced local task branch that still equals the recorded head,
   and verifying `local_task_branch_absent`. An interrupted `worktree_removal_resume` requires the path and registration
-  absent. The remote branch gate is either verified absent or recorded not applicable through
+  absent. The worktree removal remote branch gate is either verified absent or recorded not applicable through
   `non_task_owned_remote_branch_preserved`, and the same ownership, head, and merge evidence before deleting that local
   ref or accepting it as already absent.
 
   A primary-checkout task records `primary_checkout_restored` only after switching a clean exact-head checkout to
   current `origin/main`, verifying HEAD, and deleting only the exact unreferenced local task branch.
-  An interrupted `primary_checkout_resume` requires clean local `main` freshly fast-forwarded to current `origin/main`,
-  the remote ref absent, and the exact local task branch safely deletable or already absent under the same evidence.
+  An interrupted `primary_checkout_resume` requires clean local `main` freshly fast-forwarded to current `origin/main`.
+  The primary checkout remote branch gate is either verified absent or recorded not applicable through
+  `non_task_owned_remote_branch_preserved`; the exact local task branch must still be safely deletable or already absent
+  under the same evidence.
 
   Terminal order:
 

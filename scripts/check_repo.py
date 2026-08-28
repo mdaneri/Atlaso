@@ -382,7 +382,8 @@ REQUIRED_POLICY_MARKERS = {
         "when a merge queue is required",
         "`non_task_owned_remote_branch_preserved`",
         "`non_task_owned_checkout_preserved`",
-        "remote branch gate is either verified absent or recorded not applicable",
+        "worktree removal remote branch gate is either verified absent or recorded not applicable",
+        "primary checkout remote branch gate is either verified absent or recorded not applicable",
     ),
 }
 
@@ -421,7 +422,12 @@ LOCAL_TASK_BRANCH_ABSENT_MARKER = "`local_task_branch_absent`"
 REMOTE_BRANCH_LEASE_MARKER = "`--force-with-lease=refs/heads/BRANCH:HEAD_SHA`"
 WORKTREE_REMOVAL_RESUME_MARKER = "`worktree_removal_resume`"
 WORKTREE_REMOVAL_REMOTE_GATE_MARKER = (
-    "remote branch gate is either verified absent or recorded not applicable"
+    "worktree removal remote branch gate is either verified absent "
+    "or recorded not applicable"
+)
+PRIMARY_CHECKOUT_REMOTE_GATE_MARKER = (
+    "primary checkout remote branch gate is either verified absent "
+    "or recorded not applicable"
 )
 TITLE_CONTROL_UNAVAILABLE_MARKER = "`task_title_done` as verified not applicable"
 NON_TASK_OWNED_REMOTE_BRANCH_PRESERVED_MARKER = (
@@ -439,6 +445,7 @@ TERMINAL_CLEANUP_SECTION_MARKERS = {
         REMOTE_BRANCH_LEASE_MARKER,
         WORKTREE_REMOVAL_RESUME_MARKER,
         WORKTREE_REMOVAL_REMOTE_GATE_MARKER,
+        PRIMARY_CHECKOUT_REMOTE_GATE_MARKER,
         TITLE_CONTROL_UNAVAILABLE_MARKER,
         NON_TASK_OWNED_REMOTE_BRANCH_PRESERVED_MARKER,
         NON_TASK_OWNED_CHECKOUT_PRESERVED_MARKER,

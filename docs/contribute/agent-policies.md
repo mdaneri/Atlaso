@@ -218,17 +218,18 @@ Terminal order:
   Then require the exact local task branch to be unreferenced by every registered worktree, delete only that ref when
   present, and verify `local_task_branch_absent` before recording `worktree_removed`. If interrupted after the path and
   registration disappear but before local-ref deletion, `worktree_removal_resume` requires the path and registration
-  to remain absent, the remote branch gate is either verified absent or recorded not applicable through
+  to remain absent, the worktree removal remote branch gate is either verified absent or recorded not applicable through
   `non_task_owned_remote_branch_preserved`, and the same task ownership, recorded head, and merge evidence to prove
   that the exact unreferenced local branch is safely deletable or already absent. A primary-checkout task records the
   gate as not applicable only after a clean checkout still at the recorded task head fetches current `origin/main`,
   switches to local `main` without force, fast-forwards exactly to `origin/main`, verifies HEAD, deletes only a local
   task branch that still equals the recorded pull-request head and is checked out nowhere, and records
   `primary_checkout_restored`. If interrupted after the switch, `primary_checkout_resume` requires a clean local
-  `main`, a fresh fetch and non-forced fast-forward to exact current `origin/main`, an absent remote task ref, and the
-  local task branch either still equal to the recorded head and checked out nowhere or already absent under the same
-  ownership and merge evidence. Delete it when present, then record the restored state. Never remove the primary
-  checkout.
+  `main` plus a fresh fetch and non-forced fast-forward to exact current `origin/main`. The
+  primary checkout remote branch gate is either verified absent or recorded not applicable through
+  `non_task_owned_remote_branch_preserved`; the local task branch must still equal the recorded head and be checked out
+  nowhere or already be absent under the same ownership and merge evidence. Delete it when present, then record the
+  restored state. Never remove the primary checkout.
 - Complete `task_title_done` last by using supported title controls to append the exact suffix " · Done" once while
   preserving description and issue/pull-request traceability. Keep the task unarchived unless archival is separately
   requested. If the runtime exposes no supported mutable title control, record `task_title_done` as verified not applicable

@@ -170,14 +170,16 @@ advisory state, and keep repository-wide automatic branch deletion disabled. The
 deletes only the exact local task branch after proving that it still equals the pull-request head and is unreferenced by
 every registered worktree, and verifies `local_task_branch_absent` before recording `worktree_removed`. An interrupted
 `worktree_removal_resume` may finish local-ref deletion only while the path and registration remain absent. The
-remote branch gate is either verified absent or recorded not applicable through
+worktree removal remote branch gate is either verified absent or recorded not applicable through
 `non_task_owned_remote_branch_preserved`, and the same task ownership, head, and merge evidence prove that the exact
 unreferenced local branch is safely deletable or already absent. A primary-checkout task records worktree removal as
 not applicable only after a clean exact-head checkout fetches current `origin/main`, switches to local `main` without
 force, fast-forwards exactly to `origin/main`, verifies HEAD, deletes only an exact matching unreferenced local task
 branch, and records `primary_checkout_restored`. An interrupted retry may use `primary_checkout_resume` only from a
-clean local `main` that freshly fast-forwards to current `origin/main`, with the remote ref absent and the exact local
-task branch either still safely deletable or already absent under the same ownership and merge proof. Finally,
+clean local `main` that freshly fast-forwards to current `origin/main`. The
+primary checkout remote branch gate is either verified absent or recorded not applicable through
+`non_task_owned_remote_branch_preserved`; the exact local task branch must still be safely deletable or already absent
+under the same ownership and merge proof. Finally,
 supported title controls append the exact suffix " · Done"
 once and leave the task unarchived unless archival is separately requested. If the runtime has no supported mutable
 title control, record `task_title_done` as verified not applicable with capability evidence, omit the visible suffix,

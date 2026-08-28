@@ -62,14 +62,16 @@ New Tabulators must use `window.AtlasoUiPatterns.createGrid(...)`; every new or 
   path and registration absence, deletion of the exact unreferenced local task branch that still equals the recorded
   head, and verified `local_task_branch_absent`. An interrupted `worktree_removal_resume` may finish that local-ref
   deletion only when the path and registration remain absent. The
-  remote branch gate is either verified absent or recorded not applicable through
+  worktree removal remote branch gate is either verified absent or recorded not applicable through
   `non_task_owned_remote_branch_preserved`, and the same ownership, head, and merge
   evidence still proves the exact local branch safely deletable or already absent.
 
   A primary-checkout task must restore the clean checkout to current `origin/main`, verify HEAD, delete only the exact
   unreferenced local task branch, and record `primary_checkout_restored` before worktree removal becomes not applicable.
   An interrupted `primary_checkout_resume` is valid only from clean local `main` freshly fast-forwarded to current
-  `origin/main`, with the remote ref absent and the exact local task branch safely deletable or already absent.
+  `origin/main`. The primary checkout remote branch gate is either verified absent or recorded not applicable through
+  `non_task_owned_remote_branch_preserved`; the exact local task branch must still be safely deletable or already
+  absent.
 
   Terminal order:
 
