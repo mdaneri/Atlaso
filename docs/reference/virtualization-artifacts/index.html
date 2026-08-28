@@ -3731,7 +3731,9 @@ pool, and two existing libvirt networks. Copy the OVA, <code>import-atlaso-kvm.s
 <p>Arguments are the OVA, an unused domain name, active storage pool, management network, and optional services network.
 The helper imports with <code>virt-v2v -i ova</code>, creates only missing 500 GiB data volumes, verifies the resulting disk order
 and capacities, and normalizes the inactive libvirt definition. The resulting domain remains shut off for inspection.</p>
-<p>The helper serializes each pool/domain namespace and rejects an existing domain or matching storage namespace.
+<p>The helper serializes each pool/domain namespace and rejects an existing domain or storage volume with the exact
+literal <code>&lt;domain-name&gt;-</code> prefix. Dots remain valid in domain names and do not match other characters when storage
+ownership is checked.
 Rollback removes only the domain and matching volumes created after that locked preflight, including partial
 <code>virt-v2v</code> volumes left before a domain definition exists.</p>
 <h2 id="import-on-hyper-v">Import on Hyper-V<a class="headerlink" href="#import-on-hyper-v" title="Permanent link">&para;</a></h2>
