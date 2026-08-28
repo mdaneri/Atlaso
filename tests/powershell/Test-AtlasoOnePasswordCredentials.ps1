@@ -86,6 +86,25 @@ try {
 finally {
     [System.IO.Directory]::Delete($pythonInventoryRoot, $true)
 }
+$cliPackageRoot = Join-Path ([System.IO.Path]::GetTempPath()) (
+    "atlaso-cli-inventory-$([guid]::NewGuid().ToString('N'))"
+)
+$cliPackageDirectory = Join-Path $cliPackageRoot 'AgileBits.1Password.CLI_test'
+[void][System.IO.Directory]::CreateDirectory($cliPackageDirectory)
+$packagedCliPath = Join-Path $cliPackageDirectory 'op.exe'
+[System.IO.File]::WriteAllBytes($packagedCliPath, [byte[]](1))
+try {
+    $resolvedPackagedCli = Resolve-AtlasoOnePasswordCliPath `
+        -CandidatePaths @() `
+        -PackageRoot $cliPackageRoot `
+        -CommandResolver { param($Name) $null }
+    if ($resolvedPackagedCli -cne $packagedCliPath) {
+        throw 'The single WinGet package CLI fallback was not selected.'
+    }
+}
+finally {
+    [System.IO.Directory]::Delete($cliPackageRoot, $true)
+}
 $cleanupMarkerPath = Join-Path $repositoryRoot '.atlaso-local\onepassword-credential-cleanup.json'
 if (Test-Path -LiteralPath $cleanupMarkerPath) {
     throw 'A focused credential test cannot start with retained cleanup ownership.'

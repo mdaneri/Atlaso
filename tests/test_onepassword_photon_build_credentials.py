@@ -204,7 +204,9 @@ def test_omitted_nonsecret_sdk_selectors_are_discovered_fail_closed() -> None:
     )
 
     assert "function Resolve-AtlasoOnePasswordAccount" in module
+    assert "function Resolve-AtlasoOnePasswordCliPath" in module
     assert "'account', 'list', '--format', 'json'" in module
+    assert "AgileBits.1Password.CLI_*" in module
     assert "if ($accounts.Count -ne 1)" in module
     assert "exactly one discoverable 1Password account" in module
     assert "Join-Path $env:WINDIR 'py.exe'" in module
@@ -216,6 +218,7 @@ def test_omitted_nonsecret_sdk_selectors_are_discovered_fail_closed() -> None:
     assert "highest compatible" in image_wrapper
     assert "highest compatible" in test_vm
     assert "Resolve-OnePasswordTestVmAccount" in test_vm
+    assert "-OnePasswordCliPath $resolvedOpPath" in test_vm
     assert "'-OnePasswordAccount', $resolvedAccount" in test_vm
     assert "'-OnePasswordAccount', $resolvedAccount" in module
 

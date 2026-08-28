@@ -131,6 +131,61 @@ function ConvertFrom-AtlasoOnePasswordAccountInventory {
 
 <#
 .SYNOPSIS
+Resolve one installed 1Password CLI executable.
+
+.PARAMETER CandidatePaths
+Preferred exact executable paths, including the Environments-enabled install.
+
+.PARAMETER PackageRoot
+WinGet package root used only when command and shim discovery fail.
+
+.PARAMETER CommandResolver
+Command-discovery callback used by focused tests.
+#>
+function Resolve-AtlasoOnePasswordCliPath {
+    param(
+        [string[]]$CandidatePaths = @(
+            (Join-Path ([Environment]::GetFolderPath('ProgramFiles')) '1Password CLI\op.exe'),
+            (Join-Path ([Environment]::GetFolderPath('LocalApplicationData')) 'Microsoft\WinGet\Links\op.exe')
+        ),
+        [string]$PackageRoot = (
+            Join-Path ([Environment]::GetFolderPath('LocalApplicationData')) 'Microsoft\WinGet\Packages'
+        ),
+        [scriptblock]$CommandResolver = {
+            param($Name)
+            Get-Command $Name -CommandType Application -ErrorAction SilentlyContinue
+        }
+    )
+
+    foreach ($candidate in $CandidatePaths) {
+        if ($candidate -and (Test-Path -LiteralPath $candidate -PathType Leaf)) {
+            return (Resolve-Path -LiteralPath $candidate).Path
+        }
+    }
+    $command = & $CommandResolver 'op.exe'
+    if (-not $command) {
+        $command = & $CommandResolver 'op'
+    }
+    if ($command) {
+        return $command.Source
+    }
+    if ($PackageRoot -and (Test-Path -LiteralPath $PackageRoot -PathType Container)) {
+        $packageCandidates = @(Get-ChildItem -LiteralPath $PackageRoot -Directory |
+            Where-Object { $_.Name -like 'AgileBits.1Password.CLI_*' } |
+            ForEach-Object { Join-Path $_.FullName 'op.exe' } |
+            Where-Object { Test-Path -LiteralPath $_ -PathType Leaf })
+        if ($packageCandidates.Count -eq 1) {
+            return (Resolve-Path -LiteralPath $packageCandidates[0]).Path
+        }
+        if ($packageCandidates.Count -gt 1) {
+            throw 'Multiple 1Password CLI package executables were found; repair WinGet links or pass -OnePasswordAccount explicitly.'
+        }
+    }
+    throw 'Omitted Atlaso credentials require one discoverable 1Password account. Install 1Password CLI or pass -OnePasswordAccount explicitly.'
+}
+
+<#
+.SYNOPSIS
 Resolve the 1Password account used by desktop SDK authorization.
 
 .PARAMETER Account
@@ -138,11 +193,15 @@ Optional explicit 1Password account name or ID.
 
 .PARAMETER TimeoutSeconds
 Positive deadline for the bounded account inventory.
+
+.PARAMETER CliPath
+Optional exact CLI path already verified by the caller.
 #>
 function Resolve-AtlasoOnePasswordAccount {
     param(
         [AllowEmptyString()][string]$Account = '',
-        [Parameter(Mandatory = $true)][ValidateRange(1, 3600)][int]$TimeoutSeconds
+        [Parameter(Mandatory = $true)][ValidateRange(1, 3600)][int]$TimeoutSeconds,
+        [string]$CliPath = ''
     )
 
     if (-not [string]::IsNullOrWhiteSpace($Account)) {
@@ -150,19 +209,14 @@ function Resolve-AtlasoOnePasswordAccount {
         return $Account
     }
 
-    $candidatePaths = @(
-        (Join-Path ([Environment]::GetFolderPath('ProgramFiles')) '1Password CLI\op.exe'),
-        (Join-Path ([Environment]::GetFolderPath('LocalApplicationData')) 'Microsoft\WinGet\Links\op.exe')
-    )
-    $opCommand = Get-Command -Name 'op' -CommandType Application -ErrorAction SilentlyContinue
-    $opPath = if ($opCommand) {
-        $opCommand.Source
+    $opPath = if ([string]::IsNullOrWhiteSpace($CliPath)) {
+        Resolve-AtlasoOnePasswordCliPath
+    }
+    elseif (Test-Path -LiteralPath $CliPath -PathType Leaf) {
+        (Resolve-Path -LiteralPath $CliPath).Path
     }
     else {
-        @($candidatePaths | Where-Object { Test-Path -LiteralPath $_ -PathType Leaf }) | Select-Object -First 1
-    }
-    if ([string]::IsNullOrWhiteSpace($opPath)) {
-        throw 'Omitted Atlaso credentials require one discoverable 1Password account. Install 1Password CLI or pass -OnePasswordAccount explicitly.'
+        throw 'The resolved 1Password CLI path is unavailable; repair the installation or pass -OnePasswordAccount explicitly.'
     }
 
     try {
@@ -527,6 +581,9 @@ Account name or ID used for desktop SDK authorization when a default is needed.
 .PARAMETER OnePasswordPython
 CPython 3.10 through 3.13 executable used when a default is needed.
 
+.PARAMETER OnePasswordCliPath
+Optional exact CLI path already verified by a parent workflow.
+
 .PARAMETER AdminPassword
 Optional explicit administrator SecureString override.
 
@@ -550,11 +607,17 @@ function Get-AtlasoOnePasswordCredentialPair {
         'OnePasswordPython',
         Justification = 'Executable selector for the isolated SDK runtime, not a password.'
     )]
+    [Diagnostics.CodeAnalysis.SuppressMessageAttribute(
+        'PSAvoidUsingPlainTextForPassword',
+        'OnePasswordCliPath',
+        Justification = 'Path to the approved 1Password CLI executable, not a password.'
+    )]
     param(
         [Parameter(Mandatory = $true)][string]$RepositoryRoot,
         [string]$EnvironmentId = '',
         [string]$OnePasswordAccount = '',
         [string]$OnePasswordPython = '',
+        [string]$OnePasswordCliPath = '',
         [SecureString]$AdminPassword,
         [SecureString]$RootPassword,
         [Parameter(Mandatory = $true)][ValidateRange(1, 3600)][int]$TimeoutSeconds,
@@ -615,7 +678,8 @@ function Get-AtlasoOnePasswordCredentialPair {
             Assert-AtlasoOnePasswordEnvironmentId -EnvironmentId $EnvironmentId
             $resolvedAccount = Resolve-AtlasoOnePasswordAccount `
                 -Account $OnePasswordAccount `
-                -TimeoutSeconds $TimeoutSeconds
+                -TimeoutSeconds $TimeoutSeconds `
+                -CliPath $OnePasswordCliPath
             $resolvedPython = Resolve-AtlasoOnePasswordPython `
                 -PythonCommand $OnePasswordPython `
                 -TimeoutSeconds $TimeoutSeconds `
@@ -699,6 +763,7 @@ Export-ModuleMember -Function @(
     'Resolve-AtlasoOnePasswordEnvironmentId',
     'Assert-AtlasoOnePasswordEnvironmentId',
     'Assert-AtlasoOnePasswordAccount',
+    'Resolve-AtlasoOnePasswordCliPath',
     'Resolve-AtlasoOnePasswordAccount',
     'Resolve-AtlasoOnePasswordPython',
     'Initialize-AtlasoOnePasswordSdkRuntime',
