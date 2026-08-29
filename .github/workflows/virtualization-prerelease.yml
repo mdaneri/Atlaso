@@ -106,6 +106,10 @@ jobs:
           VERSION="${RELEASE_TAG#virtualization-v}"
           VERSION="${VERSION%-rc.*}"
           test "$RELEASE_TAG" = "virtualization-v${VERSION}-""$(printf '%s' "$RELEASE_TAG" | sed "s/^virtualization-v${VERSION}-//")"
+          SOFTWARE_RELEASE="$(gh release view "v$VERSION" --repo "${{ github.repository }}" \
+            --json isDraft,isPrerelease)"
+          test "$(jq -r .isDraft <<<"$SOFTWARE_RELEASE")" = false
+          test "$(jq -r .isPrerelease <<<"$SOFTWARE_RELEASE")" = false
           mkdir software-release verified-source
           gh release download "v$VERSION" --dir software-release \
             --pattern "atlaso-appliance-$VERSION.tar.gz" \
