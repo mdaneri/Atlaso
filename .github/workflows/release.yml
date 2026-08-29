@@ -180,8 +180,7 @@ jobs:
             test "$(jq -r .name <<<"$CANDIDATE_STATE")" = "Publish Python wheel"
             test "$(jq -r .path <<<"$CANDIDATE_STATE")" = .github/workflows/wheel.yml
             test "$(jq -r .run_attempt <<<"$CANDIDATE_STATE")" = "$CANDIDATE_RUN_ATTEMPT"
-            CANDIDATE_EVENT="$(jq -r .event <<<"$CANDIDATE_STATE")"
-            test "$CANDIDATE_EVENT" = workflow_run || test "$CANDIDATE_EVENT" = workflow_dispatch
+            test "$(jq -r .event <<<"$CANDIDATE_STATE")" = workflow_run
             test "$(jq -r .head_repository.full_name <<<"$CANDIDATE_STATE")" = "${{ github.repository }}"
             test "$(jq -r .head_branch <<<"$CANDIDATE_STATE")" = main
             test "$(jq -r .conclusion <<<"$CANDIDATE_STATE")" = success
@@ -209,11 +208,46 @@ jobs:
           test "$(jq -r .name <<<"$PUBLISHER_STATE")" = "Publish Python wheel"
           test "$(jq -r .path <<<"$PUBLISHER_STATE")" = .github/workflows/wheel.yml
           test "$(jq -r .run_attempt <<<"$PUBLISHER_STATE")" = "$PUBLISHER_RUN_ATTEMPT"
-          PUBLISHER_EVENT="$(jq -r .event <<<"$PUBLISHER_STATE")"
-          test "$PUBLISHER_EVENT" = workflow_run || test "$PUBLISHER_EVENT" = workflow_dispatch
+          test "$(jq -r .event <<<"$PUBLISHER_STATE")" = workflow_run
           test "$(jq -r .head_repository.full_name <<<"$PUBLISHER_STATE")" = "${{ github.repository }}"
           test "$(jq -r .head_branch <<<"$PUBLISHER_STATE")" = main
           test "$(jq -r .conclusion <<<"$PUBLISHER_STATE")" = success
+      - name: Preserve an existing immutable release
+        id: existing_release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_SHA: ${{ needs.prepare.outputs.release_sha }}
+          RELEASE_KEY_ID: atlaso-release-2026-01
+        run: |
+          VERSION="$(python scripts/version.py get)"
+          TAG="v${VERSION}"
+          if ! gh release view "$TAG" --json tagName >/dev/null 2>&1; then
+            echo "present=false" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          mkdir -p dist/release
+          gh release download "$TAG" --dir dist/release
+          test "$(find dist/release -maxdepth 1 -type f -printf '%f\n' | sort)" = "$(printf '%s\n' \
+            "atlaso-appliance-${VERSION}.tar.gz" \
+            "atlaso-third-party-notices-${VERSION}.md" \
+            release-manifest.json \
+            release-manifest.json.sig | sort)"
+          python scripts/prepare_virtualization_source.py \
+            --manifest dist/release/release-manifest.json \
+            --signature dist/release/release-manifest.json.sig \
+            --bundle "dist/release/atlaso-appliance-${VERSION}.tar.gz" \
+            --trust-key "image/common/update-trust/${RELEASE_KEY_ID}.pem" \
+            --output "$RUNNER_TEMP/existing-release-inputs" \
+            --expected-version "$VERSION" \
+            --expected-commit "$RELEASE_SHA" \
+            > "$RUNNER_TEMP/existing-release-inputs.json"
+          EXISTING_WHEEL="$(jq -r .application_wheel "$RUNNER_TEMP/existing-release-inputs.json")"
+          SELECTED_WHEEL="$(find dist/application-wheel -maxdepth 1 -type f -name '*.whl')"
+          test -f "$EXISTING_WHEEL"
+          test -f "$SELECTED_WHEEL"
+          test "$(sha256sum "$EXISTING_WHEEL" | cut -d' ' -f1)" = \
+            "$(sha256sum "$SELECTED_WHEEL" | cut -d' ' -f1)"
+          echo "present=true" >> "$GITHUB_OUTPUT"
       - name: Download CPython 3.14 wheelhouse
         uses: actions/download-artifact@v8
         with:
@@ -227,6 +261,7 @@ jobs:
           umask 077
           printf '%s\n' "$RELEASE_SIGNING_PRIVATE_KEY" > "$RUNNER_TEMP/release-signing-key.pem"
       - name: Build and sign the immutable release
+        if: steps.existing_release.outputs.present != 'true'
         env:
           RELEASE_SHA: ${{ needs.prepare.outputs.release_sha }}
           RELEASE_KEY_ID: atlaso-release-2026-01

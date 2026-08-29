@@ -4,42 +4,30 @@ on:
   workflow_run:
     workflows:
       - CI
+      - Replay Python wheel
     types:
       - completed
-  workflow_dispatch:
-    inputs:
-      commit:
-        description: Exact successful main push CI commit SHA to replay
-        required: true
-        type: string
-      source_ci_run_id:
-        description: GitHub run ID for that successful main push CI
-        required: true
-        type: string
-      source_ci_run_attempt:
-        description: Successful attempt number for that source CI run
-        required: true
-        default: '1'
-        type: string
 
 permissions:
   actions: read
   contents: read
 
 concurrency:
-  group: python-wheel-${{ github.event.workflow_run.head_sha || inputs.commit }}
+  group: python-wheel-${{ github.event.workflow_run.id }}-${{ github.event.workflow_run.run_attempt }}
   cancel-in-progress: false
 
 jobs:
   publish:
     name: Publish immutable wheel artifact
     if: >-
-      (github.event_name == 'workflow_run' &&
-       github.event.workflow_run.conclusion == 'success' &&
+      github.event.workflow_run.conclusion == 'success' &&
+      github.event.workflow_run.head_repository.full_name == github.repository &&
+      github.event.workflow_run.head_branch == 'main' &&
+      ((github.event.workflow_run.name == 'CI' &&
        github.event.workflow_run.head_repository.full_name == github.repository &&
-       github.event.workflow_run.head_branch == 'main' &&
        github.event.workflow_run.event == 'push') ||
-      (github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main')
+       (github.event.workflow_run.name == 'Replay Python wheel' &&
+        github.event.workflow_run.event == 'workflow_dispatch'))
     runs-on: ubuntu-latest
     timeout-minutes: 20
     steps:
@@ -47,10 +35,38 @@ jobs:
         id: target
         env:
           GH_TOKEN: ${{ github.token }}
-          EXPECTED_WHEEL_SHA: ${{ github.event.workflow_run.head_sha || inputs.commit }}
-          SOURCE_CI_RUN_ID: ${{ github.event.workflow_run.id || inputs.source_ci_run_id }}
-          SOURCE_CI_RUN_ATTEMPT: ${{ github.event.workflow_run.run_attempt || inputs.source_ci_run_attempt }}
+          TRIGGER_WORKFLOW: ${{ github.event.workflow_run.name }}
+          TRIGGER_RUN_ID: ${{ github.event.workflow_run.id }}
+          TRIGGER_RUN_ATTEMPT: ${{ github.event.workflow_run.run_attempt }}
+          TRIGGER_HEAD_SHA: ${{ github.event.workflow_run.head_sha }}
         run: |
+          if test "$TRIGGER_WORKFLOW" = CI; then
+            EXPECTED_WHEEL_SHA="$TRIGGER_HEAD_SHA"
+            SOURCE_CI_RUN_ID="$TRIGGER_RUN_ID"
+            SOURCE_CI_RUN_ATTEMPT="$TRIGGER_RUN_ATTEMPT"
+          else
+            REQUEST_NAME="atlaso-wheel-replay-request-${TRIGGER_RUN_ID}-${TRIGGER_RUN_ATTEMPT}"
+            REQUEST_ARTIFACTS="$(gh api \
+              "repos/${{ github.repository }}/actions/runs/${TRIGGER_RUN_ID}/artifacts")"
+            REQUEST_ARTIFACT_ID="$(jq -r \
+              --arg name "$REQUEST_NAME" \
+              '[.artifacts[] | select(.expired == false and .name == $name)] | if length == 1 then .[0].id else empty end' \
+              <<<"$REQUEST_ARTIFACTS")"
+            test -n "$REQUEST_ARTIFACT_ID"
+            gh api "repos/${{ github.repository }}/actions/artifacts/${REQUEST_ARTIFACT_ID}/zip" \
+              > "$RUNNER_TEMP/wheel-replay-request.zip"
+            test "$(unzip -Z1 "$RUNNER_TEMP/wheel-replay-request.zip")" = wheel-replay-request.json
+            unzip -p "$RUNNER_TEMP/wheel-replay-request.zip" wheel-replay-request.json \
+              > "$RUNNER_TEMP/wheel-replay-request.json"
+            REQUEST="$(jq -cS . "$RUNNER_TEMP/wheel-replay-request.json")"
+            test "$(jq -cS . <<<"$REQUEST")" = "$(cat "$RUNNER_TEMP/wheel-replay-request.json")"
+            test "$(jq -c 'keys' <<<"$REQUEST")" = \
+              '["commit","repository","source_ci_run_attempt","source_ci_run_id"]'
+            test "$(jq -r .repository <<<"$REQUEST")" = "${{ github.repository }}"
+            EXPECTED_WHEEL_SHA="$(jq -r .commit <<<"$REQUEST")"
+            SOURCE_CI_RUN_ID="$(jq -r .source_ci_run_id <<<"$REQUEST")"
+            SOURCE_CI_RUN_ATTEMPT="$(jq -r .source_ci_run_attempt <<<"$REQUEST")"
+          fi
           if ! printf '%s' "$EXPECTED_WHEEL_SHA" | grep -Eq '^[0-9a-f]{40}$'; then
             echo "::error::Wheel SHA must be a full lowercase hexadecimal commit."
             exit 1

@@ -319,12 +319,15 @@ runner authority. Byte-identical retry artifacts are accepted; divergent retaine
 release admission. Candidates are staged by publisher run plus artifact ID and every recorded attempt is revalidated.
 The manual consumer preserves the earliest retained publisher run-and-attempt identity across identical retries,
 keeping immutable signed bundle inputs deterministic.
-The protected `main` workflow revision also exposes a bounded manual replay for retention recovery. It accepts the exact
-commit and source CI run ID and attempt, revalidates the attempt-specific `CI` workflow identity, same-repository
-`main`-push event, commit, and successful conclusion, and requires the commit to remain reachable from current `main`.
-Replay uses the same GitHub-hosted read-only wheel-only job and cannot access Release, Pages, signing, or virtualization
-authority. The API-backed admission and `main`-reachability comparison complete before target checkout, and the dynamic
-exact-SHA build has no shared dependency cache.
+Protected **Replay Python wheel** admission from `main` provides bounded retention recovery. It accepts the exact commit
+and source CI run ID and attempt, revalidates the attempt-specific `CI` workflow identity, same-repository `main`-push
+event, commit, successful conclusion, and current-`main` reachability without checkout or target-code execution. It
+publishes one canonical one-day replay-request artifact. **Publish Python wheel** consumes that request only through the
+admission run's completed `workflow_run`, revalidates the request and CI evidence, and performs the cache-free exact-SHA
+build with read-only authority and no Release, Pages, signing, or virtualization access.
+When the immutable software Release already exists, the manual workflow verifies its signature, exact commit, complete
+bundle content hashes, and application-wheel bytes against the replay handoff, then reuses those existing assets for
+channel recovery. It never rewrites the bundle with replay-specific publisher provenance.
 
 The protected **Publish appliance release** workflow is manual only. It accepts an exact successful `main` push CI
 commit, verifies and consumes its retained automatic wheel without rebuilding it, builds the exact CPython 3.14
@@ -340,7 +343,7 @@ beyond its wall-clock budget. GitHub Release descriptions preserve the exact sig
 notes grouped from merged pull-request labels, contributors, and comparison metadata. The manual publication dispatch
 can publish or recover an exact commit only when it already has a successful `main` push CI run and a retained matching
 automatic wheel artifact. After the 90-day retention window, rerun that exact CI/wheel publication while the commit
-remains on `main` by dispatching **Publish Python wheel** from `main` with the exact commit and successful source CI run
+remains on `main` by dispatching **Replay Python wheel** from `main` with the exact commit and successful source CI run
 ID and attempt; the appliance workflow never substitutes or silently rebuilds the wheel. Publication refuses any
 existing tag or Release whose commit or asset bytes differ. The same dispatch safely retries channel advancement after
 a release has
