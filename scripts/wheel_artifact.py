@@ -20,7 +20,10 @@ SCRIPTS_DIR = ROOT / "scripts"
 if str(SCRIPTS_DIR) not in sys.path:
     sys.path.insert(0, str(SCRIPTS_DIR))
 
-from build_release_bundle import build_application_wheel, project_version  # noqa: E402
+from build_release_bundle import (  # noqa: E402 - local script path precedes the sibling import.
+    build_application_wheel,
+    project_version,
+)
 
 COMMIT_PATTERN = re.compile(r"^[0-9a-f]{40}$")
 SEMVER_PATTERN = re.compile(r"^[0-9]+\.[0-9]+\.[0-9]+$")
