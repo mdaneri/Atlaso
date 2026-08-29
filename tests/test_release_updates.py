@@ -1279,9 +1279,15 @@ def test_release_workflows_use_successful_main_sha_and_promote_without_rebuildin
     assert "python scripts/wheel_artifact.py select" in publication
     assert "--application-wheel-root dist/application-wheel" in publication
     assert ".source_ci.run_id" in publication
+    assert ".source_ci.run_attempt" in publication
     assert ".publisher.run_id" in publication
+    assert ".publisher.run_attempt" in publication
     assert ".github/workflows/ci.yml" in publication
     assert ".github/workflows/wheel.yml" in publication
+    assert 'actions/runs/${SOURCE_CI_RUN_ID}/attempts/${SOURCE_CI_RUN_ATTEMPT}' in publication
+    assert 'actions/runs/${PUBLISHER_RUN_ID}/attempts/${PUBLISHER_RUN_ATTEMPT}' in publication
+    assert 'test "$(jq -r .run_attempt <<<"$SOURCE_CI_STATE")" = "$SOURCE_CI_RUN_ATTEMPT"' in publication
+    assert 'test "$(jq -r .run_attempt <<<"$PUBLISHER_STATE")" = "$PUBLISHER_RUN_ATTEMPT"' in publication
     assert 'test "$(jq -r .head_sha <<<"$SOURCE_CI_STATE")" = "$RELEASE_SHA"' in publication
     assert 'test "$(jq -r .head_sha <<<"$PUBLISHER_STATE")"' not in publication
     for runner_label in ("atlaso-vmware", "atlaso-proxmox", "atlaso-kvm", "atlaso-hyperv"):

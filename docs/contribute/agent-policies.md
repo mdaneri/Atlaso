@@ -694,7 +694,8 @@ Terminal order:
 - Every successful same-repository `main` push CI run automatically starts **Publish Python wheel** on GitHub-hosted
   Linux. Keep it read-only and bounded to one 90-day Actions artifact named
   `atlaso-wheel-vX.Y.Z-<full-sha>`, containing exactly the versioned wheel and canonical identity document. Bind the
-  source CI and publisher runs, repository, version, full commit, UTC commit build time, filename, size, and SHA-256.
+  source CI and publisher run IDs and attempts, repository, version, full commit, UTC commit build time, filename, size,
+  and SHA-256. Later consumers must use the attempt-specific GitHub run endpoints and verify each recorded attempt.
   Give this path no appliance signing material, protected environment, contents write, tag/Release or `gh-pages`
   mutation, channel promotion, self-hosted label, or virtualization access. Automatic retries may publish another
   artifact for the same identity only when the wheel bytes remain identical; a later consumer must compare all retained

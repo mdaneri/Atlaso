@@ -514,9 +514,9 @@ closed as a collision.
 
 If the artifact expires before an appliance release is cut, rerun the exact successful `main` CI and its automatic
 wheel publication while the commit remains reachable from `main`. Do not copy a wheel from another commit, rename an
-artifact, or let the appliance workflow rebuild it. The artifact's source-CI run ID, publisher run ID, version, commit,
-UTC build time, filename, size, and digest are the exact handoff used by the later manual release and retained as
-`packages/wheel-identity.json` inside the signed bundle.
+artifact, or let the appliance workflow rebuild it. The artifact's source-CI run ID and attempt, publisher run ID and
+attempt, version, commit, UTC build time, filename, size, and digest are the exact handoff used by the later manual
+release and retained as `packages/wheel-identity.json` inside the signed bundle.
 
 The protected workflows use these checked-in inputs:
 

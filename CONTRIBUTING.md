@@ -314,7 +314,8 @@ follow-through workflow above.
 Every successful same-repository `main` push CI run automatically starts **Publish Python wheel**. That separate
 GitHub-hosted workflow has read-only repository permissions and publishes only the immutable Actions artifact
 `atlaso-wheel-vX.Y.Z-<full-sha>` for 90 days. The artifact contains exactly one versioned Atlaso wheel and a canonical
-identity document binding its source CI run, publisher run, version, commit, size, and SHA-256 digest. It has no signing
+identity document binding its source CI run ID and attempt, publisher run ID and attempt, version, commit, size, and
+SHA-256 digest. Manual consumption revalidates those exact attempts. It has no signing
 material, GitHub Release/tag or Pages write authority, protected environment, self-hosted runner, or virtualization
 access. Repeated artifacts for one version/commit must contain identical wheel bytes or the manual consumer fails.
 When identical retries coexist, the consumer preserves the earliest retained publisher-run identity so an automatic

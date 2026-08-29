@@ -182,17 +182,21 @@ jobs:
             --commit "$RELEASE_SHA" \
             > "$RUNNER_TEMP/selected-wheel-identity.json"
           SOURCE_CI_RUN_ID="$(jq -r .source_ci.run_id "$RUNNER_TEMP/selected-wheel-identity.json")"
+          SOURCE_CI_RUN_ATTEMPT="$(jq -r .source_ci.run_attempt "$RUNNER_TEMP/selected-wheel-identity.json")"
           PUBLISHER_RUN_ID="$(jq -r .publisher.run_id "$RUNNER_TEMP/selected-wheel-identity.json")"
-          SOURCE_CI_STATE="$(gh api "repos/${{ github.repository }}/actions/runs/${SOURCE_CI_RUN_ID}")"
-          PUBLISHER_STATE="$(gh api "repos/${{ github.repository }}/actions/runs/${PUBLISHER_RUN_ID}")"
+          PUBLISHER_RUN_ATTEMPT="$(jq -r .publisher.run_attempt "$RUNNER_TEMP/selected-wheel-identity.json")"
+          SOURCE_CI_STATE="$(gh api "repos/${{ github.repository }}/actions/runs/${SOURCE_CI_RUN_ID}/attempts/${SOURCE_CI_RUN_ATTEMPT}")"
+          PUBLISHER_STATE="$(gh api "repos/${{ github.repository }}/actions/runs/${PUBLISHER_RUN_ID}/attempts/${PUBLISHER_RUN_ATTEMPT}")"
           test "$(jq -r .name <<<"$SOURCE_CI_STATE")" = CI
           test "$(jq -r .path <<<"$SOURCE_CI_STATE")" = .github/workflows/ci.yml
+          test "$(jq -r .run_attempt <<<"$SOURCE_CI_STATE")" = "$SOURCE_CI_RUN_ATTEMPT"
           test "$(jq -r .event <<<"$SOURCE_CI_STATE")" = push
           test "$(jq -r .head_branch <<<"$SOURCE_CI_STATE")" = main
           test "$(jq -r .head_sha <<<"$SOURCE_CI_STATE")" = "$RELEASE_SHA"
           test "$(jq -r .conclusion <<<"$SOURCE_CI_STATE")" = success
           test "$(jq -r .name <<<"$PUBLISHER_STATE")" = "Publish Python wheel"
           test "$(jq -r .path <<<"$PUBLISHER_STATE")" = .github/workflows/wheel.yml
+          test "$(jq -r .run_attempt <<<"$PUBLISHER_STATE")" = "$PUBLISHER_RUN_ATTEMPT"
           test "$(jq -r .event <<<"$PUBLISHER_STATE")" = workflow_run
           test "$(jq -r .conclusion <<<"$PUBLISHER_STATE")" = success
       - name: Download CPython 3.14 wheelhouse

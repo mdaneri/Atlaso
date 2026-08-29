@@ -312,7 +312,8 @@ synchronization task.
 
 Successful same-repository `main` push CI automatically publishes only a 90-day Actions artifact named
 `atlaso-wheel-vX.Y.Z-<full-sha>`. It contains the versioned application wheel and a canonical identity document binding
-the source CI and publisher runs, repository, version, commit, build time, filename, size, and SHA-256 digest. This
+the source CI and publisher run IDs and attempts, repository, version, commit, build time, filename, size, and SHA-256
+digest. Manual admission revalidates those exact attempts through GitHub's attempt-specific endpoints. This
 GitHub-hosted read-only path has no appliance signing, Release/tag, Pages, protected virtualization, or self-hosted
 runner authority. Byte-identical retry artifacts are accepted; divergent retained bytes fail closed during manual
 release admission. The manual consumer preserves the earliest retained publisher-run identity across identical retries,

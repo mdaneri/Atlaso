@@ -545,7 +545,8 @@ The following cross-cutting boundaries always apply:
   bootstrap, control plane, and worker so a failed preflight cannot fall through to root-filesystem-backed mount paths.
 - Every successful same-repository `main` push CI run automatically publishes only the 90-day Actions artifact
   `atlaso-wheel-vX.Y.Z-<full-sha>` from GitHub-hosted Linux. Bind its single versioned wheel to canonical source-CI,
-  publisher-run, repository, version, full-commit, UTC build-time, size, and SHA-256 identity. Give that path read-only
+  publisher-run IDs and attempts, repository, version, full-commit, UTC build-time, size, and SHA-256 identity. Manual
+  consumption must query and verify each recorded GitHub run attempt. Give the automatic path read-only
   repository authority and no signing key, protected environment, tag/Release or Pages write, channel promotion,
   self-hosted label, or virtualization access. **Publish appliance release** is protected manual dispatch only; it must
   consume and record the retained exact wheel handoff without rebuilding or substituting the wheel, then retain all
