@@ -112,7 +112,7 @@ function Get-VmwareGuestHostname {
         -VmrunPath $VmrunPath -Arguments $arguments -Deadline $Deadline
     $reported = @($result.StdOut -split '\r?\n' | Where-Object { $_ }) | Select-Object -First 1
     if ($result.TimedOut -or $result.ExitCode -ne 0 -or [string]::IsNullOrWhiteSpace($reported)) { return '' }
-    return $reported.Trim()
+    return ConvertFrom-AtlasoWorkstationRuntimeConfigValue -Value $reported
 }
 
 <#
@@ -228,6 +228,7 @@ do {
             $lastReadinessError = $_.Exception.Message
             if ($lastReadinessError -like 'Duplicate VMware management address*' -or
                 $lastReadinessError -like 'VMware guest hostname mismatch*' -or
+                $lastReadinessError -like 'VMware runtimeConfig representation is malformed*' -or
                 ($lastReadinessError -like 'Host-facing address*' -and
                     $lastReadinessError -notlike '*Windows neighbor evidence is <none>*')) { throw }
         }

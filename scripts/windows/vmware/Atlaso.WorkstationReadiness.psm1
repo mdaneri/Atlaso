@@ -174,6 +174,38 @@ function Get-AtlasoWorkstationRunningVmxPath {
 
 <#
 .SYNOPSIS
+Normalize one value returned by a VMware runtimeConfig read.
+
+.PARAMETER Value
+Raw stdout value returned by vmrun readVariable.
+#>
+function ConvertFrom-AtlasoWorkstationRuntimeConfigValue {
+    param([Parameter(Mandatory = $true)][AllowEmptyString()][string]$Value)
+
+    $candidate = $Value.Trim()
+    if (-not $candidate) {
+        return ''
+    }
+
+    $startsWithQuote = $candidate.StartsWith('"')
+    $endsWithQuote = $candidate.EndsWith('"')
+    if ($startsWithQuote -xor $endsWithQuote) {
+        throw 'VMware runtimeConfig representation is malformed because its surrounding quotes are unbalanced.'
+    }
+    if ($startsWithQuote) {
+        if ($candidate.Length -lt 2) {
+            throw 'VMware runtimeConfig representation is malformed because it contains only one quote.'
+        }
+        $candidate = $candidate.Substring(1, $candidate.Length - 2)
+    }
+    if ($candidate.Contains('"')) {
+        throw 'VMware runtimeConfig representation is malformed because its quoting is ambiguous.'
+    }
+    return $candidate
+}
+
+<#
+.SYNOPSIS
 Prove that a host-facing address belongs uniquely to one running VMX.
 
 .PARAMETER TargetVmxPath
@@ -357,6 +389,7 @@ function Assert-AtlasoWorkstationStableObservation {
 Export-ModuleMember -Function @(
     'Assert-AtlasoWorkstationAddressIdentity',
     'Assert-AtlasoWorkstationStableObservation',
+    'ConvertFrom-AtlasoWorkstationRuntimeConfigValue',
     'ConvertTo-AtlasoWorkstationMacAddress',
     'Get-AtlasoWorkstationRunningVmxPath',
     'Get-AtlasoWorkstationVmxMacAddress',

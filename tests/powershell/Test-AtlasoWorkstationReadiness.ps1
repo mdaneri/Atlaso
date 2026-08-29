@@ -38,9 +38,63 @@ $concurrentVmx = Join-Path $OutputDirectory 'Concurrent-Clone.vmx'
 $fakeVmrun = Join-Path $OutputDirectory 'fake-vmrun.cmd'
 [System.IO.File]::WriteAllText(
     $fakeVmrun,
-    "@echo off`r`nif /I `"%3`"==`"getGuestIPAddress`" (`r`n  echo 192.168.167.134`r`n  exit /b 0`r`n)`r`nif /I `"%3`"==`"readVariable`" (`r`n  if /I not `"%5`"==`"runtimeConfig`" exit /b 8`r`n  echo issue-535.atlaso.internal`r`n  exit /b 0`r`n)`r`nif /I `"%3`"==`"list`" (`r`n  echo Total running VMs: 2`r`n  echo `"$targetVmx`"`r`n  echo `"$sourceVmx`"`r`n  exit /b 0`r`n)`r`nexit /b 9`r`n",
+    "@echo off`r`nif /I `"%3`"==`"getGuestIPAddress`" (`r`n  echo 192.168.167.134`r`n  exit /b 0`r`n)`r`nif /I `"%3`"==`"readVariable`" (`r`n  if /I not `"%5`"==`"runtimeConfig`" exit /b 8`r`n  echo `"issue-535.atlaso.internal`"`r`n  exit /b 0`r`n)`r`nif /I `"%3`"==`"list`" (`r`n  echo Total running VMs: 2`r`n  echo `"$targetVmx`"`r`n  echo `"$sourceVmx`"`r`n  exit /b 0`r`n)`r`nexit /b 9`r`n",
     [System.Text.UTF8Encoding]::new($false)
 )
+$runtimeConfigValues = @(
+    'issue-535.atlaso.internal',
+    '  issue-535.atlaso.internal  ',
+    '"issue-535.atlaso.internal"',
+    '  "issue-535.atlaso.internal"  '
+)
+foreach ($runtimeConfigValue in $runtimeConfigValues) {
+    $normalizedValue = ConvertFrom-AtlasoWorkstationRuntimeConfigValue -Value $runtimeConfigValue
+    if ($normalizedValue -cne 'issue-535.atlaso.internal') {
+        throw "VMware runtimeConfig normalization changed the hostname value: $runtimeConfigValue"
+    }
+}
+foreach ($malformedRuntimeConfigValue in @(
+        '"issue-535.atlaso.internal',
+        'issue-535.atlaso.internal"',
+        '""issue-535.atlaso.internal""',
+        'issue-"535.atlaso.internal'
+    )) {
+    try {
+        ConvertFrom-AtlasoWorkstationRuntimeConfigValue -Value $malformedRuntimeConfigValue | Out-Null
+        throw "Malformed VMware runtimeConfig quoting was accepted: $malformedRuntimeConfigValue"
+    }
+    catch {
+        if ($_.Exception.Message -like 'Malformed VMware runtimeConfig quoting was accepted:*' -or
+            $_.Exception.Message -notlike 'VMware runtimeConfig representation is malformed*') {
+            throw
+        }
+    }
+}
+$malformedVmrun = Join-Path $OutputDirectory 'malformed-vmrun.cmd'
+[System.IO.File]::WriteAllText(
+    $malformedVmrun,
+    (Get-Content -LiteralPath $fakeVmrun -Raw).Replace(
+        'echo "issue-535.atlaso.internal"',
+        'echo "issue-535.atlaso.internal'
+    ),
+    [System.Text.UTF8Encoding]::new($false)
+)
+$malformedWorkflowError = $null
+try {
+    & (Join-Path $RepositoryRoot 'scripts/windows/vmware/get-atlaso-vm-ip.ps1') `
+        -VmxPath $targetVmx `
+        -ExpectedHostname 'issue-535.atlaso.internal' `
+        -VmrunPath $malformedVmrun `
+        -TimeoutSeconds 2 `
+        -PollSeconds 1 | Out-Null
+}
+catch {
+    $malformedWorkflowError = $_
+}
+if ($null -eq $malformedWorkflowError -or
+    $malformedWorkflowError.Exception.Message -notlike 'VMware runtimeConfig representation is malformed*') {
+    throw 'The complete readiness workflow did not fail closed on malformed runtimeConfig quoting.'
+}
 $runningPaths = @(
     Get-AtlasoWorkstationRunningVmxPath -VmrunPath $fakeVmrun -Deadline (Get-Date).AddSeconds(2)
 )
