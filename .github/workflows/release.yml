@@ -19,15 +19,17 @@ concurrency:
 jobs:
   prepare:
     name: Validate release target
+    if: github.ref == 'refs/heads/main'
     runs-on: ubuntu-latest
     outputs:
       release_sha: ${{ steps.target.outputs.release_sha }}
     steps:
-      - name: Check out the release target
+      - name: Check out protected main admission tooling
         uses: actions/checkout@v7
         with:
-          ref: ${{ inputs.release_sha }}
+          ref: main
           fetch-depth: 0
+          persist-credentials: false
       - name: Validate successful main CI release target
         id: target
         env:
@@ -40,7 +42,6 @@ jobs:
           fi
           git fetch origin main --no-tags
           git merge-base --is-ancestor "$RELEASE_SHA" origin/main
-          test "$(git rev-parse HEAD)" = "$RELEASE_SHA"
           SUCCESSFUL_RUNS="$(
             gh api --method GET \
               "repos/${{ github.repository }}/actions/workflows/ci.yml/runs" \
@@ -55,8 +56,15 @@ jobs:
             echo "::error::$RELEASE_SHA has no successful main push CI run."
             exit 1
           fi
-          VERSION="$(python scripts/version.py get)"
+          printf '{"release_sha":"%s"}\n' "$RELEASE_SHA" > validated-release-request.json
           echo "release_sha=$RELEASE_SHA" >> "$GITHUB_OUTPUT"
+      - name: Upload the validated release request
+        uses: actions/upload-artifact@v7
+        with:
+          name: validated-release-request
+          path: validated-release-request.json
+          if-no-files-found: error
+          retention-days: 1
 
   wheelhouse:
     name: Build ${{ matrix.abi }} wheelhouse
@@ -119,18 +127,35 @@ jobs:
       actions: read
       contents: read
     steps:
-      - name: Check out the successful main commit
+      - name: Download the validated release request
+        uses: actions/download-artifact@v8
+        with:
+          name: validated-release-request
+          path: validated-release-request
+      - name: Read the validated release target
+        id: target
+        run: |
+          REQUEST=validated-release-request/validated-release-request.json
+          test "$(jq -cS . "$REQUEST")" = "$(cat "$REQUEST")"
+          test "$(jq -r 'keys | join(",")' "$REQUEST")" = release_sha
+          RELEASE_SHA="$(jq -r .release_sha "$REQUEST")"
+          if ! printf '%s' "$RELEASE_SHA" | grep -Eq '^[0-9a-f]{40}$'; then
+            echo "::error::Validated release request has an invalid commit."
+            exit 1
+          fi
+          echo "release_sha=$RELEASE_SHA" >> "$GITHUB_OUTPUT"
+      - name: Check out protected main release tooling
         uses: actions/checkout@v7
         with:
-          ref: ${{ needs.prepare.outputs.release_sha }}
+          ref: main
           fetch-depth: 0
-      - name: Confirm the commit is still on main
+          persist-credentials: false
+      - name: Confirm the validated commit is still on main
         env:
-          RELEASE_SHA: ${{ needs.prepare.outputs.release_sha }}
+          RELEASE_SHA: ${{ steps.target.outputs.release_sha }}
         run: |
           git fetch origin main --no-tags
           git merge-base --is-ancestor "$RELEASE_SHA" origin/main
-          test "$(git rev-parse HEAD)" = "$RELEASE_SHA"
       - name: Set up Python
         uses: actions/setup-python@v7
         with:
@@ -143,9 +168,14 @@ jobs:
       - name: Resolve the immutable automatic wheel handoff
         env:
           GH_TOKEN: ${{ github.token }}
-          RELEASE_SHA: ${{ needs.prepare.outputs.release_sha }}
+          RELEASE_SHA: ${{ steps.target.outputs.release_sha }}
         run: |
-          VERSION="$(python scripts/version.py get)"
+          VERSION="$(
+            git show "${RELEASE_SHA}:pyproject.toml" |
+              sed -nE '/^\[project\]$/,/^\[/ s/^version = "([0-9]+\.[0-9]+\.[0-9]+)"$/\1/p' |
+              head -n 1
+          )"
+          test -n "$VERSION"
           ARTIFACT_NAME="atlaso-wheel-v${VERSION}-${RELEASE_SHA}"
           CANDIDATES="$RUNNER_TEMP/wheel-candidates"
           mkdir -p "$CANDIDATES"
@@ -212,10 +242,11 @@ jobs:
         id: existing_release
         env:
           GH_TOKEN: ${{ github.token }}
-          RELEASE_SHA: ${{ needs.prepare.outputs.release_sha }}
+          RELEASE_SHA: ${{ steps.target.outputs.release_sha }}
           RELEASE_KEY_ID: atlaso-release-2026-01
         run: |
-          VERSION="$(python scripts/version.py get)"
+          VERSION="$(jq -r .version dist/application-wheel/wheel-identity.json)"
+          test -n "$VERSION"
           TAG="v${VERSION}"
           if ! gh release view "$TAG" --json tagName >/dev/null 2>&1; then
             echo "present=false" >> "$GITHUB_OUTPUT"

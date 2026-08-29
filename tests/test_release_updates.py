@@ -1321,9 +1321,9 @@ def test_release_workflows_use_successful_main_sha_and_promote_without_rebuildin
     assert '--expected-version "$VERSION"' in publication_check
     assert '--expected-commit "$RELEASE_SHA"' in publication_check
     assert "<script" not in publication
-    assert publication.count("ref: ${{ needs.prepare.outputs.release_sha }}") == 3
-    assert publication.count("actions/upload-artifact@v7") >= 2
-    assert publication.count("actions/download-artifact@v8") == 2
+    assert publication.count("ref: ${{ needs.prepare.outputs.release_sha }}") == 2
+    assert publication.count("actions/upload-artifact@v7") >= 3
+    assert publication.count("actions/download-artifact@v8") == 3
     assert "python scripts/wheel_artifact.py select" in publication
     assert "--application-wheel-root dist/application-wheel" in publication
     assert ".source_ci.run_id" in publication
@@ -1348,6 +1348,12 @@ def test_release_workflows_use_successful_main_sha_and_promote_without_rebuildin
     assert 'sha256sum "$EXISTING_WHEEL"' in publication
     assert 'sha256sum "$SELECTED_WHEEL"' in publication
     assert "if: needs.release_inputs.outputs.existing_release != 'true'" in publication
+    prepare_job = publication.split("  prepare:\n", 1)[1].split("  wheelhouse:\n", 1)[0]
+    assert "if: github.ref == 'refs/heads/main'" in prepare_job
+    assert "ref: main" in prepare_job
+    assert "persist-credentials: false" in prepare_job
+    assert "name: validated-release-request" in prepare_job
+    assert "retention-days: 1" in prepare_job
     release_inputs_job = publication.split("  release_inputs:\n", 1)[1].split(
         "  publish:\n", 1
     )[0]
@@ -1355,6 +1361,12 @@ def test_release_workflows_use_successful_main_sha_and_promote_without_rebuildin
     assert "group: atlaso-github-pages" not in release_inputs_job
     assert "environment: appliance-release" not in release_inputs_job
     assert "contents: write" not in release_inputs_job
+    assert "needs.prepare.outputs.release_sha" not in release_inputs_job
+    assert "name: validated-release-request" in release_inputs_job
+    assert "Read the validated release target" in release_inputs_job
+    assert "ref: main" in release_inputs_job
+    assert 'git show "${RELEASE_SHA}:pyproject.toml"' in release_inputs_job
+    assert "VERSION=\"$(jq -r .version dist/application-wheel/wheel-identity.json)\"" in release_inputs_job
     assert "Resolve the immutable automatic wheel handoff" in release_inputs_job
     assert "Preserve an existing immutable release" in release_inputs_job
     assert "actions/upload-artifact@v7" in release_inputs_job
