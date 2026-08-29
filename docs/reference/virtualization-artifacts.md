@@ -13,6 +13,13 @@ Atlaso builds and validates one appliance template with VMware Workstation. A re
 canonical OVA for VMware, Proxmox VE, and KVM, plus one Hyper-V ZIP converted from the same OVA payload. The import
 helpers normalize target-specific VM configuration without changing the source OVA.
 
+The guest-neutral Photon provisioner installs Atlaso's system-wide PowerShell profile in the canonical root reported
+by the reviewed package layout. Current images use `/usr/share/powershell`; the older
+`/opt/microsoft/powershell/7` root remains an explicitly supported compatibility layout. VMware builds and derived
+Hyper-V artifacts fail closed when the executable resolves elsewhere, when the profile ancestry is not root-owned and
+non-writable, or when the destination is a symlink. Protected artifact verification accepts exactly one of those two
+profile locations and requires the admitted Atlaso bytes with mode `0644`.
+
 Virtualization has its own immutable Release namespace. A maintainer's existing Windows workstation creates and smokes
 `virtualization-vX.Y.Z-rc.N`; a protected GitHub-hosted job signs and publishes it. Manual stable promotion runs that
 exact prerelease OVA on Proxmox and KVM before publishing the unchanged OVA and Hyper-V bytes as

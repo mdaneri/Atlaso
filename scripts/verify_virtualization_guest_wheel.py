@@ -34,7 +34,6 @@ DEPLOYED_TEXT_FILES = {
     "scripts/appliance/atlaso-helper": "/opt-atlaso/bin/atlaso-helper",
     "scripts/appliance/atlaso-install-boot-branding": "/opt-atlaso/bin/atlaso-install-boot-branding",
     "image/common/powershell/atlaso-vault-profile.ps1": "/opt-atlaso/bin/atlaso-vault-profile.ps1",
-    "image/common/powershell/profile.ps1": "/opt/microsoft/powershell/7/profile.ps1",
     "image/common/systemd/atlaso-console-manager.conf": "/etc/systemd/system.conf.d/atlaso-console.conf",
     "image/common/systemd/atlaso.service": "/etc/systemd/system/atlaso.service",
     "image/common/systemd/atlaso-console.service": "/etc/systemd/system/atlaso-console.service",
@@ -60,7 +59,6 @@ DEPLOYED_FILE_MODES = {
     "/opt-atlaso/bin/atlaso-helper": 0o755,
     "/opt-atlaso/bin/atlaso-install-boot-branding": 0o755,
     "/opt-atlaso/bin/atlaso-vault-profile.ps1": 0o644,
-    "/opt/microsoft/powershell/7/profile.ps1": 0o644,
     "/etc/systemd/system.conf.d/atlaso-console.conf": 0o644,
     "/etc/systemd/system/atlaso.service": 0o644,
     "/etc/systemd/system/atlaso-console.service": 0o644,
@@ -496,6 +494,26 @@ def _verify_deployed_system_content(
         raise SystemExit("source commit must be a full lowercase Git SHA")
     payloads = _payload_vmdks(asset_root)
     filesystems = {role: _filesystem(disk) for role, disk in payloads.items()}
+    profile_presence = _guestfish(
+        payloads["photon_os"],
+        [
+            f"mount-ro {filesystems['photon_os']} /",
+            *(f"is-file {path}" for path in POWERSHELL_PROFILE_TARGETS),
+        ],
+    )
+    if len(profile_presence) != len(POWERSHELL_PROFILE_TARGETS):
+        raise SystemExit("PowerShell global profile layout could not be verified")
+    profile_targets = [
+        path
+        for path, present in zip(
+            POWERSHELL_PROFILE_TARGETS, profile_presence, strict=True
+        )
+        if present == "true"
+    ]
+    if len(profile_targets) != 1:
+        raise SystemExit(
+            "PowerShell global profile must exist in exactly one supported layout"
+        )
     text_targets = {
         source: (
             "atlaso_system" if target.startswith("/opt-atlaso/") else "photon_os",
@@ -506,6 +524,10 @@ def _verify_deployed_system_content(
     powershell_profile_target = _powershell_profile_target(
         payloads["photon_os"], filesystems["photon_os"]
     )
+    if powershell_profile_target != profile_targets[0]:
+        raise SystemExit(
+            "PowerShell executable and installed global profile layouts disagree"
+        )
     text_targets[POWERSHELL_PROFILE_SOURCE] = (
         "photon_os",
         powershell_profile_target,
@@ -536,7 +558,10 @@ def _verify_deployed_system_content(
             raise SystemExit(
                 "deployed update-trust key set does not match admitted commit"
             )
-        role_modes = {"photon_os": {}, "atlaso_system": {}}
+        role_modes: dict[str, dict[str, int]] = {
+            "photon_os": {},
+            "atlaso_system": {},
+        }
         for _source, (role, target) in {**text_targets, **binary_targets}.items():
             role_modes[role][target] = static_modes[target]
         for name in trust_names:

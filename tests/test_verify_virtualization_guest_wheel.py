@@ -555,7 +555,7 @@ def test_rejects_altered_runtime_executables(
             "does not match admitted commit",
         ),
         (
-            "/opt/microsoft/powershell/7/profile.ps1",
+            "/usr/share/powershell/profile.ps1",
             False,
             "does not match admitted commit",
         ),
@@ -585,6 +585,7 @@ def test_rejects_altered_non_wheel_system_content(
     source_bytes = {
         **{source: f"source:{source}\n".encode() for source in verifier.DEPLOYED_TEXT_FILES},
         **{source: f"binary:{source}".encode() for source in verifier.DEPLOYED_BINARY_FILES},
+        verifier.POWERSHELL_PROFILE_SOURCE: b"canonical profile\n",
         trust_source: b"public trust key\n",
     }
     guest_bytes = {
@@ -596,6 +597,9 @@ def test_rejects_altered_non_wheel_system_content(
             target: source_bytes[source]
             for source, target in verifier.DEPLOYED_BINARY_FILES.items()
         },
+        "/usr/share/powershell/profile.ps1": source_bytes[
+            verifier.POWERSHELL_PROFILE_SOURCE
+        ],
         "/etc/atlaso/update-trust.d/atlaso-release-test.pem": source_bytes[
             trust_source
         ],
@@ -623,6 +627,11 @@ def test_rejects_altered_non_wheel_system_content(
         """
         if commands == ["list-filesystems"]:
             return ["/dev/sda: ext4"]
+        if any(command.startswith("is-file ") for command in commands):
+            return [
+                "true" if path == "/usr/share/powershell/profile.ps1" else "false"
+                for path in verifier.POWERSHELL_PROFILE_TARGETS
+            ]
         if commands[-1] == "ls /etc/atlaso/update-trust.d":
             names = ["atlaso-release-test.pem"]
             if extra_trust_key:
@@ -666,6 +675,7 @@ def test_verifies_every_release_refreshed_non_wheel_file(
     source_bytes = {
         **{source: f"source:{source}\n".encode() for source in verifier.DEPLOYED_TEXT_FILES},
         **{source: f"binary:{source}".encode() for source in verifier.DEPLOYED_BINARY_FILES},
+        verifier.POWERSHELL_PROFILE_SOURCE: b"canonical profile\n",
         trust_source: b"public trust key\n",
     }
     guest_bytes = {
@@ -677,6 +687,9 @@ def test_verifies_every_release_refreshed_non_wheel_file(
             target: source_bytes[source]
             for source, target in verifier.DEPLOYED_BINARY_FILES.items()
         },
+        "/usr/share/powershell/profile.ps1": source_bytes[
+            verifier.POWERSHELL_PROFILE_SOURCE
+        ],
         "/etc/atlaso/update-trust.d/atlaso-release-test.pem": source_bytes[
             trust_source
         ],
@@ -707,6 +720,11 @@ def test_verifies_every_release_refreshed_non_wheel_file(
         """
         if commands == ["list-filesystems"]:
             return ["/dev/sda: ext4"]
+        if any(command.startswith("is-file ") for command in commands):
+            return [
+                "true" if path == "/usr/share/powershell/profile.ps1" else "false"
+                for path in verifier.POWERSHELL_PROFILE_TARGETS
+            ]
         if commands[-1] == "ls /etc/atlaso/update-trust.d":
             return ["atlaso-release-test.pem"]
         powershell_profile = _powershell_profile_output(
@@ -733,6 +751,7 @@ def test_verifies_every_release_refreshed_non_wheel_file(
     assert verified == len(source_bytes)
     expected_metadata = {
         *verifier.DEPLOYED_FILE_MODES,
+        "/usr/share/powershell/profile.ps1",
         "/etc/atlaso/update-trust.d/atlaso-release-test.pem",
     }
     expected_metadata.remove(default_profile_target)
@@ -808,6 +827,7 @@ def test_deployed_system_sources_exist_in_the_checkout() -> None:
     sources = {
         *verifier.DEPLOYED_TEXT_FILES,
         *verifier.DEPLOYED_BINARY_FILES,
+        verifier.POWERSHELL_PROFILE_SOURCE,
     }
     missing = sorted(source for source in sources if not Path(source).is_file())
     assert missing == []

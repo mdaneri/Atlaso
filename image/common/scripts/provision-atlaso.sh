@@ -510,18 +510,11 @@ verify_bootstrap_powercli() {
 verify_bootstrap_powercli
 
 install_powershell_profile() {
-  POWERSHELL_HOME="$(dirname "$(readlink -f "$(command -v pwsh)")")"
-  case "$POWERSHELL_HOME" in
-    /opt/microsoft/powershell/7 | /usr/share/powershell) ;;
-    *)
-      echo "PowerShell resolved to an unsupported global profile directory: $POWERSHELL_HOME" >&2
-      exit 2
-      ;;
-  esac
-  # Re-resolve the package-owned runtime home after every mutating Photon update.
-  install -o root -g root -m 0644 \
-    "$ATLASO_HOME/image/common/powershell/profile.ps1" \
-    "$POWERSHELL_HOME/profile.ps1"
+  # Re-resolve and validate the package-owned runtime home after every mutating
+  # Photon update before atomically replacing the complete Atlaso-owned profile.
+  python3 "$ATLASO_HOME/scripts/appliance/atlaso_install_powershell_profile.py" \
+    --pwsh-path "$(command -v pwsh)" \
+    --profile-source "$ATLASO_HOME/image/common/powershell/profile.ps1"
 }
 
 default_boot_kernel() {

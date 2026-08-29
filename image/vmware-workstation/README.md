@@ -10,6 +10,12 @@ Before a PSGallery install, the shared provisioner expands Photon's build-time `
 dependency extraction does not exhaust the default memory-backed temporary filesystem. The deployed appliance returns
 to Photon's normal `/tmp` sizing after reboot.
 
+The current Photon package installs the PowerShell executable and system-wide profile under
+`/usr/share/powershell`. The shared provisioner also recognizes the reviewed legacy
+`/opt/microsoft/powershell/7` layout. It resolves the executable by canonical filesystem identity, requires root-owned
+non-writable profile ancestry, and atomically installs the root-owned mode-`0644` Atlaso profile. Any other layout,
+directory symlink, writable ancestry, or existing profile symlink fails the image build instead of being followed.
+
 This target builds the canonical Photon OS 5.0 VMware Workstation VMX/VMDK appliance. Its validated payload is also the
 source for the unchanged KVM and Proxmox VE OVA import and the converted Hyper-V ZIP. Fresh appliances enable the
 integrated CA on deployed-VM first boot, serve the management console/API over CA-backed HTTPS/443, and keep

@@ -1434,14 +1434,54 @@ ln -sfn "$venv/bin/atlaso-vault" /usr/local/bin/atlaso-vault
 ln -sfn "$venv/bin/atlaso-vault" /usr/bin/atlaso-vault
 pwsh_path="$(command -v pwsh || true)"
 if [ -n "$pwsh_path" ]; then
-    powershell_home="$(dirname "$(readlink -f "$pwsh_path")")"
+    powershell_binary="$(readlink -f "$pwsh_path")"
+    powershell_home="$(dirname "$powershell_binary")"
     case "$powershell_home" in
-        /opt/microsoft/powershell/7 | /usr/share/powershell) ;;
+        /usr/share/powershell)
+            powershell_ancestors="/ /usr /usr/share /usr/share/powershell"
+            ;;
+        /opt/microsoft/powershell/7)
+            powershell_ancestors="/ /opt /opt/microsoft /opt/microsoft/powershell /opt/microsoft/powershell/7"
+            ;;
         *)
             echo "PowerShell resolved to an unsupported global profile directory: $powershell_home" >&2
             exit 2
             ;;
     esac
+    powershell_binary_metadata="$(stat -c '%u:%g:%a:%F' "$powershell_binary")"
+    old_ifs="$IFS"
+    IFS=:
+    set -- $powershell_binary_metadata
+    IFS="$old_ifs"
+    if [ "$1" != "0" ] || [ "$2" != "0" ] || [ "$4" != "regular file" ] || \
+        [ $((0$3 & 0022)) -ne 0 ] || [ $((0$3 & 0111)) -eq 0 ]; then
+        echo "PowerShell executable must be root-owned, executable, and non-writable by group or other: $powershell_binary" >&2
+        exit 2
+    fi
+    for powershell_directory in $powershell_ancestors; do
+        if [ -L "$powershell_directory" ] || [ ! -d "$powershell_directory" ]; then
+            echo "PowerShell profile directory must be a canonical directory: $powershell_directory" >&2
+            exit 2
+        fi
+        powershell_metadata="$(stat -c '%u:%g:%a' "$powershell_directory")"
+        old_ifs="$IFS"
+        IFS=:
+        set -- $powershell_metadata
+        IFS="$old_ifs"
+        if [ "$1" != "0" ] || [ "$2" != "0" ]; then
+            echo "PowerShell profile directory must be owned by root: $powershell_directory" >&2
+            exit 2
+        fi
+        if [ $((0$3 & 0022)) -ne 0 ]; then
+            echo "PowerShell profile directory must not be writable by group or other: $powershell_directory" >&2
+            exit 2
+        fi
+    done
+    powershell_profile="$powershell_home/profile.ps1"
+    if [ -L "$powershell_profile" ] || { [ -e "$powershell_profile" ] && [ ! -f "$powershell_profile" ]; }; then
+        echo "PowerShell global profile path must be a regular file or absent: $powershell_profile" >&2
+        exit 2
+    fi
     cat >"/opt/atlaso/bin/atlaso-vault-profile.ps1" <<'ATLASO_POWERSHELL_PROFILE'
 function global:Get-AtlasoVault {
     [CmdletBinding()]
@@ -1461,15 +1501,22 @@ ATLASO_POWERSHELL_PROFILE
     chmod 0644 /opt/atlaso/bin/atlaso-vault-profile.ps1
     # Replace the complete Atlaso-owned global profile; preserving producer bytes
     # would let unverified commands execute before the authenticated vault import.
-    cat >"$powershell_home/profile.ps1" <<'ATLASO_GLOBAL_POWERSHELL_PROFILE'
+    powershell_profile_temporary="$(mktemp "$powershell_home/.atlaso-profile.XXXXXX")"
+    cat >"$powershell_profile_temporary" <<'ATLASO_GLOBAL_POWERSHELL_PROFILE'
 <#
 .SYNOPSIS
 Loads the Atlaso vault helpers into PowerShell sessions.
 #>
 . '/opt/atlaso/bin/atlaso-vault-profile.ps1'
 ATLASO_GLOBAL_POWERSHELL_PROFILE
-    chown root:root "$powershell_home/profile.ps1"
-    chmod 0644 "$powershell_home/profile.ps1"
+    chown root:root "$powershell_profile_temporary"
+    chmod 0644 "$powershell_profile_temporary"
+    mv -fT -- "$powershell_profile_temporary" "$powershell_profile"
+    profile_metadata="$(stat -c '%u:%g:%a:%F' "$powershell_profile")"
+    if [ "$profile_metadata" != "0:0:644:regular file" ]; then
+        echo "PowerShell global profile verification failed: $powershell_profile" >&2
+        exit 2
+    fi
 fi
 if [ -n "$helper_path" ]; then
     install -o root -g root -m 0755 "$helper_path" /opt/atlaso/bin/atlaso-helper

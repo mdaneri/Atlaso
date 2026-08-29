@@ -661,9 +661,17 @@ def test_vmware_wheel_deploy_exposes_fail_closed_vault_shell_commands():
     assert 'ln -sfn "$venv/bin/atlaso-vault" /usr/bin/atlaso-vault' in deploy
     assert "function global:Get-AtlasoVault" in deploy
     assert "/opt/atlaso/.venv/bin/atlaso-vault" in deploy
-    assert "/opt/microsoft/powershell/7 | /usr/share/powershell" in deploy
     assert 'touch "$powershell_home/profile.ps1"' not in deploy
     assert '>>"$powershell_home/profile.ps1"' not in deploy
+    assert "/usr/share/powershell)" in deploy
+    assert "/opt/microsoft/powershell/7)" in deploy
+    assert "PowerShell executable must be root-owned, executable, and non-writable" in deploy
+    assert "PowerShell profile directory must be a canonical directory" in deploy
+    assert "PowerShell profile directory must be owned by root" in deploy
+    assert "PowerShell profile directory must not be writable by group or other" in deploy
+    assert "PowerShell global profile path must be a regular file or absent" in deploy
+    assert 'mktemp "$powershell_home/.atlaso-profile.XXXXXX"' in deploy
+    assert 'mv -fT -- "$powershell_profile_temporary" "$powershell_profile"' in deploy
     assert "ATLASO_GLOBAL_POWERSHELL_PROFILE" in deploy
     assert ". '/opt/atlaso/bin/atlaso-vault-profile.ps1'" in deploy
     delimiter = "<<'ATLASO_GLOBAL_POWERSHELL_PROFILE'\n"
