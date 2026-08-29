@@ -1359,6 +1359,10 @@ def test_release_workflows_use_successful_main_sha_and_promote_without_rebuildin
     assert "needs.admit.outputs.already_published == 'true'" in windows_candidate
     assert "needs.admit.outputs.existing_draft_ready == 'true'" in windows_candidate
     assert "existing virtualization draft has unexpected assets" in windows_candidate
+    assert 'SOFTWARE_RELEASE="$(gh release view "v$VERSION"' in windows_candidate
+    assert 'test "$(jq -r .isDraft <<<"$SOFTWARE_RELEASE")" = false' in windows_candidate
+    assert 'test "$(jq -r .isPrerelease <<<"$SOFTWARE_RELEASE")" = false' in windows_candidate
+    assert "select(.isDraft == false and .isPrerelease == false)" not in windows_candidate
     assert "needs.stage_draft.result == 'success'" in windows_candidate
     assert "ref: ${{ steps.identity.outputs.release_sha }}" not in virtualization
     assert virtualization.count("ref: refs/heads/main") == 5

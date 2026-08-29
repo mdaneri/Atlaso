@@ -133,6 +133,24 @@ def test_vmware_template_scrubs_credentials_and_host_identity() -> None:
     assert "guestinfo.atlaso.template_ssh_host_ed25519_public_key" not in provision
 
 
+def test_every_virtualenv_systemd_unit_disables_generated_bytecode() -> None:
+    """Root and service-account units cannot recreate active package bytecode."""
+
+    unit_roots = (
+        Path("image/common/systemd"),
+        Path("image/vmware-workstation/systemd"),
+    )
+    virtualenv_units = []
+    for root in unit_roots:
+        for path in root.glob("*.service"):
+            source = path.read_text(encoding="utf-8")
+            if "/opt/atlaso/.venv/" in source:
+                virtualenv_units.append((path, source))
+    assert virtualenv_units
+    for path, source in virtualenv_units:
+        assert "Environment=PYTHONDONTWRITEBYTECODE=1" in source, path
+
+
 def test_guest_agent_success_marker_makes_cleanup_retryable() -> None:
     """Commit provider success before erasure and retry an interrupted cleanup."""
 

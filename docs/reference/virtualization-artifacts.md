@@ -45,7 +45,10 @@ system-content VMDK read-only with libguestfs. It resolves the active CPython 3.
 member installed from the Atlaso wheel and complete signed wheelhouse to match, and rejects unexpected active files
 except bounded inert pip metadata. Both image provisioning and release deployment disable bytecode compilation and
 remove retained package bytecode; the protected finalizer rejects every active `.pyc` file rather than trusting
-producer-generated compilation. The image retains the exact Photon RPM closure that owns the interpreter and
+producer-generated compilation. Every shipped systemd unit that executes the active virtualenv also sets
+`PYTHONDONTWRITEBYTECODE=1`, including the root console and first-boot customization services, so post-deployment
+restarts cannot recreate bytecode before signing. The image retains the exact Photon RPM closure that owns the
+interpreter and
 standard library. The finalizer authenticates every retained RPM against the Photon package keys pinned in the admitted
 Atlaso commit, requires its exact name, epoch, version, release, architecture, and SHA-256 digest to remain present in
 the current official Photon 5.0 release or updates repository metadata, extracts those signed payloads on the hosted

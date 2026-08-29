@@ -83,8 +83,10 @@ jobs:
           test "$COUNT" -ge 1
           VERSION="$(python scripts/version.py get)"
           test "$(gh api "repos/${{ github.repository }}/commits/v$VERSION" --jq .sha)" = "$RELEASE_SHA"
-          gh release view "v$VERSION" --repo "${{ github.repository }}" --json isDraft,isPrerelease \
-            --jq 'select(.isDraft == false and .isPrerelease == false)' >/dev/null
+          SOFTWARE_RELEASE="$(gh release view "v$VERSION" --repo "${{ github.repository }}" \
+            --json isDraft,isPrerelease)"
+          test "$(jq -r .isDraft <<<"$SOFTWARE_RELEASE")" = false
+          test "$(jq -r .isPrerelease <<<"$SOFTWARE_RELEASE")" = false
           PRERELEASE_TAG="virtualization-v${VERSION}-${RC}"
           EXPECTED_WINDOWS_LABEL="atlaso-windows-$(printf '%s' "$PRERELEASE_TAG" | tr '[:upper:]' '[:lower:]' | tr -c 'a-z0-9_-' '-')"
           test "$WINDOWS_RUNNER_LABEL" = "$EXPECTED_WINDOWS_LABEL"
