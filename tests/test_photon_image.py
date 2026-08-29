@@ -129,7 +129,15 @@ def test_vmware_template_scrubs_credentials_and_host_identity() -> None:
     provision = Path("image/common/scripts/provision-atlaso.sh").read_text(encoding="utf-8")
     assert '"ATLASO_SECRET_KEY": "INITIALIZATION_REQUIRED"' in provision
     assert 'usermod --password \'!\' "$BOOTSTRAP_USERNAME"' in provision
-    assert "rm -f /etc/ssh/ssh_host_* /etc/machine-id" in provision
+    identity_scrub = "rm -f /etc/ssh/ssh_host_* /etc/machine-id"
+    assert provision.count(identity_scrub) == 2
+    final_update = provision.index('run_tdnf "Final Photon OS update verification" update')
+    final_scrub = provision.rindex(identity_scrub)
+    zero_fill = provision.index('zero_fill_free_space / "Photon OS filesystem"')
+    assert final_update < final_scrub < zero_fill
+    assert "find /etc/ssh -maxdepth 1 -type f -name 'ssh_host_*'" in provision
+    assert '|| [ -e /etc/machine-id ] || [ -e /var/lib/dbus/machine-id ]' in provision
+    assert "Final Photon update left reusable host identity material" in provision
     assert "guestinfo.atlaso.template_ssh_host_ed25519_public_key" not in provision
 
 

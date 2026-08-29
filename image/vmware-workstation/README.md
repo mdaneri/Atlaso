@@ -206,7 +206,11 @@ auto-removal disabled. It then requires valid `/etc/os-release` and `/etc/photon
 effective `distroverpkg` RPM (the explicit setting or Photon's `photon-release` default) plus the Photon, RPM, TDNF,
 Python, PowerShell, and VMware guest-agent runtime packages,
 and performs a fatal cache cleanup, repository refresh, and final Photon update before checking that runtime state
-again. Only then does it clear build caches and staged sources, zero-fill free blocks on both payload filesystems while
+again. The post-update check re-resolves the installed `pwsh` runtime home and reinstalls Atlaso's global profile there,
+then rewrites build information with the final PowerShell, PowerCLI, and VCF SDK versions. Only then does it clear build
+caches and staged sources. It repeats and verifies the SSH host-key and machine-ID scrub after the final package
+transaction so package scriptlets cannot leave reusable build-time identity behind, then zero-fills free blocks on both
+payload filesystems while
 retaining a 512 MiB safety reserve, delete the fill files, request TRIM, and let Packer compact both payload VMDKs.
 Zero-filling makes compaction deterministic even when the VMware virtual disks do not advertise discard. After a
 successful build, the wrapper writes a schema-v2 provenance

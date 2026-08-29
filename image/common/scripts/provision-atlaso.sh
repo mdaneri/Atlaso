@@ -936,6 +936,13 @@ nginx -t
 pwsh -NoLogo -NoProfile -NonInteractive -Command \
   '$ErrorActionPreference = "Stop"; Import-Module VCF.PowerCLI -RequiredVersion $env:ATLASO_POWERCLI_VERSION -Force'
 python3 "$PHOTON_PACKAGE_STATE_VERIFIER" --guest-platform "$ATLASO_GUEST_PLATFORM"
+log_step "scrubbing host identity after final Photon update"
+rm -f /etc/ssh/ssh_host_* /etc/machine-id /var/lib/dbus/machine-id
+if find /etc/ssh -maxdepth 1 -type f -name 'ssh_host_*' -print -quit | grep -q . \
+  || [ -e /etc/machine-id ] || [ -e /var/lib/dbus/machine-id ]; then
+  echo "Final Photon update left reusable host identity material in the image." >&2
+  exit 2
+fi
 write_build_info
 run_tdnf "Final Photon package cache cleanup" clean all
 rm -rf /var/cache/tdnf/* "$PIP_CACHE_DIR" /root/.cache/pip \
