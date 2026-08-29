@@ -40,14 +40,20 @@ DEVELOPMENT_ROOT_CA_IMPORTED_MARKER_PATH = Path(
 DEVELOPMENT_ROOT_CA_IMPORTED_GUESTINFO = (
     "guestinfo.atlaso.test_vm_development_root_ca_imported"
 )
+COMPLETION_MARKER_TEXT = "Atlaso first-boot HTTPS bootstrap completed.\n"
+NGINX_INCLUDE_TEXT = (
+    "# Managed by Atlaso. Local changes may be overwritten.\n"
+    "include /etc/atlaso/nginx/sites.d/*.conf;\n"
+)
 
 
-def write_secret_text_atomic(path: Path, payload: str) -> None:
-    """Atomically persist secret text without a broader intermediate mode.
+def write_text_atomic(path: Path, payload: str, *, mode: int) -> None:
+    """Atomically persist text and its directory entry.
 
     Args:
-        path: Destination for the secret-bearing payload.
-        payload: UTF-8 text to persist.
+        path: Destination for the UTF-8 payload.
+        payload: Text to persist.
+        mode: Final POSIX permission bits for the replacement file.
     """
     path.parent.mkdir(parents=True, exist_ok=True)
     descriptor, temporary_name = tempfile.mkstemp(
@@ -57,15 +63,13 @@ def write_secret_text_atomic(path: Path, payload: str) -> None:
     )
     temporary = Path(temporary_name)
     try:
-        # The apply payload contains decrypted CA private keys. Establish its
-        # final mode before opening the descriptor as text or writing bytes.
-        os.fchmod(descriptor, 0o600)
+        os.fchmod(descriptor, mode)
         with os.fdopen(descriptor, "w", encoding="utf-8") as handle:
             descriptor = -1
             handle.write(payload)
             handle.flush()
             os.fsync(handle.fileno())
-        temporary.replace(path)
+        os.replace(temporary, path)
         if os.name == "posix":
             parent_descriptor = os.open(path.parent, os.O_RDONLY)
             try:
@@ -76,6 +80,103 @@ def write_secret_text_atomic(path: Path, payload: str) -> None:
         if descriptor >= 0:
             os.close(descriptor)
         temporary.unlink(missing_ok=True)
+
+
+def write_secret_text_atomic(path: Path, payload: str) -> None:
+    """Atomically persist secret text without a broader intermediate mode.
+
+    Args:
+        path: Destination for the secret-bearing payload.
+        payload: UTF-8 text to persist.
+    """
+    # The apply payload contains decrypted CA private keys. Establish its
+    # final mode before opening the descriptor as text or writing bytes.
+    write_text_atomic(path, payload, mode=0o600)
+
+
+def read_regular_text(path: Path, *, maximum_size: int) -> str | None:
+    """Read one bounded regular file without accepting a symlink.
+
+    Args:
+        path: File whose content is required for recovery evidence.
+        maximum_size: Largest accepted byte size.
+
+    Returns:
+        UTF-8 content, or ``None`` when the path is absent or unsafe.
+    """
+    try:
+        path_stat = path.lstat()
+        if path.is_symlink() or not path.is_file() or not 0 < path_stat.st_size <= maximum_size:
+            return None
+        return path.read_text(encoding="utf-8")
+    except (OSError, UnicodeError):
+        return None
+
+
+def management_nginx_contract_is_complete(config: str) -> bool:
+    """Return whether a rendered management site has a usable front door.
+
+    Args:
+        config: Applied nginx management-site text.
+
+    Returns:
+        Whether the config contains a default listener and Atlaso proxy contract.
+    """
+    if not re.search(r"(?m)^\s*listen\s+(?:\[::\]:)?\d+.*\bdefault_server\b", config):
+        return False
+    if not re.search(r"(?m)^\s*proxy_pass\s+http://127\.0\.0\.1:\d+;", config):
+        return False
+    https_enabled = bool(re.search(r"(?m)^\s*listen\s+(?:\[::\]:)?\d+\s+ssl\b", config))
+    if not https_enabled:
+        return True
+    certificate_match = re.search(r"(?m)^\s*ssl_certificate\s+([^;]+);", config)
+    key_match = re.search(r"(?m)^\s*ssl_certificate_key\s+([^;]+);", config)
+    if certificate_match is None or key_match is None:
+        return False
+    return Path(certificate_match.group(1).strip()).is_file() and Path(
+        key_match.group(1).strip()
+    ).is_file()
+
+
+def nginx_main_config_activates_atlaso(config: str) -> bool:
+    """Return whether nginx actively includes the Atlaso site bridge.
+
+    Args:
+        config: Applied nginx main configuration text.
+
+    Returns:
+        Whether an uncommented exact or wildcard include activates ``atlaso.conf``.
+    """
+    return bool(
+        re.search(
+            r"(?m)^\s*include\s+/etc/nginx/conf\.d/(?:atlaso\.conf|\*\.conf);"
+            r"[ \t]*(?:#[^\r\n]*)?$",
+            config,
+        )
+    )
+
+
+def first_boot_https_artifacts_are_complete() -> bool:
+    """Return whether durable bootstrap evidence matches the management site."""
+    marker = read_regular_text(MARKER_PATH, maximum_size=256)
+    include = read_regular_text(NGINX_CONF_INCLUDE_PATH, maximum_size=4096)
+    management = read_regular_text(NGINX_MANAGEMENT_PATH, maximum_size=262144)
+    return (
+        marker == COMPLETION_MARKER_TEXT
+        and include == NGINX_INCLUDE_TEXT
+        and management is not None
+        and management_nginx_contract_is_complete(management)
+    )
+
+
+def first_boot_https_contract_is_complete() -> bool:
+    """Return whether durable evidence is active from the nginx main config."""
+    main_config = read_regular_text(NGINX_MAIN_CONFIG_PATH, maximum_size=1048576)
+    return (
+        first_boot_https_artifacts_are_complete()
+        and main_config is not None
+        and nginx_main_config_activates_atlaso(main_config)
+    )
 
 
 def import_staged_development_root_ca(
@@ -226,7 +327,7 @@ def ensure_nginx_main_config_includes_atlaso() -> None:
     if not NGINX_MAIN_CONFIG_PATH.exists():
         return
     text = NGINX_MAIN_CONFIG_PATH.read_text(encoding="utf-8")
-    if "/etc/nginx/conf.d/atlaso.conf" in text or "include /etc/nginx/conf.d/*.conf;" in text:
+    if nginx_main_config_activates_atlaso(text):
         return
     start = text.find("http")
     brace = text.find("{", start)
@@ -242,7 +343,11 @@ def ensure_nginx_main_config_includes_atlaso() -> None:
             depth -= 1
             if depth == 0:
                 include = "\n    # Managed by Atlaso. Local changes may be overwritten.\n    include /etc/nginx/conf.d/atlaso.conf;\n"
-                NGINX_MAIN_CONFIG_PATH.write_text(text[:index].rstrip() + include + text[index:], encoding="utf-8")
+                write_text_atomic(
+                    NGINX_MAIN_CONFIG_PATH,
+                    text[:index].rstrip() + include + text[index:],
+                    mode=0o644,
+                )
                 return
         index += 1
 
@@ -259,12 +364,9 @@ def write_nginx_management_config(*, fqdn: str, cert_path: str, key_path: str) -
     NGINX_MANAGEMENT_PATH.parent.mkdir(parents=True, exist_ok=True)
     for default_path in (Path("/etc/nginx/conf.d/default.conf"), Path("/etc/nginx/conf.d/default_server.conf")):
         default_path.unlink(missing_ok=True)
-    NGINX_CONF_INCLUDE_PATH.write_text(
-        "# Managed by Atlaso. Local changes may be overwritten.\ninclude /etc/atlaso/nginx/sites.d/*.conf;\n",
-        encoding="utf-8",
-    )
-    NGINX_CONF_INCLUDE_PATH.chmod(0o644)
-    NGINX_MANAGEMENT_PATH.write_text(
+    write_text_atomic(NGINX_CONF_INCLUDE_PATH, NGINX_INCLUDE_TEXT, mode=0o644)
+    write_text_atomic(
+        NGINX_MANAGEMENT_PATH,
         f"""# Managed by Atlaso. Local changes may be overwritten.
 server {{
   listen 80 default_server;
@@ -308,9 +410,8 @@ server {{
   }}
 }}
 """,
-        encoding="utf-8",
+        mode=0o644,
     )
-    NGINX_MANAGEMENT_PATH.chmod(0o644)
     ensure_nginx_main_config_includes_atlaso()
 
 
@@ -357,7 +458,23 @@ def main() -> int:
     """Run the command-line entry point.
 
     """
-    if MARKER_PATH.exists():
+    if first_boot_https_artifacts_are_complete():
+        if not first_boot_https_contract_is_complete():
+            ensure_nginx_main_config_includes_atlaso()
+        if not first_boot_https_contract_is_complete():
+            print("nginx main configuration does not activate the Atlaso management site")
+            return 2
+        nginx = shutil.which("nginx")
+        if nginx is None:
+            print("nginx is unavailable; completed first-boot HTTPS state cannot be validated")
+            return 2
+        validation = run([nginx, "-t"])
+        if validation.stdout:
+            print(validation.stdout, end="")
+        if validation.stderr:
+            print(validation.stderr, end="")
+        if validation.returncode != 0:
+            return validation.returncode
         try:
             published = publish_development_root_ca_import_proof()
         except (OSError, UnicodeError, ValueError) as exc:
@@ -482,8 +599,7 @@ def main() -> int:
         if not published:
             print("Development root CA encrypted-import proof could not be published.")
             return 2
-    MARKER_PATH.write_text("Atlaso first-boot HTTPS bootstrap completed.\n", encoding="utf-8")
-    MARKER_PATH.chmod(0o640)
+    write_text_atomic(MARKER_PATH, COMPLETION_MARKER_TEXT, mode=0o640)
     return 0
 
 

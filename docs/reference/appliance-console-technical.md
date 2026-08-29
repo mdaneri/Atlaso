@@ -156,8 +156,16 @@ the persisted nftables rules are regenerated from the corrected management CIDR 
 source restriction. Other pending units remain unselected.
 
 After the first task, the constrained console helper retries `atlaso-bootstrap-https.service` when
-`/var/lib/atlaso/first-boot-https.applied` is absent. The bootstrap marker is created only after CA apply produces the
-managed certificate/key and `nginx -t` succeeds. The helper validates nginx before reload, enables nginx and Atlaso,
+the exact `/var/lib/atlaso/first-boot-https.applied` completion record or the applied management nginx contract is
+missing, empty, unsafe, or inconsistent. The boot unit always invokes the idempotent bootstrap instead of trusting path
+existence as a systemd condition. A valid completion record may accompany either the applied HTTPS front door or a
+later operator-selected HTTP-only front door; both require a complete default-listener and loopback-proxy contract.
+Atlaso installs the nginx include and management site with atomic replacement, syncs each file and parent directory,
+requires an active main-config include, validates the complete nginx configuration, and only then atomically publishes
+and syncs the completion record. Once those durable management artifacts are complete, an unrelated global nginx
+validation failure stops recovery without regenerating CA state or replacing an operator-selected HTTP-only listener. An
+interruption therefore leaves recovery eligible on the next boot rather than allowing an empty marker to suppress the
+bootstrap. The helper validates nginx before reload, enables nginx and Atlaso,
 starts an inactive control plane, and requires five consecutive local readiness samples: HTTP 200 from uvicorn
 `/openapi.json` plus the applied nginx contract. HTTPS mode requires HTTP 308 and HTTPS `/openapi.json` 200; HTTP-only
 mode requires HTTP `/openapi.json` 200. Appliance Settings is then applied as the second task and the same idempotent
