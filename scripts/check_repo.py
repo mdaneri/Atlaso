@@ -551,7 +551,9 @@ DEFAULT_MERGE_AUTHORITY_PROMPT_MARKERS = (
 )
 DEFAULT_MERGE_AUTHORITY_SOURCE_EXCLUSIONS = re.compile(
     r"(?:review(?:-only|[^.!?]{0,60}\bonly\b)|report findings only|"
-    r"diagnos(?:e|tic)[^.!?]{0,60}\bwithout\b[^.!?]{0,30}\b(?:implement|chang)|"
+    r"(?:diagnos(?:e|tic)|investigat(?:e|ion)|analy(?:ze|sis)|assess|inspect)"
+    r"[^.!?]{0,80}\b(?:without|no)\b[^.!?]{0,40}"
+    r"\b(?:implement|chang|modif|edit|mak)|"
     r"draft (?:pull request|pr)|external fork|fork pull request|from (?:an? )?fork|"
     r"private (?:vulnerability|advisory|remediation))"
 )
@@ -946,6 +948,14 @@ def check_merge_authority_transfer_fixtures(root: Path) -> list[Finding]:
                 Finding(
                     path,
                     f"merge authority fixture {name} drops an explicit hold: {', '.join(omitted)}",
+                )
+            )
+        if expected and has_affirmative_default_merge_authority(generated):
+            findings.append(
+                Finding(
+                    path,
+                    f"merge authority fixture {name} asserts merge authority while "
+                    "an explicit hold is active",
                 )
             )
         if (

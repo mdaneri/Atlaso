@@ -900,6 +900,49 @@ def test_merge_authority_transfer_rejects_dropped_heartbeat_hold(
     )
 
 
+def test_merge_authority_transfer_rejects_merge_instruction_with_active_hold(
+    tmp_path: Path,
+) -> None:
+    """Verify generated text cannot preserve and violate a hold simultaneously.
+
+    Args:
+        tmp_path: Temporary directory provided by pytest for isolated filesystem state.
+    """
+    path = tmp_path / MERGE_AUTHORITY_TRANSFER_FIXTURE_PATH
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(
+        json.dumps(
+            {
+                "cases": [
+                    {
+                        "name": "contradictory active hold",
+                        "default_merge_authority": True,
+                        "instructions": [
+                            {
+                                "text": "Implement the change, but do not merge.",
+                                "add_holds": ["do not merge"],
+                            }
+                        ],
+                        "generated": (
+                            "Do not merge. Continue through guarded squash merge."
+                        ),
+                        "expected_holds": ["do not merge"],
+                    }
+                ]
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    findings = check_merge_authority_transfer_fixtures(tmp_path)
+
+    assert len(findings) == 1
+    assert findings[0].message == (
+        "merge authority fixture contradictory active hold asserts merge authority "
+        "while an explicit hold is active"
+    )
+
+
 def test_merge_authority_transfer_rejects_neutral_default_prompt(
     tmp_path: Path,
 ) -> None:
@@ -1407,6 +1450,11 @@ def test_merge_authority_transfer_validates_declared_source_eligibility(
             "pull-request delivery declared ineligible",
             False,
             "Perform pull-request delivery for issue #602.",
+        ),
+        (
+            "diagnostic resolve declared eligible",
+            True,
+            "Investigate how to resolve issue #602 without making changes.",
         ),
     )
 
