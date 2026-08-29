@@ -1044,6 +1044,124 @@ def test_merge_authority_transfer_normalizes_equivalent_hold_wording(
     assert check_merge_authority_transfer_fixtures(tmp_path) == []
 
 
+def test_merge_authority_transfer_rejects_negated_default_authority(
+    tmp_path: Path,
+) -> None:
+    """Verify a negated merge marker cannot satisfy default authority.
+
+    Args:
+        tmp_path: Temporary directory provided by pytest for isolated filesystem state.
+    """
+    path = tmp_path / MERGE_AUTHORITY_TRANSFER_FIXTURE_PATH
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(
+        json.dumps(
+            {
+                "cases": [
+                    {
+                        "name": "negated default authority",
+                        "instructions": [{"text": "Implement the issue completely."}],
+                        "generated": "Do not carry the task through guarded merge.",
+                        "expected_holds": [],
+                    }
+                ]
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    findings = check_merge_authority_transfer_fixtures(tmp_path)
+
+    assert len(findings) == 1
+    assert findings[0].message == (
+        "merge authority fixture negated default authority omits affirmative "
+        "default authority"
+    )
+
+
+def test_merge_authority_transfer_matches_each_hold_direction(
+    tmp_path: Path,
+) -> None:
+    """Verify mixed additions and withdrawals cannot be reversed.
+
+    Args:
+        tmp_path: Temporary directory provided by pytest for isolated filesystem state.
+    """
+    path = tmp_path / MERGE_AUTHORITY_TRANSFER_FIXTURE_PATH
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(
+        json.dumps(
+            {
+                "cases": [
+                    {
+                        "name": "reversed mixed directions",
+                        "instructions": [
+                            {
+                                "text": (
+                                    "The do not merge instruction is withdrawn; "
+                                    "wait for approval."
+                                ),
+                                "add_holds": ["do not merge"],
+                                "remove_holds": ["wait for approval"],
+                            }
+                        ],
+                        "generated": "Do not merge.",
+                        "expected_holds": ["do not merge"],
+                    }
+                ]
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    findings = check_merge_authority_transfer_fixtures(tmp_path)
+
+    assert len(findings) == 1
+    assert findings[0].message == (
+        "merge authority fixture reversed mixed directions instruction 1 hold "
+        "operations do not match its text"
+    )
+
+
+def test_merge_authority_transfer_distinguishes_auto_merge_choice(
+    tmp_path: Path,
+) -> None:
+    """Verify disabling auto-merge retains guarded manual merge authority.
+
+    Args:
+        tmp_path: Temporary directory provided by pytest for isolated filesystem state.
+    """
+    path = tmp_path / MERGE_AUTHORITY_TRANSFER_FIXTURE_PATH
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(
+        json.dumps(
+            {
+                "cases": [
+                    {
+                        "name": "manual merge only",
+                        "instructions": [
+                            {
+                                "text": (
+                                    "Do not merge automatically; perform the guarded "
+                                    "squash merge after every gate passes."
+                                )
+                            }
+                        ],
+                        "generated": (
+                            "Keep auto-merge disabled and perform the guarded squash "
+                            "merge after every gate passes."
+                        ),
+                        "expected_holds": [],
+                    }
+                ]
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    assert check_merge_authority_transfer_fixtures(tmp_path) == []
+
+
 def test_agent_policy_gate_rejects_missing_default_merge_authority_contract(
     tmp_path: Path,
 ) -> None:

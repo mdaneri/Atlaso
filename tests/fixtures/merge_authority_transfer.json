@@ -51,6 +51,16 @@
       "expected_holds": []
     },
     {
+      "name": "manual-merge-with-auto-merge-disabled",
+      "instructions": [
+        {
+          "text": "Do not merge automatically; perform the guarded squash merge once every gate passes."
+        }
+      ],
+      "generated": "Keep GitHub auto-merge disabled and perform the guarded squash merge once every gate passes.",
+      "expected_holds": []
+    },
+    {
       "name": "explicit-do-not-merge",
       "instructions": [
         {

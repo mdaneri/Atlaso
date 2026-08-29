@@ -521,6 +521,18 @@ MERGE_HOLD_WITHDRAWAL_MARKERS = (
     "not pull request only",
     "not pr only",
 )
+AUTO_MERGE_ONLY_PHRASES = (
+    "do not merge automatically",
+    "don't merge automatically",
+    "don’t merge automatically",
+    "do not automatically merge",
+    "don't automatically merge",
+    "don’t automatically merge",
+)
+DEFAULT_MERGE_AUTHORITY_NEGATIONS = re.compile(
+    r"(?:do not|don't|don’t|never|must not|should not|cannot|can't|can’t|not)"
+    r"(?:\s+\w+){0,6}\s*$"
+)
 DEFAULT_MERGE_AUTHORITY_PROMPT_MARKERS = (
     "default merge authority",
     "guarded squash merge",
@@ -640,11 +652,61 @@ def explicit_merge_holds(text: str) -> tuple[str, ...]:
         text: Current user or maintainer instruction text to inspect.
     """
     normalized = " ".join(text.casefold().split())
+    for phrase in AUTO_MERGE_ONLY_PHRASES:
+        normalized = normalized.replace(phrase, "keep github auto-merge disabled")
     return tuple(
         hold
         for hold, patterns in EXPLICIT_MERGE_HOLD_PATTERNS.items()
         if any(pattern in normalized for pattern in patterns)
     )
+
+
+def merge_hold_directions(text: str) -> dict[str, str | None]:
+    """Classify each mentioned hold as an addition or explicit withdrawal.
+
+    Args:
+        text: One current user or maintainer instruction to classify.
+    """
+    normalized = " ".join(text.casefold().split())
+    for phrase in AUTO_MERGE_ONLY_PHRASES:
+        normalized = normalized.replace(phrase, "keep github auto-merge disabled")
+    clauses = tuple(
+        clause.strip()
+        for clause in re.split(r"[;.!?]+", normalized)
+        if clause.strip()
+    )
+    directions: dict[str, str | None] = {}
+    for hold, patterns in EXPLICIT_MERGE_HOLD_PATTERNS.items():
+        hold_directions: set[str] = set()
+        for clause in clauses:
+            if not any(pattern in clause for pattern in patterns):
+                continue
+            withdrawn = any(
+                marker in clause for marker in MERGE_HOLD_WITHDRAWAL_MARKERS
+            )
+            hold_directions.add("remove" if withdrawn else "add")
+        if hold_directions:
+            directions[hold] = (
+                hold_directions.pop() if len(hold_directions) == 1 else None
+            )
+    return directions
+
+
+def has_affirmative_default_merge_authority(text: str) -> bool:
+    """Return whether generated text affirmatively continues through merge.
+
+    Args:
+        text: Generated delegation, handoff, or heartbeat prompt to classify.
+    """
+    normalized = " ".join(text.casefold().split())
+    for marker in DEFAULT_MERGE_AUTHORITY_PROMPT_MARKERS:
+        offset = normalized.find(marker)
+        while offset >= 0:
+            prefix = normalized[max(0, offset - 80) : offset]
+            if DEFAULT_MERGE_AUTHORITY_NEGATIONS.search(prefix) is None:
+                return True
+            offset = normalized.find(marker, offset + 1)
+    return False
 
 
 def check_merge_authority_transfer_fixtures(root: Path) -> list[Finding]:
@@ -739,20 +801,22 @@ def check_merge_authority_transfer_fixtures(root: Path) -> list[Finding]:
                 continue
             additions = tuple(dict.fromkeys(item.casefold() for item in add_holds))
             removals = tuple(dict.fromkeys(item.casefold() for item in remove_holds))
-            referenced = tuple(dict.fromkeys((*additions, *removals)))
-            mentioned = explicit_merge_holds(instruction_text)
-            normalized_instruction = " ".join(
-                instruction_text.casefold().split()
-            )
-            explicitly_withdraws = any(
-                marker in normalized_instruction
-                for marker in MERGE_HOLD_WITHDRAWAL_MARKERS
-            )
+            directions = merge_hold_directions(instruction_text)
+            derived_additions = {
+                hold for hold, direction in directions.items() if direction == "add"
+            }
+            derived_removals = {
+                hold for hold, direction in directions.items() if direction == "remove"
+            }
             if (
-                any(hold not in EXPLICIT_MERGE_HOLD_PATTERNS for hold in referenced)
+                any(
+                    hold not in EXPLICIT_MERGE_HOLD_PATTERNS
+                    for hold in (*additions, *removals)
+                )
                 or set(additions) & set(removals)
-                or set(referenced) != set(mentioned)
-                or (bool(removals) != explicitly_withdraws)
+                or any(direction is None for direction in directions.values())
+                or set(additions) != derived_additions
+                or set(removals) != derived_removals
             ):
                 findings.append(
                     Finding(
@@ -770,7 +834,12 @@ def check_merge_authority_transfer_fixtures(root: Path) -> list[Finding]:
         if instruction_error:
             continue
         source_holds_tuple = tuple(source_holds)
-        generated_holds = explicit_merge_holds(generated)
+        generated_directions = merge_hold_directions(generated)
+        generated_holds = tuple(
+            hold
+            for hold, direction in generated_directions.items()
+            if direction == "add"
+        )
         if source_holds_tuple != expected:
             findings.append(
                 Finding(
@@ -798,15 +867,11 @@ def check_merge_authority_transfer_fixtures(root: Path) -> list[Finding]:
                     f"merge authority fixture {name} drops an explicit hold: {', '.join(omitted)}",
                 )
             )
-        normalized_generated = " ".join(generated.casefold().split())
         if (
             not expected
             and not invented
             and not omitted
-            and not any(
-                marker in normalized_generated
-                for marker in DEFAULT_MERGE_AUTHORITY_PROMPT_MARKERS
-            )
+            and not has_affirmative_default_merge_authority(generated)
         ):
             findings.append(
                 Finding(
