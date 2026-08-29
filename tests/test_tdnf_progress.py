@@ -6,6 +6,8 @@ import subprocess
 import sys
 from pathlib import Path
 
+from scripts import run_tdnf_with_progress as progress
+
 SCRIPT = Path("scripts/run_tdnf_with_progress.py").resolve()
 
 
@@ -112,3 +114,36 @@ def test_progress_wrapper_rejects_tdnf_error_with_zero_exit_status(tmp_path):
     assert "reported an error despite exit status 0" in result.stderr
     assert "Failed to synchronize cache" in result.stderr
     assert "Disabling Repo" in result.stderr
+
+
+def test_reported_tdnf_failure_scans_large_transcripts_incrementally(
+    tmp_path: Path, monkeypatch
+) -> None:
+    """Successful transcript scanning does not materialize the complete file.
+
+    Args:
+        tmp_path: Temporary directory provided by pytest for isolated filesystem state.
+        monkeypatch: Pytest fixture used to reject whole-file byte reads.
+    """
+
+    transcript = tmp_path / "tdnf.log"
+    transcript.write_text(("downloaded package\n" * 200_000) + "Error(1022): bad repo\n")
+
+    def reject_read_bytes(_path: Path) -> bytes:
+        """Reject whole-file reads from the transcript scanner.
+
+        Args:
+            _path: Path whose whole-file read must remain unused.
+
+        Returns:
+            This helper never returns.
+
+        Raises:
+            AssertionError: Always, because the scanner must iterate the file.
+        """
+
+        raise AssertionError("whole-file transcript read is forbidden")
+
+    monkeypatch.setattr(Path, "read_bytes", reject_read_bytes)
+
+    assert progress._reported_tdnf_failure(transcript)

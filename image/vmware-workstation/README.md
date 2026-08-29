@@ -106,7 +106,8 @@ only top-level virtual-environment distributions and ignores package-internal ve
 emit compact 30-second heartbeats with elapsed time and cache size instead of streaming terminal progress redraws
 through Packer. Successful operations report their duration. Failures preserve a nonzero TDNF exit status and replay a
 normalized, bounded output tail; a zero-status transcript that reports a TDNF error or disabled repository is promoted
-to fatal exit status 1.
+to fatal exit status 1. The zero-status error scan streams the transcript line by line so long successful transactions
+do not require another full in-memory copy after TDNF exits.
 Photon 5.0 packages the C and C++ compiler front ends together as `gcc`. The image requests and later removes that one
 build-only package; it does not request the unavailable `gcc-c++` name used by distributions that split the front ends.
 It also treats `binutils` and `linux-api-headers` as build-only because Photon packages the assembler, linker, and Linux

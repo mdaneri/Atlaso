@@ -101,13 +101,14 @@ def _reported_tdnf_failure(path: Path) -> bool:
     """
 
     try:
-        text = path.read_bytes().decode("utf-8", errors="replace")
+        with path.open("r", encoding="utf-8", errors="replace") as transcript:
+            for line in transcript:
+                normalized = ANSI_ESCAPE_RE.sub("", line).strip()
+                if TDNF_ERROR_LINE_RE.match(normalized):
+                    return True
     except OSError:
         return True
-    normalized = ANSI_ESCAPE_RE.sub("", text).replace("\r", "\n")
-    return any(
-        TDNF_ERROR_LINE_RE.match(line.strip()) for line in normalized.splitlines()
-    )
+    return False
 
 
 def run(
