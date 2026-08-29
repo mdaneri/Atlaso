@@ -310,8 +310,17 @@ Repository creation uses the shared guided workflow to capture identity, endpoin
 review before saving. Runtime package-client configuration still changes only through the explicit repository
 synchronization task.
 
-Successful `main` CI publishes immutable signed release bundles to GitHub Releases and advances the signed `development`
-pointer on GitHub Pages. The Pages root provides a static release-repository landing page, while appliances use the
+Successful same-repository `main` push CI automatically publishes only a 90-day Actions artifact named
+`atlaso-wheel-vX.Y.Z-<full-sha>`. It contains the versioned application wheel and a canonical identity document binding
+the source CI and publisher runs, repository, version, commit, build time, filename, size, and SHA-256 digest. This
+GitHub-hosted read-only path has no appliance signing, Release/tag, Pages, protected virtualization, or self-hosted
+runner authority. Byte-identical retry artifacts are accepted; divergent retained bytes fail closed during manual
+release admission.
+
+The protected **Publish appliance release** workflow is manual only. It accepts an exact successful `main` push CI
+commit, verifies and consumes its retained automatic wheel without rebuilding it, builds the exact CPython 3.14
+wheelhouse, publishes the immutable signed bundle to GitHub Releases, and advances the signed `development` pointer on
+GitHub Pages. The Pages root provides a static release-repository landing page, while appliances use the
 signed machine-readable documents under `/updates`. `preview` and `stable` promotions reuse an existing verified
 release. The signed `stable` pointer is required because the built-in Appliance Update source selects it. Every Pages
 writer fails closed if the stable manifest or detached signature is missing from the final tree. Release and promotion
@@ -319,10 +328,12 @@ workflows then verify the hosted channel and immutable release signatures, match
 trust key, and CPython 3.14 compatibility before publication succeeds. A monotonic ten-minute Pages deployment and CDN
 propagation deadline caps every request and retry delay so the live check cannot retain the shared publication lock
 beyond its wall-clock budget. GitHub Release descriptions preserve the exact signed source commit and append generated
-notes grouped from merged pull-request labels, contributors, and comparison metadata. A protected manual publication
-dispatch can recover
-an exact commit only when it already has a successful `main` push CI run. Publication refuses any existing tag or
-release whose commit or asset bytes differ. The same dispatch safely retries channel advancement after a release has
+notes grouped from merged pull-request labels, contributors, and comparison metadata. The manual publication dispatch
+can publish or recover an exact commit only when it already has a successful `main` push CI run and a retained matching
+automatic wheel artifact. After the 90-day retention window, rerun that exact CI/wheel publication while the commit
+remains on `main`; the appliance workflow never substitutes or silently rebuilds the wheel. Publication refuses any
+existing tag or Release whose commit or asset bytes differ. The same dispatch safely retries channel advancement after
+a release has
 already published because it verifies the existing asset bytes first. The guarded backfill command updates only
 provenance-only legacy descriptions, preflights the complete selected range, and verifies that release identity and
 assets remain unchanged after each body edit. See [Appliance Update](../operate/appliance-update.md) and

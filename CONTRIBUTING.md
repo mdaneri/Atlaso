@@ -305,10 +305,20 @@ follow-through workflow above.
 
 ## Release lifecycle contributions
 
-`Publish appliance release` is the automatic software/update publisher. A successful exact-`main` CI run may publish
-the signed `vX.Y.Z` appliance-update bundle only when the repository variable
-`AUTOMATIC_SOFTWARE_RELEASE_ENABLED` is `true`; manual exact-SHA recovery remains available while the automatic gate is
-disabled. This workflow must remain GitHub-hosted and must not build or publish virtualization images.
+Every successful same-repository `main` push CI run automatically starts **Publish Python wheel**. That separate
+GitHub-hosted workflow has read-only repository permissions and publishes only the immutable Actions artifact
+`atlaso-wheel-vX.Y.Z-<full-sha>` for 90 days. The artifact contains exactly one versioned Atlaso wheel and a canonical
+identity document binding its source CI run, publisher run, version, commit, size, and SHA-256 digest. It has no signing
+material, GitHub Release/tag or Pages write authority, protected environment, self-hosted runner, or virtualization
+access. Repeated artifacts for one version/commit must contain identical wheel bytes or the manual consumer fails.
+
+**Publish appliance release** is protected manual dispatch only. Supply the exact full SHA of a successful `main` push
+CI run. The workflow requires a retained matching automatic wheel artifact, validates its GitHub run identities and
+embedded build metadata, fails closed on collisions, and records that identity inside the signed appliance bundle. It
+does not rebuild or substitute the application wheel. It retains the exact CPython 3.14 wheelhouse, signing,
+immutable-tag/Release, Pages serialization, signed-channel, and live-verification gates. After the 90-day retention
+window, rerun the exact successful CI/wheel publication while the commit remains reachable from `main` before dispatching
+the appliance release.
 
 OVA and Hyper-V images use the separate manual lifecycle documented in the
 [virtualization artifact guide](docs/reference/virtualization-artifacts.md). A maintainer workstation creates and

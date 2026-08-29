@@ -1196,11 +1196,16 @@ def test_release_bundle_publishes_commit_subject_summary_and_release_link():
     assert 'git_value(["show", "-s", "--format=%s", commit])' in source
     assert '"summary": release_summary' in source
     assert '"release_notes_url": f"https://github.com/mdaneri/Atlaso/releases/tag/v{version}"' in source
+    assert '"--application-wheel-root"' in source
+    assert 'str(ROOT / "scripts/wheel_artifact.py")' in source
+    assert 'shutil.copy2(application_wheel_identity' in source
+    assert "build_application_wheel(temp_root" not in source
 
 
 def test_release_workflows_use_successful_main_sha_and_promote_without_rebuilding():
     """Verify that release workflows use successful main sha and promote without rebuilding."""
     publication = (ROOT / ".github/workflows/release.yml").read_text(encoding="utf-8")
+    wheel_publication = (ROOT / ".github/workflows/wheel.yml").read_text(encoding="utf-8")
     prerelease = (ROOT / ".github/workflows/virtualization-prerelease.yml").read_text(
         encoding="utf-8"
     )
@@ -1224,16 +1229,32 @@ def test_release_workflows_use_successful_main_sha_and_promote_without_rebuildin
     ).read_text(encoding="utf-8")
     promotion = (ROOT / ".github/workflows/promote-release.yml").read_text(encoding="utf-8")
     ci = (ROOT / ".github/workflows/ci.yml").read_text(encoding="utf-8")
-    assert "github.event.workflow_run.head_branch == 'main'" in publication
-    assert "github.event.workflow_run.event == 'push'" in publication
-    assert (
-        publication.count(
-            "github.event.workflow_run.head_repository.full_name == github.repository"
-        )
-        == 1
-    )
-    assert "github.event_name == 'workflow_dispatch'" in publication
-    assert "vars.AUTOMATIC_SOFTWARE_RELEASE_ENABLED == 'true'" in publication
+    publication_trigger = publication.split("on:\n", 1)[1].split("\npermissions:", 1)[0]
+    assert "workflow_dispatch:" in publication_trigger
+    assert "workflow_run:" not in publication_trigger
+    assert "github.event.workflow_run" not in publication
+    assert "AUTOMATIC_SOFTWARE_RELEASE_ENABLED" not in publication
+    assert "github.event.workflow_run.head_branch == 'main'" in wheel_publication
+    assert "github.event.workflow_run.event == 'push'" in wheel_publication
+    assert "github.event.workflow_run.head_repository.full_name == github.repository" in wheel_publication
+    assert "github.event.workflow_run.conclusion == 'success'" in wheel_publication
+    assert "workflow_dispatch:" not in wheel_publication
+    assert "runs-on: ubuntu-latest" in wheel_publication
+    assert "actions: read" in wheel_publication
+    assert "contents: read" in wheel_publication
+    assert "contents: write" not in wheel_publication
+    assert "environment:" not in wheel_publication
+    assert "self-hosted" not in wheel_publication
+    assert "RELEASE_SIGNING_PRIVATE_KEY" not in wheel_publication
+    assert "gh release" not in wheel_publication
+    assert "gh-pages" not in wheel_publication
+    assert "virtualization" not in wheel_publication.lower()
+    assert "actions/upload-artifact@v7" in wheel_publication
+    assert "retention-days: 90" in wheel_publication
+    assert "overwrite: false" in wheel_publication
+    assert "python scripts/wheel_artifact.py create" in wheel_publication
+    assert "--source-ci-run-id" in wheel_publication
+    assert "--publisher-run-id" in wheel_publication
     assert "-f head_sha=\"$RELEASE_SHA\"" in publication
     assert "-f status=success" in publication
     assert "has no successful main push CI run" in publication
@@ -1255,6 +1276,12 @@ def test_release_workflows_use_successful_main_sha_and_promote_without_rebuildin
     assert publication.count("ref: ${{ needs.prepare.outputs.release_sha }}") == 2
     assert "actions/upload-artifact@v7" in publication
     assert publication.count("actions/download-artifact@v8") == 1
+    assert "python scripts/wheel_artifact.py select" in publication
+    assert "--application-wheel-root dist/application-wheel" in publication
+    assert ".source_ci.run_id" in publication
+    assert ".publisher.run_id" in publication
+    assert ".github/workflows/ci.yml" in publication
+    assert ".github/workflows/wheel.yml" in publication
     for runner_label in ("atlaso-vmware", "atlaso-proxmox", "atlaso-kvm", "atlaso-hyperv"):
         assert runner_label not in publication
     for job in (

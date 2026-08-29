@@ -1,11 +1,6 @@
 name: Publish appliance release
 
 on:
-  workflow_run:
-    workflows:
-      - CI
-    types:
-      - completed
   workflow_dispatch:
     inputs:
       release_sha:
@@ -18,21 +13,12 @@ permissions:
   contents: read
 
 concurrency:
-  group: appliance-release-${{ inputs.release_sha || github.event.workflow_run.head_sha }}
+  group: appliance-release-${{ inputs.release_sha }}
   cancel-in-progress: false
 
 jobs:
   prepare:
     name: Validate release target
-    if: >-
-      github.event_name == 'workflow_dispatch' ||
-      (
-        vars.AUTOMATIC_SOFTWARE_RELEASE_ENABLED == 'true' &&
-        github.event.workflow_run.conclusion == 'success' &&
-        github.event.workflow_run.head_repository.full_name == github.repository &&
-        github.event.workflow_run.head_branch == 'main' &&
-        github.event.workflow_run.event == 'push'
-      )
     runs-on: ubuntu-latest
     outputs:
       release_sha: ${{ steps.target.outputs.release_sha }}
@@ -40,13 +26,13 @@ jobs:
       - name: Check out the release target
         uses: actions/checkout@v7
         with:
-          ref: ${{ inputs.release_sha || github.event.workflow_run.head_sha }}
+          ref: ${{ inputs.release_sha }}
           fetch-depth: 0
       - name: Validate successful main CI release target
         id: target
         env:
           GH_TOKEN: ${{ github.token }}
-          RELEASE_SHA: ${{ inputs.release_sha || github.event.workflow_run.head_sha }}
+          RELEASE_SHA: ${{ inputs.release_sha }}
         run: |
           if ! printf '%s' "$RELEASE_SHA" | grep -Eq '^[0-9a-f]{40}$'; then
             echo "::error::Release SHA must be a full lowercase hexadecimal commit."
@@ -55,21 +41,19 @@ jobs:
           git fetch origin main --no-tags
           git merge-base --is-ancestor "$RELEASE_SHA" origin/main
           test "$(git rev-parse HEAD)" = "$RELEASE_SHA"
-          if test "${{ github.event_name }}" = "workflow_dispatch"; then
-            SUCCESSFUL_RUNS="$(
-              gh api --method GET \
-                "repos/${{ github.repository }}/actions/workflows/ci.yml/runs" \
-                -f head_sha="$RELEASE_SHA" \
-                -f branch=main \
-                -f event=push \
-                -f status=success \
-                -f per_page=100 \
-                --jq '.total_count'
-            )"
-            if test "$SUCCESSFUL_RUNS" -lt 1; then
-              echo "::error::$RELEASE_SHA has no successful main push CI run."
-              exit 1
-            fi
+          SUCCESSFUL_RUNS="$(
+            gh api --method GET \
+              "repos/${{ github.repository }}/actions/workflows/ci.yml/runs" \
+              -f head_sha="$RELEASE_SHA" \
+              -f branch=main \
+              -f event=push \
+              -f status=success \
+              -f per_page=100 \
+              --jq '.total_count'
+          )"
+          if test "$SUCCESSFUL_RUNS" -lt 1; then
+            echo "::error::$RELEASE_SHA has no successful main push CI run."
+            exit 1
           fi
           VERSION="$(python scripts/version.py get)"
           echo "release_sha=$RELEASE_SHA" >> "$GITHUB_OUTPUT"
@@ -136,6 +120,7 @@ jobs:
       cancel-in-progress: false
     environment: appliance-release
     permissions:
+      actions: read
       contents: write
     steps:
       - name: Check out the successful main commit
@@ -159,6 +144,58 @@ jobs:
         env:
           PIP_CONFIG_FILE: /dev/null
         run: python -m pip install --require-hashes --requirement requirements-release-tools.lock
+      - name: Resolve the immutable automatic wheel handoff
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_SHA: ${{ needs.prepare.outputs.release_sha }}
+        run: |
+          VERSION="$(python scripts/version.py get)"
+          ARTIFACT_NAME="atlaso-wheel-v${VERSION}-${RELEASE_SHA}"
+          CANDIDATES="$RUNNER_TEMP/wheel-candidates"
+          mkdir -p "$CANDIDATES"
+          gh api --paginate --slurp \
+            "repos/${{ github.repository }}/actions/artifacts?name=${ARTIFACT_NAME}&per_page=100" \
+            --jq '[.[].artifacts[] | select(.expired == false and .name == "'"$ARTIFACT_NAME"'")]' \
+            > "$RUNNER_TEMP/wheel-artifacts.json"
+          if test "$(jq length "$RUNNER_TEMP/wheel-artifacts.json")" -lt 1; then
+            echo "::error::No retained automatic wheel artifact exists for $RELEASE_SHA at v$VERSION."
+            exit 1
+          fi
+          while IFS=$'\t' read -r ARTIFACT_ID PUBLISHER_RUN_ID; do
+            TARGET="$CANDIDATES/$PUBLISHER_RUN_ID"
+            if test -e "$TARGET"; then
+              echo "::error::Automatic wheel publisher run $PUBLISHER_RUN_ID has duplicate artifacts."
+              exit 1
+            fi
+            mkdir "$TARGET"
+            gh api "repos/${{ github.repository }}/actions/artifacts/${ARTIFACT_ID}/zip" \
+              > "$RUNNER_TEMP/wheel-${ARTIFACT_ID}.zip"
+            python scripts/wheel_artifact.py extract \
+              --archive "$RUNNER_TEMP/wheel-${ARTIFACT_ID}.zip" \
+              --output "$TARGET"
+          done < <(jq -r '.[] | [.id, .workflow_run.id] | @tsv' "$RUNNER_TEMP/wheel-artifacts.json")
+          python scripts/wheel_artifact.py select \
+            --candidates "$CANDIDATES" \
+            --output dist/application-wheel \
+            --repository "${{ github.repository }}" \
+            --version "$VERSION" \
+            --commit "$RELEASE_SHA" \
+            > "$RUNNER_TEMP/selected-wheel-identity.json"
+          SOURCE_CI_RUN_ID="$(jq -r .source_ci.run_id "$RUNNER_TEMP/selected-wheel-identity.json")"
+          PUBLISHER_RUN_ID="$(jq -r .publisher.run_id "$RUNNER_TEMP/selected-wheel-identity.json")"
+          SOURCE_CI_STATE="$(gh api "repos/${{ github.repository }}/actions/runs/${SOURCE_CI_RUN_ID}")"
+          PUBLISHER_STATE="$(gh api "repos/${{ github.repository }}/actions/runs/${PUBLISHER_RUN_ID}")"
+          test "$(jq -r .name <<<"$SOURCE_CI_STATE")" = CI
+          test "$(jq -r .path <<<"$SOURCE_CI_STATE")" = .github/workflows/ci.yml
+          test "$(jq -r .event <<<"$SOURCE_CI_STATE")" = push
+          test "$(jq -r .head_branch <<<"$SOURCE_CI_STATE")" = main
+          test "$(jq -r .head_sha <<<"$SOURCE_CI_STATE")" = "$RELEASE_SHA"
+          test "$(jq -r .conclusion <<<"$SOURCE_CI_STATE")" = success
+          test "$(jq -r .name <<<"$PUBLISHER_STATE")" = "Publish Python wheel"
+          test "$(jq -r .path <<<"$PUBLISHER_STATE")" = .github/workflows/wheel.yml
+          test "$(jq -r .event <<<"$PUBLISHER_STATE")" = workflow_run
+          test "$(jq -r .head_sha <<<"$PUBLISHER_STATE")" = "$RELEASE_SHA"
+          test "$(jq -r .conclusion <<<"$PUBLISHER_STATE")" = success
       - name: Download CPython 3.14 wheelhouse
         uses: actions/download-artifact@v8
         with:
@@ -179,6 +216,7 @@ jobs:
           BUILT_AT="$(git show -s --format=%cI "$RELEASE_SHA")"
           python scripts/build_release_bundle.py \
             --wheelhouses wheelhouses \
+            --application-wheel-root dist/application-wheel \
             --signing-key "$RUNNER_TEMP/release-signing-key.pem" \
             --signing-key-id "$RELEASE_KEY_ID" \
             --commit "$RELEASE_SHA" \

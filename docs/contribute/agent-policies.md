@@ -685,12 +685,22 @@ Terminal order:
   current-protocol fields alone as a failed update. Signed-release lifecycle
   coverage must prove the candidate and a healthy rollback both before and after audited appliance reboots; installation
   itself must not reboot automatically.
-- Release publication recovery must use the protected **Publish appliance release** manual dispatch with the exact
-  successful `main` push CI SHA. Atlaso starts a new signed update lineage at `v0.9.18`; do not publish or consume a
-  retired-product bridge. Preserve tag/release commit and asset-byte idempotency checks. A rerun after tag/release
-  publication must verify the existing asset bytes before retrying channel advancement. Automatic `workflow_run`
-  publication additionally requires `AUTOMATIC_SOFTWARE_RELEASE_ENABLED=true`; manual recovery remains admitted while
-  the gate is absent or false. Keep that workflow GitHub-hosted and limited to the signed software/update bundle,
+- Every successful same-repository `main` push CI run automatically starts **Publish Python wheel** on GitHub-hosted
+  Linux. Keep it read-only and bounded to one 90-day Actions artifact named
+  `atlaso-wheel-vX.Y.Z-<full-sha>`, containing exactly the versioned wheel and canonical identity document. Bind the
+  source CI and publisher runs, repository, version, full commit, UTC commit build time, filename, size, and SHA-256.
+  Give this path no appliance signing material, protected environment, contents write, tag/Release or `gh-pages`
+  mutation, channel promotion, self-hosted label, or virtualization access. Automatic retries may publish another
+  artifact for the same identity only when the wheel bytes remain identical; a later consumer must compare all retained
+  candidates and fail closed on divergence.
+- Complete release publication and recovery use only the protected **Publish appliance release** manual dispatch with
+  the exact successful `main` push CI SHA. Require and revalidate the retained automatic wheel handoff, including its
+  successful source CI identity and embedded wheel version/commit/time, and record `wheel-identity.json` inside the
+  signed bundle. Never rebuild or substitute the application wheel in this workflow. If the 90-day artifact expired,
+  rerun the exact successful CI/wheel publication while the commit remains on `main`. Atlaso starts a new signed update
+  lineage at `v0.9.18`; do not publish or consume a retired-product bridge. Preserve tag/release commit and asset-byte
+  idempotency checks. A rerun after tag/release publication must verify the existing asset bytes before retrying channel
+  advancement. Keep the protected manual workflow GitHub-hosted and limited to the signed software/update bundle,
   immutable `vX.Y.Z` Release, and `development` channel.
 - Virtualization publication is separate. A clean Windows workstation consumes the exact signed `vX.Y.Z` bundle,
   deploys its application wheel and CPython 3.14 wheelhouse without rebuilding them, produces and smokes the OVA and

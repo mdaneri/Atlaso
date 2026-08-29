@@ -300,6 +300,12 @@ def main() -> int:
     """
     parser = argparse.ArgumentParser(description="Build a signed, offline Atlaso appliance release bundle.")
     parser.add_argument("--wheelhouses", type=Path, required=True, help="Directory containing the cp314 wheelhouse.")
+    parser.add_argument(
+        "--application-wheel-root",
+        type=Path,
+        required=True,
+        help="Verified automatic wheel artifact directory containing the wheel and wheel-identity.json.",
+    )
     parser.add_argument("--lock", type=Path, default=ROOT / "requirements-appliance.lock")
     parser.add_argument("--output", type=Path, default=ROOT / "dist/release")
     parser.add_argument("--repository", default="mdaneri/Atlaso")
@@ -322,12 +328,37 @@ def main() -> int:
     output.mkdir(parents=True)
     signing_key = load_signing_key(args.signing_key)
 
+    wheel_verification = run(
+        [
+            sys.executable,
+            str(ROOT / "scripts/wheel_artifact.py"),
+            "verify",
+            "--root",
+            str(args.application_wheel_root.resolve()),
+            "--repository",
+            args.repository,
+            "--version",
+            version,
+            "--commit",
+            commit,
+        ],
+        cwd=ROOT,
+    )
+    if wheel_verification.returncode != 0:
+        raise SystemExit((wheel_verification.stdout + "\n" + wheel_verification.stderr).strip())
+    try:
+        wheel_handoff = json.loads(wheel_verification.stdout)
+        application_wheel = Path(wheel_handoff["wheel"])
+        application_wheel_identity = Path(wheel_handoff["identity"])
+    except (json.JSONDecodeError, KeyError, TypeError) as exc:
+        raise SystemExit("automatic wheel verifier returned an invalid handoff") from exc
+
     with tempfile.TemporaryDirectory(prefix="atlaso-release-") as temporary:
         temp_root = Path(temporary)
-        application_wheel = build_application_wheel(temp_root, commit=commit, built_at=built_at)
         bundle_root = temp_root / "bundle"
         (bundle_root / "packages").mkdir(parents=True)
         shutil.copy2(application_wheel, bundle_root / "packages" / application_wheel.name)
+        shutil.copy2(application_wheel_identity, bundle_root / "packages" / application_wheel_identity.name)
         shutil.copy2(args.lock, bundle_root / "requirements-appliance.lock")
         for abi in SUPPORTED_ABIS:
             source = args.wheelhouses.resolve() / abi
