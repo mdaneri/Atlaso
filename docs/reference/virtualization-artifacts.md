@@ -71,7 +71,9 @@ virtualenv Python link to resolve only to that authenticated CPython 3.14 interp
 match its signed-wheel entry point and canonical pip launcher. The finalizer opens both payload disks and compares every
 Atlaso-provisioned privileged helper, service unit, drop-in,
 console setting, vault profile, complete PowerShell global profile, and boot-branding asset with its exact bytes from the
-admitted software-release commit. The producer replaces that global profile with the canonical Atlaso import instead
+admitted software-release commit. The installer places that profile in the supported PowerShell runtime home discovered
+from the resolved `pwsh` executable, including the Photon package locations `/opt/microsoft/powershell/7` and
+`/usr/share/powershell`. The producer replaces that global profile with the canonical Atlaso import instead
 of preserving workstation-controlled commands. Before comparing bytes, the finalizer also requires each privileged
 file and trust key to be a root-owned regular file with its exact declared mode; every ancestor must be a root-owned
 directory without group or other write access.

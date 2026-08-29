@@ -590,10 +590,13 @@ install -d -o root -g root -m 0755 /usr/local/bin
 ln -sfn "$ATLASO_HOME/.venv/bin/atlaso-vault" /usr/local/bin/atlaso-vault
 ln -sfn "$ATLASO_HOME/.venv/bin/atlaso-vault" /usr/bin/atlaso-vault
 POWERSHELL_HOME="$(dirname "$(readlink -f "$(command -v pwsh)")")"
-if [ "$POWERSHELL_HOME" != "/opt/microsoft/powershell/7" ]; then
-  echo "PowerShell resolved to an unsupported global profile directory: $POWERSHELL_HOME" >&2
-  exit 2
-fi
+case "$POWERSHELL_HOME" in
+  /opt/microsoft/powershell/7 | /usr/share/powershell) ;;
+  *)
+    echo "PowerShell resolved to an unsupported global profile directory: $POWERSHELL_HOME" >&2
+    exit 2
+    ;;
+esac
 install -o root -g root -m 0644 \
   "$ATLASO_HOME/image/common/powershell/atlaso-vault-profile.ps1" \
   "$ATLASO_HOME/bin/atlaso-vault-profile.ps1"
