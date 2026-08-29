@@ -185,10 +185,23 @@ jobs:
             python scripts/wheel_artifact.py extract \
               --archive "$RUNNER_TEMP/wheel-${ARTIFACT_ID}.zip" \
               --output "$TARGET"
+            CANDIDATE_SOURCE_CI_RUN_ID="$(jq -r .source_ci.run_id "$TARGET/wheel-identity.json")"
+            CANDIDATE_SOURCE_CI_RUN_ATTEMPT="$(jq -r .source_ci.run_attempt "$TARGET/wheel-identity.json")"
             CANDIDATE_RUN_ID="$(jq -r .publisher.run_id "$TARGET/wheel-identity.json")"
             CANDIDATE_RUN_ATTEMPT="$(jq -r .publisher.run_attempt "$TARGET/wheel-identity.json")"
             test "$CANDIDATE_RUN_ID" = "$PUBLISHER_RUN_ID"
+            CANDIDATE_SOURCE_CI_STATE="$(
+              gh api \
+                "repos/${{ github.repository }}/actions/runs/${CANDIDATE_SOURCE_CI_RUN_ID}/attempts/${CANDIDATE_SOURCE_CI_RUN_ATTEMPT}"
+            )"
             CANDIDATE_STATE="$(gh api "repos/${{ github.repository }}/actions/runs/${CANDIDATE_RUN_ID}/attempts/${CANDIDATE_RUN_ATTEMPT}")"
+            test "$(jq -r .name <<<"$CANDIDATE_SOURCE_CI_STATE")" = CI
+            test "$(jq -r .path <<<"$CANDIDATE_SOURCE_CI_STATE")" = .github/workflows/ci.yml
+            test "$(jq -r .run_attempt <<<"$CANDIDATE_SOURCE_CI_STATE")" = "$CANDIDATE_SOURCE_CI_RUN_ATTEMPT"
+            test "$(jq -r .event <<<"$CANDIDATE_SOURCE_CI_STATE")" = push
+            test "$(jq -r .head_branch <<<"$CANDIDATE_SOURCE_CI_STATE")" = main
+            test "$(jq -r .head_sha <<<"$CANDIDATE_SOURCE_CI_STATE")" = "$RELEASE_SHA"
+            test "$(jq -r .conclusion <<<"$CANDIDATE_SOURCE_CI_STATE")" = success
             test "$(jq -r .name <<<"$CANDIDATE_STATE")" = "Publish Python wheel"
             test "$(jq -r .path <<<"$CANDIDATE_STATE")" = .github/workflows/wheel.yml
             test "$(jq -r .run_attempt <<<"$CANDIDATE_STATE")" = "$CANDIDATE_RUN_ATTEMPT"

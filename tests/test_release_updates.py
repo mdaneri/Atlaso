@@ -1331,6 +1331,21 @@ def test_release_workflows_use_successful_main_sha_and_promote_without_rebuildin
     assert ".github/workflows/wheel.yml" in publication
     assert 'TARGET="$CANDIDATES/$PUBLISHER_RUN_ID-$ARTIFACT_ID"' in publication
     assert 'test "$CANDIDATE_RUN_ID" = "$PUBLISHER_RUN_ID"' in publication
+    release_inputs_job = publication.split("  release_inputs:\n", 1)[1].split(
+        "  publish:\n", 1
+    )[0]
+    candidate_loop = release_inputs_job.split(
+        "while IFS=$'\\t' read -r ARTIFACT_ID PUBLISHER_RUN_ID; do", 1
+    )[1].split("done < <(", 1)[0]
+    assert ".source_ci.run_id" in candidate_loop
+    assert ".source_ci.run_attempt" in candidate_loop
+    assert (
+        "actions/runs/${CANDIDATE_SOURCE_CI_RUN_ID}/attempts/"
+        "${CANDIDATE_SOURCE_CI_RUN_ATTEMPT}"
+    ) in candidate_loop
+    assert 'test "$(jq -r .run_attempt <<<"$CANDIDATE_SOURCE_CI_STATE")" = ' in candidate_loop
+    assert 'test "$(jq -r .head_sha <<<"$CANDIDATE_SOURCE_CI_STATE")" = "$RELEASE_SHA"' in candidate_loop
+    assert 'test "$(jq -r .conclusion <<<"$CANDIDATE_SOURCE_CI_STATE")" = success' in candidate_loop
     assert 'actions/runs/${CANDIDATE_RUN_ID}/attempts/${CANDIDATE_RUN_ATTEMPT}' in publication
     assert 'test "$(jq -r .run_attempt <<<"$CANDIDATE_STATE")" = "$CANDIDATE_RUN_ATTEMPT"' in publication
     assert 'actions/runs/${SOURCE_CI_RUN_ID}/attempts/${SOURCE_CI_RUN_ATTEMPT}' in publication
@@ -1353,9 +1368,6 @@ def test_release_workflows_use_successful_main_sha_and_promote_without_rebuildin
     assert "retention-days: 1" in prepare_job
     assert "actions/workflows/ci.yml/runs" not in prepare_job
     assert "-f status=success" not in prepare_job
-    release_inputs_job = publication.split("  release_inputs:\n", 1)[1].split(
-        "  publish:\n", 1
-    )[0]
     publish_job = publication.split("  publish:\n", 1)[1]
     assert "group: atlaso-github-pages" not in release_inputs_job
     assert "environment: appliance-release" not in release_inputs_job
