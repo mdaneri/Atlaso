@@ -145,8 +145,7 @@ def first_boot_https_contract_is_complete() -> bool:
     management = read_regular_text(NGINX_MANAGEMENT_PATH, maximum_size=262144)
     if (
         marker != COMPLETION_MARKER_TEXT
-        or include is None
-        or "/etc/atlaso/nginx/sites.d/*.conf" not in include
+        or include != NGINX_INCLUDE_TEXT
         or management is None
         or not management_nginx_contract_is_complete(management)
     ):

@@ -297,6 +297,10 @@ CONSOLE_SERVICE_STATE_PATH = CONSOLE_STATE_DIR / "services.json"
 FIRST_BOOT_HTTPS_MARKER_PATH = ATLASO_STATE_DIR / "first-boot-https.applied"
 FIRST_BOOT_HTTPS_UNIT = "atlaso-bootstrap-https.service"
 FIRST_BOOT_HTTPS_MARKER_TEXT = "Atlaso first-boot HTTPS bootstrap completed.\n"
+FIRST_BOOT_HTTPS_INCLUDE_TEXT = (
+    "# Managed by Atlaso. Local changes may be overwritten.\n"
+    "include /etc/atlaso/nginx/sites.d/*.conf;\n"
+)
 MANAGEMENT_PLANE_UNITS = ("nginx.service", "atlaso.service")
 MANAGEMENT_APPLICATION_READINESS_CHECK = (
     ("Atlaso application loopback", "http://127.0.0.1:8000/openapi.json", False, "200"),
@@ -17342,7 +17346,7 @@ def _console_first_boot_https_contract_is_complete() -> bool:
         return False
     return (
         marker == FIRST_BOOT_HTTPS_MARKER_TEXT
-        and "/etc/atlaso/nginx/sites.d/*.conf" in include
+        and include == FIRST_BOOT_HTTPS_INCLUDE_TEXT
         and _console_management_config_contract_is_complete(management)
     )
 

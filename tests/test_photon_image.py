@@ -1146,6 +1146,12 @@ def test_photon_https_bootstrap_rejects_incomplete_durable_contract(tmp_path, mo
 
     assert bootstrap.first_boot_https_contract_is_complete() is True
 
+    include.write_text(
+        "# include /etc/atlaso/nginx/sites.d/*.conf;\n",
+        encoding="utf-8",
+    )
+    assert bootstrap.first_boot_https_contract_is_complete() is False
+
 
 def test_photon_https_bootstrap_syncs_file_and_parent_before_success(tmp_path, monkeypatch):
     """Publish an atomic replacement only after syncing its bytes and directory.
