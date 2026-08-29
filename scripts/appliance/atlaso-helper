@@ -17332,7 +17332,8 @@ def _console_nginx_main_config_activates_atlaso(config: str) -> bool:
     """
     return bool(
         re.search(
-            r"(?m)^\s*include\s+/etc/nginx/conf\.d/(?:atlaso\.conf|\*\.conf);\s*$",
+            r"(?m)^\s*include\s+/etc/nginx/conf\.d/(?:atlaso\.conf|\*\.conf);"
+            r"[ \t]*(?:#[^\r\n]*)?$",
             config,
         )
     )

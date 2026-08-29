@@ -2078,3 +2078,36 @@ def test_console_first_boot_https_contract_rejects_commented_include(monkeypatch
     monkeypatch.setattr(helper, "NGINX_MANAGEMENT_SITE_PATH", management_config)
 
     assert helper._console_first_boot_https_contract_is_complete() is False
+
+
+def test_console_first_boot_https_contract_accepts_annotated_active_outer_include(
+    monkeypatch,
+    tmp_path,
+):
+    """Accept a valid active outer include followed by a same-line comment.
+
+    Args:
+        monkeypatch: Pytest fixture used to replace deployed filesystem paths.
+        tmp_path: Temporary directory provided by pytest for isolated filesystem state.
+    """
+    helper = load_helper_module()
+    marker = tmp_path / "first-boot-https.applied"
+    main_config = tmp_path / "nginx.conf"
+    include = tmp_path / "atlaso.conf"
+    management_config = tmp_path / "management.conf"
+    marker.write_text(helper.FIRST_BOOT_HTTPS_MARKER_TEXT, encoding="utf-8")
+    main_config.write_text(
+        "http {\n  include /etc/nginx/conf.d/atlaso.conf; # managed sites\n}\n",
+        encoding="utf-8",
+    )
+    include.write_text(helper.FIRST_BOOT_HTTPS_INCLUDE_TEXT, encoding="utf-8")
+    management_config.write_text(
+        "listen 80 default_server;\nproxy_pass http://127.0.0.1:8000;\n",
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(helper, "FIRST_BOOT_HTTPS_MARKER_PATH", marker)
+    monkeypatch.setattr(helper, "NGINX_MAIN_CONFIG_PATH", main_config)
+    monkeypatch.setattr(helper, "NGINX_CONF_INCLUDE_PATH", include)
+    monkeypatch.setattr(helper, "NGINX_MANAGEMENT_SITE_PATH", management_config)
+
+    assert helper._console_first_boot_https_contract_is_complete() is True
