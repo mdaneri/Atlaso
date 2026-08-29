@@ -166,7 +166,11 @@ def test_failure_tail_scans_large_transcripts_incrementally(
     )
 
     def reject_read_bytes(_path: Path) -> bytes:
-        """Reject whole-file reads from failure-tail replay."""
+        """Reject whole-file reads from failure-tail replay.
+
+        Args:
+            _path: Path whose whole-file read must remain unused.
+        """
 
         raise AssertionError("whole-file transcript read is forbidden")
 

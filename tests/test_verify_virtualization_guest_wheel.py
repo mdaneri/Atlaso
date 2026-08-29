@@ -51,7 +51,12 @@ def _metadata_output(
 
 
 def _powershell_profile_output(commands: list[str], target: str) -> list[str] | None:
-    """Return the resolved guest PowerShell executable for one profile target."""
+    """Return the resolved guest PowerShell executable for one profile target.
+
+    Args:
+        commands: Guestfish commands issued by the verifier.
+        target: PowerShell profile target whose executable path is expected.
+    """
 
     if commands[-1] != "realpath /usr/bin/pwsh":
         return None
@@ -652,6 +657,7 @@ def test_verifies_every_release_refreshed_non_wheel_file(
     Args:
         tmp_path: Temporary directory provided by pytest.
         monkeypatch: Pytest fixture used to isolate source and guest reads.
+        powershell_profile_target: Release-refreshed PowerShell profile target to verify.
     """
 
     assets = tmp_path / "assets"
