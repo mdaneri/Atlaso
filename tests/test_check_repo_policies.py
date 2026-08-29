@@ -1419,6 +1419,45 @@ def test_merge_authority_transfer_validates_declared_source_eligibility(
         )
 
 
+def test_merge_authority_transfer_applies_eligibility_changes_in_order(
+    tmp_path: Path,
+) -> None:
+    """Verify the latest explicit scope change determines task eligibility.
+
+    Args:
+        tmp_path: Temporary directory provided by pytest for isolated filesystem state.
+    """
+    cases = (
+        {
+            "name": "later implementation scope",
+            "default_merge_authority": True,
+            "instructions": [
+                {"text": "Review the pull request and report findings only."},
+                {"text": "Now implement the issue and deliver its pull request."},
+            ],
+            "generated": "Continue through guarded squash merge.",
+            "expected_holds": [],
+        },
+        {
+            "name": "later review-only scope",
+            "default_merge_authority": False,
+            "instructions": [
+                {"text": "Implement the issue and deliver its pull request."},
+                {"text": "Instead, review the pull request and report findings only."},
+            ],
+            "generated": "Review the pull request and report findings.",
+            "expected_holds": [],
+        },
+    )
+
+    for case in cases:
+        path = tmp_path / MERGE_AUTHORITY_TRANSFER_FIXTURE_PATH
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(json.dumps({"cases": [case]}), encoding="utf-8")
+
+        assert check_merge_authority_transfer_fixtures(tmp_path) == []
+
+
 def test_agent_policy_gate_rejects_missing_default_merge_authority_contract(
     tmp_path: Path,
 ) -> None:

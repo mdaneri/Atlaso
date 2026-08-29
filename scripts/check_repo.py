@@ -750,13 +750,17 @@ def source_has_default_merge_authority(instructions: tuple[str, ...]) -> bool:
     Args:
         instructions: Ordered user or maintainer instructions from one fixture.
     """
-    normalized = " ".join(" ".join(instructions).casefold().split())
-    if DEFAULT_MERGE_AUTHORITY_SOURCE_EXCLUSIONS.search(normalized) is not None:
-        return False
-    return (
-        DEFAULT_MERGE_AUTHORITY_SOURCE_MARKERS.search(normalized) is not None
-        or bool(explicit_merge_holds(normalized))
-    )
+    eligible = False
+    for instruction in instructions:
+        normalized = " ".join(instruction.casefold().split())
+        if DEFAULT_MERGE_AUTHORITY_SOURCE_EXCLUSIONS.search(normalized) is not None:
+            eligible = False
+        elif (
+            DEFAULT_MERGE_AUTHORITY_SOURCE_MARKERS.search(normalized) is not None
+            or bool(explicit_merge_holds(normalized))
+        ):
+            eligible = True
+    return eligible
 
 
 def check_merge_authority_transfer_fixtures(root: Path) -> list[Finding]:
