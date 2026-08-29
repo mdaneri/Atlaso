@@ -636,23 +636,13 @@ find "$ATLASO_SITE_PACKAGES_REAL" -depth -type d -name __pycache__ -empty -delet
 install -d -o root -g root -m 0755 /usr/local/bin
 ln -sfn "$ATLASO_HOME/.venv/bin/atlaso-vault" /usr/local/bin/atlaso-vault
 ln -sfn "$ATLASO_HOME/.venv/bin/atlaso-vault" /usr/bin/atlaso-vault
-POWERSHELL_HOME="$(dirname "$(readlink -f "$(command -v pwsh)")")"
-case "$POWERSHELL_HOME" in
-  /opt/microsoft/powershell/7 | /usr/share/powershell) ;;
-  *)
-    echo "PowerShell resolved to an unsupported global profile directory: $POWERSHELL_HOME" >&2
-    exit 2
-    ;;
-esac
 install -o root -g root -m 0644 \
   "$ATLASO_HOME/image/common/powershell/atlaso-vault-profile.ps1" \
   "$ATLASO_HOME/bin/atlaso-vault-profile.ps1"
 # The complete global profile is Atlaso-owned so producer state cannot inject commands.
-install -o root -g root -m 0644 \
-  "$ATLASO_HOME/image/common/powershell/profile.ps1" \
-  "$POWERSHELL_HOME/profile.ps1"
+install_powershell_profile
 "$ATLASO_HOME/.venv/bin/python" "$ATLASO_HOME/scripts/check_photon_compatibility.py"
-printf 'vcf_sdk=%s\n' "$("$ATLASO_HOME/.venv/bin/python" -c 'from importlib.metadata import version; print(version("vcf-sdk"))')" >>/etc/atlaso/build-info
+write_build_info
 
 write_third_party_notices
 

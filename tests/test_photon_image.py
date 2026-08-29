@@ -1454,6 +1454,7 @@ def test_photon_provisioning_prepares_attached_data_disks():
         'log_step "revalidating Photon compatibility and runtime capabilities '
         'after final update"'
     )
+    final_profile_install_index = provision.rindex("install_powershell_profile")
     assert provision.count("stage_python_runtime_packages") == 3
     assert provision.count("stage_guest_agent_packages") == 3
     assert provision.count("write_third_party_notices") == 3
@@ -1484,7 +1485,7 @@ def test_photon_provisioning_prepares_attached_data_disks():
         'python3 "$PHOTON_PACKAGE_STATE_VERIFIER" --guest-platform '
         '"$ATLASO_GUEST_PLATFORM"'
     ) == 2
-    assert provision.count("write_build_info") == 3
+    assert provision.count("write_build_info") == 4
     assert final_update_index < provision.rindex("write_build_info")
     assert provision.rindex("write_build_info") < provision.rindex(
         'run_tdnf "Final Photon package cache cleanup" clean all'
