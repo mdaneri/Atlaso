@@ -43,6 +43,8 @@ PHOTON_PACKAGE_STATE_VERIFIER="$ATLASO_SRC/image/common/scripts/verify-photon-pa
 GUEST_AGENT_UNIT_SOURCE="$ATLASO_SRC/image/common/systemd/atlaso-guest-agent-select.service"
 GUEST_AGENT_STAGING="$ATLASO_STATE/first-boot-packages"
 PYTHON_RUNTIME_STAGING="$ATLASO_STATE/python-runtime-packages"
+QEMU_GUEST_AGENT_OUTPUT=""
+QEMU_GUEST_AGENT_RPM=""
 
 log_step() {
   printf '\n==> Atlaso appliance: %s\n' "$1"
@@ -99,6 +101,56 @@ stage_python_runtime_packages() {
   )
   chown root:root "$PYTHON_RUNTIME_STAGING/SHA256SUMS"
   chmod 0600 "$PYTHON_RUNTIME_STAGING/SHA256SUMS"
+}
+
+stage_guest_agent_packages() {
+  log_step "staging verified offline guest-agent RPM closures"
+  rm -rf "$GUEST_AGENT_STAGING"
+  install -d -o root -g root -m 0700 "$GUEST_AGENT_STAGING" \
+    "$GUEST_AGENT_STAGING/hyperv" "$GUEST_AGENT_STAGING/qemu"
+  run_tdnf "Photon Hyper-V offline RPM closure" \
+    install --downloadonly --downloaddir "$GUEST_AGENT_STAGING/hyperv" --alldeps hyper-v
+  # Resolve the local RPM's signed runtime dependencies independently so an
+  # unsigned Atlaso-built package can never weaken Photon repository verification.
+  run_tdnf "Photon QEMU guest-agent signed dependency closure" \
+    install --downloadonly --downloaddir "$GUEST_AGENT_STAGING/qemu" --alldeps glib systemd
+  # The local RPM is built from Atlaso's pinned, hash-verified QEMU source and
+  # remains immutable across the second signed-dependency staging pass.
+  install -o root -g root -m 0600 \
+    "$QEMU_GUEST_AGENT_RPM" "$GUEST_AGENT_STAGING/qemu/$(basename "$QEMU_GUEST_AGENT_RPM")"
+  if [ "$(find "$GUEST_AGENT_STAGING/hyperv" -maxdepth 1 -type f -name '*.rpm' | wc -l)" -eq 0 ] ||
+    [ "$(find "$GUEST_AGENT_STAGING/qemu" -maxdepth 1 -type f -name '*.rpm' | wc -l)" -eq 0 ]; then
+    echo "One or more offline guest-agent RPM closures are empty." >&2
+    exit 2
+  fi
+  find "$GUEST_AGENT_STAGING" -type d -exec chown root:root {} + -exec chmod 0700 {} +
+  find "$GUEST_AGENT_STAGING" -type f -name '*.rpm' -exec chown root:root {} + -exec chmod 0600 {} +
+  (
+    cd "$GUEST_AGENT_STAGING"
+    find hyperv qemu -type f -name '*.rpm' -print | LC_ALL=C sort | xargs sha256sum >SHA256SUMS
+  )
+  chown root:root "$GUEST_AGENT_STAGING/SHA256SUMS"
+  chmod 0600 "$GUEST_AGENT_STAGING/SHA256SUMS"
+}
+
+write_third_party_notices() {
+  log_step "writing third-party notices"
+  notice_rpm_inventory="$(mktemp)"
+  {
+    rpm -qa --qf '%{NAME}\t%{VERSION}-%{RELEASE}\t%{LICENSE}\t%{URL}\n'
+    find "$GUEST_AGENT_STAGING" -type f -name '*.rpm' | LC_ALL=C sort | while IFS= read -r staged_rpm; do
+      rpm -qp --qf '%{NAME}\t%{VERSION}-%{RELEASE}\t%{LICENSE}\t%{URL}\n' "$staged_rpm"
+    done
+  } | LC_ALL=C sort -u >"$notice_rpm_inventory"
+  install -d -o root -g root -m 0755 /usr/share/doc/atlaso
+  "$ATLASO_HOME/.venv/bin/python" "$ATLASO_HOME/scripts/generate_third_party_notices.py" \
+    --version "$ATLASO_RELEASE_VERSION" \
+    --output /usr/share/doc/atlaso/THIRD_PARTY_NOTICES.md \
+    --lock "$ATLASO_HOME/requirements-appliance.lock" \
+    --python-environment "$ATLASO_HOME/.venv" \
+    --rpm-inventory "$notice_rpm_inventory"
+  rm -f "$notice_rpm_inventory"
+  chmod 0644 /usr/share/doc/atlaso/THIRD_PARTY_NOTICES.md
 }
 
 report_image_footprint() {
@@ -305,43 +357,17 @@ esac
 run_tdnf "Photon appliance package installation" \
   install python3 python3-pip python3-devel python3-setuptools python3-virtualenv python3-curses python3-ntp sudo openssh-server curl rsync tar gzip xz shadow e2fsprogs sqlite procps-ng gnupg rpm-build gcc binutils linux-api-headers make glib-devel systemd-devel ninja-build pkg-config $GUEST_INTEGRATION_PACKAGES nftables dnsmasq ntpsec nfs-utils rpcbind openldap openldap-servers ipxe syslinux nginx powershell
 
-log_step "building and staging verified offline guest-agent RPM closures"
-rm -rf "$GUEST_AGENT_STAGING"
-install -d -o root -g root -m 0700 "$GUEST_AGENT_STAGING" \
-  "$GUEST_AGENT_STAGING/hyperv" "$GUEST_AGENT_STAGING/qemu"
-qemu_rpm_output=/tmp/atlaso-qemu-guest-agent-rpm
-rm -rf "$qemu_rpm_output"
-sh "$QEMU_GUEST_AGENT_BUILDER" "$qemu_rpm_output"
-qemu_rpm_count="$(find "$qemu_rpm_output" -maxdepth 1 -type f -name 'atlaso-qemu-guest-agent-*.rpm' | wc -l)"
+log_step "building the pinned QEMU guest-agent RPM"
+QEMU_GUEST_AGENT_OUTPUT=/tmp/atlaso-qemu-guest-agent-rpm
+rm -rf "$QEMU_GUEST_AGENT_OUTPUT"
+sh "$QEMU_GUEST_AGENT_BUILDER" "$QEMU_GUEST_AGENT_OUTPUT"
+qemu_rpm_count="$(find "$QEMU_GUEST_AGENT_OUTPUT" -maxdepth 1 -type f -name 'atlaso-qemu-guest-agent-*.rpm' | wc -l)"
 if [ "$qemu_rpm_count" -ne 1 ]; then
   echo "Expected one built QEMU guest-agent RPM; found $qemu_rpm_count." >&2
   exit 2
 fi
-qemu_rpm="$(find "$qemu_rpm_output" -maxdepth 1 -type f -name 'atlaso-qemu-guest-agent-*.rpm')"
-run_tdnf "Photon Hyper-V offline RPM closure" \
-  install --downloadonly --downloaddir "$GUEST_AGENT_STAGING/hyperv" --alldeps hyper-v
-# Resolve the local RPM's signed runtime dependencies independently so an
-# unsigned Atlaso-built package can never weaken Photon repository verification.
-run_tdnf "Photon QEMU guest-agent signed dependency closure" \
-  install --downloadonly --downloaddir "$GUEST_AGENT_STAGING/qemu" --alldeps glib systemd
-# The local RPM is built above from Atlaso's pinned, hash-verified QEMU source;
-# stage it directly beside the signed dependency closure and bind every byte in
-# the combined result to the root-owned SHA-256 manifest below.
-install -o root -g root -m 0600 "$qemu_rpm" "$GUEST_AGENT_STAGING/qemu/$(basename "$qemu_rpm")"
-rm -rf "$qemu_rpm_output"
-if [ "$(find "$GUEST_AGENT_STAGING/hyperv" -maxdepth 1 -type f -name '*.rpm' | wc -l)" -eq 0 ] ||
-  [ "$(find "$GUEST_AGENT_STAGING/qemu" -maxdepth 1 -type f -name '*.rpm' | wc -l)" -eq 0 ]; then
-  echo "One or more offline guest-agent RPM closures are empty." >&2
-  exit 2
-fi
-find "$GUEST_AGENT_STAGING" -type d -exec chown root:root {} + -exec chmod 0700 {} +
-find "$GUEST_AGENT_STAGING" -type f -name '*.rpm' -exec chown root:root {} + -exec chmod 0600 {} +
-(
-  cd "$GUEST_AGENT_STAGING"
-  find hyperv qemu -type f -name '*.rpm' -print | LC_ALL=C sort | xargs sha256sum >SHA256SUMS
-)
-chown root:root "$GUEST_AGENT_STAGING/SHA256SUMS"
-chmod 0600 "$GUEST_AGENT_STAGING/SHA256SUMS"
+QEMU_GUEST_AGENT_RPM="$(find "$QEMU_GUEST_AGENT_OUTPUT" -maxdepth 1 -type f -name 'atlaso-qemu-guest-agent-*.rpm')"
+stage_guest_agent_packages
 
 prepare_system_content_disk
 
@@ -576,23 +602,7 @@ install -o root -g root -m 0644 \
 "$ATLASO_HOME/.venv/bin/python" "$ATLASO_HOME/scripts/check_photon_compatibility.py"
 printf 'vcf_sdk=%s\n' "$("$ATLASO_HOME/.venv/bin/python" -c 'from importlib.metadata import version; print(version("vcf-sdk"))')" >>/etc/atlaso/build-info
 
-log_step "writing third-party notices"
-NOTICE_RPM_INVENTORY="$(mktemp)"
-{
-  rpm -qa --qf '%{NAME}\t%{VERSION}-%{RELEASE}\t%{LICENSE}\t%{URL}\n'
-  find "$GUEST_AGENT_STAGING" -type f -name '*.rpm' | LC_ALL=C sort | while IFS= read -r staged_rpm; do
-    rpm -qp --qf '%{NAME}\t%{VERSION}-%{RELEASE}\t%{LICENSE}\t%{URL}\n' "$staged_rpm"
-  done
-} | LC_ALL=C sort -u >"$NOTICE_RPM_INVENTORY"
-install -d -o root -g root -m 0755 /usr/share/doc/atlaso
-"$ATLASO_HOME/.venv/bin/python" "$ATLASO_HOME/scripts/generate_third_party_notices.py" \
-  --version "$ATLASO_RELEASE_VERSION" \
-  --output /usr/share/doc/atlaso/THIRD_PARTY_NOTICES.md \
-  --lock "$ATLASO_HOME/requirements-appliance.lock" \
-  --python-environment "$ATLASO_HOME/.venv" \
-  --rpm-inventory "$NOTICE_RPM_INVENTORY"
-rm -f "$NOTICE_RPM_INVENTORY"
-chmod 0644 /usr/share/doc/atlaso/THIRD_PARTY_NOTICES.md
+write_third_party_notices
 
 SECRET_KEY="$("$ATLASO_HOME/.venv/bin/python" -c 'import secrets; print(secrets.token_urlsafe(48))')"
 SECRETS_KEY="$("$ATLASO_HOME/.venv/bin/python" -c 'import secrets; print(secrets.token_urlsafe(48))')"
@@ -904,7 +914,10 @@ python3 "$PHOTON_PACKAGE_STATE_VERIFIER" --guest-platform "$ATLASO_GUEST_PLATFOR
 run_tdnf "Final Photon package cache cleanup" clean all
 run_tdnf "Final Photon repository refresh" makecache
 run_tdnf "Final Photon OS update verification" update
+stage_guest_agent_packages
+rm -rf "$QEMU_GUEST_AGENT_OUTPUT"
 stage_python_runtime_packages
+write_third_party_notices
 log_step "revalidating Photon compatibility and runtime capabilities after final update"
 command -v python3 >/dev/null
 command -v pwsh >/dev/null

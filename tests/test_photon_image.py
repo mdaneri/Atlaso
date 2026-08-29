@@ -1414,13 +1414,19 @@ def test_photon_provisioning_prepares_attached_data_disks():
     final_update_index = provision.index(
         'run_tdnf "Final Photon OS update verification" update'
     )
+    final_guest_agent_closure_index = provision.rindex("stage_guest_agent_packages")
     final_python_closure_index = provision.rindex("stage_python_runtime_packages")
+    final_notice_index = provision.rindex("write_third_party_notices")
     final_compatibility_index = provision.index(
         'log_step "revalidating Photon compatibility and runtime capabilities '
         'after final update"'
     )
     assert provision.count("stage_python_runtime_packages") == 3
+    assert provision.count("stage_guest_agent_packages") == 3
+    assert provision.count("write_third_party_notices") == 3
+    assert final_update_index < final_guest_agent_closure_index < final_compatibility_index
     assert final_update_index < final_python_closure_index < final_compatibility_index
+    assert final_update_index < final_notice_index < final_compatibility_index
     assert final_update_index < provision.rindex("nginx -t")
     assert final_update_index < provision.rindex(
         '"$ATLASO_HOME/.venv/bin/python" '
@@ -1702,8 +1708,8 @@ def test_photon_build_installs_the_complete_qemu_build_toolchain() -> None:
         in provision
     )
     assert (
-        'install -o root -g root -m 0600 "$qemu_rpm" '
-        '"$GUEST_AGENT_STAGING/qemu/$(basename "$qemu_rpm")"'
+        '"$QEMU_GUEST_AGENT_RPM" '
+        '"$GUEST_AGENT_STAGING/qemu/$(basename "$QEMU_GUEST_AGENT_RPM")"'
         in provision
     )
     assert "--nogpgcheck" not in provision
