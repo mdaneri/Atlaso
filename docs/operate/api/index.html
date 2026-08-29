@@ -3714,7 +3714,8 @@ listeners. See <a href="../../services/public-services/">Public Services</a> for
 <h2 id="create-and-protect-an-api-token">Create and protect an API token<a class="headerlink" href="#create-and-protect-an-api-token" title="Permanent link">&para;</a></h2>
 <ol>
 <li>Sign in to the management UI and open <strong>Authentication &gt; API Tokens</strong>.</li>
-<li>Create a token with a clear purpose, the shortest practical lifetime, and only the scopes required by the client.</li>
+<li>Create a token with a clear purpose and only the scopes required by the client. The final review shows the current
+   configured maximum lifetime and the absolute expiration that will be submitted.</li>
 <li>Copy the token when it is shown. Atlaso displays the secret once and cannot recover it later.</li>
 <li>In <code>/api/docs</code>, select <strong>Authorize</strong>, paste the token value, and authorize the bearer scheme.</li>
 <li>Revoke the token when its client is retired or its value may have been exposed. Create a replacement instead of
@@ -3723,6 +3724,11 @@ listeners. See <a href="../../services/public-services/">Public Services</a> for
 <p>Treat bearer tokens like passwords. Do not put them in command history, source files, screenshots, issue reports,
 authenticated URLs, or shared logs. Prefer a secret manager for automation and an environment variable for short-lived
 interactive work.</p>
+<p>The maximum lifetime is configured under <strong>Appliance Settings &gt; Authentication lifetimes</strong>. It defaults to 90 days and
+accepts 1 through 365 days. <code>POST /api/v1/auth/login</code> and <code>POST /api/v1/api-tokens</code> use the current policy at the instant
+of issuance: omit <code>expires_at</code> to use the maximum, or provide a timezone-aware timestamp that is in the future and no
+later than that boundary. Naive timestamps, past timestamps, and values beyond the maximum return <code>422</code>. Changing the
+policy affects only later issuance; Atlaso never extends, shortens, or revives an existing token.</p>
 <h2 id="call-the-api-safely">Call the API safely<a class="headerlink" href="#call-the-api-safely" title="Permanent link">&para;</a></h2>
 <p>The examples below use the RFC 1918 lab address <code>192.168.50.10</code> and read the token from the environment. Replace the
 address with the appliance management address; do not replace the token variable with a literal secret.</p>

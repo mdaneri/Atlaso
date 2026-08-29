@@ -6,7 +6,7 @@
       <meta charset="utf-8">
       <meta name="viewport" content="width=device-width,initial-scale=1">
       
-        <meta name="description" content="Configure Atlaso identity, resolver, management HTTPS, and root SSH desired state.">
+        <meta name="description" content="Configure Atlaso identity, authentication lifetimes, resolver, management HTTPS, and root SSH state.">
       
       
         <meta name="author" content="Atlaso contributors">
@@ -1090,6 +1090,17 @@
     <span class="md-ellipsis">
       <span class="md-typeset">
         Interface overview
+      </span>
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#configure-authentication-lifetimes" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Configure authentication lifetimes
       </span>
     </span>
   </a>
@@ -3433,6 +3444,17 @@
 </li>
       
         <li class="md-nav__item">
+  <a href="#configure-authentication-lifetimes" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Configure authentication lifetimes
+      </span>
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
   <a href="#before-you-begin" class="md-nav__link">
     <span class="md-ellipsis">
       <span class="md-typeset">
@@ -3625,12 +3647,39 @@ servers, management UI HTTPS preference, and root SSH login preference.</p>
 <p><em>Figure: Settings in the verified clean-appliance desktop state.</em></p>
 <!-- END GENERATED INTERFACE OVERVIEW -->
 
+<h2 id="configure-authentication-lifetimes">Configure authentication lifetimes<a class="headerlink" href="#configure-authentication-lifetimes" title="Permanent link">&para;</a></h2>
+<p>The <strong>Authentication lifetimes</strong> section saves immediately and does not create a pending Appliance Apply unit:</p>
+<ul>
+<li><strong>Browser session inactivity timeout</strong> defaults to 30 minutes and accepts 5 through 1,440 minutes. Atlaso evaluates
+  the current value before every protected browser handler, so lowering it can expire an existing inactive session on
+  its next request. Raising it does not resurrect a session that already expired.</li>
+<li><strong>Maximum API token lifetime</strong> defaults to 90 days and accepts 1 through 365 days. It applies only when a new token is
+  issued. An omitted expiry uses the configured maximum; an explicit timezone-aware future expiry may be shorter.
+  Existing token expiry timestamps remain unchanged.</li>
+</ul>
+<p>Atlaso stores browser activity server-side. Full-page navigation, submitted forms, deliberate browser actions, and the
+CSRF-protected activity heartbeat extend the timeout. Static assets, background status polling, and passive page
+refresh requests do not. At the exact inactivity boundary Atlaso invalidates the session before the protected handler,
+clears browser identity and CSRF state, records a sanitized audit event, and returns <code>401</code> to fetch/API consumers. Human
+navigation returns to the appropriate management, public, or protocol login surface with <strong>Session expired due to
+inactivity</strong>.</p>
+<p>The OIDC provider applies the same timeout to its separate <code>/identity</code> browser session. Its signed cookie carries only
+an opaque session identifier; Atlaso persists the authoritative activity and terminal-expiry state. A successful
+credential submission starts the session, while silent <code>prompt=none</code> authorization does not refresh it. Once the
+deadline is reached, silent authorization returns <code>login_required</code>, and raising the policy cannot resurrect that
+expired session; a new interactive sign-in is required.</p>
+<p>Settings archives preserve both policy values but exclude active browser-session records. Factory reset restores the
+30-minute and 90-day defaults and invalidates all earlier sessions and tokens.
+During the first upgrade that introduces the persisted token policy, Atlaso migrates a valid legacy
+<code>ATLASO_API_TOKEN_TTL_DAYS</code> value instead of silently replacing it with the 90-day default. Subsequent startups retain
+the database policy, so removing or changing that legacy environment variable does not overwrite operator state.</p>
 <h2 id="before-you-begin">Before you begin<a class="headerlink" href="#before-you-begin" title="Permanent link">&para;</a></h2>
 <p>Confirm the intended management hostname and DNS records. Keep an alternate console session available before changing
 management connectivity or SSH policy. Routine field changes autosave, but they do not change the host immediately.</p>
 <h2 id="edit-and-validate">Edit and validate<a class="headerlink" href="#edit-and-validate" title="Permanent link">&para;</a></h2>
 <ol>
-<li>Change only the fields required for the maintenance window.</li>
+<li>Change only the desired-state fields required for the maintenance window. Authentication lifetime fields use their
+   separate immediate autosave boundary described above.</li>
 <li>Watch the compact autosave status.</li>
 <li>Resolve errors or warnings in the Validation card.</li>
 <li>Open the rendered preview and confirm the hostname, resolver, HTTPS, and SSH effects.</li>
