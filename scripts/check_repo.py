@@ -549,6 +549,16 @@ DEFAULT_MERGE_AUTHORITY_PROMPT_MARKERS = (
     "complete the guarded merge",
     "without waiting for a second merge instruction",
 )
+DEFAULT_MERGE_AUTHORITY_SOURCE_EXCLUSIONS = re.compile(
+    r"(?:review(?:-only|[^.!?]{0,60}\bonly\b)|report findings only|"
+    r"diagnos(?:e|tic)[^.!?]{0,60}\bwithout\b[^.!?]{0,30}\b(?:implement|chang)|"
+    r"draft (?:pull request|pr)|external fork|fork pull request|from (?:an? )?fork|"
+    r"private (?:vulnerability|advisory|remediation))"
+)
+DEFAULT_MERGE_AUTHORITY_SOURCE_MARKERS = re.compile(
+    r"\b(?:implement|resolve|solve|deliver)\b|guarded[- ]squash merge|"
+    r"before merging|task-owned pull request|ordinary same-repository"
+)
 
 ORDERED_TERMINAL_CLEANUP_MARKERS = {
     path: (
@@ -734,6 +744,21 @@ def has_affirmative_default_merge_authority(text: str) -> bool:
     return False
 
 
+def source_has_default_merge_authority(instructions: tuple[str, ...]) -> bool:
+    """Derive whether current source instructions describe eligible implementation.
+
+    Args:
+        instructions: Ordered user or maintainer instructions from one fixture.
+    """
+    normalized = " ".join(" ".join(instructions).casefold().split())
+    if DEFAULT_MERGE_AUTHORITY_SOURCE_EXCLUSIONS.search(normalized) is not None:
+        return False
+    return (
+        DEFAULT_MERGE_AUTHORITY_SOURCE_MARKERS.search(normalized) is not None
+        or bool(explicit_merge_holds(normalized))
+    )
+
+
 def check_merge_authority_transfer_fixtures(root: Path) -> list[Finding]:
     """Verify delegation and heartbeat fixtures preserve merge authority.
 
@@ -795,6 +820,7 @@ def check_merge_authority_transfer_fixtures(root: Path) -> list[Finding]:
         seen_names.add(name)
         expected = tuple(dict.fromkeys(item.casefold() for item in expected_holds))
         source_holds: list[str] = []
+        source_instruction_texts: list[str] = []
         instruction_error = False
         for instruction_index, instruction in enumerate(instructions, start=1):
             if not isinstance(instruction, dict):
@@ -826,6 +852,7 @@ def check_merge_authority_transfer_fixtures(root: Path) -> list[Finding]:
                 )
                 instruction_error = True
                 continue
+            source_instruction_texts.append(instruction_text)
             additions = tuple(dict.fromkeys(item.casefold() for item in add_holds))
             removals = tuple(dict.fromkeys(item.casefold() for item in remove_holds))
             directions = merge_hold_directions(instruction_text)
@@ -859,6 +886,18 @@ def check_merge_authority_transfer_fixtures(root: Path) -> list[Finding]:
                 hold for hold in additions if hold not in source_holds
             )
         if instruction_error:
+            continue
+        derived_default_merge_authority = source_has_default_merge_authority(
+            tuple(source_instruction_texts)
+        )
+        if default_merge_authority != derived_default_merge_authority:
+            findings.append(
+                Finding(
+                    path,
+                    f"merge authority fixture {name} declared default authority "
+                    "does not match its source instructions",
+                )
+            )
             continue
         source_holds_tuple = tuple(source_holds)
         generated_directions = merge_hold_directions(generated)

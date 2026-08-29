@@ -1369,6 +1369,56 @@ def test_merge_authority_transfer_rejects_default_authority_for_ineligible_task(
     )
 
 
+def test_merge_authority_transfer_validates_declared_source_eligibility(
+    tmp_path: Path,
+) -> None:
+    """Verify fixture eligibility agrees with current source instructions.
+
+    Args:
+        tmp_path: Temporary directory provided by pytest for isolated filesystem state.
+    """
+    cases = (
+        (
+            "review-only declared eligible",
+            True,
+            "Review the pull request and report findings only.",
+        ),
+        (
+            "implementation declared ineligible",
+            False,
+            "Implement the issue completely and deliver its pull request.",
+        ),
+    )
+
+    for name, declared_authority, instruction in cases:
+        path = tmp_path / MERGE_AUTHORITY_TRANSFER_FIXTURE_PATH
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(
+            json.dumps(
+                {
+                    "cases": [
+                        {
+                            "name": name,
+                            "default_merge_authority": declared_authority,
+                            "instructions": [{"text": instruction}],
+                            "generated": "Continue through guarded squash merge.",
+                            "expected_holds": [],
+                        }
+                    ]
+                }
+            ),
+            encoding="utf-8",
+        )
+
+        findings = check_merge_authority_transfer_fixtures(tmp_path)
+
+        assert len(findings) == 1
+        assert findings[0].message == (
+            f"merge authority fixture {name} declared default authority does not "
+            "match its source instructions"
+        )
+
+
 def test_agent_policy_gate_rejects_missing_default_merge_authority_contract(
     tmp_path: Path,
 ) -> None:
