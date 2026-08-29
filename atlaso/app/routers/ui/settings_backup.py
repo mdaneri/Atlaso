@@ -18,6 +18,9 @@ from atlaso.app.audit import record_audit
 from atlaso.app.database import get_db
 from atlaso.app.models import PhysicalInterface, VlanInterface, utcnow
 from atlaso.app.security import Identity, require_session_identity
+from atlaso.app.services.authentication_lifetimes import (
+    authentication_lifetime_validation_error,
+)
 from atlaso.app.ui_routes import MANAGEMENT_UI_ROOT
 
 Endpoint = Callable[..., Any]
@@ -675,6 +678,67 @@ def build_router(dependencies: SettingsBackupUiDependencies) -> SettingsBackupUi
             )
         return RedirectResponse("/settings", status_code=303)
 
+    @router.post("/settings/authentication-lifetimes", response_model=None)
+    def update_authentication_lifetimes_from_ui(
+        request: Request,
+        browser_session_idle_timeout_minutes: int = Form(...),
+        api_token_max_lifetime_days: int = Form(...),
+        csrf: str = Form(...),
+        identity: Identity = Depends(require_session_identity),
+        db: Session = Depends(get_db),
+    ) -> RedirectResponse | JSONResponse:
+        """Persist immediate browser-session and API-token lifetime policies.
+
+        Args:
+            request: Incoming HTTP request.
+            browser_session_idle_timeout_minutes: Maximum browser inactivity in minutes.
+            api_token_max_lifetime_days: Maximum lifetime for newly issued API tokens in days.
+            csrf: Validated CSRF token authorizing the request.
+            identity: Authenticated identity authorizing the request.
+            db: Active database session.
+        """
+        verify_csrf(request, csrf)
+        require_admin_identity(identity)
+        validation_error = authentication_lifetime_validation_error(
+            browser_idle_minutes=browser_session_idle_timeout_minutes,
+            api_token_days=api_token_max_lifetime_days,
+        )
+        if validation_error:
+            return JSONResponse(
+                {"detail": validation_error},
+                status_code=422,
+            )
+        settings = get_appliance_settings_row(db)
+        settings.browser_session_idle_timeout_minutes = browser_session_idle_timeout_minutes
+        settings.api_token_max_lifetime_days = api_token_max_lifetime_days
+        settings.updated_at = utcnow()
+        db.add(settings)
+        db.commit()
+        record_audit(
+            db,
+            actor=identity.username,
+            action="update_authentication_lifetimes",
+            resource_type="settings",
+            resource_id=str(settings.id),
+            detail=(
+                f"browser_idle_minutes={browser_session_idle_timeout_minutes}; "
+                f"api_token_max_days={api_token_max_lifetime_days}"
+            ),
+        )
+        if request.headers.get("X-Atlaso-Autosave") == "1":
+            return JSONResponse(
+                {
+                    "status": "saved",
+                    "updated_at": settings.updated_at.isoformat(),
+                    "browser_session_idle_timeout_minutes": settings.browser_session_idle_timeout_minutes,
+                    "api_token_max_lifetime_days": settings.api_token_max_lifetime_days,
+                }
+            )
+        return RedirectResponse(
+            f"{MANAGEMENT_UI_ROOT}/settings#authentication-lifetimes",
+            status_code=303,
+        )
+
     @router.post("/settings/vmware-ceip", response_model=None)
     def update_vmware_ceip_from_ui(
         request: Request,
@@ -849,6 +913,7 @@ def build_router(dependencies: SettingsBackupUiDependencies) -> SettingsBackupUi
             factory_reset_backup_restore,
             settings_page,
             update_settings_from_ui,
+            update_authentication_lifetimes_from_ui,
             update_vmware_ceip_from_ui,
             update_logging_settings_from_ui,
         )

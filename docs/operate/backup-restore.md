@@ -31,6 +31,10 @@ This verified appliance view provides visual orientation before you begin.
    without it.
 
 Backups can contain operational configuration and encrypted sensitive material. Do not attach them to public issues.
+The settings archive includes the browser inactivity and maximum API-token lifetime policies, but it does not include
+active browser-session records or API tokens. Restoring a shorter browser timeout affects the next request from an
+existing session; it does not recreate a session that has already expired. A complete factory reset restores the
+30-minute browser default and 90-day token maximum while invalidating all earlier sessions and tokens.
 VCF/ESX password vault entries are not included in settings archives. Restore clears vaults and the unused legacy
 Kickstart-binding compatibility table; recreate or reimport vault entries before re-enabling dependent scripts or PXE
 workflows. Non-secret ESXi PXE custom-variable catalog definitions and defaults are included so restored Kickstarts

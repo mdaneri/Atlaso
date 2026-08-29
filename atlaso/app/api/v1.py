@@ -534,6 +534,8 @@ def appliance_settings_response(db: Session, app_settings: Settings) -> Settings
         web_terminal_enabled=desired.web_terminal_enabled,
         web_terminal_interfaces=normalized_web_terminal_interfaces(desired, management),
         root_ssh_enabled=desired.root_ssh_enabled,
+        browser_session_idle_timeout_minutes=desired.browser_session_idle_timeout_minutes,
+        api_token_max_lifetime_days=desired.api_token_max_lifetime_days,
         external_dns_servers=appliance_settings_to_dict(desired)["external_dns_servers"],
         appliance_settings_config_path=desired.config_path,
         local_dns_enabled=local_dns_enabled,

@@ -1,5 +1,6 @@
 """Test web terminal behavior."""
 
+import asyncio
 import json
 from datetime import datetime, timedelta, timezone
 from types import SimpleNamespace
@@ -279,12 +280,69 @@ def test_terminal_ticket_is_one_use_and_bound_to_session_identity():
         username="admin",
         csrf_token="csrf",
         browser_session_id="browser_session_1234",
+        authentication_browser_session_id="authentication_session_1234",
         takeover=False,
         expires_at=datetime.now(timezone.utc) + timedelta(seconds=30),
     )
 
     assert web_terminal._consume_ticket(raw, 7, "admin", "csrf") is not None
     assert web_terminal._consume_ticket(raw, 7, "admin", "csrf") is None
+
+
+def test_terminal_reader_closes_when_server_browser_session_expires(monkeypatch):
+    """A silent terminal revalidates and closes after browser authentication expires.
+
+    Args:
+        monkeypatch: Pytest fixture used to replace session validation for the test.
+    """
+    class Channel:
+        """Provide the bounded channel contract consumed by the reader."""
+
+        closed = False
+
+        def settimeout(self, _timeout):
+            """Accept the reader timeout.
+
+            Args:
+                _timeout: Timeout requested by the reader.
+            """
+
+        def close(self):
+            """Record terminal channel closure."""
+            self.closed = True
+
+    class Transport:
+        """Provide the transport closure contract consumed by the reader."""
+
+        closed = False
+
+        def close(self):
+            """Record terminal transport closure."""
+            self.closed = True
+
+    channel = Channel()
+    transport = Transport()
+    session = web_terminal.ActiveTerminalSession(
+        user_id=1,
+        username="admin",
+        display_username="admin",
+        target_key="appliance",
+        browser_session_id="terminal_browser_1234",
+        authentication_browser_session_id="authentication_session_1234",
+        session_id="terminal_session_1234",
+        transport=transport,
+        channel=channel,
+        started=0,
+        last_input=0,
+    )
+    monkeypatch.setattr(web_terminal, "_browser_session_is_active", lambda *_args: False)
+    monkeypatch.setattr(web_terminal, "record_audit", lambda *_args, **_kwargs: None)
+
+    asyncio.run(web_terminal._terminal_session_reader(session))
+
+    assert session.close_reason == "browser session expired"
+    assert channel.closed is True
+    assert transport.closed is True
 
 
 def test_terminal_replay_removes_historic_cursor_position_queries():

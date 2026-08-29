@@ -97,6 +97,9 @@ from atlaso.app.services.appliance_settings import (
     validate_appliance_settings,
     web_terminal_interface_options,
 )
+from atlaso.app.services.authentication_lifetimes import (
+    authentication_lifetime_validation_error,
+)
 from atlaso.app.services.automation import (
     validate_schedule_values,
     validate_script_revision_values,
@@ -2116,6 +2119,15 @@ def _validate_archive_relationships(data: dict[str, list[dict[str, Any]]]) -> No
     appliance_settings = ApplianceSettings(
         **_model_kwargs_with_scalar_defaults(ApplianceSettings, appliance_row)
     )
+    authentication_lifetime_error = authentication_lifetime_validation_error(
+        browser_idle_minutes=appliance_settings.browser_session_idle_timeout_minutes,
+        api_token_days=appliance_settings.api_token_max_lifetime_days,
+    )
+    if authentication_lifetime_error:
+        raise ValueError(
+            "The settings archive Authentication lifetimes are invalid: "
+            f"{authentication_lifetime_error}"
+        )
     management_interface = management_interface_context(archived_interfaces)
     options = web_terminal_interface_options(archived_interfaces, archived_vlans)
     if appliance_row.get("web_terminal_enabled", False):

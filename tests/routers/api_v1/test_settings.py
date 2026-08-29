@@ -47,6 +47,39 @@ def test_settings_api_updates_root_ssh_desired_state(client):
     assert '"root_ssh_enabled": true' in payload["config_preview"]
 
 
+def test_settings_api_preserves_omitted_authentication_lifetimes(client):
+    """PATCH fields omitted by the caller retain their persisted policy values.
+
+    Args:
+        client: HTTP test client used to exercise the Atlaso application.
+    """
+    from sqlalchemy import select
+
+    from atlaso.app.database import SessionLocal
+    from atlaso.app.models import ApplianceSettings
+
+    with SessionLocal() as db:
+        settings = db.execute(select(ApplianceSettings)).scalar_one()
+        settings.browser_session_idle_timeout_minutes = 45
+        settings.api_token_max_lifetime_days = 120
+        db.commit()
+
+    token, _metadata = create_token(client, scopes=["admin:all", "read:dashboard"])
+    response = client.patch(
+        "/api/v1/settings",
+        headers={"Authorization": f"Bearer {token}"},
+        json={"root_ssh_enabled": True},
+    )
+
+    assert response.status_code == 200, response.text
+    assert response.json()["browser_session_idle_timeout_minutes"] == 45
+    assert response.json()["api_token_max_lifetime_days"] == 120
+    with SessionLocal() as db:
+        settings = db.execute(select(ApplianceSettings)).scalar_one()
+        assert settings.browser_session_idle_timeout_minutes == 45
+        assert settings.api_token_max_lifetime_days == 120
+
+
 def test_settings_api_reconciles_factory_service_identities(client, monkeypatch):
     """Keep API-driven appliance-domain changes coherent with factory service state.
 

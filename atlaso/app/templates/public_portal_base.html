@@ -3,6 +3,7 @@
   <head>
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
+    {% if identity %}<meta name="atlaso-csrf-token" content="{{ csrf_token }}">{% endif %}
     <title>{% block title %}Atlaso - Public Services{% endblock %}</title>
     <meta name="mobile-web-app-capable" content="yes">
     <link rel="apple-touch-icon" href="/static/brand/atlaso-app-icon-light-180.png">
@@ -80,7 +81,7 @@
     <script src="/static/vendor/tabulator/tabulator.min.js"></script>
     <script src="/static/ui-patterns.js?v=atlaso-ui-foundation-20260726-10"></script>
     <script src="/static/ui-routes.js?v=issue-287-1"></script>
-    <script src="/static/app.js?v=issues-515-519-12-513-328-1-595-6-605-1"></script>
+    <script src="/static/app.js?v=issues-515-519-12-513-328-1-595-6-605-1-606-607-1"></script>
     {% block public_after_main %}{% endblock %}
   </body>
 </html>

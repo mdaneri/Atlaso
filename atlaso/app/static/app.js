@@ -9435,6 +9435,7 @@ function initializeApiTokensTable() {
   const element = document.getElementById("api-tokens-table");
   if (!(element instanceof HTMLElement)) return;
   const csrf = element.dataset.csrf || "";
+  const maximumLifetimeDays = Number.parseInt(element.dataset.maxLifetimeDays || "90", 10);
   const revokeToken = async (row) => {
     const data = row.getData();
     const confirmed = await requestConfirmation({
@@ -9503,11 +9504,14 @@ function initializeApiTokensTable() {
       const scopes = [...form.querySelectorAll('input[name="scope_choices"]:checked')].map((input) => input.value);
       body.set("scopes", scopes.join(" "));
       body.delete("scope_choices");
+      body.delete("expires_at");
     },
     reviewItems: [
       { label: "Token", field: "name" },
       { label: "Purpose", field: "description" },
       { label: "Scopes", value: (form) => [...form.querySelectorAll('input[name="scope_choices"]:checked')].map((input) => input.value).join(" ") },
+      { label: "Maximum lifetime", value: () => `${maximumLifetimeDays} days` },
+      { label: "Expires", value: () => `${maximumLifetimeDays} days after server issuance` },
       { label: "Enforcement", value: () => "Immediate application state" },
     ],
     extraActions: [
@@ -22975,6 +22979,41 @@ function initializeNetworkBootPage() {
   });
 }
 
+function initializeBrowserSessionActivity() {
+  const csrf = document.querySelector('meta[name="atlaso-csrf-token"]')?.content || "";
+  if (!csrf) return;
+  const routes = window.AtlasoRoutes || {
+    managementRoot: "/ui/management",
+    publicRoot: "/ui/public",
+  };
+  const root = window.location.pathname.startsWith(routes.publicRoot)
+    ? routes.publicRoot
+    : routes.managementRoot;
+  let lastSentAt = 0;
+  let inFlight = false;
+  const refresh = async () => {
+    const now = Date.now();
+    if (document.hidden || inFlight || now - lastSentAt < 60_000) return;
+    lastSentAt = now;
+    inFlight = true;
+    try {
+      const response = await fetch(`${root}/session/activity`, {
+        method: "POST",
+        headers: { "X-CSRF-Token": csrf, Accept: "application/json" },
+        credentials: "same-origin",
+      });
+      if (response.status === 401) window.location.assign(window.location.href);
+    } catch (_error) {
+      // The next deliberate event or protected navigation retries without extending the server timeout.
+    } finally {
+      inFlight = false;
+    }
+  };
+  document.addEventListener("pointerdown", refresh, { passive: true });
+  document.addEventListener("keydown", refresh);
+}
+
+document.addEventListener("DOMContentLoaded", initializeBrowserSessionActivity);
 document.addEventListener("DOMContentLoaded", initializeDashboard);
 document.addEventListener("DOMContentLoaded", () => initializePrimaryNavigation());
 document.addEventListener("DOMContentLoaded", initializeNetworkBootWorkspace);

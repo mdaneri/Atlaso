@@ -34,12 +34,13 @@ from atlaso.app.models import (
 )
 from atlaso.app.secrets import decrypt_secret
 from atlaso.app.security import (
-    SESSION_APPLIANCE_INSTANCE_SESSION_KEY,
     Identity,
     authenticate_user,
-    ensure_appliance_instance_id,
+    consume_browser_session_expired_notice,
+    end_browser_session,
     get_session_identity,
     require_session_identity,
+    start_browser_session,
 )
 from atlaso.app.services.ca import (
     ca_certificate_can_delete,
@@ -296,10 +297,7 @@ def build_routers(
             return failure_response(
                 request, error="Invalid username or password", status_code=401
             )
-        request.session["user_id"] = user.id
-        request.session[SESSION_APPLIANCE_INSTANCE_SESSION_KEY] = (
-            ensure_appliance_instance_id(db)
-        )
+        start_browser_session(request, db, user)
         record_audit(
             db,
             actor=user.username,
@@ -329,7 +327,11 @@ def build_routers(
                 status_code=404,
                 detail="CA public service is not available on this interface",
             )
-        return ca_public_login_response(request, db=db)
+        return ca_public_login_response(
+            request,
+            error=consume_browser_session_expired_notice(request),
+            db=db,
+        )
 
     @public_router.post("/ca/login", response_model=None)
     def ca_public_login(
@@ -525,7 +527,11 @@ def build_routers(
                 detail="CA public service is not available on this interface",
             )
         if identity is None:
-            return ca_request_portal_login_response(request, db=db)
+            return ca_request_portal_login_response(
+                request,
+                error=consume_browser_session_expired_notice(request),
+                db=db,
+            )
         require_certificate_workflow_identity(identity)
         return render(
             request,
@@ -585,6 +591,7 @@ def build_routers(
         request: Request,
         csrf: str = Form(...),
         next: str = Form(PUBLIC_UI_ROOT + "/ca/requests"),
+        db: Session = Depends(get_db),
     ) -> RedirectResponse:
         """Handle the ca request portal logout endpoint.
 
@@ -592,12 +599,13 @@ def build_routers(
             request: Incoming HTTP request.
             csrf: Validated CSRF token authorizing the request.
             next: Relative destination requested after authentication.
+            db: Active database session.
 
         Returns:
             The endpoint response.
         """
         verify_csrf(request, csrf)
-        request.session.clear()
+        end_browser_session(request, db)
         return RedirectResponse(
             safe_public_return_path(next, default="/ca/requests"), status_code=303
         )
