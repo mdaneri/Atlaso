@@ -3637,6 +3637,17 @@
 <p>Atlaso builds and validates one appliance template with VMware Workstation. A release publishes that template as the
 canonical OVA for VMware, Proxmox VE, and KVM, plus one Hyper-V ZIP converted from the same OVA payload. The import
 helpers normalize target-specific VM configuration without changing the source OVA.</p>
+<p>Virtualization has its own immutable Release namespace. A maintainer's existing Windows workstation creates and smokes
+<code>virtualization-vX.Y.Z-rc.N</code>; a protected GitHub-hosted job signs and publishes it. Manual stable promotion runs that
+exact prerelease OVA on Proxmox and KVM before publishing the unchanged OVA and Hyper-V bytes as
+<code>virtualization-vX.Y.Z</code>. The software/update <code>vX.Y.Z</code> Release is the required source of the embedded wheel and CPython
+3.14 wheelhouse, but never contains virtualization assets.</p>
+<p>The maintainer workstation is a trusted release producer. An optional explicitly approved ephemeral Windows runner is
+trusted for the same single release while it is online. Neither receives the signing key. The protected hosted
+finalizer performs the independent checks below as defense in depth and retains exclusive signing and publication
+authority, but it is not a reproducible Photon image builder and does not claim to prove an entire root filesystem safe
+against a compromised producer. A producer compromise is therefore a release-security incident that requires stopping
+publication, rotating affected credentials, and rebuilding from a known-good trusted workstation.</p>
 <p>The shared machine contract is UEFI with Secure Boot disabled, four virtual CPUs, 4096 MiB RAM, two NICs, one SCSI
 controller, and four ordered disks:</p>
 <ol>
@@ -3650,6 +3661,37 @@ controller, and four ordered disks:</p>
 <code>uefi.secureBoot.enabled</code> spelling for compatible artifacts, but every present supported declaration must explicitly
 evaluate to false. A missing, enabled, malformed, or conflicting declaration blocks export and import. Export validates
 the normalized descriptor's complete machine contract before writing provenance that records <code>secure_boot: false</code>.</p>
+<p>Before either virtualization index is signed, the protected GitHub-hosted finalizer opens the OVA-validated
+system-content VMDK read-only with libguestfs. It resolves the active CPython 3.14 environment, requires every hashed
+member installed from the Atlaso wheel and complete signed wheelhouse to match, and rejects unexpected active files
+except bounded inert pip metadata. Both image provisioning and release deployment disable bytecode compilation and
+remove retained package bytecode; the protected finalizer rejects every active <code>.pyc</code> file rather than trusting
+producer-generated compilation. Every shipped systemd unit that executes the active virtualenv also sets
+<code>PYTHONDONTWRITEBYTECODE=1</code>, including the root console and first-boot customization services, so post-deployment
+restarts cannot recreate bytecode before signing. The image retains the exact Photon RPM closure that owns the
+interpreter and
+standard library. The finalizer authenticates every retained RPM against the Photon package keys pinned in the admitted
+Atlaso commit, requires its exact name, epoch, version, release, architecture, and SHA-256 digest to remain present in
+the current official Photon 5.0 release or updates repository metadata, extracts those signed payloads on the hosted
+runner, and requires <code>/usr/bin/python3.14</code> plus the complete
+<code>/usr/lib/python3.14</code> tree in the guest to match byte for byte. The pinned keys originate from Photon OS's
+<code>photon-repos</code> package sources; updating them requires an explicit reviewed source change. It also requires the active
+virtualenv Python link to resolve only to that authenticated CPython 3.14 interpreter and every Atlaso console script to
+match its signed-wheel entry point and canonical pip launcher. The finalizer opens both payload disks and compares every
+Atlaso-provisioned privileged helper, service unit, drop-in,
+console setting, vault profile, complete PowerShell global profile, and boot-branding asset with its exact bytes from the
+admitted software-release commit. The producer replaces that global profile with the canonical Atlaso import instead
+of preserving workstation-controlled commands. Before comparing bytes, the finalizer also requires each privileged
+file and trust key to be a root-owned regular file with its exact declared mode; every ancestor must be a root-owned
+directory without group or other write access.
+It also requires the installed update-trust directory to contain exactly that commit's public PEM set, rejecting both
+altered files and injected trust keys. Producer-authored provenance and smoke evidence cannot substitute for these
+independent payload checks. The
+same boundary uses <code>qemu-img compare</code> to require both Hyper-V payload VHDX disks to
+expose the same guest-visible bytes as the admitted OVA VMDKs and both 500 GiB Hyper-V data disks to match an
+independent all-zero sparse reference.
+The protected index signer also requires the exact versioned OVA name and the canonical OVF, manifest, provenance, and
+two payload-VMDK names; suffix-compatible aliases are not publishable assets.</p>
 <p>The OVA contains files for the two payload disks. Its two 500 GiB data disks are fileless declarations. Import helpers
 retain fileless disks when the platform creates them, create only missing data disks, and reject reordered or
 conflicting disks.</p>
@@ -3658,7 +3700,7 @@ conflicting disks.</p>
 release key ID is <code>atlaso-release-2026-01</code>; its SHA-256 fingerprint is
 <code>b0bb5614342c4f432a01c53fc4c9aae54c1eeffb12806539a92babbcda74b58e</code>. This example verifies the detached Ed25519
 signature, expected version, and every indexed asset before import:</p>
-<div class="language-bash highlight"><pre><span></span><code><span id="__span-0-1"><a id="__codelineno-0-1" name="__codelineno-0-1" href="#__codelineno-0-1"></a><span class="nv">TAG</span><span class="o">=</span>vX.Y.Z
+<div class="language-bash highlight"><pre><span></span><code><span id="__span-0-1"><a id="__codelineno-0-1" name="__codelineno-0-1" href="#__codelineno-0-1"></a><span class="nv">TAG</span><span class="o">=</span>virtualization-vX.Y.Z
 </span><span id="__span-0-2"><a id="__codelineno-0-2" name="__codelineno-0-2" href="#__codelineno-0-2"></a><span class="nv">ASSET_ROOT</span><span class="o">=</span><span class="s2">&quot;atlaso-</span><span class="nv">$TAG</span><span class="s2">&quot;</span>
 </span><span id="__span-0-3"><a id="__codelineno-0-3" name="__codelineno-0-3" href="#__codelineno-0-3"></a>mkdir<span class="w"> </span>--<span class="w"> </span><span class="s2">&quot;</span><span class="nv">$ASSET_ROOT</span><span class="s2">&quot;</span>
 </span><span id="__span-0-4"><a id="__codelineno-0-4" name="__codelineno-0-4" href="#__codelineno-0-4"></a>gh<span class="w"> </span>release<span class="w"> </span>download<span class="w"> </span><span class="s2">&quot;</span><span class="nv">$TAG</span><span class="s2">&quot;</span><span class="w"> </span>--repo<span class="w"> </span>mdaneri/Atlaso<span class="w"> </span>--dir<span class="w"> </span><span class="s2">&quot;</span><span class="nv">$ASSET_ROOT</span><span class="s2">&quot;</span>
@@ -3667,32 +3709,36 @@ signature, expected version, and every indexed asset before import:</p>
 </span><span id="__span-0-7"><a id="__codelineno-0-7" name="__codelineno-0-7" href="#__codelineno-0-7"></a><span class="nb">printf</span><span class="w"> </span><span class="s1">&#39;%s  %s\n&#39;</span><span class="w"> </span><span class="se">\</span>
 </span><span id="__span-0-8"><a id="__codelineno-0-8" name="__codelineno-0-8" href="#__codelineno-0-8"></a><span class="w">  </span><span class="s1">&#39;b0bb5614342c4f432a01c53fc4c9aae54c1eeffb12806539a92babbcda74b58e&#39;</span><span class="w"> </span><span class="se">\</span>
 </span><span id="__span-0-9"><a id="__codelineno-0-9" name="__codelineno-0-9" href="#__codelineno-0-9"></a><span class="w">  </span><span class="s2">&quot;</span><span class="nv">$ASSET_ROOT</span><span class="s2">/atlaso-release-2026-01.pem&quot;</span><span class="w"> </span><span class="p">|</span><span class="w"> </span>sha256sum<span class="w"> </span>--check<span class="w"> </span>--strict
-</span><span id="__span-0-10"><a id="__codelineno-0-10" name="__codelineno-0-10" href="#__codelineno-0-10"></a>jq<span class="w"> </span>-e<span class="w"> </span>--arg<span class="w"> </span>version<span class="w"> </span><span class="s2">&quot;</span><span class="si">${</span><span class="nv">TAG</span><span class="p">#v</span><span class="si">}</span><span class="s2">&quot;</span><span class="w"> </span><span class="s1">&#39;</span>
-</span><span id="__span-0-11"><a id="__codelineno-0-11" name="__codelineno-0-11" href="#__codelineno-0-11"></a><span class="s1">  .schema_version == 1 and .kind == &quot;atlaso-virtualization-artifacts&quot; and</span>
-</span><span id="__span-0-12"><a id="__codelineno-0-12" name="__codelineno-0-12" href="#__codelineno-0-12"></a><span class="s1">  .version == $version and .signing_key_id == &quot;atlaso-release-2026-01&quot; and</span>
-</span><span id="__span-0-13"><a id="__codelineno-0-13" name="__codelineno-0-13" href="#__codelineno-0-13"></a><span class="s1">  (.source_commit | test(&quot;^[0-9a-f]{40}$&quot;)) and</span>
-</span><span id="__span-0-14"><a id="__codelineno-0-14" name="__codelineno-0-14" href="#__codelineno-0-14"></a><span class="s1">  (.assets | type == &quot;array&quot; and length &gt; 0 and</span>
-</span><span id="__span-0-15"><a id="__codelineno-0-15" name="__codelineno-0-15" href="#__codelineno-0-15"></a><span class="s1">    all(.[]; (.name | test(&quot;^[A-Za-z0-9][A-Za-z0-9._-]*$&quot;)) and</span>
-</span><span id="__span-0-16"><a id="__codelineno-0-16" name="__codelineno-0-16" href="#__codelineno-0-16"></a><span class="s1">      (.size | type == &quot;number&quot;) and (.sha256 | test(&quot;^[0-9a-f]{64}$&quot;))) and</span>
-</span><span id="__span-0-17"><a id="__codelineno-0-17" name="__codelineno-0-17" href="#__codelineno-0-17"></a><span class="s1">    ([.[].name] | length == (unique | length)))</span>
-</span><span id="__span-0-18"><a id="__codelineno-0-18" name="__codelineno-0-18" href="#__codelineno-0-18"></a><span class="s1">&#39;</span><span class="w"> </span><span class="s2">&quot;</span><span class="nv">$ASSET_ROOT</span><span class="s2">/virtualization-artifact-index.json&quot;</span><span class="w"> </span>&gt;/dev/null
-</span><span id="__span-0-19"><a id="__codelineno-0-19" name="__codelineno-0-19" href="#__codelineno-0-19"></a>jq<span class="w"> </span>-e<span class="w"> </span><span class="s1">&#39;</span>
-</span><span id="__span-0-20"><a id="__codelineno-0-20" name="__codelineno-0-20" href="#__codelineno-0-20"></a><span class="s1">  .schema_version == 1 and .algorithm == &quot;ed25519&quot; and</span>
-</span><span id="__span-0-21"><a id="__codelineno-0-21" name="__codelineno-0-21" href="#__codelineno-0-21"></a><span class="s1">  .key_id == &quot;atlaso-release-2026-01&quot; and (.signature | type == &quot;string&quot;)</span>
-</span><span id="__span-0-22"><a id="__codelineno-0-22" name="__codelineno-0-22" href="#__codelineno-0-22"></a><span class="s1">&#39;</span><span class="w"> </span><span class="s2">&quot;</span><span class="nv">$ASSET_ROOT</span><span class="s2">/virtualization-artifact-index.json.sig&quot;</span><span class="w"> </span>&gt;/dev/null
-</span><span id="__span-0-23"><a id="__codelineno-0-23" name="__codelineno-0-23" href="#__codelineno-0-23"></a>jq<span class="w"> </span>-r<span class="w"> </span>.signature<span class="w"> </span><span class="s2">&quot;</span><span class="nv">$ASSET_ROOT</span><span class="s2">/virtualization-artifact-index.json.sig&quot;</span><span class="w"> </span><span class="p">|</span>
-</span><span id="__span-0-24"><a id="__codelineno-0-24" name="__codelineno-0-24" href="#__codelineno-0-24"></a><span class="w">  </span>base64<span class="w"> </span>--decode<span class="w"> </span>&gt;<span class="s2">&quot;</span><span class="nv">$ASSET_ROOT</span><span class="s2">/virtualization-artifact-index.raw.sig&quot;</span>
-</span><span id="__span-0-25"><a id="__codelineno-0-25" name="__codelineno-0-25" href="#__codelineno-0-25"></a>openssl<span class="w"> </span>pkeyutl<span class="w"> </span>-verify<span class="w"> </span>-pubin<span class="w"> </span>-rawin<span class="w"> </span><span class="se">\</span>
-</span><span id="__span-0-26"><a id="__codelineno-0-26" name="__codelineno-0-26" href="#__codelineno-0-26"></a><span class="w">  </span>-inkey<span class="w"> </span><span class="s2">&quot;</span><span class="nv">$ASSET_ROOT</span><span class="s2">/atlaso-release-2026-01.pem&quot;</span><span class="w"> </span><span class="se">\</span>
-</span><span id="__span-0-27"><a id="__codelineno-0-27" name="__codelineno-0-27" href="#__codelineno-0-27"></a><span class="w">  </span>-in<span class="w"> </span><span class="s2">&quot;</span><span class="nv">$ASSET_ROOT</span><span class="s2">/virtualization-artifact-index.json&quot;</span><span class="w"> </span><span class="se">\</span>
-</span><span id="__span-0-28"><a id="__codelineno-0-28" name="__codelineno-0-28" href="#__codelineno-0-28"></a><span class="w">  </span>-sigfile<span class="w"> </span><span class="s2">&quot;</span><span class="nv">$ASSET_ROOT</span><span class="s2">/virtualization-artifact-index.raw.sig&quot;</span>
-</span><span id="__span-0-29"><a id="__codelineno-0-29" name="__codelineno-0-29" href="#__codelineno-0-29"></a><span class="k">while</span><span class="w"> </span><span class="nv">IFS</span><span class="o">=</span><span class="s1">$&#39;\t&#39;</span><span class="w"> </span><span class="nb">read</span><span class="w"> </span>-r<span class="w"> </span>digest<span class="w"> </span>size<span class="w"> </span>name<span class="p">;</span><span class="w"> </span><span class="k">do</span>
-</span><span id="__span-0-30"><a id="__codelineno-0-30" name="__codelineno-0-30" href="#__codelineno-0-30"></a><span class="w">  </span><span class="nb">test</span><span class="w"> </span><span class="s2">&quot;</span><span class="k">$(</span>stat<span class="w"> </span>--format<span class="o">=</span><span class="s1">&#39;%s&#39;</span><span class="w"> </span><span class="s2">&quot;</span><span class="nv">$ASSET_ROOT</span><span class="s2">/</span><span class="nv">$name</span><span class="s2">&quot;</span><span class="k">)</span><span class="s2">&quot;</span><span class="w"> </span>-eq<span class="w"> </span><span class="s2">&quot;</span><span class="nv">$size</span><span class="s2">&quot;</span>
-</span><span id="__span-0-31"><a id="__codelineno-0-31" name="__codelineno-0-31" href="#__codelineno-0-31"></a><span class="w">  </span><span class="nb">printf</span><span class="w"> </span><span class="s1">&#39;%s  %s\n&#39;</span><span class="w"> </span><span class="s2">&quot;</span><span class="nv">$digest</span><span class="s2">&quot;</span><span class="w"> </span><span class="s2">&quot;</span><span class="nv">$name</span><span class="s2">&quot;</span>
-</span><span id="__span-0-32"><a id="__codelineno-0-32" name="__codelineno-0-32" href="#__codelineno-0-32"></a><span class="k">done</span><span class="w"> </span>&lt;<span class="w"> </span>&lt;<span class="o">(</span>jq<span class="w"> </span>-r<span class="w"> </span><span class="s1">&#39;.assets[] | [.sha256, .size, .name] | @tsv&#39;</span><span class="w"> </span><span class="se">\</span>
-</span><span id="__span-0-33"><a id="__codelineno-0-33" name="__codelineno-0-33" href="#__codelineno-0-33"></a><span class="w">  </span><span class="s2">&quot;</span><span class="nv">$ASSET_ROOT</span><span class="s2">/virtualization-artifact-index.json&quot;</span><span class="o">)</span><span class="w"> </span><span class="p">|</span>
-</span><span id="__span-0-34"><a id="__codelineno-0-34" name="__codelineno-0-34" href="#__codelineno-0-34"></a><span class="w">  </span><span class="o">(</span><span class="nb">cd</span><span class="w"> </span><span class="s2">&quot;</span><span class="nv">$ASSET_ROOT</span><span class="s2">&quot;</span><span class="w"> </span><span class="o">&amp;&amp;</span><span class="w"> </span>sha256sum<span class="w"> </span>--check<span class="w"> </span>--strict<span class="o">)</span>
-</span><span id="__span-0-35"><a id="__codelineno-0-35" name="__codelineno-0-35" href="#__codelineno-0-35"></a>rm<span class="w"> </span>--<span class="w"> </span><span class="s2">&quot;</span><span class="nv">$ASSET_ROOT</span><span class="s2">/virtualization-artifact-index.raw.sig&quot;</span>
+</span><span id="__span-0-10"><a id="__codelineno-0-10" name="__codelineno-0-10" href="#__codelineno-0-10"></a>jq<span class="w"> </span>-e<span class="w"> </span>--arg<span class="w"> </span>version<span class="w"> </span><span class="s2">&quot;</span><span class="si">${</span><span class="nv">TAG</span><span class="p">#virtualization-v</span><span class="si">}</span><span class="s2">&quot;</span><span class="w"> </span>--arg<span class="w"> </span>tag<span class="w"> </span><span class="s2">&quot;</span><span class="nv">$TAG</span><span class="s2">&quot;</span><span class="w"> </span><span class="s1">&#39;</span>
+</span><span id="__span-0-11"><a id="__codelineno-0-11" name="__codelineno-0-11" href="#__codelineno-0-11"></a><span class="s1">  .schema_version == 2 and .kind == &quot;atlaso-virtualization-artifacts&quot; and</span>
+</span><span id="__span-0-12"><a id="__codelineno-0-12" name="__codelineno-0-12" href="#__codelineno-0-12"></a><span class="s1">  .classification == &quot;stable&quot; and .release_tag == $tag and</span>
+</span><span id="__span-0-13"><a id="__codelineno-0-13" name="__codelineno-0-13" href="#__codelineno-0-13"></a><span class="s1">  .source_software_tag == (&quot;v&quot; + $version) and</span>
+</span><span id="__span-0-14"><a id="__codelineno-0-14" name="__codelineno-0-14" href="#__codelineno-0-14"></a><span class="s1">  .version == $version and .signing_key_id == &quot;atlaso-release-2026-01&quot; and</span>
+</span><span id="__span-0-15"><a id="__codelineno-0-15" name="__codelineno-0-15" href="#__codelineno-0-15"></a><span class="s1">  (.source_release_manifest_sha256 | test(&quot;^[0-9a-f]{64}$&quot;)) and</span>
+</span><span id="__span-0-16"><a id="__codelineno-0-16" name="__codelineno-0-16" href="#__codelineno-0-16"></a><span class="s1">  (.application_wheel_sha256 | test(&quot;^[0-9a-f]{64}$&quot;)) and</span>
+</span><span id="__span-0-17"><a id="__codelineno-0-17" name="__codelineno-0-17" href="#__codelineno-0-17"></a><span class="s1">  (.source_commit | test(&quot;^[0-9a-f]{40}$&quot;)) and</span>
+</span><span id="__span-0-18"><a id="__codelineno-0-18" name="__codelineno-0-18" href="#__codelineno-0-18"></a><span class="s1">  (.assets | type == &quot;array&quot; and length &gt; 0 and</span>
+</span><span id="__span-0-19"><a id="__codelineno-0-19" name="__codelineno-0-19" href="#__codelineno-0-19"></a><span class="s1">    all(.[]; (.name | test(&quot;^[A-Za-z0-9][A-Za-z0-9._-]*$&quot;)) and</span>
+</span><span id="__span-0-20"><a id="__codelineno-0-20" name="__codelineno-0-20" href="#__codelineno-0-20"></a><span class="s1">      (.size | type == &quot;number&quot;) and (.sha256 | test(&quot;^[0-9a-f]{64}$&quot;))) and</span>
+</span><span id="__span-0-21"><a id="__codelineno-0-21" name="__codelineno-0-21" href="#__codelineno-0-21"></a><span class="s1">    ([.[].name] | length == (unique | length)))</span>
+</span><span id="__span-0-22"><a id="__codelineno-0-22" name="__codelineno-0-22" href="#__codelineno-0-22"></a><span class="s1">&#39;</span><span class="w"> </span><span class="s2">&quot;</span><span class="nv">$ASSET_ROOT</span><span class="s2">/virtualization-artifact-index.json&quot;</span><span class="w"> </span>&gt;/dev/null
+</span><span id="__span-0-23"><a id="__codelineno-0-23" name="__codelineno-0-23" href="#__codelineno-0-23"></a>jq<span class="w"> </span>-e<span class="w"> </span><span class="s1">&#39;</span>
+</span><span id="__span-0-24"><a id="__codelineno-0-24" name="__codelineno-0-24" href="#__codelineno-0-24"></a><span class="s1">  .schema_version == 1 and .algorithm == &quot;ed25519&quot; and</span>
+</span><span id="__span-0-25"><a id="__codelineno-0-25" name="__codelineno-0-25" href="#__codelineno-0-25"></a><span class="s1">  .key_id == &quot;atlaso-release-2026-01&quot; and (.signature | type == &quot;string&quot;)</span>
+</span><span id="__span-0-26"><a id="__codelineno-0-26" name="__codelineno-0-26" href="#__codelineno-0-26"></a><span class="s1">&#39;</span><span class="w"> </span><span class="s2">&quot;</span><span class="nv">$ASSET_ROOT</span><span class="s2">/virtualization-artifact-index.json.sig&quot;</span><span class="w"> </span>&gt;/dev/null
+</span><span id="__span-0-27"><a id="__codelineno-0-27" name="__codelineno-0-27" href="#__codelineno-0-27"></a>jq<span class="w"> </span>-r<span class="w"> </span>.signature<span class="w"> </span><span class="s2">&quot;</span><span class="nv">$ASSET_ROOT</span><span class="s2">/virtualization-artifact-index.json.sig&quot;</span><span class="w"> </span><span class="p">|</span>
+</span><span id="__span-0-28"><a id="__codelineno-0-28" name="__codelineno-0-28" href="#__codelineno-0-28"></a><span class="w">  </span>base64<span class="w"> </span>--decode<span class="w"> </span>&gt;<span class="s2">&quot;</span><span class="nv">$ASSET_ROOT</span><span class="s2">/virtualization-artifact-index.raw.sig&quot;</span>
+</span><span id="__span-0-29"><a id="__codelineno-0-29" name="__codelineno-0-29" href="#__codelineno-0-29"></a>openssl<span class="w"> </span>pkeyutl<span class="w"> </span>-verify<span class="w"> </span>-pubin<span class="w"> </span>-rawin<span class="w"> </span><span class="se">\</span>
+</span><span id="__span-0-30"><a id="__codelineno-0-30" name="__codelineno-0-30" href="#__codelineno-0-30"></a><span class="w">  </span>-inkey<span class="w"> </span><span class="s2">&quot;</span><span class="nv">$ASSET_ROOT</span><span class="s2">/atlaso-release-2026-01.pem&quot;</span><span class="w"> </span><span class="se">\</span>
+</span><span id="__span-0-31"><a id="__codelineno-0-31" name="__codelineno-0-31" href="#__codelineno-0-31"></a><span class="w">  </span>-in<span class="w"> </span><span class="s2">&quot;</span><span class="nv">$ASSET_ROOT</span><span class="s2">/virtualization-artifact-index.json&quot;</span><span class="w"> </span><span class="se">\</span>
+</span><span id="__span-0-32"><a id="__codelineno-0-32" name="__codelineno-0-32" href="#__codelineno-0-32"></a><span class="w">  </span>-sigfile<span class="w"> </span><span class="s2">&quot;</span><span class="nv">$ASSET_ROOT</span><span class="s2">/virtualization-artifact-index.raw.sig&quot;</span>
+</span><span id="__span-0-33"><a id="__codelineno-0-33" name="__codelineno-0-33" href="#__codelineno-0-33"></a><span class="k">while</span><span class="w"> </span><span class="nv">IFS</span><span class="o">=</span><span class="s1">$&#39;\t&#39;</span><span class="w"> </span><span class="nb">read</span><span class="w"> </span>-r<span class="w"> </span>digest<span class="w"> </span>size<span class="w"> </span>name<span class="p">;</span><span class="w"> </span><span class="k">do</span>
+</span><span id="__span-0-34"><a id="__codelineno-0-34" name="__codelineno-0-34" href="#__codelineno-0-34"></a><span class="w">  </span><span class="nb">test</span><span class="w"> </span><span class="s2">&quot;</span><span class="k">$(</span>stat<span class="w"> </span>--format<span class="o">=</span><span class="s1">&#39;%s&#39;</span><span class="w"> </span><span class="s2">&quot;</span><span class="nv">$ASSET_ROOT</span><span class="s2">/</span><span class="nv">$name</span><span class="s2">&quot;</span><span class="k">)</span><span class="s2">&quot;</span><span class="w"> </span>-eq<span class="w"> </span><span class="s2">&quot;</span><span class="nv">$size</span><span class="s2">&quot;</span>
+</span><span id="__span-0-35"><a id="__codelineno-0-35" name="__codelineno-0-35" href="#__codelineno-0-35"></a><span class="w">  </span><span class="nb">printf</span><span class="w"> </span><span class="s1">&#39;%s  %s\n&#39;</span><span class="w"> </span><span class="s2">&quot;</span><span class="nv">$digest</span><span class="s2">&quot;</span><span class="w"> </span><span class="s2">&quot;</span><span class="nv">$name</span><span class="s2">&quot;</span>
+</span><span id="__span-0-36"><a id="__codelineno-0-36" name="__codelineno-0-36" href="#__codelineno-0-36"></a><span class="k">done</span><span class="w"> </span>&lt;<span class="w"> </span>&lt;<span class="o">(</span>jq<span class="w"> </span>-r<span class="w"> </span><span class="s1">&#39;.assets[] | [.sha256, .size, .name] | @tsv&#39;</span><span class="w"> </span><span class="se">\</span>
+</span><span id="__span-0-37"><a id="__codelineno-0-37" name="__codelineno-0-37" href="#__codelineno-0-37"></a><span class="w">  </span><span class="s2">&quot;</span><span class="nv">$ASSET_ROOT</span><span class="s2">/virtualization-artifact-index.json&quot;</span><span class="o">)</span><span class="w"> </span><span class="p">|</span>
+</span><span id="__span-0-38"><a id="__codelineno-0-38" name="__codelineno-0-38" href="#__codelineno-0-38"></a><span class="w">  </span><span class="o">(</span><span class="nb">cd</span><span class="w"> </span><span class="s2">&quot;</span><span class="nv">$ASSET_ROOT</span><span class="s2">&quot;</span><span class="w"> </span><span class="o">&amp;&amp;</span><span class="w"> </span>sha256sum<span class="w"> </span>--check<span class="w"> </span>--strict<span class="o">)</span>
+</span><span id="__span-0-39"><a id="__codelineno-0-39" name="__codelineno-0-39" href="#__codelineno-0-39"></a>rm<span class="w"> </span>--<span class="w"> </span><span class="s2">&quot;</span><span class="nv">$ASSET_ROOT</span><span class="s2">/virtualization-artifact-index.raw.sig&quot;</span>
 </span></code></pre></div>
 <p>Run the verification from a trusted administrative workstation with OpenSSL 3, <code>jq</code>, GNU coreutils, and GitHub CLI.
 The standard tools authenticate the signed index before trusting its asset records; no downloaded verifier executes
@@ -3836,15 +3882,59 @@ correct only the reported image or platform conflict, and restart the selector. 
 while the selector is failed. For an import-time failure, keep the original release assets, remove only the target VM
 and storage owned by that import attempt, correct the host prerequisite, and run the helper again.</p>
 <h2 id="protected-release-runners">Protected release runners<a class="headerlink" href="#protected-release-runners" title="Permanent link">&para;</a></h2>
-<p>Virtualization release jobs run only for the exact protected-main commit selected by the release workflow. The runner
-fleet must provide the dedicated <code>atlaso-vmware</code>, <code>atlaso-proxmox</code>, <code>atlaso-kvm</code>, and <code>atlaso-hyperv</code> labels; do not
-attach those labels to general-purpose or fork-accessible runners. Build credentials are disposable values generated
-inside the protected build job and are scrubbed before export. Define the repository variables named by
-<code>.github/workflows/release.yml</code> for VMware vmnets, Proxmox storage and bridges, KVM storage and networks, Hyper-V
-switches, and bounded test destinations.</p>
-<p>The VMware build runner requires Workstation, Packer, OVF Tool, and the existing Photon build prerequisites. The
-Proxmox and KVM runners require the same host tools listed in their import sections. The Hyper-V runner requires
-PowerShell 7.4 or newer, Hyper-V, <code>qemu-img</code>, and two operator-owned virtual switches. Every smoke identity and storage
+<p>The primary Windows producer is a maintainer workstation, not a permanent GitHub runner. From a clean checkout of the
+successful software-release SHA, run:</p>
+<div class="language-powershell highlight"><pre><span></span><code><span id="__span-4-1"><a id="__codelineno-4-1" name="__codelineno-4-1" href="#__codelineno-4-1"></a><span class="p">./</span><span class="n">scripts</span><span class="p">/</span><span class="n">windows</span><span class="p">/</span><span class="n">vmware</span><span class="p">/</span><span class="nb">export-ovf</span><span class="p">.</span><span class="n">ps1</span> <span class="n">-Prerelease</span> <span class="p">`</span>
+</span><span id="__span-4-2"><a id="__codelineno-4-2" name="__codelineno-4-2" href="#__codelineno-4-2"></a>  <span class="n">-PrereleaseIdentifier</span> <span class="n">rc</span><span class="p">.</span><span class="n">1</span> <span class="p">`</span>
+</span><span id="__span-4-3"><a id="__codelineno-4-3" name="__codelineno-4-3" href="#__codelineno-4-3"></a>  <span class="n">-StagingRoot</span> <span class="s1">&#39;D:\Atlaso-Releases&#39;</span> <span class="p">`</span>
+</span><span id="__span-4-4"><a id="__codelineno-4-4" name="__codelineno-4-4" href="#__codelineno-4-4"></a>  <span class="n">-ManagementSwitch</span> <span class="s1">&#39;Atlaso Management&#39;</span> <span class="p">`</span>
+</span><span id="__span-4-5"><a id="__codelineno-4-5" name="__codelineno-4-5" href="#__codelineno-4-5"></a>  <span class="n">-ServiceSwitch</span> <span class="s1">&#39;Atlaso Services&#39;</span> <span class="p">`</span>
+</span><span id="__span-4-6"><a id="__codelineno-4-6" name="__codelineno-4-6" href="#__codelineno-4-6"></a>  <span class="n">-OnePasswordEnvironmentId</span> <span class="s1">&#39;&lt;atlaso-environment-id&gt;&#39;</span> <span class="p">`</span>
+</span><span id="__span-4-7"><a id="__codelineno-4-7" name="__codelineno-4-7" href="#__codelineno-4-7"></a>  <span class="n">-OnePasswordAccount</span> <span class="s1">&#39;&lt;account-name-or-id&gt;&#39;</span> <span class="p">`</span>
+</span><span id="__span-4-8"><a id="__codelineno-4-8" name="__codelineno-4-8" href="#__codelineno-4-8"></a>  <span class="n">-OnePasswordPython</span> <span class="s1">&#39;&lt;path-to-python-3.13.exe&gt;&#39;</span>
+</span></code></pre></div>
+<p>The command verifies and extracts the exact published software bundle, builds the canonical VMware template, derives
+Hyper-V from that OVA, runs both Windows smokes, creates the annotated tag before the draft Release, uploads without
+clobbering, and waits for the exact newly dispatched hosted-finalizer run to succeed before verifying publication.
+Keep <code>StagingRoot</code> until stable verification; cleanup is a separate explicit operator action. The three 1Password
+selectors are required so both the fresh image build and exact wheel deployment use the same approved credential
+source; the values are forwarded to the existing isolated SDK bridges and are never uploaded as evidence. A
+conflicting candidate requires a new explicit <code>rc.N</code>. Every retry reconstructs and byte-validates the complete cached
+software source against freshly downloaded signed Release assets. A complete retained candidate is independently
+revalidated and reused byte-for-byte; only an absent candidate enters the image-build, OVA-export, and Hyper-V
+conversion path. Pre-verification network downloads are invocation-temporary and never reused after interruption.
+Before signing, the hosted finalizer requires the OVA provenance's software tag, manifest, bundle, application-wheel, and
+Python-ABI fields to exactly match the verified software-source sidecar. A retry after only one signed-index file was
+uploaded reconstructs the deterministic pair, verifies the retained byte without clobbering it, and uploads only the
+missing counterpart.</p>
+<p>Stable promotion never rebuilds:</p>
+<div class="language-powershell highlight"><pre><span></span><code><span id="__span-5-1"><a id="__codelineno-5-1" name="__codelineno-5-1" href="#__codelineno-5-1"></a><span class="p">./</span><span class="n">scripts</span><span class="p">/</span><span class="n">windows</span><span class="p">/</span><span class="n">vmware</span><span class="p">/</span><span class="nb">export-ovf</span><span class="p">.</span><span class="n">ps1</span> <span class="n">-Release</span> <span class="p">`</span>
+</span><span id="__span-5-2"><a id="__codelineno-5-2" name="__codelineno-5-2" href="#__codelineno-5-2"></a>  <span class="n">-FromPrerelease</span> <span class="n">virtualization-vX</span><span class="p">.</span><span class="n">Y</span><span class="p">.</span><span class="n">Z-rc</span><span class="p">.</span><span class="n">1</span> <span class="p">`</span>
+</span><span id="__span-5-3"><a id="__codelineno-5-3" name="__codelineno-5-3" href="#__codelineno-5-3"></a>  <span class="n">-ProxmoxRunnerLabel</span> <span class="n">atlaso-proxmox-virtualization-vX-Y-Z-rc</span><span class="p">-</span><span class="n">1</span> <span class="p">`</span>
+</span><span id="__span-5-4"><a id="__codelineno-5-4" name="__codelineno-5-4" href="#__codelineno-5-4"></a>  <span class="n">-KvmRunnerLabel</span> <span class="n">atlaso-kvm-virtualization-vX-Y-Z-rc</span><span class="p">-</span><span class="n">1</span>
+</span></code></pre></div>
+<p>Bring the uniquely labelled Proxmox and KVM <code>--ephemeral</code> runners online only for that approved promotion, then destroy
+or sanitize them after the job. They receive read-only Actions/contents permissions, no signing secret, and no
+write-capable token. Define the repository variables named by <code>.github/workflows/virtualization-stable.yml</code> for storage
+and networks. The workstation waits for the exact promotion run it dispatched, rather than accepting an older stable
+Release with the same version. Stable promotions are serialized repository-wide so two release candidates cannot race
+one immutable stable tag. Signing and Release writes occur only in the protected GitHub-hosted finalizer. If stable
+publication completed but its final live verification did not, an exact retry detects the published stable Release
+during admission and verifies its signed index, source binding, attestations, and byte identity with the selected
+prerelease directly on GitHub-hosted Linux. It does not schedule Proxmox or KVM again, rebuild the signed index, or
+modify the immutable Release.
+If an unpublished stable draft already contains both signed-index assets, the protected finalizer validates their
+signature, release identity, source binding, and complete asset set, then resumes with those exact retained bytes even
+when current <code>main</code> would render a different index. A draft containing only one index asset fails closed. After
+confirming that the draft is unpublished and the retained file is the sole incomplete index asset, a maintainer may
+rerun <strong>Promote stable virtualization release</strong> with <code>recover_incomplete_index</code> enabled; only that explicit protected
+recovery deletes the incomplete file and reconstructs the pair. Ordinary retries never delete or replace draft assets.
+For the optional ephemeral-Windows workflow, also define <code>ATLASO_ONEPASSWORD_ENVIRONMENT_ID</code>,
+<code>ATLASO_ONEPASSWORD_ACCOUNT</code>, and <code>ATLASO_ONEPASSWORD_PYTHON</code> as repository variables. They are non-secret selectors;
+the disposable runner must still complete its local 1Password authorization and receives no signing key.</p>
+<p>The workstation requires PowerShell 7.4 or newer, VMware Workstation, Packer, OVF Tool, Hyper-V, <code>qemu-img</code>, and two
+operator-owned virtual switches. The Proxmox and KVM runners require the host tools listed in their import sections.
+Every smoke identity and storage
 namespace is invocation-scoped: VMware generates a disposable per-run password, Proxmox serializes each VMID import,
 passes it to OVF Tool through a runner-only temporary configuration file instead of process arguments, and deletes that
 file immediately after import. Proxmox serializes each VMID import, and cleanup failures fail the active smoke job
@@ -3855,9 +3945,18 @@ rollback requires a final inventory proving its fixed VMID absent. Hyper-V
 cleanup removes only a VM whose exact ID was captured after successful import; an indeterminate import preserves files
 for diagnosis rather than claiming a later name match. KVM rollback preserves every imported volume unless a successful
 libvirt inventory proves that the exact domain is absent. Every smoke identity and storage namespace must be dedicated to
-CI so cleanup can remain limited to resources created by that invocation. Release
-publication waits for all four platform smoke tests and refuses an asset at or above the repository's existing 2 GiB
-limit rather than producing multipart output.</p>
+the release invocation so cleanup can remain limited to resources created by that invocation. Stable publication waits
+for both Linux platform smokes and refuses an asset at or above the repository's existing 2 GiB limit rather than
+producing multipart output.</p>
+<p>As an optional alternative, <strong>Produce virtualization candidate on ephemeral Windows</strong> runs the same producer with
+<code>-CandidateOnly</code> on a temporary Windows runner whose exact release-specific label is
+<code>atlaso-windows-virtualization-vX-Y-Z-rc-N</code>. The Windows job has read-only repository authority
+and no signing material. A GitHub-hosted job alone creates the annotated tag and draft, then calls the same protected
+hosted prerelease finalizer. Keep that runner offline except for an approved default-branch dispatch and destroy or
+sanitize it after its single <code>--ephemeral</code> job. If a retry finds a complete existing draft, hosted admission validates
+its exact candidate asset inventory and routes it directly back to protected finalization; it never schedules a fresh
+ephemeral Windows build whose timestamp-bearing bytes could conflict with the retained draft. An incomplete or
+unexpected draft fails closed for explicit operator recovery.</p>
 
 
 

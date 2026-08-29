@@ -3861,7 +3861,9 @@ signed v2 manifests fall back to the version and commit without fabricating rele
 <li>GitHub Releases stores immutable versioned manifests, signatures, and bundles.</li>
 <li>GitHub Pages publishes signed <code>development</code>, <code>preview</code>, and <code>stable</code> channel pointers. Its root serves a small
   informational release-repository page; appliances continue to use only the signed JSON documents under <code>/updates</code>.</li>
-<li>A successful <code>main</code> CI run publishes the exact successful commit as <code>vX.Y.Z</code> and advances <code>development</code>.</li>
+<li>A successful <code>main</code> CI run publishes the exact successful commit as <code>vX.Y.Z</code> and advances <code>development</code> only when
+  <code>AUTOMATIC_SOFTWARE_RELEASE_ENABLED=true</code>. A missing or false variable suppresses only automatic <code>workflow_run</code>
+  publication, so a maintainer can keep cutover safely paused while retaining exact-SHA recovery.</li>
 <li>A protected manual dispatch may recover a failed publication only by naming a full commit that already has a
   successful <code>main</code> push CI run. The workflow verifies that provenance and that the commit remains on <code>main</code> before
   rebuilding and signing its deterministic release inputs.</li>
@@ -4194,6 +4196,9 @@ Git configuration. Each GitHub Release description keeps the exact signed source
 generated changelog. The checked-in release-note configuration groups merged pull requests as new and improved work,
 fixes, documentation, dependency updates, or other changes; dependency updates are excluded from the enhancement group
 so they appear only once.</p>
+<p>The <code>vX.Y.Z</code> Release contains the complete signed appliance-update bundle, including the Atlaso application wheel and
+CPython 3.14 dependency wheelhouse. It contains no OVA or Hyper-V image. Those images use
+<code>virtualization-vX.Y.Z-rc.N</code> and <code>virtualization-vX.Y.Z</code> Releases and never advance an update channel.</p>
 <p>To preview generated notes for the current signed-release lineage without changing GitHub, authenticate <code>gh</code> for the
 repository and run:</p>
 <div class="language-bash highlight"><pre><span></span><code><span id="__span-8-1"><a id="__codelineno-8-1" name="__codelineno-8-1" href="#__codelineno-8-1"></a>python<span class="w"> </span>scripts/backfill_release_notes.py<span class="w"> </span>--start-tag<span class="w"> </span>v0.9.18
@@ -4216,6 +4221,12 @@ signatures, and <code>development</code> pointer. The dispatch refuses commits w
 preserves the normal tag/release mismatch checks. If the tag and release already published but channel advancement
 failed, dispatch the same successful SHA again: publication verifies the existing asset names and bytes before retrying
 the signed pointer update.</p>
+<p>During migration, leave <code>AUTOMATIC_SOFTWARE_RELEASE_ENABLED</code> false, cancel and verify absence of every legacy queued or
+running publication before bringing any temporary self-hosted runner online, and enumerate first-parent versions after
+the newest published software Release through the cutover merge. Recover missing versions serially by exact successful
+<code>main</code> SHA; after each dispatch verify the immutable tag/assets and live <code>development</code> pointer before continuing. Stop
+on the first failure and retry only that SHA. Enable the variable only after the newest recovery passes live
+verification.</p>
 <p>To initialize or advance the default channel, run <strong>Promote appliance release</strong>, choose <code>stable</code>, and provide an
 existing verified version without the <code>v</code> prefix. The workflow does not rebuild that release. It completes only after
 the hosted stable pointer and signature resolve and the referenced immutable release passes signature, identity, and
