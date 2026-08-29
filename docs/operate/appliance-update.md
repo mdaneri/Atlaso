@@ -519,10 +519,11 @@ If the artifact expires before an appliance release is cut, open **Publish Pytho
 `main`, and supply the exact commit, successful source CI run ID, and successful attempt number. The replay re-fetches
 that attempt, requires the `CI` workflow at `.github/workflows/ci.yml`, a same-repository `main` push, the supplied SHA,
 and a successful conclusion, then requires the commit to remain reachable from current `main`. It runs in the same
-read-only wheel-only job and publishes a new 90-day handoff. Do not copy a wheel from another commit, rename an artifact,
-or let the appliance workflow rebuild it. The artifact's source-CI run ID and attempt, publisher run ID and attempt,
-version, commit, UTC build time, filename, size, and digest are the exact handoff used by the later manual release and
-retained as `packages/wheel-identity.json` inside the signed bundle.
+read-only wheel-only job and publishes a new 90-day handoff. Admission and current-`main` reachability verification
+finish before the target commit is checked out, and the publisher uses no shared dependency cache. Do not copy a wheel
+from another commit, rename an artifact, or let the appliance workflow rebuild it. The artifact's source-CI run ID and
+attempt, publisher run ID and attempt, version, commit, UTC build time, filename, size, and digest are the exact handoff
+used by the later manual release and retained as `packages/wheel-identity.json` inside the signed bundle.
 
 The protected workflows use these checked-in inputs:
 

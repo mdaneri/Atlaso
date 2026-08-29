@@ -323,7 +323,8 @@ The protected `main` workflow revision also exposes a bounded manual replay for 
 commit and source CI run ID and attempt, revalidates the attempt-specific `CI` workflow identity, same-repository
 `main`-push event, commit, and successful conclusion, and requires the commit to remain reachable from current `main`.
 Replay uses the same GitHub-hosted read-only wheel-only job and cannot access Release, Pages, signing, or virtualization
-authority.
+authority. The API-backed admission and `main`-reachability comparison complete before target checkout, and the dynamic
+exact-SHA build has no shared dependency cache.
 
 The protected **Publish appliance release** workflow is manual only. It accepts an exact successful `main` push CI
 commit, verifies and consumes its retained automatic wheel without rebuilding it, builds the exact CPython 3.14

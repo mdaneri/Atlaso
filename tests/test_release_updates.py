@@ -1260,12 +1260,20 @@ def test_release_workflows_use_successful_main_sha_and_promote_without_rebuildin
         '"${{ github.repository }}"' in wheel_publication
     )
     assert 'test "$(jq -r .head_branch <<<"$SOURCE_CI_STATE")" = main' in wheel_publication
-    assert 'test "$(jq -r .head_sha <<<"$SOURCE_CI_STATE")" = "$WHEEL_SHA"' in wheel_publication
+    assert 'WHEEL_SHA="$(jq -r .head_sha <<<"$SOURCE_CI_STATE")"' in wheel_publication
+    assert 'test "$WHEEL_SHA" = "$EXPECTED_WHEEL_SHA"' in wheel_publication
     assert (
         'test "$(jq -r .run_attempt <<<"$SOURCE_CI_STATE")" = "$SOURCE_CI_RUN_ATTEMPT"'
         in wheel_publication
     )
     assert 'test "$(jq -r .conclusion <<<"$SOURCE_CI_STATE")" = success' in wheel_publication
+    assert 'compare/${WHEEL_SHA}...main' in wheel_publication
+    assert 'test "$MAIN_STATUS" = ahead || test "$MAIN_STATUS" = identical' in wheel_publication
+    assert 'ref: ${{ steps.target.outputs.commit }}' in wheel_publication
+    assert "cache: pip" not in wheel_publication
+    assert wheel_publication.index("Admit the source CI evidence") < wheel_publication.index(
+        "actions/checkout@v7"
+    )
     assert "runs-on: ubuntu-latest" in wheel_publication
     assert "actions: read" in wheel_publication
     assert "contents: read" in wheel_publication
