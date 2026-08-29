@@ -506,7 +506,8 @@ sudo -H -u "$BOOTSTRAP_USERNAME" env -u PSModulePath ATLASO_POWERCLI_VERSION="$A
   pwsh -NoLogo -NoProfile -NonInteractive -Command \
   '$ErrorActionPreference = "Stop"; $module = Get-Module -Name VCF.PowerCLI -ListAvailable | Where-Object Version -eq $env:ATLASO_POWERCLI_VERSION | Select-Object -First 1; if (-not $module) { throw "VCF.PowerCLI $env:ATLASO_POWERCLI_VERSION is not available to the bootstrap administrator" }; Import-Module $module.Path -Force; $configured = Get-PowerCLIConfiguration -Scope AllUsers; if ([bool]$configured.ParticipateInCEIP) { throw "VCF.PowerCLI CEIP default is not disabled for the bootstrap administrator" }; if (-not (Get-Command Connect-VIServer -ErrorAction SilentlyContinue)) { throw "Connect-VIServer is not available to the bootstrap administrator" }; Write-Host "VCF.PowerCLI $($module.Version) verified as $([Environment]::UserName) with appliance-wide CEIP disabled"'
 
-cat >/etc/atlaso/build-info <<EOF
+write_build_info() {
+  cat >/etc/atlaso/build-info <<EOF
 build_time_utc=$(date -u +"%Y-%m-%dT%H:%M:%SZ")
 photon_release=$(cat /etc/photon-release 2>/dev/null || true)
 kernel=$(uname -r)
@@ -518,7 +519,9 @@ final_mgmt_address=$ATLASO_MGMT_ADDRESS
 final_mgmt_gateway=$ATLASO_MGMT_GATEWAY
 final_mgmt_interface=$ATLASO_MGMT_INTERFACE
 EOF
-chmod 0644 /etc/atlaso/build-info
+  chmod 0644 /etc/atlaso/build-info
+}
+write_build_info
 
 rm -f /etc/sudoers.d/90-atlaso-build
 
@@ -933,6 +936,7 @@ nginx -t
 pwsh -NoLogo -NoProfile -NonInteractive -Command \
   '$ErrorActionPreference = "Stop"; Import-Module VCF.PowerCLI -RequiredVersion $env:ATLASO_POWERCLI_VERSION -Force'
 python3 "$PHOTON_PACKAGE_STATE_VERIFIER" --guest-platform "$ATLASO_GUEST_PLATFORM"
+write_build_info
 run_tdnf "Final Photon package cache cleanup" clean all
 rm -rf /var/cache/tdnf/* "$PIP_CACHE_DIR" /root/.cache/pip \
   /root/.cache/powershell /root/.local/share/powershell/PowerShellGet

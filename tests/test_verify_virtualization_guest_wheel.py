@@ -51,15 +51,11 @@ def _metadata_output(
 
 
 def _powershell_profile_output(commands: list[str], target: str) -> list[str] | None:
-    """Return guestfish existence results for the bounded profile candidates."""
+    """Return the resolved guest PowerShell executable for one profile target."""
 
-    if not any(command.startswith("is-file ") for command in commands):
+    if commands[-1] != "realpath /usr/bin/pwsh":
         return None
-    return [
-        "true" if command.removeprefix("is-file ") == target else "false"
-        for command in commands
-        if command.startswith("is-file ")
-    ]
+    return [f"{PurePosixPath(target).parent.as_posix()}/pwsh"]
 
 
 @pytest.fixture

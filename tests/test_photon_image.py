@@ -1441,6 +1441,11 @@ def test_photon_provisioning_prepares_attached_data_disks():
         'python3 "$PHOTON_PACKAGE_STATE_VERIFIER" --guest-platform '
         '"$ATLASO_GUEST_PLATFORM"'
     ) == 2
+    assert provision.count("write_build_info") == 3
+    assert final_update_index < provision.rindex("write_build_info")
+    assert provision.rindex("write_build_info") < provision.rindex(
+        'run_tdnf "Final Photon package cache cleanup" clean all'
+    )
     assert "zero_fill_free_space / \"Photon OS filesystem\"" in provision
     assert 'zero_fill_free_space "$ATLASO_SYSTEM_CONTENT_MOUNT" "Atlaso system-content filesystem"' in provision
     assert "reserve_kib=524288" in provision

@@ -81,9 +81,12 @@ DEPLOYED_FILE_MODES = {
     "/boot/grub2/themes/atlaso/atlaso.png": 0o644,
 }
 POWERSHELL_PROFILE_SOURCE = "image/common/powershell/profile.ps1"
-POWERSHELL_PROFILE_TARGETS = (
-    "/opt/microsoft/powershell/7/profile.ps1",
-    "/usr/share/powershell/profile.ps1",
+POWERSHELL_RUNTIME_HOMES = (
+    "/opt/microsoft/powershell/7",
+    "/usr/share/powershell",
+)
+POWERSHELL_PROFILE_TARGETS = tuple(
+    f"{home}/profile.ps1" for home in POWERSHELL_RUNTIME_HOMES
 )
 PHOTON_RPM_KEY_PATHS = (
     "image/common/photon-rpm-gpg/VMWARE-RPM-GPG-KEY",
@@ -465,23 +468,17 @@ def _powershell_profile_target(disk: Path, filesystem: str) -> str:
 
     lines = _guestfish(
         disk,
-        [
-            f"mount-ro {filesystem} /",
-            *(f"is-file {path}" for path in POWERSHELL_PROFILE_TARGETS),
-        ],
+        [f"mount-ro {filesystem} /", "realpath /usr/bin/pwsh"],
     )
-    if len(lines) != len(POWERSHELL_PROFILE_TARGETS) or any(
-        line not in {"true", "false"} for line in lines
-    ):
+    if len(lines) != 1:
         raise SystemExit("PowerShell package profile discovery is malformed")
-    matches = [
-        path
-        for path, exists in zip(POWERSHELL_PROFILE_TARGETS, lines, strict=True)
-        if exists == "true"
-    ]
-    if len(matches) != 1:
-        raise SystemExit("guest must contain exactly one admitted PowerShell package profile")
-    return matches[0]
+    executable = PurePosixPath(lines[0])
+    if (
+        executable.name != "pwsh"
+        or executable.parent.as_posix() not in POWERSHELL_RUNTIME_HOMES
+    ):
+        raise SystemExit("guest pwsh resolves outside the admitted PowerShell package homes")
+    return f"{executable.parent.as_posix()}/profile.ps1"
 
 
 def _verify_deployed_system_content(
