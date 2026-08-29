@@ -1414,11 +1414,13 @@ def test_photon_provisioning_prepares_attached_data_disks():
     final_update_index = provision.index(
         'run_tdnf "Final Photon OS update verification" update'
     )
+    final_python_closure_index = provision.rindex("stage_python_runtime_packages")
     final_compatibility_index = provision.index(
         'log_step "revalidating Photon compatibility and runtime capabilities '
         'after final update"'
     )
-    assert final_update_index < final_compatibility_index
+    assert provision.count("stage_python_runtime_packages") == 3
+    assert final_update_index < final_python_closure_index < final_compatibility_index
     assert final_update_index < provision.rindex("nginx -t")
     assert final_update_index < provision.rindex(
         '"$ATLASO_HOME/.venv/bin/python" '

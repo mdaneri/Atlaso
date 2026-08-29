@@ -104,8 +104,9 @@ PowerShell profile is staged with the other common
 image assets so provisioning can install the interactive `Get-AtlasoVault` helper. Notice lock verification inventories
 only top-level virtual-environment distributions and ignores package-internal vendored metadata. Long TDNF operations
 emit compact 30-second heartbeats with elapsed time and cache size instead of streaming terminal progress redraws
-through Packer. Successful operations report their duration, while failures retain the TDNF exit status and replay a
-normalized, bounded output tail.
+through Packer. Successful operations report their duration. Failures preserve a nonzero TDNF exit status and replay a
+normalized, bounded output tail; a zero-status transcript that reports a TDNF error or disabled repository is promoted
+to fatal exit status 1.
 Photon 5.0 packages the C and C++ compiler front ends together as `gcc`. The image requests and later removes that one
 build-only package; it does not request the unavailable `gcc-c++` name used by distributions that split the front ends.
 It also treats `binutils` and `linux-api-headers` as build-only because Photon packages the assembler, linker, and Linux

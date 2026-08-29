@@ -79,6 +79,28 @@ run_tdnf() {
     tdnf -y "$@"
 }
 
+stage_python_runtime_packages() {
+  # Bind protected virtualization verification to the interpreter that remains
+  # after the most recent mutating Photon transaction.
+  log_step "staging signed Photon Python runtime packages for protected verification"
+  rm -rf "$PYTHON_RUNTIME_STAGING"
+  install -d -o root -g root -m 0700 "$PYTHON_RUNTIME_STAGING"
+  run_tdnf "Photon Python runtime signed package closure" \
+    install --downloadonly --downloaddir "$PYTHON_RUNTIME_STAGING" --alldeps \
+    python3 python3-pip python3-virtualenv python3-curses
+  if [ "$(find "$PYTHON_RUNTIME_STAGING" -maxdepth 1 -type f -name '*.rpm' | wc -l)" -eq 0 ]; then
+    echo "Photon Python runtime package closure is empty." >&2
+    exit 2
+  fi
+  find "$PYTHON_RUNTIME_STAGING" -type f -name '*.rpm' -exec chown root:root {} + -exec chmod 0600 {} +
+  (
+    cd "$PYTHON_RUNTIME_STAGING"
+    find . -maxdepth 1 -type f -name '*.rpm' -printf '%f\n' | LC_ALL=C sort | xargs sha256sum >SHA256SUMS
+  )
+  chown root:root "$PYTHON_RUNTIME_STAGING/SHA256SUMS"
+  chmod 0600 "$PYTHON_RUNTIME_STAGING/SHA256SUMS"
+}
+
 report_image_footprint() {
   label="$1"
   log_step "$label image footprint"
@@ -352,23 +374,7 @@ run_tdnf "Photon OS update verification" update
 # The protected hosted finalizer authenticates these RPMs against Atlaso's
 # admitted Photon keys and compares their payload to the read-only guest disk;
 # a Windows producer therefore cannot substitute Python or its standard library.
-log_step "staging signed Photon Python runtime packages for protected verification"
-rm -rf "$PYTHON_RUNTIME_STAGING"
-install -d -o root -g root -m 0700 "$PYTHON_RUNTIME_STAGING"
-run_tdnf "Photon Python runtime signed package closure" \
-  install --downloadonly --downloaddir "$PYTHON_RUNTIME_STAGING" --alldeps \
-  python3 python3-pip python3-virtualenv python3-curses
-if [ "$(find "$PYTHON_RUNTIME_STAGING" -maxdepth 1 -type f -name '*.rpm' | wc -l)" -eq 0 ]; then
-  echo "Photon Python runtime package closure is empty." >&2
-  exit 2
-fi
-find "$PYTHON_RUNTIME_STAGING" -type f -name '*.rpm' -exec chown root:root {} + -exec chmod 0600 {} +
-(
-  cd "$PYTHON_RUNTIME_STAGING"
-  find . -maxdepth 1 -type f -name '*.rpm' -printf '%f\n' | LC_ALL=C sort | xargs sha256sum >SHA256SUMS
-)
-chown root:root "$PYTHON_RUNTIME_STAGING/SHA256SUMS"
-chmod 0600 "$PYTHON_RUNTIME_STAGING/SHA256SUMS"
+stage_python_runtime_packages
 
 log_step "leaving only Photon NTPsec available for desired-state activation"
 systemctl disable --now ntpd.service 2>/dev/null || true
@@ -898,6 +904,7 @@ python3 "$PHOTON_PACKAGE_STATE_VERIFIER" --guest-platform "$ATLASO_GUEST_PLATFOR
 run_tdnf "Final Photon package cache cleanup" clean all
 run_tdnf "Final Photon repository refresh" makecache
 run_tdnf "Final Photon OS update verification" update
+stage_python_runtime_packages
 log_step "revalidating Photon compatibility and runtime capabilities after final update"
 command -v python3 >/dev/null
 command -v pwsh >/dev/null
