@@ -772,6 +772,7 @@ def check_merge_authority_transfer_fixtures(root: Path) -> list[Finding]:
         instructions = case.get("instructions")
         generated = case.get("generated")
         expected_holds = case.get("expected_holds")
+        default_merge_authority = case.get("default_merge_authority")
         if (
             not isinstance(name, str)
             or not name.strip()
@@ -780,6 +781,7 @@ def check_merge_authority_transfer_fixtures(root: Path) -> list[Finding]:
             or not isinstance(generated, str)
             or not isinstance(expected_holds, list)
             or any(not isinstance(item, str) for item in expected_holds)
+            or not isinstance(default_merge_authority, bool)
         ):
             findings.append(
                 Finding(path, f"merge authority fixture {index} has invalid fields")
@@ -906,7 +908,8 @@ def check_merge_authority_transfer_fixtures(root: Path) -> list[Finding]:
                 )
             )
         if (
-            not expected
+            default_merge_authority
+            and not expected
             and not invented
             and not omitted
             and not has_affirmative_default_merge_authority(generated)
@@ -915,6 +918,17 @@ def check_merge_authority_transfer_fixtures(root: Path) -> list[Finding]:
                 Finding(
                     path,
                     f"merge authority fixture {name} omits affirmative default authority",
+                )
+            )
+        if (
+            not default_merge_authority
+            and has_affirmative_default_merge_authority(generated)
+        ):
+            findings.append(
+                Finding(
+                    path,
+                    f"merge authority fixture {name} asserts default authority "
+                    "for an ineligible task",
                 )
             )
     return findings

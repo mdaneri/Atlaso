@@ -838,6 +838,7 @@ def test_merge_authority_transfer_rejects_invented_delegation_hold(
                 "cases": [
                     {
                         "name": "invented delegation hold",
+                        "default_merge_authority": True,
                         "instructions": [
                             {"text": "Implement and deliver the change."}
                         ],
@@ -874,6 +875,7 @@ def test_merge_authority_transfer_rejects_dropped_heartbeat_hold(
                 "cases": [
                     {
                         "name": "dropped heartbeat hold",
+                        "default_merge_authority": True,
                         "instructions": [
                             {
                                 "text": "Wait for approval before merging.",
@@ -914,6 +916,7 @@ def test_merge_authority_transfer_rejects_neutral_default_prompt(
                 "cases": [
                     {
                         "name": "neutral default prompt",
+                        "default_merge_authority": True,
                         "instructions": [{"text": "Implement the issue completely."}],
                         "generated": "Watch the pull request until it is ready.",
                         "expected_holds": [],
@@ -948,6 +951,7 @@ def test_merge_authority_transfer_applies_structured_hold_withdrawal(
                 "cases": [
                     {
                         "name": "withdrawn hold",
+                        "default_merge_authority": True,
                         "instructions": [
                             {
                                 "text": "Do not merge.",
@@ -986,6 +990,7 @@ def test_merge_authority_transfer_rejects_mislabeled_hold_removal(
                 "cases": [
                     {
                         "name": "mislabeled removal",
+                        "default_merge_authority": True,
                         "instructions": [
                             {
                                 "text": "Do not merge.",
@@ -1026,6 +1031,7 @@ def test_merge_authority_transfer_normalizes_equivalent_hold_wording(
                 "cases": [
                     {
                         "name": "equivalent hold",
+                        "default_merge_authority": True,
                         "instructions": [
                             {
                                 "text": "Please don't merge.",
@@ -1060,6 +1066,7 @@ def test_merge_authority_transfer_rejects_negated_default_authority(
                 "cases": [
                     {
                         "name": "negated default authority",
+                        "default_merge_authority": True,
                         "instructions": [{"text": "Implement the issue completely."}],
                         "generated": "Do not carry the task through guarded merge.",
                         "expected_holds": [],
@@ -1095,6 +1102,7 @@ def test_merge_authority_transfer_rejects_trailing_default_authority_negation(
                 "cases": [
                     {
                         "name": "trailing default authority negation",
+                        "default_merge_authority": True,
                         "instructions": [{"text": "Implement the issue completely."}],
                         "generated": (
                             "Default merge authority does not apply to this task."
@@ -1132,6 +1140,7 @@ def test_merge_authority_transfer_rejects_ambiguous_generated_hold_direction(
                 "cases": [
                     {
                         "name": "ambiguous generated direction",
+                        "default_merge_authority": True,
                         "instructions": [{"text": "Implement the issue completely."}],
                         "generated": (
                             "The earlier do not merge hold is withdrawn. Do not merge. "
@@ -1170,6 +1179,7 @@ def test_merge_authority_transfer_matches_each_hold_direction(
                 "cases": [
                     {
                         "name": "reversed mixed directions",
+                        "default_merge_authority": True,
                         "instructions": [
                             {
                                 "text": (
@@ -1214,6 +1224,7 @@ def test_merge_authority_transfer_binds_withdrawal_to_matching_hold(
                 "cases": [
                     {
                         "name": "bound hold withdrawal",
+                        "default_merge_authority": True,
                         "instructions": [
                             {
                                 "text": (
@@ -1252,6 +1263,7 @@ def test_merge_authority_transfer_rejects_negated_hold_withdrawal(
                 "cases": [
                     {
                         "name": "negated hold withdrawal",
+                        "default_merge_authority": True,
                         "instructions": [
                             {
                                 "text": "The do not merge hold is not withdrawn.",
@@ -1292,6 +1304,7 @@ def test_merge_authority_transfer_distinguishes_auto_merge_choice(
                 "cases": [
                     {
                         "name": "manual merge only",
+                        "default_merge_authority": True,
                         "instructions": [
                             {
                                 "text": (
@@ -1313,6 +1326,47 @@ def test_merge_authority_transfer_distinguishes_auto_merge_choice(
     )
 
     assert check_merge_authority_transfer_fixtures(tmp_path) == []
+
+
+def test_merge_authority_transfer_rejects_default_authority_for_ineligible_task(
+    tmp_path: Path,
+) -> None:
+    """Verify review-only work cannot gain default merge authority.
+
+    Args:
+        tmp_path: Temporary directory provided by pytest for isolated filesystem state.
+    """
+    path = tmp_path / MERGE_AUTHORITY_TRANSFER_FIXTURE_PATH
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(
+        json.dumps(
+            {
+                "cases": [
+                    {
+                        "name": "review-only generated merge",
+                        "default_merge_authority": False,
+                        "instructions": [
+                            {"text": "Review the pull request and report findings only."}
+                        ],
+                        "generated": (
+                            "Continue through guarded squash merge when every gate "
+                            "passes."
+                        ),
+                        "expected_holds": [],
+                    }
+                ]
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    findings = check_merge_authority_transfer_fixtures(tmp_path)
+
+    assert len(findings) == 1
+    assert findings[0].message == (
+        "merge authority fixture review-only generated merge asserts default "
+        "authority for an ineligible task"
+    )
 
 
 def test_agent_policy_gate_rejects_missing_default_merge_authority_contract(

@@ -2,6 +2,7 @@
   "cases": [
     {
       "name": "issue-583-delegation-default-authority",
+      "default_merge_authority": true,
       "instructions": [
         {
           "text": "Implement issue #583 completely and deliver its task-owned pull request."
@@ -12,6 +13,7 @@
     },
     {
       "name": "issues-591-613-delegation-default-authority",
+      "default_merge_authority": true,
       "instructions": [
         {
           "text": "Resolve issues #591 and #613 completely and deliver the ordinary same-repository pull request."
@@ -22,6 +24,7 @@
     },
     {
       "name": "issues-623-624-delegation-default-authority",
+      "default_merge_authority": true,
       "instructions": [
         {
           "text": "Implement issues #623 and #624 and deliver the task-owned pull request."
@@ -32,6 +35,7 @@
     },
     {
       "name": "issue-627-delegation-default-authority",
+      "default_merge_authority": true,
       "instructions": [
         {
           "text": "Solve issue #627 completely."
@@ -42,6 +46,7 @@
     },
     {
       "name": "pr-620-heartbeat-default-authority",
+      "default_merge_authority": true,
       "instructions": [
         {
           "text": "Resolve PR #620 completely under the current repository policy."
@@ -52,6 +57,7 @@
     },
     {
       "name": "manual-merge-with-auto-merge-disabled",
+      "default_merge_authority": true,
       "instructions": [
         {
           "text": "Do not merge automatically; perform the guarded squash merge once every gate passes."
@@ -62,6 +68,7 @@
     },
     {
       "name": "explicit-do-not-merge",
+      "default_merge_authority": true,
       "instructions": [
         {
           "text": "Implement the change, but do not merge.",
@@ -77,6 +84,7 @@
     },
     {
       "name": "equivalent-explicit-do-not-merge",
+      "default_merge_authority": true,
       "instructions": [
         {
           "text": "Implement the change, but don't merge.",
@@ -92,6 +100,7 @@
     },
     {
       "name": "explicit-leave-open",
+      "default_merge_authority": true,
       "instructions": [
         {
           "text": "Deliver the pull request and leave open.",
@@ -107,6 +116,7 @@
     },
     {
       "name": "explicit-pr-only",
+      "default_merge_authority": true,
       "instructions": [
         {
           "text": "PR only; do not take the merge action.",
@@ -122,6 +132,7 @@
     },
     {
       "name": "explicit-wait-for-approval",
+      "default_merge_authority": true,
       "instructions": [
         {
           "text": "Implement and wait for approval before merging.",
@@ -137,6 +148,7 @@
     },
     {
       "name": "later-explicit-hold-withdrawal",
+      "default_merge_authority": true,
       "instructions": [
         {
           "text": "Implement the change, but do not merge.",
@@ -152,6 +164,61 @@
         }
       ],
       "generated": "The hold was withdrawn; continue through guarded squash merge when every gate passes.",
+      "expected_holds": []
+    },
+    {
+      "name": "review-only-ineligible",
+      "default_merge_authority": false,
+      "instructions": [
+        {
+          "text": "Review the pull request and report findings only."
+        }
+      ],
+      "generated": "Review the pull request and report findings without changing or merging it.",
+      "expected_holds": []
+    },
+    {
+      "name": "diagnostic-ineligible",
+      "default_merge_authority": false,
+      "instructions": [
+        {
+          "text": "Diagnose the failing check without implementing a change."
+        }
+      ],
+      "generated": "Diagnose the failing check and report the evidence.",
+      "expected_holds": []
+    },
+    {
+      "name": "draft-pr-ineligible",
+      "default_merge_authority": false,
+      "instructions": [
+        {
+          "text": "Prepare a draft pull request for maintainer discussion."
+        }
+      ],
+      "generated": "Prepare the requested draft pull request for discussion.",
+      "expected_holds": []
+    },
+    {
+      "name": "fork-pr-ineligible",
+      "default_merge_authority": false,
+      "instructions": [
+        {
+          "text": "Inspect the pull request from an external fork."
+        }
+      ],
+      "generated": "Inspect the fork pull request and report its state.",
+      "expected_holds": []
+    },
+    {
+      "name": "private-remediation-ineligible",
+      "default_merge_authority": false,
+      "instructions": [
+        {
+          "text": "Perform the private vulnerability remediation workflow."
+        }
+      ],
+      "generated": "Follow the private advisory workflow and its administrator-only merge control.",
       "expected_holds": []
     }
   ]
