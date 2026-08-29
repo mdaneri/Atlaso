@@ -15,6 +15,9 @@ from scripts.check_repo import (
     PRIVATE_REMEDIATION_REMOTE_MARKER,
     REMOTE_BRANCH_LEASE_MARKER,
     REQUIRED_POLICY_MARKERS,
+    SCHEDULED_PR_MONITORING_SECTION_ANCHORS,
+    SCHEDULED_PR_MONITORING_SECTION_END_ANCHORS,
+    SCHEDULED_PR_MONITORING_SECTION_MARKERS,
     SPARK_WORKER_AGENT_PATH,
     SPARK_WORKER_ALLOWED_KEYS,
     SPARK_WORKER_REQUIRED_INSTRUCTION_MARKERS,
@@ -306,12 +309,33 @@ def write_policy_files(root: Path) -> None:
         path.parent.mkdir(parents=True, exist_ok=True)
         section_markers = TERMINAL_CLEANUP_SECTION_MARKERS.get(relative_path, ())
         section_anchor = TERMINAL_CLEANUP_SECTION_ANCHORS.get(relative_path)
+        monitoring_markers = SCHEDULED_PR_MONITORING_SECTION_MARKERS.get(
+            relative_path, ()
+        )
+        monitoring_anchor = SCHEDULED_PR_MONITORING_SECTION_ANCHORS.get(
+            relative_path
+        )
+        monitoring_end_anchor = SCHEDULED_PR_MONITORING_SECTION_END_ANCHORS.get(
+            relative_path
+        )
         other_markers = tuple(
             marker
             for marker in markers
-            if marker not in section_markers and marker != section_anchor
+            if marker not in section_markers
+            and marker != section_anchor
+            and marker not in monitoring_markers
+            and marker != monitoring_anchor
         )
         policy_lines = list(other_markers)
+        if monitoring_anchor is not None:
+            monitoring_prefix = "" if monitoring_anchor.startswith("#") else "  "
+            policy_lines.extend(
+                (
+                    monitoring_anchor,
+                    *(monitoring_prefix + marker for marker in monitoring_markers),
+                    monitoring_end_anchor or "- following monitoring policy",
+                )
+            )
         if section_anchor is not None:
             content_prefix = "" if section_anchor.startswith("#") else "  "
             non_ordered_markers = tuple(
@@ -674,6 +698,33 @@ def test_agent_policy_gate_rejects_missing_scheduled_pr_monitoring_contract(
                 == f"required agent policy marker is missing: {marker}"
                 for finding in findings
             )
+
+
+def test_agent_policy_gate_scopes_heartbeat_markers_to_monitoring_section(
+    tmp_path: Path,
+) -> None:
+    """Verify that duplicate cleanup prose cannot satisfy heartbeat policy.
+
+    Args:
+        tmp_path: Temporary directory provided by pytest for isolated filesystem state.
+    """
+    marker = "already absent"
+    for relative_path in SCHEDULED_PR_MONITORING_SECTION_MARKERS:
+        write_policy_files(tmp_path)
+        path = tmp_path / relative_path
+        text = path.read_text(encoding="utf-8")
+        path.write_text(
+            marker + "\n" + text.replace(marker, "", 1),
+            encoding="utf-8",
+        )
+
+        findings = check_agent_policy_gate(tmp_path)
+
+        assert len(findings) == 1
+        assert findings[0].path == path
+        assert findings[0].message == (
+            "pull-request monitoring section marker is missing: " + marker
+        )
 
 
 def test_agent_policy_gate_rejects_missing_default_merge_authorization(

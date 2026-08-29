@@ -40,8 +40,8 @@ New Tabulators must use `window.AtlasoUiPatterns.createGrid(...)`; every new or 
   unresolved non-outdated review thread remains;
 - bind deletion to the exact current-task heartbeat identity; never delete unrelated automations or use an ambiguous
   name match; accept an already absent heartbeat only after ownership and terminal evidence are revalidated; pause only
-  for resumable holds such as unresolved maintainer decisions or external failures; a deletion failure or ambiguous
-  ownership leaves the task actionable with the exact retry condition;
+  for resumable holds such as unresolved maintainer decisions or external failures;
+  a deletion failure or ambiguous ownership leaves the task actionable with the exact retry condition;
 - apply the **Default merge authorization** policy to ordinary same-repository pull requests within the active task's
   scope: implementation, fix, solve, delivery, and similar requests grant default merge authority, including for an
   existing ordinary pull request the agent is explicitly asked to work on; do not require a separate merge instruction;

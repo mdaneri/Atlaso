@@ -122,6 +122,27 @@ SPARK_WORKER_REQUIRED_INSTRUCTION_MARKERS = (
     "Return a concise summary",
 )
 
+SCHEDULED_PR_MONITORING_SHARED_MARKERS = (
+    "current-task heartbeat",
+    "four minutes",
+    "persistent GitHub polling loops",
+    "seen comment and review IDs",
+    "merged, closed, or merge-ready",
+    "final bounded readback",
+    "delete the exact current-task heartbeat",
+    "linked-issue closure",
+    "current `origin/main` reachability",
+    "applicable post-merge workflow verification",
+    "unmerged closed",
+    "delivery-complete",
+    "never delete unrelated",
+    "already absent",
+    "terminal evidence",
+    "resumable holds",
+    "ambiguous ownership",
+    "exact retry condition",
+)
+
 REQUIRED_POLICY_MARKERS = {
     Path("AGENTS.md"): (
         "## Mandatory Agent Startup Gate",
@@ -153,27 +174,10 @@ REQUIRED_POLICY_MARKERS = {
         "@codex review",
         "exact head",
         "reviewThreads",
-        "current-task heartbeat",
-        "four minutes",
-        "persistent GitHub polling loops",
-        "seen comment and review IDs",
+        *SCHEDULED_PR_MONITORING_SHARED_MARKERS,
         "top-level pull-request comments",
         "inline review comments",
         "review submissions",
-        "merged, closed, or merge-ready",
-        "final bounded readback",
-        "delete the exact current-task heartbeat",
-        "linked-issue closure",
-        "current `origin/main` reachability",
-        "applicable post-merge workflow verification",
-        "unmerged closed",
-        "delivery-complete",
-        "never delete unrelated",
-        "already absent",
-        "terminal evidence",
-        "resumable holds",
-        "ambiguous ownership",
-        "exact retry condition",
         "### Unrelated issue discoveries",
         "### Default merge authorization",
         "default merge authority",
@@ -207,27 +211,10 @@ REQUIRED_POLICY_MARKERS = {
         "@codex review",
         "exact head",
         "review threads",
-        "current-task heartbeat",
-        "four minutes",
-        "persistent GitHub polling loops",
-        "seen comment and review IDs",
+        *SCHEDULED_PR_MONITORING_SHARED_MARKERS,
         "top-level pull-request comments",
         "inline review comments",
         "review submissions",
-        "merged, closed, or merge-ready",
-        "final bounded readback",
-        "delete the exact current-task heartbeat",
-        "linked-issue closure",
-        "current `origin/main` reachability",
-        "applicable post-merge workflow verification",
-        "unmerged closed",
-        "delivery-complete",
-        "never delete unrelated",
-        "already absent",
-        "terminal evidence",
-        "resumable holds",
-        "ambiguous ownership",
-        "exact retry condition",
         "### Unrelated issue discoveries",
         "### Default merge authorization",
         "default merge authority",
@@ -262,27 +249,10 @@ REQUIRED_POLICY_MARKERS = {
         "@codex review",
         "exact head",
         "review threads",
-        "current-task heartbeat",
-        "four minutes",
-        "persistent GitHub polling loops",
-        "seen comment and review IDs",
+        *SCHEDULED_PR_MONITORING_SHARED_MARKERS,
         "top-level pull-request comments",
         "inline review comments",
         "review submissions",
-        "merged, closed, or merge-ready",
-        "final bounded readback",
-        "delete the exact current-task heartbeat",
-        "linked-issue closure",
-        "current `origin/main` reachability",
-        "applicable post-merge workflow verification",
-        "unmerged closed",
-        "delivery-complete",
-        "never delete unrelated",
-        "already absent",
-        "terminal evidence",
-        "resumable holds",
-        "ambiguous ownership",
-        "exact retry condition",
         "Default merge authorization",
         "default merge authority",
         "explicit merge hold",
@@ -339,27 +309,10 @@ REQUIRED_POLICY_MARKERS = {
         "@codex review",
         "exact head",
         "reviewThreads",
-        "current-task heartbeat",
-        "four minutes",
-        "persistent GitHub polling loops",
-        "seen comment and review IDs",
+        *SCHEDULED_PR_MONITORING_SHARED_MARKERS,
         "top-level pull-request comments",
         "inline review comments",
         "review submissions",
-        "merged, closed, or merge-ready",
-        "final bounded readback",
-        "delete the exact current-task heartbeat",
-        "linked-issue closure",
-        "current `origin/main` reachability",
-        "applicable post-merge workflow verification",
-        "unmerged closed",
-        "delivery-complete",
-        "never delete unrelated",
-        "already absent",
-        "terminal evidence",
-        "resumable holds",
-        "ambiguous ownership",
-        "exact retry condition",
         "outside that scope is discovered",
         "### Default merge authorization",
         "default merge authority",
@@ -384,27 +337,10 @@ REQUIRED_POLICY_MARKERS = {
         "each post-opening pushed commit received one `@codex review` request",
         "request as the exact",
         "authoritative review threads",
-        "current-task heartbeat",
-        "four minutes",
-        "persistent GitHub polling loops",
-        "seen comment and review IDs",
+        *SCHEDULED_PR_MONITORING_SHARED_MARKERS,
         "top-level pull-request comment",
         "inline review comment",
         "review submission",
-        "merged, closed, or merge-ready",
-        "final bounded readback",
-        "delete the exact current-task heartbeat",
-        "linked-issue closure",
-        "current `origin/main` reachability",
-        "applicable post-merge workflow verification",
-        "unmerged closed",
-        "delivery-complete",
-        "never delete unrelated",
-        "already absent",
-        "terminal evidence",
-        "resumable holds",
-        "ambiguous ownership",
-        "exact retry condition",
         "Default merge authorization",
         "default merge authority",
         "explicit merge hold",
@@ -449,6 +385,63 @@ REQUIRED_POLICY_MARKERS = {
         "`non_task_owned_checkout_preserved`",
         "worktree removal remote branch gate is either verified absent or recorded not applicable",
         "primary checkout remote branch gate is either verified absent or recorded not applicable",
+    ),
+}
+
+SCHEDULED_PR_MONITORING_SECTION_ANCHORS = {
+    Path("AGENTS.md"): "### Focused local validation and pull-request follow-through",
+    Path("CONTRIBUTING.md"): "### Automated pull-request follow-through",
+    Path(".github/copilot-instructions.md"): (
+        "- keep the task active with exactly one current-task heartbeat"
+    ),
+    Path(".github/pull_request_template.md"): (
+        "- [ ] For an ordinary pull request, exactly one current-task heartbeat"
+    ),
+    Path("docs/contribute/agent-policies.md"): (
+        "### Focused local validation and pull-request follow-through"
+    ),
+}
+
+SCHEDULED_PR_MONITORING_SECTION_END_ANCHORS = {
+    Path(".github/copilot-instructions.md"): (
+        "- apply the **Default merge authorization** policy"
+    ),
+    Path(".github/pull_request_template.md"): (
+        "- [ ] For an ordinary same-repository pull request within the active "
+        "task's scope, the Default merge authorization"
+    ),
+}
+
+SCHEDULED_PR_MONITORING_SECTION_MARKERS = {
+    Path("AGENTS.md"): (
+        *SCHEDULED_PR_MONITORING_SHARED_MARKERS,
+        "top-level pull-request comments",
+        "inline review comments",
+        "review submissions",
+    ),
+    Path("CONTRIBUTING.md"): (
+        *SCHEDULED_PR_MONITORING_SHARED_MARKERS,
+        "top-level pull-request comments",
+        "inline review comments",
+        "review submissions",
+    ),
+    Path(".github/copilot-instructions.md"): (
+        *SCHEDULED_PR_MONITORING_SHARED_MARKERS,
+        "top-level pull-request comments",
+        "inline review comments",
+        "review submissions",
+    ),
+    Path(".github/pull_request_template.md"): (
+        *SCHEDULED_PR_MONITORING_SHARED_MARKERS,
+        "top-level pull-request comment",
+        "inline review comment",
+        "review submission",
+    ),
+    Path("docs/contribute/agent-policies.md"): (
+        *SCHEDULED_PR_MONITORING_SHARED_MARKERS,
+        "top-level pull-request comments",
+        "inline review comments",
+        "review submissions",
     ),
 }
 
@@ -888,6 +881,77 @@ def check_file(path: Path) -> list[Finding]:
     return findings
 
 
+def extract_required_policy_section(
+    text: str,
+    section_anchor: str,
+    *,
+    section_end_anchor: str | None = None,
+) -> tuple[int, str | None]:
+    """Return the count and operative content for one policy section.
+
+    Args:
+        text: Complete Markdown policy source.
+        section_anchor: Exact heading or leading list-item text that starts the section.
+        section_end_anchor: Optional next sibling marker that bounds a list section.
+    """
+    operative_text = strip_markdown_nonoperative_content(text)
+    source_lines = text.splitlines()
+    raw_html_block_lines = markdown_raw_html_block_lines(text)
+    section_anchor_lines = tuple(
+        index
+        for index, line in enumerate(operative_text.splitlines())
+        if (
+            line == section_anchor
+            if section_anchor.startswith("#")
+            else line.startswith(section_anchor)
+        )
+        and index < len(source_lines)
+        and (
+            source_lines[index] == section_anchor
+            if section_anchor.startswith("#")
+            else source_lines[index].startswith(section_anchor)
+        )
+        and index not in raw_html_block_lines
+    )
+    if len(section_anchor_lines) != 1:
+        return len(section_anchor_lines), None
+    if section_end_anchor is not None:
+        section_start_line = section_anchor_lines[0]
+        section_end_lines = tuple(
+            index
+            for index, line in enumerate(operative_text.splitlines())
+            if index > section_start_line
+            and line.startswith(section_end_anchor)
+            and index < len(source_lines)
+            and source_lines[index].startswith(section_end_anchor)
+            and index not in raw_html_block_lines
+        )
+        if len(section_end_lines) != 1:
+            return 1, ""
+        bounded_source = "\n".join(
+            source_lines[section_start_line : section_end_lines[0]]
+        )
+        return 1, strip_markdown_nonoperative_content(bounded_source)
+    if section_anchor.startswith("#"):
+        section = extract_markdown_policy_section(
+            operative_text,
+            section_anchor,
+            start_line=section_anchor_lines[0],
+        )
+    else:
+        structural_section = extract_markdown_policy_section(
+            text,
+            section_anchor,
+            start_line=section_anchor_lines[0],
+        )
+        section = (
+            strip_markdown_nonoperative_content(structural_section)
+            if structural_section is not None
+            else None
+        )
+    return 1, section
+
+
 def check_agent_policy_gate(root: Path) -> list[Finding]:
     """Require agent policy entry points and their non-negotiable markers.
 
@@ -907,6 +971,68 @@ def check_agent_policy_gate(root: Path) -> list[Finding]:
             findings.append(
                 Finding(path, f"required agent policy marker is missing: {marker}")
             )
+        monitoring_markers = SCHEDULED_PR_MONITORING_SECTION_MARKERS.get(
+            relative_path, ()
+        )
+        monitoring_anchor = SCHEDULED_PR_MONITORING_SECTION_ANCHORS.get(
+            relative_path
+        )
+        monitoring_end_anchor = SCHEDULED_PR_MONITORING_SECTION_END_ANCHORS.get(
+            relative_path
+        )
+        monitoring_section: str | None = None
+        monitoring_boundary_missing = False
+        if monitoring_anchor is not None:
+            monitoring_boundary_missing = any(
+                marker in monitoring_anchor
+                or (
+                    monitoring_end_anchor is not None
+                    and marker in monitoring_end_anchor
+                )
+                for marker in missing_required_markers
+            )
+            monitoring_anchor_count, monitoring_section = (
+                extract_required_policy_section(
+                    text,
+                    monitoring_anchor,
+                    section_end_anchor=monitoring_end_anchor,
+                )
+            )
+            if monitoring_anchor_count == 0 and not monitoring_boundary_missing:
+                findings.append(
+                    Finding(
+                        path,
+                        "pull-request monitoring section is missing: "
+                        + monitoring_anchor,
+                    )
+                )
+            elif monitoring_anchor_count > 1 and not monitoring_boundary_missing:
+                findings.append(
+                    Finding(
+                        path,
+                        "pull-request monitoring section must appear exactly once: "
+                        + monitoring_anchor,
+                    )
+                )
+        if (
+            monitoring_markers
+            and monitoring_section is not None
+            and not monitoring_boundary_missing
+        ):
+            missing_monitoring_markers = tuple(
+                marker
+                for marker in monitoring_markers
+                if marker not in monitoring_section
+            )
+            for marker in missing_monitoring_markers:
+                if marker not in missing_required_markers:
+                    findings.append(
+                        Finding(
+                            path,
+                            "pull-request monitoring section marker is missing: "
+                            + marker,
+                        )
+                    )
         ordered_markers = ORDERED_TERMINAL_CLEANUP_MARKERS.get(relative_path)
         section_markers = TERMINAL_CLEANUP_SECTION_MARKERS.get(relative_path, ())
         section_anchor = TERMINAL_CLEANUP_SECTION_ANCHORS.get(relative_path)
