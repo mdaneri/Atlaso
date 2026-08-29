@@ -1359,6 +1359,8 @@ def test_release_workflows_use_successful_main_sha_and_promote_without_rebuildin
     assert "--expected-commit \"$RELEASE_SHA\"" in publication
     assert 'sha256sum "$EXISTING_WHEEL"' in publication
     assert 'sha256sum "$SELECTED_WHEEL"' in publication
+    assert '.content_hashes["THIRD_PARTY_NOTICES.md"]' in publication
+    assert 'sha256sum "$EXISTING_NOTICE"' in publication
     assert "if: needs.release_inputs.outputs.existing_release != 'true'" in publication
     prepare_job = publication.split("  prepare:\n", 1)[1].split("  wheelhouse:\n", 1)[0]
     assert "if: github.ref == 'refs/heads/main'" in prepare_job

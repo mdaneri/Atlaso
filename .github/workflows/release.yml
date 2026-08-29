@@ -271,10 +271,14 @@ jobs:
             > "$RUNNER_TEMP/existing-release-inputs.json"
           EXISTING_WHEEL="$(jq -r .application_wheel "$RUNNER_TEMP/existing-release-inputs.json")"
           SELECTED_WHEEL="$(find dist/application-wheel -maxdepth 1 -type f -name '*.whl')"
+          EXISTING_NOTICE="dist/release/atlaso-third-party-notices-${VERSION}.md"
+          NOTICE_SHA="$(jq -er '.content_hashes["THIRD_PARTY_NOTICES.md"] | select(type == "string" and test("^[0-9a-f]{64}$"))' dist/release/release-manifest.json)"
           test -f "$EXISTING_WHEEL"
           test -f "$SELECTED_WHEEL"
+          test -f "$EXISTING_NOTICE"
           test "$(sha256sum "$EXISTING_WHEEL" | cut -d' ' -f1)" = \
             "$(sha256sum "$SELECTED_WHEEL" | cut -d' ' -f1)"
+          test "$(sha256sum "$EXISTING_NOTICE" | cut -d' ' -f1)" = "$NOTICE_SHA"
           echo "present=true" >> "$GITHUB_OUTPUT"
       - name: Upload verified release inputs
         uses: actions/upload-artifact@v7

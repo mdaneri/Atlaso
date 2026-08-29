@@ -528,9 +528,10 @@ release and retained as `packages/wheel-identity.json` inside the signed bundle.
 
 If `vX.Y.Z` already exists and only channel advancement needs recovery, the manual workflow verifies and reuses the
 existing signed Release assets. It extracts the application wheel through the signed manifest content-hash contract and
-requires it to match the retained replay wheel byte for byte. The bundle is not rebuilt with the replay publisher's
-identity, so the immutable assets and their original signed provenance remain unchanged. This recovery path also skips
-the dependency-wheelhouse build and download. The protected signing key remains required to sign the recovered channel
+requires it to match the retained replay wheel byte for byte. It also requires the external third-party-notices asset to
+match the signed bundle content hash before reuse. The bundle is not rebuilt with the replay publisher's identity, so
+the immutable assets and their original signed provenance remain unchanged. This recovery path also skips the
+dependency-wheelhouse build and download. The protected signing key remains required to sign the recovered channel
 pointer, but it is not used to rebuild or replace the existing immutable Release.
 
 The protected workflows use these checked-in inputs:
