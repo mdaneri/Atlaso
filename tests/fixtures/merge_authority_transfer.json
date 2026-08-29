@@ -66,6 +66,21 @@
       ]
     },
     {
+      "name": "equivalent-explicit-do-not-merge",
+      "instructions": [
+        {
+          "text": "Implement the change, but don't merge.",
+          "add_holds": [
+            "do not merge"
+          ]
+        }
+      ],
+      "generated": "Preserve the explicit instruction: do not merge.",
+      "expected_holds": [
+        "do not merge"
+      ]
+    },
+    {
       "name": "explicit-leave-open",
       "instructions": [
         {

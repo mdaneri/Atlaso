@@ -970,6 +970,80 @@ def test_merge_authority_transfer_applies_structured_hold_withdrawal(
     assert check_merge_authority_transfer_fixtures(tmp_path) == []
 
 
+def test_merge_authority_transfer_rejects_mislabeled_hold_removal(
+    tmp_path: Path,
+) -> None:
+    """Verify active hold wording cannot be recorded as a withdrawal.
+
+    Args:
+        tmp_path: Temporary directory provided by pytest for isolated filesystem state.
+    """
+    path = tmp_path / MERGE_AUTHORITY_TRANSFER_FIXTURE_PATH
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(
+        json.dumps(
+            {
+                "cases": [
+                    {
+                        "name": "mislabeled removal",
+                        "instructions": [
+                            {
+                                "text": "Do not merge.",
+                                "remove_holds": ["do not merge"],
+                            }
+                        ],
+                        "generated": "Continue through guarded squash merge.",
+                        "expected_holds": [],
+                    }
+                ]
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    findings = check_merge_authority_transfer_fixtures(tmp_path)
+
+    assert len(findings) == 1
+    assert findings[0].message == (
+        "merge authority fixture mislabeled removal instruction 1 hold operations "
+        "do not match its text"
+    )
+
+
+def test_merge_authority_transfer_normalizes_equivalent_hold_wording(
+    tmp_path: Path,
+) -> None:
+    """Verify a common equivalent spelling retains the explicit hold.
+
+    Args:
+        tmp_path: Temporary directory provided by pytest for isolated filesystem state.
+    """
+    path = tmp_path / MERGE_AUTHORITY_TRANSFER_FIXTURE_PATH
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(
+        json.dumps(
+            {
+                "cases": [
+                    {
+                        "name": "equivalent hold",
+                        "instructions": [
+                            {
+                                "text": "Please don't merge.",
+                                "add_holds": ["do not merge"],
+                            }
+                        ],
+                        "generated": "Preserve the instruction: do not merge.",
+                        "expected_holds": ["do not merge"],
+                    }
+                ]
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    assert check_merge_authority_transfer_fixtures(tmp_path) == []
+
+
 def test_agent_policy_gate_rejects_missing_default_merge_authority_contract(
     tmp_path: Path,
 ) -> None:

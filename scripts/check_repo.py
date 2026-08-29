@@ -484,15 +484,43 @@ MERGE_AUTHORITY_TRANSFER_FIXTURE_PATH = Path(
     "tests/fixtures/merge_authority_transfer.json"
 )
 EXPLICIT_MERGE_HOLD_PATTERNS = {
-    "do not merge": ("do not merge",),
+    "do not merge": ("do not merge", "don't merge", "don’t merge"),
     "leave open": (
         "leave open",
         "leave the pull request open",
         "leave the pr open",
+        "keep the pull request open",
+        "keep the pr open",
     ),
-    "pr only": ("pull request only", "pr only"),
-    "wait for approval": ("wait for approval",),
+    "pr only": (
+        "pull request only",
+        "pr only",
+        "only open the pull request",
+        "only create the pull request",
+    ),
+    "wait for approval": (
+        "wait for approval",
+        "await approval",
+        "wait for maintainer approval",
+        "wait until approved",
+    ),
 }
+MERGE_HOLD_WITHDRAWAL_MARKERS = (
+    "withdrawn",
+    "withdraw the",
+    "no longer applies",
+    "rescinded",
+    "revoked",
+    "may merge now",
+    "do not leave open",
+    "don't leave open",
+    "don’t leave open",
+    "do not wait for approval",
+    "don't wait for approval",
+    "don’t wait for approval",
+    "not pull request only",
+    "not pr only",
+)
 DEFAULT_MERGE_AUTHORITY_PROMPT_MARKERS = (
     "default merge authority",
     "guarded squash merge",
@@ -713,10 +741,18 @@ def check_merge_authority_transfer_fixtures(root: Path) -> list[Finding]:
             removals = tuple(dict.fromkeys(item.casefold() for item in remove_holds))
             referenced = tuple(dict.fromkeys((*additions, *removals)))
             mentioned = explicit_merge_holds(instruction_text)
+            normalized_instruction = " ".join(
+                instruction_text.casefold().split()
+            )
+            explicitly_withdraws = any(
+                marker in normalized_instruction
+                for marker in MERGE_HOLD_WITHDRAWAL_MARKERS
+            )
             if (
                 any(hold not in EXPLICIT_MERGE_HOLD_PATTERNS for hold in referenced)
                 or set(additions) & set(removals)
                 or set(referenced) != set(mentioned)
+                or (bool(removals) != explicitly_withdraws)
             ):
                 findings.append(
                     Finding(
