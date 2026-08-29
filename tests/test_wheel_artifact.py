@@ -46,6 +46,15 @@ def test_create_artifact_builds_from_explicit_source_root(
     def fake_build(
         target: Path, *, commit: str, built_at: str, source_root: Path
     ) -> Path:
+        """Record the source root passed to the protected build helper.
+
+        Args:
+            target: Temporary wheel build directory.
+            commit: Exact admitted source commit.
+            built_at: Exact timezone-aware commit timestamp.
+            source_root: Exact admitted source checkout.
+        """
+
         observed.update(
             source_root=source_root,
             commit=commit,
