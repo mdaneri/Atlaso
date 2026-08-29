@@ -141,11 +141,17 @@ runtime.
 - Address actionable feedback, reply and resolve each handled thread, rerun focused local validation, then commit,
   push, verify the new exact head, request `@codex review`, and continue the same heartbeat.
 - Treat merged, closed, or merge-ready as terminal pull-request states. After a merge, continue the same heartbeat
-  through required merge, linked-issue, `origin/main`, and applicable post-merge workflow verification, then pause it.
-  Pause immediately for an unmerged closed pull request, or for a merge-ready pull request with a successful current
-  head, every comment and review seen, no requested changes or actionable feedback, and no unresolved non-outdated
-  review thread. Pause and escalate genuine maintainer decisions or external failures. Merge-ready status does not
-  grant merge authority, and unchanged runs must not repeat prior reports.
+  through linked-issue closure, current `origin/main` reachability, and applicable post-merge workflow verification.
+  Then perform one final bounded readback and delete the exact current-task heartbeat. For an unmerged closed pull
+  request, perform the same final bounded readback and deletion. Do likewise for a delivery-complete merge-ready pull
+  request with a successful current head, every comment and review seen, no requested changes or actionable feedback,
+  and no unresolved non-outdated review thread.
+- Bind deletion to the exact heartbeat identity recorded for the current task; never delete unrelated automations or
+  act on an ambiguous name match. An already absent heartbeat satisfies terminal cleanup only after ownership and
+  terminal evidence are revalidated. Pause only for resumable holds, such as unresolved maintainer decisions or
+  external failures. A deletion failure or ambiguous ownership leaves the task actionable and must report the
+  exact retry condition. Merge-ready status does not grant merge authority, and unchanged runs must not repeat prior
+  reports.
 
 ### Default merge authorization
 
