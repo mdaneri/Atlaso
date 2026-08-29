@@ -1369,6 +1369,11 @@ def test_release_workflows_use_successful_main_sha_and_promote_without_rebuildin
     assert "actions/workflows/ci.yml/runs" not in prepare_job
     assert "-f status=success" not in prepare_job
     publish_job = publication.split("  publish:\n", 1)[1]
+    wheelhouse_job = publication.split("  wheelhouse:\n", 1)[1].split(
+        "  release_inputs:\n", 1
+    )[0]
+    assert "- release_inputs" in wheelhouse_job
+    assert "if: needs.release_inputs.outputs.existing_release != 'true'" in wheelhouse_job
     assert "group: atlaso-github-pages" not in release_inputs_job
     assert "environment: appliance-release" not in release_inputs_job
     assert "contents: write" not in release_inputs_job
@@ -1384,6 +1389,21 @@ def test_release_workflows_use_successful_main_sha_and_promote_without_rebuildin
     assert "retention-days: 1" in release_inputs_job
     assert "group: atlaso-github-pages" in publish_job
     assert "actions/download-artifact@v8" in publish_job
+    assert "always() &&" in publish_job
+    assert "needs.prepare.result == 'success'" in publish_job
+    assert "needs.release_inputs.result == 'success'" in publish_job
+    assert (
+        "needs.release_inputs.outputs.existing_release == 'true' || "
+        "needs.wheelhouse.result == 'success'"
+    ) in publish_job
+    wheelhouse_download = publish_job.split(
+        "- name: Download CPython 3.14 wheelhouse", 1
+    )[1].split("- name: Materialize the protected signing key", 1)[0]
+    signing_key = publish_job.split(
+        "- name: Materialize the protected signing key", 1
+    )[1].split("- name: Build and sign the immutable release", 1)[0]
+    assert "if: needs.release_inputs.outputs.existing_release != 'true'" in wheelhouse_download
+    assert "if: needs.release_inputs.outputs.existing_release != 'true'" in signing_key
     assert "Resolve the immutable automatic wheel handoff" not in publish_job
     assert "Preserve an existing immutable release" not in publish_job
     assert "actions/artifacts?name=" not in publish_job

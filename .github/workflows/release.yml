@@ -56,6 +56,8 @@ jobs:
     name: Build ${{ matrix.abi }} wheelhouse
     needs:
       - prepare
+      - release_inputs
+    if: needs.release_inputs.outputs.existing_release != 'true'
     runs-on: ubuntu-latest
     strategy:
       fail-fast: true
@@ -290,6 +292,11 @@ jobs:
       - prepare
       - release_inputs
       - wheelhouse
+    if: >-
+      always() &&
+      needs.prepare.result == 'success' &&
+      needs.release_inputs.result == 'success' &&
+      (needs.release_inputs.outputs.existing_release == 'true' || needs.wheelhouse.result == 'success')
     runs-on: ubuntu-latest
     concurrency:
       group: atlaso-github-pages
@@ -343,11 +350,13 @@ jobs:
             test ! -d dist/release || test -z "$(find dist/release -type f -print -quit)"
           fi
       - name: Download CPython 3.14 wheelhouse
+        if: needs.release_inputs.outputs.existing_release != 'true'
         uses: actions/download-artifact@v8
         with:
           name: wheelhouse-cp314
           path: wheelhouses/cp314
       - name: Materialize the protected signing key
+        if: needs.release_inputs.outputs.existing_release != 'true'
         env:
           RELEASE_SIGNING_PRIVATE_KEY: ${{ secrets.RELEASE_SIGNING_PRIVATE_KEY }}
         run: |
