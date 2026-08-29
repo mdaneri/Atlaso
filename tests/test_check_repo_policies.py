@@ -610,6 +610,19 @@ def test_agent_policy_gate_rejects_missing_scheduled_pr_monitoring_contract(
         "persistent GitHub polling loops",
         "seen comment and review IDs",
         "merged, closed, or merge-ready",
+        "final bounded readback",
+        "delete the exact current-task heartbeat",
+        "linked-issue closure",
+        "current `origin/main` reachability",
+        "applicable post-merge workflow verification",
+        "unmerged closed",
+        "delivery-complete",
+        "never delete unrelated",
+        "already absent",
+        "terminal evidence",
+        "resumable holds",
+        "ambiguous ownership",
+        "exact retry condition",
     )
     required_entry_markers = {
         Path("AGENTS.md"): (
@@ -649,16 +662,17 @@ def test_agent_policy_gate_rejects_missing_scheduled_pr_monitoring_contract(
             write_policy_files(tmp_path)
             path = tmp_path / relative_path
             path.write_text(
-                path.read_text(encoding="utf-8").replace(marker, "", 1),
+                path.read_text(encoding="utf-8").replace(marker, ""),
                 encoding="utf-8",
             )
 
             findings = check_agent_policy_gate(tmp_path)
 
-            assert len(findings) == 1
-            assert findings[0].path == path
-            assert findings[0].message == (
-                f"required agent policy marker is missing: {marker}"
+            assert any(
+                finding.path == path
+                and finding.message
+                == f"required agent policy marker is missing: {marker}"
+                for finding in findings
             )
 
 

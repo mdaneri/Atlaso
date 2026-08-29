@@ -32,9 +32,16 @@ New Tabulators must use `window.AtlasoUiPatterns.createGrid(...)`; every new or 
   top-level pull-request comments, inline review comments, review submissions and requested changes, exact-head checks,
   mergeability and conflicts, and authoritative review threads;
 - treat merged, closed, or merge-ready as terminal states; keep the same heartbeat after actionable feedback and its
-  focused commit-push-review cycle, keep it running after a merge through required post-merge verification, and pause it
-  for an unmerged closure or a merge-ready successful current head only when every item is seen and no actionable
-  feedback or unresolved non-outdated review thread remains;
+  focused commit-push-review cycle, and after a merge keep it running through linked-issue closure and
+  current `origin/main` reachability, plus applicable post-merge workflow verification; then
+  perform one final bounded readback and delete the exact current-task heartbeat; use the same final readback and
+  deletion for an unmerged closed pull request or a
+  delivery-complete merge-ready successful current head only when every item is seen and no actionable feedback or
+  unresolved non-outdated review thread remains;
+- bind deletion to the exact current-task heartbeat identity; never delete unrelated automations or use an ambiguous
+  name match; accept an already absent heartbeat only after ownership and terminal evidence are revalidated; pause only
+  for resumable holds such as unresolved maintainer decisions or external failures; a deletion failure or ambiguous
+  ownership leaves the task actionable with the exact retry condition;
 - apply the **Default merge authorization** policy to ordinary same-repository pull requests within the active task's
   scope: implementation, fix, solve, delivery, and similar requests grant default merge authority, including for an
   existing ordinary pull request the agent is explicitly asked to work on; do not require a separate merge instruction;
