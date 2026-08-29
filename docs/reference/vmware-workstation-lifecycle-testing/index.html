@@ -3720,6 +3720,9 @@ desktop and responsive update-only page; redact sessions, credentials, keys, sou
 </span><span id="__span-2-4"><a id="__codelineno-2-4" name="__codelineno-2-4" href="#__codelineno-2-4"></a>  <span class="n">-IsoChecksum</span> <span class="s2">&quot;&lt;packer-checksum&gt;&quot;</span> <span class="p">`</span>
 </span><span id="__span-2-5"><a id="__codelineno-2-5" name="__codelineno-2-5" href="#__codelineno-2-5"></a>  <span class="n">-EnableRealSystemAdapters</span>
 </span></code></pre></div>
+<p>For a previously downloaded ISO, pass either its local filesystem path or an empty-authority <code>file:///</code> URI. The
+wrapper verifies that exact file against <code>-IsoChecksum</code> before any remastering and does not route it through the HTTP
+download path. Host-authority file URIs are rejected; use an explicitly mounted local path instead.</p>
 <p>The image wrapper uses the same exact Atlaso Environment selector contract as normal test-VM creation: an explicit
 <code>-OnePasswordEnvironmentId</code> takes precedence over the checkout-local, Git-ignored
 <code>.atlaso-local/onepassword-environment-id</code>, and <code>-EnvironmentIdFile</code> selects a different single-line file. When
