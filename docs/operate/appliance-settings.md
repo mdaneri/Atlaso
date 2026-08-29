@@ -40,9 +40,11 @@ clears browser identity and CSRF state, records a sanitized audit event, and ret
 navigation returns to the appropriate management, public, or protocol login surface with **Session expired due to
 inactivity**.
 
-The OIDC provider applies the same timeout to its separately signed `/identity` browser session. A successful credential
-submission records the server-authoritative activity time; silent `prompt=none` authorization does not refresh it. Once
-the deadline is reached, silent authorization returns `login_required` and a new interactive sign-in is required.
+The OIDC provider applies the same timeout to its separate `/identity` browser session. Its signed cookie carries only
+an opaque session identifier; Atlaso persists the authoritative activity and terminal-expiry state. A successful
+credential submission starts the session, while silent `prompt=none` authorization does not refresh it. Once the
+deadline is reached, silent authorization returns `login_required`, and raising the policy cannot resurrect that
+expired session; a new interactive sign-in is required.
 
 Settings archives preserve both policy values but exclude active browser-session records. Factory reset restores the
 30-minute and 90-day defaults and invalidates all earlier sessions and tokens.

@@ -638,6 +638,28 @@ class BrowserSession(Base):
     expiry_reason: Mapped[str | None] = mapped_column(String(40), nullable=True)
 
 
+class OidcBrowserSession(Base):
+    """Track server-owned OIDC browser-session activity and terminal expiry.
+
+    Attributes:
+        id: Opaque identifier stored only inside the signed OIDC browser cookie.
+        issued_at: UTC timestamp when authentication established the session.
+        last_interactive_at: UTC timestamp of the latest deliberate protocol login.
+        expired_at: UTC timestamp when Atlaso terminally invalidated the session.
+        expiry_reason: Sanitized reason for terminal invalidation.
+    """
+
+    __tablename__ = "oidc_browser_sessions"
+
+    id: Mapped[str] = mapped_column(String(64), primary_key=True)
+    issued_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+    last_interactive_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=utcnow, index=True
+    )
+    expired_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    expiry_reason: Mapped[str | None] = mapped_column(String(40), nullable=True)
+
+
 class NtpSettings(Base):
     """Represent ntp settings.
 
