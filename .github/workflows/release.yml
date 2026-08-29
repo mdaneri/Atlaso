@@ -162,9 +162,9 @@ jobs:
             exit 1
           fi
           while IFS=$'\t' read -r ARTIFACT_ID PUBLISHER_RUN_ID; do
-            TARGET="$CANDIDATES/$PUBLISHER_RUN_ID"
+            TARGET="$CANDIDATES/$PUBLISHER_RUN_ID-$ARTIFACT_ID"
             if test -e "$TARGET"; then
-              echo "::error::Automatic wheel publisher run $PUBLISHER_RUN_ID has duplicate artifacts."
+              echo "::error::Automatic wheel artifact $ARTIFACT_ID was returned more than once."
               exit 1
             fi
             mkdir "$TARGET"
@@ -173,6 +173,15 @@ jobs:
             python scripts/wheel_artifact.py extract \
               --archive "$RUNNER_TEMP/wheel-${ARTIFACT_ID}.zip" \
               --output "$TARGET"
+            CANDIDATE_RUN_ID="$(jq -r .publisher.run_id "$TARGET/wheel-identity.json")"
+            CANDIDATE_RUN_ATTEMPT="$(jq -r .publisher.run_attempt "$TARGET/wheel-identity.json")"
+            test "$CANDIDATE_RUN_ID" = "$PUBLISHER_RUN_ID"
+            CANDIDATE_STATE="$(gh api "repos/${{ github.repository }}/actions/runs/${CANDIDATE_RUN_ID}/attempts/${CANDIDATE_RUN_ATTEMPT}")"
+            test "$(jq -r .name <<<"$CANDIDATE_STATE")" = "Publish Python wheel"
+            test "$(jq -r .path <<<"$CANDIDATE_STATE")" = .github/workflows/wheel.yml
+            test "$(jq -r .run_attempt <<<"$CANDIDATE_STATE")" = "$CANDIDATE_RUN_ATTEMPT"
+            test "$(jq -r .event <<<"$CANDIDATE_STATE")" = workflow_run
+            test "$(jq -r .conclusion <<<"$CANDIDATE_STATE")" = success
           done < <(jq -r '.[] | [.id, .workflow_run.id] | @tsv' "$RUNNER_TEMP/wheel-artifacts.json")
           python scripts/wheel_artifact.py select \
             --candidates "$CANDIDATES" \

@@ -20,6 +20,7 @@ def _write_candidate(
     root: Path,
     *,
     publisher_run_id: int,
+    publisher_run_attempt: int = 1,
     wheel_payload_suffix: bytes = b"",
     embedded_commit: str = COMMIT,
 ) -> tuple[Path, dict[str, object]]:
@@ -28,6 +29,7 @@ def _write_candidate(
     Args:
         root: Fixture output directory.
         publisher_run_id: Publisher run identity.
+        publisher_run_attempt: Publisher attempt identity.
         wheel_payload_suffix: Optional divergent bytes for collision coverage.
         embedded_commit: Commit written into Atlaso build metadata.
     """
@@ -63,7 +65,7 @@ def _write_candidate(
             "workflow": "Publish Python wheel",
             "workflow_file": "wheel.yml",
             "run_id": publisher_run_id,
-            "run_attempt": 1,
+            "run_attempt": publisher_run_attempt,
         },
         "artifact": {
             "name": wheel_artifact.artifact_name(VERSION, COMMIT),
@@ -135,8 +137,12 @@ def test_select_artifact_accepts_identical_retries_and_preserves_first_run(tmp_p
     """
 
     candidates = tmp_path / "candidates"
-    first, _identity = _write_candidate(candidates / "202", publisher_run_id=202)
-    second, _identity = _write_candidate(candidates / "203", publisher_run_id=203)
+    first, _identity = _write_candidate(
+        candidates / "202-301", publisher_run_id=202, publisher_run_attempt=1
+    )
+    second, _identity = _write_candidate(
+        candidates / "202-302", publisher_run_id=202, publisher_run_attempt=2
+    )
     assert first.read_bytes() == second.read_bytes()
     output = tmp_path / "selected"
 
@@ -155,6 +161,7 @@ def test_select_artifact_accepts_identical_retries_and_preserves_first_run(tmp_p
 
     selected = json.loads((output / wheel_artifact.IDENTITY_NAME).read_text(encoding="utf-8"))
     assert selected["publisher"]["run_id"] == 202
+    assert selected["publisher"]["run_attempt"] == 1
 
 
 def test_select_artifact_fails_closed_on_divergent_collision(tmp_path: Path) -> None:
@@ -165,8 +172,13 @@ def test_select_artifact_fails_closed_on_divergent_collision(tmp_path: Path) -> 
     """
 
     candidates = tmp_path / "candidates"
-    _write_candidate(candidates / "202", publisher_run_id=202)
-    _write_candidate(candidates / "203", publisher_run_id=203, wheel_payload_suffix=b"# retry")
+    _write_candidate(candidates / "202-301", publisher_run_id=202)
+    _write_candidate(
+        candidates / "202-302",
+        publisher_run_id=202,
+        publisher_run_attempt=2,
+        wheel_payload_suffix=b"# retry",
+    )
     args = type(
         "Args",
         (),

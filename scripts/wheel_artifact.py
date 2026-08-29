@@ -357,13 +357,14 @@ def select_artifact(args: argparse.Namespace) -> None:
     candidates = [path for path in args.candidates.iterdir() if path.is_dir()]
     if not candidates:
         raise WheelArtifactError("no retained automatic wheel artifact is available for the release target")
-    verified: list[tuple[int, Path, dict[str, object]]] = []
+    verified: list[tuple[int, int, int, Path, dict[str, object]]] = []
     expected_bytes: bytes | None = None
     for candidate in candidates:
-        try:
-            publisher_run_id = int(candidate.name)
-        except ValueError as exc:
-            raise WheelArtifactError("wheel candidate directory must be named for its publisher run") from exc
+        candidate_identity = re.fullmatch(r"([1-9][0-9]*)-([1-9][0-9]*)", candidate.name)
+        if candidate_identity is None:
+            raise WheelArtifactError("wheel candidate directory must name its publisher run and artifact")
+        publisher_run_id = int(candidate_identity.group(1))
+        artifact_id = int(candidate_identity.group(2))
         wheel, identity = verify_artifact(
             candidate,
             expected_repository=args.repository,
@@ -376,10 +377,17 @@ def select_artifact(args: argparse.Namespace) -> None:
             expected_bytes = wheel_bytes
         elif wheel_bytes != expected_bytes:
             raise WheelArtifactError("retained automatic wheel artifacts collide with different bytes")
-        verified.append((publisher_run_id, wheel, identity))
+        publisher = identity["publisher"]
+        assert isinstance(publisher, dict)
+        publisher_run_attempt = _positive_integer(
+            publisher["run_attempt"], field="publisher.run_attempt"
+        )
+        verified.append((publisher_run_id, publisher_run_attempt, artifact_id, wheel, identity))
     # Keep the first published identity stable so a byte-identical retry cannot
     # change signed bundle inputs after an immutable Release already exists.
-    _run_id, wheel, identity = min(verified, key=lambda item: item[0])
+    _run_id, _run_attempt, _artifact_id, wheel, identity = min(
+        verified, key=lambda item: item[:3]
+    )
     output = args.output.resolve()
     if output.exists() and any(output.iterdir()):
         raise WheelArtifactError("selected wheel output must be absent or empty")

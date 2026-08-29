@@ -1284,6 +1284,10 @@ def test_release_workflows_use_successful_main_sha_and_promote_without_rebuildin
     assert ".publisher.run_attempt" in publication
     assert ".github/workflows/ci.yml" in publication
     assert ".github/workflows/wheel.yml" in publication
+    assert 'TARGET="$CANDIDATES/$PUBLISHER_RUN_ID-$ARTIFACT_ID"' in publication
+    assert 'test "$CANDIDATE_RUN_ID" = "$PUBLISHER_RUN_ID"' in publication
+    assert 'actions/runs/${CANDIDATE_RUN_ID}/attempts/${CANDIDATE_RUN_ATTEMPT}' in publication
+    assert 'test "$(jq -r .run_attempt <<<"$CANDIDATE_STATE")" = "$CANDIDATE_RUN_ATTEMPT"' in publication
     assert 'actions/runs/${SOURCE_CI_RUN_ID}/attempts/${SOURCE_CI_RUN_ATTEMPT}' in publication
     assert 'actions/runs/${PUBLISHER_RUN_ID}/attempts/${PUBLISHER_RUN_ATTEMPT}' in publication
     assert 'test "$(jq -r .run_attempt <<<"$SOURCE_CI_STATE")" = "$SOURCE_CI_RUN_ATTEMPT"' in publication

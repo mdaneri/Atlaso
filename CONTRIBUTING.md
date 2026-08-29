@@ -318,8 +318,9 @@ identity document binding its source CI run ID and attempt, publisher run ID and
 SHA-256 digest. Manual consumption revalidates those exact attempts. It has no signing
 material, GitHub Release/tag or Pages write authority, protected environment, self-hosted runner, or virtualization
 access. Repeated artifacts for one version/commit must contain identical wheel bytes or the manual consumer fails.
-When identical retries coexist, the consumer preserves the earliest retained publisher-run identity so an automatic
-retry cannot change the inputs of an already published signed bundle.
+When identical retries coexist, the consumer stages each publisher-run artifact separately, validates its recorded
+attempt, and preserves the earliest retained publisher run-and-attempt identity so an automatic retry cannot change the
+inputs of an already published signed bundle.
 
 **Publish appliance release** is protected manual dispatch only. Supply the exact full SHA of a successful `main` push
 CI run. The workflow requires a retained matching automatic wheel artifact, validates its GitHub run identities and

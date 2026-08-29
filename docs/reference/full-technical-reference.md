@@ -316,7 +316,8 @@ the source CI and publisher run IDs and attempts, repository, version, commit, b
 digest. Manual admission revalidates those exact attempts through GitHub's attempt-specific endpoints. This
 GitHub-hosted read-only path has no appliance signing, Release/tag, Pages, protected virtualization, or self-hosted
 runner authority. Byte-identical retry artifacts are accepted; divergent retained bytes fail closed during manual
-release admission. The manual consumer preserves the earliest retained publisher-run identity across identical retries,
+release admission. Candidates are staged by publisher run plus artifact ID and every recorded attempt is revalidated.
+The manual consumer preserves the earliest retained publisher run-and-attempt identity across identical retries,
 keeping immutable signed bundle inputs deterministic.
 
 The protected **Publish appliance release** workflow is manual only. It accepts an exact successful `main` push CI
