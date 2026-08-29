@@ -108,20 +108,16 @@ jobs:
           if-no-files-found: error
           retention-days: 7
 
-  publish:
-    name: Sign and publish release
+  release_inputs:
+    name: Resolve immutable release inputs
     needs:
       - prepare
-      - wheelhouse
     runs-on: ubuntu-latest
-    concurrency:
-      group: atlaso-github-pages
-      queue: max
-      cancel-in-progress: false
-    environment: appliance-release
+    outputs:
+      existing_release: ${{ steps.existing_release.outputs.present }}
     permissions:
       actions: read
-      contents: write
+      contents: read
     steps:
       - name: Check out the successful main commit
         uses: actions/checkout@v7
@@ -248,6 +244,74 @@ jobs:
           test "$(sha256sum "$EXISTING_WHEEL" | cut -d' ' -f1)" = \
             "$(sha256sum "$SELECTED_WHEEL" | cut -d' ' -f1)"
           echo "present=true" >> "$GITHUB_OUTPUT"
+      - name: Upload verified release inputs
+        uses: actions/upload-artifact@v7
+        with:
+          name: verified-release-inputs
+          path: |
+            dist/application-wheel
+            dist/release
+          if-no-files-found: error
+          retention-days: 1
+
+  publish:
+    name: Sign and publish release
+    needs:
+      - prepare
+      - release_inputs
+      - wheelhouse
+    runs-on: ubuntu-latest
+    concurrency:
+      group: atlaso-github-pages
+      queue: max
+      cancel-in-progress: false
+    environment: appliance-release
+    permissions:
+      actions: read
+      contents: write
+    steps:
+      - name: Check out the successful main commit
+        uses: actions/checkout@v7
+        with:
+          ref: ${{ needs.prepare.outputs.release_sha }}
+          fetch-depth: 0
+      - name: Confirm the commit is still on main
+        env:
+          RELEASE_SHA: ${{ needs.prepare.outputs.release_sha }}
+        run: |
+          git fetch origin main --no-tags
+          git merge-base --is-ancestor "$RELEASE_SHA" origin/main
+          test "$(git rev-parse HEAD)" = "$RELEASE_SHA"
+      - name: Set up Python
+        uses: actions/setup-python@v7
+        with:
+          python-version: '3.14'
+          cache: pip
+      - name: Install locked release tooling
+        env:
+          PIP_CONFIG_FILE: /dev/null
+        run: python -m pip install --require-hashes --requirement requirements-release-tools.lock
+      - name: Download verified release inputs
+        uses: actions/download-artifact@v8
+        with:
+          name: verified-release-inputs
+          path: dist
+      - name: Confirm verified release input transfer
+        env:
+          EXISTING_RELEASE: ${{ needs.release_inputs.outputs.existing_release }}
+        run: |
+          test "$(find dist/application-wheel -maxdepth 1 -type f -name 'atlaso-*.whl' | wc -l)" -eq 1
+          test -s dist/application-wheel/wheel-identity.json
+          if test "$EXISTING_RELEASE" = true; then
+            VERSION="$(python scripts/version.py get)"
+            test "$(find dist/release -maxdepth 1 -type f -printf '%f\n' | sort)" = "$(printf '%s\n' \
+              "atlaso-appliance-${VERSION}.tar.gz" \
+              "atlaso-third-party-notices-${VERSION}.md" \
+              release-manifest.json \
+              release-manifest.json.sig | sort)"
+          else
+            test ! -d dist/release || test -z "$(find dist/release -type f -print -quit)"
+          fi
       - name: Download CPython 3.14 wheelhouse
         uses: actions/download-artifact@v8
         with:
@@ -261,7 +325,7 @@ jobs:
           umask 077
           printf '%s\n' "$RELEASE_SIGNING_PRIVATE_KEY" > "$RUNNER_TEMP/release-signing-key.pem"
       - name: Build and sign the immutable release
-        if: steps.existing_release.outputs.present != 'true'
+        if: needs.release_inputs.outputs.existing_release != 'true'
         env:
           RELEASE_SHA: ${{ needs.prepare.outputs.release_sha }}
           RELEASE_KEY_ID: atlaso-release-2026-01

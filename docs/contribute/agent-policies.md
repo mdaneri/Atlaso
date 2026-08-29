@@ -720,6 +720,9 @@ Terminal order:
   idempotency checks. A rerun after tag/release publication must verify the existing asset bytes before retrying channel
   advancement. Keep the protected manual workflow GitHub-hosted and limited to the signed software/update bundle,
   immutable `vX.Y.Z` Release, and `development` channel.
+  Resolve retained wheel candidates and verify any existing immutable Release in an unlocked, read-only prerequisite
+  job. Pass those bounded verified inputs through the current workflow run, and acquire the shared Pages lock only for
+  the protected signing, Release publication, channel mutation, and live publication verification stages.
 - Virtualization publication is separate. A clean Windows workstation consumes the exact signed `vX.Y.Z` bundle,
   deploys its application wheel and CPython 3.14 wheelhouse without rebuilding them, produces and smokes the OVA and
   derived Hyper-V ZIP, and creates an explicit annotated `virtualization-vX.Y.Z-rc.N` draft. A protected hosted job

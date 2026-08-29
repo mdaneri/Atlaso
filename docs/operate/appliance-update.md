@@ -596,7 +596,9 @@ exact successful `main` commit in `release_sha`. The dispatch refuses commits wi
 retained exact automatic wheel handoff. Verify the tag, release assets, signatures, and live `development` pointer. If
 the tag and Release already published but channel advancement failed, dispatch the same successful SHA again:
 publication verifies the existing asset names and bytes before retrying the signed pointer update. No repository
-variable enables automatic appliance publication.
+variable enables automatic appliance publication. Retained wheel selection and existing immutable Release verification
+run before the shared Pages publication lock; only their bounded verified outputs enter the locked signing,
+publication, channel, and live verification stages.
 
 To initialize or advance the default channel, run **Promote appliance release**, choose `stable`, and provide an
 existing verified version without the `v` prefix. The workflow does not rebuild that release. It completes only after

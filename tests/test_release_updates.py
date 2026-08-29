@@ -1321,9 +1321,9 @@ def test_release_workflows_use_successful_main_sha_and_promote_without_rebuildin
     assert '--expected-version "$VERSION"' in publication_check
     assert '--expected-commit "$RELEASE_SHA"' in publication_check
     assert "<script" not in publication
-    assert publication.count("ref: ${{ needs.prepare.outputs.release_sha }}") == 2
-    assert "actions/upload-artifact@v7" in publication
-    assert publication.count("actions/download-artifact@v8") == 1
+    assert publication.count("ref: ${{ needs.prepare.outputs.release_sha }}") == 3
+    assert publication.count("actions/upload-artifact@v7") >= 2
+    assert publication.count("actions/download-artifact@v8") == 2
     assert "python scripts/wheel_artifact.py select" in publication
     assert "--application-wheel-root dist/application-wheel" in publication
     assert ".source_ci.run_id" in publication
@@ -1347,7 +1347,24 @@ def test_release_workflows_use_successful_main_sha_and_promote_without_rebuildin
     assert "--expected-commit \"$RELEASE_SHA\"" in publication
     assert 'sha256sum "$EXISTING_WHEEL"' in publication
     assert 'sha256sum "$SELECTED_WHEEL"' in publication
-    assert "if: steps.existing_release.outputs.present != 'true'" in publication
+    assert "if: needs.release_inputs.outputs.existing_release != 'true'" in publication
+    release_inputs_job = publication.split("  release_inputs:\n", 1)[1].split(
+        "  publish:\n", 1
+    )[0]
+    publish_job = publication.split("  publish:\n", 1)[1]
+    assert "group: atlaso-github-pages" not in release_inputs_job
+    assert "environment: appliance-release" not in release_inputs_job
+    assert "contents: write" not in release_inputs_job
+    assert "Resolve the immutable automatic wheel handoff" in release_inputs_job
+    assert "Preserve an existing immutable release" in release_inputs_job
+    assert "actions/upload-artifact@v7" in release_inputs_job
+    assert "retention-days: 1" in release_inputs_job
+    assert "group: atlaso-github-pages" in publish_job
+    assert "actions/download-artifact@v8" in publish_job
+    assert "Resolve the immutable automatic wheel handoff" not in publish_job
+    assert "Preserve an existing immutable release" not in publish_job
+    assert "actions/artifacts?name=" not in publish_job
+    assert "gh release download" not in publish_job
     assert publication.count('test "$(jq -r .event <<<"$') >= 3
     assert publication.count('test "$(jq -r .head_branch <<<"$') >= 3
     for runner_label in ("atlaso-vmware", "atlaso-proxmox", "atlaso-kvm", "atlaso-hyperv"):
