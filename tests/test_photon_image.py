@@ -1419,6 +1419,7 @@ def test_photon_provisioning_prepares_attached_data_disks():
         'after final update"'
     )
     assert final_update_index < final_compatibility_index
+    assert final_update_index < provision.rindex("nginx -t")
     assert final_update_index < provision.rindex(
         '"$ATLASO_HOME/.venv/bin/python" '
         '"$ATLASO_HOME/scripts/check_photon_compatibility.py"'

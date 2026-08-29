@@ -902,6 +902,7 @@ log_step "revalidating Photon compatibility and runtime capabilities after final
 command -v python3 >/dev/null
 command -v pwsh >/dev/null
 command -v vmtoolsd >/dev/null 2>&1 || [ "$ATLASO_GUEST_PLATFORM" != "vmware" ]
+nginx -t
 "$ATLASO_HOME/.venv/bin/python" "$ATLASO_HOME/scripts/check_photon_compatibility.py"
 "$ATLASO_HOME/.venv/bin/python" -c 'import atlaso'
 pwsh -NoLogo -NoProfile -NonInteractive -Command \
