@@ -547,10 +547,14 @@ default_boot_kernel() {
 }
 
 write_build_info() {
+  if ! boot_kernel="$(default_boot_kernel)"; then
+    echo "Could not resolve the Photon default boot kernel for build information." >&2
+    return 2
+  fi
   cat >/etc/atlaso/build-info <<EOF
 build_time_utc=$(date -u +"%Y-%m-%dT%H:%M:%SZ")
 photon_release=$(cat /etc/photon-release 2>/dev/null || true)
-kernel=$(default_boot_kernel)
+kernel=$boot_kernel
 python=$(python3 --version 2>&1)
 powershell=$(pwsh -NoLogo -NoProfile -NonInteractive -Command '$PSVersionTable.PSVersion.ToString()')
 powercli=$(pwsh -NoLogo -NoProfile -NonInteractive -Command '(Get-Module -Name VCF.PowerCLI -ListAvailable | Sort-Object Version -Descending | Select-Object -First 1).Version.ToString()')

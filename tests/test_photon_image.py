@@ -150,7 +150,16 @@ def test_build_info_records_the_installed_default_photon_kernel() -> None:
     assert "/boot/linux-*.cfg" in provision
     assert "kernel_image=\"$(sed -n 's/^photon_linux=//p'" in provision
     assert '[ ! -f "/boot/$kernel_image" ]' in provision
-    assert 'kernel=$(default_boot_kernel)' in provision
+    assert 'if ! boot_kernel="$(default_boot_kernel)"; then' in provision
+    assert "Could not resolve the Photon default boot kernel" in provision
+    assert "kernel=$boot_kernel" in provision
+    write_build_info_start = provision.index("write_build_info() {")
+    boot_kernel_resolution = provision.index(
+        'if ! boot_kernel="$(default_boot_kernel)"; then', write_build_info_start
+    )
+    build_info_heredoc = provision.index("cat >/etc/atlaso/build-info <<EOF")
+    assert boot_kernel_resolution < build_info_heredoc
+    assert "kernel=$(default_boot_kernel)" not in provision[build_info_heredoc:]
     final_update = provision.index('run_tdnf "Final Photon OS update verification" update')
     final_build_info = provision.rindex("write_build_info")
     assert final_update < final_build_info

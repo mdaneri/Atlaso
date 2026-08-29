@@ -211,6 +211,7 @@ again. The post-update check re-resolves the installed `pwsh` runtime home and r
 then rewrites build information with the kernel selected by Photon's default boot entry and the final PowerShell,
 PowerCLI, and VCF SDK versions. The final PowerCLI proof runs as the bootstrap administrator and requires
 `Connect-VIServer`, not merely a root-owned module import. Only then does it clear build caches and staged sources. It
+fails before writing build information if the default boot entry or its kernel image cannot be resolved. It
 repeats and verifies the SSH host-key and machine-ID scrub after the final package
 transaction so package scriptlets cannot leave reusable build-time identity behind, then zero-fills free blocks on both
 payload filesystems while
