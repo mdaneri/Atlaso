@@ -64,6 +64,10 @@ jobs:
           test "$(jq -r .tagName <<<"$RELEASE")" = "$PRERELEASE_TAG"
           test "$(jq -r .isDraft <<<"$RELEASE")" = false
           test "$(jq -r .isPrerelease <<<"$RELEASE")" = true
+          SOFTWARE_RELEASE="$(gh release view "v$VERSION" --repo "${{ github.repository }}" \
+            --json isDraft,isPrerelease)"
+          test "$(jq -r .isDraft <<<"$SOFTWARE_RELEASE")" = false
+          test "$(jq -r .isPrerelease <<<"$SOFTWARE_RELEASE")" = false
           STABLE_TAG="virtualization-v$VERSION"
           ALREADY_PUBLISHED=false
           STATE="$(gh api graphql \

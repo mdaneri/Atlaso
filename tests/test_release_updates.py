@@ -1301,6 +1301,9 @@ def test_release_workflows_use_successful_main_sha_and_promote_without_rebuildin
     assert "cpio libguestfs-tools qemu-utils rpm rpm2cpio" in virtualization
     admit_job = virtualization.split("  admit:\n", 1)[1].split("  recover_published:\n", 1)[0]
     assert "attestations: read" in admit_job
+    assert 'SOFTWARE_RELEASE="$(gh release view "v$VERSION"' in admit_job
+    assert 'test "$(jq -r .isDraft <<<"$SOFTWARE_RELEASE")" = false' in admit_job
+    assert 'test "$(jq -r .isPrerelease <<<"$SOFTWARE_RELEASE")" = false' in admit_job
     assert "cmp --silent" in virtualization
     assert "gh-pages" not in virtualization
     assert "The maintainer workstation is a trusted release producer" in virtualization_reference
