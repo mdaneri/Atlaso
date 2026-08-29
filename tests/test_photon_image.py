@@ -1709,7 +1709,7 @@ def test_photon_image_optional_pip_global_index_configuration():
 
     assert 'ATLASO_PIP_GLOBAL_INDEX="${ATLASO_PIP_GLOBAL_INDEX:-}"' in script
     assert 'ATLASO_PIP_GLOBAL_INDEX_URL="${ATLASO_PIP_GLOBAL_INDEX_URL:-}"' in script
-    assert 'PIP_CACHE_DIR="${PIP_CACHE_DIR:-/var/cache/atlaso-pip}"' in script
+    assert 'PIP_CACHE_DIR="/var/cache/atlaso-pip"' in script
     assert "write_pip_config() {" in script
     assert 'printf \'index = %s\\n\' "$ATLASO_PIP_GLOBAL_INDEX"' in script
     assert 'printf \'index-url = %s\\n\' "$ATLASO_PIP_GLOBAL_INDEX_URL"' in script
@@ -1728,14 +1728,10 @@ def test_photon_image_optional_pip_global_index_configuration():
     assert 'write_pip_config "$ATLASO_HOME/.venv/pip.conf"' in script
     assert '--requirement "$ATLASO_HOME/requirements-appliance.lock"' in script
     assert 'pip install --no-compile --no-deps "$ATLASO_HOME"' in script
-    assert 'ATLASO_SITE_PACKAGES_REAL="$(readlink -f "$ATLASO_SITE_PACKAGES")"' in script
-    assert (
-        'ATLASO_EXPECTED_SITE_PACKAGES="$ATLASO_RELEASE_DIR/.venv/lib/python3.14/site-packages"'
-        in script
-    )
-    assert 'if [ "$ATLASO_SITE_PACKAGES_REAL" != "$ATLASO_EXPECTED_SITE_PACKAGES" ]; then' in script
-    assert "Atlaso site-packages resolved outside the expected release environment." in script
-    assert 'find "$ATLASO_SITE_PACKAGES_REAL" -type f -name \'*.pyc\' -delete' in script
+    assert 'BOOTSTRAP_VENV_VALIDATOR="$ATLASO_SRC/image/common/scripts/validate-bootstrap-venv.py"' in script
+    assert 'python3 "$BOOTSTRAP_VENV_VALIDATOR"' in script
+    assert '--purelib "$ATLASO_LOGICAL_SITE_PACKAGES"' in script
+    assert 'find "$ATLASO_SITE_PACKAGES" -type f -name \'*.pyc\' -delete' in script
     assert "/etc/atlaso/update-trust.d" in script
     assert 'trust_source_dir="$ATLASO_HOME/image/common/update-trust"' in script
     assert 'for trust_key in "$trust_source_dir"/*.pem' in script
@@ -1820,6 +1816,16 @@ def test_photon_build_installs_the_complete_qemu_build_toolchain() -> None:
     )
     assert "QEMU configure diagnostic (last 80 Meson log lines):" in qemu_builder
     assert "tail -n 80 build/meson-logs/meson-log.txt" in qemu_builder
+    assert 'BUILD_ROOT="$(mktemp -d /tmp/atlaso-qemu-guest-agent-build.XXXXXX)"' in qemu_builder
+    assert 'export HOME="$BUILD_ROOT/home"' in qemu_builder
+    assert 'export PIP_CACHE_DIR="$BUILD_ROOT/pip-cache"' in qemu_builder
+    assert 'export XDG_CACHE_HOME="$BUILD_ROOT/xdg-cache"' in qemu_builder
+    assert qemu_builder.index('export HOME="$BUILD_ROOT/home"') < qemu_builder.index(
+        "if ! ./configure"
+    )
+    assert provision.index("export HOME=/root") < provision.index(
+        'sh "$QEMU_GUEST_AGENT_BUILDER"'
+    )
     assert (
         'install -o root -g root -m 0755 build/qga/qemu-ga "$RPM_ROOT/SOURCES/qemu-ga"'
         in qemu_builder

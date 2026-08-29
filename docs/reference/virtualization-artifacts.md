@@ -242,7 +242,9 @@ as created by that invocation.
 
 The image carries locked offline RPM closures under `/var/lib/atlaso/first-boot-packages`. A provider-neutral service
 runs before data-disk initialization, networking handoff, nginx, Atlaso, and the worker. It does not use a network
-repository.
+repository. Both the canonical VMware producer and its derived Hyper-V artifact therefore inherit the same shared
+provisioning checks: the physical bootstrap release must match both compatibility links, and QEMU's offline-agent build
+uses a private root-owned HOME/cache sandbox rather than the Packer communicator user's home.
 
 - VMware retains and enables `open-vm-tools`.
 - KVM, QEMU, and Proxmox remove VMware Tools, install the verified local QEMU guest-agent closure, and enable its

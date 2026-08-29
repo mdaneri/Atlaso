@@ -341,6 +341,10 @@ The helper creates the candidate virtualenv from the ABI-specific retained wheel
 `--no-index`, `--require-hashes`, and no network dependency resolution. It then runs `pip check`, imports the
 web/worker/console modules, and validates the installed entry points. `/opt/atlaso/current` points at the active
 release, while `/opt/atlaso/.venv` points through `current` to its virtual environment.
+Fresh-image bootstrap validates those links by resolved filesystem identity: `current` must resolve to the exact
+`bootstrap-<version>` directory, `.venv` must resolve to that directory's exact environment, and CPython 3.14 `purelib`
+must resolve to its physical `site-packages`. A broken, redirected, wrong-version, or escaping chain blocks the image
+instead of weakening the compatibility path used by services and helpers.
 
 Before switching, the helper creates the nginx maintenance marker, requires every applied management HTTP and HTTPS
 server block to honor it, validates and reloads nginx, and allows a bounded nginx convergence interval before requiring

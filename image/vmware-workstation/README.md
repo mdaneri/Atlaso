@@ -103,7 +103,12 @@ when exact provider inventory proves that the expected VMX path is the running b
 The shared provisioner stages `pyproject.toml` with `scripts/version.py`, parses `[project].version` as
 TOML, and requires the repository's strict `X.Y.Z` release format before it creates
 `/opt/atlaso/releases/bootstrap-<version>`. If that metadata is missing, unreadable, malformed, or invalid, the build
-log reports the specific version-policy error. The remastered kickstart disables `sshd.socket` and enables
+log reports the specific version-policy error. After installation, the provisioner resolves the complete compatibility
+chain and requires `/opt/atlaso/current` to identify that exact physical bootstrap release,
+`/opt/atlaso/.venv` to identify its exact physical virtual environment, and the interpreter's CPython 3.14 `purelib`
+to identify that environment's physical `site-packages`. Broken, redirected, wrong-version, or escaping links fail with
+bounded actual/expected path diagnostics; services continue to use the supported `/opt/atlaso/.venv` compatibility
+path. The remastered kickstart disables `sshd.socket` and enables
 `sshd.service`. Photon must not enable both conflicting units: the normal daemon provides deterministic
 password-authenticated SSH for Packer after the installed-system boot. The Photon root/build password remains separate
 from the Atlaso web bootstrap administrator password. The shared wrapper encodes that build credential before every
@@ -127,7 +132,11 @@ It also treats `binutils` and `linux-api-headers` as build-only because Photon p
 userspace headers separately from the compiler. The QEMU configuration probe includes GLib before it checks native type
 sizes; without `linux-api-headers`, the missing `linux/limits.h` compile error is otherwise reported as a misleading GLib
 metadata mismatch. A configure failure prints only the bounded tail of QEMU's Meson log and never dumps the guest
-environment. The RPM builder copies QEMU 10.2's linked guest agent from its `build/qga` target directory.
+environment. Packer invokes the shared provisioner through `sudo -E`, but the QEMU RPM builder replaces the preserved
+communicator `HOME` and pip cache with root-owned, mode-`0700` directories inside one identity-bound invocation root
+before `configure` can start `mkvenv`. Configured pip indexes remain available without being echoed, and exit cleanup
+removes only that invocation root. The RPM builder copies QEMU 10.2's linked guest agent from its `build/qga` target
+directory.
 Because that Atlaso-built RPM is not a repository-signed package, the provisioner downloads its `glib` and `systemd`
 runtime dependency closure in a separate signature-checked Photon transaction, then stages the pinned local RPM
 directly. No transaction bypasses repository GPG checks, and the completed root-owned offline closure remains bound by
