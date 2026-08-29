@@ -80,7 +80,11 @@ def _write_candidate(
 
 
 def test_verify_artifact_binds_repository_version_commit_digest_and_runs(tmp_path: Path) -> None:
-    """Accept only an exact canonical handoff and embedded wheel build identity."""
+    """Accept only an exact canonical handoff and embedded wheel build identity.
+
+    Args:
+        tmp_path: Isolated artifact directory.
+    """
 
     wheel, identity = _write_candidate(tmp_path, publisher_run_id=202)
 
@@ -97,7 +101,11 @@ def test_verify_artifact_binds_repository_version_commit_digest_and_runs(tmp_pat
 
 
 def test_verify_artifact_rejects_digest_and_embedded_identity_mismatch(tmp_path: Path) -> None:
-    """Reject both changed bytes and a wheel built from another commit."""
+    """Reject both changed bytes and a wheel built from another commit.
+
+    Args:
+        tmp_path: Isolated artifact directory.
+    """
 
     wheel, _identity = _write_candidate(tmp_path / "digest", publisher_run_id=202)
     wheel.write_bytes(wheel.read_bytes() + b"changed")
@@ -120,7 +128,11 @@ def test_verify_artifact_rejects_digest_and_embedded_identity_mismatch(tmp_path:
 
 
 def test_select_artifact_accepts_identical_retries_and_records_newest_run(tmp_path: Path) -> None:
-    """Allow byte-identical retries while retaining one exact publisher run handoff."""
+    """Allow byte-identical retries while retaining one exact publisher run handoff.
+
+    Args:
+        tmp_path: Isolated artifact directory.
+    """
 
     candidates = tmp_path / "candidates"
     first, _identity = _write_candidate(candidates / "202", publisher_run_id=202)
@@ -146,7 +158,11 @@ def test_select_artifact_accepts_identical_retries_and_records_newest_run(tmp_pa
 
 
 def test_select_artifact_fails_closed_on_divergent_collision(tmp_path: Path) -> None:
-    """Reject retained artifacts that claim one identity but contain different wheel bytes."""
+    """Reject retained artifacts that claim one identity but contain different wheel bytes.
+
+    Args:
+        tmp_path: Isolated artifact directory.
+    """
 
     candidates = tmp_path / "candidates"
     _write_candidate(candidates / "202", publisher_run_id=202)
@@ -168,7 +184,11 @@ def test_select_artifact_fails_closed_on_divergent_collision(tmp_path: Path) -> 
 
 
 def test_extract_artifact_rejects_unexpected_archive_members(tmp_path: Path) -> None:
-    """Extract only the two flat files allowed by the automatic artifact contract."""
+    """Extract only the two flat files allowed by the automatic artifact contract.
+
+    Args:
+        tmp_path: Isolated artifact directory.
+    """
 
     archive = tmp_path / "artifact.zip"
     with zipfile.ZipFile(archive, "w") as payload:
