@@ -2,7 +2,7 @@
 .SYNOPSIS
 Build or validate the supported Atlaso VMware Workstation Photon image.
 .PARAMETER IsoUrl
-Pinned Photon source URL or local path.
+Pinned Photon HTTPS source URL, local path, or local file URI.
 .PARAMETER IsoChecksum
 Expected Photon ISO checksum.
 .PARAMETER SshPassword

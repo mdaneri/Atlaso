@@ -205,6 +205,11 @@ pwsh -ExecutionPolicy Bypass `
   -IsoChecksum "sha512:6a7a258399a258da742032987c043ab25503698d35edafaf1ae000f12127da1a161d8b84caa17fd8f23d129e81e1faa7ab087c20ab9229772a643f8f9475305f"
 ```
 
+`-IsoUrl` also accepts an existing local filesystem path or an empty-authority `file:///` URI such as
+`file:///C:/images/photon-5.0.iso`. The wrapper verifies the local file against `-IsoChecksum` before remastering and
+does not copy or download it into the shared source cache. File URIs with a host authority are rejected; use a local
+path for an explicitly mounted share.
+
 The wrapper resolves an explicit `-OnePasswordEnvironmentId` first and otherwise reads the only line from the
 checkout-local, Git-ignored `.atlaso-local/onepassword-environment-id`; use `-EnvironmentIdFile` for another selector
 file. When `-SshPassword` and/or `-BootstrapAdminPassword` is omitted, it retrieves only the corresponding exact,

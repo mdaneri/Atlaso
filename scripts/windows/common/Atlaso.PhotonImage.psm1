@@ -280,7 +280,7 @@ function Test-AtlasoFileChecksum {
 .SYNOPSIS
 Resolve or download the checksum-pinned Photon source ISO.
 .PARAMETER UrlOrPath
-Source URL or local ISO path.
+Source HTTPS URL, local ISO path, or local file URI.
 .PARAMETER Checksum
 Expected source checksum.
 .PARAMETER BuildDirectory
@@ -299,8 +299,26 @@ function Resolve-AtlasoPhotonSourceIso {
         [Parameter(Mandatory = $true)][string]$SharedSourceDirectory
     )
 
-    if (Test-Path -LiteralPath $UrlOrPath -PathType Leaf) {
-        $local = (Resolve-Path -LiteralPath $UrlOrPath).Path
+    $localInput = $UrlOrPath
+    $sourceUri = $null
+    if ($UrlOrPath.StartsWith('file:', [System.StringComparison]::OrdinalIgnoreCase)) {
+        if (-not [Uri]::TryCreate($UrlOrPath, [UriKind]::Absolute, [ref]$sourceUri) -or -not $sourceUri.IsFile) {
+            throw "IsoUrl file URI is malformed: $UrlOrPath"
+        }
+        if (-not [string]::IsNullOrEmpty($sourceUri.Host)) {
+            throw "IsoUrl file URI must use an empty authority and reference a local file: $UrlOrPath"
+        }
+
+        # Convert the URI before cache discovery so an explicit local source is
+        # always checksum-verified directly and never falls through to download.
+        $localInput = $sourceUri.LocalPath
+        if (-not (Test-Path -LiteralPath $localInput -PathType Leaf)) {
+            throw "IsoUrl file URI does not reference an existing local file: $UrlOrPath"
+        }
+    }
+
+    if (Test-Path -LiteralPath $localInput -PathType Leaf) {
+        $local = (Resolve-Path -LiteralPath $localInput).Path
         if (-not (Test-AtlasoFileChecksum -Path $local -Checksum $Checksum)) {
             throw "Local ISO checksum does not match IsoChecksum: $local"
         }
