@@ -141,6 +141,21 @@ def test_vmware_template_scrubs_credentials_and_host_identity() -> None:
     assert "guestinfo.atlaso.template_ssh_host_ed25519_public_key" not in provision
 
 
+def test_build_info_records_the_installed_default_photon_kernel() -> None:
+    """Build provenance follows Photon's default boot entry after updates."""
+
+    provision = Path("image/common/scripts/provision-atlaso.sh").read_text(encoding="utf-8")
+    assert "kernel=$(uname -r)" not in provision
+    assert 'kernel_config="$(readlink -f /boot/photon.cfg)"' in provision
+    assert "/boot/linux-*.cfg" in provision
+    assert "kernel_image=\"$(sed -n 's/^photon_linux=//p'" in provision
+    assert '[ ! -f "/boot/$kernel_image" ]' in provision
+    assert 'kernel=$(default_boot_kernel)' in provision
+    final_update = provision.index('run_tdnf "Final Photon OS update verification" update')
+    final_build_info = provision.rindex("write_build_info")
+    assert final_update < final_build_info
+
+
 def test_every_virtualenv_systemd_unit_disables_generated_bytecode() -> None:
     """Root and service-account units cannot recreate active package bytecode."""
 

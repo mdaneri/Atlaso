@@ -207,8 +207,9 @@ effective `distroverpkg` RPM (the explicit setting or Photon's `photon-release` 
 Python, PowerShell, and VMware guest-agent runtime packages,
 and performs a fatal cache cleanup, repository refresh, and final Photon update before checking that runtime state
 again. The post-update check re-resolves the installed `pwsh` runtime home and reinstalls Atlaso's global profile there,
-then rewrites build information with the final PowerShell, PowerCLI, and VCF SDK versions. Only then does it clear build
-caches and staged sources. It repeats and verifies the SSH host-key and machine-ID scrub after the final package
+then rewrites build information with the kernel selected by Photon's default boot entry and the final PowerShell,
+PowerCLI, and VCF SDK versions. Only then does it clear build caches and staged sources. It repeats and verifies the SSH
+host-key and machine-ID scrub after the final package
 transaction so package scriptlets cannot leave reusable build-time identity behind, then zero-fills free blocks on both
 payload filesystems while
 retaining a 512 MiB safety reserve, delete the fill files, request TRIM, and let Packer compact both payload VMDKs.

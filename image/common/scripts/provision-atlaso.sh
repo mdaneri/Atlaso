@@ -506,11 +506,48 @@ sudo -H -u "$BOOTSTRAP_USERNAME" env -u PSModulePath ATLASO_POWERCLI_VERSION="$A
   pwsh -NoLogo -NoProfile -NonInteractive -Command \
   '$ErrorActionPreference = "Stop"; $module = Get-Module -Name VCF.PowerCLI -ListAvailable | Where-Object Version -eq $env:ATLASO_POWERCLI_VERSION | Select-Object -First 1; if (-not $module) { throw "VCF.PowerCLI $env:ATLASO_POWERCLI_VERSION is not available to the bootstrap administrator" }; Import-Module $module.Path -Force; $configured = Get-PowerCLIConfiguration -Scope AllUsers; if ([bool]$configured.ParticipateInCEIP) { throw "VCF.PowerCLI CEIP default is not disabled for the bootstrap administrator" }; if (-not (Get-Command Connect-VIServer -ErrorAction SilentlyContinue)) { throw "Connect-VIServer is not available to the bootstrap administrator" }; Write-Host "VCF.PowerCLI $($module.Version) verified as $([Environment]::UserName) with appliance-wide CEIP disabled"'
 
+install_powershell_profile() {
+  POWERSHELL_HOME="$(dirname "$(readlink -f "$(command -v pwsh)")")"
+  case "$POWERSHELL_HOME" in
+    /opt/microsoft/powershell/7 | /usr/share/powershell) ;;
+    *)
+      echo "PowerShell resolved to an unsupported global profile directory: $POWERSHELL_HOME" >&2
+      exit 2
+      ;;
+  esac
+  # Re-resolve the package-owned runtime home after every mutating Photon update.
+  install -o root -g root -m 0644 \
+    "$ATLASO_HOME/image/common/powershell/profile.ps1" \
+    "$POWERSHELL_HOME/profile.ps1"
+}
+
+default_boot_kernel() {
+  kernel_config="$(readlink -f /boot/photon.cfg)"
+  case "$kernel_config" in
+    /boot/linux-*.cfg) ;;
+    *)
+      echo "Photon default kernel configuration resolved outside /boot: $kernel_config" >&2
+      exit 2
+      ;;
+  esac
+  kernel_image="$(sed -n 's/^photon_linux=//p' "$kernel_config")"
+  case "$kernel_image" in
+    vmlinuz-*/* | vmlinuz-) kernel_image="" ;;
+    vmlinuz-*) ;;
+    *) kernel_image="" ;;
+  esac
+  if [ -z "$kernel_image" ] || [ ! -f "/boot/$kernel_image" ]; then
+    echo "Photon default kernel image is missing or invalid in $kernel_config" >&2
+    exit 2
+  fi
+  printf '%s\n' "${kernel_image#vmlinuz-}"
+}
+
 write_build_info() {
   cat >/etc/atlaso/build-info <<EOF
 build_time_utc=$(date -u +"%Y-%m-%dT%H:%M:%SZ")
 photon_release=$(cat /etc/photon-release 2>/dev/null || true)
-kernel=$(uname -r)
+kernel=$(default_boot_kernel)
 python=$(python3 --version 2>&1)
 powershell=$(pwsh -NoLogo -NoProfile -NonInteractive -Command '$PSVersionTable.PSVersion.ToString()')
 powercli=$(pwsh -NoLogo -NoProfile -NonInteractive -Command '(Get-Module -Name VCF.PowerCLI -ListAvailable | Sort-Object Version -Descending | Select-Object -First 1).Version.ToString()')
