@@ -11,6 +11,17 @@ status: current
 Open **Appliance Settings** to edit appliance-wide desired state: the appliance FQDN, OS hostname, resolver mode and
 servers, management UI HTTPS preference, and root SSH login preference.
 
+<!-- BEGIN GENERATED INTERFACE OVERVIEW -->
+## Interface overview
+
+This verified appliance view provides visual orientation before you begin.
+
+![Atlaso Settings page in the clean-appliance desktop viewport.](../assets/screenshots/settings-clean-desktop.webp)
+
+*Figure: Settings in the verified clean-appliance desktop state.*
+
+<!-- END GENERATED INTERFACE OVERVIEW -->
+
 ## Configure authentication lifetimes
 
 The **Authentication lifetimes** section saves immediately and does not create a pending Appliance Apply unit:
@@ -31,17 +42,6 @@ inactivity**.
 
 Settings archives preserve both policy values but exclude active browser-session records. Factory reset restores the
 30-minute and 90-day defaults and invalidates all earlier sessions and tokens.
-
-<!-- BEGIN GENERATED INTERFACE OVERVIEW -->
-## Interface overview
-
-This verified appliance view provides visual orientation before you begin.
-
-![Atlaso Settings page in the clean-appliance desktop viewport.](../assets/screenshots/settings-clean-desktop.webp)
-
-*Figure: Settings in the verified clean-appliance desktop state.*
-
-<!-- END GENERATED INTERFACE OVERVIEW -->
 
 ## Before you begin
 

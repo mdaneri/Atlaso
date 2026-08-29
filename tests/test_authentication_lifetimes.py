@@ -2,11 +2,15 @@
 
 from copy import deepcopy
 from datetime import datetime, timedelta, timezone
+from types import SimpleNamespace
 
 import pytest
 from sqlalchemy import select
 
-from atlaso.app.database import SessionLocal
+from atlaso.app.database import (
+    SessionLocal,
+    _reconcile_authentication_lifetime_columns,
+)
 from atlaso.app.models import (
     ApiToken,
     ApplianceSettings,
@@ -21,6 +25,57 @@ from atlaso.app.services.settings_archive import (
 from tests.routers.ui.helpers import login
 
 
+def test_authentication_lifetime_schema_reconciliation_is_portable_and_idempotent(
+    monkeypatch,
+):
+    """Existing PostgreSQL-style schemas receive only missing policy columns.
+
+    Args:
+        monkeypatch: Pytest fixture used to replace SQLAlchemy inspection.
+    """
+    class Inspector:
+        """Return the existing appliance-settings schema."""
+
+        @staticmethod
+        def get_columns(table_name):
+            """Return existing columns for the requested table.
+
+            Args:
+                table_name: Database table being inspected.
+            """
+            assert table_name == "appliance_settings"
+            return [
+                {"name": "id"},
+                {"name": "browser_session_idle_timeout_minutes"},
+            ]
+
+    class Connection:
+        """Capture portable ALTER TABLE statements."""
+
+        def __init__(self):
+            """Initialize captured statements."""
+            self.statements = []
+            self.dialect = SimpleNamespace(name="postgresql")
+
+        def execute(self, statement):
+            """Capture a reconciliation statement.
+
+            Args:
+                statement: SQLAlchemy statement emitted by reconciliation.
+            """
+            self.statements.append(str(statement))
+
+    monkeypatch.setattr("atlaso.app.database.inspect", lambda _connection: Inspector())
+    connection = Connection()
+
+    _reconcile_authentication_lifetime_columns(connection)
+
+    assert connection.statements == [
+        "ALTER TABLE appliance_settings ADD COLUMN IF NOT EXISTS "
+        "api_token_max_lifetime_days INTEGER NOT NULL DEFAULT 90"
+    ]
+
+
 def _current_browser_session() -> BrowserSession:
     with SessionLocal() as db:
         session = db.execute(select(BrowserSession)).scalars().one()
@@ -29,6 +84,12 @@ def _current_browser_session() -> BrowserSession:
 
 
 def _set_lifetimes(*, idle_minutes: int = 30, token_days: int = 90) -> None:
+    """Persist authentication-lifetime policy values for a test.
+
+    Args:
+        idle_minutes: Browser inactivity timeout in minutes.
+        token_days: Maximum API-token lifetime in days.
+    """
     with SessionLocal() as db:
         settings = db.execute(select(ApplianceSettings)).scalars().one()
         settings.browser_session_idle_timeout_minutes = idle_minutes
@@ -37,6 +98,13 @@ def _set_lifetimes(*, idle_minutes: int = 30, token_days: int = 90) -> None:
 
 
 def _create_token(client, *, name: str, expires_at: str | None = None):
+    """Issue an API token through the tested transport.
+
+    Args:
+        client: HTTP test client used to exercise the Atlaso application.
+        name: Operator-visible token name.
+        expires_at: Optional explicit expiration timestamp.
+    """
     payload = {"name": name, "scopes": ["read:dashboard"]}
     if expires_at is not None:
         payload["expires_at"] = expires_at
@@ -49,7 +117,12 @@ def _create_token(client, *, name: str, expires_at: str | None = None):
 def test_browser_session_expires_at_exact_idle_boundary_and_audits_notice(
     client, monkeypatch
 ):
-    """The server expires before the handler and discloses no session identifier."""
+    """The server expires before the handler and discloses no session identifier.
+
+    Args:
+        client: HTTP test client used to exercise the Atlaso application.
+        monkeypatch: Pytest fixture used to replace time for the test.
+    """
     login(client)
     baseline = datetime(2026, 8, 28, 12, 0, tzinfo=timezone.utc)
     _set_lifetimes(idle_minutes=5)
@@ -85,7 +158,12 @@ def test_browser_session_expires_at_exact_idle_boundary_and_audits_notice(
 def test_background_fetch_does_not_refresh_but_navigation_and_heartbeat_do(
     client, monkeypatch
 ):
-    """Only deliberate navigation or the CSRF-protected activity endpoint extends activity."""
+    """Only deliberate navigation or the activity endpoint extends activity.
+
+    Args:
+        client: HTTP test client used to exercise the Atlaso application.
+        monkeypatch: Pytest fixture used to replace time for the test.
+    """
     login(client)
     baseline = datetime(2026, 8, 28, 12, 0, tzinfo=timezone.utc)
     with SessionLocal() as db:
@@ -121,7 +199,12 @@ def test_background_fetch_does_not_refresh_but_navigation_and_heartbeat_do(
 def test_lowering_policy_expires_existing_session_and_expiration_is_terminal(
     client, monkeypatch
 ):
-    """Policy changes apply on the next request and cannot resurrect expired state."""
+    """Policy changes apply on the next request and cannot resurrect expired state.
+
+    Args:
+        client: HTTP test client used to exercise the Atlaso application.
+        monkeypatch: Pytest fixture used to replace time for the test.
+    """
     login(client)
     baseline = datetime(2026, 8, 28, 12, 0, tzinfo=timezone.utc)
     with SessionLocal() as db:
@@ -148,7 +231,11 @@ def test_lowering_policy_expires_existing_session_and_expiration_is_terminal(
 
 
 def test_logout_terminally_invalidates_server_browser_session(client):
-    """Explicit logout closes the server record as well as clearing signed cookie state."""
+    """Explicit logout closes the server record as well as signed cookie state.
+
+    Args:
+        client: HTTP test client used to exercise the Atlaso application.
+    """
     login(client)
     page = client.get("/ui/management/settings")
     csrf = page.text.split('name="csrf" value="', 1)[1].split('"', 1)[0]
@@ -164,7 +251,11 @@ def test_logout_terminally_invalidates_server_browser_session(client):
 
 
 def test_authentication_lifetime_settings_save_validate_and_archive(client):
-    """The immediate settings UI enforces bounds and archive restore preserves policy."""
+    """The settings UI enforces bounds and archive restore preserves policy.
+
+    Args:
+        client: HTTP test client used to exercise the Atlaso application.
+    """
     login(client)
     page = client.get("/ui/management/settings")
     csrf = page.text.split('name="csrf" value="', 1)[1].split('"', 1)[0]
@@ -217,7 +308,11 @@ def test_authentication_lifetime_settings_save_validate_and_archive(client):
 
 
 def test_api_token_default_and_explicit_expirations_obey_current_policy(client):
-    """Omitted expiration uses policy while invalid explicit timestamps get stable 422 details."""
+    """Omitted expiration uses policy while invalid timestamps get stable details.
+
+    Args:
+        client: HTTP test client used to exercise the Atlaso application.
+    """
     _set_lifetimes(token_days=30)
     before = datetime.now(timezone.utc)
     created = _create_token(client, name="policy default")
@@ -250,7 +345,12 @@ def test_api_token_default_and_explicit_expirations_obey_current_policy(client):
 
 
 def test_api_token_explicit_expiry_accepts_exact_policy_boundary(client, monkeypatch):
-    """An explicit timezone-aware expiration is inclusive at the exact maximum."""
+    """An explicit timezone-aware expiration is inclusive at the exact maximum.
+
+    Args:
+        client: HTTP test client used to exercise the Atlaso application.
+        monkeypatch: Pytest fixture used to replace time for the test.
+    """
     fixed_now = datetime(2026, 8, 28, 12, 0, tzinfo=timezone.utc)
     _set_lifetimes(token_days=30)
     monkeypatch.setattr("atlaso.app.token_service.utcnow", lambda: fixed_now)
@@ -266,7 +366,11 @@ def test_api_token_explicit_expiry_accepts_exact_policy_boundary(client, monkeyp
 
 
 def test_existing_api_token_expiration_is_immutable_when_policy_changes(client):
-    """Changing the issuance ceiling does not rewrite previously issued credentials."""
+    """Changing the issuance ceiling does not rewrite existing credentials.
+
+    Args:
+        client: HTTP test client used to exercise the Atlaso application.
+    """
     _set_lifetimes(token_days=30)
     explicit = datetime.now(timezone.utc) + timedelta(days=10)
     created = _create_token(client, name="immutable", expires_at=explicit.isoformat())
@@ -288,7 +392,13 @@ def test_existing_api_token_expiration_is_immutable_when_policy_changes(client):
 def test_authentication_lifetime_ui_accepts_documented_boundaries(
     client, idle_minutes, token_days
 ):
-    """Both configured ranges include their documented minimum and maximum."""
+    """Both configured ranges include their documented boundaries.
+
+    Args:
+        client: HTTP test client used to exercise the Atlaso application.
+        idle_minutes: Browser inactivity boundary under test.
+        token_days: API-token lifetime boundary under test.
+    """
     login(client)
     page = client.get("/ui/management/settings")
     csrf = page.text.split('name="csrf" value="', 1)[1].split('"', 1)[0]

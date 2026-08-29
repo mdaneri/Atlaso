@@ -14270,6 +14270,7 @@ def depot_logout(request: Request, csrf: str = Form(...), next: str = Form("/"),
         request: Incoming HTTP request.
         csrf: Validated CSRF token authorizing the request.
         next: Relative destination requested after authentication.
+        db: Active database session.
 
     Returns:
         The endpoint response.
@@ -14506,6 +14507,7 @@ def logout(request: Request, csrf: str = Form(...), next: str = Form(""), db: Se
         request: Incoming HTTP request.
         csrf: Validated CSRF token authorizing the request.
         next: Relative destination requested after authentication.
+        db: Active database session.
 
     Returns:
         The endpoint response.
@@ -14588,6 +14590,7 @@ def public_logout(request: Request, csrf: str = Form(...), next: str = Form(""),
         request: Incoming HTTP request.
         csrf: Validated CSRF token authorizing the request.
         next: Requested same-plane return path.
+        db: Active database session.
     """
     verify_csrf(request, csrf)
     end_browser_session(request, db)

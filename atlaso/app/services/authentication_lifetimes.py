@@ -9,7 +9,12 @@ API_TOKEN_MAX_LIFETIME_DAYS = (1, 365)
 def authentication_lifetime_validation_error(
     *, browser_idle_minutes: int, api_token_days: int
 ) -> str | None:
-    """Return the first validation error for persisted authentication policy."""
+    """Return the first validation error for persisted authentication policy.
+
+    Args:
+        browser_idle_minutes: Requested inactivity timeout in minutes.
+        api_token_days: Requested maximum API-token lifetime in days.
+    """
     idle_minimum, idle_maximum = BROWSER_SESSION_IDLE_TIMEOUT_MINUTES
     if not idle_minimum <= browser_idle_minutes <= idle_maximum:
         return (

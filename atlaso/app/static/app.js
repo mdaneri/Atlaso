@@ -9489,8 +9489,6 @@ function initializeApiTokensTable() {
       { id: "review", title: "Review immediate issuance", description: "Confirm the token scope and one-time secret handling." },
     ],
     onOpen: ({ form }) => {
-      const expiresAt = new Date(Date.now() + maximumLifetimeDays * 24 * 60 * 60 * 1000);
-      form.elements.expires_at.value = expiresAt.toISOString();
       const selected = new Set(String(form.elements.scopes.value || "read:dashboard").split(/\s+/).filter(Boolean));
       form.querySelectorAll('input[name="scope_choices"]').forEach((input) => {
         input.checked = selected.has(input.value);
@@ -9506,13 +9504,14 @@ function initializeApiTokensTable() {
       const scopes = [...form.querySelectorAll('input[name="scope_choices"]:checked')].map((input) => input.value);
       body.set("scopes", scopes.join(" "));
       body.delete("scope_choices");
+      body.delete("expires_at");
     },
     reviewItems: [
       { label: "Token", field: "name" },
       { label: "Purpose", field: "description" },
       { label: "Scopes", value: (form) => [...form.querySelectorAll('input[name="scope_choices"]:checked')].map((input) => input.value).join(" ") },
       { label: "Maximum lifetime", value: () => `${maximumLifetimeDays} days` },
-      { label: "Expires", value: (form) => new Date(form.elements.expires_at.value).toLocaleString() },
+      { label: "Expires", value: () => `${maximumLifetimeDays} days after server issuance` },
       { label: "Enforcement", value: () => "Immediate application state" },
     ],
     extraActions: [

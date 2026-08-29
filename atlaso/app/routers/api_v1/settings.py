@@ -154,8 +154,12 @@ def build_router(dependencies: SettingsApiDependencies) -> SettingsApiRouter:
             requested_terminal_interfaces
         )
         desired.root_ssh_enabled = payload.root_ssh_enabled
-        desired.browser_session_idle_timeout_minutes = payload.browser_session_idle_timeout_minutes
-        desired.api_token_max_lifetime_days = payload.api_token_max_lifetime_days
+        if "browser_session_idle_timeout_minutes" in payload.model_fields_set:
+            desired.browser_session_idle_timeout_minutes = (
+                payload.browser_session_idle_timeout_minutes
+            )
+        if "api_token_max_lifetime_days" in payload.model_fields_set:
+            desired.api_token_max_lifetime_days = payload.api_token_max_lifetime_days
         desired.external_dns_servers = normalize_multiline_values(
             "\n".join(payload.external_dns_servers)
         )

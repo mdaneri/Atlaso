@@ -893,6 +893,12 @@ def authentication_lifetime_policy_check(
     csrf = extract_csrf(settings_page)
 
     def save_policy(idle_minutes: int, token_days: int) -> None:
+        """Persist the requested authentication-lifetime policy.
+
+        Args:
+            idle_minutes: Browser inactivity timeout in minutes.
+            token_days: Maximum API-token lifetime in days.
+        """
         save_status, save_body, _save_headers = policy_client.request(
             "POST",
             "/settings/authentication-lifetimes",

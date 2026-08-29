@@ -345,6 +345,32 @@ def _advance_dns_authoritative_serial(session: Session, _flush_context, _instanc
     settings.authoritative_serial = max(current + 1, now)
 
 
+def _reconcile_authentication_lifetime_columns(connection: Connection) -> None:
+    """Add authentication-lifetime columns to an existing appliance settings table.
+
+    Args:
+        connection: Transactional database connection used for schema reconciliation.
+    """
+    existing_columns = {
+        column["name"] for column in inspect(connection).get_columns("appliance_settings")
+    }
+    additions = {
+        "browser_session_idle_timeout_minutes": "INTEGER NOT NULL DEFAULT 30",
+        "api_token_max_lifetime_days": "INTEGER NOT NULL DEFAULT 90",
+    }
+    idempotent_column_clause = (
+        "IF NOT EXISTS " if connection.dialect.name == "postgresql" else ""
+    )
+    for name, definition in additions.items():
+        if name not in existing_columns:
+            connection.execute(
+                text(
+                    "ALTER TABLE appliance_settings ADD COLUMN "
+                    f"{idempotent_column_clause}{name} {definition}"
+                )
+            )
+
+
 def init_db() -> None:
     """Handle init db."""
     from atlaso.app import (  # noqa: F401 - importing models registers SQLAlchemy metadata.
@@ -353,6 +379,7 @@ def init_db() -> None:
 
     _create_database_schema(engine)
     with engine.begin() as connection:
+        _reconcile_authentication_lifetime_columns(connection)
         if engine.dialect.name == "sqlite":
             connection.execute(
                 text(
@@ -421,23 +448,6 @@ def init_db() -> None:
                         "ADD COLUMN domain_descriptions_json TEXT NOT NULL DEFAULT '{}'"
                     )
                 )
-            appliance_settings_columns = {
-                row[1]
-                for row in connection.execute(
-                    text("PRAGMA table_info(appliance_settings)")
-                ).all()
-            }
-            appliance_settings_additions = {
-                "browser_session_idle_timeout_minutes": "INTEGER NOT NULL DEFAULT 30",
-                "api_token_max_lifetime_days": "INTEGER NOT NULL DEFAULT 90",
-            }
-            for name, definition in appliance_settings_additions.items():
-                if name not in appliance_settings_columns:
-                    connection.execute(
-                        text(
-                            f"ALTER TABLE appliance_settings ADD COLUMN {name} {definition}"
-                        )
-                    )
             user_columns = {
                 row[1]
                 for row in connection.execute(

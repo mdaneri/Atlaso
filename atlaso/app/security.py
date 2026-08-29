@@ -631,7 +631,11 @@ def get_session_identity(
 
 
 def browser_request_is_interactive(request: Request) -> bool:
-    """Return whether a protected browser request represents deliberate user activity."""
+    """Return whether a protected browser request represents deliberate user activity.
+
+    Args:
+        request: Incoming browser request to classify.
+    """
     if request.method.upper() not in {"GET", "HEAD", "OPTIONS"}:
         return True
     fetch_mode = request.headers.get("Sec-Fetch-Mode", "").strip().lower()
@@ -642,7 +646,13 @@ def browser_request_is_interactive(request: Request) -> bool:
 
 
 def start_browser_session(request: Request, db: Session, user: User) -> BrowserSession:
-    """Create server-owned activity state for a newly authenticated browser session."""
+    """Create server-owned activity state for a newly authenticated browser session.
+
+    Args:
+        request: Incoming request whose signed session is initialized.
+        db: Active database session.
+        user: Authenticated user who owns the browser session.
+    """
     now = utcnow()
     browser_session = BrowserSession(
         id=token_urlsafe(32),
@@ -660,7 +670,13 @@ def start_browser_session(request: Request, db: Session, user: User) -> BrowserS
 
 
 def end_browser_session(request: Request, db: Session, *, reason: str = "logout") -> None:
-    """Terminally invalidate the current server-owned browser session and clear its cookie state."""
+    """Terminally invalidate the current server-owned browser session and clear its cookie state.
+
+    Args:
+        request: Incoming request whose signed session is cleared.
+        db: Active database session.
+        reason: Stable audit reason for terminal invalidation.
+    """
     browser_session_id = str(request.session.get(BROWSER_SESSION_ID_KEY) or "")
     browser_session = db.get(BrowserSession, browser_session_id) if browser_session_id else None
     if browser_session is not None and browser_session.expired_at is None:
@@ -672,7 +688,11 @@ def end_browser_session(request: Request, db: Session, *, reason: str = "logout"
 
 
 def consume_browser_session_expired_notice(request: Request) -> str | None:
-    """Consume the one-time inactivity-expiry notice carried to a login surface."""
+    """Consume the one-time inactivity-expiry notice carried to a login surface.
+
+    Args:
+        request: Incoming login request carrying the one-time notice.
+    """
     if request.session.pop(BROWSER_SESSION_EXPIRED_KEY, False) is True:
         return "Session expired due to inactivity"
     return None

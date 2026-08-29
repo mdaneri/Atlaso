@@ -184,4 +184,4 @@ def test_every_autosave_form_has_a_nearby_status_target():
             assert f'id="{status.group(1)}"' in source, f"{template}:{status.group(1)}"
     # Managed PowerShell modules and Network Objects use reviewed wizard-backed
     # editors, so they are intentionally excluded from direct autosave forms.
-    assert autosave_count == 17
+    assert autosave_count == 18
