@@ -1872,9 +1872,21 @@ def test_console_management_plane_recovery_retries_bootstrap_and_verifies_readin
     """
     helper = load_helper_module()
     marker = tmp_path / "first-boot-https.applied"
+    main_config = tmp_path / "nginx.conf"
+    main_config.write_text(
+        "http {\n  include /etc/nginx/conf.d/atlaso.conf;\n}\n",
+        encoding="utf-8",
+    )
+    include = tmp_path / "atlaso.conf"
     management_config = tmp_path / "management.conf"
-    management_config.write_text("listen 443 ssl default_server;\n", encoding="utf-8")
+    certificate = tmp_path / "certificate.pem"
+    key = tmp_path / "private-key.pem"
+    include.write_text(helper.FIRST_BOOT_HTTPS_INCLUDE_TEXT, encoding="utf-8")
+    marker.write_text("", encoding="utf-8")
+    management_config.write_text("", encoding="utf-8")
     monkeypatch.setattr(helper, "FIRST_BOOT_HTTPS_MARKER_PATH", marker)
+    monkeypatch.setattr(helper, "NGINX_MAIN_CONFIG_PATH", main_config)
+    monkeypatch.setattr(helper, "NGINX_CONF_INCLUDE_PATH", include)
     monkeypatch.setattr(helper, "NGINX_MANAGEMENT_SITE_PATH", management_config)
     monkeypatch.setattr(
         helper.shutil,
@@ -1891,8 +1903,23 @@ def test_console_management_plane_recovery_retries_bootstrap_and_verifies_readin
             command: Command and arguments to execute.
         """
         commands.append(command)
-        if command == ["systemctl", "start", helper.FIRST_BOOT_HTTPS_UNIT]:
-            marker.write_text("complete\n", encoding="utf-8")
+        if command == ["systemctl", "restart", helper.FIRST_BOOT_HTTPS_UNIT]:
+            include.write_text(helper.FIRST_BOOT_HTTPS_INCLUDE_TEXT, encoding="utf-8")
+            certificate.write_text("certificate", encoding="utf-8")
+            key.write_text("key", encoding="utf-8")
+            management_config.write_text(
+                "\n".join(
+                    [
+                        "listen 443 ssl default_server;",
+                        f"ssl_certificate {certificate};",
+                        f"ssl_certificate_key {key};",
+                        "proxy_pass http://127.0.0.1:8000;",
+                        "",
+                    ]
+                ),
+                encoding="utf-8",
+            )
+            marker.write_text(helper.FIRST_BOOT_HTTPS_MARKER_TEXT, encoding="utf-8")
         if command and command[0] == "/usr/bin/curl":
             status = "308" if command[-1] == "http://127.0.0.1/" else "200"
             return subprocess.CompletedProcess(command, 0, status, "")
@@ -1906,7 +1933,7 @@ def test_console_management_plane_recovery_retries_bootstrap_and_verifies_readin
     assert '"bootstrap_retried": true' in output
     assert '"management_https_enabled": true' in output
     assert ["systemctl", "reset-failed", helper.FIRST_BOOT_HTTPS_UNIT] in commands
-    assert ["systemctl", "start", helper.FIRST_BOOT_HTTPS_UNIT] in commands
+    assert ["systemctl", "restart", helper.FIRST_BOOT_HTTPS_UNIT] in commands
     assert ["/usr/bin/nginx", "-t"] in commands
     assert ["systemctl", "enable", "nginx.service", "atlaso.service"] in commands
     assert ["systemctl", "reload", "nginx.service"] in commands
@@ -1923,10 +1950,22 @@ def test_console_management_plane_recovery_verifies_http_only_mode(monkeypatch, 
     """
     helper = load_helper_module()
     marker = tmp_path / "first-boot-https.applied"
-    marker.write_text("complete\n", encoding="utf-8")
+    main_config = tmp_path / "nginx.conf"
+    main_config.write_text(
+        "http {\n  include /etc/nginx/conf.d/*.conf;\n}\n",
+        encoding="utf-8",
+    )
+    marker.write_text(helper.FIRST_BOOT_HTTPS_MARKER_TEXT, encoding="utf-8")
+    include = tmp_path / "atlaso.conf"
+    include.write_text(helper.FIRST_BOOT_HTTPS_INCLUDE_TEXT, encoding="utf-8")
     management_config = tmp_path / "management.conf"
-    management_config.write_text("listen 80 default_server;\n", encoding="utf-8")
+    management_config.write_text(
+        "listen 80 default_server;\nproxy_pass http://127.0.0.1:8000;\n",
+        encoding="utf-8",
+    )
     monkeypatch.setattr(helper, "FIRST_BOOT_HTTPS_MARKER_PATH", marker)
+    monkeypatch.setattr(helper, "NGINX_MAIN_CONFIG_PATH", main_config)
+    monkeypatch.setattr(helper, "NGINX_CONF_INCLUDE_PATH", include)
     monkeypatch.setattr(helper, "NGINX_MANAGEMENT_SITE_PATH", management_config)
     monkeypatch.setattr(
         helper.shutil,
@@ -1968,8 +2007,23 @@ def test_console_management_plane_recovery_stops_after_nginx_validation_failure(
     """
     helper = load_helper_module()
     marker = tmp_path / "first-boot-https.applied"
-    marker.write_text("complete\n", encoding="utf-8")
+    main_config = tmp_path / "nginx.conf"
+    main_config.write_text(
+        "http {\n  include /etc/nginx/conf.d/atlaso.conf;\n}\n",
+        encoding="utf-8",
+    )
+    marker.write_text(helper.FIRST_BOOT_HTTPS_MARKER_TEXT, encoding="utf-8")
+    include = tmp_path / "atlaso.conf"
+    include.write_text(helper.FIRST_BOOT_HTTPS_INCLUDE_TEXT, encoding="utf-8")
+    management_config = tmp_path / "management.conf"
+    management_config.write_text(
+        "listen 80 default_server;\nproxy_pass http://127.0.0.1:8000;\n",
+        encoding="utf-8",
+    )
     monkeypatch.setattr(helper, "FIRST_BOOT_HTTPS_MARKER_PATH", marker)
+    monkeypatch.setattr(helper, "NGINX_MAIN_CONFIG_PATH", main_config)
+    monkeypatch.setattr(helper, "NGINX_CONF_INCLUDE_PATH", include)
+    monkeypatch.setattr(helper, "NGINX_MANAGEMENT_SITE_PATH", management_config)
     monkeypatch.setattr(helper.shutil, "which", lambda name: f"/usr/bin/{name}")
     commands: list[list[str]] = []
 
@@ -1991,3 +2045,69 @@ def test_console_management_plane_recovery_stops_after_nginx_validation_failure(
     assert "validating nginx configuration failed" in error
     assert ["systemctl", "reload", "nginx.service"] not in commands
     assert ["systemctl", "start", "nginx.service"] not in commands
+
+
+def test_console_first_boot_https_contract_rejects_commented_include(monkeypatch, tmp_path):
+    """Reject an include path that nginx sees only inside a comment.
+
+    Args:
+        monkeypatch: Pytest fixture used to replace deployed filesystem paths.
+        tmp_path: Temporary directory provided by pytest for isolated filesystem state.
+    """
+    helper = load_helper_module()
+    marker = tmp_path / "first-boot-https.applied"
+    main_config = tmp_path / "nginx.conf"
+    main_config.write_text(
+        "http {\n  # include /etc/nginx/conf.d/atlaso.conf;\n}\n",
+        encoding="utf-8",
+    )
+    include = tmp_path / "atlaso.conf"
+    management_config = tmp_path / "management.conf"
+    marker.write_text(helper.FIRST_BOOT_HTTPS_MARKER_TEXT, encoding="utf-8")
+    include.write_text(
+        "# include /etc/atlaso/nginx/sites.d/*.conf;\n",
+        encoding="utf-8",
+    )
+    management_config.write_text(
+        "listen 80 default_server;\nproxy_pass http://127.0.0.1:8000;\n",
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(helper, "FIRST_BOOT_HTTPS_MARKER_PATH", marker)
+    monkeypatch.setattr(helper, "NGINX_MAIN_CONFIG_PATH", main_config)
+    monkeypatch.setattr(helper, "NGINX_CONF_INCLUDE_PATH", include)
+    monkeypatch.setattr(helper, "NGINX_MANAGEMENT_SITE_PATH", management_config)
+
+    assert helper._console_first_boot_https_contract_is_complete() is False
+
+
+def test_console_first_boot_https_contract_accepts_annotated_active_outer_include(
+    monkeypatch,
+    tmp_path,
+):
+    """Accept a valid active outer include followed by a same-line comment.
+
+    Args:
+        monkeypatch: Pytest fixture used to replace deployed filesystem paths.
+        tmp_path: Temporary directory provided by pytest for isolated filesystem state.
+    """
+    helper = load_helper_module()
+    marker = tmp_path / "first-boot-https.applied"
+    main_config = tmp_path / "nginx.conf"
+    include = tmp_path / "atlaso.conf"
+    management_config = tmp_path / "management.conf"
+    marker.write_text(helper.FIRST_BOOT_HTTPS_MARKER_TEXT, encoding="utf-8")
+    main_config.write_text(
+        "http {\n  include /etc/nginx/conf.d/atlaso.conf; # managed sites\n}\n",
+        encoding="utf-8",
+    )
+    include.write_text(helper.FIRST_BOOT_HTTPS_INCLUDE_TEXT, encoding="utf-8")
+    management_config.write_text(
+        "listen 80 default_server;\nproxy_pass http://127.0.0.1:8000;\n",
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(helper, "FIRST_BOOT_HTTPS_MARKER_PATH", marker)
+    monkeypatch.setattr(helper, "NGINX_MAIN_CONFIG_PATH", main_config)
+    monkeypatch.setattr(helper, "NGINX_CONF_INCLUDE_PATH", include)
+    monkeypatch.setattr(helper, "NGINX_MANAGEMENT_SITE_PATH", management_config)
+
+    assert helper._console_first_boot_https_contract_is_complete() is True

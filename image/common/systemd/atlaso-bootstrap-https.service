@@ -4,7 +4,6 @@ After=network-online.target atlaso-data-disks.service atlaso-vmware-ovf-customiz
 Wants=network-online.target
 Requires=atlaso-data-disks.service
 Before=nginx.service atlaso.service
-ConditionPathExists=!/var/lib/atlaso/first-boot-https.applied
 
 [Service]
 Type=oneshot
