@@ -11,6 +11,7 @@ import subprocess
 import sys
 import tempfile
 import time
+from collections import deque
 from pathlib import Path
 
 ANSI_ESCAPE_RE = re.compile(r"\x1b\[[0-?]*[ -/]*[@-~]")
@@ -84,13 +85,18 @@ def _failure_tail(path: Path, line_limit: int) -> list[str]:
         path: Filesystem or URL path to read, validate, or update.
         line_limit: Line limit supplied by the caller.
     """
+    lines: deque[str] = deque(maxlen=line_limit)
     try:
-        text = path.read_bytes().decode("utf-8", errors="replace")
+        # Universal-newline iteration treats terminal carriage-return progress
+        # updates as separate lines without materializing the full transcript.
+        with path.open("r", encoding="utf-8", errors="replace", newline=None) as transcript:
+            for raw_line in transcript:
+                normalized = ANSI_ESCAPE_RE.sub("", raw_line).rstrip()
+                if normalized.strip():
+                    lines.append(normalized)
     except OSError as exc:
         return [f"Could not read captured TDNF output: {exc}"]
-    normalized = ANSI_ESCAPE_RE.sub("", text).replace("\r", "\n")
-    lines = [line.rstrip() for line in normalized.splitlines() if line.strip()]
-    return lines[-line_limit:]
+    return list(lines)
 
 
 def _reported_tdnf_failure(path: Path) -> bool:

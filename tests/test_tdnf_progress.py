@@ -147,3 +147,32 @@ def test_reported_tdnf_failure_scans_large_transcripts_incrementally(
     monkeypatch.setattr(Path, "read_bytes", reject_read_bytes)
 
     assert progress._reported_tdnf_failure(transcript)
+
+
+def test_failure_tail_scans_large_transcripts_incrementally(
+    tmp_path: Path, monkeypatch
+) -> None:
+    """Failure-tail replay retains only the requested final lines.
+
+    Args:
+        tmp_path: Temporary directory provided by pytest for isolated filesystem state.
+        monkeypatch: Pytest fixture used to reject whole-file byte reads.
+    """
+
+    transcript = tmp_path / "tdnf.log"
+    transcript.write_text(
+        ("downloaded package\n" * 200_000)
+        + "\x1b[31mError(1022): bad repo\x1b[0m\rDisabling Repo: photon-updates\n"
+    )
+
+    def reject_read_bytes(_path: Path) -> bytes:
+        """Reject whole-file reads from failure-tail replay."""
+
+        raise AssertionError("whole-file transcript read is forbidden")
+
+    monkeypatch.setattr(Path, "read_bytes", reject_read_bytes)
+
+    assert progress._failure_tail(transcript, 2) == [
+        "Error(1022): bad repo",
+        "Disabling Repo: photon-updates",
+    ]

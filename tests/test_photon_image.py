@@ -1487,6 +1487,8 @@ def test_photon_provisioning_prepares_attached_data_disks():
     ) == 2
     assert provision.count("write_build_info") == 4
     assert final_update_index < provision.rindex("write_build_info")
+    assert "vcf_sdk=$(" in provision
+    assert "printf 'vcf_sdk=%s\\n'" not in provision
     assert provision.rindex("write_build_info") < provision.rindex(
         'run_tdnf "Final Photon package cache cleanup" clean all'
     )

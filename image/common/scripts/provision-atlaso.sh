@@ -558,6 +558,13 @@ kernel=$boot_kernel
 python=$(python3 --version 2>&1)
 powershell=$(pwsh -NoLogo -NoProfile -NonInteractive -Command '$PSVersionTable.PSVersion.ToString()')
 powercli=$(pwsh -NoLogo -NoProfile -NonInteractive -Command '(Get-Module -Name VCF.PowerCLI -ListAvailable | Sort-Object Version -Descending | Select-Object -First 1).Version.ToString()')
+vcf_sdk=$(
+  if [ -x "$ATLASO_HOME/.venv/bin/python" ]; then
+    "$ATLASO_HOME/.venv/bin/python" -c 'from importlib.metadata import version; print(version("vcf-sdk"))'
+  else
+    printf 'not-installed\n'
+  fi
+)
 package_update=tdnf -y update completed during image provisioning
 final_mgmt_address=$ATLASO_MGMT_ADDRESS
 final_mgmt_gateway=$ATLASO_MGMT_GATEWAY
