@@ -1399,11 +1399,11 @@ def test_release_workflows_use_successful_main_sha_and_promote_without_rebuildin
     wheelhouse_download = publish_job.split(
         "- name: Download CPython 3.14 wheelhouse", 1
     )[1].split("- name: Materialize the protected signing key", 1)[0]
+    assert "if: needs.release_inputs.outputs.existing_release != 'true'" in wheelhouse_download
     signing_key = publish_job.split(
         "- name: Materialize the protected signing key", 1
     )[1].split("- name: Build and sign the immutable release", 1)[0]
-    assert "if: needs.release_inputs.outputs.existing_release != 'true'" in wheelhouse_download
-    assert "if: needs.release_inputs.outputs.existing_release != 'true'" in signing_key
+    assert "if:" not in signing_key
     assert "Resolve the immutable automatic wheel handoff" not in publish_job
     assert "Preserve an existing immutable release" not in publish_job
     assert "actions/artifacts?name=" not in publish_job

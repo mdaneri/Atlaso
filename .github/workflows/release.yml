@@ -356,7 +356,6 @@ jobs:
           name: wheelhouse-cp314
           path: wheelhouses/cp314
       - name: Materialize the protected signing key
-        if: needs.release_inputs.outputs.existing_release != 'true'
         env:
           RELEASE_SIGNING_PRIVATE_KEY: ${{ secrets.RELEASE_SIGNING_PRIVATE_KEY }}
         run: |
