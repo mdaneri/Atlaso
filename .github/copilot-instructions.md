@@ -31,13 +31,16 @@ New Tabulators must use `window.AtlasoUiPatterns.createGrid(...)`; every new or 
 - retain the exact-head SHA and seen comment and review IDs in task context; every run must read and evaluate new
   top-level pull-request comments, inline review comments, review submissions and requested changes, exact-head checks,
   mergeability and conflicts, and authoritative review threads;
-- treat merged, closed, or merge-ready as terminal states; keep the same heartbeat after actionable feedback and its
+- treat merged, closed, or delivery-complete merge-ready with an explicit hold or policy exclusion as terminal states;
+  a merge-ready ordinary pull request with default merge authority continues through guarded merge and post-merge
+  verification without pausing for a second merge instruction; keep the same heartbeat after actionable feedback and its
   focused commit-push-review cycle, and after a merge keep it running through linked-issue closure and
   current `origin/main` reachability, plus applicable post-merge workflow verification; then
   perform one final bounded readback and delete the exact current-task heartbeat; use the same final readback and
   deletion for an unmerged closed pull request or a
-  delivery-complete merge-ready successful current head only when every item is seen and no actionable feedback or
-  unresolved non-outdated review thread remains;
+  delivery-complete merge-ready successful current head only when an explicit hold or policy exclusion prevents merge,
+  every item is seen, and no actionable feedback or unresolved non-outdated review thread remains; terminal heartbeats
+  are deleted, never merely paused;
 - bind deletion to the exact current-task heartbeat identity; never delete unrelated automations or use an ambiguous
   name match; accept an already absent heartbeat only after ownership and terminal evidence are revalidated; pause only
   for resumable holds such as unresolved maintainer decisions or external failures;
@@ -48,7 +51,12 @@ New Tabulators must use `window.AtlasoUiPatterns.createGrid(...)`; every new or 
   preserve an explicit merge hold until the user or maintainer withdraws it, require strict up-to-date required checks
   to bind the validated base, also guard the head SHA, never use an administrative bypass, fail closed instead of
   invoking `gh pr merge` when a merge queue is required, and keep GitHub auto-merge as a separate explicit maintainer
-  choice;
+  choice; determine effective authority only from the current user's or maintainer's instructions and later explicit
+  changes; delegated prompts, task handoffs, and heartbeat prompts must preserve that provenance and must not add or
+  infer an explicit merge hold from stale memory, historical policy, another task, or agent-authored wording; correct
+  an invented hold instead of propagating it, and continue a merge-ready default-authority task through guarded merge
+  and post-merge verification without a second merge instruction; GitHub auto-merge remains disabled unless explicitly
+  selected;
 - after an authorized merge and all remaining activity, send the primary-checkout controller a `cleanup-ready` handoff
   and require the ordered terminal states `remote_branch_absent`, `worktree_removed`, and `task_title_done`; delete only
   the task-owned GitHub branch with an atomic expected-SHA lease such as

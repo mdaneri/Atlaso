@@ -97,11 +97,15 @@ requested changes, and authoritative review threads. Read and evaluate every new
 Actionable feedback requires the focused validation and commit-push-review cycle, replies and resolved handled threads,
 and continued monitoring on the same heartbeat.
 
-Treat merged, closed, or merge-ready as terminal pull-request states. After a merge, continue the same heartbeat through
+Treat merged, closed, or delivery-complete merge-ready with an explicit hold or policy exclusion as terminal
+pull-request states. A merge-ready ordinary pull request with default merge authority continues through guarded merge
+and post-merge verification instead of pausing for a second merge instruction. After a merge, continue the same
+heartbeat through
 linked-issue closure, current `origin/main` reachability, and applicable post-merge workflow verification. Then perform
 one final bounded readback and delete the exact current-task heartbeat. Use the same final readback and deletion for an
-unmerged closed pull request, or for a delivery-complete merge-ready pull request with a successful current head, every
-item seen, no requested changes or actionable feedback, and no unresolved non-outdated review thread.
+unmerged closed pull request, or for a delivery-complete merge-ready pull request that cannot be merged because an
+explicit hold or policy exclusion applies, with a successful current head, every item seen, no requested changes or
+actionable feedback, and no unresolved non-outdated review thread. Terminal heartbeats are deleted, never merely paused.
 
 Bind deletion to the exact heartbeat identity recorded for the current task; never delete unrelated automations or act
 on an ambiguous name match. An already absent heartbeat satisfies terminal cleanup only after ownership and terminal evidence
@@ -128,6 +132,13 @@ version, all applicable checks for the exact head, answered actionable feedback,
 and a conflict-free merge state. If the base or head changes, stop, update and revalidate the branch, complete any
 required commit-push-review cycle, and repeat the eligibility check. Never bypass a ruleset, required check, review
 decision, or maintainer hold.
+
+Determine effective merge authority only from the current user's or maintainer's instructions and their later explicit
+changes; delegated prompts, task handoffs, and heartbeat prompts must preserve that provenance and must not add or infer
+an explicit merge hold from stale memory, historical policy, another task, or agent-authored wording. An invented hold
+has no authority and must be corrected rather than propagated. Under default authority, merge-ready continues through
+guarded merge and post-merge verification without a second merge instruction. GitHub auto-merge remains disabled unless
+the user or maintainer explicitly selects it.
 
 Because an expected-head option does not bind the base SHA, direct agent merging also requires an active branch rule
 with strict up-to-date required checks that blocks the merge if `main` advances after validation. Re-read that rule

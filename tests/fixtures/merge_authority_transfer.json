@@ -1,0 +1,66 @@
+{
+  "cases": [
+    {
+      "name": "issue-583-delegation-default-authority",
+      "source": "Implement issue #583 completely and deliver its task-owned pull request.",
+      "generated": "Preserve default merge authority and perform the guarded squash merge when every required gate passes.",
+      "expected_holds": []
+    },
+    {
+      "name": "issues-591-613-delegation-default-authority",
+      "source": "Resolve issues #591 and #613 completely and deliver the ordinary same-repository pull request.",
+      "generated": "Carry the task through guarded merge and post-merge verification without waiting for a second merge instruction.",
+      "expected_holds": []
+    },
+    {
+      "name": "issues-623-624-delegation-default-authority",
+      "source": "Implement issues #623 and #624 and deliver the task-owned pull request.",
+      "generated": "Use the repository's default merge authority after exact-head, review, strict-base, and merge-queue gates pass.",
+      "expected_holds": []
+    },
+    {
+      "name": "issue-627-delegation-default-authority",
+      "source": "Solve issue #627 completely.",
+      "generated": "Deliver and guarded-squash-merge the ordinary task-owned pull request when eligible.",
+      "expected_holds": []
+    },
+    {
+      "name": "pr-620-heartbeat-default-authority",
+      "source": "Resolve PR #620 completely under the current repository policy.",
+      "generated": "At merge-ready, complete the guarded merge and post-merge verification; keep GitHub auto-merge disabled.",
+      "expected_holds": []
+    },
+    {
+      "name": "explicit-do-not-merge",
+      "source": "Implement the change, but do not merge.",
+      "generated": "Preserve the explicit instruction: do not merge.",
+      "expected_holds": [
+        "do not merge"
+      ]
+    },
+    {
+      "name": "explicit-leave-open",
+      "source": "Deliver the pull request and leave open.",
+      "generated": "Preserve the explicit instruction: leave open.",
+      "expected_holds": [
+        "leave open"
+      ]
+    },
+    {
+      "name": "explicit-pr-only",
+      "source": "PR only; do not take the merge action.",
+      "generated": "Preserve the explicit PR only instruction.",
+      "expected_holds": [
+        "pr only"
+      ]
+    },
+    {
+      "name": "explicit-wait-for-approval",
+      "source": "Implement and wait for approval before merging.",
+      "generated": "Preserve the explicit instruction to wait for approval.",
+      "expected_holds": [
+        "wait for approval"
+      ]
+    }
+  ]
+}

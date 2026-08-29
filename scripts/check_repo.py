@@ -127,7 +127,7 @@ SCHEDULED_PR_MONITORING_SHARED_MARKERS = (
     "four minutes",
     "persistent GitHub polling loops",
     "seen comment and review IDs",
-    "merged, closed, or merge-ready",
+    "delivery-complete merge-ready",
     "final bounded readback",
     "delete the exact current-task heartbeat",
     "linked-issue closure",
@@ -141,6 +141,23 @@ SCHEDULED_PR_MONITORING_SHARED_MARKERS = (
     "resumable holds",
     "ambiguous ownership",
     "exact retry condition",
+    "never merely paused",
+)
+
+DEFAULT_MERGE_AUTHORITY_SHARED_MARKERS = (
+    "current user's or maintainer's instructions",
+    "later explicit",
+    "delegated prompts",
+    "task handoffs",
+    "heartbeat prompts",
+    "preserve that provenance",
+    "stale memory",
+    "historical policy",
+    "agent-authored",
+    "invented",
+    "guarded merge",
+    "second merge instruction",
+    "remains disabled",
 )
 
 REQUIRED_POLICY_MARKERS = {
@@ -445,6 +462,38 @@ SCHEDULED_PR_MONITORING_SECTION_MARKERS = {
     ),
 }
 
+DEFAULT_MERGE_AUTHORITY_SECTION_ANCHORS = {
+    Path("AGENTS.md"): "### Default merge authorization",
+    Path("CONTRIBUTING.md"): "### Default merge authorization",
+    Path(".github/copilot-instructions.md"): (
+        "- apply the **Default merge authorization** policy"
+    ),
+    Path(".github/pull_request_template.md"): (
+        "- [ ] For an ordinary same-repository pull request within the active "
+        "task's scope, the Default merge authorization"
+    ),
+    Path("docs/contribute/agent-policies.md"): "### Default merge authorization",
+}
+
+DEFAULT_MERGE_AUTHORITY_SECTION_MARKERS = {
+    path: DEFAULT_MERGE_AUTHORITY_SHARED_MARKERS
+    for path in DEFAULT_MERGE_AUTHORITY_SECTION_ANCHORS
+}
+
+MERGE_AUTHORITY_TRANSFER_FIXTURE_PATH = Path(
+    "tests/fixtures/merge_authority_transfer.json"
+)
+EXPLICIT_MERGE_HOLD_PATTERNS = {
+    "do not merge": ("do not merge",),
+    "leave open": (
+        "leave open",
+        "leave the pull request open",
+        "leave the pr open",
+    ),
+    "pr only": ("pull request only", "pr only"),
+    "wait for approval": ("wait for approval",),
+}
+
 ORDERED_TERMINAL_CLEANUP_MARKERS = {
     path: (
         "`remote_branch_absent`",
@@ -531,6 +580,7 @@ class Finding:
         message: Message maintained by this finding.
         line: Line maintained by this finding.
     """
+
     path: Path
     message: str
     line: int | None = None
@@ -545,6 +595,105 @@ class Finding:
         if self.line is None:
             return f"{display}: {self.message}"
         return f"{display}:{self.line}: {self.message}"
+
+
+def explicit_merge_holds(text: str) -> tuple[str, ...]:
+    """Return canonical explicit merge holds present in user-authored text.
+
+    Args:
+        text: Current user or maintainer instruction text to inspect.
+    """
+    normalized = " ".join(text.casefold().split())
+    return tuple(
+        hold
+        for hold, patterns in EXPLICIT_MERGE_HOLD_PATTERNS.items()
+        if any(pattern in normalized for pattern in patterns)
+    )
+
+
+def check_merge_authority_transfer_fixtures(root: Path) -> list[Finding]:
+    """Verify delegation and heartbeat fixtures preserve merge authority.
+
+    Args:
+        root: Repository or filesystem root searched by the operation.
+    """
+    path = root / MERGE_AUTHORITY_TRANSFER_FIXTURE_PATH
+    text, error = read_text(path)
+    if error is not None or text is None:
+        return [
+            Finding(path, "merge authority transfer fixtures are missing or unreadable")
+        ]
+    try:
+        payload = json.loads(text)
+    except json.JSONDecodeError as exc:
+        return [
+            Finding(path, f"merge authority transfer fixtures are invalid JSON: {exc}")
+        ]
+    cases = payload.get("cases") if isinstance(payload, dict) else None
+    if not isinstance(cases, list) or not cases:
+        return [
+            Finding(
+                path, "merge authority transfer fixtures require a non-empty cases list"
+            )
+        ]
+
+    findings: list[Finding] = []
+    seen_names: set[str] = set()
+    for index, case in enumerate(cases, start=1):
+        if not isinstance(case, dict):
+            findings.append(
+                Finding(path, f"merge authority fixture {index} must be an object")
+            )
+            continue
+        name = case.get("name")
+        source = case.get("source")
+        generated = case.get("generated")
+        expected_holds = case.get("expected_holds")
+        if (
+            not isinstance(name, str)
+            or not name.strip()
+            or not isinstance(source, str)
+            or not isinstance(generated, str)
+            or not isinstance(expected_holds, list)
+            or any(not isinstance(item, str) for item in expected_holds)
+        ):
+            findings.append(
+                Finding(path, f"merge authority fixture {index} has invalid fields")
+            )
+            continue
+        if name in seen_names:
+            findings.append(
+                Finding(path, f"merge authority fixture name is duplicated: {name}")
+            )
+            continue
+        seen_names.add(name)
+        expected = tuple(dict.fromkeys(item.casefold() for item in expected_holds))
+        source_holds = explicit_merge_holds(source)
+        generated_holds = explicit_merge_holds(generated)
+        if source_holds != expected:
+            findings.append(
+                Finding(
+                    path,
+                    f"merge authority fixture {name} expected holds do not match the source instructions",
+                )
+            )
+        invented = tuple(hold for hold in generated_holds if hold not in source_holds)
+        if invented:
+            findings.append(
+                Finding(
+                    path,
+                    f"merge authority fixture {name} invents a hold: {', '.join(invented)}",
+                )
+            )
+        omitted = tuple(hold for hold in source_holds if hold not in generated_holds)
+        if omitted:
+            findings.append(
+                Finding(
+                    path,
+                    f"merge authority fixture {name} drops an explicit hold: {', '.join(omitted)}",
+                )
+            )
+    return findings
 
 
 def relative_path(path: Path) -> Path:
@@ -1033,6 +1182,44 @@ def check_agent_policy_gate(root: Path) -> list[Finding]:
                             + marker,
                         )
                     )
+        authority_markers = DEFAULT_MERGE_AUTHORITY_SECTION_MARKERS.get(
+            relative_path, ()
+        )
+        authority_anchor = DEFAULT_MERGE_AUTHORITY_SECTION_ANCHORS.get(relative_path)
+        if authority_anchor is not None:
+            authority_boundary_missing = any(
+                marker in authority_anchor for marker in missing_required_markers
+            )
+            authority_anchor_count, authority_section = extract_required_policy_section(
+                text,
+                authority_anchor,
+            )
+            if authority_anchor_count == 0 and not authority_boundary_missing:
+                findings.append(
+                    Finding(
+                        path,
+                        "default merge authority section is missing: "
+                        + authority_anchor,
+                    )
+                )
+            elif authority_anchor_count > 1 and not authority_boundary_missing:
+                findings.append(
+                    Finding(
+                        path,
+                        "default merge authority section must appear exactly once: "
+                        + authority_anchor,
+                    )
+                )
+            elif authority_section is not None and not authority_boundary_missing:
+                for marker in authority_markers:
+                    if marker not in authority_section:
+                        findings.append(
+                            Finding(
+                                path,
+                                "default merge authority section marker is missing: "
+                                + marker,
+                            )
+                        )
         ordered_markers = ORDERED_TERMINAL_CLEANUP_MARKERS.get(relative_path)
         section_markers = TERMINAL_CLEANUP_SECTION_MARKERS.get(relative_path, ())
         section_anchor = TERMINAL_CLEANUP_SECTION_ANCHORS.get(relative_path)
@@ -2976,6 +3163,7 @@ def main(argv: list[str] | None = None) -> int:
     for path in files:
         findings.extend(check_file(path))
     findings.extend(check_agent_policy_gate(ROOT))
+    findings.extend(check_merge_authority_transfer_fixtures(ROOT))
     findings.extend(check_spark_worker_agent(ROOT))
     findings.extend(check_ui_pattern_foundation(ROOT))
     findings.extend(check_virtualization_legacy(ROOT))

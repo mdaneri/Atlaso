@@ -1,10 +1,14 @@
 """Test check repo policies behavior."""
 
+import json
 from pathlib import Path
 
 from scripts.check_repo import (
+    DEFAULT_MERGE_AUTHORITY_SECTION_ANCHORS,
+    DEFAULT_MERGE_AUTHORITY_SECTION_MARKERS,
     LEGACY_TABULATOR_MARKER,
     LOCAL_TASK_BRANCH_ABSENT_MARKER,
+    MERGE_AUTHORITY_TRANSFER_FIXTURE_PATH,
     NON_TASK_OWNED_CHECKOUT_PRESERVED_MARKER,
     NON_TASK_OWNED_REMOTE_BRANCH_PRESERVED_MARKER,
     ORDERED_TERMINAL_CLEANUP_MARKERS,
@@ -30,6 +34,7 @@ from scripts.check_repo import (
     WORKTREE_REMOVAL_REMOTE_GATE_MARKER,
     WORKTREE_REMOVAL_RESUME_MARKER,
     check_agent_policy_gate,
+    check_merge_authority_transfer_fixtures,
     check_spark_worker_agent,
     check_ui_pattern_foundation,
     check_virtualization_legacy,
@@ -318,6 +323,10 @@ def write_policy_files(root: Path) -> None:
         monitoring_end_anchor = SCHEDULED_PR_MONITORING_SECTION_END_ANCHORS.get(
             relative_path
         )
+        authority_markers = DEFAULT_MERGE_AUTHORITY_SECTION_MARKERS.get(
+            relative_path, ()
+        )
+        authority_anchor = DEFAULT_MERGE_AUTHORITY_SECTION_ANCHORS.get(relative_path)
         other_markers = tuple(
             marker
             for marker in markers
@@ -325,6 +334,8 @@ def write_policy_files(root: Path) -> None:
             and marker != section_anchor
             and marker not in monitoring_markers
             and marker != monitoring_anchor
+            and marker not in authority_markers
+            and marker != authority_anchor
         )
         policy_lines = list(other_markers)
         if monitoring_anchor is not None:
@@ -334,6 +345,20 @@ def write_policy_files(root: Path) -> None:
                     monitoring_anchor,
                     *(monitoring_prefix + marker for marker in monitoring_markers),
                     monitoring_end_anchor or "- following monitoring policy",
+                )
+            )
+        if authority_anchor is not None:
+            authority_prefix = "" if authority_anchor.startswith("#") else "  "
+            authority_heading = (
+                ()
+                if authority_anchor == monitoring_end_anchor
+                else (authority_anchor,)
+            )
+            policy_lines.extend(
+                (
+                    *authority_heading,
+                    *(authority_prefix + marker for marker in authority_markers),
+                    "- following merge authority policy",
                 )
             )
         if section_anchor is not None:
@@ -633,7 +658,7 @@ def test_agent_policy_gate_rejects_missing_scheduled_pr_monitoring_contract(
         "four minutes",
         "persistent GitHub polling loops",
         "seen comment and review IDs",
-        "merged, closed, or merge-ready",
+        "delivery-complete merge-ready",
         "final bounded readback",
         "delete the exact current-task heartbeat",
         "linked-issue closure",
@@ -647,6 +672,7 @@ def test_agent_policy_gate_rejects_missing_scheduled_pr_monitoring_contract(
         "resumable holds",
         "ambiguous ownership",
         "exact retry condition",
+        "never merely paused",
     )
     required_entry_markers = {
         Path("AGENTS.md"): (
@@ -760,6 +786,109 @@ def test_agent_policy_gate_rejects_missing_default_merge_authorization(
         assert findings[0].message == (
             f"required agent policy marker is missing: {marker}"
         )
+
+
+def test_agent_policy_gate_scopes_merge_authority_provenance_to_its_section(
+    tmp_path: Path,
+) -> None:
+    """Verify authority provenance cannot be satisfied by unrelated prose.
+
+    Args:
+        tmp_path: Temporary directory provided by pytest for isolated filesystem state.
+    """
+    marker = "stale memory"
+    for relative_path in DEFAULT_MERGE_AUTHORITY_SECTION_MARKERS:
+        write_policy_files(tmp_path)
+        path = tmp_path / relative_path
+        text = path.read_text(encoding="utf-8")
+        path.write_text(
+            marker + "\n" + text.replace(marker, "", 1),
+            encoding="utf-8",
+        )
+
+        findings = check_agent_policy_gate(tmp_path)
+
+        assert len(findings) == 1
+        assert findings[0].path == path
+        assert findings[0].message == (
+            "default merge authority section marker is missing: " + marker
+        )
+
+
+def test_merge_authority_transfer_repository_fixtures_pass() -> None:
+    """Verify the checked-in delegation and heartbeat examples preserve authority."""
+    repository_root = Path(__file__).resolve().parents[1]
+
+    assert check_merge_authority_transfer_fixtures(repository_root) == []
+
+
+def test_merge_authority_transfer_rejects_invented_delegation_hold(
+    tmp_path: Path,
+) -> None:
+    """Verify delegation text cannot manufacture a merge hold.
+
+    Args:
+        tmp_path: Temporary directory provided by pytest for isolated filesystem state.
+    """
+    path = tmp_path / MERGE_AUTHORITY_TRANSFER_FIXTURE_PATH
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(
+        json.dumps(
+            {
+                "cases": [
+                    {
+                        "name": "invented delegation hold",
+                        "source": "Implement and deliver the change.",
+                        "generated": "Implement it, but do not merge.",
+                        "expected_holds": [],
+                    }
+                ]
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    findings = check_merge_authority_transfer_fixtures(tmp_path)
+
+    assert len(findings) == 1
+    assert findings[0].message == (
+        "merge authority fixture invented delegation hold invents a hold: do not merge"
+    )
+
+
+def test_merge_authority_transfer_rejects_dropped_heartbeat_hold(
+    tmp_path: Path,
+) -> None:
+    """Verify heartbeat text retains a later explicit merge hold.
+
+    Args:
+        tmp_path: Temporary directory provided by pytest for isolated filesystem state.
+    """
+    path = tmp_path / MERGE_AUTHORITY_TRANSFER_FIXTURE_PATH
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(
+        json.dumps(
+            {
+                "cases": [
+                    {
+                        "name": "dropped heartbeat hold",
+                        "source": "Wait for approval before merging.",
+                        "generated": "Merge when the checks pass.",
+                        "expected_holds": ["wait for approval"],
+                    }
+                ]
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    findings = check_merge_authority_transfer_fixtures(tmp_path)
+
+    assert len(findings) == 1
+    assert findings[0].message == (
+        "merge authority fixture dropped heartbeat hold drops an explicit hold: "
+        "wait for approval"
+    )
 
 
 def test_agent_policy_gate_rejects_missing_default_merge_authority_contract(
