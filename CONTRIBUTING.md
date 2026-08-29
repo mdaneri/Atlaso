@@ -311,10 +311,29 @@ follow-through workflow above.
 
 ## Release lifecycle contributions
 
-`Publish appliance release` is the automatic software/update publisher. A successful exact-`main` CI run may publish
-the signed `vX.Y.Z` appliance-update bundle only when the repository variable
-`AUTOMATIC_SOFTWARE_RELEASE_ENABLED` is `true`; manual exact-SHA recovery remains available while the automatic gate is
-disabled. This workflow must remain GitHub-hosted and must not build or publish virtualization images.
+Every successful same-repository `main` push CI run automatically starts **Publish Python wheel**. That separate
+GitHub-hosted workflow has read-only repository permissions and publishes only the immutable Actions artifact
+`atlaso-wheel-vX.Y.Z-<full-sha>` for 90 days. The artifact contains exactly one versioned Atlaso wheel and a canonical
+identity document binding its source CI run ID and attempt, publisher run ID and attempt, version, commit, size, and
+SHA-256 digest. Manual consumption revalidates those exact attempts. It has no signing
+material, GitHub Release/tag or Pages write authority, protected environment, self-hosted runner, or virtualization
+access. Repeated artifacts for one version/commit must contain identical wheel bytes or the manual consumer fails.
+When identical retries coexist, the consumer stages each publisher-run artifact separately, validates its recorded
+attempt, and preserves the earliest retained publisher run-and-attempt identity so an automatic retry cannot change the
+inputs of an already published signed bundle.
+
+**Publish appliance release** is protected manual dispatch only. Supply the exact full SHA of a successful `main` push
+CI run. The workflow requires a retained matching automatic wheel artifact, validates its GitHub run identities and
+embedded build metadata, fails closed on collisions, and records that identity inside the signed appliance bundle. It
+does not rebuild or substitute the application wheel. It retains the exact CPython 3.14 wheelhouse, signing,
+immutable-tag/Release, Pages serialization, signed-channel, and live-verification gates. After the 90-day retention
+window, manually dispatch **Replay Python wheel** from `main` with the exact commit plus its successful source CI run ID
+and attempt. That admission workflow revalidates the evidence and current-`main` reachability without checking out or
+executing the target, then emits only a one-day canonical replay request. Its completed `workflow_run` causes the
+read-only **Publish Python wheel** workflow to revalidate the request and publish the replacement handoff. Then dispatch
+the appliance release. If the immutable software Release already exists, that workflow verifies and reuses its signed
+assets only after the replay wheel matches the bundled wheel byte for byte, preserving the original signed provenance
+for channel recovery. Never rebuild or rename a wheel locally.
 
 OVA and Hyper-V images use the separate manual lifecycle documented in the
 [virtualization artifact guide](docs/reference/virtualization-artifacts.md). A maintainer workstation creates and

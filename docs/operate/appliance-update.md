@@ -138,12 +138,19 @@ GitHub is the default distribution origin:
 - GitHub Releases stores immutable versioned manifests, signatures, and bundles.
 - GitHub Pages publishes signed `development`, `preview`, and `stable` channel pointers. Its root serves a small
   informational release-repository page; appliances continue to use only the signed JSON documents under `/updates`.
-- A successful `main` CI run publishes the exact successful commit as `vX.Y.Z` and advances `development` only when
-  `AUTOMATIC_SOFTWARE_RELEASE_ENABLED=true`. A missing or false variable suppresses only automatic `workflow_run`
-  publication, so a maintainer can keep cutover safely paused while retaining exact-SHA recovery.
-- A protected manual dispatch may recover a failed publication only by naming a full commit that already has a
-  successful `main` push CI run. The workflow verifies that provenance and that the commit remains on `main` before
-  rebuilding and signing its deterministic release inputs.
+- A successful same-repository `main` push CI run automatically publishes only the 90-day Actions artifact
+  `atlaso-wheel-vX.Y.Z-<full-sha>`. It contains exactly one versioned Atlaso wheel plus canonical JSON binding the source
+  CI run, publisher run, repository, version, full commit, exact timezone-aware commit build time, filename, size, and
+  SHA-256 digest.
+  The GitHub-hosted publisher has read-only repository authority and no appliance signing key, protected environment,
+  Release/tag or Pages write, channel promotion, self-hosted label, or virtualization access. Protected **Replay Python
+  wheel** admission from `main` can recreate an expired artifact only after revalidating the supplied exact commit and
+  source CI run attempt as successful same-repository `main` push evidence.
+- **Publish appliance release** is protected manual dispatch only. The operator names a full commit that remains on
+  `main`, already has a successful `main` push CI run, and has a retained matching automatic wheel artifact. The
+  workflow validates every retained artifact with that name, accepts only byte-identical retries, revalidates the
+  selected CI identity and embedded wheel metadata, and records the handoff inside the signed appliance bundle. It
+  never rebuilds or substitutes the application wheel.
 - The manual promotion workflow advances `preview` or `stable` to an existing verified release. Promotion never rebuilds
   the artifact.
 - The shipped default is `stable`. Every Pages writer refuses to publish a tree where its manifest or detached
@@ -499,6 +506,38 @@ rollback identity and version. Omitting the URL skips only this externally suppl
 
 ## Release operator workflow
 
+Routine `main` push CI automatically starts **Publish Python wheel** after CI succeeds. Its immutable Actions artifact
+is named `atlaso-wheel-vX.Y.Z-<full-sha>` and is retained for 90 days. The artifact ZIP contains only the versioned
+`atlaso-*.whl` and canonical `wheel-identity.json`; it is not a GitHub Release, appliance-update bundle, wheelhouse,
+channel document, or virtualization input by itself. A rerun may create another retained artifact with the same name.
+The manual consumer compares all retained candidates and accepts them only when the wheel bytes are identical, then
+selects the earliest retained publisher run-and-attempt identity. Each candidate is staged by its publisher run plus
+artifact ID and revalidated against its recorded attempt, so multiple artifacts from one rerun series remain distinct.
+That stable selection keeps signed bundle inputs byte-identical when a later automatic retry publishes the same wheel
+after the immutable Release already exists. Different bytes fail closed as a collision.
+
+If the artifact expires before an appliance release is cut, open **Replay Python wheel**, choose **Run workflow** on
+`main`, and supply the exact commit, successful source CI run ID, and successful attempt number. Admission re-fetches
+that attempt, requires the `CI` workflow at `.github/workflows/ci.yml`, a same-repository `main` push, the supplied SHA,
+and a successful conclusion, then requires the commit to remain reachable from current `main`. It performs no checkout
+or target-code execution and publishes only a canonical one-day replay-request artifact. The completed admission run
+triggers **Publish Python wheel**, which downloads and revalidates that exact request and source CI evidence before its
+read-only, cache-free exact-SHA build publishes a new 90-day handoff. Do not copy a wheel from another commit, rename an
+artifact, or let the appliance workflow rebuild it. Replay checks out the protected publisher tooling at the replay
+workflow's immutable `main` SHA separately from the admitted target source, so a historical successful commit need not
+contain the newer handoff helper. Replay preserves Git's exact timezone-aware `%cI` commit timestamp so historical wheel
+bytes remain reproducible. The artifact's source-CI run ID and attempt, publisher run ID and attempt, version, commit,
+build time, filename, size, and digest are the exact handoff used by the later manual release and retained as
+`packages/wheel-identity.json` inside the signed bundle.
+
+If `vX.Y.Z` already exists and only channel advancement needs recovery, the manual workflow verifies and reuses the
+existing signed Release assets. It extracts the application wheel through the signed manifest content-hash contract and
+requires it to match the retained replay wheel byte for byte. It also requires the external third-party-notices asset to
+match the signed bundle content hash before reuse. The bundle is not rebuilt with the replay publisher's identity, so
+the immutable assets and their original signed provenance remain unchanged. This recovery path also skips the
+dependency-wheelhouse build and download. The protected signing key remains required to sign the recovered channel
+pointer, but it is not used to rebuild or replace the existing immutable Release.
+
 The protected workflows use these checked-in inputs:
 
 ```text
@@ -520,6 +559,7 @@ the appliance's CPython 3.14 runtime before running:
 ```bash
 python scripts/build_release_bundle.py \
   --wheelhouses wheelhouses \
+  --application-wheel-root dist/application-wheel \
   --signing-key /protected/release-key.pem \
   --signing-key-id atlaso-release-2026-01 \
   --commit <successful-main-sha>
@@ -558,19 +598,14 @@ python scripts/backfill_release_notes.py --start-tag v0.9.18 --apply
 ```
 
 Atlaso starts a new signed update lineage at `v0.9.18`; it does not consume or publish the retired product's update
-bridge. If an otherwise successful `main` release fails after signing but before publication, run **Publish appliance
-release**, provide the exact successful `main` commit in `release_sha`, and verify the recovered tag, release assets,
-signatures, and `development` pointer. The dispatch refuses commits without a successful `main` push CI run and
-preserves the normal tag/release mismatch checks. If the tag and release already published but channel advancement
-failed, dispatch the same successful SHA again: publication verifies the existing asset names and bytes before retrying
-the signed pointer update.
-
-During migration, leave `AUTOMATIC_SOFTWARE_RELEASE_ENABLED` false, cancel and verify absence of every legacy queued or
-running publication before bringing any temporary self-hosted runner online, and enumerate first-parent versions after
-the newest published software Release through the cutover merge. Recover missing versions serially by exact successful
-`main` SHA; after each dispatch verify the immutable tag/assets and live `development` pointer before continuing. Stop
-on the first failure and retry only that SHA. Enable the variable only after the newest recovery passes live
-verification.
+bridge. To publish or recover a complete appliance release, run **Publish appliance release** manually and provide the
+exact successful `main` commit in `release_sha`. The dispatch refuses commits without successful `main` push CI and a
+retained exact automatic wheel handoff. Verify the tag, release assets, signatures, and live `development` pointer. If
+the tag and Release already published but channel advancement failed, dispatch the same successful SHA again:
+publication verifies the existing asset names and bytes before retrying the signed pointer update. No repository
+variable enables automatic appliance publication. Retained wheel selection and existing immutable Release verification
+run before the shared Pages publication lock; only their bounded verified outputs enter the locked signing,
+publication, channel, and live verification stages.
 
 To initialize or advance the default channel, run **Promote appliance release**, choose `stable`, and provide an
 existing verified version without the `v` prefix. The workflow does not rebuild that release. It completes only after

@@ -19,6 +19,18 @@ exact prerelease OVA on Proxmox and KVM before publishing the unchanged OVA and 
 `virtualization-vX.Y.Z`. The software/update `vX.Y.Z` Release is the required source of the embedded wheel and CPython
 3.14 wheelhouse, but never contains virtualization assets.
 
+Successful `main` CI does not create either Release namespace. It automatically publishes only the 90-day
+`atlaso-wheel-vX.Y.Z-<full-sha>` Actions artifact with its commit/version/digest and CI/publisher identity. The protected
+manual **Publish appliance release** workflow consumes and records that exact wheel handoff, adds the offline CPython
+3.14 wheelhouse, signs the bundle, and publishes `vX.Y.Z`. Only after that manual software Release exists may the
+separate manual virtualization producer consume it. The automatic wheel path has no signing material, Release/tag or
+Pages write, channel, self-hosted runner, or virtualization access, and it cannot queue an OVA, Hyper-V, Proxmox, KVM,
+or virtualization smoke job. If the handoff expires, protected **Replay Python wheel** admission from `main` accepts
+only the exact commit and successful source CI run ID and attempt. It validates that evidence without target checkout,
+then a completed-run handoff lets **Publish Python wheel** revalidate and rebuild without gaining virtualization
+authority. If the software Release already exists, its signed assets are reused only after the replay wheel matches the
+bundled wheel byte for byte, so recovery cannot change the immutable source Release consumed by virtualization.
+
 The maintainer workstation is a trusted release producer. An optional explicitly approved ephemeral Windows runner is
 trusted for the same single release while it is online. Neither receives the signing key. The protected hosted
 finalizer performs the independent checks below as defense in depth and retains exclusive signing and publication

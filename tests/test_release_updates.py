@@ -1196,11 +1196,17 @@ def test_release_bundle_publishes_commit_subject_summary_and_release_link():
     assert 'git_value(["show", "-s", "--format=%s", commit])' in source
     assert '"summary": release_summary' in source
     assert '"release_notes_url": f"https://github.com/mdaneri/Atlaso/releases/tag/v{version}"' in source
+    assert '"--application-wheel-root"' in source
+    assert 'str(ROOT / "scripts/wheel_artifact.py")' in source
+    assert 'shutil.copy2(application_wheel_identity' in source
+    assert "build_application_wheel(temp_root" not in source
 
 
 def test_release_workflows_use_successful_main_sha_and_promote_without_rebuilding():
     """Verify that release workflows use successful main sha and promote without rebuilding."""
     publication = (ROOT / ".github/workflows/release.yml").read_text(encoding="utf-8")
+    wheel_publication = (ROOT / ".github/workflows/wheel.yml").read_text(encoding="utf-8")
+    wheel_replay = (ROOT / ".github/workflows/wheel-replay.yml").read_text(encoding="utf-8")
     prerelease = (ROOT / ".github/workflows/virtualization-prerelease.yml").read_text(
         encoding="utf-8"
     )
@@ -1224,19 +1230,86 @@ def test_release_workflows_use_successful_main_sha_and_promote_without_rebuildin
     ).read_text(encoding="utf-8")
     promotion = (ROOT / ".github/workflows/promote-release.yml").read_text(encoding="utf-8")
     ci = (ROOT / ".github/workflows/ci.yml").read_text(encoding="utf-8")
-    assert "github.event.workflow_run.head_branch == 'main'" in publication
-    assert "github.event.workflow_run.event == 'push'" in publication
+    publication_trigger = publication.split("on:\n", 1)[1].split("\npermissions:", 1)[0]
+    wheel_publication_trigger = wheel_publication.split("on:\n", 1)[1].split(
+        "\npermissions:", 1
+    )[0]
+    wheel_replay_trigger = wheel_replay.split("on:\n", 1)[1].split("\npermissions:", 1)[0]
+    assert "workflow_dispatch:" in publication_trigger
+    assert "workflow_run:" not in publication_trigger
+    assert "github.event.workflow_run" not in publication
+    assert "AUTOMATIC_SOFTWARE_RELEASE_ENABLED" not in publication
+    assert "github.event.workflow_run.head_branch == 'main'" in wheel_publication
+    assert "github.event.workflow_run.event == 'push'" in wheel_publication
+    assert "github.event.workflow_run.head_repository.full_name == github.repository" in wheel_publication
+    assert "github.event.workflow_run.conclusion == 'success'" in wheel_publication
+    assert "Replay Python wheel" in wheel_publication_trigger
+    assert "workflow_dispatch:" not in wheel_publication_trigger
+    assert "workflow_dispatch:" in wheel_replay_trigger
+    assert "source_ci_run_id:" in wheel_replay_trigger
+    assert "source_ci_run_attempt:" in wheel_replay_trigger
+    assert "github.ref == 'refs/heads/main'" in wheel_replay
+    assert "actions/checkout" not in wheel_replay
+    assert "python " not in wheel_replay
+    assert "inputs.commit" not in wheel_publication
+    assert "atlaso-wheel-replay-request-${TRIGGER_RUN_ID}-${TRIGGER_RUN_ATTEMPT}" in wheel_publication
+    assert "wheel-replay-request.json" in wheel_publication
+    assert "retention-days: 1" in wheel_replay
+    assert "actions/runs/${SOURCE_CI_RUN_ID}/attempts/${SOURCE_CI_RUN_ATTEMPT}" in wheel_publication
+    assert 'test "$(jq -r .name <<<"$SOURCE_CI_STATE")" = CI' in wheel_publication
+    assert 'test "$(jq -r .path <<<"$SOURCE_CI_STATE")" = .github/workflows/ci.yml' in wheel_publication
+    assert 'test "$(jq -r .event <<<"$SOURCE_CI_STATE")" = push' in wheel_publication
     assert (
-        publication.count(
-            "github.event.workflow_run.head_repository.full_name == github.repository"
-        )
-        == 1
+        'test "$(jq -r .head_repository.full_name <<<"$SOURCE_CI_STATE")" = '
+        '"${{ github.repository }}"' in wheel_publication
     )
-    assert "github.event_name == 'workflow_dispatch'" in publication
-    assert "vars.AUTOMATIC_SOFTWARE_RELEASE_ENABLED == 'true'" in publication
-    assert "-f head_sha=\"$RELEASE_SHA\"" in publication
-    assert "-f status=success" in publication
-    assert "has no successful main push CI run" in publication
+    assert 'test "$(jq -r .head_branch <<<"$SOURCE_CI_STATE")" = main' in wheel_publication
+    assert 'WHEEL_SHA="$(jq -r .head_sha <<<"$SOURCE_CI_STATE")"' in wheel_publication
+    assert 'test "$WHEEL_SHA" = "$EXPECTED_WHEEL_SHA"' in wheel_publication
+    assert (
+        'test "$(jq -r .run_attempt <<<"$SOURCE_CI_STATE")" = "$SOURCE_CI_RUN_ATTEMPT"'
+        in wheel_publication
+    )
+    assert 'test "$(jq -r .conclusion <<<"$SOURCE_CI_STATE")" = success' in wheel_publication
+    assert 'compare/${WHEEL_SHA}...main' in wheel_publication
+    assert 'test "$MAIN_STATUS" = ahead || test "$MAIN_STATUS" = identical' in wheel_publication
+    assert 'ref: ${{ steps.target.outputs.commit }}' in wheel_publication
+    assert 'ref: ${{ github.event.workflow_run.head_sha }}' in wheel_publication
+    assert "path: tooling" in wheel_publication
+    assert "path: target-source" in wheel_publication
+    assert "cache: pip" not in wheel_publication
+    assert wheel_publication.index("Admit the source CI evidence") < wheel_publication.index(
+        "actions/checkout@v7"
+    )
+    assert "runs-on: ubuntu-latest" in wheel_publication
+    assert "actions: read" in wheel_publication
+    assert "contents: read" in wheel_publication
+    assert "actions: read" in wheel_replay
+    assert "contents: read" in wheel_replay
+    assert "contents: write" not in wheel_publication
+    assert "contents: write" not in wheel_replay
+    assert "environment:" not in wheel_publication
+    assert "environment:" not in wheel_replay
+    assert "self-hosted" not in wheel_publication
+    assert "self-hosted" not in wheel_replay
+    assert "RELEASE_SIGNING_PRIVATE_KEY" not in wheel_publication
+    assert "RELEASE_SIGNING_PRIVATE_KEY" not in wheel_replay
+    assert "gh release" not in wheel_publication
+    assert "gh release" not in wheel_replay
+    assert "gh-pages" not in wheel_publication
+    assert "gh-pages" not in wheel_replay
+    assert "virtualization" not in wheel_publication.lower()
+    assert "virtualization" not in wheel_replay.lower()
+    assert "actions/upload-artifact@v7" in wheel_publication
+    assert "retention-days: 90" in wheel_publication
+    assert "overwrite: false" in wheel_publication
+    assert "python tooling/scripts/wheel_artifact.py create" in wheel_publication
+    assert "--source-root target-source" in wheel_publication
+    assert "target-source/requirements-release-tools.lock" in wheel_publication
+    assert 'git -C target-source show -s --format=%cI "$WHEEL_SHA"' in wheel_publication
+    assert "date --utc" not in wheel_publication
+    assert "--source-ci-run-id" in wheel_publication
+    assert "--publisher-run-id" in wheel_publication
     assert "legacy bridge" not in publication
     assert 'cat > "$SITE_ROOT/index.html"' in publication
     assert "Everything your virtualization lab needs." in publication
@@ -1253,8 +1326,99 @@ def test_release_workflows_use_successful_main_sha_and_promote_without_rebuildin
     assert '--expected-commit "$RELEASE_SHA"' in publication_check
     assert "<script" not in publication
     assert publication.count("ref: ${{ needs.prepare.outputs.release_sha }}") == 2
-    assert "actions/upload-artifact@v7" in publication
-    assert publication.count("actions/download-artifact@v8") == 1
+    assert publication.count("actions/upload-artifact@v7") >= 3
+    assert publication.count("actions/download-artifact@v8") == 3
+    assert "python scripts/wheel_artifact.py select" in publication
+    assert "--application-wheel-root dist/application-wheel" in publication
+    assert ".source_ci.run_id" in publication
+    assert ".source_ci.run_attempt" in publication
+    assert ".publisher.run_id" in publication
+    assert ".publisher.run_attempt" in publication
+    assert ".github/workflows/ci.yml" in publication
+    assert ".github/workflows/wheel.yml" in publication
+    assert 'TARGET="$CANDIDATES/$PUBLISHER_RUN_ID-$ARTIFACT_ID"' in publication
+    assert 'test "$CANDIDATE_RUN_ID" = "$PUBLISHER_RUN_ID"' in publication
+    release_inputs_job = publication.split("  release_inputs:\n", 1)[1].split(
+        "  publish:\n", 1
+    )[0]
+    candidate_loop = release_inputs_job.split(
+        "while IFS=$'\\t' read -r ARTIFACT_ID PUBLISHER_RUN_ID; do", 1
+    )[1].split("done < <(", 1)[0]
+    assert ".source_ci.run_id" in candidate_loop
+    assert ".source_ci.run_attempt" in candidate_loop
+    assert (
+        "actions/runs/${CANDIDATE_SOURCE_CI_RUN_ID}/attempts/"
+        "${CANDIDATE_SOURCE_CI_RUN_ATTEMPT}"
+    ) in candidate_loop
+    assert 'test "$(jq -r .run_attempt <<<"$CANDIDATE_SOURCE_CI_STATE")" = ' in candidate_loop
+    assert 'test "$(jq -r .head_sha <<<"$CANDIDATE_SOURCE_CI_STATE")" = "$RELEASE_SHA"' in candidate_loop
+    assert 'test "$(jq -r .conclusion <<<"$CANDIDATE_SOURCE_CI_STATE")" = success' in candidate_loop
+    assert 'actions/runs/${CANDIDATE_RUN_ID}/attempts/${CANDIDATE_RUN_ATTEMPT}' in publication
+    assert 'test "$(jq -r .run_attempt <<<"$CANDIDATE_STATE")" = "$CANDIDATE_RUN_ATTEMPT"' in publication
+    assert 'actions/runs/${SOURCE_CI_RUN_ID}/attempts/${SOURCE_CI_RUN_ATTEMPT}' in publication
+    assert 'actions/runs/${PUBLISHER_RUN_ID}/attempts/${PUBLISHER_RUN_ATTEMPT}' in publication
+    assert 'test "$(jq -r .run_attempt <<<"$SOURCE_CI_STATE")" = "$SOURCE_CI_RUN_ATTEMPT"' in publication
+    assert 'test "$(jq -r .run_attempt <<<"$PUBLISHER_STATE")" = "$PUBLISHER_RUN_ATTEMPT"' in publication
+    assert 'test "$(jq -r .head_sha <<<"$SOURCE_CI_STATE")" = "$RELEASE_SHA"' in publication
+    assert 'test "$(jq -r .head_sha <<<"$PUBLISHER_STATE")"' not in publication
+    assert "Preserve an existing immutable release" in publication
+    assert "python scripts/prepare_virtualization_source.py" in publication
+    assert "--expected-commit \"$RELEASE_SHA\"" in publication
+    assert 'sha256sum "$EXISTING_WHEEL"' in publication
+    assert 'sha256sum "$SELECTED_WHEEL"' in publication
+    assert '.content_hashes["THIRD_PARTY_NOTICES.md"]' in publication
+    assert 'sha256sum "$EXISTING_NOTICE"' in publication
+    assert "if: needs.release_inputs.outputs.existing_release != 'true'" in publication
+    prepare_job = publication.split("  prepare:\n", 1)[1].split("  wheelhouse:\n", 1)[0]
+    assert "if: github.ref == 'refs/heads/main'" in prepare_job
+    assert "ref: main" in prepare_job
+    assert "persist-credentials: false" in prepare_job
+    assert "name: validated-release-request" in prepare_job
+    assert "retention-days: 1" in prepare_job
+    assert "actions/workflows/ci.yml/runs" not in prepare_job
+    assert "-f status=success" not in prepare_job
+    publish_job = publication.split("  publish:\n", 1)[1]
+    wheelhouse_job = publication.split("  wheelhouse:\n", 1)[1].split(
+        "  release_inputs:\n", 1
+    )[0]
+    assert "- release_inputs" in wheelhouse_job
+    assert "if: needs.release_inputs.outputs.existing_release != 'true'" in wheelhouse_job
+    assert "group: atlaso-github-pages" not in release_inputs_job
+    assert "environment: appliance-release" not in release_inputs_job
+    assert "contents: write" not in release_inputs_job
+    assert "needs.prepare.outputs.release_sha" not in release_inputs_job
+    assert "name: validated-release-request" in release_inputs_job
+    assert "Read the validated release target" in release_inputs_job
+    assert "ref: main" in release_inputs_job
+    assert 'git show "${RELEASE_SHA}:pyproject.toml"' in release_inputs_job
+    assert "VERSION=\"$(jq -r .version dist/application-wheel/wheel-identity.json)\"" in release_inputs_job
+    assert "Resolve the immutable automatic wheel handoff" in release_inputs_job
+    assert "Preserve an existing immutable release" in release_inputs_job
+    assert "actions/upload-artifact@v7" in release_inputs_job
+    assert "retention-days: 1" in release_inputs_job
+    assert "group: atlaso-github-pages" in publish_job
+    assert "actions/download-artifact@v8" in publish_job
+    assert "always() &&" in publish_job
+    assert "needs.prepare.result == 'success'" in publish_job
+    assert "needs.release_inputs.result == 'success'" in publish_job
+    assert (
+        "needs.release_inputs.outputs.existing_release == 'true' || "
+        "needs.wheelhouse.result == 'success'"
+    ) in publish_job
+    wheelhouse_download = publish_job.split(
+        "- name: Download CPython 3.14 wheelhouse", 1
+    )[1].split("- name: Materialize the protected signing key", 1)[0]
+    assert "if: needs.release_inputs.outputs.existing_release != 'true'" in wheelhouse_download
+    signing_key = publish_job.split(
+        "- name: Materialize the protected signing key", 1
+    )[1].split("- name: Build and sign the immutable release", 1)[0]
+    assert "if:" not in signing_key
+    assert "Resolve the immutable automatic wheel handoff" not in publish_job
+    assert "Preserve an existing immutable release" not in publish_job
+    assert "actions/artifacts?name=" not in publish_job
+    assert "gh release download" not in publish_job
+    assert publication.count('test "$(jq -r .event <<<"$') >= 3
+    assert publication.count('test "$(jq -r .head_branch <<<"$') >= 3
     for runner_label in ("atlaso-vmware", "atlaso-proxmox", "atlaso-kvm", "atlaso-hyperv"):
         assert runner_label not in publication
     for job in (

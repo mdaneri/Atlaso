@@ -1,0 +1,86 @@
+name: Replay Python wheel
+
+on:
+  workflow_dispatch:
+    inputs:
+      commit:
+        description: Exact successful main push CI commit SHA to replay
+        required: true
+        type: string
+      source_ci_run_id:
+        description: GitHub run ID for that successful main push CI
+        required: true
+        type: string
+      source_ci_run_attempt:
+        description: Successful attempt number for that source CI run
+        required: true
+        default: '1'
+        type: string
+
+permissions:
+  actions: read
+  contents: read
+
+concurrency:
+  group: python-wheel-replay-${{ inputs.commit }}
+  cancel-in-progress: false
+
+jobs:
+  admit:
+    name: Admit exact wheel replay request
+    if: github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Validate the replay request
+        id: request
+        env:
+          GH_TOKEN: ${{ github.token }}
+          EXPECTED_WHEEL_SHA: ${{ inputs.commit }}
+          SOURCE_CI_RUN_ID: ${{ inputs.source_ci_run_id }}
+          SOURCE_CI_RUN_ATTEMPT: ${{ inputs.source_ci_run_attempt }}
+        run: |
+          if ! printf '%s' "$EXPECTED_WHEEL_SHA" | grep -Eq '^[0-9a-f]{40}$'; then
+            echo "::error::Wheel SHA must be a full lowercase hexadecimal commit."
+            exit 1
+          fi
+          if ! printf '%s' "$SOURCE_CI_RUN_ID" | grep -Eq '^[1-9][0-9]*$' ||
+             ! printf '%s' "$SOURCE_CI_RUN_ATTEMPT" | grep -Eq '^[1-9][0-9]*$'; then
+            echo "::error::Source CI run ID and attempt must be positive integers."
+            exit 1
+          fi
+          SOURCE_CI_STATE="$(gh api \
+            "repos/${{ github.repository }}/actions/runs/${SOURCE_CI_RUN_ID}/attempts/${SOURCE_CI_RUN_ATTEMPT}")"
+          test "$(jq -r .name <<<"$SOURCE_CI_STATE")" = CI
+          test "$(jq -r .path <<<"$SOURCE_CI_STATE")" = .github/workflows/ci.yml
+          test "$(jq -r .event <<<"$SOURCE_CI_STATE")" = push
+          test "$(jq -r .head_repository.full_name <<<"$SOURCE_CI_STATE")" = "${{ github.repository }}"
+          test "$(jq -r .head_branch <<<"$SOURCE_CI_STATE")" = main
+          test "$(jq -r .head_sha <<<"$SOURCE_CI_STATE")" = "$EXPECTED_WHEEL_SHA"
+          test "$(jq -r .run_attempt <<<"$SOURCE_CI_STATE")" = "$SOURCE_CI_RUN_ATTEMPT"
+          test "$(jq -r .conclusion <<<"$SOURCE_CI_STATE")" = success
+          MAIN_COMPARISON="$(gh api \
+            "repos/${{ github.repository }}/compare/${EXPECTED_WHEEL_SHA}...main")"
+          MAIN_STATUS="$(jq -r .status <<<"$MAIN_COMPARISON")"
+          test "$MAIN_STATUS" = ahead || test "$MAIN_STATUS" = identical
+          REQUEST_ROOT="$RUNNER_TEMP/wheel-replay-request"
+          mkdir "$REQUEST_ROOT"
+          jq -ncS \
+            --arg repository "${{ github.repository }}" \
+            --arg commit "$EXPECTED_WHEEL_SHA" \
+            --argjson source_ci_run_id "$SOURCE_CI_RUN_ID" \
+            --argjson source_ci_run_attempt "$SOURCE_CI_RUN_ATTEMPT" \
+            '{repository:$repository,commit:$commit,source_ci_run_id:$source_ci_run_id,source_ci_run_attempt:$source_ci_run_attempt}' \
+            > "$REQUEST_ROOT/wheel-replay-request.json"
+          echo "root=$REQUEST_ROOT" >> "$GITHUB_OUTPUT"
+          echo "artifact_name=atlaso-wheel-replay-request-${{ github.run_id }}-${{ github.run_attempt }}" \
+            >> "$GITHUB_OUTPUT"
+      - name: Publish the bounded replay request
+        uses: actions/upload-artifact@v7
+        with:
+          name: ${{ steps.request.outputs.artifact_name }}
+          path: ${{ steps.request.outputs.root }}/wheel-replay-request.json
+          if-no-files-found: error
+          retention-days: 1
+          compression-level: 0
+          overwrite: false

@@ -691,13 +691,38 @@ Terminal order:
   current-protocol fields alone as a failed update. Signed-release lifecycle
   coverage must prove the candidate and a healthy rollback both before and after audited appliance reboots; installation
   itself must not reboot automatically.
-- Release publication recovery must use the protected **Publish appliance release** manual dispatch with the exact
-  successful `main` push CI SHA. Atlaso starts a new signed update lineage at `v0.9.18`; do not publish or consume a
-  retired-product bridge. Preserve tag/release commit and asset-byte idempotency checks. A rerun after tag/release
-  publication must verify the existing asset bytes before retrying channel advancement. Automatic `workflow_run`
-  publication additionally requires `AUTOMATIC_SOFTWARE_RELEASE_ENABLED=true`; manual recovery remains admitted while
-  the gate is absent or false. Keep that workflow GitHub-hosted and limited to the signed software/update bundle,
+- Every successful same-repository `main` push CI run automatically starts **Publish Python wheel** on GitHub-hosted
+  Linux. Keep it read-only and bounded to one 90-day Actions artifact named
+  `atlaso-wheel-vX.Y.Z-<full-sha>`, containing exactly the versioned wheel and canonical identity document. Bind the
+  source CI and publisher run IDs and attempts, repository, version, full commit, UTC commit build time, filename, size,
+  and SHA-256. Later consumers must use the attempt-specific GitHub run endpoints and verify each recorded attempt.
+  Give this path no appliance signing material, protected environment, contents write, tag/Release or `gh-pages`
+  mutation, channel promotion, self-hosted label, or virtualization access. Automatic retries may publish another
+  artifact for the same identity only when the wheel bytes remain identical; a later consumer must compare all retained
+  candidates, stage them by publisher run plus artifact ID, validate every recorded publisher attempt, fail closed on
+  divergence, and preserve the earliest retained publisher run-and-attempt handoff so a later identical retry cannot
+  change signed bundle inputs. Provide manual retention recovery only through the protected **Replay Python wheel**
+  workflow revision on `main`. It must accept an exact commit plus source CI run ID and attempt, revalidate that exact
+  attempt as successful same-repository `main` push CI for the commit, and require the commit to remain reachable from
+  current `main` without checkout or target-code execution. Publish only one canonical one-day replay-request artifact.
+  The wheel publisher must consume that request only through its completed `workflow_run`, revalidate it and the source
+  CI evidence, and retain the same read-only wheel-only trust boundary.
+- Complete release publication and recovery use only the protected **Publish appliance release** manual dispatch with
+  the exact successful `main` push CI SHA. Require and revalidate the retained automatic wheel handoff, including its
+  successful source CI identity and embedded wheel version/commit/time, and record `wheel-identity.json` inside the
+  signed bundle. Never rebuild or substitute the application wheel in this workflow. If the 90-day artifact expired,
+  dispatch **Replay Python wheel** from protected `main` with the exact commit and successful source CI run ID and
+  attempt; the two-stage replay must revalidate that evidence before publishing the replacement handoff. If an
+  immutable software Release already exists, verify and reuse its signed assets only when the replay wheel is
+  byte-identical to the wheel inside that bundle; do not rebuild it with a new publisher identity. Atlaso starts a new
+  signed update
+  lineage at `v0.9.18`; do not publish or consume a retired-product bridge. Preserve tag/release commit and asset-byte
+  idempotency checks. A rerun after tag/release publication must verify the existing asset bytes before retrying channel
+  advancement. Keep the protected manual workflow GitHub-hosted and limited to the signed software/update bundle,
   immutable `vX.Y.Z` Release, and `development` channel.
+  Resolve retained wheel candidates and verify any existing immutable Release in an unlocked, read-only prerequisite
+  job. Pass those bounded verified inputs through the current workflow run, and acquire the shared Pages lock only for
+  the protected signing, Release publication, channel mutation, and live publication verification stages.
 - Virtualization publication is separate. A clean Windows workstation consumes the exact signed `vX.Y.Z` bundle,
   deploys its application wheel and CPython 3.14 wheelhouse without rebuilding them, produces and smokes the OVA and
   derived Hyper-V ZIP, and creates an explicit annotated `virtualization-vX.Y.Z-rc.N` draft. A protected hosted job
