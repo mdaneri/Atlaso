@@ -8,6 +8,7 @@ Before=network-pre.target systemd-networkd.service atlaso-data-disks.service atl
 
 [Service]
 Type=oneshot
+Environment=PYTHONDONTWRITEBYTECODE=1
 ExecStart=/opt/atlaso/.venv/bin/python /opt/atlaso/bin/atlaso-vmware-ovf-customize.py
 RemainAfterExit=yes
 TimeoutStartSec=infinity

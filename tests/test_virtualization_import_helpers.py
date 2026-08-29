@@ -14,7 +14,7 @@ ROOT = Path(__file__).resolve().parents[1]
 KVM_HELPER = ROOT / "scripts/virtualization/templates/import-atlaso-kvm.sh"
 PROXMOX_HELPER = ROOT / "scripts/virtualization/templates/import-atlaso-proxmox.sh"
 LINUX_SMOKE = ROOT / "scripts/virtualization/smoke-ova-linux.sh"
-RELEASE_WORKFLOW = ROOT / ".github/workflows/release.yml"
+STABLE_WORKFLOW = ROOT / ".github/workflows/virtualization-stable.yml"
 
 
 @pytest.mark.parametrize("path", (KVM_HELPER, PROXMOX_HELPER, LINUX_SMOKE))
@@ -247,17 +247,16 @@ def test_linux_smoke_imports_reboots_validates_and_bounds_cleanup() -> None:
     assert script.count("validate_guest") == 3
 
 
-def test_release_image_build_uses_only_disposable_credentials() -> None:
-    """The public template build cannot receive a protected reusable credential."""
+def test_linux_smoke_jobs_have_read_only_tokens_and_no_signing_secrets() -> None:
+    """Ephemeral public-repository runners receive no write or signing authority."""
 
-    workflow = RELEASE_WORKFLOW.read_text(encoding="utf-8")
-    build_job = workflow.split("  vmware_ova_build:\n", 1)[1].split("  vmware_ova_smoke:\n", 1)[0]
-    assert "secrets.ATLASO_PACKER_SSH_PASSWORD" not in build_job
-    assert "secrets.ATLASO_BOOTSTRAP_ADMIN_PASSWORD" not in build_job
-    assert "RandomNumberGenerator]::GetBytes(32)" in build_job
-    assert "$sshText = $null" in build_job
-    assert "$adminText = $null" in build_job
-    smoke_job = workflow.split("  vmware_ova_smoke:\n", 1)[1].split("  proxmox_ova_smoke:\n", 1)[0]
-    assert "secrets.ATLASO_BOOTSTRAP_ADMIN_PASSWORD" not in smoke_job
-    assert "RandomNumberGenerator]::GetBytes(32)" in smoke_job
-    assert "$passwordText = $null" in smoke_job
+    workflow = STABLE_WORKFLOW.read_text(encoding="utf-8")
+    proxmox = workflow.split("  proxmox_smoke:\n", 1)[1].split("  kvm_smoke:\n", 1)[0]
+    kvm = workflow.split("  kvm_smoke:\n", 1)[1].split("  publish:\n", 1)[0]
+    for smoke_job in (proxmox, kvm):
+        assert "runs-on: [self-hosted, Linux, X64" in smoke_job
+        assert "actions: read" in smoke_job
+        assert "contents: read" in smoke_job
+        assert "persist-credentials: false" in smoke_job
+        assert "RELEASE_SIGNING_PRIVATE_KEY" not in smoke_job
+        assert "contents: write" not in smoke_job

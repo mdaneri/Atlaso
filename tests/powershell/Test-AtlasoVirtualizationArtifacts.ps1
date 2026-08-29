@@ -19,8 +19,12 @@ $importerPath = Join-Path $RepositoryRoot 'scripts\windows\virtualization\templa
 $hyperVSmokePath = Join-Path $RepositoryRoot 'scripts\windows\virtualization\smoke-hyperv.ps1'
 $vmwareSmokePath = Join-Path $RepositoryRoot 'scripts\windows\virtualization\smoke-ova-vmware.ps1'
 $ovaExporterPath = Join-Path $RepositoryRoot 'scripts\windows\vmware\export-ovf.ps1'
+$releaseModulePath = Join-Path $RepositoryRoot 'scripts\windows\virtualization\Atlaso.VirtualizationRelease.psm1'
+$prereleaseWorkflowPath = Join-Path $RepositoryRoot '.github\workflows\virtualization-prerelease.yml'
+$stableWorkflowPath = Join-Path $RepositoryRoot '.github\workflows\virtualization-stable.yml'
 Import-Module $modulePath -Force
 Import-Module $smokeIdentityModulePath -Force
+Import-Module $releaseModulePath -Force
 
 $head = [string](& git -C $RepositoryRoot rev-parse HEAD)
 if ($LASTEXITCODE -ne 0 -or $head -notmatch '^[0-9a-f]{40}$') {
@@ -174,9 +178,132 @@ $module = Get-Content -Raw -LiteralPath $modulePath
 $ovaExporter = Get-Content -Raw -LiteralPath $ovaExporterPath
 $hyperVSmoke = Get-Content -Raw -LiteralPath $hyperVSmokePath
 $vmwareSmoke = Get-Content -Raw -LiteralPath $vmwareSmokePath
+$releaseModule = Get-Content -Raw -LiteralPath $releaseModulePath
+$prereleaseWorkflow = Get-Content -Raw -LiteralPath $prereleaseWorkflowPath
+$stableWorkflow = Get-Content -Raw -LiteralPath $stableWorkflowPath
 if ($vmwareSmoke.Contains('"--prop:atlaso.admin_password=$passwordText"') -or
     $vmwareSmoke.Contains('"--prop:atlaso.root_password=$passwordText"')) {
     throw 'VMware smoke still exposes the disposable credential through OVF Tool process arguments.'
+}
+try {
+    Resolve-AtlasoVirtualizationStagingDirectory -StagingRoot 'relative\release' -Tag 'virtualization-v0.9.237-rc.1' | Out-Null
+    throw 'A relative virtualization staging root was accepted.'
+}
+catch {
+    if ($_.Exception.Message -eq 'A relative virtualization staging root was accepted.') { throw }
+}
+foreach ($required in @(
+        '[string]$PrereleaseIdentifier',
+        '[string]$StagingRoot',
+        '[string]$FromPrerelease',
+        '[switch]$CandidateOnly',
+        'Invoke-AtlasoVirtualizationPrerelease',
+        'Invoke-AtlasoVirtualizationStablePromotion',
+        'Invoke-AtlasoReleaseWorkflow',
+        'git -C $RepoRoot remote get-url origin',
+        "'repo', 'view', `$repository",
+        'differs from the checkout origin',
+        "'--json', 'databaseId,displayTitle'",
+        '[string]$run.conclusion -cne ''success''',
+        'PrereleaseIdentifier must be an explicit rc.N',
+        'show-ref --verify --quiet',
+        'cat-file -t',
+        'Always reconstruct the signed source',
+        "'.software-release-download-' + [guid]::NewGuid().ToString('N')",
+        'A retry never trusts retained pre-verification network bytes',
+        "'--verify-existing', `$candidate",
+        'Retained virtualization candidate verification failed',
+        'Published assets are immutable',
+        'if ($CandidateOnly) {',
+        'Invoke-AtlasoVirtualizationPrereleaseFinalizer',
+        '-ExpectedSourceCommit $identity.Commit',
+        '-RequireCleanSource',
+        'The retained VMware image is incomplete and will be rebuilt',
+        'Update-AtlasoVmwarePayloadProvenance',
+        "Value -ceq 'software-deployed'",
+        'Start-AtlasoVirtualizationDeploymentVm',
+        'Stop-AtlasoVirtualizationDeploymentVm',
+        "'getGuestIPAddress', `$resolvedVmx, '-wait'",
+        "'stop', `$resolvedVmx, 'soft'",
+        'Proven shutdown is required before hashing or exporting',
+        'Existing virtualization Release $tag is misclassified',
+        'A published prerelease may need hosted attestation',
+        'elseif ($releaseState.isDraft)',
+        'ProxmoxRunnerLabel must be the release-specific label',
+        'KvmRunnerLabel must be the release-specific label',
+        '-OutputRoot $hypervRoot -Force',
+        "'release', 'create', `$tag",
+        "'--verify-tag'",
+        "'release', 'upload', `$Tag",
+        'already contains different bytes',
+        "'-OnePasswordEnvironmentId', `$OnePasswordEnvironmentId",
+        'artifacts\virtualization\$tag',
+        'artifacts\virtualization-smoke\$tag',
+        "-Workflow 'virtualization-prerelease.yml'",
+        "-Workflow 'virtualization-stable.yml'"
+    )) {
+    if (-not $releaseModule.Contains($required) -and -not $ovaExporter.Contains($required)) {
+        throw "Virtualization release orchestration is missing required marker: $required"
+    }
+}
+$releaseSourceChecks = ([regex]::Matches(
+        $releaseModule,
+        '-ExpectedSourceCommit \$identity\.Commit\s+`\s*\r?\n\s*-RequireCleanSource'
+    )).Count
+if ($releaseSourceChecks -ne 2) {
+    throw 'Virtualization production must enforce exact clean build provenance on reuse and after build.'
+}
+$candidateVerificationIndex = $releaseModule.IndexOf("'--verify-existing', `$candidate")
+$exportIndex = $releaseModule.IndexOf("'scripts\windows\vmware\export-ovf.ps1'")
+if ($candidateVerificationIndex -lt 0 -or $exportIndex -lt 0 -or
+    $candidateVerificationIndex -gt $exportIndex) {
+    throw 'Retained candidate verification must run before any OVA export on retry.'
+}
+$publishedResumeIndex = $releaseModule.IndexOf(
+    'if ($null -ne $releaseState -and -not $releaseState.isDraft)'
+)
+$candidateOnlyResumeIndex = $releaseModule.IndexOf('if ($CandidateOnly) {', $publishedResumeIndex)
+$candidateReuseIndex = $releaseModule.IndexOf('$reuseCandidate = Test-Path', $publishedResumeIndex)
+if ($publishedResumeIndex -lt 0 -or $candidateOnlyResumeIndex -lt 0 -or
+    $candidateReuseIndex -lt 0 -or $candidateOnlyResumeIndex -gt $candidateReuseIndex) {
+    throw 'Candidate-only published retries must stop before rebuilding or reusing local bytes.'
+}
+foreach ($forbidden in @('--clobber', 'RELEASE_SIGNING_PRIVATE_KEY')) {
+    if ($releaseModule.Contains($forbidden)) {
+        throw "The Windows producer crosses a protected publication boundary: $forbidden"
+    }
+}
+foreach ($required in @(
+        'environment: appliance-release',
+        '--classification prerelease',
+        'already_published=true',
+        "steps.identity.outputs.already_published != 'true'",
+        'gh release edit "$RELEASE_TAG" --draft=false --prerelease --verify-tag'
+    )) {
+    if (-not $prereleaseWorkflow.Contains($required)) {
+        throw "The hosted prerelease finalizer is missing required marker: $required"
+    }
+}
+foreach ($required in @(
+        'runs-on: [self-hosted, Linux, X64',
+        'actions: read',
+        'contents: read',
+        '--classification stable',
+        'test "$PROXMOX_RUNNER_LABEL" = "atlaso-proxmox-$LABEL_SUFFIX"',
+        'test "$KVM_RUNNER_LABEL" = "atlaso-kvm-$LABEL_SUFFIX"',
+        'cmp --silent',
+        'gh attestation verify'
+    )) {
+    if (-not $stableWorkflow.Contains($required)) {
+        throw "Stable virtualization promotion is missing required marker: $required"
+    }
+}
+if ($stableWorkflow.Contains('ref: ${{ steps.identity.outputs.release_sha }}') -or
+    $stableWorkflow.Contains('ref: ${{ needs.admit.outputs.release_sha }}')) {
+    throw 'Stable promotion executes release-selected source on a hosted or self-hosted runner.'
+}
+if ($prereleaseWorkflow.Contains('gh-pages') -or $stableWorkflow.Contains('gh-pages')) {
+    throw 'A virtualization workflow may not mutate the appliance update site.'
 }
 foreach ($required in @(
         "Name -notmatch '^[A-Za-z0-9][A-Za-z0-9_.-]{0,63}$'",

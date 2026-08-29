@@ -169,11 +169,27 @@ def test_publish_release_requests_generated_notes_and_keeps_provenance(
     create = next(command for command in calls if command[:3] == ["gh", "release", "create"])
     assert "--generate-notes" in create
     notes = create[create.index("--notes") + 1]
-    assert notes.startswith(f"Signed appliance release built from `{commit}`.")
-    assert "virtualization-artifact-index.json" in notes
-    assert "virtualization-artifacts.md" in notes
+    assert notes.startswith(f"Signed Atlaso software and appliance-update release built from `{commit}`.")
+    assert "virtualization-v0.9.30" in notes
     assert create[create.index("--title") + 1] == "Atlaso v0.9.30"
     assert str(asset.resolve()) in create
+
+
+def test_software_release_refuses_virtualization_assets(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The automatic vX.Y.Z publisher cannot absorb OVA or Hyper-V assets.
+
+    Args:
+        tmp_path: Temporary directory provided by pytest.
+        monkeypatch: Pytest helper for isolating publisher dependencies.
+    """
+
+    (tmp_path / "release-manifest.json").write_text("{}", encoding="utf-8")
+    (tmp_path / "atlaso-v0.9.30.ova").write_bytes(b"ova")
+    monkeypatch.setattr(publish_release, "version", lambda: "0.9.30")
+    with pytest.raises(SystemExit, match="cannot contain virtualization assets"):
+        publish_release.main(["--commit", "a" * 40, "--assets", str(tmp_path)])
 
 
 def test_vmware_release_assets_require_two_manifest_verified_vmdks(tmp_path: Path):
@@ -256,11 +272,11 @@ def test_vmware_release_assets_accept_byte_equivalent_ova(tmp_path: Path):
     )
 
 
-def test_release_recovery_accepts_manifest_verified_vmware_assets(
+def test_release_recovery_rejects_legacy_vmware_assets(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ):
-    """Verify that release recovery accepts manifest verified vmware assets.
+    """Verify that software release recovery rejects remote virtualization assets.
 
     Args:
         tmp_path: Temporary directory provided by pytest for isolated filesystem state.
@@ -318,7 +334,8 @@ def test_release_recovery_accepts_manifest_verified_vmware_assets(
 
     monkeypatch.setattr(publish_release, "run", fake_run)
 
-    assert publish_release.main(["--commit", commit, "--assets", str(core)]) == 0
+    with pytest.raises(SystemExit, match="already contains virtualization assets"):
+        publish_release.main(["--commit", commit, "--assets", str(core)])
 
 
 def test_release_note_categories_keep_dependencies_out_of_enhancements():

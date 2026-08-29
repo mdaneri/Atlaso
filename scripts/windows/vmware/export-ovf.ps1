@@ -13,9 +13,39 @@ Optional path to ovftool or an ovftool installation directory.
 .PARAMETER TarPath
 Optional path to tar used when creating OVA archives.
 .PARAMETER Release
-Publish generated assets to the checked-out GitHub release.
+Promote an existing virtualization prerelease without rebuilding its assets.
 .PARAMETER Prerelease
-Publish generated assets to the checked-out GitHub prerelease.
+Build and publish a manually produced virtualization prerelease.
+.PARAMETER PrereleaseIdentifier
+Explicit release-candidate identifier in rc.N form.
+.PARAMETER StagingRoot
+Absolute local root retained through stable publication and verification.
+.PARAMETER FromPrerelease
+Published virtualization prerelease tag selected for stable promotion.
+.PARAMETER ManagementVmnet
+VMware management network used by the workstation smoke test.
+.PARAMETER ServiceVmnet
+VMware service network used by the workstation smoke test.
+.PARAMETER ManagementSwitch
+Hyper-V management switch used by the workstation smoke test.
+.PARAMETER ServiceSwitch
+Hyper-V service switch used by the workstation smoke test.
+.PARAMETER OnePasswordEnvironmentId
+Optional 1Password Environment ID used for password-backed guest deployment.
+.PARAMETER OnePasswordAccount
+Optional 1Password account selector.
+.PARAMETER OnePasswordPython
+Optional supported Python executable used by the 1Password SDK.
+.PARAMETER ProxmoxRunnerLabel
+Release-specific label of the approved ephemeral Proxmox runner.
+.PARAMETER KvmRunnerLabel
+Release-specific label of the approved ephemeral KVM runner.
+.PARAMETER NoWait
+Return after workflow dispatch instead of waiting for hosted publication.
+.PARAMETER VirtualizationSourceMetadata
+Internal verified software-release metadata embedded into OVA provenance.
+.PARAMETER CandidateOnly
+Produce and smoke a prerelease candidate without changing GitHub.
 .PARAMETER MaximumReleaseAssetBytes
 Maximum asset size for uploaded release assets.
 .PARAMETER NoOva
@@ -23,7 +53,21 @@ Skip OVA creation and emit OVF only.
 .PARAMETER Force
 Allow replacement of the exact approved output directory.
 #>
-
+[Diagnostics.CodeAnalysis.SuppressMessageAttribute(
+    'PSAvoidUsingPlainTextForPassword',
+    'OnePasswordEnvironmentId',
+    Justification = 'Opaque Environment identifier; the SDK child retrieves concealed values.'
+)]
+[Diagnostics.CodeAnalysis.SuppressMessageAttribute(
+    'PSAvoidUsingPlainTextForPassword',
+    'OnePasswordAccount',
+    Justification = 'Desktop authorization account identifier, not an account password.'
+)]
+[Diagnostics.CodeAnalysis.SuppressMessageAttribute(
+    'PSAvoidUsingPlainTextForPassword',
+    'OnePasswordPython',
+    Justification = 'Executable selector for the isolated SDK runtime, not a password.'
+)]
 [CmdletBinding()]
 param(
     [string]$SourceVmxPath = 'image/vmware-workstation/output/atlaso-photon-vmware-workstation/Atlaso-Photon-Builder-VMware.vmx',
@@ -33,6 +77,21 @@ param(
     [string]$TarPath = '',
     [switch]$Release,
     [switch]$Prerelease,
+    [string]$PrereleaseIdentifier = '',
+    [string]$StagingRoot = '',
+    [string]$FromPrerelease = '',
+    [string]$ManagementVmnet = 'VMnet8',
+    [string]$ServiceVmnet = 'VMnet1',
+    [string]$ManagementSwitch = '',
+    [string]$ServiceSwitch = '',
+    [string]$OnePasswordEnvironmentId = '',
+    [string]$OnePasswordAccount = '',
+    [string]$OnePasswordPython = '',
+    [string]$ProxmoxRunnerLabel = '',
+    [string]$KvmRunnerLabel = '',
+    [switch]$NoWait,
+    [string]$VirtualizationSourceMetadata = '',
+    [switch]$CandidateOnly,
     [ValidateRange(1, 2147483647)]
     [long]$MaximumReleaseAssetBytes = 2147483647,
     [switch]$NoOva,
@@ -40,10 +99,52 @@ param(
 )
 
 $ErrorActionPreference = 'Stop'
-$publishReleaseAssets = $Release -or $Prerelease
 if ($Release -and $Prerelease) {
     throw '-Release and -Prerelease are mutually exclusive publishing modes.'
 }
+
+$repoRoot = (Resolve-Path -LiteralPath (Join-Path $PSScriptRoot '..\..\..')).Path
+if ($Release -or $Prerelease) {
+    $releaseModule = Join-Path $repoRoot 'scripts\windows\virtualization\Atlaso.VirtualizationRelease.psm1'
+    Import-Module $releaseModule -Force
+    if ($Prerelease) {
+        if (-not $PrereleaseIdentifier -or -not $StagingRoot -or -not $ManagementSwitch -or -not $ServiceSwitch) {
+            throw '-Prerelease requires -PrereleaseIdentifier, -StagingRoot, -ManagementSwitch, and -ServiceSwitch.'
+        }
+        if ($FromPrerelease -or $ProxmoxRunnerLabel -or $KvmRunnerLabel) {
+            throw '-FromPrerelease and Linux runner labels apply only to -Release.'
+        }
+        Invoke-AtlasoVirtualizationPrerelease `
+            -RepoRoot $repoRoot `
+            -PrereleaseIdentifier $PrereleaseIdentifier `
+            -StagingRoot $StagingRoot `
+            -ManagementVmnet $ManagementVmnet `
+            -ServiceVmnet $ServiceVmnet `
+            -ManagementSwitch $ManagementSwitch `
+            -ServiceSwitch $ServiceSwitch `
+            -OnePasswordEnvironmentId $OnePasswordEnvironmentId `
+            -OnePasswordAccount $OnePasswordAccount `
+            -OnePasswordPython $OnePasswordPython `
+            -CandidateOnly:$CandidateOnly `
+            -NoWait:$NoWait
+        return
+    }
+    if (-not $FromPrerelease -or -not $ProxmoxRunnerLabel -or -not $KvmRunnerLabel) {
+        throw '-Release requires -FromPrerelease, -ProxmoxRunnerLabel, and -KvmRunnerLabel.'
+    }
+    if ($PrereleaseIdentifier -or $StagingRoot -or $ManagementSwitch -or $ServiceSwitch -or $CandidateOnly) {
+        throw 'Prerelease build and Windows smoke parameters do not apply to -Release.'
+    }
+    Invoke-AtlasoVirtualizationStablePromotion `
+        -RepoRoot $repoRoot `
+        -FromPrerelease $FromPrerelease `
+        -ProxmoxRunnerLabel $ProxmoxRunnerLabel `
+        -KvmRunnerLabel $KvmRunnerLabel `
+        -NoWait:$NoWait
+    return
+}
+
+$publishReleaseAssets = $false
 
 $outputSafetyModule = Join-Path $PSScriptRoot 'Atlaso.OvfExport.psm1'
 Import-Module $outputSafetyModule -Force
@@ -1136,12 +1237,15 @@ Atlaso repository containing the recorded source commit.
 Normalized OVF descriptor whose payload references are recorded.
 .PARAMETER SourceCommit
 Exact clean source commit from VMware build provenance.
+.PARAMETER VirtualizationSourceMetadata
+Optional verified software-release source metadata bound into the OVA.
 #>
 function Write-AtlasoOvaProvenance {
     param(
         [Parameter(Mandatory = $true)][string]$RepoRoot,
         [Parameter(Mandatory = $true)][string]$OvfPath,
-        [Parameter(Mandatory = $true)][string]$SourceCommit
+        [Parameter(Mandatory = $true)][string]$SourceCommit,
+        [string]$VirtualizationSourceMetadata = ''
     )
 
     if ($SourceCommit -notmatch '^[0-9a-f]{40}$') {
@@ -1221,6 +1325,31 @@ function Write-AtlasoOvaProvenance {
             disk_bus    = 'scsi'
         }
         payloads        = @($payloads)
+    }
+    if ($VirtualizationSourceMetadata) {
+        $sourceItem = Get-Item -LiteralPath $VirtualizationSourceMetadata -ErrorAction Stop
+        if (($sourceItem.Attributes -band [System.IO.FileAttributes]::ReparsePoint) -ne 0) {
+            throw 'Virtualization source metadata must be an ordinary file.'
+        }
+        $source = Get-Content -LiteralPath $sourceItem.FullName -Raw | ConvertFrom-Json
+        if ($source.schema_version -ne 1 -or
+            $source.kind -ne 'atlaso-virtualization-source' -or
+            $source.version -ne $provenance.product_version -or
+            $source.source_commit -ne $SourceCommit -or
+            $source.source_software_tag -ne "v$($provenance.product_version)" -or
+            $source.python_abi -ne 'cp314' -or
+            $source.release_manifest_sha256 -notmatch '^[0-9a-f]{64}$' -or
+            $source.release_bundle_sha256 -notmatch '^[0-9a-f]{64}$' -or
+            $source.application_wheel_sha256 -notmatch '^[0-9a-f]{64}$') {
+            throw 'Virtualization source metadata does not match the OVA release identity.'
+        }
+        $provenance.software_release_source = [ordered]@{
+            tag                     = [string]$source.source_software_tag
+            release_manifest_sha256 = [string]$source.release_manifest_sha256
+            release_bundle_sha256   = [string]$source.release_bundle_sha256
+            application_wheel_sha256 = [string]$source.application_wheel_sha256
+            python_abi              = [string]$source.python_abi
+        }
     }
     $path = Join-Path (Split-Path -Parent $OvfPath) 'atlaso-provenance.json'
     [System.IO.File]::WriteAllText(
@@ -1584,7 +1713,6 @@ function Get-OvfDescriptorPath {
     return $ovfFiles[0].FullName
 }
 
-$repoRoot = (Resolve-Path -LiteralPath (Join-Path $PSScriptRoot '..\..\..')).Path
 $resolvedSourceVmx = (Resolve-Path -LiteralPath $SourceVmxPath).Path
 $releaseTag = ''
 $buildProvenance = $null
@@ -1621,7 +1749,8 @@ Assert-AtlasoCanonicalOvf -RepoRoot $repoRoot -OvfPath $ovfPath
 $provenancePath = Write-AtlasoOvaProvenance `
     -RepoRoot $repoRoot `
     -OvfPath $ovfPath `
-    -SourceCommit ([string]$buildProvenance.source_commit)
+    -SourceCommit ([string]$buildProvenance.source_commit) `
+    -VirtualizationSourceMetadata $VirtualizationSourceMetadata
 $manifestPath = Update-OvfManifest -OvfDirectory $ovfPackageDirectory
 
 $ovaPath = ''

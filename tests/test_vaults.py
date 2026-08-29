@@ -661,6 +661,19 @@ def test_vmware_wheel_deploy_exposes_fail_closed_vault_shell_commands():
     assert 'ln -sfn "$venv/bin/atlaso-vault" /usr/bin/atlaso-vault' in deploy
     assert "function global:Get-AtlasoVault" in deploy
     assert "/opt/atlaso/.venv/bin/atlaso-vault" in deploy
+    assert 'powershell_home" != "/opt/microsoft/powershell/7"' in deploy
+    assert 'touch "$powershell_home/profile.ps1"' not in deploy
+    assert '>>"$powershell_home/profile.ps1"' not in deploy
+    assert "ATLASO_GLOBAL_POWERSHELL_PROFILE" in deploy
+    assert ". '/opt/atlaso/bin/atlaso-vault-profile.ps1'" in deploy
+    delimiter = "<<'ATLASO_GLOBAL_POWERSHELL_PROFILE'\n"
+    deployed_profile = deploy.split(delimiter, 1)[1].split(
+        "\nATLASO_GLOBAL_POWERSHELL_PROFILE", 1
+    )[0]
+    canonical_profile = Path("image/common/powershell/profile.ps1").read_text(
+        encoding="utf-8"
+    ).rstrip("\n")
+    assert deployed_profile == canonical_profile
     assert "[switch]$ResetVaultEntries" in deploy
     assert "DROP TABLE IF EXISTS vault_entries" in deploy
 

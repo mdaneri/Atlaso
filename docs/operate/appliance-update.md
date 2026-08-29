@@ -138,7 +138,9 @@ GitHub is the default distribution origin:
 - GitHub Releases stores immutable versioned manifests, signatures, and bundles.
 - GitHub Pages publishes signed `development`, `preview`, and `stable` channel pointers. Its root serves a small
   informational release-repository page; appliances continue to use only the signed JSON documents under `/updates`.
-- A successful `main` CI run publishes the exact successful commit as `vX.Y.Z` and advances `development`.
+- A successful `main` CI run publishes the exact successful commit as `vX.Y.Z` and advances `development` only when
+  `AUTOMATIC_SOFTWARE_RELEASE_ENABLED=true`. A missing or false variable suppresses only automatic `workflow_run`
+  publication, so a maintainer can keep cutover safely paused while retaining exact-SHA recovery.
 - A protected manual dispatch may recover a failed publication only by naming a full commit that already has a
   successful `main` push CI run. The workflow verifies that provenance and that the commit remains on `main` before
   rebuilding and signing its deterministic release inputs.
@@ -530,6 +532,10 @@ generated changelog. The checked-in release-note configuration groups merged pul
 fixes, documentation, dependency updates, or other changes; dependency updates are excluded from the enhancement group
 so they appear only once.
 
+The `vX.Y.Z` Release contains the complete signed appliance-update bundle, including the Atlaso application wheel and
+CPython 3.14 dependency wheelhouse. It contains no OVA or Hyper-V image. Those images use
+`virtualization-vX.Y.Z-rc.N` and `virtualization-vX.Y.Z` Releases and never advance an update channel.
+
 To preview generated notes for the current signed-release lineage without changing GitHub, authenticate `gh` for the
 repository and run:
 
@@ -558,6 +564,13 @@ signatures, and `development` pointer. The dispatch refuses commits without a su
 preserves the normal tag/release mismatch checks. If the tag and release already published but channel advancement
 failed, dispatch the same successful SHA again: publication verifies the existing asset names and bytes before retrying
 the signed pointer update.
+
+During migration, leave `AUTOMATIC_SOFTWARE_RELEASE_ENABLED` false, cancel and verify absence of every legacy queued or
+running publication before bringing any temporary self-hosted runner online, and enumerate first-parent versions after
+the newest published software Release through the cutover merge. Recover missing versions serially by exact successful
+`main` SHA; after each dispatch verify the immutable tag/assets and live `development` pointer before continuing. Stop
+on the first failure and retry only that SHA. Enable the variable only after the newest recovery passes live
+verification.
 
 To initialize or advance the default channel, run **Promote appliance release**, choose `stable`, and provide an
 existing verified version without the `v` prefix. The workflow does not rebuild that release. It completes only after

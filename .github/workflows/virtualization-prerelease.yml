@@ -1,0 +1,226 @@
+name: Finalize virtualization prerelease
+run-name: Finalize ${{ inputs.prerelease_tag }}
+
+on:
+  workflow_call:
+    inputs:
+      release_sha:
+        required: true
+        type: string
+      prerelease_tag:
+        required: true
+        type: string
+  workflow_dispatch:
+    inputs:
+      release_sha:
+        description: Exact successful main commit used by the software Release
+        required: true
+        type: string
+      prerelease_tag:
+        description: Existing annotated virtualization-vX.Y.Z-rc.N tag
+        required: true
+        type: string
+
+concurrency:
+  group: virtualization-prerelease-${{ inputs.prerelease_tag }}
+  cancel-in-progress: false
+
+jobs:
+  finalize:
+    name: Sign and publish virtualization prerelease
+    runs-on: ubuntu-latest
+    environment: appliance-release
+    permissions:
+      actions: read
+      attestations: write
+      contents: write
+      id-token: write
+    steps:
+      - name: Validate dispatch identity
+        id: identity
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_SHA: ${{ inputs.release_sha }}
+          RELEASE_TAG: ${{ inputs.prerelease_tag }}
+        run: |
+          set -euo pipefail
+          test "${#RELEASE_SHA}" -eq 40
+          case "$RELEASE_SHA" in *[!0-9a-f]*) exit 1;; esac
+          case "$RELEASE_TAG" in virtualization-v*-rc.*) ;; *) exit 1;; esac
+          TAG_OBJECT="$(gh api "repos/${{ github.repository }}/git/ref/tags/$RELEASE_TAG" --jq '.object.type + " " + .object.sha')"
+          test "${TAG_OBJECT%% *}" = tag
+          TAG_SHA="$(gh api "repos/${{ github.repository }}/git/tags/${TAG_OBJECT#* }" --jq .object.sha)"
+          test "$TAG_SHA" = "$RELEASE_SHA"
+          git init admission
+          git -C admission remote add origin "https://github.com/${{ github.repository }}.git"
+          git -C admission fetch --no-tags origin main
+          git -C admission merge-base --is-ancestor "$RELEASE_SHA" FETCH_HEAD
+          COUNT="$(gh api --method GET "repos/${{ github.repository }}/actions/workflows/ci.yml/runs" \
+            -f head_sha="$RELEASE_SHA" -f branch=main -f event=push -f status=success \
+            -f per_page=100 --jq .total_count)"
+          test "$COUNT" -ge 1
+          RELEASE="$(gh release view "$RELEASE_TAG" --repo "${{ github.repository }}" --json isDraft,isPrerelease,tagName)"
+          test "$(jq -r .tagName <<<"$RELEASE")" = "$RELEASE_TAG"
+          test "$(jq -r .isPrerelease <<<"$RELEASE")" = true
+          if test "$(jq -r .isDraft <<<"$RELEASE")" = true; then
+            echo 'already_published=false' >> "$GITHUB_OUTPUT"
+          else
+            echo 'already_published=true' >> "$GITHUB_OUTPUT"
+          fi
+      - name: Check out trusted release tooling
+        uses: actions/checkout@v7
+        with:
+          ref: refs/heads/main
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Set up Python
+        uses: actions/setup-python@v7
+        with:
+          python-version: '3.14'
+          cache: pip
+      - name: Install locked release tooling
+        env:
+          PIP_CONFIG_FILE: /dev/null
+        run: |
+          sudo apt-get update
+          sudo apt-get install --yes --no-install-recommends cpio libguestfs-tools qemu-utils rpm rpm2cpio
+          python -m pip install --require-hashes --requirement requirements-release-tools.lock
+      - name: Download and validate release assets
+        env:
+          ALREADY_PUBLISHED: ${{ steps.identity.outputs.already_published }}
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_SHA: ${{ inputs.release_sha }}
+          RELEASE_TAG: ${{ inputs.prerelease_tag }}
+        run: |
+          set -euo pipefail
+          mkdir candidate
+          gh release download "$RELEASE_TAG" --dir candidate
+          INDEX_COUNT=0
+          test ! -e candidate/virtualization-artifact-index.json || INDEX_COUNT=$((INDEX_COUNT + 1))
+          test ! -e candidate/virtualization-artifact-index.json.sig || INDEX_COUNT=$((INDEX_COUNT + 1))
+          # An interrupted draft upload may retain either deterministic index file.
+          # The signing and no-clobber upload steps below reconstruct and verify both.
+          if test "$ALREADY_PUBLISHED" = true; then
+            test "$INDEX_COUNT" -eq 2
+          fi
+          VERSION="${RELEASE_TAG#virtualization-v}"
+          VERSION="${VERSION%-rc.*}"
+          test "$RELEASE_TAG" = "virtualization-v${VERSION}-""$(printf '%s' "$RELEASE_TAG" | sed "s/^virtualization-v${VERSION}-//")"
+          SOFTWARE_RELEASE="$(gh release view "v$VERSION" --repo "${{ github.repository }}" \
+            --json isDraft,isPrerelease)"
+          test "$(jq -r .isDraft <<<"$SOFTWARE_RELEASE")" = false
+          test "$(jq -r .isPrerelease <<<"$SOFTWARE_RELEASE")" = false
+          mkdir software-release verified-source
+          gh release download "v$VERSION" --dir software-release \
+            --pattern "atlaso-appliance-$VERSION.tar.gz" \
+            --pattern release-manifest.json \
+            --pattern release-manifest.json.sig
+          python scripts/prepare_virtualization_source.py \
+            --manifest software-release/release-manifest.json \
+            --signature software-release/release-manifest.json.sig \
+            --bundle "software-release/atlaso-appliance-$VERSION.tar.gz" \
+            --trust-key image/common/update-trust/atlaso-release-2026-01.pem \
+            --output verified-source --expected-version "$VERSION" --expected-commit "$RELEASE_SHA"
+          cmp --silent verified-source/virtualization-source.json candidate/virtualization-source.json
+          python - "$RELEASE_SHA" "$VERSION" <<'PY'
+          import hashlib, json, pathlib, sys
+          source = json.loads(pathlib.Path('candidate/virtualization-source.json').read_text())
+          if source.get('source_commit') != sys.argv[1] or source.get('version') != sys.argv[2]:
+              raise SystemExit('virtualization source identity mismatch')
+          manifest = source.get('release_manifest_sha256')
+          wheel = source.get('application_wheel_sha256')
+          if not all(isinstance(v, str) and len(v) == 64 for v in (manifest, wheel)):
+              raise SystemExit('virtualization source digests are invalid')
+          pathlib.Path('source.env').write_text(
+              f'SOURCE_MANIFEST_SHA256={manifest}\nAPPLICATION_WHEEL_SHA256={wheel}\n', encoding='utf-8')
+          PY
+          APPLICATION_WHEEL="verified-source/$(jq -r .application_wheel candidate/virtualization-source.json)"
+          LIBGUESTFS_BACKEND=direct python scripts/verify_virtualization_guest_wheel.py \
+            --assets candidate \
+            --wheel "$APPLICATION_WHEEL" \
+            --wheelhouse verified-source/wheelhouse/cp314 \
+            --expected-digest "$(jq -r .application_wheel_sha256 candidate/virtualization-source.json)" \
+            --source-commit "$RELEASE_SHA"
+      - name: Materialize the protected signing key
+        if: steps.identity.outputs.already_published != 'true'
+        env:
+          RELEASE_SIGNING_PRIVATE_KEY: ${{ secrets.RELEASE_SIGNING_PRIVATE_KEY }}
+        run: |
+          test -n "$RELEASE_SIGNING_PRIVATE_KEY"
+          umask 077
+          printf '%s\n' "$RELEASE_SIGNING_PRIVATE_KEY" > "$RUNNER_TEMP/release-signing-key.pem"
+      - name: Sign the prerelease virtualization index
+        if: steps.identity.outputs.already_published != 'true'
+        env:
+          RELEASE_SHA: ${{ inputs.release_sha }}
+          RELEASE_TAG: ${{ inputs.prerelease_tag }}
+        run: |
+          set -euo pipefail
+          . ./source.env
+          VERSION="${RELEASE_TAG#virtualization-v}"
+          VERSION="${VERSION%-rc.*}"
+          BUILT_AT="$(git show -s --format=%cI "$RELEASE_SHA")"
+          python scripts/build_virtualization_artifact_index.py \
+            --assets candidate \
+            --version "$VERSION" \
+            --commit "$RELEASE_SHA" \
+            --classification prerelease \
+            --release-tag "$RELEASE_TAG" \
+            --source-release-manifest-sha256 "$SOURCE_MANIFEST_SHA256" \
+            --application-wheel-sha256 "$APPLICATION_WHEEL_SHA256" \
+            --built-at "$BUILT_AT" \
+            --signing-key "$RUNNER_TEMP/release-signing-key.pem" \
+            --signing-key-id atlaso-release-2026-01
+      - name: Upload signed index without replacing bytes
+        if: steps.identity.outputs.already_published != 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_TAG: ${{ inputs.prerelease_tag }}
+        run: |
+          set -euo pipefail
+          for name in virtualization-artifact-index.json virtualization-artifact-index.json.sig; do
+            existing="$RUNNER_TEMP/existing-$name"
+            if gh release download "$RELEASE_TAG" --pattern "$name" --output "$existing" 2>/dev/null; then
+              cmp --silent "candidate/$name" "$existing"
+            else
+              gh release upload "$RELEASE_TAG" "candidate/$name"
+            fi
+          done
+      - name: Attest exact virtualization candidates
+        if: steps.identity.outputs.already_published != 'true'
+        uses: actions/attest-build-provenance@v4
+        with:
+          subject-path: |
+            candidate/*.ova
+            candidate/*-hyperv-x86_64.zip
+            candidate/virtualization-artifact-index.json
+      - name: Publish and live-verify the prerelease
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_SHA: ${{ inputs.release_sha }}
+          RELEASE_TAG: ${{ inputs.prerelease_tag }}
+          ALREADY_PUBLISHED: ${{ steps.identity.outputs.already_published }}
+        run: |
+          set -euo pipefail
+          if test "$ALREADY_PUBLISHED" != true; then
+            gh release edit "$RELEASE_TAG" --draft=false --prerelease --verify-tag
+          fi
+          mkdir published
+          gh release download "$RELEASE_TAG" --dir published
+          VERSION="${RELEASE_TAG#virtualization-v}"
+          VERSION="${VERSION%-rc.*}"
+          python scripts/verify_virtualization_artifact_index.py \
+            --index published/virtualization-artifact-index.json \
+            --signature published/virtualization-artifact-index.json.sig \
+            --trust-key image/common/update-trust/atlaso-release-2026-01.pem \
+            --asset-directory published \
+            --expected-version "$VERSION" \
+            --expected-commit "$RELEASE_SHA" \
+            --expected-classification prerelease \
+            --expected-release-tag "$RELEASE_TAG"
+          for asset in candidate/*; do
+            cmp --silent "$asset" "published/$(basename "$asset")"
+          done
+          gh attestation verify published/*.ova --repo "${{ github.repository }}"
+          gh attestation verify published/*-hyperv-x86_64.zip --repo "${{ github.repository }}"
+          gh attestation verify published/virtualization-artifact-index.json --repo "${{ github.repository }}"

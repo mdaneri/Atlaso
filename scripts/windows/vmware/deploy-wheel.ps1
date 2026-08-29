@@ -33,6 +33,8 @@ Leaves boot-branding assets unchanged.
 Leaves Inventory Linux unchanged.
 .PARAMETER WheelPath
 Explicit Atlaso wheel path.
+.PARAMETER RuntimeDependencyDirectory
+Directory containing the complete exact dependency wheelhouse used with an explicit release wheel.
 .PARAMETER OnePasswordEnvironmentId
 Opaque ID of the preverified Atlaso 1Password Environment.
 .PARAMETER OnePasswordAccount
@@ -77,6 +79,7 @@ param(
     [switch]$SkipBootBrandingSync,
     [switch]$SkipInventoryLinuxSync,
     [string]$WheelPath = '',
+    [string]$RuntimeDependencyDirectory = '',
     [string]$OnePasswordEnvironmentId = '',
     [string]$OnePasswordAccount = '',
     [string]$OnePasswordPython = '',
@@ -1043,32 +1046,83 @@ if ($UsePasswordDeploy) {
     throw '-OnePasswordAccount and -OnePasswordPython require -OnePasswordEnvironmentId.'
 }
 
+$generatedRuntimeDependencyRoot = ''
+$generatedWheelPath = ''
 if (-not $SkipBuild) {
     New-Item -ItemType Directory -Force -Path (Join-Path $resolvedRepoRoot 'dist') | Out-Null
+    # Dependency selection must not inherit stale wheels from an earlier version.
+    $generatedRuntimeDependencyRoot = Join-Path (
+        [System.IO.Path]::GetTempPath()
+    ) "atlaso-runtime-wheels-$([guid]::NewGuid().ToString('N'))"
+    New-Item -ItemType Directory -Path $generatedRuntimeDependencyRoot | Out-Null
     Write-Host "Building Atlaso wheel..."
-    Invoke-CheckedCommand -FilePath $Python -Arguments @('-m', 'pip', 'wheel', '.', '-w', 'dist') -WorkingDirectory $resolvedRepoRoot
+    try {
+        Invoke-CheckedCommand -FilePath $Python -Arguments @(
+            '-m', 'pip', 'wheel', '.', '-w', $generatedRuntimeDependencyRoot
+        ) -WorkingDirectory $resolvedRepoRoot
+        $generatedWheels = @(
+            Get-ChildItem -LiteralPath $generatedRuntimeDependencyRoot -Filter 'atlaso-*.whl' -File
+        )
+        if ($generatedWheels.Count -ne 1) {
+            throw "The fresh wheel build produced $($generatedWheels.Count) Atlaso wheels; exactly one is required."
+        }
+        $generatedWheelPath = Join-Path $resolvedRepoRoot "dist\$($generatedWheels[0].Name)"
+        Copy-Item -LiteralPath $generatedWheels[0].FullName -Destination $generatedWheelPath -Force
+    } catch {
+        Remove-Item -LiteralPath $generatedRuntimeDependencyRoot -Recurse -Force -ErrorAction SilentlyContinue
+        throw
+    }
     if ($UsePasswordDeploy) {
         Stage-PasswordDeployPythonWheels -PythonCommand $resolvedOnePasswordPython -WorkingDirectory $resolvedRepoRoot
     }
 }
 
-$resolvedWheelPath = Get-WheelPath -Path $WheelPath -Root $resolvedRepoRoot
+$resolvedWheelPath = if ($generatedWheelPath -and [string]::IsNullOrWhiteSpace($WheelPath)) {
+    $generatedWheelPath
+}
+else {
+    Get-WheelPath -Path $WheelPath -Root $resolvedRepoRoot
+}
 $wheelName = Split-Path -Leaf $resolvedWheelPath
-$runtimeDependencies = @(
-    foreach ($runtimeDependencyPattern in @('authlib-*.whl', 'joserfc-*.whl', 'pycdlib-*.whl')) {
-        $runtimeDependency = Get-ChildItem -LiteralPath (Join-Path $resolvedRepoRoot 'dist') -Filter $runtimeDependencyPattern -File |
-            Sort-Object LastWriteTime -Descending |
-            Select-Object -First 1
-        if (-not $runtimeDependency) {
-            throw "The $runtimeDependencyPattern runtime dependency wheel was not found under $(Join-Path $resolvedRepoRoot 'dist'). Rerun without -SkipBuild."
-        }
-        $runtimeDependency
+$runtimeDependencyRoot = if ([string]::IsNullOrWhiteSpace($RuntimeDependencyDirectory)) {
+    if ($generatedRuntimeDependencyRoot) {
+        $generatedRuntimeDependencyRoot
     }
-)
+    else {
+        Join-Path $resolvedRepoRoot 'dist'
+    }
+}
+else {
+    $candidate = Get-Item -LiteralPath $RuntimeDependencyDirectory -ErrorAction Stop
+    if (-not $candidate.PSIsContainer -or
+        ($candidate.Attributes -band [System.IO.FileAttributes]::ReparsePoint) -ne 0) {
+        throw 'RuntimeDependencyDirectory must be an ordinary directory, not a reparse point.'
+    }
+    $candidate.FullName
+}
+$runtimeDependencies = if ([string]::IsNullOrWhiteSpace($RuntimeDependencyDirectory)) {
+    @(
+        foreach ($runtimeDependencyPattern in @('authlib-*.whl', 'joserfc-*.whl', 'pycdlib-*.whl')) {
+            $runtimeDependency = @(Get-ChildItem -LiteralPath $runtimeDependencyRoot -Filter $runtimeDependencyPattern -File)
+            if ($runtimeDependency.Count -ne 1) {
+                throw "Exactly one $runtimeDependencyPattern runtime dependency wheel is required under $runtimeDependencyRoot. Rerun without -SkipBuild or provide the verified release wheelhouse."
+            }
+            $runtimeDependency[0]
+        }
+    )
+}
+else {
+    @(Get-ChildItem -LiteralPath $runtimeDependencyRoot -Filter '*.whl' -File | Sort-Object Name)
+}
 $runtimeDependencyPaths = @($runtimeDependencies | Select-Object -ExpandProperty FullName)
 $runtimeDependencyNames = @($runtimeDependencies | Select-Object -ExpandProperty Name)
-if ($runtimeDependencyPaths.Count -ne 3) {
-    throw 'Exactly the Authlib, joserfc, and pycdlib runtime dependency wheels are required.'
+if ($runtimeDependencyPaths.Count -lt 3 -or $runtimeDependencyNames.Count -ne (@($runtimeDependencyNames | Sort-Object -Unique)).Count) {
+    throw 'The runtime dependency wheel set is incomplete or contains duplicate file names.'
+}
+foreach ($runtimeDependencyPattern in @('authlib-*.whl', 'joserfc-*.whl', 'pycdlib-*.whl')) {
+    if (@($runtimeDependencies | Where-Object { $_.Name -like $runtimeDependencyPattern }).Count -ne 1) {
+        throw "The runtime dependency wheel set requires exactly one $runtimeDependencyPattern wheel."
+    }
 }
 $helperPath = Join-Path $resolvedRepoRoot 'scripts\appliance\atlaso-helper'
 $consoleManagerPath = Join-Path $resolvedRepoRoot 'image\common\systemd\atlaso-console-manager.conf'
@@ -1213,10 +1267,17 @@ fi
 old_ifs="$IFS"
 IFS=:
 for runtime_dependency_path in $runtime_dependency_paths; do
-    "$python" -m pip install --force-reinstall --no-deps "$runtime_dependency_path"
+    "$python" -m pip install --force-reinstall --no-compile --no-deps "$runtime_dependency_path"
 done
 IFS="$old_ifs"
-"$python" -m pip install --force-reinstall --no-deps "$wheel"
+"$python" -m pip install --force-reinstall --no-compile --no-deps "$wheel"
+site_packages="$("$python" -c 'import sysconfig; print(sysconfig.get_path("purelib"))')"
+if [ "$site_packages" != "$venv/lib/python3.14/site-packages" ]; then
+    echo "Atlaso site-packages resolved outside the active environment." >&2
+    exit 2
+fi
+find "$site_packages" -type f -name '*.pyc' -delete
+find "$site_packages" -depth -type d -name __pycache__ -empty -delete
 atlaso_was_active=false
 worker_was_active=false
 if systemctl is-active --quiet atlaso.service; then
@@ -1374,6 +1435,10 @@ ln -sfn "$venv/bin/atlaso-vault" /usr/bin/atlaso-vault
 pwsh_path="$(command -v pwsh || true)"
 if [ -n "$pwsh_path" ]; then
     powershell_home="$(dirname "$(readlink -f "$pwsh_path")")"
+    if [ "$powershell_home" != "/opt/microsoft/powershell/7" ]; then
+        echo "PowerShell resolved to an unsupported global profile directory: $powershell_home" >&2
+        exit 2
+    fi
     cat >"/opt/atlaso/bin/atlaso-vault-profile.ps1" <<'ATLASO_POWERSHELL_PROFILE'
 function global:Get-AtlasoVault {
     [CmdletBinding()]
@@ -1391,10 +1456,15 @@ function global:Get-AtlasoVault {
 ATLASO_POWERSHELL_PROFILE
     chown root:root /opt/atlaso/bin/atlaso-vault-profile.ps1
     chmod 0644 /opt/atlaso/bin/atlaso-vault-profile.ps1
-    touch "$powershell_home/profile.ps1"
-    if ! grep -qxF ". '/opt/atlaso/bin/atlaso-vault-profile.ps1'" "$powershell_home/profile.ps1"; then
-        printf "\n. '/opt/atlaso/bin/atlaso-vault-profile.ps1'\n" >>"$powershell_home/profile.ps1"
-    fi
+    # Replace the complete Atlaso-owned global profile; preserving producer bytes
+    # would let unverified commands execute before the authenticated vault import.
+    cat >"$powershell_home/profile.ps1" <<'ATLASO_GLOBAL_POWERSHELL_PROFILE'
+<#
+.SYNOPSIS
+Loads the Atlaso vault helpers into PowerShell sessions.
+#>
+. '/opt/atlaso/bin/atlaso-vault-profile.ps1'
+ATLASO_GLOBAL_POWERSHELL_PROFILE
     chown root:root "$powershell_home/profile.ps1"
     chmod 0644 "$powershell_home/profile.ps1"
 fi
@@ -1620,4 +1690,7 @@ try {
     }
     Remove-Item -LiteralPath $tempDeployDirectory -Recurse -Force -ErrorAction SilentlyContinue
     Remove-Item -LiteralPath $sshControlPath -Force -ErrorAction SilentlyContinue
+    if ($generatedRuntimeDependencyRoot) {
+        Remove-Item -LiteralPath $generatedRuntimeDependencyRoot -Recurse -Force -ErrorAction SilentlyContinue
+    }
 }

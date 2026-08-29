@@ -1,0 +1,305 @@
+name: Produce virtualization candidate on ephemeral Windows
+
+on:
+  workflow_dispatch:
+    inputs:
+      release_sha:
+        description: Exact successful main software-release commit
+        required: true
+        type: string
+      prerelease_identifier:
+        description: Explicit rc.N identifier
+        required: true
+        type: string
+      windows_runner_label:
+        description: Unique label of the approved ephemeral Windows runner
+        required: true
+        type: string
+      management_vmnet:
+        description: VMware management vmnet
+        required: true
+        default: VMnet8
+        type: string
+      service_vmnet:
+        description: VMware service vmnet
+        required: true
+        default: VMnet1
+        type: string
+      management_switch:
+        description: Hyper-V management switch
+        required: true
+        type: string
+      service_switch:
+        description: Hyper-V service switch
+        required: true
+        type: string
+
+concurrency:
+  group: virtualization-windows-${{ inputs.release_sha }}-${{ inputs.prerelease_identifier }}
+  cancel-in-progress: false
+
+jobs:
+  admit:
+    name: Admit exact software Release
+    runs-on: ubuntu-latest
+    permissions:
+      actions: read
+      contents: read
+    outputs:
+      release_sha: ${{ steps.target.outputs.release_sha }}
+      prerelease_tag: ${{ steps.target.outputs.prerelease_tag }}
+      version: ${{ steps.target.outputs.version }}
+      already_published: ${{ steps.target.outputs.already_published }}
+      existing_draft_ready: ${{ steps.target.outputs.existing_draft_ready }}
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: refs/heads/main
+          fetch-depth: 0
+      - name: Validate exact main CI and software Release
+        id: target
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_SHA: ${{ inputs.release_sha }}
+          RC: ${{ inputs.prerelease_identifier }}
+          WINDOWS_RUNNER_LABEL: ${{ inputs.windows_runner_label }}
+        run: |
+          set -euo pipefail
+          test "${#RELEASE_SHA}" -eq 40
+          case "$RELEASE_SHA" in *[!0-9a-f]*) exit 1;; esac
+          python - "$RC" <<'PY'
+          import re, sys
+          if re.fullmatch(r"rc\.[1-9][0-9]*", sys.argv[1]) is None:
+              raise SystemExit("prerelease_identifier must be rc.N")
+          PY
+          git fetch origin main --no-tags
+          test "$(git rev-parse HEAD)" = "$(git rev-parse origin/main)"
+          git merge-base --is-ancestor "$RELEASE_SHA" origin/main
+          git checkout --detach "$RELEASE_SHA"
+          test "$(git rev-parse HEAD)" = "$RELEASE_SHA"
+          COUNT="$(gh api --method GET "repos/${{ github.repository }}/actions/workflows/ci.yml/runs" \
+            -f head_sha="$RELEASE_SHA" -f branch=main -f event=push -f status=success \
+            -f per_page=100 --jq .total_count)"
+          test "$COUNT" -ge 1
+          VERSION="$(python scripts/version.py get)"
+          test "$(gh api "repos/${{ github.repository }}/commits/v$VERSION" --jq .sha)" = "$RELEASE_SHA"
+          SOFTWARE_RELEASE="$(gh release view "v$VERSION" --repo "${{ github.repository }}" \
+            --json isDraft,isPrerelease)"
+          test "$(jq -r .isDraft <<<"$SOFTWARE_RELEASE")" = false
+          test "$(jq -r .isPrerelease <<<"$SOFTWARE_RELEASE")" = false
+          PRERELEASE_TAG="virtualization-v${VERSION}-${RC}"
+          EXPECTED_WINDOWS_LABEL="atlaso-windows-$(printf '%s' "$PRERELEASE_TAG" | tr '[:upper:]' '[:lower:]' | tr -c 'a-z0-9_-' '-')"
+          test "$WINDOWS_RUNNER_LABEL" = "$EXPECTED_WINDOWS_LABEL"
+          ALREADY_PUBLISHED=false
+          EXISTING_DRAFT_READY=false
+          STATE="$(gh api graphql \
+            -f query='query($owner:String!,$name:String!,$tag:String!){repository(owner:$owner,name:$name){release(tagName:$tag){tagName isDraft isPrerelease releaseAssets(first:100){nodes{name} pageInfo{hasNextPage}}}}}' \
+            -f owner="${GITHUB_REPOSITORY%%/*}" -f name="${GITHUB_REPOSITORY#*/}" \
+            -f tag="$PRERELEASE_TAG" --jq '.data.repository.release')"
+          if test "$STATE" != null; then
+            test "$(jq -r .tagName <<<"$STATE")" = "$PRERELEASE_TAG"
+            test "$(jq -r .isPrerelease <<<"$STATE")" = true
+            if test "$(jq -r .isDraft <<<"$STATE")" = false; then
+              ALREADY_PUBLISHED=true
+            else
+              printf '%s' "$STATE" > "$RUNNER_TEMP/prerelease-state.json"
+              python - "$RUNNER_TEMP/prerelease-state.json" "$VERSION" <<'PY'
+          import json, pathlib, sys
+
+          state = json.loads(pathlib.Path(sys.argv[1]).read_text(encoding="utf-8"))
+          assets = state.get("releaseAssets") or {}
+          if (assets.get("pageInfo") or {}).get("hasNextPage") is not False:
+              raise SystemExit("existing virtualization draft asset inventory is incomplete")
+          names = [node.get("name") for node in assets.get("nodes", []) if isinstance(node, dict)]
+          if len(names) != len(set(names)) or any(not isinstance(name, str) for name in names):
+              raise SystemExit("existing virtualization draft has invalid asset names")
+          version = sys.argv[2]
+          requirements = {
+              "OVA": [name for name in names if name.lower().endswith(".ova")],
+              "OVF": [name for name in names if name.lower().endswith(".ovf")],
+              "manifest": [name for name in names if name.lower().endswith(".mf")],
+              "provenance": [name for name in names if name.lower().endswith("-provenance.json")],
+              "payload VMDKs": [name for name in names if name.lower().endswith(".vmdk")],
+              "Hyper-V ZIP": [name for name in names if name == f"atlaso-v{version}-hyperv-x86_64.zip"],
+          }
+          expected_counts = {"OVA": 1, "OVF": 1, "manifest": 1, "provenance": 1, "payload VMDKs": 2, "Hyper-V ZIP": 1}
+          for label, matches in requirements.items():
+              if len(matches) != expected_counts[label]:
+                  raise SystemExit(f"existing virtualization draft requires {label}")
+          required = {
+              "import-atlaso-proxmox.sh",
+              "import-atlaso-kvm.sh",
+              "validate_ova.py",
+              "normalize_libvirt.py",
+              "verify_virtualization_artifact_index.py",
+              "virtualization-source.json",
+              "windows-smoke-evidence.json",
+          }
+          if not required.issubset(names):
+              raise SystemExit("existing virtualization draft is missing candidate assets")
+          candidate = required | {name for matches in requirements.values() for name in matches}
+          indexes = {"virtualization-artifact-index.json", "virtualization-artifact-index.json.sig"}
+          if not set(names) <= candidate | indexes:
+              raise SystemExit("existing virtualization draft has unexpected assets")
+          PY
+              EXISTING_DRAFT_READY=true
+            fi
+          fi
+          echo "release_sha=$RELEASE_SHA" >> "$GITHUB_OUTPUT"
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+          echo "prerelease_tag=$PRERELEASE_TAG" >> "$GITHUB_OUTPUT"
+          echo "already_published=$ALREADY_PUBLISHED" >> "$GITHUB_OUTPUT"
+          echo "existing_draft_ready=$EXISTING_DRAFT_READY" >> "$GITHUB_OUTPUT"
+
+  produce:
+    name: Build and smoke OVA and Hyper-V candidate
+    needs: admit
+    if: >-
+      ${{ needs.admit.outputs.already_published != 'true' &&
+          needs.admit.outputs.existing_draft_ready != 'true' }}
+    runs-on: [self-hosted, Windows, X64, "${{ inputs.windows_runner_label }}"]
+    permissions:
+      actions: read
+      contents: read
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: ${{ needs.admit.outputs.release_sha }}
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: actions/setup-python@v7
+        with:
+          python-version: '3.14'
+          cache: pip
+      - name: Install locked release tooling
+        shell: pwsh
+        run: python -m pip install --require-hashes --requirement requirements-release-tools.lock
+      - name: Produce exact candidate without publication authority
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_SHA: ${{ needs.admit.outputs.release_sha }}
+          PRERELEASE_IDENTIFIER: ${{ inputs.prerelease_identifier }}
+          MANAGEMENT_VMNET: ${{ inputs.management_vmnet }}
+          SERVICE_VMNET: ${{ inputs.service_vmnet }}
+          MANAGEMENT_SWITCH: ${{ inputs.management_switch }}
+          SERVICE_SWITCH: ${{ inputs.service_switch }}
+          ONEPASSWORD_ENVIRONMENT_ID: ${{ vars.ATLASO_ONEPASSWORD_ENVIRONMENT_ID }}
+          ONEPASSWORD_ACCOUNT: ${{ vars.ATLASO_ONEPASSWORD_ACCOUNT }}
+          ONEPASSWORD_PYTHON: ${{ vars.ATLASO_ONEPASSWORD_PYTHON }}
+        run: |
+          if ((git rev-parse HEAD).Trim() -cne $env:RELEASE_SHA) {
+            throw 'The trusted Windows checkout no longer matches the admitted main head.'
+          }
+          if (-not $env:ONEPASSWORD_ENVIRONMENT_ID -or -not $env:ONEPASSWORD_ACCOUNT -or -not $env:ONEPASSWORD_PYTHON) {
+            throw 'The approved 1Password selector variables are required for Windows production.'
+          }
+          ./scripts/windows/vmware/export-ovf.ps1 -Prerelease -CandidateOnly `
+            -PrereleaseIdentifier $env:PRERELEASE_IDENTIFIER `
+            -StagingRoot (Join-Path $env:RUNNER_TEMP 'atlaso-virtualization') `
+            -ManagementVmnet $env:MANAGEMENT_VMNET `
+            -ServiceVmnet $env:SERVICE_VMNET `
+            -ManagementSwitch $env:MANAGEMENT_SWITCH `
+            -ServiceSwitch $env:SERVICE_SWITCH `
+            -OnePasswordEnvironmentId $env:ONEPASSWORD_ENVIRONMENT_ID `
+            -OnePasswordAccount $env:ONEPASSWORD_ACCOUNT `
+            -OnePasswordPython $env:ONEPASSWORD_PYTHON
+      - uses: actions/upload-artifact@v7
+        with:
+          name: windows-virtualization-${{ inputs.release_sha }}-${{ inputs.prerelease_identifier }}
+          path: ${{ runner.temp }}/atlaso-virtualization/${{ needs.admit.outputs.prerelease_tag }}/candidate
+          if-no-files-found: error
+          retention-days: 7
+
+  stage_draft:
+    name: Create immutable draft from hosted runner
+    needs: [admit, produce]
+    if: >-
+      ${{ needs.admit.outputs.already_published != 'true' &&
+          needs.admit.outputs.existing_draft_ready != 'true' }}
+    runs-on: ubuntu-latest
+    permissions:
+      actions: read
+      contents: write
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: refs/heads/main
+          fetch-depth: 0
+          # This hosted, write-authorized job alone creates the admitted tag.
+          persist-credentials: true
+      - uses: actions/download-artifact@v8
+        with:
+          name: windows-virtualization-${{ inputs.release_sha }}-${{ inputs.prerelease_identifier }}
+          path: candidate
+      - name: Create or resume exact annotated tag and draft assets
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_SHA: ${{ needs.admit.outputs.release_sha }}
+          RELEASE_TAG: ${{ needs.admit.outputs.prerelease_tag }}
+          VERSION: ${{ needs.admit.outputs.version }}
+        run: |
+          set -euo pipefail
+          git config user.name github-actions[bot]
+          git config user.email 41898282+github-actions[bot]@users.noreply.github.com
+          if git ls-remote --exit-code --tags origin "refs/tags/$RELEASE_TAG" >/dev/null 2>&1; then
+            REMOTE_TAGS="$(git ls-remote --tags origin "refs/tags/$RELEASE_TAG" "refs/tags/$RELEASE_TAG^{}")"
+            test "$(printf '%s\n' "$REMOTE_TAGS" | wc -l)" -eq 2
+            test "$(printf '%s\n' "$REMOTE_TAGS" | awk '/\^\{\}$/ {print $1}')" = "$RELEASE_SHA"
+          else
+            git tag -a "$RELEASE_TAG" -m "Atlaso virtualization prerelease $RELEASE_TAG" "$RELEASE_SHA"
+            git push origin "refs/tags/$RELEASE_TAG"
+          fi
+          if ! gh release view "$RELEASE_TAG" --json tagName >/dev/null 2>&1; then
+            gh release create "$RELEASE_TAG" --draft --prerelease --verify-tag \
+              --title "Atlaso Virtualization v$VERSION ${{ inputs.prerelease_identifier }}" \
+              --notes 'Ephemeral-Windows candidate awaiting protected hosted finalization.'
+          fi
+          STATE="$(gh release view "$RELEASE_TAG" --json assets,isDraft,isPrerelease)"
+          test "$(jq -r .isPrerelease <<<"$STATE")" = true
+          ALREADY_PUBLISHED=false
+          if test "$(jq -r .isDraft <<<"$STATE")" = false; then
+            ALREADY_PUBLISHED=true
+          fi
+          mkdir "$RUNNER_TEMP/existing"
+          if test "$(jq '.assets | length' <<<"$STATE")" -gt 0; then
+            gh release download "$RELEASE_TAG" --dir "$RUNNER_TEMP/existing"
+          fi
+          {
+            find candidate -maxdepth 1 -type f -printf '%f\n'
+            printf '%s\n' virtualization-artifact-index.json virtualization-artifact-index.json.sig
+          } | sort -u > "$RUNNER_TEMP/allowed-assets"
+          find "$RUNNER_TEMP/existing" -maxdepth 1 -type f -printf '%f\n' | sort > "$RUNNER_TEMP/existing-assets"
+          test -z "$(comm -23 "$RUNNER_TEMP/existing-assets" "$RUNNER_TEMP/allowed-assets")"
+          for asset in candidate/*; do
+            name="$(basename "$asset")"
+            if test -f "$RUNNER_TEMP/existing/$name"; then
+              cmp --silent "$asset" "$RUNNER_TEMP/existing/$name"
+            else
+              test "$ALREADY_PUBLISHED" = false
+              gh release upload "$RELEASE_TAG" "$asset"
+            fi
+          done
+          if test "$ALREADY_PUBLISHED" = true; then
+            test -f "$RUNNER_TEMP/existing/virtualization-artifact-index.json"
+            test -f "$RUNNER_TEMP/existing/virtualization-artifact-index.json.sig"
+          fi
+
+  finalize:
+    name: Protected hosted finalization
+    needs: [admit, stage_draft]
+    if: >-
+      ${{ always() && needs.admit.result == 'success' &&
+          (needs.admit.outputs.already_published == 'true' ||
+           needs.admit.outputs.existing_draft_ready == 'true' ||
+           needs.stage_draft.result == 'success') }}
+    permissions:
+      actions: read
+      attestations: write
+      contents: write
+      id-token: write
+    uses: ./.github/workflows/virtualization-prerelease.yml
+    with:
+      release_sha: ${{ needs.admit.outputs.release_sha }}
+      prerelease_tag: ${{ needs.admit.outputs.prerelease_tag }}
+    secrets: inherit
