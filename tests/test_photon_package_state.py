@@ -23,7 +23,11 @@ def load_verifier():
 
 
 def write_release_state(root: Path) -> tuple[Path, Path, Path]:
-    """Write one valid isolated Photon release and TDNF configuration."""
+    """Write one valid isolated Photon release and TDNF configuration.
+
+    Args:
+        root: Temporary filesystem root for the release files.
+    """
 
     etc = root / "etc"
     (etc / "tdnf").mkdir(parents=True)
@@ -49,7 +53,11 @@ def write_release_state(root: Path) -> tuple[Path, Path, Path]:
 def test_package_cleanup_transaction_preserves_runtime_with_noautoremove(
     tmp_path: Path,
 ) -> None:
-    """Execute an isolated package transaction and retain the runtime closure."""
+    """Execute an isolated package transaction and retain the runtime closure.
+
+    Args:
+        tmp_path: Temporary filesystem root for the package transaction.
+    """
 
     verifier = load_verifier()
     os_release, photon_release, tdnf_config = write_release_state(tmp_path)
@@ -68,6 +76,11 @@ def test_package_cleanup_transaction_preserves_runtime_with_noautoremove(
     }
 
     def remove_build_packages(*, noautoremove: bool) -> None:
+        """Remove the simulated build closure.
+
+        Args:
+            noautoremove: Whether to preserve runtime dependency packages.
+        """
         installed.difference_update(
             {"rpm-build", "glib-devel", "systemd-devel", "pkg-config"}
         )
@@ -77,6 +90,12 @@ def test_package_cleanup_transaction_preserves_runtime_with_noautoremove(
             photon_release.unlink()
 
     def fake_rpm(command: list[str], **_: object) -> subprocess.CompletedProcess[str]:
+        """Return simulated RPM query results.
+
+        Args:
+            command: RPM command and queried package identity.
+            **_: Unused subprocess keyword arguments.
+        """
         package = command[-1]
         return subprocess.CompletedProcess(
             command,
@@ -100,7 +119,11 @@ def test_package_cleanup_transaction_preserves_runtime_with_noautoremove(
 def test_package_cleanup_transaction_rejects_autoremoved_release_identity(
     tmp_path: Path,
 ) -> None:
-    """Reject the regression produced by Photon's automatic dependency removal."""
+    """Reject the regression produced by Photon's automatic dependency removal.
+
+    Args:
+        tmp_path: Temporary filesystem root for the regressed release state.
+    """
 
     verifier = load_verifier()
     os_release, photon_release, tdnf_config = write_release_state(tmp_path)
@@ -129,7 +152,13 @@ def test_package_cleanup_transaction_rejects_autoremoved_release_identity(
 def test_package_cleanup_resolves_effective_distroverpkg(
     tmp_path: Path, config: str, expected: str
 ) -> None:
-    """Resolve an explicit package or Photon's shipped default."""
+    """Resolve an explicit package or Photon's shipped default.
+
+    Args:
+        tmp_path: Temporary filesystem root for the TDNF configuration.
+        config: TDNF configuration content to inspect.
+        expected: Expected effective distro version package.
+    """
 
     verifier = load_verifier()
     _, _, tdnf_config = write_release_state(tmp_path)
@@ -139,7 +168,11 @@ def test_package_cleanup_resolves_effective_distroverpkg(
 
 
 def test_package_cleanup_rejects_unsafe_distroverpkg(tmp_path: Path) -> None:
-    """Reject an explicit package identity that cannot be queried safely."""
+    """Reject an explicit package identity that cannot be queried safely.
+
+    Args:
+        tmp_path: Temporary filesystem root for the unsafe configuration.
+    """
 
     verifier = load_verifier()
     _, _, tdnf_config = write_release_state(tmp_path)

@@ -16,7 +16,11 @@ REQUIRED_RUNTIME_PACKAGES = ("photon-release", "rpm", "tdnf", "python3", "powers
 
 
 def read_os_release(path: Path) -> dict[str, str]:
-    """Return the bounded key/value fields from one os-release file."""
+    """Return the bounded key/value fields from one os-release file.
+
+    Args:
+        path: Release identity file to parse.
+    """
 
     if not path.is_file() or path.stat().st_size == 0:
         raise ValueError(f"Photon release identity file is missing or empty: {path}")
@@ -39,7 +43,11 @@ def read_os_release(path: Path) -> dict[str, str]:
 
 
 def read_distroverpkg(path: Path) -> str:
-    """Return the exact package identity configured by TDNF."""
+    """Return the exact package identity configured by TDNF.
+
+    Args:
+        path: TDNF configuration file to inspect.
+    """
 
     if not path.is_file() or path.stat().st_size == 0:
         raise ValueError(f"TDNF configuration is missing or empty: {path}")
@@ -62,7 +70,12 @@ def verify_rpm_packages(
     *,
     runner: Callable[..., subprocess.CompletedProcess[str]] = subprocess.run,
 ) -> None:
-    """Require every named runtime RPM to remain installed."""
+    """Require every named runtime RPM to remain installed.
+
+    Args:
+        packages: Runtime RPM package identities to query.
+        runner: Subprocess-compatible command runner.
+    """
 
     for package in packages:
         completed = runner(
@@ -85,7 +98,15 @@ def verify_photon_package_state(
     guest_platform: str,
     runner: Callable[..., subprocess.CompletedProcess[str]] = subprocess.run,
 ) -> str:
-    """Verify release files, TDNF identity, and required runtime RPMs."""
+    """Verify release files, TDNF identity, and required runtime RPMs.
+
+    Args:
+        os_release_path: Photon ``os-release`` identity file.
+        photon_release_path: Photon human-readable release identity file.
+        tdnf_config_path: TDNF configuration defining the distro version package.
+        guest_platform: Appliance platform whose runtime packages are required.
+        runner: Subprocess-compatible command runner.
+    """
 
     os_release = read_os_release(os_release_path)
     if os_release.get("ID") != "photon" or os_release.get("VERSION_ID") != "5.0":
@@ -110,7 +131,11 @@ def verify_photon_package_state(
 
 
 def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
-    """Parse command-line arguments."""
+    """Parse command-line arguments.
+
+    Args:
+        argv: Arguments to parse, or ``None`` for the process arguments.
+    """
 
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--os-release", type=Path, default=Path("/etc/os-release"))
@@ -123,7 +148,11 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
 
 
 def main(argv: Sequence[str] | None = None) -> int:
-    """Run the Photon package-state verification."""
+    """Run the Photon package-state verification.
+
+    Args:
+        argv: Arguments to parse, or ``None`` for the process arguments.
+    """
 
     args = parse_args(argv)
     try:

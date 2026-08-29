@@ -96,7 +96,11 @@ def test_progress_wrapper_replays_bounded_normalized_tail_on_failure(tmp_path):
 
 
 def test_progress_wrapper_rejects_tdnf_error_with_zero_exit_status(tmp_path):
-    """Treat a repository error reported with status zero as fatal."""
+    """Treat a repository error reported with status zero as fatal.
+
+    Args:
+        tmp_path: Temporary cache root for the captured TDNF transcript.
+    """
 
     result = run_progress_wrapper(
         tmp_path,

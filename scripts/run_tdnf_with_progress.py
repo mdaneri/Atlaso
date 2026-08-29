@@ -94,7 +94,11 @@ def _failure_tail(path: Path, line_limit: int) -> list[str]:
 
 
 def _reported_tdnf_failure(path: Path) -> bool:
-    """Return whether TDNF reported an error while returning success."""
+    """Return whether TDNF reported an error while returning success.
+
+    Args:
+        path: Captured TDNF transcript to inspect.
+    """
 
     try:
         text = path.read_bytes().decode("utf-8", errors="replace")
