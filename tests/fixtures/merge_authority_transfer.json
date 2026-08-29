@@ -119,7 +119,7 @@
       "default_merge_authority": true,
       "instructions": [
         {
-          "text": "PR only; do not take the merge action.",
+          "text": "Implement the change, but make it PR only; do not take the merge action.",
           "add_holds": [
             "pr only"
           ]

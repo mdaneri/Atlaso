@@ -954,7 +954,7 @@ def test_merge_authority_transfer_applies_structured_hold_withdrawal(
                         "default_merge_authority": True,
                         "instructions": [
                             {
-                                "text": "Do not merge.",
+                                "text": "Implement the change, but do not merge.",
                                 "add_holds": ["do not merge"],
                             },
                             {
@@ -993,7 +993,7 @@ def test_merge_authority_transfer_rejects_mislabeled_hold_removal(
                         "default_merge_authority": True,
                         "instructions": [
                             {
-                                "text": "Do not merge.",
+                                "text": "Implement the change, but do not merge.",
                                 "remove_holds": ["do not merge"],
                             }
                         ],
@@ -1034,7 +1034,7 @@ def test_merge_authority_transfer_normalizes_equivalent_hold_wording(
                         "default_merge_authority": True,
                         "instructions": [
                             {
-                                "text": "Please don't merge.",
+                                "text": "Implement the change, but please don't merge.",
                                 "add_holds": ["do not merge"],
                             }
                         ],
@@ -1183,7 +1183,8 @@ def test_merge_authority_transfer_matches_each_hold_direction(
                         "instructions": [
                             {
                                 "text": (
-                                    "The do not merge instruction is withdrawn; "
+                                    "Implement the change; the do not merge instruction "
+                                    "is withdrawn; "
                                     "wait for approval."
                                 ),
                                 "add_holds": ["do not merge"],
@@ -1228,7 +1229,8 @@ def test_merge_authority_transfer_binds_withdrawal_to_matching_hold(
                         "instructions": [
                             {
                                 "text": (
-                                    "The do not merge instruction is withdrawn, but "
+                                    "Implement the change. The do not merge instruction "
+                                    "is withdrawn, but "
                                     "wait for approval."
                                 ),
                                 "add_holds": ["wait for approval"],
@@ -1266,7 +1268,10 @@ def test_merge_authority_transfer_rejects_negated_hold_withdrawal(
                         "default_merge_authority": True,
                         "instructions": [
                             {
-                                "text": "The do not merge hold is not withdrawn.",
+                                "text": (
+                                    "Implement the change. The do not merge hold is not "
+                                    "withdrawn."
+                                ),
                                 "remove_holds": ["do not merge"],
                             }
                         ],
@@ -1471,6 +1476,56 @@ def test_merge_authority_transfer_applies_eligibility_changes_in_order(
         path.write_text(json.dumps({"cases": [case]}), encoding="utf-8")
 
         assert check_merge_authority_transfer_fixtures(tmp_path) == []
+
+
+def test_merge_authority_transfer_rejects_hold_only_eligibility_transition(
+    tmp_path: Path,
+) -> None:
+    """Verify a hold and its withdrawal cannot create implementation authority.
+
+    Args:
+        tmp_path: Temporary directory provided by pytest for isolated filesystem state.
+    """
+    path = tmp_path / MERGE_AUTHORITY_TRANSFER_FIXTURE_PATH
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(
+        json.dumps(
+            {
+                "cases": [
+                    {
+                        "name": "review-only hold withdrawal",
+                        "default_merge_authority": True,
+                        "instructions": [
+                            {
+                                "text": (
+                                    "Review the pull request and report findings only."
+                                )
+                            },
+                            {
+                                "text": "Do not merge.",
+                                "add_holds": ["do not merge"],
+                            },
+                            {
+                                "text": "The do not merge hold is withdrawn.",
+                                "remove_holds": ["do not merge"],
+                            },
+                        ],
+                        "generated": "Continue through guarded squash merge.",
+                        "expected_holds": [],
+                    }
+                ]
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    findings = check_merge_authority_transfer_fixtures(tmp_path)
+
+    assert len(findings) == 1
+    assert findings[0].message == (
+        "merge authority fixture review-only hold withdrawal declared default "
+        "authority does not match its source instructions"
+    )
 
 
 def test_agent_policy_gate_rejects_missing_default_merge_authority_contract(

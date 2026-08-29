@@ -756,10 +756,7 @@ def source_has_default_merge_authority(instructions: tuple[str, ...]) -> bool:
         normalized = " ".join(instruction.casefold().split())
         if DEFAULT_MERGE_AUTHORITY_SOURCE_EXCLUSIONS.search(normalized) is not None:
             eligible = False
-        elif (
-            DEFAULT_MERGE_AUTHORITY_SOURCE_MARKERS.search(normalized) is not None
-            or bool(explicit_merge_holds(normalized))
-        ):
+        elif DEFAULT_MERGE_AUTHORITY_SOURCE_MARKERS.search(normalized) is not None:
             eligible = True
     return eligible
 
