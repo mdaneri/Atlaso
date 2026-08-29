@@ -883,7 +883,14 @@ def test_photon_provisioning_installs_default_nginx_management_proxy():
     assert '"$ATLASO_HOME/image/common/powershell/profile.ps1"' in script
     assert 'atlaso_install_powershell_profile.py' in script
     assert '--pwsh-path "$(command -v pwsh)"' in script
-    assert '--profile-source "$ATLASO_HOME/image/common/powershell/profile.ps1"' in script
+    assert (
+        '"$ATLASO_HOME/image/common/powershell/profile.ps1" \\\n'
+        '  "$ATLASO_HOME/bin/atlaso-powershell-profile.ps1"'
+    ) in script
+    assert (
+        '--profile-source "$ATLASO_HOME/bin/atlaso-powershell-profile.ps1"'
+        in script
+    )
     assert 'touch "$POWERSHELL_HOME/profile.ps1"' not in script
     assert '>>"$POWERSHELL_HOME/profile.ps1"' not in script
     profile = Path("image/common/powershell/atlaso-vault-profile.ps1").read_text(encoding="utf-8")
