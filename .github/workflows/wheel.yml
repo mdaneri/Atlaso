@@ -6,41 +6,76 @@ on:
       - CI
     types:
       - completed
+  workflow_dispatch:
+    inputs:
+      commit:
+        description: Exact successful main push CI commit SHA to replay
+        required: true
+        type: string
+      source_ci_run_id:
+        description: GitHub run ID for that successful main push CI
+        required: true
+        type: string
+      source_ci_run_attempt:
+        description: Successful attempt number for that source CI run
+        required: true
+        default: '1'
+        type: string
 
 permissions:
   actions: read
   contents: read
 
 concurrency:
-  group: python-wheel-${{ github.event.workflow_run.head_sha }}
+  group: python-wheel-${{ github.event.workflow_run.head_sha || inputs.commit }}
   cancel-in-progress: false
 
 jobs:
   publish:
     name: Publish immutable wheel artifact
     if: >-
-      github.event.workflow_run.conclusion == 'success' &&
-      github.event.workflow_run.head_repository.full_name == github.repository &&
-      github.event.workflow_run.head_branch == 'main' &&
-      github.event.workflow_run.event == 'push'
+      (github.event_name == 'workflow_run' &&
+       github.event.workflow_run.conclusion == 'success' &&
+       github.event.workflow_run.head_repository.full_name == github.repository &&
+       github.event.workflow_run.head_branch == 'main' &&
+       github.event.workflow_run.event == 'push') ||
+      (github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main')
     runs-on: ubuntu-latest
     timeout-minutes: 20
     steps:
       - name: Check out the successful main commit
         uses: actions/checkout@v7
         with:
-          ref: ${{ github.event.workflow_run.head_sha }}
+          ref: ${{ github.event.workflow_run.head_sha || inputs.commit }}
           fetch-depth: 0
           persist-credentials: false
-      - name: Validate the automatic wheel target
+      - name: Validate the source CI evidence and wheel target
         id: target
         env:
-          WHEEL_SHA: ${{ github.event.workflow_run.head_sha }}
+          GH_TOKEN: ${{ github.token }}
+          WHEEL_SHA: ${{ github.event.workflow_run.head_sha || inputs.commit }}
+          SOURCE_CI_RUN_ID: ${{ github.event.workflow_run.id || inputs.source_ci_run_id }}
+          SOURCE_CI_RUN_ATTEMPT: ${{ github.event.workflow_run.run_attempt || inputs.source_ci_run_attempt }}
         run: |
           if ! printf '%s' "$WHEEL_SHA" | grep -Eq '^[0-9a-f]{40}$'; then
             echo "::error::Wheel SHA must be a full lowercase hexadecimal commit."
             exit 1
           fi
+          if ! printf '%s' "$SOURCE_CI_RUN_ID" | grep -Eq '^[1-9][0-9]*$' ||
+             ! printf '%s' "$SOURCE_CI_RUN_ATTEMPT" | grep -Eq '^[1-9][0-9]*$'; then
+            echo "::error::Source CI run ID and attempt must be positive integers."
+            exit 1
+          fi
+          SOURCE_CI_STATE="$(gh api \
+            "repos/${{ github.repository }}/actions/runs/${SOURCE_CI_RUN_ID}/attempts/${SOURCE_CI_RUN_ATTEMPT}")"
+          test "$(jq -r .name <<<"$SOURCE_CI_STATE")" = CI
+          test "$(jq -r .path <<<"$SOURCE_CI_STATE")" = .github/workflows/ci.yml
+          test "$(jq -r .event <<<"$SOURCE_CI_STATE")" = push
+          test "$(jq -r .head_repository.full_name <<<"$SOURCE_CI_STATE")" = "${{ github.repository }}"
+          test "$(jq -r .head_branch <<<"$SOURCE_CI_STATE")" = main
+          test "$(jq -r .head_sha <<<"$SOURCE_CI_STATE")" = "$WHEEL_SHA"
+          test "$(jq -r .run_attempt <<<"$SOURCE_CI_STATE")" = "$SOURCE_CI_RUN_ATTEMPT"
+          test "$(jq -r .conclusion <<<"$SOURCE_CI_STATE")" = success
           git fetch origin main --no-tags
           git merge-base --is-ancestor "$WHEEL_SHA" origin/main
           test "$(git rev-parse HEAD)" = "$WHEEL_SHA"
@@ -61,7 +96,9 @@ jobs:
         run: python -m pip install --require-hashes --requirement requirements-release-tools.lock
       - name: Build and verify the commit-bound wheel
         env:
-          WHEEL_SHA: ${{ github.event.workflow_run.head_sha }}
+          WHEEL_SHA: ${{ github.event.workflow_run.head_sha || inputs.commit }}
+          SOURCE_CI_RUN_ID: ${{ github.event.workflow_run.id || inputs.source_ci_run_id }}
+          SOURCE_CI_RUN_ATTEMPT: ${{ github.event.workflow_run.run_attempt || inputs.source_ci_run_attempt }}
         run: |
           python scripts/wheel_artifact.py create \
             --output dist/wheel-artifact \
@@ -69,8 +106,8 @@ jobs:
             --version "${{ steps.target.outputs.version }}" \
             --commit "$WHEEL_SHA" \
             --built-at "${{ steps.target.outputs.built_at }}" \
-            --source-ci-run-id "${{ github.event.workflow_run.id }}" \
-            --source-ci-run-attempt "${{ github.event.workflow_run.run_attempt }}" \
+            --source-ci-run-id "$SOURCE_CI_RUN_ID" \
+            --source-ci-run-attempt "$SOURCE_CI_RUN_ATTEMPT" \
             --publisher-run-id "${{ github.run_id }}" \
             --publisher-run-attempt "${{ github.run_attempt }}"
       - name: Publish the immutable wheel handoff

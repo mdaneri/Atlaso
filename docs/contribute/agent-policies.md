@@ -701,12 +701,17 @@ Terminal order:
   artifact for the same identity only when the wheel bytes remain identical; a later consumer must compare all retained
   candidates, stage them by publisher run plus artifact ID, validate every recorded publisher attempt, fail closed on
   divergence, and preserve the earliest retained publisher run-and-attempt handoff so a later identical retry cannot
-  change signed bundle inputs.
+  change signed bundle inputs. Provide a manual replay input only on the protected `main` workflow revision. It must
+  accept an exact commit plus source CI run ID and attempt, revalidate that exact attempt as successful
+  same-repository `main` push CI for the commit, and require the commit to remain reachable from current `main`. Keep
+  replay inside the same read-only wheel-only job and trust boundary.
 - Complete release publication and recovery use only the protected **Publish appliance release** manual dispatch with
   the exact successful `main` push CI SHA. Require and revalidate the retained automatic wheel handoff, including its
   successful source CI identity and embedded wheel version/commit/time, and record `wheel-identity.json` inside the
   signed bundle. Never rebuild or substitute the application wheel in this workflow. If the 90-day artifact expired,
-  rerun the exact successful CI/wheel publication while the commit remains on `main`. Atlaso starts a new signed update
+  dispatch the protected `main` revision of **Publish Python wheel** with the exact commit and successful source CI run
+  ID and attempt; its replay must revalidate that evidence before publishing the replacement handoff. Atlaso starts a
+  new signed update
   lineage at `v0.9.18`; do not publish or consume a retired-product bridge. Preserve tag/release commit and asset-byte
   idempotency checks. A rerun after tag/release publication must verify the existing asset bytes before retrying channel
   advancement. Keep the protected manual workflow GitHub-hosted and limited to the signed software/update bundle,

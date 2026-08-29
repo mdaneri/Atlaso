@@ -1230,6 +1230,9 @@ def test_release_workflows_use_successful_main_sha_and_promote_without_rebuildin
     promotion = (ROOT / ".github/workflows/promote-release.yml").read_text(encoding="utf-8")
     ci = (ROOT / ".github/workflows/ci.yml").read_text(encoding="utf-8")
     publication_trigger = publication.split("on:\n", 1)[1].split("\npermissions:", 1)[0]
+    wheel_publication_trigger = wheel_publication.split("on:\n", 1)[1].split(
+        "\npermissions:", 1
+    )[0]
     assert "workflow_dispatch:" in publication_trigger
     assert "workflow_run:" not in publication_trigger
     assert "github.event.workflow_run" not in publication
@@ -1238,7 +1241,31 @@ def test_release_workflows_use_successful_main_sha_and_promote_without_rebuildin
     assert "github.event.workflow_run.event == 'push'" in wheel_publication
     assert "github.event.workflow_run.head_repository.full_name == github.repository" in wheel_publication
     assert "github.event.workflow_run.conclusion == 'success'" in wheel_publication
-    assert "workflow_dispatch:" not in wheel_publication
+    assert "workflow_dispatch:" in wheel_publication_trigger
+    assert "source_ci_run_id:" in wheel_publication_trigger
+    assert "source_ci_run_attempt:" in wheel_publication_trigger
+    assert "github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main'" in wheel_publication
+    assert "github.event.workflow_run.head_sha || inputs.commit" in wheel_publication
+    assert "github.event.workflow_run.id || inputs.source_ci_run_id" in wheel_publication
+    assert (
+        "github.event.workflow_run.run_attempt || inputs.source_ci_run_attempt"
+        in wheel_publication
+    )
+    assert "actions/runs/${SOURCE_CI_RUN_ID}/attempts/${SOURCE_CI_RUN_ATTEMPT}" in wheel_publication
+    assert 'test "$(jq -r .name <<<"$SOURCE_CI_STATE")" = CI' in wheel_publication
+    assert 'test "$(jq -r .path <<<"$SOURCE_CI_STATE")" = .github/workflows/ci.yml' in wheel_publication
+    assert 'test "$(jq -r .event <<<"$SOURCE_CI_STATE")" = push' in wheel_publication
+    assert (
+        'test "$(jq -r .head_repository.full_name <<<"$SOURCE_CI_STATE")" = '
+        '"${{ github.repository }}"' in wheel_publication
+    )
+    assert 'test "$(jq -r .head_branch <<<"$SOURCE_CI_STATE")" = main' in wheel_publication
+    assert 'test "$(jq -r .head_sha <<<"$SOURCE_CI_STATE")" = "$WHEEL_SHA"' in wheel_publication
+    assert (
+        'test "$(jq -r .run_attempt <<<"$SOURCE_CI_STATE")" = "$SOURCE_CI_RUN_ATTEMPT"'
+        in wheel_publication
+    )
+    assert 'test "$(jq -r .conclusion <<<"$SOURCE_CI_STATE")" = success' in wheel_publication
     assert "runs-on: ubuntu-latest" in wheel_publication
     assert "actions: read" in wheel_publication
     assert "contents: read" in wheel_publication
@@ -1294,6 +1321,15 @@ def test_release_workflows_use_successful_main_sha_and_promote_without_rebuildin
     assert 'test "$(jq -r .run_attempt <<<"$PUBLISHER_STATE")" = "$PUBLISHER_RUN_ATTEMPT"' in publication
     assert 'test "$(jq -r .head_sha <<<"$SOURCE_CI_STATE")" = "$RELEASE_SHA"' in publication
     assert 'test "$(jq -r .head_sha <<<"$PUBLISHER_STATE")"' not in publication
+    assert (
+        'test "$CANDIDATE_EVENT" = workflow_run || '
+        'test "$CANDIDATE_EVENT" = workflow_dispatch' in publication
+    )
+    assert (
+        'test "$PUBLISHER_EVENT" = workflow_run || '
+        'test "$PUBLISHER_EVENT" = workflow_dispatch' in publication
+    )
+    assert publication.count('test "$(jq -r .head_branch <<<"$') >= 3
     for runner_label in ("atlaso-vmware", "atlaso-proxmox", "atlaso-kvm", "atlaso-hyperv"):
         assert runner_label not in publication
     for job in (

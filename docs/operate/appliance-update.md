@@ -142,7 +142,9 @@ GitHub is the default distribution origin:
   `atlaso-wheel-vX.Y.Z-<full-sha>`. It contains exactly one versioned Atlaso wheel plus canonical JSON binding the source
   CI run, publisher run, repository, version, full commit, UTC commit build time, filename, size, and SHA-256 digest.
   The GitHub-hosted publisher has read-only repository authority and no appliance signing key, protected environment,
-  Release/tag or Pages write, channel promotion, self-hosted label, or virtualization access.
+  Release/tag or Pages write, channel promotion, self-hosted label, or virtualization access. A protected manual replay
+  from the `main` workflow revision can recreate an expired artifact only after revalidating the supplied exact commit
+  and source CI run attempt as successful same-repository `main` push evidence.
 - **Publish appliance release** is protected manual dispatch only. The operator names a full commit that remains on
   `main`, already has a successful `main` push CI run, and has a retained matching automatic wheel artifact. The
   workflow validates every retained artifact with that name, accepts only byte-identical retries, revalidates the
@@ -513,11 +515,14 @@ artifact ID and revalidated against its recorded attempt, so multiple artifacts 
 That stable selection keeps signed bundle inputs byte-identical when a later automatic retry publishes the same wheel
 after the immutable Release already exists. Different bytes fail closed as a collision.
 
-If the artifact expires before an appliance release is cut, rerun the exact successful `main` CI and its automatic
-wheel publication while the commit remains reachable from `main`. Do not copy a wheel from another commit, rename an
-artifact, or let the appliance workflow rebuild it. The artifact's source-CI run ID and attempt, publisher run ID and
-attempt, version, commit, UTC build time, filename, size, and digest are the exact handoff used by the later manual
-release and retained as `packages/wheel-identity.json` inside the signed bundle.
+If the artifact expires before an appliance release is cut, open **Publish Python wheel**, choose **Run workflow** on
+`main`, and supply the exact commit, successful source CI run ID, and successful attempt number. The replay re-fetches
+that attempt, requires the `CI` workflow at `.github/workflows/ci.yml`, a same-repository `main` push, the supplied SHA,
+and a successful conclusion, then requires the commit to remain reachable from current `main`. It runs in the same
+read-only wheel-only job and publishes a new 90-day handoff. Do not copy a wheel from another commit, rename an artifact,
+or let the appliance workflow rebuild it. The artifact's source-CI run ID and attempt, publisher run ID and attempt,
+version, commit, UTC build time, filename, size, and digest are the exact handoff used by the later manual release and
+retained as `packages/wheel-identity.json` inside the signed bundle.
 
 The protected workflows use these checked-in inputs:
 

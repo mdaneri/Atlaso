@@ -319,6 +319,11 @@ runner authority. Byte-identical retry artifacts are accepted; divergent retaine
 release admission. Candidates are staged by publisher run plus artifact ID and every recorded attempt is revalidated.
 The manual consumer preserves the earliest retained publisher run-and-attempt identity across identical retries,
 keeping immutable signed bundle inputs deterministic.
+The protected `main` workflow revision also exposes a bounded manual replay for retention recovery. It accepts the exact
+commit and source CI run ID and attempt, revalidates the attempt-specific `CI` workflow identity, same-repository
+`main`-push event, commit, and successful conclusion, and requires the commit to remain reachable from current `main`.
+Replay uses the same GitHub-hosted read-only wheel-only job and cannot access Release, Pages, signing, or virtualization
+authority.
 
 The protected **Publish appliance release** workflow is manual only. It accepts an exact successful `main` push CI
 commit, verifies and consumes its retained automatic wheel without rebuilding it, builds the exact CPython 3.14
@@ -334,7 +339,8 @@ beyond its wall-clock budget. GitHub Release descriptions preserve the exact sig
 notes grouped from merged pull-request labels, contributors, and comparison metadata. The manual publication dispatch
 can publish or recover an exact commit only when it already has a successful `main` push CI run and a retained matching
 automatic wheel artifact. After the 90-day retention window, rerun that exact CI/wheel publication while the commit
-remains on `main`; the appliance workflow never substitutes or silently rebuilds the wheel. Publication refuses any
+remains on `main` by dispatching **Publish Python wheel** from `main` with the exact commit and successful source CI run
+ID and attempt; the appliance workflow never substitutes or silently rebuilds the wheel. Publication refuses any
 existing tag or Release whose commit or asset bytes differ. The same dispatch safely retries channel advancement after
 a release has
 already published because it verifies the existing asset bytes first. The guarded backfill command updates only

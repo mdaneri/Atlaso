@@ -553,8 +553,10 @@ The following cross-cutting boundaries always apply:
   CPython 3.14 wheelhouse, signing, immutable publication, Pages, and live-verification gates. Byte-identical automatic
   retries are valid, but the consumer must stage them by publisher run plus artifact ID, validate every recorded attempt,
   and preserve the earliest retained publisher run-and-attempt identity so a later retry cannot change signed bundle
-  inputs. Divergent collisions fail closed, and an expired handoff requires rerunning the exact successful CI/wheel
-  publication while the commit remains on `main`.
+  inputs. Divergent collisions fail closed. For an expired handoff, allow a manual replay only from the protected
+  `main` workflow revision with the exact commit plus successful source CI run ID and attempt. Revalidate that exact
+  attempt as successful same-repository `main` push CI for the commit, require the commit to remain reachable from
+  current `main`, and keep the replay inside the same read-only wheel-only job and trust boundary.
 - Inventory Linux is an independently versioned Atlaso release package; full images leave it uninstalled so an
   administrator downloads a signed release on demand. Supported VMware wheel deployment synchronizes it unless
   explicitly skipped. Publish it only through the protected manual Inventory

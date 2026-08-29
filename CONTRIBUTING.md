@@ -327,8 +327,10 @@ CI run. The workflow requires a retained matching automatic wheel artifact, vali
 embedded build metadata, fails closed on collisions, and records that identity inside the signed appliance bundle. It
 does not rebuild or substitute the application wheel. It retains the exact CPython 3.14 wheelhouse, signing,
 immutable-tag/Release, Pages serialization, signed-channel, and live-verification gates. After the 90-day retention
-window, rerun the exact successful CI/wheel publication while the commit remains reachable from `main` before dispatching
-the appliance release.
+window, manually dispatch **Publish Python wheel** from `main` with the exact commit plus its successful source CI run
+ID and attempt. The read-only replay revalidates that attempt as a successful same-repository `main` push for the exact
+commit and requires the commit to remain reachable from current `main` before publishing a replacement handoff. Then
+dispatch the appliance release; never rebuild or rename a wheel locally.
 
 OVA and Hyper-V images use the separate manual lifecycle documented in the
 [virtualization artifact guide](docs/reference/virtualization-artifacts.md). A maintainer workstation creates and

@@ -180,7 +180,10 @@ jobs:
             test "$(jq -r .name <<<"$CANDIDATE_STATE")" = "Publish Python wheel"
             test "$(jq -r .path <<<"$CANDIDATE_STATE")" = .github/workflows/wheel.yml
             test "$(jq -r .run_attempt <<<"$CANDIDATE_STATE")" = "$CANDIDATE_RUN_ATTEMPT"
-            test "$(jq -r .event <<<"$CANDIDATE_STATE")" = workflow_run
+            CANDIDATE_EVENT="$(jq -r .event <<<"$CANDIDATE_STATE")"
+            test "$CANDIDATE_EVENT" = workflow_run || test "$CANDIDATE_EVENT" = workflow_dispatch
+            test "$(jq -r .head_repository.full_name <<<"$CANDIDATE_STATE")" = "${{ github.repository }}"
+            test "$(jq -r .head_branch <<<"$CANDIDATE_STATE")" = main
             test "$(jq -r .conclusion <<<"$CANDIDATE_STATE")" = success
           done < <(jq -r '.[] | [.id, .workflow_run.id] | @tsv' "$RUNNER_TEMP/wheel-artifacts.json")
           python scripts/wheel_artifact.py select \
@@ -206,7 +209,10 @@ jobs:
           test "$(jq -r .name <<<"$PUBLISHER_STATE")" = "Publish Python wheel"
           test "$(jq -r .path <<<"$PUBLISHER_STATE")" = .github/workflows/wheel.yml
           test "$(jq -r .run_attempt <<<"$PUBLISHER_STATE")" = "$PUBLISHER_RUN_ATTEMPT"
-          test "$(jq -r .event <<<"$PUBLISHER_STATE")" = workflow_run
+          PUBLISHER_EVENT="$(jq -r .event <<<"$PUBLISHER_STATE")"
+          test "$PUBLISHER_EVENT" = workflow_run || test "$PUBLISHER_EVENT" = workflow_dispatch
+          test "$(jq -r .head_repository.full_name <<<"$PUBLISHER_STATE")" = "${{ github.repository }}"
+          test "$(jq -r .head_branch <<<"$PUBLISHER_STATE")" = main
           test "$(jq -r .conclusion <<<"$PUBLISHER_STATE")" = success
       - name: Download CPython 3.14 wheelhouse
         uses: actions/download-artifact@v8

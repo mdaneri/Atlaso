@@ -25,7 +25,9 @@ manual **Publish appliance release** workflow consumes and records that exact wh
 3.14 wheelhouse, signs the bundle, and publishes `vX.Y.Z`. Only after that manual software Release exists may the
 separate manual virtualization producer consume it. The automatic wheel path has no signing material, Release/tag or
 Pages write, channel, self-hosted runner, or virtualization access, and it cannot queue an OVA, Hyper-V, Proxmox, KVM,
-or virtualization smoke job.
+or virtualization smoke job. If the handoff expires, the protected `main` revision of **Publish Python wheel** can be
+manually replayed only with the exact commit and successful source CI run ID and attempt; it revalidates that exact
+same-repository `main` push evidence and current `main` reachability without gaining any virtualization authority.
 
 The maintainer workstation is a trusted release producer. An optional explicitly approved ephemeral Windows runner is
 trusted for the same single release while it is online. Neither receives the signing key. The protected hosted
