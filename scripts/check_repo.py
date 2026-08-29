@@ -556,8 +556,9 @@ DEFAULT_MERGE_AUTHORITY_SOURCE_EXCLUSIONS = re.compile(
     r"private (?:vulnerability|advisory|remediation))"
 )
 DEFAULT_MERGE_AUTHORITY_SOURCE_MARKERS = re.compile(
-    r"\b(?:implement|resolve|solve|deliver)\b|guarded[- ]squash merge|"
-    r"before merging|task-owned pull request|ordinary same-repository"
+    r"\b(?:implement|implementation|fix|resolve|solve|deliver)\b|"
+    r"pull[- ]request delivery|guarded[- ]squash merge|before merging|"
+    r"task-owned pull request|ordinary same-repository"
 )
 
 ORDERED_TERMINAL_CLEANUP_MARKERS = {

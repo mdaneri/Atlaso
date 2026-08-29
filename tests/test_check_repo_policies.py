@@ -1388,6 +1388,21 @@ def test_merge_authority_transfer_validates_declared_source_eligibility(
             False,
             "Implement the issue completely and deliver its pull request.",
         ),
+        (
+            "fix declared ineligible",
+            False,
+            "Fix issue #602 completely.",
+        ),
+        (
+            "implementation noun declared ineligible",
+            False,
+            "Complete the implementation for issue #602.",
+        ),
+        (
+            "pull-request delivery declared ineligible",
+            False,
+            "Perform pull-request delivery for issue #602.",
+        ),
     )
 
     for name, declared_authority, instruction in cases:
