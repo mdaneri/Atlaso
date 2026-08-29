@@ -1634,8 +1634,14 @@ def test_photon_image_optional_pip_global_index_configuration():
     assert 'write_pip_config "$ATLASO_HOME/.venv/pip.conf"' in script
     assert '--requirement "$ATLASO_HOME/requirements-appliance.lock"' in script
     assert 'pip install --no-compile --no-deps "$ATLASO_HOME"' in script
+    assert 'ATLASO_SITE_PACKAGES_REAL="$(readlink -f "$ATLASO_SITE_PACKAGES")"' in script
+    assert (
+        'ATLASO_EXPECTED_SITE_PACKAGES="$ATLASO_RELEASE_DIR/.venv/lib/python3.14/site-packages"'
+        in script
+    )
+    assert 'if [ "$ATLASO_SITE_PACKAGES_REAL" != "$ATLASO_EXPECTED_SITE_PACKAGES" ]; then' in script
     assert "Atlaso site-packages resolved outside the expected release environment." in script
-    assert 'find "$ATLASO_SITE_PACKAGES" -type f -name \'*.pyc\' -delete' in script
+    assert 'find "$ATLASO_SITE_PACKAGES_REAL" -type f -name \'*.pyc\' -delete' in script
     assert "/etc/atlaso/update-trust.d" in script
     assert 'trust_source_dir="$ATLASO_HOME/image/common/update-trust"' in script
     assert 'for trust_key in "$trust_source_dir"/*.pem' in script

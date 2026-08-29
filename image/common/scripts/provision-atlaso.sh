@@ -578,12 +578,14 @@ write_pip_config "$ATLASO_HOME/.venv/pip.conf"
   --requirement "$ATLASO_HOME/requirements-appliance.lock"
 "$ATLASO_HOME/.venv/bin/python" -m pip install --no-compile --no-deps "$ATLASO_HOME"
 ATLASO_SITE_PACKAGES="$("$ATLASO_HOME/.venv/bin/python" -c 'import sysconfig; print(sysconfig.get_path("purelib"))')"
-if [ "$ATLASO_SITE_PACKAGES" != "$ATLASO_RELEASE_DIR/.venv/lib/python3.14/site-packages" ]; then
+ATLASO_SITE_PACKAGES_REAL="$(readlink -f "$ATLASO_SITE_PACKAGES")"
+ATLASO_EXPECTED_SITE_PACKAGES="$ATLASO_RELEASE_DIR/.venv/lib/python3.14/site-packages"
+if [ "$ATLASO_SITE_PACKAGES_REAL" != "$ATLASO_EXPECTED_SITE_PACKAGES" ]; then
   echo "Atlaso site-packages resolved outside the expected release environment." >&2
   exit 2
 fi
-find "$ATLASO_SITE_PACKAGES" -type f -name '*.pyc' -delete
-find "$ATLASO_SITE_PACKAGES" -depth -type d -name __pycache__ -empty -delete
+find "$ATLASO_SITE_PACKAGES_REAL" -type f -name '*.pyc' -delete
+find "$ATLASO_SITE_PACKAGES_REAL" -depth -type d -name __pycache__ -empty -delete
 install -d -o root -g root -m 0755 /usr/local/bin
 ln -sfn "$ATLASO_HOME/.venv/bin/atlaso-vault" /usr/local/bin/atlaso-vault
 ln -sfn "$ATLASO_HOME/.venv/bin/atlaso-vault" /usr/bin/atlaso-vault
