@@ -140,7 +140,8 @@ GitHub is the default distribution origin:
   informational release-repository page; appliances continue to use only the signed JSON documents under `/updates`.
 - A successful same-repository `main` push CI run automatically publishes only the 90-day Actions artifact
   `atlaso-wheel-vX.Y.Z-<full-sha>`. It contains exactly one versioned Atlaso wheel plus canonical JSON binding the source
-  CI run, publisher run, repository, version, full commit, UTC commit build time, filename, size, and SHA-256 digest.
+  CI run, publisher run, repository, version, full commit, exact timezone-aware commit build time, filename, size, and
+  SHA-256 digest.
   The GitHub-hosted publisher has read-only repository authority and no appliance signing key, protected environment,
   Release/tag or Pages write, channel promotion, self-hosted label, or virtualization access. Protected **Replay Python
   wheel** admission from `main` can recreate an expired artifact only after revalidating the supplied exact commit and
@@ -524,9 +525,10 @@ triggers **Publish Python wheel**, which downloads and revalidates that exact re
 read-only, cache-free exact-SHA build publishes a new 90-day handoff. Do not copy a wheel from another commit, rename an
 artifact, or let the appliance workflow rebuild it. Replay checks out the protected publisher tooling at the replay
 workflow's immutable `main` SHA separately from the admitted target source, so a historical successful commit need not
-contain the newer handoff helper. The artifact's source-CI run ID and attempt, publisher run ID and
-attempt, version, commit, UTC build time, filename, size, and digest are the exact handoff used by the later manual
-release and retained as `packages/wheel-identity.json` inside the signed bundle.
+contain the newer handoff helper. Replay preserves Git's exact timezone-aware `%cI` commit timestamp so historical wheel
+bytes remain reproducible. The artifact's source-CI run ID and attempt, publisher run ID and attempt, version, commit,
+build time, filename, size, and digest are the exact handoff used by the later manual release and retained as
+`packages/wheel-identity.json` inside the signed bundle.
 
 If `vX.Y.Z` already exists and only channel advancement needs recovery, the manual workflow verifies and reuses the
 existing signed Release assets. It extracts the application wheel through the signed manifest content-hash contract and

@@ -91,20 +91,20 @@ def _positive_integer(value: object, *, field: str) -> int:
 
 
 def _validate_timestamp(value: object) -> str:
-    """Validate the canonical UTC build timestamp.
+    """Validate the exact timezone-aware commit build timestamp.
 
     Args:
         value: Candidate timestamp.
     """
 
-    if not isinstance(value, str) or not value.endswith("Z"):
-        raise WheelArtifactError("built_at must be an ISO 8601 UTC timestamp")
+    if not isinstance(value, str):
+        raise WheelArtifactError("built_at must be a timezone-aware ISO 8601 timestamp")
     try:
         parsed = datetime.fromisoformat(value.replace("Z", "+00:00"))
     except ValueError as exc:
-        raise WheelArtifactError("built_at must be an ISO 8601 UTC timestamp") from exc
-    if parsed.utcoffset() is None or parsed.utcoffset().total_seconds() != 0:
-        raise WheelArtifactError("built_at must be an ISO 8601 UTC timestamp")
+        raise WheelArtifactError("built_at must be a timezone-aware ISO 8601 timestamp") from exc
+    if parsed.utcoffset() is None:
+        raise WheelArtifactError("built_at must be a timezone-aware ISO 8601 timestamp")
     return value
 
 

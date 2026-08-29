@@ -115,7 +115,7 @@ jobs:
         run: |
           test "$(git -C target-source rev-parse HEAD)" = "$WHEEL_SHA"
           VERSION="$(python tooling/scripts/version.py --root target-source get)"
-          BUILT_AT="$(date --utc --date="@$(git -C target-source show -s --format=%ct "$WHEEL_SHA")" '+%Y-%m-%dT%H:%M:%SZ')"
+          BUILT_AT="$(git -C target-source show -s --format=%cI "$WHEEL_SHA")"
           echo "version=$VERSION" >> "$GITHUB_OUTPUT"
           echo "built_at=$BUILT_AT" >> "$GITHUB_OUTPUT"
           echo "artifact_name=atlaso-wheel-v${VERSION}-${WHEEL_SHA}" >> "$GITHUB_OUTPUT"

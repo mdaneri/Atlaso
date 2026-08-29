@@ -17,6 +17,15 @@ BUILT_AT = "2026-08-29T01:02:03Z"
 REPOSITORY = "mdaneri/Atlaso"
 
 
+def test_timestamp_validation_preserves_timezone_aware_commit_representation() -> None:
+    """Preserve Git's exact commit timestamp so legacy wheel bytes remain reproducible."""
+
+    offset_timestamp = "2026-08-29T10:22:06-07:00"
+    assert wheel_artifact._validate_timestamp(offset_timestamp) == offset_timestamp
+    with pytest.raises(wheel_artifact.WheelArtifactError, match="timezone-aware"):
+        wheel_artifact._validate_timestamp("2026-08-29T10:22:06")
+
+
 def test_create_artifact_builds_from_explicit_source_root(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
