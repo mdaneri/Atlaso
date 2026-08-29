@@ -133,6 +133,24 @@ def test_vmware_template_scrubs_credentials_and_host_identity() -> None:
     assert "guestinfo.atlaso.template_ssh_host_ed25519_public_key" not in provision
 
 
+def test_every_virtualenv_systemd_unit_disables_generated_bytecode() -> None:
+    """Root and service-account units cannot recreate active package bytecode."""
+
+    unit_roots = (
+        Path("image/common/systemd"),
+        Path("image/vmware-workstation/systemd"),
+    )
+    virtualenv_units = []
+    for root in unit_roots:
+        for path in root.glob("*.service"):
+            source = path.read_text(encoding="utf-8")
+            if "/opt/atlaso/.venv/" in source:
+                virtualenv_units.append((path, source))
+    assert virtualenv_units
+    for path, source in virtualenv_units:
+        assert "Environment=PYTHONDONTWRITEBYTECODE=1" in source, path
+
+
 def test_guest_agent_success_marker_makes_cleanup_retryable() -> None:
     """Commit provider success before erasure and retry an interrupted cleanup."""
 
@@ -823,9 +841,18 @@ def test_photon_provisioning_installs_default_nginx_management_proxy():
     assert 'ln -sfn "$ATLASO_HOME/.venv/bin/atlaso-vault" /usr/local/bin/atlaso-vault' in script
     assert 'ln -sfn "$ATLASO_HOME/.venv/bin/atlaso-vault" /usr/bin/atlaso-vault' in script
     assert '"$ATLASO_HOME/image/common/powershell/atlaso-vault-profile.ps1"' in script
+    assert '"$ATLASO_HOME/image/common/powershell/profile.ps1"' in script
+    assert '"$POWERSHELL_HOME/profile.ps1"' in script
+    assert 'touch "$POWERSHELL_HOME/profile.ps1"' not in script
+    assert '>>"$POWERSHELL_HOME/profile.ps1"' not in script
     profile = Path("image/common/powershell/atlaso-vault-profile.ps1").read_text(encoding="utf-8")
     assert "function global:Get-AtlasoVault" in profile
     assert "/opt/atlaso/.venv/bin/atlaso-vault" in profile
+    global_profile = Path("image/common/powershell/profile.ps1").read_text(encoding="utf-8")
+    assert global_profile == (
+        "<#\n.SYNOPSIS\nLoads the Atlaso vault helpers into PowerShell sessions.\n#>\n"
+        ". '/opt/atlaso/bin/atlaso-vault-profile.ps1'\n"
+    )
     assert '--shell "$BOOTSTRAP_SHELL"' in script
     assert "touch /etc/shells" in script
     assert 'grep -qxF "$BOOTSTRAP_SHELL" /etc/shells' in script
@@ -1332,7 +1359,9 @@ def test_photon_image_optional_pip_global_index_configuration():
     assert 'ln -sfn "current/.venv" "$ATLASO_HOME/.venv"' in script
     assert 'write_pip_config "$ATLASO_HOME/.venv/pip.conf"' in script
     assert '--requirement "$ATLASO_HOME/requirements-appliance.lock"' in script
-    assert 'pip install --no-deps "$ATLASO_HOME"' in script
+    assert 'pip install --no-compile --no-deps "$ATLASO_HOME"' in script
+    assert "Atlaso site-packages resolved outside the expected release environment." in script
+    assert 'find "$ATLASO_SITE_PACKAGES" -type f -name \'*.pyc\' -delete' in script
     assert "/etc/atlaso/update-trust.d" in script
     assert 'trust_source_dir="$ATLASO_HOME/image/common/update-trust"' in script
     assert 'for trust_key in "$trust_source_dir"/*.pem' in script
@@ -1871,9 +1900,17 @@ def test_vmware_deploy_wheel_supports_secure_onepassword_password_deploy():
     assert "'authlib-*.whl'" in script
     assert "'joserfc-*.whl'" in script
     assert "'pycdlib-*.whl'" in script
+    assert '"atlaso-runtime-wheels-$([guid]::NewGuid().ToString(\'N\'))"' in script
+    assert "'-m', 'pip', 'wheel', '.', '-w', $generatedRuntimeDependencyRoot" in script
+    assert "Remove-Item -LiteralPath $generatedRuntimeDependencyRoot -Recurse -Force" in script
     assert "Matched local and remote runtime dependency wheels are required." in script
-    assert '"$python" -m pip install --force-reinstall --no-deps "$runtime_dependency_path"' in script
-    assert '"$python" -m pip install --force-reinstall --no-deps "$wheel"' in script
+    assert (
+        '"$python" -m pip install --force-reinstall --no-compile --no-deps '
+        '"$runtime_dependency_path"'
+    ) in script
+    assert '"$python" -m pip install --force-reinstall --no-compile --no-deps "$wheel"' in script
+    assert "Atlaso site-packages resolved outside the active environment." in script
+    assert 'find "$site_packages" -type f -name \'*.pyc\' -delete' in script
     assert "/etc/systemd/system/atlaso.service.d/atlaso-data-disks.conf" in script
     assert "/etc/systemd/system/nginx.service.d/atlaso-data-disks.conf" in script
     assert "systemctl enable atlaso-worker.service" in script

@@ -4,7 +4,6 @@
 from __future__ import annotations
 
 import argparse
-import base64
 import hashlib
 import json
 import re
@@ -14,10 +13,6 @@ import tempfile
 import xml.etree.ElementTree as ET
 from pathlib import Path
 
-from cryptography.exceptions import InvalidSignature
-from cryptography.hazmat.primitives import serialization
-from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PublicKey
-
 ROOT = Path(__file__).resolve().parents[1]
 GIT_RELEASE_USER_NAME = "github-actions[bot]"
 GIT_RELEASE_USER_EMAIL = "41898282+github-actions[bot]@users.noreply.github.com"
@@ -25,8 +20,6 @@ MAXIMUM_GITHUB_ASSET_BYTES = 2_147_483_647
 VMWARE_MANIFEST_PATTERN = re.compile(r"^SHA256\(([^/\\]+)\)= ([0-9a-f]{64})$")
 OVF_NAMESPACE = "http://schemas.dmtf.org/ovf/envelope/1"
 RASD_NAMESPACE = "http://schemas.dmtf.org/wbem/wscim/1/cim-schema/2/CIM_ResourceAllocationSettingData"
-VIRTUALIZATION_INDEX_NAME = "virtualization-artifact-index.json"
-VIRTUALIZATION_SIGNATURE_NAME = f"{VIRTUALIZATION_INDEX_NAME}.sig"
 
 
 def run(command: list[str], *, check: bool = True) -> subprocess.CompletedProcess[str]:
@@ -66,6 +59,29 @@ def version() -> str:
     """Return version."""
     result = run(["python", "scripts/version.py", "get"])
     return result.stdout.strip()
+
+
+def virtualization_asset_names(names: set[str]) -> set[str]:
+    """Return names reserved for the separate virtualization lifecycle.
+
+    Args:
+        names: GitHub Release or local asset names to classify.
+    """
+    return {
+        name
+        for name in names
+        if name.lower().endswith((".ovf", ".mf", ".vmdk", ".ova", "-provenance.json"))
+        or name.endswith("-hyperv-x86_64.zip")
+        or name.startswith("virtualization-")
+        or name
+        in {
+            "import-atlaso-proxmox.sh",
+            "import-atlaso-kvm.sh",
+            "validate_ova.py",
+            "normalize_libvirt.py",
+            "verify_virtualization_artifact_index.py",
+        }
+    }
 
 
 def verify_vmware_ovf_topology(path: Path, asset_names: set[str]) -> None:
@@ -244,127 +260,6 @@ def verify_vmware_release_assets(
             raise SystemExit("VMware OVA provenance commit does not match the release commit")
 
 
-def verify_virtualization_artifact_index(
-    directory: Path,
-    names: set[str],
-    *,
-    expected_version: str,
-    expected_commit: str,
-) -> None:
-    """Verify the signed exact-coverage virtualization artifact index.
-
-    Args:
-        directory: Release asset directory.
-        names: Exact asset names selected for publication.
-        expected_version: Repository version associated with the release.
-        expected_commit: Full source commit associated with the release.
-
-    Raises:
-        SystemExit: If the index, signature, trust key, or indexed assets are invalid.
-    """
-
-    required_index_files = {VIRTUALIZATION_INDEX_NAME, VIRTUALIZATION_SIGNATURE_NAME}
-    missing_index_files = required_index_files - names
-    if missing_index_files:
-        raise SystemExit(f"release is missing the signed virtualization index: {sorted(missing_index_files)}")
-    index_path = directory / VIRTUALIZATION_INDEX_NAME
-    signature_path = directory / VIRTUALIZATION_SIGNATURE_NAME
-    try:
-        index_bytes = index_path.read_bytes()
-        index = json.loads(index_bytes)
-        signature = json.loads(signature_path.read_text(encoding="utf-8"))
-    except (OSError, UnicodeDecodeError, json.JSONDecodeError) as exc:
-        raise SystemExit(f"virtualization artifact index is unreadable: {exc}") from exc
-    if not isinstance(index, dict) or not isinstance(signature, dict):
-        raise SystemExit("virtualization artifact index and signature must be JSON objects")
-    canonical_index = (json.dumps(index, sort_keys=True, separators=(",", ":"), ensure_ascii=True) + "\n").encode()
-    if index_bytes != canonical_index:
-        raise SystemExit("virtualization artifact index is not canonical JSON")
-    if (
-        index.get("schema_version") != 1
-        or index.get("kind") != "atlaso-virtualization-artifacts"
-        or index.get("version") != expected_version
-        or index.get("source_commit") != expected_commit
-    ):
-        raise SystemExit("virtualization artifact index does not match the release identity")
-    key_id = index.get("signing_key_id")
-    if not isinstance(key_id, str) or re.fullmatch(r"[A-Za-z0-9_.-]+", key_id) is None:
-        raise SystemExit("virtualization artifact index has an unsafe signing key identifier")
-    if (
-        signature.get("schema_version") != 1
-        or signature.get("algorithm") != "ed25519"
-        or signature.get("key_id") != key_id
-        or set(signature) != {"schema_version", "algorithm", "key_id", "signature"}
-    ):
-        raise SystemExit("virtualization artifact index signature metadata is invalid")
-    trust_key_path = ROOT / "image" / "common" / "update-trust" / f"{key_id}.pem"
-    if not trust_key_path.is_file() or trust_key_path.is_symlink():
-        raise SystemExit(f"virtualization artifact index trust key is unavailable: {key_id}")
-    try:
-        trust_key = serialization.load_pem_public_key(trust_key_path.read_bytes())
-        signature_bytes = base64.b64decode(str(signature["signature"]), validate=True)
-    except (OSError, ValueError, TypeError) as exc:
-        raise SystemExit(f"virtualization artifact index signature is invalid: {exc}") from exc
-    if not isinstance(trust_key, Ed25519PublicKey):
-        raise SystemExit("virtualization artifact index trust key must be Ed25519")
-    try:
-        trust_key.verify(signature_bytes, index_bytes)
-    except InvalidSignature as exc:
-        raise SystemExit("virtualization artifact index signature verification failed") from exc
-
-    records = index.get("assets")
-    if not isinstance(records, list) or not records:
-        raise SystemExit("virtualization artifact index contains no asset records")
-    indexed_names: set[str] = set()
-    required_names = {
-        f"atlaso-v{expected_version}-hyperv-x86_64.zip",
-        "import-atlaso-proxmox.sh",
-        "import-atlaso-kvm.sh",
-        "validate_ova.py",
-        "normalize_libvirt.py",
-        "verify_virtualization_artifact_index.py",
-    }
-    for record in records:
-        if not isinstance(record, dict) or set(record) != {"name", "role", "size", "sha256"}:
-            raise SystemExit("virtualization artifact index contains an invalid asset record")
-        name = record["name"]
-        if (
-            not isinstance(name, str)
-            or name in indexed_names
-            or Path(name).name != name
-            or name in required_index_files
-        ):
-            raise SystemExit("virtualization artifact index contains an unsafe or duplicate asset name")
-        indexed_names.add(name)
-        path = directory / name
-        if not path.is_file() or path.is_symlink():
-            raise SystemExit(f"indexed release asset is unavailable or unsafe: {name}")
-        size = path.stat().st_size
-        if (
-            not isinstance(record["size"], int)
-            or record["size"] != size
-            or size <= 0
-            or size >= MAXIMUM_GITHUB_ASSET_BYTES
-            or not isinstance(record["sha256"], str)
-            or re.fullmatch(r"[0-9a-f]{64}", record["sha256"]) is None
-            or sha256(path) != record["sha256"]
-            or not isinstance(record["role"], str)
-            or not record["role"]
-        ):
-            raise SystemExit(f"indexed release asset failed size, hash, or role verification: {name}")
-    vmware_names = {
-        name
-        for name in names
-        if name.lower().endswith((".ovf", ".mf", ".vmdk", ".ova", "-provenance.json"))
-    }
-    expected_indexed_names = required_names | vmware_names
-    if indexed_names != expected_indexed_names:
-        raise SystemExit("virtualization artifact index does not cover the exact release asset set")
-    missing_required_names = required_names - indexed_names
-    if missing_required_names:
-        raise SystemExit(f"virtualization release is incomplete: {sorted(missing_required_names)}")
-
-
 def main(argv: list[str] | None = None) -> int:
     """Run the command-line entry point.
 
@@ -381,11 +276,6 @@ def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("--commit", required=True)
     parser.add_argument("--assets", type=Path, required=True)
-    parser.add_argument(
-        "--require-virtualization-assets",
-        action="store_true",
-        help="Require and validate the canonical OVA release asset set.",
-    )
     args = parser.parse_args(argv)
     if re.fullmatch(r"[0-9a-f]{40}", args.commit) is None:
         raise SystemExit("release commit must be a full lowercase hexadecimal commit")
@@ -395,26 +285,11 @@ def main(argv: list[str] | None = None) -> int:
     release_version = version()
     tag = f"v{release_version}"
     asset_names = {path.name for path in assets}
-    vmware_names = {
-        name
-        for name in asset_names
-        if name.lower().endswith((".ovf", ".mf", ".vmdk", ".ova", "-provenance.json"))
-    }
-    if args.require_virtualization_assets and not vmware_names:
-        raise SystemExit("release is missing the required canonical OVA assets")
-    if vmware_names:
-        verify_vmware_release_assets(
-            args.assets.resolve(),
-            vmware_names,
-            expected_version=release_version,
-            expected_commit=args.commit,
-        )
-    if args.require_virtualization_assets:
-        verify_virtualization_artifact_index(
-            args.assets.resolve(),
-            asset_names,
-            expected_version=release_version,
-            expected_commit=args.commit,
+    virtualization_names = virtualization_asset_names(asset_names)
+    if virtualization_names:
+        raise SystemExit(
+            f"software Release v{release_version} cannot contain virtualization assets: "
+            f"{sorted(virtualization_names)}"
         )
 
     remote_tag = run(["git", "ls-remote", "--tags", "origin", f"refs/tags/{tag}"]).stdout.strip()
@@ -450,6 +325,12 @@ def main(argv: list[str] | None = None) -> int:
             raise SystemExit(f"GitHub Release lookup returned the wrong tag for {tag}")
         expected_names = {path.name for path in assets}
         actual_names = {item["name"] for item in release.get("assets", [])}
+        remote_virtualization_names = virtualization_asset_names(actual_names)
+        if remote_virtualization_names:
+            raise SystemExit(
+                f"software Release {tag} already contains virtualization assets: "
+                f"{sorted(remote_virtualization_names)}"
+            )
         missing_names = expected_names - actual_names
         extra_names = actual_names - expected_names
         if missing_names:
@@ -467,7 +348,7 @@ def main(argv: list[str] | None = None) -> int:
             if mismatches:
                 raise SystemExit(f"{tag} already contains mismatched assets: {', '.join(mismatches)}")
             if extra_names:
-                verify_vmware_release_assets(temp, extra_names)
+                raise SystemExit(f"{tag} contains unexpected assets: {sorted(extra_names)}")
         print(json.dumps({"tag": tag, "commit": args.commit, "result": "already-published"}, sort_keys=True))
         return 0
 
@@ -484,13 +365,9 @@ def main(argv: list[str] | None = None) -> int:
             "--generate-notes",
             "--notes",
             (
-                f"Signed appliance release built from `{args.commit}`.\n\n"
-                "Virtualization assets are covered by `virtualization-artifact-index.json` and its detached Ed25519 "
-                "signature. Verify them with `verify_virtualization_artifact_index.py` and the "
-                "`atlaso-release-2026-01` public key (SHA-256 "
-                "`b0bb5614342c4f432a01c53fc4c9aae54c1eeffb12806539a92babbcda74b58e`) before import; "
-                f"the [portable virtualization artifact guide](https://github.com/mdaneri/Atlaso/blob/{tag}/docs/"
-                "reference/virtualization-artifacts.md) contains the exact command sequence."
+                f"Signed Atlaso software and appliance-update release built from `{args.commit}`.\n\n"
+                "OVA and Hyper-V images are published separately under immutable "
+                f"`virtualization-{tag}` Releases after platform smoke validation."
             ),
         ]
     )

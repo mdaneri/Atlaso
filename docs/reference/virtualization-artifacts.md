@@ -13,6 +13,19 @@ Atlaso builds and validates one appliance template with VMware Workstation. A re
 canonical OVA for VMware, Proxmox VE, and KVM, plus one Hyper-V ZIP converted from the same OVA payload. The import
 helpers normalize target-specific VM configuration without changing the source OVA.
 
+Virtualization has its own immutable Release namespace. A maintainer's existing Windows workstation creates and smokes
+`virtualization-vX.Y.Z-rc.N`; a protected GitHub-hosted job signs and publishes it. Manual stable promotion runs that
+exact prerelease OVA on Proxmox and KVM before publishing the unchanged OVA and Hyper-V bytes as
+`virtualization-vX.Y.Z`. The software/update `vX.Y.Z` Release is the required source of the embedded wheel and CPython
+3.14 wheelhouse, but never contains virtualization assets.
+
+The maintainer workstation is a trusted release producer. An optional explicitly approved ephemeral Windows runner is
+trusted for the same single release while it is online. Neither receives the signing key. The protected hosted
+finalizer performs the independent checks below as defense in depth and retains exclusive signing and publication
+authority, but it is not a reproducible Photon image builder and does not claim to prove an entire root filesystem safe
+against a compromised producer. A producer compromise is therefore a release-security incident that requires stopping
+publication, rotating affected credentials, and rebuilding from a known-good trusted workstation.
+
 The shared machine contract is UEFI with Secure Boot disabled, four virtual CPUs, 4096 MiB RAM, two NICs, one SCSI
 controller, and four ordered disks:
 
@@ -27,6 +40,38 @@ The canonical VMware OVF declaration emitted by Atlaso's supported OVF Tool is
 evaluate to false. A missing, enabled, malformed, or conflicting declaration blocks export and import. Export validates
 the normalized descriptor's complete machine contract before writing provenance that records `secure_boot: false`.
 
+Before either virtualization index is signed, the protected GitHub-hosted finalizer opens the OVA-validated
+system-content VMDK read-only with libguestfs. It resolves the active CPython 3.14 environment, requires every hashed
+member installed from the Atlaso wheel and complete signed wheelhouse to match, and rejects unexpected active files
+except bounded inert pip metadata. Both image provisioning and release deployment disable bytecode compilation and
+remove retained package bytecode; the protected finalizer rejects every active `.pyc` file rather than trusting
+producer-generated compilation. Every shipped systemd unit that executes the active virtualenv also sets
+`PYTHONDONTWRITEBYTECODE=1`, including the root console and first-boot customization services, so post-deployment
+restarts cannot recreate bytecode before signing. The image retains the exact Photon RPM closure that owns the
+interpreter and
+standard library. The finalizer authenticates every retained RPM against the Photon package keys pinned in the admitted
+Atlaso commit, requires its exact name, epoch, version, release, architecture, and SHA-256 digest to remain present in
+the current official Photon 5.0 release or updates repository metadata, extracts those signed payloads on the hosted
+runner, and requires `/usr/bin/python3.14` plus the complete
+`/usr/lib/python3.14` tree in the guest to match byte for byte. The pinned keys originate from Photon OS's
+`photon-repos` package sources; updating them requires an explicit reviewed source change. It also requires the active
+virtualenv Python link to resolve only to that authenticated CPython 3.14 interpreter and every Atlaso console script to
+match its signed-wheel entry point and canonical pip launcher. The finalizer opens both payload disks and compares every
+Atlaso-provisioned privileged helper, service unit, drop-in,
+console setting, vault profile, complete PowerShell global profile, and boot-branding asset with its exact bytes from the
+admitted software-release commit. The producer replaces that global profile with the canonical Atlaso import instead
+of preserving workstation-controlled commands. Before comparing bytes, the finalizer also requires each privileged
+file and trust key to be a root-owned regular file with its exact declared mode; every ancestor must be a root-owned
+directory without group or other write access.
+It also requires the installed update-trust directory to contain exactly that commit's public PEM set, rejecting both
+altered files and injected trust keys. Producer-authored provenance and smoke evidence cannot substitute for these
+independent payload checks. The
+same boundary uses `qemu-img compare` to require both Hyper-V payload VHDX disks to
+expose the same guest-visible bytes as the admitted OVA VMDKs and both 500 GiB Hyper-V data disks to match an
+independent all-zero sparse reference.
+The protected index signer also requires the exact versioned OVA name and the canonical OVF, manifest, provenance, and
+two payload-VMDK names; suffix-compatible aliases are not publishable assets.
+
 The OVA contains files for the two payload disks. Its two 500 GiB data disks are fileless declarations. Import helpers
 retain fileless disks when the platform creates them, create only missing data disks, and reject reordered or
 conflicting disks.
@@ -39,7 +84,7 @@ release key ID is `atlaso-release-2026-01`; its SHA-256 fingerprint is
 signature, expected version, and every indexed asset before import:
 
 ```bash
-TAG=vX.Y.Z
+TAG=virtualization-vX.Y.Z
 ASSET_ROOT="atlaso-$TAG"
 mkdir -- "$ASSET_ROOT"
 gh release download "$TAG" --repo mdaneri/Atlaso --dir "$ASSET_ROOT"
@@ -48,9 +93,13 @@ curl --fail --location --output "$ASSET_ROOT/atlaso-release-2026-01.pem" \
 printf '%s  %s\n' \
   'b0bb5614342c4f432a01c53fc4c9aae54c1eeffb12806539a92babbcda74b58e' \
   "$ASSET_ROOT/atlaso-release-2026-01.pem" | sha256sum --check --strict
-jq -e --arg version "${TAG#v}" '
-  .schema_version == 1 and .kind == "atlaso-virtualization-artifacts" and
+jq -e --arg version "${TAG#virtualization-v}" --arg tag "$TAG" '
+  .schema_version == 2 and .kind == "atlaso-virtualization-artifacts" and
+  .classification == "stable" and .release_tag == $tag and
+  .source_software_tag == ("v" + $version) and
   .version == $version and .signing_key_id == "atlaso-release-2026-01" and
+  (.source_release_manifest_sha256 | test("^[0-9a-f]{64}$")) and
+  (.application_wheel_sha256 | test("^[0-9a-f]{64}$")) and
   (.source_commit | test("^[0-9a-f]{40}$")) and
   (.assets | type == "array" and length > 0 and
     all(.[]; (.name | test("^[A-Za-z0-9][A-Za-z0-9._-]*$")) and
@@ -252,16 +301,67 @@ and storage owned by that import attempt, correct the host prerequisite, and run
 
 ## Protected release runners
 
-Virtualization release jobs run only for the exact protected-main commit selected by the release workflow. The runner
-fleet must provide the dedicated `atlaso-vmware`, `atlaso-proxmox`, `atlaso-kvm`, and `atlaso-hyperv` labels; do not
-attach those labels to general-purpose or fork-accessible runners. Build credentials are disposable values generated
-inside the protected build job and are scrubbed before export. Define the repository variables named by
-`.github/workflows/release.yml` for VMware vmnets, Proxmox storage and bridges, KVM storage and networks, Hyper-V
-switches, and bounded test destinations.
+The primary Windows producer is a maintainer workstation, not a permanent GitHub runner. From a clean checkout of the
+successful software-release SHA, run:
 
-The VMware build runner requires Workstation, Packer, OVF Tool, and the existing Photon build prerequisites. The
-Proxmox and KVM runners require the same host tools listed in their import sections. The Hyper-V runner requires
-PowerShell 7.4 or newer, Hyper-V, `qemu-img`, and two operator-owned virtual switches. Every smoke identity and storage
+```powershell
+./scripts/windows/vmware/export-ovf.ps1 -Prerelease `
+  -PrereleaseIdentifier rc.1 `
+  -StagingRoot 'D:\Atlaso-Releases' `
+  -ManagementSwitch 'Atlaso Management' `
+  -ServiceSwitch 'Atlaso Services' `
+  -OnePasswordEnvironmentId '<atlaso-environment-id>' `
+  -OnePasswordAccount '<account-name-or-id>' `
+  -OnePasswordPython '<path-to-python-3.13.exe>'
+```
+
+The command verifies and extracts the exact published software bundle, builds the canonical VMware template, derives
+Hyper-V from that OVA, runs both Windows smokes, creates the annotated tag before the draft Release, uploads without
+clobbering, and waits for the exact newly dispatched hosted-finalizer run to succeed before verifying publication.
+Keep `StagingRoot` until stable verification; cleanup is a separate explicit operator action. The three 1Password
+selectors are required so both the fresh image build and exact wheel deployment use the same approved credential
+source; the values are forwarded to the existing isolated SDK bridges and are never uploaded as evidence. A
+conflicting candidate requires a new explicit `rc.N`. Every retry reconstructs and byte-validates the complete cached
+software source against freshly downloaded signed Release assets. A complete retained candidate is independently
+revalidated and reused byte-for-byte; only an absent candidate enters the image-build, OVA-export, and Hyper-V
+conversion path. Pre-verification network downloads are invocation-temporary and never reused after interruption.
+Before signing, the hosted finalizer requires the OVA provenance's software tag, manifest, bundle, application-wheel, and
+Python-ABI fields to exactly match the verified software-source sidecar. A retry after only one signed-index file was
+uploaded reconstructs the deterministic pair, verifies the retained byte without clobbering it, and uploads only the
+missing counterpart.
+
+Stable promotion never rebuilds:
+
+```powershell
+./scripts/windows/vmware/export-ovf.ps1 -Release `
+  -FromPrerelease virtualization-vX.Y.Z-rc.1 `
+  -ProxmoxRunnerLabel atlaso-proxmox-virtualization-vX-Y-Z-rc-1 `
+  -KvmRunnerLabel atlaso-kvm-virtualization-vX-Y-Z-rc-1
+```
+
+Bring the uniquely labelled Proxmox and KVM `--ephemeral` runners online only for that approved promotion, then destroy
+or sanitize them after the job. They receive read-only Actions/contents permissions, no signing secret, and no
+write-capable token. Define the repository variables named by `.github/workflows/virtualization-stable.yml` for storage
+and networks. The workstation waits for the exact promotion run it dispatched, rather than accepting an older stable
+Release with the same version. Stable promotions are serialized repository-wide so two release candidates cannot race
+one immutable stable tag. Signing and Release writes occur only in the protected GitHub-hosted finalizer. If stable
+publication completed but its final live verification did not, an exact retry detects the published stable Release
+during admission and verifies its signed index, source binding, attestations, and byte identity with the selected
+prerelease directly on GitHub-hosted Linux. It does not schedule Proxmox or KVM again, rebuild the signed index, or
+modify the immutable Release.
+If an unpublished stable draft already contains both signed-index assets, the protected finalizer validates their
+signature, release identity, source binding, and complete asset set, then resumes with those exact retained bytes even
+when current `main` would render a different index. A draft containing only one index asset fails closed. After
+confirming that the draft is unpublished and the retained file is the sole incomplete index asset, a maintainer may
+rerun **Promote stable virtualization release** with `recover_incomplete_index` enabled; only that explicit protected
+recovery deletes the incomplete file and reconstructs the pair. Ordinary retries never delete or replace draft assets.
+For the optional ephemeral-Windows workflow, also define `ATLASO_ONEPASSWORD_ENVIRONMENT_ID`,
+`ATLASO_ONEPASSWORD_ACCOUNT`, and `ATLASO_ONEPASSWORD_PYTHON` as repository variables. They are non-secret selectors;
+the disposable runner must still complete its local 1Password authorization and receives no signing key.
+
+The workstation requires PowerShell 7.4 or newer, VMware Workstation, Packer, OVF Tool, Hyper-V, `qemu-img`, and two
+operator-owned virtual switches. The Proxmox and KVM runners require the host tools listed in their import sections.
+Every smoke identity and storage
 namespace is invocation-scoped: VMware generates a disposable per-run password, Proxmox serializes each VMID import,
 passes it to OVF Tool through a runner-only temporary configuration file instead of process arguments, and deletes that
 file immediately after import. Proxmox serializes each VMID import, and cleanup failures fail the active smoke job
@@ -272,6 +372,16 @@ rollback requires a final inventory proving its fixed VMID absent. Hyper-V
 cleanup removes only a VM whose exact ID was captured after successful import; an indeterminate import preserves files
 for diagnosis rather than claiming a later name match. KVM rollback preserves every imported volume unless a successful
 libvirt inventory proves that the exact domain is absent. Every smoke identity and storage namespace must be dedicated to
-CI so cleanup can remain limited to resources created by that invocation. Release
-publication waits for all four platform smoke tests and refuses an asset at or above the repository's existing 2 GiB
-limit rather than producing multipart output.
+the release invocation so cleanup can remain limited to resources created by that invocation. Stable publication waits
+for both Linux platform smokes and refuses an asset at or above the repository's existing 2 GiB limit rather than
+producing multipart output.
+
+As an optional alternative, **Produce virtualization candidate on ephemeral Windows** runs the same producer with
+`-CandidateOnly` on a temporary Windows runner whose exact release-specific label is
+`atlaso-windows-virtualization-vX-Y-Z-rc-N`. The Windows job has read-only repository authority
+and no signing material. A GitHub-hosted job alone creates the annotated tag and draft, then calls the same protected
+hosted prerelease finalizer. Keep that runner offline except for an approved default-branch dispatch and destroy or
+sanitize it after its single `--ephemeral` job. If a retry finds a complete existing draft, hosted admission validates
+its exact candidate asset inventory and routes it directly back to protected finalization; it never schedules a fresh
+ephemeral Windows build whose timestamp-bearing bytes could conflict with the retained draft. An incomplete or
+unexpected draft fails closed for explicit operator recovery.

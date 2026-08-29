@@ -9,6 +9,7 @@ ConditionPathExists=!/var/lib/atlaso/first-boot-https.applied
 [Service]
 Type=oneshot
 EnvironmentFile=/etc/atlaso/atlaso.env
+Environment=PYTHONDONTWRITEBYTECODE=1
 ExecStart=/opt/atlaso/.venv/bin/python /opt/atlaso/bin/atlaso-bootstrap-https
 RemainAfterExit=yes
 

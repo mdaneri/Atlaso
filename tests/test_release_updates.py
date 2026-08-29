@@ -1201,6 +1201,21 @@ def test_release_bundle_publishes_commit_subject_summary_and_release_link():
 def test_release_workflows_use_successful_main_sha_and_promote_without_rebuilding():
     """Verify that release workflows use successful main sha and promote without rebuilding."""
     publication = (ROOT / ".github/workflows/release.yml").read_text(encoding="utf-8")
+    prerelease = (ROOT / ".github/workflows/virtualization-prerelease.yml").read_text(
+        encoding="utf-8"
+    )
+    virtualization = (ROOT / ".github/workflows/virtualization-stable.yml").read_text(
+        encoding="utf-8"
+    )
+    virtualization_reference = (
+        ROOT / "docs/reference/virtualization-artifacts.md"
+    ).read_text(encoding="utf-8")
+    windows_candidate = (
+        ROOT / ".github/workflows/virtualization-windows-candidate.yml"
+    ).read_text(encoding="utf-8")
+    index_builder = (
+        ROOT / "scripts/build_virtualization_artifact_index.py"
+    ).read_text(encoding="utf-8")
     inventory = (ROOT / ".github/workflows/inventory-linux-release.yml").read_text(
         encoding="utf-8"
     )
@@ -1218,6 +1233,7 @@ def test_release_workflows_use_successful_main_sha_and_promote_without_rebuildin
         == 1
     )
     assert "github.event_name == 'workflow_dispatch'" in publication
+    assert "vars.AUTOMATIC_SOFTWARE_RELEASE_ENABLED == 'true'" in publication
     assert "-f head_sha=\"$RELEASE_SHA\"" in publication
     assert "-f status=success" in publication
     assert "has no successful main push CI run" in publication
@@ -1236,11 +1252,11 @@ def test_release_workflows_use_successful_main_sha_and_promote_without_rebuildin
     assert '--expected-version "$VERSION"' in publication_check
     assert '--expected-commit "$RELEASE_SHA"' in publication_check
     assert "<script" not in publication
-    assert publication.count("ref: ${{ needs.prepare.outputs.release_sha }}") == 9
+    assert publication.count("ref: ${{ needs.prepare.outputs.release_sha }}") == 2
     assert "actions/upload-artifact@v7" in publication
-    assert publication.count("actions/download-artifact@v8") == 9
+    assert publication.count("actions/download-artifact@v8") == 1
     for runner_label in ("atlaso-vmware", "atlaso-proxmox", "atlaso-kvm", "atlaso-hyperv"):
-        assert runner_label in publication
+        assert runner_label not in publication
     for job in (
         "vmware_ova_build",
         "vmware_ova_smoke",
@@ -1250,19 +1266,114 @@ def test_release_workflows_use_successful_main_sha_and_promote_without_rebuildin
         "hyperv_smoke",
         "virtualization_release",
     ):
-        assert f"  {job}:" in publication
+        assert f"  {job}:" not in publication
     ci_packer = ci.split("  deployment-packer:", 1)[1].split("  python-tests:", 1)[0]
     assert "Test-AtlasoVirtualizationArtifacts.ps1" in ci_packer
     assert "Test-AtlasoHyperVSecureString.ps1" not in ci_packer
-    signed_virtualization = publication.split("  virtualization_release:", 1)[1].split(
+    assert "build_virtualization_artifact_index.py" not in publication
+    assert "--require-virtualization-assets" not in publication
+    assert "runs-on: [self-hosted, Linux, X64" in virtualization
+    assert "proxmox_smoke" in virtualization
+    assert "kvm_smoke" in virtualization
+    assert "permissions: {}" not in virtualization
+    assert "RELEASE_SIGNING_PRIVATE_KEY" not in virtualization.split("  proxmox_smoke:", 1)[1].split(
+        "  kvm_smoke:", 1
+    )[0]
+    assert "RELEASE_SIGNING_PRIVATE_KEY" not in virtualization.split("  kvm_smoke:", 1)[1].split(
         "  publish:", 1
     )[0]
-    assert "vmware_ova_smoke" in signed_virtualization
-    assert "proxmox_ova_smoke" in signed_virtualization
-    assert "kvm_ova_smoke" in signed_virtualization
-    assert "hyperv_smoke" in signed_virtualization
-    assert "build_virtualization_artifact_index.py" in signed_virtualization
-    assert "--require-virtualization-assets" in publication
+    assert "gh release edit \"$STABLE_TAG\" --draft=false" in virtualization
+    assert "run-name: Promote ${{ inputs.prerelease_tag }}" in virtualization
+    assert "group: atlaso-virtualization-stable" in virtualization
+    assert "group: virtualization-stable-${{ inputs.prerelease_tag }}" not in virtualization
+    assert 'test "$(jq -r .isPrerelease <<<"$STATE")" = false' in virtualization
+    assert "already_published: ${{ steps.identity.outputs.already_published }}" in virtualization
+    assert "if: needs.admit.outputs.already_published == 'true'" in virtualization
+    assert "name: Live-verify an existing stable release" in virtualization
+    assert "cmp --silent \"stable/atlaso-v${VERSION}.ova\"" in virtualization
+    assert "needs.admit.outputs.already_published != 'true'" in virtualization
+    assert "recover_incomplete_index:" in virtualization
+    assert "A complete retained pair is already the protected signer's durable" in virtualization
+    assert 'if test "$INDEX_COUNT" -eq 2' in virtualization
+    assert "python scripts/verify_virtualization_artifact_index.py" in virtualization
+    assert 'gh release delete-asset "$STABLE_TAG" "$INCOMPLETE_NAME" --yes' in virtualization
+    assert "rerun with recover_incomplete_index=true" in virtualization
+    assert "cpio libguestfs-tools qemu-utils rpm rpm2cpio" in virtualization
+    admit_job = virtualization.split("  admit:\n", 1)[1].split("  recover_published:\n", 1)[0]
+    assert "attestations: read" in admit_job
+    assert 'SOFTWARE_RELEASE="$(gh release view "v$VERSION"' in admit_job
+    assert 'test "$(jq -r .isDraft <<<"$SOFTWARE_RELEASE")" = false' in admit_job
+    assert 'test "$(jq -r .isPrerelease <<<"$SOFTWARE_RELEASE")" = false' in admit_job
+    assert "cmp --silent" in virtualization
+    assert "gh-pages" not in virtualization
+    assert "The maintainer workstation is a trusted release producer" in virtualization_reference
+    assert "does not claim to prove an entire root filesystem safe" in virtualization_reference
+    assert "environment: appliance-release" in prerelease
+    assert "run-name: Finalize ${{ inputs.prerelease_tag }}" in prerelease
+    assert "--classification prerelease" in prerelease
+    assert "gh release edit \"$RELEASE_TAG\" --draft=false --prerelease --verify-tag" in prerelease
+    assert "already_published=true" in prerelease
+    assert "steps.identity.outputs.already_published != 'true'" in prerelease
+    assert 'test "$INDEX_COUNT" -eq 0 -o "$INDEX_COUNT" -eq 2' not in prerelease
+    assert 'if test "$ALREADY_PUBLISHED" = true; then\n            test "$INDEX_COUNT" -eq 2' in prerelease
+    assert "An interrupted draft upload may retain either deterministic index file" in prerelease
+    assert 'SOFTWARE_RELEASE="$(gh release view "v$VERSION"' in prerelease
+    assert 'test "$(jq -r .isDraft <<<"$SOFTWARE_RELEASE")" = false' in prerelease
+    assert 'test "$(jq -r .isPrerelease <<<"$SOFTWARE_RELEASE")" = false' in prerelease
+    assert (
+        'gh release view "$RELEASE_TAG" --repo "${{ github.repository }}"'
+        in prerelease
+    )
+    assert (
+        'gh release view "$PRERELEASE_TAG" --repo "${{ github.repository }}"'
+        in virtualization
+    )
+    assert "verify_vmware_release_assets(" in index_builder
+    assert "ref: ${{ inputs.release_sha }}" not in prerelease
+    assert "ref: refs/heads/main" in prerelease
+    assert "gh-pages" not in prerelease
+    windows_job = windows_candidate.split("  produce:\n", 1)[1].split(
+        "  stage_draft:\n", 1
+    )[0]
+    assert "runs-on: [self-hosted, Windows, X64" in windows_job
+    assert "contents: read" in windows_job
+    assert "contents: write" not in windows_job
+    assert "RELEASE_SIGNING_PRIVATE_KEY" not in windows_job
+    assert "-CandidateOnly" in windows_job
+    assert "ref: ${{ inputs.release_sha }}" not in windows_candidate
+    assert "ref: ${{ needs.admit.outputs.release_sha }}" in windows_job
+    assert windows_candidate.count("ref: refs/heads/main") == 2
+    assert 'git checkout --detach "$RELEASE_SHA"' in windows_candidate
+    assert "comm -23" in windows_candidate
+    assert "ATLASO_ONEPASSWORD_ENVIRONMENT_ID" in windows_job
+    assert "ATLASO_ONEPASSWORD_ACCOUNT" in windows_job
+    assert "ATLASO_ONEPASSWORD_PYTHON" in windows_job
+    assert "uses: ./.github/workflows/virtualization-prerelease.yml" in windows_candidate
+    stage_draft = windows_candidate.split("  stage_draft:\n", 1)[1].split(
+        "  finalize:\n", 1
+    )[0]
+    assert "contents: write" in stage_draft
+    assert "persist-credentials: true" in stage_draft
+    assert "already_published: ${{ steps.target.outputs.already_published }}" in windows_candidate
+    assert "existing_draft_ready: ${{ steps.target.outputs.existing_draft_ready }}" in windows_candidate
+    assert "gh api graphql" in windows_candidate
+    assert "releaseAssets(first:100)" in windows_candidate
+    assert "if test \"$STATE\" != null" in windows_candidate
+    assert "2>/dev/null" not in windows_candidate.split("  produce:\n", 1)[0]
+    assert 'test "$WINDOWS_RUNNER_LABEL" = "$EXPECTED_WINDOWS_LABEL"' in windows_candidate
+    assert windows_candidate.count("needs.admit.outputs.existing_draft_ready != 'true'") == 2
+    assert "needs.admit.outputs.already_published == 'true'" in windows_candidate
+    assert "needs.admit.outputs.existing_draft_ready == 'true'" in windows_candidate
+    assert "existing virtualization draft has unexpected assets" in windows_candidate
+    assert 'SOFTWARE_RELEASE="$(gh release view "v$VERSION"' in windows_candidate
+    assert 'test "$(jq -r .isDraft <<<"$SOFTWARE_RELEASE")" = false' in windows_candidate
+    assert 'test "$(jq -r .isPrerelease <<<"$SOFTWARE_RELEASE")" = false' in windows_candidate
+    assert "select(.isDraft == false and .isPrerelease == false)" not in windows_candidate
+    assert "needs.stage_draft.result == 'success'" in windows_candidate
+    assert "ref: ${{ steps.identity.outputs.release_sha }}" not in virtualization
+    assert virtualization.count("ref: refs/heads/main") == 5
+    assert 'test "$PROXMOX_RUNNER_LABEL" = "atlaso-proxmox-$LABEL_SUFFIX"' in virtualization
+    assert 'test "$KVM_RUNNER_LABEL" = "atlaso-kvm-$LABEL_SUFFIX"' in virtualization
     assert "python-version: '3.14'" in publication
     assert "python-version: '3.14'" in promotion
     assert ci.count("python-version: '3.14'") == 3

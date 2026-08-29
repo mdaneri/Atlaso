@@ -142,6 +142,44 @@ if (($layout.Role -join ',') -ne 'photon_os,atlaso_system' -or
 }
 $provenancePath = Write-TestProvenance -VmxPath $vmxPath -Layout $layout
 $null = Assert-AtlasoVmwarePayloadProvenance -VmxPath $vmxPath -ProvenancePath $provenancePath
+$null = Assert-AtlasoVmwarePayloadProvenance `
+    -VmxPath $vmxPath `
+    -ProvenancePath $provenancePath `
+    -ExpectedSourceCommit ('a' * 40) `
+    -RequireCleanSource
+try {
+    $null = Assert-AtlasoVmwarePayloadProvenance `
+        -VmxPath $vmxPath `
+        -ProvenancePath $provenancePath `
+        -ExpectedSourceCommit ('b' * 40)
+    throw 'VMware provenance for a different release commit was accepted.'
+}
+catch {
+    if ($_.Exception.Message -notlike '*does not identify expected source commit*') {
+        throw
+    }
+}
+$dirtyProvenance = Get-Content -LiteralPath $provenancePath -Raw | ConvertFrom-Json
+$dirtyProvenance.tracked_source_dirty = $true
+[System.IO.File]::WriteAllText(
+    $provenancePath,
+    (($dirtyProvenance | ConvertTo-Json -Depth 6) + "`n"),
+    [System.Text.UTF8Encoding]::new($false)
+)
+try {
+    $null = Assert-AtlasoVmwarePayloadProvenance `
+        -VmxPath $vmxPath `
+        -ProvenancePath $provenancePath `
+        -ExpectedSourceCommit ('a' * 40) `
+        -RequireCleanSource
+    throw 'Dirty VMware build provenance was accepted for release.'
+}
+catch {
+    if ($_.Exception.Message -notlike '*records a dirty tracked source tree*') {
+        throw
+    }
+}
+$provenancePath = Write-TestProvenance -VmxPath $vmxPath -Layout $layout
 
 Write-TestVmx -Path $vmxPath -UnitZero 'atlaso-system.vmdk' -UnitOne 'photon.vmdk'
 try {
@@ -193,5 +231,30 @@ catch {
         throw
     }
 }
+
+$provenancePath = Write-TestProvenance -VmxPath $vmxPath -Layout $layout
+$deploymentSourcePath = Join-Path $OutputDirectory 'virtualization-source.json'
+[System.IO.File]::WriteAllText(
+    $deploymentSourcePath,
+    "{`"schema_version`":1}`n",
+    [System.Text.UTF8Encoding]::new($false)
+)
+[System.IO.File]::AppendAllText(
+    $systemDisk,
+    'deployed-application-wheel',
+    [System.Text.UTF8Encoding]::new($false)
+)
+$refreshed = Update-AtlasoVmwarePayloadProvenance `
+    -VmxPath $vmxPath `
+    -DeploymentSourcePath $deploymentSourcePath `
+    -ProvenancePath $provenancePath
+if ($refreshed.payload_state -cne 'software-deployed' -or
+    $refreshed.deployment_source_name -cne 'virtualization-source.json' -or
+    $refreshed.deployment_source_sha256 -cne (
+        Get-FileHash -LiteralPath $deploymentSourcePath -Algorithm SHA256
+    ).Hash.ToLowerInvariant()) {
+    throw 'Refreshed VMware payload provenance did not bind the deployed source metadata.'
+}
+$null = Assert-AtlasoVmwarePayloadProvenance -VmxPath $vmxPath -ProvenancePath $provenancePath
 
 Write-Output 'Atlaso VMware payload layout and provenance tests passed.'

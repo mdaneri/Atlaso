@@ -8,6 +8,7 @@ Conflicts=getty@tty1.service
 [Service]
 Type=simple
 EnvironmentFile=/etc/atlaso/atlaso.env
+Environment=PYTHONDONTWRITEBYTECODE=1
 ExecStart=/opt/atlaso/.venv/bin/atlaso-console
 Restart=always
 RestartSec=2

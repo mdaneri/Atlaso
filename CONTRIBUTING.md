@@ -303,6 +303,20 @@ Automation does not waive the issue, label, documentation, validation, version, 
 requirements in this guide. Automated contributors must also follow the focused local validation and pull-request
 follow-through workflow above.
 
+## Release lifecycle contributions
+
+`Publish appliance release` is the automatic software/update publisher. A successful exact-`main` CI run may publish
+the signed `vX.Y.Z` appliance-update bundle only when the repository variable
+`AUTOMATIC_SOFTWARE_RELEASE_ENABLED` is `true`; manual exact-SHA recovery remains available while the automatic gate is
+disabled. This workflow must remain GitHub-hosted and must not build or publish virtualization images.
+
+OVA and Hyper-V images use the separate manual lifecycle documented in the
+[virtualization artifact guide](docs/reference/virtualization-artifacts.md). A maintainer workstation creates and
+smokes `virtualization-vX.Y.Z-rc.N`; protected hosted jobs sign it, and the exact bytes may become
+`virtualization-vX.Y.Z` only after isolated Proxmox and KVM smoke. Never attach virtualization assets to `vX.Y.Z`,
+advance an appliance-update channel from a virtualization workflow, or give signing material or write-capable tokens
+to a self-hosted runner.
+
 ## Security and conduct
 
 Read the [Security Policy](SECURITY.md), including Atlaso's operational-identifier data classification, before handling

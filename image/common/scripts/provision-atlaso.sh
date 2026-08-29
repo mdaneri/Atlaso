@@ -41,6 +41,7 @@ MACHINE_IDENTITY_INITIALIZER_SOURCE="$ATLASO_SRC/scripts/appliance/atlaso-initia
 IMAGE_BUILD_FINALIZER_SOURCE="$ATLASO_SRC/image/common/scripts/finalize-image-build.sh"
 GUEST_AGENT_UNIT_SOURCE="$ATLASO_SRC/image/common/systemd/atlaso-guest-agent-select.service"
 GUEST_AGENT_STAGING="$ATLASO_STATE/first-boot-packages"
+PYTHON_RUNTIME_STAGING="$ATLASO_STATE/python-runtime-packages"
 
 log_step() {
   printf '\n==> Atlaso appliance: %s\n' "$1"
@@ -346,6 +347,28 @@ pwsh -NoLogo -NoProfile -NonInteractive -Command \
 log_step "verifying Photon OS updates after package install"
 run_tdnf "Photon OS update verification" update
 
+# Preserve the exact signed Photon packages that own the appliance interpreter.
+# The protected hosted finalizer authenticates these RPMs against Atlaso's
+# admitted Photon keys and compares their payload to the read-only guest disk;
+# a Windows producer therefore cannot substitute Python or its standard library.
+log_step "staging signed Photon Python runtime packages for protected verification"
+rm -rf "$PYTHON_RUNTIME_STAGING"
+install -d -o root -g root -m 0700 "$PYTHON_RUNTIME_STAGING"
+run_tdnf "Photon Python runtime signed package closure" \
+  install --downloadonly --downloaddir "$PYTHON_RUNTIME_STAGING" --alldeps \
+  python3 python3-pip python3-virtualenv python3-curses
+if [ "$(find "$PYTHON_RUNTIME_STAGING" -maxdepth 1 -type f -name '*.rpm' | wc -l)" -eq 0 ]; then
+  echo "Photon Python runtime package closure is empty." >&2
+  exit 2
+fi
+find "$PYTHON_RUNTIME_STAGING" -type f -name '*.rpm' -exec chown root:root {} + -exec chmod 0600 {} +
+(
+  cd "$PYTHON_RUNTIME_STAGING"
+  find . -maxdepth 1 -type f -name '*.rpm' -printf '%f\n' | LC_ALL=C sort | xargs sha256sum >SHA256SUMS
+)
+chown root:root "$PYTHON_RUNTIME_STAGING/SHA256SUMS"
+chmod 0600 "$PYTHON_RUNTIME_STAGING/SHA256SUMS"
+
 log_step "leaving only Photon NTPsec available for desired-state activation"
 systemctl disable --now ntpd.service 2>/dev/null || true
 systemctl disable --now systemd-timesyncd.service 2>/dev/null || true
@@ -517,22 +540,32 @@ ln -sfn "releases/bootstrap-$ATLASO_RELEASE_VERSION" "$ATLASO_HOME/current"
 ln -sfn "current/.venv" "$ATLASO_HOME/.venv"
 write_pip_config "$ATLASO_HOME/.venv/pip.conf"
 "$ATLASO_HOME/.venv/bin/python" -m pip install \
+  --no-compile \
   --require-hashes \
   --requirement "$ATLASO_HOME/requirements-appliance.lock"
-"$ATLASO_HOME/.venv/bin/python" -m pip install --no-deps "$ATLASO_HOME"
+"$ATLASO_HOME/.venv/bin/python" -m pip install --no-compile --no-deps "$ATLASO_HOME"
+ATLASO_SITE_PACKAGES="$("$ATLASO_HOME/.venv/bin/python" -c 'import sysconfig; print(sysconfig.get_path("purelib"))')"
+if [ "$ATLASO_SITE_PACKAGES" != "$ATLASO_RELEASE_DIR/.venv/lib/python3.14/site-packages" ]; then
+  echo "Atlaso site-packages resolved outside the expected release environment." >&2
+  exit 2
+fi
+find "$ATLASO_SITE_PACKAGES" -type f -name '*.pyc' -delete
+find "$ATLASO_SITE_PACKAGES" -depth -type d -name __pycache__ -empty -delete
 install -d -o root -g root -m 0755 /usr/local/bin
 ln -sfn "$ATLASO_HOME/.venv/bin/atlaso-vault" /usr/local/bin/atlaso-vault
 ln -sfn "$ATLASO_HOME/.venv/bin/atlaso-vault" /usr/bin/atlaso-vault
 POWERSHELL_HOME="$(dirname "$(readlink -f "$(command -v pwsh)")")"
+if [ "$POWERSHELL_HOME" != "/opt/microsoft/powershell/7" ]; then
+  echo "PowerShell resolved to an unsupported global profile directory: $POWERSHELL_HOME" >&2
+  exit 2
+fi
 install -o root -g root -m 0644 \
   "$ATLASO_HOME/image/common/powershell/atlaso-vault-profile.ps1" \
   "$ATLASO_HOME/bin/atlaso-vault-profile.ps1"
-touch "$POWERSHELL_HOME/profile.ps1"
-if ! grep -qxF ". '/opt/atlaso/bin/atlaso-vault-profile.ps1'" "$POWERSHELL_HOME/profile.ps1"; then
-  printf "\n. '/opt/atlaso/bin/atlaso-vault-profile.ps1'\n" >>"$POWERSHELL_HOME/profile.ps1"
-fi
-chown root:root "$POWERSHELL_HOME/profile.ps1"
-chmod 0644 "$POWERSHELL_HOME/profile.ps1"
+# The complete global profile is Atlaso-owned so producer state cannot inject commands.
+install -o root -g root -m 0644 \
+  "$ATLASO_HOME/image/common/powershell/profile.ps1" \
+  "$POWERSHELL_HOME/profile.ps1"
 "$ATLASO_HOME/.venv/bin/python" "$ATLASO_HOME/scripts/check_photon_compatibility.py"
 printf 'vcf_sdk=%s\n' "$("$ATLASO_HOME/.venv/bin/python" -c 'from importlib.metadata import version; print(version("vcf-sdk"))')" >>/etc/atlaso/build-info
 
