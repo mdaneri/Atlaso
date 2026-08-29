@@ -543,8 +543,10 @@ injects an explicit normal-test marker independently of optional SSH key provisi
 guest uses that marker to publish its actual value through VMware Tools. The check binds the exact running VMX, its
 `ethernet0` MAC, the injected and guest-published hostnames, VMware Tools' IPv4 result, and the Windows neighbor entry
 for that host-facing address. It also requires an address answer from every running Workstation VM; incomplete guest
-evidence retries rather than being treated as unique. If another VM reports the same address, the hostname differs, or
-the neighbor entry maps to another running VM's MAC, the wrapper stops before printing SSH or HTTPS endpoints and names
+evidence retries rather than being treated as unique. VMware Tools may serialize the hostname either directly or with
+one matching pair of surrounding double quotes; readiness removes only that provider representation and rejects
+unbalanced, nested, or embedded quote forms as ambiguous. If another VM reports the same address, the hostname differs,
+or the neighbor entry maps to another running VM's MAC, the wrapper stops before printing SSH or HTTPS endpoints and names
 the relevant conflicting identity evidence. Immediately before returning readiness, it re-lists the running inventory
 and rechecks the target address; a concurrent VM start, stop, or target-address change restarts the proof.
 
