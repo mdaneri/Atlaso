@@ -161,7 +161,9 @@ missing, empty, unsafe, or inconsistent. The boot unit always invokes the idempo
 existence as a systemd condition. A valid completion record may accompany either the applied HTTPS front door or a
 later operator-selected HTTP-only front door; both require a complete default-listener and loopback-proxy contract.
 Atlaso installs the nginx include and management site with atomic replacement, syncs each file and parent directory,
-validates the complete nginx configuration, and only then atomically publishes and syncs the completion record. An
+requires an active main-config include, validates the complete nginx configuration, and only then atomically publishes
+and syncs the completion record. Once those durable management artifacts are complete, an unrelated global nginx
+validation failure stops recovery without regenerating CA state or replacing an operator-selected HTTP-only listener. An
 interruption therefore leaves recovery eligible on the next boot rather than allowing an empty marker to suppress the
 bootstrap. The helper validates nginx before reload, enables nginx and Atlaso,
 starts an inactive control plane, and requires five consecutive local readiness samples: HTTP 200 from uvicorn

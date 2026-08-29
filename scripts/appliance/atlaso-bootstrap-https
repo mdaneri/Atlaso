@@ -138,20 +138,44 @@ def management_nginx_contract_is_complete(config: str) -> bool:
     ).is_file()
 
 
-def first_boot_https_contract_is_complete() -> bool:
-    """Return whether durable marker and applied nginx state agree."""
+def nginx_main_config_activates_atlaso(config: str) -> bool:
+    """Return whether nginx actively includes the Atlaso site bridge.
+
+    Args:
+        config: Applied nginx main configuration text.
+
+    Returns:
+        Whether an uncommented exact or wildcard include activates ``atlaso.conf``.
+    """
+    return bool(
+        re.search(
+            r"(?m)^\s*include\s+/etc/nginx/conf\.d/(?:atlaso\.conf|\*\.conf);\s*$",
+            config,
+        )
+    )
+
+
+def first_boot_https_artifacts_are_complete() -> bool:
+    """Return whether durable bootstrap evidence matches the management site."""
     marker = read_regular_text(MARKER_PATH, maximum_size=256)
     include = read_regular_text(NGINX_CONF_INCLUDE_PATH, maximum_size=4096)
     management = read_regular_text(NGINX_MANAGEMENT_PATH, maximum_size=262144)
-    if (
-        marker != COMPLETION_MARKER_TEXT
-        or include != NGINX_INCLUDE_TEXT
-        or management is None
-        or not management_nginx_contract_is_complete(management)
-    ):
-        return False
-    nginx = shutil.which("nginx")
-    return nginx is not None and run([nginx, "-t"]).returncode == 0
+    return (
+        marker == COMPLETION_MARKER_TEXT
+        and include == NGINX_INCLUDE_TEXT
+        and management is not None
+        and management_nginx_contract_is_complete(management)
+    )
+
+
+def first_boot_https_contract_is_complete() -> bool:
+    """Return whether durable evidence is active from the nginx main config."""
+    main_config = read_regular_text(NGINX_MAIN_CONFIG_PATH, maximum_size=1048576)
+    return (
+        first_boot_https_artifacts_are_complete()
+        and main_config is not None
+        and nginx_main_config_activates_atlaso(main_config)
+    )
 
 
 def import_staged_development_root_ca(
@@ -302,7 +326,7 @@ def ensure_nginx_main_config_includes_atlaso() -> None:
     if not NGINX_MAIN_CONFIG_PATH.exists():
         return
     text = NGINX_MAIN_CONFIG_PATH.read_text(encoding="utf-8")
-    if "/etc/nginx/conf.d/atlaso.conf" in text or "include /etc/nginx/conf.d/*.conf;" in text:
+    if nginx_main_config_activates_atlaso(text):
         return
     start = text.find("http")
     brace = text.find("{", start)
@@ -433,7 +457,23 @@ def main() -> int:
     """Run the command-line entry point.
 
     """
-    if first_boot_https_contract_is_complete():
+    if first_boot_https_artifacts_are_complete():
+        if not first_boot_https_contract_is_complete():
+            ensure_nginx_main_config_includes_atlaso()
+        if not first_boot_https_contract_is_complete():
+            print("nginx main configuration does not activate the Atlaso management site")
+            return 2
+        nginx = shutil.which("nginx")
+        if nginx is None:
+            print("nginx is unavailable; completed first-boot HTTPS state cannot be validated")
+            return 2
+        validation = run([nginx, "-t"])
+        if validation.stdout:
+            print(validation.stdout, end="")
+        if validation.stderr:
+            print(validation.stderr, end="")
+        if validation.returncode != 0:
+            return validation.returncode
         try:
             published = publish_development_root_ca_import_proof()
         except (OSError, UnicodeError, ValueError) as exc:

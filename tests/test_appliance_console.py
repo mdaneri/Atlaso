@@ -1872,6 +1872,11 @@ def test_console_management_plane_recovery_retries_bootstrap_and_verifies_readin
     """
     helper = load_helper_module()
     marker = tmp_path / "first-boot-https.applied"
+    main_config = tmp_path / "nginx.conf"
+    main_config.write_text(
+        "http {\n  include /etc/nginx/conf.d/atlaso.conf;\n}\n",
+        encoding="utf-8",
+    )
     include = tmp_path / "atlaso.conf"
     management_config = tmp_path / "management.conf"
     certificate = tmp_path / "certificate.pem"
@@ -1880,6 +1885,7 @@ def test_console_management_plane_recovery_retries_bootstrap_and_verifies_readin
     marker.write_text("", encoding="utf-8")
     management_config.write_text("", encoding="utf-8")
     monkeypatch.setattr(helper, "FIRST_BOOT_HTTPS_MARKER_PATH", marker)
+    monkeypatch.setattr(helper, "NGINX_MAIN_CONFIG_PATH", main_config)
     monkeypatch.setattr(helper, "NGINX_CONF_INCLUDE_PATH", include)
     monkeypatch.setattr(helper, "NGINX_MANAGEMENT_SITE_PATH", management_config)
     monkeypatch.setattr(
@@ -1944,6 +1950,11 @@ def test_console_management_plane_recovery_verifies_http_only_mode(monkeypatch, 
     """
     helper = load_helper_module()
     marker = tmp_path / "first-boot-https.applied"
+    main_config = tmp_path / "nginx.conf"
+    main_config.write_text(
+        "http {\n  include /etc/nginx/conf.d/*.conf;\n}\n",
+        encoding="utf-8",
+    )
     marker.write_text(helper.FIRST_BOOT_HTTPS_MARKER_TEXT, encoding="utf-8")
     include = tmp_path / "atlaso.conf"
     include.write_text(helper.FIRST_BOOT_HTTPS_INCLUDE_TEXT, encoding="utf-8")
@@ -1953,6 +1964,7 @@ def test_console_management_plane_recovery_verifies_http_only_mode(monkeypatch, 
         encoding="utf-8",
     )
     monkeypatch.setattr(helper, "FIRST_BOOT_HTTPS_MARKER_PATH", marker)
+    monkeypatch.setattr(helper, "NGINX_MAIN_CONFIG_PATH", main_config)
     monkeypatch.setattr(helper, "NGINX_CONF_INCLUDE_PATH", include)
     monkeypatch.setattr(helper, "NGINX_MANAGEMENT_SITE_PATH", management_config)
     monkeypatch.setattr(
@@ -1995,6 +2007,11 @@ def test_console_management_plane_recovery_stops_after_nginx_validation_failure(
     """
     helper = load_helper_module()
     marker = tmp_path / "first-boot-https.applied"
+    main_config = tmp_path / "nginx.conf"
+    main_config.write_text(
+        "http {\n  include /etc/nginx/conf.d/atlaso.conf;\n}\n",
+        encoding="utf-8",
+    )
     marker.write_text(helper.FIRST_BOOT_HTTPS_MARKER_TEXT, encoding="utf-8")
     include = tmp_path / "atlaso.conf"
     include.write_text(helper.FIRST_BOOT_HTTPS_INCLUDE_TEXT, encoding="utf-8")
@@ -2004,6 +2021,7 @@ def test_console_management_plane_recovery_stops_after_nginx_validation_failure(
         encoding="utf-8",
     )
     monkeypatch.setattr(helper, "FIRST_BOOT_HTTPS_MARKER_PATH", marker)
+    monkeypatch.setattr(helper, "NGINX_MAIN_CONFIG_PATH", main_config)
     monkeypatch.setattr(helper, "NGINX_CONF_INCLUDE_PATH", include)
     monkeypatch.setattr(helper, "NGINX_MANAGEMENT_SITE_PATH", management_config)
     monkeypatch.setattr(helper.shutil, "which", lambda name: f"/usr/bin/{name}")
@@ -2038,6 +2056,11 @@ def test_console_first_boot_https_contract_rejects_commented_include(monkeypatch
     """
     helper = load_helper_module()
     marker = tmp_path / "first-boot-https.applied"
+    main_config = tmp_path / "nginx.conf"
+    main_config.write_text(
+        "http {\n  # include /etc/nginx/conf.d/atlaso.conf;\n}\n",
+        encoding="utf-8",
+    )
     include = tmp_path / "atlaso.conf"
     management_config = tmp_path / "management.conf"
     marker.write_text(helper.FIRST_BOOT_HTTPS_MARKER_TEXT, encoding="utf-8")
@@ -2050,6 +2073,7 @@ def test_console_first_boot_https_contract_rejects_commented_include(monkeypatch
         encoding="utf-8",
     )
     monkeypatch.setattr(helper, "FIRST_BOOT_HTTPS_MARKER_PATH", marker)
+    monkeypatch.setattr(helper, "NGINX_MAIN_CONFIG_PATH", main_config)
     monkeypatch.setattr(helper, "NGINX_CONF_INCLUDE_PATH", include)
     monkeypatch.setattr(helper, "NGINX_MANAGEMENT_SITE_PATH", management_config)
 

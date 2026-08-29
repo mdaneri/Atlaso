@@ -17321,31 +17321,54 @@ def _console_management_config_contract_is_complete(config: str) -> bool:
     ).is_file()
 
 
+def _console_nginx_main_config_activates_atlaso(config: str) -> bool:
+    """Return whether nginx actively includes the Atlaso site bridge.
+
+    Args:
+        config: Applied nginx main configuration text.
+
+    Returns:
+        Whether an uncommented exact or wildcard include activates ``atlaso.conf``.
+    """
+    return bool(
+        re.search(
+            r"(?m)^\s*include\s+/etc/nginx/conf\.d/(?:atlaso\.conf|\*\.conf);\s*$",
+            config,
+        )
+    )
+
+
 def _console_first_boot_https_contract_is_complete() -> bool:
     """Return whether durable bootstrap evidence matches applied nginx state."""
     try:
         marker_stat = FIRST_BOOT_HTTPS_MARKER_PATH.lstat()
+        main_config_stat = NGINX_MAIN_CONFIG_PATH.lstat()
         include_stat = NGINX_CONF_INCLUDE_PATH.lstat()
         management_stat = NGINX_MANAGEMENT_SITE_PATH.lstat()
         if (
             FIRST_BOOT_HTTPS_MARKER_PATH.is_symlink()
+            or NGINX_MAIN_CONFIG_PATH.is_symlink()
             or NGINX_CONF_INCLUDE_PATH.is_symlink()
             or NGINX_MANAGEMENT_SITE_PATH.is_symlink()
             or not FIRST_BOOT_HTTPS_MARKER_PATH.is_file()
+            or not NGINX_MAIN_CONFIG_PATH.is_file()
             or not NGINX_CONF_INCLUDE_PATH.is_file()
             or not NGINX_MANAGEMENT_SITE_PATH.is_file()
             or not 0 < marker_stat.st_size <= 256
+            or not 0 < main_config_stat.st_size <= 1048576
             or not 0 < include_stat.st_size <= 4096
             or not 0 < management_stat.st_size <= 262144
         ):
             return False
         marker = FIRST_BOOT_HTTPS_MARKER_PATH.read_text(encoding="utf-8")
+        main_config = NGINX_MAIN_CONFIG_PATH.read_text(encoding="utf-8")
         include = NGINX_CONF_INCLUDE_PATH.read_text(encoding="utf-8")
         management = NGINX_MANAGEMENT_SITE_PATH.read_text(encoding="utf-8")
     except (OSError, UnicodeError):
         return False
     return (
         marker == FIRST_BOOT_HTTPS_MARKER_TEXT
+        and _console_nginx_main_config_activates_atlaso(main_config)
         and include == FIRST_BOOT_HTTPS_INCLUDE_TEXT
         and _console_management_config_contract_is_complete(management)
     )

@@ -1100,11 +1100,13 @@ def test_photon_https_bootstrap_rejects_incomplete_durable_contract(tmp_path, mo
     bootstrap = importlib.util.module_from_spec(spec)
     loader.exec_module(bootstrap)
     marker = tmp_path / "first-boot-https.applied"
+    main_config = tmp_path / "nginx.conf"
     include = tmp_path / "atlaso.conf"
     management = tmp_path / "management.conf"
     certificate = tmp_path / "certificate.pem"
     key = tmp_path / "private-key.pem"
     monkeypatch.setattr(bootstrap, "MARKER_PATH", marker)
+    monkeypatch.setattr(bootstrap, "NGINX_MAIN_CONFIG_PATH", main_config)
     monkeypatch.setattr(bootstrap, "NGINX_CONF_INCLUDE_PATH", include)
     monkeypatch.setattr(bootstrap, "NGINX_MANAGEMENT_PATH", management)
     monkeypatch.setattr(bootstrap.shutil, "which", lambda name: f"/usr/bin/{name}")
@@ -1120,6 +1122,10 @@ def test_photon_https_bootstrap_rejects_incomplete_durable_contract(tmp_path, mo
 
     certificate.write_text("certificate", encoding="utf-8")
     key.write_text("key", encoding="utf-8")
+    main_config.write_text(
+        "http {\n  include /etc/nginx/conf.d/atlaso.conf;\n}\n",
+        encoding="utf-8",
+    )
     bootstrap.write_text_atomic(include, bootstrap.NGINX_INCLUDE_TEXT, mode=0o644)
     bootstrap.write_text_atomic(
         management,
@@ -1150,6 +1156,14 @@ def test_photon_https_bootstrap_rejects_incomplete_durable_contract(tmp_path, mo
         "# include /etc/atlaso/nginx/sites.d/*.conf;\n",
         encoding="utf-8",
     )
+    assert bootstrap.first_boot_https_contract_is_complete() is False
+
+    include.write_text(bootstrap.NGINX_INCLUDE_TEXT, encoding="utf-8")
+    main_config.write_text(
+        "http {\n  # include /etc/nginx/conf.d/atlaso.conf;\n}\n",
+        encoding="utf-8",
+    )
+    assert bootstrap.first_boot_https_artifacts_are_complete() is True
     assert bootstrap.first_boot_https_contract_is_complete() is False
 
 
@@ -1233,6 +1247,66 @@ def test_photon_https_bootstrap_syncs_file_and_parent_before_success(tmp_path, m
 
     assert destination.read_text(encoding="utf-8") == "complete\n"
     assert events == ["fsync-file", "replace", "fsync-parent", "close-parent"]
+
+
+def test_photon_https_bootstrap_does_not_regenerate_completed_state_on_global_nginx_failure(
+    tmp_path,
+    monkeypatch,
+):
+    """Fail validation without re-entering destructive first-boot initialization.
+
+    Args:
+        tmp_path: Isolated destination directory.
+        monkeypatch: Pytest fixture used to replace bootstrap paths and commands.
+    """
+    import importlib.machinery
+    import importlib.util
+    from types import SimpleNamespace
+
+    script_path = Path("scripts/appliance/atlaso-bootstrap-https")
+    loader = importlib.machinery.SourceFileLoader(
+        "atlaso_bootstrap_https_global_nginx_failure_test",
+        str(script_path),
+    )
+    spec = importlib.util.spec_from_loader(loader.name, loader)
+    bootstrap = importlib.util.module_from_spec(spec)
+    loader.exec_module(bootstrap)
+    marker = tmp_path / "first-boot-https.applied"
+    main_config = tmp_path / "nginx.conf"
+    include = tmp_path / "atlaso.conf"
+    management = tmp_path / "management.conf"
+    marker.write_text(bootstrap.COMPLETION_MARKER_TEXT, encoding="utf-8")
+    main_config.write_text(
+        "http {\n  include /etc/nginx/conf.d/atlaso.conf;\n}\n",
+        encoding="utf-8",
+    )
+    include.write_text(bootstrap.NGINX_INCLUDE_TEXT, encoding="utf-8")
+    management.write_text(
+        "listen 80 default_server;\nproxy_pass http://127.0.0.1:8000;\n",
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(bootstrap, "MARKER_PATH", marker)
+    monkeypatch.setattr(bootstrap, "NGINX_MAIN_CONFIG_PATH", main_config)
+    monkeypatch.setattr(bootstrap, "NGINX_CONF_INCLUDE_PATH", include)
+    monkeypatch.setattr(bootstrap, "NGINX_MANAGEMENT_PATH", management)
+    monkeypatch.setattr(bootstrap.shutil, "which", lambda name: f"/usr/bin/{name}")
+    monkeypatch.setattr(
+        bootstrap,
+        "run",
+        lambda command: SimpleNamespace(
+            returncode=1,
+            stdout="",
+            stderr="unrelated site invalid\n",
+        ),
+    )
+
+    def reject_destructive_initialization():
+        """Prove completed state never returns to database initialization."""
+        raise AssertionError("completed state entered destructive first-boot initialization")
+
+    monkeypatch.setattr(bootstrap, "init_db", reject_destructive_initialization)
+
+    assert bootstrap.main() == 1
 
 
 def test_photon_provisioning_prepares_attached_data_disks():
