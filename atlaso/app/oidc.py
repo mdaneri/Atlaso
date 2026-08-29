@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from base64 import b64decode
 from collections import OrderedDict, deque
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from html import escape
 from secrets import token_urlsafe
 from time import monotonic
@@ -21,6 +21,7 @@ from atlaso.app.audit import record_audit
 from atlaso.app.config import get_settings
 from atlaso.app.database import get_db
 from atlaso.app.models import (
+    ApplianceSettings,
     OidcAuthorizationTransaction,
     OidcClient,
     OidcGroupMapping,
@@ -51,6 +52,9 @@ from atlaso.app.security import (
     require_scope,
 )
 from atlaso.app.services.appliance_settings import normalize_fqdn
+from atlaso.app.services.authentication_lifetimes import (
+    BROWSER_SESSION_IDLE_TIMEOUT_DEFAULT_MINUTES,
+)
 from atlaso.app.services.dnsmasq import (
     join_interfaces,
     split_addresses,
@@ -254,6 +258,26 @@ def _load_oidc_session(request: Request, db: Session) -> dict[str, object] | Non
         or payload.get(SESSION_APPLIANCE_INSTANCE_SESSION_KEY) != ensure_appliance_instance_id(db)
     ):
         return None
+    auth_time_value = payload.get("auth_time")
+    if isinstance(auth_time_value, int):
+        last_interactive_value = payload.get("last_interactive_at", auth_time_value)
+        if not isinstance(last_interactive_value, int):
+            return None
+        policy = (
+            db.execute(select(ApplianceSettings).order_by(ApplianceSettings.id))
+            .scalars()
+            .first()
+        )
+        timeout_minutes = int(
+            policy.browser_session_idle_timeout_minutes
+            if policy is not None
+            else BROWSER_SESSION_IDLE_TIMEOUT_DEFAULT_MINUTES
+        )
+        deadline = datetime.fromtimestamp(last_interactive_value, timezone.utc) + timedelta(
+            minutes=timeout_minutes
+        )
+        if utcnow() >= deadline:
+            return None
     return payload
 
 
@@ -688,6 +712,7 @@ async def authorize_post(request: Request, db: Session = Depends(get_db)) -> Res
         "source_id": identity.source_record_id,
         "organization_id": identity.organization_id,
         "auth_time": int(auth_time.timestamp()),
+        "last_interactive_at": int(auth_time.timestamp()),
     }
     try:
         state_value = transaction.state
