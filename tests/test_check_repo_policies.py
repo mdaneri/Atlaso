@@ -1079,6 +1079,81 @@ def test_merge_authority_transfer_rejects_negated_default_authority(
     )
 
 
+def test_merge_authority_transfer_rejects_trailing_default_authority_negation(
+    tmp_path: Path,
+) -> None:
+    """Verify a negation after the merge marker cannot satisfy authority.
+
+    Args:
+        tmp_path: Temporary directory provided by pytest for isolated filesystem state.
+    """
+    path = tmp_path / MERGE_AUTHORITY_TRANSFER_FIXTURE_PATH
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(
+        json.dumps(
+            {
+                "cases": [
+                    {
+                        "name": "trailing default authority negation",
+                        "instructions": [{"text": "Implement the issue completely."}],
+                        "generated": (
+                            "Default merge authority does not apply to this task."
+                        ),
+                        "expected_holds": [],
+                    }
+                ]
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    findings = check_merge_authority_transfer_fixtures(tmp_path)
+
+    assert len(findings) == 1
+    assert findings[0].message == (
+        "merge authority fixture trailing default authority negation omits "
+        "affirmative default authority"
+    )
+
+
+def test_merge_authority_transfer_rejects_ambiguous_generated_hold_direction(
+    tmp_path: Path,
+) -> None:
+    """Verify generated text cannot both withdraw and add the same hold.
+
+    Args:
+        tmp_path: Temporary directory provided by pytest for isolated filesystem state.
+    """
+    path = tmp_path / MERGE_AUTHORITY_TRANSFER_FIXTURE_PATH
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(
+        json.dumps(
+            {
+                "cases": [
+                    {
+                        "name": "ambiguous generated direction",
+                        "instructions": [{"text": "Implement the issue completely."}],
+                        "generated": (
+                            "The earlier do not merge hold is withdrawn. Do not merge. "
+                            "Continue through guarded squash merge."
+                        ),
+                        "expected_holds": [],
+                    }
+                ]
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    findings = check_merge_authority_transfer_fixtures(tmp_path)
+
+    assert len(findings) == 1
+    assert findings[0].message == (
+        "merge authority fixture ambiguous generated direction has ambiguous "
+        "generated hold direction: do not merge"
+    )
+
+
 def test_merge_authority_transfer_matches_each_hold_direction(
     tmp_path: Path,
 ) -> None:

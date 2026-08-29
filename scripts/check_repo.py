@@ -533,6 +533,11 @@ DEFAULT_MERGE_AUTHORITY_NEGATIONS = re.compile(
     r"(?:do not|don't|don’t|never|must not|should not|cannot|can't|can’t|not)"
     r"(?:\s+\w+){0,6}\s*$"
 )
+DEFAULT_MERGE_AUTHORITY_TRAILING_NEGATIONS = re.compile(
+    r"^\s*(?:(?:does|do|is|are|must|should|can|may|will|would)\s+"
+    r"(?:not|never)|doesn't|doesn’t|isn't|isn’t|aren't|aren’t|"
+    r"cannot|can't|can’t|won't|won’t|wouldn't|wouldn’t)\b"
+)
 DEFAULT_MERGE_AUTHORITY_PROMPT_MARKERS = (
     "default merge authority",
     "guarded squash merge",
@@ -703,7 +708,11 @@ def has_affirmative_default_merge_authority(text: str) -> bool:
         offset = normalized.find(marker)
         while offset >= 0:
             prefix = normalized[max(0, offset - 80) : offset]
-            if DEFAULT_MERGE_AUTHORITY_NEGATIONS.search(prefix) is None:
+            suffix = normalized[offset + len(marker) : offset + len(marker) + 80]
+            if (
+                DEFAULT_MERGE_AUTHORITY_NEGATIONS.search(prefix) is None
+                and DEFAULT_MERGE_AUTHORITY_TRAILING_NEGATIONS.search(suffix) is None
+            ):
                 return True
             offset = normalized.find(marker, offset + 1)
     return False
@@ -835,6 +844,19 @@ def check_merge_authority_transfer_fixtures(root: Path) -> list[Finding]:
             continue
         source_holds_tuple = tuple(source_holds)
         generated_directions = merge_hold_directions(generated)
+        ambiguous_generated = tuple(
+            hold
+            for hold, direction in generated_directions.items()
+            if direction is None
+        )
+        if ambiguous_generated:
+            findings.append(
+                Finding(
+                    path,
+                    f"merge authority fixture {name} has ambiguous generated hold "
+                    f"direction: {', '.join(ambiguous_generated)}",
+                )
+            )
         generated_holds = tuple(
             hold
             for hold, direction in generated_directions.items()
