@@ -1411,6 +1411,22 @@ def test_photon_provisioning_prepares_attached_data_disks():
     ) == 2
     assert 'run_tdnf "Final Photon repository refresh" makecache' in provision
     assert 'run_tdnf "Final Photon OS update verification" update' in provision
+    final_update_index = provision.index(
+        'run_tdnf "Final Photon OS update verification" update'
+    )
+    final_compatibility_index = provision.index(
+        'log_step "revalidating Photon compatibility and runtime capabilities '
+        'after final update"'
+    )
+    assert final_update_index < final_compatibility_index
+    assert final_update_index < provision.rindex(
+        '"$ATLASO_HOME/.venv/bin/python" '
+        '"$ATLASO_HOME/scripts/check_photon_compatibility.py"'
+    )
+    assert final_compatibility_index < provision.rindex(
+        'python3 "$PHOTON_PACKAGE_STATE_VERIFIER" --guest-platform '
+        '"$ATLASO_GUEST_PLATFORM"'
+    )
     assert provision.count(
         'python3 "$PHOTON_PACKAGE_STATE_VERIFIER" --guest-platform '
         '"$ATLASO_GUEST_PLATFORM"'

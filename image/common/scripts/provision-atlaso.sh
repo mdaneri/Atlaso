@@ -898,6 +898,14 @@ python3 "$PHOTON_PACKAGE_STATE_VERIFIER" --guest-platform "$ATLASO_GUEST_PLATFOR
 run_tdnf "Final Photon package cache cleanup" clean all
 run_tdnf "Final Photon repository refresh" makecache
 run_tdnf "Final Photon OS update verification" update
+log_step "revalidating Photon compatibility and runtime capabilities after final update"
+command -v python3 >/dev/null
+command -v pwsh >/dev/null
+command -v vmtoolsd >/dev/null 2>&1 || [ "$ATLASO_GUEST_PLATFORM" != "vmware" ]
+"$ATLASO_HOME/.venv/bin/python" "$ATLASO_HOME/scripts/check_photon_compatibility.py"
+"$ATLASO_HOME/.venv/bin/python" -c 'import atlaso'
+pwsh -NoLogo -NoProfile -NonInteractive -Command \
+  '$ErrorActionPreference = "Stop"; Import-Module VCF.PowerCLI -RequiredVersion $env:ATLASO_POWERCLI_VERSION -Force'
 python3 "$PHOTON_PACKAGE_STATE_VERIFIER" --guest-platform "$ATLASO_GUEST_PLATFORM"
 run_tdnf "Final Photon package cache cleanup" clean all
 rm -rf /var/cache/tdnf/* "$PIP_CACHE_DIR" /root/.cache/pip \
