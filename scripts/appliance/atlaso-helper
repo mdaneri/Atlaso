@@ -296,6 +296,7 @@ CONSOLE_STATE_DIR = ATLASO_STATE_DIR / "console"
 CONSOLE_SERVICE_STATE_PATH = CONSOLE_STATE_DIR / "services.json"
 FIRST_BOOT_HTTPS_MARKER_PATH = ATLASO_STATE_DIR / "first-boot-https.applied"
 FIRST_BOOT_HTTPS_UNIT = "atlaso-bootstrap-https.service"
+FIRST_BOOT_HTTPS_MARKER_TEXT = "Atlaso first-boot HTTPS bootstrap completed.\n"
 MANAGEMENT_PLANE_UNITS = ("nginx.service", "atlaso.service")
 MANAGEMENT_APPLICATION_READINESS_CHECK = (
     ("Atlaso application loopback", "http://127.0.0.1:8000/openapi.json", False, "200"),
@@ -17279,6 +17280,8 @@ def _console_management_readiness_checks() -> tuple[bool, tuple[tuple[str, str, 
         management_config = NGINX_MANAGEMENT_SITE_PATH.read_text(encoding="utf-8")
     except OSError as exc:
         raise ValueError(f"reading the applied nginx management configuration failed: {exc}") from exc
+    if not _console_management_config_contract_is_complete(management_config):
+        raise ValueError("the applied nginx management configuration is incomplete")
     https_enabled = bool(re.search(r"(?m)^\s*listen\s+\d+\s+ssl(?:\s+default_server)?;", management_config))
     nginx_checks = (
         ("nginx HTTP redirect", "http://127.0.0.1/", False, "308"),
@@ -17287,6 +17290,61 @@ def _console_management_readiness_checks() -> tuple[bool, tuple[tuple[str, str, 
         ("nginx HTTP readiness", "http://127.0.0.1/openapi.json", False, "200"),
     )
     return https_enabled, (*MANAGEMENT_APPLICATION_READINESS_CHECK, *nginx_checks)
+
+
+def _console_management_config_contract_is_complete(config: str) -> bool:
+    """Return whether an applied management site has a usable front door.
+
+    Args:
+        config: Applied nginx management-site text.
+
+    Returns:
+        Whether the config contains a default listener and Atlaso proxy contract.
+    """
+    if not re.search(r"(?m)^\s*listen\s+(?:\[::\]:)?\d+.*\bdefault_server\b", config):
+        return False
+    if not re.search(r"(?m)^\s*proxy_pass\s+http://127\.0\.0\.1:\d+;", config):
+        return False
+    https_enabled = bool(re.search(r"(?m)^\s*listen\s+(?:\[::\]:)?\d+\s+ssl\b", config))
+    if not https_enabled:
+        return True
+    certificate_match = re.search(r"(?m)^\s*ssl_certificate\s+([^;]+);", config)
+    key_match = re.search(r"(?m)^\s*ssl_certificate_key\s+([^;]+);", config)
+    if certificate_match is None or key_match is None:
+        return False
+    return Path(certificate_match.group(1).strip()).is_file() and Path(
+        key_match.group(1).strip()
+    ).is_file()
+
+
+def _console_first_boot_https_contract_is_complete() -> bool:
+    """Return whether durable bootstrap evidence matches applied nginx state."""
+    try:
+        marker_stat = FIRST_BOOT_HTTPS_MARKER_PATH.lstat()
+        include_stat = NGINX_CONF_INCLUDE_PATH.lstat()
+        management_stat = NGINX_MANAGEMENT_SITE_PATH.lstat()
+        if (
+            FIRST_BOOT_HTTPS_MARKER_PATH.is_symlink()
+            or NGINX_CONF_INCLUDE_PATH.is_symlink()
+            or NGINX_MANAGEMENT_SITE_PATH.is_symlink()
+            or not FIRST_BOOT_HTTPS_MARKER_PATH.is_file()
+            or not NGINX_CONF_INCLUDE_PATH.is_file()
+            or not NGINX_MANAGEMENT_SITE_PATH.is_file()
+            or not 0 < marker_stat.st_size <= 256
+            or not 0 < include_stat.st_size <= 4096
+            or not 0 < management_stat.st_size <= 262144
+        ):
+            return False
+        marker = FIRST_BOOT_HTTPS_MARKER_PATH.read_text(encoding="utf-8")
+        include = NGINX_CONF_INCLUDE_PATH.read_text(encoding="utf-8")
+        management = NGINX_MANAGEMENT_SITE_PATH.read_text(encoding="utf-8")
+    except (OSError, UnicodeError):
+        return False
+    return (
+        marker == FIRST_BOOT_HTTPS_MARKER_TEXT
+        and "/etc/atlaso/nginx/sites.d/*.conf" in include
+        and _console_management_config_contract_is_complete(management)
+    )
 
 
 def _recover_console_management_plane(timeout_seconds: int = 60) -> int:
@@ -17298,18 +17356,18 @@ def _recover_console_management_plane(timeout_seconds: int = 60) -> int:
     bootstrap_retried = False
     atlaso_restarted = False
     try:
-        if not FIRST_BOOT_HTTPS_MARKER_PATH.exists():
+        if not _console_first_boot_https_contract_is_complete():
             _console_recovery_command(
                 "resetting the first-boot HTTPS bootstrap failure",
                 ["systemctl", "reset-failed", FIRST_BOOT_HTTPS_UNIT],
             )
             _console_recovery_command(
                 "retrying first-boot HTTPS bootstrap",
-                ["systemctl", "start", FIRST_BOOT_HTTPS_UNIT],
+                ["systemctl", "restart", FIRST_BOOT_HTTPS_UNIT],
             )
             bootstrap_retried = True
-            if not FIRST_BOOT_HTTPS_MARKER_PATH.exists():
-                raise ValueError("first-boot HTTPS bootstrap returned without its completion marker")
+            if not _console_first_boot_https_contract_is_complete():
+                raise ValueError("first-boot HTTPS bootstrap returned without a complete durable contract")
 
         nginx = shutil.which("nginx")
         if nginx is None:
