@@ -33,9 +33,14 @@ surfaces.
   requested short-lived debugging.
 - [ ] For an ordinary pull request, the task retained the exact-head SHA and seen comment and review IDs, and every new
   top-level pull-request comment, inline review comment, review submission and requested change was evaluated. For
-  merged, closed, or merge-ready terminal states, the heartbeat continued after a merge through required post-merge
-  verification and otherwise paused only for an unmerged closure or a merge-ready successful current head with every
-  item seen and no open feedback.
+  merged, closed, or merge-ready terminal states, the heartbeat continued after a merge through linked-issue closure,
+  current `origin/main` reachability, and applicable post-merge workflow verification. It then performed one
+  final bounded readback and followed the requirement to delete the exact current-task heartbeat. The same final
+  readback and deletion applied to an unmerged closed pull request or a delivery-complete merge-ready successful
+  current head with every item seen and no open feedback. Deletion was
+  bound to the exact current-task heartbeat identity; it must never delete unrelated automations or use an ambiguous
+  name match. An already absent heartbeat required revalidated ownership and terminal evidence. Pause was used only for
+  resumable holds. A deletion failure or ambiguous ownership left the task actionable with the exact retry condition.
 - [ ] For an ordinary same-repository pull request within the active task's scope, the Default merge authorization
   policy was checked: implementation, fix, solve, delivery, and similar requests grant default merge authority without
   a separate merge instruction. Any explicit merge hold remains authoritative until the user or maintainer withdraws

@@ -98,10 +98,16 @@ Actionable feedback requires the focused validation and commit-push-review cycle
 and continued monitoring on the same heartbeat.
 
 Treat merged, closed, or merge-ready as terminal pull-request states. After a merge, continue the same heartbeat through
-required merge, linked-issue, `origin/main`, and applicable post-merge workflow verification, then pause it. Pause
-immediately for an unmerged closed pull request, or for a merge-ready pull request with a successful current head, every
-item seen, no requested changes or actionable feedback, and no unresolved non-outdated review thread. Pause and
-escalate decisions or external failures requiring maintainer action. Merge-ready status does not grant merge authority.
+linked-issue closure, current `origin/main` reachability, and applicable post-merge workflow verification. Then perform
+one final bounded readback and delete the exact current-task heartbeat. Use the same final readback and deletion for an
+unmerged closed pull request, or for a delivery-complete merge-ready pull request with a successful current head, every
+item seen, no requested changes or actionable feedback, and no unresolved non-outdated review thread.
+
+Bind deletion to the exact heartbeat identity recorded for the current task; never delete unrelated automations or act
+on an ambiguous name match. An already absent heartbeat satisfies terminal cleanup only after ownership and terminal evidence
+are revalidated. Pause only for resumable holds, including decisions or external failures that require
+maintainer action. A deletion failure or ambiguous ownership leaves the task actionable with the exact retry condition.
+Merge-ready status does not grant merge authority.
 
 `main` accepts squash merges only after required checks pass. Do not commit directly to `main`.
 
