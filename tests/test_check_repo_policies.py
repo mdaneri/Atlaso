@@ -878,7 +878,10 @@ def test_merge_authority_transfer_rejects_dropped_heartbeat_hold(
                         "default_merge_authority": True,
                         "instructions": [
                             {
-                                "text": "Wait for approval before merging.",
+                                "text": (
+                                    "Implement the change and wait for approval before "
+                                    "merging."
+                                ),
                                 "add_holds": ["wait for approval"],
                             }
                         ],
@@ -1165,6 +1168,50 @@ def test_merge_authority_transfer_rejects_trailing_default_authority_negation(
         "merge authority fixture trailing default authority negation omits "
         "affirmative default authority"
     )
+
+
+def test_merge_authority_transfer_rejects_second_instruction_condition(
+    tmp_path: Path,
+) -> None:
+    """Verify guarded merge cannot be conditioned on a second instruction.
+
+    Args:
+        tmp_path: Temporary directory provided by pytest for isolated filesystem state.
+    """
+    generated_prompts = (
+        "Perform the guarded squash merge only after receiving a second merge "
+        "instruction.",
+        "Only after another merge instruction, perform the guarded squash merge.",
+    )
+    for index, generated in enumerate(generated_prompts, start=1):
+        path = tmp_path / MERGE_AUTHORITY_TRANSFER_FIXTURE_PATH
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(
+            json.dumps(
+                {
+                    "cases": [
+                        {
+                            "name": f"second instruction condition {index}",
+                            "default_merge_authority": True,
+                            "instructions": [
+                                {"text": "Implement the issue completely."}
+                            ],
+                            "generated": generated,
+                            "expected_holds": [],
+                        }
+                    ]
+                }
+            ),
+            encoding="utf-8",
+        )
+
+        findings = check_merge_authority_transfer_fixtures(tmp_path)
+
+        assert len(findings) == 1
+        assert findings[0].message == (
+            f"merge authority fixture second instruction condition {index} omits "
+            "affirmative default authority"
+        )
 
 
 def test_merge_authority_transfer_rejects_ambiguous_generated_hold_direction(
@@ -1572,6 +1619,56 @@ def test_merge_authority_transfer_rejects_hold_only_eligibility_transition(
     assert len(findings) == 1
     assert findings[0].message == (
         "merge authority fixture review-only hold withdrawal declared default "
+        "authority does not match its source instructions"
+    )
+
+
+def test_merge_authority_transfer_rejects_wait_hold_eligibility_transition(
+    tmp_path: Path,
+) -> None:
+    """Verify wait-for-approval wording cannot create implementation authority.
+
+    Args:
+        tmp_path: Temporary directory provided by pytest for isolated filesystem state.
+    """
+    path = tmp_path / MERGE_AUTHORITY_TRANSFER_FIXTURE_PATH
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(
+        json.dumps(
+            {
+                "cases": [
+                    {
+                        "name": "review-only wait hold withdrawal",
+                        "default_merge_authority": True,
+                        "instructions": [
+                            {
+                                "text": (
+                                    "Review the pull request and report findings only."
+                                )
+                            },
+                            {
+                                "text": "Wait for approval before merging.",
+                                "add_holds": ["wait for approval"],
+                            },
+                            {
+                                "text": "The wait for approval hold is withdrawn.",
+                                "remove_holds": ["wait for approval"],
+                            },
+                        ],
+                        "generated": "Continue through guarded squash merge.",
+                        "expected_holds": [],
+                    }
+                ]
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    findings = check_merge_authority_transfer_fixtures(tmp_path)
+
+    assert len(findings) == 1
+    assert findings[0].message == (
+        "merge authority fixture review-only wait hold withdrawal declared default "
         "authority does not match its source instructions"
     )
 

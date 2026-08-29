@@ -541,6 +541,10 @@ DEFAULT_MERGE_AUTHORITY_TRAILING_NEGATIONS = re.compile(
     r"(?:not|never)|doesn't|doesn’t|isn't|isn’t|aren't|aren’t|"
     r"cannot|can't|can’t|won't|won’t|wouldn't|wouldn’t)\b"
 )
+DEFAULT_MERGE_AUTHORITY_SECOND_INSTRUCTION_CONDITIONS = re.compile(
+    r"(?:only\s+)?(?:after|once|when|until)\b.{0,80}"
+    r"\b(?:second|another|separate|additional)\b.{0,30}\bmerge instruction\b"
+)
 DEFAULT_MERGE_AUTHORITY_PROMPT_MARKERS = (
     "default merge authority",
     "guarded squash merge",
@@ -559,7 +563,7 @@ DEFAULT_MERGE_AUTHORITY_SOURCE_EXCLUSIONS = re.compile(
 )
 DEFAULT_MERGE_AUTHORITY_SOURCE_MARKERS = re.compile(
     r"\b(?:implement|implementation|fix|resolve|solve|deliver)\b|"
-    r"pull[- ]request delivery|guarded[- ]squash merge|before merging|"
+    r"pull[- ]request delivery|guarded[- ]squash merge|"
     r"task-owned pull request|ordinary same-repository"
 )
 
@@ -738,9 +742,16 @@ def has_affirmative_default_merge_authority(text: str) -> bool:
         while offset >= 0:
             prefix = normalized[max(0, offset - 80) : offset]
             suffix = normalized[offset + len(marker) : offset + len(marker) + 80]
+            context = normalized[
+                max(0, offset - 100) : offset + len(marker) + 100
+            ]
             if (
                 DEFAULT_MERGE_AUTHORITY_NEGATIONS.search(prefix) is None
                 and DEFAULT_MERGE_AUTHORITY_TRAILING_NEGATIONS.search(suffix) is None
+                and DEFAULT_MERGE_AUTHORITY_SECOND_INSTRUCTION_CONDITIONS.search(
+                    context
+                )
+                is None
             ):
                 return True
             offset = normalized.find(marker, offset + 1)
