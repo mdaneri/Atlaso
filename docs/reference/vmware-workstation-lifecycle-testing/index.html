@@ -3979,7 +3979,9 @@ provisioning, makes first boot publish the actual applied hostname through VMwar
 <code>ethernet0</code> MAC, the matching injected and observed hostnames, and the host-facing
 address; it requires an address answer from every running Workstation guest and requires the Windows neighbor entry for
 that address to match the target MAC. An unanswered running guest remains incomplete evidence and retries. A hostname
-mismatch, duplicate static address, or neighbor entry owned by another running VM fails closed with the relevant exact
+might be returned directly or inside one matching pair of VMware representation quotes; readiness removes only that
+outer pair and rejects unbalanced, nested, or embedded quotes as ambiguous. A hostname mismatch, duplicate static
+address, or neighbor entry owned by another running VM fails closed with the relevant exact
 identity evidence. The wrapper re-lists the running inventory and rechecks the target address immediately before
 returning; a concurrent VM start, stop, or target-address change retries the complete proof.</p>
 <p>Recover from that failure through the exact clone's local console: stop the named conflicting VM, or give the clone a
