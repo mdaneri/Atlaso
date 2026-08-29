@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 import zipfile
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 
@@ -14,6 +15,66 @@ VERSION = "1.2.3"
 COMMIT = "a" * 40
 BUILT_AT = "2026-08-29T01:02:03Z"
 REPOSITORY = "mdaneri/Atlaso"
+
+
+def test_create_artifact_builds_from_explicit_source_root(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """Use protected tooling while packaging only the admitted target source.
+
+    Args:
+        monkeypatch: Isolated replacement for the package build and final verifier.
+        tmp_path: Isolated source and artifact directories.
+    """
+
+    source_root = tmp_path / "target-source"
+    source_root.mkdir()
+    (source_root / "pyproject.toml").write_text(
+        f'[project]\nname = "atlaso"\nversion = "{VERSION}"\n', encoding="utf-8"
+    )
+    observed: dict[str, object] = {}
+
+    def fake_build(
+        target: Path, *, commit: str, built_at: str, source_root: Path
+    ) -> Path:
+        observed.update(
+            source_root=source_root,
+            commit=commit,
+            built_at=built_at,
+        )
+        wheel_root = target / "application-wheel"
+        wheel_root.mkdir()
+        wheel = wheel_root / f"atlaso-{VERSION}-py3-none-any.whl"
+        wheel.write_bytes(b"wheel")
+        return wheel
+
+    monkeypatch.setattr(wheel_artifact, "build_application_wheel", fake_build)
+    monkeypatch.setattr(wheel_artifact, "verify_artifact", lambda *args, **kwargs: None)
+    output = tmp_path / "artifact"
+
+    wheel_artifact.create_artifact(
+        SimpleNamespace(
+            source_root=source_root,
+            output=output,
+            repository=REPOSITORY,
+            version=VERSION,
+            commit=COMMIT,
+            built_at=BUILT_AT,
+            source_ci_run_id=101,
+            source_ci_run_attempt=1,
+            publisher_run_id=202,
+            publisher_run_attempt=1,
+        )
+    )
+
+    assert observed == {
+        "source_root": source_root,
+        "commit": COMMIT,
+        "built_at": BUILT_AT,
+    }
+    identity = json.loads((output / wheel_artifact.IDENTITY_NAME).read_text(encoding="utf-8"))
+    assert identity["version"] == VERSION
+    assert identity["commit"] == COMMIT
 
 
 def _write_candidate(

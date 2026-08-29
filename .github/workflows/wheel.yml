@@ -94,20 +94,28 @@ jobs:
           echo "commit=$WHEEL_SHA" >> "$GITHUB_OUTPUT"
           echo "source_ci_run_id=$SOURCE_CI_RUN_ID" >> "$GITHUB_OUTPUT"
           echo "source_ci_run_attempt=$SOURCE_CI_RUN_ATTEMPT" >> "$GITHUB_OUTPUT"
+      - name: Check out protected publisher tooling
+        uses: actions/checkout@v7
+        with:
+          ref: ${{ github.event.workflow_run.head_sha }}
+          fetch-depth: 0
+          persist-credentials: false
+          path: tooling
       - name: Check out the admitted successful main commit
         uses: actions/checkout@v7
         with:
           ref: ${{ steps.target.outputs.commit }}
           fetch-depth: 0
           persist-credentials: false
+          path: target-source
       - name: Resolve the wheel identity
         id: identity
         env:
           WHEEL_SHA: ${{ steps.target.outputs.commit }}
         run: |
-          test "$(git rev-parse HEAD)" = "$WHEEL_SHA"
-          VERSION="$(python scripts/version.py get)"
-          BUILT_AT="$(date --utc --date="@$(git show -s --format=%ct "$WHEEL_SHA")" '+%Y-%m-%dT%H:%M:%SZ')"
+          test "$(git -C target-source rev-parse HEAD)" = "$WHEEL_SHA"
+          VERSION="$(python tooling/scripts/version.py --root target-source get)"
+          BUILT_AT="$(date --utc --date="@$(git -C target-source show -s --format=%ct "$WHEEL_SHA")" '+%Y-%m-%dT%H:%M:%SZ')"
           echo "version=$VERSION" >> "$GITHUB_OUTPUT"
           echo "built_at=$BUILT_AT" >> "$GITHUB_OUTPUT"
           echo "artifact_name=atlaso-wheel-v${VERSION}-${WHEEL_SHA}" >> "$GITHUB_OUTPUT"
@@ -119,14 +127,15 @@ jobs:
         env:
           PIP_CONFIG_FILE: /dev/null
           PIP_DISABLE_PIP_VERSION_CHECK: '1'
-        run: python -m pip install --require-hashes --requirement requirements-release-tools.lock
+        run: python -m pip install --require-hashes --requirement target-source/requirements-release-tools.lock
       - name: Build and verify the commit-bound wheel
         env:
           WHEEL_SHA: ${{ steps.target.outputs.commit }}
           SOURCE_CI_RUN_ID: ${{ steps.target.outputs.source_ci_run_id }}
           SOURCE_CI_RUN_ATTEMPT: ${{ steps.target.outputs.source_ci_run_attempt }}
         run: |
-          python scripts/wheel_artifact.py create \
+          python tooling/scripts/wheel_artifact.py create \
+            --source-root target-source \
             --output dist/wheel-artifact \
             --repository "${{ github.repository }}" \
             --version "${{ steps.identity.outputs.version }}" \

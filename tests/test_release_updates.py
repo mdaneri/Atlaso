@@ -1274,6 +1274,9 @@ def test_release_workflows_use_successful_main_sha_and_promote_without_rebuildin
     assert 'compare/${WHEEL_SHA}...main' in wheel_publication
     assert 'test "$MAIN_STATUS" = ahead || test "$MAIN_STATUS" = identical' in wheel_publication
     assert 'ref: ${{ steps.target.outputs.commit }}' in wheel_publication
+    assert 'ref: ${{ github.event.workflow_run.head_sha }}' in wheel_publication
+    assert "path: tooling" in wheel_publication
+    assert "path: target-source" in wheel_publication
     assert "cache: pip" not in wheel_publication
     assert wheel_publication.index("Admit the source CI evidence") < wheel_publication.index(
         "actions/checkout@v7"
@@ -1300,7 +1303,9 @@ def test_release_workflows_use_successful_main_sha_and_promote_without_rebuildin
     assert "actions/upload-artifact@v7" in wheel_publication
     assert "retention-days: 90" in wheel_publication
     assert "overwrite: false" in wheel_publication
-    assert "python scripts/wheel_artifact.py create" in wheel_publication
+    assert "python tooling/scripts/wheel_artifact.py create" in wheel_publication
+    assert "--source-root target-source" in wheel_publication
+    assert "target-source/requirements-release-tools.lock" in wheel_publication
     assert "--source-ci-run-id" in wheel_publication
     assert "--publisher-run-id" in wheel_publication
     assert "legacy bridge" not in publication

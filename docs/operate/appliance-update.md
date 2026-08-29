@@ -522,7 +522,9 @@ and a successful conclusion, then requires the commit to remain reachable from c
 or target-code execution and publishes only a canonical one-day replay-request artifact. The completed admission run
 triggers **Publish Python wheel**, which downloads and revalidates that exact request and source CI evidence before its
 read-only, cache-free exact-SHA build publishes a new 90-day handoff. Do not copy a wheel from another commit, rename an
-artifact, or let the appliance workflow rebuild it. The artifact's source-CI run ID and attempt, publisher run ID and
+artifact, or let the appliance workflow rebuild it. Replay checks out the protected publisher tooling at the replay
+workflow's immutable `main` SHA separately from the admitted target source, so a historical successful commit need not
+contain the newer handoff helper. The artifact's source-CI run ID and attempt, publisher run ID and
 attempt, version, commit, UTC build time, filename, size, and digest are the exact handoff used by the later manual
 release and retained as `packages/wheel-identity.json` inside the signed bundle.
 

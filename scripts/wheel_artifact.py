@@ -301,7 +301,8 @@ def create_artifact(args: argparse.Namespace) -> None:
         args: Parsed create command arguments.
     """
 
-    version = project_version()
+    source_root = args.source_root.resolve(strict=True)
+    version = project_version(source_root)
     if args.version != version:
         raise WheelArtifactError(f"requested version {args.version} does not match repository version {version}")
     _validate_timestamp(args.built_at)
@@ -311,7 +312,12 @@ def create_artifact(args: argparse.Namespace) -> None:
         raise WheelArtifactError("wheel artifact output must be absent or empty")
     output.mkdir(parents=True, exist_ok=True)
     with tempfile.TemporaryDirectory(prefix="atlaso-wheel-") as temporary:
-        built = build_application_wheel(Path(temporary), commit=args.commit, built_at=args.built_at)
+        built = build_application_wheel(
+            Path(temporary),
+            commit=args.commit,
+            built_at=args.built_at,
+            source_root=source_root,
+        )
         wheel = output / built.name
         shutil.copy2(built, wheel)
     identity: dict[str, object] = {
@@ -429,6 +435,7 @@ def parser() -> argparse.ArgumentParser:
     root = argparse.ArgumentParser(description=__doc__)
     commands = root.add_subparsers(dest="command", required=True)
     create = commands.add_parser("create", help="Build one exact automatic wheel artifact.")
+    create.add_argument("--source-root", type=Path, required=True)
     create.add_argument("--output", type=Path, required=True)
     create.add_argument("--repository", required=True)
     create.add_argument("--version", required=True)
