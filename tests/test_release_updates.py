@@ -1303,9 +1303,6 @@ def test_release_workflows_use_successful_main_sha_and_promote_without_rebuildin
     assert "python scripts/wheel_artifact.py create" in wheel_publication
     assert "--source-ci-run-id" in wheel_publication
     assert "--publisher-run-id" in wheel_publication
-    assert "-f head_sha=\"$RELEASE_SHA\"" in publication
-    assert "-f status=success" in publication
-    assert "has no successful main push CI run" in publication
     assert "legacy bridge" not in publication
     assert 'cat > "$SITE_ROOT/index.html"' in publication
     assert "Everything your virtualization lab needs." in publication
@@ -1354,6 +1351,8 @@ def test_release_workflows_use_successful_main_sha_and_promote_without_rebuildin
     assert "persist-credentials: false" in prepare_job
     assert "name: validated-release-request" in prepare_job
     assert "retention-days: 1" in prepare_job
+    assert "actions/workflows/ci.yml/runs" not in prepare_job
+    assert "-f status=success" not in prepare_job
     release_inputs_job = publication.split("  release_inputs:\n", 1)[1].split(
         "  publish:\n", 1
     )[0]

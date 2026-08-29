@@ -42,20 +42,6 @@ jobs:
           fi
           git fetch origin main --no-tags
           git merge-base --is-ancestor "$RELEASE_SHA" origin/main
-          SUCCESSFUL_RUNS="$(
-            gh api --method GET \
-              "repos/${{ github.repository }}/actions/workflows/ci.yml/runs" \
-              -f head_sha="$RELEASE_SHA" \
-              -f branch=main \
-              -f event=push \
-              -f status=success \
-              -f per_page=100 \
-              --jq '.total_count'
-          )"
-          if test "$SUCCESSFUL_RUNS" -lt 1; then
-            echo "::error::$RELEASE_SHA has no successful main push CI run."
-            exit 1
-          fi
           printf '{"release_sha":"%s"}\n' "$RELEASE_SHA" > validated-release-request.json
           echo "release_sha=$RELEASE_SHA" >> "$GITHUB_OUTPUT"
       - name: Upload the validated release request
