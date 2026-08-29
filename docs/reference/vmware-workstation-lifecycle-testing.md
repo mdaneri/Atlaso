@@ -142,6 +142,10 @@ pwsh -ExecutionPolicy Bypass `
   -EnableRealSystemAdapters
 ```
 
+For a previously downloaded ISO, pass either its local filesystem path or an empty-authority `file:///` URI. The
+wrapper verifies that exact file against `-IsoChecksum` before any remastering and does not route it through the HTTP
+download path. Host-authority file URIs are rejected; use an explicitly mounted local path instead.
+
 The image wrapper uses the same exact Atlaso Environment selector contract as normal test-VM creation: an explicit
 `-OnePasswordEnvironmentId` takes precedence over the checkout-local, Git-ignored
 `.atlaso-local/onepassword-environment-id`, and `-EnvironmentIdFile` selects a different single-line file. When

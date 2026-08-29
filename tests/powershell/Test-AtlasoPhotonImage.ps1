@@ -40,7 +40,7 @@ $emptyCleanupLedgerRoot = Join-Path $OutputDirectory 'empty-cleanup-ledger'
 New-Item -ItemType Directory -Force -Path $emptyCleanupLedgerRoot | Out-Null
 $emptyCleanupLedger = [System.Collections.Generic.List[string]]::new()
 $fixtureScript = Join-Path $emptyCleanupLedgerRoot 'create-fixture.py'
-$fixtureSourceIso = Join-Path $emptyCleanupLedgerRoot 'source.iso'
+$fixtureSourceIso = Join-Path $emptyCleanupLedgerRoot 'source iso.iso'
 $fixtureKickstart = Join-Path $emptyCleanupLedgerRoot 'photon-ks.json'
 $fixtureOutputIso = Join-Path $emptyCleanupLedgerRoot 'prepared.iso'
 [System.IO.File]::WriteAllText($fixtureKickstart, '{}')
@@ -65,6 +65,75 @@ $pythonPath = (Get-Command python -ErrorAction Stop).Source
 & $pythonPath $fixtureScript $fixtureSourceIso
 if ($LASTEXITCODE -ne 0) {
     throw 'Could not create the remaster source ISO fixture.'
+}
+$fixtureSourceChecksum = "sha512:$((Get-FileHash -LiteralPath $fixtureSourceIso -Algorithm SHA512).Hash.ToLowerInvariant())"
+$fixtureSourceUri = ([Uri](Resolve-Path -LiteralPath $fixtureSourceIso).Path).AbsoluteUri
+$resolvedFixtureSource = & $module {
+    param(
+        [string]$UrlOrPath,
+        [string]$Checksum,
+        [string]$BuildDirectory,
+        [string]$PackerDirectory,
+        [string]$SharedSourceDirectory
+    )
+    Resolve-AtlasoPhotonSourceIso `
+        -UrlOrPath $UrlOrPath `
+        -Checksum $Checksum `
+        -BuildDirectory $BuildDirectory `
+        -PackerDirectory $PackerDirectory `
+        -SharedSourceDirectory $SharedSourceDirectory
+} $fixtureSourceUri $fixtureSourceChecksum $emptyCleanupLedgerRoot $emptyCleanupLedgerRoot $emptyCleanupLedgerRoot
+$expectedFixtureSource = (Resolve-Path -LiteralPath $fixtureSourceIso).Path
+if ($resolvedFixtureSource -cne $expectedFixtureSource) {
+    throw "Local file URI did not resolve to the expected ISO path: $resolvedFixtureSource"
+}
+$missingFixtureUri = ([Uri](Join-Path $emptyCleanupLedgerRoot 'missing source.iso')).AbsoluteUri
+try {
+    & $module {
+        param(
+            [string]$UrlOrPath,
+            [string]$Checksum,
+            [string]$BuildDirectory,
+            [string]$PackerDirectory,
+            [string]$SharedSourceDirectory
+        )
+        Resolve-AtlasoPhotonSourceIso `
+            -UrlOrPath $UrlOrPath `
+            -Checksum $Checksum `
+            -BuildDirectory $BuildDirectory `
+            -PackerDirectory $PackerDirectory `
+            -SharedSourceDirectory $SharedSourceDirectory
+    } $missingFixtureUri $fixtureSourceChecksum $emptyCleanupLedgerRoot $emptyCleanupLedgerRoot $emptyCleanupLedgerRoot
+    throw 'Missing local file URI unexpectedly reached cache discovery or download.'
+}
+catch {
+    if ($_.Exception.Message -notlike 'IsoUrl file URI does not reference an existing local file:*') {
+        throw
+    }
+}
+$hostAuthorityFixtureUri = 'file://example.invalid/share/source.iso'
+try {
+    & $module {
+        param(
+            [string]$UrlOrPath,
+            [string]$Checksum,
+            [string]$BuildDirectory,
+            [string]$PackerDirectory,
+            [string]$SharedSourceDirectory
+        )
+        Resolve-AtlasoPhotonSourceIso `
+            -UrlOrPath $UrlOrPath `
+            -Checksum $Checksum `
+            -BuildDirectory $BuildDirectory `
+            -PackerDirectory $PackerDirectory `
+            -SharedSourceDirectory $SharedSourceDirectory
+    } $hostAuthorityFixtureUri $fixtureSourceChecksum $emptyCleanupLedgerRoot $emptyCleanupLedgerRoot $emptyCleanupLedgerRoot
+    throw 'Host-authority file URI unexpectedly reached cache discovery or download.'
+}
+catch {
+    if ($_.Exception.Message -notlike 'IsoUrl file URI must use an empty authority and reference a local file:*') {
+        throw
+    }
 }
 & $module {
     param(
