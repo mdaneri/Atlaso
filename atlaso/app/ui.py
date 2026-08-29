@@ -197,15 +197,16 @@ from atlaso.app.routers.ui.vcf_workflows import (
 )
 from atlaso.app.secrets import decrypt_secret, encrypt_secret, secret_key_status
 from atlaso.app.security import (
-    SESSION_APPLIANCE_INSTANCE_SESSION_KEY,
     Identity,
     authenticate_user,
-    ensure_appliance_instance_id,
+    consume_browser_session_expired_notice,
+    end_browser_session,
     get_session_identity,
     normalize_roles,
     primary_role,
     require_session_identity,
     role_label,
+    start_browser_session,
     user_roles,
 )
 from atlaso.app.services.appliance_settings import (
@@ -13995,6 +13996,24 @@ def public_home(
     return render(request, "public_service_home.html", {"identity": identity, **public_service_directory_context(db, binding)})
 
 
+@router.post("/session/activity", response_model=None)
+@public_router.post("/session/activity", response_model=None)
+def browser_session_activity(
+    request: Request,
+    db: Session = Depends(get_db),
+) -> Response:
+    """Refresh server-owned browser activity after a bounded deliberate user event.
+
+    Args:
+        request: Incoming HTTP request.
+        db: Active database session used to validate and refresh the session.
+    """
+    verify_csrf(request, request.headers.get("X-CSRF-Token", ""))
+    if get_session_identity(request, db) is None:
+        raise HTTPException(status_code=401, detail="Authentication required")
+    return Response(status_code=204)
+
+
 def _format_file_size(size: int) -> str:
     """Render file size.
 
@@ -14190,7 +14209,12 @@ def depot_login_page(
     return_to = safe_depot_login_next(next)
     if identity:
         return RedirectResponse(return_to, status_code=303)
-    return depot_login_response(request, return_to=return_to, db=db)
+    return depot_login_response(
+        request,
+        error=consume_browser_session_expired_notice(request),
+        return_to=return_to,
+        db=db,
+    )
 
 
 @protocol_router.post("/PROD/login", response_model=None)
@@ -14233,26 +14257,26 @@ def depot_login(
     if user is None:
         record_audit(db, actor=username, action="vcf_depot_login_failed", resource_type="auth", success=False)
         return depot_login_response(request, return_to=return_to, error="Invalid username or password", status_code=401, db=db)
-    request.session["user_id"] = user.id
-    request.session[SESSION_APPLIANCE_INSTANCE_SESSION_KEY] = ensure_appliance_instance_id(db)
+    start_browser_session(request, db, user)
     record_audit(db, actor=user.username, action="vcf_depot_login", resource_type="auth")
     return RedirectResponse(return_to, status_code=303)
 
 
 @protocol_router.post("/PROD/logout", response_model=None)
-def depot_logout(request: Request, csrf: str = Form(...), next: str = Form("/")) -> RedirectResponse:
+def depot_logout(request: Request, csrf: str = Form(...), next: str = Form("/"), db: Session = Depends(get_db)) -> RedirectResponse:
     """Handle the depot logout endpoint.
 
     Args:
         request: Incoming HTTP request.
         csrf: Validated CSRF token authorizing the request.
         next: Relative destination requested after authentication.
+        db: Active database session.
 
     Returns:
         The endpoint response.
     """
     verify_csrf(request, csrf)
-    request.session.clear()
+    end_browser_session(request, db)
     return RedirectResponse(next if next in {"/", "/PROD/"} else "/", status_code=303)
 
 
@@ -14438,7 +14462,7 @@ def login_page(
     return render(
         request,
         "login.html",
-        {"error": None, "return_to": return_to, "factory_reset_notice": reset_notice},
+        {"error": consume_browser_session_expired_notice(request), "return_to": return_to, "factory_reset_notice": reset_notice},
     )
 
 
@@ -14470,26 +14494,26 @@ def login(
     if not user:
         record_audit(db, actor=username, action="ui_login_failed", resource_type="auth", success=False)
         return render(request, "login.html", {"error": "Invalid username or password", "return_to": return_to})
-    request.session["user_id"] = user.id
-    request.session[SESSION_APPLIANCE_INSTANCE_SESSION_KEY] = ensure_appliance_instance_id(db)
+    start_browser_session(request, db, user)
     record_audit(db, actor=user.username, action="ui_login", resource_type="auth")
     return RedirectResponse(return_to, status_code=303)
 
 
 @router.post("/logout", response_model=None)
-def logout(request: Request, csrf: str = Form(...), next: str = Form("")) -> RedirectResponse:
+def logout(request: Request, csrf: str = Form(...), next: str = Form(""), db: Session = Depends(get_db)) -> RedirectResponse:
     """Handle the logout endpoint.
 
     Args:
         request: Incoming HTTP request.
         csrf: Validated CSRF token authorizing the request.
         next: Relative destination requested after authentication.
+        db: Active database session.
 
     Returns:
         The endpoint response.
     """
     verify_csrf(request, csrf)
-    request.session.clear()
+    end_browser_session(request, db)
     return RedirectResponse(management_ui_path("/login"), status_code=303)
 
 
@@ -14513,7 +14537,11 @@ def public_login_page(
     return_to = safe_public_return_path(next, default="/terminal")
     if identity:
         return RedirectResponse(return_to, status_code=303)
-    return public_terminal_login_response(request, db=db)
+    return public_terminal_login_response(
+        request,
+        error=consume_browser_session_expired_notice(request),
+        db=db,
+    )
 
 
 @public_router.post("/login", response_model=None)
@@ -14549,23 +14577,23 @@ def public_login(
     if not user:
         record_audit(db, actor=username, action="public_ui_login_failed", resource_type="auth", success=False)
         return public_terminal_login_response(request, error="Invalid username or password", status_code=401, db=db)
-    request.session["user_id"] = user.id
-    request.session[SESSION_APPLIANCE_INSTANCE_SESSION_KEY] = ensure_appliance_instance_id(db)
+    start_browser_session(request, db, user)
     record_audit(db, actor=user.username, action="public_ui_login", resource_type="auth")
     return RedirectResponse(return_to, status_code=303)
 
 
 @public_router.post("/logout", response_model=None)
-def public_logout(request: Request, csrf: str = Form(...), next: str = Form("")) -> RedirectResponse:
+def public_logout(request: Request, csrf: str = Form(...), next: str = Form(""), db: Session = Depends(get_db)) -> RedirectResponse:
     """End a public-plane session without crossing into management.
 
     Args:
         request: Incoming HTTP request.
         csrf: Validated CSRF token authorizing the request.
         next: Requested same-plane return path.
+        db: Active database session.
     """
     verify_csrf(request, csrf)
-    request.session.clear()
+    end_browser_session(request, db)
     return RedirectResponse(safe_public_return_path(next, default="/terminal"), status_code=303)
 
 
@@ -17183,6 +17211,9 @@ factory_reset_backup_restore = _settings_backup_ui.endpoints[
 ]
 settings_page = _settings_backup_ui.endpoints["settings_page"]
 update_settings_from_ui = _settings_backup_ui.endpoints["update_settings_from_ui"]
+update_authentication_lifetimes_from_ui = _settings_backup_ui.endpoints[
+    "update_authentication_lifetimes_from_ui"
+]
 update_vmware_ceip_from_ui = _settings_backup_ui.endpoints[
     "update_vmware_ceip_from_ui"
 ]

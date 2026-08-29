@@ -34,6 +34,11 @@ def test_settings_backup_router_owns_exact_transport_set():
         ("/ui/management/settings", ("GET",), "settings_page"),
         ("/ui/management/settings", ("POST",), "update_settings_from_ui"),
         (
+            "/ui/management/settings/authentication-lifetimes",
+            ("POST",),
+            "update_authentication_lifetimes_from_ui",
+        ),
+        (
             "/ui/management/settings/vmware-ceip",
             ("POST",),
             "update_vmware_ceip_from_ui",
@@ -109,6 +114,10 @@ def test_settings_page_renders_autosave_validation_and_preview(client, monkeypat
     assert "Management UI HTTPS" in response.text
     assert "Root SSH login" in response.text
     assert "VMware Product Preferences" in response.text
+    assert "Authentication lifetimes" in response.text
+    assert 'name="browser_session_idle_timeout_minutes"' in response.text
+    assert 'name="api_token_max_lifetime_days"' in response.text
+    assert 'action="/ui/management/settings/authentication-lifetimes"' in response.text
     assert "VMware CEIP participation" in response.text
     assert 'action="/ui/management/settings/vmware-ceip"' in response.text
     assert 'name="vmware_ceip_enabled"' in response.text

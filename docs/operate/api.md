@@ -21,7 +21,8 @@ listeners. See [Public Services](../services/public-services.md) for the listene
 ## Create and protect an API token
 
 1. Sign in to the management UI and open **Authentication > API Tokens**.
-2. Create a token with a clear purpose, the shortest practical lifetime, and only the scopes required by the client.
+2. Create a token with a clear purpose and only the scopes required by the client. The final review shows the current
+   configured maximum lifetime and the absolute expiration that will be submitted.
 3. Copy the token when it is shown. Atlaso displays the secret once and cannot recover it later.
 4. In `/api/docs`, select **Authorize**, paste the token value, and authorize the bearer scheme.
 5. Revoke the token when its client is retired or its value may have been exposed. Create a replacement instead of
@@ -30,6 +31,12 @@ listeners. See [Public Services](../services/public-services.md) for the listene
 Treat bearer tokens like passwords. Do not put them in command history, source files, screenshots, issue reports,
 authenticated URLs, or shared logs. Prefer a secret manager for automation and an environment variable for short-lived
 interactive work.
+
+The maximum lifetime is configured under **Appliance Settings > Authentication lifetimes**. It defaults to 90 days and
+accepts 1 through 365 days. `POST /api/v1/auth/login` and `POST /api/v1/api-tokens` use the current policy at the instant
+of issuance: omit `expires_at` to use the maximum, or provide a timezone-aware timestamp that is in the future and no
+later than that boundary. Naive timestamps, past timestamps, and values beyond the maximum return `422`. Changing the
+policy affects only later issuance; Atlaso never extends, shortens, or revives an existing token.
 
 ## Call the API safely
 

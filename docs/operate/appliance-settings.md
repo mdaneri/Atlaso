@@ -1,6 +1,6 @@
 ---
 title: Appliance settings
-description: Configure Atlaso identity, resolver, management HTTPS, and root SSH desired state.
+description: Configure Atlaso identity, authentication lifetimes, resolver, management HTTPS, and root SSH state.
 audience:
   - operator
 status: current
@@ -22,6 +22,36 @@ This verified appliance view provides visual orientation before you begin.
 
 <!-- END GENERATED INTERFACE OVERVIEW -->
 
+## Configure authentication lifetimes
+
+The **Authentication lifetimes** section saves immediately and does not create a pending Appliance Apply unit:
+
+- **Browser session inactivity timeout** defaults to 30 minutes and accepts 5 through 1,440 minutes. Atlaso evaluates
+  the current value before every protected browser handler, so lowering it can expire an existing inactive session on
+  its next request. Raising it does not resurrect a session that already expired.
+- **Maximum API token lifetime** defaults to 90 days and accepts 1 through 365 days. It applies only when a new token is
+  issued. An omitted expiry uses the configured maximum; an explicit timezone-aware future expiry may be shorter.
+  Existing token expiry timestamps remain unchanged.
+
+Atlaso stores browser activity server-side. Full-page navigation, submitted forms, deliberate browser actions, and the
+CSRF-protected activity heartbeat extend the timeout. Static assets, background status polling, and passive page
+refresh requests do not. At the exact inactivity boundary Atlaso invalidates the session before the protected handler,
+clears browser identity and CSRF state, records a sanitized audit event, and returns `401` to fetch/API consumers. Human
+navigation returns to the appropriate management, public, or protocol login surface with **Session expired due to
+inactivity**.
+
+The OIDC provider applies the same timeout to its separate `/identity` browser session. Its signed cookie carries only
+an opaque session identifier; Atlaso persists the authoritative activity and terminal-expiry state. A successful
+credential submission starts the session, while silent `prompt=none` authorization does not refresh it. Once the
+deadline is reached, silent authorization returns `login_required`, and raising the policy cannot resurrect that
+expired session; a new interactive sign-in is required.
+
+Settings archives preserve both policy values but exclude active browser-session records. Factory reset restores the
+30-minute and 90-day defaults and invalidates all earlier sessions and tokens.
+During the first upgrade that introduces the persisted token policy, Atlaso migrates a valid legacy
+`ATLASO_API_TOKEN_TTL_DAYS` value instead of silently replacing it with the 90-day default. Subsequent startups retain
+the database policy, so removing or changing that legacy environment variable does not overwrite operator state.
+
 ## Before you begin
 
 Confirm the intended management hostname and DNS records. Keep an alternate console session available before changing
@@ -29,7 +59,8 @@ management connectivity or SSH policy. Routine field changes autosave, but they 
 
 ## Edit and validate
 
-1. Change only the fields required for the maintenance window.
+1. Change only the desired-state fields required for the maintenance window. Authentication lifetime fields use their
+   separate immediate autosave boundary described above.
 2. Watch the compact autosave status.
 3. Resolve errors or warnings in the Validation card.
 4. Open the rendered preview and confirm the hostname, resolver, HTTPS, and SSH effects.

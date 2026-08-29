@@ -345,6 +345,45 @@ def _advance_dns_authoritative_serial(session: Session, _flush_context, _instanc
     settings.authoritative_serial = max(current + 1, now)
 
 
+def _reconcile_authentication_lifetime_columns(connection: Connection) -> None:
+    """Add authentication-lifetime columns to an existing appliance settings table.
+
+    Args:
+        connection: Transactional database connection used for schema reconciliation.
+    """
+    existing_columns = {
+        column["name"] for column in inspect(connection).get_columns("appliance_settings")
+    }
+    additions = {
+        "browser_session_idle_timeout_minutes": "INTEGER NOT NULL DEFAULT 30",
+        "api_token_max_lifetime_days": "INTEGER NOT NULL DEFAULT 90",
+    }
+    idempotent_column_clause = (
+        "IF NOT EXISTS " if connection.dialect.name == "postgresql" else ""
+    )
+    for name, definition in additions.items():
+        if name not in existing_columns:
+            connection.execute(
+                text(
+                    "ALTER TABLE appliance_settings ADD COLUMN "
+                    f"{idempotent_column_clause}{name} {definition}"
+                )
+            )
+            if name == "api_token_max_lifetime_days":
+                legacy_token_days = get_settings().api_token_ttl_days
+                if legacy_token_days is not None:
+                    # Preserve a stricter legacy environment policy only while the
+                    # persisted column is first introduced. Later startups must
+                    # never overwrite an operator-managed database value.
+                    connection.execute(
+                        text(
+                            "UPDATE appliance_settings "
+                            "SET api_token_max_lifetime_days = :legacy_token_days"
+                        ),
+                        {"legacy_token_days": legacy_token_days},
+                    )
+
+
 def init_db() -> None:
     """Handle init db."""
     from atlaso.app import (  # noqa: F401 - importing models registers SQLAlchemy metadata.
@@ -353,6 +392,7 @@ def init_db() -> None:
 
     _create_database_schema(engine)
     with engine.begin() as connection:
+        _reconcile_authentication_lifetime_columns(connection)
         if engine.dialect.name == "sqlite":
             connection.execute(
                 text(

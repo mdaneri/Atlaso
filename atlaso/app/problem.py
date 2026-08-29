@@ -37,6 +37,12 @@ def should_redirect_to_login(request: Request, exc: HTTPException) -> bool:
     """
     if exc.status_code != 401 or exc.detail != "Authentication required":
         return False
+    fetch_mode = request.headers.get("Sec-Fetch-Mode", "").strip().lower()
+    accept = request.headers.get("Accept", "").lower()
+    if fetch_mode and fetch_mode != "navigate":
+        return False
+    if "application/json" in accept and "text/html" not in accept:
+        return False
     path = request.url.path
     return not (
         path == "/openapi.json"

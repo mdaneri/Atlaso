@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from base64 import b64decode
 from collections import OrderedDict, deque
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from html import escape
 from secrets import token_urlsafe
 from time import monotonic
@@ -14,14 +14,16 @@ from urllib.parse import urlencode
 from fastapi import APIRouter, Depends, HTTPException, Path, Request, Response, status
 from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse
 from itsdangerous import BadSignature, SignatureExpired, URLSafeTimedSerializer
-from sqlalchemy import select
+from sqlalchemy import delete, select
 from sqlalchemy.orm import Session
 
 from atlaso.app.audit import record_audit
 from atlaso.app.config import get_settings
 from atlaso.app.database import get_db
 from atlaso.app.models import (
+    ApplianceSettings,
     OidcAuthorizationTransaction,
+    OidcBrowserSession,
     OidcClient,
     OidcGroupMapping,
     OidcSigningKey,
@@ -51,6 +53,9 @@ from atlaso.app.security import (
     require_scope,
 )
 from atlaso.app.services.appliance_settings import normalize_fqdn
+from atlaso.app.services.authentication_lifetimes import (
+    BROWSER_SESSION_IDLE_TIMEOUT_DEFAULT_MINUTES,
+)
 from atlaso.app.services.dnsmasq import (
     join_interfaces,
     split_addresses,
@@ -254,6 +259,31 @@ def _load_oidc_session(request: Request, db: Session) -> dict[str, object] | Non
         or payload.get(SESSION_APPLIANCE_INSTANCE_SESSION_KEY) != ensure_appliance_instance_id(db)
     ):
         return None
+    auth_time_value = payload.get("auth_time")
+    if isinstance(auth_time_value, int):
+        browser_session = db.get(OidcBrowserSession, str(payload["sid"]))
+        if browser_session is None or browser_session.expired_at is not None:
+            return None
+        policy = (
+            db.execute(select(ApplianceSettings).order_by(ApplianceSettings.id))
+            .scalars()
+            .first()
+        )
+        timeout_minutes = int(
+            policy.browser_session_idle_timeout_minutes
+            if policy is not None
+            else BROWSER_SESSION_IDLE_TIMEOUT_DEFAULT_MINUTES
+        )
+        last_interactive_at = browser_session.last_interactive_at
+        if last_interactive_at.tzinfo is None:
+            last_interactive_at = last_interactive_at.replace(tzinfo=timezone.utc)
+        now = utcnow()
+        if now >= last_interactive_at + timedelta(minutes=timeout_minutes):
+            browser_session.expired_at = now
+            browser_session.expiry_reason = "inactivity"
+            db.add(browser_session)
+            db.commit()
+            return None
     return payload
 
 
@@ -689,6 +719,19 @@ async def authorize_post(request: Request, db: Session = Depends(get_db)) -> Res
         "organization_id": identity.organization_id,
         "auth_time": int(auth_time.timestamp()),
     }
+    db.execute(
+        delete(OidcBrowserSession).where(
+            OidcBrowserSession.issued_at
+            < auth_time - timedelta(seconds=OIDC_SESSION_MAX_AGE_SECONDS)
+        )
+    )
+    db.add(
+        OidcBrowserSession(
+            id=str(authenticated_session["sid"]),
+            issued_at=auth_time,
+            last_interactive_at=auth_time,
+        )
+    )
     try:
         state_value = transaction.state
         redirect_uri = transaction.redirect_uri
@@ -900,6 +943,14 @@ async def _logout_response(request: Request, db: Session) -> Response:
             response = RedirectResponse(location, status_code=303)
     else:
         response = Response(status_code=204)
+    session = _load_oidc_session(request, db)
+    if session is not None:
+        browser_session = db.get(OidcBrowserSession, str(session["sid"]))
+        if browser_session is not None and browser_session.expired_at is None:
+            browser_session.expired_at = utcnow()
+            browser_session.expiry_reason = "logout"
+            db.add(browser_session)
+            db.commit()
     _clear_oidc_cookie(response)
     return _no_store(response)
 

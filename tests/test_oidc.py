@@ -1811,6 +1811,87 @@ def test_prompt_none_max_age_and_login_hint_is_prefill_only(client):
     ]
 
 
+def test_prompt_none_enforces_configured_browser_inactivity_timeout(client, monkeypatch):
+    """Silent OIDC authorization cannot outlive the browser inactivity policy.
+
+    Args:
+        client: HTTP test client used to exercise the Atlaso application.
+        monkeypatch: Pytest fixture used to replace time for the test.
+    """
+    from atlaso.app.database import SessionLocal
+    from atlaso.app.models import ApplianceSettings, OidcBrowserSession
+    from atlaso.app.oidc import OIDC_SESSION_COOKIE, _session_serializer
+
+    client_id, _secret = _configure_protocol_client()
+    transaction, csrf, _cookie = _start_login(
+        client,
+        _authorization_parameters(client_id, "i" * 64),
+    )
+    assert _finish_local_login(client, transaction, csrf).status_code == 303
+
+    baseline = datetime(2026, 8, 29, 12, 0, tzinfo=timezone.utc)
+    session = _session_serializer().loads(client.cookies[OIDC_SESSION_COOKIE])
+    session["auth_time"] = int(baseline.timestamp())
+    client.cookies.set(
+        OIDC_SESSION_COOKIE,
+        _session_serializer().dumps(session),
+        domain="testserver.local",
+        path="/identity",
+    )
+    with SessionLocal() as db:
+        settings = db.execute(select(ApplianceSettings)).scalars().one()
+        settings.browser_session_idle_timeout_minutes = 5
+        browser_session = db.get(OidcBrowserSession, str(session["sid"]))
+        assert browser_session is not None
+        browser_session.last_interactive_at = baseline
+        db.commit()
+
+    monkeypatch.setattr(
+        "atlaso.app.oidc.utcnow",
+        lambda: baseline + timedelta(minutes=5),
+    )
+    expired = client.get(
+        "https://testserver/identity/authorize",
+        params=_authorization_parameters(
+            client_id,
+            "j" * 64,
+            prompt="none",
+            state="inactive-session",
+        ),
+        follow_redirects=False,
+    )
+
+    assert expired.status_code == 303
+    query = parse_qs(urlsplit(expired.headers["location"]).query)
+    assert query["state"] == ["inactive-session"]
+    assert query["error"] == ["login_required"]
+    with SessionLocal() as db:
+        browser_session = db.get(OidcBrowserSession, str(session["sid"]))
+        assert browser_session is not None
+        assert browser_session.expired_at is not None
+        assert browser_session.expired_at.replace(tzinfo=timezone.utc) == baseline + timedelta(
+            minutes=5
+        )
+        assert browser_session.expiry_reason == "inactivity"
+        settings = db.execute(select(ApplianceSettings)).scalars().one()
+        settings.browser_session_idle_timeout_minutes = 30
+        db.commit()
+
+    replay = client.get(
+        "https://testserver/identity/authorize",
+        params=_authorization_parameters(
+            client_id,
+            "k" * 64,
+            prompt="none",
+            state="terminal-expiry",
+        ),
+        follow_redirects=False,
+    )
+    replay_query = parse_qs(urlsplit(replay.headers["location"]).query)
+    assert replay_query["state"] == ["terminal-expiry"]
+    assert replay_query["error"] == ["login_required"]
+
+
 def test_oidc_browser_session_is_invalid_after_appliance_instance_changes(client):
     """An appliance reset invalidates an otherwise current OIDC browser cookie.
 

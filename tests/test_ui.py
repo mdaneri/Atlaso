@@ -379,6 +379,7 @@ def test_public_web_terminal_uses_public_shell_and_explicit_user_access(client, 
     assert "Back to Public Services" not in terminal.text
     assert 'action="/ui/public/logout"' in terminal.text
     assert 'name="next" value="/ui/public/terminal"' in terminal.text
+    session_csrf = terminal.text.split('name="csrf" value="', 1)[1].split('"', 1)[0]
     assert terminal.text.index("/static/ui-routes.js?v=issue-287-1") < terminal.text.index("/static/terminal.js?v=issue-287-2")
 
     directory = client.get("/ui/public", headers={"host": "192.168.87.32"})
@@ -396,7 +397,7 @@ def test_public_web_terminal_uses_public_shell_and_explicit_user_access(client, 
     logout = client.post(
         "/ui/public/logout",
         headers={"host": "192.168.87.32"},
-        data={"csrf": csrf, "next": "/ui/public/terminal"},
+        data={"csrf": session_csrf, "next": "/ui/public/terminal"},
         follow_redirects=False,
     )
     assert logout.status_code == 303
@@ -1064,7 +1065,7 @@ def test_pwa_manifest_service_worker_and_offline_shell(client):
     assert "ATLASO_CACHE" in service_worker.text
     assert "atlaso-management-pwa-v" in service_worker.text
     assert "ATLASO_CACHE_PREFIX" in service_worker.text
-    assert 'const ATLASO_CACHE = `${ATLASO_CACHE_PREFIX}295`;' in service_worker.text
+    assert 'const ATLASO_CACHE = `${ATLASO_CACHE_PREFIX}296`;' in service_worker.text
     assert 'fetch(asset, { cache: "reload" })' in service_worker.text
     assert "Required precache request failed" in service_worker.text
     assert "key.startsWith(ATLASO_CACHE_PREFIX)" in service_worker.text
@@ -1274,6 +1275,11 @@ def test_every_existing_tabulator_uses_the_shared_grid_foundation(client):
     host_wizard = function_block("initializeEsxiHostReferenceWizard")
     assert host_wizard.count(create_grid) == 1
     assert host_wizard.count('pattern: "direct-edit"') == 1
+
+    api_tokens = function_block("initializeApiTokensTable")
+    assert 'body.delete("expires_at")' in api_tokens
+    assert "days after server issuance" in api_tokens
+    assert "Date.now()" not in api_tokens
 
     network_boot = function_block("initializeNetworkBootPage")
     assert network_boot.count(create_grid) == 2

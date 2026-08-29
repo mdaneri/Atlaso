@@ -41,6 +41,7 @@ from atlaso.app.config import get_settings
 from atlaso.app.database import SessionLocal, get_db
 from atlaso.app.models import (
     ApplianceSettings,
+    BrowserSession,
     PhysicalInterface,
     User,
     VaultEntry,
@@ -48,8 +49,10 @@ from atlaso.app.models import (
 )
 from atlaso.app.secrets import decrypt_secret
 from atlaso.app.security import (
+    BROWSER_SESSION_ID_KEY,
     SESSION_APPLIANCE_INSTANCE_SESSION_KEY,
     ensure_appliance_instance_id,
+    ensure_aware,
     get_session_identity,
     require_session_identity,
 )
@@ -59,6 +62,9 @@ from atlaso.app.services.appliance_settings import (
     web_terminal_interface_options,
     web_terminal_interfaces_from_json,
     web_terminal_listener_interfaces,
+)
+from atlaso.app.services.authentication_lifetimes import (
+    BROWSER_SESSION_IDLE_TIMEOUT_DEFAULT_MINUTES,
 )
 from atlaso.app.services.management_bindings import applied_management_bindings
 from atlaso.app.services.vaults import vault_entry_uris
@@ -94,6 +100,7 @@ class TerminalTicket:
         username: Username maintained by this terminalticket.
         csrf_token: Csrf token maintained by this terminalticket.
         browser_session_id: Identifier of the associated browser session.
+        authentication_browser_session_id: Server-owned authenticated browser-session identifier.
         takeover: Takeover maintained by this terminalticket.
         expires_at: UTC timestamp after which the resource is no longer valid.
         remote_entry_id: Identifier of the associated remote entry.
@@ -104,6 +111,7 @@ class TerminalTicket:
     username: str
     csrf_token: str
     browser_session_id: str
+    authentication_browser_session_id: str
     takeover: bool
     expires_at: datetime
     remote_entry_id: int = 0
@@ -139,6 +147,7 @@ class ActiveTerminalSession:
         display_username: Display username maintained by this activeterminalsession.
         target_key: Target key maintained by this activeterminalsession.
         browser_session_id: Identifier of the associated browser session.
+        authentication_browser_session_id: Server-owned authenticated browser-session identifier.
         session_id: Identifier of the associated session.
         transport: Transport maintained by this activeterminalsession.
         channel: Channel maintained by this activeterminalsession.
@@ -156,6 +165,7 @@ class ActiveTerminalSession:
     display_username: str
     target_key: str
     browser_session_id: str
+    authentication_browser_session_id: str
     session_id: str
     transport: paramiko.Transport
     channel: paramiko.Channel
@@ -408,6 +418,52 @@ def revoke_user_terminal_sessions(user_id: int, reason: str = "Web SSH access re
             session.transport.close()
         except Exception:  # noqa: BLE001 - terminal transport cleanup is best effort.
             pass
+
+
+def _browser_session_is_active(browser_session_id: str, user_id: int) -> bool:
+    """Return whether the server-owned browser session still authorizes terminal access.
+
+    Args:
+        browser_session_id: Server-owned authenticated browser-session identifier.
+        user_id: Stable identifier of the associated user resource.
+    """
+    if not browser_session_id:
+        return False
+    with SessionLocal() as db:
+        browser_session = db.get(BrowserSession, browser_session_id)
+        if (
+            browser_session is None
+            or browser_session.user_id != user_id
+            or browser_session.expired_at is not None
+        ):
+            return False
+        policy = (
+            db.execute(select(ApplianceSettings).order_by(ApplianceSettings.id))
+            .scalars()
+            .first()
+        )
+        timeout_minutes = int(
+            policy.browser_session_idle_timeout_minutes
+            if policy is not None
+            else BROWSER_SESSION_IDLE_TIMEOUT_DEFAULT_MINUTES
+        )
+        now = datetime.now(timezone.utc)
+        if now < ensure_aware(browser_session.last_interactive_at) + timedelta(
+            minutes=timeout_minutes
+        ):
+            return True
+        browser_session.expired_at = now
+        browser_session.expiry_reason = "inactivity"
+        db.add(browser_session)
+        user = db.get(User, user_id)
+        record_audit(
+            db,
+            actor=user.username if user is not None else f"user:{user_id}",
+            action="browser_session_expired",
+            resource_type="auth",
+            detail="session_class=browser; reason=inactivity",
+        )
+        return False
 
 
 def _reserve_new_session(key: tuple[int, str]) -> bool:
@@ -742,6 +798,11 @@ def create_terminal_ticket(
     browser_session_id = browser_session_id.strip()
     if not re.fullmatch(r"[A-Za-z0-9_-]{16,80}", browser_session_id):
         raise HTTPException(status_code=400, detail="Invalid browser terminal session identifier")
+    authentication_browser_session_id = str(
+        request.session.get(BROWSER_SESSION_ID_KEY) or ""
+    )
+    if not authentication_browser_session_id:
+        raise HTTPException(status_code=401, detail="Authentication required")
     desired, _selected, addresses, management_addresses = _terminal_network_state(db)
     server_host = str((request.scope.get("server") or ("", 0))[0])
     selected_listener = _request_uses_selected_listener(request.headers, server_host, addresses)
@@ -802,6 +863,7 @@ def create_terminal_ticket(
             username=identity.username,
             csrf_token=csrf,
             browser_session_id=browser_session_id,
+            authentication_browser_session_id=authentication_browser_session_id,
             takeover=bool(takeover),
             expires_at=now + timedelta(seconds=TICKET_TTL_SECONDS),
             remote_entry_id=remote.entry_id if remote else 0,
@@ -952,6 +1014,11 @@ async def _terminal_session_reader(session: ActiveTerminalSession) -> None:
         if hasattr(session.channel, "settimeout"):
             session.channel.settimeout(1.0)
         while not session.channel.closed:
+            if not _browser_session_is_active(
+                session.authentication_browser_session_id, session.user_id
+            ):
+                session.close_reason = "browser session expired"
+                break
             now = monotonic()
             if now - session.started >= MAX_SESSION_SECONDS:
                 session.close_reason = "maximum lifetime"
@@ -1074,8 +1141,16 @@ async def terminal_websocket(websocket: WebSocket) -> None:
     """
     user_id = websocket.session.get("user_id")
     csrf_token = str(websocket.session.get("csrf_token") or "")
+    authentication_browser_session_id = str(
+        websocket.session.get(BROWSER_SESSION_ID_KEY) or ""
+    )
     with SessionLocal() as db:
         if not user_id or websocket.session.get(SESSION_APPLIANCE_INSTANCE_SESSION_KEY) != ensure_appliance_instance_id(db):
+            await websocket.close(code=4401)
+            return
+        if not _browser_session_is_active(
+            authentication_browser_session_id, int(user_id)
+        ):
             await websocket.close(code=4401)
             return
         user = db.get(User, int(user_id))
@@ -1114,6 +1189,14 @@ async def terminal_websocket(websocket: WebSocket) -> None:
         if auth_message.get("type") != "authenticate" or ticket is None:
             await websocket.send_json({"type": "error", "message": "Terminal ticket is invalid or expired."})
             return
+        if (
+            ticket.authentication_browser_session_id
+            != authentication_browser_session_id
+        ):
+            await websocket.send_json(
+                {"type": "error", "message": "Terminal ticket is invalid or expired."}
+            )
+            return
         key = (int(user_id), ticket.browser_session_id)
         target_key = (
             f"vault:{ticket.remote_entry_id}:{ticket.remote_uri_index}"
@@ -1145,9 +1228,16 @@ async def terminal_websocket(websocket: WebSocket) -> None:
                     if _sessions.get(old_key) is active_session:
                         _sessions.pop(old_key, None)
                     active_session.browser_session_id = ticket.browser_session_id
+                    active_session.authentication_browser_session_id = (
+                        ticket.authentication_browser_session_id
+                    )
                     _sessions[key] = active_session
                 session = active_session
                 resumed = True
+        if session is not None:
+            session.authentication_browser_session_id = (
+                ticket.authentication_browser_session_id
+            )
         if session is None:
             if not _reserve_new_session(key):
                 await websocket.send_json({"type": "error", "message": "The appliance terminal session limit has been reached."})
@@ -1173,6 +1263,9 @@ async def terminal_websocket(websocket: WebSocket) -> None:
                     display_username=display_username,
                     target_key=target_key,
                     browser_session_id=ticket.browser_session_id,
+                    authentication_browser_session_id=(
+                        ticket.authentication_browser_session_id
+                    ),
                     session_id=session_id,
                     transport=transport,
                     channel=channel,
@@ -1189,6 +1282,11 @@ async def terminal_websocket(websocket: WebSocket) -> None:
         await _attach_terminal_session(session, websocket, resumed=resumed)
         while not session.channel.closed and session.websocket is websocket:
             message = await websocket.receive_json()
+            if not _browser_session_is_active(
+                session.authentication_browser_session_id, session.user_id
+            ):
+                await _terminate_terminal_session(session, "browser session expired")
+                break
             message_type = message.get("type")
             if message_type == "input":
                 data = str(message.get("data") or "").encode("utf-8")

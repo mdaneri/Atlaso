@@ -100,9 +100,11 @@ def build_router() -> IdentityApiRouter:
     ) -> ApiTokenCreated:
         """Create Api Token.
 
-        Requires the `read:dashboard` API scope. The operation changes saved Atlaso application state;
-        any appliance host enforcement remains subject to the documented apply or task boundary for the
-        resource.
+        Requires the `read:dashboard` API scope. An omitted expiration uses the current maximum API
+        token lifetime from Appliance Settings. An explicit expiration must be timezone-aware, in the
+        future, and no later than that current maximum. The selected absolute expiration is immutable
+        when the policy changes later. The operation changes Atlaso application state immediately and
+        returns the plaintext bearer token only once.
 
         Args:
             payload: Validated request or task payload consumed by the operation.

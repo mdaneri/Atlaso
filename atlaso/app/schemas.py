@@ -78,13 +78,14 @@ class ApiTokenCreate(BaseModel):
     Attributes:
         name: Stable operator-facing name of this resource.
         description: Operator-facing purpose or context for this resource.
-        expires_at: UTC timestamp after which the resource or credential is no longer accepted.
+        expires_at: Optional timezone-aware expiration for the token. When omitted, Atlaso uses
+            the configured maximum lifetime for a newly issued token.
         scopes: Normalized Atlaso API scopes granted to the identity or token.
     """
 
     name: Annotated[str, Field(description='Stable operator-facing name of this resource.')] = Field(min_length=1, max_length=120)
     description: Annotated[str | None, Field(description='Operator-facing purpose or context for this resource.')] = None
-    expires_at: Annotated[datetime | None, Field(description='UTC timestamp after which the resource or credential is no longer accepted.')] = None
+    expires_at: Annotated[datetime | None, Field(description='Optional timezone-aware expiration for the new token. Omit to use the configured maximum API token lifetime; an explicit value must be in the future and no later than that maximum.')] = None
     scopes: Annotated[list[str], Field(description='Normalized Atlaso API scopes granted to the identity or token.')] = Field(default_factory=lambda: ["read:dashboard"])
 
 
@@ -2348,6 +2349,8 @@ class SettingsResponse(BaseModel):
         web_terminal_interfaces: Ordered collection of web terminal interfaces values represented by
             this settings schema.
         root_ssh_enabled: Whether root ssh enabled is enabled for this settings resource.
+        browser_session_idle_timeout_minutes: Maximum browser inactivity before Atlaso expires the session.
+        api_token_max_lifetime_days: Maximum lifetime allowed for newly issued API tokens.
         external_dns_servers: Ordered collection of external dns servers values represented by this
             settings schema.
         appliance_settings_config_path: Canonical filesystem or HTTP appliance settings config path
@@ -2374,6 +2377,8 @@ class SettingsResponse(BaseModel):
     web_terminal_enabled: Annotated[bool, Field(description='Whether web terminal enabled is enabled for this settings resource.')] = False
     web_terminal_interfaces: Annotated[list[str], Field(description='Ordered collection of web terminal interfaces values represented by this settings schema.')] = Field(default_factory=list)
     root_ssh_enabled: Annotated[bool, Field(description='Whether root ssh enabled is enabled for this settings resource.')] = False
+    browser_session_idle_timeout_minutes: Annotated[int, Field(description='Maximum period of authenticated browser inactivity, in minutes, before Atlaso expires the session on its next protected request.')] = Field(default=30, ge=5, le=1440)
+    api_token_max_lifetime_days: Annotated[int, Field(description='Maximum lifetime, in days, applied to newly issued API bearer tokens; existing tokens are unchanged.')] = Field(default=90, ge=1, le=365)
     external_dns_servers: Annotated[list[str], Field(description='Ordered collection of external dns servers values represented by this settings schema.')]
     appliance_settings_config_path: Annotated[str, Field(description='Canonical filesystem or HTTP appliance settings config path used by Atlaso; callers must not treat it as an unrestricted path.')]
     local_dns_enabled: Annotated[bool, Field(description='Whether local dns enabled is enabled for this settings resource.')]
@@ -2396,6 +2401,8 @@ class SettingsUpdate(BaseModel):
         web_terminal_interfaces: Ordered collection of web terminal interfaces values represented by
             this settings schema.
         root_ssh_enabled: Whether root ssh enabled is enabled for this settings resource.
+        browser_session_idle_timeout_minutes: Maximum browser inactivity before Atlaso expires the session.
+        api_token_max_lifetime_days: Maximum lifetime allowed for newly issued API tokens.
         external_dns_servers: Ordered collection of external dns servers values represented by this
             settings schema.
     """
@@ -2405,6 +2412,8 @@ class SettingsUpdate(BaseModel):
     web_terminal_enabled: Annotated[bool, Field(description='Whether web terminal enabled is enabled for this settings resource.')] = False
     web_terminal_interfaces: Annotated[list[str], Field(description='Ordered collection of web terminal interfaces values represented by this settings schema.')] = Field(default_factory=list)
     root_ssh_enabled: Annotated[bool, Field(description='Whether root ssh enabled is enabled for this settings resource.')] = False
+    browser_session_idle_timeout_minutes: Annotated[int, Field(description='Maximum period of authenticated browser inactivity, in minutes, before Atlaso expires the session on its next protected request.')] = Field(default=30, ge=5, le=1440)
+    api_token_max_lifetime_days: Annotated[int, Field(description='Maximum lifetime, in days, applied to newly issued API bearer tokens; existing tokens are unchanged.')] = Field(default=90, ge=1, le=365)
     external_dns_servers: Annotated[list[str], Field(description='Ordered collection of external dns servers values represented by this settings schema.')] = Field(default_factory=lambda: ["1.1.1.1", "9.9.9.9"])
 
 
