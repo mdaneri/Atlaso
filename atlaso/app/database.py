@@ -369,6 +369,19 @@ def _reconcile_authentication_lifetime_columns(connection: Connection) -> None:
                     f"{idempotent_column_clause}{name} {definition}"
                 )
             )
+            if name == "api_token_max_lifetime_days":
+                legacy_token_days = get_settings().api_token_ttl_days
+                if legacy_token_days is not None:
+                    # Preserve a stricter legacy environment policy only while the
+                    # persisted column is first introduced. Later startups must
+                    # never overwrite an operator-managed database value.
+                    connection.execute(
+                        text(
+                            "UPDATE appliance_settings "
+                            "SET api_token_max_lifetime_days = :legacy_token_days"
+                        ),
+                        {"legacy_token_days": legacy_token_days},
+                    )
 
 
 def init_db() -> None:

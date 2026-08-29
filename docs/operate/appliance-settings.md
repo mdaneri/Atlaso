@@ -42,6 +42,9 @@ inactivity**.
 
 Settings archives preserve both policy values but exclude active browser-session records. Factory reset restores the
 30-minute and 90-day defaults and invalidates all earlier sessions and tokens.
+During the first upgrade that introduces the persisted token policy, Atlaso migrates a valid legacy
+`ATLASO_API_TOKEN_TTL_DAYS` value instead of silently replacing it with the 90-day default. Subsequent startups retain
+the database policy, so removing or changing that legacy environment variable does not overwrite operator state.
 
 ## Before you begin
 

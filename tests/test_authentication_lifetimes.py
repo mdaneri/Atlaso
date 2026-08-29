@@ -7,6 +7,8 @@ from types import SimpleNamespace
 import pytest
 from sqlalchemy import select
 
+from atlaso.app import web_terminal
+from atlaso.app.config import Settings
 from atlaso.app.database import (
     SessionLocal,
     _reconcile_authentication_lifetime_columns,
@@ -33,6 +35,11 @@ def test_authentication_lifetime_schema_reconciliation_is_portable_and_idempoten
     Args:
         monkeypatch: Pytest fixture used to replace SQLAlchemy inspection.
     """
+    existing_columns = [
+        {"name": "id"},
+        {"name": "browser_session_idle_timeout_minutes"},
+    ]
+
     class Inspector:
         """Return the existing appliance-settings schema."""
 
@@ -44,10 +51,7 @@ def test_authentication_lifetime_schema_reconciliation_is_portable_and_idempoten
                 table_name: Database table being inspected.
             """
             assert table_name == "appliance_settings"
-            return [
-                {"name": "id"},
-                {"name": "browser_session_idle_timeout_minutes"},
-            ]
+            return existing_columns
 
     class Connection:
         """Capture portable ALTER TABLE statements."""
@@ -55,25 +59,41 @@ def test_authentication_lifetime_schema_reconciliation_is_portable_and_idempoten
         def __init__(self):
             """Initialize captured statements."""
             self.statements = []
+            self.parameters = []
             self.dialect = SimpleNamespace(name="postgresql")
 
-        def execute(self, statement):
+        def execute(self, statement, parameters=None):
             """Capture a reconciliation statement.
 
             Args:
                 statement: SQLAlchemy statement emitted by reconciliation.
+                parameters: Optional bound values emitted with the statement.
             """
             self.statements.append(str(statement))
+            self.parameters.append(parameters)
 
     monkeypatch.setattr("atlaso.app.database.inspect", lambda _connection: Inspector())
+    monkeypatch.setattr(
+        "atlaso.app.database.get_settings",
+        lambda: SimpleNamespace(api_token_ttl_days=7),
+    )
+    monkeypatch.setenv("ATLASO_API_TOKEN_TTL_DAYS", "7")
+    assert Settings(_env_file=None).api_token_ttl_days == 7
     connection = Connection()
 
     _reconcile_authentication_lifetime_columns(connection)
 
     assert connection.statements == [
         "ALTER TABLE appliance_settings ADD COLUMN IF NOT EXISTS "
-        "api_token_max_lifetime_days INTEGER NOT NULL DEFAULT 90"
+        "api_token_max_lifetime_days INTEGER NOT NULL DEFAULT 90",
+        "UPDATE appliance_settings SET api_token_max_lifetime_days = :legacy_token_days",
     ]
+    assert connection.parameters == [None, {"legacy_token_days": 7}]
+
+    existing_columns.append({"name": "api_token_max_lifetime_days"})
+    reconciled_connection = Connection()
+    _reconcile_authentication_lifetime_columns(reconciled_connection)
+    assert reconciled_connection.statements == []
 
 
 def _current_browser_session() -> BrowserSession:
@@ -248,6 +268,27 @@ def test_logout_terminally_invalidates_server_browser_session(client):
     closed = _current_browser_session()
     assert closed.expired_at is not None
     assert closed.expiry_reason == "logout"
+
+
+def test_terminal_protocol_revalidation_expires_inactive_browser_session(client):
+    """Terminal protocol checks enforce the persisted browser inactivity deadline.
+
+    Args:
+        client: HTTP test client used to exercise the Atlaso application.
+    """
+    login(client)
+    _set_lifetimes(idle_minutes=5)
+    with SessionLocal() as db:
+        session = db.execute(select(BrowserSession)).scalars().one()
+        session.last_interactive_at = datetime.now(timezone.utc) - timedelta(minutes=6)
+        session_id = session.id
+        user_id = session.user_id
+        db.commit()
+
+    assert web_terminal._browser_session_is_active(session_id, user_id) is False
+    expired = _current_browser_session()
+    assert expired.expired_at is not None
+    assert expired.expiry_reason == "inactivity"
 
 
 def test_authentication_lifetime_settings_save_validate_and_archive(client):
