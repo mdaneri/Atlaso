@@ -502,9 +502,12 @@ $BOOTSTRAP_USERNAME ALL=(ALL) ALL
 EOF
 chmod 0440 /etc/sudoers.d/atlaso-bootstrap-admin
 visudo -cf /etc/sudoers.d/atlaso-bootstrap-admin
-sudo -H -u "$BOOTSTRAP_USERNAME" env -u PSModulePath ATLASO_POWERCLI_VERSION="$ATLASO_POWERCLI_VERSION" \
-  pwsh -NoLogo -NoProfile -NonInteractive -Command \
-  '$ErrorActionPreference = "Stop"; $module = Get-Module -Name VCF.PowerCLI -ListAvailable | Where-Object Version -eq $env:ATLASO_POWERCLI_VERSION | Select-Object -First 1; if (-not $module) { throw "VCF.PowerCLI $env:ATLASO_POWERCLI_VERSION is not available to the bootstrap administrator" }; Import-Module $module.Path -Force; $configured = Get-PowerCLIConfiguration -Scope AllUsers; if ([bool]$configured.ParticipateInCEIP) { throw "VCF.PowerCLI CEIP default is not disabled for the bootstrap administrator" }; if (-not (Get-Command Connect-VIServer -ErrorAction SilentlyContinue)) { throw "Connect-VIServer is not available to the bootstrap administrator" }; Write-Host "VCF.PowerCLI $($module.Version) verified as $([Environment]::UserName) with appliance-wide CEIP disabled"'
+verify_bootstrap_powercli() {
+  sudo -H -u "$BOOTSTRAP_USERNAME" env -u PSModulePath ATLASO_POWERCLI_VERSION="$ATLASO_POWERCLI_VERSION" \
+    pwsh -NoLogo -NoProfile -NonInteractive -Command \
+    '$ErrorActionPreference = "Stop"; $module = Get-Module -Name VCF.PowerCLI -ListAvailable | Where-Object Version -eq $env:ATLASO_POWERCLI_VERSION | Select-Object -First 1; if (-not $module) { throw "VCF.PowerCLI $env:ATLASO_POWERCLI_VERSION is not available to the bootstrap administrator" }; Import-Module $module.Path -Force; $configured = Get-PowerCLIConfiguration -Scope AllUsers; if ([bool]$configured.ParticipateInCEIP) { throw "VCF.PowerCLI CEIP default is not disabled for the bootstrap administrator" }; if (-not (Get-Command Connect-VIServer -ErrorAction SilentlyContinue)) { throw "Connect-VIServer is not available to the bootstrap administrator" }; Write-Host "VCF.PowerCLI $($module.Version) verified as $([Environment]::UserName) with appliance-wide CEIP disabled"'
+}
+verify_bootstrap_powercli
 
 install_powershell_profile() {
   POWERSHELL_HOME="$(dirname "$(readlink -f "$(command -v pwsh)")")"
@@ -967,6 +970,8 @@ log_step "revalidating Photon compatibility and runtime capabilities after final
 command -v python3 >/dev/null
 command -v pwsh >/dev/null
 command -v vmtoolsd >/dev/null 2>&1 || [ "$ATLASO_GUEST_PLATFORM" != "vmware" ]
+install_powershell_profile
+verify_bootstrap_powercli
 nginx -t
 "$ATLASO_HOME/.venv/bin/python" "$ATLASO_HOME/scripts/check_photon_compatibility.py"
 "$ATLASO_HOME/.venv/bin/python" -c 'import atlaso'
