@@ -80,6 +80,11 @@ DEPLOYED_FILE_MODES = {
     "/boot/grub2/themes/atlaso/theme.txt": 0o644,
     "/boot/grub2/themes/atlaso/atlaso.png": 0o644,
 }
+POWERSHELL_PROFILE_SOURCE = "image/common/powershell/profile.ps1"
+POWERSHELL_PROFILE_TARGETS = (
+    "/opt/microsoft/powershell/7/profile.ps1",
+    "/usr/share/powershell/profile.ps1",
+)
 PHOTON_RPM_KEY_PATHS = (
     "image/common/photon-rpm-gpg/VMWARE-RPM-GPG-KEY",
     "image/common/photon-rpm-gpg/VMWARE-RPM-GPG-KEY-4096",
@@ -450,6 +455,35 @@ def _verify_guest_path_metadata(
             raise SystemExit(f"privileged guest ancestry is unsafe: {path}")
 
 
+def _powershell_profile_target(disk: Path, filesystem: str) -> str:
+    """Return the one admitted PowerShell package profile path in the guest.
+
+    Args:
+        disk: Read-only Photon payload disk.
+        filesystem: Guest filesystem mounted as root.
+    """
+
+    lines = _guestfish(
+        disk,
+        [
+            f"mount-ro {filesystem} /",
+            *(f"is-file {path}" for path in POWERSHELL_PROFILE_TARGETS),
+        ],
+    )
+    if len(lines) != len(POWERSHELL_PROFILE_TARGETS) or any(
+        line not in {"true", "false"} for line in lines
+    ):
+        raise SystemExit("PowerShell package profile discovery is malformed")
+    matches = [
+        path
+        for path, exists in zip(POWERSHELL_PROFILE_TARGETS, lines, strict=True)
+        if exists == "true"
+    ]
+    if len(matches) != 1:
+        raise SystemExit("guest must contain exactly one admitted PowerShell package profile")
+    return matches[0]
+
+
 def _verify_deployed_system_content(
     asset_root: Path, source_commit: str, repo_root: Path
 ) -> int:
@@ -472,6 +506,13 @@ def _verify_deployed_system_content(
         )
         for source, target in DEPLOYED_TEXT_FILES.items()
     }
+    powershell_profile_target = _powershell_profile_target(
+        payloads["photon_os"], filesystems["photon_os"]
+    )
+    text_targets[POWERSHELL_PROFILE_SOURCE] = (
+        "photon_os",
+        powershell_profile_target,
+    )
     binary_targets = {
         source: ("photon_os", target)
         for source, target in DEPLOYED_BINARY_FILES.items()
@@ -480,6 +521,8 @@ def _verify_deployed_system_content(
         target: DEPLOYED_FILE_MODES[target]
         for target in {*DEPLOYED_TEXT_FILES.values(), *DEPLOYED_BINARY_FILES.values()}
     }
+    static_modes.pop(DEPLOYED_TEXT_FILES[POWERSHELL_PROFILE_SOURCE])
+    static_modes[powershell_profile_target] = 0o644
     verified = 0
     with tempfile.TemporaryDirectory(prefix="atlaso-system-content-") as temporary:
         temporary_root = Path(temporary)

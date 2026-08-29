@@ -38,14 +38,28 @@ def _metadata_output(
             lines.append(command.removeprefix("echo "))
         elif command.startswith("lstatns "):
             path = command.removeprefix("lstatns ")
-            is_file = path in verifier.DEPLOYED_FILE_MODES or path.startswith(
-                "/etc/atlaso/update-trust.d/"
+            is_file = (
+                path in verifier.DEPLOYED_FILE_MODES
+                or path in verifier.POWERSHELL_PROFILE_TARGETS
+                or path.startswith("/etc/atlaso/update-trust.d/")
             )
             file_mode = verifier.DEPLOYED_FILE_MODES.get(path, 0o644)
             default_mode = (stat.S_IFREG | file_mode) if is_file else (stat.S_IFDIR | 0o755)
             mode, uid, gid = overrides.get(path, (default_mode, 0, 0))
             lines.extend((f"st_mode: {mode}", f"st_uid: {uid}", f"st_gid: {gid}"))
     return lines
+
+
+def _powershell_profile_output(commands: list[str], target: str) -> list[str] | None:
+    """Return guestfish existence results for the bounded profile candidates."""
+
+    if not any(command.startswith("is-file ") for command in commands):
+        return None
+    return [
+        "true" if command.removeprefix("is-file ") == target else "false"
+        for command in commands
+        if command.startswith("is-file ")
+    ]
 
 
 @pytest.fixture
@@ -613,6 +627,11 @@ def test_rejects_altered_non_wheel_system_content(
             if extra_trust_key:
                 names.append("producer.pem")
             return names
+        powershell_profile = _powershell_profile_output(
+            commands, "/opt/microsoft/powershell/7/profile.ps1"
+        )
+        if powershell_profile is not None:
+            return powershell_profile
         metadata = _metadata_output(commands)
         if metadata is not None:
             return metadata
@@ -626,8 +645,11 @@ def test_rejects_altered_non_wheel_system_content(
         verifier._verify_deployed_system_content(assets, SOURCE_COMMIT, tmp_path)
 
 
+@pytest.mark.parametrize("powershell_profile_target", verifier.POWERSHELL_PROFILE_TARGETS)
 def test_verifies_every_release_refreshed_non_wheel_file(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    powershell_profile_target: str,
 ) -> None:
     """The admitted commit supplies every expected deployed system byte.
 
@@ -657,6 +679,11 @@ def test_verifies_every_release_refreshed_non_wheel_file(
             trust_source
         ],
     }
+    default_profile_target = verifier.DEPLOYED_TEXT_FILES[
+        verifier.POWERSHELL_PROFILE_SOURCE
+    ]
+    if powershell_profile_target != default_profile_target:
+        guest_bytes[powershell_profile_target] = guest_bytes.pop(default_profile_target)
     metadata_queries: set[str] = set()
     monkeypatch.setattr(
         verifier,
@@ -680,6 +707,11 @@ def test_verifies_every_release_refreshed_non_wheel_file(
             return ["/dev/sda: ext4"]
         if commands[-1] == "ls /etc/atlaso/update-trust.d":
             return ["atlaso-release-test.pem"]
+        powershell_profile = _powershell_profile_output(
+            commands, powershell_profile_target
+        )
+        if powershell_profile is not None:
+            return powershell_profile
         metadata = _metadata_output(commands)
         if metadata is not None:
             metadata_queries.update(
@@ -701,6 +733,8 @@ def test_verifies_every_release_refreshed_non_wheel_file(
         *verifier.DEPLOYED_FILE_MODES,
         "/etc/atlaso/update-trust.d/atlaso-release-test.pem",
     }
+    expected_metadata.remove(default_profile_target)
+    expected_metadata.add(powershell_profile_target)
     expected_metadata.update(
         parent.as_posix()
         for path in tuple(expected_metadata)
