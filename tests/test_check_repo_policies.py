@@ -1198,6 +1198,84 @@ def test_merge_authority_transfer_matches_each_hold_direction(
     )
 
 
+def test_merge_authority_transfer_binds_withdrawal_to_matching_hold(
+    tmp_path: Path,
+) -> None:
+    """Verify one hold's withdrawal does not reverse another hold.
+
+    Args:
+        tmp_path: Temporary directory provided by pytest for isolated filesystem state.
+    """
+    path = tmp_path / MERGE_AUTHORITY_TRANSFER_FIXTURE_PATH
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(
+        json.dumps(
+            {
+                "cases": [
+                    {
+                        "name": "bound hold withdrawal",
+                        "instructions": [
+                            {
+                                "text": (
+                                    "The do not merge instruction is withdrawn, but "
+                                    "wait for approval."
+                                ),
+                                "add_holds": ["wait for approval"],
+                                "remove_holds": ["do not merge"],
+                            }
+                        ],
+                        "generated": "Wait for approval before merging.",
+                        "expected_holds": ["wait for approval"],
+                    }
+                ]
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    assert check_merge_authority_transfer_fixtures(tmp_path) == []
+
+
+def test_merge_authority_transfer_rejects_negated_hold_withdrawal(
+    tmp_path: Path,
+) -> None:
+    """Verify negating a withdrawal leaves the explicit hold active.
+
+    Args:
+        tmp_path: Temporary directory provided by pytest for isolated filesystem state.
+    """
+    path = tmp_path / MERGE_AUTHORITY_TRANSFER_FIXTURE_PATH
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(
+        json.dumps(
+            {
+                "cases": [
+                    {
+                        "name": "negated hold withdrawal",
+                        "instructions": [
+                            {
+                                "text": "The do not merge hold is not withdrawn.",
+                                "remove_holds": ["do not merge"],
+                            }
+                        ],
+                        "generated": "Continue through guarded squash merge.",
+                        "expected_holds": [],
+                    }
+                ]
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    findings = check_merge_authority_transfer_fixtures(tmp_path)
+
+    assert len(findings) == 1
+    assert findings[0].message == (
+        "merge authority fixture negated hold withdrawal instruction 1 hold "
+        "operations do not match its text"
+    )
+
+
 def test_merge_authority_transfer_distinguishes_auto_merge_choice(
     tmp_path: Path,
 ) -> None:

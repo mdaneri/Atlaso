@@ -521,6 +521,9 @@ MERGE_HOLD_WITHDRAWAL_MARKERS = (
     "not pull request only",
     "not pr only",
 )
+MERGE_HOLD_WITHDRAWAL_NEGATIONS = re.compile(
+    r"(?:not|never|cannot|can't|can’t|isn't|isn’t|wasn't|wasn’t)\s*$"
+)
 AUTO_MERGE_ONLY_PHRASES = (
     "do not merge automatically",
     "don't merge automatically",
@@ -675,20 +678,33 @@ def merge_hold_directions(text: str) -> dict[str, str | None]:
     normalized = " ".join(text.casefold().split())
     for phrase in AUTO_MERGE_ONLY_PHRASES:
         normalized = normalized.replace(phrase, "keep github auto-merge disabled")
-    clauses = tuple(
-        clause.strip()
-        for clause in re.split(r"[;.!?]+", normalized)
-        if clause.strip()
+    # Coordinating conjunctions begin a new instruction segment so a withdrawal
+    # attached to one named hold cannot reverse a different hold later in the
+    # same sentence.
+    segments = tuple(
+        segment.strip()
+        for segment in re.split(
+            r"(?:[;.!?]+|,\s*(?:but|and)\s+|\s+(?:but|and)\s+)", normalized
+        )
+        if segment.strip()
     )
     directions: dict[str, str | None] = {}
     for hold, patterns in EXPLICIT_MERGE_HOLD_PATTERNS.items():
         hold_directions: set[str] = set()
-        for clause in clauses:
-            if not any(pattern in clause for pattern in patterns):
+        for segment in segments:
+            if not any(pattern in segment for pattern in patterns):
                 continue
-            withdrawn = any(
-                marker in clause for marker in MERGE_HOLD_WITHDRAWAL_MARKERS
-            )
+            withdrawn = False
+            for marker in MERGE_HOLD_WITHDRAWAL_MARKERS:
+                marker_offset = segment.find(marker)
+                while marker_offset >= 0:
+                    prefix = segment[max(0, marker_offset - 24) : marker_offset]
+                    if MERGE_HOLD_WITHDRAWAL_NEGATIONS.search(prefix) is None:
+                        withdrawn = True
+                        break
+                    marker_offset = segment.find(marker, marker_offset + 1)
+                if withdrawn:
+                    break
             hold_directions.add("remove" if withdrawn else "add")
         if hold_directions:
             directions[hold] = (
