@@ -838,7 +838,9 @@ def test_merge_authority_transfer_rejects_invented_delegation_hold(
                 "cases": [
                     {
                         "name": "invented delegation hold",
-                        "source": "Implement and deliver the change.",
+                        "instructions": [
+                            {"text": "Implement and deliver the change."}
+                        ],
                         "generated": "Implement it, but do not merge.",
                         "expected_holds": [],
                     }
@@ -872,7 +874,12 @@ def test_merge_authority_transfer_rejects_dropped_heartbeat_hold(
                 "cases": [
                     {
                         "name": "dropped heartbeat hold",
-                        "source": "Wait for approval before merging.",
+                        "instructions": [
+                            {
+                                "text": "Wait for approval before merging.",
+                                "add_holds": ["wait for approval"],
+                            }
+                        ],
                         "generated": "Merge when the checks pass.",
                         "expected_holds": ["wait for approval"],
                     }
@@ -889,6 +896,78 @@ def test_merge_authority_transfer_rejects_dropped_heartbeat_hold(
         "merge authority fixture dropped heartbeat hold drops an explicit hold: "
         "wait for approval"
     )
+
+
+def test_merge_authority_transfer_rejects_neutral_default_prompt(
+    tmp_path: Path,
+) -> None:
+    """Verify a no-hold generated prompt affirmatively retains default authority.
+
+    Args:
+        tmp_path: Temporary directory provided by pytest for isolated filesystem state.
+    """
+    path = tmp_path / MERGE_AUTHORITY_TRANSFER_FIXTURE_PATH
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(
+        json.dumps(
+            {
+                "cases": [
+                    {
+                        "name": "neutral default prompt",
+                        "instructions": [{"text": "Implement the issue completely."}],
+                        "generated": "Watch the pull request until it is ready.",
+                        "expected_holds": [],
+                    }
+                ]
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    findings = check_merge_authority_transfer_fixtures(tmp_path)
+
+    assert len(findings) == 1
+    assert findings[0].message == (
+        "merge authority fixture neutral default prompt omits affirmative default authority"
+    )
+
+
+def test_merge_authority_transfer_applies_structured_hold_withdrawal(
+    tmp_path: Path,
+) -> None:
+    """Verify a later explicit withdrawal restores default merge authority.
+
+    Args:
+        tmp_path: Temporary directory provided by pytest for isolated filesystem state.
+    """
+    path = tmp_path / MERGE_AUTHORITY_TRANSFER_FIXTURE_PATH
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(
+        json.dumps(
+            {
+                "cases": [
+                    {
+                        "name": "withdrawn hold",
+                        "instructions": [
+                            {
+                                "text": "Do not merge.",
+                                "add_holds": ["do not merge"],
+                            },
+                            {
+                                "text": "The earlier do not merge hold is withdrawn.",
+                                "remove_holds": ["do not merge"],
+                            },
+                        ],
+                        "generated": "Continue through guarded squash merge.",
+                        "expected_holds": [],
+                    }
+                ]
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    assert check_merge_authority_transfer_fixtures(tmp_path) == []
 
 
 def test_agent_policy_gate_rejects_missing_default_merge_authority_contract(

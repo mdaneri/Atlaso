@@ -493,6 +493,14 @@ EXPLICIT_MERGE_HOLD_PATTERNS = {
     "pr only": ("pull request only", "pr only"),
     "wait for approval": ("wait for approval",),
 }
+DEFAULT_MERGE_AUTHORITY_PROMPT_MARKERS = (
+    "default merge authority",
+    "guarded squash merge",
+    "guarded-squash-merge",
+    "carry the task through guarded merge",
+    "complete the guarded merge",
+    "without waiting for a second merge instruction",
+)
 
 ORDERED_TERMINAL_CLEANUP_MARKERS = {
     path: (
@@ -646,13 +654,14 @@ def check_merge_authority_transfer_fixtures(root: Path) -> list[Finding]:
             )
             continue
         name = case.get("name")
-        source = case.get("source")
+        instructions = case.get("instructions")
         generated = case.get("generated")
         expected_holds = case.get("expected_holds")
         if (
             not isinstance(name, str)
             or not name.strip()
-            or not isinstance(source, str)
+            or not isinstance(instructions, list)
+            or not instructions
             or not isinstance(generated, str)
             or not isinstance(expected_holds, list)
             or any(not isinstance(item, str) for item in expected_holds)
@@ -668,16 +677,74 @@ def check_merge_authority_transfer_fixtures(root: Path) -> list[Finding]:
             continue
         seen_names.add(name)
         expected = tuple(dict.fromkeys(item.casefold() for item in expected_holds))
-        source_holds = explicit_merge_holds(source)
+        source_holds: list[str] = []
+        instruction_error = False
+        for instruction_index, instruction in enumerate(instructions, start=1):
+            if not isinstance(instruction, dict):
+                findings.append(
+                    Finding(
+                        path,
+                        f"merge authority fixture {name} instruction "
+                        f"{instruction_index} must be an object",
+                    )
+                )
+                instruction_error = True
+                continue
+            instruction_text = instruction.get("text")
+            add_holds = instruction.get("add_holds", [])
+            remove_holds = instruction.get("remove_holds", [])
+            if (
+                not isinstance(instruction_text, str)
+                or not isinstance(add_holds, list)
+                or any(not isinstance(item, str) for item in add_holds)
+                or not isinstance(remove_holds, list)
+                or any(not isinstance(item, str) for item in remove_holds)
+            ):
+                findings.append(
+                    Finding(
+                        path,
+                        f"merge authority fixture {name} instruction "
+                        f"{instruction_index} has invalid fields",
+                    )
+                )
+                instruction_error = True
+                continue
+            additions = tuple(dict.fromkeys(item.casefold() for item in add_holds))
+            removals = tuple(dict.fromkeys(item.casefold() for item in remove_holds))
+            referenced = tuple(dict.fromkeys((*additions, *removals)))
+            mentioned = explicit_merge_holds(instruction_text)
+            if (
+                any(hold not in EXPLICIT_MERGE_HOLD_PATTERNS for hold in referenced)
+                or set(additions) & set(removals)
+                or set(referenced) != set(mentioned)
+            ):
+                findings.append(
+                    Finding(
+                        path,
+                        f"merge authority fixture {name} instruction "
+                        f"{instruction_index} hold operations do not match its text",
+                    )
+                )
+                instruction_error = True
+                continue
+            source_holds = [hold for hold in source_holds if hold not in removals]
+            source_holds.extend(
+                hold for hold in additions if hold not in source_holds
+            )
+        if instruction_error:
+            continue
+        source_holds_tuple = tuple(source_holds)
         generated_holds = explicit_merge_holds(generated)
-        if source_holds != expected:
+        if source_holds_tuple != expected:
             findings.append(
                 Finding(
                     path,
                     f"merge authority fixture {name} expected holds do not match the source instructions",
                 )
             )
-        invented = tuple(hold for hold in generated_holds if hold not in source_holds)
+        invented = tuple(
+            hold for hold in generated_holds if hold not in source_holds_tuple
+        )
         if invented:
             findings.append(
                 Finding(
@@ -685,12 +752,30 @@ def check_merge_authority_transfer_fixtures(root: Path) -> list[Finding]:
                     f"merge authority fixture {name} invents a hold: {', '.join(invented)}",
                 )
             )
-        omitted = tuple(hold for hold in source_holds if hold not in generated_holds)
+        omitted = tuple(
+            hold for hold in source_holds_tuple if hold not in generated_holds
+        )
         if omitted:
             findings.append(
                 Finding(
                     path,
                     f"merge authority fixture {name} drops an explicit hold: {', '.join(omitted)}",
+                )
+            )
+        normalized_generated = " ".join(generated.casefold().split())
+        if (
+            not expected
+            and not invented
+            and not omitted
+            and not any(
+                marker in normalized_generated
+                for marker in DEFAULT_MERGE_AUTHORITY_PROMPT_MARKERS
+            )
+        ):
+            findings.append(
+                Finding(
+                    path,
+                    f"merge authority fixture {name} omits affirmative default authority",
                 )
             )
     return findings
