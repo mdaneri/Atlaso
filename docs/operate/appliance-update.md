@@ -508,7 +508,9 @@ is named `atlaso-wheel-vX.Y.Z-<full-sha>` and is retained for 90 days. The artif
 `atlaso-*.whl` and canonical `wheel-identity.json`; it is not a GitHub Release, appliance-update bundle, wheelhouse,
 channel document, or virtualization input by itself. A rerun may create another retained artifact with the same name.
 The manual consumer compares all retained candidates and accepts them only when the wheel bytes are identical, then
-selects the newest publisher-run identity. Different bytes fail closed as a collision.
+selects the earliest retained publisher-run identity. That stable selection keeps signed bundle inputs byte-identical
+when a later automatic retry publishes the same wheel after the immutable Release already exists. Different bytes fail
+closed as a collision.
 
 If the artifact expires before an appliance release is cut, rerun the exact successful `main` CI and its automatic
 wheel publication while the commit remains reachable from `main`. Do not copy a wheel from another commit, rename an

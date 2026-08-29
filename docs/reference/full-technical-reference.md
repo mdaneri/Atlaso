@@ -315,7 +315,8 @@ Successful same-repository `main` push CI automatically publishes only a 90-day 
 the source CI and publisher runs, repository, version, commit, build time, filename, size, and SHA-256 digest. This
 GitHub-hosted read-only path has no appliance signing, Release/tag, Pages, protected virtualization, or self-hosted
 runner authority. Byte-identical retry artifacts are accepted; divergent retained bytes fail closed during manual
-release admission.
+release admission. The manual consumer preserves the earliest retained publisher-run identity across identical retries,
+keeping immutable signed bundle inputs deterministic.
 
 The protected **Publish appliance release** workflow is manual only. It accepts an exact successful `main` push CI
 commit, verifies and consumes its retained automatic wheel without rebuilding it, builds the exact CPython 3.14

@@ -127,8 +127,8 @@ def test_verify_artifact_rejects_digest_and_embedded_identity_mismatch(tmp_path:
         )
 
 
-def test_select_artifact_accepts_identical_retries_and_records_newest_run(tmp_path: Path) -> None:
-    """Allow byte-identical retries while retaining one exact publisher run handoff.
+def test_select_artifact_accepts_identical_retries_and_preserves_first_run(tmp_path: Path) -> None:
+    """Keep the first exact handoff stable across byte-identical retries.
 
     Args:
         tmp_path: Isolated artifact directory.
@@ -154,7 +154,7 @@ def test_select_artifact_accepts_identical_retries_and_records_newest_run(tmp_pa
     wheel_artifact.select_artifact(args)
 
     selected = json.loads((output / wheel_artifact.IDENTITY_NAME).read_text(encoding="utf-8"))
-    assert selected["publisher"]["run_id"] == 203
+    assert selected["publisher"]["run_id"] == 202
 
 
 def test_select_artifact_fails_closed_on_divergent_collision(tmp_path: Path) -> None:

@@ -550,8 +550,9 @@ The following cross-cutting boundaries always apply:
   self-hosted label, or virtualization access. **Publish appliance release** is protected manual dispatch only; it must
   consume and record the retained exact wheel handoff without rebuilding or substituting the wheel, then retain all
   CPython 3.14 wheelhouse, signing, immutable publication, Pages, and live-verification gates. Byte-identical automatic
-  retries are valid, divergent collisions fail closed, and an expired handoff requires rerunning the exact successful
-  CI/wheel publication while the commit remains on `main`.
+  retries are valid, but the consumer must preserve the earliest retained publisher-run identity so a later retry cannot
+  change signed bundle inputs. Divergent collisions fail closed, and an expired handoff requires rerunning the exact
+  successful CI/wheel publication while the commit remains on `main`.
 - Inventory Linux is an independently versioned Atlaso release package; full images leave it uninstalled so an
   administrator downloads a signed release on demand. Supported VMware wheel deployment synchronizes it unless
   explicitly skipped. Publish it only through the protected manual Inventory

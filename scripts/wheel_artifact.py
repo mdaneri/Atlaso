@@ -348,7 +348,7 @@ def create_artifact(args: argparse.Namespace) -> None:
 
 
 def select_artifact(args: argparse.Namespace) -> None:
-    """Fail closed on collisions and select the newest exact wheel handoff.
+    """Fail closed on collisions and preserve the earliest exact wheel handoff.
 
     Args:
         args: Parsed select command arguments.
@@ -377,7 +377,9 @@ def select_artifact(args: argparse.Namespace) -> None:
         elif wheel_bytes != expected_bytes:
             raise WheelArtifactError("retained automatic wheel artifacts collide with different bytes")
         verified.append((publisher_run_id, wheel, identity))
-    _run_id, wheel, identity = max(verified, key=lambda item: item[0])
+    # Keep the first published identity stable so a byte-identical retry cannot
+    # change signed bundle inputs after an immutable Release already exists.
+    _run_id, wheel, identity = min(verified, key=lambda item: item[0])
     output = args.output.resolve()
     if output.exists() and any(output.iterdir()):
         raise WheelArtifactError("selected wheel output must be absent or empty")

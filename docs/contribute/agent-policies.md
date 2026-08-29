@@ -698,7 +698,8 @@ Terminal order:
   Give this path no appliance signing material, protected environment, contents write, tag/Release or `gh-pages`
   mutation, channel promotion, self-hosted label, or virtualization access. Automatic retries may publish another
   artifact for the same identity only when the wheel bytes remain identical; a later consumer must compare all retained
-  candidates and fail closed on divergence.
+  candidates, fail closed on divergence, and preserve the earliest retained publisher-run handoff so a later identical
+  retry cannot change signed bundle inputs.
 - Complete release publication and recovery use only the protected **Publish appliance release** manual dispatch with
   the exact successful `main` push CI SHA. Require and revalidate the retained automatic wheel handoff, including its
   successful source CI identity and embedded wheel version/commit/time, and record `wheel-identity.json` inside the
