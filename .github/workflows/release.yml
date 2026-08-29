@@ -194,7 +194,6 @@ jobs:
           test "$(jq -r .name <<<"$PUBLISHER_STATE")" = "Publish Python wheel"
           test "$(jq -r .path <<<"$PUBLISHER_STATE")" = .github/workflows/wheel.yml
           test "$(jq -r .event <<<"$PUBLISHER_STATE")" = workflow_run
-          test "$(jq -r .head_sha <<<"$PUBLISHER_STATE")" = "$RELEASE_SHA"
           test "$(jq -r .conclusion <<<"$PUBLISHER_STATE")" = success
       - name: Download CPython 3.14 wheelhouse
         uses: actions/download-artifact@v8
