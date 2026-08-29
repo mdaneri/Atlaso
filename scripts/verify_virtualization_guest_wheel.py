@@ -964,7 +964,13 @@ def _require_admitted_runtime_package(
     rpm_tool: str,
     inventory: set[tuple[str, str, str, str, str, str]],
 ) -> None:
-    """Require one staged RPM identity and digest in official Photon metadata."""
+    """Require one staged RPM identity and digest in official Photon metadata.
+
+    Args:
+        package: Staged RPM whose signed package identity is inspected.
+        rpm_tool: Host-side RPM executable used for the bounded header query.
+        inventory: Exact official Photon package identities and file digests.
+    """
 
     query = _run_runtime_tool(
         [rpm_tool, "-qp", "--qf", "ATLASO\\t%{NAME}\\t%{EPOCHNUM}\\t%{VERSION}\\t%{RELEASE}\\t%{ARCH}\\n", str(package)]

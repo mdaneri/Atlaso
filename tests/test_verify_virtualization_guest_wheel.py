@@ -426,7 +426,12 @@ def test_rejects_generated_active_bytecode(
     )
 
     def fake_guestfish(_disk: Path, commands: list[str]) -> list[str]:
-        """Return producer-generated active bytecode beside signed source."""
+        """Return producer-generated active bytecode beside signed source.
+
+        Args:
+            _disk: Unused virtual-disk path.
+            commands: Guestfish command sequence.
+        """
 
         if commands == ["list-filesystems"]:
             return ["/dev/sda: ext4"]
