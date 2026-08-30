@@ -1995,6 +1995,17 @@
       ],
       "generated": "Preserve default merge authority and complete the guarded merge when eligible.",
       "expected_holds": []
+    },
+    {
+      "name": "qualified-fix-review-is-ineligible",
+      "default_merge_authority": false,
+      "instructions": [
+        {
+          "text": "Review the proposed fix for issue #602 and report findings."
+        }
+      ],
+      "generated": "Review the proposed fix and report findings without implementation or pull-request delivery.",
+      "expected_holds": []
     }
   ]
 }

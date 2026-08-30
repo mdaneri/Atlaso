@@ -711,6 +711,7 @@ DEFAULT_MERGE_AUTHORITY_DIRECT_REVIEW = re.compile(
     r"verif(?:y|ication)|validat(?:e|ion)|"
     r"analy(?:ze|sis)|assess|audit|evaluat(?:e|ion))(?:\s+of)?\s+"
     r"(?:(?:the|this|that|an?)\s+)?"
+    r"(?:(?:proposed|existing|current|updated|submitted)\s+)?"
     r"(?:implementation|changes?|code|patch|fix(?:es)?|pull request|pr|commit)\b"
     r"(?:\s+(?:#\d+|[0-9a-f]{7,40}))?"
     r"(?:\s+and\s+(?:report|summarize|describe)\b[^;.!?]*)?"

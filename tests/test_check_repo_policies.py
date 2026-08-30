@@ -342,6 +342,9 @@ def test_source_authority_excludes_patch_review() -> None:
         ("Review the patch and report findings.",)
     )
     assert not source_has_default_merge_authority(
+        ("Review the proposed fix for issue #602 and report findings.",)
+    )
+    assert not source_has_default_merge_authority(
         ("Evaluate the fix and report findings.",)
     )
     assert not source_has_default_merge_authority(

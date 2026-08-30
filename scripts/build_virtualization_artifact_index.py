@@ -159,9 +159,15 @@ def _require_virtualization_set(
             "virtualization release requires canonical VMware asset names; "
             f"expected {sorted(canonical_vmware)}, found {sorted(actual_vmware)}"
         )
-    expected_hyperv = f"atlaso-v{version}-hyperv-x86_64.zip"
-    if expected_hyperv not in names:
-        raise SystemExit(f"virtualization release requires {expected_hyperv}")
+    expected_hyperv = {f"atlaso-v{version}-hyperv-x86_64.zip"}
+    actual_hyperv = {
+        name for name in names if name.lower().endswith("-hyperv-x86_64.zip")
+    }
+    if actual_hyperv != expected_hyperv:
+        raise SystemExit(
+            "virtualization release requires the exact canonical Hyper-V asset set; "
+            f"expected {sorted(expected_hyperv)}, found {sorted(actual_hyperv)}"
+        )
     for helper in (
         "import-atlaso-proxmox.sh",
         "import-atlaso-kvm.sh",
