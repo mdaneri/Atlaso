@@ -362,6 +362,38 @@ def test_dependency_policy_accepts_matching_checkout_condition(
     assert validate(tmp_path) == []
 
 
+def test_dependency_policy_rejects_fallible_checkout_replacement(
+    tmp_path: Path,
+) -> None:
+    """Verify a continued checkout cannot become trusted source metadata.
+
+    Args:
+        tmp_path: Temporary directory provided by pytest for isolated filesystem state.
+    """
+    write_valid_policy(tmp_path)
+    workflow = tmp_path / ".github" / "workflows" / "release.yml"
+    workflow.parent.mkdir(parents=True, exist_ok=True)
+    workflow.write_text(
+        """jobs:
+  fallible:
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          repository: attacker/other
+      - uses: actions/checkout@v7
+        continue-on-error: true
+      - run: python -m pip install -r requirements-release-tools.lock
+""",
+        encoding="utf-8",
+    )
+
+    assert any(
+        "root workflow requirement uses fallible checkout metadata: "
+        "requirements-release-tools.lock" in error
+        for error in validate(tmp_path)
+    )
+
+
 def test_dependency_policy_decodes_quoted_run_scalars(tmp_path: Path) -> None:
     """Verify quoted run scalars are decoded before command tokenization.
 
@@ -617,6 +649,39 @@ def test_dependency_policy_tracks_shell_directory_changes(tmp_path: Path) -> Non
             "requirements-release-tools.lock" in error
             for error in validate(tmp_path)
         )
+
+
+def test_dependency_policy_tracks_multiline_shell_directory_change(
+    tmp_path: Path,
+) -> None:
+    """Verify directory state persists across lines of one run block.
+
+    Args:
+        tmp_path: Temporary directory provided by pytest for isolated filesystem state.
+    """
+    write_valid_policy(tmp_path)
+    workflow = tmp_path / ".github" / "workflows" / "release.yml"
+    workflow.parent.mkdir(parents=True, exist_ok=True)
+    workflow.write_text(
+        """jobs:
+  external:
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          repository: attacker/other
+          path: external
+      - run: |
+          cd external
+          python -m pip install -r requirements-release-tools.lock
+""",
+        encoding="utf-8",
+    )
+
+    assert any(
+        "checkout-prefixed workflow requirement is not sourced from Atlaso: "
+        "requirements-release-tools.lock" in error
+        for error in validate(tmp_path)
+    )
 
 
 def test_dependency_policy_treats_dot_checkout_path_as_root(

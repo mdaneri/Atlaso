@@ -71,6 +71,7 @@ class CheckoutSource:
     repository: str
     ref: str
     condition: str
+    fallible: bool
 
 
 LOCK_POLICIES = (
@@ -202,6 +203,18 @@ def _workflow_checkout_sources(
             ),
             "",
         )
+        continue_on_error = next(
+            (
+                value
+                for candidate in lines[step_index:step_end]
+                if len(candidate) - len(candidate.lstrip()) == step_indent + 2
+                and (
+                    value := _yaml_scalar(candidate, "continue-on-error")
+                )
+                is not None
+            ),
+            "false",
+        )
         checkout_path = ""
         repository = "${{ github.repository }}"
         ref = ""
@@ -231,7 +244,12 @@ def _workflow_checkout_sources(
             ref_value = _yaml_scalar(candidate, "ref")
             if ref_value is not None:
                 ref = ref_value.strip()
-        source = CheckoutSource(repository, ref, condition)
+        source = CheckoutSource(
+            repository,
+            ref,
+            condition,
+            continue_on_error.strip().lower() != "false",
+        )
         if checkout_path and checkout_path != ".":
             checkout_paths.setdefault((job_scope, checkout_path), []).append(
                 (index + 1, source)
@@ -534,13 +552,13 @@ def _workflow_effective_working_directory(lines: list[str], index: int) -> str:
     )
 
 
-def _workflow_run_commands(lines: list[str]) -> list[tuple[int, str, str]]:
+def _workflow_run_commands(lines: list[str]) -> list[tuple[int, str, str, int]]:
     """Return logical commands from every workflow run value.
 
     Args:
         lines: Workflow source lines.
     """
-    commands: list[tuple[int, str, str]] = []
+    commands: list[tuple[int, str, str, int]] = []
     index = 0
     while index < len(lines):
         match = RUN_RE.match(lines[index])
@@ -554,7 +572,7 @@ def _workflow_run_commands(lines: list[str]) -> list[tuple[int, str, str]]:
         run_indent = len(match.group("indent"))
         if value and not value.startswith(("|", ">")):
             working_directory = _workflow_effective_working_directory(lines, index)
-            commands.append((line_number, value, working_directory))
+            commands.append((line_number, value, working_directory, index))
             index += 1
             continue
 
@@ -578,6 +596,7 @@ def _workflow_run_commands(lines: list[str]) -> list[tuple[int, str, str]]:
                         command_line,
                         " ".join(line.strip() for _, line in block),
                         working_directory,
+                        line_number,
                     )
                 )
         else:
@@ -585,7 +604,9 @@ def _workflow_run_commands(lines: list[str]) -> list[tuple[int, str, str]]:
                 working_directory = _workflow_effective_working_directory(
                     lines, command_line - 1
                 )
-                commands.append((command_line, command, working_directory))
+                commands.append(
+                    (command_line, command, working_directory, line_number)
+                )
     return commands
 
 
@@ -596,8 +617,12 @@ def _workflow_requirement_paths(lines: list[str]) -> list[tuple[int, str, str]]:
         lines: Workflow source lines.
     """
     references: list[tuple[int, str, str]] = []
-    for line_number, command, working_directory in _workflow_run_commands(lines):
-        active_directory = working_directory
+    active_scope = -1
+    active_directory = ""
+    for line_number, command, working_directory, run_scope in _workflow_run_commands(lines):
+        if run_scope != active_scope:
+            active_scope = run_scope
+            active_directory = working_directory
         for segment in _shell_command_segments(command):
             directory_change = _segment_directory_change(segment)
             if directory_change is not None:
@@ -677,6 +702,13 @@ def _validate_workflow_locks(root: Path, policy_paths: set[str]) -> list[str]:
                 None,
             )
             if checkout_source is not None and len(relative.parts) > 1:
+                if checkout_source.fallible:
+                    errors.append(
+                        f"{workflow.relative_to(root)}:{line_number}: checkout-prefixed "
+                        "workflow requirement uses fallible checkout metadata: "
+                        f"{reference}"
+                    )
+                    continue
                 if checkout_source.condition and checkout_source.condition != command_condition:
                     errors.append(
                         f"{workflow.relative_to(root)}:{line_number}: checkout-prefixed "
@@ -717,6 +749,13 @@ def _validate_workflow_locks(root: Path, policy_paths: set[str]) -> list[str]:
                     ),
                     None,
                 )
+                if active_root is not None and active_root.fallible:
+                    errors.append(
+                        f"{workflow.relative_to(root)}:{line_number}: root workflow "
+                        "requirement uses fallible checkout metadata: "
+                        f"{reference}"
+                    )
+                    continue
                 if (
                     active_root is not None
                     and active_root.condition
