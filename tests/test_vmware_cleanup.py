@@ -490,6 +490,34 @@ Write-Host 'CLEANUP SUCCEEDED'
     return _run_script(wrapper, environment=environment)
 
 
+def _run_stale_registration_repair(
+    tmp_path: Path,
+    *,
+    scope_root: Path,
+    environment: dict[str, str],
+) -> subprocess.CompletedProcess[str]:
+    """Invoke only the exported pre-GUI stale-registration repair.
+
+    Args:
+        tmp_path: Scratch directory for the generated wrapper.
+        scope_root: Exact scope allowed for missing registration repair.
+        environment: Environment used to invoke the repair command.
+    """
+    wrapper = tmp_path / "repair-stale-registrations.ps1"
+    module = VMWARE_SCRIPT_ROOT / "Atlaso.WorkstationCleanup.psm1"
+    wrapper.write_text(
+        f"""$ErrorActionPreference = 'Stop'
+Import-Module '{module}' -Force
+Repair-AtlasoWorkstationStaleRegistrations `
+    -ScopeRoot '{scope_root}' `
+    -Confirm:$false
+Write-Host 'REPAIR SUCCEEDED'
+""",
+        encoding="utf-8",
+    )
+    return _run_script(wrapper, environment=environment)
+
+
 def _commands(log: Path) -> list[list[str]]:
     """Read fake vmrun invocations.
 
@@ -1400,6 +1428,42 @@ def test_stale_atlaso_registration_ignores_unrelated_broken_entries(tmp_path: Pa
     assert str(stale.resolve()) not in inventory_text
     assert str(unrelated_missing.resolve()) in inventory_text
     assert "vmlistBROKEN.config = malformed" in inventory_text
+    assert "unrelated.value = keep-me" in inventory_text
+
+
+def test_pre_gui_repair_removes_only_missing_scoped_registration(tmp_path: Path) -> None:
+    """Repair the stale row without deleting the configured output root.
+
+    Args:
+        tmp_path: Pytest temporary directory path.
+    """
+    root = tmp_path / "image" / "vmware-workstation" / "output"
+    root.mkdir(parents=True)
+    sentinel = root / "sentinel.txt"
+    sentinel.write_text("preserve", encoding="utf-8")
+    stale = root / "missing.vmx"
+    unrelated = tmp_path / "other" / "missing.vmx"
+    suffix = (
+        f'vmlist7.config = "{stale.resolve()}"\n'
+        f'index7.id = "{stale.resolve()}"\n'
+        f'vmlist8.config = "{unrelated.resolve()}"\n'
+        "unrelated.value = keep-me\n"
+    )
+    _, environment, _, inventory = _write_fake_vmrun(
+        tmp_path / "fake", [], inventory_suffix=suffix
+    )
+
+    result = _run_stale_registration_repair(
+        tmp_path,
+        scope_root=root,
+        environment=environment,
+    )
+
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert sentinel.read_text(encoding="utf-8") == "preserve"
+    inventory_text = inventory.read_text(encoding="utf-8")
+    assert str(stale.resolve()) not in inventory_text
+    assert str(unrelated.resolve()) in inventory_text
     assert "unrelated.value = keep-me" in inventory_text
 
 
@@ -2352,6 +2416,18 @@ def test_module_keeps_inventory_work_out_of_normal_delete_path() -> None:
 
     assert "Test-AtlasoWorkstationVmxRegistered" in normal_path
     assert "Remove-AtlasoWorkstationStaleRegistrations" in normal_path
+    assert "function Repair-AtlasoWorkstationStaleRegistrations" in module
+    assert "'Repair-AtlasoWorkstationStaleRegistrations'" in module
+    pre_gui_repair = module.split(
+        "function Repair-AtlasoWorkstationStaleRegistrations", 1
+    )[1].split("function Get-AtlasoRootSnapshot", 1)[0]
+    assert "Assert-AtlasoPathHasNoReparsePoint -Path $resolvedScopeRoot" in pre_gui_repair
+    assert "Remove-AtlasoWorkstationStaleRegistrations" in pre_gui_repair
+    assert "Remove-Item -LiteralPath $resolvedScopeRoot" not in pre_gui_repair
+    assert (
+        "Close the VMware Workstation UI before removing stale Atlaso VM library entries."
+        in module
+    )
     assert "Start-Sleep" not in normal_path
     assert "InventorySnapshotsEqual" not in module
     assert "index.count" not in normal_path
@@ -2413,4 +2489,21 @@ def test_module_keeps_inventory_work_out_of_normal_delete_path() -> None:
     )
     assert inventory_replace < rollback_catch < rollback_call
     implementation = re.sub(r"<#.*?#>\s*", "", module, flags=re.DOTALL)
-    assert len(implementation.splitlines()) < 1_100
+    assert len(implementation.splitlines()) < 1_125
+
+
+def test_pre_gui_repair_retains_exact_open_ui_refusal() -> None:
+    """Keep the real-inventory process gate and its operator diagnostic exact."""
+    module = (VMWARE_SCRIPT_ROOT / "Atlaso.WorkstationCleanup.psm1").read_text(
+        encoding="utf-8"
+    )
+    stale_repair = module.split(
+        "function Remove-AtlasoWorkstationStaleRegistrations", 1
+    )[1].split("function Repair-AtlasoWorkstationStaleRegistrations", 1)[0]
+    process_gate = stale_repair.index("Get-Process vmware -ErrorAction SilentlyContinue")
+    refusal = stale_repair.index(
+        "Close the VMware Workstation UI before removing stale Atlaso VM library entries."
+    )
+
+    assert "Test-AtlasoSamePath -Left $InventoryPath -Right $realInventoryPath" in stale_repair
+    assert process_gate < refusal

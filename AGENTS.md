@@ -714,8 +714,11 @@ The following cross-cutting boundaries always apply:
   the read-only GitHub Actions token to Packer only through `PACKER_GITHUB_API_TOKEN` on the canonical validation step
   for protected events and same-repository pull requests. Keep fork validation tokenless, checkout credentials
   unpersisted, and token material out of output, files, caches, and artifacts.
-- Default VMware Workstation GUI image builds must start or reuse a responsive Workstation UI in a process separate from
-  Packer before the synchronous `vmrun` start transition. Bind bounded sanitized startup diagnostics to the expected
+- Default VMware Workstation GUI image builds must repair only exact missing Atlaso registrations inside the configured
+  output scope while the Workstation UI is closed, then start or reuse a responsive Workstation UI in a process separate
+  from Packer before the synchronous `vmrun` start transition. Keep full artifact cleanup after network preflight, and
+  retain the exact close-the-UI refusal when scoped repair is required. Bind bounded sanitized startup diagnostics to
+  the expected
   VMX filesystem identity, provider inventory, exact running state, and configured builder TCP/22 endpoint until SSH
   provisioning begins. Remove raw Packer debug-log environment variables from the monitored child because they bypass
   redaction. On timeout, terminate only the Packer process tree and honor `-PackerOnError cleanup` through the checked
