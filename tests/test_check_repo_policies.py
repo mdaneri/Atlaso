@@ -13,6 +13,7 @@ from scripts.check_repo import (
     PRIMARY_CHECKOUT_RESUME_MARKER,
     PRIVATE_REMEDIATION_CLEANUP_MARKER,
     PRIVATE_REMEDIATION_REMOTE_MARKER,
+    PROTECTED_PUBLICATION_WORKFLOWS,
     REMOTE_BRANCH_LEASE_MARKER,
     REQUIRED_POLICY_MARKERS,
     SCHEDULED_PR_MONITORING_SECTION_ANCHORS,
@@ -30,12 +31,143 @@ from scripts.check_repo import (
     WORKTREE_REMOVAL_REMOTE_GATE_MARKER,
     WORKTREE_REMOVAL_RESUME_MARKER,
     check_agent_policy_gate,
+    check_protected_workflow_caches,
     check_spark_worker_agent,
     check_ui_pattern_foundation,
     check_virtualization_legacy,
     collect_files,
     is_checkable,
 )
+
+
+def write_protected_workflows(root: Path, workflow: str) -> None:
+    """Write the same focused workflow fixture to every protected path.
+
+    Args:
+        root: Temporary repository root.
+        workflow: Workflow YAML source.
+    """
+
+    for relative_path in PROTECTED_PUBLICATION_WORKFLOWS:
+        path = root / relative_path
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(workflow, encoding="utf-8")
+
+
+def test_protected_workflow_cache_policy_accepts_cache_free_jobs(tmp_path: Path) -> None:
+    """Protected jobs may configure Python without registering cache saves.
+
+    Args:
+        tmp_path: Temporary directory provided by pytest.
+    """
+
+    write_protected_workflows(
+        tmp_path,
+        """permissions:
+  actions: read
+  contents: read
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/setup-python@v7
+        with:
+          python-version: '3.14'
+""",
+    )
+
+    assert check_protected_workflow_caches(tmp_path) == []
+
+
+def test_protected_workflow_cache_policy_uses_effective_job_permissions(
+    tmp_path: Path,
+) -> None:
+    """A job override without Actions write cannot request a cache save.
+
+    Args:
+        tmp_path: Temporary directory provided by pytest.
+    """
+
+    write_protected_workflows(
+        tmp_path,
+        """permissions:
+  actions: write
+  contents: read
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    permissions:
+      actions: read
+      contents: write
+    steps:
+      - name: Set up Python
+        uses: actions/setup-python@v7
+        with:
+          python-version: '3.14'
+          cache: pip
+""",
+    )
+
+    findings = check_protected_workflow_caches(tmp_path)
+
+    assert len(findings) == len(PROTECTED_PUBLICATION_WORKFLOWS)
+    assert all("without actions: write" in finding.message for finding in findings)
+
+
+def test_protected_workflow_cache_policy_accepts_effective_actions_write(
+    tmp_path: Path,
+) -> None:
+    """The parser does not reject a cache when effective permissions can save it.
+
+    Args:
+        tmp_path: Temporary directory provided by pytest.
+    """
+
+    write_protected_workflows(
+        tmp_path,
+        """permissions:
+  actions: read
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    permissions:
+      actions: write
+    steps:
+      - uses: actions/setup-python@v7
+        with:
+          python-version: '3.14'
+          cache: 'pip'
+""",
+    )
+
+    assert check_protected_workflow_caches(tmp_path) == []
+
+
+def test_protected_workflow_cache_policy_ignores_ordinary_ci(tmp_path: Path) -> None:
+    """Ordinary CI cache policy remains outside protected publication checks.
+
+    Args:
+        tmp_path: Temporary directory provided by pytest.
+    """
+
+    write_protected_workflows(tmp_path, "jobs: {}\n")
+    ordinary = tmp_path / ".github/workflows/ci.yml"
+    ordinary.write_text(
+        """permissions:
+  contents: read
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/setup-python@v7
+        with:
+          python-version: '3.14'
+          cache: pip
+""",
+        encoding="utf-8",
+    )
+
+    assert check_protected_workflow_caches(tmp_path) == []
 
 
 def write_spark_worker_agent(

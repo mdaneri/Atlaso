@@ -289,6 +289,11 @@ The protected smoke jobs retrieve each booted VM's regenerated Ed25519 public ho
 its authenticated hypervisor metadata channel before SSH authentication. They reject an unknown or changed host and
 never use trust-on-first-use host-key acceptance. Artifact provenance intentionally contains no reusable host identity.
 
+Protected virtualization admission, finalization, and publication jobs configure Python without requesting the
+built-in `setup-python` pip cache. Their read-only or otherwise narrowly scoped Actions permissions are not widened for
+cache saving; exact hash-locked release-tool installation and every signing, attestation, immutable-asset, and isolated
+smoke boundary remain authoritative.
+
 Each smoke also captures both provider-side NIC identities before probing the guest. Hyper-V binds the address to the
 named **Management** adapter and its exact switch, KVM and Proxmox match QEMU guest-agent interface data to the
 management MAC from the ordered provider topology, and VMware resolves `ethernet0` only through its mapped management

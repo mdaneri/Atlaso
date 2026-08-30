@@ -122,6 +122,15 @@ SPARK_WORKER_REQUIRED_INSTRUCTION_MARKERS = (
     "Return a concise summary",
 )
 
+PROTECTED_PUBLICATION_WORKFLOWS = (
+    Path(".github/workflows/inventory-linux-release.yml"),
+    Path(".github/workflows/promote-release.yml"),
+    Path(".github/workflows/release.yml"),
+    Path(".github/workflows/virtualization-prerelease.yml"),
+    Path(".github/workflows/virtualization-stable.yml"),
+    Path(".github/workflows/virtualization-windows-candidate.yml"),
+)
+
 SCHEDULED_PR_MONITORING_SHARED_MARKERS = (
     "current-task heartbeat",
     "four minutes",
@@ -2957,6 +2966,100 @@ def check_virtualization_legacy(root: Path) -> list[Finding]:
     return findings
 
 
+def _yaml_mapping(lines: list[str], key_index: int, key_indent: int) -> dict[str, str]:
+    """Read one simple scalar YAML mapping used by workflow permissions.
+
+    Args:
+        lines: Workflow source split into lines.
+        key_index: Index of the mapping key line.
+        key_indent: Indentation of the mapping key.
+
+    Returns:
+        The scalar child values keyed by their YAML names.
+    """
+
+    values: dict[str, str] = {}
+    for line in lines[key_index + 1 :]:
+        stripped = line.lstrip()
+        if not stripped or stripped.startswith("#"):
+            continue
+        indent = len(line) - len(stripped)
+        if indent <= key_indent:
+            break
+        if indent != key_indent + 2 or ":" not in stripped:
+            continue
+        key, value = stripped.split(":", 1)
+        values[key.strip()] = value.split("#", 1)[0].strip().strip("'\"")
+    return values
+
+
+def check_protected_workflow_caches(root: Path) -> list[Finding]:
+    """Reject writable setup-python caches without effective Actions write scope.
+
+    Args:
+        root: Repository root containing protected publication workflows.
+
+    Returns:
+        Findings for cache-enabled setup-python steps that cannot save a cache.
+    """
+
+    findings: list[Finding] = []
+    job_key = re.compile(r"^  ([A-Za-z0-9_-]+):\s*(?:#.*)?$")
+    for relative_path in PROTECTED_PUBLICATION_WORKFLOWS:
+        path = root / relative_path
+        text, error = read_text(path)
+        if error is not None or text is None:
+            findings.append(Finding(path, "protected publication workflow is missing or unreadable"))
+            continue
+        lines = text.splitlines()
+        workflow_permissions: dict[str, str] = {}
+        for index, line in enumerate(lines):
+            if line == "permissions:":
+                workflow_permissions = _yaml_mapping(lines, index, 0)
+                break
+        jobs_index = next(
+            (index for index, line in enumerate(lines) if line == "jobs:"),
+            len(lines),
+        )
+        job_starts = [
+            (index, match.group(1))
+            for index, line in enumerate(lines[jobs_index + 1 :], jobs_index + 1)
+            if (match := job_key.match(line)) is not None
+        ]
+        for position, (start, job_id) in enumerate(job_starts):
+            end = job_starts[position + 1][0] if position + 1 < len(job_starts) else len(lines)
+            job_lines = lines[start:end]
+            effective_permissions = workflow_permissions
+            for offset, line in enumerate(job_lines):
+                if line == "    permissions:":
+                    effective_permissions = _yaml_mapping(job_lines, offset, 4)
+                    break
+            for offset, line in enumerate(job_lines):
+                if "uses: actions/setup-python@" not in line:
+                    continue
+                step_indent = len(line) - len(line.lstrip())
+                for cache_offset in range(offset + 1, len(job_lines)):
+                    candidate = job_lines[cache_offset]
+                    stripped = candidate.lstrip()
+                    candidate_indent = len(candidate) - len(stripped)
+                    if (
+                        stripped.startswith("- ")
+                        and candidate_indent < step_indent
+                    ):
+                        break
+                    if re.match(r"cache:\s*['\"]?(?:pip|pipenv|poetry)['\"]?\s*(?:#.*)?$", stripped):
+                        if effective_permissions.get("actions") != "write":
+                            findings.append(
+                                Finding(
+                                    path,
+                                    f"protected job {job_id!r} enables setup-python cache without actions: write",
+                                    start + cache_offset + 1,
+                                )
+                            )
+                        break
+    return findings
+
+
 def main(argv: list[str] | None = None) -> int:
     """Run the command-line entry point.
 
@@ -2979,6 +3082,7 @@ def main(argv: list[str] | None = None) -> int:
     findings.extend(check_spark_worker_agent(ROOT))
     findings.extend(check_ui_pattern_foundation(ROOT))
     findings.extend(check_virtualization_legacy(ROOT))
+    findings.extend(check_protected_workflow_caches(ROOT))
 
     if findings:
         print(f"Repository checks failed with {len(findings)} issue(s):", file=sys.stderr)
