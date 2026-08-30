@@ -13,6 +13,7 @@ from scripts.check_repo import (
     PRIMARY_CHECKOUT_RESUME_MARKER,
     PRIVATE_REMEDIATION_CLEANUP_MARKER,
     PRIVATE_REMEDIATION_REMOTE_MARKER,
+    PROTECTED_PUBLICATION_WORKFLOWS,
     REMOTE_BRANCH_LEASE_MARKER,
     REQUIRED_POLICY_MARKERS,
     SCHEDULED_PR_MONITORING_SECTION_ANCHORS,
@@ -30,12 +31,388 @@ from scripts.check_repo import (
     WORKTREE_REMOVAL_REMOTE_GATE_MARKER,
     WORKTREE_REMOVAL_RESUME_MARKER,
     check_agent_policy_gate,
+    check_protected_workflow_caches,
     check_spark_worker_agent,
     check_ui_pattern_foundation,
     check_virtualization_legacy,
     collect_files,
     is_checkable,
 )
+
+
+def write_protected_workflows(root: Path, workflow: str) -> None:
+    """Write the same focused workflow fixture to every protected path.
+
+    Args:
+        root: Temporary repository root.
+        workflow: Workflow YAML source.
+    """
+
+    for relative_path in PROTECTED_PUBLICATION_WORKFLOWS:
+        path = root / relative_path
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(workflow, encoding="utf-8")
+
+
+def test_protected_workflow_cache_policy_accepts_cache_free_jobs(tmp_path: Path) -> None:
+    """Protected jobs may configure Python without registering cache saves.
+
+    Args:
+        tmp_path: Temporary directory provided by pytest.
+    """
+
+    write_protected_workflows(
+        tmp_path,
+        """permissions:
+  actions: read
+  contents: read
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/setup-python@v7
+        with:
+          python-version: '3.14'
+""",
+    )
+
+    assert check_protected_workflow_caches(tmp_path) == []
+
+
+def test_protected_workflow_cache_policy_uses_effective_job_permissions(
+    tmp_path: Path,
+) -> None:
+    """A job override without Actions write cannot request a cache save.
+
+    Args:
+        tmp_path: Temporary directory provided by pytest.
+    """
+
+    write_protected_workflows(
+        tmp_path,
+        """permissions:
+  actions: write
+  contents: read
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    permissions:
+      actions: read
+      contents: write
+    steps:
+      - name: Set up Python
+        uses: actions/setup-python@v7
+        with:
+          python-version: '3.14'
+          cache: pip
+""",
+    )
+
+    findings = check_protected_workflow_caches(tmp_path)
+
+    assert len(findings) == len(PROTECTED_PUBLICATION_WORKFLOWS)
+    assert all("without actions: write" in finding.message for finding in findings)
+
+
+def test_protected_workflow_cache_policy_accepts_effective_actions_write(
+    tmp_path: Path,
+) -> None:
+    """The parser does not reject a cache when effective permissions can save it.
+
+    Args:
+        tmp_path: Temporary directory provided by pytest.
+    """
+
+    write_protected_workflows(
+        tmp_path,
+        """permissions:
+  actions: read
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    permissions:
+      actions: write
+    steps:
+      - uses: actions/setup-python@v7
+        with:
+          python-version: '3.14'
+          cache: 'pip'
+""",
+    )
+
+    assert check_protected_workflow_caches(tmp_path) == []
+
+
+def test_protected_workflow_cache_policy_stops_at_same_indent_step(tmp_path: Path) -> None:
+    """A later action's cache input does not belong to inline setup-python.
+
+    Args:
+        tmp_path: Temporary directory provided by pytest.
+    """
+
+    write_protected_workflows(
+        tmp_path,
+        """permissions: read-all
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/setup-python@v7
+      - uses: example/cache-aware-action@v1
+        with:
+          cache: pip
+""",
+    )
+
+    assert check_protected_workflow_caches(tmp_path) == []
+
+
+def test_protected_workflow_cache_policy_honors_scalar_job_permissions(tmp_path: Path) -> None:
+    """Scalar job permissions override a workflow-level Actions write grant.
+
+    Args:
+        tmp_path: Temporary directory provided by pytest.
+    """
+
+    write_protected_workflows(
+        tmp_path,
+        """permissions: {actions: write, contents: read}
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    permissions: {}
+    steps:
+      - uses: actions/setup-python@v7
+        with:
+          cache: pip
+""",
+    )
+
+    findings = check_protected_workflow_caches(tmp_path)
+
+    assert len(findings) == len(PROTECTED_PUBLICATION_WORKFLOWS)
+    assert all("without actions: write" in finding.message for finding in findings)
+
+
+def test_protected_workflow_cache_policy_rejects_inline_cache_input(tmp_path: Path) -> None:
+    """Flow-style setup-python inputs cannot bypass protected cache policy.
+
+    Args:
+        tmp_path: Temporary directory provided by pytest.
+    """
+
+    write_protected_workflows(
+        tmp_path,
+        """permissions: read-all
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/setup-python@v7
+        with: {python-version: '3.14', cache: pip}
+""",
+    )
+
+    findings = check_protected_workflow_caches(tmp_path)
+
+    assert len(findings) == len(PROTECTED_PUBLICATION_WORKFLOWS)
+    assert all("without actions: write" in finding.message for finding in findings)
+
+
+def test_protected_workflow_cache_policy_rejects_complete_flow_step(tmp_path: Path) -> None:
+    """A complete flow-style step is inspected independent of mapping order.
+
+    Args:
+        tmp_path: Temporary directory provided by pytest.
+    """
+
+    write_protected_workflows(
+        tmp_path,
+        """permissions: read-all
+jobs: # protected publication jobs
+  publish:
+    runs-on: ubuntu-latest
+    steps:
+      - {with: {cache: pip, python-version: '3.14'}, uses: actions/setup-python@v7}
+""",
+    )
+
+    findings = check_protected_workflow_caches(tmp_path)
+
+    assert len(findings) == len(PROTECTED_PUBLICATION_WORKFLOWS)
+    assert all("without actions: write" in finding.message for finding in findings)
+
+
+def test_protected_workflow_cache_policy_ignores_environment_cache_key(tmp_path: Path) -> None:
+    """Only setup-python action inputs participate in the cache policy.
+
+    Args:
+        tmp_path: Temporary directory provided by pytest.
+    """
+
+    write_protected_workflows(
+        tmp_path,
+        """permissions: read-all
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/setup-python@v7
+        env:
+          cache: pip
+        with:
+          python-version: '3.14'
+""",
+    )
+
+    assert check_protected_workflow_caches(tmp_path) == []
+
+
+def test_protected_workflow_cache_policy_uses_relative_job_indentation(tmp_path: Path) -> None:
+    """Formatting-only job indentation cannot disable the protected policy.
+
+    Args:
+        tmp_path: Temporary directory provided by pytest.
+    """
+
+    write_protected_workflows(
+        tmp_path,
+        """permissions: read-all
+jobs:
+    publish:
+      runs-on: ubuntu-latest
+      steps:
+        - uses: actions/setup-python@v7
+          with:
+            cache: pip
+""",
+    )
+
+    findings = check_protected_workflow_caches(tmp_path)
+
+    assert len(findings) == len(PROTECTED_PUBLICATION_WORKFLOWS)
+
+
+def test_protected_workflow_cache_policy_rejects_dynamic_cache_input(tmp_path: Path) -> None:
+    """A nonempty expression is conservatively treated as cache-enabled.
+
+    Args:
+        tmp_path: Temporary directory provided by pytest.
+    """
+
+    write_protected_workflows(
+        tmp_path,
+        """permissions: read-all
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/setup-python@v7
+        with:
+          cache: ${{ matrix.cache }}
+""",
+    )
+
+    findings = check_protected_workflow_caches(tmp_path)
+
+    assert len(findings) == len(PROTECTED_PUBLICATION_WORKFLOWS)
+
+
+def test_protected_workflow_cache_policy_accepts_wider_with_indentation(tmp_path: Path) -> None:
+    """Direct action inputs are parsed independent of indentation width.
+
+    Args:
+        tmp_path: Temporary directory provided by pytest.
+    """
+
+    write_protected_workflows(
+        tmp_path,
+        """permissions: read-all
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/setup-python@v7
+        with:
+            cache: pip
+""",
+    )
+
+    assert len(check_protected_workflow_caches(tmp_path)) == len(PROTECTED_PUBLICATION_WORKFLOWS)
+
+
+def test_protected_workflow_cache_policy_accepts_indentless_steps(tmp_path: Path) -> None:
+    """A valid indentless step sequence remains covered by policy.
+
+    Args:
+        tmp_path: Temporary directory provided by pytest.
+    """
+
+    write_protected_workflows(
+        tmp_path,
+        """permissions: read-all
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    steps:
+    - uses: actions/setup-python@v7
+      with:
+        cache: pip
+""",
+    )
+
+    assert len(check_protected_workflow_caches(tmp_path)) == len(PROTECTED_PUBLICATION_WORKFLOWS)
+
+
+def test_protected_workflow_cache_policy_accepts_bare_step_markers(tmp_path: Path) -> None:
+    """A bare sequence marker cannot hide a setup-python cache input.
+
+    Args:
+        tmp_path: Temporary directory provided by pytest.
+    """
+
+    write_protected_workflows(
+        tmp_path,
+        """permissions: read-all
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    steps:
+      -
+        uses: actions/setup-python@v7
+        with:
+          cache: pip
+""",
+    )
+
+    assert len(check_protected_workflow_caches(tmp_path)) == len(PROTECTED_PUBLICATION_WORKFLOWS)
+
+
+def test_protected_workflow_cache_policy_ignores_ordinary_ci(tmp_path: Path) -> None:
+    """Ordinary CI cache policy remains outside protected publication checks.
+
+    Args:
+        tmp_path: Temporary directory provided by pytest.
+    """
+
+    write_protected_workflows(tmp_path, "jobs: {}\n")
+    ordinary = tmp_path / ".github/workflows/ci.yml"
+    ordinary.write_text(
+        """permissions:
+  contents: read
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/setup-python@v7
+        with:
+          python-version: '3.14'
+          cache: pip
+""",
+        encoding="utf-8",
+    )
+
+    assert check_protected_workflow_caches(tmp_path) == []
 
 
 def write_spark_worker_agent(

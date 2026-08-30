@@ -101,7 +101,6 @@ jobs:
         uses: actions/setup-python@v7
         with:
           python-version: '3.14'
-          cache: pip
       - name: Install locked release tooling
         if: steps.identity.outputs.already_published != 'true'
         env:
@@ -167,7 +166,6 @@ jobs:
       - uses: actions/setup-python@v7
         with:
           python-version: '3.14'
-          cache: pip
       - name: Install locked release tooling
         env:
           PIP_CONFIG_FILE: /dev/null
@@ -317,7 +315,6 @@ jobs:
       - uses: actions/setup-python@v7
         with:
           python-version: '3.14'
-          cache: pip
       - name: Install locked release tooling
         env:
           PIP_CONFIG_FILE: /dev/null

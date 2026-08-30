@@ -569,6 +569,11 @@ every downloaded wheel or source archive against the checked-in lock, builds any
 isolation, and writes an ABI-specific `requirements-wheelhouse.lock` over the resulting wheel bytes. It does this for
 the appliance's CPython 3.14 runtime before running:
 
+Protected release and promotion jobs configure Python without the built-in `setup-python` pip cache. Their deliberately
+narrow Actions permissions cannot reserve cache saves, and publication must not broaden token authority merely for a
+performance optimization. The cache-free setup leaves the hash-locked installation, wheelhouse, signing, immutable
+Release, Pages serialization, channel monotonicity, and live-verification gates unchanged.
+
 ```bash
 python scripts/build_release_bundle.py \
   --wheelhouses wheelhouses \

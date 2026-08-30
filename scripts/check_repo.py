@@ -20,6 +20,8 @@ from html import unescape
 from pathlib import Path
 from urllib.parse import unquote
 
+import yaml
+
 ROOT = Path(__file__).resolve().parents[1]
 
 SKIP_PARTS = {
@@ -120,6 +122,16 @@ SPARK_WORKER_REQUIRED_INSTRUCTION_MARKERS = (
     "Ruff",
     "mypy",
     "Return a concise summary",
+)
+
+PROTECTED_PUBLICATION_WORKFLOWS = (
+    Path(".github/workflows/inventory-linux-release.yml"),
+    Path(".github/workflows/promote-release.yml"),
+    Path(".github/workflows/release.yml"),
+    Path(".github/workflows/virtualization-prerelease.yml"),
+    Path(".github/workflows/virtualization-stable.yml"),
+    Path(".github/workflows/virtualization-windows-candidate.yml"),
+    Path(".github/workflows/wheel.yml"),
 )
 
 SCHEDULED_PR_MONITORING_SHARED_MARKERS = (
@@ -2957,6 +2969,72 @@ def check_virtualization_legacy(root: Path) -> list[Finding]:
     return findings
 
 
+def check_protected_workflow_caches(root: Path) -> list[Finding]:
+    """Reject writable setup-python caches without effective Actions write scope.
+
+    Args:
+        root: Repository root containing protected publication workflows.
+
+    Returns:
+        Findings for cache-enabled setup-python steps that cannot save a cache.
+    """
+
+    findings: list[Finding] = []
+    for relative_path in PROTECTED_PUBLICATION_WORKFLOWS:
+        path = root / relative_path
+        text, error = read_text(path)
+        if error is not None or text is None:
+            findings.append(Finding(path, "protected publication workflow is missing or unreadable"))
+            continue
+        try:
+            workflow = yaml.safe_load(text)
+        except yaml.YAMLError as exc:
+            findings.append(Finding(path, f"protected publication workflow YAML is invalid: {exc}"))
+            continue
+        if not isinstance(workflow, dict):
+            findings.append(Finding(path, "protected publication workflow must be a YAML mapping"))
+            continue
+        workflow_permissions = workflow.get("permissions")
+        jobs = workflow.get("jobs", {})
+        if not isinstance(jobs, dict):
+            findings.append(Finding(path, "protected publication workflow jobs must be a mapping"))
+            continue
+        for job_id, job in jobs.items():
+            if not isinstance(job, dict):
+                continue
+            permissions = job.get("permissions", workflow_permissions)
+            actions_permission: object = None
+            if permissions == "write-all":
+                actions_permission = "write"
+            elif permissions == "read-all":
+                actions_permission = "read"
+            elif isinstance(permissions, dict):
+                actions_permission = permissions.get("actions")
+            steps = job.get("steps", [])
+            if not isinstance(steps, list):
+                continue
+            for step in steps:
+                if not isinstance(step, dict):
+                    continue
+                uses = step.get("uses")
+                inputs = step.get("with", {})
+                if not isinstance(uses, str) or not uses.startswith("actions/setup-python@"):
+                    continue
+                if not isinstance(inputs, dict) or "cache" not in inputs:
+                    continue
+                cache_value = inputs.get("cache")
+                if cache_value is None or (isinstance(cache_value, str) and not cache_value.strip()):
+                    continue
+                if actions_permission != "write":
+                    findings.append(
+                        Finding(
+                            path,
+                            f"protected job {str(job_id)!r} enables setup-python cache without actions: write",
+                        )
+                    )
+    return findings
+
+
 def main(argv: list[str] | None = None) -> int:
     """Run the command-line entry point.
 
@@ -2979,6 +3057,7 @@ def main(argv: list[str] | None = None) -> int:
     findings.extend(check_spark_worker_agent(ROOT))
     findings.extend(check_ui_pattern_foundation(ROOT))
     findings.extend(check_virtualization_legacy(ROOT))
+    findings.extend(check_protected_workflow_caches(ROOT))
 
     if findings:
         print(f"Repository checks failed with {len(findings)} issue(s):", file=sys.stderr)
