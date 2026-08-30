@@ -639,6 +639,8 @@ AUTO_MERGE_ONLY_PATTERN = re.compile(
 DEFAULT_MERGE_AUTHORITY_NEGATIONS = re.compile(
     r"(?:(?:do not|don't|don’t|never|must not|should not|cannot|can't|can’t|not)"
     r"(?:\s+\w+){0,6}|(?:lacks?|has no|have no|without)(?:\s+\w+){0,4}|"
+    r"(?:there\s+is|there's|there’s)\s+no\s+"
+    r"(?:authority|authorization|permission)\s+to|"
     r"(?:skip|avoid|omit|decline|refrain(?:\s+from)?|"
     r"hold off(?:\s+on)?|defer|delay|postpone|pause)"
     r"(?:\s+\w+){0,3})\s*$"
@@ -731,7 +733,7 @@ DEFAULT_MERGE_AUTHORITY_DIRECT_REVIEW = re.compile(
     r"(?:review|inspect|check|test|summarize|describe|explain|report|"
     r"verif(?:y|ication)|validat(?:e|ion)|"
     r"analy(?:ze|sis)|assess|audit|evaluat(?:e|ion))(?:\s+of)?\s+"
-    r"(?:(?:the|this|that|an?)\s+)?"
+    r"(?:(?:the|this|that|an?|my|our|your|their|his|her|its)\s+)?"
     r"(?:(?:proposed|existing|current|updated|submitted)\s+)?"
     r"(?:implementation|changes?|code|patch|fix(?:es)?|pull request|pr|commit)\b"
     r"(?:\s+(?:#\d+|[0-9a-f]{7,40}))?"
@@ -859,6 +861,17 @@ MERGE_HOLD_NONAPPROVAL_CONDITION = re.compile(
 MERGE_HOLD_APPROVAL_CONDITION = re.compile(
     r"\b(?:merge(?: only)?|only merge)\s+"
     r"(?:after|when|if|once|until|unless)\s+"
+    r"(?:i|we|(?:the\s+)?maintainer|"
+    r"(?:the\s+)?(?:[a-z][a-z0-9_-]*\s+)?owner)\s+approves?\b"
+)
+MERGE_HOLD_APPROVAL_BOUNDED_DISPOSITION = re.compile(
+    r"\b(?:(?:do not|don't|don’t|never)\s+merge"
+    r"(?:\s+(?:(?:this|the)\s+)?(?:pull request|pr))?|"
+    r"(?:leave|keep)\s+(?:(?:this|the)\s+)?(?:pull request|pr)\s+open|"
+    r"(?:pull request|pr)\s+only|"
+    r"only\s+(?:open|create|submit|prepare)\s+"
+    r"(?:(?:an?|the|this)\s+)?(?:pull request|pr))\b"
+    r"[^.!?]{0,60}\b(?:after|when|if|once|until|unless)\s+"
     r"(?:i|we|(?:the\s+)?maintainer|"
     r"(?:the\s+)?(?:[a-z][a-z0-9_-]*\s+)?owner)\s+approves?\b"
 )
@@ -1101,10 +1114,10 @@ def _hold_targets_non_pr_object(
     )
 
 
-def _is_approval_scoped_do_not_merge(
+def _is_approval_scoped_disposition(
     hold: str, segment: str, offset: int, pattern: str
 ) -> bool:
-    """Return whether a do-not-merge phrase belongs to an approval condition.
+    """Return whether a permanent disposition belongs to an approval condition.
 
     Args:
         hold: Canonical merge-hold name being classified.
@@ -1112,13 +1125,14 @@ def _is_approval_scoped_do_not_merge(
         offset: Character offset where the hold phrase begins.
         pattern: Exact hold phrase matched in the segment.
     """
-    if hold != "do not merge":
+    if hold not in {"do not merge", "leave open", "pr only"}:
         return False
     hold_end = offset + len(pattern)
     approval_matches = (
         tuple(MERGE_HOLD_APPROVAL_CONDITION.finditer(segment))
         + tuple(MERGE_HOLD_APPROVAL_BEFORE_MERGING.finditer(segment))
         + tuple(MERGE_HOLD_WITHOUT_APPROVAL.finditer(segment))
+        + tuple(MERGE_HOLD_APPROVAL_BOUNDED_DISPOSITION.finditer(segment))
     )
     return any(match.start() < hold_end and offset < match.end() for match in approval_matches)
 
@@ -1246,7 +1260,7 @@ def merge_hold_directions(
                         segment, pattern_offset, pattern
                     ) and not _hold_targets_non_pr_object(
                         hold, segment, pattern_offset, pattern
-                    ) and not _is_approval_scoped_do_not_merge(
+                    ) and not _is_approval_scoped_disposition(
                         hold, segment, pattern_offset, pattern
                     ):
                         has_directive_occurrence = True
@@ -1318,6 +1332,16 @@ def merge_hold_directions(
         ):
             directions["do not merge"] = "add"
     for condition_match in MERGE_HOLD_APPROVAL_CONDITION.finditer(normalized):
+        condition = condition_match.group(0)
+        if not _is_hold_discussion(
+            normalized, condition_match.start()
+        ) and not _hold_targets_other_task(
+            normalized, condition_match.start(), condition
+        ):
+            directions["wait for approval"] = "add"
+    for condition_match in MERGE_HOLD_APPROVAL_BOUNDED_DISPOSITION.finditer(
+        normalized
+    ):
         condition = condition_match.group(0)
         if not _is_hold_discussion(
             normalized, condition_match.start()

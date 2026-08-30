@@ -1913,6 +1913,36 @@
       "expected_holds": []
     },
     {
+      "name": "possessive-fix-review-is-review-only",
+      "default_merge_authority": false,
+      "instructions": [
+        {
+          "text": "Review my fix for issue #602 and report findings."
+        }
+      ],
+      "generated": "Review the submitted fix and report findings without changing repository or GitHub state.",
+      "expected_holds": []
+    },
+    {
+      "name": "approval-scoped-leave-open-is-resumable",
+      "default_merge_authority": true,
+      "instructions": [
+        {
+          "text": "Implement issue #602."
+        },
+        {
+          "text": "Keep this PR open until I approve.",
+          "add_holds": [
+            "wait for approval"
+          ]
+        }
+      ],
+      "generated": "Wait for approval before merging.",
+      "expected_holds": [
+        "wait for approval"
+      ]
+    },
+    {
       "name": "never-merge-is-an-explicit-hold",
       "default_merge_authority": true,
       "instructions": [

@@ -456,6 +456,16 @@ def test_source_authority_excludes_planning_a_fix() -> None:
     )
 
 
+def test_source_authority_excludes_possessive_review_targets() -> None:
+    """Verify possessive fix and patch reviews remain review-only."""
+    assert not source_has_default_merge_authority(
+        ("Review my fix for issue #602 and report findings.",)
+    )
+    assert not source_has_default_merge_authority(
+        ("Review our patch for issue #602 and report findings.",)
+    )
+
+
 def test_merge_hold_directions_recognizes_indefinite_pr_only_instruction() -> None:
     """Verify indefinite articles preserve an explicit PR-only hold."""
     assert merge_hold_directions("Only open a pull request for issue #602.") == {
@@ -480,6 +490,19 @@ def test_merge_hold_directions_classifies_approval_until_as_resumable() -> None:
     assert merge_hold_directions(
         "Do not merge unless the maintainer approves."
     ) == {"wait for approval": "add"}
+    assert merge_hold_directions("Keep this PR open until I approve.") == {
+        "wait for approval": "add"
+    }
+    assert merge_hold_directions("PR only until I approve.") == {
+        "wait for approval": "add"
+    }
+
+
+def test_generated_authority_rejects_absence_of_authority() -> None:
+    """Verify generated authority denials are not affirmative merge guidance."""
+    assert not has_affirmative_default_merge_authority(
+        "There is no authority to complete the guarded merge."
+    )
 
 
 def test_source_authority_keeps_workflow_policy_subject_eligible() -> None:
@@ -1530,6 +1553,44 @@ def test_merge_authority_transfer_rejects_neutral_default_prompt(
     assert len(findings) == 1
     assert findings[0].message == (
         "merge authority fixture neutral default prompt omits affirmative default authority"
+    )
+
+
+def test_merge_authority_transfer_rejects_generated_authority_denial(
+    tmp_path: Path,
+) -> None:
+    """Verify a generated denial cannot satisfy affirmative default authority.
+
+    Args:
+        tmp_path: Temporary directory provided by pytest for isolated filesystem state.
+    """
+    path = tmp_path / MERGE_AUTHORITY_TRANSFER_FIXTURE_PATH
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(
+        json.dumps(
+            {
+                "cases": [
+                    {
+                        "name": "generated authority denial",
+                        "default_merge_authority": True,
+                        "instructions": [{"text": "Implement issue #602."}],
+                        "generated": (
+                            "There is no authority to complete the guarded merge."
+                        ),
+                        "expected_holds": [],
+                    }
+                ]
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    findings = check_merge_authority_transfer_fixtures(tmp_path)
+
+    assert len(findings) == 1
+    assert findings[0].message == (
+        "merge authority fixture generated authority denial omits affirmative "
+        "default authority"
     )
 
 
