@@ -3025,6 +3025,51 @@ def _workflow_permissions(lines: list[str], key_index: int, key_indent: int) -> 
     return {}
 
 
+def _setup_python_step_uses_cache(step_lines: list[str]) -> bool:
+    """Return whether one workflow step enables setup-python dependency caching.
+
+    Args:
+        step_lines: Complete YAML source lines for one workflow step.
+
+    Returns:
+        True when the step uses setup-python and its ``with`` inputs enable a
+        supported dependency cache.
+    """
+
+    lines = [line.split("#", 1)[0] for line in step_lines]
+    if not any(re.search(r"\buses:\s*['\"]?actions/setup-python@", line) for line in lines):
+        return False
+    cache_input = re.compile(
+        r"(?:^|[,{]\s*)cache:\s*['\"]?(?:pip|pipenv|poetry)['\"]?(?=\s*(?:[,}]|$))"
+    )
+    flow_with_cache = re.compile(
+        r"(?:^|[,{]\s*)with:\s*\{[^{}]*\bcache:\s*"
+        r"['\"]?(?:pip|pipenv|poetry)['\"]?(?=\s*(?:[,}]|$))"
+    )
+    if any(flow_with_cache.search(line) for line in lines):
+        return True
+    for index, line in enumerate(lines):
+        stripped = line.lstrip()
+        match = re.match(r"with:\s*(.*)$", stripped)
+        if match is None:
+            continue
+        inline_value = match.group(1)
+        if inline_value:
+            return cache_input.search(inline_value) is not None
+        with_indent = len(line) - len(stripped)
+        for candidate in lines[index + 1 :]:
+            candidate_stripped = candidate.lstrip()
+            if not candidate_stripped:
+                continue
+            candidate_indent = len(candidate) - len(candidate_stripped)
+            if candidate_indent <= with_indent:
+                break
+            if candidate_indent == with_indent + 2 and cache_input.search(candidate_stripped):
+                return True
+        return False
+    return False
+
+
 def check_protected_workflow_caches(root: Path) -> list[Finding]:
     """Reject writable setup-python caches without effective Actions write scope.
 
@@ -3037,9 +3082,6 @@ def check_protected_workflow_caches(root: Path) -> list[Finding]:
 
     findings: list[Finding] = []
     job_key = re.compile(r"^  ([A-Za-z0-9_-]+):\s*(?:#.*)?$")
-    cache_input = re.compile(
-        r"(?:^|[,{]\s*)cache:\s*['\"]?(?:pip|pipenv|poetry)['\"]?(?=\s*(?:[,}]|#|$))"
-    )
     for relative_path in PROTECTED_PUBLICATION_WORKFLOWS:
         path = root / relative_path
         text, error = read_text(path)
@@ -3053,7 +3095,7 @@ def check_protected_workflow_caches(root: Path) -> list[Finding]:
                 workflow_permissions = _workflow_permissions(lines, index, 0)
                 break
         jobs_index = next(
-            (index for index, line in enumerate(lines) if line == "jobs:"),
+            (index for index, line in enumerate(lines) if re.match(r"^jobs:\s*(?:#.*)?$", line)),
             len(lines),
         )
         job_starts = [
@@ -3069,29 +3111,45 @@ def check_protected_workflow_caches(root: Path) -> list[Finding]:
                 if re.match(r"^    permissions:\s*(?:[^#].*)?$", line):
                     effective_permissions = _workflow_permissions(job_lines, offset, 4)
                     break
-            for offset, line in enumerate(job_lines):
-                if "uses: actions/setup-python@" not in line:
+            steps_index = next(
+                (
+                    offset
+                    for offset, line in enumerate(job_lines)
+                    if re.match(r"^    steps:\s*(?:#.*)?$", line)
+                ),
+                len(job_lines),
+            )
+            steps_end = next(
+                (
+                    offset
+                    for offset, line in enumerate(job_lines[steps_index + 1 :], steps_index + 1)
+                    if line.strip()
+                    and not line.lstrip().startswith("#")
+                    and len(line) - len(line.lstrip()) <= 4
+                ),
+                len(job_lines),
+            )
+            step_starts = [
+                offset
+                for offset, line in enumerate(job_lines[steps_index + 1 : steps_end], steps_index + 1)
+                if line.startswith("      - ")
+            ]
+            for step_position, step_start in enumerate(step_starts):
+                step_end = (
+                    step_starts[step_position + 1]
+                    if step_position + 1 < len(step_starts)
+                    else steps_end
+                )
+                if not _setup_python_step_uses_cache(job_lines[step_start:step_end]):
                     continue
-                step_indent = len(line) - len(line.lstrip())
-                for cache_offset in range(offset + 1, len(job_lines)):
-                    candidate = job_lines[cache_offset]
-                    stripped = candidate.lstrip()
-                    candidate_indent = len(candidate) - len(stripped)
-                    if (
-                        stripped.startswith("- ")
-                        and candidate_indent <= step_indent
-                    ):
-                        break
-                    if cache_input.search(stripped):
-                        if effective_permissions.get("actions") != "write":
-                            findings.append(
-                                Finding(
-                                    path,
-                                    f"protected job {job_id!r} enables setup-python cache without actions: write",
-                                    start + cache_offset + 1,
-                                )
-                            )
-                        break
+                if effective_permissions.get("actions") != "write":
+                    findings.append(
+                        Finding(
+                            path,
+                            f"protected job {job_id!r} enables setup-python cache without actions: write",
+                            start + step_start + 1,
+                        )
+                    )
     return findings
 
 

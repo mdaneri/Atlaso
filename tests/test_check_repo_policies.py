@@ -219,6 +219,55 @@ jobs:
     assert all("without actions: write" in finding.message for finding in findings)
 
 
+def test_protected_workflow_cache_policy_rejects_complete_flow_step(tmp_path: Path) -> None:
+    """A complete flow-style step is inspected independent of mapping order.
+
+    Args:
+        tmp_path: Temporary directory provided by pytest.
+    """
+
+    write_protected_workflows(
+        tmp_path,
+        """permissions: read-all
+jobs: # protected publication jobs
+  publish:
+    runs-on: ubuntu-latest
+    steps:
+      - {with: {cache: pip, python-version: '3.14'}, uses: actions/setup-python@v7}
+""",
+    )
+
+    findings = check_protected_workflow_caches(tmp_path)
+
+    assert len(findings) == len(PROTECTED_PUBLICATION_WORKFLOWS)
+    assert all("without actions: write" in finding.message for finding in findings)
+
+
+def test_protected_workflow_cache_policy_ignores_environment_cache_key(tmp_path: Path) -> None:
+    """Only setup-python action inputs participate in the cache policy.
+
+    Args:
+        tmp_path: Temporary directory provided by pytest.
+    """
+
+    write_protected_workflows(
+        tmp_path,
+        """permissions: read-all
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/setup-python@v7
+        env:
+          cache: pip
+        with:
+          python-version: '3.14'
+""",
+    )
+
+    assert check_protected_workflow_caches(tmp_path) == []
+
+
 def test_protected_workflow_cache_policy_ignores_ordinary_ci(tmp_path: Path) -> None:
     """Ordinary CI cache policy remains outside protected publication checks.
 
