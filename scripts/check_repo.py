@@ -575,6 +575,9 @@ DEFAULT_MERGE_AUTHORITY_SOURCE_MARKERS = re.compile(
     r"pull[- ]request delivery|guarded[- ]squash merge|"
     r"task-owned pull request|ordinary same-repository"
 )
+MERGE_AUTHORITY_INSTRUCTION_BOUNDARY = re.compile(
+    r"(?:[;,.!?]+|\s+(?:but|and)\s+)"
+)
 
 ORDERED_TERMINAL_CLEANUP_MARKERS = {
     path: (
@@ -709,9 +712,7 @@ def merge_hold_directions(text: str) -> dict[str, str | None]:
     # same sentence.
     segments = tuple(
         segment.strip()
-        for segment in re.split(
-            r"(?:[;.!?]+|,\s*(?:but|and)\s+|\s+(?:but|and)\s+)", normalized
-        )
+        for segment in MERGE_AUTHORITY_INSTRUCTION_BOUNDARY.split(normalized)
         if segment.strip()
     )
     directions: dict[str, str | None] = {}
@@ -776,10 +777,16 @@ def source_has_default_merge_authority(instructions: tuple[str, ...]) -> bool:
     eligible = False
     for instruction in instructions:
         normalized = " ".join(instruction.casefold().split())
-        if DEFAULT_MERGE_AUTHORITY_SOURCE_EXCLUSIONS.search(normalized) is not None:
-            eligible = False
-        elif DEFAULT_MERGE_AUTHORITY_SOURCE_MARKERS.search(normalized) is not None:
-            eligible = True
+        segments = (
+            segment.strip()
+            for segment in MERGE_AUTHORITY_INSTRUCTION_BOUNDARY.split(normalized)
+            if segment.strip()
+        )
+        for segment in segments:
+            if DEFAULT_MERGE_AUTHORITY_SOURCE_EXCLUSIONS.search(segment) is not None:
+                eligible = False
+            elif DEFAULT_MERGE_AUTHORITY_SOURCE_MARKERS.search(segment) is not None:
+                eligible = True
     return eligible
 
 

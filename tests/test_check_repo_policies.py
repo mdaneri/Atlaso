@@ -1339,6 +1339,93 @@ def test_merge_authority_transfer_binds_withdrawal_to_matching_hold(
     assert check_merge_authority_transfer_fixtures(tmp_path) == []
 
 
+def test_merge_authority_transfer_binds_comma_separated_hold_withdrawal(
+    tmp_path: Path,
+) -> None:
+    """Verify comma-separated withdrawal does not reverse a later hold.
+
+    Args:
+        tmp_path: Temporary directory provided by pytest for isolated filesystem state.
+    """
+    path = tmp_path / MERGE_AUTHORITY_TRANSFER_FIXTURE_PATH
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(
+        json.dumps(
+            {
+                "cases": [
+                    {
+                        "name": "comma-bound withdrawal",
+                        "default_merge_authority": True,
+                        "instructions": [
+                            {
+                                "text": (
+                                    "Withdraw the wait for approval requirement, keep "
+                                    "the pull request open."
+                                ),
+                                "remove_holds": ["wait for approval", "leave open"],
+                            }
+                        ],
+                        "generated": "Continue through guarded squash merge.",
+                        "expected_holds": [],
+                    }
+                ]
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    findings = check_merge_authority_transfer_fixtures(tmp_path)
+
+    assert len(findings) == 1
+    assert findings[0].message == (
+        "merge authority fixture comma-bound withdrawal instruction 1 hold "
+        "operations do not match its text"
+    )
+
+
+def test_merge_authority_transfer_applies_same_instruction_scope_transition(
+    tmp_path: Path,
+) -> None:
+    """Verify a later clause can restore implementation authority.
+
+    Args:
+        tmp_path: Temporary directory provided by pytest for isolated filesystem state.
+    """
+    path = tmp_path / MERGE_AUTHORITY_TRANSFER_FIXTURE_PATH
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(
+        json.dumps(
+            {
+                "cases": [
+                    {
+                        "name": "same instruction scope transition",
+                        "default_merge_authority": False,
+                        "instructions": [
+                            {
+                                "text": (
+                                    "This is no longer review-only; implement issue "
+                                    "#602 completely."
+                                )
+                            }
+                        ],
+                        "generated": "Only report the findings.",
+                        "expected_holds": [],
+                    }
+                ]
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    findings = check_merge_authority_transfer_fixtures(tmp_path)
+
+    assert len(findings) == 1
+    assert findings[0].message == (
+        "merge authority fixture same instruction scope transition declared "
+        "default authority does not match its source instructions"
+    )
+
+
 def test_merge_authority_transfer_rejects_negated_hold_withdrawal(
     tmp_path: Path,
 ) -> None:

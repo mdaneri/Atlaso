@@ -178,6 +178,42 @@
       "expected_holds": []
     },
     {
+      "name": "comma-bound-hold-withdrawal",
+      "default_merge_authority": true,
+      "instructions": [
+        {
+          "text": "Implement the change and wait for approval.",
+          "add_holds": [
+            "wait for approval"
+          ]
+        },
+        {
+          "text": "Withdraw the wait for approval requirement, keep the pull request open.",
+          "add_holds": [
+            "leave open"
+          ],
+          "remove_holds": [
+            "wait for approval"
+          ]
+        }
+      ],
+      "generated": "Preserve the explicit instruction to keep the pull request open.",
+      "expected_holds": [
+        "leave open"
+      ]
+    },
+    {
+      "name": "same-instruction-eligibility-transition",
+      "default_merge_authority": true,
+      "instructions": [
+        {
+          "text": "This is no longer review-only; implement issue #602 completely."
+        }
+      ],
+      "generated": "Preserve default merge authority and complete the guarded merge when eligible.",
+      "expected_holds": []
+    },
+    {
       "name": "review-only-ineligible",
       "default_merge_authority": false,
       "instructions": [
