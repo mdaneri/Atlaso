@@ -77,16 +77,28 @@ namespace Atlaso
             }
             catch (ObjectDisposedException)
             {
+                if (!cancellationToken.IsCancellationRequested)
+                {
+                    throw;
+                }
                 // The bounded caller closes a descendant-held stream after its
                 // drain deadline. Bytes copied before closure remain available.
             }
             catch (IOException)
             {
+                if (!cancellationToken.IsCancellationRequested)
+                {
+                    throw;
+                }
                 // Closing the Windows pipe can surface as an I/O failure on the
                 // asynchronous reader; already copied diagnostics remain valid.
             }
             catch (OperationCanceledException)
             {
+                if (!cancellationToken.IsCancellationRequested)
+                {
+                    throw;
+                }
                 // A descendant-held pipe reached its explicit drain deadline.
             }
         }

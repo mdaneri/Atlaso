@@ -45,6 +45,12 @@ $wrapperSource = Get-Content -LiteralPath $wrapperPath -Raw
 $firstBootSource = Get-Content -LiteralPath (
     Join-Path $RepositoryRoot 'scripts\windows\vmware\Atlaso.WorkstationFirstBoot.ps1'
 ) -Raw
+if (($firstBootSource | Select-String -Pattern (
+            'catch \((ObjectDisposedException|IOException|OperationCanceledException)\)\s*' +
+            '\{\s*if \(!cancellationToken\.IsCancellationRequested\)\s*\{\s*throw;'
+        ) -AllMatches).Matches.Count -ne 3) {
+    throw 'Redirected-stream closure exceptions must fail closed before explicit cancellation.'
+}
 
 $missingEnvironmentIdRoot = Join-Path ([System.IO.Path]::GetTempPath()) (
     "atlaso-missing-environment-id-$([guid]::NewGuid().ToString('N'))"
@@ -418,12 +424,14 @@ Add-Type -Path '$escapedLauncherPath'
     $streamDeadline = [System.Diagnostics.Stopwatch]::StartNew()
     $retainedPipeError = $null
     try {
+        # Leave enough time for the synthetic PowerShell parent to compile
+        # its native launcher before measuring the independent stream drain.
         Invoke-AtlasoBoundedProcess `
             -FilePath $powerShellPath `
             -ArgumentList @(
                 '-NoLogo', '-NoProfile', '-NonInteractive', '-File', $retainedPipeParentPath
             ) `
-            -TimeoutSeconds 1 `
+            -TimeoutSeconds 2 `
             -Action 'Descendant-held redirected-stream regression' | Out-Null
     }
     catch {
