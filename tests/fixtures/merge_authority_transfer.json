@@ -203,6 +203,22 @@
       ]
     },
     {
+      "name": "hold-first-explanation",
+      "default_merge_authority": true,
+      "instructions": [
+        {
+          "text": "Implement issue #602. Do not merge because I need to explain the result.",
+          "add_holds": [
+            "do not merge"
+          ]
+        }
+      ],
+      "generated": "Preserve the explicit do not merge hold.",
+      "expected_holds": [
+        "do not merge"
+      ]
+    },
+    {
       "name": "equivalent-explicit-do-not-merge",
       "default_merge_authority": true,
       "instructions": [
@@ -500,6 +516,20 @@
       "expected_holds": []
     },
     {
+      "name": "later-polite-stop-work-ineligible",
+      "default_merge_authority": false,
+      "instructions": [
+        {
+          "text": "Implement issue #602 completely."
+        },
+        {
+          "text": "Please stop work; only explain the failure."
+        }
+      ],
+      "generated": "Stop implementation and explain the failure.",
+      "expected_holds": []
+    },
+    {
       "name": "review-object-implementation-ineligible",
       "default_merge_authority": false,
       "instructions": [
@@ -736,6 +766,26 @@
         }
       ],
       "generated": "The approval hold was removed; continue through guarded squash merge.",
+      "expected_holds": []
+    },
+    {
+      "name": "adverb-qualified-hold-withdrawal",
+      "default_merge_authority": true,
+      "instructions": [
+        {
+          "text": "Implement the change, but do not merge.",
+          "add_holds": [
+            "do not merge"
+          ]
+        },
+        {
+          "text": "The do not merge hold is hereby withdrawn.",
+          "remove_holds": [
+            "do not merge"
+          ]
+        }
+      ],
+      "generated": "The hold was withdrawn; continue through guarded squash merge.",
       "expected_holds": []
     },
     {

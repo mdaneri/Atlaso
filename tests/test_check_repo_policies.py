@@ -104,12 +104,27 @@ def test_merge_hold_directions_preserves_qualified_hold() -> None:
     ) == {"do not merge": "add"}
 
 
+def test_merge_hold_directions_preserves_hold_first_explanation() -> None:
+    """Verify discussion words after a hold-first directive cannot hide it."""
+    assert merge_hold_directions(
+        "Do not merge because I need to explain the result."
+    ) == {"do not merge": "add"}
+
+
 def test_merge_hold_directions_binds_withdrawal_verb_to_hold() -> None:
     """Verify feature-oriented remove wording cannot withdraw an active hold."""
     assert merge_hold_directions(
         "Implement a remove control for the do not merge hold.",
         active_holds=("do not merge",),
     ) == {"do not merge": "add"}
+
+
+def test_merge_hold_directions_accepts_current_withdrawal_adverb() -> None:
+    """Verify current adverbs preserve an explicit withdrawal's meaning."""
+    assert merge_hold_directions(
+        "The do not merge hold is hereby withdrawn.",
+        active_holds=("do not merge",),
+    ) == {"do not merge": "remove"}
 
 
 def test_merge_hold_directions_recognizes_owner_approval() -> None:
@@ -130,6 +145,9 @@ def test_source_authority_honors_later_stop_work() -> None:
     """Verify a later explicit stop-work instruction revokes eligibility."""
     assert not source_has_default_merge_authority(
         ("Implement issue #602.", "Stop work; only explain the failure.")
+    )
+    assert not source_has_default_merge_authority(
+        ("Implement issue #602.", "Please stop work; only explain the failure.")
     )
 
 

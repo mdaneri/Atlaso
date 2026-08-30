@@ -631,7 +631,7 @@ DEFAULT_MERGE_AUTHORITY_DIRECT_REVIEW = re.compile(
     r"(?:\s+and\s+(?:report|summarize|describe)\b[^;.!?]*)?"
 )
 DEFAULT_MERGE_AUTHORITY_STOP_WORK = re.compile(
-    r"(?:^|[;.!?]\s*)(?:stop|cancel|cease|end)\s+"
+    r"(?:^|[;.!?]\s*)(?:please\s+)?(?:stop|cancel|cease|end)\s+"
     r"(?:(?:all|further|this|the)\s+)?(?:work|implementation|task)\b[^;.!?]*"
 )
 DEFAULT_MERGE_AUTHORITY_SOURCE_MARKERS = re.compile(
@@ -690,6 +690,7 @@ MERGE_HOLD_WITHDRAWAL_BEFORE_HOLD = re.compile(
 MERGE_HOLD_WITHDRAWAL_AFTER_HOLD = re.compile(
     r"\s*(?:(?:hold|instruction|directive)s?\s*)?"
     r"(?:(?:is|are|was|were|has been|have been)\s*)?"
+    r"(?:(?:hereby|explicitly|now|formally)\s*)?"
 )
 
 ORDERED_TERMINAL_CLEANUP_MARKERS = {
@@ -818,7 +819,7 @@ def _is_hold_discussion(segment: str, offset: int) -> bool:
         segment: Current instruction segment containing the hold phrase.
         offset: Character offset where the hold phrase begins.
     """
-    prefix = segment[max(0, offset - 100) : offset - 1]
+    prefix = segment[max(0, offset - 100) : offset]
     return MERGE_HOLD_DISCUSSION_CONTEXT.search(prefix) is not None
 
 
