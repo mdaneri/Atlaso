@@ -1322,6 +1322,7 @@ def test_agent_policy_gate_rejects_missing_maintainer_break_glass_contract(
         f'<span style="display:none;--x:foo\\;display:block">{prohibition}</span>',
         f'<span style="display:none" style="display:block">{prohibition}</span>',
         f'<span style="opacity:0">{prohibition}</span>',
+        f'<span style="opacity:calc(1 - 1)">{prohibition}</span>',
     )
     for replacement in complex_html_replacements:
         for relative_path in required_entry_points:
@@ -1449,6 +1450,25 @@ def test_agent_policy_gate_rejects_missing_maintainer_break_glass_contract(
         )
 
         assert check_agent_policy_gate(tmp_path) == []
+
+    visible_nested_html_replacements = (
+        f'<span style="display:none; --x:\"/*\"; display:block; --y:\"*/\"">'
+        f"{prohibition}</span>",
+        f'<span style="visibility:hidden"><span style="visibility:visible">'
+        f"{prohibition}</span></span>",
+    )
+    for replacement in visible_nested_html_replacements:
+        for relative_path in required_entry_points:
+            write_policy_files(tmp_path)
+            path = tmp_path / relative_path
+            original = path.read_text(encoding="utf-8")
+            assert prohibition in original
+            path.write_text(
+                original.replace(prohibition, replacement, 1),
+                encoding="utf-8",
+            )
+
+            assert check_agent_policy_gate(tmp_path) == []
 
 
 def test_agent_policy_gate_rejects_missing_unrelated_issue_tracking(

@@ -37,6 +37,70 @@ function splitCssFunctionArguments (value) {
   return argumentsList
 }
 
+function evaluateCalcExpression (value) {
+  let index = 0
+  function skipWhitespace () {
+    while (/\s/.test(value[index] || '')) index += 1
+  }
+  function parseFactor () {
+    skipWhitespace()
+    let sign = 1
+    if (value[index] === '+' || value[index] === '-') {
+      if (value[index] === '-') sign = -1
+      index += 1
+      skipWhitespace()
+    }
+    if (value[index] === '(') {
+      index += 1
+      const nested = parseExpression()
+      skipWhitespace()
+      if (nested === null || value[index] !== ')') return null
+      index += 1
+      return sign * nested
+    }
+    const numeric = value.slice(index).match(/^(?:\d+(?:\.\d*)?|\.\d+)/)
+    if (!numeric) return null
+    index += numeric[0].length
+    let parsed = Number.parseFloat(numeric[0])
+    if (value[index] === '%') {
+      parsed /= 100
+      index += 1
+    }
+    return sign * parsed
+  }
+  function parseTerm () {
+    let result = parseFactor()
+    if (result === null) return null
+    while (true) {
+      skipWhitespace()
+      const operator = value[index]
+      if (operator !== '*' && operator !== '/') break
+      index += 1
+      const right = parseFactor()
+      if (right === null || (operator === '/' && right === 0)) return null
+      result = operator === '*' ? result * right : result / right
+    }
+    return result
+  }
+  function parseExpression () {
+    let result = parseTerm()
+    if (result === null) return null
+    while (true) {
+      skipWhitespace()
+      const operator = value[index]
+      if (operator !== '+' && operator !== '-') break
+      index += 1
+      const right = parseTerm()
+      if (right === null) return null
+      result = operator === '+' ? result + right : result - right
+    }
+    return result
+  }
+  const result = parseExpression()
+  skipWhitespace()
+  return result !== null && index === value.length ? result : null
+}
+
 function parseOpacityValue (value) {
   const numeric = value.match(/^([+-]?(?:\d+(?:\.\d*)?|\.\d+))(%)?$/)
   if (numeric) {
@@ -47,12 +111,12 @@ function parseOpacityValue (value) {
   if (!functional) {
     return null
   }
+  if (functional[1] === 'calc') {
+    return evaluateCalcExpression(functional[2])
+  }
   const values = splitCssFunctionArguments(functional[2]).map(parseOpacityValue)
   if (values.some(item => item === null)) {
     return null
-  }
-  if (functional[1] === 'calc' && values.length === 1) {
-    return values[0]
   }
   if (functional[1] === 'min' && values.length > 0) {
     return Math.min(...values)
@@ -82,6 +146,36 @@ function isValidSuppressionDeclaration (property, value) {
   return true
 }
 
+function stripCssComments (value) {
+  let outputValue = ''
+  let quote = null
+  for (let index = 0; index < value.length; index += 1) {
+    const character = value[index]
+    if (character === '\\' && index + 1 < value.length) {
+      outputValue += character + value[index + 1]
+      index += 1
+      continue
+    }
+    if (quote) {
+      outputValue += character
+      if (character === quote) quote = null
+      continue
+    }
+    if (character === '"' || character === "'") {
+      quote = character
+      outputValue += character
+      continue
+    }
+    if (character === '/' && value[index + 1] === '*') {
+      const end = value.indexOf('*/', index + 2)
+      index = end < 0 ? value.length : end + 1
+      continue
+    }
+    outputValue += character
+  }
+  return outputValue
+}
+
 function hasHiddenAttributes (attributes) {
   const parsedAttributes = new Map()
   const attributePattern = /(?:^|\s)([^\s"'=<>`/]+)(?:\s*=\s*(?:"([^"]*)"|'([^']*)'|([^\s"'=<>`]+)))?/g
@@ -91,14 +185,9 @@ function hasHiddenAttributes (attributes) {
       parsedAttributes.set(name, match[2] ?? match[3] ?? match[4] ?? null)
     }
   }
-  if (parsedAttributes.has('hidden')) {
-    return true
-  }
-  if ((parsedAttributes.get('aria-hidden') || '').toLowerCase() === 'true') {
-    return true
-  }
-  const styleValue = decodeHtmlAttributeEntities(parsedAttributes.get('style') || '')
-    .replace(/\/\*[\s\S]*?\*\//g, '')
+  const styleValue = stripCssComments(
+    decodeHtmlAttributeEntities(parsedAttributes.get('style') || '')
+  )
   const declarations = new Map()
   for (const encodedDeclaration of splitCssDeclarations(styleValue)) {
     const declaration = decodeCssEscapes(encodedDeclaration)
@@ -118,12 +207,16 @@ function hasHiddenAttributes (attributes) {
       declarations.set(property, { value, important })
     }
   }
-  return (
-    declarations.get('display')?.value === 'none' ||
-    ['hidden', 'collapse'].includes(declarations.get('visibility')?.value) ||
-    declarations.get('content-visibility')?.value === 'hidden' ||
-    (parseOpacityValue(declarations.get('opacity')?.value || '') ?? 1) <= 0
-  )
+  return {
+    irreversible: (
+      parsedAttributes.has('hidden') ||
+      (parsedAttributes.get('aria-hidden') || '').toLowerCase() === 'true' ||
+      declarations.get('display')?.value === 'none' ||
+      declarations.get('content-visibility')?.value === 'hidden' ||
+      (parseOpacityValue(declarations.get('opacity')?.value || '') ?? 1) <= 0
+    ),
+    visibility: declarations.get('visibility')?.value || null
+  }
 }
 
 function decodeHtmlAttributeEntities (value) {
@@ -197,7 +290,15 @@ function decodeCssEscapes (value) {
 }
 
 function isHtmlSuppressed () {
-  return htmlStack.some(entry => entry.suppressed)
+  if (htmlStack.some(entry => entry.irreversible)) {
+    return true
+  }
+  for (let index = htmlStack.length - 1; index >= 0; index -= 1) {
+    if (htmlStack[index].visibility) {
+      return ['hidden', 'collapse'].includes(htmlStack[index].visibility)
+    }
+  }
+  return false
 }
 
 function updateHtmlSuppression (content, inlineContext = false) {
@@ -221,11 +322,12 @@ function updateHtmlSuppression (content, inlineContext = false) {
       continue
     }
     const attributes = match.groups.attributes
-    const hidden = hasHiddenAttributes(attributes)
+    const suppression = hasHiddenAttributes(attributes)
     if (!match.groups.selfClosing || !voidTags.has(tag)) {
       htmlStack.push({
         tag,
-        suppressed: suppressedTags.has(tag) || hidden,
+        irreversible: suppressedTags.has(tag) || suppression.irreversible,
+        visibility: suppression.visibility,
         inline: inlineContext
       })
     }
