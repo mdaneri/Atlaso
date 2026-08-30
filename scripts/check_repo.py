@@ -706,7 +706,7 @@ DEFAULT_MERGE_AUTHORITY_DIRECT_REVIEW = re.compile(
     r"(?:\s+and\s+(?:report|summarize|describe)\b[^;.!?]*)?"
 )
 DEFAULT_MERGE_AUTHORITY_SUPERSEDING_REVIEW_PREFIX = re.compile(
-    r"(?:^|[;.!?]\s*)instead,?\s*$"
+    r"(?:^|[;.!?]\s*)(?:instead,?|switch to|move to|change to)\s*$"
 )
 DEFAULT_MERGE_AUTHORITY_SUPERSEDING_REVIEW_MARKER = re.compile(r"\binstead\b")
 DEFAULT_MERGE_AUTHORITY_STOP_WORK = re.compile(
@@ -729,8 +729,9 @@ DEFAULT_MERGE_AUTHORITY_POST_STOP_STATUS = re.compile(
 DEFAULT_MERGE_AUTHORITY_NEGATED_MUTATION = re.compile(
     r"(?:^|[;.!?]\s*|,\s*(?:but|and)\s+|\s+but\s+)"
     r"(?:please\s+)?(?:do not|don't|don’t|must not)\s+"
-    r"(?:\w+\s+){0,3}(?:implement|fix|patch|resolve|solve|deliver|update|"
-    r"change|modify|edit|add|remove|create|build|refactor)\b[^;.!?]*"
+    r"(?:\w+\s+){0,3}(?:implement|fix|patch|resolve|solve|deliver|open|submit|"
+    r"prepare|update|change|modify|edit|add|remove|create|build|refactor)"
+    r"\b[^;.!?]*"
 )
 DEFAULT_MERGE_AUTHORITY_SOURCE_MARKERS = re.compile(
     r"\b(?:implement|implementation|fix|patch|resolve|solve|deliver)\b|"
@@ -800,7 +801,7 @@ MERGE_HOLD_STANDALONE_PERMISSION = re.compile(
 MERGE_HOLD_NONAPPROVAL_CONDITION = re.compile(
     r"\b(?:(?:merge(?: only)?|only merge) (?:after|when|if|once)\s+"
     r"(?:ci|tests?|checks?|validation|builds?|"
-    r"(?:(?:security|code|maintainer|final)\s+)?review)\b[^.!?]{0,40}"
+    r"(?:(?:[a-z][a-z0-9_-]*\s+){0,2}review))\b[^.!?]{0,40}"
     r"\b(?:pass(?:es|ed)?|succeed(?:s|ed)?|complete(?:s|d)?)|"
     r"wait (?:for|until)\s+(?:ci|tests?|checks?|validation|builds?)\b"
     r"[^.!?]{0,40}\b(?:pass|succeed|complete)(?:es|s|d)?\b"

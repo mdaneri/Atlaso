@@ -270,6 +270,9 @@ def test_merge_hold_directions_recognizes_plain_approval_condition() -> None:
     assert merge_hold_directions(
         "Implement issue #602, but merge only after security review passes."
     ) == {"do not merge": "add"}
+    assert merge_hold_directions(
+        "Implement issue #602, but merge only after QA review passes."
+    ) == {"do not merge": "add"}
 
 
 def test_object_qualified_auto_merge_denial_is_not_a_manual_hold() -> None:
@@ -348,6 +351,12 @@ def test_source_authority_excludes_patch_review() -> None:
     )
     assert not source_has_default_merge_authority(
         ("Fix issue #602, but do not create a pull request.",)
+    )
+    assert not source_has_default_merge_authority(
+        ("Fix issue #602, but do not open a pull request.",)
+    )
+    assert not source_has_default_merge_authority(
+        ("Implement issue #602. Switch to review PR #602 and report findings.",)
     )
     assert not source_has_default_merge_authority(("Create a plan for issue #602.",))
     assert not source_has_default_merge_authority(("Update me on issue #602.",))
