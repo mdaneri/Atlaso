@@ -290,7 +290,7 @@ When the IP should be resolved from VMware Tools, pass the VMX path as a named a
 
 ```powershell
 .\scripts\windows\vmware\deploy-wheel.ps1 `
-  -VmxPath "image\vmware-workstation\test-vms\Atlaso-VMware\Atlaso-VMware.vmx"
+  -VmxPath "image\vmware-workstation\test-vms\Atlaso-PR-<number>-test-vm\Atlaso-PR-<number>-test-vm.vmx"
 ```
 
 Do not pipe the VMX path or put the `.vmx` path on a line by itself; PowerShell will try to run that file and report a
@@ -482,12 +482,15 @@ Run the Workstation lifecycle wrapper after building an appliance VM:
 
 ```powershell
 pwsh -ExecutionPolicy Bypass `
-  -File scripts/windows/vmware/invoke-lifecycle-test.ps1
+  -File scripts/windows/vmware/invoke-lifecycle-test.ps1 `
+  -PullRequestNumber <number>
 ```
 
-The wrapper writes evidence under `test-results/vmware-workstation-lifecycle/<timestamp>`. Unless `-ApplianceIPAddress`
-is passed, it waits for VMware Tools to report the DHCP management address and records it in `discovered-appliance.json`
-before running HTTP and SSH probes. It keeps the Python appliance assertions provider-neutral.
+The wrapper writes evidence under the canonical
+`test-results/vmware-workstation-lifecycle/Atlaso-PR-<number>-lifecycle-<collision-safe-suffix>` directory and records
+absolute VMX evidence in `vmware-identity.json`. Unless `-ApplianceIPAddress` is passed, it waits for VMware Tools to
+report the DHCP management address and records it in `discovered-appliance.json` before running HTTP and SSH probes. It
+keeps the Python appliance assertions provider-neutral.
 
 Pass `-PlanOnly` to print the selected VMX, client VMDK, vmnets, and result path without creating VMs.
 
@@ -516,6 +519,7 @@ Create and start a normal Workstation test appliance from the latest built VMX w
 ```powershell
 pwsh -ExecutionPolicy Bypass `
   -File scripts/windows/vmware/create-atlaso-test-vm.ps1 `
+  -PullRequestNumber <number> `
   -Redeploy `
   -ResetDataDisks `
   -TrustRootCa

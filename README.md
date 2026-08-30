@@ -35,6 +35,10 @@ Atlaso runs on Photon OS 5.0. VMware Workstation is the canonical image-build, l
 validated OVF/OVA supports VMware deployment and is the source artifact for KVM and Proxmox VE imports; Hyper-V uses a
 portable ZIP converted from that same appliance image.
 
+Contributor-created VMware test and lifecycle VMs use pull-request-owned identities so validation artifacts remain
+traceable and cleanup cannot adopt a shared or provisional VM name. See the
+[VMware Workstation lifecycle testing guide](docs/reference/vmware-workstation-lifecycle-testing.md).
+
 See [Getting started](docs/getting-started/index.md) for the first-use path and
 [Portable virtualization artifacts](docs/reference/virtualization-artifacts.md) for platform-specific import details.
 

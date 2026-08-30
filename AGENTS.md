@@ -581,6 +581,16 @@ The following cross-cutting boundaries always apply:
   closed for missing SDK support, desktop authorization, Environment, variable, masking, or redaction. Never use a
   password argument,
   local `.env`, caller-provided `DEFAULT_ADMIN_PASSWORD`, or the retired `ATLASO_DEPLOY_SSH_PASSWORD` fallback.
+- Every task-owned VMware test VM used for pull-request validation derives its identity from the exact positive
+  pull-request number through `Atlaso-PR-<number>-<purpose>[-<collision-safe-suffix>]`. Sanitize the short purpose and
+  optional suffix through the shared VMware identity helper. Keep the VMware `displayName`, canonical output or
+  lifecycle-lab directory, VMX filename where applicable, result/log identity, and reported absolute VMX evidence
+  consistent with that name. Use a collision-safe suffix for multiple VMs owned by one pull request without removing
+  the `PR-<number>` segment. Before reuse, redeploy, or cleanup, require the expected canonical name, exact VMX path,
+  matching `displayName`, and lifecycle ownership manifest; any mismatch fails before mutation. Never automatically
+  rename, reuse, redeploy, or delete a generic, issue-only, or differently owned VM. Atlaso does not support a
+  provisional shared/live VM path: wait for the pull-request number, and collect acceptance evidence only from the
+  resulting PR-numbered VM.
 - The normal `create-atlaso-test-vm.ps1` Workstation wrapper provisions an existing Ed25519 public key for the bootstrap
   administrator and a separate test-only passwordless-sudo drop-in by default. Resolve the default only from the current
   Windows user's `.ssh/id_ed25519.pub`, permit an explicit public-key path or explicit skip, and fail before cleanup or

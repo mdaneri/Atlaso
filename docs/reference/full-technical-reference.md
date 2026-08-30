@@ -1397,11 +1397,14 @@ Lifecycle testing uses VMX/VMDK artifacts and `vmrun.exe`:
 
 ```powershell
 pwsh -ExecutionPolicy Bypass `
-  -File scripts/windows/vmware/invoke-lifecycle-test.ps1
+  -File scripts/windows/vmware/invoke-lifecycle-test.ps1 `
+  -PullRequestNumber <number>
 ```
 
-Results are written under `test-results/vmware-workstation-lifecycle/<timestamp>`. Workstation vmnets provide isolated
-layer-2 segments; tagged-trunk checks require a compatible upstream virtual-network configuration. Details live in
+Results are written under the canonical
+`test-results/vmware-workstation-lifecycle/Atlaso-PR-<number>-lifecycle-<collision-safe-suffix>` identity, with absolute
+VMX evidence in `vmware-identity.json`. Workstation vmnets provide isolated layer-2 segments; tagged-trunk checks require
+a compatible upstream virtual-network configuration. Details live in
 [VMware Workstation Lifecycle Testing](vmware-workstation-lifecycle-testing.md).
 
 Workstation test-VM and lifecycle cleanup fails closed around the exact recursive-removal target. Redeploy requires the
@@ -1444,6 +1447,7 @@ Then run:
 ```powershell
 pwsh -ExecutionPolicy Bypass `
   -File scripts/windows/vmware/create-atlaso-test-vm.ps1 `
+  -PullRequestNumber <number> `
   -Redeploy `
   -ResetDataDisks
 ```
@@ -1533,7 +1537,7 @@ argument:
 
 ```powershell
 .\scripts\windows\vmware\deploy-wheel.ps1 `
-  -VmxPath "image\vmware-workstation\test-vms\Atlaso-VMware\Atlaso-VMware.vmx" `
+  -VmxPath "image\vmware-workstation\test-vms\Atlaso-PR-<number>-test-vm\Atlaso-PR-<number>-test-vm.vmx" `
   -OnePasswordEnvironmentId '<atlaso-environment-id>' `
   -OnePasswordAccount '<account-name-or-id>' `
   -OnePasswordPython '<path-to-python-3.13.exe>'

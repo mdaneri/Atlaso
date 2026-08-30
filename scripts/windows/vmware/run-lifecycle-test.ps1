@@ -2,8 +2,12 @@
 .SYNOPSIS
 Run the VMware Workstation lifecycle interop scenario for Atlaso image regression and backup/restore verification.
 
-.PARAMETER LabName
-Lifecycle lab name prefix for created VM artifacts.
+.PARAMETER PullRequestNumber
+Exact positive GitHub pull-request number that owns this lifecycle lab.
+.PARAMETER Purpose
+Short purpose text sanitized into the canonical lifecycle identity.
+.PARAMETER CollisionSuffix
+Exact collision-safe suffix that distinguishes this lab for the pull request.
 .PARAMETER ApplianceVmxPath
 Path to the appliance source VMX.
 .PARAMETER ClientVmdkPath
@@ -65,7 +69,12 @@ Emit and return planning JSON without executing scenarios.
 #>
 [CmdletBinding(SupportsShouldProcess = $true)]
 param(
-    [string]$LabName = 'AtlasoWorkstationLifecycle',
+    [Parameter(Mandatory = $true)]
+    [ValidateRange(1, 2147483647)]
+    [int]$PullRequestNumber,
+    [string]$Purpose = 'lifecycle',
+    [Parameter(Mandatory = $true)]
+    [string]$CollisionSuffix,
     [Parameter(Mandatory = $true)]
     [string]$ApplianceVmxPath,
     [Parameter(Mandatory = $true)]
@@ -100,6 +109,24 @@ param(
 )
 
 $ErrorActionPreference = 'Stop'
+Import-Module (Join-Path $PSScriptRoot 'Atlaso.VmwareTestIdentity.psm1') -Force
+
+$repoRoot = Resolve-Path -LiteralPath (Join-Path $PSScriptRoot '..\..\..')
+$vmIdentity = New-AtlasoVmwareTestIdentity `
+    -PullRequestNumber $PullRequestNumber `
+    -Purpose $Purpose `
+    -CollisionSuffix $CollisionSuffix
+$LabName = $vmIdentity.Name
+$resultRoot = Assert-AtlasoVmwareIdentityDirectory `
+    -Path (Join-Path $repoRoot "test-results\vmware-workstation-lifecycle\$LabName") `
+    -ExpectedName $LabName `
+    -ParameterName 'LifecycleResultDirectory'
+if (Test-Path -LiteralPath $resultRoot) {
+    throw "Refusing lifecycle reuse because the exact PR-owned result root already exists: $resultRoot"
+}
+$vmRoot = Join-Path $resultRoot 'vms'
+$seedRoot = Join-Path $resultRoot 'seed'
+$createdVmxPaths = New-Object System.Collections.Generic.List[string]
 
 # Plan-only execution consumes no credentials. Runtime execution imports the
 # current-user-protected bundle before VMware or the harness needs plaintext.
@@ -143,8 +170,6 @@ if (-not $PlanOnly) {
 . (Join-Path $PSScriptRoot 'Atlaso.WorkstationFirstBoot.ps1')
 Import-Module (Join-Path $PSScriptRoot 'Atlaso.WorkstationCleanup.psm1') -Force
 Import-Module (Join-Path $PSScriptRoot 'Atlaso.VmwarePayload.psm1') -Force
-
-$repoRoot = Resolve-Path -LiteralPath (Join-Path $PSScriptRoot '..\..\..')
 if (-not $SshPassword) {
     $SshPassword = $AdminPassword
 }
@@ -222,12 +247,6 @@ function Invoke-LifecyclePython {
     }
 }
 
-$resultStamp = Get-Date -Format 'yyyyMMdd-HHmmss'
-$resultRoot = Join-Path $repoRoot "test-results\vmware-workstation-lifecycle\$resultStamp"
-$vmRoot = Join-Path $resultRoot 'vms'
-$seedRoot = Join-Path $resultRoot 'seed'
-$createdVmxPaths = New-Object System.Collections.Generic.List[string]
-
 <#
 .SYNOPSIS
 Resolve the vmrun path from a user override or common install locations.
@@ -297,8 +316,9 @@ function Assert-SafeLifecycleName {
     if ($reserved -contains $Name) {
         throw "Refusing to use reserved VM name '$Name'. Lifecycle tests must use a separate VM set."
     }
-    if (-not $Name.StartsWith($LabName)) {
-        throw "Refusing VM name '$Name' because it does not start with lifecycle lab prefix '$LabName'."
+    $escapedLabName = [regex]::Escape($LabName)
+    if ($Name -cnotmatch "^$escapedLabName-(Appliance|ClientA|ClientB|ESXiPXE)$") {
+        throw "Refusing VM name '$Name' because it is not an exact child of PR-owned lifecycle lab '$LabName'."
     }
 }
 
@@ -473,7 +493,7 @@ function New-LanSegmentId {
 
     $sha = [System.Security.Cryptography.SHA256]::Create()
     try {
-        $bytes = $sha.ComputeHash([System.Text.Encoding]::UTF8.GetBytes("AtlasoWorkstationLifecycle:$Name"))
+        $bytes = $sha.ComputeHash([System.Text.Encoding]::UTF8.GetBytes("${LabName}:$Name"))
     } finally {
         $sha.Dispose()
     }
@@ -1530,9 +1550,13 @@ $planClientVmdk = if (Test-Path -LiteralPath $ClientVmdkPath) { (Resolve-Path -L
 $plan = [ordered]@{
     name                  = 'vmware workstation lifecycle interop'
     lab_name              = $LabName
+    pull_request_number   = $PullRequestNumber
+    purpose               = $vmIdentity.Purpose
+    collision_suffix      = $vmIdentity.CollisionSuffix
     appliance_vmx         = $planApplianceVmx
     client_vmdk           = $planClientVmdk
     result_root           = $resultRoot
+    lifecycle_appliance_vmx = (Join-Path $vmRoot "$applianceName\$applianceName.vmx")
     management_network    = $ManagementNetwork
     site_a_network        = $SiteANetwork
     trunk_network         = $TrunkNetwork
@@ -1590,6 +1614,38 @@ try {
     $esxiVmx = ''
     if ($FullEsxiPxeInstall) {
         $esxiVmx = New-EsxiPxeVm -Name $esxiName -Directory (Join-Path $vmRoot $esxiName) -Network $SiteANetwork -MacAddress $esxiMacAddress
+    }
+
+    $identityVms = @(
+        [ordered]@{ role = 'appliance'; display_name = $applianceName; vmx = $applianceVmx }
+    )
+    if (-not $OidcOnly) {
+        $identityVms += @(
+            [ordered]@{ role = 'client-a'; display_name = $clientAName; vmx = $clientAVmx },
+            [ordered]@{ role = 'client-b'; display_name = $clientBName; vmx = $clientBVmx }
+        )
+    }
+    if ($FullEsxiPxeInstall) {
+        $identityVms += [ordered]@{ role = 'esxi-pxe'; display_name = $esxiName; vmx = $esxiVmx }
+    }
+    foreach ($identityVm in $identityVms) {
+        Assert-AtlasoVmwareOwnedVmx `
+            -VmxPath $identityVm.vmx `
+            -ExpectedDirectory (Split-Path -Parent $identityVm.vmx) `
+            -ExpectedName $identityVm.display_name | Out-Null
+    }
+    [ordered]@{
+        lab_name            = $LabName
+        pull_request_number = $PullRequestNumber
+        purpose             = $vmIdentity.Purpose
+        collision_suffix    = $vmIdentity.CollisionSuffix
+        result_root         = $resultRoot
+        log_identity        = $LabName
+        vms                 = $identityVms
+    } | ConvertTo-Json -Depth 5 | Set-Content -LiteralPath (Join-Path $resultRoot 'vmware-identity.json') -Encoding UTF8
+    Write-Host "Lifecycle identity evidence: $(Join-Path $resultRoot 'vmware-identity.json')"
+    foreach ($identityVm in $identityVms) {
+        Write-Host "Lifecycle VM [$($identityVm.role)]: $($identityVm.display_name) => $($identityVm.vmx)"
     }
 
     $vmxsToStart = @($applianceVmx)

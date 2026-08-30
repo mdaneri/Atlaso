@@ -799,6 +799,16 @@ Terminal order:
 
 ## Photon VM Debugging Notes
 
+- Every task-owned VMware test VM used for pull-request validation has one canonical identity:
+  `Atlaso-PR-<number>-<purpose>[-<collision-safe-suffix>]`. Require the exact positive pull-request number and sanitize
+  the short purpose and optional suffix through `Atlaso.VmwareTestIdentity.psm1`. The same identity owns the Workstation
+  `displayName`, normal output or lifecycle-lab directory, VMX filename where applicable, result/log directory, and
+  absolute VMX evidence reported with validation. Multiple VMs for one pull request use distinct collision-safe
+  suffixes while retaining the exact `PR-<number>` segment. Reuse, redeploy, and cleanup must rederive the expected
+  identity and fail before mutation unless the exact directory, VMX path, `displayName`, and lifecycle ownership
+  manifest agree. Never rename, adopt, reuse, redeploy, or remove a generic, issue-only, or differently owned VM
+  automatically. No provisional shared/live VM workflow is supported; create acceptance VMs only after the pull request
+  exists and collect acceptance evidence only from the PR-numbered VM.
 - Use the running VMware Photon VM for real functionality checks after appliance-impacting changes: validate focused
   local tests first, then install and test on the VM when behavior depends on Photon NICs, systemd, nftables, dnsmasq,
   resolver state, or `/ui/management/appliance-apply`.
