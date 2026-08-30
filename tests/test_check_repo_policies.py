@@ -441,6 +441,14 @@ def test_source_authority_honors_later_stop_work() -> None:
     )
 
 
+def test_source_authority_excludes_planning_a_fix() -> None:
+    """Verify planning-only fix language does not grant implementation authority."""
+    assert not source_has_default_merge_authority(("Plan a fix for issue #602.",))
+    assert not source_has_default_merge_authority(
+        ("Plan an implementation for issue #602.",)
+    )
+
+
 def test_merge_hold_directions_recognizes_indefinite_pr_only_instruction() -> None:
     """Verify indefinite articles preserve an explicit PR-only hold."""
     assert merge_hold_directions("Only open a pull request for issue #602.") == {
@@ -461,6 +469,9 @@ def test_merge_hold_directions_classifies_approval_until_as_resumable() -> None:
     """Verify an approval-until condition is the resumable approval hold."""
     assert merge_hold_directions(
         "Do not merge until the maintainer approves."
+    ) == {"wait for approval": "add"}
+    assert merge_hold_directions(
+        "Do not merge unless the maintainer approves."
     ) == {"wait for approval": "add"}
 
 

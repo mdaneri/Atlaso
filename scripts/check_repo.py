@@ -682,6 +682,8 @@ DEFAULT_MERGE_AUTHORITY_SOURCE_EXCLUSIONS = re.compile(
     r"(?:review(?:-only|[^.!?]{0,60}\bonly\b)|"
     r"only\s+review\b[^;.!?]*|"
     r"report findings only|"
+    r"\bplan(?:ning)?\s+(?:an?\s+)?(?:fix|patch|implementation|change|"
+    r"update|solution)\b|"
     r"(?:do not|don't|don’t|must not|without)\s+"
     r"(?:\w+\s+){0,3}(?:implement|fix|patch|resolve|solve|deliver|"
     r"(?:updat|chang|modif|edit|mak)\w*\s+(?:any\s+)?"
@@ -854,7 +856,8 @@ MERGE_HOLD_NONAPPROVAL_CONDITION = re.compile(
     r"[^.!?]{0,40}\bbefore merging)\b"
 )
 MERGE_HOLD_APPROVAL_CONDITION = re.compile(
-    r"\b(?:merge(?: only)?|only merge)\s+(?:after|when|if|once|until)\s+"
+    r"\b(?:merge(?: only)?|only merge)\s+"
+    r"(?:after|when|if|once|until|unless)\s+"
     r"(?:i|we|(?:the\s+)?maintainer|"
     r"(?:the\s+)?(?:[a-z][a-z0-9_-]*\s+)?owner)\s+approves?\b"
 )

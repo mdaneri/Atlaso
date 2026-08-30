@@ -1913,6 +1913,36 @@
       "expected_holds": []
     },
     {
+      "name": "planning-a-fix-is-not-implementation",
+      "default_merge_authority": false,
+      "instructions": [
+        {
+          "text": "Plan a fix for issue #602."
+        }
+      ],
+      "generated": "Produce the requested implementation plan without changing repository or GitHub state.",
+      "expected_holds": []
+    },
+    {
+      "name": "unless-approval-is-resumable",
+      "default_merge_authority": true,
+      "instructions": [
+        {
+          "text": "Implement issue #602."
+        },
+        {
+          "text": "Do not merge unless the maintainer approves.",
+          "add_holds": [
+            "wait for approval"
+          ]
+        }
+      ],
+      "generated": "Wait for maintainer approval before merging.",
+      "expected_holds": [
+        "wait for approval"
+      ]
+    },
+    {
       "name": "submit-only-pr-instruction",
       "default_merge_authority": true,
       "instructions": [
