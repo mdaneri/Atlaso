@@ -200,6 +200,33 @@
       "expected_holds": []
     },
     {
+      "name": "explicit-no-fix-ineligible",
+      "default_merge_authority": false,
+      "instructions": [
+        {
+          "text": "Do not fix issue #602; only explain the failure."
+        }
+      ],
+      "generated": "Explain the failure without changing or merging the pull request.",
+      "expected_holds": []
+    },
+    {
+      "name": "explicit-approval-condition",
+      "default_merge_authority": true,
+      "instructions": [
+        {
+          "text": "Implement the fix and merge only after maintainer approval.",
+          "add_holds": [
+            "wait for approval"
+          ]
+        }
+      ],
+      "generated": "Preserve the instruction to merge only after maintainer approval.",
+      "expected_holds": [
+        "wait for approval"
+      ]
+    },
+    {
       "name": "passively-negated-hold-withdrawal",
       "default_merge_authority": true,
       "instructions": [

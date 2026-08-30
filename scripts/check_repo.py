@@ -504,6 +504,10 @@ EXPLICIT_MERGE_HOLD_PATTERNS = {
         "await approval",
         "wait for maintainer approval",
         "wait until approved",
+        "after approval",
+        "after maintainer approval",
+        "once approved",
+        "when approved",
     ),
 }
 MERGE_HOLD_WITHDRAWAL_MARKERS = (
@@ -558,7 +562,7 @@ DEFAULT_MERGE_AUTHORITY_PROMPT_MARKERS = (
 DEFAULT_MERGE_AUTHORITY_SOURCE_EXCLUSIONS = re.compile(
     r"(?:review(?:-only|[^.!?]{0,60}\bonly\b)|report findings only|"
     r"(?:do not|don't|don’t|must not|without)\s+"
-    r"(?:\w+\s+){0,3}(?:implement|chang|modif|edit|mak)|"
+    r"(?:\w+\s+){0,3}(?:implement|fix|resolve|solve|deliver|chang|modif|edit|mak)|"
     r"(?:diagnos(?:e|tic)|investigat(?:e|ion)|analy(?:ze|sis)|assess|inspect)"
     r"[^.!?]{0,80}\b(?:without|no)\b[^.!?]{0,40}"
     r"\b(?:implement|chang|modif|edit|mak)|"

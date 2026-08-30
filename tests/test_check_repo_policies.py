@@ -1470,6 +1470,90 @@ def test_merge_authority_transfer_rejects_explicit_no_change_eligibility(
     )
 
 
+def test_merge_authority_transfer_rejects_negated_authority_verbs(
+    tmp_path: Path,
+) -> None:
+    """Verify negated work verbs cannot create implementation authority.
+
+    Args:
+        tmp_path: Temporary directory provided by pytest for isolated filesystem state.
+    """
+    for verb in ("fix", "resolve", "solve", "deliver"):
+        case_root = tmp_path / verb
+        path = case_root / MERGE_AUTHORITY_TRANSFER_FIXTURE_PATH
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(
+            json.dumps(
+                {
+                    "cases": [
+                        {
+                            "name": f"negated {verb}",
+                            "default_merge_authority": True,
+                            "instructions": [
+                                {
+                                    "text": (
+                                        f"Do not {verb} issue #602; only explain the "
+                                        "failure."
+                                    )
+                                }
+                            ],
+                            "generated": "Continue through guarded squash merge.",
+                            "expected_holds": [],
+                        }
+                    ]
+                }
+            ),
+            encoding="utf-8",
+        )
+
+        findings = check_merge_authority_transfer_fixtures(case_root)
+
+        assert len(findings) == 1
+        assert findings[0].message == (
+            f"merge authority fixture negated {verb} declared default authority "
+            "does not match its source instructions"
+        )
+
+
+def test_merge_authority_transfer_rejects_invented_approval_condition(
+    tmp_path: Path,
+) -> None:
+    """Verify generated prompts cannot invent approval-before-merge gates.
+
+    Args:
+        tmp_path: Temporary directory provided by pytest for isolated filesystem state.
+    """
+    path = tmp_path / MERGE_AUTHORITY_TRANSFER_FIXTURE_PATH
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(
+        json.dumps(
+            {
+                "cases": [
+                    {
+                        "name": "invented approval condition",
+                        "default_merge_authority": True,
+                        "instructions": [{"text": "Implement issue #602 completely."}],
+                        "generated": (
+                            "Perform the guarded squash merge only after maintainer "
+                            "approval."
+                        ),
+                        "expected_holds": [],
+                    }
+                ]
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    findings = check_merge_authority_transfer_fixtures(tmp_path)
+
+    assert len(findings) == 1
+    assert findings[0].message == (
+        "merge authority fixture invented approval condition invents a hold: "
+        "wait for approval"
+    )
+
+
 def test_merge_authority_transfer_distinguishes_auto_merge_choice(
     tmp_path: Path,
 ) -> None:
