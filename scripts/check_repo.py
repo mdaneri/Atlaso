@@ -821,6 +821,9 @@ MERGE_HOLD_DISCUSSION_CONTEXT = re.compile(
     r"contemplat(?:e|ed|ing|ion)|ask(?:ed|ing)?|"
     r"determin(?:e|ed|ing|ation)|decid(?:e|ed|ing))\b"
 )
+MERGE_HOLD_DIRECT_REQUEST_CONTEXT = re.compile(
+    r"\b(?:i|we)\s+(?:ask|request)\s+that\s+(?:you\s+)?$"
+)
 DEFAULT_MERGE_AUTHORITY_ACTION_BOUNDARY = re.compile(
     r"(?:[;,.!?]+|\s+(?:and|then|but)\s+)"
 )
@@ -1047,6 +1050,8 @@ def _is_hold_discussion(segment: str, offset: int) -> bool:
         offset: Character offset where the hold phrase begins.
     """
     prefix = segment[max(0, offset - 100) : offset]
+    if MERGE_HOLD_DIRECT_REQUEST_CONTEXT.search(prefix) is not None:
+        return False
     return MERGE_HOLD_DISCUSSION_CONTEXT.search(prefix) is not None
 
 

@@ -1913,6 +1913,22 @@
       "expected_holds": []
     },
     {
+      "name": "direct-request-preserves-hold",
+      "default_merge_authority": true,
+      "instructions": [
+        {
+          "text": "Implement issue #602. I ask that you do not merge this pull request.",
+          "add_holds": [
+            "do not merge"
+          ]
+        }
+      ],
+      "generated": "Keep the explicit do not merge hold.",
+      "expected_holds": [
+        "do not merge"
+      ]
+    },
+    {
       "name": "current-pr-permission-withdraws-hold",
       "default_merge_authority": true,
       "instructions": [

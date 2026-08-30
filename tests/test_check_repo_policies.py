@@ -111,6 +111,13 @@ def test_merge_hold_directions_preserves_hold_first_explanation() -> None:
     ) == {"do not merge": "add"}
 
 
+def test_merge_hold_directions_preserves_direct_hold_request() -> None:
+    """Verify a present-tense user request remains an explicit hold."""
+    assert merge_hold_directions(
+        "I ask that you do not merge this pull request."
+    ) == {"do not merge": "add"}
+
+
 def test_merge_hold_directions_preserves_branch_targeted_hold() -> None:
     """Verify branch delivery remains a pull-request merge target."""
     assert merge_hold_directions(
