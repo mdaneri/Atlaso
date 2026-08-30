@@ -17,6 +17,7 @@ import sys
 import tomllib
 import unicodedata
 from dataclasses import dataclass
+from functools import lru_cache
 from html import unescape
 from pathlib import Path
 from urllib.parse import unquote
@@ -24,6 +25,7 @@ from urllib.parse import unquote
 import yaml
 
 ROOT = Path(__file__).resolve().parents[1]
+MARKDOWN_OPERATIVE_TEXT_HELPER = ROOT / "scripts" / "markdown_operative_text.mjs"
 
 SKIP_PARTS = {
     ".git",
@@ -995,14 +997,17 @@ def check_agent_policy_gate(root: Path) -> list[Finding]:
             continue
         assert text is not None
         operative_text = strip_markdown_nonoperative_content(text)
+        markdown_operative_text = render_markdown_operative_text(text)
         normalized_text = " ".join(text.split())
-        normalized_operative_text = " ".join(operative_text.split())
+        normalized_markdown_operative_text = " ".join(
+            markdown_operative_text.split()
+        )
         missing_required_markers = tuple(
             marker
             for marker in markers
             if (
-                marker not in operative_text
-                and marker not in normalized_operative_text
+                marker not in markdown_operative_text
+                and marker not in normalized_markdown_operative_text
                 if marker in MAINTAINER_BREAK_GLASS_SHARED_MARKERS
                 else marker not in text and marker not in normalized_text
             )
@@ -2297,6 +2302,31 @@ def complete_reference_title(text: str, *, require_separator: bool) -> bool:
             return candidate[cursor + 1 :].strip(" \t") == ""
         cursor += 1
     return False
+
+
+@lru_cache(maxsize=128)
+def render_markdown_operative_text(text: str) -> str:
+    """Render Markdown to visible policy text using the pinned parser.
+
+    Args:
+        text: Markdown source whose operative prose must be inspected.
+    """
+    try:
+        result = subprocess.run(
+            ["node", str(MARKDOWN_OPERATIVE_TEXT_HELPER)],
+            input=text,
+            capture_output=True,
+            check=False,
+            encoding="utf-8",
+        )
+    except OSError as exc:
+        raise RuntimeError(
+            "Node.js is required to validate rendered Markdown policy text"
+        ) from exc
+    if result.returncode != 0:
+        detail = result.stderr.strip() or f"exit code {result.returncode}"
+        raise RuntimeError(f"Markdown policy rendering failed: {detail}")
+    return result.stdout
 
 
 def strip_markdown_deleted_content(text: str) -> str:
