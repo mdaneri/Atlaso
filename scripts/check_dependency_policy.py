@@ -18,7 +18,9 @@ PIN_RE = re.compile(
 )
 HASH_RE = re.compile(r"--hash=sha256:[0-9a-f]{64}")
 PIP_COMMAND_RE = re.compile(
-    r"(?:^|(?:&&|\|\||;)\s*)(?:python(?:3)?\s+-m\s+)?pip\s+[^\s;&|]+"
+    r"(?<![A-Za-z0-9_.-])"
+    r"(?:(?:python(?:\d+(?:\.\d+)*)?(?:\.exe)?|py(?:\.exe)?)\s+-m\s+)?"
+    r"pip(?:\d+(?:\.\d+)*)?\s+[^\s;&|]+"
     r"(?P<args>.*?)(?=(?:&&|\|\||;)|$)"
 )
 WORKFLOW_REQUIREMENT_RE = re.compile(
@@ -76,13 +78,13 @@ LOCK_POLICIES = (
 )
 
 
-def _workflow_checkout_paths(lines: list[str]) -> set[str]:
-    """Return literal checkout destinations declared by one workflow.
+def _workflow_checkout_paths(lines: list[str]) -> dict[str, str]:
+    """Return literal checkout destinations and their source repositories.
 
     Args:
         lines: Workflow source lines.
     """
-    checkout_paths: set[str] = set()
+    checkout_paths: dict[str, str] = {}
     for index, line in enumerate(lines):
         if "uses: actions/checkout@" not in line:
             continue
@@ -91,12 +93,23 @@ def _workflow_checkout_paths(lines: list[str]) -> set[str]:
             if re.match(r"\s*-\s", step_line):
                 step_indent = len(step_line) - len(step_line.lstrip())
                 break
+        checkout_path = ""
+        repository = "${{ github.repository }}"
         for candidate in lines[index + 1 :]:
             if candidate.strip() and len(candidate) - len(candidate.lstrip()) <= step_indent:
                 break
-            match = re.fullmatch(r"\s*path:\s*['\"]?([A-Za-z0-9._-]+)['\"]?\s*", candidate)
-            if match:
-                checkout_paths.add(match.group(1))
+            path_match = re.fullmatch(
+                r"\s*path:\s*['\"]?([A-Za-z0-9._-]+)['\"]?\s*", candidate
+            )
+            if path_match:
+                checkout_path = path_match.group(1)
+            repository_match = re.fullmatch(
+                r"\s*repository:\s*['\"]?([^'\"]+?)['\"]?\s*", candidate
+            )
+            if repository_match:
+                repository = repository_match.group(1).strip()
+        if checkout_path:
+            checkout_paths[checkout_path] = repository
     return checkout_paths
 
 
@@ -209,6 +222,17 @@ def _validate_workflow_locks(root: Path, policy_paths: set[str]) -> list[str]:
             policy_path = relative.as_posix()
             tracked_path = root.joinpath(*relative.parts)
             if relative.parts[0] in checkout_paths and len(relative.parts) > 1:
+                checkout_repository = checkout_paths[relative.parts[0]]
+                if checkout_repository not in {
+                    "${{ github.repository }}",
+                    "mdaneri/Atlaso",
+                }:
+                    errors.append(
+                        f"{workflow.relative_to(root)}:{line_number}: checkout-prefixed "
+                        "workflow requirement is not sourced from Atlaso: "
+                        f"{reference}"
+                    )
+                    continue
                 policy_path = PurePosixPath(*relative.parts[1:]).as_posix()
                 tracked_path = root.joinpath(*relative.parts[1:])
 

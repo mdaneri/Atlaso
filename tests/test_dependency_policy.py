@@ -155,6 +155,62 @@ def test_dependency_policy_checks_multiline_pip_wheel_requirements(
     )
 
 
+def test_dependency_policy_recognizes_prefixed_python_pip_invocations(
+    tmp_path: Path,
+) -> None:
+    """Verify valid Python launch prefixes cannot bypass workflow lock policy.
+
+    Args:
+        tmp_path: Temporary directory provided by pytest for isolated filesystem state.
+    """
+    write_valid_policy(tmp_path)
+    (tmp_path / "requirements-ad-hoc.lock").write_text("placeholder\n", encoding="utf-8")
+    workflow = tmp_path / ".github" / "workflows" / "release.yml"
+    workflow.parent.mkdir(parents=True, exist_ok=True)
+    invocations = (
+        "python3.14 -m pip install -r requirements-ad-hoc.lock",
+        "PIP_CONFIG_FILE=/dev/null python -m pip install -r requirements-ad-hoc.lock",
+        "& python -m pip install -r requirements-ad-hoc.lock",
+    )
+    for invocation in invocations:
+        workflow.write_text(f"run: {invocation}\n", encoding="utf-8")
+
+        assert any(
+            "workflow requirement lock is outside the generated dependency policy "
+            "inventory: requirements-ad-hoc.lock" in error
+            for error in validate(tmp_path)
+        )
+
+
+def test_dependency_policy_rejects_external_checkout_requirement_lock(
+    tmp_path: Path,
+) -> None:
+    """Verify checkout prefixes cannot map external locks onto Atlaso inventory.
+
+    Args:
+        tmp_path: Temporary directory provided by pytest for isolated filesystem state.
+    """
+    write_valid_policy(tmp_path)
+    workflow = tmp_path / ".github" / "workflows" / "release.yml"
+    workflow.parent.mkdir(parents=True, exist_ok=True)
+    workflow.write_text(
+        """steps:
+  - uses: actions/checkout@v7
+    with:
+      repository: attacker/other
+      path: external
+  - run: python -m pip install -r external/requirements-release-tools.lock
+""",
+        encoding="utf-8",
+    )
+
+    assert any(
+        "checkout-prefixed workflow requirement is not sourced from Atlaso: "
+        "external/requirements-release-tools.lock" in error
+        for error in validate(tmp_path)
+    )
+
+
 def test_dependency_policy_accepts_lock_from_checkout_destination(
     tmp_path: Path,
 ) -> None:
