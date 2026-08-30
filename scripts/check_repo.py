@@ -606,13 +606,11 @@ MERGE_HOLD_WITHDRAWAL_NONCURRENT_SUFFIX = re.compile(
     r"^\s*(?:tomorrow|later|eventually|(?:only\s+)?"
     r"(?:after|when|once|if|unless)\b)"
 )
-AUTO_MERGE_ONLY_PHRASES = (
-    "do not merge automatically",
-    "don't merge automatically",
-    "don’t merge automatically",
-    "do not automatically merge",
-    "don't automatically merge",
-    "don’t automatically merge",
+AUTO_MERGE_ONLY_PATTERN = re.compile(
+    r"\b(?:do not|don't|don’t)\s+(?:"
+    r"merge(?:\s+(?:(?:this|the)\s+)?(?:pull request|pr))?\s+automatically|"
+    r"automatically\s+merge(?:\s+(?:(?:this|the)\s+)?(?:pull request|pr))?"
+    r")\b"
 )
 DEFAULT_MERGE_AUTHORITY_NEGATIONS = re.compile(
     r"(?:(?:do not|don't|don’t|never|must not|should not|cannot|can't|can’t|not)"
@@ -728,7 +726,8 @@ DEFAULT_MERGE_AUTHORITY_POST_STOP_STATUS = re.compile(
     r"(?:is|isn't|isn’t|is not|remains?|was|wasn't|wasn’t|was not)\b[^.!?]*"
 )
 DEFAULT_MERGE_AUTHORITY_NEGATED_MUTATION = re.compile(
-    r"(?:^|[;.!?]\s*)(?:please\s+)?(?:do not|don't|don’t|must not)\s+"
+    r"(?:^|[;.!?]\s*|,\s*(?:but|and)\s+|\s+but\s+)"
+    r"(?:please\s+)?(?:do not|don't|don’t|must not)\s+"
     r"(?:\w+\s+){0,3}(?:implement|fix|patch|resolve|solve|deliver|update|"
     r"change|modify|edit|add|remove|create|build|refactor)\b[^;.!?]*"
 )
@@ -794,7 +793,8 @@ MERGE_HOLD_STANDALONE_PERMISSION = re.compile(
 )
 MERGE_HOLD_NONAPPROVAL_CONDITION = re.compile(
     r"\b(?:(?:merge(?: only)?|only merge) (?:after|when|if|once)\s+"
-    r"(?:ci|tests?|checks?|validation|builds?)\b[^.!?]{0,40}"
+    r"(?:ci|tests?|checks?|validation|builds?|"
+    r"(?:(?:security|code|maintainer|final)\s+)?review)\b[^.!?]{0,40}"
     r"\b(?:pass(?:es|ed)?|succeed(?:s|ed)?|complete(?:s|d)?)|"
     r"wait (?:for|until)\s+(?:ci|tests?|checks?|validation|builds?)\b"
     r"[^.!?]{0,40}\b(?:pass|succeed|complete)(?:es|s|d)?\b"
@@ -933,8 +933,9 @@ def explicit_merge_holds(text: str) -> tuple[str, ...]:
         text: Current user or maintainer instruction text to inspect.
     """
     normalized = " ".join(text.casefold().split())
-    for phrase in AUTO_MERGE_ONLY_PHRASES:
-        normalized = normalized.replace(phrase, "keep github auto-merge disabled")
+    normalized = AUTO_MERGE_ONLY_PATTERN.sub(
+        "keep github auto-merge disabled", normalized
+    )
     return tuple(
         hold
         for hold, patterns in EXPLICIT_MERGE_HOLD_PATTERNS.items()
@@ -1027,8 +1028,9 @@ def merge_hold_directions(
         active_holds: Holds active before this instruction is evaluated.
     """
     normalized = " ".join(text.casefold().split())
-    for phrase in AUTO_MERGE_ONLY_PHRASES:
-        normalized = normalized.replace(phrase, "keep github auto-merge disabled")
+    normalized = AUTO_MERGE_ONLY_PATTERN.sub(
+        "keep github auto-merge disabled", normalized
+    )
     task_clauses: list[str] = []
     for sentence in MERGE_AUTHORITY_TASK_CLAUSE_BOUNDARY.split(normalized):
         for clause in MERGE_AUTHORITY_COORDINATED_CLAUSE_BOUNDARY.split(sentence):

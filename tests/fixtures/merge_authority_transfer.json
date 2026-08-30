@@ -1663,6 +1663,44 @@
       "expected_holds": [
         "do not merge"
       ]
+    },
+    {
+      "name": "merge-after-security-review-is-preserved",
+      "default_merge_authority": true,
+      "instructions": [
+        {
+          "text": "Implement issue #602, but merge only after security review passes.",
+          "add_holds": [
+            "do not merge"
+          ]
+        }
+      ],
+      "generated": "Wait for security review before merging; do not complete the guarded merge yet.",
+      "expected_holds": [
+        "do not merge"
+      ]
+    },
+    {
+      "name": "coordinated-no-pr-request-is-ineligible",
+      "default_merge_authority": false,
+      "instructions": [
+        {
+          "text": "Fix issue #602, but do not create a pull request."
+        }
+      ],
+      "generated": "Stop after the requested fix without pull-request delivery or guarded merge.",
+      "expected_holds": []
+    },
+    {
+      "name": "object-qualified-auto-merge-denial-keeps-manual-authority",
+      "default_merge_authority": true,
+      "instructions": [
+        {
+          "text": "Implement issue #602. Do not merge this pull request automatically."
+        }
+      ],
+      "generated": "Keep GitHub auto-merge disabled and perform the guarded squash merge when every gate passes.",
+      "expected_holds": []
     }
   ]
 }
