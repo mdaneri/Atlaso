@@ -686,7 +686,12 @@ DEFAULT_MERGE_AUTHORITY_WORKFLOW_RECLASSIFICATION = re.compile(
     r"(?:^|[;.!?]\s*)(?:the|this)\s+(?:pull request|pr)\s+is\s+"
     r"(?:now\s+)?(?:an?\s+)?draft\b|"
     r"(?:^|[;.!?]\s*)move\s+(?:the\s+)?(?:work|task|implementation)\s+"
-    r"to\s+(?:an?\s+)?(?:external\s+)?fork\b"
+    r"to\s+(?:an?\s+)?(?:external\s+)?fork\b|"
+    r"(?:^|[;.!?]\s*)(?:convert|mark|move)\s+"
+    r"(?:(?:the|this)\s+)?(?:pull request|pr)\s+(?:to|as)\s+"
+    r"(?:an?\s+)?draft\b|"
+    r"(?:^|[;.!?]\s*)make\s+(?:(?:the|this)\s+)?"
+    r"(?:(?:pull request|pr)\s+)?(?:an?\s+)?draft\s*(?:pull request|pr)?\b"
 )
 DEFAULT_MERGE_AUTHORITY_DIRECT_REVIEW = re.compile(
     r"(?:review|inspect|check|test|summarize|describe|explain|report|"
@@ -783,7 +788,7 @@ MERGE_HOLD_STANDALONE_PERMISSION = re.compile(
     r"proceed (?:with the merge|with merging|to merge)(?: now)?)\b"
 )
 MERGE_HOLD_NONAPPROVAL_CONDITION = re.compile(
-    r"\b(?:(?:merge only|only merge) (?:after|when|if|once)\s+"
+    r"\b(?:(?:merge(?: only)?|only merge) (?:after|when|if|once)\s+"
     r"(?:ci|tests?|checks?|validation|builds?)\b[^.!?]{0,40}"
     r"\b(?:pass(?:es|ed)?|succeed(?:s|ed)?|complete(?:s|d)?)|"
     r"wait (?:for|until)\s+(?:ci|tests?|checks?|validation|builds?)\b"
@@ -1014,20 +1019,21 @@ def merge_hold_directions(
     for phrase in AUTO_MERGE_ONLY_PHRASES:
         normalized = normalized.replace(phrase, "keep github auto-merge disabled")
     task_clauses: list[str] = []
-    for clause in MERGE_AUTHORITY_TASK_CLAUSE_BOUNDARY.split(normalized):
-        clause = MERGE_HOLD_OTHER_TASK_TRAILING_CLAUSE.sub("", clause).strip()
-        other_task_reference = MERGE_HOLD_OTHER_TASK_REFERENCE.search(clause)
-        has_active_target_before_reference = (
-            other_task_reference is not None
-            and MERGE_HOLD_ACTIVE_TASK_TARGET.search(
-                clause[: other_task_reference.start()]
+    for sentence in MERGE_AUTHORITY_TASK_CLAUSE_BOUNDARY.split(normalized):
+        for clause in MERGE_AUTHORITY_COORDINATED_CLAUSE_BOUNDARY.split(sentence):
+            clause = MERGE_HOLD_OTHER_TASK_TRAILING_CLAUSE.sub("", clause).strip()
+            other_task_reference = MERGE_HOLD_OTHER_TASK_REFERENCE.search(clause)
+            has_active_target_before_reference = (
+                other_task_reference is not None
+                and MERGE_HOLD_ACTIVE_TASK_TARGET.search(
+                    clause[: other_task_reference.start()]
+                )
+                is not None
             )
-            is not None
-        )
-        if clause and (
-            other_task_reference is None or has_active_target_before_reference
-        ):
-            task_clauses.append(clause)
+            if clause and (
+                other_task_reference is None or has_active_target_before_reference
+            ):
+                task_clauses.append(clause)
     normalized = "; ".join(task_clauses)
     if not normalized:
         return {}

@@ -1571,6 +1571,55 @@
       ],
       "generated": "Report that the implementation is incomplete without continuing delivery.",
       "expected_holds": []
+    },
+    {
+      "name": "unrelated-pr-before-active-hold",
+      "default_merge_authority": true,
+      "instructions": [
+        {
+          "text": "Implement issue #602."
+        },
+        {
+          "text": "For another PR, do not merge, but leave this pull request open.",
+          "add_holds": [
+            "leave open"
+          ]
+        }
+      ],
+      "generated": "Leave this pull request open after delivery.",
+      "expected_holds": [
+        "leave open"
+      ]
+    },
+    {
+      "name": "imperative-draft-conversion-is-ineligible",
+      "default_merge_authority": false,
+      "instructions": [
+        {
+          "text": "Implement issue #602."
+        },
+        {
+          "text": "Convert the pull request to draft."
+        }
+      ],
+      "generated": "Keep the pull request in the draft workflow without guarded merge.",
+      "expected_holds": []
+    },
+    {
+      "name": "plain-post-ci-merge-condition-is-preserved",
+      "default_merge_authority": true,
+      "instructions": [
+        {
+          "text": "Implement issue #602, but merge after CI passes.",
+          "add_holds": [
+            "do not merge"
+          ]
+        }
+      ],
+      "generated": "Wait for CI to pass before merging; do not complete the guarded merge yet.",
+      "expected_holds": [
+        "do not merge"
+      ]
     }
   ]
 }

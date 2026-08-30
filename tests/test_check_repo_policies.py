@@ -248,6 +248,16 @@ def test_merge_hold_directions_recognizes_wait_for_ci_condition() -> None:
     assert merge_hold_directions(
         "Implement issue #602, but wait for CI to pass before merging."
     ) == {"do not merge": "add"}
+    assert merge_hold_directions(
+        "Implement issue #602, but merge after CI passes."
+    ) == {"do not merge": "add"}
+
+
+def test_merge_hold_directions_keeps_active_task_after_unrelated_clause() -> None:
+    """Verify another PR cannot hide a later active-task hold."""
+    assert merge_hold_directions(
+        "For another PR, do not merge, but leave this pull request open."
+    ) == {"leave open": "add"}
 
 
 def test_generated_merge_decision_questions_are_not_affirmative() -> None:
@@ -353,6 +363,8 @@ def test_source_authority_honors_workflow_reclassification() -> None:
         "This is private vulnerability remediation.",
         "The pull request is now a draft.",
         "Move the work to a fork.",
+        "Convert the pull request to draft.",
+        "Make this a draft PR.",
     ):
         assert not source_has_default_merge_authority(
             ("Implement issue #602.", reclassification)
