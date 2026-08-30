@@ -264,6 +264,8 @@ release intent before ledger admission, then uses write-through replacement and 
 records. Parent cleanup can therefore release the exact pre-VM reservation after proven child-tree termination.
 Bridged admission also excludes all IPv4 addresses on the selected Windows interface. `-SkipNetworkCheck` skips topology
 preparation but still performs read-only management-vmnet discovery so DHCP state and exclusions cannot become unknown.
+Validation-only and ISO-preparation runs create no VM and therefore do not reserve a builder address. Actual image builds
+reject an explicitly empty `-BuilderStaticIp` instead of falling back to unreserved DHCP.
 
 Use `-BuilderAddressPoolStartOffset` and `-BuilderAddressPoolEndOffset` to select another bounded pool. An explicit
 `-BuilderStaticIp` is a one-address pool and must pass the same VMware DHCP, fixed-address, observation, and reservation

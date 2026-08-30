@@ -430,6 +430,8 @@ exit 1
             '-ReservationHandoffPath $resolvedBuilderAddressReservationPath'
             'was not paired with its durable release handoff'
             'SkipNetworkCheck suppresses topology preparation, not allocator safety'
+            '$requiresBuilderReservation = -not $ValidateOnly -and -not $PrepareIsoOnly'
+            'BuilderStaticIp must not be empty for a VMware Photon image build.'
             'HostAddresses'
             '(@($BuilderStaticGateway) + $managementHostAddresses)'
         )) {

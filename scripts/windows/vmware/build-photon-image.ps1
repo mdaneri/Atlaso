@@ -1049,6 +1049,7 @@ $finalAddressWasPassed = $PSBoundParameters.ContainsKey('FinalMgmtAddress')
 $finalGatewayWasPassed = $PSBoundParameters.ContainsKey('FinalMgmtGateway')
 $management = $null
 $managementGateway = ''
+$requiresBuilderReservation = -not $ValidateOnly -and -not $PrepareIsoOnly
 
 if (-not $SkipNetworkCheck) {
     $management = Get-WorkstationManagementNetwork -NetworkName $VmnetName -ServiceNetworkName $ServiceVmnetName -ResolvedVmrunPath $VmrunPath -BridgedInterfaceAlias $BridgedInterfaceAlias
@@ -1080,7 +1081,10 @@ if (-not $SkipNetworkCheck) {
     Write-Host "Using VMware services network $ServiceVmnetName for the second appliance NIC."
     Write-Host "Photon builder temporary SSH address: $BuilderStaticIp; final appliance management address: $FinalMgmtAddress."
 }
-elseif (-not [string]::IsNullOrWhiteSpace($BuilderStaticIp)) {
+elseif ($requiresBuilderReservation) {
+    if ([string]::IsNullOrWhiteSpace($BuilderStaticIp)) {
+        throw 'BuilderStaticIp must not be empty for a VMware Photon image build.'
+    }
     # SkipNetworkCheck suppresses topology preparation, not allocator safety.
     # Read-only discovery is still required to establish exact DHCP exclusions.
     $management = Get-WorkstationManagementNetwork `
@@ -1091,7 +1095,10 @@ elseif (-not [string]::IsNullOrWhiteSpace($BuilderStaticIp)) {
     Write-Host "Discovered VMware management network $($management.Name) for safe builder-address admission."
 }
 
-if (-not [string]::IsNullOrWhiteSpace($BuilderStaticIp)) {
+if ($requiresBuilderReservation) {
+    if ([string]::IsNullOrWhiteSpace($BuilderStaticIp)) {
+        throw 'BuilderStaticIp must not be empty for a VMware Photon image build.'
+    }
     $resolvedReservationVmrun = Resolve-WorkstationVmrunPath -Path $VmrunPath
     $builderParts = @($BuilderStaticIp -split '/', 2)
     if ($builderParts.Count -ne 2 -or $builderParts[1] -notmatch '^\d{1,2}$') {

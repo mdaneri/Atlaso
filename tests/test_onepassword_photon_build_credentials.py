@@ -175,6 +175,8 @@ def test_photon_wrapper_preflights_credentials_before_image_mutation() -> None:
     assert "was not paired with its durable release handoff" in wrapper
     assert "-ProcessTreeTerminationProven" in wrapper
     assert "SkipNetworkCheck suppresses topology preparation, not allocator safety" in wrapper
+    assert "$requiresBuilderReservation = -not $ValidateOnly -and -not $PrepareIsoOnly" in wrapper
+    assert "BuilderStaticIp must not be empty for a VMware Photon image build." in wrapper
     assert "(@($BuilderStaticGateway) + $managementHostAddresses)" in wrapper
     assert "Cleanup marker root does not match the exact task-created Photon root." in wrapper
     assert "$Job.TerminateAndWait(10000)" in runner
