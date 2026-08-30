@@ -301,6 +301,90 @@ def test_dependency_policy_tokenizes_escaped_requirement_flag(
     )
 
 
+def test_dependency_policy_rejects_conditional_checkout_replacement(
+    tmp_path: Path,
+) -> None:
+    """Verify a skipped checkout cannot replace the active external root.
+
+    Args:
+        tmp_path: Temporary directory provided by pytest for isolated filesystem state.
+    """
+    write_valid_policy(tmp_path)
+    workflow = tmp_path / ".github" / "workflows" / "release.yml"
+    workflow.parent.mkdir(parents=True, exist_ok=True)
+    workflow.write_text(
+        """jobs:
+  conditional:
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          repository: attacker/other
+      - uses: actions/checkout@v7
+        if: ${{ false }}
+      - run: python -m pip install -r requirements-release-tools.lock
+""",
+        encoding="utf-8",
+    )
+
+    assert any(
+        "root workflow requirement uses conditional checkout metadata: "
+        "requirements-release-tools.lock" in error
+        for error in validate(tmp_path)
+    )
+
+
+def test_dependency_policy_accepts_matching_checkout_condition(
+    tmp_path: Path,
+) -> None:
+    """Verify identical checkout and pip conditions share source metadata.
+
+    Args:
+        tmp_path: Temporary directory provided by pytest for isolated filesystem state.
+    """
+    write_valid_policy(tmp_path)
+    workflow = tmp_path / ".github" / "workflows" / "release.yml"
+    workflow.parent.mkdir(parents=True, exist_ok=True)
+    workflow.write_text(
+        """jobs:
+  conditional:
+    steps:
+      - uses: actions/checkout@v7
+        if: steps.identity.outputs.ready == 'true'
+      - run: python -m pip install -r requirements-release-tools.lock
+        if: steps.identity.outputs.ready == 'true'
+""",
+        encoding="utf-8",
+    )
+
+    assert validate(tmp_path) == []
+
+
+def test_dependency_policy_decodes_quoted_run_scalars(tmp_path: Path) -> None:
+    """Verify quoted run scalars are decoded before command tokenization.
+
+    Args:
+        tmp_path: Temporary directory provided by pytest for isolated filesystem state.
+    """
+    write_valid_policy(tmp_path)
+    (tmp_path / "requirements-ad-hoc.lock").write_text(
+        "placeholder\n", encoding="utf-8"
+    )
+    workflow = tmp_path / ".github" / "workflows" / "release.yml"
+    workflow.parent.mkdir(parents=True, exist_ok=True)
+    invocations = (
+        "run: 'python -m pip install -r requirements-ad-hoc.lock'\n",
+        'run: "python -m pip install -r requirements-ad-hoc.lock"\n',
+    )
+    for invocation in invocations:
+        workflow.write_text(invocation, encoding="utf-8")
+
+        assert any(
+            "workflow requirement lock is outside the generated dependency policy "
+            "inventory: requirements-ad-hoc.lock" in error
+            for error in validate(tmp_path)
+        )
+
+
 def test_dependency_policy_rejects_untrusted_atlaso_checkout_ref(
     tmp_path: Path,
 ) -> None:

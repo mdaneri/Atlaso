@@ -3,6 +3,7 @@
 
 from __future__ import annotations
 
+import json
 import re
 import shlex
 import sys
@@ -69,6 +70,7 @@ class CheckoutSource:
 
     repository: str
     ref: str
+    condition: str
 
 
 LOCK_POLICIES = (
@@ -117,13 +119,20 @@ def _yaml_scalar(line: str, key: str) -> str | None:
     if not match:
         return None
     value = match.group(1).strip()
-    if value.startswith(("'", '"')):
-        quote = value[0]
-        end = value.find(quote, 1)
-        remainder = value[end + 1 :].strip() if end >= 0 else ""
-        if end < 0 or (remainder and not remainder.startswith("#")):
+    if value.startswith("'"):
+        quoted = re.fullmatch(r"'((?:''|[^'])*)'(?:\s+#.*)?", value)
+        if not quoted:
             return None
-        return value[1:end]
+        return quoted.group(1).replace("''", "'")
+    if value.startswith('"'):
+        quoted = re.fullmatch(r'("(?:\\.|[^"\\])*")(?:\s+#.*)?', value)
+        if not quoted:
+            return None
+        try:
+            decoded = json.loads(quoted.group(1))
+        except json.JSONDecodeError:
+            return None
+        return decoded if isinstance(decoded, str) else None
     return re.split(r"\s+#", value, maxsplit=1)[0].rstrip()
 
 
@@ -169,16 +178,35 @@ def _workflow_checkout_sources(
         if action is None or not re.fullmatch(r"actions/checkout@[^\s]+", action):
             continue
         job_scope = _workflow_job_scope(lines, index)
+        step_index = index
         step_indent = len(line) - len(line.lstrip())
-        for step_line in reversed(lines[: index + 1]):
+        for candidate_index in range(index, -1, -1):
+            step_line = lines[candidate_index]
             if re.match(r"\s*-\s", step_line):
+                step_index = candidate_index
                 step_indent = len(step_line) - len(step_line.lstrip())
                 break
+        step_end = len(lines)
+        for candidate_index in range(step_index + 1, len(lines)):
+            candidate = lines[candidate_index]
+            candidate_indent = len(candidate) - len(candidate.lstrip())
+            if candidate.strip() and candidate_indent <= step_indent:
+                step_end = candidate_index
+                break
+        condition = next(
+            (
+                value
+                for candidate in lines[step_index:step_end]
+                if len(candidate) - len(candidate.lstrip()) == step_indent + 2
+                and (value := _yaml_scalar(candidate, "if")) is not None
+            ),
+            "",
+        )
         checkout_path = ""
         repository = "${{ github.repository }}"
         ref = ""
         with_indent = -1
-        for candidate in lines[index + 1 :]:
+        for candidate in lines[index + 1 : step_end]:
             candidate_indent = len(candidate) - len(candidate.lstrip())
             if candidate.strip() and candidate_indent <= step_indent:
                 break
@@ -203,7 +231,7 @@ def _workflow_checkout_sources(
             ref_value = _yaml_scalar(candidate, "ref")
             if ref_value is not None:
                 ref = ref_value.strip()
-        source = CheckoutSource(repository, ref)
+        source = CheckoutSource(repository, ref, condition)
         if checkout_path and checkout_path != ".":
             checkout_paths.setdefault((job_scope, checkout_path), []).append(
                 (index + 1, source)
@@ -357,6 +385,37 @@ def _workflow_step_working_directory(lines: list[str], index: int) -> str:
     return ""
 
 
+def _workflow_step_condition(lines: list[str], index: int) -> str:
+    """Return the direct step condition for a workflow source line.
+
+    Args:
+        lines: Workflow source lines.
+        index: Zero-based line index within the step.
+    """
+    line_indent = len(lines[index]) - len(lines[index].lstrip())
+    step_index = index
+    for candidate_index in range(index, -1, -1):
+        candidate = lines[candidate_index]
+        candidate_indent = len(candidate) - len(candidate.lstrip())
+        if re.match(r"\s*-\s", candidate) and candidate_indent <= line_indent:
+            step_index = candidate_index
+            break
+    step_indent = len(lines[step_index]) - len(lines[step_index].lstrip())
+    step_end = len(lines)
+    for candidate_index in range(step_index + 1, len(lines)):
+        candidate = lines[candidate_index]
+        candidate_indent = len(candidate) - len(candidate.lstrip())
+        if candidate.strip() and candidate_indent <= step_indent:
+            step_end = candidate_index
+            break
+    for candidate in lines[step_index:step_end]:
+        candidate_indent = len(candidate) - len(candidate.lstrip())
+        value = _yaml_scalar(candidate, "if")
+        if value is not None and candidate_indent == step_indent + 2:
+            return value.strip()
+    return ""
+
+
 def _workflow_job_working_directory(lines: list[str], index: int) -> str:
     """Return the enclosing job's default run working directory.
 
@@ -446,7 +505,9 @@ def _workflow_run_commands(lines: list[str]) -> list[tuple[int, str, str]]:
             index += 1
             continue
         line_number = index + 1
-        value = match.group("value").strip()
+        value = _yaml_scalar(lines[index], "run")
+        if value is None:
+            value = match.group("value").strip()
         run_indent = len(match.group("indent"))
         if value and not value.startswith(("|", ">")):
             working_directory = _workflow_effective_working_directory(lines, index)
@@ -549,6 +610,7 @@ def _validate_workflow_locks(root: Path, policy_paths: set[str]) -> list[str]:
             policy_path = relative.as_posix()
             tracked_path = root.joinpath(*relative.parts)
             job_scope = _workflow_job_scope(lines, line_number - 1)
+            command_condition = _workflow_step_condition(lines, line_number - 1)
             checkout_source = next(
                 (
                     source
@@ -560,6 +622,13 @@ def _validate_workflow_locks(root: Path, policy_paths: set[str]) -> list[str]:
                 None,
             )
             if checkout_source is not None and len(relative.parts) > 1:
+                if checkout_source.condition and checkout_source.condition != command_condition:
+                    errors.append(
+                        f"{workflow.relative_to(root)}:{line_number}: checkout-prefixed "
+                        "workflow requirement uses conditional checkout metadata: "
+                        f"{reference}"
+                    )
+                    continue
                 if checkout_source.repository not in {
                     "${{ github.repository }}",
                     "mdaneri/Atlaso",
@@ -593,6 +662,17 @@ def _validate_workflow_locks(root: Path, policy_paths: set[str]) -> list[str]:
                     ),
                     None,
                 )
+                if (
+                    active_root is not None
+                    and active_root.condition
+                    and active_root.condition != command_condition
+                ):
+                    errors.append(
+                        f"{workflow.relative_to(root)}:{line_number}: root workflow "
+                        "requirement uses conditional checkout metadata: "
+                        f"{reference}"
+                    )
+                    continue
                 if active_root is not None and active_root.repository not in {
                     "${{ github.repository }}",
                     "mdaneri/Atlaso",
