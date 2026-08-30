@@ -431,7 +431,8 @@ function isHtmlSuppressed () {
 
 function updateHtmlSuppression (content, inlineContext = false) {
   const tagPattern = /<(?<closing>\/)?(?<tag>[A-Za-z][A-Za-z0-9-]*)\b(?<attributes>(?:[^<>"']|"[^"]*"|'[^']*')*?)(?<selfClosing>\/)?\s*>/g
-  for (const match of content.matchAll(tagPattern)) {
+  const parseableContent = content.replace(/<!--[\s\S]*?(?:-->|$)/g, '')
+  for (const match of parseableContent.matchAll(tagPattern)) {
     const tag = match.groups.tag.toLowerCase()
     const rawTextTag = htmlStack.length && htmlStack[htmlStack.length - 1].tag
     if (
