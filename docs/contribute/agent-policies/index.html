@@ -4532,7 +4532,8 @@ runtime.</p>
   and do not skip notice generation to complete a build.</li>
 <li>Run long TDNF operations in shared Photon provisioning through <code>scripts/run_tdnf_with_progress.py</code>. Keep its compact
   30-second Packer heartbeats with elapsed time and TDNF cache size, capture raw transaction output instead of streaming
-  terminal redraws, preserve the child exit status, and replay only a normalized bounded output tail on failure.</li>
+  terminal redraws, preserve every nonzero child exit status, promote a zero-status transcript that reports a TDNF
+  error or disabled repository to exit status 1, and replay only a normalized bounded output tail on failure.</li>
 <li>Photon 5.0 GA started at Python 3.11, but Atlaso targets the updated Photon 5.0 package stream; on June 21, 2026 live
   repo metadata showed <code>python3</code> as <code>3.14.5-2.ph5</code>. Keep Atlaso at <code>requires-python &gt;=3.14,&lt;3.15</code>, publish only the
   <code>cp314</code> appliance wheelhouse, and run <code>python scripts/check_photon_compatibility.py</code> before treating Photon
