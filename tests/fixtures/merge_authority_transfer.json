@@ -1541,6 +1541,36 @@
       ],
       "generated": "Summarize the implementation without continuing delivery.",
       "expected_holds": []
+    },
+    {
+      "name": "wait-for-ci-before-merge-is-preserved",
+      "default_merge_authority": true,
+      "instructions": [
+        {
+          "text": "Implement issue #602, but wait for CI to pass before merging.",
+          "add_holds": [
+            "do not merge"
+          ]
+        }
+      ],
+      "generated": "Wait for CI to pass before merging; do not perform the guarded merge yet.",
+      "expected_holds": [
+        "do not merge"
+      ]
+    },
+    {
+      "name": "stop-work-status-remains-ineligible",
+      "default_merge_authority": false,
+      "instructions": [
+        {
+          "text": "Implement issue #602."
+        },
+        {
+          "text": "Stop work on this task. The implementation is incomplete."
+        }
+      ],
+      "generated": "Report that the implementation is incomplete without continuing delivery.",
+      "expected_holds": []
     }
   ]
 }

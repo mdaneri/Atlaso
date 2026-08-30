@@ -710,6 +710,13 @@ DEFAULT_MERGE_AUTHORITY_POST_STOP_SUMMARY = re.compile(
     r"(?:(?:all|further|this|the)\s+)?(?:work|implementation|task)\b"
     r"[^.!?]*[.!?]\s*(?:summarize|describe|explain|report|document)\b[^.!?]*"
 )
+DEFAULT_MERGE_AUTHORITY_POST_STOP_STATUS = re.compile(
+    r"(?:^|[;.!?]\s*)(?:please\s+)?(?:stop|cancel|cease|end)\s+"
+    r"(?:(?:all|further|this|the)\s+)?(?:work|implementation|task)\b"
+    r"[^.!?]*[.!?]\s*(?:(?:the|this|that)\s+)?"
+    r"(?:implementation|work|task|change|patch|fix)\s+"
+    r"(?:is|isn't|isn’t|is not|remains?|was|wasn't|wasn’t|was not)\b[^.!?]*"
+)
 DEFAULT_MERGE_AUTHORITY_NEGATED_MUTATION = re.compile(
     r"(?:^|[;.!?]\s*)(?:please\s+)?(?:do not|don't|don’t|must not)\s+"
     r"(?:\w+\s+){0,3}(?:implement|fix|patch|resolve|solve|deliver|update|"
@@ -742,7 +749,8 @@ MERGE_HOLD_DISCUSSION_CONTEXT = re.compile(
     r"\b(?:explain(?:ed|ing)?|document(?:ed|ing)?|discuss(?:ed|ing)?|"
     r"describe(?:d|s|ing)?|mention(?:ed|ing)?|refer(?:red|ring)?|"
     r"test(?:ed|ing)?|plan(?:ned|ning)?|consider(?:ed|ing|ation)?|"
-    r"contemplat(?:e|ed|ing|ion)|ask(?:ed|ing)?)\b"
+    r"contemplat(?:e|ed|ing|ion)|ask(?:ed|ing)?|"
+    r"determin(?:e|ed|ing|ation)|decid(?:e|ed|ing))\b"
 )
 DEFAULT_MERGE_AUTHORITY_ACTION_BOUNDARY = re.compile(
     r"(?:[;,.!?]+|\s+(?:and|then|but)\s+)"
@@ -775,9 +783,12 @@ MERGE_HOLD_STANDALONE_PERMISSION = re.compile(
     r"proceed (?:with the merge|with merging|to merge)(?: now)?)\b"
 )
 MERGE_HOLD_NONAPPROVAL_CONDITION = re.compile(
-    r"\b(?:merge only|only merge) (?:after|when|if|once)\s+"
+    r"\b(?:(?:merge only|only merge) (?:after|when|if|once)\s+"
     r"(?:ci|tests?|checks?|validation|builds?)\b[^.!?]{0,40}"
-    r"\b(?:pass(?:es|ed)?|succeed(?:s|ed)?|complete(?:s|d)?)\b"
+    r"\b(?:pass(?:es|ed)?|succeed(?:s|ed)?|complete(?:s|d)?)|"
+    r"wait (?:for|until)\s+(?:ci|tests?|checks?|validation|builds?)\b"
+    r"[^.!?]{0,40}\b(?:pass|succeed|complete)(?:es|s|d)?\b"
+    r"[^.!?]{0,40}\bbefore merging)\b"
 )
 MERGE_HOLD_NON_PR_OBJECT = re.compile(
     r"^\s+(?!(?:(?:this|the)\s+)?(?:pull request|pr)\b|it\b|"
@@ -1253,6 +1264,8 @@ def source_has_default_merge_authority(instructions: tuple[str, ...]) -> bool:
             DEFAULT_MERGE_AUTHORITY_STOP_WORK.finditer(normalized)
         ) + tuple(
             DEFAULT_MERGE_AUTHORITY_POST_STOP_SUMMARY.finditer(normalized)
+        ) + tuple(
+            DEFAULT_MERGE_AUTHORITY_POST_STOP_STATUS.finditer(normalized)
         ) + tuple(
             DEFAULT_MERGE_AUTHORITY_NEGATED_MUTATION.finditer(normalized)
         ) + tuple(

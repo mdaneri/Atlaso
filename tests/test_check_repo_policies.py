@@ -243,6 +243,23 @@ def test_merge_hold_directions_recognizes_this_pull_request_hold() -> None:
     ) == {"leave open": "add"}
 
 
+def test_merge_hold_directions_recognizes_wait_for_ci_condition() -> None:
+    """Verify waiting for CI before merge remains an explicit hold."""
+    assert merge_hold_directions(
+        "Implement issue #602, but wait for CI to pass before merging."
+    ) == {"do not merge": "add"}
+
+
+def test_generated_merge_decision_questions_are_not_affirmative() -> None:
+    """Verify decision-only prompts do not manufacture merge authority."""
+    assert not has_affirmative_default_merge_authority(
+        "Determine whether to complete the guarded merge."
+    )
+    assert not has_affirmative_default_merge_authority(
+        "Decide whether to complete the guarded merge."
+    )
+
+
 def test_source_authority_excludes_patch_review() -> None:
     """Verify reviewing an existing patch is review-only work."""
     assert not source_has_default_merge_authority(
@@ -298,6 +315,12 @@ def test_source_authority_honors_later_stop_work() -> None:
         (
             "Implement issue #602.",
             "Stop work on this task. Summarize the implementation.",
+        )
+    )
+    assert not source_has_default_merge_authority(
+        (
+            "Implement issue #602.",
+            "Stop work on this task. The implementation is incomplete.",
         )
     )
 
