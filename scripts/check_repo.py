@@ -15,6 +15,7 @@ import shutil
 import subprocess
 import sys
 import tomllib
+import unicodedata
 from dataclasses import dataclass
 from html import unescape
 from pathlib import Path
@@ -2383,8 +2384,24 @@ def strip_markdown_deleted_content(text: str) -> str:
                 if run_end < len(without_html_deletions)
                 else ""
             )
-            can_open = bool(following and not following.isspace())
-            can_close = bool(previous and not previous.isspace())
+            previous_is_whitespace = not previous or previous.isspace()
+            following_is_whitespace = not following or following.isspace()
+            previous_is_punctuation = bool(
+                previous and unicodedata.category(previous).startswith("P")
+            )
+            following_is_punctuation = bool(
+                following and unicodedata.category(following).startswith("P")
+            )
+            can_open = not following_is_whitespace and (
+                not following_is_punctuation
+                or previous_is_whitespace
+                or previous_is_punctuation
+            )
+            can_close = not previous_is_whitespace and (
+                not previous_is_punctuation
+                or following_is_whitespace
+                or following_is_punctuation
+            )
             if in_deletion and can_close:
                 in_deletion = False
                 tilde_run = tilde_run[2:]
