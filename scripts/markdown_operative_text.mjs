@@ -196,6 +196,10 @@ function isValidSuppressionDeclaration (property, value) {
 
 function isTransparentColor (value) {
   if (value === 'transparent') return true
+  const hexadecimal = value.match(/^#(?:[0-9a-f]{3}([0-9a-f])|[0-9a-f]{6}([0-9a-f]{2}))$/)
+  if (hexadecimal) {
+    return Number.parseInt(hexadecimal[1] || hexadecimal[2], 16) === 0
+  }
   const alpha = value.match(/(?:,|\/)\s*([+-]?(?:\d+(?:\.\d*)?|\.\d+))(%?)\s*\)$/)
   if (!alpha) return false
   const numericAlpha = Number.parseFloat(alpha[1])
@@ -302,7 +306,7 @@ function resolveCssVariables (value, customProperties, seen = new Set()) {
   return resolved
 }
 
-function hasHiddenAttributes (attributes, inheritedCustomProperties = new Map()) {
+function hasHiddenAttributes (attributes, inheritedCustomProperties = new Map(), tag = '') {
   const parsedAttributes = new Map()
   const attributePattern = /(?:^|\s)([^\s"'=<>`/]+)(?:\s*=\s*(?:"([^"]*)"|'([^']*)'|([^\s"'=<>`]+)))?/g
   for (const match of attributes.matchAll(attributePattern)) {
@@ -368,6 +372,7 @@ function hasHiddenAttributes (attributes, inheritedCustomProperties = new Map())
     irreversible: (
       parsedAttributes.has('hidden') ||
       parsedAttributes.has('inert') ||
+      (tag === 'dialog' && !parsedAttributes.has('open')) ||
       decodeHtmlAttributeEntities(parsedAttributes.get('aria-hidden') || '')
         .toLowerCase() === 'true' ||
       declarations.get('display')?.value === 'none' ||
@@ -518,7 +523,7 @@ function updateHtmlSuppression (content, inlineContext = false) {
     const inheritedCustomProperties = htmlStack.length
       ? htmlStack[htmlStack.length - 1].customProperties
       : new Map()
-    const suppression = hasHiddenAttributes(attributes, inheritedCustomProperties)
+    const suppression = hasHiddenAttributes(attributes, inheritedCustomProperties, tag)
     const foreign = tag === 'svg' || tag === 'math' || Boolean(
       htmlStack.length && htmlStack[htmlStack.length - 1].foreign
     )
