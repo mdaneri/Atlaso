@@ -90,7 +90,7 @@ function Get-VmwareGuestIPv4Address {
 
 <#
 .SYNOPSIS
-Read the actual first-boot hostname published through VMware Tools.
+Read one bounded first-boot hostname observation through VMware Tools.
 .PARAMETER VmrunPath
 Resolved vmrun executable.
 .PARAMETER VmxPath
@@ -98,7 +98,7 @@ Exact running VMX to query.
 .PARAMETER Deadline
 Absolute readiness deadline that bounds the provider query.
 #>
-function Get-VmwareGuestHostname {
+function Get-VmwareGuestHostnameObservation {
     param(
         [Parameter(Mandatory = $true)][string]$VmrunPath,
         [Parameter(Mandatory = $true)][string]$VmxPath,
@@ -111,8 +111,16 @@ function Get-VmwareGuestHostname {
     $result = Invoke-AtlasoWorkstationVmrunBounded `
         -VmrunPath $VmrunPath -Arguments $arguments -Deadline $Deadline
     $reported = @($result.StdOut -split '\r?\n' | Where-Object { $_ }) | Select-Object -First 1
-    if ($result.TimedOut -or $result.ExitCode -ne 0 -or [string]::IsNullOrWhiteSpace($reported)) { return '' }
-    return ConvertFrom-AtlasoWorkstationRuntimeConfigValue -Value $reported
+    if ($result.TimedOut) {
+        return [pscustomobject]@{ Value = ''; TimedOut = $true }
+    }
+    if ($result.ExitCode -ne 0 -or [string]::IsNullOrWhiteSpace($reported)) {
+        return [pscustomobject]@{ Value = ''; TimedOut = $false }
+    }
+    return [pscustomobject]@{
+        Value    = ConvertFrom-AtlasoWorkstationRuntimeConfigValue -Value $reported
+        TimedOut = $false
+    }
 }
 
 <#
@@ -156,8 +164,12 @@ do {
         try {
             # Normalize provider representation before host network probing so
             # malformed guest-info remains an immediate fail-closed boundary.
-            $lastObservedHostname = Get-VmwareGuestHostname `
+            $initialHostnameObservation = Get-VmwareGuestHostnameObservation `
                 -VmrunPath $resolvedVmrun -VmxPath $resolvedVmxPath -Deadline $deadline
+            if ($initialHostnameObservation.TimedOut) {
+                throw 'Read the VMware guest hostname exceeded the readiness deadline.'
+            }
+            $lastObservedHostname = $initialHostnameObservation.Value
             $runningPaths = @(
                 Get-AtlasoWorkstationRunningVmxPath -VmrunPath $resolvedVmrun -Deadline $deadline
             )
@@ -224,10 +236,16 @@ do {
                 -RunningGuests $confirmedGuests `
                 -NeighborMacAddresses @(Get-HostNeighborMacAddress -IPAddress $confirmedIpAddress)
             $lastAddressOwnership = $confirmedOwnership
-            $lastObservedHostname = Get-VmwareGuestHostname `
+            $confirmedHostnameObservation = Get-VmwareGuestHostnameObservation `
                 -VmrunPath $resolvedVmrun `
                 -VmxPath $resolvedVmxPath `
                 -Deadline $deadline
+            if (-not $confirmedHostnameObservation.TimedOut) {
+                # A completed empty read proves the guest has not published the
+                # hostname. A provider timeout cannot erase the valid value read
+                # earlier in this same stable ownership observation.
+                $lastObservedHostname = $confirmedHostnameObservation.Value
+            }
             if (-not $lastObservedHostname) {
                 $stage = Get-AtlasoWorkstationFirstBootStage `
                     -VmxPath $resolvedVmxPath `
