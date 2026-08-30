@@ -94,6 +94,11 @@ jobs:
           echo "commit=$WHEEL_SHA" >> "$GITHUB_OUTPUT"
           echo "source_ci_run_id=$SOURCE_CI_RUN_ID" >> "$GITHUB_OUTPUT"
           echo "source_ci_run_attempt=$SOURCE_CI_RUN_ATTEMPT" >> "$GITHUB_OUTPUT"
+          if test "$TRIGGER_WORKFLOW" = CI; then
+            echo "publisher_trigger=automatic-main" >> "$GITHUB_OUTPUT"
+          else
+            echo "publisher_trigger=replay" >> "$GITHUB_OUTPUT"
+          fi
       - name: Check out protected publisher tooling
         uses: actions/checkout@v7
         with:
@@ -144,7 +149,8 @@ jobs:
             --source-ci-run-id "$SOURCE_CI_RUN_ID" \
             --source-ci-run-attempt "$SOURCE_CI_RUN_ATTEMPT" \
             --publisher-run-id "${{ github.run_id }}" \
-            --publisher-run-attempt "${{ github.run_attempt }}"
+            --publisher-run-attempt "${{ github.run_attempt }}" \
+            --publisher-trigger "${{ steps.target.outputs.publisher_trigger }}"
       - name: Publish the immutable wheel handoff
         uses: actions/upload-artifact@v7
         with:

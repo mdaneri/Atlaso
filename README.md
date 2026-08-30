@@ -84,8 +84,9 @@ brings infrastructure, storage, identity, networking, and lifecycle workflows in
   worker handoff instead
   of discarding later operator writes, including after reboot when the volatile gate must be recreated.
   Startup rejects inconsistent success evidence and resumes only untouched update children. Successful `main` CI
-  publishes only the versioned Python wheel and its immutable commit/digest handoff; complete signed appliance Releases
-  and all virtualization artifacts remain explicit protected manual workflows.
+  publishes the immutable wheel handoff, then the protected software publisher signs the complete `vX.Y.Z` bundle and
+  advances `development`. Promotion to `preview` or `stable` and all OVA/virtualization production remain explicit
+  manual operations.
 - [Services](docs/services/index.md) — configure DNS, identity, storage, network boot, and VCF integrations.
 - [Network configuration](docs/operate/networking.md) — distinguish static paths from forwarding permissions, create
   explicit IPv4 or IPv6 default routes through native IP-family choices without entering `/0` manually, and manage

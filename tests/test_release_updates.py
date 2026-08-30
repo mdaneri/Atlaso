@@ -1236,8 +1236,12 @@ def test_release_workflows_use_successful_main_sha_and_promote_without_rebuildin
     )[0]
     wheel_replay_trigger = wheel_replay.split("on:\n", 1)[1].split("\npermissions:", 1)[0]
     assert "workflow_dispatch:" in publication_trigger
-    assert "workflow_run:" not in publication_trigger
-    assert "github.event.workflow_run" not in publication
+    assert "workflow_run:" in publication_trigger
+    assert "Publish Python wheel" in publication_trigger
+    assert "github.event.workflow_run.conclusion == 'success'" in publication
+    assert "github.event.workflow_run.head_repository.full_name == github.repository" in publication
+    assert "github.event.workflow_run.head_branch == 'main'" in publication
+    assert 'test "$(jq -r .publisher.trigger <<<"$IDENTITY")" = automatic-main' in publication
     assert "AUTOMATIC_SOFTWARE_RELEASE_ENABLED" not in publication
     assert "github.event.workflow_run.head_branch == 'main'" in wheel_publication
     assert "github.event.workflow_run.event == 'push'" in wheel_publication
@@ -1310,6 +1314,9 @@ def test_release_workflows_use_successful_main_sha_and_promote_without_rebuildin
     assert "date --utc" not in wheel_publication
     assert "--source-ci-run-id" in wheel_publication
     assert "--publisher-run-id" in wheel_publication
+    assert "--publisher-trigger" in wheel_publication
+    assert "publisher_trigger=automatic-main" in wheel_publication
+    assert "publisher_trigger=replay" in wheel_publication
     assert "legacy bridge" not in publication
     assert 'cat > "$SITE_ROOT/index.html"' in publication
     assert "Everything your virtualization lab needs." in publication
@@ -1370,7 +1377,7 @@ def test_release_workflows_use_successful_main_sha_and_promote_without_rebuildin
     assert 'sha256sum "$EXISTING_NOTICE"' in publication
     assert "if: needs.release_inputs.outputs.existing_release != 'true'" in publication
     prepare_job = publication.split("  prepare:\n", 1)[1].split("  wheelhouse:\n", 1)[0]
-    assert "if: github.ref == 'refs/heads/main'" in prepare_job
+    assert "github.ref == 'refs/heads/main'" in prepare_job
     assert "ref: main" in prepare_job
     assert "persist-credentials: false" in prepare_job
     assert "name: validated-release-request" in prepare_job

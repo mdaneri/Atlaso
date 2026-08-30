@@ -708,8 +708,8 @@ Terminal order:
   current `main` without checkout or target-code execution. Publish only one canonical one-day replay-request artifact.
   The wheel publisher must consume that request only through its completed `workflow_run`, revalidate it and the source
   CI evidence, and retain the same read-only wheel-only trust boundary.
-- Complete release publication and recovery use only the protected **Publish appliance release** manual dispatch with
-  the exact successful `main` push CI SHA. Require and revalidate the retained automatic wheel handoff, including its
+- Every successful automatic-main wheel handoff starts the protected **Publish appliance release** workflow. Require
+  and revalidate the retained handoff, including its
   successful source CI identity and embedded wheel version/commit/time, and record `wheel-identity.json` inside the
   signed bundle. Never rebuild or substitute the application wheel in this workflow. If the 90-day artifact expired,
   dispatch **Replay Python wheel** from protected `main` with the exact commit and successful source CI run ID and
@@ -719,8 +719,9 @@ Terminal order:
   signed update
   lineage at `v0.9.18`; do not publish or consume a retired-product bridge. Preserve tag/release commit and asset-byte
   idempotency checks. A rerun after tag/release publication must verify the existing asset bytes before retrying channel
-  advancement. Keep the protected manual workflow GitHub-hosted and limited to the signed software/update bundle,
-  immutable `vX.Y.Z` Release, and `development` channel.
+  advancement. Keep the protected GitHub-hosted workflow limited to the signed software/update bundle, immutable
+  `vX.Y.Z` Release, and `development` channel. Retain exact-successful-main-SHA manual dispatch for idempotent recovery;
+  replayed historical handoffs must not automatically move `development` backward.
   Resolve retained wheel candidates and verify any existing immutable Release in an unlocked, read-only prerequisite
   job. Pass those bounded verified inputs through the current workflow run, and acquire the shared Pages lock only for
   the protected signing, Release publication, channel mutation, and live publication verification stages.

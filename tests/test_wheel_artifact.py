@@ -1,4 +1,4 @@
-"""Contract tests for automatic wheel publication and manual-release handoff."""
+"""Contract tests for automatic wheel and software-release handoff publication."""
 
 from __future__ import annotations
 
@@ -82,6 +82,7 @@ def test_create_artifact_builds_from_explicit_source_root(
             source_ci_run_attempt=1,
             publisher_run_id=202,
             publisher_run_attempt=1,
+            publisher_trigger="automatic-main",
         )
     )
 
@@ -102,6 +103,7 @@ def _write_candidate(
     publisher_run_attempt: int = 1,
     wheel_payload_suffix: bytes = b"",
     embedded_commit: str = COMMIT,
+    publisher_trigger: str | None = "automatic-main",
 ) -> tuple[Path, dict[str, object]]:
     """Create one minimal extracted wheel artifact fixture.
 
@@ -111,6 +113,7 @@ def _write_candidate(
         publisher_run_attempt: Publisher attempt identity.
         wheel_payload_suffix: Optional divergent bytes for collision coverage.
         embedded_commit: Commit written into Atlaso build metadata.
+        publisher_trigger: Optional publisher trigger recorded by current artifacts.
     """
 
     root.mkdir(parents=True, exist_ok=True)
@@ -156,6 +159,10 @@ def _write_candidate(
             "size": wheel.stat().st_size,
         },
     }
+    if publisher_trigger is not None:
+        publisher = identity["publisher"]
+        assert isinstance(publisher, dict)
+        publisher["trigger"] = publisher_trigger
     (root / wheel_artifact.IDENTITY_NAME).write_bytes(wheel_artifact.canonical_json(identity))
     return wheel, identity
 
@@ -168,6 +175,27 @@ def test_verify_artifact_binds_repository_version_commit_digest_and_runs(tmp_pat
     """
 
     wheel, identity = _write_candidate(tmp_path, publisher_run_id=202)
+
+    verified_wheel, verified_identity = wheel_artifact.verify_artifact(
+        tmp_path,
+        expected_repository=REPOSITORY,
+        expected_version=VERSION,
+        expected_commit=COMMIT,
+        expected_publisher_run_id=202,
+    )
+
+    assert verified_wheel == wheel
+    assert verified_identity == identity
+
+
+def test_verify_artifact_accepts_legacy_identity_without_publisher_trigger(tmp_path: Path) -> None:
+    """Keep retained pre-trigger handoffs available for manual recovery."""
+
+    wheel, identity = _write_candidate(
+        tmp_path,
+        publisher_run_id=202,
+        publisher_trigger=None,
+    )
 
     verified_wheel, verified_identity = wheel_artifact.verify_artifact(
         tmp_path,

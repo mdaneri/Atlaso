@@ -259,12 +259,15 @@ def verify_artifact(
         raise WheelArtifactError("wheel source CI workflow identity is invalid")
     _positive_integer(source_ci["run_id"], field="source_ci.run_id")
     _positive_integer(source_ci["run_attempt"], field="source_ci.run_attempt")
-    if set(publisher) != {"workflow", "workflow_file", "run_id", "run_attempt"}:
+    publisher_fields = {"workflow", "workflow_file", "run_id", "run_attempt"}
+    if set(publisher) not in (publisher_fields, publisher_fields | {"trigger"}):
         raise WheelArtifactError("wheel publisher identity fields do not match schema 1")
     if publisher["workflow"] != "Publish Python wheel" or publisher["workflow_file"] != "wheel.yml":
         raise WheelArtifactError("wheel publisher workflow identity is invalid")
     publisher_run_id = _positive_integer(publisher["run_id"], field="publisher.run_id")
     _positive_integer(publisher["run_attempt"], field="publisher.run_attempt")
+    if "trigger" in publisher and publisher["trigger"] not in {"automatic-main", "replay"}:
+        raise WheelArtifactError("wheel publisher trigger is invalid")
     if expected_publisher_run_id is not None and publisher_run_id != expected_publisher_run_id:
         raise WheelArtifactError("wheel publisher run does not match the GitHub artifact record")
     if artifact != {"name": expected_name, "retention_days": RETENTION_DAYS}:
@@ -338,6 +341,7 @@ def create_artifact(args: argparse.Namespace) -> None:
             "workflow_file": "wheel.yml",
             "run_id": args.publisher_run_id,
             "run_attempt": args.publisher_run_attempt,
+            "trigger": args.publisher_trigger,
         },
         "artifact": {"name": name, "retention_days": RETENTION_DAYS},
         "wheel": {"filename": wheel.name, "sha256": sha256(wheel), "size": wheel.stat().st_size},
@@ -445,6 +449,9 @@ def parser() -> argparse.ArgumentParser:
     create.add_argument("--source-ci-run-attempt", type=int, required=True)
     create.add_argument("--publisher-run-id", type=int, required=True)
     create.add_argument("--publisher-run-attempt", type=int, required=True)
+    create.add_argument(
+        "--publisher-trigger", choices=("automatic-main", "replay"), required=True
+    )
     create.set_defaults(handler=create_artifact)
     extract = commands.add_parser("extract", help="Safely extract one downloaded artifact ZIP.")
     extract.add_argument("--archive", type=Path, required=True)
