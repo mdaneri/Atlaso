@@ -447,6 +447,88 @@ def _run_script(
     )
 
 
+def _write_test_vm_wrapper_harness(directory: Path) -> Path:
+    """Create a test-only wrapper that stops after the real clone boundary.
+
+    The harness retains the normal wrapper's input validation, redeploy cleanup,
+    data-disk checks, and clone orchestration. It removes only the host-global
+    pending-signer recovery and 1Password credential boundaries, then returns
+    immediately after the low-level clone succeeds. Production code receives no
+    test switch, and the forbidden ``-NoStart`` parameter remains untouched.
+
+    Args:
+        directory: Destination directory for the generated harness.
+
+    Returns:
+        Path to the generated PowerShell wrapper.
+    """
+
+    source = (VMWARE_SCRIPT_ROOT / "create-atlaso-test-vm.ps1").read_text(
+        encoding="utf-8"
+    )
+
+    def replace_segment(start: str, end: str, replacement: str) -> None:
+        """Replace one exact source segment or reject wrapper drift.
+
+        Args:
+            start: Unique segment start marker.
+            end: Unique following marker retained in the result.
+            replacement: Test-harness text replacing the selected segment.
+        """
+
+        nonlocal source
+        start_index = source.find(start)
+        end_index = source.find(end, start_index + len(start))
+        if start_index < 0 or end_index < 0 or source.find(start, start_index + 1) >= 0:
+            raise AssertionError("Normal test-VM wrapper harness marker drifted")
+        source = source[:start_index] + replacement + source[end_index:]
+
+    source = source.replace("$PSScriptRoot", "$script:AtlasoWrapperScriptRoot")
+    error_preference = "$ErrorActionPreference = 'Stop'"
+    if source.count(error_preference) != 1:
+        raise AssertionError("Normal test-VM wrapper error-preference marker drifted")
+    script_root = str(VMWARE_SCRIPT_ROOT).replace("'", "''")
+    source = source.replace(
+        error_preference,
+        f"$script:AtlasoWrapperScriptRoot = '{script_root}'\n{error_preference}",
+        1,
+    )
+
+    replace_segment(
+        "if (-not $WhatIfPreference) {\n"
+        "    # Recovery consumes no 1Password material.",
+        "if ($NoStart) {",
+        "$resolvedVmrunPath = $VmrunPath\n",
+    )
+    replace_segment(
+        "if (-not $WhatIfPreference) {\n"
+        "    # Resolve new Environment configuration only after credential-independent",
+        "# Key input validation intentionally precedes",
+        "",
+    )
+    replace_segment(
+        "$credentialBridgeState = $null\n"
+        "if (-not $WhatIfPreference) {\n"
+        "    # The parent converts explicit SecureStrings",
+        "\ntry {\nif ($SkipLabNetworkAdapters",
+        "$credentialBridgeState = $null",
+    )
+
+    clone_success = "$createdThisInvocation = $true\n        try {"
+    if source.count(clone_success) != 1:
+        raise AssertionError("Normal test-VM wrapper clone boundary drifted")
+    source = source.replace(
+        clone_success,
+        "$createdThisInvocation = $true\n        return\n        try {",
+        1,
+    )
+
+    directory.mkdir(parents=True, exist_ok=True)
+    harness = directory / "create-atlaso-test-vm-harness.ps1"
+    harness.write_text(source, encoding="utf-8")
+    return harness
+
+
 def _run_root_cleanup(
     tmp_path: Path,
     *,
@@ -1138,7 +1220,7 @@ def test_provider_delete_may_remove_the_complete_validated_root(tmp_path: Path) 
 def test_redeploy_continues_after_provider_removes_artifact_root(
     tmp_path: Path,
 ) -> None:
-    """The redeploy cleanup and clone seams tolerate provider-removed roots.
+    """The redeploy wrapper clones after the provider removes its artifact root.
 
     Args:
         tmp_path: Pytest temporary directory path.
@@ -1156,24 +1238,13 @@ def test_redeploy_continues_after_provider_removes_artifact_root(
     )
     vdisk_manager = _write_fake_vdisk_manager(tmp_path / "fake-vdisk-manager")
 
-    cleanup = _run_script(
-        VMWARE_SCRIPT_ROOT / "remove-atlaso-vm.ps1",
-        "-VmxPath",
-        str(vmx),
-        "-VmrunPath",
-        str(vmrun),
-        "-ExpectedName",
-        identity,
-        "-Confirm:$false",
-        environment=environment,
-    )
-    assert cleanup.returncode == 0, cleanup.stdout + cleanup.stderr
-    assert not vm_directory.exists()
-
-    clone = _run_script(
-        VMWARE_SCRIPT_ROOT / "create-atlaso-vm.ps1",
-        "-Name",
-        identity,
+    wrapper = _write_test_vm_wrapper_harness(tmp_path / "wrapper-harness")
+    result = _run_script(
+        wrapper,
+        "-PullRequestNumber",
+        "634",
+        "-Purpose",
+        "redeploy",
         "-ApplianceVmxPath",
         str(source_vmx),
         "-OutputDirectory",
@@ -1182,12 +1253,13 @@ def test_redeploy_continues_after_provider_removes_artifact_root(
         str(vmrun),
         "-VdiskManagerPath",
         str(vdisk_manager),
-        "-SkipLabNetworkAdapters",
-        "-Confirm:$false",
+        "-Redeploy",
+        "-SkipSshKeyProvisioning",
+        "-SkipNetworkPrepare",
         environment=environment,
     )
 
-    assert clone.returncode == 0, clone.stdout + clone.stderr
+    assert result.returncode == 0, result.stdout + result.stderr
     assert vmx.exists()
     assert f'displayName = "{identity}"' in vmx.read_text(encoding="utf-8")
     command_names = [command[2] for command in _commands(log)]
@@ -2234,9 +2306,10 @@ def test_redeploy_missing_target_and_sibling_disk_fail_closed(tmp_path: Path) ->
     output_directory.mkdir()
     sentinel = output_directory / "sentinel.txt"
     sentinel.write_text("preserve", encoding="utf-8")
+    wrapper = _write_test_vm_wrapper_harness(tmp_path / "wrapper-harness")
 
     redeploy = _run_script(
-        VMWARE_SCRIPT_ROOT / "create-atlaso-test-vm.ps1",
+        wrapper,
         "-PullRequestNumber",
         "634",
         "-Purpose",
@@ -2252,7 +2325,6 @@ def test_redeploy_missing_target_and_sibling_disk_fail_closed(tmp_path: Path) ->
         "-Redeploy",
         "-SkipSshKeyProvisioning",
         "-SkipNetworkPrepare",
-        "-WhatIf",
         environment=environment,
     )
     assert redeploy.returncode != 0
@@ -2268,7 +2340,7 @@ def test_redeploy_missing_target_and_sibling_disk_fail_closed(tmp_path: Path) ->
     sibling_disk = sibling_directory / "unrelated.vmdk"
     sibling_disk.write_text("preserve", encoding="utf-8")
     disk_reset = _run_script(
-        VMWARE_SCRIPT_ROOT / "create-atlaso-test-vm.ps1",
+        wrapper,
         "-PullRequestNumber",
         "634",
         "-Purpose",
@@ -2286,7 +2358,6 @@ def test_redeploy_missing_target_and_sibling_disk_fail_closed(tmp_path: Path) ->
         "-ResetDataDisks",
         "-SkipSshKeyProvisioning",
         "-SkipNetworkPrepare",
-        "-WhatIf",
         environment=environment,
     )
     assert disk_reset.returncode != 0
@@ -2308,9 +2379,13 @@ def test_test_vm_ssh_key_inputs_fail_before_cleanup(tmp_path: Path) -> None:
     _write_vmx(target_vmx, identity)
     sentinel = output_directory / "sentinel.txt"
     sentinel.write_text("preserve", encoding="utf-8")
+    vmrun, environment, log, _ = _write_fake_vmrun(
+        tmp_path / "fake-ssh-preflight", [target_vmx], registered=True
+    )
+    wrapper = _write_test_vm_wrapper_harness(tmp_path / "wrapper-harness")
 
     missing_key = _run_script(
-        VMWARE_SCRIPT_ROOT / "create-atlaso-test-vm.ps1",
+        wrapper,
         "-PullRequestNumber",
         "634",
         "-Purpose",
@@ -2319,20 +2394,22 @@ def test_test_vm_ssh_key_inputs_fail_before_cleanup(tmp_path: Path) -> None:
         str(source_vmx),
         "-OutputDirectory",
         str(output_directory),
+        "-VmrunPath",
+        str(vmrun),
         "-SshPublicKeyPath",
         str(tmp_path / "missing.pub"),
         "-Redeploy",
         "-SkipNetworkPrepare",
-        "-WhatIf",
-        environment=os.environ.copy(),
+        environment=environment,
     )
     assert missing_key.returncode != 0
     assert "SSH public key not found" in missing_key.stderr
     assert target_vmx.exists()
     assert sentinel.read_text(encoding="utf-8") == "preserve"
+    assert _commands(log) == []
 
     conflicting_key_options = _run_script(
-        VMWARE_SCRIPT_ROOT / "create-atlaso-test-vm.ps1",
+        wrapper,
         "-PullRequestNumber",
         "634",
         "-Purpose",
@@ -2341,18 +2418,20 @@ def test_test_vm_ssh_key_inputs_fail_before_cleanup(tmp_path: Path) -> None:
         str(source_vmx),
         "-OutputDirectory",
         str(output_directory),
+        "-VmrunPath",
+        str(vmrun),
         "-SshPublicKeyPath",
         str(tmp_path / "missing.pub"),
         "-SkipSshKeyProvisioning",
         "-Redeploy",
         "-SkipNetworkPrepare",
-        "-WhatIf",
-        environment=os.environ.copy(),
+        environment=environment,
     )
     assert conflicting_key_options.returncode != 0
     assert "Pass either -SshPublicKeyPath or -SkipSshKeyProvisioning" in conflicting_key_options.stderr
     assert target_vmx.exists()
     assert sentinel.read_text(encoding="utf-8") == "preserve"
+    assert _commands(log) == []
 
 
 def test_module_keeps_inventory_work_out_of_normal_delete_path() -> None:
