@@ -3,8 +3,13 @@
 <#
 .SYNOPSIS
 Launch the bounded VMware Workstation lifecycle test with secure credential handoff.
-.PARAMETER LabName
-Name prefix used to isolate generated lifecycle resources.
+.PARAMETER PullRequestNumber
+Exact positive GitHub pull-request number that owns this lifecycle lab.
+.PARAMETER Purpose
+Short purpose text sanitized into the canonical lifecycle identity.
+.PARAMETER CollisionSuffix
+Optional collision-safe suffix. Run and plan modes generate one when omitted;
+cleanup requires the exact suffix reported by the creating run.
 .PARAMETER ApplianceVmxPath
 Path to the source appliance VMX used for the lifecycle VM.
 .PARAMETER ClientVmdkPath
@@ -74,10 +79,21 @@ Emit the resolved lifecycle plan without prompting for secrets or mutating the h
 #>
 [CmdletBinding(DefaultParameterSetName = 'Run')]
 param(
+    [Parameter(Mandatory = $true, ParameterSetName = 'Run')]
+    [Parameter(Mandatory = $true, ParameterSetName = 'Plan')]
+    [Parameter(Mandatory = $true, ParameterSetName = 'CleanupVms')]
+    [ValidateRange(1, 2147483647)]
+    [int]$PullRequestNumber,
+
     [Parameter(ParameterSetName = 'Run')]
     [Parameter(ParameterSetName = 'Plan')]
     [Parameter(ParameterSetName = 'CleanupVms')]
-    [string]$LabName = '',
+    [string]$Purpose = 'lifecycle',
+
+    [Parameter(ParameterSetName = 'Run')]
+    [Parameter(ParameterSetName = 'Plan')]
+    [Parameter(Mandatory = $true, ParameterSetName = 'CleanupVms')]
+    [string]$CollisionSuffix = '',
 
     [Parameter(ParameterSetName = 'Run')]
     [Parameter(ParameterSetName = 'Plan')]
@@ -218,6 +234,7 @@ $ErrorActionPreference = 'Stop'
 
 $repoRoot = Resolve-Path -LiteralPath (Join-Path $PSScriptRoot '..\..\..')
 $applianceIpWasPassed = $PSBoundParameters.ContainsKey('ApplianceIPAddress')
+Import-Module (Join-Path $PSScriptRoot 'Atlaso.VmwareTestIdentity.psm1') -Force
 
 <#
 .SYNOPSIS
@@ -324,14 +341,6 @@ function Get-ManagementNetworkPlan {
     return $planText | ConvertFrom-Json
 }
 
-if (-not $LabName) {
-    if ($PSCmdlet.ParameterSetName -eq 'CleanupVms') {
-        $LabName = 'AtlasoWorkstationLifecycle'
-    } else {
-        $LabName = "AtlasoWorkstationLifecycle-$(Get-Date -Format 'yyyyMMddHHmmss')"
-    }
-}
-
 if ($PSCmdlet.ParameterSetName -eq 'PrepareNetworks') {
     & (Join-Path $PSScriptRoot 'prepare-networks.ps1') `
         -VmrunPath $VmrunPath `
@@ -346,9 +355,25 @@ if ($PSCmdlet.ParameterSetName -eq 'PrepareNetworks') {
     return
 }
 
+if ([string]::IsNullOrWhiteSpace($CollisionSuffix)) {
+    # A timestamp keeps the result recognizable; the random tail prevents two
+    # same-second lifecycle starts for one PR from claiming the same lab root.
+    $CollisionSuffix = "$(Get-Date -Format 'yyyyMMddHHmmss')-$([guid]::NewGuid().ToString('N').Substring(0, 8))"
+}
+$vmIdentity = New-AtlasoVmwareTestIdentity `
+    -PullRequestNumber $PullRequestNumber `
+    -Purpose $Purpose `
+    -CollisionSuffix $CollisionSuffix
+$LabName = $vmIdentity.Name
+$lifecycleApplianceVmx = Join-Path $repoRoot (
+    "test-results\vmware-workstation-lifecycle\$LabName\vms\$LabName-Appliance\$LabName-Appliance.vmx"
+)
+
 if ($PSCmdlet.ParameterSetName -eq 'CleanupVms') {
     & (Join-Path $PSScriptRoot 'remove-lifecycle-vms.ps1') `
-        -LabName $LabName `
+        -PullRequestNumber $PullRequestNumber `
+        -Purpose $vmIdentity.Purpose `
+        -CollisionSuffix $vmIdentity.CollisionSuffix `
         -VmrunPath $VmrunPath
     if (-not $?) {
         throw "VMware Workstation lifecycle VM cleanup failed."
@@ -430,7 +455,9 @@ $arguments = @(
     '-NonInteractive',
     '-ExecutionPolicy', 'Bypass',
     '-File', (Join-Path $PSScriptRoot 'run-lifecycle-test.ps1'),
-    '-LabName', $LabName,
+    '-PullRequestNumber', "$PullRequestNumber",
+    '-Purpose', $vmIdentity.Purpose,
+    '-CollisionSuffix', $vmIdentity.CollisionSuffix,
     '-ApplianceVmxPath', $ApplianceVmxPath,
     '-ClientVmdkPath', $ClientVmdkPath,
     '-ManagementNetwork', $ManagementNetwork,
@@ -460,6 +487,8 @@ if ($PxeInstallerIsoPath) { $arguments += @('-PxeInstallerIsoPath', $PxeInstalle
 if ($PlanOnly) { $arguments += '-PlanOnly' }
 
 Write-Host "Workstation lifecycle lab: $LabName"
+Write-Host "Pull request: #$PullRequestNumber"
+Write-Host "Lifecycle appliance VMX: $lifecycleApplianceVmx"
 Write-Host "Appliance VMX: $ApplianceVmxPath"
 Write-Host "Client VMDK: $ClientVmdkPath"
 Write-Host "Appliance URL: $(if ($effectiveApplianceUrl) { $effectiveApplianceUrl } else { 'discovered at runtime' })"

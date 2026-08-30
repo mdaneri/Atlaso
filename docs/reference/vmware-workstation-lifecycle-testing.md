@@ -46,6 +46,20 @@ VM mutation. The stable SDK-backed wheel deployment above does not change this n
 Atlaso uses a VMware Workstation lifecycle lab as its canonical deployed-behavior environment. The path uses VMX/VMDK
 artifacts and `vmrun.exe`, then delegates appliance behavior checks to the provider-neutral Python lifecycle runner.
 
+Every task-owned VM used for pull-request validation has the canonical identity
+`Atlaso-PR-<number>-<purpose>[-<collision-safe-suffix>]`. `-PullRequestNumber` is required and accepts only a positive
+integer. The shared helper sanitizes `-Purpose` and `-CollisionSuffix` to lowercase ASCII words separated by hyphens.
+The normal wrapper defaults the purpose to `test-vm`; the lifecycle wrapper defaults it to `lifecycle` and generates a
+timestamp-plus-random suffix when one is not supplied. Use an explicit suffix to distinguish multiple normal VMs for
+the same pull request. The exact name is used for Workstation `displayName`, the output or lifecycle-lab directory, the
+normal VMX filename, and lifecycle result/log identity. Lifecycle runs also write `vmware-identity.json`, which records
+the final display names and absolute VMX paths; include those values with pull-request validation evidence.
+
+Reuse, redeploy, and cleanup rederive the expected identity and fail before mutation when the canonical directory,
+exact VMX path, `displayName`, or lifecycle plan ownership differs. The tools never rename, adopt, reuse, redeploy, or
+delete generic, issue-only, or differently owned VMs. Atlaso intentionally has no provisional shared/live VM workflow:
+wait until the pull request exists, then create a PR-numbered VM before collecting any acceptance evidence.
+
 Run all Windows commands in PowerShell 7.4 or newer (`pwsh`). Earlier PowerShell releases and Windows PowerShell 5.1
 (`powershell.exe`) are not supported.
 The single-command wrapper enforces that runtime, resolves the installed `pwsh` application, and launches its lifecycle
@@ -57,10 +71,10 @@ blank-disk claims depend on those identities and reject transient `/dev/sdX` nam
 
 ## Topology
 
-The default lifecycle lab creates isolated VM directories under:
+The default lifecycle lab creates isolated VM directories and result/log artifacts under its canonical identity:
 
 ```text
-test-results/vmware-workstation-lifecycle/<timestamp>/vms
+test-results/vmware-workstation-lifecycle/Atlaso-PR-<number>-lifecycle-<collision-safe-suffix>/vms
 ```
 
 The appliance VMX is copied from the selected Workstation image output. Client VMs use an Alpine cloud VMDK prepared
@@ -221,7 +235,8 @@ by formatting or silently swapping unrelated VMDKs.
 
 ```powershell
 pwsh -ExecutionPolicy Bypass `
-  -File scripts/windows/vmware/invoke-lifecycle-test.ps1
+  -File scripts/windows/vmware/invoke-lifecycle-test.ps1 `
+  -PullRequestNumber <number>
 ```
 
 The wrapper has no password defaults. It prompts securely for the appliance administrator and VCF Backup credentials;
@@ -246,10 +261,10 @@ The `-OidcOnly` and `-RoutingWanOnly` paths do not prompt for or include a VCF B
 scenarios neither stage VCF Backup nor run the settings backup/restore pass.
 
 The wrapper selects the newest appliance VMX under `image/vmware-workstation/output`, prepares the tiny Alpine client
-VMDK when needed, creates a unique `AtlasoWorkstationLifecycle-*` lab, runs the initial lifecycle scenario, and by
-default runs the restored backup/restore pass. Pass `-SkipBackupRestoreTest` only when the older single-pass behavior is
-intended. Unless `-ApplianceIPAddress` is passed, the wrapper waits for VMware Tools to report the appliance's DHCP
-management IPv4 address and derives the appliance URL from that discovered address.
+VMDK when needed, creates a unique `Atlaso-PR-<number>-lifecycle-<collision-safe-suffix>` lab, runs the initial lifecycle
+scenario, and by default runs the restored backup/restore pass. Pass `-SkipBackupRestoreTest` only when the older
+single-pass behavior is intended. Unless `-ApplianceIPAddress` is passed, the wrapper waits for VMware Tools to report
+the appliance's DHCP management IPv4 address and derives the appliance URL from that discovered address.
 
 Tiny-client preparation exits nonzero and emits no prepared-image JSON when `qemu-img` conversion or inspection fails.
 If the current run created an incomplete or unverified VMDK, the wrapper removes that exact output before returning the
@@ -277,6 +292,7 @@ Useful commands:
 # Print selected paths and topology without creating VMs.
 pwsh -ExecutionPolicy Bypass `
   -File scripts/windows/vmware/invoke-lifecycle-test.ps1 `
+  -PullRequestNumber <number> `
   -PlanOnly
 
 # Validate Workstation vmnet inventory.
@@ -284,9 +300,11 @@ pwsh -ExecutionPolicy Bypass `
   -File scripts/windows/vmware/invoke-lifecycle-test.ps1 `
   -PrepareNetworksOnly
 
-# Stop and remove existing AtlasoWorkstationLifecycle* VMs.
+# Stop and remove one exact retained PR-owned lifecycle lab.
 pwsh -ExecutionPolicy Bypass `
   -File scripts/windows/vmware/invoke-lifecycle-test.ps1 `
+  -PullRequestNumber <number> `
+  -CollisionSuffix '<suffix-reported-by-the-run>' `
   -CleanupVmsOnly
 ```
 
@@ -374,6 +392,7 @@ Then use the ordinary command without an ID argument:
 ```powershell
 pwsh -ExecutionPolicy Bypass `
   -File scripts/windows/vmware/create-atlaso-test-vm.ps1 `
+  -PullRequestNumber <number> `
   -Redeploy `
   -ResetDataDisks `
   -WaitForIp `

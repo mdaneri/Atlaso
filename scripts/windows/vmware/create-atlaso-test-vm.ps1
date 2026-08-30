@@ -18,8 +18,14 @@ After the VM starts, the wrapper reads the normal test VM's Ed25519 SSH host
 public key through VMware guest-info and prints the exact key plus its SHA-256
 fingerprint for explicit known_hosts verification.
 
-.PARAMETER Name
-VMware display name and default output-folder name for the test appliance.
+.PARAMETER PullRequestNumber
+Exact positive GitHub pull-request number that owns this validation VM.
+
+.PARAMETER Purpose
+Short purpose text sanitized into the canonical VMware identity.
+
+.PARAMETER CollisionSuffix
+Optional collision-safe suffix for multiple VMs owned by the same pull request.
 
 .PARAMETER ApplianceVmxPath
 Optional built appliance VMX to clone; the newest build output is selected by default.
@@ -148,7 +154,11 @@ root-CA readiness.
 )]
 [CmdletBinding(SupportsShouldProcess = $true)]
 param(
-    [string]$Name = 'Atlaso-VMware',
+    [Parameter(Mandatory = $true)]
+    [ValidateRange(1, 2147483647)]
+    [int]$PullRequestNumber,
+    [string]$Purpose = 'test-vm',
+    [string]$CollisionSuffix = '',
     [string]$ApplianceVmxPath = '',
     [string]$OutputDirectory = '',
     [string]$VmrunPath = '',
@@ -197,6 +207,7 @@ $waitForIpEnabled = if ($PSBoundParameters.ContainsKey('WaitForIp')) {
 Import-Module (Join-Path $PSScriptRoot 'Atlaso.OnePasswordCredentials.psm1') -Force
 Import-Module (Join-Path $PSScriptRoot 'Atlaso.WorkstationCleanup.psm1') -Force
 Import-Module (Join-Path $PSScriptRoot 'Atlaso.VmwarePayload.psm1') -Force
+Import-Module (Join-Path $PSScriptRoot 'Atlaso.VmwareTestIdentity.psm1') -Force
 
 <#
 .SYNOPSIS
@@ -2750,6 +2761,7 @@ function Write-ConnectionSummary {
 
     Write-Host ""
     Write-Host "Atlaso VMware appliance connection summary" -ForegroundColor Cyan
+    Write-SummaryRow -Label "Pull request:" -Value "#$PullRequestNumber" -ValueColor White
     Write-SummaryRow -Label "Name:" -Value $Name -ValueColor White
     Write-SummaryRow -Label "VMX:" -Value $VmxPath -ValueColor Gray
     Write-SummaryRow -Label "MAC:" -Value $MacAddress -ValueColor Gray
@@ -2776,6 +2788,17 @@ function Write-ConnectionSummary {
 }
 
 $repoRoot = (Resolve-Path -LiteralPath (Join-Path $PSScriptRoot '..\..\..')).Path
+$vmIdentity = New-AtlasoVmwareTestIdentity `
+    -PullRequestNumber $PullRequestNumber `
+    -Purpose $Purpose `
+    -CollisionSuffix $CollisionSuffix
+$Name = $vmIdentity.Name
+if (-not $OutputDirectory) {
+    $OutputDirectory = Join-Path $repoRoot "image\vmware-workstation\test-vms\$Name"
+}
+$resolvedOutputDirectory = Assert-AtlasoVmwareIdentityDirectory `
+    -Path $ExecutionContext.SessionState.Path.GetUnresolvedProviderPathFromPSPath($OutputDirectory) `
+    -ExpectedName $Name
 $developmentRootCaCertificatePath = Join-Path $repoRoot 'image\vmware-workstation\development-trust\atlaso-development-root-ca.pem'
 $developmentRootCaCertificatePem = Get-Content -LiteralPath $developmentRootCaCertificatePath -Raw
 $developmentRootCaFingerprint = Get-AtlasoDevelopmentRootCaFingerprint `
@@ -2867,10 +2890,6 @@ if (-not $ApplianceVmxPath) {
 $resolvedSourceVmx = (Resolve-Path -LiteralPath $ApplianceVmxPath).Path
 Assert-AtlasoVmwarePayloadProvenance -VmxPath $resolvedSourceVmx | Out-Null
 
-if (-not $OutputDirectory) {
-    $OutputDirectory = Join-Path $repoRoot "image\vmware-workstation\test-vms\$Name"
-}
-$resolvedOutputDirectory = $ExecutionContext.SessionState.Path.GetUnresolvedProviderPathFromPSPath($OutputDirectory)
 $targetVmx = Join-Path $resolvedOutputDirectory "$Name.vmx"
 $resolvedDepotVmdkPath = if ($DepotVmdkPath) {
     $ExecutionContext.SessionState.Path.GetUnresolvedProviderPathFromPSPath($DepotVmdkPath)
@@ -2886,7 +2905,13 @@ else {
 }
 
 if ((Test-Path -LiteralPath $targetVmx) -and -not $Redeploy) {
-    throw "VM already exists: $targetVmx. Pass -Redeploy to remove and recreate it, or pass -Name/-OutputDirectory for a new test VM."
+    throw "VM already exists: $targetVmx. Pass -Redeploy to remove and recreate it, or choose a different -CollisionSuffix for another PR-owned test VM."
+}
+if (
+    (Test-Path -LiteralPath $resolvedOutputDirectory -PathType Container) -and
+    -not (Test-Path -LiteralPath $targetVmx -PathType Leaf)
+) {
+    throw "Refusing VMware creation because the canonical PR-owned output directory already exists without its exact VMX: $resolvedOutputDirectory"
 }
 
 if (-not $SkipNetworkPrepare) {
@@ -2904,8 +2929,12 @@ if (-not $SkipNetworkPrepare) {
 
 if ((Test-Path -LiteralPath $resolvedOutputDirectory) -and $Redeploy) {
     if (-not (Test-Path -LiteralPath $targetVmx -PathType Leaf)) {
-        throw "Refusing redeploy cleanup because the expected Atlaso VMX is missing: $targetVmx. Choose the correct -Name/-OutputDirectory or remove the directory manually after reviewing its contents."
+        throw "Refusing redeploy cleanup because the expected PR-owned Atlaso VMX is missing: $targetVmx. Choose the correct -PullRequestNumber/-Purpose/-CollisionSuffix/-OutputDirectory or remove the directory manually after reviewing its contents."
     }
+    Assert-AtlasoVmwareOwnedVmx `
+        -VmxPath $targetVmx `
+        -ExpectedDirectory $resolvedOutputDirectory `
+        -ExpectedName $Name | Out-Null
     if ($PSCmdlet.ShouldProcess($targetVmx, 'Remove existing Atlaso Workstation test VM')) {
         & (Join-Path $PSScriptRoot 'remove-atlaso-vm.ps1') `
             -VmxPath $targetVmx `
