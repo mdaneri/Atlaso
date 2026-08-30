@@ -520,6 +520,12 @@ EXPLICIT_MERGE_HOLD_PATTERNS = {
 MERGE_HOLD_WITHDRAWAL_MARKERS = (
     "withdrawn",
     "withdraw the",
+    "remove the",
+    "remove ",
+    "lift the",
+    "lift ",
+    "cancel the",
+    "cancel ",
     "no longer applies",
     "no longer need to",
     "rescinded",
@@ -584,6 +590,9 @@ DEFAULT_MERGE_AUTHORITY_SOURCE_EXCLUSIONS = re.compile(
     r"(?:review(?:-only|[^.!?]{0,60}\bonly\b)|"
     r"only\s+review\b[^;.!?]*|"
     r"report findings only|"
+    r"(?:review|inspect|analy(?:ze|sis)|assess)\s+(?:the\s+)?"
+    r"(?:implementation|changes?|code)\b"
+    r"(?:\s+and\s+(?:report|summarize|describe)\b[^;.!?]*)?|"
     r"(?:do not|don't|don’t|must not|without)\s+"
     r"(?:\w+\s+){0,3}(?:implement|fix|resolve|solve|deliver|"
     r"(?:updat|chang|modif|edit|mak)\w*\s+(?:any\s+)?"
@@ -631,7 +640,8 @@ MERGE_HOLD_DISCUSSION_CONTEXT = re.compile(
     r"describe(?:d|s|ing)?|mention(?:ed|ing)?|refer(?:red|ring)?)\b"
 )
 MERGE_HOLD_OTHER_TASK_SUFFIX = re.compile(
-    r"^\s+(?:(?:the|an?)\s+)?(?:unrelated|other|another)\s+"
+    r"^\s+(?:(?:for|on)\s+)?(?:(?:the|an?)\s+)?"
+    r"(?:unrelated|other|another)\s+"
     r"(?:pull request|pr)\b"
 )
 MERGE_HOLD_OTHER_TASK_PREFIX = re.compile(
@@ -878,6 +888,9 @@ def merge_hold_directions(
         if (
             MERGE_HOLD_WITHDRAWAL_NONCURRENT_PREFIX.search(prefix) is None
             and MERGE_HOLD_WITHDRAWAL_NONCURRENT_SUFFIX.search(suffix) is None
+            and not _hold_targets_other_task(
+                normalized, permission_offset, "may merge now"
+            )
         ):
             for hold in active_holds:
                 directions.setdefault(hold, "remove")

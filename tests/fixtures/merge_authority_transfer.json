@@ -253,6 +253,45 @@
       "expected_holds": []
     },
     {
+      "name": "unrelated-pr-merge-permission",
+      "default_merge_authority": true,
+      "instructions": [
+        {
+          "text": "Implement the change, but do not merge.",
+          "add_holds": [
+            "do not merge"
+          ]
+        },
+        {
+          "text": "You may merge now for unrelated PR #621."
+        }
+      ],
+      "generated": "Preserve the explicit do not merge instruction.",
+      "expected_holds": [
+        "do not merge"
+      ]
+    },
+    {
+      "name": "direct-hold-removal",
+      "default_merge_authority": true,
+      "instructions": [
+        {
+          "text": "Implement the change, but do not merge.",
+          "add_holds": [
+            "do not merge"
+          ]
+        },
+        {
+          "text": "Remove the do not merge hold.",
+          "remove_holds": [
+            "do not merge"
+          ]
+        }
+      ],
+      "generated": "The hold was withdrawn; continue through guarded squash merge when every gate passes.",
+      "expected_holds": []
+    },
+    {
       "name": "coordinated-hold-list-withdrawal",
       "default_merge_authority": true,
       "instructions": [
@@ -341,6 +380,17 @@
       "instructions": [
         {
           "text": "Only review the implementation."
+        }
+      ],
+      "generated": "Review the implementation and report findings.",
+      "expected_holds": []
+    },
+    {
+      "name": "direct-review-implementation-ineligible",
+      "default_merge_authority": false,
+      "instructions": [
+        {
+          "text": "Review the implementation and report findings."
         }
       ],
       "generated": "Review the implementation and report findings.",
