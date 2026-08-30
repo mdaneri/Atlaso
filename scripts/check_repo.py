@@ -2404,6 +2404,41 @@ def strip_markdown_deleted_content(text: str) -> str:
     link_stack: list[tuple[int, int]] = []
     link_cursor = 0
     next_link_id = 0
+
+    def has_complete_link_suffix(closing_bracket: int) -> bool:
+        """Return whether a link label is followed by a complete destination."""
+        suffix_start = closing_bracket + 1
+        if suffix_start >= len(without_html_deletions):
+            return False
+        suffix_marker = without_html_deletions[suffix_start]
+        if suffix_marker == "[":
+            reference_end = suffix_start + 1
+            while reference_end < len(without_html_deletions):
+                if without_html_deletions[reference_end] == "\\":
+                    reference_end += 2
+                    continue
+                if without_html_deletions[reference_end] == "]":
+                    return True
+                reference_end += 1
+            return False
+        if suffix_marker != "(":
+            return False
+        depth = 1
+        destination_cursor = suffix_start + 1
+        while destination_cursor < len(without_html_deletions):
+            character = without_html_deletions[destination_cursor]
+            if character == "\\":
+                destination_cursor += 2
+                continue
+            if character == "(":
+                depth += 1
+            elif character == ")":
+                depth -= 1
+                if depth == 0:
+                    return True
+            destination_cursor += 1
+        return False
+
     while link_cursor < len(without_html_deletions):
         if without_html_deletions[link_cursor] == "\\" and (
             link_cursor + 1 < len(without_html_deletions)
@@ -2424,12 +2459,7 @@ def strip_markdown_deleted_content(text: str) -> str:
             next_link_id += 1
         elif without_html_deletions[link_cursor] == "]" and link_stack:
             opening, link_id = link_stack.pop()
-            following = (
-                without_html_deletions[link_cursor + 1]
-                if link_cursor + 1 < len(without_html_deletions)
-                else ""
-            )
-            if following in {"(", "["}:
+            if has_complete_link_suffix(link_cursor):
                 link_intervals.append((opening + 1, link_cursor, link_id))
         link_cursor += 1
 
