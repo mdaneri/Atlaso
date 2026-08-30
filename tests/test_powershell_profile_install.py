@@ -4,7 +4,9 @@ from __future__ import annotations
 
 import os
 import stat
+import sys
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 
@@ -126,6 +128,7 @@ def test_rejects_supported_path_that_escapes_through_symlink(tmp_path: Path) -> 
     outside.mkdir()
     escaped_binary = outside / "pwsh"
     escaped_binary.write_bytes(b"fixture pwsh\n")
+    escaped_binary.chmod(0o755)
     nominal_root = trusted_root / "usr/share/powershell"
     nominal_root.parent.mkdir(parents=True)
     nominal_root.symlink_to(outside, target_is_directory=True)
@@ -230,27 +233,82 @@ def test_rejects_group_writable_powershell_binary_with_exact_diagnostic(
     )
 
 
-def test_rejects_wrong_directory_owner_with_exact_diagnostic(tmp_path: Path) -> None:
+def test_rejects_wrong_directory_owner_with_exact_diagnostic(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     """Reject a layout whose trusted ancestry is not root-owned.
 
     Args:
         tmp_path: Pytest-owned temporary directory.
+        monkeypatch: Pytest fixture used to model an unsafe directory owner.
     """
 
     trusted_root, command, binary = _layout(tmp_path, "usr/share/powershell/pwsh")
+    original_lstat = Path.lstat
+
+    def mismatched_root_owner(path: Path) -> os.stat_result | SimpleNamespace:
+        """Report only the trusted root as owned by an unexpected identity."""
+
+        metadata = original_lstat(path)
+        if path == trusted_root:
+            return SimpleNamespace(
+                st_mode=metadata.st_mode,
+                st_uid=os.getuid() + 1,
+                st_gid=metadata.st_gid,
+            )
+        return metadata
+
+    monkeypatch.setattr(Path, "lstat", mismatched_root_owner)
 
     with pytest.raises(installer.ProfileInstallError) as error:
         installer.resolve_profile_root(
             command,
             supported_binaries={binary},
             trusted_ancestor=trusted_root,
-            expected_uid=os.getuid() + 1,
+            expected_uid=os.getuid(),
             expected_gid=os.getgid(),
         )
 
     assert str(error.value) == (
         f"PowerShell profile directory must be owned by root: {trusted_root}"
     )
+
+
+def test_main_does_not_log_untrusted_paths(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """Keep operator-controlled paths out of the command-line diagnostic.
+
+    Args:
+        monkeypatch: Pytest fixture used to drive the CLI failure boundary.
+        capsys: Pytest fixture used to inspect bounded CLI output.
+    """
+
+    secret_path = "/tmp/operator-secret/pwsh"
+
+    def reject_profile(*_args: object, **_kwargs: object) -> Path:
+        """Raise one detailed internal error containing an untrusted path."""
+
+        raise installer.ProfileInstallError(f"unsafe profile path: {secret_path}")
+
+    monkeypatch.setattr(installer, "install_global_profile", reject_profile)
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        [
+            "atlaso_install_powershell_profile.py",
+            "--pwsh-path",
+            secret_path,
+            "--profile-source",
+            "/tmp/operator-secret/profile.ps1",
+        ],
+    )
+
+    assert installer.main() == 2
+    captured = capsys.readouterr()
+    assert captured.out == ""
+    assert captured.err == "Atlaso PowerShell profile installation failed safely\n"
+    assert secret_path not in captured.err
 
 
 def test_production_allowlist_names_current_and_legacy_photon_layouts() -> None:

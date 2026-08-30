@@ -280,8 +280,11 @@ def main() -> int:
     args = parser.parse_args()
     try:
         installed = install_global_profile(args.pwsh_path, args.profile_source)
-    except ProfileInstallError as exc:
-        print(str(exc), file=sys.stderr)
+    except ProfileInstallError:
+        # Command-line paths are operator-controlled and may disclose host or
+        # staging identities. Keep detailed diagnostics inside the typed
+        # exception for trusted callers, but emit only a bounded CLI failure.
+        print("Atlaso PowerShell profile installation failed safely", file=sys.stderr)
         return 2
     print(f"Installed Atlaso PowerShell global profile: {installed}")
     return 0
