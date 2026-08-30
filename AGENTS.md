@@ -627,8 +627,10 @@ The following cross-cutting boundaries always apply:
   scrubbed normal-wrapper guest-info value. First boot must stage it mode `0600`, prove guest-info scrub, encrypt it with
   the VM-unique secrets key, remove staging even when encrypted import fails, and issue a unique HTTPS leaf. Commit
   guest-agent provider selection before potentially long offline-closure cleanup, and retain that cleanup as a
-  mandatory data-disk pre-start gate so VMware signer scrub can proceed concurrently without admitting appliance
-  readiness early. Publish only bounded fixed non-secret first-boot stage identifiers for host timeout diagnostics.
+  mandatory 15-minute data-disk pre-start gate so VMware signer scrub can proceed concurrently without admitting
+  appliance readiness early. Cleanup mode must erase only the offline closure; retain portable KVM and Hyper-V
+  first-boot access until the next boot. Publish only bounded fixed non-secret first-boot stage identifiers for host
+  timeout diagnostics.
   Commit a
   durable non-secret cleanup marker through a Windows write-through atomic rename before staging. Bind it to a
   non-secret VMX identity that survives VMware's legitimate power-on file replacement. Expose its marker path to

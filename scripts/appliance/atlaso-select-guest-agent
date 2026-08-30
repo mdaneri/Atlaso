@@ -433,8 +433,11 @@ if [ -f "$SUCCESS_MARKER" ]; then
   detected_platform=$(detect_platform)
   [ "$marker_platform" = "$detected_platform" ] ||
     fail "Guest-agent marker platform conflicts with current evidence: marker=$marker_platform detected=$detected_platform"
-  if [ "$MODE" = "select" ]; then
-    log "Guest-agent selection already completed."
+  if [ "$MODE" = "cleanup" ]; then
+    # The data-disk gate may run during the provider-selection boot. Erase only
+    # the offline closure here; portable one-time access survives until reboot.
+    cleanup_staging
+    log "Guest-agent cleanup completed."
     exit 0
   fi
   [ -f "$MACHINE_IDENTITY_INITIALIZER" ] && [ ! -L "$MACHINE_IDENTITY_INITIALIZER" ] ||
@@ -449,10 +452,7 @@ if [ -f "$SUCCESS_MARKER" ]; then
   else
     "$MACHINE_IDENTITY_INITIALIZER" --platform "$marker_platform" --clear-access
   fi
-  # A durable marker proves the provider transaction completed. Retrying the
-  # cleanup here closes the power-loss window between that commit and erasure.
-  cleanup_staging
-  log "Guest-agent cleanup completed."
+  log "Guest-agent selection already completed."
   exit 0
 fi
 

@@ -625,8 +625,10 @@ VMX untouched, or keeps reused disks quarantined during removal, until a Windows
 gone. First boot writes it mode
 `0600`, proves guest-info scrub, encrypts it with that VM's unique `ATLASO_SECRETS_KEY`, and deletes the staging file.
 Provider selection commits its durable marker before the potentially long offline guest-agent closure cleanup. The data
-disk readiness unit owns that retryable cleanup as a mandatory pre-start gate, allowing VMware customization and signer
-scrub to proceed concurrently without admitting data disks or Atlaso before cleanup succeeds. While the wrapper waits
+disk readiness unit owns that retryable cleanup as a mandatory 15-minute pre-start gate, allowing VMware customization
+and signer scrub to proceed concurrently without admitting data disks or Atlaso before cleanup succeeds. Cleanup mode
+erases only the offline closure; portable KVM and Hyper-V first-boot access survives until the next boot. While the
+wrapper waits
 for scrub and encrypted-import proof, it reads only a bounded non-secret first-boot stage; timeout diagnostics report
 that fixed stage or state that provider selection or customizer startup did not complete.
 Every post-staging VMware operation has its own process-tree deadline. Before staging, the wrapper records a non-secret

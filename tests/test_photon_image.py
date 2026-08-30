@@ -192,7 +192,7 @@ def test_guest_agent_success_marker_makes_cleanup_retryable() -> None:
         encoding="utf-8"
     )
     existing_marker = selector.index('if [ -f "$SUCCESS_MARKER" ]; then')
-    cleanup_mode = selector.index('if [ "$MODE" = "select" ]; then', existing_marker)
+    cleanup_mode = selector.index('if [ "$MODE" = "cleanup" ]; then', existing_marker)
     retry_cleanup = selector.index("cleanup_staging", cleanup_mode)
     publish_marker = selector.rindex('mv -f -- "$marker_tmp" "$SUCCESS_MARKER"')
     assert 'stat -c \'%U:%G:%a\' "$marker_parent"' in selector
@@ -207,6 +207,7 @@ def test_guest_agent_success_marker_makes_cleanup_retryable() -> None:
         "ExecStartPre=/opt/atlaso/bin/atlaso-select-guest-agent --cleanup-only"
         in data_disks_unit
     )
+    assert "TimeoutStartSec=15min" in data_disks_unit
     assert 'PACKAGE_CACHE_DIRECTORY="${ATLASO_GUEST_AGENT_PACKAGE_CACHE:-/var/cache/tdnf}"' in selector
     assert 'if [ "$cleanup_required" -eq 1 ]; then' in selector
 

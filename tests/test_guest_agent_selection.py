@@ -543,7 +543,7 @@ def test_success_marker_retry_rejects_mount_backed_cleanup_target(tmp_path: Path
     assert first.returncode == 0, first.stderr
 
     runtime = Path(environment["ATLASO_GUEST_AGENT_RUNTIME"])
-    runtime.mkdir(mode=0o700)
+    runtime.mkdir(mode=0o700, exist_ok=True)
     sentinel = runtime / "preserve.txt"
     sentinel.write_text("preserve\n", encoding="utf-8")
     environment["FAKE_MOUNT_TARGET"] = str(runtime)
@@ -569,7 +569,7 @@ def test_success_marker_retry_rejects_mounted_cleanup_ancestor(tmp_path: Path) -
     mounted_ancestor = tmp_path / "mounted-backing"
     mounted_ancestor.mkdir(mode=0o700)
     staging = mounted_ancestor / "staging"
-    staging.mkdir(mode=0o700)
+    staging.mkdir(mode=0o700, exist_ok=True)
     sentinel = staging / "preserve.rpm"
     sentinel.write_text("preserve\n", encoding="utf-8")
     environment["ATLASO_GUEST_AGENT_STAGING"] = str(staging)
@@ -594,7 +594,7 @@ def test_success_marker_retry_rejects_mount_backed_cleanup_file(tmp_path: Path) 
     assert first.returncode == 0, first.stderr
 
     staging = Path(environment["ATLASO_GUEST_AGENT_STAGING"])
-    staging.mkdir(mode=0o700)
+    staging.mkdir(mode=0o700, exist_ok=True)
     sentinel = staging / "preserve.rpm"
     sentinel.write_text("preserve\n", encoding="utf-8")
     environment["FAKE_MOUNT_TARGET"] = str(sentinel)
@@ -620,7 +620,7 @@ def test_success_marker_retry_rejects_hard_linked_cleanup_file(tmp_path: Path) -
     outside = tmp_path / "outside.rpm"
     outside.write_text("preserve\n", encoding="utf-8")
     staging = Path(environment["ATLASO_GUEST_AGENT_STAGING"])
-    staging.mkdir(mode=0o700)
+    staging.mkdir(mode=0o700, exist_ok=True)
     alias = staging / "linked.rpm"
     os.link(outside, alias)
 
@@ -644,7 +644,7 @@ def test_test_override_cleanup_never_shreds_after_link_count_validation(tmp_path
     assert first.returncode == 0, first.stderr
 
     staging = Path(environment["ATLASO_GUEST_AGENT_STAGING"])
-    staging.mkdir(mode=0o700)
+    staging.mkdir(mode=0o700, exist_ok=True)
     sentinel = staging / "preserve.rpm"
     sentinel.write_text("preserve\n", encoding="utf-8")
     outside_alias = tmp_path.parent / f"{tmp_path.name}-outside.rpm"
@@ -698,7 +698,7 @@ def test_test_override_cleanup_uses_pinned_root_after_path_swap(tmp_path: Path) 
     assert first.returncode == 0, first.stderr
 
     staging = Path(environment["ATLASO_GUEST_AGENT_STAGING"])
-    staging.mkdir(mode=0o700)
+    staging.mkdir(mode=0o700, exist_ok=True)
     (staging / "retry.rpm").write_text("retry\n", encoding="utf-8")
     replacement = tmp_path.parent / f"{tmp_path.name}-replacement"
     replacement.mkdir(mode=0o700)
@@ -742,7 +742,12 @@ def test_hyperv_access_cleanup_reloads_kvp_after_record_removal(tmp_path: Path) 
     log_path = Path(environment["FAKE_SYSTEMCTL_LOG"])
     log_path.write_text("", encoding="utf-8")
 
-    second = _run_selector(environment, "--cleanup-only")
+    cleanup = _run_selector(environment, "--cleanup-only")
+
+    assert cleanup.returncode == 0, cleanup.stderr
+    assert log_path.read_text(encoding="utf-8") == ""
+
+    second = _run_selector(environment)
 
     assert second.returncode == 0, second.stderr
     service_log = log_path.read_text(encoding="utf-8")

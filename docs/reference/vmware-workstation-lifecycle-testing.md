@@ -421,8 +421,10 @@ starting removal. After first boot proves encrypted import and
 VMware reports the exact empty runtime sentinel, the wrapper stops the exact VM, removes and verifies the powered-off
 signing-key assignment, restarts it, and requires three empty runtime readbacks before retiring the marker.
 First boot commits guest-agent provider selection before erasing the offline package closure. That retryable cleanup is
-a mandatory data-disk pre-start gate and may run concurrently with VMware customization, so it cannot delay signing-key
-guest-info scrub while still blocking data-disk and application readiness. During scrub and encrypted-import proof, the
+a mandatory 15-minute data-disk pre-start gate and may run concurrently with VMware customization, so it cannot delay
+signing-key guest-info scrub while still blocking data-disk and application readiness. That cleanup erases only the
+offline closure; portable KVM and Hyper-V first-boot access remains available until the next boot. During scrub and
+encrypted-import proof, the
 guest publishes only bounded fixed first-boot stage identifiers. A timeout reports the last valid stage, or a fixed
 diagnostic that provider selection or customizer startup did not complete; it never includes command output or secret
 material.
