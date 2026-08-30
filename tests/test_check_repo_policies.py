@@ -128,6 +128,9 @@ def test_merge_hold_directions_recognizes_merge_deferral() -> None:
     assert merge_hold_directions(
         "Implement issue #602, but merge only after CI passes."
     ) == {"do not merge": "add"}
+    assert merge_hold_directions(
+        "Implement issue #602, but only merge after CI passes."
+    ) == {"do not merge": "add"}
 
 
 def test_merge_hold_directions_preserves_shared_active_task_hold() -> None:
@@ -210,7 +213,11 @@ def test_merge_hold_directions_recognizes_first_person_approval() -> None:
 
 def test_merge_hold_directions_recognizes_equivalent_permission() -> None:
     """Verify equivalent current permissions withdraw active holds."""
-    for instruction in ("You can merge now.", "Go ahead and merge."):
+    for instruction in (
+        "You can merge now.",
+        "Go ahead and merge.",
+        "Proceed with the merge now.",
+    ):
         assert merge_hold_directions(
             instruction,
             active_holds=("do not merge",),
@@ -255,6 +262,15 @@ def test_source_authority_excludes_patch_review() -> None:
     )
     assert not source_has_default_merge_authority(
         ("Review this implementation and report findings.",)
+    )
+    assert not source_has_default_merge_authority(
+        ("Summarize the implementation for issue #602.",)
+    )
+    assert not source_has_default_merge_authority(
+        (
+            "Implement issue #602. Instead, review the implementation and "
+            "report findings.",
+        )
     )
     assert not source_has_default_merge_authority(
         ("Review the implementation; do not modify it.",)

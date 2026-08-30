@@ -273,6 +273,22 @@
       ]
     },
     {
+      "name": "explicit-only-merge-after-ci-passes",
+      "default_merge_authority": true,
+      "instructions": [
+        {
+          "text": "Implement issue #602, but only merge after CI passes.",
+          "add_holds": [
+            "do not merge"
+          ]
+        }
+      ],
+      "generated": "Preserve the explicit only merge after CI passes instruction.",
+      "expected_holds": [
+        "do not merge"
+      ]
+    },
+    {
       "name": "qualified-explicit-do-not-merge",
       "default_merge_authority": true,
       "instructions": [
@@ -528,6 +544,26 @@
         },
         {
           "text": "You may merge now.",
+          "remove_holds": [
+            "do not merge"
+          ]
+        }
+      ],
+      "generated": "The hold was withdrawn; continue through guarded squash merge when every gate passes.",
+      "expected_holds": []
+    },
+    {
+      "name": "proceed-with-merge-withdrawal",
+      "default_merge_authority": true,
+      "instructions": [
+        {
+          "text": "Implement the change, but do not merge.",
+          "add_holds": [
+            "do not merge"
+          ]
+        },
+        {
+          "text": "Proceed with the merge now.",
           "remove_holds": [
             "do not merge"
           ]
@@ -830,6 +866,28 @@
       "instructions": [
         {
           "text": "Review this implementation and report findings."
+        }
+      ],
+      "generated": "Review the implementation and report findings.",
+      "expected_holds": []
+    },
+    {
+      "name": "summarize-implementation-ineligible",
+      "default_merge_authority": false,
+      "instructions": [
+        {
+          "text": "Summarize the implementation for issue #602."
+        }
+      ],
+      "generated": "Summarize the implementation without continuing delivery.",
+      "expected_holds": []
+    },
+    {
+      "name": "same-message-later-review-reclassification",
+      "default_merge_authority": false,
+      "instructions": [
+        {
+          "text": "Implement issue #602. Instead, review the implementation and report findings."
         }
       ],
       "generated": "Review the implementation and report findings.",

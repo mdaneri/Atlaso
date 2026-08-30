@@ -689,12 +689,16 @@ DEFAULT_MERGE_AUTHORITY_WORKFLOW_RECLASSIFICATION = re.compile(
     r"to\s+(?:an?\s+)?(?:external\s+)?fork\b"
 )
 DEFAULT_MERGE_AUTHORITY_DIRECT_REVIEW = re.compile(
-    r"(?:review|inspect|check|test|verif(?:y|ication)|validat(?:e|ion)|"
+    r"(?:review|inspect|check|test|summarize|describe|explain|report|"
+    r"verif(?:y|ication)|validat(?:e|ion)|"
     r"analy(?:ze|sis)|assess|audit|evaluat(?:e|ion))(?:\s+of)?\s+"
     r"(?:(?:the|this|that|an?)\s+)?"
     r"(?:implementation|changes?|code|patch|fix(?:es)?|pull request|pr|commit)\b"
     r"(?:\s+(?:#\d+|[0-9a-f]{7,40}))?"
     r"(?:\s+and\s+(?:report|summarize|describe)\b[^;.!?]*)?"
+)
+DEFAULT_MERGE_AUTHORITY_SUPERSEDING_REVIEW_PREFIX = re.compile(
+    r"(?:^|[;.!?]\s*)instead,?\s*$"
 )
 DEFAULT_MERGE_AUTHORITY_STOP_WORK = re.compile(
     r"(?:^|[;.!?]\s*)(?:please\s+)?(?:stop|cancel|cease|end)\s+"
@@ -767,10 +771,11 @@ MERGE_AUTHORITY_COORDINATED_CLAUSE_BOUNDARY = re.compile(
     r",\s+(?:but|and)\s+|\s+but\s+"
 )
 MERGE_HOLD_STANDALONE_PERMISSION = re.compile(
-    r"\b(?:(?:may|can)\s+merge now|go ahead and merge)\b"
+    r"\b(?:(?:may|can)\s+merge now|go ahead and merge|"
+    r"proceed (?:with the merge|with merging|to merge)(?: now)?)\b"
 )
 MERGE_HOLD_NONAPPROVAL_CONDITION = re.compile(
-    r"\bmerge only (?:after|when|if|once)\s+"
+    r"\b(?:merge only|only merge) (?:after|when|if|once)\s+"
     r"(?:ci|tests?|checks?|validation|builds?)\b[^.!?]{0,40}"
     r"\b(?:pass(?:es|ed)?|succeed(?:s|ed)?|complete(?:s|d)?)\b"
 )
@@ -1268,9 +1273,15 @@ def source_has_default_merge_authority(instructions: tuple[str, ...]) -> bool:
         direct_review_matches = tuple(
             match
             for match in DEFAULT_MERGE_AUTHORITY_DIRECT_REVIEW.finditer(normalized)
-            if not any(
-                marker.start() < match.start()
-                for marker in affirmative_source_markers
+            if (
+                DEFAULT_MERGE_AUTHORITY_SUPERSEDING_REVIEW_PREFIX.search(
+                    normalized[: match.start()]
+                )
+                is not None
+                or not any(
+                    marker.start() < match.start()
+                    for marker in affirmative_source_markers
+                )
             )
         )
         exclusion_matches += direct_review_matches
