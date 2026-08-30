@@ -1364,6 +1364,8 @@ def test_agent_policy_gate_rejects_missing_maintainer_break_glass_contract(
         f'<span style="color:transparent"><span style="color:#00000">'
         f"{prohibition}</span></span>",
         f'<span style="color:rgb(0 0 0 / 0e0)">{prohibition}</span>',
+        f"<svg><foreignObject><span hidden/>{prohibition}</span>"
+        "</foreignObject></svg>",
     )
     for replacement in complex_html_replacements:
         for relative_path in required_entry_points:
@@ -1533,6 +1535,31 @@ def test_agent_policy_gate_rejects_missing_maintainer_break_glass_contract(
             )
 
             assert check_agent_policy_gate(tmp_path) == []
+
+    visible_recovered_container_replacement = (
+        f"<div><span hidden>retired</div>{prohibition}"
+    )
+    for relative_path in required_entry_points:
+        write_policy_files(tmp_path)
+        path = tmp_path / relative_path
+        original = path.read_text(encoding="utf-8")
+        assert prohibition in original
+        path.write_text(
+            original.replace(
+                prohibition,
+                visible_recovered_container_replacement,
+                1,
+            ),
+            encoding="utf-8",
+        )
+
+        findings = check_agent_policy_gate(tmp_path)
+        assert not any(
+            finding.path == path
+            and finding.message
+            == f"required agent policy marker is missing: {prohibition}"
+            for finding in findings
+        )
 
     visible_open_dialog_replacement = f"<dialog open>{prohibition}</dialog>"
     for relative_path in required_entry_points:

@@ -20,6 +20,7 @@ const formattingTags = new Set([
   'a', 'b', 'big', 'code', 'em', 'font', 'i', 'nobr', 's', 'small',
   'strike', 'strong', 'tt', 'u'
 ])
+const svgHtmlIntegrationTags = new Set(['desc', 'foreignobject', 'title'])
 const optionalEndTagClosures = new Map([
   ['p', new Set(['p'])],
   ['li', new Set(['li'])],
@@ -506,7 +507,11 @@ function updateHtmlSuppression (content, inlineContext = false) {
     if (match.groups.closing) {
       for (let index = htmlStack.length - 1; index >= 0; index -= 1) {
         if (htmlStack[index].tag === tag) {
-          htmlStack.splice(index, 1)
+          if (paragraphClosingTags.has(tag)) {
+            htmlStack.splice(index)
+          } else {
+            htmlStack.splice(index, 1)
+          }
           break
         }
       }
@@ -545,8 +550,9 @@ function updateHtmlSuppression (content, inlineContext = false) {
       parent.summarySeen = true
       summaryOwner = parent
     }
-    const foreign = tag === 'svg' || tag === 'math' || Boolean(
-      htmlStack.length && htmlStack[htmlStack.length - 1].foreign
+    const parentForeign = Boolean(parent?.foreign)
+    const foreign = tag === 'svg' || tag === 'math' || (
+      parentForeign && !svgHtmlIntegrationTags.has(parent.tag)
     )
     if (!selfClosing || (!voidTags.has(tag) && !foreign)) {
       const entry = {
