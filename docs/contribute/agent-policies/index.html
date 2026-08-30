@@ -5081,12 +5081,22 @@ runtime.</p>
   mutating the VM or VMX during rollback. Persist boot-bound child-active phases for staging, VM start, and artifact
   removal. If termination is unproven, preserve the VM and VMX, or keep reused disks quarantined during removal, until
   a Windows host restart proves the child tree is gone. Validate the
-  key before host mutation, use only the separately scrubbed test-wrapper guest-info/staging path, encrypt it with each
-  VM's unique secrets key, scrub plaintext staging when import fails, and issue a unique HTTPS leaf. Commit a durable
+  key before host mutation, use only canonical base64 PKCS#8 DER in the separately scrubbed test-wrapper guest-info path
+  so its complete VMX assignment stays below 4,096 characters, reconstruct standard PKCS#8 PEM for staging, encrypt it
+  with each
+  VM's unique secrets key, scrub plaintext staging when import fails, and issue a unique HTTPS leaf. Commit guest-agent
+  provider selection before potentially long offline-closure cleanup, and keep that cleanup as a mandatory data-disk
+  15-minute pre-start gate so VMware signer scrub can run concurrently without admitting appliance readiness early.
+  Reserve additional data-disk unit time for formatting and mounting after the full cleanup deadline, and retain enough
+  host import-proof time for cleanup, disk preparation, and bootstrap startup.
+  Cleanup mode erases only the offline closure and must retain portable KVM and Hyper-V first-boot access until the next
+  boot. Host timeout diagnostics may consume only bounded fixed non-secret first-boot stage identifiers. Commit a durable
   non-secret cleanup marker through a Windows write-through atomic rename before staging and bind it to a non-secret
   VMX identity that survives VMware's legitimate power-on file replacement. After encrypted import proof, stop the
-  exact VM, prove the powered-off VMX signer assignment absent, restart it, and prove runtime guest-info remains empty
-  before retiring the marker. Later normal-wrapper invocations must retry its exact identity-bound stop, VMX scrub,
+  exact VM only through a bounded graceful shutdown, prove the powered-off VMX signer assignment absent, restart it,
+  and prove runtime guest-info remains empty before retiring the marker. Never fall back to hard power-off on the
+  successful-import path; retain the retryable marker when graceful shutdown is unproven. Later normal-wrapper
+  invocations must retry its exact identity-bound stop, VMX scrub,
   artifact removal, and data-disk restoration before
   1Password preflight or any new mutation. Persist the
   stopped/scrubbed phase before artifact removal so a retry can safely resume restoration from an absent artifact root.
