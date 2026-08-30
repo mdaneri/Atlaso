@@ -220,8 +220,6 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
           RELEASE_SHA: ${{ steps.target.outputs.release_sha }}
-          AUTOMATIC_PUBLISHER_RUN_ID: ${{ github.event.workflow_run.id }}
-          AUTOMATIC_PUBLISHER_RUN_ATTEMPT: ${{ github.event.workflow_run.run_attempt }}
         run: |
           VERSION="$(
             git show "${RELEASE_SHA}:pyproject.toml" |
@@ -280,8 +278,6 @@ jobs:
           SELECT_PUBLISHER_ARGS=()
           if test "${{ github.event_name }}" = workflow_run; then
             SELECT_PUBLISHER_ARGS=(
-              --publisher-run-id "$AUTOMATIC_PUBLISHER_RUN_ID"
-              --publisher-run-attempt "$AUTOMATIC_PUBLISHER_RUN_ATTEMPT"
               --publisher-trigger automatic-main
             )
           fi

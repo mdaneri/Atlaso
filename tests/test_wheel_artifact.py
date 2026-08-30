@@ -275,8 +275,8 @@ def test_select_artifact_accepts_identical_retries_and_preserves_first_run(tmp_p
     assert selected["publisher"]["run_attempt"] == 1
 
 
-def test_select_artifact_binds_automatic_release_to_triggering_publisher(tmp_path: Path) -> None:
-    """Ignore an older replay when automatic publication names its triggering handoff.
+def test_select_artifact_uses_earliest_automatic_identity(tmp_path: Path) -> None:
+    """Ignore replays and preserve the earliest retained automatic handoff.
 
     Args:
         tmp_path: Isolated artifact directory.
@@ -289,9 +289,14 @@ def test_select_artifact_binds_automatic_release_to_triggering_publisher(tmp_pat
         publisher_trigger="replay",
     )
     _write_candidate(
+        candidates / "203-302",
+        publisher_run_id=203,
+        publisher_run_attempt=2,
+        publisher_trigger="automatic-main",
+    )
+    _write_candidate(
         candidates / "202-301",
         publisher_run_id=202,
-        publisher_run_attempt=2,
         publisher_trigger="automatic-main",
     )
     output = tmp_path / "selected"
@@ -304,8 +309,6 @@ def test_select_artifact_binds_automatic_release_to_triggering_publisher(tmp_pat
             "repository": REPOSITORY,
             "version": VERSION,
             "commit": COMMIT,
-            "publisher_run_id": 202,
-            "publisher_run_attempt": 2,
             "publisher_trigger": "automatic-main",
         },
     )()
@@ -314,7 +317,7 @@ def test_select_artifact_binds_automatic_release_to_triggering_publisher(tmp_pat
 
     selected = json.loads((output / wheel_artifact.IDENTITY_NAME).read_text(encoding="utf-8"))
     assert selected["publisher"] == {
-        "run_attempt": 2,
+        "run_attempt": 1,
         "run_id": 202,
         "trigger": "automatic-main",
         "workflow": "Publish Python wheel",
@@ -351,8 +354,6 @@ def test_select_artifact_compares_replays_before_selecting_automatic_run(tmp_pat
             "repository": REPOSITORY,
             "version": VERSION,
             "commit": COMMIT,
-            "publisher_run_id": 202,
-            "publisher_run_attempt": 2,
             "publisher_trigger": "automatic-main",
         },
     )()

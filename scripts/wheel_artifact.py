@@ -370,10 +370,8 @@ def select_artifact(args: argparse.Namespace) -> None:
     expected_publisher_run_id = getattr(args, "publisher_run_id", None)
     expected_publisher_run_attempt = getattr(args, "publisher_run_attempt", None)
     expected_publisher_trigger = getattr(args, "publisher_trigger", None)
-    if (expected_publisher_run_attempt is not None or expected_publisher_trigger is not None) and (
-        expected_publisher_run_id is None
-    ):
-        raise WheelArtifactError("publisher attempt or trigger requires an exact publisher run")
+    if expected_publisher_run_attempt is not None and expected_publisher_run_id is None:
+        raise WheelArtifactError("publisher attempt requires an exact publisher run")
     verified: list[tuple[int, int, int, Path, dict[str, object]]] = []
     expected_bytes: bytes | None = None
     for candidate in candidates:
