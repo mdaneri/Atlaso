@@ -319,7 +319,13 @@ function hasHiddenAttributes (attributes, inheritedCustomProperties = new Map())
   }
   const customProperties = new Map(inheritedCustomProperties)
   for (const [property, declaration] of declarations) {
-    if (property.startsWith('--')) customProperties.set(property, declaration)
+    if (!property.startsWith('--')) continue
+    const cssWideValue = declaration.value.toLowerCase()
+    if (cssWideValue === 'initial') {
+      customProperties.delete(property)
+    } else if (!/^(?:inherit|unset|revert|revert-layer)$/.test(cssWideValue)) {
+      customProperties.set(property, declaration)
+    }
   }
   for (const property of ['display', 'visibility', 'content-visibility', 'opacity']) {
     const declaration = declarations.get(property)
