@@ -325,6 +325,17 @@
       "expected_holds": []
     },
     {
+      "name": "review-object-implementation-ineligible",
+      "default_merge_authority": false,
+      "instructions": [
+        {
+          "text": "Only review the implementation."
+        }
+      ],
+      "generated": "Review the implementation and report findings.",
+      "expected_holds": []
+    },
+    {
       "name": "diagnostic-ineligible",
       "default_merge_authority": false,
       "instructions": [
@@ -423,6 +434,28 @@
         },
         {
           "text": "The do not merge instruction has not been withdrawn.",
+          "add_holds": [
+            "do not merge"
+          ]
+        }
+      ],
+      "generated": "Preserve the explicit do not merge instruction.",
+      "expected_holds": [
+        "do not merge"
+      ]
+    },
+    {
+      "name": "modal-negated-hold-withdrawal",
+      "default_merge_authority": true,
+      "instructions": [
+        {
+          "text": "Implement the change, but do not merge.",
+          "add_holds": [
+            "do not merge"
+          ]
+        },
+        {
+          "text": "The do not merge hold cannot be withdrawn.",
           "add_holds": [
             "do not merge"
           ]

@@ -1804,6 +1804,50 @@ def test_merge_authority_transfer_rejects_passively_negated_withdrawal(
     )
 
 
+def test_merge_authority_transfer_rejects_modal_negated_withdrawal(
+    tmp_path: Path,
+) -> None:
+    """Verify cannot-be wording leaves an explicit hold active.
+
+    Args:
+        tmp_path: Temporary directory provided by pytest for isolated filesystem state.
+    """
+    path = tmp_path / MERGE_AUTHORITY_TRANSFER_FIXTURE_PATH
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(
+        json.dumps(
+            {
+                "cases": [
+                    {
+                        "name": "modal negated hold withdrawal",
+                        "default_merge_authority": True,
+                        "instructions": [
+                            {
+                                "text": (
+                                    "Implement the change. The do not merge hold cannot "
+                                    "be withdrawn."
+                                ),
+                                "remove_holds": ["do not merge"],
+                            }
+                        ],
+                        "generated": "Continue through guarded squash merge.",
+                        "expected_holds": [],
+                    }
+                ]
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    findings = check_merge_authority_transfer_fixtures(tmp_path)
+
+    assert len(findings) == 1
+    assert findings[0].message == (
+        "merge authority fixture modal negated hold withdrawal instruction 1 hold "
+        "operations do not match its text"
+    )
+
+
 def test_merge_authority_transfer_rejects_noncurrent_hold_withdrawals(
     tmp_path: Path,
 ) -> None:
@@ -1888,6 +1932,42 @@ def test_merge_authority_transfer_applies_leading_only_review_transition(
     assert findings[0].message == (
         "merge authority fixture leading only review declared default authority "
         "does not match its source instructions"
+    )
+
+
+def test_merge_authority_transfer_excludes_review_object_markers(
+    tmp_path: Path,
+) -> None:
+    """Verify a reviewed implementation noun does not restore task authority.
+
+    Args:
+        tmp_path: Temporary directory provided by pytest for isolated filesystem state.
+    """
+    path = tmp_path / MERGE_AUTHORITY_TRANSFER_FIXTURE_PATH
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(
+        json.dumps(
+            {
+                "cases": [
+                    {
+                        "name": "review implementation object",
+                        "default_merge_authority": True,
+                        "instructions": [{"text": "Only review the implementation."}],
+                        "generated": "Continue through guarded squash merge.",
+                        "expected_holds": [],
+                    }
+                ]
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    findings = check_merge_authority_transfer_fixtures(tmp_path)
+
+    assert len(findings) == 1
+    assert findings[0].message == (
+        "merge authority fixture review implementation object declared default "
+        "authority does not match its source instructions"
     )
 
 

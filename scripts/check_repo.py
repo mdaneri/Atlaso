@@ -535,8 +535,9 @@ MERGE_HOLD_WITHDRAWAL_MARKERS = (
     "not pr only",
 )
 MERGE_HOLD_WITHDRAWAL_NEGATIONS = re.compile(
-    r"(?:not|never|cannot|can't|can’t|isn't|isn’t|wasn't|wasn’t)"
-    r"(?:\s+been)?\s*$"
+    r"(?:(?:must|should|may|might|will|would|could|can)\s+not|not|never|"
+    r"cannot|can't|can’t|isn't|isn’t|wasn't|wasn’t)"
+    r"(?:\s+(?:be|been))?\s*$"
 )
 MERGE_HOLD_WITHDRAWAL_NONCURRENT_PREFIX = re.compile(
     r"(?:\bunless\b|\bif\b|\bonce\b|\bwhen\b|\bafter\b|\bbefore\b|"
@@ -577,7 +578,8 @@ DEFAULT_MERGE_AUTHORITY_PROMPT_MARKERS = (
     "without waiting for a second merge instruction",
 )
 DEFAULT_MERGE_AUTHORITY_SOURCE_EXCLUSIONS = re.compile(
-    r"(?:review(?:-only|[^.!?]{0,60}\bonly\b)|only\s+review\b|"
+    r"(?:review(?:-only|[^.!?]{0,60}\bonly\b)|"
+    r"only\s+review\b[^;.!?]*|"
     r"report findings only|"
     r"(?:do not|don't|don’t|must not|without)\s+"
     r"(?:\w+\s+){0,3}(?:implement|fix|resolve|solve|deliver|"
