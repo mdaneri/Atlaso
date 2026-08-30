@@ -111,6 +111,13 @@ def test_merge_hold_directions_preserves_hold_first_explanation() -> None:
     ) == {"do not merge": "add"}
 
 
+def test_merge_hold_directions_preserves_branch_targeted_hold() -> None:
+    """Verify branch delivery remains a pull-request merge target."""
+    assert merge_hold_directions(
+        "Implement issue #602, but do not merge this branch."
+    ) == {"do not merge": "add"}
+
+
 def test_merge_hold_directions_binds_withdrawal_verb_to_hold() -> None:
     """Verify feature-oriented remove wording cannot withdraw an active hold."""
     assert merge_hold_directions(
@@ -123,6 +130,14 @@ def test_merge_hold_directions_accepts_current_withdrawal_adverb() -> None:
     """Verify current adverbs preserve an explicit withdrawal's meaning."""
     assert merge_hold_directions(
         "The do not merge hold is hereby withdrawn.",
+        active_holds=("do not merge",),
+    ) == {"do not merge": "remove"}
+
+
+def test_merge_hold_directions_accepts_passive_withdrawal() -> None:
+    """Verify passive withdrawal verbs remove an active hold."""
+    assert merge_hold_directions(
+        "The do not merge hold is lifted.",
         active_holds=("do not merge",),
     ) == {"do not merge": "remove"}
 
@@ -166,6 +181,18 @@ def test_generated_authority_rejects_conditional_approval() -> None:
     assert not has_affirmative_default_merge_authority(
         "Only if the maintainer approves, complete the guarded merge."
     )
+
+
+def test_generated_authority_rejects_imperative_denial() -> None:
+    """Verify negative action verbs cannot masquerade as merge authority."""
+    for instruction in (
+        "Skip the guarded squash merge.",
+        "Avoid the guarded squash merge.",
+        "Omit the guarded squash merge.",
+        "Decline the guarded squash merge.",
+        "Refrain from the guarded squash merge.",
+    ):
+        assert not has_affirmative_default_merge_authority(instruction)
 
 
 def test_spark_worker_agent_accepts_required_contract(tmp_path: Path) -> None:

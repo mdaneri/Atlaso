@@ -526,6 +526,10 @@ EXPLICIT_MERGE_HOLD_PATTERNS = {
 }
 MERGE_HOLD_WITHDRAWAL_MARKERS = (
     "withdrawn",
+    "lifted",
+    "removed",
+    "cancelled",
+    "canceled",
     "withdraw the",
     "remove the",
     "remove ",
@@ -570,7 +574,8 @@ AUTO_MERGE_ONLY_PHRASES = (
 )
 DEFAULT_MERGE_AUTHORITY_NEGATIONS = re.compile(
     r"(?:(?:do not|don't|don’t|never|must not|should not|cannot|can't|can’t|not)"
-    r"(?:\s+\w+){0,6}|(?:lacks?|has no|have no|without))\s*$"
+    r"(?:\s+\w+){0,6}|(?:lacks?|has no|have no|without)|"
+    r"(?:skip|avoid|omit|decline|refrain(?:\s+from)?)(?:\s+\w+){0,3})\s*$"
 )
 DEFAULT_MERGE_AUTHORITY_TRAILING_NEGATIONS = re.compile(
     r"^\s*(?:(?:does|do|is|are|must|should|can|may|will|would)\s+"
@@ -680,6 +685,7 @@ MERGE_HOLD_OTHER_TASK_REFERENCE = re.compile(
 MERGE_AUTHORITY_TASK_CLAUSE_BOUNDARY = re.compile(r"[;.?!]+")
 MERGE_HOLD_NON_PR_OBJECT = re.compile(
     r"^\s+(?!(?:(?:this|the)\s+)?(?:pull request|pr)\b|it\b|"
+    r"(?:(?:this|the)\s+)?(?:branch|change|commit)\b|"
     r"(?:hold|instruction|directive)\b|until\b|before\b|after\b|unless\b|"
     r"because\b|while\b|when\b|yet\b|now\b|automatically\b|"
     r"for\s+(?:now|the moment|approval|maintainer approval)\b)\w+"
