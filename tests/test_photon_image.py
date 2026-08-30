@@ -204,7 +204,8 @@ def test_guest_agent_success_marker_makes_cleanup_retryable() -> None:
     assert cleanup_mode < retry_cleanup < publish_marker
     assert selector.find("cleanup_staging", publish_marker) == -1
     assert (
-        "ExecStartPre=/opt/atlaso/bin/atlaso-select-guest-agent --cleanup-only"
+        "ExecStartPre=/usr/bin/timeout --kill-after=30s 15m "
+        "/opt/atlaso/bin/atlaso-select-guest-agent --cleanup-only"
         in data_disks_unit
     )
     assert "TimeoutStartSec=20min" in data_disks_unit
