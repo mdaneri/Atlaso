@@ -1346,6 +1346,7 @@ def test_agent_policy_gate_rejects_missing_maintainer_break_glass_contract(
         f"<b hidden>retired\n\n{prohibition}",
         f'<span style="display:none;display\\:block">{prohibition}</span>',
         f"<iframe>{prohibition}</iframe>",
+        f"<noscript>{prohibition}</noscript>",
         f'<span aria-hidden="tr&#117;e">{prohibition}</span>',
         f"<span inert>{prohibition}</span>",
         f'<span style="display:none;display:block\\!important">{prohibition}</span>',
