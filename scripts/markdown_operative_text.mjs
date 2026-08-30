@@ -15,6 +15,10 @@ const htmlStack = []
 const suppressedTags = new Set(['del', 's', 'strike', 'script', 'style', 'pre', 'textarea', 'template', 'title'])
 const voidTags = new Set(['area', 'base', 'br', 'col', 'embed', 'hr', 'img', 'input', 'link', 'meta', 'param', 'source', 'track', 'wbr'])
 const rawTextTags = new Set(['script', 'style', 'textarea', 'title'])
+const formattingTags = new Set([
+  'a', 'b', 'big', 'code', 'em', 'font', 'i', 'nobr', 's', 'small',
+  'strike', 'strong', 'tt', 'u'
+])
 
 function splitCssFunctionArguments (value) {
   const argumentsList = []
@@ -58,7 +62,9 @@ function evaluateCalcExpression (value) {
       index += 1
       return sign * nested
     }
-    const numeric = value.slice(index).match(/^(?:\d+(?:\.\d*)?|\.\d+)/)
+    const numeric = value.slice(index).match(
+      /^(?:\d+(?:\.\d*)?|\.\d+)(?:[eE][+-]?\d+)?/
+    )
     if (!numeric) return null
     index += numeric[0].length
     let parsed = Number.parseFloat(numeric[0])
@@ -102,7 +108,9 @@ function evaluateCalcExpression (value) {
 }
 
 function parseOpacityValue (value) {
-  const numeric = value.match(/^([+-]?(?:\d+(?:\.\d*)?|\.\d+))(%)?$/)
+  const numeric = value.match(
+    /^([+-]?(?:\d+(?:\.\d*)?|\.\d+)(?:[eE][+-]?\d+)?)(%)?$/
+  )
   if (numeric) {
     const parsed = Number.parseFloat(numeric[1])
     return numeric[2] ? parsed / 100 : parsed
@@ -394,7 +402,7 @@ for (const token of tokens) {
     output.push('\n')
   } else if (token.type === 'paragraph_close') {
     for (let index = htmlStack.length - 1; index >= 0; index -= 1) {
-      if (htmlStack[index].inline) {
+      if (htmlStack[index].inline && !formattingTags.has(htmlStack[index].tag)) {
         htmlStack.splice(index, 1)
       }
     }
