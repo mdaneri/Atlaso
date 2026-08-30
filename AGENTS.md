@@ -543,14 +543,17 @@ The following cross-cutting boundaries always apply:
   and fstab contract. Atlaso-formatted disks retain their `lf-<hash>` label; claimed existing ext4 disks additionally
   require an exact root-owned allowlist record. Make data-disk success a hard systemd requirement for nginx, the HTTPS
   bootstrap, control plane, and worker so a failed preflight cannot fall through to root-filesystem-backed mount paths.
-- Every successful same-repository `main` push CI run automatically publishes only the 90-day Actions artifact
+- Every successful same-repository `main` push CI run automatically publishes the 90-day Actions artifact
   `atlaso-wheel-vX.Y.Z-<full-sha>` from GitHub-hosted Linux. Bind its single versioned wheel to canonical source-CI,
   publisher-run IDs and attempts, repository, version, full-commit, UTC build-time, size, and SHA-256 identity. Manual
   consumption must query and verify each recorded GitHub run attempt. Give the automatic path read-only
   repository authority and no signing key, protected environment, tag/Release or Pages write, channel promotion,
-  self-hosted label, or virtualization access. **Publish appliance release** is protected manual dispatch only; it must
-  consume and record the retained exact wheel handoff without rebuilding or substituting the wheel, then retain all
-  CPython 3.14 wheelhouse, signing, immutable publication, Pages, and live-verification gates. Byte-identical automatic
+  self-hosted label, or virtualization access. A successful automatic-main wheel handoff then starts the separately
+  protected **Publish appliance release** workflow, which consumes and records the exact wheel without rebuilding or
+  substituting it, publishes the signed `vX.Y.Z` software bundle, and advances `development` while retaining all
+  CPython 3.14 wheelhouse, signing, immutable publication, Pages, and live-verification gates. Manual exact-SHA dispatch
+  remains the recovery entry point. Authenticate the existing `development` pointer under the shared Pages lock and
+  refuse to replace it with an older semantic version. Byte-identical automatic
   retries are valid, but the consumer must stage them by publisher run plus artifact ID, validate every recorded attempt,
   and preserve the earliest retained publisher run-and-attempt identity so a later retry cannot change signed bundle
   inputs. Divergent collisions fail closed. For an expired handoff, allow only the protected **Replay Python wheel**

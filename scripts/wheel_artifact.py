@@ -259,12 +259,15 @@ def verify_artifact(
         raise WheelArtifactError("wheel source CI workflow identity is invalid")
     _positive_integer(source_ci["run_id"], field="source_ci.run_id")
     _positive_integer(source_ci["run_attempt"], field="source_ci.run_attempt")
-    if set(publisher) != {"workflow", "workflow_file", "run_id", "run_attempt"}:
+    publisher_fields = {"workflow", "workflow_file", "run_id", "run_attempt"}
+    if set(publisher) not in (publisher_fields, publisher_fields | {"trigger"}):
         raise WheelArtifactError("wheel publisher identity fields do not match schema 1")
     if publisher["workflow"] != "Publish Python wheel" or publisher["workflow_file"] != "wheel.yml":
         raise WheelArtifactError("wheel publisher workflow identity is invalid")
     publisher_run_id = _positive_integer(publisher["run_id"], field="publisher.run_id")
     _positive_integer(publisher["run_attempt"], field="publisher.run_attempt")
+    if "trigger" in publisher and publisher["trigger"] not in {"automatic-main", "replay"}:
+        raise WheelArtifactError("wheel publisher trigger is invalid")
     if expected_publisher_run_id is not None and publisher_run_id != expected_publisher_run_id:
         raise WheelArtifactError("wheel publisher run does not match the GitHub artifact record")
     if artifact != {"name": expected_name, "retention_days": RETENTION_DAYS}:
@@ -338,6 +341,7 @@ def create_artifact(args: argparse.Namespace) -> None:
             "workflow_file": "wheel.yml",
             "run_id": args.publisher_run_id,
             "run_attempt": args.publisher_run_attempt,
+            "trigger": args.publisher_trigger,
         },
         "artifact": {"name": name, "retention_days": RETENTION_DAYS},
         "wheel": {"filename": wheel.name, "sha256": sha256(wheel), "size": wheel.stat().st_size},
@@ -354,7 +358,7 @@ def create_artifact(args: argparse.Namespace) -> None:
 
 
 def select_artifact(args: argparse.Namespace) -> None:
-    """Fail closed on collisions and preserve the earliest exact wheel handoff.
+    """Fail closed on collisions and select the required exact wheel handoff.
 
     Args:
         args: Parsed select command arguments.
@@ -363,6 +367,11 @@ def select_artifact(args: argparse.Namespace) -> None:
     candidates = [path for path in args.candidates.iterdir() if path.is_dir()]
     if not candidates:
         raise WheelArtifactError("no retained automatic wheel artifact is available for the release target")
+    expected_publisher_run_id = getattr(args, "publisher_run_id", None)
+    expected_publisher_run_attempt = getattr(args, "publisher_run_attempt", None)
+    expected_publisher_trigger = getattr(args, "publisher_trigger", None)
+    if expected_publisher_run_attempt is not None and expected_publisher_run_id is None:
+        raise WheelArtifactError("publisher attempt requires an exact publisher run")
     verified: list[tuple[int, int, int, Path, dict[str, object]]] = []
     expected_bytes: bytes | None = None
     for candidate in candidates:
@@ -378,17 +387,29 @@ def select_artifact(args: argparse.Namespace) -> None:
             expected_commit=args.commit,
             expected_publisher_run_id=publisher_run_id,
         )
-        wheel_bytes = wheel.read_bytes()
-        if expected_bytes is None:
-            expected_bytes = wheel_bytes
-        elif wheel_bytes != expected_bytes:
-            raise WheelArtifactError("retained automatic wheel artifacts collide with different bytes")
         publisher = identity["publisher"]
         assert isinstance(publisher, dict)
         publisher_run_attempt = _positive_integer(
             publisher["run_attempt"], field="publisher.run_attempt"
         )
+        publisher_trigger = publisher.get("trigger")
+        wheel_bytes = wheel.read_bytes()
+        if expected_bytes is None:
+            expected_bytes = wheel_bytes
+        elif wheel_bytes != expected_bytes:
+            raise WheelArtifactError("retained automatic wheel artifacts collide with different bytes")
+        if expected_publisher_run_id is not None and publisher_run_id != expected_publisher_run_id:
+            continue
+        if (
+            expected_publisher_run_attempt is not None
+            and publisher_run_attempt != expected_publisher_run_attempt
+        ):
+            continue
+        if expected_publisher_trigger is not None and publisher_trigger != expected_publisher_trigger:
+            continue
         verified.append((publisher_run_id, publisher_run_attempt, artifact_id, wheel, identity))
+    if not verified:
+        raise WheelArtifactError("no retained automatic wheel artifact matches the required publisher identity")
     # Keep the first published identity stable so a byte-identical retry cannot
     # change signed bundle inputs after an immutable Release already exists.
     _run_id, _run_attempt, _artifact_id, wheel, identity = min(
@@ -445,6 +466,9 @@ def parser() -> argparse.ArgumentParser:
     create.add_argument("--source-ci-run-attempt", type=int, required=True)
     create.add_argument("--publisher-run-id", type=int, required=True)
     create.add_argument("--publisher-run-attempt", type=int, required=True)
+    create.add_argument(
+        "--publisher-trigger", choices=("automatic-main", "replay"), required=True
+    )
     create.set_defaults(handler=create_artifact)
     extract = commands.add_parser("extract", help="Safely extract one downloaded artifact ZIP.")
     extract.add_argument("--archive", type=Path, required=True)
@@ -463,6 +487,9 @@ def parser() -> argparse.ArgumentParser:
     select.add_argument("--repository", required=True)
     select.add_argument("--version", required=True)
     select.add_argument("--commit", required=True)
+    select.add_argument("--publisher-run-id", type=int)
+    select.add_argument("--publisher-run-attempt", type=int)
+    select.add_argument("--publisher-trigger", choices=("automatic-main", "replay"))
     select.set_defaults(handler=select_artifact)
     return root
 

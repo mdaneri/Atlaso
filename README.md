@@ -15,6 +15,10 @@ brings infrastructure, storage, identity, networking, and lifecycle workflows in
 - **Networking** — configure interfaces, routing, DNS, DHCP, firewall policy, public services, and network boot.
 - **Lifecycle** — review desired-state changes, automate tasks, monitor health, and install signed updates.
 
+Successful `main` CI automatically publishes the immutable wheel handoff, creates the signed software Release, and
+advances `development`. Promotion to `preview` or `stable` and all OVA/virtualization production remain explicit manual
+operations.
+
 ## Start here
 
 - [Documentation](https://mdaneri.github.io/Atlaso/docs/) — browse the published Atlaso documentation.
