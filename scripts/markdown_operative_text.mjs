@@ -14,6 +14,7 @@ const htmlStack = []
 
 const suppressedTags = new Set(['del', 's', 'strike', 'script', 'style', 'pre', 'textarea', 'template'])
 const voidTags = new Set(['area', 'base', 'br', 'col', 'embed', 'hr', 'img', 'input', 'link', 'meta', 'param', 'source', 'track', 'wbr'])
+const rawTextTags = new Set(['script', 'style', 'textarea', 'title'])
 
 function hasHiddenAttributes (attributes) {
   const parsedAttributes = new Map()
@@ -30,7 +31,7 @@ function hasHiddenAttributes (attributes) {
   if ((parsedAttributes.get('aria-hidden') || '').toLowerCase() === 'true') {
     return true
   }
-  const styleValue = parsedAttributes.get('style') || ''
+  const styleValue = (parsedAttributes.get('style') || '').replace(/\/\*[\s\S]*?\*\//g, '')
   return Boolean(styleValue && /(?:display\s*:\s*none|visibility\s*:\s*hidden)/i.test(styleValue))
 }
 
@@ -42,6 +43,13 @@ function updateHtmlSuppression (content) {
   const tagPattern = /<(?<closing>\/)?(?<tag>[A-Za-z][A-Za-z0-9-]*)\b(?<attributes>(?:[^<>"']|"[^"]*"|'[^']*')*?)(?<selfClosing>\/)?\s*>/g
   for (const match of content.matchAll(tagPattern)) {
     const tag = match.groups.tag.toLowerCase()
+    const rawTextTag = htmlStack.length && htmlStack[htmlStack.length - 1].tag
+    if (
+      rawTextTags.has(rawTextTag) &&
+      !(match.groups.closing && tag === rawTextTag)
+    ) {
+      continue
+    }
     if (match.groups.closing) {
       for (let index = htmlStack.length - 1; index >= 0; index -= 1) {
         if (htmlStack[index].tag === tag) {
