@@ -434,6 +434,17 @@
       "expected_holds": []
     },
     {
+      "name": "draft-pull-request-feature-eligible",
+      "default_merge_authority": true,
+      "instructions": [
+        {
+          "text": "Implement support for draft pull requests."
+        }
+      ],
+      "generated": "Preserve default merge authority and complete the guarded merge when eligible.",
+      "expected_holds": []
+    },
+    {
       "name": "fork-pr-ineligible",
       "default_merge_authority": false,
       "instructions": [

@@ -1209,6 +1209,44 @@ def test_merge_authority_transfer_rejects_trailing_default_authority_negation(
     )
 
 
+def test_merge_authority_transfer_rejects_lexical_authority_prohibitions(
+    tmp_path: Path,
+) -> None:
+    """Verify lexical prohibitions cannot satisfy affirmative merge authority.
+
+    Args:
+        tmp_path: Temporary directory provided by pytest for isolated filesystem state.
+    """
+    for adjective in ("forbidden", "disallowed", "prohibited"):
+        case_root = tmp_path / adjective
+        path = case_root / MERGE_AUTHORITY_TRANSFER_FIXTURE_PATH
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(
+            json.dumps(
+                {
+                    "cases": [
+                        {
+                            "name": f"merge {adjective}",
+                            "default_merge_authority": True,
+                            "instructions": [{"text": "Implement the issue."}],
+                            "generated": f"Guarded squash merge is {adjective}.",
+                            "expected_holds": [],
+                        }
+                    ]
+                }
+            ),
+            encoding="utf-8",
+        )
+
+        findings = check_merge_authority_transfer_fixtures(case_root)
+
+        assert len(findings) == 1
+        assert findings[0].message == (
+            f"merge authority fixture merge {adjective} omits affirmative "
+            "default authority"
+        )
+
+
 def test_merge_authority_transfer_rejects_second_instruction_condition(
     tmp_path: Path,
 ) -> None:
@@ -1680,6 +1718,44 @@ def test_merge_authority_transfer_rejects_open_as_draft_eligibility(
     assert findings[0].message == (
         "merge authority fixture open as draft declared default authority does not "
         "match its source instructions"
+    )
+
+
+def test_merge_authority_transfer_keeps_draft_feature_work_eligible(
+    tmp_path: Path,
+) -> None:
+    """Verify feature wording about draft pull requests remains implementation work.
+
+    Args:
+        tmp_path: Temporary directory provided by pytest for isolated filesystem state.
+    """
+    path = tmp_path / MERGE_AUTHORITY_TRANSFER_FIXTURE_PATH
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(
+        json.dumps(
+            {
+                "cases": [
+                    {
+                        "name": "draft feature declared ineligible",
+                        "default_merge_authority": False,
+                        "instructions": [
+                            {"text": "Implement support for draft pull requests."}
+                        ],
+                        "generated": "Describe the requested feature.",
+                        "expected_holds": [],
+                    }
+                ]
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    findings = check_merge_authority_transfer_fixtures(tmp_path)
+
+    assert len(findings) == 1
+    assert findings[0].message == (
+        "merge authority fixture draft feature declared ineligible declared default "
+        "authority does not match its source instructions"
     )
 
 

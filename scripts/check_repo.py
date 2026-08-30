@@ -561,7 +561,8 @@ DEFAULT_MERGE_AUTHORITY_NEGATIONS = re.compile(
 DEFAULT_MERGE_AUTHORITY_TRAILING_NEGATIONS = re.compile(
     r"^\s*(?:(?:does|do|is|are|must|should|can|may|will|would)\s+"
     r"(?:not|never)|doesn't|doesn’t|isn't|isn’t|aren't|aren’t|"
-    r"cannot|can't|can’t|won't|won’t|wouldn't|wouldn’t)\b"
+    r"cannot|can't|can’t|won't|won’t|wouldn't|wouldn’t|"
+    r"(?:is|are|remains?|be)\s+(?:forbidden|disallowed|prohibited))\b"
 )
 DEFAULT_MERGE_AUTHORITY_SECOND_INSTRUCTION_CONDITIONS = re.compile(
     r"(?:only\s+)?(?:after|once|when|until)\b.{0,80}"
@@ -584,7 +585,11 @@ DEFAULT_MERGE_AUTHORITY_SOURCE_EXCLUSIONS = re.compile(
     r"(?:diagnos(?:e|tic)|investigat(?:e|ion)|analy(?:ze|sis)|assess|inspect)"
     r"[^.!?]{0,80}\b(?:without|no)\b[^.!?]{0,40}"
     r"\b(?:implement|chang|modif|edit|mak)|"
-    r"draft (?:pull request|pr)|(?:pull request|pr)[^.!?]{0,40}\bas (?:an? )?draft\b|"
+    r"(?:open(?:ing)?|create|submit|prepare|deliver|leave|keep)\s+"
+    r"(?:(?:an?|the|this)\s+)?draft (?:pull request|pr)|"
+    r"(?:open(?:ing)?|create|submit|prepare|deliver|leave|keep)\s+"
+    r"(?:(?:an?|the|this)\s+)?(?:pull request|pr)"
+    r"[^.!?]{0,20}\bas (?:an? )?draft\b|"
     r"external fork|fork pull request|from (?:an? )?fork|"
     r"private (?:vulnerability|advisory|remediation))"
 )
