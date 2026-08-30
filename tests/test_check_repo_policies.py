@@ -139,6 +139,13 @@ def test_merge_hold_directions_ignores_application_leave_open_object() -> None:
     ) == {}
 
 
+def test_merge_hold_directions_ignores_approval_state_feature() -> None:
+    """Verify approval-state feature naming cannot create a task hold."""
+    assert merge_hold_directions(
+        "Implement support for a wait for approval state in the scheduler."
+    ) == {}
+
+
 def test_merge_hold_directions_binds_withdrawal_verb_to_hold() -> None:
     """Verify feature-oriented remove wording cannot withdraw an active hold."""
     assert merge_hold_directions(
@@ -167,6 +174,13 @@ def test_merge_hold_directions_recognizes_owner_approval() -> None:
     """Verify possessive approval wording remains an explicit hold."""
     assert merge_hold_directions(
         "Implement issue #602, but wait for my approval before merging."
+    ) == {"wait for approval": "add"}
+
+
+def test_merge_hold_directions_recognizes_first_person_approval() -> None:
+    """Verify active first-person approval conditions remain explicit holds."""
+    assert merge_hold_directions(
+        "Implement issue #602, but wait until I approve."
     ) == {"wait for approval": "add"}
 
 
@@ -208,6 +222,9 @@ def test_source_authority_excludes_patch_review() -> None:
     )
     assert not source_has_default_merge_authority(
         ("Verify the implementation and report findings.",)
+    )
+    assert not source_has_default_merge_authority(
+        ("Test the implementation and report findings.",)
     )
     assert not source_has_default_merge_authority(
         ("Do not add any code; review the implementation and report findings.",)

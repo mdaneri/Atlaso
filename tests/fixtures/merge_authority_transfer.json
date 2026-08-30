@@ -144,6 +144,17 @@
       "expected_holds": []
     },
     {
+      "name": "approval-state-feature-does-not-hold-pr",
+      "default_merge_authority": true,
+      "instructions": [
+        {
+          "text": "Implement support for a wait for approval state in the scheduler."
+        }
+      ],
+      "generated": "Preserve default merge authority and complete the guarded merge when eligible.",
+      "expected_holds": []
+    },
+    {
       "name": "unrelated-pr-hold-does-not-transfer",
       "default_merge_authority": true,
       "instructions": [
@@ -369,6 +380,22 @@
         }
       ],
       "generated": "Preserve the explicit instruction to wait for my approval.",
+      "expected_holds": [
+        "wait for approval"
+      ]
+    },
+    {
+      "name": "explicit-wait-until-i-approve",
+      "default_merge_authority": true,
+      "instructions": [
+        {
+          "text": "Implement issue #602, but wait until I approve.",
+          "add_holds": [
+            "wait for approval"
+          ]
+        }
+      ],
+      "generated": "Preserve the explicit wait for approval instruction.",
       "expected_holds": [
         "wait for approval"
       ]
@@ -688,6 +715,17 @@
         }
       ],
       "generated": "Check the implementation and report findings.",
+      "expected_holds": []
+    },
+    {
+      "name": "test-implementation-ineligible",
+      "default_merge_authority": false,
+      "instructions": [
+        {
+          "text": "Test the implementation and report findings."
+        }
+      ],
+      "generated": "Test the implementation and report findings.",
       "expected_holds": []
     },
     {

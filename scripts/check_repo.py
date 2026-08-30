@@ -515,6 +515,10 @@ EXPLICIT_MERGE_HOLD_PATTERNS = {
         "wait for the maintainer’s approval",
         "wait for owner approval",
         "wait until approved",
+        "wait until i approve",
+        "wait until we approve",
+        "wait for me to approve",
+        "wait for us to approve",
         "after approval",
         "after maintainer approval",
         "once approved",
@@ -526,6 +530,10 @@ EXPLICIT_MERGE_HOLD_PATTERNS = {
         "pending approval",
         "pending maintainer approval",
         "unless approved",
+        "until i approve",
+        "until we approve",
+        "for me to approve",
+        "for us to approve",
     ),
 }
 MERGE_HOLD_WITHDRAWAL_MARKERS = (
@@ -638,7 +646,7 @@ DEFAULT_MERGE_AUTHORITY_WORKFLOW_EXCLUSIONS = re.compile(
     r"private (?:vulnerability|advisory|remediation))\b"
 )
 DEFAULT_MERGE_AUTHORITY_DIRECT_REVIEW = re.compile(
-    r"(?:review|inspect|check|verif(?:y|ication)|validat(?:e|ion)|"
+    r"(?:review|inspect|check|test|verif(?:y|ication)|validat(?:e|ion)|"
     r"analy(?:ze|sis)|assess|audit|evaluat(?:e|ion))\s+"
     r"(?:the\s+)?(?:implementation|changes?|code|patch|fix(?:es)?)\b"
     r"(?:\s+and\s+(?:report|summarize|describe)\b[^;.!?]*)?"
@@ -891,8 +899,26 @@ def _hold_targets_non_pr_object(
         offset: Character offset where the hold phrase begins.
         pattern: Exact hold phrase matched in the segment.
     """
-    if hold not in {"do not merge", "leave open"}:
-        return False
+    hold_end = offset + len(pattern)
+    for marker in MERGE_HOLD_WITHDRAWAL_MARKERS:
+        marker_offset = segment.find(marker)
+        while marker_offset >= 0:
+            marker_end = marker_offset + len(marker)
+            if marker_end <= offset and (
+                MERGE_HOLD_WITHDRAWAL_BEFORE_HOLD.fullmatch(
+                    segment[marker_end:offset]
+                )
+                is not None
+            ):
+                return False
+            if hold_end <= marker_offset and (
+                MERGE_HOLD_WITHDRAWAL_AFTER_HOLD.fullmatch(
+                    segment[hold_end:marker_offset]
+                )
+                is not None
+            ):
+                return False
+            marker_offset = segment.find(marker, marker_offset + 1)
     suffix = segment[offset + len(pattern) : offset + len(pattern) + 80]
     return MERGE_HOLD_NON_PR_OBJECT.search(suffix) is not None
 
