@@ -189,7 +189,11 @@ def test_verify_artifact_binds_repository_version_commit_digest_and_runs(tmp_pat
 
 
 def test_verify_artifact_accepts_legacy_identity_without_publisher_trigger(tmp_path: Path) -> None:
-    """Keep retained pre-trigger handoffs available for manual recovery."""
+    """Keep retained pre-trigger handoffs available for manual recovery.
+
+    Args:
+        tmp_path: Isolated artifact directory.
+    """
 
     wheel, identity = _write_candidate(
         tmp_path,

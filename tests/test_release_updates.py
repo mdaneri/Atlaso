@@ -200,7 +200,12 @@ def test_channel_pointer_must_match_named_key(trust):
 def test_automatic_development_promotion_refuses_signed_channel_downgrade(
     trust, tmp_path: Path
 ) -> None:
-    """Keep a historical successful-main rerun from moving development backward."""
+    """Keep a historical successful-main rerun from moving development backward.
+
+    Args:
+        trust: Temporary signing key and trust directory fixture.
+        tmp_path: Isolated channel publication directory.
+    """
 
     private_key, trust_dir = trust
     destination = tmp_path / "channels" / "development"
@@ -237,7 +242,12 @@ def test_automatic_development_promotion_refuses_signed_channel_downgrade(
 def test_monotonic_promotion_requires_the_selected_existing_pointer_key(
     trust, tmp_path: Path
 ) -> None:
-    """Reject a valid pointer signed by a different key in the trust directory."""
+    """Reject a valid pointer signed by a different key in the trust directory.
+
+    Args:
+        trust: Temporary signing key and trust directory fixture.
+        tmp_path: Isolated channel publication directory.
+    """
 
     _private_key, trust_dir = trust
     other_key = Ed25519PrivateKey.generate()
