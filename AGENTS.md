@@ -533,6 +533,9 @@ The following cross-cutting boundaries always apply:
   state as defense in depth; it is not a reproducible Photon image builder and does not claim to authenticate the entire
   root filesystem against a compromised producer. Keep public-repository Windows runners offline except for the approved
   release, bind them to one release-specific label, and destroy or sanitize them immediately afterward.
+  Before evidence validation, index construction, signing, attestation, or publication, require the complete
+  suffix-matching Hyper-V archive-name set to equal exactly the single version-derived canonical filename. Stable
+  promotion must independently enforce the same signed asset-set invariant before reusing those bytes.
 - First-boot depot and backup initialization requires the root-owned image policy, exact platform SCSI identities,
   topology-derived `atlaso-path-*` links, and exact 500 GiB capacities. Complete an all-disk preflight before `mkfs` and
   fail closed for missing, extra, reordered, ambiguous, read-only, in-use, or identity/capacity-mismatched disks.
@@ -711,8 +714,11 @@ The following cross-cutting boundaries always apply:
   the read-only GitHub Actions token to Packer only through `PACKER_GITHUB_API_TOKEN` on the canonical validation step
   for protected events and same-repository pull requests. Keep fork validation tokenless, checkout credentials
   unpersisted, and token material out of output, files, caches, and artifacts.
-- Default VMware Workstation GUI image builds must start or reuse a responsive Workstation UI in a process separate from
-  Packer before the synchronous `vmrun` start transition. Bind bounded sanitized startup diagnostics to the expected
+- Default VMware Workstation GUI image builds must repair only exact missing Atlaso registrations inside the configured
+  output scope while the Workstation UI is closed, then start or reuse a responsive Workstation UI in a process separate
+  from Packer before the synchronous `vmrun` start transition. Keep full artifact cleanup after network preflight, and
+  retain the exact close-the-UI refusal when scoped repair is required. Bind bounded sanitized startup diagnostics to
+  the expected
   VMX filesystem identity, provider inventory, exact running state, and configured builder TCP/22 endpoint until SSH
   provisioning begins. Remove raw Packer debug-log environment variables from the monitored child because they bypass
   redaction. On timeout, terminate only the Packer process tree and honor `-PackerOnError cleanup` through the checked

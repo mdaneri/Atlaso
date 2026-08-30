@@ -247,6 +247,17 @@ def verify(
     }
     if verified_names != actual_names:
         raise SystemExit("artifact index does not cover the exact asset set")
+    expected_hyperv = {f"atlaso-v{version}-hyperv-x86_64.zip"}
+    actual_hyperv = {
+        name
+        for name in verified_names
+        if name.lower().endswith("-hyperv-x86_64.zip")
+    }
+    if actual_hyperv != expected_hyperv:
+        raise SystemExit(
+            "artifact index requires the exact canonical Hyper-V asset set; "
+            f"expected {sorted(expected_hyperv)}, found {sorted(actual_hyperv)}"
+        )
     return {
         "version": version,
         "source_commit": source_commit,
