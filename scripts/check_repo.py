@@ -3040,6 +3040,15 @@ def _setup_python_step_uses_cache(step_lines: list[str]) -> bool:
     if not any(re.search(r"\buses:\s*['\"]?actions/setup-python@", line) for line in lines):
         return False
     def enabled(value: str) -> bool:
+        """Return whether a cache input value enables setup-python caching.
+
+        Args:
+            value: YAML scalar value assigned to the setup-python cache input.
+
+        Returns:
+            True unless the scalar is provably empty or null.
+        """
+
         return value.strip() not in {"", "''", '""', "null", "~"}
 
     joined = " ".join(line.strip() for line in lines)
