@@ -2,8 +2,12 @@
 .SYNOPSIS
 Run the VMware Workstation lifecycle interop scenario for Atlaso image regression and backup/restore verification.
 
-.PARAMETER LabName
-Lifecycle lab name prefix for created VM artifacts.
+.PARAMETER PullRequestNumber
+Exact positive GitHub pull-request number that owns this lifecycle lab.
+.PARAMETER Purpose
+Short purpose text sanitized into the canonical lifecycle identity.
+.PARAMETER CollisionSuffix
+Exact collision-safe suffix that distinguishes this lab for the pull request.
 .PARAMETER ApplianceVmxPath
 Path to the appliance source VMX.
 .PARAMETER ClientVmdkPath
@@ -65,7 +69,12 @@ Emit and return planning JSON without executing scenarios.
 #>
 [CmdletBinding(SupportsShouldProcess = $true)]
 param(
-    [string]$LabName = 'AtlasoWorkstationLifecycle',
+    [Parameter(Mandatory = $true)]
+    [ValidateRange(1, 2147483647)]
+    [int]$PullRequestNumber,
+    [string]$Purpose = 'lifecycle',
+    [Parameter(Mandatory = $true)]
+    [string]$CollisionSuffix,
     [Parameter(Mandatory = $true)]
     [string]$ApplianceVmxPath,
     [Parameter(Mandatory = $true)]
@@ -100,6 +109,24 @@ param(
 )
 
 $ErrorActionPreference = 'Stop'
+Import-Module (Join-Path $PSScriptRoot 'Atlaso.VmwareTestIdentity.psm1') -Force
+
+$repoRoot = Resolve-Path -LiteralPath (Join-Path $PSScriptRoot '..\..\..')
+$vmIdentity = New-AtlasoVmwareTestIdentity `
+    -PullRequestNumber $PullRequestNumber `
+    -Purpose $Purpose `
+    -CollisionSuffix $CollisionSuffix
+$LabName = $vmIdentity.Name
+$resultRoot = Assert-AtlasoVmwareIdentityDirectory `
+    -Path (Join-Path $repoRoot "test-results\vmware-workstation-lifecycle\$LabName") `
+    -ExpectedName $LabName `
+    -ParameterName 'LifecycleResultDirectory'
+if (Test-Path -LiteralPath $resultRoot) {
+    throw "Refusing lifecycle reuse because the exact PR-owned result root already exists: $resultRoot"
+}
+$vmRoot = Join-Path $resultRoot 'vms'
+$seedRoot = Join-Path $resultRoot 'seed'
+$createdVmxPaths = New-Object System.Collections.Generic.List[string]
 
 # Plan-only execution consumes no credentials. Runtime execution imports the
 # current-user-protected bundle before VMware or the harness needs plaintext.
@@ -143,8 +170,6 @@ if (-not $PlanOnly) {
 . (Join-Path $PSScriptRoot 'Atlaso.WorkstationFirstBoot.ps1')
 Import-Module (Join-Path $PSScriptRoot 'Atlaso.WorkstationCleanup.psm1') -Force
 Import-Module (Join-Path $PSScriptRoot 'Atlaso.VmwarePayload.psm1') -Force
-
-$repoRoot = Resolve-Path -LiteralPath (Join-Path $PSScriptRoot '..\..\..')
 if (-not $SshPassword) {
     $SshPassword = $AdminPassword
 }
@@ -222,12 +247,6 @@ function Invoke-LifecyclePython {
     }
 }
 
-$resultStamp = Get-Date -Format 'yyyyMMdd-HHmmss'
-$resultRoot = Join-Path $repoRoot "test-results\vmware-workstation-lifecycle\$resultStamp"
-$vmRoot = Join-Path $resultRoot 'vms'
-$seedRoot = Join-Path $resultRoot 'seed'
-$createdVmxPaths = New-Object System.Collections.Generic.List[string]
-
 <#
 .SYNOPSIS
 Resolve the vmrun path from a user override or common install locations.
@@ -297,8 +316,9 @@ function Assert-SafeLifecycleName {
     if ($reserved -contains $Name) {
         throw "Refusing to use reserved VM name '$Name'. Lifecycle tests must use a separate VM set."
     }
-    if (-not $Name.StartsWith($LabName)) {
-        throw "Refusing VM name '$Name' because it does not start with lifecycle lab prefix '$LabName'."
+    $escapedLabName = [regex]::Escape($LabName)
+    if ($Name -cnotmatch "^$escapedLabName-(Appliance|ClientA|ClientB|ESXiPXE)$") {
+        throw "Refusing VM name '$Name' because it is not an exact child of PR-owned lifecycle lab '$LabName'."
     }
 }
 
@@ -473,7 +493,7 @@ function New-LanSegmentId {
 
     $sha = [System.Security.Cryptography.SHA256]::Create()
     try {
-        $bytes = $sha.ComputeHash([System.Text.Encoding]::UTF8.GetBytes("AtlasoWorkstationLifecycle:$Name"))
+        $bytes = $sha.ComputeHash([System.Text.Encoding]::UTF8.GetBytes("${LabName}:$Name"))
     } finally {
         $sha.Dispose()
     }
@@ -1530,9 +1550,13 @@ $planClientVmdk = if (Test-Path -LiteralPath $ClientVmdkPath) { (Resolve-Path -L
 $plan = [ordered]@{
     name                  = 'vmware workstation lifecycle interop'
     lab_name              = $LabName
+    pull_request_number   = $PullRequestNumber
+    purpose               = $vmIdentity.Purpose
+    collision_suffix      = $vmIdentity.CollisionSuffix
     appliance_vmx         = $planApplianceVmx
     client_vmdk           = $planClientVmdk
     result_root           = $resultRoot
+    lifecycle_appliance_vmx = (Join-Path $vmRoot "$applianceName\$applianceName.vmx")
     management_network    = $ManagementNetwork
     site_a_network        = $SiteANetwork
     trunk_network         = $TrunkNetwork
@@ -1547,13 +1571,19 @@ $plan = [ordered]@{
     esxi_pxe_mac          = $esxiMacAddress
     workstation_fidelity  = 'Workstation vmnets are isolated layer-2 segments; tagged trunk behavior requires a compatible upstream virtual-network configuration.'
 }
+$planJson = $plan | ConvertTo-Json -Depth 5
 
 if ($PlanOnly) {
     New-Item -ItemType Directory -Force -Path $resultRoot | Out-Null
-    $plan | ConvertTo-Json -Depth 5 | Set-Content -LiteralPath (Join-Path $resultRoot 'plan.json') -Encoding UTF8
-    $plan | ConvertTo-Json -Depth 5
+    $planJson | Set-Content -LiteralPath (Join-Path $resultRoot 'plan.json') -Encoding UTF8
+    $planJson
     return
 }
+
+# Cleanup must retain the same identity proof for a kept runtime lab that it
+# receives for a plan-only lab. Publish it before any VM can be created.
+New-Item -ItemType Directory -Force -Path $resultRoot | Out-Null
+$planJson | Set-Content -LiteralPath (Join-Path $resultRoot 'plan.json') -Encoding UTF8
 
 $firstBootOvfEnvironment = New-AtlasoWorkstationOvfEnvironment `
     -Fqdn (New-AtlasoWorkstationFqdn -Name $applianceName) `
@@ -1563,6 +1593,102 @@ $firstBootOvfEnvironment = New-AtlasoWorkstationOvfEnvironment `
 
 New-Item -ItemType Directory -Force -Path $vmRoot | Out-Null
 New-Item -ItemType Directory -Force -Path $seedRoot | Out-Null
+$identityPath = Join-Path $resultRoot 'vmware-identity.json'
+$identityVms = [System.Collections.Generic.List[object]]::new()
+
+<#
+.SYNOPSIS
+Durably refresh the lifecycle identity evidence for every admitted VM record.
+#>
+function Write-LifecycleIdentityEvidence {
+    $identityJson = [ordered]@{
+        lab_name            = $LabName
+        pull_request_number = $PullRequestNumber
+        purpose             = $vmIdentity.Purpose
+        collision_suffix    = $vmIdentity.CollisionSuffix
+        result_root         = $resultRoot
+        log_identity        = $LabName
+        vms                 = @($identityVms)
+    } | ConvertTo-Json -Depth 5
+
+    # Keep every observable ownership manifest complete. The temporary file is
+    # created beside the destination so the final replace stays on one volume.
+    $identityTempPath = Join-Path $resultRoot ('.vmware-identity.{0}.tmp' -f [guid]::NewGuid().ToString('N'))
+    try {
+        [System.IO.File]::WriteAllText(
+            $identityTempPath,
+            $identityJson,
+            [System.Text.UTF8Encoding]::new($false)
+        )
+        [System.IO.File]::Move($identityTempPath, $identityPath, $true)
+    }
+    finally {
+        if (Test-Path -LiteralPath $identityTempPath -PathType Leaf) {
+            Remove-Item -LiteralPath $identityTempPath -Force
+        }
+    }
+}
+
+<#
+.SYNOPSIS
+Publish one expected VM identity before running its artifact-producing action.
+
+.PARAMETER Role
+Canonical lifecycle role recorded for the VM.
+
+.PARAMETER DisplayName
+Exact canonical VMware display name.
+
+.PARAMETER VmxPath
+Deterministic absolute VMX path the action must produce.
+
+.PARAMETER Action
+Artifact-producing action that must return the exact VMX path.
+#>
+function Invoke-TrackedLifecycleVmCreation {
+    param(
+        [Parameter(Mandatory = $true)][string]$Role,
+        [Parameter(Mandatory = $true)][string]$DisplayName,
+        [Parameter(Mandatory = $true)][string]$VmxPath,
+        [Parameter(Mandatory = $true)][scriptblock]$Action
+    )
+
+    $expectedVmxPath = [System.IO.Path]::GetFullPath($VmxPath)
+    $record = [ordered]@{
+        role         = $Role
+        display_name = $DisplayName
+        vmx          = $expectedVmxPath
+    }
+    $identityVms.Add($record)
+    # Publish ownership before an external copy or VMX writer can leave an
+    # artifact behind. A failure with no VMX retracts only this pending record.
+    Write-LifecycleIdentityEvidence
+    try {
+        $createdVmxPath = & $Action
+        Assert-AtlasoVmwareOwnedVmx `
+            -VmxPath $createdVmxPath `
+            -ExpectedDirectory (Split-Path -Parent $expectedVmxPath) `
+            -ExpectedName $DisplayName | Out-Null
+        if (-not (Resolve-Path -LiteralPath $createdVmxPath).Path.Equals(
+                $expectedVmxPath,
+                [System.StringComparison]::OrdinalIgnoreCase
+            )) {
+            throw "Lifecycle VM creation returned a VMX outside its published identity: $createdVmxPath"
+        }
+        Write-LifecycleIdentityEvidence
+        return $expectedVmxPath
+    }
+    catch {
+        $failure = $_
+        if (-not (Test-Path -LiteralPath $expectedVmxPath -PathType Leaf)) {
+            $identityVms.Remove($record) | Out-Null
+            Write-LifecycleIdentityEvidence
+        }
+        throw $failure
+    }
+}
+
+Write-LifecycleIdentityEvidence
 
 $clientASeedIso = ''
 $clientBSeedIso = ''
@@ -1577,19 +1703,68 @@ try {
         New-CloudInitSeedIso -Path $clientASeedIso -HostName ($clientAName.ToLowerInvariant())
         New-CloudInitSeedIso -Path $clientBSeedIso -HostName ($clientBName.ToLowerInvariant())
     }
-    $applianceVmx = Copy-VmDirectory -SourceVmx $ApplianceVmxPath -DestinationDirectory (Join-Path $vmRoot $applianceName) -Name $applianceName
+    $applianceDirectory = Join-Path $vmRoot $applianceName
+    $applianceVmx = Invoke-TrackedLifecycleVmCreation `
+        -Role 'appliance' `
+        -DisplayName $applianceName `
+        -VmxPath (Join-Path $applianceDirectory "$applianceName.vmx") `
+        -Action {
+            Copy-VmDirectory `
+                -SourceVmx $ApplianceVmxPath `
+                -DestinationDirectory $applianceDirectory `
+                -Name $applianceName
+        }
     Set-VmxNetworkAdapter -Path $applianceVmx -Index 0 -Vmnet $ManagementNetwork
     Set-AtlasoWorkstationOvfEnvironment -VmxPath $applianceVmx -OvfEnvironment $firstBootOvfEnvironment
     if (-not $OidcOnly) {
         Set-VmxNetworkAdapter -Path $applianceVmx -Index 1 -Vmnet $SiteANetwork
         Set-VmxNetworkAdapter -Path $applianceVmx -Index 2 -Vmnet $TrunkNetwork
         Set-VmxNetworkAdapter -Path $applianceVmx -Index 3 -Vmnet $SiteBNetwork
-        $clientAVmx = New-ClientVm -Name $clientAName -Directory (Join-Path $vmRoot $clientAName) -DiskPath $ClientVmdkPath -SeedIso $clientASeedIso -Networks @($ManagementNetwork, $SiteANetwork, $TrunkNetwork)
-        $clientBVmx = New-ClientVm -Name $clientBName -Directory (Join-Path $vmRoot $clientBName) -DiskPath $ClientVmdkPath -SeedIso $clientBSeedIso -Networks @($ManagementNetwork, $SiteBNetwork)
+        $clientADirectory = Join-Path $vmRoot $clientAName
+        $clientAVmx = Invoke-TrackedLifecycleVmCreation `
+            -Role 'client-a' `
+            -DisplayName $clientAName `
+            -VmxPath (Join-Path $clientADirectory "$clientAName.vmx") `
+            -Action {
+                New-ClientVm `
+                    -Name $clientAName `
+                    -Directory $clientADirectory `
+                    -DiskPath $ClientVmdkPath `
+                    -SeedIso $clientASeedIso `
+                    -Networks @($ManagementNetwork, $SiteANetwork, $TrunkNetwork)
+            }
+        $clientBDirectory = Join-Path $vmRoot $clientBName
+        $clientBVmx = Invoke-TrackedLifecycleVmCreation `
+            -Role 'client-b' `
+            -DisplayName $clientBName `
+            -VmxPath (Join-Path $clientBDirectory "$clientBName.vmx") `
+            -Action {
+                New-ClientVm `
+                    -Name $clientBName `
+                    -Directory $clientBDirectory `
+                    -DiskPath $ClientVmdkPath `
+                    -SeedIso $clientBSeedIso `
+                    -Networks @($ManagementNetwork, $SiteBNetwork)
+            }
     }
     $esxiVmx = ''
     if ($FullEsxiPxeInstall) {
-        $esxiVmx = New-EsxiPxeVm -Name $esxiName -Directory (Join-Path $vmRoot $esxiName) -Network $SiteANetwork -MacAddress $esxiMacAddress
+        $esxiDirectory = Join-Path $vmRoot $esxiName
+        $esxiVmx = Invoke-TrackedLifecycleVmCreation `
+            -Role 'esxi-pxe' `
+            -DisplayName $esxiName `
+            -VmxPath (Join-Path $esxiDirectory "$esxiName.vmx") `
+            -Action {
+                New-EsxiPxeVm `
+                    -Name $esxiName `
+                    -Directory $esxiDirectory `
+                    -Network $SiteANetwork `
+                    -MacAddress $esxiMacAddress
+            }
+    }
+    Write-Host "Lifecycle identity evidence: $identityPath"
+    foreach ($identityVm in $identityVms) {
+        Write-Host "Lifecycle VM [$($identityVm.role)]: $($identityVm.display_name) => $($identityVm.vmx)"
     }
 
     $vmxsToStart = @($applianceVmx)
