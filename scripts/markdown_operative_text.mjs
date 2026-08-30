@@ -200,7 +200,9 @@ function isTransparentColor (value) {
   if (hexadecimal) {
     return Number.parseInt(hexadecimal[1] || hexadecimal[2], 16) === 0
   }
-  const alpha = value.match(/(?:,|\/)\s*([+-]?(?:\d+(?:\.\d*)?|\.\d+))(%?)\s*\)$/)
+  const alpha = value.match(
+    /(?:,|\/)\s*([+-]?(?:\d+(?:\.\d*)?|\.\d+)(?:e[+-]?\d+)?)(%?)\s*\)$/i
+  )
   if (!alpha) return false
   const numericAlpha = Number.parseFloat(alpha[1])
   return numericAlpha <= 0
@@ -527,7 +529,12 @@ function updateHtmlSuppression (content, inlineContext = false) {
         }
       }
     }
-    const attributes = match.groups.attributes
+    let attributes = match.groups.attributes
+    let selfClosing = Boolean(match.groups.selfClosing)
+    if (selfClosing && /=\s*[^\s"'=<>`]*$/.test(attributes)) {
+      attributes += '/'
+      selfClosing = false
+    }
     const inheritedCustomProperties = htmlStack.length
       ? htmlStack[htmlStack.length - 1].customProperties
       : new Map()
@@ -541,7 +548,7 @@ function updateHtmlSuppression (content, inlineContext = false) {
     const foreign = tag === 'svg' || tag === 'math' || Boolean(
       htmlStack.length && htmlStack[htmlStack.length - 1].foreign
     )
-    if (!match.groups.selfClosing || (!voidTags.has(tag) && !foreign)) {
+    if (!selfClosing || (!voidTags.has(tag) && !foreign)) {
       const entry = {
         tag,
         irreversible: suppressedTags.has(tag) || suppression.irreversible,
