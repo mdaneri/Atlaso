@@ -552,7 +552,8 @@ The following cross-cutting boundaries always apply:
   protected **Publish appliance release** workflow, which consumes and records the exact wheel without rebuilding or
   substituting it, publishes the signed `vX.Y.Z` software bundle, and advances `development` while retaining all
   CPython 3.14 wheelhouse, signing, immutable publication, Pages, and live-verification gates. Manual exact-SHA dispatch
-  remains the recovery entry point. Byte-identical automatic
+  remains the recovery entry point. Authenticate the existing `development` pointer under the shared Pages lock and
+  refuse to replace it with an older semantic version. Byte-identical automatic
   retries are valid, but the consumer must stage them by publisher run plus artifact ID, validate every recorded attempt,
   and preserve the earliest retained publisher run-and-attempt identity so a later retry cannot change signed bundle
   inputs. Divergent collisions fail closed. For an expired handoff, allow only the protected **Replay Python wheel**

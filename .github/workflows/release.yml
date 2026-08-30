@@ -453,7 +453,8 @@ jobs:
             --trusted-key image/common/update-trust/${RELEASE_KEY_ID}.pem \
             --site-root "$SITE_ROOT/updates" \
             --signing-key "$RUNNER_TEMP/release-signing-key.pem" \
-            --signing-key-id "$RELEASE_KEY_ID"
+            --signing-key-id "$RELEASE_KEY_ID" \
+            --refuse-downgrade
           install -m 0644 docs/assets/brand/atlaso-logo-horizontal-light.svg "$SITE_ROOT/atlaso-logo.svg"
           cat > "$SITE_ROOT/index.html" <<'EOF'
           <!doctype html>

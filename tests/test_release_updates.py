@@ -52,6 +52,10 @@ published_channel_check = load_script(
     "check_published_release_channel_script",
     "check_published_release_channel.py",
 )
+promote_release_channel = load_script(
+    "promote_release_channel_script",
+    "promote_release_channel.py",
+)
 
 
 def canonical(payload: dict) -> bytes:
@@ -191,6 +195,43 @@ def test_channel_pointer_must_match_named_key(trust):
     )
     with pytest.raises(ReleaseManifestError, match="key IDs do not match"):
         verify_signed_json(mismatched_raw, mismatched_signature, trust_dir=trust_dir, document_kind="channel")
+
+
+def test_automatic_development_promotion_refuses_signed_channel_downgrade(
+    trust, tmp_path: Path
+) -> None:
+    """Keep a historical successful-main rerun from moving development backward."""
+
+    private_key, trust_dir = trust
+    destination = tmp_path / "channels" / "development"
+    destination.mkdir(parents=True)
+    channel = {
+        "schema_version": 2,
+        "kind": "atlaso-channel",
+        "channel": "development",
+        "version": "0.9.259",
+        "git_commit": "a" * 40,
+        "release_manifest_url": "https://example.test/releases/v0.9.259/release-manifest.json",
+        "issued_at": "2026-08-30T01:02:03Z",
+        "signing_key_id": KEY_ID,
+    }
+    raw, signature = signed(channel, private_key)
+    (destination / "manifest.json").write_bytes(raw)
+    (destination / "manifest.json.sig").write_bytes(signature)
+
+    with pytest.raises(SystemExit, match="refusing to move development backward"):
+        promote_release_channel.refuse_channel_downgrade(
+            destination,
+            channel="development",
+            incoming_version="0.9.258",
+            trusted_key=trust_dir / f"{KEY_ID}.pem",
+        )
+    promote_release_channel.refuse_channel_downgrade(
+        destination,
+        channel="development",
+        incoming_version="0.9.259",
+        trusted_key=trust_dir / f"{KEY_ID}.pem",
+    )
 
 
 def test_signed_inventory_release_verification_detects_tampering(trust):
@@ -1324,6 +1365,7 @@ def test_release_workflows_use_successful_main_sha_and_promote_without_rebuildin
     assert "The HTML page is informational." in publication
     assert "python scripts/check_published_release_channel.py" in publication
     assert "--expected-channel development" in publication
+    assert "--refuse-downgrade" in publication
     publication_check = publication.split(
         "- name: Verify the published development channel",
         1,

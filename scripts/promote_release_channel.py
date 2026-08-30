@@ -6,6 +6,7 @@ from __future__ import annotations
 import argparse
 import base64
 import json
+import re
 import sys
 from datetime import datetime, timezone
 from pathlib import Path
@@ -23,6 +24,8 @@ from atlaso.app.services.release_updates import (  # noqa: E402 - repository roo
     verify_signed_json,
 )
 
+SEMVER_PATTERN = re.compile(r"^([0-9]+)\.([0-9]+)\.([0-9]+)$")
+
 
 def canonical_json(payload: dict) -> bytes:
     """Return canonical json.
@@ -31,6 +34,48 @@ def canonical_json(payload: dict) -> bytes:
         payload: Validated request or task payload consumed by the operation.
     """
     return (json.dumps(payload, indent=2, sort_keys=True) + "\n").encode("utf-8")
+
+
+def refuse_channel_downgrade(
+    destination: Path,
+    *,
+    channel: str,
+    incoming_version: str,
+    trusted_key: Path,
+) -> None:
+    """Reject replacement of a signed channel with an older release.
+
+    Args:
+        destination: Existing channel directory in the checked-out Pages tree.
+        channel: Exact channel being updated.
+        incoming_version: Candidate semantic version.
+        trusted_key: Named public key used to authenticate the existing pointer.
+    """
+
+    manifest = destination / "manifest.json"
+    signature = destination / "manifest.json.sig"
+    if not manifest.exists() and not signature.exists():
+        return
+    if not manifest.is_file() or not signature.is_file():
+        raise SystemExit(f"existing {channel} channel pointer is incomplete")
+    existing = verify_signed_json(
+        manifest.read_bytes(),
+        signature.read_bytes(),
+        trust_dir=trusted_key.parent,
+        document_kind="channel",
+    )
+    if existing["channel"] != channel:
+        raise SystemExit(f"existing channel pointer is not for {channel}")
+    existing_match = SEMVER_PATTERN.fullmatch(existing["version"])
+    incoming_match = SEMVER_PATTERN.fullmatch(incoming_version)
+    if existing_match is None or incoming_match is None:
+        raise SystemExit("channel versions must use semantic X.Y.Z")
+    existing_version = tuple(int(part) for part in existing_match.groups())
+    candidate_version = tuple(int(part) for part in incoming_match.groups())
+    if candidate_version < existing_version:
+        raise SystemExit(
+            f"refusing to move {channel} backward from {existing['version']} to {incoming_version}"
+        )
 
 
 def main() -> int:
@@ -52,6 +97,7 @@ def main() -> int:
     parser.add_argument("--site-root", type=Path, required=True)
     parser.add_argument("--signing-key", type=Path, required=True)
     parser.add_argument("--signing-key-id", required=True)
+    parser.add_argument("--refuse-downgrade", action="store_true")
     args = parser.parse_args()
 
     raw_release = (
@@ -76,6 +122,14 @@ def main() -> int:
     )
     if verified != release:
         raise SystemExit("verified release manifest does not match the promotion input")
+    destination = args.site_root / "channels" / args.channel
+    if args.refuse_downgrade:
+        refuse_channel_downgrade(
+            destination,
+            channel=args.channel,
+            incoming_version=release["version"],
+            trusted_key=args.trusted_key,
+        )
     channel = {
         "schema_version": 2,
         "kind": "atlaso-channel",
@@ -90,7 +144,6 @@ def main() -> int:
     key = serialization.load_pem_private_key(args.signing_key.read_bytes(), password=None)
     if not isinstance(key, Ed25519PrivateKey):
         raise SystemExit("channel signing key must be Ed25519")
-    destination = args.site_root / "channels" / args.channel
     destination.mkdir(parents=True, exist_ok=True)
     (destination / "manifest.json").write_bytes(raw_channel)
     (destination / "manifest.json.sig").write_bytes(

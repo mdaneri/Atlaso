@@ -721,7 +721,8 @@ Terminal order:
   idempotency checks. A rerun after tag/release publication must verify the existing asset bytes before retrying channel
   advancement. Keep the protected GitHub-hosted workflow limited to the signed software/update bundle, immutable
   `vX.Y.Z` Release, and `development` channel. Retain exact-successful-main-SHA manual dispatch for idempotent recovery;
-  replayed historical handoffs must not automatically move `development` backward.
+  authenticate the existing pointer under the shared Pages lock and refuse semantic-version downgrades so historical
+  CI reruns and replayed handoffs cannot move `development` backward.
   Resolve retained wheel candidates and verify any existing immutable Release in an unlocked, read-only prerequisite
   job. Pass those bounded verified inputs through the current workflow run, and acquire the shared Pages lock only for
   the protected signing, Release publication, channel mutation, and live publication verification stages.

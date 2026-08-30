@@ -153,6 +153,8 @@ GitHub is the default distribution origin:
   workflow validates every retained artifact with that name, accepts only byte-identical retries, revalidates the
   selected CI identity and embedded wheel metadata, and records the handoff inside the signed appliance bundle. It
   never rebuilds or substitutes the application wheel.
+  Under the shared Pages lock it authenticates the existing `development` pointer and refuses a semantic-version
+  downgrade, including when successful CI is rerun for a historical commit.
 - The manual promotion workflow advances `preview` or `stable` to an existing verified release. Promotion never rebuilds
   the artifact.
 - The shipped default is `stable`. Every Pages writer refuses to publish a tree where its manifest or detached
