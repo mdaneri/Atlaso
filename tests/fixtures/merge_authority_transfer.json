@@ -78,6 +78,28 @@
       "expected_holds": []
     },
     {
+      "name": "existing-pr-feedback-work",
+      "default_merge_authority": true,
+      "instructions": [
+        {
+          "text": "Address review feedback on existing ordinary PR #620."
+        }
+      ],
+      "generated": "Preserve default merge authority and complete the guarded merge when eligible.",
+      "expected_holds": []
+    },
+    {
+      "name": "quoted-hold-documentation-work",
+      "default_merge_authority": true,
+      "instructions": [
+        {
+          "text": "Update the documentation explaining the \"do not merge\" hold."
+        }
+      ],
+      "generated": "Preserve default merge authority and complete the guarded merge when eligible.",
+      "expected_holds": []
+    },
+    {
       "name": "manual-merge-with-auto-merge-disabled",
       "default_merge_authority": true,
       "instructions": [
@@ -180,6 +202,26 @@
         },
         {
           "text": "The earlier do not merge instruction is withdrawn.",
+          "remove_holds": [
+            "do not merge"
+          ]
+        }
+      ],
+      "generated": "The hold was withdrawn; continue through guarded squash merge when every gate passes.",
+      "expected_holds": []
+    },
+    {
+      "name": "standalone-merge-permission-withdrawal",
+      "default_merge_authority": true,
+      "instructions": [
+        {
+          "text": "Implement the change, but do not merge.",
+          "add_holds": [
+            "do not merge"
+          ]
+        },
+        {
+          "text": "You may merge now.",
           "remove_holds": [
             "do not merge"
           ]

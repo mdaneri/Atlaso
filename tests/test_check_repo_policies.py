@@ -1020,6 +1020,89 @@ def test_merge_authority_transfer_applies_structured_hold_withdrawal(
     assert check_merge_authority_transfer_fixtures(tmp_path) == []
 
 
+def test_merge_authority_transfer_applies_standalone_merge_permission(
+    tmp_path: Path,
+) -> None:
+    """Verify an unconditional merge permission removes an active hold.
+
+    Args:
+        tmp_path: Temporary directory provided by pytest for isolated filesystem state.
+    """
+    path = tmp_path / MERGE_AUTHORITY_TRANSFER_FIXTURE_PATH
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(
+        json.dumps(
+            {
+                "cases": [
+                    {
+                        "name": "standalone merge permission",
+                        "default_merge_authority": True,
+                        "instructions": [
+                            {
+                                "text": "Implement the change, but do not merge.",
+                                "add_holds": ["do not merge"],
+                            },
+                            {
+                                "text": "You may merge now.",
+                                "remove_holds": ["do not merge"],
+                            },
+                        ],
+                        "generated": "Continue through guarded squash merge.",
+                        "expected_holds": [],
+                    }
+                ]
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    assert check_merge_authority_transfer_fixtures(tmp_path) == []
+
+
+def test_merge_authority_transfer_ignores_quoted_hold_discussion(
+    tmp_path: Path,
+) -> None:
+    """Verify documentation discussing quoted hold text does not add a hold.
+
+    Args:
+        tmp_path: Temporary directory provided by pytest for isolated filesystem state.
+    """
+    path = tmp_path / MERGE_AUTHORITY_TRANSFER_FIXTURE_PATH
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(
+        json.dumps(
+            {
+                "cases": [
+                    {
+                        "name": "quoted hold discussion",
+                        "default_merge_authority": True,
+                        "instructions": [
+                            {
+                                "text": (
+                                    'Update the documentation explaining the "do not '
+                                    'merge" hold.'
+                                ),
+                                "add_holds": ["do not merge"],
+                            }
+                        ],
+                        "generated": "Preserve the do not merge hold.",
+                        "expected_holds": ["do not merge"],
+                    }
+                ]
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    findings = check_merge_authority_transfer_fixtures(tmp_path)
+
+    assert len(findings) == 1
+    assert findings[0].message == (
+        "merge authority fixture quoted hold discussion instruction 1 hold "
+        "operations do not match its text"
+    )
+
+
 def test_merge_authority_transfer_recognizes_no_longer_need_withdrawal(
     tmp_path: Path,
 ) -> None:
@@ -2007,6 +2090,49 @@ def test_merge_authority_transfer_requires_authority_for_existing_pr_work(
     assert len(findings) == 1
     assert findings[0].message == (
         "merge authority fixture existing ordinary PR work declared default authority "
+        "does not match its source instructions"
+    )
+
+
+def test_merge_authority_transfer_requires_authority_for_existing_pr_feedback(
+    tmp_path: Path,
+) -> None:
+    """Verify direct existing-PR feedback work grants default authority.
+
+    Args:
+        tmp_path: Temporary directory provided by pytest for isolated filesystem state.
+    """
+    path = tmp_path / MERGE_AUTHORITY_TRANSFER_FIXTURE_PATH
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(
+        json.dumps(
+            {
+                "cases": [
+                    {
+                        "name": "existing PR feedback",
+                        "default_merge_authority": False,
+                        "instructions": [
+                            {
+                                "text": (
+                                    "Address review feedback on existing ordinary PR "
+                                    "#620."
+                                )
+                            }
+                        ],
+                        "generated": "Address the requested feedback.",
+                        "expected_holds": [],
+                    }
+                ]
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    findings = check_merge_authority_transfer_fixtures(tmp_path)
+
+    assert len(findings) == 1
+    assert findings[0].message == (
+        "merge authority fixture existing PR feedback declared default authority "
         "does not match its source instructions"
     )
 

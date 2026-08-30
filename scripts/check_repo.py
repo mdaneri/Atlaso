@@ -582,6 +582,10 @@ DEFAULT_MERGE_AUTHORITY_SOURCE_EXCLUSIONS = re.compile(
     r"(?:do not|don't|don’t|must not|without)\s+"
     r"(?:\w+\s+){0,3}(?:implement|fix|resolve|solve|deliver|update|chang|"
     r"modif|edit|mak|add|remove|create|build|refactor)|"
+    r"(?:do not|don't|don’t|must not|without)\s+"
+    r"(?:\w+\s+){0,3}(?:address|apply)\s+(?:review\s+)?feedback\s+"
+    r"(?:on|for)\s+(?:an?\s+)?(?:existing\s+)?(?:ordinary\s+)?"
+    r"(?:pull request|pr)|"
     r"(?:diagnos(?:e|tic)|investigat(?:e|ion)|analy(?:ze|sis)|assess|inspect)"
     r"[^.!?]{0,80}\b(?:without|no)\b[^.!?]{0,40}"
     r"\b(?:implement|chang|modif|edit|mak)|"
@@ -597,6 +601,9 @@ DEFAULT_MERGE_AUTHORITY_SOURCE_MARKERS = re.compile(
     r"\b(?:implement|implementation|fix|resolve|solve|deliver|update|change|"
     r"modify|edit|add|remove|create|build|refactor)\b|"
     r"\bwork on (?:an? )?(?:existing )?(?:ordinary )?(?:pull request|pr)\b|"
+    r"\b(?:address|resolve|apply|implement)\s+(?:review\s+)?feedback\s+"
+    r"(?:on|for)\s+(?:an?\s+)?(?:existing\s+)?(?:ordinary\s+)?"
+    r"(?:pull request|pr)\b|"
     r"pull[- ]request delivery|guarded[- ]squash merge|"
     r"task-owned pull request|ordinary same-repository"
 )
@@ -611,6 +618,10 @@ DEFAULT_MERGE_AUTHORITY_COORDINATED_NO_WORK = re.compile(
 )
 MERGE_AUTHORITY_INSTRUCTION_BOUNDARY = re.compile(
     r"(?:[;,.!?]+|\s+(?:but|and)\s+)"
+)
+MERGE_HOLD_DISCUSSION_CONTEXT = re.compile(
+    r"\b(?:explain(?:ed|ing)?|document(?:ed|ing)?|discuss(?:ed|ing)?|"
+    r"describe(?:d|s|ing)?|mention(?:ed|ing)?|refer(?:red|ring)?)\b"
 )
 
 ORDERED_TERMINAL_CLEANUP_MARKERS = {
@@ -732,11 +743,26 @@ def explicit_merge_holds(text: str) -> tuple[str, ...]:
     )
 
 
-def merge_hold_directions(text: str) -> dict[str, str | None]:
+def _is_quoted_hold_discussion(segment: str, offset: int, pattern: str) -> bool:
+    """Return whether a quoted hold phrase is only a discussed policy term."""
+    if offset == 0 or segment[offset - 1] not in {'"', "“"}:
+        return False
+    closing_quote = '"' if segment[offset - 1] == '"' else "”"
+    suffix = segment[offset + len(pattern) :].lstrip()
+    prefix = segment[max(0, offset - 100) : offset - 1]
+    return suffix.startswith(closing_quote) and MERGE_HOLD_DISCUSSION_CONTEXT.search(
+        prefix
+    ) is not None
+
+
+def merge_hold_directions(
+    text: str, *, active_holds: tuple[str, ...] = ()
+) -> dict[str, str | None]:
     """Classify each mentioned hold as an addition or explicit withdrawal.
 
     Args:
         text: One current user or maintainer instruction to classify.
+        active_holds: Holds active before this instruction is evaluated.
     """
     normalized = " ".join(text.casefold().split())
     for phrase in AUTO_MERGE_ONLY_PHRASES:
@@ -753,7 +779,19 @@ def merge_hold_directions(text: str) -> dict[str, str | None]:
     for hold, patterns in EXPLICIT_MERGE_HOLD_PATTERNS.items():
         hold_directions: set[str] = set()
         for segment in segments:
-            if not any(pattern in segment for pattern in patterns):
+            has_directive_occurrence = False
+            for pattern in patterns:
+                pattern_offset = segment.find(pattern)
+                while pattern_offset >= 0:
+                    if not _is_quoted_hold_discussion(
+                        segment, pattern_offset, pattern
+                    ):
+                        has_directive_occurrence = True
+                        break
+                    pattern_offset = segment.find(pattern, pattern_offset + 1)
+                if has_directive_occurrence:
+                    break
+            if not has_directive_occurrence:
                 continue
             withdrawn = False
             for marker in MERGE_HOLD_WITHDRAWAL_MARKERS:
@@ -780,6 +818,20 @@ def merge_hold_directions(text: str) -> dict[str, str | None]:
             directions[hold] = (
                 hold_directions.pop() if len(hold_directions) == 1 else None
             )
+    permission_offset = normalized.find("may merge now")
+    while permission_offset >= 0:
+        prefix = normalized[max(0, permission_offset - 24) : permission_offset]
+        suffix = normalized[
+            permission_offset + len("may merge now") : permission_offset + 53
+        ]
+        if (
+            MERGE_HOLD_WITHDRAWAL_NONCURRENT_PREFIX.search(prefix) is None
+            and MERGE_HOLD_WITHDRAWAL_NONCURRENT_SUFFIX.search(suffix) is None
+        ):
+            for hold in active_holds:
+                directions.setdefault(hold, "remove")
+            break
+        permission_offset = normalized.find("may merge now", permission_offset + 1)
     return directions
 
 
@@ -936,7 +988,9 @@ def check_merge_authority_transfer_fixtures(root: Path) -> list[Finding]:
             source_instruction_texts.append(instruction_text)
             additions = tuple(dict.fromkeys(item.casefold() for item in add_holds))
             removals = tuple(dict.fromkeys(item.casefold() for item in remove_holds))
-            directions = merge_hold_directions(instruction_text)
+            directions = merge_hold_directions(
+                instruction_text, active_holds=tuple(source_holds)
+            )
             derived_additions = {
                 hold for hold, direction in directions.items() if direction == "add"
             }
