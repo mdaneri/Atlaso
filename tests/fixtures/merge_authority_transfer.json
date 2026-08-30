@@ -417,6 +417,22 @@
       ]
     },
     {
+      "name": "explicit-approval-from-maintainer",
+      "default_merge_authority": true,
+      "instructions": [
+        {
+          "text": "Implement issue #602, but wait for approval from the maintainer before merging.",
+          "add_holds": [
+            "wait for approval"
+          ]
+        }
+      ],
+      "generated": "Preserve the explicit wait for approval instruction.",
+      "expected_holds": [
+        "wait for approval"
+      ]
+    },
+    {
       "name": "explicit-owner-approval-hold",
       "default_merge_authority": true,
       "instructions": [

@@ -190,6 +190,9 @@ def test_merge_hold_directions_recognizes_owner_approval() -> None:
     assert merge_hold_directions(
         "Implement issue #602, but wait for my approval before merging."
     ) == {"wait for approval": "add"}
+    assert merge_hold_directions(
+        "Implement issue #602, but wait for approval from the maintainer before merging."
+    ) == {"wait for approval": "add"}
 
 
 def test_merge_hold_directions_recognizes_first_person_approval() -> None:
@@ -368,6 +371,9 @@ def test_generated_authority_rejects_imperative_denial() -> None:
     assert not has_affirmative_default_merge_authority(
         "This task lacks authority to complete the guarded merge."
     )
+    assert not has_affirmative_default_merge_authority(
+        "Ask whether to complete the guarded merge."
+    )
 
 
 def test_generated_permission_cannot_withdraw_source_hold(tmp_path: Path) -> None:
@@ -408,6 +414,43 @@ def test_generated_permission_cannot_withdraw_source_hold(tmp_path: Path) -> Non
     assert findings[0].message == (
         "merge authority fixture generated permission withdrawal drops an "
         "explicit hold: do not merge"
+    )
+
+
+def test_generated_withdrawal_cannot_invent_source_hold(tmp_path: Path) -> None:
+    """Verify generated text cannot withdraw a hold absent from source.
+
+    Args:
+        tmp_path: Temporary directory provided by pytest for isolated filesystem state.
+    """
+    path = tmp_path / MERGE_AUTHORITY_TRANSFER_FIXTURE_PATH
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(
+        json.dumps(
+            {
+                "cases": [
+                    {
+                        "name": "invented generated withdrawal",
+                        "default_merge_authority": True,
+                        "instructions": [{"text": "Implement issue #602."}],
+                        "generated": (
+                            "The earlier do not merge instruction is withdrawn. "
+                            "Complete the guarded merge."
+                        ),
+                        "expected_holds": [],
+                    }
+                ]
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    findings = check_merge_authority_transfer_fixtures(tmp_path)
+
+    assert len(findings) == 1
+    assert findings[0].message == (
+        "merge authority fixture invented generated withdrawal withdraws a "
+        "nonexistent source hold: do not merge"
     )
 
 

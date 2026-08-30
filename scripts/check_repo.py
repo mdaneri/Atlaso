@@ -742,7 +742,7 @@ MERGE_HOLD_DISCUSSION_CONTEXT = re.compile(
     r"\b(?:explain(?:ed|ing)?|document(?:ed|ing)?|discuss(?:ed|ing)?|"
     r"describe(?:d|s|ing)?|mention(?:ed|ing)?|refer(?:red|ring)?|"
     r"test(?:ed|ing)?|plan(?:ned|ning)?|consider(?:ed|ing|ation)?|"
-    r"contemplat(?:e|ed|ing|ion))\b"
+    r"contemplat(?:e|ed|ing|ion)|ask(?:ed|ing)?)\b"
 )
 DEFAULT_MERGE_AUTHORITY_ACTION_BOUNDARY = re.compile(
     r"(?:[;,.!?]+|\s+(?:and|then|but)\s+)"
@@ -784,6 +784,7 @@ MERGE_HOLD_NON_PR_OBJECT = re.compile(
     r"(?:(?:this|the)\s+)?(?:branch|change|commit)\b|"
     r"(?:hold|instruction|directive)s?\b|until\b|before\b|after\b|unless\b|"
     r"because\b|while\b|when\b|yet\b|now\b|automatically\b|"
+    r"from\s+(?:(?:the)\s+)?(?:maintainer|owner|me|us|you)\b|"
     r"for\s+(?:now|the moment|approval|maintainer approval)\b)\w+"
 )
 MERGE_HOLD_WITHDRAWAL_BEFORE_HOLD = re.compile(
@@ -1466,6 +1467,11 @@ def check_merge_authority_transfer_fixtures(root: Path) -> list[Finding]:
             for hold, direction in generated_directions.items()
             if direction == "add"
         )
+        generated_removals = tuple(
+            hold
+            for hold, direction in generated_directions.items()
+            if direction == "remove"
+        )
         if source_holds_tuple != expected:
             findings.append(
                 Finding(
@@ -1481,6 +1487,17 @@ def check_merge_authority_transfer_fixtures(root: Path) -> list[Finding]:
                 Finding(
                     path,
                     f"merge authority fixture {name} invents a hold: {', '.join(invented)}",
+                )
+            )
+        nonexistent_removals = tuple(
+            hold for hold in generated_removals if hold not in source_holds_tuple
+        )
+        if nonexistent_removals:
+            findings.append(
+                Finding(
+                    path,
+                    f"merge authority fixture {name} withdraws a nonexistent "
+                    f"source hold: {', '.join(nonexistent_removals)}",
                 )
             )
         omitted = tuple(
@@ -1506,6 +1523,7 @@ def check_merge_authority_transfer_fixtures(root: Path) -> list[Finding]:
             and not expected
             and not invented
             and not omitted
+            and not nonexistent_removals
             and not has_affirmative_default_merge_authority(generated)
         ):
             findings.append(
