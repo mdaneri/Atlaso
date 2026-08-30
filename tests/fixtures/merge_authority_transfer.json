@@ -1701,6 +1701,22 @@
       ],
       "generated": "Keep GitHub auto-merge disabled and perform the guarded squash merge when every gate passes.",
       "expected_holds": []
+    },
+    {
+      "name": "approval-before-merging-is-preserved",
+      "default_merge_authority": true,
+      "instructions": [
+        {
+          "text": "Implement issue #602, but wait for the maintainer to approve before merging.",
+          "add_holds": [
+            "wait for approval"
+          ]
+        }
+      ],
+      "generated": "Wait for maintainer approval before merging.",
+      "expected_holds": [
+        "wait for approval"
+      ]
     }
   ]
 }

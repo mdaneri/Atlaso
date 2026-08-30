@@ -638,6 +638,7 @@ DEFAULT_MERGE_AUTHORITY_CONDITIONAL_REQUEST = re.compile(
     r"\b(?:if|when|once|after)\s+(?:(?:the|a)\s+)?"
     r"(?:user|maintainer|owner)\s+(?:asks?|requests?|instructs?|tells?)\b"
 )
+DEFAULT_MERGE_AUTHORITY_DECISION_ONLY = re.compile(r"\bwhether\s+to\b")
 DEFAULT_MERGE_AUTHORITY_PROMPT_MARKERS = (
     "preserve default merge authority",
     "use the repository's default merge authority",
@@ -805,6 +806,12 @@ MERGE_HOLD_NONAPPROVAL_CONDITION = re.compile(
 MERGE_HOLD_APPROVAL_CONDITION = re.compile(
     r"\b(?:merge(?: only)?|only merge)\s+(?:after|when|if|once)\s+"
     r"(?:i|we|(?:the\s+)?maintainer|(?:the\s+)?owner)\s+approves?\b"
+)
+MERGE_HOLD_APPROVAL_BEFORE_MERGING = re.compile(
+    r"\b(?:wait (?:for|until)\s+(?:(?:the\s+)?"
+    r"(?:user|maintainer|owner)\s+to\s+approve|approval)|"
+    r"(?:get|obtain|require)\s+(?:(?:the\s+)?(?:user|maintainer|owner)"
+    r"(?:'s|’s)?\s+)?approval)\b[^.!?]{0,40}\bbefore merging\b"
 )
 MERGE_HOLD_NON_PR_OBJECT = re.compile(
     r"^\s+(?!(?:(?:this|the)\s+)?(?:pull request|pr)\b|it\b|"
@@ -1218,6 +1225,14 @@ def merge_hold_directions(
             normalized, condition_match.start(), condition
         ):
             directions["wait for approval"] = "add"
+    for condition_match in MERGE_HOLD_APPROVAL_BEFORE_MERGING.finditer(normalized):
+        condition = condition_match.group(0)
+        if not _is_hold_discussion(
+            normalized, condition_match.start()
+        ) and not _hold_targets_other_task(
+            normalized, condition_match.start(), condition
+        ):
+            directions["wait for approval"] = "add"
     for permission_match in MERGE_HOLD_STANDALONE_PERMISSION.finditer(normalized):
         permission_offset = permission_match.start()
         permission = permission_match.group(0)
@@ -1270,6 +1285,7 @@ def has_affirmative_default_merge_authority(text: str) -> bool:
                 is None
                 and DEFAULT_MERGE_AUTHORITY_CONDITIONAL_REQUEST.search(context)
                 is None
+                and DEFAULT_MERGE_AUTHORITY_DECISION_ONLY.search(context) is None
             ):
                 return True
             offset = normalized.find(marker, offset + 1)
