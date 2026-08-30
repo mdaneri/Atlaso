@@ -645,11 +645,13 @@ function Enter-AtlasoVmwareBuilderAddressReservation {
             $running = @(Get-AtlasoRunningVmwareVmxPaths -VmrunPath $VmrunPath)
             $entryVmx = [System.IO.Path]::GetFullPath([string]$entry.VmxPath)
             if (@($running | Where-Object { $_.Equals($entryVmx, [StringComparison]::OrdinalIgnoreCase) }).Count -gt 0) {
-                throw "Stale builder reservation $($entry.Id) still owns a running VMware VM: $entryVmx"
+                $retained += $entry
+                continue
             }
             $entryAddress = [string]$entry.Address
             if (Test-AtlasoVmwareAddressObservedInUse -Address $entryAddress -VmrunPath $VmrunPath) {
-                throw "Stale builder reservation $($entry.Id) still has observed address activity at $entryAddress."
+                $retained += $entry
+                continue
             }
         }
         foreach ($candidate in $candidateValues) {
@@ -716,6 +718,11 @@ function Exit-AtlasoVmwareBuilderAddressReservation {
     Invoke-WithAtlasoBuilderReservationLock -StateRoot $resolvedStateRoot -Action {
         $reservations = @(Read-AtlasoBuilderReservationLedger -Path $ledgerPath)
         $matching = @($reservations | Where-Object { [string]$_.Id -ceq [string]$Reservation.Id })
+        if ($matching.Count -eq 0) {
+            # The ledger removal can durably complete before the caller deletes
+            # its handoff. Absence makes that exact release safe to replay.
+            return
+        }
         if ($matching.Count -ne 1 -or
             [string]$matching[0].Address -cne [string]$Reservation.Address -or
             [int]$matching[0].OwnerPid -ne [int]$Reservation.OwnerPid -or

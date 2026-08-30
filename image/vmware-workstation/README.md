@@ -254,7 +254,7 @@ binds each reservation to the exact task
 worktree, source commit, branch, process, Windows boot identity, output root, VM name, and VMX path. A dead owner remains
 reserved for the rest of the same Windows boot because a surviving descendant could still start the VM. After a host
 restart proves that process tree gone, recovery also requires the exact VM to be inactive and its address unobserved;
-ambiguous state remains reserved with an actionable error.
+an active or observed stale address remains reserved while the allocator tries another pool candidate.
 The non-secret release handoff lives under the same per-user state root instead of the temporary credential directory.
 If cleanup retains a running VM, stop that VM and rerun the wrapper; startup retries every exact pending handoff before
 allocating another address, skips handoffs whose exact owner process is still active, and deletes a handoff only after

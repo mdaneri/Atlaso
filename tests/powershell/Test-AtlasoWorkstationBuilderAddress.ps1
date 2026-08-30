@@ -179,6 +179,7 @@ exit 1
         throw 'A normally released builder address did not return to the pool.'
     }
     Exit-AtlasoVmwareBuilderAddressReservation -Reservation $replacement -VmrunPath $vmrunPath -StateRoot $stateRoot
+    Exit-AtlasoVmwareBuilderAddressReservation -Reservation $replacement -VmrunPath $vmrunPath -StateRoot $stateRoot
     Exit-AtlasoVmwareBuilderAddressReservation -Reservation $second -VmrunPath $vmrunPath -StateRoot $stateRoot
 
     $activeStateRoot = Join-Path $testRoot 'active-owner-state'
@@ -323,6 +324,40 @@ exit 1
         throw 'A same-boot orphaned reservation was recovered without whole-tree termination proof.'
     }
     Exit-AtlasoVmwareBuilderAddressReservation -Reservation $sameBoot -VmrunPath $vmrunPath -StateRoot $stateRoot
+
+    $stale.Reservations[0].HostBootIdentity = '1'
+    [System.IO.File]::WriteAllText(
+        $ledgerPath,
+        (($stale | ConvertTo-Json -Depth 5) + "`n"),
+        [System.Text.UTF8Encoding]::new($false)
+    )
+    $staleRunningVmrunPath = Join-Path $testRoot 'fake-stale-running-vmrun.ps1'
+    $staleRunningVmrunSource = @'
+param([Parameter(ValueFromRemainingArguments = $true)][string[]]$Arguments)
+if ($Arguments[-1] -ceq 'list') {
+    'Total running VMs: 1'
+    '__VMX__'
+    exit 0
+}
+exit 1
+'@.Replace('__VMX__', $stale.Reservations[0].VmxPath.Replace("'", "''"))
+    [System.IO.File]::WriteAllText(
+        $staleRunningVmrunPath,
+        $staleRunningVmrunSource,
+        [System.Text.UTF8Encoding]::new($false)
+    )
+    $staleRunningCommon = $common.Clone()
+    $staleRunningCommon.VmrunPath = $staleRunningVmrunPath
+    $retainedStale = Enter-AtlasoVmwareBuilderAddressReservation `
+        @staleRunningCommon `
+        -OutputDirectory $outputOne
+    if ($retainedStale.Address -cne '192.0.2.31') {
+        throw 'An occupied prior-boot reservation prevented allocation of another safe pool address.'
+    }
+    Exit-AtlasoVmwareBuilderAddressReservation `
+        -Reservation $retainedStale `
+        -VmrunPath $vmrunPath `
+        -StateRoot $stateRoot
 
     $stale.Reservations[0].HostBootIdentity = '1'
     [System.IO.File]::WriteAllText(
