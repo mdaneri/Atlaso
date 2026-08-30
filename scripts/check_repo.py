@@ -129,6 +129,7 @@ PROTECTED_PUBLICATION_WORKFLOWS = (
     Path(".github/workflows/virtualization-prerelease.yml"),
     Path(".github/workflows/virtualization-stable.yml"),
     Path(".github/workflows/virtualization-windows-candidate.yml"),
+    Path(".github/workflows/wheel.yml"),
 )
 
 SCHEDULED_PR_MONITORING_SHARED_MARKERS = (
@@ -3036,6 +3037,9 @@ def check_protected_workflow_caches(root: Path) -> list[Finding]:
 
     findings: list[Finding] = []
     job_key = re.compile(r"^  ([A-Za-z0-9_-]+):\s*(?:#.*)?$")
+    cache_input = re.compile(
+        r"(?:^|[,{]\s*)cache:\s*['\"]?(?:pip|pipenv|poetry)['\"]?(?=\s*(?:[,}]|#|$))"
+    )
     for relative_path in PROTECTED_PUBLICATION_WORKFLOWS:
         path = root / relative_path
         text, error = read_text(path)
@@ -3078,7 +3082,7 @@ def check_protected_workflow_caches(root: Path) -> list[Finding]:
                         and candidate_indent <= step_indent
                     ):
                         break
-                    if re.match(r"cache:\s*['\"]?(?:pip|pipenv|poetry)['\"]?\s*(?:#.*)?$", stripped):
+                    if cache_input.search(stripped):
                         if effective_permissions.get("actions") != "write":
                             findings.append(
                                 Finding(

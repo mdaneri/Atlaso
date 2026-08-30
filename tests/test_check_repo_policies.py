@@ -194,6 +194,31 @@ jobs:
     assert all("without actions: write" in finding.message for finding in findings)
 
 
+def test_protected_workflow_cache_policy_rejects_inline_cache_input(tmp_path: Path) -> None:
+    """Flow-style setup-python inputs cannot bypass protected cache policy.
+
+    Args:
+        tmp_path: Temporary directory provided by pytest.
+    """
+
+    write_protected_workflows(
+        tmp_path,
+        """permissions: read-all
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/setup-python@v7
+        with: {python-version: '3.14', cache: pip}
+""",
+    )
+
+    findings = check_protected_workflow_caches(tmp_path)
+
+    assert len(findings) == len(PROTECTED_PUBLICATION_WORKFLOWS)
+    assert all("without actions: write" in finding.message for finding in findings)
+
+
 def test_protected_workflow_cache_policy_ignores_ordinary_ci(tmp_path: Path) -> None:
     """Ordinary CI cache policy remains outside protected publication checks.
 
