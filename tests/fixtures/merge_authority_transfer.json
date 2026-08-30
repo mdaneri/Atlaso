@@ -1913,6 +1913,37 @@
       "expected_holds": []
     },
     {
+      "name": "current-pr-permission-withdraws-hold",
+      "default_merge_authority": true,
+      "instructions": [
+        {
+          "text": "Implement issue #602, but do not merge.",
+          "add_holds": [
+            "do not merge"
+          ]
+        },
+        {
+          "text": "You may merge this pull request.",
+          "remove_holds": [
+            "do not merge"
+          ]
+        }
+      ],
+      "generated": "Preserve default merge authority and complete the guarded merge when eligible.",
+      "expected_holds": []
+    },
+    {
+      "name": "diagnostic-how-to-question-is-not-implementation",
+      "default_merge_authority": false,
+      "instructions": [
+        {
+          "text": "How should we fix issue #602?"
+        }
+      ],
+      "generated": "Explain the diagnostic approach without changing repository or GitHub state.",
+      "expected_holds": []
+    },
+    {
       "name": "before-approval-is-resumable",
       "default_merge_authority": true,
       "instructions": [

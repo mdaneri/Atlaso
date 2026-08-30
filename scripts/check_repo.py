@@ -668,7 +668,7 @@ DEFAULT_MERGE_AUTHORITY_CONDITIONAL_REQUEST = re.compile(
 DEFAULT_MERGE_AUTHORITY_DECISION_ONLY = re.compile(r"\bwhether\s+to\b")
 DEFAULT_MERGE_AUTHORITY_PERMISSION_QUESTION = re.compile(
     r"\b(?:(?:do|would)\s+you\s+(?:want|like)\s+(?:me|us)\s+to|"
-    r"should\s+(?:i|we))\b"
+    r"should\s+(?:i|we)|(?:can|could|may)\s+(?:i|we))\b"
 )
 DEFAULT_MERGE_AUTHORITY_PROMPT_MARKERS = (
     "preserve default merge authority",
@@ -744,7 +744,11 @@ DEFAULT_MERGE_AUTHORITY_INTERROGATIVE_REVIEW = re.compile(
     r"(?:explain|describe|assess|evaluate|tell)\b[^?]*\?|"
     r"(?:^|[;.!?]\s*)(?:is|are|was|were|does|do|did)\s+"
     r"(?:(?:the|this|that|an?)\s+)?"
-    r"(?:implementation|fix|patch|changes?|code|pull request|pr)\b[^?]*\?"
+    r"(?:implementation|fix|patch|changes?|code|pull request|pr)\b[^?]*\?|"
+    r"(?:^|[;.!?]\s*)how\s+(?:do|should|can|could|would)\s+"
+    r"(?:i|we|you)\s+(?:implement|fix|patch|resolve|solve)\b[^?]*\?|"
+    r"(?:^|[;.!?]\s*)what\s+(?:is|are)\s+(?:needed|required)\s+to\s+"
+    r"(?:implement|fix|patch|resolve|solve)\b[^?]*\?"
 )
 DEFAULT_MERGE_AUTHORITY_SUPERSEDING_REVIEW_PREFIX = re.compile(
     r"(?:^|[;.!?]\s*)(?:instead,?|switch to|move to|change to)\s*$"
@@ -844,7 +848,9 @@ MERGE_AUTHORITY_COORDINATED_CLAUSE_BOUNDARY = re.compile(
     r",\s+(?:but|and)\s+|\s+but\s+"
 )
 MERGE_HOLD_STANDALONE_PERMISSION = re.compile(
-    r"\b(?:merge now|(?:may|can)\s+merge now|go ahead and merge|"
+    r"\b(?:merge now|(?:you\s+)?(?:may|can)\s+merge"
+    r"(?:\s+(?:(?:this|the)\s+)?(?:pull request|pr))?(?:\s+now)?|"
+    r"go ahead and merge|"
     r"proceed (?:with the merge|with merging|to merge)(?: now)?)\b"
 )
 MERGE_HOLD_NONAPPROVAL_CONDITION = re.compile(

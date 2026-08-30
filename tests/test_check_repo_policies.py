@@ -506,6 +506,17 @@ def test_generated_authority_rejects_absence_of_authority() -> None:
     assert not has_affirmative_default_merge_authority(
         "There is no authority to complete the guarded merge."
     )
+    assert not has_affirmative_default_merge_authority(
+        "Can I complete the guarded merge?"
+    )
+
+
+def test_source_authority_excludes_diagnostic_how_to_questions() -> None:
+    """Verify how-to and what-is-needed questions remain diagnostic."""
+    assert not source_has_default_merge_authority(("How should we fix issue #602?",))
+    assert not source_has_default_merge_authority(
+        ("What is needed to implement issue #602?",)
+    )
 
 
 def test_source_authority_keeps_workflow_policy_subject_eligible() -> None:
@@ -1593,6 +1604,42 @@ def test_merge_authority_transfer_rejects_generated_authority_denial(
     assert len(findings) == 1
     assert findings[0].message == (
         "merge authority fixture generated authority denial omits affirmative "
+        "default authority"
+    )
+
+
+def test_merge_authority_transfer_rejects_generated_permission_question(
+    tmp_path: Path,
+) -> None:
+    """Verify a generated permission question cannot satisfy default authority.
+
+    Args:
+        tmp_path: Temporary directory provided by pytest for isolated filesystem state.
+    """
+    path = tmp_path / MERGE_AUTHORITY_TRANSFER_FIXTURE_PATH
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(
+        json.dumps(
+            {
+                "cases": [
+                    {
+                        "name": "generated permission question",
+                        "default_merge_authority": True,
+                        "instructions": [{"text": "Implement issue #602."}],
+                        "generated": "Can I complete the guarded merge?",
+                        "expected_holds": [],
+                    }
+                ]
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    findings = check_merge_authority_transfer_fixtures(tmp_path)
+
+    assert len(findings) == 1
+    assert findings[0].message == (
+        "merge authority fixture generated permission question omits affirmative "
         "default authority"
     )
 
