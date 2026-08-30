@@ -1593,6 +1593,85 @@ $firstBootOvfEnvironment = New-AtlasoWorkstationOvfEnvironment `
 
 New-Item -ItemType Directory -Force -Path $vmRoot | Out-Null
 New-Item -ItemType Directory -Force -Path $seedRoot | Out-Null
+$identityPath = Join-Path $resultRoot 'vmware-identity.json'
+$identityVms = [System.Collections.Generic.List[object]]::new()
+
+<#
+.SYNOPSIS
+Durably refresh the lifecycle identity evidence for every admitted VM record.
+#>
+function Write-LifecycleIdentityEvidence {
+    [ordered]@{
+        lab_name            = $LabName
+        pull_request_number = $PullRequestNumber
+        purpose             = $vmIdentity.Purpose
+        collision_suffix    = $vmIdentity.CollisionSuffix
+        result_root         = $resultRoot
+        log_identity        = $LabName
+        vms                 = @($identityVms)
+    } | ConvertTo-Json -Depth 5 | Set-Content -LiteralPath $identityPath -Encoding UTF8
+}
+
+<#
+.SYNOPSIS
+Publish one expected VM identity before running its artifact-producing action.
+
+.PARAMETER Role
+Canonical lifecycle role recorded for the VM.
+
+.PARAMETER DisplayName
+Exact canonical VMware display name.
+
+.PARAMETER VmxPath
+Deterministic absolute VMX path the action must produce.
+
+.PARAMETER Action
+Artifact-producing action that must return the exact VMX path.
+#>
+function Invoke-TrackedLifecycleVmCreation {
+    param(
+        [Parameter(Mandatory = $true)][string]$Role,
+        [Parameter(Mandatory = $true)][string]$DisplayName,
+        [Parameter(Mandatory = $true)][string]$VmxPath,
+        [Parameter(Mandatory = $true)][scriptblock]$Action
+    )
+
+    $expectedVmxPath = [System.IO.Path]::GetFullPath($VmxPath)
+    $record = [ordered]@{
+        role         = $Role
+        display_name = $DisplayName
+        vmx          = $expectedVmxPath
+    }
+    $identityVms.Add($record)
+    # Publish ownership before an external copy or VMX writer can leave an
+    # artifact behind. A failure with no VMX retracts only this pending record.
+    Write-LifecycleIdentityEvidence
+    try {
+        $createdVmxPath = & $Action
+        Assert-AtlasoVmwareOwnedVmx `
+            -VmxPath $createdVmxPath `
+            -ExpectedDirectory (Split-Path -Parent $expectedVmxPath) `
+            -ExpectedName $DisplayName | Out-Null
+        if (-not (Resolve-Path -LiteralPath $createdVmxPath).Path.Equals(
+                $expectedVmxPath,
+                [System.StringComparison]::OrdinalIgnoreCase
+            )) {
+            throw "Lifecycle VM creation returned a VMX outside its published identity: $createdVmxPath"
+        }
+        Write-LifecycleIdentityEvidence
+        return $expectedVmxPath
+    }
+    catch {
+        $failure = $_
+        if (-not (Test-Path -LiteralPath $expectedVmxPath -PathType Leaf)) {
+            $identityVms.Remove($record) | Out-Null
+            Write-LifecycleIdentityEvidence
+        }
+        throw $failure
+    }
+}
+
+Write-LifecycleIdentityEvidence
 
 $clientASeedIso = ''
 $clientBSeedIso = ''
@@ -1607,49 +1686,66 @@ try {
         New-CloudInitSeedIso -Path $clientASeedIso -HostName ($clientAName.ToLowerInvariant())
         New-CloudInitSeedIso -Path $clientBSeedIso -HostName ($clientBName.ToLowerInvariant())
     }
-    $applianceVmx = Copy-VmDirectory -SourceVmx $ApplianceVmxPath -DestinationDirectory (Join-Path $vmRoot $applianceName) -Name $applianceName
+    $applianceDirectory = Join-Path $vmRoot $applianceName
+    $applianceVmx = Invoke-TrackedLifecycleVmCreation `
+        -Role 'appliance' `
+        -DisplayName $applianceName `
+        -VmxPath (Join-Path $applianceDirectory "$applianceName.vmx") `
+        -Action {
+            Copy-VmDirectory `
+                -SourceVmx $ApplianceVmxPath `
+                -DestinationDirectory $applianceDirectory `
+                -Name $applianceName
+        }
     Set-VmxNetworkAdapter -Path $applianceVmx -Index 0 -Vmnet $ManagementNetwork
     Set-AtlasoWorkstationOvfEnvironment -VmxPath $applianceVmx -OvfEnvironment $firstBootOvfEnvironment
     if (-not $OidcOnly) {
         Set-VmxNetworkAdapter -Path $applianceVmx -Index 1 -Vmnet $SiteANetwork
         Set-VmxNetworkAdapter -Path $applianceVmx -Index 2 -Vmnet $TrunkNetwork
         Set-VmxNetworkAdapter -Path $applianceVmx -Index 3 -Vmnet $SiteBNetwork
-        $clientAVmx = New-ClientVm -Name $clientAName -Directory (Join-Path $vmRoot $clientAName) -DiskPath $ClientVmdkPath -SeedIso $clientASeedIso -Networks @($ManagementNetwork, $SiteANetwork, $TrunkNetwork)
-        $clientBVmx = New-ClientVm -Name $clientBName -Directory (Join-Path $vmRoot $clientBName) -DiskPath $ClientVmdkPath -SeedIso $clientBSeedIso -Networks @($ManagementNetwork, $SiteBNetwork)
+        $clientADirectory = Join-Path $vmRoot $clientAName
+        $clientAVmx = Invoke-TrackedLifecycleVmCreation `
+            -Role 'client-a' `
+            -DisplayName $clientAName `
+            -VmxPath (Join-Path $clientADirectory "$clientAName.vmx") `
+            -Action {
+                New-ClientVm `
+                    -Name $clientAName `
+                    -Directory $clientADirectory `
+                    -DiskPath $ClientVmdkPath `
+                    -SeedIso $clientASeedIso `
+                    -Networks @($ManagementNetwork, $SiteANetwork, $TrunkNetwork)
+            }
+        $clientBDirectory = Join-Path $vmRoot $clientBName
+        $clientBVmx = Invoke-TrackedLifecycleVmCreation `
+            -Role 'client-b' `
+            -DisplayName $clientBName `
+            -VmxPath (Join-Path $clientBDirectory "$clientBName.vmx") `
+            -Action {
+                New-ClientVm `
+                    -Name $clientBName `
+                    -Directory $clientBDirectory `
+                    -DiskPath $ClientVmdkPath `
+                    -SeedIso $clientBSeedIso `
+                    -Networks @($ManagementNetwork, $SiteBNetwork)
+            }
     }
     $esxiVmx = ''
     if ($FullEsxiPxeInstall) {
-        $esxiVmx = New-EsxiPxeVm -Name $esxiName -Directory (Join-Path $vmRoot $esxiName) -Network $SiteANetwork -MacAddress $esxiMacAddress
+        $esxiDirectory = Join-Path $vmRoot $esxiName
+        $esxiVmx = Invoke-TrackedLifecycleVmCreation `
+            -Role 'esxi-pxe' `
+            -DisplayName $esxiName `
+            -VmxPath (Join-Path $esxiDirectory "$esxiName.vmx") `
+            -Action {
+                New-EsxiPxeVm `
+                    -Name $esxiName `
+                    -Directory $esxiDirectory `
+                    -Network $SiteANetwork `
+                    -MacAddress $esxiMacAddress
+            }
     }
-
-    $identityVms = @(
-        [ordered]@{ role = 'appliance'; display_name = $applianceName; vmx = $applianceVmx }
-    )
-    if (-not $OidcOnly) {
-        $identityVms += @(
-            [ordered]@{ role = 'client-a'; display_name = $clientAName; vmx = $clientAVmx },
-            [ordered]@{ role = 'client-b'; display_name = $clientBName; vmx = $clientBVmx }
-        )
-    }
-    if ($FullEsxiPxeInstall) {
-        $identityVms += [ordered]@{ role = 'esxi-pxe'; display_name = $esxiName; vmx = $esxiVmx }
-    }
-    foreach ($identityVm in $identityVms) {
-        Assert-AtlasoVmwareOwnedVmx `
-            -VmxPath $identityVm.vmx `
-            -ExpectedDirectory (Split-Path -Parent $identityVm.vmx) `
-            -ExpectedName $identityVm.display_name | Out-Null
-    }
-    [ordered]@{
-        lab_name            = $LabName
-        pull_request_number = $PullRequestNumber
-        purpose             = $vmIdentity.Purpose
-        collision_suffix    = $vmIdentity.CollisionSuffix
-        result_root         = $resultRoot
-        log_identity        = $LabName
-        vms                 = $identityVms
-    } | ConvertTo-Json -Depth 5 | Set-Content -LiteralPath (Join-Path $resultRoot 'vmware-identity.json') -Encoding UTF8
-    Write-Host "Lifecycle identity evidence: $(Join-Path $resultRoot 'vmware-identity.json')"
+    Write-Host "Lifecycle identity evidence: $identityPath"
     foreach ($identityVm in $identityVms) {
         Write-Host "Lifecycle VM [$($identityVm.role)]: $($identityVm.display_name) => $($identityVm.vmx)"
     }

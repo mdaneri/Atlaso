@@ -2546,11 +2546,15 @@ def test_vmware_test_identity_is_bound_to_the_exact_pull_request():
     assert '"test-results\\vmware-workstation-lifecycle\\$LabName"' in lifecycle_runner
     assert "Refusing lifecycle reuse because the exact PR-owned result root already exists" in lifecycle_runner
     assert "vmware-identity.json" in lifecycle_runner
+    assert "Invoke-TrackedLifecycleVmCreation" in lifecycle_runner
+    assert "Publish ownership before an external copy or VMX writer" in lifecycle_runner
     assert "pull_request_number = $PullRequestNumber" in lifecycle_runner
     assert "$planJson | Set-Content -LiteralPath (Join-Path $resultRoot 'plan.json')" in lifecycle_runner
     assert "identity evidence is missing" in lifecycle_cleanup
     assert "$identityVms = @($identity.vms)" in lifecycle_cleanup
     assert "identity evidence does not match the discovered VMX set" in lifecycle_cleanup
+    assert "$matchedCandidatePaths.Add($matchingCandidates[0].Path)" in lifecycle_cleanup
+    assert "identity evidence contains a duplicate VMX record" in lifecycle_cleanup
     assert "Get-ChildItem -LiteralPath $vmRoot" in lifecycle_cleanup
     assert "Get-ChildItem -LiteralPath $resolvedLifecycleRoot" not in lifecycle_cleanup
     assert "plan ownership does not match" in lifecycle_cleanup

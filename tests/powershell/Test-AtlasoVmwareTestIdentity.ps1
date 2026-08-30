@@ -140,10 +140,18 @@ try {
     $cleanupDisplayName = "$($cleanupIdentity.Name)-Appliance"
     $cleanupVmDirectory = Join-Path $cleanupRoot "vms\$cleanupDisplayName"
     $cleanupVmxPath = Join-Path $cleanupVmDirectory "$cleanupDisplayName.vmx"
+    $cleanupClientDisplayName = "$($cleanupIdentity.Name)-ClientA"
+    $cleanupClientDirectory = Join-Path $cleanupRoot "vms\$cleanupClientDisplayName"
+    $cleanupClientVmxPath = Join-Path $cleanupClientDirectory "$cleanupClientDisplayName.vmx"
     New-Item -ItemType Directory -Path $cleanupVmDirectory -Force | Out-Null
+    New-Item -ItemType Directory -Path $cleanupClientDirectory -Force | Out-Null
     [System.IO.File]::WriteAllText(
         $cleanupVmxPath,
         "displayName = `"$cleanupDisplayName`"`r`n"
+    )
+    [System.IO.File]::WriteAllText(
+        $cleanupClientVmxPath,
+        "displayName = `"$cleanupClientDisplayName`"`r`n"
     )
     [ordered]@{
         lab_name            = $cleanupIdentity.Name
@@ -164,6 +172,11 @@ try {
                 role         = 'appliance'
                 display_name = $cleanupDisplayName
                 vmx          = $cleanupVmxPath
+            },
+            [ordered]@{
+                role         = 'client-a'
+                display_name = $cleanupClientDisplayName
+                vmx          = $cleanupClientVmxPath
             }
         )
     } | ConvertTo-Json -Depth 5 | Set-Content -LiteralPath $manifestPath -Encoding UTF8
@@ -179,7 +192,7 @@ try {
     }
 
     $mismatchedManifest = Get-Content -LiteralPath $manifestPath -Raw | ConvertFrom-Json
-    $mismatchedManifest.vms[0].vmx = Join-Path $cleanupVmDirectory 'different.vmx'
+    $mismatchedManifest.vms[1] = $mismatchedManifest.vms[0]
     $mismatchedManifest | ConvertTo-Json -Depth 5 | Set-Content -LiteralPath $manifestPath -Encoding UTF8
     Assert-Throws {
         & (Join-Path $RepositoryRoot 'scripts\windows\vmware\remove-lifecycle-vms.ps1') `
@@ -188,7 +201,7 @@ try {
             -CollisionSuffix $cleanupIdentity.CollisionSuffix `
             -VmrunPath (Get-Process -Id $PID).Path `
             -WhatIf
-    } 'Lifecycle cleanup must reject identity evidence for a different VMX path.'
+    } 'Lifecycle cleanup must reject a duplicate manifest record that omits another VMX.'
 }
 finally {
     if (Test-Path -LiteralPath $cleanupRoot) {

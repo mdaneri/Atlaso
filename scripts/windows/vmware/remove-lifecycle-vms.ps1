@@ -156,6 +156,9 @@ $identityVms = @($identity.vms)
 if ($identityVms.Count -ne $candidates.Count) {
     throw "Refusing lifecycle cleanup because identity evidence does not match the discovered VMX set: $identityPath"
 }
+$matchedCandidatePaths = [System.Collections.Generic.HashSet[string]]::new(
+    [System.StringComparer]::OrdinalIgnoreCase
+)
 foreach ($identityVm in $identityVms) {
     $identityDisplayName = [string]$identityVm.display_name
     $identityRole = [string]$identityVm.role
@@ -177,6 +180,12 @@ foreach ($identityVm in $identityVms) {
     if ($matchingCandidates.Count -ne 1) {
         throw "Refusing lifecycle cleanup because identity evidence does not match the discovered VMX set: $identityPath"
     }
+    if (-not $matchedCandidatePaths.Add($matchingCandidates[0].Path)) {
+        throw "Refusing lifecycle cleanup because identity evidence contains a duplicate VMX record: $identityPath"
+    }
+}
+if ($matchedCandidatePaths.Count -ne $candidates.Count) {
+    throw "Refusing lifecycle cleanup because identity evidence omits a discovered VMX: $identityPath"
 }
 
 foreach ($candidateGroup in $candidates | Group-Object -Property Directory) {
