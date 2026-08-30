@@ -67,6 +67,17 @@
       "expected_holds": []
     },
     {
+      "name": "ordinary-documentation-update",
+      "default_merge_authority": true,
+      "instructions": [
+        {
+          "text": "Update the documentation for issue #602."
+        }
+      ],
+      "generated": "Preserve default merge authority and complete the guarded merge when eligible.",
+      "expected_holds": []
+    },
+    {
       "name": "manual-merge-with-auto-merge-disabled",
       "default_merge_authority": true,
       "instructions": [
@@ -288,6 +299,22 @@
       ]
     },
     {
+      "name": "explicit-approval-qualifier",
+      "default_merge_authority": true,
+      "instructions": [
+        {
+          "text": "Implement the fix and merge only with maintainer approval.",
+          "add_holds": [
+            "wait for approval"
+          ]
+        }
+      ],
+      "generated": "Preserve the instruction to merge only with maintainer approval.",
+      "expected_holds": [
+        "wait for approval"
+      ]
+    },
+    {
       "name": "passively-negated-hold-withdrawal",
       "default_merge_authority": true,
       "instructions": [
@@ -321,6 +348,28 @@
         },
         {
           "text": "The do not merge hold will be withdrawn tomorrow.",
+          "add_holds": [
+            "do not merge"
+          ]
+        }
+      ],
+      "generated": "Preserve the explicit do not merge instruction.",
+      "expected_holds": [
+        "do not merge"
+      ]
+    },
+    {
+      "name": "conditional-hold-withdrawal",
+      "default_merge_authority": true,
+      "instructions": [
+        {
+          "text": "Implement the change, but do not merge.",
+          "add_holds": [
+            "do not merge"
+          ]
+        },
+        {
+          "text": "The do not merge hold is withdrawn only after CI succeeds.",
           "add_holds": [
             "do not merge"
           ]

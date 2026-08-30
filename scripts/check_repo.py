@@ -508,6 +508,13 @@ EXPLICIT_MERGE_HOLD_PATTERNS = {
         "after maintainer approval",
         "once approved",
         "when approved",
+        "with approval",
+        "with maintainer approval",
+        "subject to approval",
+        "subject to maintainer approval",
+        "pending approval",
+        "pending maintainer approval",
+        "unless approved",
     ),
 }
 MERGE_HOLD_WITHDRAWAL_MARKERS = (
@@ -535,7 +542,8 @@ MERGE_HOLD_WITHDRAWAL_NONCURRENT_PREFIX = re.compile(
     r"\b(?:will|would|may|might|could|shall)\s+(?:be\s+)?)"
 )
 MERGE_HOLD_WITHDRAWAL_NONCURRENT_SUFFIX = re.compile(
-    r"^\s*(?:tomorrow|later|eventually|after\b|when\b|once\b|if\b|unless\b)"
+    r"^\s*(?:tomorrow|later|eventually|(?:only\s+)?"
+    r"(?:after|when|once|if|unless)\b)"
 )
 AUTO_MERGE_ONLY_PHRASES = (
     "do not merge automatically",
@@ -570,7 +578,8 @@ DEFAULT_MERGE_AUTHORITY_SOURCE_EXCLUSIONS = re.compile(
     r"(?:review(?:-only|[^.!?]{0,60}\bonly\b)|only\s+review\b|"
     r"report findings only|"
     r"(?:do not|don't|don’t|must not|without)\s+"
-    r"(?:\w+\s+){0,3}(?:implement|fix|resolve|solve|deliver|chang|modif|edit|mak)|"
+    r"(?:\w+\s+){0,3}(?:implement|fix|resolve|solve|deliver|update|chang|"
+    r"modif|edit|mak|add|remove|create|build|refactor)|"
     r"(?:diagnos(?:e|tic)|investigat(?:e|ion)|analy(?:ze|sis)|assess|inspect)"
     r"[^.!?]{0,80}\b(?:without|no)\b[^.!?]{0,40}"
     r"\b(?:implement|chang|modif|edit|mak)|"
@@ -579,7 +588,8 @@ DEFAULT_MERGE_AUTHORITY_SOURCE_EXCLUSIONS = re.compile(
     r"private (?:vulnerability|advisory|remediation))"
 )
 DEFAULT_MERGE_AUTHORITY_SOURCE_MARKERS = re.compile(
-    r"\b(?:implement|implementation|fix|resolve|solve|deliver)\b|"
+    r"\b(?:implement|implementation|fix|resolve|solve|deliver|update|change|"
+    r"modify|edit|add|remove|create|build|refactor)\b|"
     r"\bwork on (?:an? )?(?:existing )?(?:ordinary )?(?:pull request|pr)\b|"
     r"pull[- ]request delivery|guarded[- ]squash merge|"
     r"task-owned pull request|ordinary same-repository"

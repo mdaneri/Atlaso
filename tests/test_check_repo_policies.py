@@ -1525,6 +1525,7 @@ def test_merge_authority_transfer_rejects_noncurrent_hold_withdrawals(
     statements = (
         "The do not merge hold will be withdrawn tomorrow.",
         "Do not merge unless the hold is withdrawn.",
+        "The do not merge hold is withdrawn only after CI succeeds.",
     )
     for index, statement in enumerate(statements):
         case_root = tmp_path / str(index)
@@ -1770,6 +1771,45 @@ def test_merge_authority_transfer_rejects_invented_approval_condition(
     )
 
 
+def test_merge_authority_transfer_rejects_invented_approval_qualifier(
+    tmp_path: Path,
+) -> None:
+    """Verify generated prompts cannot invent approval-qualified merges.
+
+    Args:
+        tmp_path: Temporary directory provided by pytest for isolated filesystem state.
+    """
+    path = tmp_path / MERGE_AUTHORITY_TRANSFER_FIXTURE_PATH
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(
+        json.dumps(
+            {
+                "cases": [
+                    {
+                        "name": "invented approval qualifier",
+                        "default_merge_authority": True,
+                        "instructions": [{"text": "Update issue #602 completely."}],
+                        "generated": (
+                            "Perform the guarded squash merge only with maintainer "
+                            "approval."
+                        ),
+                        "expected_holds": [],
+                    }
+                ]
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    findings = check_merge_authority_transfer_fixtures(tmp_path)
+
+    assert len(findings) == 1
+    assert findings[0].message == (
+        "merge authority fixture invented approval qualifier invents a hold: "
+        "wait for approval"
+    )
+
+
 def test_merge_authority_transfer_requires_authority_for_existing_pr_work(
     tmp_path: Path,
 ) -> None:
@@ -1810,6 +1850,44 @@ def test_merge_authority_transfer_requires_authority_for_existing_pr_work(
     assert findings[0].message == (
         "merge authority fixture existing ordinary PR work declared default authority "
         "does not match its source instructions"
+    )
+
+
+def test_merge_authority_transfer_requires_authority_for_update_requests(
+    tmp_path: Path,
+) -> None:
+    """Verify ordinary update requests grant default merge authority.
+
+    Args:
+        tmp_path: Temporary directory provided by pytest for isolated filesystem state.
+    """
+    path = tmp_path / MERGE_AUTHORITY_TRANSFER_FIXTURE_PATH
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(
+        json.dumps(
+            {
+                "cases": [
+                    {
+                        "name": "ordinary update",
+                        "default_merge_authority": False,
+                        "instructions": [
+                            {"text": "Update the documentation for issue #602."}
+                        ],
+                        "generated": "Stop after updating the documentation.",
+                        "expected_holds": [],
+                    }
+                ]
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    findings = check_merge_authority_transfer_fixtures(tmp_path)
+
+    assert len(findings) == 1
+    assert findings[0].message == (
+        "merge authority fixture ordinary update declared default authority does not "
+        "match its source instructions"
     )
 
 
