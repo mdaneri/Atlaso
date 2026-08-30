@@ -217,6 +217,7 @@ def test_merge_hold_directions_recognizes_first_person_approval() -> None:
 def test_merge_hold_directions_recognizes_equivalent_permission() -> None:
     """Verify equivalent current permissions withdraw active holds."""
     for instruction in (
+        "Merge now.",
         "You can merge now.",
         "Go ahead and merge.",
         "Proceed with the merge now.",
@@ -398,6 +399,12 @@ def test_source_authority_keeps_workflow_policy_subject_eligible() -> None:
     assert source_has_default_merge_authority(
         ("Update the documentation for external fork workflows.",)
     )
+    for instruction in (
+        "Prepare a pull request for issue #602.",
+        "Open a pull request for issue #602.",
+        "Submit a pull request for issue #602.",
+    ):
+        assert source_has_default_merge_authority((instruction,))
 
 
 def test_source_authority_excludes_ineligible_delivery_scopes() -> None:

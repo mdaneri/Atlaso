@@ -1509,12 +1509,30 @@ function Set-AtlasoWorkstationDevelopmentRootCaPrivateKey {
         [Parameter(Mandatory = $true)][string]$PrivateKeyPem
     )
 
-    $encoded = [Convert]::ToBase64String([System.Text.Encoding]::UTF8.GetBytes($PrivateKeyPem))
-    if ($encoded.Length -gt 16384) {
-        throw 'The encoded Atlaso development root private key exceeds the bounded guest-info size.'
+    $rsa = [System.Security.Cryptography.RSA]::Create()
+    $pkcs8PrivateKey = $null
+    try {
+        $rsa.ImportFromPem($PrivateKeyPem)
+        $pkcs8PrivateKey = $rsa.ExportPkcs8PrivateKey()
+        # Encoding the PEM text a second time pushes a 4096-bit key beyond
+        # VMware's single-line VMX parser boundary. Canonical PKCS#8 DER keeps
+        # the same validated key inside one bounded guest-info assignment.
+        $encoded = [Convert]::ToBase64String($pkcs8PrivateKey)
+    }
+    catch {
+        throw 'The Atlaso development root private key could not be normalized as PKCS#8.'
+    }
+    finally {
+        if ($null -ne $pkcs8PrivateKey) {
+            [System.Security.Cryptography.CryptographicOperations]::ZeroMemory($pkcs8PrivateKey)
+        }
+        $rsa.Dispose()
     }
     $guestInfoName = 'guestinfo.atlaso.test_vm_development_root_ca_private_key'
     $line = "$guestInfoName = " + (ConvertTo-AtlasoVmxString -Value $encoded)
+    if ($line.Length -gt 4095) {
+        throw 'The PKCS#8 Atlaso development root private key exceeds the VMware VMX line boundary.'
+    }
     $content = @(Get-Content -LiteralPath $VmxPath)
     $pattern = '^\s*guestinfo\.atlaso\.test_vm_development_root_ca_private_key\s*='
     $importProofPattern = '^\s*guestinfo\.atlaso\.test_vm_development_root_ca_imported\s*='
@@ -1658,6 +1676,7 @@ function Wait-AtlasoWorkstationDevelopmentRootCaImportProof {
     $guestInfoName = 'guestinfo.atlaso.test_vm_development_root_ca_imported'
     $deadline = (Get-Date).AddSeconds($TimeoutSeconds)
     $matchingReads = 0
+    $lastFirstBootStage = ''
     do {
         $remainingSeconds = [Math]::Max(1, [int][Math]::Ceiling(($deadline - (Get-Date)).TotalSeconds))
         $value = Invoke-AtlasoBoundedVmrun `
@@ -1679,12 +1698,95 @@ function Wait-AtlasoWorkstationDevelopmentRootCaImportProof {
         }
         else {
             $matchingReads = 0
+            $lastFirstBootStage = Get-AtlasoWorkstationFirstBootStage `
+                -VmxPath $VmxPath `
+                -VmrunPath $VmrunPath `
+                -TimeoutSeconds ([Math]::Min($remainingSeconds, 5))
         }
         if ((Get-Date) -lt $deadline) {
             Start-Sleep -Seconds $PollSeconds
         }
     } while ((Get-Date) -lt $deadline)
-    throw 'The normal test VM did not prove encrypted development-root import and plaintext staging removal.'
+    $diagnostic = if ($lastFirstBootStage) {
+        " Last reported first-boot stage: $lastFirstBootStage."
+    }
+    else {
+        ' No bounded first-boot stage was reported; guest-agent selection or customizer startup did not complete.'
+    }
+    throw "The normal test VM did not prove encrypted development-root import and plaintext staging removal.$diagnostic"
+}
+
+<#
+.SYNOPSIS
+Read one bounded sanitized normal-test-VM first-boot stage.
+
+.PARAMETER VmxPath
+Exact running normal test VMX path.
+
+.PARAMETER VmrunPath
+Exact VMware vmrun executable path.
+
+.PARAMETER TimeoutSeconds
+Positive bounded time allowed for the guest-info read.
+#>
+function Get-AtlasoWorkstationFirstBootStage {
+    param(
+        [Parameter(Mandatory = $true)][string]$VmxPath,
+        [Parameter(Mandatory = $true)][string]$VmrunPath,
+        [Parameter(Mandatory = $true)][int]$TimeoutSeconds
+    )
+
+    try {
+        $value = Invoke-AtlasoBoundedVmrun `
+            -VmrunPath $VmrunPath `
+            -ArgumentList @(
+                '-T', 'ws', 'readVariable', $VmxPath, 'runtimeConfig',
+                'guestinfo.atlaso.test_vm_first_boot_stage'
+            ) `
+            -TimeoutSeconds $TimeoutSeconds `
+            -Action 'Read the bounded normal-test-VM first-boot stage'
+    }
+    catch {
+        # A best-effort diagnostic must never replace the primary readiness error.
+        return ''
+    }
+    $normalized = if ($null -eq $value) { '' } else { $value.Trim().ToLowerInvariant() }
+    $layerStages = @(
+        'management-network',
+        'resolver',
+        'management-web-server',
+        'firewall',
+        'hostname',
+        'root-password',
+        'root-ssh',
+        'bootstrap-administrator-password',
+        'ssh-host-key',
+        'development-administrator-ssh',
+        'test-vm-hostname',
+        'appliance-environment',
+        'development-root-ca-staging-and-guest-info-scrub',
+        'console-credential-refresh',
+        'host-state-durability',
+        'pending-success-marker',
+        'ovf-credential-scrub',
+        'applied-marker'
+    )
+    $knownStages = @($layerStages)
+    $knownStages += @($layerStages | ForEach-Object { "failed-$_" })
+    $knownStages += @(
+        'vmware-customization-complete',
+        'https-development-root-proof',
+        'https-development-root-proof-complete',
+        'https-development-root-import',
+        'https-development-root-import-complete',
+        'failed-https-development-root-proof',
+        'failed-https-development-root-import',
+        'failed-https-development-root-staging-removal'
+    )
+    if ($knownStages -ccontains $normalized) {
+        return $normalized
+    }
+    return ''
 }
 
 <#
@@ -1714,6 +1816,7 @@ function Wait-AtlasoWorkstationDevelopmentRootCaPrivateKeyScrub {
     $guestInfoName = 'guestinfo.atlaso.test_vm_development_root_ca_private_key'
     $deadline = (Get-Date).AddSeconds($TimeoutSeconds)
     $emptyReads = 0
+    $lastFirstBootStage = ''
     do {
         $remainingSeconds = [Math]::Max(1, [int][Math]::Ceiling(($deadline - (Get-Date)).TotalSeconds))
         $value = Invoke-AtlasoBoundedVmrun `
@@ -1733,12 +1836,22 @@ function Wait-AtlasoWorkstationDevelopmentRootCaPrivateKeyScrub {
         }
         else {
             $emptyReads = 0
+            $lastFirstBootStage = Get-AtlasoWorkstationFirstBootStage `
+                -VmxPath $VmxPath `
+                -VmrunPath $VmrunPath `
+                -TimeoutSeconds ([Math]::Min($remainingSeconds, 5))
         }
         if ((Get-Date) -lt $deadline) {
             Start-Sleep -Seconds $PollSeconds
         }
     } while ((Get-Date) -lt $deadline)
-    throw 'The normal test VM did not prove that its development signing key guest-info value was scrubbed.'
+    $diagnostic = if ($lastFirstBootStage) {
+        " Last reported first-boot stage: $lastFirstBootStage."
+    }
+    else {
+        ' No bounded first-boot stage was reported; guest-agent selection or customizer startup did not complete.'
+    }
+    throw "The normal test VM did not prove that its development signing key guest-info value was scrubbed.$diagnostic"
 }
 
 <#

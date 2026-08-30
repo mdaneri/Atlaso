@@ -1793,6 +1793,37 @@
       "expected_holds": [
         "wait for approval"
       ]
+    },
+    {
+      "name": "affirmative-pr-preparation-grants-authority",
+      "default_merge_authority": true,
+      "instructions": [
+        {
+          "text": "Prepare a pull request for issue #602."
+        }
+      ],
+      "generated": "Preserve default merge authority and complete the guarded merge when eligible.",
+      "expected_holds": []
+    },
+    {
+      "name": "direct-merge-imperative-withdraws-hold",
+      "default_merge_authority": true,
+      "instructions": [
+        {
+          "text": "Implement issue #602, but do not merge.",
+          "add_holds": [
+            "do not merge"
+          ]
+        },
+        {
+          "text": "Merge now.",
+          "remove_holds": [
+            "do not merge"
+          ]
+        }
+      ],
+      "generated": "Preserve default merge authority and complete the guarded merge when eligible.",
+      "expected_holds": []
     }
   ]
 }

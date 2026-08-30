@@ -419,7 +419,22 @@ marker whose atomic rename completed before its caller path was exposed, then du
 quarantine path, and current host boot. An ambiguous publication or failed fallback preserves the VM instead of
 starting removal. After first boot proves encrypted import and
 VMware reports the exact empty runtime sentinel, the wrapper stops the exact VM, removes and verifies the powered-off
-signing-key assignment, restarts it, and requires three empty runtime readbacks before retiring the marker.
+signing-key assignment, restarts it, and requires three empty runtime readbacks before retiring the marker. This
+successful-import stop is graceful and bounded so certificate and database state reach durable storage; the wrapper
+does not fall back to a hard power-off and preserves the retryable marker when graceful shutdown cannot be proven.
+First boot commits guest-agent provider selection before erasing the offline package closure. That retryable cleanup is
+a mandatory 15-minute data-disk pre-start gate and may run concurrently with VMware customization, so it cannot delay
+signing-key guest-info scrub while still blocking data-disk and application readiness. The data-disk unit reserves five
+additional minutes for formatting and mounting after cleanup. The host retains at least 25 minutes for encrypted-import
+proof so cleanup, disk preparation, and subsequent bootstrap startup cannot trigger false rollback. The
+wrapper transports the
+validated signer as one canonical base64 PKCS#8 DER value whose complete assignment stays below VMware's 4,096-character
+VMX line boundary; first boot reconstructs standard PKCS#8 PEM before mode-`0600` staging. That cleanup erases only the
+offline closure; portable KVM and Hyper-V first-boot access remains available until the next boot. During scrub and
+encrypted-import proof, the
+guest publishes only bounded fixed first-boot stage identifiers. A timeout reports the last valid stage, or a fixed
+diagnostic that provider selection or customizer startup did not complete; it never includes command output or secret
+material.
 The wrapper injects the same complete DHCP-first OVF environment before power-on. Use `-FirstBootFqdn` for the test
 identity. The wrapper uses the single local 1Password CLI account and the highest compatible CPython 3.10 through 3.13
 runtime registered with the Windows launcher, including bracketed Python Install Manager architecture selectors. Use

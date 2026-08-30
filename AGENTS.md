@@ -636,8 +636,16 @@ The following cross-cutting boundaries always apply:
   `Atlaso Development Root CA` before mutation, pin and verify the exact Environment ID by SHA-256 before invoking `op`,
   bound and whole-tree-terminate every `op`/secret-child invocation and every post-staging VMware operation, and pass
   the signer only through a separately
-  scrubbed normal-wrapper guest-info value. First boot must stage it mode `0600`, prove guest-info scrub, encrypt it with
-  the VM-unique secrets key, remove staging even when encrypted import fails, and issue a unique HTTPS leaf. Commit a
+  scrubbed normal-wrapper guest-info value. Encode canonical PKCS#8 DER once so the complete assignment remains below
+  VMware's 4,096-character VMX line boundary. First boot must reconstruct standard PKCS#8 PEM, stage it mode `0600`,
+  prove guest-info scrub, encrypt it with
+  the VM-unique secrets key, remove staging even when encrypted import fails, and issue a unique HTTPS leaf. Commit
+  guest-agent provider selection before potentially long offline-closure cleanup, and retain that cleanup as a
+  mandatory 15-minute data-disk pre-start gate so VMware signer scrub can proceed concurrently without admitting
+  appliance readiness early. Cleanup mode must erase only the offline closure; retain portable KVM and Hyper-V
+  first-boot access until the next boot. Publish only bounded fixed non-secret first-boot stage identifiers for host
+  timeout diagnostics.
+  Commit a
   durable non-secret cleanup marker through a Windows write-through atomic rename before staging. Bind it to a
   non-secret VMX identity that survives VMware's legitimate power-on file replacement. Expose its marker path to
   rollback only after durable publication succeeds. A pre-publication failure before any
@@ -647,8 +655,10 @@ The following cross-cutting boundaries always apply:
   published. If reconciliation is ambiguous or fallback publication fails, preserve the VM artifacts and do not start
   a removal child. Actual child-active or unproven state remains fail-closed across same-boot reruns.
   After encrypted import proof,
-  stop the exact VM, prove the powered-off VMX signer assignment absent, restart it, and prove runtime guest-info remains
-  empty before retiring the marker. Later normal-wrapper invocations must retry its exact identity-bound stop, VMX
+  gracefully stop the exact VM within a bounded deadline, prove the powered-off VMX signer assignment absent, restart
+  it, and prove runtime guest-info remains empty before retiring the marker. Never substitute a hard power-off on this
+  successful-import path; preserve the retryable marker if graceful shutdown cannot be proven. Later normal-wrapper
+  invocations must retry its exact identity-bound stop, VMX
   scrub, artifact removal, and data-disk restoration before
   1Password preflight or any new mutation. Persist
   boot-bound child-active phases before staging, VM start, and artifact removal. An unproven child-tree termination must

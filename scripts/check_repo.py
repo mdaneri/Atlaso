@@ -735,7 +735,8 @@ DEFAULT_MERGE_AUTHORITY_NEGATED_MUTATION = re.compile(
 )
 DEFAULT_MERGE_AUTHORITY_SOURCE_MARKERS = re.compile(
     r"\b(?:implement|implementation|fix|patch|resolve|solve|deliver)\b|"
-    r"\b(?:update|change|modify|edit|add|remove|create|build|refactor)\s+"
+    r"\b(?:update|change|modify|edit|add|remove|create|build|refactor|"
+    r"prepare|open|submit)\s+"
     r"(?:(?:the|this|that|an?|new|existing)\s+)?"
     r"(?:code|implementation|documentation|docs?|tests?|files?|repository|repo|"
     r"scripts?|modules?|packages?|workflows?|polic(?:y|ies)|checkers?|fixtures?|"
@@ -795,7 +796,7 @@ MERGE_AUTHORITY_COORDINATED_CLAUSE_BOUNDARY = re.compile(
     r",\s+(?:but|and)\s+|\s+but\s+"
 )
 MERGE_HOLD_STANDALONE_PERMISSION = re.compile(
-    r"\b(?:(?:may|can)\s+merge now|go ahead and merge|"
+    r"\b(?:merge now|(?:may|can)\s+merge now|go ahead and merge|"
     r"proceed (?:with the merge|with merging|to merge)(?: now)?)\b"
 )
 MERGE_HOLD_NONAPPROVAL_CONDITION = re.compile(

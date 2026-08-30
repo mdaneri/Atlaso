@@ -617,13 +617,25 @@ one concealed `ATLASO_DEVELOPMENT_ROOT_CA_PRIVATE_KEY` matching the checked-in c
 `C:\Program Files\1Password CLI` must support `op run --environment`. The wrapper validates that capability and
 cryptographically verifies the retrieved key against the checked-in certificate before network preparation, redeploy
 cleanup, or cloning. A bounded child removes the inherited signer variable
-immediately and stages the signer only through the normal-wrapper guest-info field. `-TimeoutSeconds` bounds each
+immediately and stages the signer only as canonical base64 PKCS#8 DER through the normal-wrapper guest-info field. The
+complete assignment remains below VMware's 4,096-character VMX line boundary, and first boot reconstructs standard
+PKCS#8 PEM before staging. `-TimeoutSeconds` bounds each
 `op`/secret-child
 process tree; a timeout enters signer scrub and VM rollback only after whole-tree termination is proven. Boot-bound
 marker phases also cover VM start and artifact removal. If termination cannot be proven, the wrapper leaves the VM and
 VMX untouched, or keeps reused disks quarantined during removal, until a Windows host restart proves the child tree is
 gone. First boot writes it mode
 `0600`, proves guest-info scrub, encrypts it with that VM's unique `ATLASO_SECRETS_KEY`, and deletes the staging file.
+Provider selection commits its durable marker before the potentially long offline guest-agent closure cleanup. The data
+disk readiness unit owns that retryable cleanup as a mandatory 15-minute pre-start gate, allowing VMware customization
+and signer scrub to proceed concurrently without admitting data disks or Atlaso before cleanup succeeds. Its 20-minute
+unit deadline reserves five additional minutes for formatting and mounting. The host retains at least 25 minutes for
+encrypted-import proof so cleanup, disk preparation, and subsequent bootstrap startup cannot cause false rollback.
+Cleanup mode
+erases only the offline closure; portable KVM and Hyper-V first-boot access survives until the next boot. While the
+wrapper waits
+for scrub and encrypted-import proof, it reads only a bounded non-secret first-boot stage; timeout diagnostics report
+that fixed stage or state that provider selection or customizer startup did not complete.
 Every post-staging VMware operation has its own process-tree deadline. Before staging, the wrapper records a non-secret
 per-user cleanup marker through a Windows write-through atomic rename, so the marker reaches disk before the VMX signer
 assignment. The wrapper publishes the marker path to rollback only after that rename succeeds. A failure before any
@@ -640,7 +652,9 @@ by filesystem identity, before persisting a plan that could move one file twice.
 boot also durably scrubs plaintext staging when encrypted import fails. `-NoStart` is rejected because a powered-off VM
 would retain
 the signer before consumption. The wrapper never prints the signer or places it in arguments, logs, markers, lifecycle
-artifacts, or exports. Successful import or rollback write-through transitions the marker to a non-actionable tombstone
+artifacts, or exports. After successful encrypted import, the wrapper uses only a bounded graceful VM stop before
+powered-off VMX scrub and restart; it never falls back to hard power-off and preserves the retryable marker when that
+graceful stop is unproven. Successful import or rollback write-through transitions the marker to a non-actionable tombstone
 before deletion; a tombstone that reappears after a crash is deleted without touching its VM.
 
 Waiting is enabled by default and verifies the shared root before printing the management summary. Mandatory

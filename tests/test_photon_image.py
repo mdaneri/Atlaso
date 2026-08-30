@@ -184,13 +184,16 @@ def test_every_virtualenv_systemd_unit_disables_generated_bytecode() -> None:
 
 
 def test_guest_agent_success_marker_makes_cleanup_retryable() -> None:
-    """Commit provider success before erasure and retry an interrupted cleanup."""
+    """Commit provider success before deferred mandatory cleanup."""
 
     selector = Path("scripts/appliance/atlaso-select-guest-agent").read_text(encoding="utf-8")
     provision = Path("image/common/scripts/provision-atlaso.sh").read_text(encoding="utf-8")
+    data_disks_unit = Path("image/common/systemd/atlaso-data-disks.service").read_text(
+        encoding="utf-8"
+    )
     existing_marker = selector.index('if [ -f "$SUCCESS_MARKER" ]; then')
-    retry_cleanup = selector.index("cleanup_staging", existing_marker)
-    already_completed = selector.index('log "Guest-agent selection already completed."', existing_marker)
+    cleanup_mode = selector.index('if [ "$MODE" = "cleanup" ]; then', existing_marker)
+    retry_cleanup = selector.index("cleanup_staging", cleanup_mode)
     publish_marker = selector.rindex('mv -f -- "$marker_tmp" "$SUCCESS_MARKER"')
     assert 'stat -c \'%U:%G:%a\' "$marker_parent"' in selector
     assert "success marker parent ownership or mode is unsafe" in selector
@@ -198,10 +201,14 @@ def test_guest_agent_success_marker_makes_cleanup_retryable() -> None:
         "install -d -o root -g root -m 0700 "
         "/var/lib/atlaso-privileged/guest-agent"
     ) in provision
-    final_cleanup = selector.rindex("cleanup_staging")
-
-    assert retry_cleanup < already_completed
-    assert publish_marker < final_cleanup
+    assert cleanup_mode < retry_cleanup < publish_marker
+    assert selector.find("cleanup_staging", publish_marker) == -1
+    assert (
+        "ExecStartPre=/usr/bin/timeout --kill-after=30s 15m "
+        "/opt/atlaso/bin/atlaso-select-guest-agent --cleanup-only"
+        in data_disks_unit
+    )
+    assert "TimeoutStartSec=20min" in data_disks_unit
     assert 'PACKAGE_CACHE_DIRECTORY="${ATLASO_GUEST_AGENT_PACKAGE_CACHE:-/var/cache/tdnf}"' in selector
     assert 'if [ "$cleanup_required" -eq 1 ]; then' in selector
 
@@ -1024,6 +1031,7 @@ def test_photon_https_bootstrap_publishes_exact_development_root_import_proof(
     bootstrap.DEVELOPMENT_ROOT_CA_IMPORTED_MARKER_PATH = tmp_path / "imported"
     fingerprint = "A1" * 32
     commands = []
+    stage_commands = []
 
     def fake_run(command):
         """Capture VMware guest-info commands and return deterministic results.
@@ -1042,6 +1050,19 @@ def test_photon_https_bootstrap_publishes_exact_development_root_import_proof(
     )
     monkeypatch.setattr(bootstrap, "run", fake_run)
 
+    def fake_stage_run(command, **kwargs):
+        """Capture bounded first-boot stage publication.
+
+        Args:
+            command: Command and arguments issued by the stage publisher.
+            **kwargs: Subprocess options accepted by the test double.
+        """
+        assert kwargs["timeout"] == 5
+        stage_commands.append(command)
+        return SimpleNamespace(returncode=0, stdout="", stderr="")
+
+    monkeypatch.setattr(bootstrap.subprocess, "run", fake_stage_run)
+
     bootstrap.write_development_root_ca_import_proof(fingerprint)
 
     assert bootstrap.publish_development_root_ca_import_proof() is True
@@ -1057,6 +1078,19 @@ def test_photon_https_bootstrap_publishes_exact_development_root_import_proof(
             "/usr/bin/vmware-rpctool",
             f"info-get {bootstrap.DEVELOPMENT_ROOT_CA_IMPORTED_GUESTINFO}",
         ],
+    ]
+
+    bootstrap.publish_first_boot_stage("https-development-root-proof")
+    bootstrap.publish_first_boot_stage("unsafe stage\nvalue")
+
+    assert stage_commands == [
+        [
+            "/usr/bin/vmware-rpctool",
+            (
+                "info-set guestinfo.atlaso.test_vm_first_boot_stage "
+                "https-development-root-proof"
+            ),
+        ]
     ]
 
 
@@ -2113,9 +2147,9 @@ def test_vmware_raw_vmx_workflows_inject_complete_first_boot_ovf_environment_bef
     assert '"guestinfo.atlaso.test_vm_development_root_ca_private_key"' in customizer
     assert "def stage_development_root_ca(" in customizer
     assert "def publish_test_vm_ssh_host_key()" in customizer
-    assert 'run_initialization_layer("SSH host key", publish_test_vm_ssh_host_key)' in customizer
+    assert 'run_layer("SSH host key", publish_test_vm_ssh_host_key)' in customizer
     assert 'if config["normal_test_vm"]:' in customizer
-    assert 'run_initialization_layer("test VM hostname", publish_test_vm_hostname)' in customizer
+    assert 'run_layer("test VM hostname", publish_test_vm_hostname)' in customizer
 
     assert "Atlaso.WorkstationFirstBoot.ps1" in test_vm
     assert "New-AtlasoWorkstationOvfEnvironment" in test_vm_credentials

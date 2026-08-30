@@ -40,6 +40,7 @@ DEVELOPMENT_ROOT_CA_IMPORTED_MARKER_PATH = Path(
 DEVELOPMENT_ROOT_CA_IMPORTED_GUESTINFO = (
     "guestinfo.atlaso.test_vm_development_root_ca_imported"
 )
+FIRST_BOOT_STAGE_GUESTINFO = "guestinfo.atlaso.test_vm_first_boot_stage"
 COMPLETION_MARKER_TEXT = "Atlaso first-boot HTTPS bootstrap completed.\n"
 NGINX_INCLUDE_TEXT = (
     "# Managed by Atlaso. Local changes may be overwritten.\n"
@@ -311,6 +312,36 @@ def publish_development_root_ca_import_proof() -> bool:
     return False
 
 
+def publish_first_boot_stage(stage: str) -> None:
+    """Best-effort publish one bounded non-secret normal-test-VM stage.
+
+    Args:
+        stage: Stable lowercase stage identifier.
+    """
+    if not re.fullmatch(r"[a-z][a-z0-9-]{0,63}", stage):
+        return
+    command_pairs = (
+        ("vmware-rpctool", [f"info-set {FIRST_BOOT_STAGE_GUESTINFO} {stage}"]),
+        ("vmtoolsd", ["--cmd", f"info-set {FIRST_BOOT_STAGE_GUESTINFO} {stage}"]),
+    )
+    for command_name, arguments in command_pairs:
+        command = shutil.which(command_name)
+        if command is None:
+            continue
+        try:
+            result = subprocess.run(
+                [command, *arguments],
+                check=False,
+                text=True,
+                capture_output=True,
+                timeout=5,
+            )
+        except (OSError, subprocess.TimeoutExpired):
+            continue
+        if result.returncode == 0:
+            return
+
+
 def run(command: list[str]) -> subprocess.CompletedProcess[str]:
     """Perform run.
 
@@ -476,13 +507,17 @@ def main() -> int:
         if validation.returncode != 0:
             return validation.returncode
         try:
+            publish_first_boot_stage("https-development-root-proof")
             published = publish_development_root_ca_import_proof()
         except (OSError, UnicodeError, ValueError) as exc:
+            publish_first_boot_stage("failed-https-development-root-proof")
             print(str(exc))
             return 2
         if not published:
+            publish_first_boot_stage("failed-https-development-root-proof")
             print("Development root CA encrypted-import proof could not be published.")
             return 2
+        publish_first_boot_stage("https-development-root-proof-complete")
         return 0
 
     init_db()
@@ -500,12 +535,15 @@ def main() -> int:
             .all()
         )
         try:
+            if DEVELOPMENT_ROOT_CA_STAGING_PATH.exists():
+                publish_first_boot_stage("https-development-root-import")
             development_root_imported = import_staged_development_root_ca(
                 ca_settings,
                 managed_certificates,
             )
             db.commit()
         except Exception as exc:  # noqa: BLE001 - fail closed and scrub shared signer
+            publish_first_boot_stage("failed-https-development-root-import")
             if isinstance(exc, ValueError):
                 print(str(exc))
             else:
@@ -517,6 +555,7 @@ def main() -> int:
             try:
                 remove_staged_development_root_ca()
             except OSError:
+                publish_first_boot_stage("failed-https-development-root-staging-removal")
                 print("Development root CA staging could not be removed after encrypted import.")
                 return 2
         if (
@@ -525,6 +564,7 @@ def main() -> int:
             and not DEVELOPMENT_ROOT_CA_STAGING_PATH.exists()
         ):
             development_root_fingerprint = ca_settings.root_fingerprint.upper()
+            publish_first_boot_stage("https-development-root-import-complete")
 
         errors = ensure_ca_state(db)
         if errors:
@@ -591,14 +631,18 @@ def main() -> int:
     fix_state_permissions()
     if development_root_fingerprint:
         try:
+            publish_first_boot_stage("https-development-root-proof")
             write_development_root_ca_import_proof(development_root_fingerprint)
             published = publish_development_root_ca_import_proof()
         except (OSError, UnicodeError, ValueError) as exc:
+            publish_first_boot_stage("failed-https-development-root-proof")
             print(str(exc))
             return 2
         if not published:
+            publish_first_boot_stage("failed-https-development-root-proof")
             print("Development root CA encrypted-import proof could not be published.")
             return 2
+        publish_first_boot_stage("https-development-root-proof-complete")
     write_text_atomic(MARKER_PATH, COMPLETION_MARKER_TEXT, mode=0o640)
     return 0
 
