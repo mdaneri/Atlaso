@@ -13,6 +13,7 @@ let deletionDepth = 0
 const suppressedHtml = []
 
 const suppressedTags = new Set(['del', 's', 'strike', 'script', 'style', 'pre', 'textarea', 'template'])
+const voidTags = new Set(['area', 'base', 'br', 'col', 'embed', 'hr', 'img', 'input', 'link', 'meta', 'param', 'source', 'track', 'wbr'])
 
 function hasHiddenAttributes (attributes) {
   if (/(?:^|\s)hidden(?:\s|=|$)/i.test(attributes)) {
@@ -42,7 +43,7 @@ function updateHtmlSuppression (content) {
     }
     const attributes = match.groups.attributes
     const hidden = hasHiddenAttributes(attributes)
-    if (suppressedTags.has(tag) || (hidden && !match.groups.selfClosing)) {
+    if (suppressedTags.has(tag) || (hidden && (!match.groups.selfClosing || !voidTags.has(tag)))) {
       suppressedHtml.push(tag)
     }
   }
@@ -52,13 +53,15 @@ function processHtmlBlock (content) {
   if (/^\s*<(?:!--|!|\?)/.test(content)) {
     return
   }
-  const tagPattern = /<\/?[A-Za-z][A-Za-z0-9-]*\b(?:[^<>"']|"[^"]*"|'[^']*')*?\/?\s*>/g
+  const tagPattern = /<!--[\s\S]*?(?:-->|$)|<![^>]*>|<\?[\s\S]*?(?:\?>|$)|<\/?[A-Za-z][A-Za-z0-9-]*\b(?:[^<>"']|"[^"]*"|'[^']*')*?\/?\s*>/g
   let cursor = 0
   for (const match of content.matchAll(tagPattern)) {
     if (!blockquoteDepth && !suppressedHtml.length) {
       output.push(content.slice(cursor, match.index))
     }
-    updateHtmlSuppression(match[0])
+    if (/^<\/?[A-Za-z]/.test(match[0])) {
+      updateHtmlSuppression(match[0])
+    }
     cursor = match.index + match[0].length
   }
   if (!blockquoteDepth && !suppressedHtml.length) {
