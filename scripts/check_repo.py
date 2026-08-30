@@ -649,6 +649,10 @@ DEFAULT_MERGE_AUTHORITY_CONDITIONAL_REQUEST = re.compile(
     r"(?:asked|requested|instructed|told))\b"
 )
 DEFAULT_MERGE_AUTHORITY_DECISION_ONLY = re.compile(r"\bwhether\s+to\b")
+DEFAULT_MERGE_AUTHORITY_PERMISSION_QUESTION = re.compile(
+    r"\b(?:(?:do|would)\s+you\s+(?:want|like)\s+(?:me|us)\s+to|"
+    r"should\s+(?:i|we))\b"
+)
 DEFAULT_MERGE_AUTHORITY_PROMPT_MARKERS = (
     "preserve default merge authority",
     "use the repository's default merge authority",
@@ -715,6 +719,13 @@ DEFAULT_MERGE_AUTHORITY_DIRECT_REVIEW = re.compile(
     r"(?:implementation|changes?|code|patch|fix(?:es)?|pull request|pr|commit)\b"
     r"(?:\s+(?:#\d+|[0-9a-f]{7,40}))?"
     r"(?:\s+and\s+(?:report|summarize|describe)\b[^;.!?]*)?"
+)
+DEFAULT_MERGE_AUTHORITY_INTERROGATIVE_REVIEW = re.compile(
+    r"(?:^|[;.!?]\s*)(?:can|could|would|will)\s+you\s+"
+    r"(?:explain|describe|assess|evaluate|tell)\b[^?]*\?|"
+    r"(?:^|[;.!?]\s*)(?:is|are|was|were|does|do|did)\s+"
+    r"(?:(?:the|this|that|an?)\s+)?"
+    r"(?:implementation|fix|patch|changes?|code|pull request|pr)\b[^?]*\?"
 )
 DEFAULT_MERGE_AUTHORITY_SUPERSEDING_REVIEW_PREFIX = re.compile(
     r"(?:^|[;.!?]\s*)(?:instead,?|switch to|move to|change to)\s*$"
@@ -1323,6 +1334,8 @@ def has_affirmative_default_merge_authority(text: str) -> bool:
                 and DEFAULT_MERGE_AUTHORITY_CONDITIONAL_REQUEST.search(context)
                 is None
                 and DEFAULT_MERGE_AUTHORITY_DECISION_ONLY.search(context) is None
+                and DEFAULT_MERGE_AUTHORITY_PERMISSION_QUESTION.search(context)
+                is None
             ):
                 return True
             offset = normalized.find(marker, offset + 1)
@@ -1340,6 +1353,8 @@ def source_has_default_merge_authority(instructions: tuple[str, ...]) -> bool:
         normalized = " ".join(instruction.casefold().split())
         exclusion_matches = tuple(
             DEFAULT_MERGE_AUTHORITY_SOURCE_EXCLUSIONS.finditer(normalized)
+        ) + tuple(
+            DEFAULT_MERGE_AUTHORITY_INTERROGATIVE_REVIEW.finditer(normalized)
         ) + tuple(
             DEFAULT_MERGE_AUTHORITY_COORDINATED_NO_WORK.finditer(normalized)
         ) + tuple(

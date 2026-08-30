@@ -334,6 +334,9 @@ def test_generated_merge_decision_questions_are_not_affirmative() -> None:
     assert not has_affirmative_default_merge_authority(
         "Complete the guarded merge if requested."
     )
+    assert not has_affirmative_default_merge_authority(
+        "Do you want me to complete the guarded merge?"
+    )
 
 
 def test_source_authority_excludes_patch_review() -> None:
@@ -343,6 +346,12 @@ def test_source_authority_excludes_patch_review() -> None:
     )
     assert not source_has_default_merge_authority(
         ("Review the proposed fix for issue #602 and report findings.",)
+    )
+    assert not source_has_default_merge_authority(
+        ("Can you explain how to fix issue #602?",)
+    )
+    assert not source_has_default_merge_authority(
+        ("Is the fix for issue #602 correct?",)
     )
     assert not source_has_default_merge_authority(
         ("Evaluate the fix and report findings.",)

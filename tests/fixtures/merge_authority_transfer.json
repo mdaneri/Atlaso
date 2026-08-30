@@ -2006,6 +2006,17 @@
       ],
       "generated": "Review the proposed fix and report findings without implementation or pull-request delivery.",
       "expected_holds": []
+    },
+    {
+      "name": "interrogative-fix-explanation-is-ineligible",
+      "default_merge_authority": false,
+      "instructions": [
+        {
+          "text": "Can you explain how to fix issue #602?"
+        }
+      ],
+      "generated": "Explain the possible fix without implementation or pull-request delivery.",
+      "expected_holds": []
     }
   ]
 }
