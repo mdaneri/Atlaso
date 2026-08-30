@@ -993,9 +993,7 @@ def check_agent_policy_gate(root: Path) -> list[Finding]:
             findings.append(Finding(path, "required agent policy entry point is missing or unreadable"))
             continue
         assert text is not None
-        operative_text = strip_markdown_nonoperative_content(
-            strip_markdown_deleted_content(text)
-        )
+        operative_text = strip_markdown_nonoperative_content(text)
         normalized_text = " ".join(text.split())
         normalized_operative_text = " ".join(operative_text.split())
         missing_required_markers = tuple(
@@ -2306,26 +2304,38 @@ def strip_markdown_deleted_content(text: str) -> str:
     Args:
         text: Markdown source whose active policy prose must be inspected.
     """
-    html_deletion_pattern = re.compile(
-        r'''<(?P<tag>del|s|strike)\b(?:[^<>"']|"[^"]*"|'[^']*')*>'''
-        r'''(?:(?!<(?P=tag)\b).)*?</(?P=tag)[ \t\r\n]*>''',
-        flags=re.DOTALL | re.IGNORECASE,
+    html_deletion_tag_pattern = re.compile(
+        r'''<(?P<closing>/)?(?P<tag>del|s|strike)\b'''
+        r'''(?:[^<>"']|"[^"]*"|'[^']*')*>''',
+        flags=re.IGNORECASE,
     )
-    without_html_deletions = text
-    while True:
-        updated_text, replacement_count = html_deletion_pattern.subn(
-            lambda match: re.sub(r"[^\r\n]", "", match.group(0)),
-            without_html_deletions,
+    deletion_stack: list[str] = []
+    visible_parts: list[str] = []
+    cursor = 0
+    for match in html_deletion_tag_pattern.finditer(text):
+        preceding_text = text[cursor : match.start()]
+        visible_parts.append(
+            re.sub(r"[^\r\n]", "", preceding_text)
+            if deletion_stack
+            else preceding_text
         )
-        without_html_deletions = updated_text
-        if replacement_count == 0:
-            break
-    without_html_deletions = re.sub(
-        r'''<(?P<tag>del|s|strike)\b(?:[^<>"']|"[^"]*"|'[^']*')*>.*$''',
-        lambda match: re.sub(r"[^\r\n]", "", match.group(0)),
-        without_html_deletions,
-        flags=re.DOTALL | re.IGNORECASE,
+        visible_parts.append(re.sub(r"[^\r\n]", "", match.group(0)))
+        tag_name = match.group("tag").lower()
+        if match.group("closing"):
+            for index in range(len(deletion_stack) - 1, -1, -1):
+                if deletion_stack[index] == tag_name:
+                    del deletion_stack[index]
+                    break
+        elif not match.group(0).rstrip().endswith("/>"):
+            deletion_stack.append(tag_name)
+        cursor = match.end()
+    trailing_text = text[cursor:]
+    visible_parts.append(
+        re.sub(r"[^\r\n]", "", trailing_text)
+        if deletion_stack
+        else trailing_text
     )
+    without_html_deletions = "".join(visible_parts)
     return re.sub(
         r"~~(?=\S).*?(?<=\S)~~",
         lambda match: re.sub(r"[^\r\n]", "", match.group(0)),
@@ -2368,6 +2378,9 @@ def strip_markdown_nonoperative_content(text: str) -> str:
     )
     without_raw_html_blocks = strip_markdown_hidden_html_containers(
         without_raw_html_blocks,
+    )
+    without_raw_html_blocks = strip_markdown_deleted_content(
+        without_raw_html_blocks
     )
     html_block_interrupt_lines = {
         index
