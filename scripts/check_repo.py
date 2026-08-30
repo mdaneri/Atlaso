@@ -521,7 +521,13 @@ EXPLICIT_MERGE_HOLD_PATTERNS = {
         "pull request only",
         "pr only",
         "only open the pull request",
+        "only open a pull request",
+        "only open a pr",
+        "only open an pr",
         "only create the pull request",
+        "only create a pull request",
+        "only create a pr",
+        "only create an pr",
     ),
     "wait for approval": (
         "wait for approval",
@@ -732,18 +738,24 @@ DEFAULT_MERGE_AUTHORITY_SUPERSEDING_REVIEW_PREFIX = re.compile(
 )
 DEFAULT_MERGE_AUTHORITY_SUPERSEDING_REVIEW_MARKER = re.compile(r"\binstead\b")
 DEFAULT_MERGE_AUTHORITY_STOP_WORK = re.compile(
-    r"(?:^|[;.!?]\s*)(?:please\s+)?(?:stop|cancel|cease|end)\s+"
-    r"(?:(?:all|further|this|the)\s+)?(?:work(?:ing)?|implementation|task)\b"
+    r"(?:^|[;.!?]\s*)(?:please\s+)?(?:"
+    r"(?:stop|cancel|cease|end)\s+"
+    r"(?:(?:all|further|this|the)\s+)?(?:work(?:ing)?|implementation|task)|"
+    r"(?:cancel|end)\s+(?:this|that|the)\s+request)\b"
     r"(?![^;.!?]*\b(?:if|unless|when|once|after|before)\b)[^;.!?]*"
 )
 DEFAULT_MERGE_AUTHORITY_POST_STOP_SUMMARY = re.compile(
-    r"(?:^|[;.!?]\s*)(?:please\s+)?(?:stop|cancel|cease|end)\s+"
-    r"(?:(?:all|further|this|the)\s+)?(?:work(?:ing)?|implementation|task)\b"
+    r"(?:^|[;.!?]\s*)(?:please\s+)?(?:"
+    r"(?:stop|cancel|cease|end)\s+"
+    r"(?:(?:all|further|this|the)\s+)?(?:work(?:ing)?|implementation|task)|"
+    r"(?:cancel|end)\s+(?:this|that|the)\s+request)\b"
     r"[^.!?]*[.!?]\s*(?:summarize|describe|explain|report|document)\b[^.!?]*"
 )
 DEFAULT_MERGE_AUTHORITY_POST_STOP_STATUS = re.compile(
-    r"(?:^|[;.!?]\s*)(?:please\s+)?(?:stop|cancel|cease|end)\s+"
-    r"(?:(?:all|further|this|the)\s+)?(?:work(?:ing)?|implementation|task)\b"
+    r"(?:^|[;.!?]\s*)(?:please\s+)?(?:"
+    r"(?:stop|cancel|cease|end)\s+"
+    r"(?:(?:all|further|this|the)\s+)?(?:work(?:ing)?|implementation|task)|"
+    r"(?:cancel|end)\s+(?:this|that|the)\s+request)\b"
     r"[^.!?]*[.!?]\s*(?:(?:the|this|that)\s+)?"
     r"(?:implementation|work|task|change|patch|fix)\s+"
     r"(?:is|isn't|isn’t|is not|remains?|was|wasn't|wasn’t|was not)\b[^.!?]*"
@@ -858,6 +870,7 @@ MERGE_HOLD_NON_PR_OBJECT = re.compile(
     r"(?:hold|instruction|directive)s?\b|until\b|before\b|after\b|unless\b|"
     r"because\b|while\b|when\b|yet\b|now\b|automatically\b|"
     r"(?:to|for)\s+(?:merge|merging)\b|"
+    r"for\s+issue(?:\s+#\d+)?\b|"
     r"from\s+(?:(?:the)\s+)?(?:maintainer|owner|me|us|you)\b|"
     r"for\s+(?:now|the moment|approval|maintainer approval)\b)\w+"
 )

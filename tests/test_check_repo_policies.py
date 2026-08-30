@@ -421,6 +421,9 @@ def test_source_authority_honors_later_stop_work() -> None:
     assert not source_has_default_merge_authority(
         ("Implement issue #602.", "Stop working on this task.")
     )
+    assert not source_has_default_merge_authority(
+        ("Implement issue #602.", "Cancel that request.")
+    )
     assert source_has_default_merge_authority(
         ("Implement issue #602.", "Please stop work if CI fails.")
     )
@@ -436,6 +439,16 @@ def test_source_authority_honors_later_stop_work() -> None:
             "Stop work on this task. The implementation is incomplete.",
         )
     )
+
+
+def test_merge_hold_directions_recognizes_indefinite_pr_only_instruction() -> None:
+    """Verify indefinite articles preserve an explicit PR-only hold."""
+    assert merge_hold_directions("Only open a pull request for issue #602.") == {
+        "pr only": "add"
+    }
+    assert merge_hold_directions("Only create a PR for issue #602.") == {
+        "pr only": "add"
+    }
 
 
 def test_source_authority_keeps_workflow_policy_subject_eligible() -> None:

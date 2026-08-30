@@ -1913,6 +1913,36 @@
       "expected_holds": []
     },
     {
+      "name": "indefinite-article-pr-only-instruction",
+      "default_merge_authority": true,
+      "instructions": [
+        {
+          "text": "Only open a pull request for issue #602.",
+          "add_holds": [
+            "pr only"
+          ]
+        }
+      ],
+      "generated": "Keep this task pull request only and leave the ready pull request open.",
+      "expected_holds": [
+        "pr only"
+      ]
+    },
+    {
+      "name": "later-cancellation-refers-to-preceding-request",
+      "default_merge_authority": false,
+      "instructions": [
+        {
+          "text": "Implement issue #602."
+        },
+        {
+          "text": "Cancel that request."
+        }
+      ],
+      "generated": "Stop task work without continuing delivery or guarded merge.",
+      "expected_holds": []
+    },
+    {
       "name": "stop-working-revokes-authority",
       "default_merge_authority": false,
       "instructions": [
