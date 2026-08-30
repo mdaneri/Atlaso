@@ -349,8 +349,11 @@ continues the same registration and identity-aware running-inventory postconditi
 absent through the final gate. It does not enumerate or recursively remove the missing directory, so the same
 `create-atlaso-test-vm.ps1 -Redeploy` invocation can proceed to a fresh clone. A recreated root or changed target
 inventory remains an ambiguous state that fails closed and preserves the new path.
-Focused regression coverage exercises that complete redeploy wrapper with a synthetic schema-v2, role-bound source
-payload and separately proves that missing-target cleanup and sibling-prefix data-disk resets still fail closed.
+Focused regression coverage composes the checked cleanup and low-level clone seams with a synthetic schema-v2,
+role-bound source payload so provider-owned root removal is tested without bypassing normal-test-VM startup. Wrapper
+preflight tests use PowerShell's non-mutating `-WhatIf` path to prove that missing targets, sibling-prefix data disks,
+and invalid SSH-key inputs fail before cleanup. They do not use `-NoStart`; the normal wrapper still requires first boot
+to consume and scrub the shared development signer.
 
 The read-only Workstation registration inventory may reside beneath a redirected `%APPDATA%` junction or symbolic link.
 The non-reparse-point requirement remains enforced on the Atlaso artifact root that cleanup recursively deletes, not on

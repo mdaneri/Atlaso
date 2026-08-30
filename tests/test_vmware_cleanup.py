@@ -1138,7 +1138,7 @@ def test_provider_delete_may_remove_the_complete_validated_root(tmp_path: Path) 
 def test_redeploy_continues_after_provider_removes_artifact_root(
     tmp_path: Path,
 ) -> None:
-    """The original redeploy invocation recreates the VM after verified root absence.
+    """The redeploy cleanup and clone seams tolerate provider-removed roots.
 
     Args:
         tmp_path: Pytest temporary directory path.
@@ -1156,12 +1156,24 @@ def test_redeploy_continues_after_provider_removes_artifact_root(
     )
     vdisk_manager = _write_fake_vdisk_manager(tmp_path / "fake-vdisk-manager")
 
-    result = _run_script(
-        VMWARE_SCRIPT_ROOT / "create-atlaso-test-vm.ps1",
-        "-PullRequestNumber",
-        "634",
-        "-Purpose",
-        "redeploy",
+    cleanup = _run_script(
+        VMWARE_SCRIPT_ROOT / "remove-atlaso-vm.ps1",
+        "-VmxPath",
+        str(vmx),
+        "-VmrunPath",
+        str(vmrun),
+        "-ExpectedName",
+        identity,
+        "-Confirm:$false",
+        environment=environment,
+    )
+    assert cleanup.returncode == 0, cleanup.stdout + cleanup.stderr
+    assert not vm_directory.exists()
+
+    clone = _run_script(
+        VMWARE_SCRIPT_ROOT / "create-atlaso-vm.ps1",
+        "-Name",
+        identity,
         "-ApplianceVmxPath",
         str(source_vmx),
         "-OutputDirectory",
@@ -1170,14 +1182,12 @@ def test_redeploy_continues_after_provider_removes_artifact_root(
         str(vmrun),
         "-VdiskManagerPath",
         str(vdisk_manager),
-        "-Redeploy",
-        "-SkipSshKeyProvisioning",
-        "-SkipNetworkPrepare",
-        "-NoStart",
+        "-SkipLabNetworkAdapters",
+        "-Confirm:$false",
         environment=environment,
     )
 
-    assert result.returncode == 0, result.stdout + result.stderr
+    assert clone.returncode == 0, clone.stdout + clone.stderr
     assert vmx.exists()
     assert f'displayName = "{identity}"' in vmx.read_text(encoding="utf-8")
     command_names = [command[2] for command in _commands(log)]
@@ -2242,13 +2252,17 @@ def test_redeploy_missing_target_and_sibling_disk_fail_closed(tmp_path: Path) ->
         "-Redeploy",
         "-SkipSshKeyProvisioning",
         "-SkipNetworkPrepare",
-        "-NoStart",
+        "-WhatIf",
         environment=environment,
     )
     assert redeploy.returncode != 0
-    assert "expected PR-owned Atlaso VMX is missing" in redeploy.stderr
+    assert (
+        "canonical PR-owned output directory already exists without its exact VMX"
+        in redeploy.stderr
+    )
     assert sentinel.read_text(encoding="utf-8") == "preserve"
 
+    disk_output_directory = tmp_path / "Atlaso-PR-634-sibling-disk"
     sibling_directory = tmp_path / "vm-sibling"
     sibling_directory.mkdir()
     sibling_disk = sibling_directory / "unrelated.vmdk"
@@ -2258,11 +2272,11 @@ def test_redeploy_missing_target_and_sibling_disk_fail_closed(tmp_path: Path) ->
         "-PullRequestNumber",
         "634",
         "-Purpose",
-        "missing-target",
+        "sibling-disk",
         "-ApplianceVmxPath",
         str(source_vmx),
         "-OutputDirectory",
-        str(output_directory),
+        str(disk_output_directory),
         "-VmrunPath",
         str(vmrun),
         "-VdiskManagerPath",
@@ -2272,11 +2286,11 @@ def test_redeploy_missing_target_and_sibling_disk_fail_closed(tmp_path: Path) ->
         "-ResetDataDisks",
         "-SkipSshKeyProvisioning",
         "-SkipNetworkPrepare",
-        "-NoStart",
+        "-WhatIf",
         environment=environment,
     )
     assert disk_reset.returncode != 0
-    assert "canonical PR-owned output directory already exists without its exact VMX" in disk_reset.stderr
+    assert "outside the VM output directory" in disk_reset.stderr
     assert sibling_disk.read_text(encoding="utf-8") == "preserve"
 
 
@@ -2309,7 +2323,7 @@ def test_test_vm_ssh_key_inputs_fail_before_cleanup(tmp_path: Path) -> None:
         str(tmp_path / "missing.pub"),
         "-Redeploy",
         "-SkipNetworkPrepare",
-        "-NoStart",
+        "-WhatIf",
         environment=os.environ.copy(),
     )
     assert missing_key.returncode != 0
@@ -2332,7 +2346,7 @@ def test_test_vm_ssh_key_inputs_fail_before_cleanup(tmp_path: Path) -> None:
         "-SkipSshKeyProvisioning",
         "-Redeploy",
         "-SkipNetworkPrepare",
-        "-NoStart",
+        "-WhatIf",
         environment=os.environ.copy(),
     )
     assert conflicting_key_options.returncode != 0
