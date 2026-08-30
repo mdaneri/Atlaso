@@ -20,10 +20,12 @@ HASH_RE = re.compile(r"--hash=sha256:[0-9a-f]{64}")
 PIP_COMMAND_RE = re.compile(
     r"(?<![A-Za-z0-9_.-])"
     r"(?:"
-    r"(?:python(?:\d+(?:\.\d+)*)?(?:\.exe)?|py(?:\.exe)?)\s+-m\s+"
+    r"(?P<python_quote>['\"]?)"
+    r"(?:python(?:\d+(?:\.\d+)*)?(?:\.exe)?|py(?:\.exe)?)"
+    r"(?P=python_quote)\s+-m\s+"
     r"(?P<module_quote>['\"]?)pip(?:\d+(?:\.\d+)*)?(?:\.__main__)?"
     r"(?P=module_quote)"
-    r"|pip(?:\d+(?:\.\d+)*)?"
+    r"|(?P<pip_quote>['\"]?)pip(?:\d+(?:\.\d+)*)?(?P=pip_quote)"
     r")\s+[^\s;&|]+"
     r"(?P<args>.*?)(?=(?:&&|\|\||;)|$)"
 )
@@ -161,10 +163,10 @@ def _workflow_checkout_sources(
             if candidate.strip() and len(candidate) - len(candidate.lstrip()) <= step_indent:
                 break
             path_match = re.fullmatch(
-                r"\s*path:\s*['\"]?([A-Za-z0-9._-]+)['\"]?\s*", candidate
+                r"\s*path:\s*['\"]?([A-Za-z0-9._/-]+)['\"]?\s*", candidate
             )
             if path_match:
-                checkout_path = path_match.group(1)
+                checkout_path = PurePosixPath(path_match.group(1)).as_posix()
             repository_match = re.fullmatch(
                 r"\s*repository:\s*['\"]?([^'\"]+?)['\"]?\s*", candidate
             )
@@ -176,7 +178,7 @@ def _workflow_checkout_sources(
             if ref_match:
                 ref = ref_match.group(1).strip()
         source = CheckoutSource(repository, ref)
-        if checkout_path:
+        if checkout_path and checkout_path != ".":
             checkout_paths.setdefault((job_scope, checkout_path), []).append(
                 (index + 1, source)
             )
