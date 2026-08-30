@@ -64,17 +64,34 @@ jobs:
             ARTIFACT_NAME="atlaso-wheel-v${VERSION}-${RELEASE_SHA}"
             PUBLISHER_ARTIFACTS="$(gh api \
               "repos/${{ github.repository }}/actions/runs/${PUBLISHER_RUN_ID}/artifacts")"
-            ARTIFACT_ID="$(jq -r \
+            MATCHING_ARTIFACT_IDS="$(jq -r \
               --arg name "$ARTIFACT_NAME" \
-              '[.artifacts[] | select(.expired == false and .name == $name)] | if length == 1 then .[0].id else empty end' \
+              '.artifacts[] | select(.expired == false and .name == $name) | .id' \
               <<<"$PUBLISHER_ARTIFACTS")"
-            test -n "$ARTIFACT_ID"
-            gh api "repos/${{ github.repository }}/actions/artifacts/${ARTIFACT_ID}/zip" \
-              > "$RUNNER_TEMP/automatic-wheel.zip"
-            test "$(unzip -Z1 "$RUNNER_TEMP/automatic-wheel.zip" | sort)" = \
-              "$(printf '%s\n' "atlaso-${VERSION}-py3-none-any.whl" wheel-identity.json | sort)"
-            unzip -p "$RUNNER_TEMP/automatic-wheel.zip" wheel-identity.json \
-              > "$RUNNER_TEMP/automatic-wheel-identity.json"
+            test -n "$MATCHING_ARTIFACT_IDS"
+            SELECTED_ARTIFACTS=0
+            while read -r ARTIFACT_ID; do
+              CANDIDATE_ZIP="$RUNNER_TEMP/automatic-wheel-${ARTIFACT_ID}.zip"
+              CANDIDATE_IDENTITY="$RUNNER_TEMP/automatic-wheel-identity-${ARTIFACT_ID}.json"
+              gh api "repos/${{ github.repository }}/actions/artifacts/${ARTIFACT_ID}/zip" \
+                > "$CANDIDATE_ZIP"
+              if test "$(unzip -Z1 "$CANDIDATE_ZIP" | sort)" != \
+                "$(printf '%s\n' "atlaso-${VERSION}-py3-none-any.whl" wheel-identity.json | sort)"; then
+                continue
+              fi
+              unzip -p "$CANDIDATE_ZIP" wheel-identity.json > "$CANDIDATE_IDENTITY"
+              CANDIDATE_CANONICAL="$(jq -cS . "$CANDIDATE_IDENTITY")"
+              if test "$CANDIDATE_CANONICAL" != "$(cat "$CANDIDATE_IDENTITY")"; then
+                continue
+              fi
+              if test "$(jq -r .publisher.run_id <<<"$CANDIDATE_CANONICAL")" = "$PUBLISHER_RUN_ID" && \
+                test "$(jq -r .publisher.run_attempt <<<"$CANDIDATE_CANONICAL")" = "$PUBLISHER_RUN_ATTEMPT"; then
+                SELECTED_ARTIFACTS=$((SELECTED_ARTIFACTS + 1))
+                cp "$CANDIDATE_ZIP" "$RUNNER_TEMP/automatic-wheel.zip"
+                cp "$CANDIDATE_IDENTITY" "$RUNNER_TEMP/automatic-wheel-identity.json"
+              fi
+            done <<<"$MATCHING_ARTIFACT_IDS"
+            test "$SELECTED_ARTIFACTS" -eq 1
             IDENTITY="$(jq -cS . "$RUNNER_TEMP/automatic-wheel-identity.json")"
             test "$IDENTITY" = "$(cat "$RUNNER_TEMP/automatic-wheel-identity.json")"
             test "$(jq -r .repository <<<"$IDENTITY")" = "${{ github.repository }}"
