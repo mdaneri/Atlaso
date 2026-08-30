@@ -993,11 +993,18 @@ def check_agent_policy_gate(root: Path) -> list[Finding]:
             findings.append(Finding(path, "required agent policy entry point is missing or unreadable"))
             continue
         assert text is not None
+        operative_text = strip_markdown_nonoperative_content(text)
         normalized_text = " ".join(text.split())
+        normalized_operative_text = " ".join(operative_text.split())
         missing_required_markers = tuple(
             marker
             for marker in markers
-            if marker not in text and marker not in normalized_text
+            if (
+                marker not in operative_text
+                and marker not in normalized_operative_text
+                if marker in MAINTAINER_BREAK_GLASS_SHARED_MARKERS
+                else marker not in text and marker not in normalized_text
+            )
         )
         for marker in missing_required_markers:
             findings.append(
