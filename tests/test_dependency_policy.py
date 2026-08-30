@@ -558,6 +558,40 @@ def test_dependency_policy_respects_quoted_shell_separators(
     )
 
 
+def test_dependency_policy_tracks_shell_directory_changes(tmp_path: Path) -> None:
+    """Verify shell directory changes affect later requirement resolution.
+
+    Args:
+        tmp_path: Temporary directory provided by pytest for isolated filesystem state.
+    """
+    write_valid_policy(tmp_path)
+    workflow = tmp_path / ".github" / "workflows" / "release.yml"
+    workflow.parent.mkdir(parents=True, exist_ok=True)
+    invocations = (
+        "cd external && python -m pip install -r requirements-release-tools.lock",
+        "Set-Location external; python -m pip install -r requirements-release-tools.lock",
+    )
+    for invocation in invocations:
+        workflow.write_text(
+            f"""jobs:
+  external:
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          repository: attacker/other
+          path: external
+      - run: {invocation}
+""",
+            encoding="utf-8",
+        )
+
+        assert any(
+            "checkout-prefixed workflow requirement is not sourced from Atlaso: "
+            "requirements-release-tools.lock" in error
+            for error in validate(tmp_path)
+        )
+
+
 def test_dependency_policy_treats_dot_checkout_path_as_root(
     tmp_path: Path,
 ) -> None:

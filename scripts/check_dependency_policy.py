@@ -310,8 +310,8 @@ def _shell_command_segments(command: str) -> list[str]:
     return segments
 
 
-def _segment_requirement_paths(segment: str) -> list[str]:
-    """Return requirement paths from one quote-aware shell command segment.
+def _shell_tokens(segment: str) -> list[str]:
+    """Return shell tokens while preserving Windows path separators.
 
     Args:
         segment: Command text with outer separators already removed.
@@ -321,8 +321,42 @@ def _segment_requirement_paths(segment: str) -> list[str]:
     # forms without hiding an intentionally escaped option such as ``\-r``.
     tokenizable = re.sub(r"\\(?=[A-Za-z0-9_.])", r"\\\\", segment)
     try:
-        tokens = shlex.split(tokenizable, posix=True)
+        return shlex.split(tokenizable, posix=True)
     except ValueError:
+        return []
+
+
+def _segment_directory_change(segment: str) -> str | None:
+    """Return a shell directory change performed by one command segment.
+
+    Args:
+        segment: Command text with outer separators already removed.
+    """
+    tokens = _shell_tokens(segment)
+    while tokens and tokens[0] == "&":
+        tokens.pop(0)
+    if not tokens:
+        return None
+    command = tokens[0].replace("\\", "/").rsplit("/", maxsplit=1)[-1].lower()
+    if command == "cd":
+        arguments = [token for token in tokens[1:] if token != "--"]
+        return arguments[0] if arguments else ""
+    if command in {"set-location", "push-location"}:
+        arguments = tokens[1:]
+        if arguments[:1] in (["-Path"], ["-LiteralPath"]):
+            arguments = arguments[1:]
+        return arguments[0] if arguments else ""
+    return None
+
+
+def _segment_requirement_paths(segment: str) -> list[str]:
+    """Return requirement paths from one quote-aware shell command segment.
+
+    Args:
+        segment: Command text with outer separators already removed.
+    """
+    tokens = _shell_tokens(segment)
+    if not tokens:
         return []
     pip_index = -1
     for index, token in enumerate(tokens):
@@ -559,9 +593,21 @@ def _workflow_requirement_paths(lines: list[str]) -> list[tuple[int, str, str]]:
     """
     references: list[tuple[int, str, str]] = []
     for line_number, command, working_directory in _workflow_run_commands(lines):
+        active_directory = working_directory
         for segment in _shell_command_segments(command):
+            directory_change = _segment_directory_change(segment)
+            if directory_change is not None:
+                change_path = PurePosixPath(directory_change.replace("\\", "/"))
+                if active_directory and not change_path.is_absolute():
+                    active_directory = (
+                        PurePosixPath(active_directory.replace("\\", "/"))
+                        / change_path
+                    ).as_posix()
+                else:
+                    active_directory = change_path.as_posix()
+                continue
             references.extend(
-                (line_number, path, working_directory)
+                (line_number, path, active_directory)
                 for path in _segment_requirement_paths(segment)
             )
     return references
