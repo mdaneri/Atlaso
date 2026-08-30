@@ -549,6 +549,8 @@ EXPLICIT_MERGE_HOLD_PATTERNS = {
         "for us to approve",
         "merge only after i approve",
         "merge only after we approve",
+        "merge only if i approve",
+        "merge only if we approve",
         "merge only with my approval",
         "merge only with our approval",
     ),
@@ -678,7 +680,8 @@ DEFAULT_MERGE_AUTHORITY_WORKFLOW_RECLASSIFICATION = re.compile(
 DEFAULT_MERGE_AUTHORITY_DIRECT_REVIEW = re.compile(
     r"(?:review|inspect|check|test|verif(?:y|ication)|validat(?:e|ion)|"
     r"analy(?:ze|sis)|assess|audit|evaluat(?:e|ion))(?:\s+of)?\s+"
-    r"(?:the\s+)?(?:implementation|changes?|code|patch|fix(?:es)?)\b"
+    r"(?:(?:the|this|that|an?)\s+)?"
+    r"(?:implementation|changes?|code|patch|fix(?:es)?)\b"
     r"(?:\s+and\s+(?:report|summarize|describe)\b[^;.!?]*)?"
 )
 DEFAULT_MERGE_AUTHORITY_STOP_WORK = re.compile(

@@ -194,6 +194,9 @@ def test_merge_hold_directions_recognizes_first_person_approval() -> None:
     assert merge_hold_directions(
         "Implement issue #602, but merge only after I approve."
     ) == {"wait for approval": "add"}
+    assert merge_hold_directions(
+        "Implement issue #602, but merge only if I approve."
+    ) == {"wait for approval": "add"}
 
 
 def test_merge_hold_directions_recognizes_equivalent_permission() -> None:
@@ -240,6 +243,9 @@ def test_source_authority_excludes_patch_review() -> None:
     )
     assert not source_has_default_merge_authority(
         ("Perform a code review of the implementation and report findings.",)
+    )
+    assert not source_has_default_merge_authority(
+        ("Review this implementation and report findings.",)
     )
     assert not source_has_default_merge_authority(
         ("Review the implementation; do not modify it.",)

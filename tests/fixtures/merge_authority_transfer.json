@@ -433,6 +433,22 @@
       ]
     },
     {
+      "name": "explicit-merge-if-i-approve",
+      "default_merge_authority": true,
+      "instructions": [
+        {
+          "text": "Implement issue #602, but merge only if I approve.",
+          "add_holds": [
+            "wait for approval"
+          ]
+        }
+      ],
+      "generated": "Preserve the explicit wait for approval instruction.",
+      "expected_holds": [
+        "wait for approval"
+      ]
+    },
+    {
       "name": "later-explicit-hold-withdrawal",
       "default_merge_authority": true,
       "instructions": [
@@ -755,6 +771,17 @@
       "instructions": [
         {
           "text": "Perform a code review of the implementation and report findings."
+        }
+      ],
+      "generated": "Review the implementation and report findings.",
+      "expected_holds": []
+    },
+    {
+      "name": "review-this-implementation-ineligible",
+      "default_merge_authority": false,
+      "instructions": [
+        {
+          "text": "Review this implementation and report findings."
         }
       ],
       "generated": "Review the implementation and report findings.",
