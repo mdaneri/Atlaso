@@ -1374,6 +1374,22 @@ def test_agent_policy_gate_rejects_missing_maintainer_break_glass_contract(
 
         assert check_agent_policy_gate(tmp_path) == []
 
+    visible_inline_code_replacement = prohibition.replace(
+        "ruleset",
+        "`ruleset`",
+    )
+    for relative_path in required_entry_points:
+        write_policy_files(tmp_path)
+        path = tmp_path / relative_path
+        original = path.read_text(encoding="utf-8")
+        assert prohibition in original
+        path.write_text(
+            original.replace(prohibition, visible_inline_code_replacement, 1),
+            encoding="utf-8",
+        )
+
+        assert check_agent_policy_gate(tmp_path) == []
+
     operative_html_replacement = f"\n\n<div>\n{prohibition}\n</div>\n\n"
     for relative_path in required_entry_points:
         write_policy_files(tmp_path)

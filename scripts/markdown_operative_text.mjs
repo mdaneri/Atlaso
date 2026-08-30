@@ -402,7 +402,7 @@ function processInline (children) {
     if (blockquoteDepth || deletionDepth || isHtmlSuppressed()) {
       continue
     }
-    if (token.type === 'text') {
+    if (token.type === 'text' || token.type === 'code_inline') {
       output.push(token.content)
     } else if (token.type === 'softbreak' || token.type === 'hardbreak') {
       output.push('\n')
