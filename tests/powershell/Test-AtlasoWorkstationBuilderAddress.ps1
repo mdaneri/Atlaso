@@ -197,10 +197,21 @@ exit 1
         $sleeper.WaitForExit()
         $sleeper.Dispose()
     }
+    try {
+        Exit-AtlasoVmwareBuilderAddressReservation `
+            -Reservation $activeOwnerReservation `
+            -VmrunPath $vmrunPath `
+            -StateRoot $activeStateRoot
+        throw 'A dead same-boot foreign owner released without whole-tree termination proof.'
+    }
+    catch {
+        if ($_.Exception.Message -eq 'A dead same-boot foreign owner released without whole-tree termination proof.') { throw }
+    }
     Exit-AtlasoVmwareBuilderAddressReservation `
         -Reservation $activeOwnerReservation `
         -VmrunPath $vmrunPath `
-        -StateRoot $activeStateRoot
+        -StateRoot $activeStateRoot `
+        -ProcessTreeTerminationProven
 
     $ledgerPath = Join-Path $stateRoot 'reservations.json'
     $currentBootIdentity = ([DateTimeOffset](
@@ -264,6 +275,7 @@ exit 1
             'builder-address-reservation-'
             'pending-releases'
             'Complete-AtlasoBuilderAddressReservationHandoff'
+            'ProcessTreeTerminationProven'
             'Builder-address handoff publication failed and exact reservation rollback also failed'
             'SkipNetworkCheck suppresses topology preparation, not allocator safety'
             'HostAddresses'

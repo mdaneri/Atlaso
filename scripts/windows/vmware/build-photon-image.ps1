@@ -733,7 +733,8 @@ else {
                     Exit-AtlasoVmwareBuilderAddressReservation `
                         -Reservation $builderReservation `
                         -VmrunPath (Resolve-WorkstationVmrunPath -Path $VmrunPath) `
-                        -StateRoot $builderReservationStateRoot
+                        -StateRoot $builderReservationStateRoot `
+                        -ProcessTreeTerminationProven
                     Remove-Item -LiteralPath $childBuilderAddressReservationPath -Force
                     if (Test-Path -LiteralPath $childBuilderAddressReservationPath) {
                         throw 'The released VMware builder-address handoff could not be removed.'

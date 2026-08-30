@@ -675,11 +675,15 @@ function Exit-AtlasoVmwareBuilderAddressReservation {
     Exact vmrun executable path.
     .PARAMETER StateRoot
     Optional stable per-user reservation state directory.
+    .PARAMETER ProcessTreeTerminationProven
+    Permit the controlling parent to release a dead foreign owner on the same
+    host boot only after it has proven termination of the complete child tree.
     #>
     param(
         [Parameter(Mandatory = $true)][object]$Reservation,
         [Parameter(Mandatory = $true)][string]$VmrunPath,
-        [string]$StateRoot = ''
+        [string]$StateRoot = '',
+        [switch]$ProcessTreeTerminationProven
     )
 
     $resolvedStateRoot = if ([string]::IsNullOrWhiteSpace($StateRoot)) {
@@ -696,6 +700,7 @@ function Exit-AtlasoVmwareBuilderAddressReservation {
             [string]$matching[0].Address -cne [string]$Reservation.Address -or
             [int]$matching[0].OwnerPid -ne [int]$Reservation.OwnerPid -or
             [long]$matching[0].OwnerStartTimeUtcTicks -ne [long]$Reservation.OwnerStartTimeUtcTicks -or
+            [string]$matching[0].HostBootIdentity -cne [string]$Reservation.HostBootIdentity -or
             [string]$matching[0].SourceCommit -cne [string]$Reservation.SourceCommit -or
             [string]$matching[0].SourceBranch -cne [string]$Reservation.SourceBranch -or
             [string]$matching[0].VmName -cne [string]$Reservation.VmName -or
@@ -713,11 +718,18 @@ function Exit-AtlasoVmwareBuilderAddressReservation {
             )) {
             throw 'The exact VMware builder-address reservation could not be proven for release.'
         }
-        if ([int]$matching[0].OwnerPid -ne $PID -and
-            (Test-AtlasoProcessIdentityActive `
+        if ([int]$matching[0].OwnerPid -ne $PID) {
+            $ownerActive = Test-AtlasoProcessIdentityActive `
                 -ProcessId ([int]$matching[0].OwnerPid) `
-                -StartTimeUtcTicks ([long]$matching[0].OwnerStartTimeUtcTicks))) {
-            throw "Builder address $($matching[0].Address) remains reserved because its exact owner process is still active."
+                -StartTimeUtcTicks ([long]$matching[0].OwnerStartTimeUtcTicks)
+            if ($ownerActive) {
+                throw "Builder address $($matching[0].Address) remains reserved because its exact owner process is still active."
+            }
+            $currentBootIdentity = Get-AtlasoBuilderHostBootIdentity
+            if ([string]$matching[0].HostBootIdentity -ceq $currentBootIdentity -and
+                -not $ProcessTreeTerminationProven) {
+                throw "Builder address $($matching[0].Address) remains reserved because a dead same-boot owner does not prove its descendants are inactive."
+            }
         }
         $running = @(Get-AtlasoRunningVmwareVmxPaths -VmrunPath $VmrunPath)
         $vmx = [System.IO.Path]::GetFullPath([string]$matching[0].VmxPath)

@@ -256,7 +256,9 @@ ambiguous state remains reserved with an actionable error.
 The non-secret release handoff lives under the same per-user state root instead of the temporary credential directory.
 If cleanup retains a running VM, stop that VM and rerun the wrapper; startup retries every exact pending handoff before
 allocating another address, skips handoffs whose exact owner process is still active, and deletes a handoff only after
-its ledger release succeeds. Ledger publication uses write-through file replacement and directory-metadata flushing;
+its ledger release succeeds. A dead same-boot owner remains reserved unless the controlling parent proves complete
+process-tree termination; otherwise recovery waits for a host-restart boundary. Ledger publication uses write-through
+file replacement and directory-metadata flushing;
 if handoff publication fails before any VM starts, the owning child rolls back its exact reservation.
 Bridged admission also excludes all IPv4 addresses on the selected Windows interface. `-SkipNetworkCheck` skips topology
 preparation but still performs read-only management-vmnet discovery so DHCP state and exclusions cannot become unknown.

@@ -717,7 +717,9 @@ The following cross-cutting boundaries always apply:
   descendant could still start the VM. Permit stale recovery only after a changed host-boot identity proves that tree
   gone and the exact VM and address are inactive. Keep the non-secret release handoff outside temporary credential
   storage, never recover it while its exact owner process remains active, retry it after a preserved VM stops, and
-  delete it only after exact ledger release succeeds. Publish ledger state with write-through replacement plus directory
+  delete it only after exact ledger release succeeds. Never replay a dead same-boot owner's handoff unless the
+  controlling parent proved complete process-tree termination; otherwise require a host-restart boundary. Publish
+  ledger state with write-through replacement plus directory
   metadata synchronization, and roll back an exact pre-VM reservation if its handoff cannot be published. Release
   normally only after inactive-VM completion. Exclude every IPv4 address on the selected bridged host interface, and never
   let skipped topology preparation bypass read-only DHCP-state discovery. The completed appliance still uses management
