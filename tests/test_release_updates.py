@@ -52,6 +52,10 @@ published_channel_check = load_script(
     "check_published_release_channel_script",
     "check_published_release_channel.py",
 )
+promote_release_channel = load_script(
+    "promote_release_channel_script",
+    "promote_release_channel.py",
+)
 
 
 def canonical(payload: dict) -> bytes:
@@ -191,6 +195,98 @@ def test_channel_pointer_must_match_named_key(trust):
     )
     with pytest.raises(ReleaseManifestError, match="key IDs do not match"):
         verify_signed_json(mismatched_raw, mismatched_signature, trust_dir=trust_dir, document_kind="channel")
+
+
+def test_automatic_development_promotion_refuses_signed_channel_downgrade(
+    trust, tmp_path: Path
+) -> None:
+    """Keep a historical successful-main rerun from moving development backward.
+
+    Args:
+        trust: Temporary signing key and trust directory fixture.
+        tmp_path: Isolated channel publication directory.
+    """
+
+    private_key, trust_dir = trust
+    destination = tmp_path / "channels" / "development"
+    destination.mkdir(parents=True)
+    channel = {
+        "schema_version": 2,
+        "kind": "atlaso-channel",
+        "channel": "development",
+        "version": "0.9.259",
+        "git_commit": "a" * 40,
+        "release_manifest_url": "https://example.test/releases/v0.9.259/release-manifest.json",
+        "issued_at": "2026-08-30T01:02:03Z",
+        "signing_key_id": KEY_ID,
+    }
+    raw, signature = signed(channel, private_key)
+    (destination / "manifest.json").write_bytes(raw)
+    (destination / "manifest.json.sig").write_bytes(signature)
+
+    with pytest.raises(SystemExit, match="refusing to move development backward"):
+        promote_release_channel.refuse_channel_downgrade(
+            destination,
+            channel="development",
+            incoming_version="0.9.258",
+            trusted_key=trust_dir / f"{KEY_ID}.pem",
+        )
+    promote_release_channel.refuse_channel_downgrade(
+        destination,
+        channel="development",
+        incoming_version="0.9.259",
+        trusted_key=trust_dir / f"{KEY_ID}.pem",
+    )
+
+
+def test_monotonic_promotion_requires_the_selected_existing_pointer_key(
+    trust, tmp_path: Path
+) -> None:
+    """Reject a valid pointer signed by a different key in the trust directory.
+
+    Args:
+        trust: Temporary signing key and trust directory fixture.
+        tmp_path: Isolated channel publication directory.
+    """
+
+    _private_key, trust_dir = trust
+    other_key = Ed25519PrivateKey.generate()
+    (trust_dir / "other-key.pem").write_bytes(
+        other_key.public_key().public_bytes(
+            serialization.Encoding.PEM,
+            serialization.PublicFormat.SubjectPublicKeyInfo,
+        )
+    )
+    destination = tmp_path / "channels" / "development"
+    destination.mkdir(parents=True)
+    channel = {
+        "schema_version": 2,
+        "kind": "atlaso-channel",
+        "channel": "development",
+        "version": "0.9.259",
+        "git_commit": "a" * 40,
+        "release_manifest_url": "https://example.test/releases/v0.9.259/release-manifest.json",
+        "issued_at": "2026-08-30T01:02:03Z",
+        "signing_key_id": "other-key",
+    }
+    raw = canonical(channel)
+    signature = canonical(
+        {
+            "schema_version": 1,
+            "key_id": "other-key",
+            "signature": base64.b64encode(other_key.sign(raw)).decode(),
+        }
+    )
+    (destination / "manifest.json").write_bytes(raw)
+    (destination / "manifest.json.sig").write_bytes(signature)
+
+    with pytest.raises(SystemExit, match="selected named trust key"):
+        promote_release_channel.refuse_channel_downgrade(
+            destination,
+            channel="development",
+            incoming_version="0.9.260",
+            trusted_key=trust_dir / f"{KEY_ID}.pem",
+        )
 
 
 def test_signed_inventory_release_verification_detects_tampering(trust):
@@ -1236,8 +1332,12 @@ def test_release_workflows_use_successful_main_sha_and_promote_without_rebuildin
     )[0]
     wheel_replay_trigger = wheel_replay.split("on:\n", 1)[1].split("\npermissions:", 1)[0]
     assert "workflow_dispatch:" in publication_trigger
-    assert "workflow_run:" not in publication_trigger
-    assert "github.event.workflow_run" not in publication
+    assert "workflow_run:" in publication_trigger
+    assert "Publish Python wheel" in publication_trigger
+    assert "github.event.workflow_run.conclusion == 'success'" in publication
+    assert "github.event.workflow_run.head_repository.full_name == github.repository" in publication
+    assert "github.event.workflow_run.head_branch == 'main'" in publication
+    assert 'test "$(jq -r .publisher.trigger <<<"$IDENTITY")" = automatic-main' in publication
     assert "AUTOMATIC_SOFTWARE_RELEASE_ENABLED" not in publication
     assert "github.event.workflow_run.head_branch == 'main'" in wheel_publication
     assert "github.event.workflow_run.event == 'push'" in wheel_publication
@@ -1274,7 +1374,7 @@ def test_release_workflows_use_successful_main_sha_and_promote_without_rebuildin
     assert 'compare/${WHEEL_SHA}...main' in wheel_publication
     assert 'test "$MAIN_STATUS" = ahead || test "$MAIN_STATUS" = identical' in wheel_publication
     assert 'ref: ${{ steps.target.outputs.commit }}' in wheel_publication
-    assert 'ref: ${{ github.event.workflow_run.head_sha }}' in wheel_publication
+    assert 'ref: ${{ github.workflow_sha }}' in wheel_publication
     assert "path: tooling" in wheel_publication
     assert "path: target-source" in wheel_publication
     assert "cache: pip" not in wheel_publication
@@ -1310,6 +1410,9 @@ def test_release_workflows_use_successful_main_sha_and_promote_without_rebuildin
     assert "date --utc" not in wheel_publication
     assert "--source-ci-run-id" in wheel_publication
     assert "--publisher-run-id" in wheel_publication
+    assert "--publisher-trigger" in wheel_publication
+    assert "publisher_trigger=automatic-main" in wheel_publication
+    assert "publisher_trigger=replay" in wheel_publication
     assert "legacy bridge" not in publication
     assert 'cat > "$SITE_ROOT/index.html"' in publication
     assert "Everything your virtualization lab needs." in publication
@@ -1317,6 +1420,8 @@ def test_release_workflows_use_successful_main_sha_and_promote_without_rebuildin
     assert "The HTML page is informational." in publication
     assert "python scripts/check_published_release_channel.py" in publication
     assert "--expected-channel development" in publication
+    assert "--refuse-downgrade" in publication
+    assert "python protected-tooling/scripts/promote_release_channel.py" in publication
     publication_check = publication.split(
         "- name: Verify the published development channel",
         1,
@@ -1329,6 +1434,7 @@ def test_release_workflows_use_successful_main_sha_and_promote_without_rebuildin
     assert publication.count("actions/upload-artifact@v7") >= 3
     assert publication.count("actions/download-artifact@v8") == 3
     assert "python scripts/wheel_artifact.py select" in publication
+    assert "--publisher-trigger automatic-main" in publication
     assert "--application-wheel-root dist/application-wheel" in publication
     assert ".source_ci.run_id" in publication
     assert ".source_ci.run_attempt" in publication
@@ -1370,14 +1476,27 @@ def test_release_workflows_use_successful_main_sha_and_promote_without_rebuildin
     assert 'sha256sum "$EXISTING_NOTICE"' in publication
     assert "if: needs.release_inputs.outputs.existing_release != 'true'" in publication
     prepare_job = publication.split("  prepare:\n", 1)[1].split("  wheelhouse:\n", 1)[0]
-    assert "if: github.ref == 'refs/heads/main'" in prepare_job
+    assert "github.ref == 'refs/heads/main'" in prepare_job
     assert "ref: main" in prepare_job
     assert "persist-credentials: false" in prepare_job
     assert "name: validated-release-request" in prepare_job
     assert "retention-days: 1" in prepare_job
     assert "actions/workflows/ci.yml/runs" not in prepare_job
     assert "-f status=success" not in prepare_job
+    assert "github.event.workflow_run.head_sha" not in prepare_job
+    assert "CANDIDATE_ARTIFACTS=" in prepare_job
+    assert "while IFS=$'\\t' read -r ARTIFACT_ID ARTIFACT_NAME; do" in prepare_job
+    assert '.publisher.run_id <<<"$CANDIDATE_CANONICAL"' in prepare_job
+    assert '.publisher.run_attempt <<<"$CANDIDATE_CANONICAL"' in prepare_job
+    assert 'test "$SELECTED_ARTIFACTS" -eq 1' in prepare_job
+    assert 'RELEASE_SHA="$(jq -r .commit <<<"$IDENTITY")"' in prepare_job
+    assert 'VERSION="$(jq -r .version <<<"$IDENTITY")"' in prepare_job
+    assert 'test "$SELECTED_ARTIFACT_NAME" = "atlaso-wheel-v${VERSION}-${RELEASE_SHA}"' in prepare_job
+    assert 'test "$SELECTED_WHEEL" = "atlaso-${VERSION}-py3-none-any.whl"' in prepare_job
+    assert "if length == 1 then .[0].id else empty end" not in prepare_job
     publish_job = publication.split("  publish:\n", 1)[1]
+    assert 'ref: ${{ github.workflow_sha }}' in publish_job
+    assert "path: protected-tooling" in publish_job
     wheelhouse_job = publication.split("  wheelhouse:\n", 1)[1].split(
         "  release_inputs:\n", 1
     )[0]

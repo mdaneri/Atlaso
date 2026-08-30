@@ -51,14 +51,18 @@ $missingEnvironmentIdRoot = Join-Path ([System.IO.Path]::GetTempPath()) (
 )
 try {
     New-Item -ItemType Directory -Path $missingEnvironmentIdRoot | Out-Null
-    $preservedMarker = Join-Path $missingEnvironmentIdRoot 'preserve.txt'
+    $missingEnvironmentVmRoot = Join-Path $missingEnvironmentIdRoot 'Atlaso-PR-634-credential-preflight'
+    New-Item -ItemType Directory -Path $missingEnvironmentVmRoot | Out-Null
+    $preservedMarker = Join-Path $missingEnvironmentVmRoot 'preserve.txt'
     [System.IO.File]::WriteAllText($preservedMarker, 'preserve-before-preflight')
     $inertVmrunPath = Join-Path $missingEnvironmentIdRoot 'must-not-invoke-vmrun.exe'
     [System.IO.File]::WriteAllText($inertVmrunPath, '')
     $missingEnvironmentIdError = ''
     try {
         & $wrapperPath `
-            -OutputDirectory $missingEnvironmentIdRoot `
+            -PullRequestNumber 634 `
+            -Purpose 'credential preflight' `
+            -OutputDirectory $missingEnvironmentVmRoot `
             -Redeploy `
             -VmrunPath $inertVmrunPath `
             -OnePasswordEnvironmentId '' `
@@ -834,7 +838,8 @@ finally {
         -NoLogo `
         -NoProfile `
         -NonInteractive `
-        -File $scriptScopeHarness 2>&1
+        -File $scriptScopeHarness `
+        -PullRequestNumber 634 2>&1
     if ($LASTEXITCODE -ne 0) {
         throw "The file-backed script-local marker regression failed: $($scriptScopeResult -join ' ')"
     }

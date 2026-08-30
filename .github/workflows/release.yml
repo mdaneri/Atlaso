@@ -1,6 +1,11 @@
 name: Publish appliance release
 
 on:
+  workflow_run:
+    workflows:
+      - Publish Python wheel
+    types:
+      - completed
   workflow_dispatch:
     inputs:
       release_sha:
@@ -13,13 +18,18 @@ permissions:
   contents: read
 
 concurrency:
-  group: appliance-release-${{ inputs.release_sha }}
+  group: appliance-release-${{ inputs.release_sha || github.event.workflow_run.id }}
   cancel-in-progress: false
 
 jobs:
   prepare:
     name: Validate release target
-    if: github.ref == 'refs/heads/main'
+    if: >-
+      (github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main') ||
+      (github.event_name == 'workflow_run' &&
+       github.event.workflow_run.conclusion == 'success' &&
+       github.event.workflow_run.head_repository.full_name == github.repository &&
+       github.event.workflow_run.head_branch == 'main')
     runs-on: ubuntu-latest
     outputs:
       release_sha: ${{ steps.target.outputs.release_sha }}
@@ -35,7 +45,60 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
           RELEASE_SHA: ${{ inputs.release_sha }}
+          PUBLISHER_RUN_ID: ${{ github.event.workflow_run.id }}
+          PUBLISHER_RUN_ATTEMPT: ${{ github.event.workflow_run.run_attempt }}
         run: |
+          if test "${{ github.event_name }}" = workflow_run; then
+            PUBLISHER_ARTIFACTS="$(gh api \
+              "repos/${{ github.repository }}/actions/runs/${PUBLISHER_RUN_ID}/artifacts")"
+            CANDIDATE_ARTIFACTS="$(jq -r \
+              '.artifacts[] |
+               select(.expired == false and
+                 (.name | test("^atlaso-wheel-v[0-9]+\\.[0-9]+\\.[0-9]+-[0-9a-f]{40}$"))) |
+               [.id, .name] | @tsv' \
+              <<<"$PUBLISHER_ARTIFACTS")"
+            test -n "$CANDIDATE_ARTIFACTS"
+            SELECTED_ARTIFACTS=0
+            while IFS=$'\t' read -r ARTIFACT_ID ARTIFACT_NAME; do
+              CANDIDATE_ZIP="$RUNNER_TEMP/automatic-wheel-${ARTIFACT_ID}.zip"
+              CANDIDATE_IDENTITY="$RUNNER_TEMP/automatic-wheel-identity-${ARTIFACT_ID}.json"
+              gh api "repos/${{ github.repository }}/actions/artifacts/${ARTIFACT_ID}/zip" \
+                > "$CANDIDATE_ZIP"
+              CANDIDATE_MEMBERS="$(unzip -Z1 "$CANDIDATE_ZIP" | sort)"
+              CANDIDATE_WHEEL="$(grep -E '^atlaso-[0-9]+\.[0-9]+\.[0-9]+-py3-none-any\.whl$' \
+                <<<"$CANDIDATE_MEMBERS" || true)"
+              if test -z "$CANDIDATE_WHEEL" || test "$CANDIDATE_MEMBERS" != \
+                "$(printf '%s\n' "$CANDIDATE_WHEEL" wheel-identity.json | sort)"; then
+                continue
+              fi
+              unzip -p "$CANDIDATE_ZIP" wheel-identity.json > "$CANDIDATE_IDENTITY"
+              CANDIDATE_CANONICAL="$(jq -cS . "$CANDIDATE_IDENTITY")"
+              if test "$CANDIDATE_CANONICAL" != "$(cat "$CANDIDATE_IDENTITY")"; then
+                continue
+              fi
+              if test "$(jq -r .publisher.run_id <<<"$CANDIDATE_CANONICAL")" = "$PUBLISHER_RUN_ID" && \
+                test "$(jq -r .publisher.run_attempt <<<"$CANDIDATE_CANONICAL")" = "$PUBLISHER_RUN_ATTEMPT"; then
+                SELECTED_ARTIFACTS=$((SELECTED_ARTIFACTS + 1))
+                cp "$CANDIDATE_ZIP" "$RUNNER_TEMP/automatic-wheel.zip"
+                cp "$CANDIDATE_IDENTITY" "$RUNNER_TEMP/automatic-wheel-identity.json"
+                SELECTED_ARTIFACT_NAME="$ARTIFACT_NAME"
+                SELECTED_WHEEL="$CANDIDATE_WHEEL"
+              fi
+            done <<<"$CANDIDATE_ARTIFACTS"
+            test "$SELECTED_ARTIFACTS" -eq 1
+            IDENTITY="$(jq -cS . "$RUNNER_TEMP/automatic-wheel-identity.json")"
+            test "$IDENTITY" = "$(cat "$RUNNER_TEMP/automatic-wheel-identity.json")"
+            RELEASE_SHA="$(jq -r .commit <<<"$IDENTITY")"
+            VERSION="$(jq -r .version <<<"$IDENTITY")"
+            test "$(jq -r .repository <<<"$IDENTITY")" = "${{ github.repository }}"
+            test "$(jq -r .publisher.workflow <<<"$IDENTITY")" = "Publish Python wheel"
+            test "$(jq -r .publisher.workflow_file <<<"$IDENTITY")" = wheel.yml
+            test "$(jq -r .publisher.run_id <<<"$IDENTITY")" = "$PUBLISHER_RUN_ID"
+            test "$(jq -r .publisher.run_attempt <<<"$IDENTITY")" = "$PUBLISHER_RUN_ATTEMPT"
+            test "$(jq -r .publisher.trigger <<<"$IDENTITY")" = automatic-main
+            test "$SELECTED_ARTIFACT_NAME" = "atlaso-wheel-v${VERSION}-${RELEASE_SHA}"
+            test "$SELECTED_WHEEL" = "atlaso-${VERSION}-py3-none-any.whl"
+          fi
           if ! printf '%s' "$RELEASE_SHA" | grep -Eq '^[0-9a-f]{40}$'; then
             echo "::error::Release SHA must be a full lowercase hexadecimal commit."
             exit 1
@@ -212,12 +275,19 @@ jobs:
             test "$(jq -r .head_branch <<<"$CANDIDATE_STATE")" = main
             test "$(jq -r .conclusion <<<"$CANDIDATE_STATE")" = success
           done < <(jq -r '.[] | [.id, .workflow_run.id] | @tsv' "$RUNNER_TEMP/wheel-artifacts.json")
+          SELECT_PUBLISHER_ARGS=()
+          if test "${{ github.event_name }}" = workflow_run; then
+            SELECT_PUBLISHER_ARGS=(
+              --publisher-trigger automatic-main
+            )
+          fi
           python scripts/wheel_artifact.py select \
             --candidates "$CANDIDATES" \
             --output dist/application-wheel \
             --repository "${{ github.repository }}" \
             --version "$VERSION" \
             --commit "$RELEASE_SHA" \
+            "${SELECT_PUBLISHER_ARGS[@]}" \
             > "$RUNNER_TEMP/selected-wheel-identity.json"
           SOURCE_CI_RUN_ID="$(jq -r .source_ci.run_id "$RUNNER_TEMP/selected-wheel-identity.json")"
           SOURCE_CI_RUN_ATTEMPT="$(jq -r .source_ci.run_attempt "$RUNNER_TEMP/selected-wheel-identity.json")"
@@ -316,6 +386,13 @@ jobs:
         with:
           ref: ${{ needs.prepare.outputs.release_sha }}
           fetch-depth: 0
+      - name: Check out protected release tooling
+        uses: actions/checkout@v7
+        with:
+          ref: ${{ github.workflow_sha }}
+          fetch-depth: 0
+          persist-credentials: false
+          path: protected-tooling
       - name: Confirm the commit is still on main
         env:
           RELEASE_SHA: ${{ needs.prepare.outputs.release_sha }}
@@ -400,7 +477,7 @@ jobs:
           if test "$VERSION" = "0.9.18"; then
             git -C "$SITE_ROOT" rm -r --ignore-unmatch .
           fi
-          python scripts/promote_release_channel.py \
+          python protected-tooling/scripts/promote_release_channel.py \
             --channel development \
             --expected-version "$VERSION" \
             --release-manifest-url "https://github.com/${{ github.repository }}/releases/download/v${VERSION}/release-manifest.json" \
@@ -409,7 +486,8 @@ jobs:
             --trusted-key image/common/update-trust/${RELEASE_KEY_ID}.pem \
             --site-root "$SITE_ROOT/updates" \
             --signing-key "$RUNNER_TEMP/release-signing-key.pem" \
-            --signing-key-id "$RELEASE_KEY_ID"
+            --signing-key-id "$RELEASE_KEY_ID" \
+            --refuse-downgrade
           install -m 0644 docs/assets/brand/atlaso-logo-horizontal-light.svg "$SITE_ROOT/atlaso-logo.svg"
           cat > "$SITE_ROOT/index.html" <<'EOF'
           <!doctype html>

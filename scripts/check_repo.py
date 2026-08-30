@@ -640,6 +640,8 @@ DEFAULT_MERGE_AUTHORITY_SOURCE_EXCLUSIONS = re.compile(
 DEFAULT_MERGE_AUTHORITY_WORKFLOW_EXCLUSIONS = re.compile(
     r"(?:perform|follow|conduct|undertake|use)\s+(?:the\s+)?"
     r"private (?:vulnerability|advisory|remediation)\b|"
+    r"(?:fix|patch|resolve|change|modify|edit|work on)\s+"
+    r"(?:(?:an?|the|this|existing)\s+)?draft (?:pull request|pr)\b|"
     r"(?:implement|fix|patch|resolve|solve|deliver|change|modify|edit|work on)"
     r"\b[^.!?]{0,60}\b(?:external fork|"
     r"(?:from|in|on|inside|within) (?:an? )?(?:external )?fork|"
@@ -962,14 +964,21 @@ def merge_hold_directions(
             while marker_offset >= 0:
                 prefix = clause[:marker_offset]
                 if MERGE_HOLD_WITHDRAWAL_NONCURRENT_PREFIX.search(prefix):
-                    conditional_named_withdrawals.update(
-                        hold
-                        for hold, patterns in EXPLICIT_MERGE_HOLD_PATTERNS.items()
-                        if any(
-                            0 <= clause.find(pattern) < marker_offset
-                            for pattern in patterns
-                        )
-                    )
+                    marker_end = marker_offset + len(marker)
+                    for hold, patterns in EXPLICIT_MERGE_HOLD_PATTERNS.items():
+                        for pattern in patterns:
+                            hold_offset = clause.find(pattern)
+                            if hold_offset < 0:
+                                continue
+                            if hold_offset < marker_offset or (
+                                marker_end <= hold_offset
+                                and MERGE_HOLD_WITHDRAWAL_BEFORE_HOLD.fullmatch(
+                                    clause[marker_end:hold_offset]
+                                )
+                                is not None
+                            ):
+                                conditional_named_withdrawals.add(hold)
+                                break
                 marker_offset = clause.find(marker, marker_offset + 1)
     shared_withdrawals: set[str] = set()
     coarse_segments = (

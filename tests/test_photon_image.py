@@ -1880,7 +1880,10 @@ def test_create_atlaso_vmware_test_vm_wrapper_uses_common_helpers():
     packer_template = Path("image/vmware-workstation/atlaso-photon.pkr.hcl").read_text(encoding="utf-8")
     docs = Path("image/vmware-workstation/README.md").read_text(encoding="utf-8")
 
-    assert "[string]$Name = 'Atlaso-VMware'" in script
+    assert "[int]$PullRequestNumber" in script
+    assert "[string]$Purpose = 'test-vm'" in script
+    assert "[string]$CollisionSuffix = ''" in script
+    assert "Atlaso.VmwareTestIdentity.psm1" in script
     assert "[switch]$Redeploy" in script
     assert "[switch]$SkipLabNetworkAdapters" in script
     assert "[switch]$IncludeLabNetworkAdapters" in script
@@ -1958,7 +1961,7 @@ def test_create_atlaso_vmware_test_vm_wrapper_uses_common_helpers():
     assert "Atlaso-Depot.vmdk" in script
     assert "Atlaso-Backups.vmdk" in script
     assert "Atlaso.WorkstationCleanup.psm1" in script
-    assert "expected Atlaso VMX is missing" in script
+    assert "expected PR-owned Atlaso VMX is missing" in script
     assert "-ExpectedName $Name" in script
     assert "Assert-AtlasoStrictDescendantPath" in script
     assert "Assert-AtlasoVmwarePayloadProvenance -VmxPath $resolvedSourceVmx" in vm_script
@@ -2436,8 +2439,9 @@ def test_vmware_lifecycle_cleanup_only_removes_existing_lifecycle_vms():
     assert "PowerShell 7 (pwsh) is required to run the VMware Workstation lifecycle test." in wrapper
     assert "& $powerShell7Path @arguments" in wrapper
     assert "powershell.exe" not in wrapper.lower()
-    assert "Refusing VM cleanup for prefix '$LabName'" in cleanup_script
-    assert "AtlasoWorkstationLifecycle" in cleanup_script
+    assert "Refusing lifecycle cleanup because plan ownership does not match" in cleanup_script
+    assert "New-AtlasoVmwareTestIdentity" in cleanup_script
+    assert "AtlasoWorkstationLifecycle" not in cleanup_script
     assert "test-results\\vmware-workstation-lifecycle" in cleanup_script
     assert "vmrun.exe was not found" in cleanup_script
     assert "Get-AtlasoVmxDisplayName" in cleanup_script
@@ -2497,6 +2501,65 @@ def test_vmware_lifecycle_cleanup_only_removes_existing_lifecycle_vms():
     assert "Cleanup also failed; VM artifacts were preserved" in runner
     assert "Remove-Item -LiteralPath $vmRoot -Recurse -Force" not in runner
     assert "-CleanupVmsOnly" in docs
+
+
+def test_vmware_test_identity_is_bound_to_the_exact_pull_request():
+    """Verify normal and lifecycle tooling share the PR-owned identity contract."""
+    identity_module = Path(
+        "scripts/windows/vmware/Atlaso.VmwareTestIdentity.psm1"
+    ).read_text(encoding="utf-8")
+    normal_wrapper = Path(
+        "scripts/windows/vmware/create-atlaso-test-vm.ps1"
+    ).read_text(encoding="utf-8")
+    lifecycle_wrapper = Path(
+        "scripts/windows/vmware/invoke-lifecycle-test.ps1"
+    ).read_text(encoding="utf-8")
+    lifecycle_runner = Path(
+        "scripts/windows/vmware/run-lifecycle-test.ps1"
+    ).read_text(encoding="utf-8")
+    lifecycle_cleanup = Path(
+        "scripts/windows/vmware/remove-lifecycle-vms.ps1"
+    ).read_text(encoding="utf-8")
+    policy_sources = (
+        Path("AGENTS.md"),
+        Path("docs/contribute/agent-policies.md"),
+        Path("docs/reference/vmware-workstation-lifecycle-testing.md"),
+    )
+
+    grammar = "Atlaso-PR-<number>-<purpose>[-<collision-safe-suffix>]"
+    for policy_path in policy_sources:
+        assert grammar in policy_path.read_text(encoding="utf-8")
+
+    assert '"Atlaso-PR-$PullRequestNumber-$canonicalPurpose"' in identity_module
+    assert "[ValidateRange(1, 2147483647)]" in identity_module
+    assert "[^a-z0-9]+" in identity_module
+    assert "Assert-AtlasoVmwareIdentityDirectory" in identity_module
+    assert "Assert-AtlasoVmwareOwnedVmx" in identity_module
+    assert "[string]$Name = 'Atlaso-VMware'" not in normal_wrapper
+    assert "[Parameter(Mandatory = $true)]" in normal_wrapper
+    assert "-PullRequestNumber $PullRequestNumber" in normal_wrapper
+    assert "-ExpectedName $Name" in normal_wrapper
+    assert "[string]$Purpose = 'lifecycle'" in lifecycle_wrapper
+    assert "[Parameter(Mandatory = $true, ParameterSetName = 'CleanupVms')]" in lifecycle_wrapper
+    assert "[guid]::NewGuid().ToString('N').Substring(0, 8)" in lifecycle_wrapper
+    assert "-PullRequestNumber', \"$PullRequestNumber\"" in lifecycle_wrapper
+    assert '"test-results\\vmware-workstation-lifecycle\\$LabName"' in lifecycle_runner
+    assert "Refusing lifecycle reuse because the exact PR-owned result root already exists" in lifecycle_runner
+    assert "vmware-identity.json" in lifecycle_runner
+    assert "'.vmware-identity.{0}.tmp'" in lifecycle_runner
+    assert "[System.IO.File]::Move($identityTempPath, $identityPath, $true)" in lifecycle_runner
+    assert "Invoke-TrackedLifecycleVmCreation" in lifecycle_runner
+    assert "Publish ownership before an external copy or VMX writer" in lifecycle_runner
+    assert "pull_request_number = $PullRequestNumber" in lifecycle_runner
+    assert "$planJson | Set-Content -LiteralPath (Join-Path $resultRoot 'plan.json')" in lifecycle_runner
+    assert "identity evidence is missing" in lifecycle_cleanup
+    assert "$identityVms = @($identity.vms)" in lifecycle_cleanup
+    assert "identity evidence does not match the discovered VMX set" in lifecycle_cleanup
+    assert "$matchedCandidatePaths.Add($matchingCandidates[0].Path)" in lifecycle_cleanup
+    assert "identity evidence contains a duplicate VMX record" in lifecycle_cleanup
+    assert "Get-ChildItem -LiteralPath $vmRoot" in lifecycle_cleanup
+    assert "Get-ChildItem -LiteralPath $resolvedLifecycleRoot" not in lifecycle_cleanup
+    assert "plan ownership does not match" in lifecycle_cleanup
 
 
 def test_lifecycle_vmware_script_supports_routing_wan_only_and_esxi_pxe_install():

@@ -1144,9 +1144,10 @@ def test_redeploy_continues_after_provider_removes_artifact_root(
         tmp_path: Pytest temporary directory path.
     """
     source_vmx = _write_vmware_payload_fixture(tmp_path / "source")
-    vm_directory = tmp_path / "redeploy"
-    vmx = vm_directory / "Atlaso-Redeploy.vmx"
-    _write_vmx(vmx, "Atlaso-Redeploy")
+    identity = "Atlaso-PR-634-redeploy"
+    vm_directory = tmp_path / identity
+    vmx = vm_directory / f"{identity}.vmx"
+    _write_vmx(vmx, identity)
     vmrun, environment, log, _ = _write_fake_vmrun(
         tmp_path / "fake-redeploy",
         [vmx],
@@ -1157,8 +1158,10 @@ def test_redeploy_continues_after_provider_removes_artifact_root(
 
     result = _run_script(
         VMWARE_SCRIPT_ROOT / "create-atlaso-test-vm.ps1",
-        "-Name",
-        "Atlaso-Redeploy",
+        "-PullRequestNumber",
+        "634",
+        "-Purpose",
+        "redeploy",
         "-ApplianceVmxPath",
         str(source_vmx),
         "-OutputDirectory",
@@ -1176,7 +1179,7 @@ def test_redeploy_continues_after_provider_removes_artifact_root(
 
     assert result.returncode == 0, result.stdout + result.stderr
     assert vmx.exists()
-    assert 'displayName = "Atlaso-Redeploy"' in vmx.read_text(encoding="utf-8")
+    assert f'displayName = "{identity}"' in vmx.read_text(encoding="utf-8")
     command_names = [command[2] for command in _commands(log)]
     assert command_names.index("deleteVM") < command_names.index("clone")
 
@@ -2217,15 +2220,17 @@ def test_redeploy_missing_target_and_sibling_disk_fail_closed(tmp_path: Path) ->
     """
     source_vmx = _write_vmware_payload_fixture(tmp_path / "source")
     vmrun, environment, _, _ = _write_fake_vmrun(tmp_path / "fake", [])
-    output_directory = tmp_path / "vm"
+    output_directory = tmp_path / "Atlaso-PR-634-missing-target"
     output_directory.mkdir()
     sentinel = output_directory / "sentinel.txt"
     sentinel.write_text("preserve", encoding="utf-8")
 
     redeploy = _run_script(
         VMWARE_SCRIPT_ROOT / "create-atlaso-test-vm.ps1",
-        "-Name",
-        "MissingTarget",
+        "-PullRequestNumber",
+        "634",
+        "-Purpose",
+        "missing-target",
         "-ApplianceVmxPath",
         str(source_vmx),
         "-OutputDirectory",
@@ -2241,7 +2246,7 @@ def test_redeploy_missing_target_and_sibling_disk_fail_closed(tmp_path: Path) ->
         environment=environment,
     )
     assert redeploy.returncode != 0
-    assert "expected Atlaso VMX is missing" in redeploy.stderr
+    assert "expected PR-owned Atlaso VMX is missing" in redeploy.stderr
     assert sentinel.read_text(encoding="utf-8") == "preserve"
 
     sibling_directory = tmp_path / "vm-sibling"
@@ -2250,8 +2255,10 @@ def test_redeploy_missing_target_and_sibling_disk_fail_closed(tmp_path: Path) ->
     sibling_disk.write_text("preserve", encoding="utf-8")
     disk_reset = _run_script(
         VMWARE_SCRIPT_ROOT / "create-atlaso-test-vm.ps1",
-        "-Name",
-        "SiblingDisk",
+        "-PullRequestNumber",
+        "634",
+        "-Purpose",
+        "missing-target",
         "-ApplianceVmxPath",
         str(source_vmx),
         "-OutputDirectory",
@@ -2269,7 +2276,7 @@ def test_redeploy_missing_target_and_sibling_disk_fail_closed(tmp_path: Path) ->
         environment=environment,
     )
     assert disk_reset.returncode != 0
-    assert "outside the VM output directory" in disk_reset.stderr
+    assert "canonical PR-owned output directory already exists without its exact VMX" in disk_reset.stderr
     assert sibling_disk.read_text(encoding="utf-8") == "preserve"
 
 
@@ -2281,16 +2288,19 @@ def test_test_vm_ssh_key_inputs_fail_before_cleanup(tmp_path: Path) -> None:
     """
     source_vmx = tmp_path / "source" / "source.vmx"
     _write_vmx(source_vmx, "Source")
-    output_directory = tmp_path / "vm"
-    target_vmx = output_directory / "ProtectedVm.vmx"
-    _write_vmx(target_vmx, "ProtectedVm")
+    identity = "Atlaso-PR-634-protected-vm"
+    output_directory = tmp_path / identity
+    target_vmx = output_directory / f"{identity}.vmx"
+    _write_vmx(target_vmx, identity)
     sentinel = output_directory / "sentinel.txt"
     sentinel.write_text("preserve", encoding="utf-8")
 
     missing_key = _run_script(
         VMWARE_SCRIPT_ROOT / "create-atlaso-test-vm.ps1",
-        "-Name",
-        "ProtectedVm",
+        "-PullRequestNumber",
+        "634",
+        "-Purpose",
+        "protected-vm",
         "-ApplianceVmxPath",
         str(source_vmx),
         "-OutputDirectory",
@@ -2309,8 +2319,10 @@ def test_test_vm_ssh_key_inputs_fail_before_cleanup(tmp_path: Path) -> None:
 
     conflicting_key_options = _run_script(
         VMWARE_SCRIPT_ROOT / "create-atlaso-test-vm.ps1",
-        "-Name",
-        "ProtectedVm",
+        "-PullRequestNumber",
+        "634",
+        "-Purpose",
+        "protected-vm",
         "-ApplianceVmxPath",
         str(source_vmx),
         "-OutputDirectory",

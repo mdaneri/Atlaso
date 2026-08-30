@@ -259,6 +259,8 @@ def test_source_authority_excludes_ineligible_delivery_scopes() -> None:
     assert not source_has_default_merge_authority(
         ("Fix the tests on draft PR #602.",)
     )
+    assert not source_has_default_merge_authority(("Fix draft PR #602.",))
+    assert not source_has_default_merge_authority(("Fix the draft PR #602.",))
 
 
 def test_generated_authority_rejects_conditional_approval() -> None:

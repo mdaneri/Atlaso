@@ -1052,6 +1052,28 @@
       ]
     },
     {
+      "name": "prefix-conditional-named-withdrawal",
+      "default_merge_authority": true,
+      "instructions": [
+        {
+          "text": "Implement the change, but do not merge.",
+          "add_holds": [
+            "do not merge"
+          ]
+        },
+        {
+          "text": "If approved, withdraw the do not merge hold.",
+          "add_holds": [
+            "do not merge"
+          ]
+        }
+      ],
+      "generated": "Preserve the explicit do not merge instruction.",
+      "expected_holds": [
+        "do not merge"
+      ]
+    },
+    {
       "name": "long-conditional-standalone-permission",
       "default_merge_authority": true,
       "instructions": [
@@ -1112,6 +1134,17 @@
         }
       ],
       "generated": "Fix the tests while preserving the existing draft state.",
+      "expected_holds": []
+    },
+    {
+      "name": "direct-draft-pr-work-ineligible",
+      "default_merge_authority": false,
+      "instructions": [
+        {
+          "text": "Fix the draft PR #602."
+        }
+      ],
+      "generated": "Fix the scoped draft pull request without merging it.",
       "expected_holds": []
     },
     {

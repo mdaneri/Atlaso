@@ -329,23 +329,26 @@ Every successful same-repository `main` push CI run automatically starts **Publi
 GitHub-hosted workflow has read-only repository permissions and publishes only the immutable Actions artifact
 `atlaso-wheel-vX.Y.Z-<full-sha>` for 90 days. The artifact contains exactly one versioned Atlaso wheel and a canonical
 identity document binding its source CI run ID and attempt, publisher run ID and attempt, version, commit, size, and
-SHA-256 digest. Manual consumption revalidates those exact attempts. It has no signing
+SHA-256 digest. Downstream consumption revalidates those exact attempts. It has no signing
 material, GitHub Release/tag or Pages write authority, protected environment, self-hosted runner, or virtualization
-access. Repeated artifacts for one version/commit must contain identical wheel bytes or the manual consumer fails.
+access. Repeated artifacts for one version/commit must contain identical wheel bytes or the software consumer fails.
 When identical retries coexist, the consumer stages each publisher-run artifact separately, validates its recorded
 attempt, and preserves the earliest retained publisher run-and-attempt identity so an automatic retry cannot change the
 inputs of an already published signed bundle.
 
-**Publish appliance release** is protected manual dispatch only. Supply the exact full SHA of a successful `main` push
-CI run. The workflow requires a retained matching automatic wheel artifact, validates its GitHub run identities and
+Each successful automatic-main wheel handoff starts the separately protected **Publish appliance release** workflow.
+The workflow requires the retained matching artifact, validates its GitHub run identities and
 embedded build metadata, fails closed on collisions, and records that identity inside the signed appliance bundle. It
 does not rebuild or substitute the application wheel. It retains the exact CPython 3.14 wheelhouse, signing,
-immutable-tag/Release, Pages serialization, signed-channel, and live-verification gates. After the 90-day retention
-window, manually dispatch **Replay Python wheel** from `main` with the exact commit plus its successful source CI run ID
+immutable-tag/Release, Pages serialization, automatic `development` advancement, and live-verification gates. Manual
+dispatch with the exact full SHA of a successful `main` push CI run remains available for idempotent recovery. After
+the 90-day retention window, manually dispatch **Replay Python wheel** from `main` with the exact commit plus its
+successful source CI run ID
 and attempt. That admission workflow revalidates the evidence and current-`main` reachability without checking out or
 executing the target, then emits only a one-day canonical replay request. Its completed `workflow_run` causes the
-read-only **Publish Python wheel** workflow to revalidate the request and publish the replacement handoff. Then dispatch
-the appliance release. If the immutable software Release already exists, that workflow verifies and reuses its signed
+read-only **Publish Python wheel** workflow to revalidate the request and publish the replacement handoff. Replay does
+not implicitly advance an older release; use the exact-SHA software-release dispatch for recovery. If the immutable
+software Release already exists, that workflow verifies and reuses its signed
 assets only after the replay wheel matches the bundled wheel byte for byte, preserving the original signed provenance
 for channel recovery. Never rebuild or rename a wheel locally.
 

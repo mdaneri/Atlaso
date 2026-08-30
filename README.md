@@ -15,6 +15,10 @@ brings infrastructure, storage, identity, networking, and lifecycle workflows in
 - **Networking** — configure interfaces, routing, DNS, DHCP, firewall policy, public services, and network boot.
 - **Lifecycle** — review desired-state changes, automate tasks, monitor health, and install signed updates.
 
+Successful `main` CI automatically publishes the immutable wheel handoff, creates the signed software Release, and
+advances `development`. Promotion to `preview` or `stable` and all OVA/virtualization production remain explicit manual
+operations.
+
 ## Start here
 
 - [Documentation](https://mdaneri.github.io/Atlaso/docs/) — browse the published Atlaso documentation.
@@ -30,6 +34,10 @@ brings infrastructure, storage, identity, networking, and lifecycle workflows in
 Atlaso runs on Photon OS 5.0. VMware Workstation is the canonical image-build, live-test, and documentation target. The
 validated OVF/OVA supports VMware deployment and is the source artifact for KVM and Proxmox VE imports; Hyper-V uses a
 portable ZIP converted from that same appliance image.
+
+Contributor-created VMware test and lifecycle VMs use pull-request-owned identities so validation artifacts remain
+traceable and cleanup cannot adopt a shared or provisional VM name. See the
+[VMware Workstation lifecycle testing guide](docs/reference/vmware-workstation-lifecycle-testing.md).
 
 See [Getting started](docs/getting-started/index.md) for the first-use path and
 [Portable virtualization artifacts](docs/reference/virtualization-artifacts.md) for platform-specific import details.
