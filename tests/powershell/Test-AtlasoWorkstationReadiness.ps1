@@ -254,26 +254,30 @@ $hostnameTimeoutVmrun = Join-Path $OutputDirectory 'hostname-confirmation-timeou
     "@echo off`r`nsetlocal EnableDelayedExpansion`r`nif /I `"%3`"==`"getGuestIPAddress`" (`r`n  echo 192.168.167.135`r`n  exit /b 0`r`n)`r`nif /I `"%3`"==`"readVariable`" (`r`n  if /I not `"%6`"==`"guestinfo.atlaso.test_vm_hostname`" exit /b 0`r`n  set /p count=<`"$hostnameCounter`"`r`n  set /a count+=1`r`n  >`"$hostnameCounter`" echo !count!`r`n  if !count! EQU 1 (`r`n    echo issue-584.atlaso.internal`r`n    exit /b 0`r`n  )`r`n  ping -n 6 127.0.0.1 >nul`r`n  exit /b 0`r`n)`r`nif /I `"%3`"==`"list`" (`r`n  echo Total running VMs: 1`r`n  echo `"$targetVmx`"`r`n  exit /b 0`r`n)`r`nexit /b 9`r`n",
     [System.Text.UTF8Encoding]::new($false)
 )
-$timeoutIdentity = $null
+$hostnameTimeoutError = $null
 try {
     Set-Alias -Name Get-NetNeighbor -Value Get-TestNetNeighbor -Scope Global
     Set-Alias -Name Test-Connection -Value Test-TestConnection -Scope Global
-    $timeoutIdentity = & (Join-Path $RepositoryRoot 'scripts/windows/vmware/get-atlaso-vm-ip.ps1') `
+    & (Join-Path $RepositoryRoot 'scripts/windows/vmware/get-atlaso-vm-ip.ps1') `
         -VmxPath $targetVmx `
         -ExpectedHostname 'issue-584.atlaso.internal' `
         -VmrunPath $hostnameTimeoutVmrun `
         -TimeoutSeconds 2 `
-        -PollSeconds 1 `
-        -PassThruIdentity
+        -PollSeconds 1 | Out-Null
+}
+catch {
+    $hostnameTimeoutError = $_
 }
 finally {
     Remove-Item Alias:Get-NetNeighbor -ErrorAction SilentlyContinue
     Remove-Item Alias:Test-Connection -ErrorAction SilentlyContinue
 }
-if ($null -eq $timeoutIdentity -or
-    $timeoutIdentity.Hostname -cne 'issue-584.atlaso.internal' -or
-    $timeoutIdentity.IPAddress -cne '192.168.167.135') {
-    throw 'A timed-out confirmation read erased the valid hostname from the same stable ownership observation.'
+if ($null -eq $hostnameTimeoutError -or
+    $hostnameTimeoutError.Exception.Message -notlike '*hostname confirmation exceeded*' -or
+    $hostnameTimeoutError.Exception.Message -notlike '*Earlier observed hostname: ''issue-584.atlaso.internal''*' -or
+    $hostnameTimeoutError.Exception.Message -notlike '*Readiness was not returned*' -or
+    $hostnameTimeoutError.Exception.Message -like '*guest initialization did not publish*') {
+    throw 'A timed-out hostname confirmation returned readiness or discarded the earlier diagnostic observation.'
 }
 $stalledError = $null
 try {

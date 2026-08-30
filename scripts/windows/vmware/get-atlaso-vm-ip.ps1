@@ -272,7 +272,10 @@ do {
                 $lastHostnameObservationState = 'ProviderFailed'
                 $lastHostnameProviderExitCode = $confirmedHostnameObservation.ExitCode
             }
-            elseif ($lastHostnameObservationState -ne 'Answered') {
+            else {
+                # The earlier hostname remains useful diagnostic evidence, but
+                # ownership may have changed while the confirmation provider was
+                # stalled. Never return readiness without a fresh complete proof.
                 $lastHostnameObservationState = 'TimedOut'
             }
             if ($lastHostnameObservationState -eq 'ProviderFailed') {
@@ -321,7 +324,8 @@ if ($null -ne $lastAddressOwnership) {
         throw "VMware address ownership was proven for VMX '$($lastAddressOwnership.VmxPath)', MAC $($lastAddressOwnership.MacAddress), and host-facing address $($lastAddressOwnership.IPAddress), but the VMware Tools hostname evidence query failed with exit code $lastHostnameProviderExitCode. Retry after restoring the VMware Tools provider path; no guest-initialization conclusion was made."
     }
     if ($lastHostnameObservationState -eq 'TimedOut') {
-        throw "VMware address ownership was proven for VMX '$($lastAddressOwnership.VmxPath)', MAC $($lastAddressOwnership.MacAddress), and host-facing address $($lastAddressOwnership.IPAddress), but the VMware Tools hostname evidence query exceeded the shared $TimeoutSeconds-second readiness deadline. Retry with a responsive VMware Tools provider; no guest-initialization conclusion was made."
+        $earlierHostname = if ($lastObservedHostname) { $lastObservedHostname } else { '<not reported>' }
+        throw "A stable VMware ownership observation completed for VMX '$($lastAddressOwnership.VmxPath)', MAC $($lastAddressOwnership.MacAddress), and host-facing address $($lastAddressOwnership.IPAddress), but the VMware Tools hostname confirmation exceeded the shared $TimeoutSeconds-second readiness deadline. Earlier observed hostname: '$earlierHostname'. Readiness was not returned because ownership could have changed during the stalled provider call; retry the complete proof with a responsive VMware Tools provider."
     }
     $observedHostname = if ($lastObservedHostname) { $lastObservedHostname } else { '<not reported>' }
     $stageDetail = if ($lastFirstBootStage) {
