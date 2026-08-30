@@ -311,6 +311,43 @@ def test_main_does_not_log_untrusted_paths(
     assert secret_path not in captured.err
 
 
+def test_main_does_not_log_installed_path(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """Keep the resolved installation identity out of successful CLI output.
+
+    Args:
+        monkeypatch: Pytest fixture used to drive the CLI success boundary.
+        capsys: Pytest fixture used to inspect bounded CLI output.
+    """
+
+    secret_path = Path("/tmp/operator-secret/powershell/profile.ps1")
+
+    def install_profile(*_args: object, **_kwargs: object) -> Path:
+        """Return one installation path derived from untrusted CLI input."""
+
+        return secret_path
+
+    monkeypatch.setattr(installer, "install_global_profile", install_profile)
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        [
+            "atlaso_install_powershell_profile.py",
+            "--pwsh-path",
+            "/tmp/operator-secret/pwsh",
+            "--profile-source",
+            "/tmp/operator-secret/profile.ps1",
+        ],
+    )
+
+    assert installer.main() == 0
+    captured = capsys.readouterr()
+    assert captured.err == ""
+    assert captured.out == "Installed Atlaso PowerShell global profile\n"
+    assert str(secret_path) not in captured.out
+
+
 def test_production_allowlist_names_current_and_legacy_photon_layouts() -> None:
     """Keep the reviewed Photon identities explicit and bounded."""
 

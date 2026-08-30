@@ -279,14 +279,17 @@ def main() -> int:
     parser.add_argument("--profile-source", required=True, type=Path)
     args = parser.parse_args()
     try:
-        installed = install_global_profile(args.pwsh_path, args.profile_source)
+        install_global_profile(args.pwsh_path, args.profile_source)
     except ProfileInstallError:
         # Command-line paths are operator-controlled and may disclose host or
         # staging identities. Keep detailed diagnostics inside the typed
         # exception for trusted callers, but emit only a bounded CLI failure.
         print("Atlaso PowerShell profile installation failed safely", file=sys.stderr)
         return 2
-    print(f"Installed Atlaso PowerShell global profile: {installed}")
+    # The resolved destination derives from operator-controlled command paths.
+    # Successful installation is enough for this public CLI boundary; trusted
+    # callers retain the exact returned path from install_global_profile().
+    print("Installed Atlaso PowerShell global profile")
     return 0
 
 
