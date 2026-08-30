@@ -478,6 +478,16 @@ address, or neighbor entry owned by another running VM fails closed with the rel
 identity evidence. The wrapper re-lists the running inventory and rechecks the target address immediately before
 returning; a concurrent VM start, stop, or target-address change retries the complete proof.
 
+Address ownership and guest initialization are reported as separate readiness layers. Once a stable VMX, MAC, Tools
+address, running inventory, and Windows neighbor tuple has been proven, an absent guest-published hostname no longer
+falls through to the generic address-discovery timeout. The failure retains that non-secret ownership tuple, shows the
+injected and observed hostname state, and includes only the last allowlisted bounded first-boot stage when the guest
+published one. A missing or unknown stage is reported as unavailable; arbitrary guest-info is never echoed. This usually
+means the source image predates the active first-boot contract or the guest first-boot service stopped before hostname
+publication and HTTPS/application startup. Inspect the exact clone's local console and first-boot service state, and
+rebuild an outdated source appliance before redeploying. Do not weaken or bypass the hostname gate merely because SSH
+or an address is reachable.
+
 Recover from that failure through the exact clone's local console: stop the named conflicting VM, or give the clone a
 unique applied static address. A temporary DHCP reservation is acceptable only when it is bound to the exact target MAC
 shown by the failure. Then rerun `get-atlaso-vm-ip.ps1` with the exact VMX and the original `-ExpectedHostname`, or

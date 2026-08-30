@@ -172,6 +172,17 @@ $uniqueGuests = @(
     [pscustomobject]@{ Path = $targetVmx; MacAddress = $targetMac; IPAddress = '192.168.167.135' },
     [pscustomobject]@{ Path = $sourceVmx; MacAddress = '00-0c-29-aa-bb-cc'; IPAddress = '192.168.167.134' }
 )
+$ownership = Assert-AtlasoWorkstationAddressOwnership `
+    -TargetVmxPath $targetVmx `
+    -TargetMacAddress $targetMac `
+    -TargetIPAddress '192.168.167.135' `
+    -RunningGuests $uniqueGuests `
+    -NeighborMacAddresses @($targetMac)
+if ($ownership.VmxPath -cne (Resolve-Path -LiteralPath $targetVmx).Path -or
+    $ownership.MacAddress -cne $targetMac -or
+    $ownership.IPAddress -cne '192.168.167.135') {
+    throw 'Address ownership proof did not retain the VMX, MAC, and address tuple independently of hostname readiness.'
+}
 $identity = Assert-AtlasoWorkstationAddressIdentity `
     -TargetVmxPath $targetVmx `
     -TargetMacAddress $targetMac `
@@ -185,6 +196,93 @@ if ($identity.VmxPath -cne (Resolve-Path -LiteralPath $targetVmx).Path -or
     $identity.Hostname -cne 'issue-535.atlaso.internal' -or
     $identity.IPAddress -cne '192.168.167.135') {
     throw 'Successful readiness did not retain the complete VMX, MAC, hostname, and address identity tuple.'
+}
+
+$stalledVmrun = Join-Path $OutputDirectory 'stalled-first-boot-vmrun.cmd'
+[System.IO.File]::WriteAllText(
+    $stalledVmrun,
+    "@echo off`r`nif /I `"%3`"==`"getGuestIPAddress`" (`r`n  echo 192.168.167.135`r`n  exit /b 0`r`n)`r`nif /I `"%3`"==`"readVariable`" (`r`n  if /I `"%6`"==`"guestinfo.atlaso.test_vm_first_boot_stage`" echo failed-hostname`r`n  exit /b 0`r`n)`r`nif /I `"%3`"==`"list`" (`r`n  echo Total running VMs: 1`r`n  echo `"$targetVmx`"`r`n  exit /b 0`r`n)`r`nexit /b 9`r`n",
+    [System.Text.UTF8Encoding]::new($false)
+)
+<#
+.SYNOPSIS
+Return synthetic Windows neighbor evidence for the stalled first-boot fixture.
+.PARAMETER AddressFamily
+Ignored address-family selector.
+.PARAMETER IPAddress
+Ignored fixture address.
+.PARAMETER ErrorAction
+Ignored error preference.
+#>
+function Get-TestNetNeighbor {
+    param(
+        [string]$AddressFamily,
+        [string]$IPAddress,
+        [System.Management.Automation.ActionPreference]$ErrorAction
+    )
+    return [pscustomobject]@{ State = 'Reachable'; LinkLayerAddress = $targetMac }
+}
+<#
+.SYNOPSIS
+Populate synthetic neighbor state for the stalled first-boot fixture.
+.PARAMETER TargetName
+Ignored fixture address.
+.PARAMETER Count
+Ignored probe count.
+.PARAMETER Quiet
+Ignored quiet selector.
+.PARAMETER TimeoutSeconds
+Ignored timeout.
+.PARAMETER ErrorAction
+Ignored error preference.
+#>
+function Test-TestConnection {
+    param(
+        [string]$TargetName,
+        [int]$Count,
+        [switch]$Quiet,
+        [int]$TimeoutSeconds,
+        [System.Management.Automation.ActionPreference]$ErrorAction
+    )
+    return $true
+}
+$stalledError = $null
+try {
+    Set-Alias -Name Get-NetNeighbor -Value Get-TestNetNeighbor -Scope Global
+    Set-Alias -Name Test-Connection -Value Test-TestConnection -Scope Global
+    & (Join-Path $RepositoryRoot 'scripts/windows/vmware/get-atlaso-vm-ip.ps1') `
+        -VmxPath $targetVmx `
+        -ExpectedHostname 'issue-584.atlaso.internal' `
+        -VmrunPath $stalledVmrun `
+        -TimeoutSeconds 2 `
+        -PollSeconds 1 | Out-Null
+}
+catch {
+    $stalledError = $_
+}
+finally {
+    Remove-Item Alias:Get-NetNeighbor -ErrorAction SilentlyContinue
+    Remove-Item Alias:Test-Connection -ErrorAction SilentlyContinue
+}
+if ($null -eq $stalledError -or
+    $stalledError.Exception.Message -notlike 'VMware address ownership was proven*' -or
+    $stalledError.Exception.Message -notlike '*failed-hostname*' -or
+    $stalledError.Exception.Message -notlike '*Observed hostname: ''<not reported>''*' -or
+    $stalledError.Exception.Message -like 'No uniquely bound IPv4 address*') {
+    throw 'A guest-initialization stall after stable address ownership did not report the sanitized first-boot layer.'
+}
+$unknownStageVmrun = Join-Path $OutputDirectory 'unknown-first-boot-stage-vmrun.cmd'
+[System.IO.File]::WriteAllText(
+    $unknownStageVmrun,
+    (Get-Content -LiteralPath $stalledVmrun -Raw).Replace('failed-hostname', 'credential-shaped-value'),
+    [System.Text.UTF8Encoding]::new($false)
+)
+$unknownStage = Get-AtlasoWorkstationFirstBootStage `
+    -VmxPath $targetVmx `
+    -VmrunPath $unknownStageVmrun `
+    -Deadline (Get-Date).AddSeconds(2)
+if ($unknownStage) {
+    throw 'An unknown first-boot stage was accepted into readiness diagnostics.'
 }
 
 $neighborError = $null

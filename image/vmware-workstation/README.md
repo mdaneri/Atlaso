@@ -594,6 +594,13 @@ or the neighbor entry maps to another running VM's MAC, the wrapper stops before
 the relevant conflicting identity evidence. Immediately before returning readiness, it re-lists the running inventory
 and rechecks the target address; a concurrent VM start, stop, or target-address change restarts the proof.
 
+The wrapper reports a guest-initialization timeout separately after it has proved the stable VMX, MAC, Tools address,
+running inventory, and Windows neighbor tuple. That diagnostic includes the injected hostname, whether the guest
+published a hostname, and the last allowlisted bounded first-boot stage when available; it does not relabel the failure
+as an address-discovery timeout or print arbitrary guest-info. An address or reachable SSH port is not appliance
+readiness. Use the exact clone's local console to inspect first boot, and rebuild a source image that predates the active
+first-boot contract before redeploying. The hostname and HTTPS/application gates remain mandatory.
+
 For recovery, leave the failed clone running only while using its local console, then either stop the named conflicting
 VM or assign the clone a unique management address. A task-specific DHCP reservation must target the exact MAC printed
 in the failure; a static address must be changed and applied from the clone's console before retrying readiness. Re-run

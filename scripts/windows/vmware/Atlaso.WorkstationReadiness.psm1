@@ -217,25 +217,17 @@ Management NIC MAC read from the target VMX.
 .PARAMETER TargetIPAddress
 IPv4 address reported by VMware Tools for the target.
 
-.PARAMETER ExpectedHostname
-Hostname injected into the target's first-boot environment.
-
-.PARAMETER ObservedHostname
-Actual hostname published by the target through VMware Tools after first boot.
-
 .PARAMETER RunningGuests
 Running VMware guests with Path, MacAddress, and IPAddress properties.
 
 .PARAMETER NeighborMacAddresses
 Usable Windows IPv4-neighbor MAC entries for the target address.
 #>
-function Assert-AtlasoWorkstationAddressIdentity {
+function Assert-AtlasoWorkstationAddressOwnership {
     param(
         [Parameter(Mandatory = $true)][string]$TargetVmxPath,
         [Parameter(Mandatory = $true)][string]$TargetMacAddress,
         [Parameter(Mandatory = $true)][string]$TargetIPAddress,
-        [Parameter(Mandatory = $true)][string]$ExpectedHostname,
-        [Parameter(Mandatory = $true)][AllowEmptyString()][string]$ObservedHostname,
         [Parameter(Mandatory = $true)][AllowEmptyCollection()][object[]]$RunningGuests,
         [Parameter(Mandatory = $true)][AllowEmptyCollection()][string[]]$NeighborMacAddresses
     )
@@ -277,18 +269,6 @@ function Assert-AtlasoWorkstationAddressIdentity {
         throw "Duplicate VMware management address $TargetIPAddress`: target VMX '$resolvedTargetVmxPath' uses MAC $normalizedTargetMac, but running VMX '$conflictPath' uses MAC $conflictMac and reports the same address. Stop or readdress the conflicting VM before retrying."
     }
 
-    $normalizedExpectedHostname = $ExpectedHostname.Trim().TrimEnd('.').ToLowerInvariant()
-    $normalizedObservedHostname = $ObservedHostname.Trim().TrimEnd('.').ToLowerInvariant()
-    if (-not $normalizedExpectedHostname) {
-        throw "Expected VMware guest hostname is empty for target VMX '$resolvedTargetVmxPath'."
-    }
-    if (-not $normalizedObservedHostname) {
-        throw "VMware guest hostname evidence is incomplete for target VMX '$resolvedTargetVmxPath'."
-    }
-    if ($normalizedObservedHostname -ne $normalizedExpectedHostname) {
-        throw "VMware guest hostname mismatch for target VMX '$resolvedTargetVmxPath': expected '$normalizedExpectedHostname', but VMware Tools reported '$normalizedObservedHostname'."
-    }
-
     $normalizedNeighborMacs = @(
         $NeighborMacAddresses |
             ForEach-Object { ConvertTo-AtlasoWorkstationMacAddress -MacAddress $_ } |
@@ -311,9 +291,154 @@ function Assert-AtlasoWorkstationAddressIdentity {
     return [pscustomobject]@{
         VmxPath    = $resolvedTargetVmxPath
         MacAddress = $normalizedTargetMac
-        Hostname   = $normalizedObservedHostname
         IPAddress  = $TargetIPAddress
     }
+}
+
+<#
+.SYNOPSIS
+Prove that a guest-published hostname matches the injected hostname.
+
+.PARAMETER TargetVmxPath
+Exact VMX whose guest-published hostname is being checked.
+
+.PARAMETER ExpectedHostname
+Hostname injected into the target's first-boot environment.
+
+.PARAMETER ObservedHostname
+Actual hostname published by the target through VMware Tools after first boot.
+#>
+function Assert-AtlasoWorkstationHostnameIdentity {
+    param(
+        [Parameter(Mandatory = $true)][string]$TargetVmxPath,
+        [Parameter(Mandatory = $true)][string]$ExpectedHostname,
+        [Parameter(Mandatory = $true)][AllowEmptyString()][string]$ObservedHostname
+    )
+
+    $resolvedTargetVmxPath = (Resolve-Path -LiteralPath $TargetVmxPath -ErrorAction Stop).Path
+    $normalizedExpectedHostname = $ExpectedHostname.Trim().TrimEnd('.').ToLowerInvariant()
+    $normalizedObservedHostname = $ObservedHostname.Trim().TrimEnd('.').ToLowerInvariant()
+    if (-not $normalizedExpectedHostname) {
+        throw "Expected VMware guest hostname is empty for target VMX '$resolvedTargetVmxPath'."
+    }
+    if (-not $normalizedObservedHostname) {
+        throw "VMware guest hostname evidence is incomplete for target VMX '$resolvedTargetVmxPath'."
+    }
+    if ($normalizedObservedHostname -ne $normalizedExpectedHostname) {
+        throw "VMware guest hostname mismatch for target VMX '$resolvedTargetVmxPath': expected '$normalizedExpectedHostname', but VMware Tools reported '$normalizedObservedHostname'."
+    }
+    return $normalizedObservedHostname
+}
+
+<#
+.SYNOPSIS
+Prove the complete VMX, MAC, address, neighbor, and hostname identity tuple.
+
+.PARAMETER TargetVmxPath
+Exact VMX expected to own the address.
+
+.PARAMETER TargetMacAddress
+Management NIC MAC read from the target VMX.
+
+.PARAMETER TargetIPAddress
+IPv4 address reported by VMware Tools for the target.
+
+.PARAMETER ExpectedHostname
+Hostname injected into the target's first-boot environment.
+
+.PARAMETER ObservedHostname
+Actual hostname published by the target through VMware Tools after first boot.
+
+.PARAMETER RunningGuests
+Running VMware guests with Path, MacAddress, and IPAddress properties.
+
+.PARAMETER NeighborMacAddresses
+Usable Windows IPv4-neighbor MAC entries for the target address.
+#>
+function Assert-AtlasoWorkstationAddressIdentity {
+    param(
+        [Parameter(Mandatory = $true)][string]$TargetVmxPath,
+        [Parameter(Mandatory = $true)][string]$TargetMacAddress,
+        [Parameter(Mandatory = $true)][string]$TargetIPAddress,
+        [Parameter(Mandatory = $true)][string]$ExpectedHostname,
+        [Parameter(Mandatory = $true)][AllowEmptyString()][string]$ObservedHostname,
+        [Parameter(Mandatory = $true)][AllowEmptyCollection()][object[]]$RunningGuests,
+        [Parameter(Mandatory = $true)][AllowEmptyCollection()][string[]]$NeighborMacAddresses
+    )
+
+    $ownership = Assert-AtlasoWorkstationAddressOwnership `
+        -TargetVmxPath $TargetVmxPath `
+        -TargetMacAddress $TargetMacAddress `
+        -TargetIPAddress $TargetIPAddress `
+        -RunningGuests $RunningGuests `
+        -NeighborMacAddresses $NeighborMacAddresses
+    $hostname = Assert-AtlasoWorkstationHostnameIdentity `
+        -TargetVmxPath $TargetVmxPath `
+        -ExpectedHostname $ExpectedHostname `
+        -ObservedHostname $ObservedHostname
+    return [pscustomobject]@{
+        VmxPath    = $ownership.VmxPath
+        MacAddress = $ownership.MacAddress
+        Hostname   = $hostname
+        IPAddress  = $ownership.IPAddress
+    }
+}
+
+<#
+.SYNOPSIS
+Read one allowlisted first-boot stage for bounded readiness diagnostics.
+
+.PARAMETER VmxPath
+Exact running normal test VMX path.
+
+.PARAMETER VmrunPath
+Exact VMware vmrun executable path.
+
+.PARAMETER Deadline
+Absolute deadline that bounds the diagnostic guest-info read.
+#>
+function Get-AtlasoWorkstationFirstBootStage {
+    param(
+        [Parameter(Mandatory = $true)][string]$VmxPath,
+        [Parameter(Mandatory = $true)][string]$VmrunPath,
+        [Parameter(Mandatory = $true)][datetime]$Deadline
+    )
+
+    $result = Invoke-AtlasoWorkstationVmrunBounded `
+        -VmrunPath $VmrunPath `
+        -Arguments @(
+            '-T', 'ws', 'readVariable', $VmxPath, 'runtimeConfig',
+            'guestinfo.atlaso.test_vm_first_boot_stage'
+        ) `
+        -Deadline $Deadline
+    if ($result.TimedOut -or $result.ExitCode -ne 0) { return '' }
+    $reported = @($result.StdOut -split '\r?\n' | Where-Object { $_ }) | Select-Object -First 1
+    if ([string]::IsNullOrWhiteSpace($reported)) { return '' }
+    try {
+        $normalized = ConvertFrom-AtlasoWorkstationRuntimeConfigValue -Value $reported
+    }
+    catch {
+        return ''
+    }
+    $normalized = $normalized.Trim().ToLowerInvariant()
+    $layerStages = @(
+        'management-network', 'resolver', 'management-web-server', 'firewall',
+        'hostname', 'root-password', 'root-ssh', 'bootstrap-administrator-password',
+        'ssh-host-key', 'development-administrator-ssh', 'test-vm-hostname',
+        'appliance-environment', 'development-root-ca-staging-and-guest-info-scrub',
+        'console-credential-refresh', 'host-state-durability', 'pending-success-marker',
+        'ovf-credential-scrub', 'applied-marker'
+    )
+    $knownStages = @($layerStages)
+    $knownStages += @($layerStages | ForEach-Object { "failed-$_" })
+    $knownStages += @(
+        'vmware-customization-complete', 'https-development-root-proof',
+        'https-development-root-proof-complete', 'https-development-root-import',
+        'https-development-root-import-complete', 'failed-https-development-root-proof',
+        'failed-https-development-root-import', 'failed-https-development-root-staging-removal'
+    )
+    if ($knownStages -ccontains $normalized) { return $normalized }
+    return ''
 }
 
 <#
@@ -388,10 +513,13 @@ function Assert-AtlasoWorkstationStableObservation {
 
 Export-ModuleMember -Function @(
     'Assert-AtlasoWorkstationAddressIdentity',
+    'Assert-AtlasoWorkstationAddressOwnership',
+    'Assert-AtlasoWorkstationHostnameIdentity',
     'Assert-AtlasoWorkstationStableObservation',
     'ConvertFrom-AtlasoWorkstationRuntimeConfigValue',
     'ConvertTo-AtlasoWorkstationMacAddress',
     'Get-AtlasoWorkstationRunningVmxPath',
+    'Get-AtlasoWorkstationFirstBootStage',
     'Get-AtlasoWorkstationVmxMacAddress',
     'Invoke-AtlasoWorkstationVmrunBounded'
 )

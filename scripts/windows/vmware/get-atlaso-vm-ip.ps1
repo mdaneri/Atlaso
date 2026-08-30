@@ -140,12 +140,17 @@ $resolvedVmxPath = (Resolve-Path -LiteralPath $VmxPath -ErrorAction Stop).Path
 $resolvedVmrun = Resolve-VmrunPath -Path $VmrunPath
 $deadline = (Get-Date).AddSeconds($TimeoutSeconds)
 $lastReadinessError = ''
+$lastAddressOwnership = $null
+$lastObservedHostname = ''
+$lastFirstBootStage = ''
 do {
     $ipAddress = Get-VmwareGuestIPv4Address `
         -VmrunPath $resolvedVmrun -VmxPath $resolvedVmxPath -Deadline $deadline
     if ($ipAddress) {
         try {
-            $observedHostname = Get-VmwareGuestHostname `
+            # Normalize provider representation before host network probing so
+            # malformed guest-info remains an immediate fail-closed boundary.
+            $lastObservedHostname = Get-VmwareGuestHostname `
                 -VmrunPath $resolvedVmrun -VmxPath $resolvedVmxPath -Deadline $deadline
             $runningPaths = @(
                 Get-AtlasoWorkstationRunningVmxPath -VmrunPath $resolvedVmrun -Deadline $deadline
@@ -169,12 +174,10 @@ do {
                 }
             )
             $targetMacAddress = Get-AtlasoWorkstationVmxMacAddress -VmxPath $resolvedVmxPath
-            Assert-AtlasoWorkstationAddressIdentity `
+            Assert-AtlasoWorkstationAddressOwnership `
                 -TargetVmxPath $resolvedVmxPath `
                 -TargetMacAddress $targetMacAddress `
                 -TargetIPAddress $ipAddress `
-                -ExpectedHostname $ExpectedHostname `
-                -ObservedHostname $observedHostname `
                 -RunningGuests $runningGuests `
                 -NeighborMacAddresses @(Get-HostNeighborMacAddress -IPAddress $ipAddress) | Out-Null
             # Close the concurrent-start window after the slower per-guest and
@@ -208,17 +211,34 @@ do {
                 -ConfirmedTargetIPAddress $confirmedIpAddress `
                 -InitialRunningGuests $runningGuests `
                 -ConfirmedRunningGuests $confirmedGuests
-            $confirmedIdentity = Assert-AtlasoWorkstationAddressIdentity `
+            $confirmedOwnership = Assert-AtlasoWorkstationAddressOwnership `
                 -TargetVmxPath $resolvedVmxPath `
                 -TargetMacAddress $targetMacAddress `
                 -TargetIPAddress $confirmedIpAddress `
-                -ExpectedHostname $ExpectedHostname `
-                -ObservedHostname (Get-VmwareGuestHostname `
-                    -VmrunPath $resolvedVmrun `
-                    -VmxPath $resolvedVmxPath `
-                    -Deadline $deadline) `
                 -RunningGuests $confirmedGuests `
                 -NeighborMacAddresses @(Get-HostNeighborMacAddress -IPAddress $confirmedIpAddress)
+            $lastAddressOwnership = $confirmedOwnership
+            $lastObservedHostname = Get-VmwareGuestHostname `
+                -VmrunPath $resolvedVmrun `
+                -VmxPath $resolvedVmxPath `
+                -Deadline $deadline
+            if (-not $lastObservedHostname) {
+                $stage = Get-AtlasoWorkstationFirstBootStage `
+                    -VmxPath $resolvedVmxPath `
+                    -VmrunPath $resolvedVmrun `
+                    -Deadline $deadline
+                if ($stage) { $lastFirstBootStage = $stage }
+            }
+            $confirmedHostname = Assert-AtlasoWorkstationHostnameIdentity `
+                -TargetVmxPath $resolvedVmxPath `
+                -ExpectedHostname $ExpectedHostname `
+                -ObservedHostname $lastObservedHostname
+            $confirmedIdentity = [pscustomobject]@{
+                VmxPath    = $confirmedOwnership.VmxPath
+                MacAddress = $confirmedOwnership.MacAddress
+                Hostname   = $confirmedHostname
+                IPAddress  = $confirmedOwnership.IPAddress
+            }
             Write-Information `
                 "Verified VMware readiness: VMX='$($confirmedIdentity.VmxPath)'; MAC=$($confirmedIdentity.MacAddress); hostname=$($confirmedIdentity.Hostname); host address=$($confirmedIdentity.IPAddress)" `
                 -InformationAction Continue
@@ -236,5 +256,16 @@ do {
     if ((Get-Date) -lt $deadline) { Start-Sleep -Seconds $PollSeconds }
 } while ((Get-Date) -lt $deadline)
 
+$normalizedExpectedHostname = $ExpectedHostname.Trim().TrimEnd('.').ToLowerInvariant()
+if ($null -ne $lastAddressOwnership) {
+    $observedHostname = if ($lastObservedHostname) { $lastObservedHostname } else { '<not reported>' }
+    $stageDetail = if ($lastFirstBootStage) {
+        " Last allowlisted first-boot stage: '$lastFirstBootStage'."
+    }
+    else {
+        ' No allowlisted first-boot stage was reported.'
+    }
+    throw "VMware address ownership was proven for VMX '$($lastAddressOwnership.VmxPath)', MAC $($lastAddressOwnership.MacAddress), and host-facing address $($lastAddressOwnership.IPAddress), but guest initialization did not publish the injected hostname '$normalizedExpectedHostname' within $TimeoutSeconds seconds. Observed hostname: '$observedHostname'.$stageDetail The HTTPS/application readiness path was not reached; inspect the appliance console and first-boot service state."
+}
 $detail = if ($lastReadinessError) { " Last readiness error: $lastReadinessError" } else { '' }
 throw "No uniquely bound IPv4 address was proven for VM '$resolvedVmxPath' within $TimeoutSeconds seconds.$detail Confirm open-vm-tools, the exact VMX management MAC, and Windows neighbor state."
