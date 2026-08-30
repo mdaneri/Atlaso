@@ -125,6 +125,13 @@ def test_merge_hold_directions_preserves_shared_active_task_hold() -> None:
     ) == {"do not merge": "add"}
 
 
+def test_merge_hold_directions_preserves_other_pr_reason() -> None:
+    """Verify an unrelated PR used as rationale cannot erase this task's hold."""
+    assert merge_hold_directions(
+        "Do not merge this pull request because another PR #621 is pending."
+    ) == {"do not merge": "add"}
+
+
 def test_merge_hold_directions_ignores_application_leave_open_object() -> None:
     """Verify application connection state cannot create a PR hold."""
     assert merge_hold_directions(
@@ -179,6 +186,9 @@ def test_source_authority_excludes_patch_review() -> None:
     )
     assert not source_has_default_merge_authority(
         ("Evaluate the fix and report findings.",)
+    )
+    assert not source_has_default_merge_authority(
+        ("Check the implementation for bugs and report findings.",)
     )
     assert not source_has_default_merge_authority(
         ("Do not add any code; review the implementation and report findings.",)

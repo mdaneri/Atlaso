@@ -187,6 +187,22 @@
       ]
     },
     {
+      "name": "other-pr-reason-preserves-active-hold",
+      "default_merge_authority": true,
+      "instructions": [
+        {
+          "text": "Implement issue #602, but do not merge this pull request because another PR #621 is pending.",
+          "add_holds": [
+            "do not merge"
+          ]
+        }
+      ],
+      "generated": "Preserve the explicit do not merge hold.",
+      "expected_holds": [
+        "do not merge"
+      ]
+    },
+    {
       "name": "manual-merge-with-auto-merge-disabled",
       "default_merge_authority": true,
       "instructions": [
@@ -634,6 +650,17 @@
         }
       ],
       "generated": "Evaluate the fix and report findings.",
+      "expected_holds": []
+    },
+    {
+      "name": "check-implementation-ineligible",
+      "default_merge_authority": false,
+      "instructions": [
+        {
+          "text": "Check the implementation for bugs and report findings."
+        }
+      ],
+      "generated": "Check the implementation and report findings.",
       "expected_holds": []
     },
     {

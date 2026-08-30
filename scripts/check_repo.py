@@ -634,7 +634,7 @@ DEFAULT_MERGE_AUTHORITY_WORKFLOW_EXCLUSIONS = re.compile(
     r"private (?:vulnerability|advisory|remediation))\b"
 )
 DEFAULT_MERGE_AUTHORITY_DIRECT_REVIEW = re.compile(
-    r"(?:review|inspect|analy(?:ze|sis)|assess|audit|evaluat(?:e|ion))\s+"
+    r"(?:review|inspect|check|analy(?:ze|sis)|assess|audit|evaluat(?:e|ion))\s+"
     r"(?:the\s+)?(?:implementation|changes?|code|patch|fix(?:es)?)\b"
     r"(?:\s+and\s+(?:report|summarize|describe)\b[^;.!?]*)?"
 )
@@ -688,6 +688,9 @@ MERGE_HOLD_OTHER_TASK_PREFIX = re.compile(
 )
 MERGE_HOLD_OTHER_TASK_REFERENCE = re.compile(
     r"(?:unrelated|other|another)\s+(?:pull request|pr)\b"
+)
+MERGE_HOLD_ACTIVE_TASK_TARGET = re.compile(
+    r"(?:(?:this|the)\s+)?(?:pull request|pr|branch|change|commit)\b"
 )
 MERGE_HOLD_OTHER_TASK_TRAILING_CLAUSE = re.compile(
     r"\s+(?:and|or|but)\s+(?:(?:for|on)\s+)?(?:(?:the|an?)\s+)?"
@@ -891,7 +894,17 @@ def merge_hold_directions(
     task_clauses: list[str] = []
     for clause in MERGE_AUTHORITY_TASK_CLAUSE_BOUNDARY.split(normalized):
         clause = MERGE_HOLD_OTHER_TASK_TRAILING_CLAUSE.sub("", clause).strip()
-        if clause and MERGE_HOLD_OTHER_TASK_REFERENCE.search(clause) is None:
+        other_task_reference = MERGE_HOLD_OTHER_TASK_REFERENCE.search(clause)
+        has_active_target_before_reference = (
+            other_task_reference is not None
+            and MERGE_HOLD_ACTIVE_TASK_TARGET.search(
+                clause[: other_task_reference.start()]
+            )
+            is not None
+        )
+        if clause and (
+            other_task_reference is None or has_active_target_before_reference
+        ):
             task_clauses.append(clause)
     normalized = "; ".join(task_clauses)
     if not normalized:
