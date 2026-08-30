@@ -242,6 +242,9 @@ def test_merge_hold_directions_recognizes_this_pull_request_hold() -> None:
     assert merge_hold_directions(
         "Implement issue #602, but keep this pull request open."
     ) == {"leave open": "add"}
+    assert merge_hold_directions(
+        "Implement issue #602, but keep this pull request unmerged."
+    ) == {"leave open": "add"}
 
 
 def test_merge_hold_directions_recognizes_wait_for_ci_condition() -> None:
@@ -364,6 +367,9 @@ def test_source_authority_excludes_patch_review() -> None:
     )
     assert not source_has_default_merge_authority(("Create a plan for issue #602.",))
     assert not source_has_default_merge_authority(("Update me on issue #602.",))
+    assert not source_has_default_merge_authority(
+        ("The implementation for issue #602 is not authorized.",)
+    )
 
 
 def test_source_authority_honors_later_stop_work() -> None:

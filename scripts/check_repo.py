@@ -509,6 +509,10 @@ EXPLICIT_MERGE_HOLD_PATTERNS = {
         "keep this pull request open",
         "keep the pr open",
         "keep this pr open",
+        "keep the pull request unmerged",
+        "keep this pull request unmerged",
+        "keep the pr unmerged",
+        "keep this pr unmerged",
     ),
     "pr only": (
         "pull request only",
@@ -734,7 +738,8 @@ DEFAULT_MERGE_AUTHORITY_NEGATED_MUTATION = re.compile(
     r"\b[^;.!?]*"
 )
 DEFAULT_MERGE_AUTHORITY_SOURCE_MARKERS = re.compile(
-    r"\b(?:implement|implementation|fix|patch|resolve|solve|deliver)\b|"
+    r"\b(?:implement|fix|patch|resolve|solve|deliver)\b|"
+    r"\bcomplete\s+(?:the\s+)?implementation\b|"
     r"\b(?:update|change|modify|edit|add|remove|create|build|refactor|"
     r"prepare|open|submit)\s+"
     r"(?:(?:the|this|that|an?|new|existing)\s+)?"

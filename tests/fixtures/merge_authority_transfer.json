@@ -1824,6 +1824,33 @@
       ],
       "generated": "Preserve default merge authority and complete the guarded merge when eligible.",
       "expected_holds": []
+    },
+    {
+      "name": "explicit-unmerged-hold-is-preserved",
+      "default_merge_authority": true,
+      "instructions": [
+        {
+          "text": "Implement issue #602, but keep this pull request unmerged.",
+          "add_holds": [
+            "leave open"
+          ]
+        }
+      ],
+      "generated": "Keep this pull request unmerged after delivery.",
+      "expected_holds": [
+        "leave open"
+      ]
+    },
+    {
+      "name": "unauthorized-implementation-status-is-ineligible",
+      "default_merge_authority": false,
+      "instructions": [
+        {
+          "text": "The implementation for issue #602 is not authorized."
+        }
+      ],
+      "generated": "Report the authorization status without implementation or pull-request delivery.",
+      "expected_holds": []
     }
   ]
 }
