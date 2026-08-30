@@ -275,6 +275,53 @@ def test_select_artifact_accepts_identical_retries_and_preserves_first_run(tmp_p
     assert selected["publisher"]["run_attempt"] == 1
 
 
+def test_select_artifact_binds_automatic_release_to_triggering_publisher(tmp_path: Path) -> None:
+    """Ignore an older replay when automatic publication names its triggering handoff.
+
+    Args:
+        tmp_path: Isolated artifact directory.
+    """
+
+    candidates = tmp_path / "candidates"
+    _write_candidate(
+        candidates / "201-300",
+        publisher_run_id=201,
+        publisher_trigger="replay",
+    )
+    _write_candidate(
+        candidates / "202-301",
+        publisher_run_id=202,
+        publisher_run_attempt=2,
+        publisher_trigger="automatic-main",
+    )
+    output = tmp_path / "selected"
+    args = type(
+        "Args",
+        (),
+        {
+            "candidates": candidates,
+            "output": output,
+            "repository": REPOSITORY,
+            "version": VERSION,
+            "commit": COMMIT,
+            "publisher_run_id": 202,
+            "publisher_run_attempt": 2,
+            "publisher_trigger": "automatic-main",
+        },
+    )()
+
+    wheel_artifact.select_artifact(args)
+
+    selected = json.loads((output / wheel_artifact.IDENTITY_NAME).read_text(encoding="utf-8"))
+    assert selected["publisher"] == {
+        "run_attempt": 2,
+        "run_id": 202,
+        "trigger": "automatic-main",
+        "workflow": "Publish Python wheel",
+        "workflow_file": "wheel.yml",
+    }
+
+
 def test_select_artifact_fails_closed_on_divergent_collision(tmp_path: Path) -> None:
     """Reject retained artifacts that claim one identity but contain different wheel bytes.
 

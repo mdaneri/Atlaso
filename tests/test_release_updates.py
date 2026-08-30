@@ -1434,6 +1434,11 @@ def test_release_workflows_use_successful_main_sha_and_promote_without_rebuildin
     assert publication.count("actions/upload-artifact@v7") >= 3
     assert publication.count("actions/download-artifact@v8") == 3
     assert "python scripts/wheel_artifact.py select" in publication
+    assert 'AUTOMATIC_PUBLISHER_RUN_ID: ${{ github.event.workflow_run.id }}' in publication
+    assert 'AUTOMATIC_PUBLISHER_RUN_ATTEMPT: ${{ github.event.workflow_run.run_attempt }}' in publication
+    assert '--publisher-run-id "$AUTOMATIC_PUBLISHER_RUN_ID"' in publication
+    assert '--publisher-run-attempt "$AUTOMATIC_PUBLISHER_RUN_ATTEMPT"' in publication
+    assert "--publisher-trigger automatic-main" in publication
     assert "--application-wheel-root dist/application-wheel" in publication
     assert ".source_ci.run_id" in publication
     assert ".source_ci.run_attempt" in publication

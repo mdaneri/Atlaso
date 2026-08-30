@@ -220,6 +220,8 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
           RELEASE_SHA: ${{ steps.target.outputs.release_sha }}
+          AUTOMATIC_PUBLISHER_RUN_ID: ${{ github.event.workflow_run.id }}
+          AUTOMATIC_PUBLISHER_RUN_ATTEMPT: ${{ github.event.workflow_run.run_attempt }}
         run: |
           VERSION="$(
             git show "${RELEASE_SHA}:pyproject.toml" |
@@ -275,12 +277,21 @@ jobs:
             test "$(jq -r .head_branch <<<"$CANDIDATE_STATE")" = main
             test "$(jq -r .conclusion <<<"$CANDIDATE_STATE")" = success
           done < <(jq -r '.[] | [.id, .workflow_run.id] | @tsv' "$RUNNER_TEMP/wheel-artifacts.json")
+          SELECT_PUBLISHER_ARGS=()
+          if test "${{ github.event_name }}" = workflow_run; then
+            SELECT_PUBLISHER_ARGS=(
+              --publisher-run-id "$AUTOMATIC_PUBLISHER_RUN_ID"
+              --publisher-run-attempt "$AUTOMATIC_PUBLISHER_RUN_ATTEMPT"
+              --publisher-trigger automatic-main
+            )
+          fi
           python scripts/wheel_artifact.py select \
             --candidates "$CANDIDATES" \
             --output dist/application-wheel \
             --repository "${{ github.repository }}" \
             --version "$VERSION" \
             --commit "$RELEASE_SHA" \
+            "${SELECT_PUBLISHER_ARGS[@]}" \
             > "$RUNNER_TEMP/selected-wheel-identity.json"
           SOURCE_CI_RUN_ID="$(jq -r .source_ci.run_id "$RUNNER_TEMP/selected-wheel-identity.json")"
           SOURCE_CI_RUN_ATTEMPT="$(jq -r .source_ci.run_attempt "$RUNNER_TEMP/selected-wheel-identity.json")"
