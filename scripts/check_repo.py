@@ -639,8 +639,9 @@ DEFAULT_MERGE_AUTHORITY_CONDITIONAL_APPROVAL = re.compile(
     r"[^.!?]{0,60}\b(?:approv\w*|permission|authorization)\b"
 )
 DEFAULT_MERGE_AUTHORITY_CONDITIONAL_REQUEST = re.compile(
-    r"\b(?:if|when|once|after)\s+(?:(?:the|a)\s+)?"
-    r"(?:user|maintainer|owner)\s+(?:asks?|requests?|instructs?|tells?)\b"
+    r"\b(?:if|when|once|after)\s+(?:(?:(?:the|a)\s+)?"
+    r"(?:user|maintainer|owner)\s+(?:asks?|requests?|instructs?|tells?)|"
+    r"(?:asked|requested|instructed|told))\b"
 )
 DEFAULT_MERGE_AUTHORITY_DECISION_ONLY = re.compile(r"\bwhether\s+to\b")
 DEFAULT_MERGE_AUTHORITY_PROMPT_MARKERS = (
@@ -817,7 +818,8 @@ MERGE_HOLD_NONAPPROVAL_CONDITION = re.compile(
 )
 MERGE_HOLD_APPROVAL_CONDITION = re.compile(
     r"\b(?:merge(?: only)?|only merge)\s+(?:after|when|if|once)\s+"
-    r"(?:i|we|(?:the\s+)?maintainer|(?:the\s+)?owner)\s+approves?\b"
+    r"(?:i|we|(?:the\s+)?maintainer|"
+    r"(?:the\s+)?(?:[a-z][a-z0-9_-]*\s+)?owner)\s+approves?\b"
 )
 MERGE_HOLD_APPROVAL_BEFORE_MERGING = re.compile(
     r"\b(?:wait (?:for|until)\s+(?:(?:the\s+)?"

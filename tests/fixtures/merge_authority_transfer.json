@@ -1884,6 +1884,22 @@
       ],
       "generated": "Preserve default merge authority and complete the guarded merge when eligible.",
       "expected_holds": []
+    },
+    {
+      "name": "code-owner-approval-is-preserved",
+      "default_merge_authority": true,
+      "instructions": [
+        {
+          "text": "Implement issue #602, but merge only after the code owner approves.",
+          "add_holds": [
+            "wait for approval"
+          ]
+        }
+      ],
+      "generated": "Wait for approval from the code owner before merging.",
+      "expected_holds": [
+        "wait for approval"
+      ]
     }
   ]
 }

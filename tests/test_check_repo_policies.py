@@ -275,6 +275,9 @@ def test_merge_hold_directions_recognizes_plain_approval_condition() -> None:
         "Implement issue #602, but wait for approval to merge."
     ) == {"wait for approval": "add"}
     assert merge_hold_directions(
+        "Implement issue #602, but merge only after the code owner approves."
+    ) == {"wait for approval": "add"}
+    assert merge_hold_directions(
         "Implement issue #602, but merge after CI passes."
     ) == {"do not merge": "add"}
     assert merge_hold_directions(
@@ -317,6 +320,12 @@ def test_generated_merge_decision_questions_are_not_affirmative() -> None:
         assert not has_affirmative_default_merge_authority(
             f"{verb} whether to complete the guarded merge."
         )
+    assert not has_affirmative_default_merge_authority(
+        "If asked, complete the guarded merge."
+    )
+    assert not has_affirmative_default_merge_authority(
+        "Complete the guarded merge if requested."
+    )
 
 
 def test_source_authority_excludes_patch_review() -> None:
