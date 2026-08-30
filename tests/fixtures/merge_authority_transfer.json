@@ -133,6 +133,17 @@
       "expected_holds": []
     },
     {
+      "name": "application-leave-open-object-does-not-hold-pr",
+      "default_merge_authority": true,
+      "instructions": [
+        {
+          "text": "Implement keepalive support and leave open the connection."
+        }
+      ],
+      "generated": "Preserve default merge authority and complete the guarded merge when eligible.",
+      "expected_holds": []
+    },
+    {
       "name": "unrelated-pr-hold-does-not-transfer",
       "default_merge_authority": true,
       "instructions": [
@@ -642,6 +653,17 @@
       "instructions": [
         {
           "text": "Do not implement anything; review the implementation and report findings."
+        }
+      ],
+      "generated": "Review the implementation and report findings.",
+      "expected_holds": []
+    },
+    {
+      "name": "negated-add-review-ineligible",
+      "default_merge_authority": false,
+      "instructions": [
+        {
+          "text": "Do not add any code; review the implementation and report findings."
         }
       ],
       "generated": "Review the implementation and report findings.",

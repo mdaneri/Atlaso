@@ -125,6 +125,13 @@ def test_merge_hold_directions_preserves_shared_active_task_hold() -> None:
     ) == {"do not merge": "add"}
 
 
+def test_merge_hold_directions_ignores_application_leave_open_object() -> None:
+    """Verify application connection state cannot create a PR hold."""
+    assert merge_hold_directions(
+        "Implement keepalive support and leave open the connection."
+    ) == {}
+
+
 def test_merge_hold_directions_binds_withdrawal_verb_to_hold() -> None:
     """Verify feature-oriented remove wording cannot withdraw an active hold."""
     assert merge_hold_directions(
@@ -173,6 +180,9 @@ def test_source_authority_excludes_patch_review() -> None:
     assert not source_has_default_merge_authority(
         ("Evaluate the fix and report findings.",)
     )
+    assert not source_has_default_merge_authority(
+        ("Do not add any code; review the implementation and report findings.",)
+    )
 
 
 def test_source_authority_honors_later_stop_work() -> None:
@@ -212,6 +222,47 @@ def test_generated_authority_rejects_imperative_denial() -> None:
         "Refrain from the guarded squash merge.",
     ):
         assert not has_affirmative_default_merge_authority(instruction)
+
+
+def test_generated_permission_cannot_withdraw_source_hold(tmp_path: Path) -> None:
+    """Verify agent-authored permission cannot remove a source hold.
+
+    Args:
+        tmp_path: Temporary directory provided by pytest for isolated filesystem state.
+    """
+    path = tmp_path / MERGE_AUTHORITY_TRANSFER_FIXTURE_PATH
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(
+        json.dumps(
+            {
+                "cases": [
+                    {
+                        "name": "generated permission withdrawal",
+                        "default_merge_authority": True,
+                        "instructions": [
+                            {
+                                "text": "Implement issue #602, but do not merge.",
+                                "add_holds": ["do not merge"],
+                            }
+                        ],
+                        "generated": (
+                            "Do not merge this pull request; you may merge now."
+                        ),
+                        "expected_holds": ["do not merge"],
+                    }
+                ]
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    findings = check_merge_authority_transfer_fixtures(tmp_path)
+
+    assert len(findings) == 1
+    assert findings[0].message == (
+        "merge authority fixture generated permission withdrawal drops an "
+        "explicit hold: do not merge"
+    )
 
 
 def test_spark_worker_agent_accepts_required_contract(tmp_path: Path) -> None:

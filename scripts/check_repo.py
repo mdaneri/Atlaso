@@ -639,6 +639,10 @@ DEFAULT_MERGE_AUTHORITY_STOP_WORK = re.compile(
     r"(?:^|[;.!?]\s*)(?:please\s+)?(?:stop|cancel|cease|end)\s+"
     r"(?:(?:all|further|this|the)\s+)?(?:work|implementation|task)\b[^;.!?]*"
 )
+DEFAULT_MERGE_AUTHORITY_NEGATED_MUTATION = re.compile(
+    r"(?:^|[;.!?]\s*)(?:please\s+)?(?:do not|don't|don’t|must not)\s+"
+    r"(?:\w+\s+){0,3}(?:add|remove|create|build|refactor)\b[^;.!?]*"
+)
 DEFAULT_MERGE_AUTHORITY_SOURCE_MARKERS = re.compile(
     r"\b(?:implement|implementation|fix|patch|resolve|solve|deliver|update|change|"
     r"modify|edit|add|remove|create|build|refactor)\b|"
@@ -693,7 +697,7 @@ MERGE_HOLD_STANDALONE_PERMISSION = re.compile(
 MERGE_HOLD_NON_PR_OBJECT = re.compile(
     r"^\s+(?!(?:(?:this|the)\s+)?(?:pull request|pr)\b|it\b|"
     r"(?:(?:this|the)\s+)?(?:branch|change|commit)\b|"
-    r"(?:hold|instruction|directive)\b|until\b|before\b|after\b|unless\b|"
+    r"(?:hold|instruction|directive)s?\b|until\b|before\b|after\b|unless\b|"
     r"because\b|while\b|when\b|yet\b|now\b|automatically\b|"
     r"for\s+(?:now|the moment|approval|maintainer approval)\b)\w+"
 )
@@ -855,7 +859,7 @@ def _hold_targets_other_task(segment: str, offset: int, pattern: str) -> bool:
 def _hold_targets_non_pr_object(
     hold: str, segment: str, offset: int, pattern: str
 ) -> bool:
-    """Return whether do-not-merge governs an application object, not PR delivery.
+    """Return whether hold wording governs an application object, not PR delivery.
 
     Args:
         hold: Canonical merge-hold name being classified.
@@ -863,7 +867,7 @@ def _hold_targets_non_pr_object(
         offset: Character offset where the hold phrase begins.
         pattern: Exact hold phrase matched in the segment.
     """
-    if hold != "do not merge":
+    if hold not in {"do not merge", "leave open"}:
         return False
     suffix = segment[offset + len(pattern) : offset + len(pattern) + 80]
     return MERGE_HOLD_NON_PR_OBJECT.search(suffix) is not None
@@ -1075,6 +1079,8 @@ def source_has_default_merge_authority(instructions: tuple[str, ...]) -> bool:
             DEFAULT_MERGE_AUTHORITY_COORDINATED_NO_WORK.finditer(normalized)
         ) + tuple(
             DEFAULT_MERGE_AUTHORITY_STOP_WORK.finditer(normalized)
+        ) + tuple(
+            DEFAULT_MERGE_AUTHORITY_NEGATED_MUTATION.finditer(normalized)
         ) + tuple(DEFAULT_MERGE_AUTHORITY_WORKFLOW_EXCLUSIONS.finditer(normalized))
         source_markers = tuple(
             DEFAULT_MERGE_AUTHORITY_SOURCE_MARKERS.finditer(normalized)
@@ -1256,7 +1262,9 @@ def check_merge_authority_transfer_fixtures(root: Path) -> list[Finding]:
             )
             continue
         source_holds_tuple = tuple(source_holds)
-        generated_directions = merge_hold_directions(generated)
+        generated_directions = merge_hold_directions(
+            generated, active_holds=source_holds_tuple
+        )
         ambiguous_generated = tuple(
             hold
             for hold, direction in generated_directions.items()
