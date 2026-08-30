@@ -304,6 +304,36 @@ if ($null -eq $stalledError -or
     $stalledError.Exception.Message -like 'No uniquely bound IPv4 address*') {
     throw 'A guest-initialization stall after stable address ownership did not report the sanitized first-boot layer.'
 }
+$stageTimeoutVmrun = Join-Path $OutputDirectory 'first-boot-stage-timeout-vmrun.cmd'
+[System.IO.File]::WriteAllText(
+    $stageTimeoutVmrun,
+    "@echo off`r`nif /I `"%3`"==`"getGuestIPAddress`" (`r`n  echo 192.168.167.135`r`n  exit /b 0`r`n)`r`nif /I `"%3`"==`"readVariable`" (`r`n  if /I `"%6`"==`"guestinfo.atlaso.test_vm_first_boot_stage`" ping -n 6 127.0.0.1 >nul`r`n  exit /b 0`r`n)`r`nif /I `"%3`"==`"list`" (`r`n  echo Total running VMs: 1`r`n  echo `"$targetVmx`"`r`n  exit /b 0`r`n)`r`nexit /b 9`r`n",
+    [System.Text.UTF8Encoding]::new($false)
+)
+$stageTimeoutError = $null
+try {
+    Set-Alias -Name Get-NetNeighbor -Value Get-TestNetNeighbor -Scope Global
+    Set-Alias -Name Test-Connection -Value Test-TestConnection -Scope Global
+    & (Join-Path $RepositoryRoot 'scripts/windows/vmware/get-atlaso-vm-ip.ps1') `
+        -VmxPath $targetVmx `
+        -ExpectedHostname 'issue-584.atlaso.internal' `
+        -VmrunPath $stageTimeoutVmrun `
+        -TimeoutSeconds 2 `
+        -PollSeconds 1 | Out-Null
+}
+catch {
+    $stageTimeoutError = $_
+}
+finally {
+    Remove-Item Alias:Get-NetNeighbor -ErrorAction SilentlyContinue
+    Remove-Item Alias:Test-Connection -ErrorAction SilentlyContinue
+}
+if ($null -eq $stageTimeoutError -or
+    $stageTimeoutError.Exception.Message -notlike 'No uniquely bound IPv4 address*' -or
+    $stageTimeoutError.Exception.Message -like 'VMware address ownership was proven*' -or
+    $stageTimeoutError.Exception.Message -like '*guest initialization did not publish*') {
+    throw 'A timed-out first-boot-stage read reused stale ownership for an initialization diagnosis.'
+}
 $providerFailureVmrun = Join-Path $OutputDirectory 'hostname-provider-failure-vmrun.cmd'
 [System.IO.File]::WriteAllText(
     $providerFailureVmrun,

@@ -244,9 +244,21 @@ do {
             if ($lastHostnameObservationState -eq 'TimedOut') {
                 throw 'Read the VMware guest hostname exceeded the readiness deadline.'
             }
-            # Close both the hostname-read and concurrent-start windows after the
-            # slower provider call. Readiness is returned only from a stable final
-            # inventory, target address, and neighbor proof.
+            # From this point forward, the initial tuple is stale diagnostic
+            # evidence. The optional first-boot-stage read is another provider
+            # call during which ownership can change, so require a fresh complete
+            # proof after it before retaining an ownership tuple.
+            $lastAddressOwnership = $null
+            if (-not $lastObservedHostname) {
+                $stage = Get-AtlasoWorkstationFirstBootStage `
+                    -VmxPath $resolvedVmxPath `
+                    -VmrunPath $resolvedVmrun `
+                    -Deadline $deadline
+                if ($stage) { $lastFirstBootStage = $stage }
+            }
+            # Close the hostname, diagnostic-stage, and concurrent-start windows.
+            # Readiness or an initialization diagnosis is returned only from a
+            # stable final inventory, target address, and neighbor proof.
             $confirmedPaths = @(
                 Get-AtlasoWorkstationRunningVmxPath -VmrunPath $resolvedVmrun -Deadline $deadline
             )
@@ -282,13 +294,6 @@ do {
                 -RunningGuests $confirmedGuests `
                 -NeighborMacAddresses @(Get-HostNeighborMacAddress -IPAddress $confirmedIpAddress)
             $lastAddressOwnership = $confirmedOwnership
-            if (-not $lastObservedHostname) {
-                $stage = Get-AtlasoWorkstationFirstBootStage `
-                    -VmxPath $resolvedVmxPath `
-                    -VmrunPath $resolvedVmrun `
-                    -Deadline $deadline
-                if ($stage) { $lastFirstBootStage = $stage }
-            }
             $confirmedHostname = Assert-AtlasoWorkstationHostnameIdentity `
                 -TargetVmxPath $resolvedVmxPath `
                 -ExpectedHostname $ExpectedHostname `
