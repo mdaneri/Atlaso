@@ -1319,7 +1319,7 @@ def test_release_workflows_use_successful_main_sha_and_promote_without_rebuildin
     assert 'compare/${WHEEL_SHA}...main' in wheel_publication
     assert 'test "$MAIN_STATUS" = ahead || test "$MAIN_STATUS" = identical' in wheel_publication
     assert 'ref: ${{ steps.target.outputs.commit }}' in wheel_publication
-    assert 'ref: ${{ github.event.workflow_run.head_sha }}' in wheel_publication
+    assert 'ref: ${{ github.workflow_sha }}' in wheel_publication
     assert "path: tooling" in wheel_publication
     assert "path: target-source" in wheel_publication
     assert "cache: pip" not in wheel_publication

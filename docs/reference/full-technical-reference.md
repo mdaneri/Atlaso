@@ -330,7 +330,9 @@ and source CI run ID and attempt, revalidates the attempt-specific `CI` workflow
 event, commit, successful conclusion, and current-`main` reachability without checkout or target-code execution. It
 publishes one canonical one-day replay-request artifact. **Publish Python wheel** consumes that request only through the
 admission run's completed `workflow_run`, revalidates the request and CI evidence, and performs the cache-free exact-SHA
-build with read-only authority and no Release, Pages, signing, or virtualization access.
+build with read-only authority and no Release, Pages, signing, or virtualization access. Publisher tooling comes from
+the immutable protected workflow SHA, separately from the admitted target source, so historical commits remain
+compatible with the current handoff schema.
 When the immutable software Release already exists, the protected workflow verifies its signature, exact commit, complete
 bundle content hashes, and application-wheel bytes against the replay handoff, then reuses those existing assets for
 channel recovery. It never rewrites the bundle with replay-specific publisher provenance.
