@@ -611,8 +611,12 @@ DEFAULT_MERGE_AUTHORITY_SOURCE_EXCLUSIONS = re.compile(
 )
 DEFAULT_MERGE_AUTHORITY_DIRECT_REVIEW = re.compile(
     r"(?:review|inspect|analy(?:ze|sis)|assess|audit)\s+(?:the\s+)?"
-    r"(?:implementation|changes?|code)\b"
+    r"(?:implementation|changes?|code|patch)\b"
     r"(?:\s+and\s+(?:report|summarize|describe)\b[^;.!?]*)?"
+)
+DEFAULT_MERGE_AUTHORITY_STOP_WORK = re.compile(
+    r"(?:^|[;.!?]\s*)(?:stop|cancel|cease|end)\s+"
+    r"(?:(?:all|further|this|the)\s+)?(?:work|implementation|task)\b[^;.!?]*"
 )
 DEFAULT_MERGE_AUTHORITY_SOURCE_MARKERS = re.compile(
     r"\b(?:implement|implementation|fix|patch|resolve|solve|deliver|update|change|"
@@ -661,7 +665,15 @@ MERGE_AUTHORITY_TASK_CLAUSE_BOUNDARY = re.compile(r"[;.?!]+")
 MERGE_HOLD_NON_PR_OBJECT = re.compile(
     r"^\s+(?!(?:(?:this|the)\s+)?(?:pull request|pr)\b|it\b|"
     r"(?:hold|instruction|directive)\b|until\b|before\b|after\b|unless\b|"
-    r"because\b|while\b|when\b|yet\b|now\b|automatically\b)\w+"
+    r"because\b|while\b|when\b|yet\b|now\b|automatically\b|"
+    r"for\s+(?:now|the moment|approval|maintainer approval)\b)\w+"
+)
+MERGE_HOLD_WITHDRAWAL_BEFORE_HOLD = re.compile(
+    r"\s*(?:(?:the|previous|current|explicit|earlier)\s+){0,3}"
+)
+MERGE_HOLD_WITHDRAWAL_AFTER_HOLD = re.compile(
+    r"\s*(?:(?:hold|instruction|directive)s?\s*)?"
+    r"(?:(?:is|are|was|were|has been|have been)\s*)?"
 )
 
 ORDERED_TERMINAL_CLEANUP_MARKERS = {
@@ -919,8 +931,36 @@ def merge_hold_directions(
                     suffix = segment[
                         marker_offset + len(marker) : marker_offset + len(marker) + 40
                     ]
+                    marker_end = marker_offset + len(marker)
+                    targets_hold = False
+                    for pattern in patterns:
+                        hold_offset = segment.find(pattern)
+                        while hold_offset >= 0:
+                            hold_end = hold_offset + len(pattern)
+                            if marker_offset < hold_end and hold_offset < marker_end:
+                                targets_hold = True
+                            elif marker_end <= hold_offset:
+                                bridge = segment[marker_end:hold_offset]
+                                targets_hold = (
+                                    MERGE_HOLD_WITHDRAWAL_BEFORE_HOLD.fullmatch(
+                                        bridge
+                                    )
+                                    is not None
+                                )
+                            else:
+                                bridge = segment[hold_end:marker_offset]
+                                targets_hold = (
+                                    MERGE_HOLD_WITHDRAWAL_AFTER_HOLD.fullmatch(bridge)
+                                    is not None
+                                )
+                            if targets_hold:
+                                break
+                            hold_offset = segment.find(pattern, hold_offset + 1)
+                        if targets_hold:
+                            break
                     if (
-                        MERGE_HOLD_WITHDRAWAL_NEGATIONS.search(prefix) is None
+                        targets_hold
+                        and MERGE_HOLD_WITHDRAWAL_NEGATIONS.search(prefix) is None
                         and MERGE_HOLD_WITHDRAWAL_NONCURRENT_PREFIX.search(prefix)
                         is None
                         and MERGE_HOLD_WITHDRAWAL_NONCURRENT_SUFFIX.search(suffix)
@@ -999,7 +1039,9 @@ def source_has_default_merge_authority(instructions: tuple[str, ...]) -> bool:
         normalized = " ".join(instruction.casefold().split())
         exclusion_matches = tuple(
             DEFAULT_MERGE_AUTHORITY_SOURCE_EXCLUSIONS.finditer(normalized)
-        ) + tuple(DEFAULT_MERGE_AUTHORITY_COORDINATED_NO_WORK.finditer(normalized))
+        ) + tuple(
+            DEFAULT_MERGE_AUTHORITY_COORDINATED_NO_WORK.finditer(normalized)
+        ) + tuple(DEFAULT_MERGE_AUTHORITY_STOP_WORK.finditer(normalized))
         source_markers = tuple(
             DEFAULT_MERGE_AUTHORITY_SOURCE_MARKERS.finditer(normalized)
         )

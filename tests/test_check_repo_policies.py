@@ -40,6 +40,8 @@ from scripts.check_repo import (
     check_virtualization_legacy,
     collect_files,
     is_checkable,
+    merge_hold_directions,
+    source_has_default_merge_authority,
 )
 
 
@@ -92,6 +94,35 @@ def write_spark_worker_agent(
         lines.append(f'{extra_key} = "unexpected"')
     lines.extend(("", 'developer_instructions = """', instruction_text, '"""'))
     path.write_text("\n".join(lines) + "\n", encoding="utf-8")
+
+
+def test_merge_hold_directions_preserves_qualified_hold() -> None:
+    """Verify a temporal qualifier does not hide an explicit merge hold."""
+    assert merge_hold_directions(
+        "Implement issue #602, but do not merge for now."
+    ) == {"do not merge": "add"}
+
+
+def test_merge_hold_directions_binds_withdrawal_verb_to_hold() -> None:
+    """Verify feature-oriented remove wording cannot withdraw an active hold."""
+    assert merge_hold_directions(
+        "Implement a remove control for the do not merge hold.",
+        active_holds=("do not merge",),
+    ) == {"do not merge": "add"}
+
+
+def test_source_authority_excludes_patch_review() -> None:
+    """Verify reviewing an existing patch is review-only work."""
+    assert not source_has_default_merge_authority(
+        ("Review the patch and report findings.",)
+    )
+
+
+def test_source_authority_honors_later_stop_work() -> None:
+    """Verify a later explicit stop-work instruction revokes eligibility."""
+    assert not source_has_default_merge_authority(
+        ("Implement issue #602.", "Stop work; only explain the failure.")
+    )
 
 
 def test_spark_worker_agent_accepts_required_contract(tmp_path: Path) -> None:
