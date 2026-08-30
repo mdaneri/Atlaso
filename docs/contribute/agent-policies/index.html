@@ -4746,8 +4746,8 @@ runtime.</p>
   current <code>main</code> without checkout or target-code execution. Publish only one canonical one-day replay-request artifact.
   The wheel publisher must consume that request only through its completed <code>workflow_run</code>, revalidate it and the source
   CI evidence, and retain the same read-only wheel-only trust boundary.</li>
-<li>Complete release publication and recovery use only the protected <strong>Publish appliance release</strong> manual dispatch with
-  the exact successful <code>main</code> push CI SHA. Require and revalidate the retained automatic wheel handoff, including its
+<li>Every successful automatic-main wheel handoff starts the protected <strong>Publish appliance release</strong> workflow. Require
+  and revalidate the retained handoff, including its
   successful source CI identity and embedded wheel version/commit/time, and record <code>wheel-identity.json</code> inside the
   signed bundle. Never rebuild or substitute the application wheel in this workflow. If the 90-day artifact expired,
   dispatch <strong>Replay Python wheel</strong> from protected <code>main</code> with the exact commit and successful source CI run ID and
@@ -4757,8 +4757,10 @@ runtime.</p>
   signed update
   lineage at <code>v0.9.18</code>; do not publish or consume a retired-product bridge. Preserve tag/release commit and asset-byte
   idempotency checks. A rerun after tag/release publication must verify the existing asset bytes before retrying channel
-  advancement. Keep the protected manual workflow GitHub-hosted and limited to the signed software/update bundle,
-  immutable <code>vX.Y.Z</code> Release, and <code>development</code> channel.
+  advancement. Keep the protected GitHub-hosted workflow limited to the signed software/update bundle, immutable
+  <code>vX.Y.Z</code> Release, and <code>development</code> channel. Retain exact-successful-main-SHA manual dispatch for idempotent recovery;
+  authenticate the existing pointer under the shared Pages lock and refuse semantic-version downgrades so historical
+  CI reruns and replayed handoffs cannot move <code>development</code> backward.
   Resolve retained wheel candidates and verify any existing immutable Release in an unlocked, read-only prerequisite
   job. Pass those bounded verified inputs through the current workflow run, and acquire the shared Pages lock only for
   the protected signing, Release publication, channel mutation, and live publication verification stages.</li>

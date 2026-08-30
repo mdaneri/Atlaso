@@ -3642,10 +3642,10 @@ helpers normalize target-specific VM configuration without changing the source O
 exact prerelease OVA on Proxmox and KVM before publishing the unchanged OVA and Hyper-V bytes as
 <code>virtualization-vX.Y.Z</code>. The software/update <code>vX.Y.Z</code> Release is the required source of the embedded wheel and CPython
 3.14 wheelhouse, but never contains virtualization assets.</p>
-<p>Successful <code>main</code> CI does not create either Release namespace. It automatically publishes only the 90-day
-<code>atlaso-wheel-vX.Y.Z-&lt;full-sha&gt;</code> Actions artifact with its commit/version/digest and CI/publisher identity. The protected
-manual <strong>Publish appliance release</strong> workflow consumes and records that exact wheel handoff, adds the offline CPython
-3.14 wheelhouse, signs the bundle, and publishes <code>vX.Y.Z</code>. Only after that manual software Release exists may the
+<p>Successful <code>main</code> CI automatically publishes the 90-day <code>atlaso-wheel-vX.Y.Z-&lt;full-sha&gt;</code> Actions artifact with its
+commit/version/digest and CI/publisher identity. The separately protected <strong>Publish appliance release</strong> workflow then
+consumes and records that exact automatic-main wheel handoff, adds the offline CPython 3.14 wheelhouse, signs the
+bundle, publishes <code>vX.Y.Z</code>, and advances <code>development</code>. Only after that software Release exists may the
 separate manual virtualization producer consume it. The automatic wheel path has no signing material, Release/tag or
 Pages write, channel, self-hosted runner, or virtualization access, and it cannot queue an OVA, Hyper-V, Proxmox, KVM,
 or virtualization smoke job. If the handoff expires, protected <strong>Replay Python wheel</strong> admission from <code>main</code> accepts
