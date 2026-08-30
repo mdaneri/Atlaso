@@ -31,11 +31,11 @@ function hasHiddenAttributes (attributes) {
   if ((parsedAttributes.get('aria-hidden') || '').toLowerCase() === 'true') {
     return true
   }
-  const styleValue = decodeCssEscapes(markdown.utils
-    .unescapeAll(parsedAttributes.get('style') || '')
+  const styleValue = decodeCssEscapes(decodeHtmlAttributeEntities(
+    parsedAttributes.get('style') || '')
     .replace(/\/\*[\s\S]*?\*\//g, ''))
   const declarations = new Map()
-  for (const declaration of styleValue.split(';')) {
+  for (const declaration of splitCssDeclarations(styleValue)) {
     const separator = declaration.indexOf(':')
     if (separator < 0) {
       continue
@@ -53,6 +53,58 @@ function hasHiddenAttributes (attributes) {
     declarations.get('display')?.value === 'none' ||
     ['hidden', 'collapse'].includes(declarations.get('visibility')?.value)
   )
+}
+
+function decodeHtmlAttributeEntities (value) {
+  const numericDecoded = value.replace(
+    /&#(?:x([0-9A-Fa-f]+)|([0-9]+));?/g,
+    (_, hexadecimal, decimal) => {
+      const codePoint = Number.parseInt(hexadecimal || decimal, hexadecimal ? 16 : 10)
+      return String.fromCodePoint(
+        codePoint === 0 || codePoint > 0x10FFFF ? 0xFFFD : codePoint
+      )
+    }
+  )
+  return markdown.utils.unescapeAll(numericDecoded)
+}
+
+function splitCssDeclarations (value) {
+  const declarations = []
+  let current = ''
+  let quote = null
+  let parenthesisDepth = 0
+  for (let index = 0; index < value.length; index += 1) {
+    const character = value[index]
+    if (character === '\\' && index + 1 < value.length) {
+      current += character + value[index + 1]
+      index += 1
+      continue
+    }
+    if (quote) {
+      current += character
+      if (character === quote) {
+        quote = null
+      }
+      continue
+    }
+    if (character === '"' || character === "'") {
+      quote = character
+      current += character
+    } else if (character === '(') {
+      parenthesisDepth += 1
+      current += character
+    } else if (character === ')') {
+      parenthesisDepth = Math.max(0, parenthesisDepth - 1)
+      current += character
+    } else if (character === ';' && parenthesisDepth === 0) {
+      declarations.push(current)
+      current = ''
+    } else {
+      current += character
+    }
+  }
+  declarations.push(current)
+  return declarations
 }
 
 function decodeCssEscapes (value) {
