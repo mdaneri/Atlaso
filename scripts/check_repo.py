@@ -2339,7 +2339,49 @@ def strip_markdown_deleted_content(text: str) -> str:
         else trailing_text
     )
     without_html_deletions = "".join(visible_parts)
-    delimiters: list[tuple[int, int, bool, bool, int]] = []
+    delimiters: list[tuple[int, int, bool, bool, int, tuple[int, ...]]] = []
+    emphasis_stack: list[tuple[str, int]] = []
+    next_emphasis_id = 0
+
+    def delimiter_flanking(
+        run_start: int,
+        run_end: int,
+        *,
+        can_split_word: bool,
+    ) -> tuple[bool, bool]:
+        """Return Markdown opening and closing eligibility for a delimiter run."""
+        previous = without_html_deletions[run_start - 1] if run_start else ""
+        following = (
+            without_html_deletions[run_end]
+            if run_end < len(without_html_deletions)
+            else ""
+        )
+        previous_is_whitespace = not previous or previous.isspace()
+        following_is_whitespace = not following or following.isspace()
+        previous_is_punctuation = bool(
+            previous and unicodedata.category(previous).startswith(("P", "S"))
+        )
+        following_is_punctuation = bool(
+            following and unicodedata.category(following).startswith(("P", "S"))
+        )
+        left_flanking = not following_is_whitespace and (
+            not following_is_punctuation
+            or previous_is_whitespace
+            or previous_is_punctuation
+        )
+        right_flanking = not previous_is_whitespace and (
+            not previous_is_punctuation
+            or following_is_whitespace
+            or following_is_punctuation
+        )
+        can_open = left_flanking and (
+            can_split_word or not right_flanking or previous_is_punctuation
+        )
+        can_close = right_flanking and (
+            can_split_word or not left_flanking or following_is_punctuation
+        )
+        return can_open, can_close
+
     cursor = 0
     while cursor < len(without_html_deletions):
         if without_html_deletions[cursor] == "\\" and cursor + 1 < len(
@@ -2359,6 +2401,32 @@ def strip_markdown_deleted_content(text: str) -> str:
             span_end = closing + len(delimiter) if closing >= 0 else run_end
             cursor = span_end
             continue
+        if without_html_deletions[cursor] in {"*", "_"}:
+            marker = without_html_deletions[cursor]
+            run_end = cursor + 1
+            while (
+                run_end < len(without_html_deletions)
+                and without_html_deletions[run_end] == marker
+            ):
+                run_end += 1
+            can_open, can_close = delimiter_flanking(
+                cursor,
+                run_end,
+                can_split_word=False,
+            )
+            matched = False
+            if can_close:
+                for stack_position in range(len(emphasis_stack) - 1, -1, -1):
+                    if emphasis_stack[stack_position][0] != marker:
+                        continue
+                    del emphasis_stack[stack_position:]
+                    matched = True
+                    break
+            if can_open and not matched:
+                emphasis_stack.append((marker, next_emphasis_id))
+                next_emphasis_id += 1
+            cursor = run_end
+            continue
         if without_html_deletions.startswith("~~", cursor):
             run_end = cursor + 2
             while (
@@ -2367,31 +2435,10 @@ def strip_markdown_deleted_content(text: str) -> str:
             ):
                 run_end += 1
             tilde_run = without_html_deletions[cursor:run_end]
-            previous = without_html_deletions[cursor - 1] if cursor else ""
-            following = (
-                without_html_deletions[run_end]
-                if run_end < len(without_html_deletions)
-                else ""
-            )
-            previous_is_whitespace = not previous or previous.isspace()
-            following_is_whitespace = not following or following.isspace()
-            previous_is_punctuation = bool(
-                previous
-                and unicodedata.category(previous).startswith(("P", "S"))
-            )
-            following_is_punctuation = bool(
-                following
-                and unicodedata.category(following).startswith(("P", "S"))
-            )
-            can_open = not following_is_whitespace and (
-                not following_is_punctuation
-                or previous_is_whitespace
-                or previous_is_punctuation
-            )
-            can_close = not previous_is_whitespace and (
-                not previous_is_punctuation
-                or following_is_whitespace
-                or following_is_punctuation
+            can_open, can_close = delimiter_flanking(
+                cursor,
+                run_end,
+                can_split_word=True,
             )
             # Markdown-it represents every pair in a run as an independent
             # delimiter and leaves an odd leading tilde literal. Pairing the
@@ -2400,7 +2447,14 @@ def strip_markdown_deleted_content(text: str) -> str:
             pair_start = cursor + len(tilde_run) % 2
             for marker_start in range(pair_start, run_end, 2):
                 delimiters.append(
-                    (marker_start, marker_start + 2, can_open, can_close, cursor)
+                    (
+                        marker_start,
+                        marker_start + 2,
+                        can_open,
+                        can_close,
+                        cursor,
+                        tuple(scope_id for _, scope_id in emphasis_stack),
+                    )
                 )
             cursor = run_end
             continue
@@ -2409,12 +2463,15 @@ def strip_markdown_deleted_content(text: str) -> str:
     matched_closers: list[int | None] = [None] * len(delimiters)
     openers: list[int] = []
     for delimiter_index, delimiter in enumerate(delimiters):
-        _, _, can_open, can_close, run_start = delimiter
+        _, _, can_open, can_close, run_start, emphasis_context = delimiter
         matched = False
         if can_close:
             for opener_position in range(len(openers) - 1, -1, -1):
                 opener_index = openers[opener_position]
-                if delimiters[opener_index][4] == run_start:
+                if (
+                    delimiters[opener_index][4] == run_start
+                    or delimiters[opener_index][5] != emphasis_context
+                ):
                     continue
                 matched_closers[opener_index] = delimiter_index
                 del openers[opener_position]

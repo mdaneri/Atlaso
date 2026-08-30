@@ -1278,6 +1278,19 @@ def test_agent_policy_gate_rejects_missing_maintainer_break_glass_contract(
                 f"required agent policy marker is missing: {prohibition}"
             )
 
+    operative_replacement = f"_~~{prohibition}_~~~~"
+    for relative_path in required_entry_points:
+        write_policy_files(tmp_path)
+        path = tmp_path / relative_path
+        original = path.read_text(encoding="utf-8")
+        assert prohibition in original
+        path.write_text(
+            original.replace(prohibition, operative_replacement, 1),
+            encoding="utf-8",
+        )
+
+        assert check_agent_policy_gate(tmp_path) == []
+
 
 def test_agent_policy_gate_rejects_missing_unrelated_issue_tracking(
     tmp_path: Path,
