@@ -824,6 +824,7 @@ MERGE_HOLD_NON_PR_OBJECT = re.compile(
     r"(?:(?:this|the)\s+)?(?:branch|change|commit)\b|"
     r"(?:hold|instruction|directive)s?\b|until\b|before\b|after\b|unless\b|"
     r"because\b|while\b|when\b|yet\b|now\b|automatically\b|"
+    r"(?:to|for)\s+(?:merge|merging)\b|"
     r"from\s+(?:(?:the)\s+)?(?:maintainer|owner|me|us|you)\b|"
     r"for\s+(?:now|the moment|approval|maintainer approval)\b)\w+"
 )

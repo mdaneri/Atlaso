@@ -1777,6 +1777,22 @@
       "expected_holds": [
         "do not merge"
       ]
+    },
+    {
+      "name": "approval-to-merge-is-preserved",
+      "default_merge_authority": true,
+      "instructions": [
+        {
+          "text": "Implement issue #602, but wait for approval to merge.",
+          "add_holds": [
+            "wait for approval"
+          ]
+        }
+      ],
+      "generated": "Wait for approval to merge.",
+      "expected_holds": [
+        "wait for approval"
+      ]
     }
   ]
 }

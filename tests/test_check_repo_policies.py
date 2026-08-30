@@ -262,6 +262,9 @@ def test_merge_hold_directions_recognizes_plain_approval_condition() -> None:
         "Implement issue #602, but wait for approval before deploying to staging."
     ) == {}
     assert merge_hold_directions(
+        "Implement issue #602, but wait for approval to merge."
+    ) == {"wait for approval": "add"}
+    assert merge_hold_directions(
         "Implement issue #602, but merge after CI passes."
     ) == {"do not merge": "add"}
     assert merge_hold_directions(
