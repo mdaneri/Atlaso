@@ -39,6 +39,7 @@ from scripts.check_repo import (
     check_ui_pattern_foundation,
     check_virtualization_legacy,
     collect_files,
+    has_affirmative_default_merge_authority,
     is_checkable,
     merge_hold_directions,
     source_has_default_merge_authority,
@@ -111,6 +112,13 @@ def test_merge_hold_directions_binds_withdrawal_verb_to_hold() -> None:
     ) == {"do not merge": "add"}
 
 
+def test_merge_hold_directions_recognizes_owner_approval() -> None:
+    """Verify possessive approval wording remains an explicit hold."""
+    assert merge_hold_directions(
+        "Implement issue #602, but wait for my approval before merging."
+    ) == {"wait for approval": "add"}
+
+
 def test_source_authority_excludes_patch_review() -> None:
     """Verify reviewing an existing patch is review-only work."""
     assert not source_has_default_merge_authority(
@@ -122,6 +130,23 @@ def test_source_authority_honors_later_stop_work() -> None:
     """Verify a later explicit stop-work instruction revokes eligibility."""
     assert not source_has_default_merge_authority(
         ("Implement issue #602.", "Stop work; only explain the failure.")
+    )
+
+
+def test_source_authority_keeps_workflow_policy_subject_eligible() -> None:
+    """Verify workflow terminology alone does not exclude ordinary policy work."""
+    assert source_has_default_merge_authority(
+        ("Update the documentation for private vulnerability remediation.",)
+    )
+    assert source_has_default_merge_authority(
+        ("Update the documentation for external fork workflows.",)
+    )
+
+
+def test_generated_authority_rejects_conditional_approval() -> None:
+    """Verify generated prompts cannot invent an approval prerequisite."""
+    assert not has_affirmative_default_merge_authority(
+        "Only if the maintainer approves, complete the guarded merge."
     )
 
 

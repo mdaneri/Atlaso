@@ -501,8 +501,15 @@ EXPLICIT_MERGE_HOLD_PATTERNS = {
     ),
     "wait for approval": (
         "wait for approval",
+        "wait for my approval",
+        "wait for your approval",
         "await approval",
+        "await my approval",
+        "await your approval",
         "wait for maintainer approval",
+        "wait for the maintainer's approval",
+        "wait for the maintainer’s approval",
+        "wait for owner approval",
         "wait until approved",
         "after approval",
         "after maintainer approval",
@@ -575,6 +582,10 @@ DEFAULT_MERGE_AUTHORITY_SECOND_INSTRUCTION_CONDITIONS = re.compile(
     r"(?:only\s+)?(?:after|once|when|until)\b.{0,80}"
     r"\b(?:second|another|separate|additional)\b.{0,30}\bmerge instruction\b"
 )
+DEFAULT_MERGE_AUTHORITY_CONDITIONAL_APPROVAL = re.compile(
+    r"(?:only\s+)?(?:if|when|once|after|with|unless|pending|subject to)\b"
+    r"[^.!?]{0,60}\b(?:approv\w*|permission|authorization)\b"
+)
 DEFAULT_MERGE_AUTHORITY_PROMPT_MARKERS = (
     "preserve default merge authority",
     "use the repository's default merge authority",
@@ -605,9 +616,14 @@ DEFAULT_MERGE_AUTHORITY_SOURCE_EXCLUSIONS = re.compile(
     r"(?:(?:an?|the|this)\s+)?draft (?:pull request|pr)|"
     r"(?:open(?:ing)?|create|submit|prepare|deliver|leave|keep)\s+"
     r"(?:(?:an?|the|this)\s+)?(?:pull request|pr)"
-    r"[^.!?]{0,20}\bas (?:an? )?draft\b|"
-    r"external fork|from (?:an? )?fork|"
-    r"private (?:vulnerability|advisory|remediation))"
+    r"[^.!?]{0,20}\bas (?:an? )?draft\b)"
+)
+DEFAULT_MERGE_AUTHORITY_WORKFLOW_EXCLUSIONS = re.compile(
+    r"(?:perform|follow|conduct|undertake|use)\s+(?:the\s+)?"
+    r"private (?:vulnerability|advisory|remediation)\b|"
+    r"(?:implement|fix|deliver|work on)\b[^.!?]{0,60}"
+    r"\b(?:external fork|from (?:an? )?fork|"
+    r"private (?:vulnerability|advisory|remediation))\b"
 )
 DEFAULT_MERGE_AUTHORITY_DIRECT_REVIEW = re.compile(
     r"(?:review|inspect|analy(?:ze|sis)|assess|audit)\s+(?:the\s+)?"
@@ -1022,6 +1038,8 @@ def has_affirmative_default_merge_authority(text: str) -> bool:
                     context
                 )
                 is None
+                and DEFAULT_MERGE_AUTHORITY_CONDITIONAL_APPROVAL.search(context)
+                is None
             ):
                 return True
             offset = normalized.find(marker, offset + 1)
@@ -1041,7 +1059,9 @@ def source_has_default_merge_authority(instructions: tuple[str, ...]) -> bool:
             DEFAULT_MERGE_AUTHORITY_SOURCE_EXCLUSIONS.finditer(normalized)
         ) + tuple(
             DEFAULT_MERGE_AUTHORITY_COORDINATED_NO_WORK.finditer(normalized)
-        ) + tuple(DEFAULT_MERGE_AUTHORITY_STOP_WORK.finditer(normalized))
+        ) + tuple(
+            DEFAULT_MERGE_AUTHORITY_STOP_WORK.finditer(normalized)
+        ) + tuple(DEFAULT_MERGE_AUTHORITY_WORKFLOW_EXCLUSIONS.finditer(normalized))
         source_markers = tuple(
             DEFAULT_MERGE_AUTHORITY_SOURCE_MARKERS.finditer(normalized)
         )

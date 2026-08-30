@@ -267,6 +267,22 @@
       ]
     },
     {
+      "name": "explicit-owner-approval-hold",
+      "default_merge_authority": true,
+      "instructions": [
+        {
+          "text": "Implement issue #602, but wait for my approval before merging.",
+          "add_holds": [
+            "wait for approval"
+          ]
+        }
+      ],
+      "generated": "Preserve the explicit instruction to wait for my approval.",
+      "expected_holds": [
+        "wait for approval"
+      ]
+    },
+    {
       "name": "later-explicit-hold-withdrawal",
       "default_merge_authority": true,
       "instructions": [
@@ -816,6 +832,28 @@
       "instructions": [
         {
           "text": "Implement support for fork pull requests."
+        }
+      ],
+      "generated": "Preserve default merge authority and complete the guarded merge when eligible.",
+      "expected_holds": []
+    },
+    {
+      "name": "private-remediation-policy-subject-eligible",
+      "default_merge_authority": true,
+      "instructions": [
+        {
+          "text": "Update the documentation for private vulnerability remediation."
+        }
+      ],
+      "generated": "Preserve default merge authority and complete the guarded merge when eligible.",
+      "expected_holds": []
+    },
+    {
+      "name": "external-fork-policy-subject-eligible",
+      "default_merge_authority": true,
+      "instructions": [
+        {
+          "text": "Update the documentation for external fork workflows."
         }
       ],
       "generated": "Preserve default merge authority and complete the guarded merge when eligible.",
