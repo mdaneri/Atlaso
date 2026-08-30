@@ -175,6 +175,8 @@ def test_dependency_policy_recognizes_prefixed_python_pip_invocations(
         "'python' -m 'pip' install -r requirements-ad-hoc.lock",
         '"python3.14" -m "pip.__main__" install -r requirements-ad-hoc.lock',
         "'pip' install -r requirements-ad-hoc.lock",
+        "pip.exe install -r requirements-ad-hoc.lock",
+        "'pip.exe' install -r requirements-ad-hoc.lock",
         "PIP_CONFIG_FILE=/dev/null python -m pip install -r requirements-ad-hoc.lock",
         "& python -m pip install -r requirements-ad-hoc.lock",
     )
@@ -285,6 +287,7 @@ def test_dependency_policy_accepts_lock_from_checkout_destination(
         """steps:
   - uses: actions/checkout@v7
     with:
+      ref: ${{ steps.target.outputs.commit }}
       path: target-source
   - run: python -m pip install --require-hashes -r target-source/requirements-release-tools.lock
 """,

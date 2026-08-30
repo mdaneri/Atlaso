@@ -74,7 +74,9 @@ expected input manifests, exact pins, and SHA-256 hashes across all generated lo
 inventories. That workflow check follows ordered checkout destinations, each job's active workspace-root checkout, and
 step or job-default working directories, rejecting external repositories and untrusted Atlaso revisions instead of
 validating a same-named lock from the review checkout. Dynamic or escaping working directories fail closed.
-The small allowlist of dynamic root revisions is limited to the canonical workflows whose admission jobs already prove
-the supplied commit is the successful `main` release target. The appliance check separately verifies direct dependency
+The small allowlist of dynamic checkout revisions is limited to the canonical workflows whose admission jobs already
+prove the supplied commit is the successful `main` release target. This retains commit-bound build-tool pins for
+byte-identical replay builds while publisher scripts remain on protected `main`. The appliance check separately verifies
+direct dependency
 coverage, bootstrap equality, and the
 declaration fingerprint.

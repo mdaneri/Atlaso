@@ -25,7 +25,7 @@ PIP_COMMAND_RE = re.compile(
     r"(?P=python_quote)\s+-m\s+"
     r"(?P<module_quote>['\"]?)pip(?:\d+(?:\.\d+)*)?(?:\.__main__)?"
     r"(?P=module_quote)"
-    r"|(?P<pip_quote>['\"]?)pip(?:\d+(?:\.\d+)*)?(?P=pip_quote)"
+    r"|(?P<pip_quote>['\"]?)pip(?:\d+(?:\.\d+)*)?(?:\.exe)?(?P=pip_quote)"
     r")\s+[^\s;&|]+"
     r"(?P<args>.*?)(?=(?:&&|\|\||;)|$)"
 )
@@ -50,6 +50,9 @@ TRUSTED_ROOT_REFS_BY_WORKFLOW = {
     "virtualization-windows-candidate.yml": {
         "${{ needs.admit.outputs.release_sha }}"
     },
+}
+TRUSTED_PREFIXED_REFS_BY_WORKFLOW = {
+    "wheel.yml": {"${{ steps.target.outputs.commit }}"},
 }
 
 
@@ -426,7 +429,10 @@ def _validate_workflow_locks(root: Path, policy_paths: set[str]) -> list[str]:
                         f"{reference}"
                     )
                     continue
-                if checkout_source.ref not in TRUSTED_ATLASO_REFS:
+                trusted_prefixed_refs = TRUSTED_ATLASO_REFS | (
+                    TRUSTED_PREFIXED_REFS_BY_WORKFLOW.get(workflow.name, set())
+                )
+                if checkout_source.ref not in trusted_prefixed_refs:
                     errors.append(
                         f"{workflow.relative_to(root)}:{line_number}: checkout-prefixed "
                         "workflow requirement uses an untrusted Atlaso ref: "
