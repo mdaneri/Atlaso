@@ -103,19 +103,35 @@ if (-not (Test-Path -LiteralPath $vmRoot -PathType Container)) {
     Write-Host "No retained VMware VM directory exists for the exact PR-owned lab: $vmRoot"
     return
 }
+$identityPath = Join-Path $resolvedLabRoot 'vmware-identity.json'
+if (-not (Test-Path -LiteralPath $identityPath -PathType Leaf)) {
+    throw "Refusing lifecycle cleanup because the exact PR-owned identity evidence is missing: $identityPath"
+}
+$identity = Get-Content -LiteralPath $identityPath -Raw | ConvertFrom-Json
+$identityResultRoot = [System.IO.Path]::GetFullPath([string]$identity.result_root)
+if (
+    [string]$identity.lab_name -cne $LabName -or
+    [int]$identity.pull_request_number -ne $PullRequestNumber -or
+    [string]$identity.purpose -cne $vmIdentity.Purpose -or
+    [string]$identity.collision_suffix -cne $vmIdentity.CollisionSuffix -or
+    [string]$identity.log_identity -cne $LabName -or
+    -not $identityResultRoot.Equals($resolvedLabRoot, [System.StringComparison]::OrdinalIgnoreCase)
+) {
+    throw "Refusing lifecycle cleanup because identity evidence does not match '$LabName': $identityPath"
+}
 $resolvedVmrun = Resolve-VmrunPath -Path $VmrunPath
-$expectedDisplayNames = @(
-    "$LabName-Appliance",
-    "$LabName-ClientA",
-    "$LabName-ClientB",
-    "$LabName-ESXiPXE"
-)
+$expectedRoles = @{
+    "$LabName-Appliance" = 'appliance'
+    "$LabName-ClientA"   = 'client-a'
+    "$LabName-ClientB"   = 'client-b'
+    "$LabName-ESXiPXE"   = 'esxi-pxe'
+}
 $candidates = @(
     Get-ChildItem -LiteralPath $vmRoot -Recurse -Filter '*.vmx' -File |
         ForEach-Object {
             $resolvedPath = $_.FullName
             $displayName = Get-AtlasoVmxDisplayName -Path $resolvedPath
-            if ($expectedDisplayNames -cnotcontains $displayName) {
+            if (-not $expectedRoles.ContainsKey($displayName)) {
                 throw "Refusing lifecycle cleanup because VMX displayName is not owned by the exact lab '$LabName': $resolvedPath"
             }
             Assert-AtlasoVmwareOwnedVmx `
@@ -134,6 +150,33 @@ $candidates = @(
 if (-not $candidates) {
     Write-Host "No Workstation lifecycle VMs found for exact PR-owned lab: $LabName"
     return
+}
+
+$identityVms = @($identity.vms)
+if ($identityVms.Count -ne $candidates.Count) {
+    throw "Refusing lifecycle cleanup because identity evidence does not match the discovered VMX set: $identityPath"
+}
+foreach ($identityVm in $identityVms) {
+    $identityDisplayName = [string]$identityVm.display_name
+    $identityRole = [string]$identityVm.role
+    $identityVmx = [string]$identityVm.vmx
+    if (
+        -not $expectedRoles.ContainsKey($identityDisplayName) -or
+        $identityRole -cne $expectedRoles[$identityDisplayName] -or
+        -not [System.IO.Path]::IsPathFullyQualified($identityVmx)
+    ) {
+        throw "Refusing lifecycle cleanup because identity evidence contains an invalid VM record: $identityPath"
+    }
+    $resolvedIdentityVmx = [System.IO.Path]::GetFullPath($identityVmx)
+    $matchingCandidates = @(
+        $candidates | Where-Object {
+            $_.DisplayName -ceq $identityDisplayName -and
+            $_.Path.Equals($resolvedIdentityVmx, [System.StringComparison]::OrdinalIgnoreCase)
+        }
+    )
+    if ($matchingCandidates.Count -ne 1) {
+        throw "Refusing lifecycle cleanup because identity evidence does not match the discovered VMX set: $identityPath"
+    }
 }
 
 foreach ($candidateGroup in $candidates | Group-Object -Property Directory) {

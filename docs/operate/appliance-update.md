@@ -497,8 +497,11 @@ The canonical VMware Workstation lifecycle coverage can exercise the complete re
 
 ```powershell
 scripts/windows/vmware/invoke-lifecycle-test.ps1 `
+  -PullRequestNumber 1234 `
   -SignedReleaseRepositoryUrl https://release-fixture.example.test/updates
 ```
+
+Replace `1234` with the exact pull-request number that owns the lifecycle validation.
 
 The fixture must use the appliance's named test trust key. Its signed `preview` channel must select a healthy release
 newer than the image baseline; its signed `development` channel must select a candidate that reaches database startup

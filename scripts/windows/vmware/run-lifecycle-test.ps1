@@ -1571,13 +1571,19 @@ $plan = [ordered]@{
     esxi_pxe_mac          = $esxiMacAddress
     workstation_fidelity  = 'Workstation vmnets are isolated layer-2 segments; tagged trunk behavior requires a compatible upstream virtual-network configuration.'
 }
+$planJson = $plan | ConvertTo-Json -Depth 5
 
 if ($PlanOnly) {
     New-Item -ItemType Directory -Force -Path $resultRoot | Out-Null
-    $plan | ConvertTo-Json -Depth 5 | Set-Content -LiteralPath (Join-Path $resultRoot 'plan.json') -Encoding UTF8
-    $plan | ConvertTo-Json -Depth 5
+    $planJson | Set-Content -LiteralPath (Join-Path $resultRoot 'plan.json') -Encoding UTF8
+    $planJson
     return
 }
+
+# Cleanup must retain the same identity proof for a kept runtime lab that it
+# receives for a plan-only lab. Publish it before any VM can be created.
+New-Item -ItemType Directory -Force -Path $resultRoot | Out-Null
+$planJson | Set-Content -LiteralPath (Join-Path $resultRoot 'plan.json') -Encoding UTF8
 
 $firstBootOvfEnvironment = New-AtlasoWorkstationOvfEnvironment `
     -Fqdn (New-AtlasoWorkstationFqdn -Name $applianceName) `

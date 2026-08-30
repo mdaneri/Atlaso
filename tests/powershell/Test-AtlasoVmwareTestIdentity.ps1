@@ -128,4 +128,72 @@ finally {
     }
 }
 
+$cleanupSuffix = "test-$([guid]::NewGuid().ToString('N').Substring(0, 16))"
+$cleanupIdentity = New-AtlasoVmwareTestIdentity `
+    -PullRequestNumber 2147483647 `
+    -Purpose 'lifecycle-cleanup-test' `
+    -CollisionSuffix $cleanupSuffix
+$cleanupRoot = Join-Path $RepositoryRoot (
+    "test-results\vmware-workstation-lifecycle\$($cleanupIdentity.Name)"
+)
+try {
+    $cleanupDisplayName = "$($cleanupIdentity.Name)-Appliance"
+    $cleanupVmDirectory = Join-Path $cleanupRoot "vms\$cleanupDisplayName"
+    $cleanupVmxPath = Join-Path $cleanupVmDirectory "$cleanupDisplayName.vmx"
+    New-Item -ItemType Directory -Path $cleanupVmDirectory -Force | Out-Null
+    [System.IO.File]::WriteAllText(
+        $cleanupVmxPath,
+        "displayName = `"$cleanupDisplayName`"`r`n"
+    )
+    [ordered]@{
+        lab_name            = $cleanupIdentity.Name
+        pull_request_number = 2147483647
+        purpose             = $cleanupIdentity.Purpose
+        collision_suffix    = $cleanupIdentity.CollisionSuffix
+    } | ConvertTo-Json | Set-Content -LiteralPath (Join-Path $cleanupRoot 'plan.json') -Encoding UTF8
+    $manifestPath = Join-Path $cleanupRoot 'vmware-identity.json'
+    [ordered]@{
+        lab_name            = $cleanupIdentity.Name
+        pull_request_number = 2147483647
+        purpose             = $cleanupIdentity.Purpose
+        collision_suffix    = $cleanupIdentity.CollisionSuffix
+        result_root         = $cleanupRoot
+        log_identity        = $cleanupIdentity.Name
+        vms                 = @(
+            [ordered]@{
+                role         = 'appliance'
+                display_name = $cleanupDisplayName
+                vmx          = $cleanupVmxPath
+            }
+        )
+    } | ConvertTo-Json -Depth 5 | Set-Content -LiteralPath $manifestPath -Encoding UTF8
+
+    & (Join-Path $RepositoryRoot 'scripts\windows\vmware\remove-lifecycle-vms.ps1') `
+        -PullRequestNumber 2147483647 `
+        -Purpose $cleanupIdentity.Purpose `
+        -CollisionSuffix $cleanupIdentity.CollisionSuffix `
+        -VmrunPath (Get-Process -Id $PID).Path `
+        -WhatIf
+    if (-not $?) {
+        throw 'Exact lifecycle cleanup evidence unexpectedly failed validation.'
+    }
+
+    $mismatchedManifest = Get-Content -LiteralPath $manifestPath -Raw | ConvertFrom-Json
+    $mismatchedManifest.vms[0].vmx = Join-Path $cleanupVmDirectory 'different.vmx'
+    $mismatchedManifest | ConvertTo-Json -Depth 5 | Set-Content -LiteralPath $manifestPath -Encoding UTF8
+    Assert-Throws {
+        & (Join-Path $RepositoryRoot 'scripts\windows\vmware\remove-lifecycle-vms.ps1') `
+            -PullRequestNumber 2147483647 `
+            -Purpose $cleanupIdentity.Purpose `
+            -CollisionSuffix $cleanupIdentity.CollisionSuffix `
+            -VmrunPath (Get-Process -Id $PID).Path `
+            -WhatIf
+    } 'Lifecycle cleanup must reject identity evidence for a different VMX path.'
+}
+finally {
+    if (Test-Path -LiteralPath $cleanupRoot) {
+        Remove-Item -LiteralPath $cleanupRoot -Recurse -Force
+    }
+}
+
 Write-Host 'Atlaso VMware test identity checks passed.'
