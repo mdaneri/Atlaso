@@ -643,7 +643,11 @@ Every post-staging VMware operation has its own process-tree deadline. Before st
 per-user cleanup marker through a Windows write-through atomic rename, so the marker reaches disk before the VMX signer
 assignment. The wrapper publishes the marker path to rollback only after that rename succeeds. A failure before any
 credential or signer child starts preserves the original error and rolls back only invocation-owned VM artifacts;
-before removal it durably records the exact stopped VMX, quarantine path, and host-boot ownership. A failed fallback
+normal GUI and headless starts launch `vmrun` without redirected standard streams. The short-lived PowerShell launcher
+therefore remains the only writer to the bounded wrapper pipes; detached `vmware.exe` and `vmware-vmx.exe` descendants
+cannot retain them after the launcher exits. Root-process and redirected-stream completion are independently bounded,
+and an unexpected retained writer fails closed while preserving diagnostics already copied from the root launcher.
+Before removal it durably records the exact stopped VMX, quarantine path, and host-boot ownership. A failed fallback
 publication preserves the VM without launching removal, while durable child-active or unproven state remains
 fail-closed across same-boot reruns. An interrupted rollback blocks later normal-VM creation
 until the exact marked VM is stopped, its VMX signer
