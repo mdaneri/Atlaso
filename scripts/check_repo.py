@@ -631,8 +631,8 @@ DEFAULT_MERGE_AUTHORITY_WORKFLOW_EXCLUSIONS = re.compile(
     r"private (?:vulnerability|advisory|remediation))\b"
 )
 DEFAULT_MERGE_AUTHORITY_DIRECT_REVIEW = re.compile(
-    r"(?:review|inspect|analy(?:ze|sis)|assess|audit)\s+(?:the\s+)?"
-    r"(?:implementation|changes?|code|patch)\b"
+    r"(?:review|inspect|analy(?:ze|sis)|assess|audit|evaluat(?:e|ion))\s+"
+    r"(?:the\s+)?(?:implementation|changes?|code|patch|fix(?:es)?)\b"
     r"(?:\s+and\s+(?:report|summarize|describe)\b[^;.!?]*)?"
 )
 DEFAULT_MERGE_AUTHORITY_STOP_WORK = re.compile(
@@ -682,7 +682,14 @@ MERGE_HOLD_OTHER_TASK_PREFIX = re.compile(
 MERGE_HOLD_OTHER_TASK_REFERENCE = re.compile(
     r"(?:unrelated|other|another)\s+(?:pull request|pr)\b"
 )
+MERGE_HOLD_OTHER_TASK_TRAILING_CLAUSE = re.compile(
+    r"\s+(?:and|or|but)\s+(?:(?:for|on)\s+)?(?:(?:the|an?)\s+)?"
+    r"(?:unrelated|other|another)\s+(?:pull request|pr)\b[^;.!?]*$"
+)
 MERGE_AUTHORITY_TASK_CLAUSE_BOUNDARY = re.compile(r"[;.?!]+")
+MERGE_HOLD_STANDALONE_PERMISSION = re.compile(
+    r"\b(?:(?:may|can)\s+merge now|go ahead and merge)\b"
+)
 MERGE_HOLD_NON_PR_OBJECT = re.compile(
     r"^\s+(?!(?:(?:this|the)\s+)?(?:pull request|pr)\b|it\b|"
     r"(?:(?:this|the)\s+)?(?:branch|change|commit)\b|"
@@ -874,12 +881,12 @@ def merge_hold_directions(
     normalized = " ".join(text.casefold().split())
     for phrase in AUTO_MERGE_ONLY_PHRASES:
         normalized = normalized.replace(phrase, "keep github auto-merge disabled")
-    normalized = "; ".join(
-        clause.strip()
-        for clause in MERGE_AUTHORITY_TASK_CLAUSE_BOUNDARY.split(normalized)
-        if clause.strip()
-        and MERGE_HOLD_OTHER_TASK_REFERENCE.search(clause) is None
-    )
+    task_clauses: list[str] = []
+    for clause in MERGE_AUTHORITY_TASK_CLAUSE_BOUNDARY.split(normalized):
+        clause = MERGE_HOLD_OTHER_TASK_TRAILING_CLAUSE.sub("", clause).strip()
+        if clause and MERGE_HOLD_OTHER_TASK_REFERENCE.search(clause) is None:
+            task_clauses.append(clause)
+    normalized = "; ".join(task_clauses)
     if not normalized:
         return {}
     shared_withdrawals: set[str] = set()
@@ -999,23 +1006,23 @@ def merge_hold_directions(
             directions[hold] = (
                 hold_directions.pop() if len(hold_directions) == 1 else None
             )
-    permission_offset = normalized.find("may merge now")
-    while permission_offset >= 0:
+    for permission_match in MERGE_HOLD_STANDALONE_PERMISSION.finditer(normalized):
+        permission_offset = permission_match.start()
+        permission = permission_match.group(0)
         prefix = normalized[max(0, permission_offset - 24) : permission_offset]
         suffix = normalized[
-            permission_offset + len("may merge now") : permission_offset + 53
+            permission_match.end() : permission_match.end() + 40
         ]
         if (
             MERGE_HOLD_WITHDRAWAL_NONCURRENT_PREFIX.search(prefix) is None
             and MERGE_HOLD_WITHDRAWAL_NONCURRENT_SUFFIX.search(suffix) is None
             and not _hold_targets_other_task(
-                normalized, permission_offset, "may merge now"
+                normalized, permission_offset, permission
             )
         ):
             for hold in active_holds:
                 directions[hold] = "remove"
             break
-        permission_offset = normalized.find("may merge now", permission_offset + 1)
     for hold in shared_withdrawals:
         directions[hold] = "remove"
     return directions

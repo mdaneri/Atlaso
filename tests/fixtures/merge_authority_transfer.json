@@ -160,6 +160,22 @@
       ]
     },
     {
+      "name": "shared-clause-active-hold-transfers",
+      "default_merge_authority": true,
+      "instructions": [
+        {
+          "text": "Implement issue #602. Do not merge this pull request or another PR #621.",
+          "add_holds": [
+            "do not merge"
+          ]
+        }
+      ],
+      "generated": "Preserve the explicit do not merge hold.",
+      "expected_holds": [
+        "do not merge"
+      ]
+    },
+    {
       "name": "manual-merge-with-auto-merge-disabled",
       "default_merge_authority": true,
       "instructions": [
@@ -346,6 +362,26 @@
         },
         {
           "text": "You may merge now.",
+          "remove_holds": [
+            "do not merge"
+          ]
+        }
+      ],
+      "generated": "The hold was withdrawn; continue through guarded squash merge when every gate passes.",
+      "expected_holds": []
+    },
+    {
+      "name": "equivalent-standalone-merge-permission-withdrawal",
+      "default_merge_authority": true,
+      "instructions": [
+        {
+          "text": "Implement the change, but do not merge.",
+          "add_holds": [
+            "do not merge"
+          ]
+        },
+        {
+          "text": "You can merge now.",
           "remove_holds": [
             "do not merge"
           ]
@@ -576,6 +612,17 @@
         }
       ],
       "generated": "Review the patch and report findings.",
+      "expected_holds": []
+    },
+    {
+      "name": "evaluate-fix-ineligible",
+      "default_merge_authority": false,
+      "instructions": [
+        {
+          "text": "Evaluate the fix and report findings."
+        }
+      ],
+      "generated": "Evaluate the fix and report findings.",
       "expected_holds": []
     },
     {

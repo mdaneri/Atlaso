@@ -118,6 +118,13 @@ def test_merge_hold_directions_preserves_branch_targeted_hold() -> None:
     ) == {"do not merge": "add"}
 
 
+def test_merge_hold_directions_preserves_shared_active_task_hold() -> None:
+    """Verify another-PR wording cannot erase an active-task hold."""
+    assert merge_hold_directions(
+        "Do not merge this pull request or another PR #621."
+    ) == {"do not merge": "add"}
+
+
 def test_merge_hold_directions_binds_withdrawal_verb_to_hold() -> None:
     """Verify feature-oriented remove wording cannot withdraw an active hold."""
     assert merge_hold_directions(
@@ -149,10 +156,22 @@ def test_merge_hold_directions_recognizes_owner_approval() -> None:
     ) == {"wait for approval": "add"}
 
 
+def test_merge_hold_directions_recognizes_equivalent_permission() -> None:
+    """Verify equivalent current permissions withdraw active holds."""
+    for instruction in ("You can merge now.", "Go ahead and merge."):
+        assert merge_hold_directions(
+            instruction,
+            active_holds=("do not merge",),
+        ) == {"do not merge": "remove"}
+
+
 def test_source_authority_excludes_patch_review() -> None:
     """Verify reviewing an existing patch is review-only work."""
     assert not source_has_default_merge_authority(
         ("Review the patch and report findings.",)
+    )
+    assert not source_has_default_merge_authority(
+        ("Evaluate the fix and report findings.",)
     )
 
 
