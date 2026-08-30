@@ -1092,6 +1092,29 @@ elseif ($requiresBuilderReservation) {
         -ServiceNetworkName '' `
         -ResolvedVmrunPath $VmrunPath `
         -BridgedInterfaceAlias $BridgedInterfaceAlias
+    $managementGateway = if ($management.PSObject.Properties['Gateway'] -and
+        -not [string]::IsNullOrWhiteSpace($management.Gateway)) {
+        $management.Gateway
+    }
+    else {
+        Get-Ipv4AddressFromSubnetOffset -Subnet $management.Subnet -Netmask $management.Mask -HostOffset 2
+    }
+    if (-not $builderNetmaskWasPassed) {
+        $BuilderStaticNetmask = $management.Mask
+    }
+    if (-not $builderIpWasPassed) {
+        $BuilderStaticIp = Get-Ipv4CidrFromSubnetOffset `
+            -Subnet $management.Subnet `
+            -Netmask $management.Mask `
+            -HostOffset 30
+    }
+    if (-not $builderGatewayWasPassed) {
+        $BuilderStaticGateway = $managementGateway
+    }
+    if (-not $builderDnsWasPassed -and $BuilderStaticDns.Count -eq 0 -and $management.Type -eq 'nat') {
+        $BuilderStaticDns = @($managementGateway)
+        Write-Host "Using VMware NAT gateway DNS for Photon builder: $($BuilderStaticDns -join ', ')."
+    }
     Write-Host "Discovered VMware management network $($management.Name) for safe builder-address admission."
 }
 

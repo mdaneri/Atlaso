@@ -177,6 +177,13 @@ def test_photon_wrapper_preflights_credentials_before_image_mutation() -> None:
     assert "SkipNetworkCheck suppresses topology preparation, not allocator safety" in wrapper
     assert "$requiresBuilderReservation = -not $ValidateOnly -and -not $PrepareIsoOnly" in wrapper
     assert "BuilderStaticIp must not be empty for a VMware Photon image build." in wrapper
+    skipped_check_branch = wrapper.index("elseif ($requiresBuilderReservation) {")
+    reservation_branch = wrapper.index("\nif ($requiresBuilderReservation) {", skipped_check_branch + 1)
+    skipped_check_defaults = wrapper[skipped_check_branch:reservation_branch]
+    assert "$BuilderStaticNetmask = $management.Mask" in skipped_check_defaults
+    assert "$BuilderStaticGateway = $managementGateway" in skipped_check_defaults
+    assert "$BuilderStaticDns = @($managementGateway)" in skipped_check_defaults
+    assert "Get-Ipv4CidrFromSubnetOffset `" in skipped_check_defaults
     assert "(@($BuilderStaticGateway) + $managementHostAddresses)" in wrapper
     assert "Cleanup marker root does not match the exact task-created Photon root." in wrapper
     assert "$Job.TerminateAndWait(10000)" in runner
