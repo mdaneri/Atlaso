@@ -97,14 +97,17 @@ requested changes, and authoritative review threads. Read and evaluate every new
 Actionable feedback requires the focused validation and commit-push-review cycle, replies and resolved handled threads,
 and continued monitoring on the same heartbeat.
 
-Treat merged, closed, or delivery-complete merge-ready with an explicit hold or policy exclusion as terminal
-pull-request states. A merge-ready ordinary pull request with default merge authority continues through guarded merge
-and post-merge verification instead of pausing for a second merge instruction. After a merge, continue the same
+Treat merged, closed, or delivery-complete merge-ready with a permanent-disposition hold such as **do not merge**,
+**leave open**, or **pull request only**, or with a policy exclusion, as terminal pull-request states. A merge-ready
+ordinary pull request with default merge authority continues through guarded merge and post-merge verification instead
+of pausing for a second merge instruction. An active **wait for approval** hold is an unresolved maintainer decision:
+`wait for approval` remains resumable until explicitly withdrawn. After a merge, continue the same
 heartbeat through
 linked-issue closure, current `origin/main` reachability, and applicable post-merge workflow verification. Then perform
 one final bounded readback and delete the exact current-task heartbeat. Use the same final readback and deletion for an
-unmerged closed pull request, or for a delivery-complete merge-ready pull request that cannot be merged because an
-explicit hold or policy exclusion applies, with a successful current head, every item seen, no requested changes or
+unmerged closed pull request, or for a delivery-complete merge-ready pull request that cannot be merged because a
+permanent-disposition hold or policy exclusion applies, with a successful current head, every item seen, no requested
+changes or
 actionable feedback, and no unresolved non-outdated review thread. Terminal heartbeats are deleted, never merely paused.
 
 Bind deletion to the exact heartbeat identity recorded for the current task; never delete unrelated automations or act

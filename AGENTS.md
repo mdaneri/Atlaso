@@ -162,14 +162,17 @@ comment or review; record informational items as seen so later runs do not treat
 
 Address actionable feedback, reply and resolve each handled thread, rerun the focused local validation, then commit,
 push, verify the new exact head, request `@codex review`, and continue the same heartbeat.
-Treat merged, closed, or delivery-complete merge-ready with an explicit hold or policy exclusion as terminal
-pull-request states. A merge-ready ordinary pull request with default merge authority is not a terminal pause: continue
-through the guarded merge and post-merge verification instead of waiting for a second merge instruction.
+Treat merged, closed, or delivery-complete merge-ready with a permanent-disposition hold such as **do not merge**,
+**leave open**, or **pull request only**, or with a policy exclusion, as terminal pull-request states. A merge-ready
+ordinary pull request with default merge authority is not a terminal pause: continue through the guarded merge and
+post-merge verification instead of waiting for a second merge instruction. An active **wait for approval** hold is an
+unresolved maintainer decision: `wait for approval` remains resumable until explicitly withdrawn.
 After a merge, continue the same heartbeat through linked-issue closure, current `origin/main` reachability, and
 applicable post-merge workflow verification. Then perform one final bounded readback and
 delete the exact current-task heartbeat. For an unmerged closed pull request, perform the same final bounded readback
-and deletion. Do likewise for a delivery-complete merge-ready pull request that cannot be merged because an explicit
-hold or policy exclusion applies, provided its current head is successful, every comment and review is seen, there are
+and deletion. Do likewise for a delivery-complete merge-ready pull request that cannot be merged because a
+permanent-disposition hold or policy exclusion applies, provided its current head is successful, every comment and
+review is seen, there are
 no requested changes or actionable findings, and no non-outdated review thread remains unresolved. Terminal heartbeats
 are deleted, never merely paused.
 

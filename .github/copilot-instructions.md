@@ -31,14 +31,18 @@ New Tabulators must use `window.AtlasoUiPatterns.createGrid(...)`; every new or 
 - retain the exact-head SHA and seen comment and review IDs in task context; every run must read and evaluate new
   top-level pull-request comments, inline review comments, review submissions and requested changes, exact-head checks,
   mergeability and conflicts, and authoritative review threads;
-- treat merged, closed, or delivery-complete merge-ready with an explicit hold or policy exclusion as terminal states;
+- treat merged, closed, or delivery-complete merge-ready with a permanent-disposition hold such as **do not merge**,
+  **leave open**, or **pull request only**, or with a policy exclusion, as terminal states; an active
+  **wait for approval** hold is an unresolved maintainer decision, so `wait for approval` remains resumable until
+  explicitly withdrawn;
   a merge-ready ordinary pull request with default merge authority continues through guarded merge and post-merge
   verification without pausing for a second merge instruction; keep the same heartbeat after actionable feedback and its
   focused commit-push-review cycle, and after a merge keep it running through linked-issue closure and
   current `origin/main` reachability, plus applicable post-merge workflow verification; then
   perform one final bounded readback and delete the exact current-task heartbeat; use the same final readback and
   deletion for an unmerged closed pull request or a
-  delivery-complete merge-ready successful current head only when an explicit hold or policy exclusion prevents merge,
+  delivery-complete merge-ready successful current head only when a permanent-disposition hold or policy exclusion
+  prevents merge,
   every item is seen, and no actionable feedback or unresolved non-outdated review thread remains; terminal heartbeats
   are deleted, never merely paused;
 - bind deletion to the exact current-task heartbeat identity; never delete unrelated automations or use an ambiguous

@@ -139,6 +139,7 @@ SCHEDULED_PR_MONITORING_SHARED_MARKERS = (
     "already absent",
     "terminal evidence",
     "resumable holds",
+    "`wait for approval` remains resumable",
     "ambiguous ownership",
     "exact retry condition",
     "never merely paused",
@@ -522,7 +523,8 @@ MERGE_HOLD_WITHDRAWAL_MARKERS = (
     "not pr only",
 )
 MERGE_HOLD_WITHDRAWAL_NEGATIONS = re.compile(
-    r"(?:not|never|cannot|can't|can’t|isn't|isn’t|wasn't|wasn’t)\s*$"
+    r"(?:not|never|cannot|can't|can’t|isn't|isn’t|wasn't|wasn’t)"
+    r"(?:\s+been)?\s*$"
 )
 AUTO_MERGE_ONLY_PHRASES = (
     "do not merge automatically",
@@ -555,6 +557,8 @@ DEFAULT_MERGE_AUTHORITY_PROMPT_MARKERS = (
 )
 DEFAULT_MERGE_AUTHORITY_SOURCE_EXCLUSIONS = re.compile(
     r"(?:review(?:-only|[^.!?]{0,60}\bonly\b)|report findings only|"
+    r"(?:do not|don't|don’t|must not|without)\s+"
+    r"(?:\w+\s+){0,3}(?:implement|chang|modif|edit|mak)|"
     r"(?:diagnos(?:e|tic)|investigat(?:e|ion)|analy(?:ze|sis)|assess|inspect)"
     r"[^.!?]{0,80}\b(?:without|no)\b[^.!?]{0,40}"
     r"\b(?:implement|chang|modif|edit|mak)|"
