@@ -2339,7 +2339,7 @@ def strip_markdown_deleted_content(text: str) -> str:
         else trailing_text
     )
     without_html_deletions = "".join(visible_parts)
-    delimiters: list[tuple[int, int, bool, bool, int, tuple[int, ...]]] = []
+    delimiters: list[tuple[int, int, bool, bool, str, int, int]] = []
 
     def delimiter_flanking(
         run_start: int,
@@ -2380,82 +2380,6 @@ def strip_markdown_deleted_content(text: str) -> str:
         )
         return can_open, can_close
 
-    emphasis_delimiters: list[tuple[int, int, bool, bool, str, int]] = []
-    emphasis_cursor = 0
-    while emphasis_cursor < len(without_html_deletions):
-        if without_html_deletions[emphasis_cursor] == "\\" and (
-            emphasis_cursor + 1 < len(without_html_deletions)
-        ):
-            emphasis_cursor += 2
-            continue
-        if without_html_deletions[emphasis_cursor] == "`":
-            run_end = emphasis_cursor
-            while (
-                run_end < len(without_html_deletions)
-                and without_html_deletions[run_end] == "`"
-            ):
-                run_end += 1
-            delimiter = without_html_deletions[emphasis_cursor:run_end]
-            closing = without_html_deletions.find(delimiter, run_end)
-            emphasis_cursor = (
-                closing + len(delimiter) if closing >= 0 else run_end
-            )
-            continue
-        if without_html_deletions[emphasis_cursor] in {"*", "_"}:
-            marker = without_html_deletions[emphasis_cursor]
-            run_end = emphasis_cursor + 1
-            while (
-                run_end < len(without_html_deletions)
-                and without_html_deletions[run_end] == marker
-            ):
-                run_end += 1
-            can_open, can_close = delimiter_flanking(
-                emphasis_cursor,
-                run_end,
-                can_split_word=False,
-            )
-            emphasis_delimiters.append(
-                (
-                    emphasis_cursor,
-                    run_end,
-                    can_open,
-                    can_close,
-                    marker,
-                    emphasis_cursor,
-                )
-            )
-            emphasis_cursor = run_end
-            continue
-        emphasis_cursor += 1
-
-    emphasis_matches: list[int | None] = [None] * len(emphasis_delimiters)
-    emphasis_openers: list[int] = []
-    for delimiter_index, delimiter in enumerate(emphasis_delimiters):
-        _, _, can_open, can_close, marker, run_start = delimiter
-        matched = False
-        if can_close:
-            for opener_position in range(len(emphasis_openers) - 1, -1, -1):
-                opener_index = emphasis_openers[opener_position]
-                opener = emphasis_delimiters[opener_index]
-                if opener[4] != marker or opener[5] == run_start:
-                    continue
-                emphasis_matches[opener_index] = delimiter_index
-                del emphasis_openers[opener_position]
-                matched = True
-                break
-        if can_open and not matched:
-            emphasis_openers.append(delimiter_index)
-
-    emphasis_intervals = [
-        (
-            emphasis_delimiters[opener_index][1],
-            emphasis_delimiters[closer_index][0],
-            opener_index,
-        )
-        for opener_index, closer_index in enumerate(emphasis_matches)
-        if closer_index is not None
-    ]
-
     cursor = 0
     while cursor < len(without_html_deletions):
         if without_html_deletions[cursor] == "\\" and cursor + 1 < len(
@@ -2483,6 +2407,24 @@ def strip_markdown_deleted_content(text: str) -> str:
                 and without_html_deletions[run_end] == marker
             ):
                 run_end += 1
+            can_open, can_close = delimiter_flanking(
+                cursor,
+                run_end,
+                can_split_word=marker == "*",
+            )
+            run_length = run_end - cursor
+            for marker_start in range(cursor, run_end):
+                delimiters.append(
+                    (
+                        marker_start,
+                        marker_start + 1,
+                        can_open,
+                        can_close,
+                        marker,
+                        cursor,
+                        run_length,
+                    )
+                )
             cursor = run_end
             continue
         if without_html_deletions.startswith("~~", cursor):
@@ -2510,37 +2452,65 @@ def strip_markdown_deleted_content(text: str) -> str:
                         marker_start + 2,
                         can_open,
                         can_close,
+                        "~",
                         cursor,
-                        tuple(
-                            scope_id
-                            for scope_start, scope_end, scope_id in emphasis_intervals
-                            if scope_start <= marker_start < scope_end
-                        ),
+                        0,
                     )
                 )
             cursor = run_end
             continue
         cursor += 1
 
-    matched_closers: list[int | None] = [None] * len(delimiters)
-    openers: list[int] = []
-    for delimiter_index, delimiter in enumerate(delimiters):
-        _, _, can_open, can_close, run_start, emphasis_context = delimiter
-        matched = False
-        if can_close:
-            for opener_position in range(len(openers) - 1, -1, -1):
-                opener_index = openers[opener_position]
-                if (
-                    delimiters[opener_index][4] == run_start
-                    or delimiters[opener_index][5] != emphasis_context
-                ):
-                    continue
-                matched_closers[opener_index] = delimiter_index
-                del openers[opener_position]
-                matched = True
-                break
-        if not matched and can_open:
-            openers.append(delimiter_index)
+    matched_closers = [-1] * len(delimiters)
+    mutable_open = [delimiter[2] for delimiter in delimiters]
+    mutable_close = [delimiter[3] for delimiter in delimiters]
+    jumps: list[int] = []
+    openers_bottom: dict[str, list[int]] = {}
+    header_index = 0
+    last_run_start: int | None = None
+    for closer_index, delimiter in enumerate(delimiters):
+        _, _, _, _, marker, run_start, length = delimiter
+        jumps.append(0)
+        if last_run_start != run_start:
+            header_index = closer_index
+        last_run_start = run_start
+        if not mutable_close[closer_index]:
+            continue
+        bottoms = openers_bottom.setdefault(marker, [-1] * 6)
+        bottom_slot = (3 if mutable_open[closer_index] else 0) + length % 3
+        minimum_opener = bottoms[bottom_slot]
+        opener_index = header_index - jumps[header_index] - 1
+        new_minimum = opener_index
+        while opener_index > minimum_opener:
+            opener = delimiters[opener_index]
+            if (
+                opener[4] == marker
+                and mutable_open[opener_index]
+                and matched_closers[opener_index] < 0
+            ):
+                odd_match = False
+                if mutable_close[opener_index] or mutable_open[closer_index]:
+                    if (opener[6] + length) % 3 == 0 and (
+                        opener[6] % 3 != 0 or length % 3 != 0
+                    ):
+                        odd_match = True
+                if not odd_match:
+                    last_jump = (
+                        jumps[opener_index - 1] + 1
+                        if opener_index > 0 and not mutable_open[opener_index - 1]
+                        else 0
+                    )
+                    jumps[closer_index] = closer_index - opener_index + last_jump
+                    jumps[opener_index] = last_jump
+                    mutable_open[closer_index] = False
+                    matched_closers[opener_index] = closer_index
+                    mutable_close[opener_index] = False
+                    new_minimum = -1
+                    last_run_start = None
+                    break
+            opener_index -= jumps[opener_index] + 1
+        if new_minimum != -1:
+            bottoms[bottom_slot] = new_minimum
 
     deletion_intervals = sorted(
         (
@@ -2548,7 +2518,7 @@ def strip_markdown_deleted_content(text: str) -> str:
             delimiters[closer_index][1],
         )
         for opener_index, closer_index in enumerate(matched_closers)
-        if closer_index is not None
+        if closer_index >= 0 and delimiters[opener_index][4] == "~"
     )
     merged_intervals: list[tuple[int, int]] = []
     for interval_start, interval_end in deletion_intervals:
