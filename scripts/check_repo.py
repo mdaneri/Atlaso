@@ -2404,8 +2404,16 @@ def strip_markdown_deleted_content(text: str) -> str:
     link_stack: list[tuple[int, int]] = []
     link_cursor = 0
     next_link_id = 0
+    reference_definitions = {
+        re.sub(r"\s+", " ", match.group("label")).strip().casefold()
+        for match in re.finditer(
+            r"(?m)^ {0,3}\[(?P<label>[^\]\r\n]+)\]:[ \t]+"
+            r"(?:<[^<>\r\n]+>|[^\s<>]+)",
+            without_html_deletions,
+        )
+    }
 
-    def has_complete_link_suffix(closing_bracket: int) -> bool:
+    def has_complete_link_suffix(opening_bracket: int, closing_bracket: int) -> bool:
         """Return whether a link label is followed by a complete destination."""
         suffix_start = closing_bracket + 1
         if suffix_start >= len(without_html_deletions):
@@ -2418,7 +2426,17 @@ def strip_markdown_deleted_content(text: str) -> str:
                     reference_end += 2
                     continue
                 if without_html_deletions[reference_end] == "]":
-                    return True
+                    reference_label = without_html_deletions[
+                        suffix_start + 1 : reference_end
+                    ]
+                    if not reference_label:
+                        reference_label = without_html_deletions[
+                            opening_bracket + 1 : closing_bracket
+                        ]
+                    normalized_label = re.sub(
+                        r"\s+", " ", reference_label
+                    ).strip().casefold()
+                    return normalized_label in reference_definitions
                 reference_end += 1
             return False
         if suffix_marker != "(":
@@ -2487,6 +2505,8 @@ def strip_markdown_deleted_content(text: str) -> str:
                     continue
                 if character in {"\r", "\n"}:
                     return False
+                if title_opener == "(" and character == "(":
+                    return False
                 if character == title_closer:
                     destination_cursor += 1
                     break
@@ -2523,7 +2543,7 @@ def strip_markdown_deleted_content(text: str) -> str:
             next_link_id += 1
         elif without_html_deletions[link_cursor] == "]" and link_stack:
             opening, link_id = link_stack.pop()
-            if has_complete_link_suffix(link_cursor):
+            if has_complete_link_suffix(opening, link_cursor):
                 link_intervals.append((opening + 1, link_cursor, link_id))
         link_cursor += 1
 
