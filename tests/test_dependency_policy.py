@@ -126,6 +126,35 @@ def test_dependency_policy_rejects_workflow_lock_outside_inventory(
     )
 
 
+def test_dependency_policy_checks_multiline_pip_wheel_requirements(
+    tmp_path: Path,
+) -> None:
+    """Verify non-install pip commands and continuation lines use policy locks.
+
+    Args:
+        tmp_path: Temporary directory provided by pytest for isolated filesystem state.
+    """
+    write_valid_policy(tmp_path)
+    (tmp_path / "requirements-ad-hoc.lock").write_text("placeholder\n", encoding="utf-8")
+    workflow = tmp_path / ".github" / "workflows" / "release.yml"
+    workflow.parent.mkdir(parents=True, exist_ok=True)
+    workflow.write_text(
+        """steps:
+  - run: |
+      python -m pip wheel \\
+        --no-deps \\
+        --requirement requirements-ad-hoc.lock
+""",
+        encoding="utf-8",
+    )
+
+    assert any(
+        "workflow requirement lock is outside the generated dependency policy inventory: "
+        "requirements-ad-hoc.lock" in error
+        for error in validate(tmp_path)
+    )
+
+
 def test_dependency_policy_accepts_lock_from_checkout_destination(
     tmp_path: Path,
 ) -> None:

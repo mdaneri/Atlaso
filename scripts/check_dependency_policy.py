@@ -17,10 +17,14 @@ PIN_RE = re.compile(
     r"^[A-Za-z0-9_.-]+==[^\s\\;]+(?:\s*;\s*[^\\]+)?\s*\\?$"
 )
 HASH_RE = re.compile(r"--hash=sha256:[0-9a-f]{64}")
-PIP_INSTALL_RE = re.compile(r"(?:^|\s)(?:python(?:3)?\s+-m\s+)?pip\s+install(?:\s|$)")
+PIP_COMMAND_RE = re.compile(
+    r"(?:^|(?:&&|\|\||;)\s*)(?:python(?:3)?\s+-m\s+)?pip\s+[^\s;&|]+"
+    r"(?P<args>.*?)(?=(?:&&|\|\||;)|$)"
+)
 WORKFLOW_REQUIREMENT_RE = re.compile(
     r"(?<!\S)(?:--requirement|-r)(?:=|\s+)(?:['\"])?(?P<path>[^\s'\"]+)"
 )
+RUN_RE = re.compile(r"^(?P<indent>\s*)(?:-\s+)?run:\s*(?P<value>.*)$")
 
 
 @dataclass(frozen=True)
@@ -96,20 +100,82 @@ def _workflow_checkout_paths(lines: list[str]) -> set[str]:
     return checkout_paths
 
 
-def _workflow_requirement_paths(text: str) -> list[tuple[int, str]]:
+def _continued_commands(lines: list[tuple[int, str]]) -> list[tuple[int, str]]:
+    """Join shell and PowerShell continuation lines into logical commands.
+
+    Args:
+        lines: Workflow line numbers and command text.
+    """
+    commands: list[tuple[int, str]] = []
+    start_line = 0
+    parts: list[str] = []
+    for line_number, line in lines:
+        stripped = line.strip()
+        if not parts:
+            start_line = line_number
+        continued = stripped.endswith(("\\", "`"))
+        parts.append(stripped[:-1].rstrip() if continued else stripped)
+        if not continued:
+            commands.append((start_line, " ".join(parts)))
+            parts = []
+    if parts:
+        commands.append((start_line, " ".join(parts)))
+    return commands
+
+
+def _workflow_run_commands(lines: list[str]) -> list[tuple[int, str]]:
+    """Return logical commands from every workflow run value.
+
+    Args:
+        lines: Workflow source lines.
+    """
+    commands: list[tuple[int, str]] = []
+    index = 0
+    while index < len(lines):
+        match = RUN_RE.match(lines[index])
+        if not match:
+            index += 1
+            continue
+        line_number = index + 1
+        value = match.group("value").strip()
+        run_indent = len(match.group("indent"))
+        if value and not value.startswith(("|", ">")):
+            commands.append((line_number, value))
+            index += 1
+            continue
+
+        block: list[tuple[int, str]] = []
+        index += 1
+        while index < len(lines):
+            candidate = lines[index]
+            candidate_indent = len(candidate) - len(candidate.lstrip())
+            if candidate.strip() and candidate_indent <= run_indent:
+                break
+            block.append((index + 1, candidate))
+            index += 1
+        if value.startswith(">"):
+            if block:
+                commands.append((block[0][0], " ".join(line.strip() for _, line in block)))
+        else:
+            commands.extend(_continued_commands(block))
+    return commands
+
+
+def _workflow_requirement_paths(lines: list[str]) -> list[tuple[int, str]]:
     """Return workflow line numbers and pip requirement arguments.
 
     Args:
-        text: Workflow source text.
+        lines: Workflow source lines.
     """
     references: list[tuple[int, str]] = []
-    for line_number, line in enumerate(text.splitlines(), start=1):
-        if not PIP_INSTALL_RE.search(line):
-            continue
-        references.extend(
-            (line_number, match.group("path"))
-            for match in WORKFLOW_REQUIREMENT_RE.finditer(line)
-        )
+    for line_number, command in _workflow_run_commands(lines):
+        for pip_command in PIP_COMMAND_RE.finditer(command):
+            references.extend(
+                (line_number, match.group("path"))
+                for match in WORKFLOW_REQUIREMENT_RE.finditer(
+                    pip_command.group("args")
+                )
+            )
     return references
 
 
@@ -130,7 +196,7 @@ def _validate_workflow_locks(root: Path, policy_paths: set[str]) -> list[str]:
             continue
         lines = text.splitlines()
         checkout_paths = _workflow_checkout_paths(lines)
-        for line_number, reference in _workflow_requirement_paths(text):
+        for line_number, reference in _workflow_requirement_paths(lines):
             normalized = reference.replace("\\", "/")
             relative = PurePosixPath(normalized)
             if relative.is_absolute() or ".." in relative.parts or not relative.parts:
