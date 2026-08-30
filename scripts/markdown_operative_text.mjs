@@ -10,22 +10,32 @@ const tokens = markdown.parse(source, {})
 const output = []
 let blockquoteDepth = 0
 let deletionDepth = 0
-const suppressedHtml = []
+const htmlStack = []
 
 const suppressedTags = new Set(['del', 's', 'strike', 'script', 'style', 'pre', 'textarea', 'template'])
 const voidTags = new Set(['area', 'base', 'br', 'col', 'embed', 'hr', 'img', 'input', 'link', 'meta', 'param', 'source', 'track', 'wbr'])
 
 function hasHiddenAttributes (attributes) {
-  if (/(?:^|\s)hidden(?:\s|=|$)/i.test(attributes)) {
+  const parsedAttributes = new Map()
+  const attributePattern = /(?:^|\s)([^\s"'=<>`/]+)(?:\s*=\s*(?:"([^"]*)"|'([^']*)'|([^\s"'=<>`]+)))?/g
+  for (const match of attributes.matchAll(attributePattern)) {
+    parsedAttributes.set(
+      match[1].toLowerCase(),
+      match[2] ?? match[3] ?? match[4] ?? null
+    )
+  }
+  if (parsedAttributes.has('hidden')) {
     return true
   }
-  const ariaHidden = attributes.match(/(?:^|\s)aria-hidden\s*=\s*(?:"([^"]*)"|'([^']*)'|([^\s"'=<>`]+))/i)
-  if (ariaHidden && (ariaHidden[1] || ariaHidden[2] || ariaHidden[3] || '').toLowerCase() === 'true') {
+  if ((parsedAttributes.get('aria-hidden') || '').toLowerCase() === 'true') {
     return true
   }
-  const style = attributes.match(/(?:^|\s)style\s*=\s*(?:"([^"]*)"|'([^']*)'|([^\s"'=<>`]+))/i)
-  const styleValue = style && (style[1] || style[2] || style[3] || '')
+  const styleValue = parsedAttributes.get('style') || ''
   return Boolean(styleValue && /(?:display\s*:\s*none|visibility\s*:\s*hidden)/i.test(styleValue))
+}
+
+function isHtmlSuppressed () {
+  return htmlStack.some(entry => entry.suppressed)
 }
 
 function updateHtmlSuppression (content) {
@@ -33,9 +43,9 @@ function updateHtmlSuppression (content) {
   for (const match of content.matchAll(tagPattern)) {
     const tag = match.groups.tag.toLowerCase()
     if (match.groups.closing) {
-      for (let index = suppressedHtml.length - 1; index >= 0; index -= 1) {
-        if (suppressedHtml[index] === tag) {
-          suppressedHtml.splice(index, 1)
+      for (let index = htmlStack.length - 1; index >= 0; index -= 1) {
+        if (htmlStack[index].tag === tag) {
+          htmlStack.splice(index, 1)
           break
         }
       }
@@ -43,8 +53,8 @@ function updateHtmlSuppression (content) {
     }
     const attributes = match.groups.attributes
     const hidden = hasHiddenAttributes(attributes)
-    if (suppressedTags.has(tag) || (hidden && (!match.groups.selfClosing || !voidTags.has(tag)))) {
-      suppressedHtml.push(tag)
+    if (!match.groups.selfClosing || !voidTags.has(tag)) {
+      htmlStack.push({ tag, suppressed: suppressedTags.has(tag) || hidden })
     }
   }
 }
@@ -56,7 +66,7 @@ function processHtmlBlock (content) {
   const tagPattern = /<!--[\s\S]*?(?:-->|$)|<![^>]*>|<\?[\s\S]*?(?:\?>|$)|<\/?[A-Za-z][A-Za-z0-9-]*\b(?:[^<>"']|"[^"]*"|'[^']*')*?\/?\s*>/g
   let cursor = 0
   for (const match of content.matchAll(tagPattern)) {
-    if (!blockquoteDepth && !suppressedHtml.length) {
+    if (!blockquoteDepth && !isHtmlSuppressed()) {
       output.push(content.slice(cursor, match.index))
     }
     if (/^<\/?[A-Za-z]/.test(match[0])) {
@@ -64,7 +74,7 @@ function processHtmlBlock (content) {
     }
     cursor = match.index + match[0].length
   }
-  if (!blockquoteDepth && !suppressedHtml.length) {
+  if (!blockquoteDepth && !isHtmlSuppressed()) {
     output.push(content.slice(cursor))
   }
   output.push('\n')
@@ -84,7 +94,7 @@ function processInline (children) {
       updateHtmlSuppression(token.content)
       continue
     }
-    if (blockquoteDepth || deletionDepth || suppressedHtml.length) {
+    if (blockquoteDepth || deletionDepth || isHtmlSuppressed()) {
       continue
     }
     if (token.type === 'text') {
