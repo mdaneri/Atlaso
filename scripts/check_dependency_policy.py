@@ -127,7 +127,7 @@ def _workflow_job_scope(lines: list[str], index: int) -> int:
 def _workflow_checkout_sources(
     lines: list[str],
 ) -> tuple[
-    dict[tuple[int, str], CheckoutSource],
+    dict[tuple[int, str], list[tuple[int, CheckoutSource]]],
     dict[int, list[tuple[int, CheckoutSource]]],
 ]:
     """Return checkout destinations and root replacements grouped by job.
@@ -135,7 +135,7 @@ def _workflow_checkout_sources(
     Args:
         lines: Workflow source lines.
     """
-    checkout_paths: dict[tuple[int, str], CheckoutSource] = {}
+    checkout_paths: dict[tuple[int, str], list[tuple[int, CheckoutSource]]] = {}
     root_checkouts: dict[int, list[tuple[int, CheckoutSource]]] = {}
     for index, line in enumerate(lines):
         if "uses: actions/checkout@" not in line:
@@ -169,7 +169,9 @@ def _workflow_checkout_sources(
                 ref = ref_match.group(1).strip()
         source = CheckoutSource(repository, ref)
         if checkout_path:
-            checkout_paths[(job_scope, checkout_path)] = source
+            checkout_paths.setdefault((job_scope, checkout_path), []).append(
+                (index + 1, source)
+            )
         else:
             root_checkouts.setdefault(job_scope, []).append((index + 1, source))
     return checkout_paths, root_checkouts
@@ -198,13 +200,79 @@ def _continued_commands(lines: list[tuple[int, str]]) -> list[tuple[int, str]]:
     return commands
 
 
-def _workflow_run_commands(lines: list[str]) -> list[tuple[int, str]]:
+def _workflow_step_working_directory(lines: list[str], index: int) -> str:
+    """Return the literal working-directory value that applies to one run step.
+
+    Args:
+        lines: Workflow source lines.
+        index: Zero-based line index within the run step.
+    """
+    run_indent = len(lines[index]) - len(lines[index].lstrip())
+    step_index = index
+    for candidate_index in range(index, -1, -1):
+        candidate = lines[candidate_index]
+        candidate_indent = len(candidate) - len(candidate.lstrip())
+        if re.match(r"\s*-\s", candidate) and candidate_indent <= run_indent:
+            step_index = candidate_index
+            break
+    step_indent = len(lines[step_index]) - len(lines[step_index].lstrip())
+    step_end = len(lines)
+    for candidate_index in range(step_index + 1, len(lines)):
+        candidate = lines[candidate_index]
+        candidate_indent = len(candidate) - len(candidate.lstrip())
+        if candidate.strip() and candidate_indent <= step_indent:
+            step_end = candidate_index
+            break
+    for candidate in lines[step_index:step_end]:
+        candidate_indent = len(candidate) - len(candidate.lstrip())
+        match = re.fullmatch(r"\s*working-directory:\s*['\"]?([^'\"]+?)['\"]?\s*", candidate)
+        if match and candidate_indent == step_indent + 2:
+            return match.group(1).strip()
+    return ""
+
+
+def _workflow_job_working_directory(lines: list[str], index: int) -> str:
+    """Return the enclosing job's default run working directory.
+
+    Args:
+        lines: Workflow source lines.
+        index: Zero-based line index within the job.
+    """
+    job_scope = _workflow_job_scope(lines, index)
+    if job_scope < 0:
+        return ""
+    job_indent = len(lines[job_scope]) - len(lines[job_scope].lstrip())
+    job_end = len(lines)
+    for candidate_index in range(job_scope + 1, len(lines)):
+        candidate = lines[candidate_index]
+        candidate_indent = len(candidate) - len(candidate.lstrip())
+        if candidate.strip() and candidate_indent <= job_indent:
+            job_end = candidate_index
+            break
+    defaults_indent = -1
+    run_indent = -1
+    for candidate in lines[job_scope + 1 : job_end]:
+        candidate_indent = len(candidate) - len(candidate.lstrip())
+        if candidate.strip() == "defaults:" and candidate_indent == job_indent + 2:
+            defaults_indent = candidate_indent
+            run_indent = -1
+            continue
+        if defaults_indent >= 0 and candidate.strip() == "run:" and candidate_indent == defaults_indent + 2:
+            run_indent = candidate_indent
+            continue
+        match = re.fullmatch(r"\s*working-directory:\s*['\"]?([^'\"]+?)['\"]?\s*", candidate)
+        if match and run_indent >= 0 and candidate_indent == run_indent + 2:
+            return match.group(1).strip()
+    return ""
+
+
+def _workflow_run_commands(lines: list[str]) -> list[tuple[int, str, str]]:
     """Return logical commands from every workflow run value.
 
     Args:
         lines: Workflow source lines.
     """
-    commands: list[tuple[int, str]] = []
+    commands: list[tuple[int, str, str]] = []
     index = 0
     while index < len(lines):
         match = RUN_RE.match(lines[index])
@@ -215,7 +283,10 @@ def _workflow_run_commands(lines: list[str]) -> list[tuple[int, str]]:
         value = match.group("value").strip()
         run_indent = len(match.group("indent"))
         if value and not value.startswith(("|", ">")):
-            commands.append((line_number, value))
+            working_directory = _workflow_step_working_directory(lines, index)
+            if not working_directory:
+                working_directory = _workflow_job_working_directory(lines, index)
+            commands.append((line_number, value, working_directory))
             index += 1
             continue
 
@@ -230,23 +301,45 @@ def _workflow_run_commands(lines: list[str]) -> list[tuple[int, str]]:
             index += 1
         if value.startswith(">"):
             if block:
-                commands.append((block[0][0], " ".join(line.strip() for _, line in block)))
+                command_line = block[0][0]
+                working_directory = _workflow_step_working_directory(
+                    lines, command_line - 1
+                )
+                if not working_directory:
+                    working_directory = _workflow_job_working_directory(
+                        lines, command_line - 1
+                    )
+                commands.append(
+                    (
+                        command_line,
+                        " ".join(line.strip() for _, line in block),
+                        working_directory,
+                    )
+                )
         else:
-            commands.extend(_continued_commands(block))
+            for command_line, command in _continued_commands(block):
+                working_directory = _workflow_step_working_directory(
+                    lines, command_line - 1
+                )
+                if not working_directory:
+                    working_directory = _workflow_job_working_directory(
+                        lines, command_line - 1
+                    )
+                commands.append((command_line, command, working_directory))
     return commands
 
 
-def _workflow_requirement_paths(lines: list[str]) -> list[tuple[int, str]]:
+def _workflow_requirement_paths(lines: list[str]) -> list[tuple[int, str, str]]:
     """Return workflow line numbers and pip requirement arguments.
 
     Args:
         lines: Workflow source lines.
     """
-    references: list[tuple[int, str]] = []
-    for line_number, command in _workflow_run_commands(lines):
+    references: list[tuple[int, str, str]] = []
+    for line_number, command, working_directory in _workflow_run_commands(lines):
         for pip_command in PIP_COMMAND_RE.finditer(command):
             references.extend(
-                (line_number, match.group("path"))
+                (line_number, match.group("path"), working_directory)
                 for match in WORKFLOW_REQUIREMENT_RE.finditer(
                     pip_command.group("args")
                 )
@@ -271,7 +364,7 @@ def _validate_workflow_locks(root: Path, policy_paths: set[str]) -> list[str]:
             continue
         lines = text.splitlines()
         checkout_paths, root_checkouts = _workflow_checkout_sources(lines)
-        for line_number, reference in _workflow_requirement_paths(lines):
+        for line_number, reference, working_directory in _workflow_requirement_paths(lines):
             normalized = reference.replace("\\", "/")
             relative = PurePosixPath(normalized)
             if relative.is_absolute() or ".." in relative.parts or not relative.parts:
@@ -281,10 +374,37 @@ def _validate_workflow_locks(root: Path, policy_paths: set[str]) -> list[str]:
                 )
                 continue
 
+            if working_directory:
+                normalized_working_directory = working_directory.replace("\\", "/")
+                working_path = PurePosixPath(normalized_working_directory)
+                if (
+                    working_path.is_absolute()
+                    or ".." in working_path.parts
+                    or not re.fullmatch(
+                        r"[A-Za-z0-9._/-]+", normalized_working_directory
+                    )
+                ):
+                    errors.append(
+                        f"{workflow.relative_to(root)}:{line_number}: workflow working "
+                        "directory must be a literal repository path: "
+                        f"{working_directory}"
+                    )
+                    continue
+                relative = working_path / relative
+
             policy_path = relative.as_posix()
             tracked_path = root.joinpath(*relative.parts)
             job_scope = _workflow_job_scope(lines, line_number - 1)
-            checkout_source = checkout_paths.get((job_scope, relative.parts[0]))
+            checkout_source = next(
+                (
+                    source
+                    for checkout_line, source in reversed(
+                        checkout_paths.get((job_scope, relative.parts[0]), [])
+                    )
+                    if checkout_line < line_number
+                ),
+                None,
+            )
             if checkout_source is not None and len(relative.parts) > 1:
                 if checkout_source.repository not in {
                     "${{ github.repository }}",

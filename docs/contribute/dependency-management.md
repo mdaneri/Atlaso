@@ -71,8 +71,9 @@ git diff --check
 `check_dependency_policy.py` verifies the Dependabot cooldown, Python 3.14 lock headers, seven-day resolver cutoff,
 expected input manifests, exact pins, and SHA-256 hashes across all generated locks. It also rejects workflow
 `--requirement` or `-r` paths that do not resolve to a tracked lock in both the generation and minimum-age policy
-inventories. That workflow check follows checkout destinations and each job's active workspace-root checkout, rejecting
-external repositories and untrusted Atlaso revisions instead of validating a same-named lock from the review checkout.
+inventories. That workflow check follows ordered checkout destinations, each job's active workspace-root checkout, and
+step or job-default working directories, rejecting external repositories and untrusted Atlaso revisions instead of
+validating a same-named lock from the review checkout. Dynamic or escaping working directories fail closed.
 The small allowlist of dynamic root revisions is limited to the canonical workflows whose admission jobs already prove
 the supplied commit is the successful `main` release target. The appliance check separately verifies direct dependency
 coverage, bootstrap equality, and the

@@ -377,6 +377,132 @@ def test_dependency_policy_scopes_root_checkouts_to_their_jobs(
     assert validate(tmp_path) == []
 
 
+def test_dependency_policy_honors_step_working_directory(
+    tmp_path: Path,
+) -> None:
+    """Verify a step working directory selects the checkout supplying its lock.
+
+    Args:
+        tmp_path: Temporary directory provided by pytest for isolated filesystem state.
+    """
+    write_valid_policy(tmp_path)
+    workflow = tmp_path / ".github" / "workflows" / "release.yml"
+    workflow.parent.mkdir(parents=True, exist_ok=True)
+    workflow.write_text(
+        """jobs:
+  external:
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          repository: attacker/other
+          path: external
+      - run: python -m pip install -r requirements-release-tools.lock
+        working-directory: external
+""",
+        encoding="utf-8",
+    )
+
+    assert any(
+        "checkout-prefixed workflow requirement is not sourced from Atlaso: "
+        "requirements-release-tools.lock" in error
+        for error in validate(tmp_path)
+    )
+
+
+def test_dependency_policy_honors_job_default_working_directory(
+    tmp_path: Path,
+) -> None:
+    """Verify a job's default working directory applies to run steps.
+
+    Args:
+        tmp_path: Temporary directory provided by pytest for isolated filesystem state.
+    """
+    write_valid_policy(tmp_path)
+    workflow = tmp_path / ".github" / "workflows" / "release.yml"
+    workflow.parent.mkdir(parents=True, exist_ok=True)
+    workflow.write_text(
+        """jobs:
+  external:
+    defaults:
+      run:
+        working-directory: external
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          repository: attacker/other
+          path: external
+      - run: python -m pip install -r requirements-release-tools.lock
+""",
+        encoding="utf-8",
+    )
+
+    assert any(
+        "checkout-prefixed workflow requirement is not sourced from Atlaso: "
+        "requirements-release-tools.lock" in error
+        for error in validate(tmp_path)
+    )
+
+
+def test_dependency_policy_uses_checkout_destination_history(
+    tmp_path: Path,
+) -> None:
+    """Verify each command uses the latest preceding destination checkout.
+
+    Args:
+        tmp_path: Temporary directory provided by pytest for isolated filesystem state.
+    """
+    write_valid_policy(tmp_path)
+    workflow = tmp_path / ".github" / "workflows" / "release.yml"
+    workflow.parent.mkdir(parents=True, exist_ok=True)
+    workflow.write_text(
+        """jobs:
+  reused:
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          repository: attacker/other
+          path: tooling
+      - run: python -m pip install -r tooling/requirements-release-tools.lock
+      - uses: actions/checkout@v7
+        with:
+          path: tooling
+""",
+        encoding="utf-8",
+    )
+
+    assert any(
+        "checkout-prefixed workflow requirement is not sourced from Atlaso: "
+        "tooling/requirements-release-tools.lock" in error
+        for error in validate(tmp_path)
+    )
+
+
+def test_dependency_policy_rejects_dynamic_working_directory(
+    tmp_path: Path,
+) -> None:
+    """Verify unresolved working-directory expressions fail closed.
+
+    Args:
+        tmp_path: Temporary directory provided by pytest for isolated filesystem state.
+    """
+    write_valid_policy(tmp_path)
+    workflow = tmp_path / ".github" / "workflows" / "release.yml"
+    workflow.parent.mkdir(parents=True, exist_ok=True)
+    workflow.write_text(
+        """steps:
+  - run: python -m pip install -r requirements-release-tools.lock
+    working-directory: ${{ matrix.source }}
+""",
+        encoding="utf-8",
+    )
+
+    assert any(
+        "workflow working directory must be a literal repository path: "
+        "${{ matrix.source }}" in error
+        for error in validate(tmp_path)
+    )
+
+
 def test_dependency_policy_rejects_missing_dependabot_cooldown(
     tmp_path: Path,
 ) -> None:
