@@ -2370,20 +2370,36 @@ def strip_markdown_deleted_content(text: str) -> str:
             cursor = span_end
             continue
         if without_html_deletions.startswith("~~", cursor):
+            run_end = cursor + 2
+            while (
+                run_end < len(without_html_deletions)
+                and without_html_deletions[run_end] == "~"
+            ):
+                run_end += 1
+            tilde_run = without_html_deletions[cursor:run_end]
             previous = without_html_deletions[cursor - 1] if cursor else ""
-            following_index = cursor + 2
             following = (
-                without_html_deletions[following_index]
-                if following_index < len(without_html_deletions)
+                without_html_deletions[run_end]
+                if run_end < len(without_html_deletions)
                 else ""
             )
             can_open = bool(following and not following.isspace())
             can_close = bool(previous and not previous.isspace())
-            if (in_deletion and can_close) or (not in_deletion and can_open):
-                in_deletion = not in_deletion
+            if in_deletion and can_close:
+                in_deletion = False
                 markdown_parts.append("")
-                cursor += 2
+                cursor = run_end
                 continue
+            if not in_deletion and can_open:
+                # A longer run leaves its leading tildes literal and uses the
+                # final pair as the opening delimiter.
+                markdown_parts.append(tilde_run[:-2])
+                in_deletion = True
+                cursor = run_end
+                continue
+            markdown_parts.append("" if in_deletion else tilde_run)
+            cursor = run_end
+            continue
         character = without_html_deletions[cursor]
         markdown_parts.append(
             "" if in_deletion and character not in "\r\n" else character
