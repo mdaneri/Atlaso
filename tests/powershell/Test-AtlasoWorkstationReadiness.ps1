@@ -271,6 +271,37 @@ if ($null -eq $stalledError -or
     $stalledError.Exception.Message -like 'No uniquely bound IPv4 address*') {
     throw 'A guest-initialization stall after stable address ownership did not report the sanitized first-boot layer.'
 }
+$addressCounter = Join-Path $OutputDirectory 'transient-address-count.txt'
+[System.IO.File]::WriteAllText($addressCounter, '0', [System.Text.UTF8Encoding]::new($false))
+$transientVmrun = Join-Path $OutputDirectory 'transient-address-vmrun.cmd'
+[System.IO.File]::WriteAllText(
+    $transientVmrun,
+    "@echo off`r`nsetlocal EnableDelayedExpansion`r`nif /I `"%3`"==`"getGuestIPAddress`" (`r`n  set /p count=<`"$addressCounter`"`r`n  set /a count+=1`r`n  >`"$addressCounter`" echo !count!`r`n  if !count! LEQ 2 echo 192.168.167.135`r`n  exit /b 0`r`n)`r`nif /I `"%3`"==`"readVariable`" (`r`n  if /I `"%6`"==`"guestinfo.atlaso.test_vm_first_boot_stage`" echo failed-hostname`r`n  exit /b 0`r`n)`r`nif /I `"%3`"==`"list`" (`r`n  echo Total running VMs: 1`r`n  echo `"$targetVmx`"`r`n  exit /b 0`r`n)`r`nexit /b 9`r`n",
+    [System.Text.UTF8Encoding]::new($false)
+)
+$transientError = $null
+try {
+    Set-Alias -Name Get-NetNeighbor -Value Get-TestNetNeighbor -Scope Global
+    Set-Alias -Name Test-Connection -Value Test-TestConnection -Scope Global
+    & (Join-Path $RepositoryRoot 'scripts/windows/vmware/get-atlaso-vm-ip.ps1') `
+        -VmxPath $targetVmx `
+        -ExpectedHostname 'issue-584.atlaso.internal' `
+        -VmrunPath $transientVmrun `
+        -TimeoutSeconds 3 `
+        -PollSeconds 1 | Out-Null
+}
+catch {
+    $transientError = $_
+}
+finally {
+    Remove-Item Alias:Get-NetNeighbor -ErrorAction SilentlyContinue
+    Remove-Item Alias:Test-Connection -ErrorAction SilentlyContinue
+}
+if ($null -eq $transientError -or
+    $transientError.Exception.Message -notlike 'No uniquely bound IPv4 address*' -or
+    $transientError.Exception.Message -like 'VMware address ownership was proven*') {
+    throw 'A later loss of address evidence reused a stale ownership tuple for guest-initialization diagnostics.'
+}
 $unknownStageVmrun = Join-Path $OutputDirectory 'unknown-first-boot-stage-vmrun.cmd'
 [System.IO.File]::WriteAllText(
     $unknownStageVmrun,

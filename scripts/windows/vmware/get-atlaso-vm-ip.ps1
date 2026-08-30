@@ -144,6 +144,12 @@ $lastAddressOwnership = $null
 $lastObservedHostname = ''
 $lastFirstBootStage = ''
 do {
+    # Diagnostic ownership is valid only for the current complete observation.
+    # A later poll that loses Tools, inventory, or neighbor evidence must not
+    # reuse an older tuple to diagnose a guest-initialization stall.
+    $lastAddressOwnership = $null
+    $lastObservedHostname = ''
+    $lastFirstBootStage = ''
     $ipAddress = Get-VmwareGuestIPv4Address `
         -VmrunPath $resolvedVmrun -VmxPath $resolvedVmxPath -Deadline $deadline
     if ($ipAddress) {
