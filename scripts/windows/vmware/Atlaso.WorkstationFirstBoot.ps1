@@ -1509,12 +1509,30 @@ function Set-AtlasoWorkstationDevelopmentRootCaPrivateKey {
         [Parameter(Mandatory = $true)][string]$PrivateKeyPem
     )
 
-    $encoded = [Convert]::ToBase64String([System.Text.Encoding]::UTF8.GetBytes($PrivateKeyPem))
-    if ($encoded.Length -gt 16384) {
-        throw 'The encoded Atlaso development root private key exceeds the bounded guest-info size.'
+    $rsa = [System.Security.Cryptography.RSA]::Create()
+    $pkcs8PrivateKey = $null
+    try {
+        $rsa.ImportFromPem($PrivateKeyPem)
+        $pkcs8PrivateKey = $rsa.ExportPkcs8PrivateKey()
+        # Encoding the PEM text a second time pushes a 4096-bit key beyond
+        # VMware's single-line VMX parser boundary. Canonical PKCS#8 DER keeps
+        # the same validated key inside one bounded guest-info assignment.
+        $encoded = [Convert]::ToBase64String($pkcs8PrivateKey)
+    }
+    catch {
+        throw 'The Atlaso development root private key could not be normalized as PKCS#8.'
+    }
+    finally {
+        if ($null -ne $pkcs8PrivateKey) {
+            [System.Security.Cryptography.CryptographicOperations]::ZeroMemory($pkcs8PrivateKey)
+        }
+        $rsa.Dispose()
     }
     $guestInfoName = 'guestinfo.atlaso.test_vm_development_root_ca_private_key'
     $line = "$guestInfoName = " + (ConvertTo-AtlasoVmxString -Value $encoded)
+    if ($line.Length -gt 4095) {
+        throw 'The PKCS#8 Atlaso development root private key exceeds the VMware VMX line boundary.'
+    }
     $content = @(Get-Content -LiteralPath $VmxPath)
     $pattern = '^\s*guestinfo\.atlaso\.test_vm_development_root_ca_private_key\s*='
     $importProofPattern = '^\s*guestinfo\.atlaso\.test_vm_development_root_ca_imported\s*='

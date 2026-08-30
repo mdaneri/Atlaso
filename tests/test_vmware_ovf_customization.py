@@ -214,8 +214,15 @@ def test_vmware_ovf_customizer_stages_and_scrubs_development_root_key(
     certificate_pem = (
         "-----BEGIN CERTIFICATE-----\nY2VydGlmaWNhdGU=\n-----END CERTIFICATE-----\n"
     )
+    private_key_der = b"private-key-pkcs8-der"
+    encoded_private_key = base64.b64encode(private_key_der).decode("ascii")
     private_key_pem = (
-        "-----BEGIN PRIVATE KEY-----\ncHJpdmF0ZS1rZXk=\n-----END PRIVATE KEY-----\n"
+        "-----BEGIN PRIVATE KEY-----\n"
+        + "\n".join(
+            encoded_private_key[index : index + 64]
+            for index in range(0, len(encoded_private_key), 64)
+        )
+        + "\n-----END PRIVATE KEY-----\n"
     )
     properties = customizer.parse_ovf_environment(OVF_ENV)
     properties[customizer.PROPERTY_DEVELOPMENT_TEST_VM] = "true"
@@ -229,7 +236,7 @@ def test_vmware_ovf_customizer_stages_and_scrubs_development_root_key(
         "try_read_guestinfo_value",
         lambda name: (
             True,
-            base64.b64encode(private_key_pem.encode("ascii")).decode("ascii"),
+            encoded_private_key,
         ),
     )
     monkeypatch.setattr(

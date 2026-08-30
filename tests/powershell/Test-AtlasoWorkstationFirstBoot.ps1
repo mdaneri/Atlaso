@@ -394,6 +394,17 @@ try {
         if ($vmx.Contains('BEGIN PRIVATE KEY')) {
             throw 'The signing key guest-info field must use bounded base64.'
         }
+        $signerAssignment = [regex]::Match(
+            $vmx,
+            'guestinfo\.atlaso\.test_vm_development_root_ca_private_key\s*=\s*"(?<value>[A-Za-z0-9+/=]+)"'
+        )
+        $expectedPkcs8 = [Convert]::ToBase64String($rsa.ExportPkcs8PrivateKey())
+        if (-not $signerAssignment.Success -or $signerAssignment.Groups['value'].Value -cne $expectedPkcs8) {
+            throw 'The signing key guest-info field must contain canonical PKCS#8 DER base64.'
+        }
+        if ($signerAssignment.Value.Length -gt 4095) {
+            throw 'The signing key guest-info assignment must remain below the VMware VMX line boundary.'
+        }
         if ($vmx -match 'guestinfo\.atlaso\.test_vm_development_root_ca_imported') {
             throw 'Staging a new signer must remove stale encrypted-import proof from the VMX.'
         }

@@ -333,6 +333,14 @@ $rollbackCatch = $wrapperSource.IndexOf("`n    catch {", $stageStart, [System.St
 if ($stageStart -lt 0 -or $importProof -lt $stageStart -or $rollbackCatch -lt $importProof) {
     throw 'Encrypted-import proof must remain inside the automatic rollback boundary.'
 }
+if (
+    @([regex]::Matches(
+            $wrapperSource,
+            'Wait-AtlasoWorkstationDevelopmentRootCaImportProof[\s\S]*?-TimeoutSeconds\s+\(\[Math\]::Max\(\$TimeoutSeconds,\s*1200\)\)'
+        )).Count -ne 3
+) {
+    throw 'Every development-root import proof must retain the 15-minute cleanup gate plus bootstrap allowance.'
+}
 foreach ($rollbackMarker in @(
         'Clear-AtlasoWorkstationDevelopmentRootCaRuntimePrivateKey',
         'Clear-AtlasoWorkstationDevelopmentRootCaPrivateKey',
@@ -1583,9 +1591,13 @@ try {
         param([Parameter(ValueFromRemainingArguments = $true)][string[]]$Remaining)
         if ($Remaining -contains 'list') {
             $global:LASTEXITCODE = 0
-            if ([System.IO.File]::ReadAllText($vmrunState) -eq 'running') {
+            $state = [System.IO.File]::ReadAllText($vmrunState)
+            if ($state -in @('running', 'stopping')) {
                 'Total running VMs: 1'
                 $aliasVmx
+                if ($state -eq 'stopping') {
+                    [System.IO.File]::WriteAllText($vmrunState, 'stopped')
+                }
             }
             else {
                 'Total running VMs: 0'
@@ -1593,7 +1605,7 @@ try {
             return
         }
         if ($Remaining -contains 'stop') {
-            [System.IO.File]::WriteAllText($vmrunState, 'stopped')
+            [System.IO.File]::WriteAllText($vmrunState, 'stopping')
             $global:LASTEXITCODE = 0
             return
         }
@@ -1601,7 +1613,7 @@ try {
     }
     Stop-AtlasoTestVmForRollback -VmxPath $targetVmx -VmrunPath AtlasoFakeVmrun
     if ([System.IO.File]::ReadAllText($vmrunState) -ne 'stopped') {
-        throw 'Rollback failed to stop a running VMX reported through a filesystem alias.'
+        throw 'Rollback failed to poll a running VMX through graceful shutdown and filesystem aliasing.'
     }
 
     <#

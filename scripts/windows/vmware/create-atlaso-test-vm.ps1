@@ -135,7 +135,8 @@ Cannot be combined with -SshPublicKeyPath.
 
 .PARAMETER TimeoutSeconds
 Bounded wait used for the 1Password child, management-address discovery, and
-root-CA readiness.
+root-CA readiness. Development-root import proof always retains at least 20
+minutes for the 15-minute offline-cleanup gate plus bootstrap startup.
 #>
 [Diagnostics.CodeAnalysis.SuppressMessageAttribute(
     'PSAvoidUsingPlainTextForPassword',
@@ -1025,6 +1026,7 @@ function Stop-AtlasoTestVmForRollback {
 
     $resolvedVmxPath = (Resolve-Path -LiteralPath $VmxPath).Path
     $targetIdentity = [Atlaso.WorkstationFileIdentity]::Get($resolvedVmxPath)
+    $deadline = [DateTimeOffset]::UtcNow.AddSeconds($TimeoutSeconds)
     $runningText = Invoke-AtlasoBoundedVmrun `
         -VmrunPath $VmrunPath `
         -ArgumentList @('-T', 'ws', 'list') `
@@ -1039,28 +1041,45 @@ function Stop-AtlasoTestVmForRollback {
     if ($runningTargets.Count -eq 0) {
         return
     }
+    $remainingSeconds = [Math]::Ceiling(($deadline - [DateTimeOffset]::UtcNow).TotalSeconds)
+    if ($remainingSeconds -le 0) {
+        throw 'The normal test VM stop deadline elapsed during running-state discovery.'
+    }
     Invoke-AtlasoBoundedVmrun `
         -VmrunPath $VmrunPath `
         -ArgumentList @('-T', 'ws', 'stop', $runningTargets[0], $Mode) `
-        -TimeoutSeconds $TimeoutSeconds `
+        -TimeoutSeconds $remainingSeconds `
         -Action $(if ($Mode -ceq 'soft') {
                 'Gracefully stop the normal test VM after proven development-root import'
             } else {
                 'Stop the failed normal test VM during rollback'
             }) | Out-Null
-    $runningText = Invoke-AtlasoBoundedVmrun `
-        -VmrunPath $VmrunPath `
-        -ArgumentList @('-T', 'ws', 'list') `
-        -TimeoutSeconds $TimeoutSeconds `
-        -Action 'Verify the failed normal test VM stopped during rollback'
-    $runningPaths = @(ConvertFrom-AtlasoVmrunListOutput -Output @($runningText -split '\r?\n'))
-    foreach ($runningPath in $runningPaths) {
-        if (Test-AtlasoTestVmRunningPathMatchesIdentity `
-                -RunningPath $runningPath.Trim() `
-                -TargetIdentity $targetIdentity) {
-            throw 'The failed normal test VM remained running during rollback.'
+
+    # vmrun accepts a graceful shutdown before the guest has necessarily
+    # disappeared from the running inventory. Poll within the caller's single
+    # deadline so only proven stopped state advances signer cleanup.
+    do {
+        $remainingSeconds = [Math]::Ceiling(($deadline - [DateTimeOffset]::UtcNow).TotalSeconds)
+        if ($remainingSeconds -le 0) {
+            break
         }
-    }
+        $runningText = Invoke-AtlasoBoundedVmrun `
+            -VmrunPath $VmrunPath `
+            -ArgumentList @('-T', 'ws', 'list') `
+            -TimeoutSeconds $remainingSeconds `
+            -Action 'Verify the normal test VM stopped'
+        $runningPaths = @(ConvertFrom-AtlasoVmrunListOutput -Output @($runningText -split '\r?\n'))
+        $stillRunning = @($runningPaths | Where-Object {
+                Test-AtlasoTestVmRunningPathMatchesIdentity `
+                    -RunningPath $_.Trim() `
+                    -TargetIdentity $targetIdentity
+            }).Count -gt 0
+        if (-not $stillRunning) {
+            return
+        }
+        Start-Sleep -Seconds 1
+    } while ([DateTimeOffset]::UtcNow -lt $deadline)
+    throw 'The normal test VM remained running after the bounded stop request.'
 }
 
 <#
@@ -2071,7 +2090,7 @@ function Repair-AtlasoLegacyDevelopmentCaCleanupMarkerIdentity {
         -VmxPath $resolvedVmxPath `
         -VmrunPath $VmrunPath `
         -ExpectedFingerprint $ExpectedFingerprint `
-        -TimeoutSeconds $TimeoutSeconds
+        -TimeoutSeconds ([Math]::Max($TimeoutSeconds, 1200))
     # Only the non-secret filesystem identity changes here. Exact running-path,
     # display-name, guest scrub, and import proofs all precede the durable rebind.
     $payload.VmxIdentity = [Atlaso.WorkstationFileIdentity]::Get($resolvedVmxPath)
@@ -2382,7 +2401,7 @@ function Invoke-PendingAtlasoDevelopmentCaCleanup {
                         -VmxPath $marker.VmxPath `
                         -VmrunPath $VmrunPath `
                         -ExpectedFingerprint $ExpectedFingerprint `
-                        -TimeoutSeconds $TimeoutSeconds
+                        -TimeoutSeconds ([Math]::Max($TimeoutSeconds, 1200))
                     $importProven = $true
                 }
                 catch {
@@ -3147,7 +3166,7 @@ if (-not $WhatIfPreference) {
             -VmxPath $targetVmx `
             -VmrunPath $resolvedVmrunPath `
             -ExpectedFingerprint $developmentRootCaFingerprint `
-            -TimeoutSeconds $TimeoutSeconds
+            -TimeoutSeconds ([Math]::Max($TimeoutSeconds, 1200))
         $successfulImportMarker = Read-AtlasoDevelopmentCaCleanupMarker `
             -MarkerPath $developmentCaCleanupMarkerPath `
             -MarkerRoot (Get-AtlasoDevelopmentCaCleanupMarkerRoot)

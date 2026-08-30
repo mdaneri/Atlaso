@@ -1192,16 +1192,27 @@ def stage_development_root_ca(config: dict[str, object]) -> None:
         answered, encoded_private_key = try_read_guestinfo_value(
             DEVELOPMENT_ROOT_CA_PRIVATE_KEY_GUESTINFO
         )
-        if not answered or not encoded_private_key or len(encoded_private_key) > 16384:
+        if not answered or not encoded_private_key or len(encoded_private_key) > 4096:
             raise OvfCustomizationError(
                 "The normal test VM development signing key guest-info value is unavailable"
             )
         try:
-            private_key_bytes = base64.b64decode(encoded_private_key, validate=True)
-            if base64.b64encode(private_key_bytes).decode("ascii") != encoded_private_key:
+            private_key_der = base64.b64decode(encoded_private_key, validate=True)
+            if (
+                not private_key_der
+                or len(private_key_der) > 4096
+                or base64.b64encode(private_key_der).decode("ascii") != encoded_private_key
+            ):
                 raise ValueError
-            private_key_pem = private_key_bytes.decode("ascii")
-        except (binascii.Error, UnicodeDecodeError, ValueError) as exc:
+            private_key_pem = (
+                "-----BEGIN PRIVATE KEY-----\n"
+                + "\n".join(
+                    encoded_private_key[index : index + 64]
+                    for index in range(0, len(encoded_private_key), 64)
+                )
+                + "\n-----END PRIVATE KEY-----\n"
+            )
+        except (binascii.Error, ValueError) as exc:
             raise OvfCustomizationError(
                 "The normal test VM development signing key guest-info value is invalid"
             ) from exc

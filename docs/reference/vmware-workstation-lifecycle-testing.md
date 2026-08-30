@@ -424,7 +424,11 @@ successful-import stop is graceful and bounded so certificate and database state
 does not fall back to a hard power-off and preserves the retryable marker when graceful shutdown cannot be proven.
 First boot commits guest-agent provider selection before erasing the offline package closure. That retryable cleanup is
 a mandatory 15-minute data-disk pre-start gate and may run concurrently with VMware customization, so it cannot delay
-signing-key guest-info scrub while still blocking data-disk and application readiness. That cleanup erases only the
+signing-key guest-info scrub while still blocking data-disk and application readiness. The host retains at least 20
+minutes for encrypted-import proof so that gate and subsequent bootstrap startup cannot trigger false rollback. The
+wrapper transports the
+validated signer as one canonical base64 PKCS#8 DER value whose complete assignment stays below VMware's 4,096-character
+VMX line boundary; first boot reconstructs standard PKCS#8 PEM before mode-`0600` staging. That cleanup erases only the
 offline closure; portable KVM and Hyper-V first-boot access remains available until the next boot. During scrub and
 encrypted-import proof, the
 guest publishes only bounded fixed first-boot stage identifiers. A timeout reports the last valid stage, or a fixed

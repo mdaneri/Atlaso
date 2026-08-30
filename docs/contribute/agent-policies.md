@@ -1043,7 +1043,9 @@ Terminal order:
   mutating the VM or VMX during rollback. Persist boot-bound child-active phases for staging, VM start, and artifact
   removal. If termination is unproven, preserve the VM and VMX, or keep reused disks quarantined during removal, until
   a Windows host restart proves the child tree is gone. Validate the
-  key before host mutation, use only the separately scrubbed test-wrapper guest-info/staging path, encrypt it with each
+  key before host mutation, use only canonical base64 PKCS#8 DER in the separately scrubbed test-wrapper guest-info path
+  so its complete VMX assignment stays below 4,096 characters, reconstruct standard PKCS#8 PEM for staging, encrypt it
+  with each
   VM's unique secrets key, scrub plaintext staging when import fails, and issue a unique HTTPS leaf. Commit guest-agent
   provider selection before potentially long offline-closure cleanup, and keep that cleanup as a mandatory data-disk
   15-minute pre-start gate so VMware signer scrub can run concurrently without admitting appliance readiness early.

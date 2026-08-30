@@ -624,7 +624,9 @@ The following cross-cutting boundaries always apply:
   `Atlaso Development Root CA` before mutation, pin and verify the exact Environment ID by SHA-256 before invoking `op`,
   bound and whole-tree-terminate every `op`/secret-child invocation and every post-staging VMware operation, and pass
   the signer only through a separately
-  scrubbed normal-wrapper guest-info value. First boot must stage it mode `0600`, prove guest-info scrub, encrypt it with
+  scrubbed normal-wrapper guest-info value. Encode canonical PKCS#8 DER once so the complete assignment remains below
+  VMware's 4,096-character VMX line boundary. First boot must reconstruct standard PKCS#8 PEM, stage it mode `0600`,
+  prove guest-info scrub, encrypt it with
   the VM-unique secrets key, remove staging even when encrypted import fails, and issue a unique HTTPS leaf. Commit
   guest-agent provider selection before potentially long offline-closure cleanup, and retain that cleanup as a
   mandatory 15-minute data-disk pre-start gate so VMware signer scrub can proceed concurrently without admitting

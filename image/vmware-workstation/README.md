@@ -617,7 +617,9 @@ one concealed `ATLASO_DEVELOPMENT_ROOT_CA_PRIVATE_KEY` matching the checked-in c
 `C:\Program Files\1Password CLI` must support `op run --environment`. The wrapper validates that capability and
 cryptographically verifies the retrieved key against the checked-in certificate before network preparation, redeploy
 cleanup, or cloning. A bounded child removes the inherited signer variable
-immediately and stages the signer only through the normal-wrapper guest-info field. `-TimeoutSeconds` bounds each
+immediately and stages the signer only as canonical base64 PKCS#8 DER through the normal-wrapper guest-info field. The
+complete assignment remains below VMware's 4,096-character VMX line boundary, and first boot reconstructs standard
+PKCS#8 PEM before staging. `-TimeoutSeconds` bounds each
 `op`/secret-child
 process tree; a timeout enters signer scrub and VM rollback only after whole-tree termination is proven. Boot-bound
 marker phases also cover VM start and artifact removal. If termination cannot be proven, the wrapper leaves the VM and
@@ -626,7 +628,9 @@ gone. First boot writes it mode
 `0600`, proves guest-info scrub, encrypts it with that VM's unique `ATLASO_SECRETS_KEY`, and deletes the staging file.
 Provider selection commits its durable marker before the potentially long offline guest-agent closure cleanup. The data
 disk readiness unit owns that retryable cleanup as a mandatory 15-minute pre-start gate, allowing VMware customization
-and signer scrub to proceed concurrently without admitting data disks or Atlaso before cleanup succeeds. Cleanup mode
+and signer scrub to proceed concurrently without admitting data disks or Atlaso before cleanup succeeds. The host
+retains at least 20 minutes for encrypted-import proof so cleanup and subsequent bootstrap startup cannot cause false
+rollback. Cleanup mode
 erases only the offline closure; portable KVM and Hyper-V first-boot access survives until the next boot. While the
 wrapper waits
 for scrub and encrypted-import proof, it reads only a bounded non-secret first-boot stage; timeout diagnostics report
