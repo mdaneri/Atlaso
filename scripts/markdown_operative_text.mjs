@@ -367,6 +367,7 @@ function hasHiddenAttributes (attributes, inheritedCustomProperties = new Map())
   return {
     irreversible: (
       parsedAttributes.has('hidden') ||
+      parsedAttributes.has('inert') ||
       decodeHtmlAttributeEntities(parsedAttributes.get('aria-hidden') || '')
         .toLowerCase() === 'true' ||
       declarations.get('display')?.value === 'none' ||
