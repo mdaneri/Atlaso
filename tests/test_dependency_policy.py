@@ -170,6 +170,8 @@ def test_dependency_policy_recognizes_prefixed_python_pip_invocations(
     invocations = (
         "python3.14 -m pip install -r requirements-ad-hoc.lock",
         "python -m pip.__main__ install -r requirements-ad-hoc.lock",
+        "python -m 'pip' install -r requirements-ad-hoc.lock",
+        'python -m "pip.__main__" install -r requirements-ad-hoc.lock',
         "PIP_CONFIG_FILE=/dev/null python -m pip install -r requirements-ad-hoc.lock",
         "& python -m pip install -r requirements-ad-hoc.lock",
     )
@@ -305,6 +307,36 @@ def test_dependency_policy_rejects_external_root_checkout_lock(
   external:
     steps:
       - uses: actions/checkout@v7
+        with:
+          repository: attacker/other
+      - run: python -m pip install -r requirements-release-tools.lock
+""",
+        encoding="utf-8",
+    )
+
+    assert any(
+        "root workflow requirement is not sourced from Atlaso: "
+        "requirements-release-tools.lock" in error
+        for error in validate(tmp_path)
+    )
+
+
+def test_dependency_policy_recognizes_quoted_checkout_action(
+    tmp_path: Path,
+) -> None:
+    """Verify quoted checkout action scalars still identify external roots.
+
+    Args:
+        tmp_path: Temporary directory provided by pytest for isolated filesystem state.
+    """
+    write_valid_policy(tmp_path)
+    workflow = tmp_path / ".github" / "workflows" / "release.yml"
+    workflow.parent.mkdir(parents=True, exist_ok=True)
+    workflow.write_text(
+        """jobs:
+  external:
+    steps:
+      - uses: 'actions/checkout@v7'
         with:
           repository: attacker/other
       - run: python -m pip install -r requirements-release-tools.lock

@@ -19,8 +19,12 @@ PIN_RE = re.compile(
 HASH_RE = re.compile(r"--hash=sha256:[0-9a-f]{64}")
 PIP_COMMAND_RE = re.compile(
     r"(?<![A-Za-z0-9_.-])"
-    r"(?:(?:python(?:\d+(?:\.\d+)*)?(?:\.exe)?|py(?:\.exe)?)\s+-m\s+)?"
-    r"pip(?:\d+(?:\.\d+)*)?(?:\.__main__)?\s+[^\s;&|]+"
+    r"(?:"
+    r"(?:python(?:\d+(?:\.\d+)*)?(?:\.exe)?|py(?:\.exe)?)\s+-m\s+"
+    r"(?P<module_quote>['\"]?)pip(?:\d+(?:\.\d+)*)?(?:\.__main__)?"
+    r"(?P=module_quote)"
+    r"|pip(?:\d+(?:\.\d+)*)?"
+    r")\s+[^\s;&|]+"
     r"(?P<args>.*?)(?=(?:&&|\|\||;)|$)"
 )
 WORKFLOW_REQUIREMENT_RE = re.compile(
@@ -28,6 +32,10 @@ WORKFLOW_REQUIREMENT_RE = re.compile(
     r"(?:['\"])?(?P<path>[^\s'\"]+)"
 )
 RUN_RE = re.compile(r"^(?P<indent>\s*)(?:-\s+)?run:\s*(?P<value>.*)$")
+CHECKOUT_ACTION_RE = re.compile(
+    r"^\s*(?:-\s+)?uses:\s*(?P<quote>['\"]?)actions/checkout@[^'\"\s]+"
+    r"(?P=quote)\s*$"
+)
 TRUSTED_ATLASO_REFS = {
     "",
     "${{ github.workflow_sha }}",
@@ -138,7 +146,7 @@ def _workflow_checkout_sources(
     checkout_paths: dict[tuple[int, str], list[tuple[int, CheckoutSource]]] = {}
     root_checkouts: dict[int, list[tuple[int, CheckoutSource]]] = {}
     for index, line in enumerate(lines):
-        if "uses: actions/checkout@" not in line:
+        if not CHECKOUT_ACTION_RE.fullmatch(line):
             continue
         job_scope = _workflow_job_scope(lines, index)
         step_indent = len(line) - len(line.lstrip())
