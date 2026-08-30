@@ -200,6 +200,9 @@ def test_merge_hold_directions_recognizes_first_person_approval() -> None:
     assert merge_hold_directions(
         "Implement issue #602, but merge only after my approval."
     ) == {"wait for approval": "add"}
+    assert merge_hold_directions(
+        "Implement issue #602, but merge only after the maintainer approves."
+    ) == {"wait for approval": "add"}
 
 
 def test_merge_hold_directions_recognizes_equivalent_permission() -> None:
@@ -309,6 +312,9 @@ def test_source_authority_honors_workflow_reclassification() -> None:
         assert not source_has_default_merge_authority(
             ("Implement issue #602.", reclassification)
         )
+    assert not source_has_default_merge_authority(
+        ("Implement issue #602.", "Instead, review PR #602 and report findings.")
+    )
 
 
 def test_generated_authority_rejects_conditional_approval() -> None:

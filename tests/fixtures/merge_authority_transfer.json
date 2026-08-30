@@ -465,6 +465,22 @@
       ]
     },
     {
+      "name": "explicit-merge-after-maintainer-approves",
+      "default_merge_authority": true,
+      "instructions": [
+        {
+          "text": "Implement issue #602, but merge only after the maintainer approves.",
+          "add_holds": [
+            "wait for approval"
+          ]
+        }
+      ],
+      "generated": "Preserve the explicit wait for approval instruction.",
+      "expected_holds": [
+        "wait for approval"
+      ]
+    },
+    {
       "name": "later-explicit-hold-withdrawal",
       "default_merge_authority": true,
       "instructions": [
@@ -801,6 +817,20 @@
         }
       ],
       "generated": "Review the implementation and report findings.",
+      "expected_holds": []
+    },
+    {
+      "name": "later-pr-review-reclassification",
+      "default_merge_authority": false,
+      "instructions": [
+        {
+          "text": "Implement issue #602."
+        },
+        {
+          "text": "Instead, review PR #602 and report findings."
+        }
+      ],
+      "generated": "Review the pull request and report findings.",
       "expected_holds": []
     },
     {
