@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import ast
 import base64
 import io
 import struct
@@ -15,6 +16,31 @@ from scripts.virtualization import smoke_guest_ssh as smoke
 HOST_KEY = "ssh-ed25519 " + base64.b64encode(
     struct.pack(">I", 11) + b"ssh-ed25519" + struct.pack(">I", 32) + b"s" * 32
 ).decode()
+
+
+def test_smoke_dependency_input_matches_the_only_third_party_import() -> None:
+    """Keep the smoke lock narrower than the credential-bridge dependency set."""
+    root = Path(__file__).resolve().parents[1]
+    source = (root / "scripts/virtualization/smoke_guest_ssh.py").read_text(
+        encoding="utf-8"
+    )
+    imported_roots: set[str] = set()
+    for node in ast.walk(ast.parse(source)):
+        if isinstance(node, ast.Import):
+            imported_roots.update(alias.name.partition(".")[0] for alias in node.names)
+        elif isinstance(node, ast.ImportFrom) and node.module:
+            imported_roots.add(node.module.partition(".")[0])
+    third_party = imported_roots - sys.stdlib_module_names - {"__future__"}
+    declarations = [
+        line
+        for line in (
+            root / "requirements-virtualization-smoke.in"
+        ).read_text(encoding="utf-8").splitlines()
+        if line and not line.startswith("#")
+    ]
+
+    assert third_party == {"paramiko"}
+    assert declarations == ["paramiko>=3.5.0"]
 
 
 class _FakeChannel:

@@ -1,0 +1,2 @@
+# VMware and Hyper-V release smoke SSH validation on CPython 3.14.
+paramiko>=3.5.0

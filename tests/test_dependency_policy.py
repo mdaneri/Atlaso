@@ -78,6 +78,78 @@ def test_dependency_policy_accepts_all_generated_locks(tmp_path: Path) -> None:
     assert validate(tmp_path) == []
 
 
+def test_dependency_policy_rejects_missing_workflow_requirement_lock(
+    tmp_path: Path,
+) -> None:
+    """Verify that workflows cannot reference a missing requirement lock.
+
+    Args:
+        tmp_path: Temporary directory provided by pytest for isolated filesystem state.
+    """
+    write_valid_policy(tmp_path)
+    workflow = tmp_path / ".github" / "workflows" / "release.yml"
+    workflow.parent.mkdir(parents=True, exist_ok=True)
+    workflow.write_text(
+        "run: python -m pip install --require-hashes "
+        "--requirement requirements-deployment.lock\n",
+        encoding="utf-8",
+    )
+
+    normalized_errors = [error.replace("\\", "/") for error in validate(tmp_path)]
+    assert (
+        ".github/workflows/release.yml:1: workflow requirement path is missing: "
+        "requirements-deployment.lock"
+    ) in normalized_errors
+
+
+def test_dependency_policy_rejects_workflow_lock_outside_inventory(
+    tmp_path: Path,
+) -> None:
+    """Verify that an existing ad hoc workflow lock is not sufficient.
+
+    Args:
+        tmp_path: Temporary directory provided by pytest for isolated filesystem state.
+    """
+    write_valid_policy(tmp_path)
+    (tmp_path / "requirements-ad-hoc.lock").write_text("placeholder\n", encoding="utf-8")
+    workflow = tmp_path / ".github" / "workflows" / "release.yml"
+    workflow.parent.mkdir(parents=True, exist_ok=True)
+    workflow.write_text(
+        "run: python -m pip install -r requirements-ad-hoc.lock\n",
+        encoding="utf-8",
+    )
+
+    assert any(
+        "workflow requirement lock is outside the generated dependency policy inventory: "
+        "requirements-ad-hoc.lock" in error
+        for error in validate(tmp_path)
+    )
+
+
+def test_dependency_policy_accepts_lock_from_checkout_destination(
+    tmp_path: Path,
+) -> None:
+    """Verify checkout-prefixed target-source locks resolve to tracked inputs.
+
+    Args:
+        tmp_path: Temporary directory provided by pytest for isolated filesystem state.
+    """
+    write_valid_policy(tmp_path)
+    workflow = tmp_path / ".github" / "workflows" / "wheel.yml"
+    workflow.parent.mkdir(parents=True, exist_ok=True)
+    workflow.write_text(
+        """steps:
+  - uses: actions/checkout@v7
+    with:
+      path: target-source
+  - run: python -m pip install --require-hashes -r target-source/requirements-release-tools.lock
+""",
+        encoding="utf-8",
+    )
+
+    assert validate(tmp_path) == []
+
+
 def test_dependency_policy_rejects_missing_dependabot_cooldown(
     tmp_path: Path,
 ) -> None:
@@ -173,6 +245,13 @@ def test_lock_compiler_applies_upload_cutoff_to_every_target() -> None:
         assert "--no-emit-index-url" in command
         assert f"--output-file={target.output}" in command
         assert ("--allow-unsafe" in command) is target.allow_unsafe
+
+
+def test_lock_policy_and_generation_inventories_match() -> None:
+    """Verify every policy lock is generated and every generated lock is governed."""
+    assert {policy.path for policy in LOCK_POLICIES} == {
+        target.output for target in LOCK_TARGETS
+    }
 
 
 def test_lock_compiler_adds_upgrade_only_when_requested() -> None:

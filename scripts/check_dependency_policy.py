@@ -7,7 +7,7 @@ import re
 import shlex
 import sys
 from dataclasses import dataclass
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 
 ROOT = Path(__file__).resolve().parents[1]
 MINIMUM_AGE_DAYS = 7
@@ -17,6 +17,10 @@ PIN_RE = re.compile(
     r"^[A-Za-z0-9_.-]+==[^\s\\;]+(?:\s*;\s*[^\\]+)?\s*\\?$"
 )
 HASH_RE = re.compile(r"--hash=sha256:[0-9a-f]{64}")
+PIP_INSTALL_RE = re.compile(r"(?:^|\s)(?:python(?:3)?\s+-m\s+)?pip\s+install(?:\s|$)")
+WORKFLOW_REQUIREMENT_RE = re.compile(
+    r"(?<!\S)(?:--requirement|-r)(?:=|\s+)(?:['\"])?(?P<path>[^\s'\"]+)"
+)
 
 
 @dataclass(frozen=True)
@@ -60,7 +64,100 @@ LOCK_POLICIES = (
         ("requirements-onepassword-deploy.in",),
         False,
     ),
+    LockPolicy(
+        "requirements-virtualization-smoke.lock",
+        ("requirements-virtualization-smoke.in",),
+        False,
+    ),
 )
+
+
+def _workflow_checkout_paths(lines: list[str]) -> set[str]:
+    """Return literal checkout destinations declared by one workflow.
+
+    Args:
+        lines: Workflow source lines.
+    """
+    checkout_paths: set[str] = set()
+    for index, line in enumerate(lines):
+        if "uses: actions/checkout@" not in line:
+            continue
+        step_indent = len(line) - len(line.lstrip())
+        for step_line in reversed(lines[: index + 1]):
+            if re.match(r"\s*-\s", step_line):
+                step_indent = len(step_line) - len(step_line.lstrip())
+                break
+        for candidate in lines[index + 1 :]:
+            if candidate.strip() and len(candidate) - len(candidate.lstrip()) <= step_indent:
+                break
+            match = re.fullmatch(r"\s*path:\s*['\"]?([A-Za-z0-9._-]+)['\"]?\s*", candidate)
+            if match:
+                checkout_paths.add(match.group(1))
+    return checkout_paths
+
+
+def _workflow_requirement_paths(text: str) -> list[tuple[int, str]]:
+    """Return workflow line numbers and pip requirement arguments.
+
+    Args:
+        text: Workflow source text.
+    """
+    references: list[tuple[int, str]] = []
+    for line_number, line in enumerate(text.splitlines(), start=1):
+        if not PIP_INSTALL_RE.search(line):
+            continue
+        references.extend(
+            (line_number, match.group("path"))
+            for match in WORKFLOW_REQUIREMENT_RE.finditer(line)
+        )
+    return references
+
+
+def _validate_workflow_locks(root: Path, policy_paths: set[str]) -> list[str]:
+    """Validate workflow lock references against tracked generated locks.
+
+    Args:
+        root: Repository or filesystem root searched by the operation.
+        policy_paths: Generated locks covered by the minimum-age policy.
+    """
+    errors: list[str] = []
+    workflow_root = root / ".github" / "workflows"
+    for workflow in sorted((*workflow_root.glob("*.yml"), *workflow_root.glob("*.yaml"))):
+        try:
+            text = workflow.read_text(encoding="utf-8")
+        except OSError:
+            errors.append(f"{workflow.relative_to(root)}: workflow is unreadable")
+            continue
+        lines = text.splitlines()
+        checkout_paths = _workflow_checkout_paths(lines)
+        for line_number, reference in _workflow_requirement_paths(text):
+            normalized = reference.replace("\\", "/")
+            relative = PurePosixPath(normalized)
+            if relative.is_absolute() or ".." in relative.parts or not relative.parts:
+                errors.append(
+                    f"{workflow.relative_to(root)}:{line_number}: workflow requirement "
+                    f"path must be a literal repository lock: {reference}"
+                )
+                continue
+
+            policy_path = relative.as_posix()
+            tracked_path = root.joinpath(*relative.parts)
+            if relative.parts[0] in checkout_paths and len(relative.parts) > 1:
+                policy_path = PurePosixPath(*relative.parts[1:]).as_posix()
+                tracked_path = root.joinpath(*relative.parts[1:])
+
+            if not tracked_path.is_file():
+                errors.append(
+                    f"{workflow.relative_to(root)}:{line_number}: workflow requirement "
+                    f"path is missing: {reference}"
+                )
+                continue
+            if policy_path not in policy_paths:
+                errors.append(
+                    f"{workflow.relative_to(root)}:{line_number}: workflow requirement "
+                    f"lock is outside the generated dependency policy inventory: {reference}"
+                )
+    return errors
 
 
 def _pip_update_block(lines: list[str]) -> list[str]:
@@ -114,6 +211,8 @@ def validate(root: Path = ROOT) -> list[str]:
         The validate result.
     """
     errors: list[str] = []
+    policy_paths = {policy.path for policy in LOCK_POLICIES}
+    errors.extend(_validate_workflow_locks(root, policy_paths))
     dependabot_path = root / ".github" / "dependabot.yml"
     try:
         pip_block = _pip_update_block(

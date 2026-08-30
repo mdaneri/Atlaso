@@ -170,9 +170,11 @@ jobs:
       - uses: actions/setup-python@v7
         with:
           python-version: '3.14'
-      - name: Install locked release tooling
+      - name: Install locked release and virtualization smoke tooling
         shell: pwsh
-        run: python -m pip install --require-hashes --requirement requirements-release-tools.lock
+        run: |
+          python -m pip install --require-hashes --requirement requirements-release-tools.lock
+          python -m pip install --require-hashes --requirement requirements-virtualization-smoke.lock
       - name: Produce exact candidate without publication authority
         shell: pwsh
         env:

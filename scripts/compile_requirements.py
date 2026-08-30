@@ -75,6 +75,12 @@ LOCK_TARGETS = (
         False,
         True,
     ),
+    LockTarget(
+        "requirements-virtualization-smoke.lock",
+        ("requirements-virtualization-smoke.in",),
+        False,
+        True,
+    ),
 )
 
 

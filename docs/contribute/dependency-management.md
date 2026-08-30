@@ -30,9 +30,10 @@ The wrapper regenerates:
 - `requirements-appliance-bootstrap.lock`;
 - `requirements-appliance.lock`;
 - `requirements-docs.lock`;
-- `requirements-static-analysis.lock`; and
-- `requirements-release-tools.lock`; and
-- `requirements-onepassword-deploy.lock`.
+- `requirements-static-analysis.lock`;
+- `requirements-release-tools.lock`;
+- `requirements-onepassword-deploy.lock`; and
+- `requirements-virtualization-smoke.lock`.
 
 Every resolver invocation includes `--uploaded-prior-to=P7D` and `--generate-hashes`. Locks that need pip's unsafe
 bootstrap tools retain `--allow-unsafe`, and the wrapper refreshes the declaration fingerprint embedded in
@@ -68,5 +69,7 @@ git diff --check
 ```
 
 `check_dependency_policy.py` verifies the Dependabot cooldown, Python 3.14 lock headers, seven-day resolver cutoff,
-expected input manifests, exact pins, and SHA-256 hashes across all generated locks. The appliance check separately
-verifies direct dependency coverage, bootstrap equality, and the declaration fingerprint.
+expected input manifests, exact pins, and SHA-256 hashes across all generated locks. It also rejects workflow
+`--requirement` or `-r` paths that do not resolve to a tracked lock in both the generation and minimum-age policy
+inventories. The appliance check separately verifies direct dependency coverage, bootstrap equality, and the
+declaration fingerprint.
