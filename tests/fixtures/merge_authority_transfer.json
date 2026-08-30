@@ -257,6 +257,22 @@
       ]
     },
     {
+      "name": "explicit-merge-after-ci-passes",
+      "default_merge_authority": true,
+      "instructions": [
+        {
+          "text": "Implement issue #602, but merge only after CI passes.",
+          "add_holds": [
+            "do not merge"
+          ]
+        }
+      ],
+      "generated": "Preserve the explicit merge only after CI passes instruction.",
+      "expected_holds": [
+        "do not merge"
+      ]
+    },
+    {
       "name": "qualified-explicit-do-not-merge",
       "default_merge_authority": true,
       "instructions": [

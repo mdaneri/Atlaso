@@ -616,7 +616,7 @@ AUTO_MERGE_ONLY_PHRASES = (
 )
 DEFAULT_MERGE_AUTHORITY_NEGATIONS = re.compile(
     r"(?:(?:do not|don't|don’t|never|must not|should not|cannot|can't|can’t|not)"
-    r"(?:\s+\w+){0,6}|(?:lacks?|has no|have no|without)|"
+    r"(?:\s+\w+){0,6}|(?:lacks?|has no|have no|without)(?:\s+\w+){0,4}|"
     r"(?:skip|avoid|omit|decline|refrain(?:\s+from)?|"
     r"hold off(?:\s+on)?|defer|delay|postpone|pause)"
     r"(?:\s+\w+){0,3})\s*$"
@@ -768,6 +768,11 @@ MERGE_AUTHORITY_COORDINATED_CLAUSE_BOUNDARY = re.compile(
 )
 MERGE_HOLD_STANDALONE_PERMISSION = re.compile(
     r"\b(?:(?:may|can)\s+merge now|go ahead and merge)\b"
+)
+MERGE_HOLD_NONAPPROVAL_CONDITION = re.compile(
+    r"\bmerge only (?:after|when|if|once)\s+"
+    r"(?:ci|tests?|checks?|validation|builds?)\b[^.!?]{0,40}"
+    r"\b(?:pass(?:es|ed)?|succeed(?:s|ed)?|complete(?:s|d)?)\b"
 )
 MERGE_HOLD_NON_PR_OBJECT = re.compile(
     r"^\s+(?!(?:(?:this|the)\s+)?(?:pull request|pr)\b|it\b|"
@@ -1161,6 +1166,14 @@ def merge_hold_directions(
             directions[hold] = (
                 hold_directions.pop() if len(hold_directions) == 1 else None
             )
+    for condition_match in MERGE_HOLD_NONAPPROVAL_CONDITION.finditer(normalized):
+        condition = condition_match.group(0)
+        if not _is_hold_discussion(
+            normalized, condition_match.start()
+        ) and not _hold_targets_other_task(
+            normalized, condition_match.start(), condition
+        ):
+            directions["do not merge"] = "add"
     for permission_match in MERGE_HOLD_STANDALONE_PERMISSION.finditer(normalized):
         permission_offset = permission_match.start()
         permission = permission_match.group(0)

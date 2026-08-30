@@ -125,6 +125,9 @@ def test_merge_hold_directions_recognizes_merge_deferral() -> None:
         "Implement issue #602, but defer the merge.",
     ):
         assert merge_hold_directions(instruction) == {"do not merge": "add"}
+    assert merge_hold_directions(
+        "Implement issue #602, but merge only after CI passes."
+    ) == {"do not merge": "add"}
 
 
 def test_merge_hold_directions_preserves_shared_active_task_hold() -> None:
@@ -345,6 +348,9 @@ def test_generated_authority_rejects_imperative_denial() -> None:
     )
     assert not has_affirmative_default_merge_authority(
         "Consider the guarded squash merge."
+    )
+    assert not has_affirmative_default_merge_authority(
+        "This task lacks authority to complete the guarded merge."
     )
 
 
