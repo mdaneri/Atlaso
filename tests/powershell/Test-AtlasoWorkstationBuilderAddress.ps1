@@ -179,7 +179,13 @@ exit 1
         throw 'A normally released builder address did not return to the pool.'
     }
     Exit-AtlasoVmwareBuilderAddressReservation -Reservation $replacement -VmrunPath $vmrunPath -StateRoot $stateRoot
-    Exit-AtlasoVmwareBuilderAddressReservation -Reservation $replacement -VmrunPath $vmrunPath -StateRoot $stateRoot
+    $completedReplacement = $replacement | ConvertTo-Json -Depth 6 | ConvertFrom-Json
+    $completedReplacement.OwnerPid = 2147483647
+    $completedReplacement.OwnerStartTimeUtcTicks = 1
+    Exit-AtlasoVmwareBuilderAddressReservation `
+        -Reservation $completedReplacement `
+        -VmrunPath $vmrunPath `
+        -StateRoot $stateRoot
     Exit-AtlasoVmwareBuilderAddressReservation -Reservation $second -VmrunPath $vmrunPath -StateRoot $stateRoot
 
     $activeStateRoot = Join-Path $testRoot 'active-owner-state'
@@ -264,6 +270,44 @@ exit 1
         -VmrunPath $vmrunPath `
         -StateRoot $reusedPidStateRoot `
         -ProcessTreeTerminationProven
+
+    $preHandoffStateRoot = Join-Path $testRoot 'pre-handoff-state'
+    $preHandoffPendingRoot = Join-Path $preHandoffStateRoot 'pending-releases'
+    [void][System.IO.Directory]::CreateDirectory($preHandoffPendingRoot)
+    $preHandoffPath = Join-Path $preHandoffPendingRoot (
+        "builder-address-reservation-$([guid]::NewGuid().ToString('N')).json"
+    )
+    $preHandoffCommon = $common.Clone()
+    $preHandoffCommon.StateRoot = $preHandoffStateRoot
+    $preHandoffReservation = Enter-AtlasoVmwareBuilderAddressReservation `
+        @preHandoffCommon `
+        -ReservationHandoffPath $preHandoffPath `
+        -OutputDirectory (Join-Path $testRoot 'pre-handoff-output')
+    if (-not (Test-Path -LiteralPath $preHandoffPath -PathType Leaf)) {
+        throw 'Reservation admission returned before its durable release handoff was published.'
+    }
+    [System.IO.File]::WriteAllText(
+        (Join-Path $preHandoffStateRoot 'reservations.json'),
+        (([ordered]@{ Schema = 1; Reservations = @() } | ConvertTo-Json -Depth 6) + "`n"),
+        [System.Text.UTF8Encoding]::new($false)
+    )
+    try {
+        Exit-AtlasoVmwareBuilderAddressReservation `
+            -Reservation $preHandoffReservation `
+            -VmrunPath $vmrunPath `
+            -StateRoot $preHandoffStateRoot
+        throw 'A pre-ledger handoff was retired while its exact owner remained active.'
+    }
+    catch {
+        if ($_.Exception.Message -notmatch 'remains pending because its exact owner process is still active') { throw }
+    }
+    $completedPreHandoff = $preHandoffReservation | ConvertTo-Json -Depth 6 | ConvertFrom-Json
+    $completedPreHandoff.OwnerPid = 2147483647
+    $completedPreHandoff.OwnerStartTimeUtcTicks = 1
+    Exit-AtlasoVmwareBuilderAddressReservation `
+        -Reservation $completedPreHandoff `
+        -VmrunPath $vmrunPath `
+        -StateRoot $preHandoffStateRoot
 
     $postRenameStateRoot = Join-Path $testRoot 'post-rename-sync-state'
     [void][System.IO.Directory]::CreateDirectory($postRenameStateRoot)
@@ -383,7 +427,8 @@ exit 1
             'pending-releases'
             'Complete-AtlasoBuilderAddressReservationHandoff'
             'ProcessTreeTerminationProven'
-            'Builder-address handoff publication failed and exact reservation rollback also failed'
+            '-ReservationHandoffPath $resolvedBuilderAddressReservationPath'
+            'was not paired with its durable release handoff'
             'SkipNetworkCheck suppresses topology preparation, not allocator safety'
             'HostAddresses'
             '(@($BuilderStaticGateway) + $managementHostAddresses)'

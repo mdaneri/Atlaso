@@ -719,8 +719,8 @@ The following cross-cutting boundaries always apply:
   storage, never recover it while its exact owner process remains active, retry it after a preserved VM stops, and
   delete it only after exact ledger release succeeds. Never replay a dead same-boot owner's handoff unless the
   controlling parent proved complete process-tree termination; otherwise require a host-restart boundary. Publish
-  ledger state with write-through replacement plus directory
-  metadata synchronization, and roll back an exact pre-VM reservation if its handoff cannot be published. Release
+  recoverable release intent before ledger admission, then publish both records with write-through replacement plus
+  directory metadata synchronization. Release
   normally only after inactive-VM completion. Exclude every IPv4 address on the selected bridged host interface, and never
   let skipped topology preparation bypass read-only DHCP-state discovery. The completed appliance still uses management
   DHCP by default.

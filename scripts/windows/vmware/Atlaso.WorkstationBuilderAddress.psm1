@@ -342,9 +342,32 @@ function Write-AtlasoBuilderReservationLedger {
         [Parameter(Mandatory = $true)][AllowEmptyCollection()][object[]]$Reservations
     )
 
+    Write-AtlasoBuilderDurableJsonFile `
+        -Path $Path `
+        -Payload ([ordered]@{ Schema = 1; Reservations = @($Reservations) }) `
+        -Replace
+}
+
+function Write-AtlasoBuilderDurableJsonFile {
+    <#
+    .SYNOPSIS
+    Durably publish one builder-state JSON payload.
+    .PARAMETER Path
+    Exact destination path.
+    .PARAMETER Payload
+    Complete JSON-serializable payload.
+    .PARAMETER Replace
+    Replace an existing destination instead of requiring a new path.
+    #>
+    param(
+        [Parameter(Mandatory = $true)][string]$Path,
+        [Parameter(Mandatory = $true)][object]$Payload,
+        [switch]$Replace
+    )
+
     $temporary = "$Path.$([guid]::NewGuid().ToString('N')).tmp"
     try {
-        $json = [ordered]@{ Schema = 1; Reservations = @($Reservations) } | ConvertTo-Json -Depth 6
+        $json = $Payload | ConvertTo-Json -Depth 6
         $bytes = [System.Text.UTF8Encoding]::new($false).GetBytes("$json`n")
         $stream = [System.IO.FileStream]::new(
             $temporary,
@@ -364,7 +387,7 @@ function Write-AtlasoBuilderReservationLedger {
         Move-AtlasoBuilderLedgerDurableFile `
             -SourcePath $temporary `
             -DestinationPath $Path `
-            -Replace
+            -Replace:$Replace
         try {
             Sync-AtlasoBuilderLedgerDirectory -DirectoryPath (Split-Path -Parent $Path)
         }
@@ -517,6 +540,8 @@ function Enter-AtlasoVmwareBuilderAddressReservation {
     Optional explicit VMware DHCP configuration path.
     .PARAMETER StateRoot
     Optional stable per-user reservation state directory.
+    .PARAMETER ReservationHandoffPath
+    Optional exact pending-release handoff to publish before ledger admission.
     .PARAMETER VmrunPath
     Exact vmrun executable path.
     .PARAMETER OutputDirectory
@@ -537,6 +562,7 @@ function Enter-AtlasoVmwareBuilderAddressReservation {
         [string[]]$AdditionalExcludedAddresses = @(),
         [string]$DhcpConfigPath = '',
         [string]$StateRoot = '',
+        [string]$ReservationHandoffPath = '',
         [Parameter(Mandatory = $true)][string]$VmrunPath,
         [Parameter(Mandatory = $true)][string]$OutputDirectory,
         [Parameter(Mandatory = $true)][string]$VmName,
@@ -600,6 +626,19 @@ function Enter-AtlasoVmwareBuilderAddressReservation {
         [System.IO.Path]::GetFullPath($StateRoot)
     }
     $ledgerPath = Join-Path $resolvedStateRoot 'reservations.json'
+    $resolvedHandoffPath = ''
+    if (-not [string]::IsNullOrWhiteSpace($ReservationHandoffPath)) {
+        $pendingRoot = [System.IO.Path]::GetFullPath((Join-Path $resolvedStateRoot 'pending-releases'))
+        $resolvedHandoffPath = [System.IO.Path]::GetFullPath($ReservationHandoffPath)
+        if (-not (Split-Path -Parent $resolvedHandoffPath).Equals(
+                $pendingRoot,
+                [StringComparison]::OrdinalIgnoreCase
+            ) -or
+            (Split-Path -Leaf $resolvedHandoffPath) -notmatch '^builder-address-reservation-[0-9a-f]{32}\.json$' -or
+            -not (Test-Path -LiteralPath $pendingRoot -PathType Container)) {
+            throw 'The VMware builder-address release handoff path is invalid.'
+        }
+    }
     $resolvedOutput = [System.IO.Path]::GetFullPath($OutputDirectory)
     $vmxPath = [System.IO.Path]::GetFullPath((Join-Path $resolvedOutput "$VmName.vmx"))
     $resolvedRepository = (Resolve-Path -LiteralPath $RepositoryRoot -ErrorAction Stop).Path
@@ -680,6 +719,14 @@ function Enter-AtlasoVmwareBuilderAddressReservation {
                 VmxPath                = $vmxPath
                 CreatedUtc             = [DateTime]::UtcNow.ToString('o')
             }
+            if (-not [string]::IsNullOrWhiteSpace($resolvedHandoffPath)) {
+                # Publish recoverable intent first. A concurrent recovery keeps
+                # it while this exact owner is active; after owner termination,
+                # absence from the ledger is an idempotently completed release.
+                Write-AtlasoBuilderDurableJsonFile `
+                    -Path $resolvedHandoffPath `
+                    -Payload ([pscustomobject]$record)
+            }
             Write-AtlasoBuilderReservationLedger -Path $ledgerPath -Reservations @($retained + [pscustomobject]$record)
             return [pscustomobject]$record
         }
@@ -720,7 +767,13 @@ function Exit-AtlasoVmwareBuilderAddressReservation {
         $matching = @($reservations | Where-Object { [string]$_.Id -ceq [string]$Reservation.Id })
         if ($matching.Count -eq 0) {
             # The ledger removal can durably complete before the caller deletes
-            # its handoff. Absence makes that exact release safe to replay.
+            # its handoff. A pre-ledger handoff must remain while its exact owner
+            # is active; otherwise absence makes the release safe to replay.
+            if (Test-AtlasoProcessIdentityActive `
+                    -ProcessId ([int]$Reservation.OwnerPid) `
+                    -StartTimeUtcTicks ([long]$Reservation.OwnerStartTimeUtcTicks)) {
+                throw "Builder address handoff $($Reservation.Id) remains pending because its exact owner process is still active."
+            }
             return
         }
         if ($matching.Count -ne 1 -or

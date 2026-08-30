@@ -171,8 +171,8 @@ def test_photon_wrapper_preflights_credentials_before_image_mutation() -> None:
     assert "Start-AtlasoWorkstationUiBreakawayProcess" not in runner
     assert "-ExpectedRootPath $credentialRoot" in wrapper
     assert "Remove-Item -LiteralPath $childBuilderAddressReservationPath -Force" in wrapper
-    assert "$publicationError = $_" in wrapper
-    assert "exact reservation rollback also failed" in wrapper
+    assert "-ReservationHandoffPath $resolvedBuilderAddressReservationPath" in wrapper
+    assert "was not paired with its durable release handoff" in wrapper
     assert "-ProcessTreeTerminationProven" in wrapper
     assert "SkipNetworkCheck suppresses topology preparation, not allocator safety" in wrapper
     assert "(@($BuilderStaticGateway) + $managementHostAddresses)" in wrapper
