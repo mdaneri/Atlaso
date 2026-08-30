@@ -1913,6 +1913,39 @@
       "expected_holds": []
     },
     {
+      "name": "pronoun-review-reclassifies-task",
+      "default_merge_authority": false,
+      "instructions": [
+        {
+          "text": "Implement issue #602."
+        },
+        {
+          "text": "Actually, just review it and report findings."
+        }
+      ],
+      "generated": "Review the implementation and report findings without changing repository or GitHub state.",
+      "expected_holds": []
+    },
+    {
+      "name": "passive-until-approved-is-resumable",
+      "default_merge_authority": true,
+      "instructions": [
+        {
+          "text": "Implement issue #602."
+        },
+        {
+          "text": "Do not merge until approved.",
+          "add_holds": [
+            "wait for approval"
+          ]
+        }
+      ],
+      "generated": "Wait for approval before merging.",
+      "expected_holds": [
+        "wait for approval"
+      ]
+    },
+    {
       "name": "direct-request-preserves-hold",
       "default_merge_authority": true,
       "instructions": [

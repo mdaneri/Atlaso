@@ -735,7 +735,8 @@ DEFAULT_MERGE_AUTHORITY_DIRECT_REVIEW = re.compile(
     r"analy(?:ze|sis)|assess|audit|evaluat(?:e|ion))(?:\s+of)?\s+"
     r"(?:(?:the|this|that|an?|my|our|your|their|his|her|its)\s+)?"
     r"(?:(?:proposed|existing|current|updated|submitted)\s+)?"
-    r"(?:implementation|changes?|code|patch|fix(?:es)?|pull request|pr|commit)\b"
+    r"(?:implementation|changes?|code|patch|fix(?:es)?|pull request|pr|commit|"
+    r"it|them)\b"
     r"(?:\s+(?:#\d+|[0-9a-f]{7,40}))?"
     r"(?:\s+and\s+(?:report|summarize|describe)\b[^;.!?]*)?"
 )
@@ -870,8 +871,8 @@ MERGE_HOLD_NONAPPROVAL_CONDITION = re.compile(
 MERGE_HOLD_APPROVAL_CONDITION = re.compile(
     r"\b(?:merge(?: only)?|only merge)\s+"
     r"(?:after|when|if|once|until|unless|before)\s+"
-    r"(?:i|we|(?:the\s+)?maintainer|"
-    r"(?:the\s+)?(?:[a-z][a-z0-9_-]*\s+)?owner)\s+approves?\b"
+    r"(?:(?:i|we|(?:the\s+)?maintainer|"
+    r"(?:the\s+)?(?:[a-z][a-z0-9_-]*\s+)?owner)\s+approves?|approved)\b"
 )
 MERGE_HOLD_APPROVAL_BOUNDED_DISPOSITION = re.compile(
     r"\b(?:(?:do not|don't|don’t|never)\s+merge"
@@ -881,8 +882,8 @@ MERGE_HOLD_APPROVAL_BOUNDED_DISPOSITION = re.compile(
     r"only\s+(?:open|create|submit|prepare)\s+"
     r"(?:(?:an?|the|this)\s+)?(?:pull request|pr))\b"
     r"[^.!?]{0,60}\b(?:after|when|if|once|until|unless|before)\s+"
-    r"(?:i|we|(?:the\s+)?maintainer|"
-    r"(?:the\s+)?(?:[a-z][a-z0-9_-]*\s+)?owner)\s+approves?\b"
+    r"(?:(?:i|we|(?:the\s+)?maintainer|"
+    r"(?:the\s+)?(?:[a-z][a-z0-9_-]*\s+)?owner)\s+approves?|approved)\b"
 )
 MERGE_HOLD_APPROVAL_BEFORE_MERGING = re.compile(
     r"\b(?:wait (?:for|until)\s+(?:(?:the\s+)?"

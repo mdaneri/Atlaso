@@ -471,6 +471,9 @@ def test_source_authority_excludes_possessive_review_targets() -> None:
     assert not source_has_default_merge_authority(
         ("Review our patch for issue #602 and report findings.",)
     )
+    assert not source_has_default_merge_authority(
+        ("Implement issue #602.", "Actually, just review it and report findings.")
+    )
 
 
 def test_merge_hold_directions_recognizes_indefinite_pr_only_instruction() -> None:
@@ -500,6 +503,9 @@ def test_merge_hold_directions_classifies_approval_until_as_resumable() -> None:
     assert merge_hold_directions(
         "Do not merge before the maintainer approves."
     ) == {"wait for approval": "add"}
+    assert merge_hold_directions("Do not merge until approved.") == {
+        "wait for approval": "add"
+    }
     assert merge_hold_directions("Keep this PR open until I approve.") == {
         "wait for approval": "add"
     }
