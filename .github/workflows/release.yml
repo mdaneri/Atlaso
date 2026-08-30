@@ -18,7 +18,7 @@ permissions:
   contents: read
 
 concurrency:
-  group: appliance-release-${{ inputs.release_sha || github.event.workflow_run.head_sha }}
+  group: appliance-release-${{ inputs.release_sha || github.event.workflow_run.id }}
   cancel-in-progress: false
 
 jobs:
@@ -44,39 +44,31 @@ jobs:
         id: target
         env:
           GH_TOKEN: ${{ github.token }}
-          RELEASE_SHA: ${{ inputs.release_sha || github.event.workflow_run.head_sha }}
+          RELEASE_SHA: ${{ inputs.release_sha }}
           PUBLISHER_RUN_ID: ${{ github.event.workflow_run.id }}
           PUBLISHER_RUN_ATTEMPT: ${{ github.event.workflow_run.run_attempt }}
         run: |
-          if ! printf '%s' "$RELEASE_SHA" | grep -Eq '^[0-9a-f]{40}$'; then
-            echo "::error::Release SHA must be a full lowercase hexadecimal commit."
-            exit 1
-          fi
-          git fetch origin main --no-tags
-          git merge-base --is-ancestor "$RELEASE_SHA" origin/main
           if test "${{ github.event_name }}" = workflow_run; then
-            VERSION="$(
-              git show "${RELEASE_SHA}:pyproject.toml" |
-                sed -nE '/^\[project\]$/,/^\[/ s/^version = "([0-9]+\.[0-9]+\.[0-9]+)"$/\1/p' |
-                head -n 1
-            )"
-            test -n "$VERSION"
-            ARTIFACT_NAME="atlaso-wheel-v${VERSION}-${RELEASE_SHA}"
             PUBLISHER_ARTIFACTS="$(gh api \
               "repos/${{ github.repository }}/actions/runs/${PUBLISHER_RUN_ID}/artifacts")"
-            MATCHING_ARTIFACT_IDS="$(jq -r \
-              --arg name "$ARTIFACT_NAME" \
-              '.artifacts[] | select(.expired == false and .name == $name) | .id' \
+            CANDIDATE_ARTIFACTS="$(jq -r \
+              '.artifacts[] |
+               select(.expired == false and
+                 (.name | test("^atlaso-wheel-v[0-9]+\\.[0-9]+\\.[0-9]+-[0-9a-f]{40}$"))) |
+               [.id, .name] | @tsv' \
               <<<"$PUBLISHER_ARTIFACTS")"
-            test -n "$MATCHING_ARTIFACT_IDS"
+            test -n "$CANDIDATE_ARTIFACTS"
             SELECTED_ARTIFACTS=0
-            while read -r ARTIFACT_ID; do
+            while IFS=$'\t' read -r ARTIFACT_ID ARTIFACT_NAME; do
               CANDIDATE_ZIP="$RUNNER_TEMP/automatic-wheel-${ARTIFACT_ID}.zip"
               CANDIDATE_IDENTITY="$RUNNER_TEMP/automatic-wheel-identity-${ARTIFACT_ID}.json"
               gh api "repos/${{ github.repository }}/actions/artifacts/${ARTIFACT_ID}/zip" \
                 > "$CANDIDATE_ZIP"
-              if test "$(unzip -Z1 "$CANDIDATE_ZIP" | sort)" != \
-                "$(printf '%s\n' "atlaso-${VERSION}-py3-none-any.whl" wheel-identity.json | sort)"; then
+              CANDIDATE_MEMBERS="$(unzip -Z1 "$CANDIDATE_ZIP" | sort)"
+              CANDIDATE_WHEEL="$(grep -E '^atlaso-[0-9]+\.[0-9]+\.[0-9]+-py3-none-any\.whl$' \
+                <<<"$CANDIDATE_MEMBERS" || true)"
+              if test -z "$CANDIDATE_WHEEL" || test "$CANDIDATE_MEMBERS" != \
+                "$(printf '%s\n' "$CANDIDATE_WHEEL" wheel-identity.json | sort)"; then
                 continue
               fi
               unzip -p "$CANDIDATE_ZIP" wheel-identity.json > "$CANDIDATE_IDENTITY"
@@ -89,20 +81,30 @@ jobs:
                 SELECTED_ARTIFACTS=$((SELECTED_ARTIFACTS + 1))
                 cp "$CANDIDATE_ZIP" "$RUNNER_TEMP/automatic-wheel.zip"
                 cp "$CANDIDATE_IDENTITY" "$RUNNER_TEMP/automatic-wheel-identity.json"
+                SELECTED_ARTIFACT_NAME="$ARTIFACT_NAME"
+                SELECTED_WHEEL="$CANDIDATE_WHEEL"
               fi
-            done <<<"$MATCHING_ARTIFACT_IDS"
+            done <<<"$CANDIDATE_ARTIFACTS"
             test "$SELECTED_ARTIFACTS" -eq 1
             IDENTITY="$(jq -cS . "$RUNNER_TEMP/automatic-wheel-identity.json")"
             test "$IDENTITY" = "$(cat "$RUNNER_TEMP/automatic-wheel-identity.json")"
+            RELEASE_SHA="$(jq -r .commit <<<"$IDENTITY")"
+            VERSION="$(jq -r .version <<<"$IDENTITY")"
             test "$(jq -r .repository <<<"$IDENTITY")" = "${{ github.repository }}"
-            test "$(jq -r .version <<<"$IDENTITY")" = "$VERSION"
-            test "$(jq -r .commit <<<"$IDENTITY")" = "$RELEASE_SHA"
             test "$(jq -r .publisher.workflow <<<"$IDENTITY")" = "Publish Python wheel"
             test "$(jq -r .publisher.workflow_file <<<"$IDENTITY")" = wheel.yml
             test "$(jq -r .publisher.run_id <<<"$IDENTITY")" = "$PUBLISHER_RUN_ID"
             test "$(jq -r .publisher.run_attempt <<<"$IDENTITY")" = "$PUBLISHER_RUN_ATTEMPT"
             test "$(jq -r .publisher.trigger <<<"$IDENTITY")" = automatic-main
+            test "$SELECTED_ARTIFACT_NAME" = "atlaso-wheel-v${VERSION}-${RELEASE_SHA}"
+            test "$SELECTED_WHEEL" = "atlaso-${VERSION}-py3-none-any.whl"
           fi
+          if ! printf '%s' "$RELEASE_SHA" | grep -Eq '^[0-9a-f]{40}$'; then
+            echo "::error::Release SHA must be a full lowercase hexadecimal commit."
+            exit 1
+          fi
+          git fetch origin main --no-tags
+          git merge-base --is-ancestor "$RELEASE_SHA" origin/main
           printf '{"release_sha":"%s"}\n' "$RELEASE_SHA" > validated-release-request.json
           echo "release_sha=$RELEASE_SHA" >> "$GITHUB_OUTPUT"
       - name: Upload the validated release request

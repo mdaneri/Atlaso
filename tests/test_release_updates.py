@@ -1482,11 +1482,16 @@ def test_release_workflows_use_successful_main_sha_and_promote_without_rebuildin
     assert "retention-days: 1" in prepare_job
     assert "actions/workflows/ci.yml/runs" not in prepare_job
     assert "-f status=success" not in prepare_job
-    assert "MATCHING_ARTIFACT_IDS=" in prepare_job
-    assert 'while read -r ARTIFACT_ID; do' in prepare_job
+    assert "github.event.workflow_run.head_sha" not in prepare_job
+    assert "CANDIDATE_ARTIFACTS=" in prepare_job
+    assert "while IFS=$'\\t' read -r ARTIFACT_ID ARTIFACT_NAME; do" in prepare_job
     assert '.publisher.run_id <<<"$CANDIDATE_CANONICAL"' in prepare_job
     assert '.publisher.run_attempt <<<"$CANDIDATE_CANONICAL"' in prepare_job
     assert 'test "$SELECTED_ARTIFACTS" -eq 1' in prepare_job
+    assert 'RELEASE_SHA="$(jq -r .commit <<<"$IDENTITY")"' in prepare_job
+    assert 'VERSION="$(jq -r .version <<<"$IDENTITY")"' in prepare_job
+    assert 'test "$SELECTED_ARTIFACT_NAME" = "atlaso-wheel-v${VERSION}-${RELEASE_SHA}"' in prepare_job
+    assert 'test "$SELECTED_WHEEL" = "atlaso-${VERSION}-py3-none-any.whl"' in prepare_job
     assert "if length == 1 then .[0].id else empty end" not in prepare_job
     publish_job = publication.split("  publish:\n", 1)[1]
     assert 'ref: ${{ github.workflow_sha }}' in publish_job
