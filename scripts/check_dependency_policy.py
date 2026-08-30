@@ -24,7 +24,8 @@ PIP_COMMAND_RE = re.compile(
     r"(?P<args>.*?)(?=(?:&&|\|\||;)|$)"
 )
 WORKFLOW_REQUIREMENT_RE = re.compile(
-    r"(?<!\S)(?:--requirement|-r)(?:=|\s+)(?:['\"])?(?P<path>[^\s'\"]+)"
+    r"(?<!\S)(?:--requirement(?:=|\s+)|-r(?:=|\s*))"
+    r"(?:['\"])?(?P<path>[^\s'\"]+)"
 )
 RUN_RE = re.compile(r"^(?P<indent>\s*)(?:-\s+)?run:\s*(?P<value>.*)$")
 
@@ -41,6 +42,14 @@ class LockPolicy:
     path: str
     inputs: tuple[str, ...]
     allow_unsafe: bool
+
+
+@dataclass(frozen=True)
+class CheckoutSource:
+    """Describe the repository and revision behind a checkout destination."""
+
+    repository: str
+    ref: str
 
 
 LOCK_POLICIES = (
@@ -78,13 +87,13 @@ LOCK_POLICIES = (
 )
 
 
-def _workflow_checkout_paths(lines: list[str]) -> dict[str, str]:
+def _workflow_checkout_paths(lines: list[str]) -> dict[str, CheckoutSource]:
     """Return literal checkout destinations and their source repositories.
 
     Args:
         lines: Workflow source lines.
     """
-    checkout_paths: dict[str, str] = {}
+    checkout_paths: dict[str, CheckoutSource] = {}
     for index, line in enumerate(lines):
         if "uses: actions/checkout@" not in line:
             continue
@@ -95,6 +104,7 @@ def _workflow_checkout_paths(lines: list[str]) -> dict[str, str]:
                 break
         checkout_path = ""
         repository = "${{ github.repository }}"
+        ref = ""
         for candidate in lines[index + 1 :]:
             if candidate.strip() and len(candidate) - len(candidate.lstrip()) <= step_indent:
                 break
@@ -108,8 +118,13 @@ def _workflow_checkout_paths(lines: list[str]) -> dict[str, str]:
             )
             if repository_match:
                 repository = repository_match.group(1).strip()
+            ref_match = re.fullmatch(
+                r"\s*ref:\s*['\"]?([^'\"]+?)['\"]?\s*", candidate
+            )
+            if ref_match:
+                ref = ref_match.group(1).strip()
         if checkout_path:
-            checkout_paths[checkout_path] = repository
+            checkout_paths[checkout_path] = CheckoutSource(repository, ref)
     return checkout_paths
 
 
@@ -222,14 +237,26 @@ def _validate_workflow_locks(root: Path, policy_paths: set[str]) -> list[str]:
             policy_path = relative.as_posix()
             tracked_path = root.joinpath(*relative.parts)
             if relative.parts[0] in checkout_paths and len(relative.parts) > 1:
-                checkout_repository = checkout_paths[relative.parts[0]]
-                if checkout_repository not in {
+                checkout_source = checkout_paths[relative.parts[0]]
+                if checkout_source.repository not in {
                     "${{ github.repository }}",
                     "mdaneri/Atlaso",
                 }:
                     errors.append(
                         f"{workflow.relative_to(root)}:{line_number}: checkout-prefixed "
                         "workflow requirement is not sourced from Atlaso: "
+                        f"{reference}"
+                    )
+                    continue
+                if checkout_source.ref not in {
+                    "",
+                    "${{ github.workflow_sha }}",
+                    "main",
+                    "refs/heads/main",
+                }:
+                    errors.append(
+                        f"{workflow.relative_to(root)}:{line_number}: checkout-prefixed "
+                        "workflow requirement uses an untrusted Atlaso ref: "
                         f"{reference}"
                     )
                     continue

@@ -182,6 +182,30 @@ def test_dependency_policy_recognizes_prefixed_python_pip_invocations(
         )
 
 
+def test_dependency_policy_recognizes_attached_short_requirement_argument(
+    tmp_path: Path,
+) -> None:
+    """Verify pip's attached short requirement option cannot bypass policy.
+
+    Args:
+        tmp_path: Temporary directory provided by pytest for isolated filesystem state.
+    """
+    write_valid_policy(tmp_path)
+    (tmp_path / "requirements-ad-hoc.lock").write_text("placeholder\n", encoding="utf-8")
+    workflow = tmp_path / ".github" / "workflows" / "release.yml"
+    workflow.parent.mkdir(parents=True, exist_ok=True)
+    workflow.write_text(
+        "run: python -m pip install -rrequirements-ad-hoc.lock\n",
+        encoding="utf-8",
+    )
+
+    assert any(
+        "workflow requirement lock is outside the generated dependency policy inventory: "
+        "requirements-ad-hoc.lock" in error
+        for error in validate(tmp_path)
+    )
+
+
 def test_dependency_policy_rejects_external_checkout_requirement_lock(
     tmp_path: Path,
 ) -> None:
@@ -207,6 +231,35 @@ def test_dependency_policy_rejects_external_checkout_requirement_lock(
     assert any(
         "checkout-prefixed workflow requirement is not sourced from Atlaso: "
         "external/requirements-release-tools.lock" in error
+        for error in validate(tmp_path)
+    )
+
+
+def test_dependency_policy_rejects_untrusted_atlaso_checkout_ref(
+    tmp_path: Path,
+) -> None:
+    """Verify arbitrary same-repository refs cannot provide policy locks.
+
+    Args:
+        tmp_path: Temporary directory provided by pytest for isolated filesystem state.
+    """
+    write_valid_policy(tmp_path)
+    workflow = tmp_path / ".github" / "workflows" / "release.yml"
+    workflow.parent.mkdir(parents=True, exist_ok=True)
+    workflow.write_text(
+        """steps:
+  - uses: actions/checkout@v7
+    with:
+      ref: feature/untrusted-lock
+      path: candidate
+  - run: python -m pip install -r candidate/requirements-release-tools.lock
+""",
+        encoding="utf-8",
+    )
+
+    assert any(
+        "checkout-prefixed workflow requirement uses an untrusted Atlaso ref: "
+        "candidate/requirements-release-tools.lock" in error
         for error in validate(tmp_path)
     )
 
