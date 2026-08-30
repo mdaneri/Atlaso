@@ -1647,6 +1647,22 @@
       ],
       "generated": "Review PR #602 and report findings without continuing delivery.",
       "expected_holds": []
+    },
+    {
+      "name": "security-review-before-merge-is-preserved",
+      "default_merge_authority": true,
+      "instructions": [
+        {
+          "text": "Implement issue #602, but wait for security review before merging.",
+          "add_holds": [
+            "do not merge"
+          ]
+        }
+      ],
+      "generated": "Wait for security review before merging; do not complete the guarded merge yet.",
+      "expected_holds": [
+        "do not merge"
+      ]
     }
   ]
 }

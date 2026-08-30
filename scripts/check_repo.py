@@ -636,6 +636,10 @@ DEFAULT_MERGE_AUTHORITY_CONDITIONAL_APPROVAL = re.compile(
     r"(?:only\s+)?(?:if|when|once|after|with|unless|pending|subject to)\b"
     r"[^.!?]{0,60}\b(?:approv\w*|permission|authorization)\b"
 )
+DEFAULT_MERGE_AUTHORITY_CONDITIONAL_REQUEST = re.compile(
+    r"\b(?:if|when|once|after)\s+(?:(?:the|a)\s+)?"
+    r"(?:user|maintainer|owner)\s+(?:asks?|requests?|instructs?|tells?)\b"
+)
 DEFAULT_MERGE_AUTHORITY_PROMPT_MARKERS = (
     "preserve default merge authority",
     "use the repository's default merge authority",
@@ -794,6 +798,8 @@ MERGE_HOLD_NONAPPROVAL_CONDITION = re.compile(
     r"\b(?:pass(?:es|ed)?|succeed(?:s|ed)?|complete(?:s|d)?)|"
     r"wait (?:for|until)\s+(?:ci|tests?|checks?|validation|builds?)\b"
     r"[^.!?]{0,40}\b(?:pass|succeed|complete)(?:es|s|d)?\b"
+    r"[^.!?]{0,40}\bbefore merging|"
+    r"wait (?:for|until)\s+[^.!?]{0,40}\breview\b"
     r"[^.!?]{0,40}\bbefore merging)\b"
 )
 MERGE_HOLD_APPROVAL_CONDITION = re.compile(
@@ -1259,6 +1265,8 @@ def has_affirmative_default_merge_authority(text: str) -> bool:
                 )
                 is None
                 and DEFAULT_MERGE_AUTHORITY_CONDITIONAL_APPROVAL.search(context)
+                is None
+                and DEFAULT_MERGE_AUTHORITY_CONDITIONAL_REQUEST.search(context)
                 is None
             ):
                 return True
