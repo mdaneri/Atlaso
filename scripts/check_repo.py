@@ -555,8 +555,8 @@ AUTO_MERGE_ONLY_PHRASES = (
     "don’t automatically merge",
 )
 DEFAULT_MERGE_AUTHORITY_NEGATIONS = re.compile(
-    r"(?:do not|don't|don’t|never|must not|should not|cannot|can't|can’t|not)"
-    r"(?:\s+\w+){0,6}\s*$"
+    r"(?:(?:do not|don't|don’t|never|must not|should not|cannot|can't|can’t|not)"
+    r"(?:\s+\w+){0,6}|(?:lacks?|has no|have no|without))\s*$"
 )
 DEFAULT_MERGE_AUTHORITY_TRAILING_NEGATIONS = re.compile(
     r"^\s*(?:(?:does|do|is|are|must|should|can|may|will|would)\s+"
@@ -580,8 +580,9 @@ DEFAULT_MERGE_AUTHORITY_SOURCE_EXCLUSIONS = re.compile(
     r"(?:review(?:-only|[^.!?]{0,60}\bonly\b)|only\s+review\b|"
     r"report findings only|"
     r"(?:do not|don't|don’t|must not|without)\s+"
-    r"(?:\w+\s+){0,3}(?:implement|fix|resolve|solve|deliver|update|chang|"
-    r"modif|edit|mak|add|remove|create|build|refactor)|"
+    r"(?:\w+\s+){0,3}(?:implement|fix|resolve|solve|deliver|"
+    r"(?:updat|chang|modif|edit|mak)\w*\s+(?:any\s+)?"
+    r"(?:changes?|code|implementation|issue|task))|"
     r"(?:do not|don't|don’t|must not|without)\s+"
     r"(?:\w+\s+){0,3}(?:address|apply)\s+(?:review\s+)?feedback\s+"
     r"(?:on|for)\s+(?:an?\s+)?(?:existing\s+)?(?:ordinary\s+)?"

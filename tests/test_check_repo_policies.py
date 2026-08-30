@@ -1374,6 +1374,48 @@ def test_merge_authority_transfer_rejects_lexical_authority_prohibitions(
         )
 
 
+def test_merge_authority_transfer_rejects_lexical_authority_denials(
+    tmp_path: Path,
+) -> None:
+    """Verify direct lexical denials cannot satisfy affirmative authority.
+
+    Args:
+        tmp_path: Temporary directory provided by pytest for isolated filesystem state.
+    """
+    generated_prompts = (
+        "This task lacks default merge authority.",
+        "This task has no default merge authority.",
+    )
+    for index, generated in enumerate(generated_prompts):
+        case_root = tmp_path / str(index)
+        path = case_root / MERGE_AUTHORITY_TRANSFER_FIXTURE_PATH
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(
+            json.dumps(
+                {
+                    "cases": [
+                        {
+                            "name": f"authority denial {index}",
+                            "default_merge_authority": True,
+                            "instructions": [{"text": "Implement the issue."}],
+                            "generated": generated,
+                            "expected_holds": [],
+                        }
+                    ]
+                }
+            ),
+            encoding="utf-8",
+        )
+
+        findings = check_merge_authority_transfer_fixtures(case_root)
+
+        assert len(findings) == 1
+        assert findings[0].message == (
+            f"merge authority fixture authority denial {index} omits affirmative "
+            "default authority"
+        )
+
+
 def test_merge_authority_transfer_rejects_second_instruction_condition(
     tmp_path: Path,
 ) -> None:
@@ -2013,6 +2055,44 @@ def test_merge_authority_transfer_preserves_coordinated_work_negation(
     assert len(findings) == 1
     assert findings[0].message == (
         "merge authority fixture coordinated negated work declared default authority "
+        "does not match its source instructions"
+    )
+
+
+def test_merge_authority_transfer_keeps_implementation_constraints_eligible(
+    tmp_path: Path,
+) -> None:
+    """Verify a dependency constraint does not turn implementation into no-work.
+
+    Args:
+        tmp_path: Temporary directory provided by pytest for isolated filesystem state.
+    """
+    path = tmp_path / MERGE_AUTHORITY_TRANSFER_FIXTURE_PATH
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(
+        json.dumps(
+            {
+                "cases": [
+                    {
+                        "name": "implementation constraint",
+                        "default_merge_authority": False,
+                        "instructions": [
+                            {"text": "Implement issue #602 without adding dependencies."}
+                        ],
+                        "generated": "Implement without adding dependencies.",
+                        "expected_holds": [],
+                    }
+                ]
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    findings = check_merge_authority_transfer_fixtures(tmp_path)
+
+    assert len(findings) == 1
+    assert findings[0].message == (
+        "merge authority fixture implementation constraint declared default authority "
         "does not match its source instructions"
     )
 

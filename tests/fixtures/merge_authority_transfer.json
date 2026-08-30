@@ -358,6 +358,17 @@
       "expected_holds": []
     },
     {
+      "name": "implementation-constraint-eligible",
+      "default_merge_authority": true,
+      "instructions": [
+        {
+          "text": "Implement issue #602 without adding dependencies."
+        }
+      ],
+      "generated": "Preserve default merge authority and complete the guarded merge when eligible.",
+      "expected_holds": []
+    },
+    {
       "name": "explicit-approval-condition",
       "default_merge_authority": true,
       "instructions": [
