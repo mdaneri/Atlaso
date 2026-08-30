@@ -489,6 +489,7 @@ EXPLICIT_MERGE_HOLD_PATTERNS = {
         "do not merge",
         "don't merge",
         "don’t merge",
+        "never merge",
         "hold off on merging",
         "hold off on the merge",
         "defer merging",

@@ -135,6 +135,13 @@ def test_merge_hold_directions_recognizes_merge_deferral() -> None:
     ) == {"do not merge": "add"}
 
 
+def test_merge_hold_directions_recognizes_never_merge() -> None:
+    """Verify never-merge wording preserves the permanent merge hold."""
+    assert merge_hold_directions(
+        "Implement issue #602, but never merge this pull request."
+    ) == {"do not merge": "add"}
+
+
 def test_merge_hold_directions_preserves_shared_active_task_hold() -> None:
     """Verify another-PR wording cannot erase an active-task hold."""
     assert merge_hold_directions(

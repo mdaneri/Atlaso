@@ -1913,6 +1913,22 @@
       "expected_holds": []
     },
     {
+      "name": "never-merge-is-an-explicit-hold",
+      "default_merge_authority": true,
+      "instructions": [
+        {
+          "text": "Implement issue #602, but never merge this pull request.",
+          "add_holds": [
+            "do not merge"
+          ]
+        }
+      ],
+      "generated": "Keep the explicit do not merge hold.",
+      "expected_holds": [
+        "do not merge"
+      ]
+    },
+    {
       "name": "planning-a-fix-is-not-implementation",
       "default_merge_authority": false,
       "instructions": [
