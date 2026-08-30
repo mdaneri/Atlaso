@@ -2340,8 +2340,6 @@ def strip_markdown_deleted_content(text: str) -> str:
     )
     without_html_deletions = "".join(visible_parts)
     delimiters: list[tuple[int, int, bool, bool, int, tuple[int, ...]]] = []
-    emphasis_stack: list[tuple[str, int]] = []
-    next_emphasis_id = 0
 
     def delimiter_flanking(
         run_start: int,
@@ -2382,6 +2380,82 @@ def strip_markdown_deleted_content(text: str) -> str:
         )
         return can_open, can_close
 
+    emphasis_delimiters: list[tuple[int, int, bool, bool, str, int]] = []
+    emphasis_cursor = 0
+    while emphasis_cursor < len(without_html_deletions):
+        if without_html_deletions[emphasis_cursor] == "\\" and (
+            emphasis_cursor + 1 < len(without_html_deletions)
+        ):
+            emphasis_cursor += 2
+            continue
+        if without_html_deletions[emphasis_cursor] == "`":
+            run_end = emphasis_cursor
+            while (
+                run_end < len(without_html_deletions)
+                and without_html_deletions[run_end] == "`"
+            ):
+                run_end += 1
+            delimiter = without_html_deletions[emphasis_cursor:run_end]
+            closing = without_html_deletions.find(delimiter, run_end)
+            emphasis_cursor = (
+                closing + len(delimiter) if closing >= 0 else run_end
+            )
+            continue
+        if without_html_deletions[emphasis_cursor] in {"*", "_"}:
+            marker = without_html_deletions[emphasis_cursor]
+            run_end = emphasis_cursor + 1
+            while (
+                run_end < len(without_html_deletions)
+                and without_html_deletions[run_end] == marker
+            ):
+                run_end += 1
+            can_open, can_close = delimiter_flanking(
+                emphasis_cursor,
+                run_end,
+                can_split_word=False,
+            )
+            emphasis_delimiters.append(
+                (
+                    emphasis_cursor,
+                    run_end,
+                    can_open,
+                    can_close,
+                    marker,
+                    emphasis_cursor,
+                )
+            )
+            emphasis_cursor = run_end
+            continue
+        emphasis_cursor += 1
+
+    emphasis_matches: list[int | None] = [None] * len(emphasis_delimiters)
+    emphasis_openers: list[int] = []
+    for delimiter_index, delimiter in enumerate(emphasis_delimiters):
+        _, _, can_open, can_close, marker, run_start = delimiter
+        matched = False
+        if can_close:
+            for opener_position in range(len(emphasis_openers) - 1, -1, -1):
+                opener_index = emphasis_openers[opener_position]
+                opener = emphasis_delimiters[opener_index]
+                if opener[4] != marker or opener[5] == run_start:
+                    continue
+                emphasis_matches[opener_index] = delimiter_index
+                del emphasis_openers[opener_position]
+                matched = True
+                break
+        if can_open and not matched:
+            emphasis_openers.append(delimiter_index)
+
+    emphasis_intervals = [
+        (
+            emphasis_delimiters[opener_index][1],
+            emphasis_delimiters[closer_index][0],
+            opener_index,
+        )
+        for opener_index, closer_index in enumerate(emphasis_matches)
+        if closer_index is not None
+    ]
+
     cursor = 0
     while cursor < len(without_html_deletions):
         if without_html_deletions[cursor] == "\\" and cursor + 1 < len(
@@ -2409,22 +2483,6 @@ def strip_markdown_deleted_content(text: str) -> str:
                 and without_html_deletions[run_end] == marker
             ):
                 run_end += 1
-            can_open, can_close = delimiter_flanking(
-                cursor,
-                run_end,
-                can_split_word=False,
-            )
-            matched = False
-            if can_close:
-                for stack_position in range(len(emphasis_stack) - 1, -1, -1):
-                    if emphasis_stack[stack_position][0] != marker:
-                        continue
-                    del emphasis_stack[stack_position:]
-                    matched = True
-                    break
-            if can_open and not matched:
-                emphasis_stack.append((marker, next_emphasis_id))
-                next_emphasis_id += 1
             cursor = run_end
             continue
         if without_html_deletions.startswith("~~", cursor):
@@ -2453,7 +2511,11 @@ def strip_markdown_deleted_content(text: str) -> str:
                         can_open,
                         can_close,
                         cursor,
-                        tuple(scope_id for _, scope_id in emphasis_stack),
+                        tuple(
+                            scope_id
+                            for scope_start, scope_end, scope_id in emphasis_intervals
+                            if scope_start <= marker_start < scope_end
+                        ),
                     )
                 )
             cursor = run_end
