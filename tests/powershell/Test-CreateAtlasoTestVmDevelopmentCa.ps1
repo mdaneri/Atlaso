@@ -333,6 +333,14 @@ $rollbackCatch = $wrapperSource.IndexOf("`n    catch {", $stageStart, [System.St
 if ($stageStart -lt 0 -or $importProof -lt $stageStart -or $rollbackCatch -lt $importProof) {
     throw 'Encrypted-import proof must remain inside the automatic rollback boundary.'
 }
+if (
+    @([regex]::Matches(
+            $wrapperSource,
+            'Wait-AtlasoWorkstationDevelopmentRootCaImportProof[\s\S]*?-TimeoutSeconds\s+\(\[Math\]::Max\(\$TimeoutSeconds,\s*1500\)\)'
+        )).Count -ne 3
+) {
+    throw 'Every development-root import proof must retain cleanup, disk-preparation, and bootstrap allowance.'
+}
 foreach ($rollbackMarker in @(
         'Clear-AtlasoWorkstationDevelopmentRootCaRuntimePrivateKey',
         'Clear-AtlasoWorkstationDevelopmentRootCaPrivateKey',
@@ -354,6 +362,18 @@ $rollbackStop = $wrapperSource.IndexOf(
 )
 if ($runtimeScrub -lt 0 -or $rollbackStop -lt $runtimeScrub) {
     throw 'Rollback must attempt runtime signer scrub before VM stop discovery.'
+}
+$successfulImportFunction = $ast.FindAll({
+        param($node)
+        $node -is [System.Management.Automation.Language.FunctionDefinitionAst] -and
+        $node.Name -ceq 'Complete-AtlasoDevelopmentCaSuccessfulImport'
+    }, $true) | Select-Object -First 1
+if (
+    $null -eq $successfulImportFunction -or
+    @([regex]::Matches($successfulImportFunction.Extent.Text, '-Mode\s+soft')).Count -ne 2 -or
+    $successfulImportFunction.Extent.Text -match "-Mode\s+hard"
+) {
+    throw 'Successful signer-import cleanup must use only bounded graceful VM stops.'
 }
 $pendingCleanupCall = $wrapperSource.LastIndexOf(
     'Invoke-PendingAtlasoDevelopmentCaCleanup',
@@ -1021,6 +1041,13 @@ RW 524288000 SPARSE "Atlaso-Depot-s002.vmdk"
             $script:successfulImportRuntimeValue
             return
         }
+        if ($Remaining -contains 'stop') {
+            if ($Remaining[-1] -cne 'soft') {
+                throw 'Successful-import cleanup attempted a non-graceful VMware stop.'
+            }
+            $script:successfulImportRunningVmxPath = ''
+            return
+        }
         throw 'Successful-import recovery issued an unexpected vmrun operation.'
     }
 
@@ -1056,6 +1083,52 @@ RW 524288000 SPARSE "Atlaso-Depot-s002.vmdk"
     }
 
     try {
+        $gracefulStopVmRoot = Join-Path $markerTestRoot 'graceful-stop-vm'
+        $gracefulStopMarkerRoot = Join-Path $markerTestRoot 'graceful-stop-markers'
+        New-Item -ItemType Directory -Path $gracefulStopVmRoot | Out-Null
+        $gracefulStopVmx = Join-Path $gracefulStopVmRoot 'Atlaso-Graceful-Stop.vmx'
+        [System.IO.File]::WriteAllLines(
+            $gracefulStopVmx,
+            @(
+                'config.version = "8"',
+                'guestinfo.atlaso.test_vm_development_root_ca_private_key = "test-fixture"'
+            ),
+            [System.Text.UTF8Encoding]::new($false)
+        )
+        $gracefulStopMarker = New-AtlasoDevelopmentCaCleanupMarker `
+            -VmxPath $gracefulStopVmx `
+            -Name 'Atlaso-Graceful-Stop' `
+            -OutputDirectory $gracefulStopVmRoot `
+            -DataDiskStates @() `
+            -MarkerRoot $gracefulStopMarkerRoot
+        Set-AtlasoDevelopmentCaCleanupMarkerPhase `
+            -MarkerPath $gracefulStopMarker `
+            -ExpectedPhase secret-child-active `
+            -Phase staged
+        $script:successfulImportRunningVmxPath = $gracefulStopVmx
+        $gracefulStopMarkerState = Read-AtlasoDevelopmentCaCleanupMarker `
+            -MarkerPath $gracefulStopMarker `
+            -MarkerRoot $gracefulStopMarkerRoot
+        Complete-AtlasoDevelopmentCaSuccessfulImport `
+            -Marker $gracefulStopMarkerState `
+            -VmrunPath AtlasoSuccessfulImportVmrun `
+            -TimeoutSeconds 5
+        $stopCalls = @($script:successfulImportVmrunCalls | Where-Object { $_ -match ' stop ' })
+        if (
+            (Test-Path -LiteralPath $gracefulStopMarker) -or
+            (Select-String -LiteralPath $gracefulStopVmx -Pattern (
+                    '^\s*guestinfo\.atlaso\.test_vm_development_root_ca_private_key\s*='
+                ) -Quiet) -or
+            $stopCalls.Count -ne 1 -or
+            $stopCalls[0] -notmatch ' soft$' -or
+            $stopCalls[0] -match ' hard$'
+        ) {
+            throw 'Successful signer-import completion did not gracefully stop, scrub, restart, and retire its marker.'
+        }
+
+        $script:successfulImportRunningVmxPath = ''
+        $script:successfulImportVmrunCalls.Clear()
+        $script:successfulImportProcessActions.Clear()
         $interruptedStopVmRoot = Join-Path $markerTestRoot 'interrupted-stop-vm'
         $interruptedStopMarkerRoot = Join-Path $markerTestRoot 'interrupted-stop-markers'
         New-Item -ItemType Directory -Path $interruptedStopVmRoot | Out-Null
@@ -1518,9 +1591,13 @@ try {
         param([Parameter(ValueFromRemainingArguments = $true)][string[]]$Remaining)
         if ($Remaining -contains 'list') {
             $global:LASTEXITCODE = 0
-            if ([System.IO.File]::ReadAllText($vmrunState) -eq 'running') {
+            $state = [System.IO.File]::ReadAllText($vmrunState)
+            if ($state -in @('running', 'stopping')) {
                 'Total running VMs: 1'
                 $aliasVmx
+                if ($state -eq 'stopping') {
+                    [System.IO.File]::WriteAllText($vmrunState, 'stopped')
+                }
             }
             else {
                 'Total running VMs: 0'
@@ -1528,7 +1605,7 @@ try {
             return
         }
         if ($Remaining -contains 'stop') {
-            [System.IO.File]::WriteAllText($vmrunState, 'stopped')
+            [System.IO.File]::WriteAllText($vmrunState, 'stopping')
             $global:LASTEXITCODE = 0
             return
         }
@@ -1536,7 +1613,7 @@ try {
     }
     Stop-AtlasoTestVmForRollback -VmxPath $targetVmx -VmrunPath AtlasoFakeVmrun
     if ([System.IO.File]::ReadAllText($vmrunState) -ne 'stopped') {
-        throw 'Rollback failed to stop a running VMX reported through a filesystem alias.'
+        throw 'Rollback failed to poll a running VMX through graceful shutdown and filesystem aliasing.'
     }
 
     <#

@@ -227,15 +227,19 @@ done
     }
 
 
-def _run_selector(environment: dict[str, str]) -> subprocess.CompletedProcess[str]:
+def _run_selector(
+    environment: dict[str, str],
+    *arguments: str,
+) -> subprocess.CompletedProcess[str]:
     """Run the selector inside its isolated test boundary.
 
     Args:
         environment: Isolated selector environment.
+        *arguments: Optional selector command-line arguments.
     """
 
     return subprocess.run(
-        ["sh", str(SELECTOR)],
+        ["sh", str(SELECTOR), *arguments],
         check=False,
         capture_output=True,
         text=True,
@@ -258,7 +262,7 @@ def _run_selector(environment: dict[str, str]) -> subprocess.CompletedProcess[st
         ("none", "Physical Vendor", ("open-vm-tools",), set(), "vmtoolsd.service"),
     ],
 )
-def test_selects_one_provider_and_erases_staging(
+def test_selects_one_provider_then_erases_staging_at_cleanup_gate(
     tmp_path: Path,
     detected: str,
     dmi: str,
@@ -285,8 +289,8 @@ def test_selects_one_provider_and_erases_staging(
     assert f"platform={'qemu' if detected == 'kvm' else 'hyperv' if detected == 'microsoft' else 'baremetal' if detected == 'none' else detected}" in Path(
         environment["ATLASO_GUEST_AGENT_MARKER"]
     ).read_text(encoding="utf-8")
-    assert not Path(environment["ATLASO_GUEST_AGENT_STAGING"]).exists()
-    assert not any(Path(environment["ATLASO_GUEST_AGENT_PACKAGE_CACHE"]).iterdir())
+    assert Path(environment["ATLASO_GUEST_AGENT_STAGING"]).is_dir()
+    assert any(Path(environment["ATLASO_GUEST_AGENT_PACKAGE_CACHE"]).iterdir())
     assert service in Path(environment["FAKE_SYSTEMCTL_LOG"]).read_text(encoding="utf-8")
     expected_platform = "qemu" if detected == "kvm" else "hyperv" if detected == "microsoft" else "baremetal" if detected == "none" else detected
     assert Path(environment["FAKE_MACHINE_IDENTITY_LOG"]).read_text(encoding="utf-8") == f"--platform {expected_platform}\n"
@@ -298,6 +302,12 @@ def test_selects_one_provider_and_erases_staging(
         assert "enable --now hv_kvp_daemon.service" not in service_log
         assert service_log.index("enable hv_kvp_daemon.service") < service_log.index("initialize --platform hyperv")
         assert service_log.index("initialize --platform hyperv") < service_log.index("start hv_kvp_daemon.service")
+
+    cleanup = _run_selector(environment, "--cleanup-only")
+
+    assert cleanup.returncode == 0, cleanup.stderr
+    assert not Path(environment["ATLASO_GUEST_AGENT_STAGING"]).exists()
+    assert not any(Path(environment["ATLASO_GUEST_AGENT_PACKAGE_CACHE"]).iterdir())
 
 
 @pytest.mark.parametrize(
@@ -350,8 +360,12 @@ def test_checksum_failure_is_retryable_without_network_access(tmp_path: Path) ->
     qemu_rpm.write_bytes(b"qemu")
     retried = _run_selector(environment)
     assert retried.returncode == 0, retried.stderr
-    assert not Path(environment["ATLASO_GUEST_AGENT_STAGING"]).exists()
+    assert Path(environment["ATLASO_GUEST_AGENT_STAGING"]).is_dir()
     assert "atlaso-qemu-guest-agent" in Path(environment["FAKE_PACKAGE_STATE"]).read_text(encoding="utf-8")
+
+    cleanup = _run_selector(environment, "--cleanup-only")
+    assert cleanup.returncode == 0, cleanup.stderr
+    assert not Path(environment["ATLASO_GUEST_AGENT_STAGING"]).exists()
 
 
 def test_unlisted_rpm_is_rejected_without_package_mutation(tmp_path: Path) -> None:
@@ -372,6 +386,23 @@ def test_unlisted_rpm_is_rejected_without_package_mutation(tmp_path: Path) -> No
     assert "does not cover the exact RPM closure" in result.stderr
     assert Path(environment["FAKE_PACKAGE_STATE"]).read_text(encoding="utf-8").splitlines() == ["open-vm-tools"]
     assert Path(environment["ATLASO_GUEST_AGENT_STAGING"]).is_dir()
+
+
+def test_cleanup_requires_completed_provider_selection(tmp_path: Path) -> None:
+    """Deferred cleanup cannot erase staging before provider selection commits.
+
+    Args:
+        tmp_path: Temporary directory provided by pytest.
+    """
+
+    environment = _prepare_runtime(tmp_path, platform="kvm", dmi="QEMU", packages=("open-vm-tools",))
+
+    result = _run_selector(environment, "--cleanup-only")
+
+    assert result.returncode == 2
+    assert "requires a completed provider-selection marker" in result.stderr
+    assert Path(environment["ATLASO_GUEST_AGENT_STAGING"]).is_dir()
+    assert not Path(environment["ATLASO_GUEST_AGENT_MARKER"]).exists()
 
 
 def test_success_marker_is_revalidated_against_current_platform(tmp_path: Path) -> None:
@@ -430,7 +461,7 @@ def test_success_marker_retry_rejects_unrelated_cleanup_target(tmp_path: Path, o
     sentinel.write_text("preserve\n", encoding="utf-8")
     environment[override_name] = str(victim)
 
-    retry = _run_selector(environment)
+    retry = _run_selector(environment, "--cleanup-only")
 
     assert retry.returncode == 2
     assert "strict descendants" in retry.stderr
@@ -512,12 +543,12 @@ def test_success_marker_retry_rejects_mount_backed_cleanup_target(tmp_path: Path
     assert first.returncode == 0, first.stderr
 
     runtime = Path(environment["ATLASO_GUEST_AGENT_RUNTIME"])
-    runtime.mkdir(mode=0o700)
+    runtime.mkdir(mode=0o700, exist_ok=True)
     sentinel = runtime / "preserve.txt"
     sentinel.write_text("preserve\n", encoding="utf-8")
     environment["FAKE_MOUNT_TARGET"] = str(runtime)
 
-    retry = _run_selector(environment)
+    retry = _run_selector(environment, "--cleanup-only")
 
     assert retry.returncode == 2
     assert "cannot contain a mount point" in retry.stderr
@@ -538,13 +569,13 @@ def test_success_marker_retry_rejects_mounted_cleanup_ancestor(tmp_path: Path) -
     mounted_ancestor = tmp_path / "mounted-backing"
     mounted_ancestor.mkdir(mode=0o700)
     staging = mounted_ancestor / "staging"
-    staging.mkdir(mode=0o700)
+    staging.mkdir(mode=0o700, exist_ok=True)
     sentinel = staging / "preserve.rpm"
     sentinel.write_text("preserve\n", encoding="utf-8")
     environment["ATLASO_GUEST_AGENT_STAGING"] = str(staging)
     environment["FAKE_MOUNT_TARGET"] = str(mounted_ancestor)
 
-    retry = _run_selector(environment)
+    retry = _run_selector(environment, "--cleanup-only")
 
     assert retry.returncode == 2
     assert "isolated test root cannot contain a mount point" in retry.stderr
@@ -563,12 +594,12 @@ def test_success_marker_retry_rejects_mount_backed_cleanup_file(tmp_path: Path) 
     assert first.returncode == 0, first.stderr
 
     staging = Path(environment["ATLASO_GUEST_AGENT_STAGING"])
-    staging.mkdir(mode=0o700)
+    staging.mkdir(mode=0o700, exist_ok=True)
     sentinel = staging / "preserve.rpm"
     sentinel.write_text("preserve\n", encoding="utf-8")
     environment["FAKE_MOUNT_TARGET"] = str(sentinel)
 
-    retry = _run_selector(environment)
+    retry = _run_selector(environment, "--cleanup-only")
 
     assert retry.returncode == 2
     assert "cannot contain a mount point" in retry.stderr
@@ -589,11 +620,11 @@ def test_success_marker_retry_rejects_hard_linked_cleanup_file(tmp_path: Path) -
     outside = tmp_path / "outside.rpm"
     outside.write_text("preserve\n", encoding="utf-8")
     staging = Path(environment["ATLASO_GUEST_AGENT_STAGING"])
-    staging.mkdir(mode=0o700)
+    staging.mkdir(mode=0o700, exist_ok=True)
     alias = staging / "linked.rpm"
     os.link(outside, alias)
 
-    retry = _run_selector(environment)
+    retry = _run_selector(environment, "--cleanup-only")
 
     assert retry.returncode == 2
     assert "cannot contain hard-linked files" in retry.stderr
@@ -613,13 +644,13 @@ def test_test_override_cleanup_never_shreds_after_link_count_validation(tmp_path
     assert first.returncode == 0, first.stderr
 
     staging = Path(environment["ATLASO_GUEST_AGENT_STAGING"])
-    staging.mkdir(mode=0o700)
+    staging.mkdir(mode=0o700, exist_ok=True)
     sentinel = staging / "preserve.rpm"
     sentinel.write_text("preserve\n", encoding="utf-8")
     outside_alias = tmp_path.parent / f"{tmp_path.name}-outside.rpm"
     environment["FAKE_SHRED_LINK_TARGET"] = str(outside_alias)
 
-    retry = _run_selector(environment)
+    retry = _run_selector(environment, "--cleanup-only")
 
     assert retry.returncode == 0, retry.stderr
     assert not outside_alias.exists()
@@ -636,7 +667,10 @@ def test_test_override_cleanup_quarantines_without_recursive_deletion(tmp_path: 
     environment = _prepare_runtime(tmp_path, platform="kvm", dmi="QEMU", packages=("open-vm-tools",))
     environment["FAKE_REJECT_RECURSIVE_CLEANUP"] = "1"
 
-    result = _run_selector(environment)
+    selected = _run_selector(environment)
+    assert selected.returncode == 0, selected.stderr
+
+    result = _run_selector(environment, "--cleanup-only")
 
     assert result.returncode == 0, result.stderr
     retained_staging = list(tmp_path.glob(".first-boot-packages.atlaso-retained.*"))
@@ -664,7 +698,7 @@ def test_test_override_cleanup_uses_pinned_root_after_path_swap(tmp_path: Path) 
     assert first.returncode == 0, first.stderr
 
     staging = Path(environment["ATLASO_GUEST_AGENT_STAGING"])
-    staging.mkdir(mode=0o700)
+    staging.mkdir(mode=0o700, exist_ok=True)
     (staging / "retry.rpm").write_text("retry\n", encoding="utf-8")
     replacement = tmp_path.parent / f"{tmp_path.name}-replacement"
     replacement.mkdir(mode=0o700)
@@ -677,7 +711,7 @@ def test_test_override_cleanup_uses_pinned_root_after_path_swap(tmp_path: Path) 
     environment["FAKE_SWAP_TEST_ROOT_ORIGINAL"] = str(original)
 
     try:
-        retry = _run_selector(environment)
+        retry = _run_selector(environment, "--cleanup-only")
 
         assert retry.returncode == 0, retry.stderr
         assert sentinel.read_text(encoding="utf-8") == "preserve\n"
@@ -707,6 +741,11 @@ def test_hyperv_access_cleanup_reloads_kvp_after_record_removal(tmp_path: Path) 
     assert first.returncode == 0, first.stderr
     log_path = Path(environment["FAKE_SYSTEMCTL_LOG"])
     log_path.write_text("", encoding="utf-8")
+
+    cleanup = _run_selector(environment, "--cleanup-only")
+
+    assert cleanup.returncode == 0, cleanup.stderr
+    assert log_path.read_text(encoding="utf-8") == ""
 
     second = _run_selector(environment)
 

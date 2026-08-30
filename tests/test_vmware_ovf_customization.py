@@ -214,8 +214,15 @@ def test_vmware_ovf_customizer_stages_and_scrubs_development_root_key(
     certificate_pem = (
         "-----BEGIN CERTIFICATE-----\nY2VydGlmaWNhdGU=\n-----END CERTIFICATE-----\n"
     )
+    private_key_der = b"private-key-pkcs8-der"
+    encoded_private_key = base64.b64encode(private_key_der).decode("ascii")
     private_key_pem = (
-        "-----BEGIN PRIVATE KEY-----\ncHJpdmF0ZS1rZXk=\n-----END PRIVATE KEY-----\n"
+        "-----BEGIN PRIVATE KEY-----\n"
+        + "\n".join(
+            encoded_private_key[index : index + 64]
+            for index in range(0, len(encoded_private_key), 64)
+        )
+        + "\n-----END PRIVATE KEY-----\n"
     )
     properties = customizer.parse_ovf_environment(OVF_ENV)
     properties[customizer.PROPERTY_DEVELOPMENT_TEST_VM] = "true"
@@ -229,7 +236,7 @@ def test_vmware_ovf_customizer_stages_and_scrubs_development_root_key(
         "try_read_guestinfo_value",
         lambda name: (
             True,
-            base64.b64encode(private_key_pem.encode("ascii")).decode("ascii"),
+            encoded_private_key,
         ),
     )
     monkeypatch.setattr(
@@ -253,6 +260,51 @@ def test_vmware_ovf_customizer_stages_and_scrubs_development_root_key(
     summary = customizer.redacted_summary(config)
     assert summary["development_root_ca_staged"] is True
     assert private_key_pem not in str(summary)
+
+
+def test_vmware_ovf_customizer_reports_only_bounded_first_boot_stages(monkeypatch):
+    """Publish allowlisted stage syntax and preserve a sanitized failure layer.
+
+    Args:
+        monkeypatch: Pytest fixture used to replace VMware guest-info commands.
+    """
+    customizer = load_customizer()
+    commands = []
+    monkeypatch.setattr(customizer.shutil, "which", lambda name: f"/usr/bin/{name}")
+
+    def record_run(command, **kwargs):
+        """Capture a guest-info setter without executing VMware Tools.
+
+        Args:
+            command: Command selected by the customizer.
+            **kwargs: Subprocess options accepted by the test double.
+        """
+        assert kwargs["timeout"] == 5
+        commands.append(command)
+        return subprocess.CompletedProcess(command, 0, "", "")
+
+    monkeypatch.setattr(customizer.subprocess, "run", record_run)
+    customizer.publish_first_boot_stage("development-root-ca-staging")
+    customizer.publish_first_boot_stage("unsafe stage\nvalue")
+
+    assert commands == [
+        [
+            "/usr/bin/vmware-rpctool",
+            "info-set guestinfo.atlaso.test_vm_first_boot_stage development-root-ca-staging",
+        ]
+    ]
+
+    stages = []
+    with pytest.raises(
+        customizer.OvfCustomizationError,
+        match="First-time initialization failed in the fixed layer",
+    ):
+        customizer.run_initialization_layer(
+            "fixed layer",
+            lambda: (_ for _ in ()).throw(OSError("sensitive detail")),
+            stage_reporter=stages.append,
+        )
+    assert stages == ["fixed-layer", "failed-fixed-layer"]
 
 
 def test_atomic_json_applies_secret_mode_before_opening_payload(tmp_path, monkeypatch):

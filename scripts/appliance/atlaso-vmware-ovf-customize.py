@@ -50,6 +50,7 @@ TEST_VM_HOSTNAME_GUESTINFO = "guestinfo.atlaso.test_vm_hostname"
 DEVELOPMENT_ROOT_CA_PRIVATE_KEY_GUESTINFO = (
     "guestinfo.atlaso.test_vm_development_root_ca_private_key"
 )
+FIRST_BOOT_STAGE_GUESTINFO = "guestinfo.atlaso.test_vm_first_boot_stage"
 MINIMUM_PASSWORD_LENGTH = 12
 REQUIRED_PROPERTIES = {
     PROPERTY_FQDN,
@@ -1120,6 +1121,36 @@ def clear_guestinfo_value(name: str) -> None:
     raise OvfCustomizationError("VMware Tools could not prove a secret guest-info value was cleared")
 
 
+def publish_first_boot_stage(stage: str) -> None:
+    """Best-effort publish one bounded non-secret normal-test-VM stage.
+
+    Args:
+        stage: Stable lowercase stage identifier.
+    """
+    if not re.fullmatch(r"[a-z][a-z0-9-]{0,63}", stage):
+        return
+    commands = (
+        ["vmware-rpctool", f"info-set {FIRST_BOOT_STAGE_GUESTINFO} {stage}"],
+        ["vmtoolsd", "--cmd", f"info-set {FIRST_BOOT_STAGE_GUESTINFO} {stage}"],
+    )
+    for command in commands:
+        executable = shutil.which(command[0])
+        if executable is None:
+            continue
+        try:
+            result = subprocess.run(
+                [executable, *command[1:]],
+                check=False,
+                text=True,
+                capture_output=True,
+                timeout=5,
+            )
+        except (OSError, subprocess.TimeoutExpired):
+            continue
+        if result.returncode == 0:
+            return
+
+
 def stage_development_root_ca(config: dict[str, object]) -> None:
     """Stage and scrub the normal test VM's shared development signing key.
 
@@ -1161,16 +1192,27 @@ def stage_development_root_ca(config: dict[str, object]) -> None:
         answered, encoded_private_key = try_read_guestinfo_value(
             DEVELOPMENT_ROOT_CA_PRIVATE_KEY_GUESTINFO
         )
-        if not answered or not encoded_private_key or len(encoded_private_key) > 16384:
+        if not answered or not encoded_private_key or len(encoded_private_key) > 4096:
             raise OvfCustomizationError(
                 "The normal test VM development signing key guest-info value is unavailable"
             )
         try:
-            private_key_bytes = base64.b64decode(encoded_private_key, validate=True)
-            if base64.b64encode(private_key_bytes).decode("ascii") != encoded_private_key:
+            private_key_der = base64.b64decode(encoded_private_key, validate=True)
+            if (
+                not private_key_der
+                or len(private_key_der) > 4096
+                or base64.b64encode(private_key_der).decode("ascii") != encoded_private_key
+            ):
                 raise ValueError
-            private_key_pem = private_key_bytes.decode("ascii")
-        except (binascii.Error, UnicodeDecodeError, ValueError) as exc:
+            private_key_pem = (
+                "-----BEGIN PRIVATE KEY-----\n"
+                + "\n".join(
+                    encoded_private_key[index : index + 64]
+                    for index in range(0, len(encoded_private_key), 64)
+                )
+                + "\n-----END PRIVATE KEY-----\n"
+            )
+        except (binascii.Error, ValueError) as exc:
             raise OvfCustomizationError(
                 "The normal test VM development signing key guest-info value is invalid"
             ) from exc
@@ -1728,35 +1770,57 @@ def restart_console() -> None:
     )
 
 
-def run_initialization_layer(label: str, operation: Callable[[], None]) -> None:
+def run_initialization_layer(
+    label: str,
+    operation: Callable[[], None],
+    *,
+    stage_reporter: Callable[[str], None] | None = None,
+) -> None:
     """Run one mutation while exposing only its bounded non-secret layer name.
 
     Args:
         label: Stable operator-facing name for the initialization layer.
         operation: Mutation to execute.
+        stage_reporter: Optional bounded non-secret progress publisher.
 
     Raises:
         OvfCustomizationError: If the layer cannot finish.
     """
+    stage = re.sub(r"[^a-z0-9]+", "-", label.lower()).strip("-")[:56]
+    if stage_reporter is not None:
+        stage_reporter(stage)
     try:
         operation()
     except (OvfCustomizationError, OSError, subprocess.CalledProcessError) as exc:
+        if stage_reporter is not None:
+            stage_reporter(f"failed-{stage}")
         raise OvfCustomizationError(f"First-time initialization failed in the {label} layer.") from exc
 
 
-def run_finalization_layer(label: str, operation: Callable[[], None]) -> None:
+def run_finalization_layer(
+    label: str,
+    operation: Callable[[], None],
+    *,
+    stage_reporter: Callable[[str], None] | None = None,
+) -> None:
     """Run a retryable OVF credential-scrub or marker operation.
 
     Args:
         label: Stable operator-facing name for the finalization layer.
         operation: Mutation to execute.
+        stage_reporter: Optional bounded non-secret progress publisher.
 
     Raises:
         OvfFinalizationError: If finalization must retry without network review.
     """
+    stage = re.sub(r"[^a-z0-9]+", "-", label.lower()).strip("-")[:56]
+    if stage_reporter is not None:
+        stage_reporter(stage)
     try:
         operation()
     except (OvfCustomizationError, OSError, subprocess.CalledProcessError) as exc:
+        if stage_reporter is not None:
+            stage_reporter(f"failed-{stage}")
         raise OvfFinalizationError(f"First-time initialization failed in the {label} layer.") from exc
 
 
@@ -1800,28 +1864,48 @@ def apply_customization(config: dict[str, object], *, dry_run: bool = False) -> 
     if dry_run:
         return summary
 
-    run_initialization_layer("management network", lambda: write_networkd_config(config))
-    run_initialization_layer("resolver", lambda: write_resolv_conf(config))
-    run_initialization_layer("management web server", lambda: write_nginx_management_server_name(config))
-    run_initialization_layer("firewall", lambda: write_initial_firewall_config(config))
-    run_initialization_layer("hostname", lambda: set_hostname(str(config["fqdn"])))
-    run_initialization_layer("root password", lambda: set_password("root", str(config["root_password"])))
-    run_initialization_layer("root SSH", lambda: configure_root_ssh(bool(config["root_ssh_enabled"])))
+    stage_reporter = publish_first_boot_stage if config["normal_test_vm"] else None
+
+    def run_layer(label: str, operation: Callable[[], None]) -> None:
+        """Run one initialization layer with normal-test-VM stage reporting.
+
+        Args:
+            label: Human-readable layer name published for normal test VMs.
+            operation: Initialization operation to execute.
+        """
+        run_initialization_layer(label, operation, stage_reporter=stage_reporter)
+
+    def run_final_layer(label: str, operation: Callable[[], None]) -> None:
+        """Run one finalization layer with normal-test-VM stage reporting.
+
+        Args:
+            label: Human-readable layer name published for normal test VMs.
+            operation: Finalization operation to execute.
+        """
+        run_finalization_layer(label, operation, stage_reporter=stage_reporter)
+
+    run_layer("management network", lambda: write_networkd_config(config))
+    run_layer("resolver", lambda: write_resolv_conf(config))
+    run_layer("management web server", lambda: write_nginx_management_server_name(config))
+    run_layer("firewall", lambda: write_initial_firewall_config(config))
+    run_layer("hostname", lambda: set_hostname(str(config["fqdn"])))
+    run_layer("root password", lambda: set_password("root", str(config["root_password"])))
+    run_layer("root SSH", lambda: configure_root_ssh(bool(config["root_ssh_enabled"])))
     try:
         bootstrap_user = read_env_file(ENV_PATH).get("ATLASO_BOOTSTRAP_ADMIN_USERNAME", "admin").strip('"') or "admin"
     except OSError as exc:
         raise OvfCustomizationError(
             "First-time initialization failed in the bootstrap administrator lookup layer."
         ) from exc
-    run_initialization_layer(
+    run_layer(
         "bootstrap administrator password",
         lambda: set_password(bootstrap_user, str(config["admin_password"])),
     )
     # Every imported appliance regenerated its host identity before networking;
     # publish that exact public key for authenticated deployment automation.
-    run_initialization_layer("SSH host key", publish_test_vm_ssh_host_key)
+    run_layer("SSH host key", publish_test_vm_ssh_host_key)
     if config["development_admin_ssh_public_key"]:
-        run_initialization_layer(
+        run_layer(
             "development administrator SSH",
             lambda: configure_development_admin_ssh(
                 bootstrap_user,
@@ -1835,23 +1919,25 @@ def apply_customization(config: dict[str, object], *, dry_run: bool = False) -> 
     if config["normal_test_vm"]:
         # The explicit normal-test marker survives password-only clone creation;
         # do not infer this trust boundary from optional SSH key provisioning.
-        run_initialization_layer("test VM hostname", publish_test_vm_hostname)
-    run_initialization_layer(
+        run_layer("test VM hostname", publish_test_vm_hostname)
+    run_layer(
         "appliance environment",
         lambda: write_env_file(ENV_PATH, appliance_environment_values(config)),
     )
-    run_initialization_layer(
+    run_layer(
         "development root CA staging and guest-info scrub",
         lambda: stage_development_root_ca(config),
     )
-    run_initialization_layer("console credential refresh", restart_console)
-    run_initialization_layer("host state durability", sync_customized_host_state)
-    run_initialization_layer(
+    run_layer("console credential refresh", restart_console)
+    run_layer("host state durability", sync_customized_host_state)
+    run_layer(
         "pending success marker",
         lambda: write_json_atomic(PENDING_MARKER_PATH, summary),
     )
-    run_finalization_layer("OVF credential scrub", clear_ovf_environment)
-    run_finalization_layer("applied marker", promote_pending_marker)
+    run_final_layer("OVF credential scrub", clear_ovf_environment)
+    run_final_layer("applied marker", promote_pending_marker)
+    if stage_reporter is not None:
+        stage_reporter("vmware-customization-complete")
     return summary
 
 

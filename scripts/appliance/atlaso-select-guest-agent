@@ -1,6 +1,22 @@
 #!/bin/sh
 set -eu
 
+MODE=select
+case "$#" in
+  0) ;;
+  1)
+    [ "$1" = "--cleanup-only" ] || {
+      printf 'atlaso-select-guest-agent: Unsupported argument.\n' >&2
+      exit 2
+    }
+    MODE=cleanup
+    ;;
+  *)
+    printf 'atlaso-select-guest-agent: Expected at most one argument.\n' >&2
+    exit 2
+    ;;
+esac
+
 STAGING_DIRECTORY="${ATLASO_GUEST_AGENT_STAGING:-/var/lib/atlaso/first-boot-packages}"
 MANIFEST_PATH="$STAGING_DIRECTORY/SHA256SUMS"
 RUNTIME_DIRECTORY="${ATLASO_GUEST_AGENT_RUNTIME:-/run/atlaso-guest-agent}"
@@ -417,6 +433,13 @@ if [ -f "$SUCCESS_MARKER" ]; then
   detected_platform=$(detect_platform)
   [ "$marker_platform" = "$detected_platform" ] ||
     fail "Guest-agent marker platform conflicts with current evidence: marker=$marker_platform detected=$detected_platform"
+  if [ "$MODE" = "cleanup" ]; then
+    # The data-disk gate may run during the provider-selection boot. Erase only
+    # the offline closure here; portable one-time access survives until reboot.
+    cleanup_staging
+    log "Guest-agent cleanup completed."
+    exit 0
+  fi
   [ -f "$MACHINE_IDENTITY_INITIALIZER" ] && [ ! -L "$MACHINE_IDENTITY_INITIALIZER" ] ||
     fail "Machine-identity initializer is missing or unsafe."
   if [ "$marker_platform" = "hyperv" ]; then
@@ -429,12 +452,11 @@ if [ -f "$SUCCESS_MARKER" ]; then
   else
     "$MACHINE_IDENTITY_INITIALIZER" --platform "$marker_platform" --clear-access
   fi
-  # A durable marker proves the provider transaction completed. Retrying the
-  # cleanup here closes the power-loss window between that commit and erasure.
-  cleanup_staging
   log "Guest-agent selection already completed."
   exit 0
 fi
+
+[ "$MODE" = "select" ] || fail "Guest-agent cleanup requires a completed provider-selection marker."
 
 # The runtime scratch directory follows the same trusted identity contract as
 # the persistent closure. Production fixes that identity at root:root; the
@@ -529,5 +551,4 @@ sync
 mv -f -- "$marker_tmp" "$SUCCESS_MARKER"
 trap - EXIT HUP INT TERM
 sync
-cleanup_staging
 log "Guest-agent selection completed."
