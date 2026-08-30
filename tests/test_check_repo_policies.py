@@ -1147,6 +1147,50 @@ def test_merge_authority_transfer_ignores_quoted_hold_discussion(
     )
 
 
+def test_merge_authority_transfer_ignores_holds_for_unrelated_prs(
+    tmp_path: Path,
+) -> None:
+    """Verify a hold targeting another PR does not constrain the active task.
+
+    Args:
+        tmp_path: Temporary directory provided by pytest for isolated filesystem state.
+    """
+    path = tmp_path / MERGE_AUTHORITY_TRANSFER_FIXTURE_PATH
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(
+        json.dumps(
+            {
+                "cases": [
+                    {
+                        "name": "unrelated PR hold",
+                        "default_merge_authority": True,
+                        "instructions": [
+                            {
+                                "text": (
+                                    "Implement issue #602, but do not merge unrelated "
+                                    "PR #621."
+                                ),
+                                "add_holds": ["do not merge"],
+                            }
+                        ],
+                        "generated": "Preserve the do not merge hold.",
+                        "expected_holds": ["do not merge"],
+                    }
+                ]
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    findings = check_merge_authority_transfer_fixtures(tmp_path)
+
+    assert len(findings) == 1
+    assert findings[0].message == (
+        "merge authority fixture unrelated PR hold instruction 1 hold operations "
+        "do not match its text"
+    )
+
+
 def test_merge_authority_transfer_recognizes_no_longer_need_withdrawal(
     tmp_path: Path,
 ) -> None:

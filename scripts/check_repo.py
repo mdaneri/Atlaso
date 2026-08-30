@@ -625,6 +625,14 @@ MERGE_HOLD_DISCUSSION_CONTEXT = re.compile(
     r"\b(?:explain(?:ed|ing)?|document(?:ed|ing)?|discuss(?:ed|ing)?|"
     r"describe(?:d|s|ing)?|mention(?:ed|ing)?|refer(?:red|ring)?)\b"
 )
+MERGE_HOLD_OTHER_TASK_SUFFIX = re.compile(
+    r"^\s+(?:(?:the|an?)\s+)?(?:unrelated|other|another)\s+"
+    r"(?:pull request|pr)\b"
+)
+MERGE_HOLD_OTHER_TASK_PREFIX = re.compile(
+    r"(?:unrelated|other|another)\s+(?:pull request|pr)(?:\s*#\d+)?"
+    r"(?:\s+[^.!?]{0,20})?\s*$"
+)
 
 ORDERED_TERMINAL_CLEANUP_MARKERS = {
     path: (
@@ -757,6 +765,16 @@ def _is_quoted_hold_discussion(segment: str, offset: int, pattern: str) -> bool:
     ) is not None
 
 
+def _hold_targets_other_task(segment: str, offset: int, pattern: str) -> bool:
+    """Return whether a hold phrase explicitly targets a different task."""
+    prefix = segment[max(0, offset - 80) : offset]
+    suffix = segment[offset + len(pattern) : offset + len(pattern) + 80]
+    return (
+        MERGE_HOLD_OTHER_TASK_PREFIX.search(prefix) is not None
+        or MERGE_HOLD_OTHER_TASK_SUFFIX.search(suffix) is not None
+    )
+
+
 def merge_hold_directions(
     text: str, *, active_holds: tuple[str, ...] = ()
 ) -> dict[str, str | None]:
@@ -816,6 +834,8 @@ def merge_hold_directions(
                 pattern_offset = segment.find(pattern)
                 while pattern_offset >= 0:
                     if not _is_quoted_hold_discussion(
+                        segment, pattern_offset, pattern
+                    ) and not _hold_targets_other_task(
                         segment, pattern_offset, pattern
                     ):
                         has_directive_occurrence = True
