@@ -1147,6 +1147,50 @@ def test_merge_authority_transfer_ignores_quoted_hold_discussion(
     )
 
 
+def test_merge_authority_transfer_ignores_unquoted_hold_discussion(
+    tmp_path: Path,
+) -> None:
+    """Verify explanatory hold references do not depend on quotation style.
+
+    Args:
+        tmp_path: Temporary directory provided by pytest for isolated filesystem state.
+    """
+    path = tmp_path / MERGE_AUTHORITY_TRANSFER_FIXTURE_PATH
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(
+        json.dumps(
+            {
+                "cases": [
+                    {
+                        "name": "unquoted hold discussion",
+                        "default_merge_authority": True,
+                        "instructions": [
+                            {
+                                "text": (
+                                    "Implement issue #602. Explain when users say do "
+                                    "not merge."
+                                ),
+                                "add_holds": ["do not merge"],
+                            }
+                        ],
+                        "generated": "Preserve the do not merge hold.",
+                        "expected_holds": ["do not merge"],
+                    }
+                ]
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    findings = check_merge_authority_transfer_fixtures(tmp_path)
+
+    assert len(findings) == 1
+    assert findings[0].message == (
+        "merge authority fixture unquoted hold discussion instruction 1 hold "
+        "operations do not match its text"
+    )
+
+
 def test_merge_authority_transfer_ignores_holds_for_unrelated_prs(
     tmp_path: Path,
 ) -> None:
@@ -1458,6 +1502,42 @@ def test_merge_authority_transfer_rejects_lexical_authority_denials(
             f"merge authority fixture authority denial {index} omits affirmative "
             "default authority"
         )
+
+
+def test_merge_authority_transfer_rejects_nonoperational_authority_mentions(
+    tmp_path: Path,
+) -> None:
+    """Verify policy documentation text is not an operational merge instruction.
+
+    Args:
+        tmp_path: Temporary directory provided by pytest for isolated filesystem state.
+    """
+    path = tmp_path / MERGE_AUTHORITY_TRANSFER_FIXTURE_PATH
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(
+        json.dumps(
+            {
+                "cases": [
+                    {
+                        "name": "authority policy mention",
+                        "default_merge_authority": True,
+                        "instructions": [{"text": "Implement the issue."}],
+                        "generated": "Document the default merge authority policy.",
+                        "expected_holds": [],
+                    }
+                ]
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    findings = check_merge_authority_transfer_fixtures(tmp_path)
+
+    assert len(findings) == 1
+    assert findings[0].message == (
+        "merge authority fixture authority policy mention omits affirmative default "
+        "authority"
+    )
 
 
 def test_merge_authority_transfer_rejects_second_instruction_condition(
@@ -2048,6 +2128,44 @@ def test_merge_authority_transfer_keeps_draft_feature_work_eligible(
     assert len(findings) == 1
     assert findings[0].message == (
         "merge authority fixture draft feature declared ineligible declared default "
+        "authority does not match its source instructions"
+    )
+
+
+def test_merge_authority_transfer_keeps_fork_feature_work_eligible(
+    tmp_path: Path,
+) -> None:
+    """Verify fork-PR feature wording remains ordinary implementation work.
+
+    Args:
+        tmp_path: Temporary directory provided by pytest for isolated filesystem state.
+    """
+    path = tmp_path / MERGE_AUTHORITY_TRANSFER_FIXTURE_PATH
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(
+        json.dumps(
+            {
+                "cases": [
+                    {
+                        "name": "fork feature declared ineligible",
+                        "default_merge_authority": False,
+                        "instructions": [
+                            {"text": "Implement support for fork pull requests."}
+                        ],
+                        "generated": "Describe the requested feature.",
+                        "expected_holds": [],
+                    }
+                ]
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    findings = check_merge_authority_transfer_fixtures(tmp_path)
+
+    assert len(findings) == 1
+    assert findings[0].message == (
+        "merge authority fixture fork feature declared ineligible declared default "
         "authority does not match its source instructions"
     )
 

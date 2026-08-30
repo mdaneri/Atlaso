@@ -100,6 +100,17 @@
       "expected_holds": []
     },
     {
+      "name": "unquoted-hold-documentation-work",
+      "default_merge_authority": true,
+      "instructions": [
+        {
+          "text": "Implement issue #602. Explain when users say do not merge."
+        }
+      ],
+      "generated": "Preserve default merge authority and complete the guarded merge when eligible.",
+      "expected_holds": []
+    },
+    {
       "name": "unrelated-pr-hold-does-not-transfer",
       "default_merge_authority": true,
       "instructions": [
@@ -572,6 +583,17 @@
         }
       ],
       "generated": "Inspect the fork pull request and report its state.",
+      "expected_holds": []
+    },
+    {
+      "name": "fork-pull-request-feature-eligible",
+      "default_merge_authority": true,
+      "instructions": [
+        {
+          "text": "Implement support for fork pull requests."
+        }
+      ],
+      "generated": "Preserve default merge authority and complete the guarded merge when eligible.",
       "expected_holds": []
     },
     {

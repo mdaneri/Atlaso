@@ -570,7 +570,10 @@ DEFAULT_MERGE_AUTHORITY_SECOND_INSTRUCTION_CONDITIONS = re.compile(
     r"\b(?:second|another|separate|additional)\b.{0,30}\bmerge instruction\b"
 )
 DEFAULT_MERGE_AUTHORITY_PROMPT_MARKERS = (
-    "default merge authority",
+    "preserve default merge authority",
+    "use the repository's default merge authority",
+    "apply default merge authority",
+    "exercise default merge authority",
     "guarded squash merge",
     "guarded-squash-merge",
     "carry the task through guarded merge",
@@ -597,7 +600,7 @@ DEFAULT_MERGE_AUTHORITY_SOURCE_EXCLUSIONS = re.compile(
     r"(?:open(?:ing)?|create|submit|prepare|deliver|leave|keep)\s+"
     r"(?:(?:an?|the|this)\s+)?(?:pull request|pr)"
     r"[^.!?]{0,20}\bas (?:an? )?draft\b|"
-    r"external fork|fork pull request|from (?:an? )?fork|"
+    r"external fork|from (?:an? )?fork|"
     r"private (?:vulnerability|advisory|remediation))"
 )
 DEFAULT_MERGE_AUTHORITY_SOURCE_MARKERS = re.compile(
@@ -755,16 +758,10 @@ def explicit_merge_holds(text: str) -> tuple[str, ...]:
     )
 
 
-def _is_quoted_hold_discussion(segment: str, offset: int, pattern: str) -> bool:
-    """Return whether a quoted hold phrase is only a discussed policy term."""
-    if offset == 0 or segment[offset - 1] not in {'"', "“"}:
-        return False
-    closing_quote = '"' if segment[offset - 1] == '"' else "”"
-    suffix = segment[offset + len(pattern) :].lstrip()
+def _is_hold_discussion(segment: str, offset: int) -> bool:
+    """Return whether a hold phrase is only a discussed policy term."""
     prefix = segment[max(0, offset - 100) : offset - 1]
-    return suffix.startswith(closing_quote) and MERGE_HOLD_DISCUSSION_CONTEXT.search(
-        prefix
-    ) is not None
+    return MERGE_HOLD_DISCUSSION_CONTEXT.search(prefix) is not None
 
 
 def _hold_targets_other_task(segment: str, offset: int, pattern: str) -> bool:
@@ -835,8 +832,8 @@ def merge_hold_directions(
             for pattern in patterns:
                 pattern_offset = segment.find(pattern)
                 while pattern_offset >= 0:
-                    if not _is_quoted_hold_discussion(
-                        segment, pattern_offset, pattern
+                    if not _is_hold_discussion(
+                        segment, pattern_offset
                     ) and not _hold_targets_other_task(
                         segment, pattern_offset, pattern
                     ):
