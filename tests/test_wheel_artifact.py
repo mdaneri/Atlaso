@@ -322,6 +322,45 @@ def test_select_artifact_binds_automatic_release_to_triggering_publisher(tmp_pat
     }
 
 
+def test_select_artifact_compares_replays_before_selecting_automatic_run(tmp_path: Path) -> None:
+    """Reject divergent retained bytes even when automatic publication names one run.
+
+    Args:
+        tmp_path: Isolated artifact directory.
+    """
+
+    candidates = tmp_path / "candidates"
+    _write_candidate(
+        candidates / "201-300",
+        publisher_run_id=201,
+        publisher_trigger="replay",
+        wheel_payload_suffix=b"# divergent replay",
+    )
+    _write_candidate(
+        candidates / "202-301",
+        publisher_run_id=202,
+        publisher_run_attempt=2,
+        publisher_trigger="automatic-main",
+    )
+    args = type(
+        "Args",
+        (),
+        {
+            "candidates": candidates,
+            "output": tmp_path / "selected",
+            "repository": REPOSITORY,
+            "version": VERSION,
+            "commit": COMMIT,
+            "publisher_run_id": 202,
+            "publisher_run_attempt": 2,
+            "publisher_trigger": "automatic-main",
+        },
+    )()
+
+    with pytest.raises(wheel_artifact.WheelArtifactError, match="collide"):
+        wheel_artifact.select_artifact(args)
+
+
 def test_select_artifact_fails_closed_on_divergent_collision(tmp_path: Path) -> None:
     """Reject retained artifacts that claim one identity but contain different wheel bytes.
 

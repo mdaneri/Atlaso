@@ -395,6 +395,11 @@ def select_artifact(args: argparse.Namespace) -> None:
             publisher["run_attempt"], field="publisher.run_attempt"
         )
         publisher_trigger = publisher.get("trigger")
+        wheel_bytes = wheel.read_bytes()
+        if expected_bytes is None:
+            expected_bytes = wheel_bytes
+        elif wheel_bytes != expected_bytes:
+            raise WheelArtifactError("retained automatic wheel artifacts collide with different bytes")
         if expected_publisher_run_id is not None and publisher_run_id != expected_publisher_run_id:
             continue
         if (
@@ -404,11 +409,6 @@ def select_artifact(args: argparse.Namespace) -> None:
             continue
         if expected_publisher_trigger is not None and publisher_trigger != expected_publisher_trigger:
             continue
-        wheel_bytes = wheel.read_bytes()
-        if expected_bytes is None:
-            expected_bytes = wheel_bytes
-        elif wheel_bytes != expected_bytes:
-            raise WheelArtifactError("retained automatic wheel artifacts collide with different bytes")
         verified.append((publisher_run_id, publisher_run_attempt, artifact_id, wheel, identity))
     if not verified:
         raise WheelArtifactError("no retained automatic wheel artifact matches the required publisher identity")
