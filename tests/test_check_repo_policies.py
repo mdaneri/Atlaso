@@ -5,6 +5,7 @@ from pathlib import Path
 from scripts.check_repo import (
     LEGACY_TABULATOR_MARKER,
     LOCAL_TASK_BRANCH_ABSENT_MARKER,
+    MAINTAINER_BREAK_GLASS_SHARED_MARKERS,
     NON_TASK_OWNED_CHECKOUT_PRESERVED_MARKER,
     NON_TASK_OWNED_REMOTE_BRANCH_PRESERVED_MARKER,
     ORDERED_TERMINAL_CLEANUP_MARKERS,
@@ -1172,6 +1173,44 @@ def test_agent_policy_gate_rejects_missing_default_merge_authority_contract(
         assert findings[0].message == (
             f"required agent policy marker is missing: {marker}"
         )
+
+
+def test_agent_policy_gate_rejects_missing_maintainer_break_glass_contract(
+    tmp_path: Path,
+) -> None:
+    """Verify policy surfaces separate human override from automation authority.
+
+    Args:
+        tmp_path: Temporary directory provided by pytest for isolated filesystem state.
+    """
+    required_entry_points = (
+        Path("AGENTS.md"),
+        Path("CONTRIBUTING.md"),
+        Path(".github/copilot-instructions.md"),
+        Path(".github/pull_request_template.md"),
+        Path("SECURITY.md"),
+        Path("docs/contribute/agent-policies.md"),
+        Path("docs/reference/full-technical-reference.md"),
+    )
+
+    for marker in MAINTAINER_BREAK_GLASS_SHARED_MARKERS:
+        for relative_path in required_entry_points:
+            write_policy_files(tmp_path)
+            path = tmp_path / relative_path
+            original = path.read_text(encoding="utf-8")
+            assert marker in original
+            path.write_text(
+                original.replace(marker, "", 1),
+                encoding="utf-8",
+            )
+
+            findings = check_agent_policy_gate(tmp_path)
+
+            assert len(findings) == 1
+            assert findings[0].path == path
+            assert findings[0].message == (
+                f"required agent policy marker is missing: {marker}"
+            )
 
 
 def test_agent_policy_gate_rejects_missing_unrelated_issue_tracking(

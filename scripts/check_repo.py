@@ -155,6 +155,14 @@ SCHEDULED_PR_MONITORING_SHARED_MARKERS = (
     "exact retry condition",
 )
 
+MAINTAINER_BREAK_GLASS_SHARED_MARKERS = (
+    "human-maintainer break-glass authority",
+    "must never",
+    "use or request",
+    "ruleset or administrative bypass",
+    "cannot be delegated to automation",
+)
+
 REQUIRED_POLICY_MARKERS = {
     Path("AGENTS.md"): (
         "## Mandatory Agent Startup Gate",
@@ -194,6 +202,7 @@ REQUIRED_POLICY_MARKERS = {
         "### Default merge authorization",
         "default merge authority",
         "explicit merge hold",
+        *MAINTAINER_BREAK_GLASS_SHARED_MARKERS,
         "strict up-to-date required checks",
         "no merge queue is required",
         "--match-head-commit <head-sha>",
@@ -231,6 +240,9 @@ REQUIRED_POLICY_MARKERS = {
         "### Default merge authorization",
         "default merge authority",
         "explicit merge hold",
+        "### Maintainer override / break-glass",
+        "canonical maintainer override policy",
+        *MAINTAINER_BREAK_GLASS_SHARED_MARKERS,
         "strict up-to-date required checks",
         "no required merge queue",
         "AtlasoUiPatterns.createGrid",
@@ -268,6 +280,7 @@ REQUIRED_POLICY_MARKERS = {
         "Default merge authorization",
         "default merge authority",
         "explicit merge hold",
+        *MAINTAINER_BREAK_GLASS_SHARED_MARKERS,
         "strict up-to-date required checks",
         "when a merge queue is required",
         "evidence-backed unrelated problem",
@@ -299,6 +312,7 @@ REQUIRED_POLICY_MARKERS = {
         "coordinated disclosure",
         "advisory-side maintainer review",
         "complete Python test suite locally",
+        *MAINTAINER_BREAK_GLASS_SHARED_MARKERS,
     ),
     Path("docs/contribute/agent-policies.md"): (
         "# Detailed agent policies",
@@ -329,6 +343,7 @@ REQUIRED_POLICY_MARKERS = {
         "### Default merge authorization",
         "default merge authority",
         "explicit merge hold",
+        *MAINTAINER_BREAK_GLASS_SHARED_MARKERS,
         "strict up-to-date required checks",
         "no required merge queue",
         "### Completed task cleanup",
@@ -356,6 +371,7 @@ REQUIRED_POLICY_MARKERS = {
         "Default merge authorization",
         "default merge authority",
         "explicit merge hold",
+        *MAINTAINER_BREAK_GLASS_SHARED_MARKERS,
         "strict up-to-date required checks",
         "no merge queue is required",
         "Evidence-backed issues discovered outside",
@@ -391,6 +407,7 @@ REQUIRED_POLICY_MARKERS = {
     Path("docs/reference/full-technical-reference.md"): (
         "default merge authority",
         "explicit merge hold",
+        *MAINTAINER_BREAK_GLASS_SHARED_MARKERS,
         "strict up-to-date required checks",
         "when a merge queue is required",
         "`non_task_owned_remote_branch_preserved`",
