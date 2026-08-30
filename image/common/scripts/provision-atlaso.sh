@@ -39,9 +39,12 @@ QEMU_GUEST_AGENT_BUILDER="$ATLASO_SRC/image/common/scripts/build-qemu-guest-agen
 GUEST_AGENT_SELECTOR_SOURCE="$ATLASO_SRC/scripts/appliance/atlaso-select-guest-agent"
 MACHINE_IDENTITY_INITIALIZER_SOURCE="$ATLASO_SRC/scripts/appliance/atlaso-initialize-machine-identity.py"
 IMAGE_BUILD_FINALIZER_SOURCE="$ATLASO_SRC/image/common/scripts/finalize-image-build.sh"
+PHOTON_PACKAGE_STATE_VERIFIER="$ATLASO_SRC/image/common/scripts/verify-photon-package-state.py"
 GUEST_AGENT_UNIT_SOURCE="$ATLASO_SRC/image/common/systemd/atlaso-guest-agent-select.service"
 GUEST_AGENT_STAGING="$ATLASO_STATE/first-boot-packages"
 PYTHON_RUNTIME_STAGING="$ATLASO_STATE/python-runtime-packages"
+QEMU_GUEST_AGENT_OUTPUT=""
+QEMU_GUEST_AGENT_RPM=""
 
 log_step() {
   printf '\n==> Atlaso appliance: %s\n' "$1"
@@ -76,6 +79,78 @@ run_tdnf() {
     --cache-dir /var/cache/tdnf \
     -- \
     tdnf -y "$@"
+}
+
+stage_python_runtime_packages() {
+  # Bind protected virtualization verification to the interpreter that remains
+  # after the most recent mutating Photon transaction.
+  log_step "staging signed Photon Python runtime packages for protected verification"
+  rm -rf "$PYTHON_RUNTIME_STAGING"
+  install -d -o root -g root -m 0700 "$PYTHON_RUNTIME_STAGING"
+  run_tdnf "Photon Python runtime signed package closure" \
+    install --downloadonly --downloaddir "$PYTHON_RUNTIME_STAGING" --alldeps \
+    python3 python3-pip python3-virtualenv python3-curses
+  if [ "$(find "$PYTHON_RUNTIME_STAGING" -maxdepth 1 -type f -name '*.rpm' | wc -l)" -eq 0 ]; then
+    echo "Photon Python runtime package closure is empty." >&2
+    exit 2
+  fi
+  find "$PYTHON_RUNTIME_STAGING" -type f -name '*.rpm' -exec chown root:root {} + -exec chmod 0600 {} +
+  (
+    cd "$PYTHON_RUNTIME_STAGING"
+    find . -maxdepth 1 -type f -name '*.rpm' -printf '%f\n' | LC_ALL=C sort | xargs sha256sum >SHA256SUMS
+  )
+  chown root:root "$PYTHON_RUNTIME_STAGING/SHA256SUMS"
+  chmod 0600 "$PYTHON_RUNTIME_STAGING/SHA256SUMS"
+}
+
+stage_guest_agent_packages() {
+  log_step "staging verified offline guest-agent RPM closures"
+  rm -rf "$GUEST_AGENT_STAGING"
+  install -d -o root -g root -m 0700 "$GUEST_AGENT_STAGING" \
+    "$GUEST_AGENT_STAGING/hyperv" "$GUEST_AGENT_STAGING/qemu"
+  run_tdnf "Photon Hyper-V offline RPM closure" \
+    install --downloadonly --downloaddir "$GUEST_AGENT_STAGING/hyperv" --alldeps hyper-v
+  # Resolve the local RPM's signed runtime dependencies independently so an
+  # unsigned Atlaso-built package can never weaken Photon repository verification.
+  run_tdnf "Photon QEMU guest-agent signed dependency closure" \
+    install --downloadonly --downloaddir "$GUEST_AGENT_STAGING/qemu" --alldeps glib systemd
+  # The local RPM is built from Atlaso's pinned, hash-verified QEMU source and
+  # remains immutable across the second signed-dependency staging pass.
+  install -o root -g root -m 0600 \
+    "$QEMU_GUEST_AGENT_RPM" "$GUEST_AGENT_STAGING/qemu/$(basename "$QEMU_GUEST_AGENT_RPM")"
+  if [ "$(find "$GUEST_AGENT_STAGING/hyperv" -maxdepth 1 -type f -name '*.rpm' | wc -l)" -eq 0 ] ||
+    [ "$(find "$GUEST_AGENT_STAGING/qemu" -maxdepth 1 -type f -name '*.rpm' | wc -l)" -eq 0 ]; then
+    echo "One or more offline guest-agent RPM closures are empty." >&2
+    exit 2
+  fi
+  find "$GUEST_AGENT_STAGING" -type d -exec chown root:root {} + -exec chmod 0700 {} +
+  find "$GUEST_AGENT_STAGING" -type f -name '*.rpm' -exec chown root:root {} + -exec chmod 0600 {} +
+  (
+    cd "$GUEST_AGENT_STAGING"
+    find hyperv qemu -type f -name '*.rpm' -print | LC_ALL=C sort | xargs sha256sum >SHA256SUMS
+  )
+  chown root:root "$GUEST_AGENT_STAGING/SHA256SUMS"
+  chmod 0600 "$GUEST_AGENT_STAGING/SHA256SUMS"
+}
+
+write_third_party_notices() {
+  log_step "writing third-party notices"
+  notice_rpm_inventory="$(mktemp)"
+  {
+    rpm -qa --qf '%{NAME}\t%{VERSION}-%{RELEASE}\t%{LICENSE}\t%{URL}\n'
+    find "$GUEST_AGENT_STAGING" -type f -name '*.rpm' | LC_ALL=C sort | while IFS= read -r staged_rpm; do
+      rpm -qp --qf '%{NAME}\t%{VERSION}-%{RELEASE}\t%{LICENSE}\t%{URL}\n' "$staged_rpm"
+    done
+  } | LC_ALL=C sort -u >"$notice_rpm_inventory"
+  install -d -o root -g root -m 0755 /usr/share/doc/atlaso
+  "$ATLASO_HOME/.venv/bin/python" "$ATLASO_HOME/scripts/generate_third_party_notices.py" \
+    --version "$ATLASO_RELEASE_VERSION" \
+    --output /usr/share/doc/atlaso/THIRD_PARTY_NOTICES.md \
+    --lock "$ATLASO_HOME/requirements-appliance.lock" \
+    --python-environment "$ATLASO_HOME/.venv" \
+    --rpm-inventory "$notice_rpm_inventory"
+  rm -f "$notice_rpm_inventory"
+  chmod 0644 /usr/share/doc/atlaso/THIRD_PARTY_NOTICES.md
 }
 
 report_image_footprint() {
@@ -253,7 +328,7 @@ if [ ! -r "$DATA_DISK_POLICY_SOURCE" ]; then
 fi
 if [ ! -r "$QEMU_GUEST_AGENT_BUILDER" ] || [ ! -r "$GUEST_AGENT_SELECTOR_SOURCE" ] ||
   [ ! -r "$MACHINE_IDENTITY_INITIALIZER_SOURCE" ] || [ ! -r "$IMAGE_BUILD_FINALIZER_SOURCE" ] ||
-  [ ! -r "$GUEST_AGENT_UNIT_SOURCE" ]; then
+  [ ! -r "$PHOTON_PACKAGE_STATE_VERIFIER" ] || [ ! -r "$GUEST_AGENT_UNIT_SOURCE" ]; then
   echo "Provider-neutral guest-agent build or first-boot assets are missing from staged Atlaso sources." >&2
   exit 2
 fi
@@ -282,43 +357,17 @@ esac
 run_tdnf "Photon appliance package installation" \
   install python3 python3-pip python3-devel python3-setuptools python3-virtualenv python3-curses python3-ntp sudo openssh-server curl rsync tar gzip xz shadow e2fsprogs sqlite procps-ng gnupg rpm-build gcc binutils linux-api-headers make glib-devel systemd-devel ninja-build pkg-config $GUEST_INTEGRATION_PACKAGES nftables dnsmasq ntpsec nfs-utils rpcbind openldap openldap-servers ipxe syslinux nginx powershell
 
-log_step "building and staging verified offline guest-agent RPM closures"
-rm -rf "$GUEST_AGENT_STAGING"
-install -d -o root -g root -m 0700 "$GUEST_AGENT_STAGING" \
-  "$GUEST_AGENT_STAGING/hyperv" "$GUEST_AGENT_STAGING/qemu"
-qemu_rpm_output=/tmp/atlaso-qemu-guest-agent-rpm
-rm -rf "$qemu_rpm_output"
-sh "$QEMU_GUEST_AGENT_BUILDER" "$qemu_rpm_output"
-qemu_rpm_count="$(find "$qemu_rpm_output" -maxdepth 1 -type f -name 'atlaso-qemu-guest-agent-*.rpm' | wc -l)"
+log_step "building the pinned QEMU guest-agent RPM"
+QEMU_GUEST_AGENT_OUTPUT=/tmp/atlaso-qemu-guest-agent-rpm
+rm -rf "$QEMU_GUEST_AGENT_OUTPUT"
+sh "$QEMU_GUEST_AGENT_BUILDER" "$QEMU_GUEST_AGENT_OUTPUT"
+qemu_rpm_count="$(find "$QEMU_GUEST_AGENT_OUTPUT" -maxdepth 1 -type f -name 'atlaso-qemu-guest-agent-*.rpm' | wc -l)"
 if [ "$qemu_rpm_count" -ne 1 ]; then
   echo "Expected one built QEMU guest-agent RPM; found $qemu_rpm_count." >&2
   exit 2
 fi
-qemu_rpm="$(find "$qemu_rpm_output" -maxdepth 1 -type f -name 'atlaso-qemu-guest-agent-*.rpm')"
-run_tdnf "Photon Hyper-V offline RPM closure" \
-  install --downloadonly --downloaddir "$GUEST_AGENT_STAGING/hyperv" --alldeps hyper-v
-# Resolve the local RPM's signed runtime dependencies independently so an
-# unsigned Atlaso-built package can never weaken Photon repository verification.
-run_tdnf "Photon QEMU guest-agent signed dependency closure" \
-  install --downloadonly --downloaddir "$GUEST_AGENT_STAGING/qemu" --alldeps glib systemd
-# The local RPM is built above from Atlaso's pinned, hash-verified QEMU source;
-# stage it directly beside the signed dependency closure and bind every byte in
-# the combined result to the root-owned SHA-256 manifest below.
-install -o root -g root -m 0600 "$qemu_rpm" "$GUEST_AGENT_STAGING/qemu/$(basename "$qemu_rpm")"
-rm -rf "$qemu_rpm_output"
-if [ "$(find "$GUEST_AGENT_STAGING/hyperv" -maxdepth 1 -type f -name '*.rpm' | wc -l)" -eq 0 ] ||
-  [ "$(find "$GUEST_AGENT_STAGING/qemu" -maxdepth 1 -type f -name '*.rpm' | wc -l)" -eq 0 ]; then
-  echo "One or more offline guest-agent RPM closures are empty." >&2
-  exit 2
-fi
-find "$GUEST_AGENT_STAGING" -type d -exec chown root:root {} + -exec chmod 0700 {} +
-find "$GUEST_AGENT_STAGING" -type f -name '*.rpm' -exec chown root:root {} + -exec chmod 0600 {} +
-(
-  cd "$GUEST_AGENT_STAGING"
-  find hyperv qemu -type f -name '*.rpm' -print | LC_ALL=C sort | xargs sha256sum >SHA256SUMS
-)
-chown root:root "$GUEST_AGENT_STAGING/SHA256SUMS"
-chmod 0600 "$GUEST_AGENT_STAGING/SHA256SUMS"
+QEMU_GUEST_AGENT_RPM="$(find "$QEMU_GUEST_AGENT_OUTPUT" -maxdepth 1 -type f -name 'atlaso-qemu-guest-agent-*.rpm')"
+stage_guest_agent_packages
 
 prepare_system_content_disk
 
@@ -351,23 +400,7 @@ run_tdnf "Photon OS update verification" update
 # The protected hosted finalizer authenticates these RPMs against Atlaso's
 # admitted Photon keys and compares their payload to the read-only guest disk;
 # a Windows producer therefore cannot substitute Python or its standard library.
-log_step "staging signed Photon Python runtime packages for protected verification"
-rm -rf "$PYTHON_RUNTIME_STAGING"
-install -d -o root -g root -m 0700 "$PYTHON_RUNTIME_STAGING"
-run_tdnf "Photon Python runtime signed package closure" \
-  install --downloadonly --downloaddir "$PYTHON_RUNTIME_STAGING" --alldeps \
-  python3 python3-pip python3-virtualenv python3-curses
-if [ "$(find "$PYTHON_RUNTIME_STAGING" -maxdepth 1 -type f -name '*.rpm' | wc -l)" -eq 0 ]; then
-  echo "Photon Python runtime package closure is empty." >&2
-  exit 2
-fi
-find "$PYTHON_RUNTIME_STAGING" -type f -name '*.rpm' -exec chown root:root {} + -exec chmod 0600 {} +
-(
-  cd "$PYTHON_RUNTIME_STAGING"
-  find . -maxdepth 1 -type f -name '*.rpm' -printf '%f\n' | LC_ALL=C sort | xargs sha256sum >SHA256SUMS
-)
-chown root:root "$PYTHON_RUNTIME_STAGING/SHA256SUMS"
-chmod 0600 "$PYTHON_RUNTIME_STAGING/SHA256SUMS"
+stage_python_runtime_packages
 
 log_step "leaving only Photon NTPsec available for desired-state activation"
 systemctl disable --now ntpd.service 2>/dev/null || true
@@ -469,23 +502,77 @@ $BOOTSTRAP_USERNAME ALL=(ALL) ALL
 EOF
 chmod 0440 /etc/sudoers.d/atlaso-bootstrap-admin
 visudo -cf /etc/sudoers.d/atlaso-bootstrap-admin
-sudo -H -u "$BOOTSTRAP_USERNAME" env -u PSModulePath ATLASO_POWERCLI_VERSION="$ATLASO_POWERCLI_VERSION" \
-  pwsh -NoLogo -NoProfile -NonInteractive -Command \
-  '$ErrorActionPreference = "Stop"; $module = Get-Module -Name VCF.PowerCLI -ListAvailable | Where-Object Version -eq $env:ATLASO_POWERCLI_VERSION | Select-Object -First 1; if (-not $module) { throw "VCF.PowerCLI $env:ATLASO_POWERCLI_VERSION is not available to the bootstrap administrator" }; Import-Module $module.Path -Force; $configured = Get-PowerCLIConfiguration -Scope AllUsers; if ([bool]$configured.ParticipateInCEIP) { throw "VCF.PowerCLI CEIP default is not disabled for the bootstrap administrator" }; if (-not (Get-Command Connect-VIServer -ErrorAction SilentlyContinue)) { throw "Connect-VIServer is not available to the bootstrap administrator" }; Write-Host "VCF.PowerCLI $($module.Version) verified as $([Environment]::UserName) with appliance-wide CEIP disabled"'
+verify_bootstrap_powercli() {
+  sudo -H -u "$BOOTSTRAP_USERNAME" env -u PSModulePath ATLASO_POWERCLI_VERSION="$ATLASO_POWERCLI_VERSION" \
+    pwsh -NoLogo -NoProfile -NonInteractive -Command \
+    '$ErrorActionPreference = "Stop"; $module = Get-Module -Name VCF.PowerCLI -ListAvailable | Where-Object Version -eq $env:ATLASO_POWERCLI_VERSION | Select-Object -First 1; if (-not $module) { throw "VCF.PowerCLI $env:ATLASO_POWERCLI_VERSION is not available to the bootstrap administrator" }; Import-Module $module.Path -Force; $configured = Get-PowerCLIConfiguration -Scope AllUsers; if ([bool]$configured.ParticipateInCEIP) { throw "VCF.PowerCLI CEIP default is not disabled for the bootstrap administrator" }; if (-not (Get-Command Connect-VIServer -ErrorAction SilentlyContinue)) { throw "Connect-VIServer is not available to the bootstrap administrator" }; Write-Host "VCF.PowerCLI $($module.Version) verified as $([Environment]::UserName) with appliance-wide CEIP disabled"'
+}
+verify_bootstrap_powercli
 
-cat >/etc/atlaso/build-info <<EOF
+install_powershell_profile() {
+  POWERSHELL_HOME="$(dirname "$(readlink -f "$(command -v pwsh)")")"
+  case "$POWERSHELL_HOME" in
+    /opt/microsoft/powershell/7 | /usr/share/powershell) ;;
+    *)
+      echo "PowerShell resolved to an unsupported global profile directory: $POWERSHELL_HOME" >&2
+      exit 2
+      ;;
+  esac
+  # Re-resolve the package-owned runtime home after every mutating Photon update.
+  install -o root -g root -m 0644 \
+    "$ATLASO_HOME/image/common/powershell/profile.ps1" \
+    "$POWERSHELL_HOME/profile.ps1"
+}
+
+default_boot_kernel() {
+  kernel_config="$(readlink -f /boot/photon.cfg)"
+  case "$kernel_config" in
+    /boot/linux-*.cfg) ;;
+    *)
+      echo "Photon default kernel configuration resolved outside /boot: $kernel_config" >&2
+      exit 2
+      ;;
+  esac
+  kernel_image="$(sed -n 's/^photon_linux=//p' "$kernel_config")"
+  case "$kernel_image" in
+    vmlinuz-*/* | vmlinuz-) kernel_image="" ;;
+    vmlinuz-*) ;;
+    *) kernel_image="" ;;
+  esac
+  if [ -z "$kernel_image" ] || [ ! -f "/boot/$kernel_image" ]; then
+    echo "Photon default kernel image is missing or invalid in $kernel_config" >&2
+    exit 2
+  fi
+  printf '%s\n' "${kernel_image#vmlinuz-}"
+}
+
+write_build_info() {
+  if ! boot_kernel="$(default_boot_kernel)"; then
+    echo "Could not resolve the Photon default boot kernel for build information." >&2
+    return 2
+  fi
+  cat >/etc/atlaso/build-info <<EOF
 build_time_utc=$(date -u +"%Y-%m-%dT%H:%M:%SZ")
 photon_release=$(cat /etc/photon-release 2>/dev/null || true)
-kernel=$(uname -r)
+kernel=$boot_kernel
 python=$(python3 --version 2>&1)
 powershell=$(pwsh -NoLogo -NoProfile -NonInteractive -Command '$PSVersionTable.PSVersion.ToString()')
 powercli=$(pwsh -NoLogo -NoProfile -NonInteractive -Command '(Get-Module -Name VCF.PowerCLI -ListAvailable | Sort-Object Version -Descending | Select-Object -First 1).Version.ToString()')
+vcf_sdk=$(
+  if [ -x "$ATLASO_HOME/.venv/bin/python" ]; then
+    "$ATLASO_HOME/.venv/bin/python" -c 'from importlib.metadata import version; print(version("vcf-sdk"))'
+  else
+    printf 'not-installed\n'
+  fi
+)
 package_update=tdnf -y update completed during image provisioning
 final_mgmt_address=$ATLASO_MGMT_ADDRESS
 final_mgmt_gateway=$ATLASO_MGMT_GATEWAY
 final_mgmt_interface=$ATLASO_MGMT_INTERFACE
 EOF
-chmod 0644 /etc/atlaso/build-info
+  chmod 0644 /etc/atlaso/build-info
+}
+write_build_info
 
 rm -f /etc/sudoers.d/90-atlaso-build
 
@@ -545,47 +632,26 @@ write_pip_config "$ATLASO_HOME/.venv/pip.conf"
   --requirement "$ATLASO_HOME/requirements-appliance.lock"
 "$ATLASO_HOME/.venv/bin/python" -m pip install --no-compile --no-deps "$ATLASO_HOME"
 ATLASO_SITE_PACKAGES="$("$ATLASO_HOME/.venv/bin/python" -c 'import sysconfig; print(sysconfig.get_path("purelib"))')"
-if [ "$ATLASO_SITE_PACKAGES" != "$ATLASO_RELEASE_DIR/.venv/lib/python3.14/site-packages" ]; then
+ATLASO_SITE_PACKAGES_REAL="$(readlink -f "$ATLASO_SITE_PACKAGES")"
+ATLASO_EXPECTED_SITE_PACKAGES="$ATLASO_RELEASE_DIR/.venv/lib/python3.14/site-packages"
+if [ "$ATLASO_SITE_PACKAGES_REAL" != "$ATLASO_EXPECTED_SITE_PACKAGES" ]; then
   echo "Atlaso site-packages resolved outside the expected release environment." >&2
   exit 2
 fi
-find "$ATLASO_SITE_PACKAGES" -type f -name '*.pyc' -delete
-find "$ATLASO_SITE_PACKAGES" -depth -type d -name __pycache__ -empty -delete
+find "$ATLASO_SITE_PACKAGES_REAL" -type f -name '*.pyc' -delete
+find "$ATLASO_SITE_PACKAGES_REAL" -depth -type d -name __pycache__ -empty -delete
 install -d -o root -g root -m 0755 /usr/local/bin
 ln -sfn "$ATLASO_HOME/.venv/bin/atlaso-vault" /usr/local/bin/atlaso-vault
 ln -sfn "$ATLASO_HOME/.venv/bin/atlaso-vault" /usr/bin/atlaso-vault
-POWERSHELL_HOME="$(dirname "$(readlink -f "$(command -v pwsh)")")"
-if [ "$POWERSHELL_HOME" != "/opt/microsoft/powershell/7" ]; then
-  echo "PowerShell resolved to an unsupported global profile directory: $POWERSHELL_HOME" >&2
-  exit 2
-fi
 install -o root -g root -m 0644 \
   "$ATLASO_HOME/image/common/powershell/atlaso-vault-profile.ps1" \
   "$ATLASO_HOME/bin/atlaso-vault-profile.ps1"
 # The complete global profile is Atlaso-owned so producer state cannot inject commands.
-install -o root -g root -m 0644 \
-  "$ATLASO_HOME/image/common/powershell/profile.ps1" \
-  "$POWERSHELL_HOME/profile.ps1"
+install_powershell_profile
 "$ATLASO_HOME/.venv/bin/python" "$ATLASO_HOME/scripts/check_photon_compatibility.py"
-printf 'vcf_sdk=%s\n' "$("$ATLASO_HOME/.venv/bin/python" -c 'from importlib.metadata import version; print(version("vcf-sdk"))')" >>/etc/atlaso/build-info
+write_build_info
 
-log_step "writing third-party notices"
-NOTICE_RPM_INVENTORY="$(mktemp)"
-{
-  rpm -qa --qf '%{NAME}\t%{VERSION}-%{RELEASE}\t%{LICENSE}\t%{URL}\n'
-  find "$GUEST_AGENT_STAGING" -type f -name '*.rpm' | LC_ALL=C sort | while IFS= read -r staged_rpm; do
-    rpm -qp --qf '%{NAME}\t%{VERSION}-%{RELEASE}\t%{LICENSE}\t%{URL}\n' "$staged_rpm"
-  done
-} | LC_ALL=C sort -u >"$NOTICE_RPM_INVENTORY"
-install -d -o root -g root -m 0755 /usr/share/doc/atlaso
-"$ATLASO_HOME/.venv/bin/python" "$ATLASO_HOME/scripts/generate_third_party_notices.py" \
-  --version "$ATLASO_RELEASE_VERSION" \
-  --output /usr/share/doc/atlaso/THIRD_PARTY_NOTICES.md \
-  --lock "$ATLASO_HOME/requirements-appliance.lock" \
-  --python-environment "$ATLASO_HOME/.venv" \
-  --rpm-inventory "$NOTICE_RPM_INVENTORY"
-rm -f "$NOTICE_RPM_INVENTORY"
-chmod 0644 /usr/share/doc/atlaso/THIRD_PARTY_NOTICES.md
+write_third_party_notices
 
 SECRET_KEY="$("$ATLASO_HOME/.venv/bin/python" -c 'import secrets; print(secrets.token_urlsafe(48))')"
 SECRETS_KEY="$("$ATLASO_HOME/.venv/bin/python" -c 'import secrets; print(secrets.token_urlsafe(48))')"
@@ -883,15 +949,45 @@ rm -f /root/.bash_history "/home/$BOOTSTRAP_USERNAME/.bash_history"
 sync
 
 log_step "removing build-only packages and caches"
-run_tdnf "Build-only package removal" remove python3-devel python3-setuptools rpm-build gcc binutils linux-api-headers make glib-devel systemd-devel ninja-build pkg-config
+# Photon enables clean_requirements_on_remove, which can otherwise prune RPM,
+# systemd, and the release package while removing this temporary toolchain.
+run_tdnf "Build-only package removal" --noautoremove remove python3-devel python3-setuptools rpm-build gcc binutils linux-api-headers make glib-devel systemd-devel ninja-build pkg-config
 command -v python3 >/dev/null
 command -v pwsh >/dev/null
 command -v vmtoolsd >/dev/null 2>&1 || [ "$ATLASO_GUEST_PLATFORM" != "vmware" ]
 "$ATLASO_HOME/.venv/bin/python" -c 'import atlaso'
 pwsh -NoLogo -NoProfile -NonInteractive -Command \
   '$ErrorActionPreference = "Stop"; Import-Module VCF.PowerCLI -RequiredVersion $env:ATLASO_POWERCLI_VERSION -Force'
+python3 "$PHOTON_PACKAGE_STATE_VERIFIER" --guest-platform "$ATLASO_GUEST_PLATFORM"
 
-tdnf -y clean all || true
+run_tdnf "Final Photon package cache cleanup" clean all
+run_tdnf "Final Photon repository refresh" makecache
+run_tdnf "Final Photon OS update verification" update
+stage_guest_agent_packages
+rm -rf "$QEMU_GUEST_AGENT_OUTPUT"
+stage_python_runtime_packages
+write_third_party_notices
+log_step "revalidating Photon compatibility and runtime capabilities after final update"
+command -v python3 >/dev/null
+command -v pwsh >/dev/null
+command -v vmtoolsd >/dev/null 2>&1 || [ "$ATLASO_GUEST_PLATFORM" != "vmware" ]
+install_powershell_profile
+verify_bootstrap_powercli
+nginx -t
+"$ATLASO_HOME/.venv/bin/python" "$ATLASO_HOME/scripts/check_photon_compatibility.py"
+"$ATLASO_HOME/.venv/bin/python" -c 'import atlaso'
+pwsh -NoLogo -NoProfile -NonInteractive -Command \
+  '$ErrorActionPreference = "Stop"; Import-Module VCF.PowerCLI -RequiredVersion $env:ATLASO_POWERCLI_VERSION -Force'
+python3 "$PHOTON_PACKAGE_STATE_VERIFIER" --guest-platform "$ATLASO_GUEST_PLATFORM"
+log_step "scrubbing host identity after final Photon update"
+rm -f /etc/ssh/ssh_host_* /etc/machine-id /var/lib/dbus/machine-id
+if find /etc/ssh -maxdepth 1 -type f -name 'ssh_host_*' -print -quit | grep -q . \
+  || [ -e /etc/machine-id ] || [ -e /var/lib/dbus/machine-id ]; then
+  echo "Final Photon update left reusable host identity material in the image." >&2
+  exit 2
+fi
+write_build_info
+run_tdnf "Final Photon package cache cleanup" clean all
 rm -rf /var/cache/tdnf/* "$PIP_CACHE_DIR" /root/.cache/pip \
   /root/.cache/powershell /root/.local/share/powershell/PowerShellGet
 rm -rf "$ATLASO_SRC"
