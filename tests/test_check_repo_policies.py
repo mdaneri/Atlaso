@@ -1241,6 +1241,8 @@ def test_agent_policy_gate_rejects_missing_maintainer_break_glass_contract(
         f"<!-- {prohibition} -->",
         f"```text\n{prohibition}\n```",
         f"<del>{prohibition}</del>",
+        f"<s>{prohibition}</s>",
+        f"<strike>{prohibition}</strike>",
         f"~~{prohibition}~~",
     )
     for replacement in nonoperative_replacements:

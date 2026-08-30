@@ -2307,7 +2307,8 @@ def strip_markdown_deleted_content(text: str) -> str:
         text: Markdown source whose active policy prose must be inspected.
     """
     without_html_deletions = re.sub(
-        r'''<del\b(?:[^<>"']|"[^"]*"|'[^']*')*>.*?(?:</del[ \t\r\n]*>|$)''',
+        r'''<(?P<tag>del|s|strike)\b(?:[^<>"']|"[^"]*"|'[^']*')*>'''
+        r'''.*?(?:</(?P=tag)[ \t\r\n]*>|$)''',
         lambda match: re.sub(r"[^\r\n]", "", match.group(0)),
         text,
         flags=re.DOTALL | re.IGNORECASE,
