@@ -971,6 +971,17 @@
       "expected_holds": []
     },
     {
+      "name": "existing-draft-pr-work-ineligible",
+      "default_merge_authority": false,
+      "instructions": [
+        {
+          "text": "Fix the tests on draft PR #602."
+        }
+      ],
+      "generated": "Fix the tests while preserving the existing draft state.",
+      "expected_holds": []
+    },
+    {
       "name": "fork-pr-ineligible",
       "default_merge_authority": false,
       "instructions": [
@@ -979,6 +990,17 @@
         }
       ],
       "generated": "Inspect the fork pull request and report its state.",
+      "expected_holds": []
+    },
+    {
+      "name": "implementation-in-fork-ineligible",
+      "default_merge_authority": false,
+      "instructions": [
+        {
+          "text": "Implement issue #602 in a fork."
+        }
+      ],
+      "generated": "Implement the issue in the requested fork without merging it.",
       "expected_holds": []
     },
     {

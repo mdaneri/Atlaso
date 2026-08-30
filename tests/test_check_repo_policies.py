@@ -205,6 +205,16 @@ def test_source_authority_keeps_workflow_policy_subject_eligible() -> None:
     )
 
 
+def test_source_authority_excludes_ineligible_delivery_scopes() -> None:
+    """Verify fork and existing-draft implementation scopes remain ineligible."""
+    assert not source_has_default_merge_authority(
+        ("Implement issue #602 in a fork.",)
+    )
+    assert not source_has_default_merge_authority(
+        ("Fix the tests on draft PR #602.",)
+    )
+
+
 def test_generated_authority_rejects_conditional_approval() -> None:
     """Verify generated prompts cannot invent an approval prerequisite."""
     assert not has_affirmative_default_merge_authority(

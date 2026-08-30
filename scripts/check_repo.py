@@ -626,8 +626,11 @@ DEFAULT_MERGE_AUTHORITY_SOURCE_EXCLUSIONS = re.compile(
 DEFAULT_MERGE_AUTHORITY_WORKFLOW_EXCLUSIONS = re.compile(
     r"(?:perform|follow|conduct|undertake|use)\s+(?:the\s+)?"
     r"private (?:vulnerability|advisory|remediation)\b|"
-    r"(?:implement|fix|deliver|work on)\b[^.!?]{0,60}"
-    r"\b(?:external fork|from (?:an? )?fork|"
+    r"(?:implement|fix|patch|resolve|solve|deliver|change|modify|edit|work on)"
+    r"\b[^.!?]{0,60}\b(?:external fork|"
+    r"(?:from|in|on|inside|within) (?:an? )?(?:external )?fork|"
+    r"(?:on|in|against) (?:(?:an?|the|this|existing) )?"
+    r"draft (?:pull request|pr)\b|"
     r"private (?:vulnerability|advisory|remediation))\b"
 )
 DEFAULT_MERGE_AUTHORITY_DIRECT_REVIEW = re.compile(
