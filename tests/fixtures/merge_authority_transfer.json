@@ -1941,6 +1941,33 @@
       "expected_holds": [
         "wait for approval"
       ]
+    },
+    {
+      "name": "refrain-from-merging-is-preserved",
+      "default_merge_authority": true,
+      "instructions": [
+        {
+          "text": "Implement issue #602, but refrain from merging.",
+          "add_holds": [
+            "do not merge"
+          ]
+        }
+      ],
+      "generated": "Refrain from merging after pull-request delivery.",
+      "expected_holds": [
+        "do not merge"
+      ]
+    },
+    {
+      "name": "repository-refactor-grants-authority",
+      "default_merge_authority": true,
+      "instructions": [
+        {
+          "text": "Refactor the parser in scripts/check_repo.py."
+        }
+      ],
+      "generated": "Preserve default merge authority and complete the guarded merge when eligible.",
+      "expected_holds": []
     }
   ]
 }
