@@ -207,7 +207,7 @@ def test_guest_agent_success_marker_makes_cleanup_retryable() -> None:
         "ExecStartPre=/opt/atlaso/bin/atlaso-select-guest-agent --cleanup-only"
         in data_disks_unit
     )
-    assert "TimeoutStartSec=15min" in data_disks_unit
+    assert "TimeoutStartSec=20min" in data_disks_unit
     assert 'PACKAGE_CACHE_DIRECTORY="${ATLASO_GUEST_AGENT_PACKAGE_CACHE:-/var/cache/tdnf}"' in selector
     assert 'if [ "$cleanup_required" -eq 1 ]; then' in selector
 

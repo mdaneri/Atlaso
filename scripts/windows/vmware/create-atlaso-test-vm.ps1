@@ -135,8 +135,8 @@ Cannot be combined with -SshPublicKeyPath.
 
 .PARAMETER TimeoutSeconds
 Bounded wait used for the 1Password child, management-address discovery, and
-root-CA readiness. Development-root import proof always retains at least 20
-minutes for the 15-minute offline-cleanup gate plus bootstrap startup.
+root-CA readiness. Development-root import proof always retains at least 25
+minutes for the 15-minute offline-cleanup gate, disk preparation, and bootstrap startup.
 #>
 [Diagnostics.CodeAnalysis.SuppressMessageAttribute(
     'PSAvoidUsingPlainTextForPassword',
@@ -2090,7 +2090,7 @@ function Repair-AtlasoLegacyDevelopmentCaCleanupMarkerIdentity {
         -VmxPath $resolvedVmxPath `
         -VmrunPath $VmrunPath `
         -ExpectedFingerprint $ExpectedFingerprint `
-        -TimeoutSeconds ([Math]::Max($TimeoutSeconds, 1200))
+        -TimeoutSeconds ([Math]::Max($TimeoutSeconds, 1500))
     # Only the non-secret filesystem identity changes here. Exact running-path,
     # display-name, guest scrub, and import proofs all precede the durable rebind.
     $payload.VmxIdentity = [Atlaso.WorkstationFileIdentity]::Get($resolvedVmxPath)
@@ -2401,7 +2401,7 @@ function Invoke-PendingAtlasoDevelopmentCaCleanup {
                         -VmxPath $marker.VmxPath `
                         -VmrunPath $VmrunPath `
                         -ExpectedFingerprint $ExpectedFingerprint `
-                        -TimeoutSeconds ([Math]::Max($TimeoutSeconds, 1200))
+                        -TimeoutSeconds ([Math]::Max($TimeoutSeconds, 1500))
                     $importProven = $true
                 }
                 catch {
@@ -3166,7 +3166,7 @@ if (-not $WhatIfPreference) {
             -VmxPath $targetVmx `
             -VmrunPath $resolvedVmrunPath `
             -ExpectedFingerprint $developmentRootCaFingerprint `
-            -TimeoutSeconds ([Math]::Max($TimeoutSeconds, 1200))
+            -TimeoutSeconds ([Math]::Max($TimeoutSeconds, 1500))
         $successfulImportMarker = Read-AtlasoDevelopmentCaCleanupMarker `
             -MarkerPath $developmentCaCleanupMarkerPath `
             -MarkerRoot (Get-AtlasoDevelopmentCaCleanupMarkerRoot)

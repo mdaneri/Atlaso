@@ -628,9 +628,10 @@ gone. First boot writes it mode
 `0600`, proves guest-info scrub, encrypts it with that VM's unique `ATLASO_SECRETS_KEY`, and deletes the staging file.
 Provider selection commits its durable marker before the potentially long offline guest-agent closure cleanup. The data
 disk readiness unit owns that retryable cleanup as a mandatory 15-minute pre-start gate, allowing VMware customization
-and signer scrub to proceed concurrently without admitting data disks or Atlaso before cleanup succeeds. The host
-retains at least 20 minutes for encrypted-import proof so cleanup and subsequent bootstrap startup cannot cause false
-rollback. Cleanup mode
+and signer scrub to proceed concurrently without admitting data disks or Atlaso before cleanup succeeds. Its 20-minute
+unit deadline reserves five additional minutes for formatting and mounting. The host retains at least 25 minutes for
+encrypted-import proof so cleanup, disk preparation, and subsequent bootstrap startup cannot cause false rollback.
+Cleanup mode
 erases only the offline closure; portable KVM and Hyper-V first-boot access survives until the next boot. While the
 wrapper waits
 for scrub and encrypted-import proof, it reads only a bounded non-secret first-boot stage; timeout diagnostics report

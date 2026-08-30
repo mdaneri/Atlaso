@@ -336,10 +336,10 @@ if ($stageStart -lt 0 -or $importProof -lt $stageStart -or $rollbackCatch -lt $i
 if (
     @([regex]::Matches(
             $wrapperSource,
-            'Wait-AtlasoWorkstationDevelopmentRootCaImportProof[\s\S]*?-TimeoutSeconds\s+\(\[Math\]::Max\(\$TimeoutSeconds,\s*1200\)\)'
+            'Wait-AtlasoWorkstationDevelopmentRootCaImportProof[\s\S]*?-TimeoutSeconds\s+\(\[Math\]::Max\(\$TimeoutSeconds,\s*1500\)\)'
         )).Count -ne 3
 ) {
-    throw 'Every development-root import proof must retain the 15-minute cleanup gate plus bootstrap allowance.'
+    throw 'Every development-root import proof must retain cleanup, disk-preparation, and bootstrap allowance.'
 }
 foreach ($rollbackMarker in @(
         'Clear-AtlasoWorkstationDevelopmentRootCaRuntimePrivateKey',

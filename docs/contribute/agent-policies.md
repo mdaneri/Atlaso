@@ -1049,6 +1049,8 @@ Terminal order:
   VM's unique secrets key, scrub plaintext staging when import fails, and issue a unique HTTPS leaf. Commit guest-agent
   provider selection before potentially long offline-closure cleanup, and keep that cleanup as a mandatory data-disk
   15-minute pre-start gate so VMware signer scrub can run concurrently without admitting appliance readiness early.
+  Reserve additional data-disk unit time for formatting and mounting after the full cleanup deadline, and retain enough
+  host import-proof time for cleanup, disk preparation, and bootstrap startup.
   Cleanup mode erases only the offline closure and must retain portable KVM and Hyper-V first-boot access until the next
   boot. Host timeout diagnostics may consume only bounded fixed non-secret first-boot stage identifiers. Commit a durable
   non-secret cleanup marker through a Windows write-through atomic rename before staging and bind it to a non-secret
