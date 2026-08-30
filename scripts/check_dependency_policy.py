@@ -28,6 +28,19 @@ WORKFLOW_REQUIREMENT_RE = re.compile(
     r"(?:['\"])?(?P<path>[^\s'\"]+)"
 )
 RUN_RE = re.compile(r"^(?P<indent>\s*)(?:-\s+)?run:\s*(?P<value>.*)$")
+TRUSTED_ATLASO_REFS = {
+    "",
+    "${{ github.workflow_sha }}",
+    "main",
+    "refs/heads/main",
+}
+TRUSTED_ROOT_REFS_BY_WORKFLOW = {
+    "inventory-linux-release.yml": {"${{ inputs.release_sha }}"},
+    "release.yml": {"${{ needs.prepare.outputs.release_sha }}"},
+    "virtualization-windows-candidate.yml": {
+        "${{ needs.admit.outputs.release_sha }}"
+    },
+}
 
 
 @dataclass(frozen=True)
@@ -87,16 +100,47 @@ LOCK_POLICIES = (
 )
 
 
-def _workflow_checkout_paths(lines: list[str]) -> dict[str, CheckoutSource]:
-    """Return literal checkout destinations and their source repositories.
+def _workflow_job_scope(lines: list[str], index: int) -> int:
+    """Return the line index that identifies the enclosing workflow job.
+
+    Args:
+        lines: Workflow source lines.
+        index: Zero-based line index within the workflow.
+    """
+    line_indent = len(lines[index]) - len(lines[index].lstrip())
+    for steps_index in range(index, -1, -1):
+        candidate = lines[steps_index]
+        if candidate.strip() != "steps:":
+            continue
+        steps_indent = len(candidate) - len(candidate.lstrip())
+        if steps_indent >= line_indent:
+            continue
+        for parent_index in range(steps_index - 1, -1, -1):
+            parent = lines[parent_index]
+            parent_indent = len(parent) - len(parent.lstrip())
+            if parent.strip() and parent_indent < steps_indent:
+                return parent_index
+        return steps_index
+    return -1
+
+
+def _workflow_checkout_sources(
+    lines: list[str],
+) -> tuple[
+    dict[tuple[int, str], CheckoutSource],
+    dict[int, list[tuple[int, CheckoutSource]]],
+]:
+    """Return checkout destinations and root replacements grouped by job.
 
     Args:
         lines: Workflow source lines.
     """
-    checkout_paths: dict[str, CheckoutSource] = {}
+    checkout_paths: dict[tuple[int, str], CheckoutSource] = {}
+    root_checkouts: dict[int, list[tuple[int, CheckoutSource]]] = {}
     for index, line in enumerate(lines):
         if "uses: actions/checkout@" not in line:
             continue
+        job_scope = _workflow_job_scope(lines, index)
         step_indent = len(line) - len(line.lstrip())
         for step_line in reversed(lines[: index + 1]):
             if re.match(r"\s*-\s", step_line):
@@ -123,9 +167,12 @@ def _workflow_checkout_paths(lines: list[str]) -> dict[str, CheckoutSource]:
             )
             if ref_match:
                 ref = ref_match.group(1).strip()
+        source = CheckoutSource(repository, ref)
         if checkout_path:
-            checkout_paths[checkout_path] = CheckoutSource(repository, ref)
-    return checkout_paths
+            checkout_paths[(job_scope, checkout_path)] = source
+        else:
+            root_checkouts.setdefault(job_scope, []).append((index + 1, source))
+    return checkout_paths, root_checkouts
 
 
 def _continued_commands(lines: list[tuple[int, str]]) -> list[tuple[int, str]]:
@@ -223,7 +270,7 @@ def _validate_workflow_locks(root: Path, policy_paths: set[str]) -> list[str]:
             errors.append(f"{workflow.relative_to(root)}: workflow is unreadable")
             continue
         lines = text.splitlines()
-        checkout_paths = _workflow_checkout_paths(lines)
+        checkout_paths, root_checkouts = _workflow_checkout_sources(lines)
         for line_number, reference in _workflow_requirement_paths(lines):
             normalized = reference.replace("\\", "/")
             relative = PurePosixPath(normalized)
@@ -236,8 +283,9 @@ def _validate_workflow_locks(root: Path, policy_paths: set[str]) -> list[str]:
 
             policy_path = relative.as_posix()
             tracked_path = root.joinpath(*relative.parts)
-            if relative.parts[0] in checkout_paths and len(relative.parts) > 1:
-                checkout_source = checkout_paths[relative.parts[0]]
+            job_scope = _workflow_job_scope(lines, line_number - 1)
+            checkout_source = checkout_paths.get((job_scope, relative.parts[0]))
+            if checkout_source is not None and len(relative.parts) > 1:
                 if checkout_source.repository not in {
                     "${{ github.repository }}",
                     "mdaneri/Atlaso",
@@ -248,12 +296,7 @@ def _validate_workflow_locks(root: Path, policy_paths: set[str]) -> list[str]:
                         f"{reference}"
                     )
                     continue
-                if checkout_source.ref not in {
-                    "",
-                    "${{ github.workflow_sha }}",
-                    "main",
-                    "refs/heads/main",
-                }:
+                if checkout_source.ref not in TRUSTED_ATLASO_REFS:
                     errors.append(
                         f"{workflow.relative_to(root)}:{line_number}: checkout-prefixed "
                         "workflow requirement uses an untrusted Atlaso ref: "
@@ -262,6 +305,37 @@ def _validate_workflow_locks(root: Path, policy_paths: set[str]) -> list[str]:
                     continue
                 policy_path = PurePosixPath(*relative.parts[1:]).as_posix()
                 tracked_path = root.joinpath(*relative.parts[1:])
+            else:
+                active_root = next(
+                    (
+                        source
+                        for checkout_line, source in reversed(
+                            root_checkouts.get(job_scope, [])
+                        )
+                        if checkout_line < line_number
+                    ),
+                    None,
+                )
+                if active_root is not None and active_root.repository not in {
+                    "${{ github.repository }}",
+                    "mdaneri/Atlaso",
+                }:
+                    errors.append(
+                        f"{workflow.relative_to(root)}:{line_number}: root workflow "
+                        "requirement is not sourced from Atlaso: "
+                        f"{reference}"
+                    )
+                    continue
+                trusted_root_refs = TRUSTED_ATLASO_REFS | (
+                    TRUSTED_ROOT_REFS_BY_WORKFLOW.get(workflow.name, set())
+                )
+                if active_root is not None and active_root.ref not in trusted_root_refs:
+                    errors.append(
+                        f"{workflow.relative_to(root)}:{line_number}: root workflow "
+                        "requirement uses an untrusted Atlaso ref: "
+                        f"{reference}"
+                    )
+                    continue
 
             if not tracked_path.is_file():
                 errors.append(

@@ -288,6 +288,95 @@ def test_dependency_policy_accepts_lock_from_checkout_destination(
     assert validate(tmp_path) == []
 
 
+def test_dependency_policy_rejects_external_root_checkout_lock(
+    tmp_path: Path,
+) -> None:
+    """Verify an external root checkout cannot supply an Atlaso-named lock.
+
+    Args:
+        tmp_path: Temporary directory provided by pytest for isolated filesystem state.
+    """
+    write_valid_policy(tmp_path)
+    workflow = tmp_path / ".github" / "workflows" / "release.yml"
+    workflow.parent.mkdir(parents=True, exist_ok=True)
+    workflow.write_text(
+        """jobs:
+  external:
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          repository: attacker/other
+      - run: python -m pip install -r requirements-release-tools.lock
+""",
+        encoding="utf-8",
+    )
+
+    assert any(
+        "root workflow requirement is not sourced from Atlaso: "
+        "requirements-release-tools.lock" in error
+        for error in validate(tmp_path)
+    )
+
+
+def test_dependency_policy_rejects_untrusted_atlaso_root_checkout_ref(
+    tmp_path: Path,
+) -> None:
+    """Verify an arbitrary Atlaso root ref cannot supply policy locks.
+
+    Args:
+        tmp_path: Temporary directory provided by pytest for isolated filesystem state.
+    """
+    write_valid_policy(tmp_path)
+    workflow = tmp_path / ".github" / "workflows" / "release.yml"
+    workflow.parent.mkdir(parents=True, exist_ok=True)
+    workflow.write_text(
+        """jobs:
+  candidate:
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: feature/untrusted-lock
+      - run: python -m pip install -r requirements-release-tools.lock
+""",
+        encoding="utf-8",
+    )
+
+    assert any(
+        "root workflow requirement uses an untrusted Atlaso ref: "
+        "requirements-release-tools.lock" in error
+        for error in validate(tmp_path)
+    )
+
+
+def test_dependency_policy_scopes_root_checkouts_to_their_jobs(
+    tmp_path: Path,
+) -> None:
+    """Verify one job's external checkout does not taint another job.
+
+    Args:
+        tmp_path: Temporary directory provided by pytest for isolated filesystem state.
+    """
+    write_valid_policy(tmp_path)
+    workflow = tmp_path / ".github" / "workflows" / "release.yml"
+    workflow.parent.mkdir(parents=True, exist_ok=True)
+    workflow.write_text(
+        """jobs:
+  external:
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          repository: attacker/other
+  atlaso:
+    steps:
+      - uses: actions/checkout@v7
+      - run: python -m pip install -r requirements-release-tools.lock
+""",
+        encoding="utf-8",
+    )
+
+    assert validate(tmp_path) == []
+
+
 def test_dependency_policy_rejects_missing_dependabot_cooldown(
     tmp_path: Path,
 ) -> None:
