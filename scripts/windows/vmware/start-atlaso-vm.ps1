@@ -91,6 +91,7 @@ namespace Atlaso
             public uint XCountChars;
             public uint YCountChars;
             public uint FillAttribute;
+            public uint Flags;
             public ushort ShowWindow;
             public ushort Reserved2;
             public IntPtr Reserved2Pointer;

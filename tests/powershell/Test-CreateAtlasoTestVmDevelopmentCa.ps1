@@ -459,6 +459,7 @@ $startVmSource = Get-Content -LiteralPath (
 if ($startVmSource -notmatch '\[ValidateSet\(''gui'', ''nogui''\)\]' -or
     $startVmSource -notmatch 'bool inheritHandles' -or
     $startVmSource -notmatch 'ref startup,\s+out process' -or
+    $startVmSource -notmatch 'public uint FillAttribute;\s+public uint Flags;\s+public ushort ShowWindow;' -or
     $startVmSource -notmatch '@\(''-T'', ''ws'', ''start'', \$resolvedVmxPath, \$Mode\)' -or
     $startVmSource -match '&\s+\$resolvedVmrun') {
     throw 'GUI and headless VM starts must use the non-redirecting vmrun launcher contract.'
