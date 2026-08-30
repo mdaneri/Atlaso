@@ -318,6 +318,76 @@ jobs:
     assert len(findings) == len(PROTECTED_PUBLICATION_WORKFLOWS)
 
 
+def test_protected_workflow_cache_policy_accepts_wider_with_indentation(tmp_path: Path) -> None:
+    """Direct action inputs are parsed independent of indentation width.
+
+    Args:
+        tmp_path: Temporary directory provided by pytest.
+    """
+
+    write_protected_workflows(
+        tmp_path,
+        """permissions: read-all
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/setup-python@v7
+        with:
+            cache: pip
+""",
+    )
+
+    assert len(check_protected_workflow_caches(tmp_path)) == len(PROTECTED_PUBLICATION_WORKFLOWS)
+
+
+def test_protected_workflow_cache_policy_accepts_indentless_steps(tmp_path: Path) -> None:
+    """A valid indentless step sequence remains covered by policy.
+
+    Args:
+        tmp_path: Temporary directory provided by pytest.
+    """
+
+    write_protected_workflows(
+        tmp_path,
+        """permissions: read-all
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    steps:
+    - uses: actions/setup-python@v7
+      with:
+        cache: pip
+""",
+    )
+
+    assert len(check_protected_workflow_caches(tmp_path)) == len(PROTECTED_PUBLICATION_WORKFLOWS)
+
+
+def test_protected_workflow_cache_policy_accepts_bare_step_markers(tmp_path: Path) -> None:
+    """A bare sequence marker cannot hide a setup-python cache input.
+
+    Args:
+        tmp_path: Temporary directory provided by pytest.
+    """
+
+    write_protected_workflows(
+        tmp_path,
+        """permissions: read-all
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    steps:
+      -
+        uses: actions/setup-python@v7
+        with:
+          cache: pip
+""",
+    )
+
+    assert len(check_protected_workflow_caches(tmp_path)) == len(PROTECTED_PUBLICATION_WORKFLOWS)
+
+
 def test_protected_workflow_cache_policy_ignores_ordinary_ci(tmp_path: Path) -> None:
     """Ordinary CI cache policy remains outside protected publication checks.
 

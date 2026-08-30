@@ -20,6 +20,8 @@ from html import unescape
 from pathlib import Path
 from urllib.parse import unquote
 
+import yaml
+
 ROOT = Path(__file__).resolve().parents[1]
 
 SKIP_PARTS = {
@@ -2967,142 +2969,6 @@ def check_virtualization_legacy(root: Path) -> list[Finding]:
     return findings
 
 
-def _yaml_mapping(lines: list[str], key_index: int, key_indent: int) -> dict[str, str]:
-    """Read one simple scalar YAML mapping used by workflow permissions.
-
-    Args:
-        lines: Workflow source split into lines.
-        key_index: Index of the mapping key line.
-        key_indent: Indentation of the mapping key.
-
-    Returns:
-        The scalar child values keyed by their YAML names.
-    """
-
-    values: dict[str, str] = {}
-    for line in lines[key_index + 1 :]:
-        stripped = line.lstrip()
-        if not stripped or stripped.startswith("#"):
-            continue
-        indent = len(line) - len(stripped)
-        if indent <= key_indent:
-            break
-        if indent != key_indent + 2 or ":" not in stripped:
-            continue
-        key, value = stripped.split(":", 1)
-        values[key.strip()] = value.split("#", 1)[0].strip().strip("'\"")
-    return values
-
-
-def _workflow_permissions(lines: list[str], key_index: int, key_indent: int) -> dict[str, str]:
-    """Read block, scalar, or inline workflow permissions conservatively.
-
-    Args:
-        lines: Workflow source split into lines.
-        key_index: Index of the permissions key line.
-        key_indent: Indentation of the permissions key.
-
-    Returns:
-        Effective permission values needed by the protected-cache policy.
-    """
-
-    value = lines[key_index].split(":", 1)[1].split("#", 1)[0].strip()
-    if not value:
-        return _yaml_mapping(lines, key_index, key_indent)
-    value = value.strip("'\"")
-    if value == "write-all":
-        return {"actions": "write"}
-    if value == "read-all":
-        return {"actions": "read"}
-    if value.startswith("{") and value.endswith("}"):
-        entries: dict[str, str] = {}
-        for item in value[1:-1].split(","):
-            if ":" not in item:
-                continue
-            key, permission = item.split(":", 1)
-            entries[key.strip().strip("'\"")] = permission.strip().strip("'\"")
-        return entries
-    return {}
-
-
-def _setup_python_step_uses_cache(step_lines: list[str]) -> bool:
-    """Return whether one workflow step enables setup-python dependency caching.
-
-    Args:
-        step_lines: Complete YAML source lines for one workflow step.
-
-    Returns:
-        True when the step uses setup-python and its ``with`` inputs enable a
-        supported dependency cache.
-    """
-
-    lines = [line.split("#", 1)[0] for line in step_lines]
-    if not any(re.search(r"\buses:\s*['\"]?actions/setup-python@", line) for line in lines):
-        return False
-    def enabled(value: str) -> bool:
-        """Return whether a cache input value enables setup-python caching.
-
-        Args:
-            value: YAML scalar value assigned to the setup-python cache input.
-
-        Returns:
-            True unless the scalar is provably empty or null.
-        """
-
-        return value.strip() not in {"", "''", '""', "null", "~"}
-
-    joined = " ".join(line.strip() for line in lines)
-    flow_with = re.search(r"\bwith:\s*\{", joined)
-    if flow_with is not None:
-        opening = flow_with.end() - 1
-        depth = 0
-        quote = ""
-        body_end = len(joined)
-        for position, character in enumerate(joined[opening:], opening):
-            if quote:
-                if character == quote and joined[position - 1] != "\\":
-                    quote = ""
-                continue
-            if character in "'\"":
-                quote = character
-            elif character == "{":
-                depth += 1
-            elif character == "}":
-                depth -= 1
-                if depth == 0:
-                    body_end = position
-                    break
-        body = joined[opening + 1 : body_end]
-        flow_cache = re.search(
-            r"(?:^|,)\s*cache:\s*(.*?)(?=,\s*[A-Za-z0-9_-]+\s*:|$)",
-            body,
-        )
-        if flow_cache is not None:
-            return enabled(flow_cache.group(1))
-    for index, line in enumerate(lines):
-        stripped = line.lstrip()
-        match = re.match(r"with:\s*(.*)$", stripped)
-        if match is None:
-            continue
-        inline_value = match.group(1)
-        if inline_value:
-            return False
-        with_indent = len(line) - len(stripped)
-        for candidate in lines[index + 1 :]:
-            candidate_stripped = candidate.lstrip()
-            if not candidate_stripped:
-                continue
-            candidate_indent = len(candidate) - len(candidate_stripped)
-            if candidate_indent <= with_indent:
-                break
-            if candidate_indent == with_indent + 2:
-                cache_match = re.match(r"cache:\s*(.*)$", candidate_stripped)
-                if cache_match is not None:
-                    return enabled(cache_match.group(1))
-        return False
-    return False
-
-
 def check_protected_workflow_caches(root: Path) -> list[Finding]:
     """Reject writable setup-python caches without effective Actions write scope.
 
@@ -3120,115 +2986,50 @@ def check_protected_workflow_caches(root: Path) -> list[Finding]:
         if error is not None or text is None:
             findings.append(Finding(path, "protected publication workflow is missing or unreadable"))
             continue
-        lines = text.splitlines()
-        workflow_permissions: dict[str, str] = {}
-        for index, line in enumerate(lines):
-            if re.match(r"^permissions:\s*(?:[^#].*)?$", line):
-                workflow_permissions = _workflow_permissions(lines, index, 0)
-                break
-        jobs_index = next(
-            (
-                index
-                for index, line in enumerate(lines)
-                if re.match(r"^\s*jobs:\s*(?:#.*)?$", line)
-            ),
-            len(lines),
-        )
-        jobs_indent = (
-            len(lines[jobs_index]) - len(lines[jobs_index].lstrip())
-            if jobs_index < len(lines)
-            else 0
-        )
-        job_indent = next(
-            (
-                len(line) - len(line.lstrip())
-                for line in lines[jobs_index + 1 :]
-                if line.strip()
-                and not line.lstrip().startswith("#")
-                and len(line) - len(line.lstrip()) > jobs_indent
-            ),
-            jobs_indent + 2,
-        )
-        job_key = re.compile(
-            rf"^\s{{{job_indent}}}([A-Za-z0-9_-]+):\s*(?:#.*)?$"
-        )
-        job_starts = [
-            (index, match.group(1))
-            for index, line in enumerate(lines[jobs_index + 1 :], jobs_index + 1)
-            if (match := job_key.match(line)) is not None
-        ]
-        for position, (start, job_id) in enumerate(job_starts):
-            end = job_starts[position + 1][0] if position + 1 < len(job_starts) else len(lines)
-            job_lines = lines[start:end]
-            property_indent = min(
-                (
-                    len(line) - len(line.lstrip())
-                    for line in job_lines[1:]
-                    if line.strip()
-                    and not line.lstrip().startswith("#")
-                    and len(line) - len(line.lstrip()) > job_indent
-                ),
-                default=job_indent + 2,
-            )
-            effective_permissions = workflow_permissions
-            for offset, line in enumerate(job_lines):
-                indent = len(line) - len(line.lstrip())
-                if indent == property_indent and re.match(
-                    r"^\s*permissions:\s*(?:[^#].*)?$", line
-                ):
-                    effective_permissions = _workflow_permissions(
-                        job_lines, offset, property_indent
-                    )
-                    break
-            steps_index = next(
-                (
-                    offset
-                    for offset, line in enumerate(job_lines)
-                    if len(line) - len(line.lstrip()) == property_indent
-                    and re.match(r"^\s*steps:\s*(?:#.*)?$", line)
-                ),
-                len(job_lines),
-            )
-            steps_indent = property_indent
-            steps_end = next(
-                (
-                    offset
-                    for offset, line in enumerate(job_lines[steps_index + 1 :], steps_index + 1)
-                    if line.strip()
-                    and not line.lstrip().startswith("#")
-                    and len(line) - len(line.lstrip()) <= steps_indent
-                ),
-                len(job_lines),
-            )
-            step_indent = next(
-                (
-                    len(line) - len(line.lstrip())
-                    for line in job_lines[steps_index + 1 : steps_end]
-                    if line.lstrip().startswith("- ")
-                    and len(line) - len(line.lstrip()) > steps_indent
-                ),
-                steps_indent + 2,
-            )
-            step_starts = [
-                offset
-                for offset, line in enumerate(job_lines[steps_index + 1 : steps_end], steps_index + 1)
-                if len(line) - len(line.lstrip()) == step_indent
-                and line.lstrip().startswith("- ")
-            ]
-            for step_position, step_start in enumerate(step_starts):
-                step_end = (
-                    step_starts[step_position + 1]
-                    if step_position + 1 < len(step_starts)
-                    else steps_end
-                )
-                if not _setup_python_step_uses_cache(job_lines[step_start:step_end]):
+        try:
+            workflow = yaml.safe_load(text)
+        except yaml.YAMLError as exc:
+            findings.append(Finding(path, f"protected publication workflow YAML is invalid: {exc}"))
+            continue
+        if not isinstance(workflow, dict):
+            findings.append(Finding(path, "protected publication workflow must be a YAML mapping"))
+            continue
+        workflow_permissions = workflow.get("permissions")
+        jobs = workflow.get("jobs", {})
+        if not isinstance(jobs, dict):
+            findings.append(Finding(path, "protected publication workflow jobs must be a mapping"))
+            continue
+        for job_id, job in jobs.items():
+            if not isinstance(job, dict):
+                continue
+            permissions = job.get("permissions", workflow_permissions)
+            actions_permission: object = None
+            if permissions == "write-all":
+                actions_permission = "write"
+            elif permissions == "read-all":
+                actions_permission = "read"
+            elif isinstance(permissions, dict):
+                actions_permission = permissions.get("actions")
+            steps = job.get("steps", [])
+            if not isinstance(steps, list):
+                continue
+            for step in steps:
+                if not isinstance(step, dict):
                     continue
-                if effective_permissions.get("actions") != "write":
+                uses = step.get("uses")
+                inputs = step.get("with", {})
+                if not isinstance(uses, str) or not uses.startswith("actions/setup-python@"):
+                    continue
+                if not isinstance(inputs, dict) or "cache" not in inputs:
+                    continue
+                cache_value = inputs.get("cache")
+                if cache_value is None or (isinstance(cache_value, str) and not cache_value.strip()):
+                    continue
+                if actions_permission != "write":
                     findings.append(
                         Finding(
                             path,
-                            f"protected job {job_id!r} enables setup-python cache without actions: write",
-                            start + step_start + 1,
+                            f"protected job {str(job_id)!r} enables setup-python cache without actions: write",
                         )
                     )
     return findings
