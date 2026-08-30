@@ -1355,6 +1355,7 @@ def test_agent_policy_gate_rejects_missing_maintainer_break_glass_contract(
         f'<span hidden>retired<!-- </span> -->{prohibition}</span>',
         f'<span style="--state:initial;display:var(--state,none)">'
         f'{prohibition}</span>',
+        f'<span style="color:transparent">{prohibition}</span>',
     )
     for replacement in complex_html_replacements:
         for relative_path in required_entry_points:
@@ -1503,6 +1504,8 @@ def test_agent_policy_gate_rejects_missing_maintainer_break_glass_contract(
         f'<span style="display:none; --x:\"/*\"; display:block; --y:\"*/\"">'
         f"{prohibition}</span>",
         f'<span style="visibility:hidden"><span style="visibility:visible">'
+        f"{prohibition}</span></span>",
+        f'<span style="color:transparent"><span style="color:red">'
         f"{prohibition}</span></span>",
         f'<span style="display:none;display:initial">{prohibition}</span>',
         f'<span style="display:none;display:unset">{prohibition}</span>',

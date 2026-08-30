@@ -186,7 +186,20 @@ function isValidSuppressionDeclaration (property, value) {
   if (property === 'opacity') {
     return parseOpacityValue(value) !== null
   }
+  if (property === 'color') {
+    return /^(?:transparent|currentcolor|black|silver|gray|white|maroon|red|purple|fuchsia|green|lime|olive|yellow|navy|blue|teal|aqua|orange|rebeccapurple)$/.test(value) ||
+      /^#[0-9a-f]{3,8}$/.test(value) ||
+      /^(?:rgb|rgba|hsl|hsla|hwb|lab|lch|oklab|oklch|color|color-mix|light-dark)\(.+\)$/.test(value)
+  }
   return true
+}
+
+function isTransparentColor (value) {
+  if (value === 'transparent') return true
+  const alpha = value.match(/(?:,|\/)\s*([+-]?(?:\d+(?:\.\d*)?|\.\d+))(%?)\s*\)$/)
+  if (!alpha) return false
+  const numericAlpha = Number.parseFloat(alpha[1])
+  return numericAlpha <= 0
 }
 
 function stripCssComments (value) {
@@ -342,7 +355,7 @@ function hasHiddenAttributes (attributes, inheritedCustomProperties = new Map())
       customProperties.set(property, declaration)
     }
   }
-  for (const property of ['display', 'visibility', 'content-visibility', 'opacity']) {
+  for (const property of ['display', 'visibility', 'content-visibility', 'opacity', 'color']) {
     const declaration = declarations.get(property)
     if (!declaration?.value.includes('var(')) continue
     const resolved = resolveCssVariables(declaration.value, customProperties)
@@ -361,6 +374,7 @@ function hasHiddenAttributes (attributes, inheritedCustomProperties = new Map())
       (parseOpacityValue(declarations.get('opacity')?.value || '') ?? 1) <= 0
     ),
     visibility: declarations.get('visibility')?.value || null,
+    color: declarations.get('color')?.value || null,
     customProperties
   }
 }
@@ -439,12 +453,23 @@ function isHtmlSuppressed () {
   if (htmlStack.some(entry => entry.irreversible)) {
     return true
   }
+  let visibilityHidden = false
   for (let index = htmlStack.length - 1; index >= 0; index -= 1) {
     if (htmlStack[index].visibility) {
       if (/^(?:inherit|unset|revert|revert-layer)$/.test(htmlStack[index].visibility)) {
         continue
       }
-      return ['hidden', 'collapse'].includes(htmlStack[index].visibility)
+      visibilityHidden = ['hidden', 'collapse'].includes(htmlStack[index].visibility)
+      break
+    }
+  }
+  if (visibilityHidden) return true
+  for (let index = htmlStack.length - 1; index >= 0; index -= 1) {
+    if (htmlStack[index].color) {
+      if (/^(?:inherit|unset|revert|revert-layer|currentcolor)$/.test(htmlStack[index].color)) {
+        continue
+      }
+      return isTransparentColor(htmlStack[index].color)
     }
   }
   return false
@@ -501,6 +526,7 @@ function updateHtmlSuppression (content, inlineContext = false) {
         tag,
         irreversible: suppressedTags.has(tag) || suppression.irreversible,
         visibility: suppression.visibility,
+        color: suppression.color,
         inline: inlineContext,
         foreign,
         customProperties: suppression.customProperties
