@@ -784,13 +784,24 @@ def explicit_merge_holds(text: str) -> tuple[str, ...]:
 
 
 def _is_hold_discussion(segment: str, offset: int) -> bool:
-    """Return whether a hold phrase is only a discussed policy term."""
+    """Return whether a hold phrase is only a discussed policy term.
+
+    Args:
+        segment: Current instruction segment containing the hold phrase.
+        offset: Character offset where the hold phrase begins.
+    """
     prefix = segment[max(0, offset - 100) : offset - 1]
     return MERGE_HOLD_DISCUSSION_CONTEXT.search(prefix) is not None
 
 
 def _hold_targets_other_task(segment: str, offset: int, pattern: str) -> bool:
-    """Return whether a hold phrase explicitly targets a different task."""
+    """Return whether a hold phrase explicitly targets a different task.
+
+    Args:
+        segment: Current instruction segment containing the hold phrase.
+        offset: Character offset where the hold phrase begins.
+        pattern: Exact hold phrase matched in the segment.
+    """
     prefix = segment[max(0, offset - 80) : offset]
     suffix = segment[offset + len(pattern) : offset + len(pattern) + 80]
     return (
@@ -802,7 +813,14 @@ def _hold_targets_other_task(segment: str, offset: int, pattern: str) -> bool:
 def _hold_targets_non_pr_object(
     hold: str, segment: str, offset: int, pattern: str
 ) -> bool:
-    """Return whether do-not-merge governs an application object, not PR delivery."""
+    """Return whether do-not-merge governs an application object, not PR delivery.
+
+    Args:
+        hold: Canonical merge-hold name being classified.
+        segment: Current instruction segment containing the hold phrase.
+        offset: Character offset where the hold phrase begins.
+        pattern: Exact hold phrase matched in the segment.
+    """
     if hold != "do not merge":
         return False
     suffix = segment[offset + len(pattern) : offset + len(pattern) + 80]
