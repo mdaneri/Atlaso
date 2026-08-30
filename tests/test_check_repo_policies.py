@@ -1189,6 +1189,57 @@ def test_merge_authority_transfer_applies_coordinated_hold_withdrawal(
     assert check_merge_authority_transfer_fixtures(tmp_path) == []
 
 
+def test_merge_authority_transfer_scopes_coordinated_withdrawal_to_active_task(
+    tmp_path: Path,
+) -> None:
+    """Verify a coordinated withdrawal for another PR leaves active holds intact.
+
+    Args:
+        tmp_path: Temporary directory provided by pytest for isolated filesystem state.
+    """
+    path = tmp_path / MERGE_AUTHORITY_TRANSFER_FIXTURE_PATH
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(
+        json.dumps(
+            {
+                "cases": [
+                    {
+                        "name": "unrelated coordinated withdrawal",
+                        "default_merge_authority": True,
+                        "instructions": [
+                            {
+                                "text": (
+                                    "Implement the change, but do not merge and leave "
+                                    "the pull request open."
+                                ),
+                                "add_holds": ["do not merge", "leave open"],
+                            },
+                            {
+                                "text": (
+                                    "For unrelated PR #621, the do not merge and leave "
+                                    "open holds are withdrawn."
+                                ),
+                                "remove_holds": ["do not merge", "leave open"],
+                            },
+                        ],
+                        "generated": "Continue through guarded squash merge.",
+                        "expected_holds": [],
+                    }
+                ]
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    findings = check_merge_authority_transfer_fixtures(tmp_path)
+
+    assert len(findings) == 1
+    assert findings[0].message == (
+        "merge authority fixture unrelated coordinated withdrawal instruction 2 hold "
+        "operations do not match its text"
+    )
+
+
 def test_merge_authority_transfer_ignores_quoted_hold_discussion(
     tmp_path: Path,
 ) -> None:
@@ -1622,6 +1673,42 @@ def test_merge_authority_transfer_rejects_nonoperational_authority_mentions(
     assert len(findings) == 1
     assert findings[0].message == (
         "merge authority fixture authority policy mention omits affirmative default "
+        "authority"
+    )
+
+
+def test_merge_authority_transfer_rejects_documented_guarded_merge_mentions(
+    tmp_path: Path,
+) -> None:
+    """Verify documentation subjects are not operational guarded-merge actions.
+
+    Args:
+        tmp_path: Temporary directory provided by pytest for isolated filesystem state.
+    """
+    path = tmp_path / MERGE_AUTHORITY_TRANSFER_FIXTURE_PATH
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(
+        json.dumps(
+            {
+                "cases": [
+                    {
+                        "name": "document guarded merge",
+                        "default_merge_authority": True,
+                        "instructions": [{"text": "Implement the issue."}],
+                        "generated": "Document how to complete the guarded merge.",
+                        "expected_holds": [],
+                    }
+                ]
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    findings = check_merge_authority_transfer_fixtures(tmp_path)
+
+    assert len(findings) == 1
+    assert findings[0].message == (
+        "merge authority fixture document guarded merge omits affirmative default "
         "authority"
     )
 
@@ -2172,6 +2259,49 @@ def test_merge_authority_transfer_excludes_direct_review_requests(
     assert findings[0].message == (
         "merge authority fixture direct implementation review declared default "
         "authority does not match its source instructions"
+    )
+
+
+def test_merge_authority_transfer_keeps_implementation_before_review_eligible(
+    tmp_path: Path,
+) -> None:
+    """Verify a review step does not erase earlier implementation scope.
+
+    Args:
+        tmp_path: Temporary directory provided by pytest for isolated filesystem state.
+    """
+    path = tmp_path / MERGE_AUTHORITY_TRANSFER_FIXTURE_PATH
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(
+        json.dumps(
+            {
+                "cases": [
+                    {
+                        "name": "implementation then review",
+                        "default_merge_authority": False,
+                        "instructions": [
+                            {
+                                "text": (
+                                    "Implement issue #602, then review the "
+                                    "implementation."
+                                )
+                            }
+                        ],
+                        "generated": "Complete the implementation and review it.",
+                        "expected_holds": [],
+                    }
+                ]
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    findings = check_merge_authority_transfer_fixtures(tmp_path)
+
+    assert len(findings) == 1
+    assert findings[0].message == (
+        "merge authority fixture implementation then review declared default authority "
+        "does not match its source instructions"
     )
 
 

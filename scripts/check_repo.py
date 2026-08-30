@@ -590,9 +590,6 @@ DEFAULT_MERGE_AUTHORITY_SOURCE_EXCLUSIONS = re.compile(
     r"(?:review(?:-only|[^.!?]{0,60}\bonly\b)|"
     r"only\s+review\b[^;.!?]*|"
     r"report findings only|"
-    r"(?:review|inspect|analy(?:ze|sis)|assess)\s+(?:the\s+)?"
-    r"(?:implementation|changes?|code)\b"
-    r"(?:\s+and\s+(?:report|summarize|describe)\b[^;.!?]*)?|"
     r"(?:do not|don't|don’t|must not|without)\s+"
     r"(?:\w+\s+){0,3}(?:implement|fix|resolve|solve|deliver|"
     r"(?:updat|chang|modif|edit|mak)\w*\s+(?:any\s+)?"
@@ -611,6 +608,11 @@ DEFAULT_MERGE_AUTHORITY_SOURCE_EXCLUSIONS = re.compile(
     r"[^.!?]{0,20}\bas (?:an? )?draft\b|"
     r"external fork|from (?:an? )?fork|"
     r"private (?:vulnerability|advisory|remediation))"
+)
+DEFAULT_MERGE_AUTHORITY_DIRECT_REVIEW = re.compile(
+    r"(?:review|inspect|analy(?:ze|sis)|assess)\s+(?:the\s+)?"
+    r"(?:implementation|changes?|code)\b"
+    r"(?:\s+and\s+(?:report|summarize|describe)\b[^;.!?]*)?"
 )
 DEFAULT_MERGE_AUTHORITY_SOURCE_MARKERS = re.compile(
     r"\b(?:implement|implementation|fix|resolve|solve|deliver|update|change|"
@@ -639,6 +641,9 @@ MERGE_HOLD_DISCUSSION_CONTEXT = re.compile(
     r"\b(?:explain(?:ed|ing)?|document(?:ed|ing)?|discuss(?:ed|ing)?|"
     r"describe(?:d|s|ing)?|mention(?:ed|ing)?|refer(?:red|ring)?)\b"
 )
+DEFAULT_MERGE_AUTHORITY_ACTION_BOUNDARY = re.compile(
+    r"(?:[;,.!?]+|\s+(?:and|then|but)\s+)"
+)
 MERGE_HOLD_OTHER_TASK_SUFFIX = re.compile(
     r"^\s+(?:(?:for|on)\s+)?(?:(?:the|an?)\s+)?"
     r"(?:unrelated|other|another)\s+"
@@ -647,6 +652,9 @@ MERGE_HOLD_OTHER_TASK_SUFFIX = re.compile(
 MERGE_HOLD_OTHER_TASK_PREFIX = re.compile(
     r"(?:unrelated|other|another)\s+(?:pull request|pr)(?:\s*#\d+)?"
     r"(?:\s+[^.!?]{0,20})?\s*$"
+)
+MERGE_HOLD_OTHER_TASK_REFERENCE = re.compile(
+    r"(?:unrelated|other|another)\s+(?:pull request|pr)\b"
 )
 
 ORDERED_TERMINAL_CLEANUP_MARKERS = {
@@ -796,6 +804,8 @@ def merge_hold_directions(
     normalized = " ".join(text.casefold().split())
     for phrase in AUTO_MERGE_ONLY_PHRASES:
         normalized = normalized.replace(phrase, "keep github auto-merge disabled")
+    if MERGE_HOLD_OTHER_TASK_REFERENCE.search(normalized) is not None:
+        return {}
     shared_withdrawals: set[str] = set()
     coarse_segments = (
         segment.strip()
@@ -819,7 +829,11 @@ def merge_hold_directions(
                         hold
                         for hold, patterns in EXPLICIT_MERGE_HOLD_PATTERNS.items()
                         if any(
-                            0 <= coarse_segment.find(pattern) < marker_offset
+                            0 <= (hold_offset := coarse_segment.find(pattern))
+                            < marker_offset
+                            and not _hold_targets_other_task(
+                                coarse_segment, hold_offset, pattern
+                            )
                             for pattern in patterns
                         )
                     }
@@ -916,9 +930,11 @@ def has_affirmative_default_merge_authority(text: str) -> bool:
             context = normalized[
                 max(0, offset - 100) : offset + len(marker) + 100
             ]
+            action_prefix = DEFAULT_MERGE_AUTHORITY_ACTION_BOUNDARY.split(prefix)[-1]
             if (
                 DEFAULT_MERGE_AUTHORITY_NEGATIONS.search(prefix) is None
                 and DEFAULT_MERGE_AUTHORITY_TRAILING_NEGATIONS.search(suffix) is None
+                and MERGE_HOLD_DISCUSSION_CONTEXT.search(action_prefix) is None
                 and DEFAULT_MERGE_AUTHORITY_SECOND_INSTRUCTION_CONDITIONS.search(
                     context
                 )
@@ -941,13 +957,22 @@ def source_has_default_merge_authority(instructions: tuple[str, ...]) -> bool:
         exclusion_matches = tuple(
             DEFAULT_MERGE_AUTHORITY_SOURCE_EXCLUSIONS.finditer(normalized)
         ) + tuple(DEFAULT_MERGE_AUTHORITY_COORDINATED_NO_WORK.finditer(normalized))
+        source_markers = tuple(
+            DEFAULT_MERGE_AUTHORITY_SOURCE_MARKERS.finditer(normalized)
+        )
+        direct_review_matches = tuple(
+            match
+            for match in DEFAULT_MERGE_AUTHORITY_DIRECT_REVIEW.finditer(normalized)
+            if not any(marker.start() < match.start() for marker in source_markers)
+        )
+        exclusion_matches += direct_review_matches
         events = [
             (match.start(), 0, False)
             for match in exclusion_matches
         ]
         events.extend(
             (match.start(), 1, True)
-            for match in DEFAULT_MERGE_AUTHORITY_SOURCE_MARKERS.finditer(normalized)
+            for match in source_markers
             if not any(
                 exclusion.start() <= match.start() < exclusion.end()
                 for exclusion in exclusion_matches

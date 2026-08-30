@@ -314,6 +314,27 @@
       "expected_holds": []
     },
     {
+      "name": "unrelated-pr-coordinated-withdrawal",
+      "default_merge_authority": true,
+      "instructions": [
+        {
+          "text": "Implement the change, but do not merge and leave the pull request open.",
+          "add_holds": [
+            "do not merge",
+            "leave open"
+          ]
+        },
+        {
+          "text": "For unrelated PR #621, the do not merge and leave open holds are withdrawn."
+        }
+      ],
+      "generated": "Preserve the explicit do not merge and leave open instructions.",
+      "expected_holds": [
+        "do not merge",
+        "leave open"
+      ]
+    },
+    {
       "name": "comma-bound-hold-withdrawal",
       "default_merge_authority": true,
       "instructions": [
@@ -394,6 +415,17 @@
         }
       ],
       "generated": "Review the implementation and report findings.",
+      "expected_holds": []
+    },
+    {
+      "name": "implementation-then-review-eligible",
+      "default_merge_authority": true,
+      "instructions": [
+        {
+          "text": "Implement issue #602, then review the implementation."
+        }
+      ],
+      "generated": "Preserve default merge authority and complete the guarded merge when eligible.",
       "expected_holds": []
     },
     {
