@@ -20,10 +20,10 @@ function hasHiddenAttributes (attributes) {
   const parsedAttributes = new Map()
   const attributePattern = /(?:^|\s)([^\s"'=<>`/]+)(?:\s*=\s*(?:"([^"]*)"|'([^']*)'|([^\s"'=<>`]+)))?/g
   for (const match of attributes.matchAll(attributePattern)) {
-    parsedAttributes.set(
-      match[1].toLowerCase(),
-      match[2] ?? match[3] ?? match[4] ?? null
-    )
+    const name = match[1].toLowerCase()
+    if (!parsedAttributes.has(name)) {
+      parsedAttributes.set(name, match[2] ?? match[3] ?? match[4] ?? null)
+    }
   }
   if (parsedAttributes.has('hidden')) {
     return true
@@ -31,11 +31,11 @@ function hasHiddenAttributes (attributes) {
   if ((parsedAttributes.get('aria-hidden') || '').toLowerCase() === 'true') {
     return true
   }
-  const styleValue = decodeCssEscapes(decodeHtmlAttributeEntities(
-    parsedAttributes.get('style') || '')
-    .replace(/\/\*[\s\S]*?\*\//g, ''))
+  const styleValue = decodeHtmlAttributeEntities(parsedAttributes.get('style') || '')
+    .replace(/\/\*[\s\S]*?\*\//g, '')
   const declarations = new Map()
-  for (const declaration of splitCssDeclarations(styleValue)) {
+  for (const encodedDeclaration of splitCssDeclarations(styleValue)) {
+    const declaration = decodeCssEscapes(encodedDeclaration)
     const separator = declaration.indexOf(':')
     if (separator < 0) {
       continue
@@ -65,7 +65,10 @@ function decodeHtmlAttributeEntities (value) {
       )
     }
   )
-  return markdown.utils.unescapeAll(numericDecoded)
+  return numericDecoded.replace(
+    /&[A-Za-z][A-Za-z0-9]+;?/g,
+    entity => markdown.utils.unescapeAll(entity)
+  )
 }
 
 function splitCssDeclarations (value) {

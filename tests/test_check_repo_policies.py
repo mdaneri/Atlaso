@@ -1319,6 +1319,8 @@ def test_agent_policy_gate_rejects_missing_maintainer_break_glass_contract(
         f'<span style="display:n\\6f ne">{prohibition}</span>',
         f'<span style="display:none; --x:\'; display:block;\'">{prohibition}</span>',
         f'<span style="display&#58none">{prohibition}</span>',
+        f'<span style="display:none;--x:foo\\;display:block">{prohibition}</span>',
+        f'<span style="display:none" style="display:block">{prohibition}</span>',
     )
     for replacement in complex_html_replacements:
         for relative_path in required_entry_points:
