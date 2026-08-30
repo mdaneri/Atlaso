@@ -329,7 +329,7 @@ finally {
     Remove-Item Alias:Test-Connection -ErrorAction SilentlyContinue
 }
 if ($null -eq $providerFailureError -or
-    $providerFailureError.Exception.Message -notlike 'VMware address ownership was proven*' -or
+    $providerFailureError.Exception.Message -notlike 'An initial VMware ownership observation completed*' -or
     $providerFailureError.Exception.Message -notlike '*hostname evidence query failed with exit code 8*' -or
     $providerFailureError.Exception.Message -like '*guest initialization did not publish*') {
     throw 'A failed hostname provider read was misclassified as a successful empty first-boot answer.'
