@@ -5258,10 +5258,13 @@ present-but-incomplete, and invalid environments remain fail-closed. A later rea
 marker before normal validation so replacement deployments are not silently ignored.</p>
 <p>Lifecycle testing uses VMX/VMDK artifacts and <code>vmrun.exe</code>:</p>
 <div class="language-powershell highlight"><pre><span></span><code><span id="__span-28-1"><a id="__codelineno-28-1" name="__codelineno-28-1" href="#__codelineno-28-1"></a><span class="n">pwsh</span> <span class="n">-ExecutionPolicy</span> <span class="n">Bypass</span> <span class="p">`</span>
-</span><span id="__span-28-2"><a id="__codelineno-28-2" name="__codelineno-28-2" href="#__codelineno-28-2"></a>  <span class="o">-File</span> <span class="n">scripts</span><span class="p">/</span><span class="n">windows</span><span class="p">/</span><span class="n">vmware</span><span class="p">/</span><span class="nb">invoke-lifecycle</span><span class="n">-test</span><span class="p">.</span><span class="n">ps1</span>
+</span><span id="__span-28-2"><a id="__codelineno-28-2" name="__codelineno-28-2" href="#__codelineno-28-2"></a>  <span class="o">-File</span> <span class="n">scripts</span><span class="p">/</span><span class="n">windows</span><span class="p">/</span><span class="n">vmware</span><span class="p">/</span><span class="nb">invoke-lifecycle</span><span class="n">-test</span><span class="p">.</span><span class="n">ps1</span> <span class="p">`</span>
+</span><span id="__span-28-3"><a id="__codelineno-28-3" name="__codelineno-28-3" href="#__codelineno-28-3"></a>  <span class="n">-PullRequestNumber</span> <span class="p">&lt;</span><span class="n">number</span><span class="p">&gt;</span>
 </span></code></pre></div>
-<p>Results are written under <code>test-results/vmware-workstation-lifecycle/&lt;timestamp&gt;</code>. Workstation vmnets provide isolated
-layer-2 segments; tagged-trunk checks require a compatible upstream virtual-network configuration. Details live in
+<p>Results are written under the canonical
+<code>test-results/vmware-workstation-lifecycle/Atlaso-PR-&lt;number&gt;-lifecycle-&lt;collision-safe-suffix&gt;</code> identity, with absolute
+VMX evidence in <code>vmware-identity.json</code>. Workstation vmnets provide isolated layer-2 segments; tagged-trunk checks require
+a compatible upstream virtual-network configuration. Details live in
 <a href="../vmware-workstation-lifecycle-testing/">VMware Workstation Lifecycle Testing</a>.</p>
 <p>Workstation test-VM and lifecycle cleanup fails closed around the exact recursive-removal target. Redeploy requires the
 exact named VMX with exactly one well-formed expected display-name assignment; duplicate, malformed, or conflicting
@@ -5296,8 +5299,9 @@ checkout-local, Git-ignored configuration file. Input is masked and is never pri
 <p>Then run:</p>
 <div class="language-powershell highlight"><pre><span></span><code><span id="__span-30-1"><a id="__codelineno-30-1" name="__codelineno-30-1" href="#__codelineno-30-1"></a><span class="n">pwsh</span> <span class="n">-ExecutionPolicy</span> <span class="n">Bypass</span> <span class="p">`</span>
 </span><span id="__span-30-2"><a id="__codelineno-30-2" name="__codelineno-30-2" href="#__codelineno-30-2"></a>  <span class="o">-File</span> <span class="n">scripts</span><span class="p">/</span><span class="n">windows</span><span class="p">/</span><span class="n">vmware</span><span class="p">/</span><span class="n">create-atlaso-test-vm</span><span class="p">.</span><span class="n">ps1</span> <span class="p">`</span>
-</span><span id="__span-30-3"><a id="__codelineno-30-3" name="__codelineno-30-3" href="#__codelineno-30-3"></a>  <span class="n">-Redeploy</span> <span class="p">`</span>
-</span><span id="__span-30-4"><a id="__codelineno-30-4" name="__codelineno-30-4" href="#__codelineno-30-4"></a>  <span class="n">-ResetDataDisks</span>
+</span><span id="__span-30-3"><a id="__codelineno-30-3" name="__codelineno-30-3" href="#__codelineno-30-3"></a>  <span class="n">-PullRequestNumber</span> <span class="p">&lt;</span><span class="n">number</span><span class="p">&gt;</span> <span class="p">`</span>
+</span><span id="__span-30-4"><a id="__codelineno-30-4" name="__codelineno-30-4" href="#__codelineno-30-4"></a>  <span class="n">-Redeploy</span> <span class="p">`</span>
+</span><span id="__span-30-5"><a id="__codelineno-30-5" name="__codelineno-30-5" href="#__codelineno-30-5"></a>  <span class="n">-ResetDataDisks</span>
 </span></code></pre></div>
 <p>The normal wrapper resolves the current Windows user's existing <code>.ssh/id_ed25519.pub</code> before any cleanup or VM
 creation, validates it as one canonical Ed25519 public key, and provisions it for the bootstrap <code>admin</code> account with a
@@ -5374,7 +5378,7 @@ the exact 1Password Environment ID and approved 1Password account name or ID:</p
 <p>If you want that password-backed helper to resolve the guest IP from VMware Tools, pass the VMX path as the <code>-VmxPath</code>
 argument:</p>
 <div class="language-powershell highlight"><pre><span></span><code><span id="__span-33-1"><a id="__codelineno-33-1" name="__codelineno-33-1" href="#__codelineno-33-1"></a><span class="p">.\</span><span class="n">scripts</span><span class="p">\</span><span class="n">windows</span><span class="p">\</span><span class="n">vmware</span><span class="p">\</span><span class="n">deploy-wheel</span><span class="p">.</span><span class="n">ps1</span> <span class="p">`</span>
-</span><span id="__span-33-2"><a id="__codelineno-33-2" name="__codelineno-33-2" href="#__codelineno-33-2"></a>  <span class="n">-VmxPath</span> <span class="s2">&quot;image\vmware-workstation\test-vms\Atlaso-VMware\Atlaso-VMware.vmx&quot;</span> <span class="p">`</span>
+</span><span id="__span-33-2"><a id="__codelineno-33-2" name="__codelineno-33-2" href="#__codelineno-33-2"></a>  <span class="n">-VmxPath</span> <span class="s2">&quot;image\vmware-workstation\test-vms\Atlaso-PR-&lt;number&gt;-test-vm\Atlaso-PR-&lt;number&gt;-test-vm.vmx&quot;</span> <span class="p">`</span>
 </span><span id="__span-33-3"><a id="__codelineno-33-3" name="__codelineno-33-3" href="#__codelineno-33-3"></a>  <span class="n">-OnePasswordEnvironmentId</span> <span class="s1">&#39;&lt;atlaso-environment-id&gt;&#39;</span> <span class="p">`</span>
 </span><span id="__span-33-4"><a id="__codelineno-33-4" name="__codelineno-33-4" href="#__codelineno-33-4"></a>  <span class="n">-OnePasswordAccount</span> <span class="s1">&#39;&lt;account-name-or-id&gt;&#39;</span> <span class="p">`</span>
 </span><span id="__span-33-5"><a id="__codelineno-33-5" name="__codelineno-33-5" href="#__codelineno-33-5"></a>  <span class="n">-OnePasswordPython</span> <span class="s1">&#39;&lt;path-to-python-3.13.exe&gt;&#39;</span>

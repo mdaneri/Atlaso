@@ -3645,6 +3645,18 @@ that bounded child, and cryptographically verifies its concealed signer against 
 VM mutation. The stable SDK-backed wheel deployment above does not change this normal-test-wrapper-only trust path.</p>
 <p>Atlaso uses a VMware Workstation lifecycle lab as its canonical deployed-behavior environment. The path uses VMX/VMDK
 artifacts and <code>vmrun.exe</code>, then delegates appliance behavior checks to the provider-neutral Python lifecycle runner.</p>
+<p>Every task-owned VM used for pull-request validation has the canonical identity
+<code>Atlaso-PR-&lt;number&gt;-&lt;purpose&gt;[-&lt;collision-safe-suffix&gt;]</code>. <code>-PullRequestNumber</code> is required and accepts only a positive
+integer. The shared helper sanitizes <code>-Purpose</code> and <code>-CollisionSuffix</code> to lowercase ASCII words separated by hyphens.
+The normal wrapper defaults the purpose to <code>test-vm</code>; the lifecycle wrapper defaults it to <code>lifecycle</code> and generates a
+timestamp-plus-random suffix when one is not supplied. Use an explicit suffix to distinguish multiple normal VMs for
+the same pull request. The exact name is used for Workstation <code>displayName</code>, the output or lifecycle-lab directory, the
+normal VMX filename, and lifecycle result/log identity. Lifecycle runs also write <code>vmware-identity.json</code>, which records
+the final display names and absolute VMX paths; include those values with pull-request validation evidence.</p>
+<p>Reuse, redeploy, and cleanup rederive the expected identity and fail before mutation when the canonical directory,
+exact VMX path, <code>displayName</code>, or lifecycle plan ownership differs. The tools never rename, adopt, reuse, redeploy, or
+delete generic, issue-only, or differently owned VMs. Atlaso intentionally has no provisional shared/live VM workflow:
+wait until the pull request exists, then create a PR-numbered VM before collecting any acceptance evidence.</p>
 <p>Run all Windows commands in PowerShell 7.4 or newer (<code>pwsh</code>). Earlier PowerShell releases and Windows PowerShell 5.1
 (<code>powershell.exe</code>) are not supported.
 The single-command wrapper enforces that runtime, resolves the installed <code>pwsh</code> application, and launches its lifecycle
@@ -3653,8 +3665,8 @@ installation fails before any lifecycle VM is created.</p>
 <p>Appliance VMX files set <code>disk.EnableUUID = "TRUE"</code> so Photon exposes stable <code>/dev/disk/by-id</code> identities. ESX Storage
 blank-disk claims depend on those identities and reject transient <code>/dev/sdX</code> names.</p>
 <h2 id="topology">Topology<a class="headerlink" href="#topology" title="Permanent link">&para;</a></h2>
-<p>The default lifecycle lab creates isolated VM directories under:</p>
-<div class="language-text highlight"><pre><span></span><code><span id="__span-0-1"><a id="__codelineno-0-1" name="__codelineno-0-1" href="#__codelineno-0-1"></a>test-results/vmware-workstation-lifecycle/&lt;timestamp&gt;/vms
+<p>The default lifecycle lab creates isolated VM directories and result/log artifacts under its canonical identity:</p>
+<div class="language-text highlight"><pre><span></span><code><span id="__span-0-1"><a id="__codelineno-0-1" name="__codelineno-0-1" href="#__codelineno-0-1"></a>test-results/vmware-workstation-lifecycle/Atlaso-PR-&lt;number&gt;-lifecycle-&lt;collision-safe-suffix&gt;/vms
 </span></code></pre></div>
 <p>The appliance VMX is copied from the selected Workstation image output. Client VMs use an Alpine cloud VMDK prepared
 from a pinned upstream QCOW2 source. The payload and SHA-512 metadata are cached only as
@@ -3792,7 +3804,8 @@ reversed, ambiguous, capacity-mismatched, legacy-unproven, or byte-modified payl
 by formatting or silently swapping unrelated VMDKs.</p>
 <h2 id="single-command-run">Single-Command Run<a class="headerlink" href="#single-command-run" title="Permanent link">&para;</a></h2>
 <div class="language-powershell highlight"><pre><span></span><code><span id="__span-3-1"><a id="__codelineno-3-1" name="__codelineno-3-1" href="#__codelineno-3-1"></a><span class="n">pwsh</span> <span class="n">-ExecutionPolicy</span> <span class="n">Bypass</span> <span class="p">`</span>
-</span><span id="__span-3-2"><a id="__codelineno-3-2" name="__codelineno-3-2" href="#__codelineno-3-2"></a>  <span class="o">-File</span> <span class="n">scripts</span><span class="p">/</span><span class="n">windows</span><span class="p">/</span><span class="n">vmware</span><span class="p">/</span><span class="nb">invoke-lifecycle</span><span class="n">-test</span><span class="p">.</span><span class="n">ps1</span>
+</span><span id="__span-3-2"><a id="__codelineno-3-2" name="__codelineno-3-2" href="#__codelineno-3-2"></a>  <span class="o">-File</span> <span class="n">scripts</span><span class="p">/</span><span class="n">windows</span><span class="p">/</span><span class="n">vmware</span><span class="p">/</span><span class="nb">invoke-lifecycle</span><span class="n">-test</span><span class="p">.</span><span class="n">ps1</span> <span class="p">`</span>
+</span><span id="__span-3-3"><a id="__codelineno-3-3" name="__codelineno-3-3" href="#__codelineno-3-3"></a>  <span class="n">-PullRequestNumber</span> <span class="p">&lt;</span><span class="n">number</span><span class="p">&gt;</span>
 </span></code></pre></div>
 <p>The wrapper has no password defaults. It prompts securely for the appliance administrator and VCF Backup credentials;
 client SSH reuses the administrator <code>SecureString</code> unless <code>-SshPassword</code> is supplied. <code>-FullEsxiPxeInstall</code> also
@@ -3815,10 +3828,10 @@ ESXi PXE unit is applied.
 The <code>-OidcOnly</code> and <code>-RoutingWanOnly</code> paths do not prompt for or include a VCF Backup password because those focused
 scenarios neither stage VCF Backup nor run the settings backup/restore pass.</p>
 <p>The wrapper selects the newest appliance VMX under <code>image/vmware-workstation/output</code>, prepares the tiny Alpine client
-VMDK when needed, creates a unique <code>AtlasoWorkstationLifecycle-*</code> lab, runs the initial lifecycle scenario, and by
-default runs the restored backup/restore pass. Pass <code>-SkipBackupRestoreTest</code> only when the older single-pass behavior is
-intended. Unless <code>-ApplianceIPAddress</code> is passed, the wrapper waits for VMware Tools to report the appliance's DHCP
-management IPv4 address and derives the appliance URL from that discovered address.</p>
+VMDK when needed, creates a unique <code>Atlaso-PR-&lt;number&gt;-lifecycle-&lt;collision-safe-suffix&gt;</code> lab, runs the initial lifecycle
+scenario, and by default runs the restored backup/restore pass. Pass <code>-SkipBackupRestoreTest</code> only when the older
+single-pass behavior is intended. Unless <code>-ApplianceIPAddress</code> is passed, the wrapper waits for VMware Tools to report
+the appliance's DHCP management IPv4 address and derives the appliance URL from that discovered address.</p>
 <p>Tiny-client preparation exits nonzero and emits no prepared-image JSON when <code>qemu-img</code> conversion or inspection fails.
 If the current run created an incomplete or unverified VMDK, the wrapper removes that exact output before returning the
 failure so a later lifecycle run cannot accept it as prepared.</p>
@@ -3840,17 +3853,20 @@ and the backup/restore pass.</p>
 <div class="language-powershell highlight"><pre><span></span><code><span id="__span-4-1"><a id="__codelineno-4-1" name="__codelineno-4-1" href="#__codelineno-4-1"></a><span class="c"># Print selected paths and topology without creating VMs.</span>
 </span><span id="__span-4-2"><a id="__codelineno-4-2" name="__codelineno-4-2" href="#__codelineno-4-2"></a><span class="n">pwsh</span> <span class="n">-ExecutionPolicy</span> <span class="n">Bypass</span> <span class="p">`</span>
 </span><span id="__span-4-3"><a id="__codelineno-4-3" name="__codelineno-4-3" href="#__codelineno-4-3"></a>  <span class="o">-File</span> <span class="n">scripts</span><span class="p">/</span><span class="n">windows</span><span class="p">/</span><span class="n">vmware</span><span class="p">/</span><span class="nb">invoke-lifecycle</span><span class="n">-test</span><span class="p">.</span><span class="n">ps1</span> <span class="p">`</span>
-</span><span id="__span-4-4"><a id="__codelineno-4-4" name="__codelineno-4-4" href="#__codelineno-4-4"></a>  <span class="n">-PlanOnly</span>
-</span><span id="__span-4-5"><a id="__codelineno-4-5" name="__codelineno-4-5" href="#__codelineno-4-5"></a>
-</span><span id="__span-4-6"><a id="__codelineno-4-6" name="__codelineno-4-6" href="#__codelineno-4-6"></a><span class="c"># Validate Workstation vmnet inventory.</span>
-</span><span id="__span-4-7"><a id="__codelineno-4-7" name="__codelineno-4-7" href="#__codelineno-4-7"></a><span class="n">pwsh</span> <span class="n">-ExecutionPolicy</span> <span class="n">Bypass</span> <span class="p">`</span>
-</span><span id="__span-4-8"><a id="__codelineno-4-8" name="__codelineno-4-8" href="#__codelineno-4-8"></a>  <span class="o">-File</span> <span class="n">scripts</span><span class="p">/</span><span class="n">windows</span><span class="p">/</span><span class="n">vmware</span><span class="p">/</span><span class="nb">invoke-lifecycle</span><span class="n">-test</span><span class="p">.</span><span class="n">ps1</span> <span class="p">`</span>
-</span><span id="__span-4-9"><a id="__codelineno-4-9" name="__codelineno-4-9" href="#__codelineno-4-9"></a>  <span class="n">-PrepareNetworksOnly</span>
-</span><span id="__span-4-10"><a id="__codelineno-4-10" name="__codelineno-4-10" href="#__codelineno-4-10"></a>
-</span><span id="__span-4-11"><a id="__codelineno-4-11" name="__codelineno-4-11" href="#__codelineno-4-11"></a><span class="c"># Stop and remove existing AtlasoWorkstationLifecycle* VMs.</span>
-</span><span id="__span-4-12"><a id="__codelineno-4-12" name="__codelineno-4-12" href="#__codelineno-4-12"></a><span class="n">pwsh</span> <span class="n">-ExecutionPolicy</span> <span class="n">Bypass</span> <span class="p">`</span>
-</span><span id="__span-4-13"><a id="__codelineno-4-13" name="__codelineno-4-13" href="#__codelineno-4-13"></a>  <span class="o">-File</span> <span class="n">scripts</span><span class="p">/</span><span class="n">windows</span><span class="p">/</span><span class="n">vmware</span><span class="p">/</span><span class="nb">invoke-lifecycle</span><span class="n">-test</span><span class="p">.</span><span class="n">ps1</span> <span class="p">`</span>
-</span><span id="__span-4-14"><a id="__codelineno-4-14" name="__codelineno-4-14" href="#__codelineno-4-14"></a>  <span class="n">-CleanupVmsOnly</span>
+</span><span id="__span-4-4"><a id="__codelineno-4-4" name="__codelineno-4-4" href="#__codelineno-4-4"></a>  <span class="n">-PullRequestNumber</span> <span class="p">&lt;</span><span class="n">number</span><span class="p">&gt;</span> <span class="p">`</span>
+</span><span id="__span-4-5"><a id="__codelineno-4-5" name="__codelineno-4-5" href="#__codelineno-4-5"></a>  <span class="n">-PlanOnly</span>
+</span><span id="__span-4-6"><a id="__codelineno-4-6" name="__codelineno-4-6" href="#__codelineno-4-6"></a>
+</span><span id="__span-4-7"><a id="__codelineno-4-7" name="__codelineno-4-7" href="#__codelineno-4-7"></a><span class="c"># Validate Workstation vmnet inventory.</span>
+</span><span id="__span-4-8"><a id="__codelineno-4-8" name="__codelineno-4-8" href="#__codelineno-4-8"></a><span class="n">pwsh</span> <span class="n">-ExecutionPolicy</span> <span class="n">Bypass</span> <span class="p">`</span>
+</span><span id="__span-4-9"><a id="__codelineno-4-9" name="__codelineno-4-9" href="#__codelineno-4-9"></a>  <span class="o">-File</span> <span class="n">scripts</span><span class="p">/</span><span class="n">windows</span><span class="p">/</span><span class="n">vmware</span><span class="p">/</span><span class="nb">invoke-lifecycle</span><span class="n">-test</span><span class="p">.</span><span class="n">ps1</span> <span class="p">`</span>
+</span><span id="__span-4-10"><a id="__codelineno-4-10" name="__codelineno-4-10" href="#__codelineno-4-10"></a>  <span class="n">-PrepareNetworksOnly</span>
+</span><span id="__span-4-11"><a id="__codelineno-4-11" name="__codelineno-4-11" href="#__codelineno-4-11"></a>
+</span><span id="__span-4-12"><a id="__codelineno-4-12" name="__codelineno-4-12" href="#__codelineno-4-12"></a><span class="c"># Stop and remove one exact retained PR-owned lifecycle lab.</span>
+</span><span id="__span-4-13"><a id="__codelineno-4-13" name="__codelineno-4-13" href="#__codelineno-4-13"></a><span class="n">pwsh</span> <span class="n">-ExecutionPolicy</span> <span class="n">Bypass</span> <span class="p">`</span>
+</span><span id="__span-4-14"><a id="__codelineno-4-14" name="__codelineno-4-14" href="#__codelineno-4-14"></a>  <span class="o">-File</span> <span class="n">scripts</span><span class="p">/</span><span class="n">windows</span><span class="p">/</span><span class="n">vmware</span><span class="p">/</span><span class="nb">invoke-lifecycle</span><span class="n">-test</span><span class="p">.</span><span class="n">ps1</span> <span class="p">`</span>
+</span><span id="__span-4-15"><a id="__codelineno-4-15" name="__codelineno-4-15" href="#__codelineno-4-15"></a>  <span class="n">-PullRequestNumber</span> <span class="p">&lt;</span><span class="n">number</span><span class="p">&gt;</span> <span class="p">`</span>
+</span><span id="__span-4-16"><a id="__codelineno-4-16" name="__codelineno-4-16" href="#__codelineno-4-16"></a>  <span class="n">-CollisionSuffix</span> <span class="s1">&#39;&lt;suffix-reported-by-the-run&gt;&#39;</span> <span class="p">`</span>
+</span><span id="__span-4-17"><a id="__codelineno-4-17" name="__codelineno-4-17" href="#__codelineno-4-17"></a>  <span class="n">-CleanupVmsOnly</span>
 </span></code></pre></div>
 <p>The plan-only command does not prompt for passwords or create a protected credential bundle because the emitted plan
 does not consume credentials.</p>
@@ -3920,10 +3936,11 @@ the checkout-local, Git-ignored configuration file. The prompt is masked and the
 <p>Then use the ordinary command without an ID argument:</p>
 <div class="language-powershell highlight"><pre><span></span><code><span id="__span-6-1"><a id="__codelineno-6-1" name="__codelineno-6-1" href="#__codelineno-6-1"></a><span class="n">pwsh</span> <span class="n">-ExecutionPolicy</span> <span class="n">Bypass</span> <span class="p">`</span>
 </span><span id="__span-6-2"><a id="__codelineno-6-2" name="__codelineno-6-2" href="#__codelineno-6-2"></a>  <span class="o">-File</span> <span class="n">scripts</span><span class="p">/</span><span class="n">windows</span><span class="p">/</span><span class="n">vmware</span><span class="p">/</span><span class="n">create-atlaso-test-vm</span><span class="p">.</span><span class="n">ps1</span> <span class="p">`</span>
-</span><span id="__span-6-3"><a id="__codelineno-6-3" name="__codelineno-6-3" href="#__codelineno-6-3"></a>  <span class="n">-Redeploy</span> <span class="p">`</span>
-</span><span id="__span-6-4"><a id="__codelineno-6-4" name="__codelineno-6-4" href="#__codelineno-6-4"></a>  <span class="n">-ResetDataDisks</span> <span class="p">`</span>
-</span><span id="__span-6-5"><a id="__codelineno-6-5" name="__codelineno-6-5" href="#__codelineno-6-5"></a>  <span class="n">-WaitForIp</span> <span class="p">`</span>
-</span><span id="__span-6-6"><a id="__codelineno-6-6" name="__codelineno-6-6" href="#__codelineno-6-6"></a>  <span class="n">-TrustRootCa</span>
+</span><span id="__span-6-3"><a id="__codelineno-6-3" name="__codelineno-6-3" href="#__codelineno-6-3"></a>  <span class="n">-PullRequestNumber</span> <span class="p">&lt;</span><span class="n">number</span><span class="p">&gt;</span> <span class="p">`</span>
+</span><span id="__span-6-4"><a id="__codelineno-6-4" name="__codelineno-6-4" href="#__codelineno-6-4"></a>  <span class="n">-Redeploy</span> <span class="p">`</span>
+</span><span id="__span-6-5"><a id="__codelineno-6-5" name="__codelineno-6-5" href="#__codelineno-6-5"></a>  <span class="n">-ResetDataDisks</span> <span class="p">`</span>
+</span><span id="__span-6-6"><a id="__codelineno-6-6" name="__codelineno-6-6" href="#__codelineno-6-6"></a>  <span class="n">-WaitForIp</span> <span class="p">`</span>
+</span><span id="__span-6-7"><a id="__codelineno-6-7" name="__codelineno-6-7" href="#__codelineno-6-7"></a>  <span class="n">-TrustRootCa</span>
 </span></code></pre></div>
 <p>It defaults to the management vmnet only; pass <code>-IncludeLabNetworkAdapters</code> after creating the SiteA, WAN/SiteB, and
 trunk-like vmnets.

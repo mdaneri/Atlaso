@@ -4171,8 +4171,10 @@ sources directly.</p>
 <h2 id="signed-lifecycle-fixture">Signed lifecycle fixture<a class="headerlink" href="#signed-lifecycle-fixture" title="Permanent link">&para;</a></h2>
 <p>The canonical VMware Workstation lifecycle coverage can exercise the complete release transaction with:</p>
 <div class="language-powershell highlight"><pre><span></span><code><span id="__span-5-1"><a id="__codelineno-5-1" name="__codelineno-5-1" href="#__codelineno-5-1"></a><span class="n">scripts</span><span class="p">/</span><span class="n">windows</span><span class="p">/</span><span class="n">vmware</span><span class="p">/</span><span class="nb">invoke-lifecycle</span><span class="n">-test</span><span class="p">.</span><span class="n">ps1</span> <span class="p">`</span>
-</span><span id="__span-5-2"><a id="__codelineno-5-2" name="__codelineno-5-2" href="#__codelineno-5-2"></a>  <span class="n">-SignedReleaseRepositoryUrl</span> <span class="n">https</span><span class="p">://</span><span class="n">release-fixture</span><span class="p">.</span><span class="n">example</span><span class="p">.</span><span class="n">test</span><span class="p">/</span><span class="n">updates</span>
+</span><span id="__span-5-2"><a id="__codelineno-5-2" name="__codelineno-5-2" href="#__codelineno-5-2"></a>  <span class="n">-PullRequestNumber</span> <span class="n">1234</span> <span class="p">`</span>
+</span><span id="__span-5-3"><a id="__codelineno-5-3" name="__codelineno-5-3" href="#__codelineno-5-3"></a>  <span class="n">-SignedReleaseRepositoryUrl</span> <span class="n">https</span><span class="p">://</span><span class="n">release-fixture</span><span class="p">.</span><span class="n">example</span><span class="p">.</span><span class="n">test</span><span class="p">/</span><span class="n">updates</span>
 </span></code></pre></div>
+<p>Replace <code>1234</code> with the exact pull-request number that owns the lifecycle validation.</p>
 <p>The fixture must use the appliance's named test trust key. Its signed <code>preview</code> channel must select a healthy release
 newer than the image baseline; its signed <code>development</code> channel must select a candidate that reaches database startup
 and then fails final nginx or management-front-door readiness. The lifecycle runner proves that each release task
