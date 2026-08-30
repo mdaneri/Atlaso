@@ -207,8 +207,11 @@ failure, fallback ISO paths, and forced whole-child timeout through the parent-o
 endpoint-protection cleanup failure terminates the build instead of reporting success with a credential-bearing
 artifact left behind. `-PrepareIsoOnly` is rejected because retaining that ISO would retain a reusable build credential.
 
-GUI builds start or reuse a responsive VMware Workstation UI as a process separate from Packer before invoking the
-VMware builder. The parent starts the exact resolved `vmware.exe` before creating the bounded image-build child, then
+GUI builds repair exact missing Atlaso registrations inside the configured output scope before Workstation is started,
+while the existing full output cleanup remains after network preflight. They then start or reuse a responsive VMware
+Workstation UI as a process separate from Packer before invoking the VMware builder. An already-open UI still blocks
+required stale-registration repair with the exact close-the-UI diagnostic. The parent starts the exact resolved
+`vmware.exe` before creating the bounded image-build child, then
 the child verifies that UI remains responsive immediately before Packer starts. This preserves the visible console
 while keeping the sensitive job non-breakaway; Packer, plugins, and their VM consumers cannot leave that job. Until SSH
 provisioning begins, the wrapper reports sanitized,
