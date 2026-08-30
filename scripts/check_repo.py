@@ -2326,7 +2326,9 @@ def strip_markdown_deleted_content(text: str) -> str:
                 if deletion_stack[index] == tag_name:
                     del deletion_stack[index]
                     break
-        elif not match.group(0).rstrip().endswith("/>"):
+        else:
+            # HTML ignores the self-closing flag on non-void deletion elements,
+            # so ``<del/>`` remains open until a matching end tag appears.
             deletion_stack.append(tag_name)
         cursor = match.end()
     trailing_text = text[cursor:]
@@ -2336,12 +2338,58 @@ def strip_markdown_deleted_content(text: str) -> str:
         else trailing_text
     )
     without_html_deletions = "".join(visible_parts)
-    return re.sub(
-        r"~~(?=\S).*?(?<=\S)~~",
-        lambda match: re.sub(r"[^\r\n]", "", match.group(0)),
-        without_html_deletions,
-        flags=re.DOTALL,
-    )
+    markdown_parts: list[str] = []
+    cursor = 0
+    in_deletion = False
+    while cursor < len(without_html_deletions):
+        if without_html_deletions[cursor] == "\\" and cursor + 1 < len(
+            without_html_deletions
+        ):
+            escaped = without_html_deletions[cursor : cursor + 2]
+            markdown_parts.append(
+                re.sub(r"[^\r\n]", "", escaped) if in_deletion else escaped
+            )
+            cursor += 2
+            continue
+        if without_html_deletions[cursor] == "`":
+            run_end = cursor
+            while (
+                run_end < len(without_html_deletions)
+                and without_html_deletions[run_end] == "`"
+            ):
+                run_end += 1
+            delimiter = without_html_deletions[cursor:run_end]
+            closing = without_html_deletions.find(delimiter, run_end)
+            span_end = closing + len(delimiter) if closing >= 0 else run_end
+            code_span = without_html_deletions[cursor:span_end]
+            markdown_parts.append(
+                re.sub(r"[^\r\n]", "", code_span)
+                if in_deletion
+                else code_span
+            )
+            cursor = span_end
+            continue
+        if without_html_deletions.startswith("~~", cursor):
+            previous = without_html_deletions[cursor - 1] if cursor else ""
+            following_index = cursor + 2
+            following = (
+                without_html_deletions[following_index]
+                if following_index < len(without_html_deletions)
+                else ""
+            )
+            can_open = bool(following and not following.isspace())
+            can_close = bool(previous and not previous.isspace())
+            if (in_deletion and can_close) or (not in_deletion and can_open):
+                in_deletion = not in_deletion
+                markdown_parts.append("")
+                cursor += 2
+                continue
+        character = without_html_deletions[cursor]
+        markdown_parts.append(
+            "" if in_deletion and character not in "\r\n" else character
+        )
+        cursor += 1
+    return "".join(markdown_parts)
 
 
 def strip_markdown_nonoperative_content(text: str) -> str:

@@ -1248,7 +1248,11 @@ def test_agent_policy_gate_rejects_missing_maintainer_break_glass_contract(
         f"<strike><strike>retired</strike> {prohibition}</strike>",
         f"<del><s>retired</del> {prohibition}</s>",
         f"<s><strike>retired</s> {prohibition}</strike>",
+        f"<del/>retired {prohibition}</del>",
+        f"<s/>retired {prohibition}</s>",
+        f"<strike/>retired {prohibition}</strike>",
         f"~~{prohibition}~~",
+        f"~~retired `~~` {prohibition}~~",
     )
     for replacement in nonoperative_replacements:
         for relative_path in required_entry_points:
