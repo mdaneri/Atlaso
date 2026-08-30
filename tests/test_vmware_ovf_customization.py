@@ -255,6 +255,51 @@ def test_vmware_ovf_customizer_stages_and_scrubs_development_root_key(
     assert private_key_pem not in str(summary)
 
 
+def test_vmware_ovf_customizer_reports_only_bounded_first_boot_stages(monkeypatch):
+    """Publish allowlisted stage syntax and preserve a sanitized failure layer.
+
+    Args:
+        monkeypatch: Pytest fixture used to replace VMware guest-info commands.
+    """
+    customizer = load_customizer()
+    commands = []
+    monkeypatch.setattr(customizer.shutil, "which", lambda name: f"/usr/bin/{name}")
+
+    def record_run(command, **kwargs):
+        """Capture a guest-info setter without executing VMware Tools.
+
+        Args:
+            command: Command selected by the customizer.
+            **kwargs: Subprocess options accepted by the test double.
+        """
+        assert kwargs["timeout"] == 5
+        commands.append(command)
+        return subprocess.CompletedProcess(command, 0, "", "")
+
+    monkeypatch.setattr(customizer.subprocess, "run", record_run)
+    customizer.publish_first_boot_stage("development-root-ca-staging")
+    customizer.publish_first_boot_stage("unsafe stage\nvalue")
+
+    assert commands == [
+        [
+            "/usr/bin/vmware-rpctool",
+            "info-set guestinfo.atlaso.test_vm_first_boot_stage development-root-ca-staging",
+        ]
+    ]
+
+    stages = []
+    with pytest.raises(
+        customizer.OvfCustomizationError,
+        match="First-time initialization failed in the fixed layer",
+    ):
+        customizer.run_initialization_layer(
+            "fixed layer",
+            lambda: (_ for _ in ()).throw(OSError("sensitive detail")),
+            stage_reporter=stages.append,
+        )
+    assert stages == ["fixed-layer", "failed-fixed-layer"]
+
+
 def test_atomic_json_applies_secret_mode_before_opening_payload(tmp_path, monkeypatch):
     """Apply the requested staging mode before a shared signer can be written.
 

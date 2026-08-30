@@ -420,6 +420,12 @@ quarantine path, and current host boot. An ambiguous publication or failed fallb
 starting removal. After first boot proves encrypted import and
 VMware reports the exact empty runtime sentinel, the wrapper stops the exact VM, removes and verifies the powered-off
 signing-key assignment, restarts it, and requires three empty runtime readbacks before retiring the marker.
+First boot commits guest-agent provider selection before erasing the offline package closure. That retryable cleanup is
+a mandatory data-disk pre-start gate and may run concurrently with VMware customization, so it cannot delay signing-key
+guest-info scrub while still blocking data-disk and application readiness. During scrub and encrypted-import proof, the
+guest publishes only bounded fixed first-boot stage identifiers. A timeout reports the last valid stage, or a fixed
+diagnostic that provider selection or customizer startup did not complete; it never includes command output or secret
+material.
 The wrapper injects the same complete DHCP-first OVF environment before power-on. Use `-FirstBootFqdn` for the test
 identity. The wrapper uses the single local 1Password CLI account and the highest compatible CPython 3.10 through 3.13
 runtime registered with the Windows launcher, including bracketed Python Install Manager architecture selectors. Use

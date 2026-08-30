@@ -1658,6 +1658,7 @@ function Wait-AtlasoWorkstationDevelopmentRootCaImportProof {
     $guestInfoName = 'guestinfo.atlaso.test_vm_development_root_ca_imported'
     $deadline = (Get-Date).AddSeconds($TimeoutSeconds)
     $matchingReads = 0
+    $lastFirstBootStage = ''
     do {
         $remainingSeconds = [Math]::Max(1, [int][Math]::Ceiling(($deadline - (Get-Date)).TotalSeconds))
         $value = Invoke-AtlasoBoundedVmrun `
@@ -1679,12 +1680,63 @@ function Wait-AtlasoWorkstationDevelopmentRootCaImportProof {
         }
         else {
             $matchingReads = 0
+            $lastFirstBootStage = Get-AtlasoWorkstationFirstBootStage `
+                -VmxPath $VmxPath `
+                -VmrunPath $VmrunPath `
+                -TimeoutSeconds ([Math]::Min($remainingSeconds, 5))
         }
         if ((Get-Date) -lt $deadline) {
             Start-Sleep -Seconds $PollSeconds
         }
     } while ((Get-Date) -lt $deadline)
-    throw 'The normal test VM did not prove encrypted development-root import and plaintext staging removal.'
+    $diagnostic = if ($lastFirstBootStage) {
+        " Last reported first-boot stage: $lastFirstBootStage."
+    }
+    else {
+        ' No bounded first-boot stage was reported; guest-agent selection or customizer startup did not complete.'
+    }
+    throw "The normal test VM did not prove encrypted development-root import and plaintext staging removal.$diagnostic"
+}
+
+<#
+.SYNOPSIS
+Read one bounded sanitized normal-test-VM first-boot stage.
+
+.PARAMETER VmxPath
+Exact running normal test VMX path.
+
+.PARAMETER VmrunPath
+Exact VMware vmrun executable path.
+
+.PARAMETER TimeoutSeconds
+Positive bounded time allowed for the guest-info read.
+#>
+function Get-AtlasoWorkstationFirstBootStage {
+    param(
+        [Parameter(Mandatory = $true)][string]$VmxPath,
+        [Parameter(Mandatory = $true)][string]$VmrunPath,
+        [Parameter(Mandatory = $true)][int]$TimeoutSeconds
+    )
+
+    try {
+        $value = Invoke-AtlasoBoundedVmrun `
+            -VmrunPath $VmrunPath `
+            -ArgumentList @(
+                '-T', 'ws', 'readVariable', $VmxPath, 'runtimeConfig',
+                'guestinfo.atlaso.test_vm_first_boot_stage'
+            ) `
+            -TimeoutSeconds $TimeoutSeconds `
+            -Action 'Read the bounded normal-test-VM first-boot stage'
+    }
+    catch {
+        # A best-effort diagnostic must never replace the primary readiness error.
+        return ''
+    }
+    $normalized = if ($null -eq $value) { '' } else { $value.Trim().ToLowerInvariant() }
+    if ($normalized -match '^[a-z][a-z0-9-]{0,63}$') {
+        return $normalized
+    }
+    return ''
 }
 
 <#
@@ -1714,6 +1766,7 @@ function Wait-AtlasoWorkstationDevelopmentRootCaPrivateKeyScrub {
     $guestInfoName = 'guestinfo.atlaso.test_vm_development_root_ca_private_key'
     $deadline = (Get-Date).AddSeconds($TimeoutSeconds)
     $emptyReads = 0
+    $lastFirstBootStage = ''
     do {
         $remainingSeconds = [Math]::Max(1, [int][Math]::Ceiling(($deadline - (Get-Date)).TotalSeconds))
         $value = Invoke-AtlasoBoundedVmrun `
@@ -1733,12 +1786,22 @@ function Wait-AtlasoWorkstationDevelopmentRootCaPrivateKeyScrub {
         }
         else {
             $emptyReads = 0
+            $lastFirstBootStage = Get-AtlasoWorkstationFirstBootStage `
+                -VmxPath $VmxPath `
+                -VmrunPath $VmrunPath `
+                -TimeoutSeconds ([Math]::Min($remainingSeconds, 5))
         }
         if ((Get-Date) -lt $deadline) {
             Start-Sleep -Seconds $PollSeconds
         }
     } while ((Get-Date) -lt $deadline)
-    throw 'The normal test VM did not prove that its development signing key guest-info value was scrubbed.'
+    $diagnostic = if ($lastFirstBootStage) {
+        " Last reported first-boot stage: $lastFirstBootStage."
+    }
+    else {
+        ' No bounded first-boot stage was reported; guest-agent selection or customizer startup did not complete.'
+    }
+    throw "The normal test VM did not prove that its development signing key guest-info value was scrubbed.$diagnostic"
 }
 
 <#

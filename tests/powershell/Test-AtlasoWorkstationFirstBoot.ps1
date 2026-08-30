@@ -115,6 +115,44 @@ function Invoke-AtlasoRuntimeSignerScrubVmrun {
     }
 }
 
+<#
+.SYNOPSIS
+Return a retained signer and one fixed non-secret first-boot stage.
+
+.PARAMETER Arguments
+vmrun-compatible arguments used to select the requested guest-info key.
+#>
+function Invoke-AtlasoFirstBootStageVmrun {
+    param(
+        [Parameter(ValueFromRemainingArguments = $true)][string[]]$Arguments
+    )
+
+    $global:LASTEXITCODE = 0
+    if ($Arguments -contains 'guestinfo.atlaso.test_vm_first_boot_stage') {
+        return 'failed-development-root-ca-staging-and-guest-info-scrub'
+    }
+    return 'present'
+}
+
+<#
+.SYNOPSIS
+Return a retained signer while failing only the diagnostic-stage read.
+
+.PARAMETER Arguments
+vmrun-compatible arguments used to select the requested guest-info key.
+#>
+function Invoke-AtlasoUnavailableFirstBootStageVmrun {
+    param(
+        [Parameter(ValueFromRemainingArguments = $true)][string[]]$Arguments
+    )
+
+    $global:LASTEXITCODE = 0
+    if ($Arguments -contains 'guestinfo.atlaso.test_vm_first_boot_stage') {
+        throw 'simulated diagnostic read failure'
+    }
+    return 'present'
+}
+
 $validKey = 'ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIAABAgMEBQYHCAkKCwwNDg8QERITFBUWFxgZGhscHR4f atlaso&test'
 $temporaryRoot = Join-Path ([System.IO.Path]::GetTempPath()) "atlaso-workstation-key-$([guid]::NewGuid().ToString('N'))"
 New-Item -ItemType Directory -Path $temporaryRoot | Out-Null
@@ -229,6 +267,40 @@ try {
                 -TimeoutSeconds 0 `
                 -PollSeconds 0
         } 'A mismatched encrypted-import proof must fail closed.'
+        $stageFailure = $null
+        try {
+            Wait-AtlasoWorkstationDevelopmentRootCaPrivateKeyScrub `
+                -VmxPath (Join-Path $temporaryRoot 'stage.vmx') `
+                -VmrunPath 'Invoke-AtlasoFirstBootStageVmrun' `
+                -TimeoutSeconds 0 `
+                -PollSeconds 0
+        }
+        catch {
+            $stageFailure = $_.Exception.Message
+        }
+        if (
+            $stageFailure -notmatch 'Last reported first-boot stage: ' -or
+            $stageFailure -notmatch 'failed-development-root-ca-staging-and-guest-info-scrub'
+        ) {
+            throw 'A scrub timeout must surface only the bounded guest-reported first-boot stage.'
+        }
+        $unavailableStageFailure = $null
+        try {
+            Wait-AtlasoWorkstationDevelopmentRootCaPrivateKeyScrub `
+                -VmxPath (Join-Path $temporaryRoot 'stage-unavailable.vmx') `
+                -VmrunPath 'Invoke-AtlasoUnavailableFirstBootStageVmrun' `
+                -TimeoutSeconds 0 `
+                -PollSeconds 0
+        }
+        catch {
+            $unavailableStageFailure = $_.Exception.Message
+        }
+        if (
+            $unavailableStageFailure -notmatch 'No bounded first-boot stage was reported' -or
+            $unavailableStageFailure -match 'simulated diagnostic read failure'
+        ) {
+            throw 'An unavailable stage diagnostic must preserve the primary scrub timeout.'
+        }
         $script:RuntimeSignerScrubCalls = [System.Collections.Generic.List[string]]::new()
         Clear-AtlasoWorkstationDevelopmentRootCaRuntimePrivateKey `
             -VmxPath (Join-Path $temporaryRoot 'runtime-scrub.vmx') `

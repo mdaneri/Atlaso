@@ -1044,7 +1044,10 @@ Terminal order:
   removal. If termination is unproven, preserve the VM and VMX, or keep reused disks quarantined during removal, until
   a Windows host restart proves the child tree is gone. Validate the
   key before host mutation, use only the separately scrubbed test-wrapper guest-info/staging path, encrypt it with each
-  VM's unique secrets key, scrub plaintext staging when import fails, and issue a unique HTTPS leaf. Commit a durable
+  VM's unique secrets key, scrub plaintext staging when import fails, and issue a unique HTTPS leaf. Commit guest-agent
+  provider selection before potentially long offline-closure cleanup, and keep that cleanup as a mandatory data-disk
+  pre-start gate so VMware signer scrub can run concurrently without admitting appliance readiness early. Host timeout
+  diagnostics may consume only bounded fixed non-secret first-boot stage identifiers. Commit a durable
   non-secret cleanup marker through a Windows write-through atomic rename before staging and bind it to a non-secret
   VMX identity that survives VMware's legitimate power-on file replacement. After encrypted import proof, stop the
   exact VM, prove the powered-off VMX signer assignment absent, restart it, and prove runtime guest-info remains empty

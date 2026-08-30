@@ -7,6 +7,7 @@ Before=atlaso-bootstrap-https.service atlaso.service
 
 [Service]
 Type=oneshot
+ExecStartPre=/opt/atlaso/bin/atlaso-select-guest-agent --cleanup-only
 ExecStart=/opt/atlaso/bin/atlaso-mount-data-disks
 RemainAfterExit=yes
 
