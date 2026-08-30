@@ -533,6 +533,9 @@ The following cross-cutting boundaries always apply:
   state as defense in depth; it is not a reproducible Photon image builder and does not claim to authenticate the entire
   root filesystem against a compromised producer. Keep public-repository Windows runners offline except for the approved
   release, bind them to one release-specific label, and destroy or sanitize them immediately afterward.
+  Before evidence validation, index construction, signing, attestation, or publication, require the complete
+  suffix-matching Hyper-V archive-name set to equal exactly the single version-derived canonical filename. Stable
+  promotion must independently enforce the same signed asset-set invariant before reusing those bytes.
 - First-boot depot and backup initialization requires the root-owned image policy, exact platform SCSI identities,
   topology-derived `atlaso-path-*` links, and exact 500 GiB capacities. Complete an all-disk preflight before `mkfs` and
   fail closed for missing, extra, reordered, ambiguous, read-only, in-use, or identity/capacity-mismatched disks.

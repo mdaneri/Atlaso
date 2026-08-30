@@ -84,7 +84,11 @@ same boundary uses `qemu-img compare` to require both Hyper-V payload VHDX disks
 expose the same guest-visible bytes as the admitted OVA VMDKs and both 500 GiB Hyper-V data disks to match an
 independent all-zero sparse reference.
 The protected index signer also requires the exact versioned OVA name and the canonical OVF, manifest, provenance, and
-two payload-VMDK names; suffix-compatible aliases are not publishable assets.
+two payload-VMDK names; suffix-compatible aliases are not publishable assets. The complete Hyper-V archive-name set
+must equal exactly `{atlaso-v<version>-hyperv-x86_64.zip}` before the finalizer validates evidence, builds or signs an
+index, or changes publication state. Missing, additional, wrong-version, case-variant, and path-variant suffix matches
+fail closed. Stable promotion independently enforces the same invariant from the signed prerelease index before it can
+publish the unchanged bytes.
 
 The OVA contains files for the two payload disks. Its two 500 GiB data disks are fileless declarations. Import helpers
 retain fileless disks when the platform creates them, create only missing data disks, and reject reordered or

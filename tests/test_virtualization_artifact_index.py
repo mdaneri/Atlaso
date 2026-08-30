@@ -447,6 +447,164 @@ def test_rejects_noncanonical_vmware_release_names(tmp_path: Path) -> None:
         )
 
 
+@pytest.mark.parametrize(
+    "hyperv_names",
+    [
+        set(),
+        {
+            "atlaso-v0.9.217-hyperv-x86_64.zip",
+            "additional-hyperv-x86_64.zip",
+        },
+        {"atlaso-v0.9.216-hyperv-x86_64.zip"},
+        {
+            "atlaso-v0.9.217-hyperv-x86_64.zip",
+            "atlaso-v0.9.216-hyperv-x86_64.zip",
+        },
+        {
+            "atlaso-v0.9.217-hyperv-x86_64.zip",
+            "ATLASO-V0.9.217-HYPERV-X86_64.ZIP",
+        },
+        {r"nested\atlaso-v0.9.217-hyperv-x86_64.zip"},
+    ],
+)
+def test_rejects_noncanonical_hyperv_asset_sets(
+    tmp_path: Path, hyperv_names: set[str]
+) -> None:
+    """Every Hyper-V-like name set must equal the single canonical archive.
+
+    Args:
+        tmp_path: Temporary directory provided by pytest.
+        hyperv_names: Noncanonical suffix-matching archive-name set.
+    """
+
+    assets = tmp_path / "assets"
+    _assets(assets)
+    names = {
+        path.name
+        for path in assets.iterdir()
+        if not path.name.lower().endswith("-hyperv-x86_64.zip")
+    }
+    names.update(hyperv_names)
+    with pytest.raises(SystemExit, match="exact canonical Hyper-V asset set"):
+        builder._require_virtualization_set(names, "0.9.217", "prerelease")
+
+
+def test_rejects_additional_hyperv_archive_before_signing(tmp_path: Path) -> None:
+    """An extra suffix-matching archive fails before index or signature output.
+
+    Args:
+        tmp_path: Temporary directory provided by pytest.
+    """
+
+    assets = tmp_path / "assets"
+    _assets(assets)
+    (assets / "unvalidated-hyperv-x86_64.zip").write_bytes(b"unvalidated")
+    _key(tmp_path / "key.pem")
+
+    with pytest.raises(SystemExit, match="exact canonical Hyper-V asset set"):
+        builder.main(
+            [
+                "--assets",
+                str(assets),
+                "--version",
+                "0.9.217",
+                "--commit",
+                "a" * 40,
+                "--classification",
+                "prerelease",
+                "--release-tag",
+                "virtualization-v0.9.217-rc.1",
+                "--source-release-manifest-sha256",
+                "b" * 64,
+                "--application-wheel-sha256",
+                "c" * 64,
+                "--signing-key",
+                str(tmp_path / "key.pem"),
+                "--signing-key-id",
+                "test-key",
+            ]
+        )
+    assert not (assets / builder.INDEX_NAME).exists()
+    assert not (assets / builder.SIGNATURE_NAME).exists()
+
+
+def test_verifier_rejects_signed_additional_hyperv_archive(tmp_path: Path) -> None:
+    """Stable admission rejects even a validly signed noncanonical archive set.
+
+    Args:
+        tmp_path: Temporary directory provided by pytest.
+    """
+
+    assets = tmp_path / "assets"
+    _assets(assets)
+    key = _key(tmp_path / "key.pem")
+    arguments = [
+        "--assets",
+        str(assets),
+        "--version",
+        "0.9.217",
+        "--commit",
+        "a" * 40,
+        "--classification",
+        "prerelease",
+        "--release-tag",
+        "virtualization-v0.9.217-rc.1",
+        "--source-release-manifest-sha256",
+        "b" * 64,
+        "--application-wheel-sha256",
+        "c" * 64,
+        "--built-at",
+        "2026-08-26T00:00:00Z",
+        "--signing-key",
+        str(tmp_path / "key.pem"),
+        "--signing-key-id",
+        "test-key",
+    ]
+    assert builder.main(arguments) == 0
+
+    additional = assets / "unvalidated-hyperv-x86_64.zip"
+    additional.write_bytes(b"unvalidated")
+    index_path = assets / builder.INDEX_NAME
+    index = json.loads(index_path.read_text(encoding="utf-8"))
+    index["assets"].append(
+        {
+            "name": additional.name,
+            "role": "hyperv_package",
+            "size": additional.stat().st_size,
+            "sha256": hashlib.sha256(additional.read_bytes()).hexdigest(),
+        }
+    )
+    index["assets"].sort(key=lambda record: record["name"])
+    index_bytes = builder._canonical_json(index)
+    index_path.write_bytes(index_bytes)
+    signature = {
+        "schema_version": 1,
+        "algorithm": "ed25519",
+        "key_id": "test-key",
+        "signature": base64.b64encode(key.sign(index_bytes)).decode("ascii"),
+    }
+    (assets / builder.SIGNATURE_NAME).write_bytes(builder._canonical_json(signature))
+    trust_key = tmp_path / "test-key.pem"
+    trust_key.write_bytes(
+        key.public_key().public_bytes(
+            encoding=serialization.Encoding.PEM,
+            format=serialization.PublicFormat.SubjectPublicKeyInfo,
+        )
+    )
+
+    with pytest.raises(SystemExit, match="exact canonical Hyper-V asset set"):
+        verifier.verify(
+            index_path=index_path,
+            signature_path=assets / builder.SIGNATURE_NAME,
+            trust_key_path=trust_key,
+            asset_directory=assets,
+            expected_version="0.9.217",
+            expected_commit="a" * 40,
+            expected_classification="prerelease",
+            expected_release_tag="virtualization-v0.9.217-rc.1",
+        )
+
+
 def test_rejects_ova_provenance_not_bound_to_software_source(tmp_path: Path) -> None:
     """Signing fails when OVA provenance disagrees with the signed source sidecar.
 
