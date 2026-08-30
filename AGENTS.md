@@ -715,8 +715,9 @@ The following cross-cutting boundaries always apply:
   boot identity, output root, VM name, and VMX path, and retain it while that exact VM remains active or recovery
   evidence is ambiguous. A dead owner cannot release its reservation during the same Windows boot because a surviving
   descendant could still start the VM. Permit stale recovery only after a changed host-boot identity proves that tree
-  gone and the exact VM and address are inactive. Release normally only after inactive-VM completion. The completed
-  appliance still uses management DHCP by default.
+  gone and the exact VM and address are inactive. Keep the non-secret release handoff outside temporary credential
+  storage, retry it after a preserved VM stops, and delete it only after exact ledger release succeeds. Release normally
+  only after inactive-VM completion. The completed appliance still uses management DHCP by default.
 - Validate live appliance readiness through `/openapi.json`, not VMware Tools IP discovery or service color alone.
 - A successful tty1 management-network correction must explicitly apply Network and Firewall from the corrected state,
   retry unfinished first-boot HTTPS before applying Appliance Settings, validate nginx before reload, ensure nginx and

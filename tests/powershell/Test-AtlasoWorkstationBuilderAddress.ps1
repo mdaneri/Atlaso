@@ -201,7 +201,9 @@ exit 1
             'BuilderAddressPoolStartOffset',
             'BuilderAddressPoolEndOffset',
             'VmwareDhcpConfigPath',
-            'builder-address-reservation.json'
+            'builder-address-reservation-'
+            'pending-releases'
+            'Complete-AtlasoBuilderAddressReservationHandoff'
         )) {
         if (-not $wrapper.Contains($required, [StringComparison]::Ordinal)) {
             throw "The Photon wrapper is missing builder reservation integration marker: $required"

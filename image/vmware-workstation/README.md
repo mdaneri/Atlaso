@@ -253,6 +253,9 @@ worktree, source commit, branch, process, Windows boot identity, output root, VM
 reserved for the rest of the same Windows boot because a surviving descendant could still start the VM. After a host
 restart proves that process tree gone, recovery also requires the exact VM to be inactive and its address unobserved;
 ambiguous state remains reserved with an actionable error.
+The non-secret release handoff lives under the same per-user state root instead of the temporary credential directory.
+If cleanup retains a running VM, stop that VM and rerun the wrapper; startup retries every exact pending handoff before
+allocating another address and deletes a handoff only after its ledger release succeeds.
 
 Use `-BuilderAddressPoolStartOffset` and `-BuilderAddressPoolEndOffset` to select another bounded pool. An explicit
 `-BuilderStaticIp` is a one-address pool and must pass the same VMware DHCP, fixed-address, observation, and reservation

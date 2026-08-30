@@ -377,7 +377,53 @@ function Resolve-WorkstationOutputDirectory {
     return $ExecutionContext.SessionState.Path.GetUnresolvedProviderPathFromPSPath($effectiveOutput)
 }
 
+function Complete-AtlasoBuilderAddressReservationHandoff {
+    <#
+    .SYNOPSIS
+    Release one durable builder-address handoff and remove it after verification.
+    .PARAMETER Path
+    Exact non-secret reservation handoff path.
+    .PARAMETER VmrunPath
+    Exact vmrun executable path.
+    .PARAMETER StateRoot
+    Stable per-user builder-address state directory.
+    #>
+    param(
+        [Parameter(Mandatory = $true)][string]$Path,
+        [Parameter(Mandatory = $true)][string]$VmrunPath,
+        [Parameter(Mandatory = $true)][string]$StateRoot
+    )
+
+    $resolvedStateRoot = [System.IO.Path]::GetFullPath($StateRoot)
+    $pendingRoot = [System.IO.Path]::GetFullPath((Join-Path $resolvedStateRoot 'pending-releases'))
+    $resolvedPath = [System.IO.Path]::GetFullPath($Path)
+    if (-not (Split-Path -Parent $resolvedPath).Equals(
+            $pendingRoot,
+            [StringComparison]::OrdinalIgnoreCase
+        ) -or
+        (Split-Path -Leaf $resolvedPath) -notmatch '^builder-address-reservation-[0-9a-f]{32}\.json$') {
+        throw 'Refusing to process an invalid VMware builder-address release handoff path.'
+    }
+    if (-not (Test-Path -LiteralPath $resolvedPath -PathType Leaf)) {
+        return
+    }
+    $reservation = Get-Content -LiteralPath $resolvedPath -Raw -ErrorAction Stop |
+        ConvertFrom-Json -ErrorAction Stop
+    Exit-AtlasoVmwareBuilderAddressReservation `
+        -Reservation $reservation `
+        -VmrunPath $VmrunPath `
+        -StateRoot $resolvedStateRoot
+    Remove-Item -LiteralPath $resolvedPath -Force
+    if (Test-Path -LiteralPath $resolvedPath) {
+        throw "The released VMware builder-address handoff could not be removed: $resolvedPath"
+    }
+}
+
 $repoRoot = (Resolve-Path -LiteralPath (Join-Path $PSScriptRoot '..\..\..')).Path
+$builderReservationStateRoot = Join-Path (
+    [Environment]::GetFolderPath('LocalApplicationData')
+) 'Atlaso\vmware-builder-addresses'
+$builderReservationPendingRoot = Join-Path $builderReservationStateRoot 'pending-releases'
 $cleanupMarkerPath = Join-Path $repoRoot '.atlaso-local\photon-image-build-cleanup.json'
 if ($CredentialChild) {
     if ($SshPassword -or $BootstrapAdminPassword -or
@@ -421,11 +467,12 @@ if ($CredentialChild) {
         throw 'The isolated Photon output-cleanup claim path is unavailable or invalid.'
     }
     if ([string]::IsNullOrWhiteSpace($resolvedBuilderAddressReservationPath) -or
-        -not $resolvedBuilderAddressReservationPath.StartsWith(
-            $credentialRootPrefix,
+        -not (Split-Path -Parent $resolvedBuilderAddressReservationPath).Equals(
+            [System.IO.Path]::GetFullPath($builderReservationPendingRoot),
             [StringComparison]::OrdinalIgnoreCase
         ) -or
-        (Split-Path -Leaf $resolvedBuilderAddressReservationPath) -cne 'builder-address-reservation.json') {
+        (Split-Path -Leaf $resolvedBuilderAddressReservationPath) -notmatch
+            '^builder-address-reservation-[0-9a-f]{32}\.json$') {
         throw 'The isolated Photon builder-address reservation path is unavailable or invalid.'
     }
     if (-not [string]::IsNullOrWhiteSpace($PreparedIsoPath)) {
@@ -474,6 +521,28 @@ else {
     # identity is the fail-closed proof that an untracked descendant cannot
     # recreate credential-bearing files after absence verification.
     Invoke-AtlasoPhotonBuildCleanupRecovery -MarkerPath $cleanupMarkerPath
+    [void][System.IO.Directory]::CreateDirectory($builderReservationPendingRoot)
+    $pendingReservationHandoffs = @(
+        Get-ChildItem -LiteralPath $builderReservationPendingRoot `
+            -Filter 'builder-address-reservation-*.json' `
+            -File `
+            -ErrorAction Stop
+    )
+    if ($pendingReservationHandoffs.Count -gt 0) {
+        $recoveryVmrunPath = Resolve-WorkstationVmrunPath -Path $VmrunPath
+        foreach ($handoff in $pendingReservationHandoffs) {
+            try {
+                Complete-AtlasoBuilderAddressReservationHandoff `
+                    -Path $handoff.FullName `
+                    -VmrunPath $recoveryVmrunPath `
+                    -StateRoot $builderReservationStateRoot
+                Write-Host "Released prior VMware builder-address handoff $($handoff.Name)."
+            }
+            catch {
+                Write-Warning "Retained prior VMware builder-address handoff $($handoff.Name): $($_.Exception.Message)"
+            }
+        }
+    }
     $needsOnePasswordDefaults = $null -eq $SshPassword -or $null -eq $BootstrapAdminPassword
     $resolvedEnvironmentId = ''
     if ($needsOnePasswordDefaults) {
@@ -503,7 +572,9 @@ else {
     $childCredentialBundlePath = Join-Path $credentialRoot 'credentials.json'
     $childSensitiveBuildDirectory = Join-Path $credentialRoot 'sensitive-build'
     $childOutputCleanupClaimPath = Join-Path $credentialRoot 'output-cleanup-claimed.json'
-    $childBuilderAddressReservationPath = Join-Path $credentialRoot 'builder-address-reservation.json'
+    $childBuilderAddressReservationPath = Join-Path $builderReservationPendingRoot (
+        "builder-address-reservation-$([guid]::NewGuid().ToString('N')).json"
+    )
     $outerCleanupPackerDirectory = if ([string]::IsNullOrWhiteSpace($PackerDirectory)) {
         Join-Path $PSScriptRoot '..\..\..\image\vmware-workstation'
     }
@@ -661,7 +732,12 @@ else {
                         ConvertFrom-Json
                     Exit-AtlasoVmwareBuilderAddressReservation `
                         -Reservation $builderReservation `
-                        -VmrunPath (Resolve-WorkstationVmrunPath -Path $VmrunPath)
+                        -VmrunPath (Resolve-WorkstationVmrunPath -Path $VmrunPath) `
+                        -StateRoot $builderReservationStateRoot
+                    Remove-Item -LiteralPath $childBuilderAddressReservationPath -Force
+                    if (Test-Path -LiteralPath $childBuilderAddressReservationPath) {
+                        throw 'The released VMware builder-address handoff could not be removed.'
+                    }
                 }
                 catch {
                     $reservationReleaseError = $_
