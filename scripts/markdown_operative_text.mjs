@@ -139,6 +139,9 @@ function parseOpacityValue (value) {
 }
 
 function isValidSuppressionDeclaration (property, value) {
+  if (/^(?:initial|inherit|unset|revert|revert-layer)$/.test(value)) {
+    return true
+  }
   if (property === 'display') {
     return /^(?:none|inline|block|inline-block|flow-root|flex|inline-flex|grid|inline-grid|table|list-item|contents)$/.test(value)
   }
@@ -240,7 +243,8 @@ function hasHiddenAttributes (attributes) {
   return {
     irreversible: (
       parsedAttributes.has('hidden') ||
-      (parsedAttributes.get('aria-hidden') || '').toLowerCase() === 'true' ||
+      decodeHtmlAttributeEntities(parsedAttributes.get('aria-hidden') || '')
+        .toLowerCase() === 'true' ||
       declarations.get('display')?.value === 'none' ||
       declarations.get('content-visibility')?.value === 'hidden' ||
       (parseOpacityValue(declarations.get('opacity')?.value || '') ?? 1) <= 0
@@ -325,6 +329,9 @@ function isHtmlSuppressed () {
   }
   for (let index = htmlStack.length - 1; index >= 0; index -= 1) {
     if (htmlStack[index].visibility) {
+      if (/^(?:inherit|unset|revert|revert-layer)$/.test(htmlStack[index].visibility)) {
+        continue
+      }
       return ['hidden', 'collapse'].includes(htmlStack[index].visibility)
     }
   }
