@@ -1737,6 +1737,89 @@ def test_vmware_ovf_customizer_marker_recovers_interrupted_review_cleanup(tmp_pa
     assert len(empty_reads) == customizer.PENDING_EMPTY_CONFIRMATION_READS
 
 
+def test_normal_test_vm_republishes_identity_after_signer_scrub_restart(tmp_path, monkeypatch):
+    """Republish guest-owned runtime identity after the required VM power cycle.
+
+    Args:
+        tmp_path: Temporary directory provided by pytest for isolated filesystem state.
+        monkeypatch: Pytest helper used to replace guest-info and cleanup operations.
+    """
+    customizer = load_customizer()
+    customizer.MARKER_PATH = tmp_path / "customization.applied"
+    customizer.INITIALIZATION_LOCK_PATH = tmp_path / "initializing"
+    customizer.NETWORK_REVIEW_PATH = tmp_path / "network-review.json"
+    customizer.NETWORK_CORRECTION_PATH = tmp_path / "network-correction.json"
+    customizer.write_json_atomic(
+        customizer.MARKER_PATH,
+        {"normal_test_vm": True, "fqdn": "issue-584.atlaso.internal"},
+    )
+    operations = []
+    monkeypatch.setattr(
+        customizer,
+        "publish_test_vm_ssh_host_key",
+        lambda: operations.append("host-key"),
+    )
+    monkeypatch.setattr(
+        customizer,
+        "publish_test_vm_hostname",
+        lambda: operations.append("hostname"),
+    )
+    monkeypatch.setattr(
+        customizer,
+        "publish_first_boot_stage",
+        lambda stage: operations.append(f"stage:{stage}"),
+    )
+    monkeypatch.setattr(
+        customizer,
+        "scrub_applied_ovf_environment",
+        lambda: operations.append("scrub-ovf"),
+    )
+    monkeypatch.setattr(
+        customizer,
+        "complete_first_boot_initialization",
+        lambda: operations.append("complete"),
+    )
+    monkeypatch.setattr(customizer, "log", lambda _message: None)
+
+    assert customizer.main([]) == 0
+    assert operations == [
+        "scrub-ovf",
+        "stage:ssh-host-key",
+        "host-key",
+        "stage:test-vm-hostname",
+        "hostname",
+        "stage:vmware-customization-complete",
+        "complete",
+    ]
+
+
+def test_ordinary_applied_marker_does_not_publish_test_identity(tmp_path, monkeypatch):
+    """Keep ordinary appliance reboots outside the normal-test identity channel.
+
+    Args:
+        tmp_path: Temporary directory provided by pytest for isolated filesystem state.
+        monkeypatch: Pytest helper used to replace guest-info and cleanup operations.
+    """
+    customizer = load_customizer()
+    customizer.MARKER_PATH = tmp_path / "customization.applied"
+    customizer.write_json_atomic(customizer.MARKER_PATH, {"normal_test_vm": False})
+    monkeypatch.setattr(
+        customizer,
+        "publish_test_vm_ssh_host_key",
+        lambda: pytest.fail("ordinary appliance published a test host key"),
+    )
+    monkeypatch.setattr(
+        customizer,
+        "publish_test_vm_hostname",
+        lambda: pytest.fail("ordinary appliance published a test hostname"),
+    )
+    monkeypatch.setattr(customizer, "scrub_applied_ovf_environment", lambda: None)
+    monkeypatch.setattr(customizer, "complete_first_boot_initialization", lambda: None)
+    monkeypatch.setattr(customizer, "log", lambda _message: None)
+
+    assert customizer.main([]) == 0
+
+
 def test_vmware_ovf_customizer_marker_scrubs_properties_injected_into_reused_source(tmp_path, monkeypatch):
     """Verify an already-customized raw source cannot retain newly injected credentials.
 

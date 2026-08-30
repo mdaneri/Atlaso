@@ -337,7 +337,7 @@ if ($null -ne $lastAddressOwnership) {
     else {
         ' No allowlisted first-boot stage was reported.'
     }
-    throw "VMware address ownership was proven for VMX '$($lastAddressOwnership.VmxPath)', MAC $($lastAddressOwnership.MacAddress), and host-facing address $($lastAddressOwnership.IPAddress), but guest initialization did not publish the injected hostname '$normalizedExpectedHostname' within $TimeoutSeconds seconds. Observed hostname: '$observedHostname'.$stageDetail The HTTPS/application readiness path was not reached; inspect the appliance console and first-boot service state."
+    throw "VMware address ownership was proven for VMX '$($lastAddressOwnership.VmxPath)', MAC $($lastAddressOwnership.MacAddress), and host-facing address $($lastAddressOwnership.IPAddress), but guest initialization did not publish the injected hostname '$normalizedExpectedHostname' within $TimeoutSeconds seconds. Observed hostname: '$observedHostname'.$stageDetail Complete identity-bound readiness was not reached; inspect the appliance console and first-boot service state."
 }
 $detail = if ($lastReadinessError) { " Last readiness error: $lastReadinessError" } else { '' }
 throw "No uniquely bound IPv4 address was proven for VM '$resolvedVmxPath' within $TimeoutSeconds seconds.$detail Confirm open-vm-tools, the exact VMX management MAC, and Windows neighbor state."
