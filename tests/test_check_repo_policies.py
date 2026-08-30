@@ -1240,6 +1240,8 @@ def test_agent_policy_gate_rejects_missing_maintainer_break_glass_contract(
     nonoperative_replacements = (
         f"<!-- {prohibition} -->",
         f"```text\n{prohibition}\n```",
+        f"<del>{prohibition}</del>",
+        f"~~{prohibition}~~",
     )
     for replacement in nonoperative_replacements:
         for relative_path in required_entry_points:
