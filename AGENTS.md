@@ -641,8 +641,10 @@ The following cross-cutting boundaries always apply:
   published. If reconciliation is ambiguous or fallback publication fails, preserve the VM artifacts and do not start
   a removal child. Actual child-active or unproven state remains fail-closed across same-boot reruns.
   After encrypted import proof,
-  stop the exact VM, prove the powered-off VMX signer assignment absent, restart it, and prove runtime guest-info remains
-  empty before retiring the marker. Later normal-wrapper invocations must retry its exact identity-bound stop, VMX
+  gracefully stop the exact VM within a bounded deadline, prove the powered-off VMX signer assignment absent, restart
+  it, and prove runtime guest-info remains empty before retiring the marker. Never substitute a hard power-off on this
+  successful-import path; preserve the retryable marker if graceful shutdown cannot be proven. Later normal-wrapper
+  invocations must retry its exact identity-bound stop, VMX
   scrub, artifact removal, and data-disk restoration before
   1Password preflight or any new mutation. Persist
   boot-bound child-active phases before staging, VM start, and artifact removal. An unproven child-tree termination must

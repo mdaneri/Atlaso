@@ -647,7 +647,9 @@ by filesystem identity, before persisting a plan that could move one file twice.
 boot also durably scrubs plaintext staging when encrypted import fails. `-NoStart` is rejected because a powered-off VM
 would retain
 the signer before consumption. The wrapper never prints the signer or places it in arguments, logs, markers, lifecycle
-artifacts, or exports. Successful import or rollback write-through transitions the marker to a non-actionable tombstone
+artifacts, or exports. After successful encrypted import, the wrapper uses only a bounded graceful VM stop before
+powered-off VMX scrub and restart; it never falls back to hard power-off and preserves the retryable marker when that
+graceful stop is unproven. Successful import or rollback write-through transitions the marker to a non-actionable tombstone
 before deletion; a tombstone that reappears after a crash is deleted without touching its VM.
 
 Waiting is enabled by default and verifies the shared root before printing the management summary. Mandatory

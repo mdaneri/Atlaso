@@ -1051,8 +1051,10 @@ Terminal order:
   boot. Host timeout diagnostics may consume only bounded fixed non-secret first-boot stage identifiers. Commit a durable
   non-secret cleanup marker through a Windows write-through atomic rename before staging and bind it to a non-secret
   VMX identity that survives VMware's legitimate power-on file replacement. After encrypted import proof, stop the
-  exact VM, prove the powered-off VMX signer assignment absent, restart it, and prove runtime guest-info remains empty
-  before retiring the marker. Later normal-wrapper invocations must retry its exact identity-bound stop, VMX scrub,
+  exact VM only through a bounded graceful shutdown, prove the powered-off VMX signer assignment absent, restart it,
+  and prove runtime guest-info remains empty before retiring the marker. Never fall back to hard power-off on the
+  successful-import path; retain the retryable marker when graceful shutdown is unproven. Later normal-wrapper
+  invocations must retry its exact identity-bound stop, VMX scrub,
   artifact removal, and data-disk restoration before
   1Password preflight or any new mutation. Persist the
   stopped/scrubbed phase before artifact removal so a retry can safely resume restoration from an absent artifact root.

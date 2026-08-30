@@ -1010,12 +1010,17 @@ Resolved VMware vmrun executable path.
 
 .PARAMETER TimeoutSeconds
 Positive per-operation deadline for discovery, stop, and stopped-state proof.
+
+.PARAMETER Mode
+VMware stop mode. Rollback defaults to a hard stop, while the proven-import path
+must request a soft stop so durable appliance state is not power-cut.
 #>
 function Stop-AtlasoTestVmForRollback {
     param(
         [Parameter(Mandatory = $true)][string]$VmxPath,
         [Parameter(Mandatory = $true)][string]$VmrunPath,
-        [ValidateRange(1, 3600)][int]$TimeoutSeconds = 30
+        [ValidateRange(1, 3600)][int]$TimeoutSeconds = 30,
+        [ValidateSet('hard', 'soft')][string]$Mode = 'hard'
     )
 
     $resolvedVmxPath = (Resolve-Path -LiteralPath $VmxPath).Path
@@ -1036,9 +1041,13 @@ function Stop-AtlasoTestVmForRollback {
     }
     Invoke-AtlasoBoundedVmrun `
         -VmrunPath $VmrunPath `
-        -ArgumentList @('-T', 'ws', 'stop', $runningTargets[0], 'hard') `
+        -ArgumentList @('-T', 'ws', 'stop', $runningTargets[0], $Mode) `
         -TimeoutSeconds $TimeoutSeconds `
-        -Action 'Stop the failed normal test VM during rollback' | Out-Null
+        -Action $(if ($Mode -ceq 'soft') {
+                'Gracefully stop the normal test VM after proven development-root import'
+            } else {
+                'Stop the failed normal test VM during rollback'
+            }) | Out-Null
     $runningText = Invoke-AtlasoBoundedVmrun `
         -VmrunPath $VmrunPath `
         -ArgumentList @('-T', 'ws', 'list') `
@@ -2159,7 +2168,8 @@ function Complete-AtlasoDevelopmentCaSuccessfulImport {
             Stop-AtlasoTestVmForRollback `
                 -VmxPath $Marker.VmxPath `
                 -VmrunPath $VmrunPath `
-                -TimeoutSeconds $TimeoutSeconds
+                -TimeoutSeconds $TimeoutSeconds `
+                -Mode soft
             Clear-AtlasoWorkstationDevelopmentRootCaPrivateKey -VmxPath $Marker.VmxPath
         }
         catch {
@@ -2219,7 +2229,8 @@ function Complete-AtlasoDevelopmentCaSuccessfulImport {
             Stop-AtlasoTestVmForRollback `
                 -VmxPath $Marker.VmxPath `
                 -VmrunPath $VmrunPath `
-                -TimeoutSeconds $TimeoutSeconds
+                -TimeoutSeconds $TimeoutSeconds `
+                -Mode soft
             Clear-AtlasoWorkstationDevelopmentRootCaPrivateKey -VmxPath $Marker.VmxPath
             Set-AtlasoDevelopmentCaCleanupMarkerPhase `
                 -MarkerPath $Marker.MarkerPath `

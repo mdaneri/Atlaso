@@ -419,7 +419,9 @@ marker whose atomic rename completed before its caller path was exposed, then du
 quarantine path, and current host boot. An ambiguous publication or failed fallback preserves the VM instead of
 starting removal. After first boot proves encrypted import and
 VMware reports the exact empty runtime sentinel, the wrapper stops the exact VM, removes and verifies the powered-off
-signing-key assignment, restarts it, and requires three empty runtime readbacks before retiring the marker.
+signing-key assignment, restarts it, and requires three empty runtime readbacks before retiring the marker. This
+successful-import stop is graceful and bounded so certificate and database state reach durable storage; the wrapper
+does not fall back to a hard power-off and preserves the retryable marker when graceful shutdown cannot be proven.
 First boot commits guest-agent provider selection before erasing the offline package closure. That retryable cleanup is
 a mandatory 15-minute data-disk pre-start gate and may run concurrently with VMware customization, so it cannot delay
 signing-key guest-info scrub while still blocking data-disk and application readiness. That cleanup erases only the
