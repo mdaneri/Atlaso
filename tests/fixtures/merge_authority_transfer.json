@@ -1620,6 +1620,33 @@
       "expected_holds": [
         "do not merge"
       ]
+    },
+    {
+      "name": "plain-maintainer-approval-condition-is-preserved",
+      "default_merge_authority": true,
+      "instructions": [
+        {
+          "text": "Implement issue #602, but merge after the maintainer approves.",
+          "add_holds": [
+            "wait for approval"
+          ]
+        }
+      ],
+      "generated": "Wait for maintainer approval before merging.",
+      "expected_holds": [
+        "wait for approval"
+      ]
+    },
+    {
+      "name": "trailing-instead-review-is-ineligible",
+      "default_merge_authority": false,
+      "instructions": [
+        {
+          "text": "Implement issue #602. Review PR #602 instead and report findings."
+        }
+      ],
+      "generated": "Review PR #602 and report findings without continuing delivery.",
+      "expected_holds": []
     }
   ]
 }

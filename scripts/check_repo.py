@@ -705,6 +705,7 @@ DEFAULT_MERGE_AUTHORITY_DIRECT_REVIEW = re.compile(
 DEFAULT_MERGE_AUTHORITY_SUPERSEDING_REVIEW_PREFIX = re.compile(
     r"(?:^|[;.!?]\s*)instead,?\s*$"
 )
+DEFAULT_MERGE_AUTHORITY_SUPERSEDING_REVIEW_MARKER = re.compile(r"\binstead\b")
 DEFAULT_MERGE_AUTHORITY_STOP_WORK = re.compile(
     r"(?:^|[;.!?]\s*)(?:please\s+)?(?:stop|cancel|cease|end)\s+"
     r"(?:(?:all|further|this|the)\s+)?(?:work|implementation|task)\b"
@@ -794,6 +795,10 @@ MERGE_HOLD_NONAPPROVAL_CONDITION = re.compile(
     r"wait (?:for|until)\s+(?:ci|tests?|checks?|validation|builds?)\b"
     r"[^.!?]{0,40}\b(?:pass|succeed|complete)(?:es|s|d)?\b"
     r"[^.!?]{0,40}\bbefore merging)\b"
+)
+MERGE_HOLD_APPROVAL_CONDITION = re.compile(
+    r"\b(?:merge(?: only)?|only merge)\s+(?:after|when|if|once)\s+"
+    r"(?:i|we|(?:the\s+)?maintainer|(?:the\s+)?owner)\s+approves?\b"
 )
 MERGE_HOLD_NON_PR_OBJECT = re.compile(
     r"^\s+(?!(?:(?:this|the)\s+)?(?:pull request|pr)\b|it\b|"
@@ -1197,6 +1202,14 @@ def merge_hold_directions(
             normalized, condition_match.start(), condition
         ):
             directions["do not merge"] = "add"
+    for condition_match in MERGE_HOLD_APPROVAL_CONDITION.finditer(normalized):
+        condition = condition_match.group(0)
+        if not _is_hold_discussion(
+            normalized, condition_match.start()
+        ) and not _hold_targets_other_task(
+            normalized, condition_match.start(), condition
+        ):
+            directions["wait for approval"] = "add"
     for permission_match in MERGE_HOLD_STANDALONE_PERMISSION.finditer(normalized):
         permission_offset = permission_match.start()
         permission = permission_match.group(0)
@@ -1296,6 +1309,10 @@ def source_has_default_merge_authority(instructions: tuple[str, ...]) -> bool:
             if (
                 DEFAULT_MERGE_AUTHORITY_SUPERSEDING_REVIEW_PREFIX.search(
                     normalized[: match.start()]
+                )
+                is not None
+                or DEFAULT_MERGE_AUTHORITY_SUPERSEDING_REVIEW_MARKER.search(
+                    normalized[match.end() : match.end() + 24]
                 )
                 is not None
                 or not any(

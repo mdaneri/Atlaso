@@ -248,6 +248,13 @@ def test_merge_hold_directions_recognizes_wait_for_ci_condition() -> None:
     assert merge_hold_directions(
         "Implement issue #602, but wait for CI to pass before merging."
     ) == {"do not merge": "add"}
+
+
+def test_merge_hold_directions_recognizes_plain_approval_condition() -> None:
+    """Verify plain merge-after-approval wording remains a hold."""
+    assert merge_hold_directions(
+        "Implement issue #602, but merge after the maintainer approves."
+    ) == {"wait for approval": "add"}
     assert merge_hold_directions(
         "Implement issue #602, but merge after CI passes."
     ) == {"do not merge": "add"}
@@ -300,6 +307,11 @@ def test_source_authority_excludes_patch_review() -> None:
         (
             "Implement issue #602. Instead, review the implementation and "
             "report findings.",
+        )
+    )
+    assert not source_has_default_merge_authority(
+        (
+            "Implement issue #602. Review PR #602 instead and report findings.",
         )
     )
     assert not source_has_default_merge_authority(

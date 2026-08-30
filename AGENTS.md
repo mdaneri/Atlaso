@@ -720,6 +720,22 @@ The following cross-cutting boundaries always apply:
   redaction. On timeout, terminate only the Packer process tree and honor `-PackerOnError cleanup` through the checked
   exact-root cleanup; preserve exact artifacts for other failure selections. Never print connection credentials or VMX
   contents, and do not mask a start-handoff failure with an arbitrary delay.
+- Before any canonical VMware Photon builder starts, atomically reserve one temporary static IPv4 address from the
+  configured per-host pool. Parse the selected vmnet's exact `vmnetdhcp.conf` subnet, reject a pool or explicit address
+  that overlaps a VMware DHCP range or fixed address, and exclude observed non-ICMP use. Serialize the durable ledger
+  across Atlaso worktrees, bind each entry to the exact task worktree, source commit, branch, owner process, Windows
+  boot identity, output root, VM name, and VMX path, and retain it while that exact VM remains active or recovery
+  evidence is ambiguous. A dead owner cannot release its reservation during the same Windows boot because a surviving
+  descendant could still start the VM. Permit stale recovery only after a changed host-boot identity proves that tree
+  gone and the exact VM and address are inactive. Keep the non-secret release handoff outside temporary credential
+  storage, never recover it while its exact owner process remains active, retry it after a preserved VM stops, and
+  delete it only after exact ledger release succeeds. Never replay a dead same-boot owner's handoff unless the
+  controlling parent proved complete process-tree termination; otherwise require a host-restart boundary. Publish
+  recoverable release intent before ledger admission, then publish both records with write-through replacement plus
+  directory metadata synchronization. Release
+  normally only after inactive-VM completion. Exclude every IPv4 address on the selected bridged host interface, and never
+  let skipped topology preparation bypass read-only DHCP-state discovery. The completed appliance still uses management
+  DHCP by default.
 - Validate live appliance readiness through `/openapi.json`, not VMware Tools IP discovery or service color alone.
 - A successful tty1 management-network correction must explicitly apply Network and Firewall from the corrected state,
   retry unfinished first-boot HTTPS before applying Appliance Settings, validate nginx before reload, ensure nginx and
