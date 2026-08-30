@@ -547,6 +547,10 @@ EXPLICIT_MERGE_HOLD_PATTERNS = {
         "until we approve",
         "for me to approve",
         "for us to approve",
+        "merge only after i approve",
+        "merge only after we approve",
+        "merge only with my approval",
+        "merge only with our approval",
     ),
 }
 MERGE_HOLD_WITHDRAWAL_MARKERS = (
@@ -662,6 +666,14 @@ DEFAULT_MERGE_AUTHORITY_WORKFLOW_EXCLUSIONS = re.compile(
     r"(?:on|in|against) (?:(?:an?|the|this|existing) )?"
     r"draft (?:pull request|pr)\b|"
     r"private (?:vulnerability|advisory|remediation))\b"
+)
+DEFAULT_MERGE_AUTHORITY_WORKFLOW_RECLASSIFICATION = re.compile(
+    r"(?:^|[;.!?]\s*)(?:this|the\s+(?:work|task|implementation))\s+is\s+"
+    r"(?:now\s+)?private (?:vulnerability|advisory|remediation)\b|"
+    r"(?:^|[;.!?]\s*)(?:the|this)\s+(?:pull request|pr)\s+is\s+"
+    r"(?:now\s+)?(?:an?\s+)?draft\b|"
+    r"(?:^|[;.!?]\s*)move\s+(?:the\s+)?(?:work|task|implementation)\s+"
+    r"to\s+(?:an?\s+)?(?:external\s+)?fork\b"
 )
 DEFAULT_MERGE_AUTHORITY_DIRECT_REVIEW = re.compile(
     r"(?:review|inspect|check|test|verif(?:y|ication)|validat(?:e|ion)|"
@@ -1184,7 +1196,11 @@ def source_has_default_merge_authority(instructions: tuple[str, ...]) -> bool:
             DEFAULT_MERGE_AUTHORITY_STOP_WORK.finditer(normalized)
         ) + tuple(
             DEFAULT_MERGE_AUTHORITY_NEGATED_MUTATION.finditer(normalized)
-        ) + tuple(DEFAULT_MERGE_AUTHORITY_WORKFLOW_EXCLUSIONS.finditer(normalized))
+        ) + tuple(
+            DEFAULT_MERGE_AUTHORITY_WORKFLOW_EXCLUSIONS.finditer(normalized)
+        ) + tuple(
+            DEFAULT_MERGE_AUTHORITY_WORKFLOW_RECLASSIFICATION.finditer(normalized)
+        )
         source_markers = tuple(
             DEFAULT_MERGE_AUTHORITY_SOURCE_MARKERS.finditer(normalized)
         )

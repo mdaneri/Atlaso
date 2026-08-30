@@ -417,6 +417,22 @@
       ]
     },
     {
+      "name": "explicit-merge-after-i-approve",
+      "default_merge_authority": true,
+      "instructions": [
+        {
+          "text": "Implement issue #602, but merge only after I approve.",
+          "add_holds": [
+            "wait for approval"
+          ]
+        }
+      ],
+      "generated": "Preserve the explicit wait for approval instruction.",
+      "expected_holds": [
+        "wait for approval"
+      ]
+    },
+    {
       "name": "later-explicit-hold-withdrawal",
       "default_merge_authority": true,
       "instructions": [
@@ -1249,6 +1265,48 @@
         }
       ],
       "generated": "Follow the private advisory workflow and its administrator-only merge control.",
+      "expected_holds": []
+    },
+    {
+      "name": "later-private-remediation-reclassification",
+      "default_merge_authority": false,
+      "instructions": [
+        {
+          "text": "Implement issue #602."
+        },
+        {
+          "text": "This is private vulnerability remediation."
+        }
+      ],
+      "generated": "Follow the private advisory workflow and its administrator-only merge control.",
+      "expected_holds": []
+    },
+    {
+      "name": "later-draft-reclassification",
+      "default_merge_authority": false,
+      "instructions": [
+        {
+          "text": "Implement issue #602."
+        },
+        {
+          "text": "The pull request is now a draft."
+        }
+      ],
+      "generated": "Keep the pull request in draft state.",
+      "expected_holds": []
+    },
+    {
+      "name": "later-fork-reclassification",
+      "default_merge_authority": false,
+      "instructions": [
+        {
+          "text": "Implement issue #602."
+        },
+        {
+          "text": "Move the work to a fork."
+        }
+      ],
+      "generated": "Continue the implementation in the fork without merging it here.",
       "expected_holds": []
     }
   ]
