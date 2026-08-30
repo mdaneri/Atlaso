@@ -558,6 +558,32 @@ def test_dependency_policy_respects_quoted_shell_separators(
     )
 
 
+def test_dependency_policy_respects_powershell_escaped_separators(
+    tmp_path: Path,
+) -> None:
+    """Verify PowerShell-escaped separators do not truncate pip arguments.
+
+    Args:
+        tmp_path: Temporary directory provided by pytest for isolated filesystem state.
+    """
+    write_valid_policy(tmp_path)
+    (tmp_path / "requirements-ad-hoc.lock").write_text(
+        "placeholder\n", encoding="utf-8"
+    )
+    workflow = tmp_path / ".github" / "workflows" / "release.yml"
+    workflow.parent.mkdir(parents=True, exist_ok=True)
+    workflow.write_text(
+        "run: python -m pip install -C flag=a`;b -r requirements-ad-hoc.lock\n",
+        encoding="utf-8",
+    )
+
+    assert any(
+        "workflow requirement lock is outside the generated dependency policy "
+        "inventory: requirements-ad-hoc.lock" in error
+        for error in validate(tmp_path)
+    )
+
+
 def test_dependency_policy_tracks_shell_directory_changes(tmp_path: Path) -> None:
     """Verify shell directory changes affect later requirement resolution.
 
@@ -569,6 +595,7 @@ def test_dependency_policy_tracks_shell_directory_changes(tmp_path: Path) -> Non
     workflow.parent.mkdir(parents=True, exist_ok=True)
     invocations = (
         "cd external && python -m pip install -r requirements-release-tools.lock",
+        "pushd external > /dev/null && python -m pip install -r requirements-release-tools.lock",
         "Set-Location external; python -m pip install -r requirements-release-tools.lock",
     )
     for invocation in invocations:

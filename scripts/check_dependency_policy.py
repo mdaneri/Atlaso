@@ -280,6 +280,10 @@ def _shell_command_segments(command: str) -> list[str]:
             part.extend((character, command[index + 1]))
             index += 2
             continue
+        if character == "`" and quote != "'" and index + 1 < len(command):
+            part.append(command[index + 1])
+            index += 2
+            continue
         if character in {"'", '"'}:
             if not quote:
                 quote = character
@@ -338,7 +342,7 @@ def _segment_directory_change(segment: str) -> str | None:
     if not tokens:
         return None
     command = tokens[0].replace("\\", "/").rsplit("/", maxsplit=1)[-1].lower()
-    if command == "cd":
+    if command in {"cd", "pushd"}:
         arguments = [token for token in tokens[1:] if token != "--"]
         return arguments[0] if arguments else ""
     if command in {"set-location", "push-location"}:
