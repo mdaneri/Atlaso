@@ -490,6 +490,9 @@ def test_merge_hold_directions_classifies_approval_until_as_resumable() -> None:
     assert merge_hold_directions(
         "Do not merge unless the maintainer approves."
     ) == {"wait for approval": "add"}
+    assert merge_hold_directions(
+        "Do not merge before the maintainer approves."
+    ) == {"wait for approval": "add"}
     assert merge_hold_directions("Keep this PR open until I approve.") == {
         "wait for approval": "add"
     }

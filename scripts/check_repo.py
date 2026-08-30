@@ -860,7 +860,7 @@ MERGE_HOLD_NONAPPROVAL_CONDITION = re.compile(
 )
 MERGE_HOLD_APPROVAL_CONDITION = re.compile(
     r"\b(?:merge(?: only)?|only merge)\s+"
-    r"(?:after|when|if|once|until|unless)\s+"
+    r"(?:after|when|if|once|until|unless|before)\s+"
     r"(?:i|we|(?:the\s+)?maintainer|"
     r"(?:the\s+)?(?:[a-z][a-z0-9_-]*\s+)?owner)\s+approves?\b"
 )
@@ -871,7 +871,7 @@ MERGE_HOLD_APPROVAL_BOUNDED_DISPOSITION = re.compile(
     r"(?:pull request|pr)\s+only|"
     r"only\s+(?:open|create|submit|prepare)\s+"
     r"(?:(?:an?|the|this)\s+)?(?:pull request|pr))\b"
-    r"[^.!?]{0,60}\b(?:after|when|if|once|until|unless)\s+"
+    r"[^.!?]{0,60}\b(?:after|when|if|once|until|unless|before)\s+"
     r"(?:i|we|(?:the\s+)?maintainer|"
     r"(?:the\s+)?(?:[a-z][a-z0-9_-]*\s+)?owner)\s+approves?\b"
 )

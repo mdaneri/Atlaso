@@ -1913,6 +1913,25 @@
       "expected_holds": []
     },
     {
+      "name": "before-approval-is-resumable",
+      "default_merge_authority": true,
+      "instructions": [
+        {
+          "text": "Implement issue #602."
+        },
+        {
+          "text": "Do not merge before the maintainer approves.",
+          "add_holds": [
+            "wait for approval"
+          ]
+        }
+      ],
+      "generated": "Wait for maintainer approval before merging.",
+      "expected_holds": [
+        "wait for approval"
+      ]
+    },
+    {
       "name": "possessive-fix-review-is-review-only",
       "default_merge_authority": false,
       "instructions": [
