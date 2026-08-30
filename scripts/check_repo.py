@@ -530,6 +530,13 @@ MERGE_HOLD_WITHDRAWAL_NEGATIONS = re.compile(
     r"(?:not|never|cannot|can't|can’t|isn't|isn’t|wasn't|wasn’t)"
     r"(?:\s+been)?\s*$"
 )
+MERGE_HOLD_WITHDRAWAL_NONCURRENT_PREFIX = re.compile(
+    r"(?:\bunless\b|\bif\b|\bonce\b|\bwhen\b|\bafter\b|\bbefore\b|"
+    r"\b(?:will|would|may|might|could|shall)\s+(?:be\s+)?)"
+)
+MERGE_HOLD_WITHDRAWAL_NONCURRENT_SUFFIX = re.compile(
+    r"^\s*(?:tomorrow|later|eventually|after\b|when\b|once\b|if\b|unless\b)"
+)
 AUTO_MERGE_ONLY_PHRASES = (
     "do not merge automatically",
     "don't merge automatically",
@@ -560,13 +567,15 @@ DEFAULT_MERGE_AUTHORITY_PROMPT_MARKERS = (
     "without waiting for a second merge instruction",
 )
 DEFAULT_MERGE_AUTHORITY_SOURCE_EXCLUSIONS = re.compile(
-    r"(?:review(?:-only|[^.!?]{0,60}\bonly\b)|report findings only|"
+    r"(?:review(?:-only|[^.!?]{0,60}\bonly\b)|only\s+review\b|"
+    r"report findings only|"
     r"(?:do not|don't|don’t|must not|without)\s+"
     r"(?:\w+\s+){0,3}(?:implement|fix|resolve|solve|deliver|chang|modif|edit|mak)|"
     r"(?:diagnos(?:e|tic)|investigat(?:e|ion)|analy(?:ze|sis)|assess|inspect)"
     r"[^.!?]{0,80}\b(?:without|no)\b[^.!?]{0,40}"
     r"\b(?:implement|chang|modif|edit|mak)|"
-    r"draft (?:pull request|pr)|external fork|fork pull request|from (?:an? )?fork|"
+    r"draft (?:pull request|pr)|(?:pull request|pr)[^.!?]{0,40}\bas (?:an? )?draft\b|"
+    r"external fork|fork pull request|from (?:an? )?fork|"
     r"private (?:vulnerability|advisory|remediation))"
 )
 DEFAULT_MERGE_AUTHORITY_SOURCE_MARKERS = re.compile(
@@ -726,7 +735,16 @@ def merge_hold_directions(text: str) -> dict[str, str | None]:
                 marker_offset = segment.find(marker)
                 while marker_offset >= 0:
                     prefix = segment[max(0, marker_offset - 24) : marker_offset]
-                    if MERGE_HOLD_WITHDRAWAL_NEGATIONS.search(prefix) is None:
+                    suffix = segment[
+                        marker_offset + len(marker) : marker_offset + len(marker) + 40
+                    ]
+                    if (
+                        MERGE_HOLD_WITHDRAWAL_NEGATIONS.search(prefix) is None
+                        and MERGE_HOLD_WITHDRAWAL_NONCURRENT_PREFIX.search(prefix)
+                        is None
+                        and MERGE_HOLD_WITHDRAWAL_NONCURRENT_SUFFIX.search(suffix)
+                        is None
+                    ):
                         withdrawn = True
                         break
                     marker_offset = segment.find(marker, marker_offset + 1)

@@ -1514,6 +1514,135 @@ def test_merge_authority_transfer_rejects_passively_negated_withdrawal(
     )
 
 
+def test_merge_authority_transfer_rejects_noncurrent_hold_withdrawals(
+    tmp_path: Path,
+) -> None:
+    """Verify future and conditional statements cannot withdraw a hold.
+
+    Args:
+        tmp_path: Temporary directory provided by pytest for isolated filesystem state.
+    """
+    statements = (
+        "The do not merge hold will be withdrawn tomorrow.",
+        "Do not merge unless the hold is withdrawn.",
+    )
+    for index, statement in enumerate(statements):
+        case_root = tmp_path / str(index)
+        path = case_root / MERGE_AUTHORITY_TRANSFER_FIXTURE_PATH
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(
+            json.dumps(
+                {
+                    "cases": [
+                        {
+                            "name": f"noncurrent withdrawal {index}",
+                            "default_merge_authority": True,
+                            "instructions": [
+                                {
+                                    "text": f"Implement the change. {statement}",
+                                    "remove_holds": ["do not merge"],
+                                }
+                            ],
+                            "generated": "Continue through guarded squash merge.",
+                            "expected_holds": [],
+                        }
+                    ]
+                }
+            ),
+            encoding="utf-8",
+        )
+
+        findings = check_merge_authority_transfer_fixtures(case_root)
+
+        assert len(findings) == 1
+        assert findings[0].message == (
+            f"merge authority fixture noncurrent withdrawal {index} instruction 1 "
+            "hold operations do not match its text"
+        )
+
+
+def test_merge_authority_transfer_applies_leading_only_review_transition(
+    tmp_path: Path,
+) -> None:
+    """Verify a later leading-only review instruction removes eligibility.
+
+    Args:
+        tmp_path: Temporary directory provided by pytest for isolated filesystem state.
+    """
+    path = tmp_path / MERGE_AUTHORITY_TRANSFER_FIXTURE_PATH
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(
+        json.dumps(
+            {
+                "cases": [
+                    {
+                        "name": "leading only review",
+                        "default_merge_authority": True,
+                        "instructions": [
+                            {"text": "Implement issue #602 completely."},
+                            {"text": "Only review the pull request now."},
+                        ],
+                        "generated": "Continue through guarded squash merge.",
+                        "expected_holds": [],
+                    }
+                ]
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    findings = check_merge_authority_transfer_fixtures(tmp_path)
+
+    assert len(findings) == 1
+    assert findings[0].message == (
+        "merge authority fixture leading only review declared default authority "
+        "does not match its source instructions"
+    )
+
+
+def test_merge_authority_transfer_rejects_open_as_draft_eligibility(
+    tmp_path: Path,
+) -> None:
+    """Verify opening a pull request as a draft remains ineligible.
+
+    Args:
+        tmp_path: Temporary directory provided by pytest for isolated filesystem state.
+    """
+    path = tmp_path / MERGE_AUTHORITY_TRANSFER_FIXTURE_PATH
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(
+        json.dumps(
+            {
+                "cases": [
+                    {
+                        "name": "open as draft",
+                        "default_merge_authority": True,
+                        "instructions": [
+                            {
+                                "text": (
+                                    "Deliver the change by opening the pull request as "
+                                    "a draft."
+                                )
+                            }
+                        ],
+                        "generated": "Continue through guarded squash merge.",
+                        "expected_holds": [],
+                    }
+                ]
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    findings = check_merge_authority_transfer_fixtures(tmp_path)
+
+    assert len(findings) == 1
+    assert findings[0].message == (
+        "merge authority fixture open as draft declared default authority does not "
+        "match its source instructions"
+    )
+
+
 def test_merge_authority_transfer_rejects_explicit_no_change_eligibility(
     tmp_path: Path,
 ) -> None:

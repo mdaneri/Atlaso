@@ -225,6 +225,20 @@
       "expected_holds": []
     },
     {
+      "name": "leading-only-review-ineligible",
+      "default_merge_authority": false,
+      "instructions": [
+        {
+          "text": "Implement issue #602 completely."
+        },
+        {
+          "text": "Only review the pull request now."
+        }
+      ],
+      "generated": "Only review the pull request and report findings.",
+      "expected_holds": []
+    },
+    {
       "name": "diagnostic-ineligible",
       "default_merge_authority": false,
       "instructions": [
@@ -296,6 +310,28 @@
       ]
     },
     {
+      "name": "future-hold-withdrawal",
+      "default_merge_authority": true,
+      "instructions": [
+        {
+          "text": "Implement the change, but do not merge.",
+          "add_holds": [
+            "do not merge"
+          ]
+        },
+        {
+          "text": "The do not merge hold will be withdrawn tomorrow.",
+          "add_holds": [
+            "do not merge"
+          ]
+        }
+      ],
+      "generated": "Preserve the explicit do not merge instruction.",
+      "expected_holds": [
+        "do not merge"
+      ]
+    },
+    {
       "name": "draft-pr-ineligible",
       "default_merge_authority": false,
       "instructions": [
@@ -304,6 +340,17 @@
         }
       ],
       "generated": "Prepare the requested draft pull request for discussion.",
+      "expected_holds": []
+    },
+    {
+      "name": "open-as-draft-ineligible",
+      "default_merge_authority": false,
+      "instructions": [
+        {
+          "text": "Deliver the change by opening the pull request as a draft."
+        }
+      ],
+      "generated": "Open the requested draft pull request for discussion.",
       "expected_holds": []
     },
     {
