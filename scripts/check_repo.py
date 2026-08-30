@@ -677,13 +677,14 @@ DEFAULT_MERGE_AUTHORITY_WORKFLOW_RECLASSIFICATION = re.compile(
 )
 DEFAULT_MERGE_AUTHORITY_DIRECT_REVIEW = re.compile(
     r"(?:review|inspect|check|test|verif(?:y|ication)|validat(?:e|ion)|"
-    r"analy(?:ze|sis)|assess|audit|evaluat(?:e|ion))\s+"
+    r"analy(?:ze|sis)|assess|audit|evaluat(?:e|ion))(?:\s+of)?\s+"
     r"(?:the\s+)?(?:implementation|changes?|code|patch|fix(?:es)?)\b"
     r"(?:\s+and\s+(?:report|summarize|describe)\b[^;.!?]*)?"
 )
 DEFAULT_MERGE_AUTHORITY_STOP_WORK = re.compile(
     r"(?:^|[;.!?]\s*)(?:please\s+)?(?:stop|cancel|cease|end)\s+"
-    r"(?:(?:all|further|this|the)\s+)?(?:work|implementation|task)\b[^;.!?]*"
+    r"(?:(?:all|further|this|the)\s+)?(?:work|implementation|task)\b"
+    r"(?![^;.!?]*\b(?:if|unless|when|once|after|before)\b)[^;.!?]*"
 )
 DEFAULT_MERGE_AUTHORITY_NEGATED_MUTATION = re.compile(
     r"(?:^|[;.!?]\s*)(?:please\s+)?(?:do not|don't|don’t|must not)\s+"
@@ -740,6 +741,9 @@ MERGE_HOLD_OTHER_TASK_TRAILING_CLAUSE = re.compile(
     r"(?:unrelated|other|another)\s+(?:pull request|pr)\b[^;.!?]*$"
 )
 MERGE_AUTHORITY_TASK_CLAUSE_BOUNDARY = re.compile(r"[;.?!]+")
+MERGE_AUTHORITY_COORDINATED_CLAUSE_BOUNDARY = re.compile(
+    r",\s+(?:but|and)\s+|\s+but\s+"
+)
 MERGE_HOLD_STANDALONE_PERMISSION = re.compile(
     r"\b(?:(?:may|can)\s+merge now|go ahead and merge)\b"
 )
@@ -988,8 +992,20 @@ def merge_hold_directions(
         for marker in MERGE_HOLD_WITHDRAWAL_MARKERS:
             marker_offset = clause.find(marker)
             while marker_offset >= 0:
-                prefix = clause[:marker_offset]
-                if MERGE_HOLD_WITHDRAWAL_NONCURRENT_PREFIX.search(clause):
+                context_start = 0
+                context_end = len(clause)
+                for boundary in MERGE_AUTHORITY_COORDINATED_CLAUSE_BOUNDARY.finditer(
+                    clause
+                ):
+                    if boundary.end() <= marker_offset:
+                        context_start = boundary.end()
+                    elif marker_offset < boundary.start():
+                        context_end = boundary.start()
+                        break
+                withdrawal_context = clause[context_start:context_end]
+                if MERGE_HOLD_WITHDRAWAL_NONCURRENT_PREFIX.search(
+                    withdrawal_context
+                ):
                     marker_end = marker_offset + len(marker)
                     for hold, patterns in EXPLICIT_MERGE_HOLD_PATTERNS.items():
                         for pattern in patterns:

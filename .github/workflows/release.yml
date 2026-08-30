@@ -232,7 +232,9 @@ jobs:
           mkdir -p "$CANDIDATES"
           gh api --paginate --slurp \
             "repos/${{ github.repository }}/actions/artifacts?name=${ARTIFACT_NAME}&per_page=100" \
-            --jq '[.[].artifacts[] | select(.expired == false and .name == "'"$ARTIFACT_NAME"'")]' \
+            > "$RUNNER_TEMP/wheel-artifact-pages.json"
+          jq '[.[].artifacts[] | select(.expired == false and .name == "'"$ARTIFACT_NAME"'")]' \
+            "$RUNNER_TEMP/wheel-artifact-pages.json" \
             > "$RUNNER_TEMP/wheel-artifacts.json"
           if test "$(jq length "$RUNNER_TEMP/wheel-artifacts.json")" -lt 1; then
             echo "::error::No retained automatic wheel artifact exists for $RELEASE_SHA at v$VERSION."

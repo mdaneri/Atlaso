@@ -750,6 +750,17 @@
       "expected_holds": []
     },
     {
+      "name": "code-review-of-implementation-ineligible",
+      "default_merge_authority": false,
+      "instructions": [
+        {
+          "text": "Perform a code review of the implementation and report findings."
+        }
+      ],
+      "generated": "Review the implementation and report findings.",
+      "expected_holds": []
+    },
+    {
       "name": "test-implementation-ineligible",
       "default_merge_authority": false,
       "instructions": [
@@ -1128,6 +1139,26 @@
       ]
     },
     {
+      "name": "unrelated-trailing-condition-does-not-block-withdrawal",
+      "default_merge_authority": true,
+      "instructions": [
+        {
+          "text": "Implement the change, but do not merge.",
+          "add_holds": [
+            "do not merge"
+          ]
+        },
+        {
+          "text": "Withdraw the do not merge hold now, but if CI fails, notify me.",
+          "remove_holds": [
+            "do not merge"
+          ]
+        }
+      ],
+      "generated": "The hold was withdrawn; complete the guarded merge when eligible.",
+      "expected_holds": []
+    },
+    {
       "name": "long-conditional-standalone-permission",
       "default_merge_authority": true,
       "instructions": [
@@ -1307,6 +1338,20 @@
         }
       ],
       "generated": "Continue the implementation in the fork without merging it here.",
+      "expected_holds": []
+    },
+    {
+      "name": "conditional-stop-work-preserves-authority",
+      "default_merge_authority": true,
+      "instructions": [
+        {
+          "text": "Implement issue #602."
+        },
+        {
+          "text": "Please stop work if CI fails."
+        }
+      ],
+      "generated": "Preserve default merge authority and complete the guarded merge when eligible.",
       "expected_holds": []
     }
   ]

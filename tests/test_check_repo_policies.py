@@ -239,6 +239,9 @@ def test_source_authority_excludes_patch_review() -> None:
         ("Test the implementation and report findings.",)
     )
     assert not source_has_default_merge_authority(
+        ("Perform a code review of the implementation and report findings.",)
+    )
+    assert not source_has_default_merge_authority(
         ("Do not add any code; review the implementation and report findings.",)
     )
 
@@ -250,6 +253,9 @@ def test_source_authority_honors_later_stop_work() -> None:
     )
     assert not source_has_default_merge_authority(
         ("Implement issue #602.", "Please stop work; only explain the failure.")
+    )
+    assert source_has_default_merge_authority(
+        ("Implement issue #602.", "Please stop work if CI fails.")
     )
 
 

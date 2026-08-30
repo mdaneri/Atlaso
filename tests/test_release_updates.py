@@ -1447,6 +1447,13 @@ def test_release_workflows_use_successful_main_sha_and_promote_without_rebuildin
     release_inputs_job = publication.split("  release_inputs:\n", 1)[1].split(
         "  publish:\n", 1
     )[0]
+    artifact_pagination = release_inputs_job.split("gh api --paginate --slurp", 1)[1].split(
+        'if test "$(jq length', 1
+    )[0]
+    assert "--jq" not in artifact_pagination
+    assert '> "$RUNNER_TEMP/wheel-artifact-pages.json"' in artifact_pagination
+    assert "jq '[.[].artifacts[] | select(" in artifact_pagination
+    assert '"$RUNNER_TEMP/wheel-artifact-pages.json"' in artifact_pagination
     candidate_loop = release_inputs_job.split(
         "while IFS=$'\\t' read -r ARTIFACT_ID PUBLISHER_RUN_ID; do", 1
     )[1].split("done < <(", 1)[0]
