@@ -12,7 +12,20 @@ let blockquoteDepth = 0
 let deletionDepth = 0
 const suppressedHtml = []
 
-const suppressedTags = new Set(['del', 's', 'strike', 'script', 'style', 'pre', 'textarea'])
+const suppressedTags = new Set(['del', 's', 'strike', 'script', 'style', 'pre', 'textarea', 'template'])
+
+function hasHiddenAttributes (attributes) {
+  if (/(?:^|\s)hidden(?:\s|=|$)/i.test(attributes)) {
+    return true
+  }
+  const ariaHidden = attributes.match(/(?:^|\s)aria-hidden\s*=\s*(?:"([^"]*)"|'([^']*)'|([^\s"'=<>`]+))/i)
+  if (ariaHidden && (ariaHidden[1] || ariaHidden[2] || ariaHidden[3] || '').toLowerCase() === 'true') {
+    return true
+  }
+  const style = attributes.match(/(?:^|\s)style\s*=\s*(?:"([^"]*)"|'([^']*)'|([^\s"'=<>`]+))/i)
+  const styleValue = style && (style[1] || style[2] || style[3] || '')
+  return Boolean(styleValue && /(?:display\s*:\s*none|visibility\s*:\s*hidden)/i.test(styleValue))
+}
 
 function updateHtmlSuppression (content) {
   const tagPattern = /<(?<closing>\/)?(?<tag>[A-Za-z][A-Za-z0-9-]*)\b(?<attributes>(?:[^<>"']|"[^"]*"|'[^']*')*?)(?<selfClosing>\/)?\s*>/g
@@ -28,11 +41,30 @@ function updateHtmlSuppression (content) {
       continue
     }
     const attributes = match.groups.attributes
-    const hidden = /(?:^|\s)(?:hidden|aria-hidden\s*=\s*["']?true|style\s*=\s*["'][^"']*(?:display\s*:\s*none|visibility\s*:\s*hidden))/i.test(attributes)
+    const hidden = hasHiddenAttributes(attributes)
     if (suppressedTags.has(tag) || (hidden && !match.groups.selfClosing)) {
       suppressedHtml.push(tag)
     }
   }
+}
+
+function processHtmlBlock (content) {
+  if (/^\s*<(?:!--|!|\?)/.test(content)) {
+    return
+  }
+  const tagPattern = /<\/?[A-Za-z][A-Za-z0-9-]*\b(?:[^<>"']|"[^"]*"|'[^']*')*?\/?\s*>/g
+  let cursor = 0
+  for (const match of content.matchAll(tagPattern)) {
+    if (!blockquoteDepth && !suppressedHtml.length) {
+      output.push(content.slice(cursor, match.index))
+    }
+    updateHtmlSuppression(match[0])
+    cursor = match.index + match[0].length
+  }
+  if (!blockquoteDepth && !suppressedHtml.length) {
+    output.push(content.slice(cursor))
+  }
+  output.push('\n')
 }
 
 function processInline (children) {
@@ -72,6 +104,8 @@ for (const token of tokens) {
   if (token.type === 'inline') {
     processInline(token.children)
     output.push('\n')
+  } else if (token.type === 'html_block') {
+    processHtmlBlock(token.content)
   }
 }
 
