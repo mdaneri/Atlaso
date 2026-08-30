@@ -1452,12 +1452,12 @@ if [ -n "$pwsh_path" ]; then
             exit 2
             ;;
     esac
-    powershell_binary_metadata="$(stat -c '%u:%g:%a:%F' "$powershell_binary")"
+    powershell_binary_metadata="$(stat -c '%u:%g:%a' "$powershell_binary")"
     old_ifs="$IFS"
     IFS=:
     set -- $powershell_binary_metadata
     IFS="$old_ifs"
-    if [ "$1" != "0" ] || [ "$2" != "0" ] || [ "$4" != "regular file" ] || \
+    if [ ! -f "$powershell_binary" ] || [ "$1" != "0" ] || [ "$2" != "0" ] || \
         [ $((0$3 & 0022)) -ne 0 ] || [ $((0$3 & 0111)) -eq 0 ]; then
         echo "PowerShell executable must be root-owned, executable, and non-writable by group or other: $powershell_binary" >&2
         exit 2
@@ -1516,8 +1516,8 @@ ATLASO_GLOBAL_POWERSHELL_PROFILE
     chown root:root "$powershell_profile_temporary"
     chmod 0644 "$powershell_profile_temporary"
     mv -fT -- "$powershell_profile_temporary" "$powershell_profile"
-    profile_metadata="$(stat -c '%u:%g:%a:%F' "$powershell_profile")"
-    if [ "$profile_metadata" != "0:0:644:regular file" ]; then
+    profile_metadata="$(stat -c '%u:%g:%a' "$powershell_profile")"
+    if [ "$profile_metadata" != "0:0:644" ]; then
         echo "PowerShell global profile verification failed: $powershell_profile" >&2
         exit 2
     fi
@@ -1546,7 +1546,7 @@ ATLASO_GLOBAL_POWERSHELL_PROFILE
             fi
         done
         if [ -L "$inactive_powershell_profile" ] || [ ! -f "$inactive_powershell_profile" ] || \
-            [ "$(stat -c '%u:%g:%a:%F' "$inactive_powershell_profile")" != "0:0:644:regular file" ] || \
+            [ "$(stat -c '%u:%g:%a' "$inactive_powershell_profile")" != "0:0:644" ] || \
             ! cmp -s -- "$inactive_powershell_profile" "$powershell_profile"; then
             echo "Inactive PowerShell global profile is not Atlaso-owned: $inactive_powershell_profile" >&2
             exit 2

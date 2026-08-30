@@ -370,7 +370,11 @@ def test_rejects_wrong_directory_owner_with_exact_diagnostic(
     original_lstat = Path.lstat
 
     def mismatched_root_owner(path: Path) -> os.stat_result | SimpleNamespace:
-        """Report only the trusted root as owned by an unexpected identity."""
+        """Report only the trusted root as owned by an unexpected identity.
+
+        Args:
+            path: Filesystem path whose metadata is requested.
+        """
 
         metadata = original_lstat(path)
         if path == trusted_root:
@@ -410,7 +414,12 @@ def test_main_does_not_log_untrusted_paths(
     secret_path = "/tmp/operator-secret/pwsh"
 
     def reject_profile(*_args: object, **_kwargs: object) -> Path:
-        """Raise one detailed internal error containing an untrusted path."""
+        """Raise one detailed internal error containing an untrusted path.
+
+        Args:
+            *_args: Positional installer arguments ignored by the fixture.
+            **_kwargs: Keyword installer arguments ignored by the fixture.
+        """
 
         raise installer.ProfileInstallError(f"unsafe profile path: {secret_path}")
 
@@ -447,7 +456,12 @@ def test_main_does_not_log_installed_path(
     secret_path = Path("/tmp/operator-secret/powershell/profile.ps1")
 
     def install_profile(*_args: object, **_kwargs: object) -> Path:
-        """Return one installation path derived from untrusted CLI input."""
+        """Return one installation path derived from untrusted CLI input.
+
+        Args:
+            *_args: Positional installer arguments ignored by the fixture.
+            **_kwargs: Keyword installer arguments ignored by the fixture.
+        """
 
         return secret_path
 

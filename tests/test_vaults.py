@@ -666,6 +666,8 @@ def test_vmware_wheel_deploy_exposes_fail_closed_vault_shell_commands():
     assert "/usr/share/powershell)" in deploy
     assert "/opt/microsoft/powershell/7)" in deploy
     assert "PowerShell executable must be root-owned, executable, and non-writable" in deploy
+    assert "'%u:%g:%a:%F'" not in deploy
+    assert 'if [ ! -f "$powershell_binary" ]' in deploy
     assert "PowerShell profile directory must be a canonical directory" in deploy
     assert "PowerShell profile directory must be owned by root" in deploy
     assert "PowerShell profile directory must not be writable by group or other" in deploy
