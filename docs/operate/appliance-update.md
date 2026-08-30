@@ -150,9 +150,9 @@ GitHub is the default distribution origin:
 - **Publish appliance release** consumes that handoff, publishes the signed immutable `vX.Y.Z` software bundle, and
   advances `development`. The operator may also manually name a full commit that remains on `main`, already has a
   successful `main` push CI run, and has a retained matching automatic wheel artifact for recovery. The
-  workflow validates every retained artifact with that name, accepts only byte-identical retries, revalidates the
-  selected CI identity and embedded wheel metadata, and records the handoff inside the signed appliance bundle. It
-  never rebuilds or substitutes the application wheel.
+  workflow collects every page of retained artifact records before filtering the exact name, validates every retained
+  match, accepts only byte-identical retries, revalidates the selected CI identity and embedded wheel metadata, and
+  records the handoff inside the signed appliance bundle. It never rebuilds or substitutes the application wheel.
   Under the shared Pages lock it authenticates the existing `development` pointer and refuses a semantic-version
   downgrade, including when successful CI is rerun for a historical commit. The promotion helper comes from the
   immutable protected workflow SHA and requires the existing pointer to use the exact selected named trust key, while
