@@ -246,9 +246,11 @@ The build wrapper reads the selected VMware network before rendering Packer vari
 interface named by `-BridgedInterfaceAlias`. Unless overridden, it atomically selects the first free address from host
 offsets `.30` through `.49` for the temporary Photon builder and uses DHCP for the completed appliance management
 address. Before publishing a reservation, it reads the exact selected subnet from VMware's `vmnetdhcp.conf` and rejects
-the pool when any address overlaps a VMware dynamic range or fixed address. It also excludes addresses held by another
-Atlaso reservation, reported by a running Workstation guest, or present in the Windows neighbor table; ping is not used
-as free-address proof. The per-user ledger serializes concurrent worktrees and binds each reservation to the exact task
+the pool when any address overlaps a VMware dynamic range or fixed address. Automatic selection skips gateway and host
+interface addresses while trying the remaining pool; an explicitly requested excluded address fails closed. It also
+excludes addresses held by another Atlaso reservation, reported by a running Workstation guest, or present in the
+Windows neighbor table; ping is not used as free-address proof. The per-user ledger serializes concurrent worktrees and
+binds each reservation to the exact task
 worktree, source commit, branch, process, Windows boot identity, output root, VM name, and VMX path. A dead owner remains
 reserved for the rest of the same Windows boot because a surviving descendant could still start the VM. After a host
 restart proves that process tree gone, recovery also requires the exact VM to be inactive and its address unobserved;

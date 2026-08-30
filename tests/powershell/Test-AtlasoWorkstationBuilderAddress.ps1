@@ -97,6 +97,28 @@ exit 1
         throw 'Concurrent reservations did not allocate distinct deterministic builder addresses.'
     }
 
+    $excludedStateRoot = Join-Path $testRoot 'ordinary-exclusion-state'
+    $excludedCommon = $common.Clone()
+    $excludedCommon.StateRoot = $excludedStateRoot
+    $excludedCommon.AdditionalExcludedAddresses = @('192.0.2.30')
+    $skipped = Enter-AtlasoVmwareBuilderAddressReservation `
+        @excludedCommon `
+        -OutputDirectory (Join-Path $testRoot 'ordinary-exclusion-output')
+    if ($skipped.Address -cne '192.0.2.31') {
+        throw 'Automatic allocation did not skip an ordinary host or network exclusion.'
+    }
+    Exit-AtlasoVmwareBuilderAddressReservation -Reservation $skipped -VmrunPath $vmrunPath -StateRoot $excludedStateRoot
+    try {
+        $null = Enter-AtlasoVmwareBuilderAddressReservation `
+            @excludedCommon `
+            -OutputDirectory (Join-Path $testRoot 'preferred-exclusion-output') `
+            -PreferredAddress '192.0.2.30'
+        throw 'An explicitly preferred ordinary exclusion was accepted.'
+    }
+    catch {
+        if ($_.Exception.Message -eq 'An explicitly preferred ordinary exclusion was accepted.') { throw }
+    }
+
     $runningVmrunPath = Join-Path $testRoot 'fake-running-vmrun.ps1'
     $runningVmrunSource = @'
 param([Parameter(ValueFromRemainingArguments = $true)][string[]]$Arguments)
@@ -212,6 +234,56 @@ exit 1
         -VmrunPath $vmrunPath `
         -StateRoot $activeStateRoot `
         -ProcessTreeTerminationProven
+
+    $reusedPidStateRoot = Join-Path $testRoot 'reused-pid-state'
+    $reusedPidCommon = $common.Clone()
+    $reusedPidCommon.StateRoot = $reusedPidStateRoot
+    $reusedPidReservation = Enter-AtlasoVmwareBuilderAddressReservation `
+        @reusedPidCommon `
+        -OutputDirectory (Join-Path $testRoot 'reused-pid-output')
+    $reusedPidReservation.OwnerStartTimeUtcTicks = 1
+    $reusedPidLedger = [ordered]@{ Schema = 1; Reservations = @($reusedPidReservation) }
+    [System.IO.File]::WriteAllText(
+        (Join-Path $reusedPidStateRoot 'reservations.json'),
+        (($reusedPidLedger | ConvertTo-Json -Depth 6) + "`n"),
+        [System.Text.UTF8Encoding]::new($false)
+    )
+    try {
+        Exit-AtlasoVmwareBuilderAddressReservation `
+            -Reservation $reusedPidReservation `
+            -VmrunPath $vmrunPath `
+            -StateRoot $reusedPidStateRoot
+        throw 'A reused PID released a dead same-boot reservation as its own.'
+    }
+    catch {
+        if ($_.Exception.Message -eq 'A reused PID released a dead same-boot reservation as its own.') { throw }
+    }
+    Exit-AtlasoVmwareBuilderAddressReservation `
+        -Reservation $reusedPidReservation `
+        -VmrunPath $vmrunPath `
+        -StateRoot $reusedPidStateRoot `
+        -ProcessTreeTerminationProven
+
+    $postRenameStateRoot = Join-Path $testRoot 'post-rename-sync-state'
+    [void][System.IO.Directory]::CreateDirectory($postRenameStateRoot)
+    $postRenameLedgerPath = Join-Path $postRenameStateRoot 'reservations.json'
+    $module = Get-Module -Name Atlaso.WorkstationBuilderAddress -ErrorAction Stop
+    & $module {
+        param($LedgerPath)
+        function Sync-AtlasoBuilderLedgerDirectory {
+            <#
+            .SYNOPSIS
+            Inject a post-rename directory synchronization failure.
+            #>
+            throw 'Injected post-rename directory synchronization failure.'
+        }
+        Write-AtlasoBuilderReservationLedger -Path $LedgerPath -Reservations @()
+    } $postRenameLedgerPath
+    $postRenameLedger = Get-Content -LiteralPath $postRenameLedgerPath -Raw | ConvertFrom-Json
+    if ([int]$postRenameLedger.Schema -ne 1 -or @($postRenameLedger.Reservations).Count -ne 0) {
+        throw 'Post-rename synchronization reconciliation did not preserve the published ledger.'
+    }
+    Import-Module $modulePath -Force
 
     $ledgerPath = Join-Path $stateRoot 'reservations.json'
     $currentBootIdentity = ([DateTimeOffset](

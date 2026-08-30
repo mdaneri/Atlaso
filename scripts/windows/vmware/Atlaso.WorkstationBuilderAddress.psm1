@@ -365,7 +365,19 @@ function Write-AtlasoBuilderReservationLedger {
             -SourcePath $temporary `
             -DestinationPath $Path `
             -Replace
-        Sync-AtlasoBuilderLedgerDirectory -DirectoryPath (Split-Path -Parent $Path)
+        try {
+            Sync-AtlasoBuilderLedgerDirectory -DirectoryPath (Split-Path -Parent $Path)
+        }
+        catch {
+            # MoveFileEx publishes the write-through replacement before the
+            # supplementary directory flush. Reconcile that visible state so
+            # callers never lose the exact record needed to release it.
+            $publishedBytes = [System.IO.File]::ReadAllBytes($Path)
+            if ($publishedBytes.Length -ne $bytes.Length -or
+                -not [System.Linq.Enumerable]::SequenceEqual[byte]($publishedBytes, $bytes)) {
+                throw
+            }
+        }
     }
     finally {
         if (Test-Path -LiteralPath $temporary) {
@@ -536,15 +548,17 @@ function Enter-AtlasoVmwareBuilderAddressReservation {
     }
     $network = Get-AtlasoIpv4Network -Subnet $Subnet -Netmask $Netmask
     $dhcp = Get-AtlasoVmwareDhcpExclusions -Subnet $Subnet -Netmask $Netmask -DhcpEnabled $DhcpEnabled -ConfigPath $DhcpConfigPath
-    $excluded = [System.Collections.Generic.HashSet[uint32]]::new()
-    foreach ($value in $dhcp.FixedAddresses) { [void]$excluded.Add([uint32]$value) }
+    $fixedExcluded = [System.Collections.Generic.HashSet[uint32]]::new()
+    foreach ($value in $dhcp.FixedAddresses) { [void]$fixedExcluded.Add([uint32]$value) }
+    $ordinaryExcluded = [System.Collections.Generic.HashSet[uint32]]::new()
     foreach ($address in $AdditionalExcludedAddresses) {
         if (-not [string]::IsNullOrWhiteSpace($address)) {
-            [void]$excluded.Add((ConvertTo-AtlasoIpv4Integer -Address $address))
+            [void]$ordinaryExcluded.Add((ConvertTo-AtlasoIpv4Integer -Address $address))
         }
     }
 
-    $candidateValues = if (-not [string]::IsNullOrWhiteSpace($PreferredAddress)) {
+    $preferredAddressSupplied = -not [string]::IsNullOrWhiteSpace($PreferredAddress)
+    $candidateValues = if ($preferredAddressSupplied) {
         @((ConvertTo-AtlasoIpv4Integer -Address $PreferredAddress))
     }
     else {
@@ -568,9 +582,15 @@ function Enter-AtlasoVmwareBuilderAddressReservation {
                 throw "Builder address pool overlaps VMware DHCP range $(ConvertFrom-AtlasoIpv4Integer -Address $range.Start)-$(ConvertFrom-AtlasoIpv4Integer -Address $range.End)."
             }
         }
-        if ($excluded.Contains($candidate)) {
+        if ($fixedExcluded.Contains($candidate)) {
             throw "Builder address pool includes VMware-reserved address $(ConvertFrom-AtlasoIpv4Integer -Address $candidate)."
         }
+        if ($preferredAddressSupplied -and $ordinaryExcluded.Contains($candidate)) {
+            throw "Preferred builder address $(ConvertFrom-AtlasoIpv4Integer -Address $candidate) is reserved by the host or network configuration."
+        }
+    }
+    if (-not $preferredAddressSupplied) {
+        $candidateValues = @($candidateValues | Where-Object { -not $ordinaryExcluded.Contains([uint32]$_) })
     }
 
     $resolvedStateRoot = if ([string]::IsNullOrWhiteSpace($StateRoot)) {
@@ -718,7 +738,12 @@ function Exit-AtlasoVmwareBuilderAddressReservation {
             )) {
             throw 'The exact VMware builder-address reservation could not be proven for release.'
         }
-        if ([int]$matching[0].OwnerPid -ne $PID) {
+        $currentOwner = Get-Process -Id $PID -ErrorAction Stop
+        $isExactCurrentOwner = (
+            [int]$matching[0].OwnerPid -eq $PID -and
+            [long]$matching[0].OwnerStartTimeUtcTicks -eq $currentOwner.StartTime.ToUniversalTime().Ticks
+        )
+        if (-not $isExactCurrentOwner) {
             $ownerActive = Test-AtlasoProcessIdentityActive `
                 -ProcessId ([int]$matching[0].OwnerPid) `
                 -StartTimeUtcTicks ([long]$matching[0].OwnerStartTimeUtcTicks)
