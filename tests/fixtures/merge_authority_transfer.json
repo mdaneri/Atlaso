@@ -56,6 +56,17 @@
       "expected_holds": []
     },
     {
+      "name": "existing-ordinary-pr-work",
+      "default_merge_authority": true,
+      "instructions": [
+        {
+          "text": "Work on existing ordinary PR #620 and address its review feedback."
+        }
+      ],
+      "generated": "Preserve default merge authority and complete the guarded merge plus post-merge verification.",
+      "expected_holds": []
+    },
+    {
       "name": "manual-merge-with-auto-merge-disabled",
       "default_merge_authority": true,
       "instructions": [
