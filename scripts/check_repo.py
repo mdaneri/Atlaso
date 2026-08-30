@@ -2993,6 +2993,37 @@ def _yaml_mapping(lines: list[str], key_index: int, key_indent: int) -> dict[str
     return values
 
 
+def _workflow_permissions(lines: list[str], key_index: int, key_indent: int) -> dict[str, str]:
+    """Read block, scalar, or inline workflow permissions conservatively.
+
+    Args:
+        lines: Workflow source split into lines.
+        key_index: Index of the permissions key line.
+        key_indent: Indentation of the permissions key.
+
+    Returns:
+        Effective permission values needed by the protected-cache policy.
+    """
+
+    value = lines[key_index].split(":", 1)[1].split("#", 1)[0].strip()
+    if not value:
+        return _yaml_mapping(lines, key_index, key_indent)
+    value = value.strip("'\"")
+    if value == "write-all":
+        return {"actions": "write"}
+    if value == "read-all":
+        return {"actions": "read"}
+    if value.startswith("{") and value.endswith("}"):
+        entries: dict[str, str] = {}
+        for item in value[1:-1].split(","):
+            if ":" not in item:
+                continue
+            key, permission = item.split(":", 1)
+            entries[key.strip().strip("'\"")] = permission.strip().strip("'\"")
+        return entries
+    return {}
+
+
 def check_protected_workflow_caches(root: Path) -> list[Finding]:
     """Reject writable setup-python caches without effective Actions write scope.
 
@@ -3014,8 +3045,8 @@ def check_protected_workflow_caches(root: Path) -> list[Finding]:
         lines = text.splitlines()
         workflow_permissions: dict[str, str] = {}
         for index, line in enumerate(lines):
-            if line == "permissions:":
-                workflow_permissions = _yaml_mapping(lines, index, 0)
+            if re.match(r"^permissions:\s*(?:[^#].*)?$", line):
+                workflow_permissions = _workflow_permissions(lines, index, 0)
                 break
         jobs_index = next(
             (index for index, line in enumerate(lines) if line == "jobs:"),
@@ -3031,8 +3062,8 @@ def check_protected_workflow_caches(root: Path) -> list[Finding]:
             job_lines = lines[start:end]
             effective_permissions = workflow_permissions
             for offset, line in enumerate(job_lines):
-                if line == "    permissions:":
-                    effective_permissions = _yaml_mapping(job_lines, offset, 4)
+                if re.match(r"^    permissions:\s*(?:[^#].*)?$", line):
+                    effective_permissions = _workflow_permissions(job_lines, offset, 4)
                     break
             for offset, line in enumerate(job_lines):
                 if "uses: actions/setup-python@" not in line:
@@ -3044,7 +3075,7 @@ def check_protected_workflow_caches(root: Path) -> list[Finding]:
                     candidate_indent = len(candidate) - len(stripped)
                     if (
                         stripped.startswith("- ")
-                        and candidate_indent < step_indent
+                        and candidate_indent <= step_indent
                     ):
                         break
                     if re.match(r"cache:\s*['\"]?(?:pip|pipenv|poetry)['\"]?\s*(?:#.*)?$", stripped):
