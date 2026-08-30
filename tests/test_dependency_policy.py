@@ -169,6 +169,7 @@ def test_dependency_policy_recognizes_prefixed_python_pip_invocations(
     workflow.parent.mkdir(parents=True, exist_ok=True)
     invocations = (
         "python3.14 -m pip install -r requirements-ad-hoc.lock",
+        "python -m pip.__main__ install -r requirements-ad-hoc.lock",
         "PIP_CONFIG_FILE=/dev/null python -m pip install -r requirements-ad-hoc.lock",
         "& python -m pip install -r requirements-ad-hoc.lock",
     )

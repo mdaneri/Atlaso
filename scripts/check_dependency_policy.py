@@ -20,7 +20,7 @@ HASH_RE = re.compile(r"--hash=sha256:[0-9a-f]{64}")
 PIP_COMMAND_RE = re.compile(
     r"(?<![A-Za-z0-9_.-])"
     r"(?:(?:python(?:\d+(?:\.\d+)*)?(?:\.exe)?|py(?:\.exe)?)\s+-m\s+)?"
-    r"pip(?:\d+(?:\.\d+)*)?\s+[^\s;&|]+"
+    r"pip(?:\d+(?:\.\d+)*)?(?:\.__main__)?\s+[^\s;&|]+"
     r"(?P<args>.*?)(?=(?:&&|\|\||;)|$)"
 )
 WORKFLOW_REQUIREMENT_RE = re.compile(
