@@ -3533,6 +3533,11 @@ must not embed credentials, and must provide complete upload-time metadata or co
 shorten the upload-time cutoff to obtain a newer dependency, including for a security update. If no eligible version
 satisfies the input declarations, change the input constraint through a reviewed dependency update or wait until the
 required release reaches seven full days.</p>
+<p>Protected appliance, promotion, Inventory Linux, and virtualization publication jobs intentionally run without a
+writable Actions cache scope. Their <code>actions/setup-python</code> steps therefore do not enable the built-in pip cache, because
+that option always registers a post-job cache save. This cache-free setup does not relax dependency integrity: every
+release-tool and appliance dependency installation continues to consume the checked-in hash-locked requirements files.
+Ordinary CI jobs may continue to use dependency caching under their separate execution permissions.</p>
 <h2 id="validate-the-result">Validate the result<a class="headerlink" href="#validate-the-result" title="Permanent link">&para;</a></h2>
 <p>Run:</p>
 <div class="language-powershell highlight"><pre><span></span><code><span id="__span-1-1"><a id="__codelineno-1-1" name="__codelineno-1-1" href="#__codelineno-1-1"></a><span class="n">python</span> <span class="n">scripts</span><span class="p">/</span><span class="n">check_dependency_policy</span><span class="p">.</span><span class="n">py</span>

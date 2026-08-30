@@ -4232,6 +4232,10 @@ Python-range changes without a regenerated hash lock. Release CI installs only t
 every downloaded wheel or source archive against the checked-in lock, builds any missing pure wheel without build
 isolation, and writes an ABI-specific <code>requirements-wheelhouse.lock</code> over the resulting wheel bytes. It does this for
 the appliance's CPython 3.14 runtime before running:</p>
+<p>Protected release and promotion jobs configure Python without the built-in <code>setup-python</code> pip cache. Their deliberately
+narrow Actions permissions cannot reserve cache saves, and publication must not broaden token authority merely for a
+performance optimization. The cache-free setup leaves the hash-locked installation, wheelhouse, signing, immutable
+Release, Pages serialization, channel monotonicity, and live-verification gates unchanged.</p>
 <div class="language-bash highlight"><pre><span></span><code><span id="__span-7-1"><a id="__codelineno-7-1" name="__codelineno-7-1" href="#__codelineno-7-1"></a>python<span class="w"> </span>scripts/build_release_bundle.py<span class="w"> </span><span class="se">\</span>
 </span><span id="__span-7-2"><a id="__codelineno-7-2" name="__codelineno-7-2" href="#__codelineno-7-2"></a><span class="w">  </span>--wheelhouses<span class="w"> </span>wheelhouses<span class="w"> </span><span class="se">\</span>
 </span><span id="__span-7-3"><a id="__codelineno-7-3" name="__codelineno-7-3" href="#__codelineno-7-3"></a><span class="w">  </span>--application-wheel-root<span class="w"> </span>dist/application-wheel<span class="w"> </span><span class="se">\</span>
