@@ -143,6 +143,12 @@ exit 1
     Exit-AtlasoVmwareBuilderAddressReservation -Reservation $second -VmrunPath $vmrunPath -StateRoot $stateRoot
 
     $ledgerPath = Join-Path $stateRoot 'reservations.json'
+    $currentBootIdentity = ([DateTimeOffset](
+            Get-CimInstance -ClassName Win32_OperatingSystem -ErrorAction Stop |
+                Select-Object -First 1
+        ).LastBootUpTime).ToUniversalTime().Ticks.ToString(
+        [Globalization.CultureInfo]::InvariantCulture
+    )
     $stale = [ordered]@{
         Schema = 1
         Reservations = @([ordered]@{
@@ -154,6 +160,7 @@ exit 1
                 Netmask                = '255.255.255.0'
                 OwnerPid               = 2147483647
                 OwnerStartTimeUtcTicks = 1
+                HostBootIdentity       = $currentBootIdentity
                 RepositoryRoot         = $RepositoryRoot
                 SourceCommit           = ('0' * 40)
                 SourceBranch           = 'bug/stale-test'
@@ -168,9 +175,21 @@ exit 1
         (($stale | ConvertTo-Json -Depth 5) + "`n"),
         [System.Text.UTF8Encoding]::new($false)
     )
+    $sameBoot = Enter-AtlasoVmwareBuilderAddressReservation @common -OutputDirectory $outputOne
+    if ($sameBoot.Address -cne '192.0.2.31') {
+        throw 'A same-boot orphaned reservation was recovered without whole-tree termination proof.'
+    }
+    Exit-AtlasoVmwareBuilderAddressReservation -Reservation $sameBoot -VmrunPath $vmrunPath -StateRoot $stateRoot
+
+    $stale.Reservations[0].HostBootIdentity = '1'
+    [System.IO.File]::WriteAllText(
+        $ledgerPath,
+        (($stale | ConvertTo-Json -Depth 5) + "`n"),
+        [System.Text.UTF8Encoding]::new($false)
+    )
     $recovered = Enter-AtlasoVmwareBuilderAddressReservation @common -OutputDirectory $outputOne
     if ($recovered.Address -cne '192.0.2.30') {
-        throw 'Ownership-verified stale reservation recovery did not return the address to the pool.'
+        throw 'Prior-boot stale reservation recovery did not return the address to the pool.'
     }
     Exit-AtlasoVmwareBuilderAddressReservation -Reservation $recovered -VmrunPath $vmrunPath -StateRoot $stateRoot
 

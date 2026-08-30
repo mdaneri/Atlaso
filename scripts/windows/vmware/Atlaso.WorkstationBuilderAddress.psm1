@@ -189,6 +189,21 @@ function Test-AtlasoProcessIdentityActive {
     }
 }
 
+function Get-AtlasoBuilderHostBootIdentity {
+    <#
+    .SYNOPSIS
+    Return the stable identity of the current Windows host boot.
+    #>
+    $operatingSystem = Get-CimInstance -ClassName Win32_OperatingSystem -ErrorAction Stop |
+        Select-Object -First 1
+    if ($null -eq $operatingSystem -or $null -eq $operatingSystem.LastBootUpTime) {
+        throw 'The Windows host boot identity could not be determined.'
+    }
+    return ([DateTimeOffset]$operatingSystem.LastBootUpTime).ToUniversalTime().Ticks.ToString(
+        [Globalization.CultureInfo]::InvariantCulture
+    )
+}
+
 function Get-AtlasoRunningVmwareVmxPaths {
     <#
     .SYNOPSIS
@@ -453,6 +468,7 @@ function Enter-AtlasoVmwareBuilderAddressReservation {
         throw 'Could not bind the VMware builder reservation to an exact task branch.'
     }
     $owner = Get-Process -Id $PID -ErrorAction Stop
+    $hostBootIdentity = Get-AtlasoBuilderHostBootIdentity
     $reservationId = [guid]::NewGuid().ToString('N')
 
     return Invoke-WithAtlasoBuilderReservationLock -StateRoot $resolvedStateRoot -Action {
@@ -461,17 +477,24 @@ function Enter-AtlasoVmwareBuilderAddressReservation {
         foreach ($entry in $reservations) {
             $required = @(
                 'Id', 'Address', 'Cidr', 'NetworkName', 'Subnet', 'Netmask',
-                'OwnerPid', 'OwnerStartTimeUtcTicks', 'RepositoryRoot', 'SourceCommit',
+                'OwnerPid', 'OwnerStartTimeUtcTicks', 'HostBootIdentity', 'RepositoryRoot', 'SourceCommit',
                 'SourceBranch', 'OutputDirectory', 'VmName', 'VmxPath', 'CreatedUtc'
             )
             $entryProperties = @($entry.PSObject.Properties.Name)
             if ($entryProperties.Count -ne $required.Count -or
                 @($required | Where-Object { $_ -notin $entryProperties }).Count -gt 0 -or
                 [string]$entry.Id -notmatch '^[0-9a-f]{32}$' -or
+                [string]$entry.HostBootIdentity -notmatch '^[0-9]{1,19}$' -or
                 [string]$entry.SourceCommit -notmatch '^[0-9a-f]{40}$') {
                 throw "The Atlaso VMware builder-address reservation ledger is ambiguous: $ledgerPath"
             }
             if (Test-AtlasoProcessIdentityActive -ProcessId ([int]$entry.OwnerPid) -StartTimeUtcTicks ([long]$entry.OwnerStartTimeUtcTicks)) {
+                $retained += $entry
+                continue
+            }
+            if ([string]$entry.HostBootIdentity -ceq $hostBootIdentity) {
+                # A dead parent does not prove its descendants are gone. On the same
+                # host boot, one could still start the reserved VM after this check.
                 $retained += $entry
                 continue
             }
@@ -502,6 +525,7 @@ function Enter-AtlasoVmwareBuilderAddressReservation {
                 Netmask                = $Netmask
                 OwnerPid               = $PID
                 OwnerStartTimeUtcTicks = $owner.StartTime.ToUniversalTime().Ticks
+                HostBootIdentity       = $hostBootIdentity
                 RepositoryRoot         = $resolvedRepository
                 SourceCommit           = $sourceCommit.Trim()
                 SourceBranch           = $sourceBranch.Trim()

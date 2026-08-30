@@ -711,10 +711,12 @@ The following cross-cutting boundaries always apply:
 - Before any canonical VMware Photon builder starts, atomically reserve one temporary static IPv4 address from the
   configured per-host pool. Parse the selected vmnet's exact `vmnetdhcp.conf` subnet, reject a pool or explicit address
   that overlaps a VMware DHCP range or fixed address, and exclude observed non-ICMP use. Serialize the durable ledger
-  across Atlaso worktrees, bind each entry to the exact task worktree, source commit, branch, owner process, output root,
-  VM name, and VMX path, and retain it
-  while that exact VM remains active or recovery evidence is ambiguous. Release only after normal inactive-VM
-  completion or ownership-verified stale recovery. The completed appliance still uses management DHCP by default.
+  across Atlaso worktrees, bind each entry to the exact task worktree, source commit, branch, owner process, Windows
+  boot identity, output root, VM name, and VMX path, and retain it while that exact VM remains active or recovery
+  evidence is ambiguous. A dead owner cannot release its reservation during the same Windows boot because a surviving
+  descendant could still start the VM. Permit stale recovery only after a changed host-boot identity proves that tree
+  gone and the exact VM and address are inactive. Release normally only after inactive-VM completion. The completed
+  appliance still uses management DHCP by default.
 - Validate live appliance readiness through `/openapi.json`, not VMware Tools IP discovery or service color alone.
 - A successful tty1 management-network correction must explicitly apply Network and Firewall from the corrected state,
   retry unfinished first-boot HTTPS before applying Appliance Settings, validate nginx before reload, ensure nginx and

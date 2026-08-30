@@ -249,9 +249,10 @@ address. Before publishing a reservation, it reads the exact selected subnet fro
 the pool when any address overlaps a VMware dynamic range or fixed address. It also excludes addresses held by another
 Atlaso reservation, reported by a running Workstation guest, or present in the Windows neighbor table; ping is not used
 as free-address proof. The per-user ledger serializes concurrent worktrees and binds each reservation to the exact task
-worktree, source commit, branch, process, output root, VM name, and VMX path. An interrupted owner is recovered only
-after the exact VM is inactive and the address is no longer observed; ambiguous state remains reserved with an
-actionable error.
+worktree, source commit, branch, process, Windows boot identity, output root, VM name, and VMX path. A dead owner remains
+reserved for the rest of the same Windows boot because a surviving descendant could still start the VM. After a host
+restart proves that process tree gone, recovery also requires the exact VM to be inactive and its address unobserved;
+ambiguous state remains reserved with an actionable error.
 
 Use `-BuilderAddressPoolStartOffset` and `-BuilderAddressPoolEndOffset` to select another bounded pool. An explicit
 `-BuilderStaticIp` is a one-address pool and must pass the same VMware DHCP, fixed-address, observation, and reservation
