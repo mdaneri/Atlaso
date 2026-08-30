@@ -639,7 +639,8 @@ MERGE_AUTHORITY_INSTRUCTION_BOUNDARY = re.compile(
 MERGE_AUTHORITY_COARSE_BOUNDARY = re.compile(r"(?:[;,.!?]+|\s+but\s+)")
 MERGE_HOLD_DISCUSSION_CONTEXT = re.compile(
     r"\b(?:explain(?:ed|ing)?|document(?:ed|ing)?|discuss(?:ed|ing)?|"
-    r"describe(?:d|s|ing)?|mention(?:ed|ing)?|refer(?:red|ring)?)\b"
+    r"describe(?:d|s|ing)?|mention(?:ed|ing)?|refer(?:red|ring)?|"
+    r"test(?:ed|ing)?)\b"
 )
 DEFAULT_MERGE_AUTHORITY_ACTION_BOUNDARY = re.compile(
     r"(?:[;,.!?]+|\s+(?:and|then|but)\s+)"
@@ -656,6 +657,7 @@ MERGE_HOLD_OTHER_TASK_PREFIX = re.compile(
 MERGE_HOLD_OTHER_TASK_REFERENCE = re.compile(
     r"(?:unrelated|other|another)\s+(?:pull request|pr)\b"
 )
+MERGE_AUTHORITY_TASK_CLAUSE_BOUNDARY = re.compile(r"[;.?!]+")
 
 ORDERED_TERMINAL_CLEANUP_MARKERS = {
     path: (
@@ -804,7 +806,13 @@ def merge_hold_directions(
     normalized = " ".join(text.casefold().split())
     for phrase in AUTO_MERGE_ONLY_PHRASES:
         normalized = normalized.replace(phrase, "keep github auto-merge disabled")
-    if MERGE_HOLD_OTHER_TASK_REFERENCE.search(normalized) is not None:
+    normalized = "; ".join(
+        clause.strip()
+        for clause in MERGE_AUTHORITY_TASK_CLAUSE_BOUNDARY.split(normalized)
+        if clause.strip()
+        and MERGE_HOLD_OTHER_TASK_REFERENCE.search(clause) is None
+    )
+    if not normalized:
         return {}
     shared_withdrawals: set[str] = set()
     coarse_segments = (
@@ -907,7 +915,7 @@ def merge_hold_directions(
             )
         ):
             for hold in active_holds:
-                directions.setdefault(hold, "remove")
+                directions[hold] = "remove"
             break
         permission_offset = normalized.find("may merge now", permission_offset + 1)
     for hold in shared_withdrawals:
@@ -960,10 +968,21 @@ def source_has_default_merge_authority(instructions: tuple[str, ...]) -> bool:
         source_markers = tuple(
             DEFAULT_MERGE_AUTHORITY_SOURCE_MARKERS.finditer(normalized)
         )
+        affirmative_source_markers = tuple(
+            marker
+            for marker in source_markers
+            if not any(
+                exclusion.start() <= marker.start() < exclusion.end()
+                for exclusion in exclusion_matches
+            )
+        )
         direct_review_matches = tuple(
             match
             for match in DEFAULT_MERGE_AUTHORITY_DIRECT_REVIEW.finditer(normalized)
-            if not any(marker.start() < match.start() for marker in source_markers)
+            if not any(
+                marker.start() < match.start()
+                for marker in affirmative_source_markers
+            )
         )
         exclusion_matches += direct_review_matches
         events = [

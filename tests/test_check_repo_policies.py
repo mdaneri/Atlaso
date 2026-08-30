@@ -1059,6 +1059,48 @@ def test_merge_authority_transfer_applies_standalone_merge_permission(
     assert check_merge_authority_transfer_fixtures(tmp_path) == []
 
 
+def test_merge_authority_transfer_permission_overrides_repeated_hold_text(
+    tmp_path: Path,
+) -> None:
+    """Verify current merge permission overrides repeated stale hold wording.
+
+    Args:
+        tmp_path: Temporary directory provided by pytest for isolated filesystem state.
+    """
+    path = tmp_path / MERGE_AUTHORITY_TRANSFER_FIXTURE_PATH
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(
+        json.dumps(
+            {
+                "cases": [
+                    {
+                        "name": "permission overrides repeated hold",
+                        "default_merge_authority": True,
+                        "instructions": [
+                            {
+                                "text": "Implement the change, but do not merge.",
+                                "add_holds": ["do not merge"],
+                            },
+                            {
+                                "text": (
+                                    "Ignore the previous do not merge hold; you may "
+                                    "merge now."
+                                ),
+                                "remove_holds": ["do not merge"],
+                            },
+                        ],
+                        "generated": "Continue through guarded squash merge.",
+                        "expected_holds": [],
+                    }
+                ]
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    assert check_merge_authority_transfer_fixtures(tmp_path) == []
+
+
 def test_merge_authority_transfer_scopes_standalone_permission_to_active_task(
     tmp_path: Path,
 ) -> None:
@@ -1370,6 +1412,44 @@ def test_merge_authority_transfer_ignores_holds_for_unrelated_prs(
         "merge authority fixture unrelated PR hold instruction 1 hold operations "
         "do not match its text"
     )
+
+
+def test_merge_authority_transfer_preserves_active_clause_in_mixed_task_text(
+    tmp_path: Path,
+) -> None:
+    """Verify another-PR prose does not erase this task's explicit hold clause.
+
+    Args:
+        tmp_path: Temporary directory provided by pytest for isolated filesystem state.
+    """
+    path = tmp_path / MERGE_AUTHORITY_TRANSFER_FIXTURE_PATH
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(
+        json.dumps(
+            {
+                "cases": [
+                    {
+                        "name": "mixed task active hold",
+                        "default_merge_authority": True,
+                        "instructions": [
+                            {
+                                "text": (
+                                    "Implement issue #602 and do not merge this pull "
+                                    "request; also document unrelated PR #621."
+                                ),
+                                "add_holds": ["do not merge"],
+                            }
+                        ],
+                        "generated": "Preserve the explicit do not merge instruction.",
+                        "expected_holds": ["do not merge"],
+                    }
+                ]
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    assert check_merge_authority_transfer_fixtures(tmp_path) == []
 
 
 def test_merge_authority_transfer_recognizes_no_longer_need_withdrawal(
@@ -1709,6 +1789,42 @@ def test_merge_authority_transfer_rejects_documented_guarded_merge_mentions(
     assert len(findings) == 1
     assert findings[0].message == (
         "merge authority fixture document guarded merge omits affirmative default "
+        "authority"
+    )
+
+
+def test_merge_authority_transfer_rejects_test_subject_merge_mentions(
+    tmp_path: Path,
+) -> None:
+    """Verify test-subject wording is not an operational merge action.
+
+    Args:
+        tmp_path: Temporary directory provided by pytest for isolated filesystem state.
+    """
+    path = tmp_path / MERGE_AUTHORITY_TRANSFER_FIXTURE_PATH
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(
+        json.dumps(
+            {
+                "cases": [
+                    {
+                        "name": "test guarded merge prompt",
+                        "default_merge_authority": True,
+                        "instructions": [{"text": "Implement the issue."}],
+                        "generated": "Test detection of guarded squash merge prompts.",
+                        "expected_holds": [],
+                    }
+                ]
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    findings = check_merge_authority_transfer_fixtures(tmp_path)
+
+    assert len(findings) == 1
+    assert findings[0].message == (
+        "merge authority fixture test guarded merge prompt omits affirmative default "
         "authority"
     )
 
@@ -2258,6 +2374,49 @@ def test_merge_authority_transfer_excludes_direct_review_requests(
     assert len(findings) == 1
     assert findings[0].message == (
         "merge authority fixture direct implementation review declared default "
+        "authority does not match its source instructions"
+    )
+
+
+def test_merge_authority_transfer_keeps_review_after_negated_work_ineligible(
+    tmp_path: Path,
+) -> None:
+    """Verify negated work does not suppress a later review-only exclusion.
+
+    Args:
+        tmp_path: Temporary directory provided by pytest for isolated filesystem state.
+    """
+    path = tmp_path / MERGE_AUTHORITY_TRANSFER_FIXTURE_PATH
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(
+        json.dumps(
+            {
+                "cases": [
+                    {
+                        "name": "negated implementation review",
+                        "default_merge_authority": True,
+                        "instructions": [
+                            {
+                                "text": (
+                                    "Do not implement anything; review the "
+                                    "implementation and report findings."
+                                )
+                            }
+                        ],
+                        "generated": "Continue through guarded squash merge.",
+                        "expected_holds": [],
+                    }
+                ]
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    findings = check_merge_authority_transfer_fixtures(tmp_path)
+
+    assert len(findings) == 1
+    assert findings[0].message == (
+        "merge authority fixture negated implementation review declared default "
         "authority does not match its source instructions"
     )
 

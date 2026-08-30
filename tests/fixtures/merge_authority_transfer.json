@@ -122,6 +122,22 @@
       "expected_holds": []
     },
     {
+      "name": "mixed-task-active-hold-transfers",
+      "default_merge_authority": true,
+      "instructions": [
+        {
+          "text": "Implement issue #602 and do not merge this pull request; also document unrelated PR #621.",
+          "add_holds": [
+            "do not merge"
+          ]
+        }
+      ],
+      "generated": "Preserve the explicit do not merge instruction.",
+      "expected_holds": [
+        "do not merge"
+      ]
+    },
+    {
       "name": "manual-merge-with-auto-merge-disabled",
       "default_merge_authority": true,
       "instructions": [
@@ -244,6 +260,26 @@
         },
         {
           "text": "You may merge now.",
+          "remove_holds": [
+            "do not merge"
+          ]
+        }
+      ],
+      "generated": "The hold was withdrawn; continue through guarded squash merge when every gate passes.",
+      "expected_holds": []
+    },
+    {
+      "name": "repeated-hold-standalone-permission-withdrawal",
+      "default_merge_authority": true,
+      "instructions": [
+        {
+          "text": "Implement the change, but do not merge.",
+          "add_holds": [
+            "do not merge"
+          ]
+        },
+        {
+          "text": "Ignore the previous do not merge hold; you may merge now.",
           "remove_holds": [
             "do not merge"
           ]
@@ -412,6 +448,17 @@
       "instructions": [
         {
           "text": "Review the implementation and report findings."
+        }
+      ],
+      "generated": "Review the implementation and report findings.",
+      "expected_holds": []
+    },
+    {
+      "name": "negated-implementation-review-ineligible",
+      "default_merge_authority": false,
+      "instructions": [
+        {
+          "text": "Do not implement anything; review the implementation and report findings."
         }
       ],
       "generated": "Review the implementation and report findings.",
