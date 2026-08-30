@@ -78,6 +78,17 @@
       "expected_holds": []
     },
     {
+      "name": "ordinary-patch-request",
+      "default_merge_authority": true,
+      "instructions": [
+        {
+          "text": "Patch issue #602 completely."
+        }
+      ],
+      "generated": "Preserve default merge authority and complete the guarded merge when eligible.",
+      "expected_holds": []
+    },
+    {
       "name": "existing-pr-feedback-work",
       "default_merge_authority": true,
       "instructions": [
@@ -105,6 +116,17 @@
       "instructions": [
         {
           "text": "Implement issue #602. Explain when users say do not merge."
+        }
+      ],
+      "generated": "Preserve default merge authority and complete the guarded merge when eligible.",
+      "expected_holds": []
+    },
+    {
+      "name": "application-merge-object-does-not-hold-pr",
+      "default_merge_authority": true,
+      "instructions": [
+        {
+          "text": "Implement a merge algorithm, but do not merge adjacent entries."
         }
       ],
       "generated": "Preserve default merge authority and complete the guarded merge when eligible.",
@@ -451,6 +473,17 @@
         }
       ],
       "generated": "Review the implementation and report findings.",
+      "expected_holds": []
+    },
+    {
+      "name": "audit-implementation-ineligible",
+      "default_merge_authority": false,
+      "instructions": [
+        {
+          "text": "Audit the implementation and report findings."
+        }
+      ],
+      "generated": "Audit the implementation and report findings.",
       "expected_holds": []
     },
     {

@@ -1370,6 +1370,50 @@ def test_merge_authority_transfer_ignores_unquoted_hold_discussion(
     )
 
 
+def test_merge_authority_transfer_ignores_application_merge_objects(
+    tmp_path: Path,
+) -> None:
+    """Verify application merge language does not create a pull-request hold.
+
+    Args:
+        tmp_path: Temporary directory provided by pytest for isolated filesystem state.
+    """
+    path = tmp_path / MERGE_AUTHORITY_TRANSFER_FIXTURE_PATH
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(
+        json.dumps(
+            {
+                "cases": [
+                    {
+                        "name": "application merge object",
+                        "default_merge_authority": True,
+                        "instructions": [
+                            {
+                                "text": (
+                                    "Implement a merge algorithm, but do not merge "
+                                    "adjacent entries."
+                                ),
+                                "add_holds": ["do not merge"],
+                            }
+                        ],
+                        "generated": "Preserve the do not merge hold.",
+                        "expected_holds": ["do not merge"],
+                    }
+                ]
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    findings = check_merge_authority_transfer_fixtures(tmp_path)
+
+    assert len(findings) == 1
+    assert findings[0].message == (
+        "merge authority fixture application merge object instruction 1 hold "
+        "operations do not match its text"
+    )
+
+
 def test_merge_authority_transfer_ignores_holds_for_unrelated_prs(
     tmp_path: Path,
 ) -> None:
@@ -2378,6 +2422,48 @@ def test_merge_authority_transfer_excludes_direct_review_requests(
     )
 
 
+def test_merge_authority_transfer_excludes_audit_only_requests(
+    tmp_path: Path,
+) -> None:
+    """Verify auditing an implementation does not grant implementation authority.
+
+    Args:
+        tmp_path: Temporary directory provided by pytest for isolated filesystem state.
+    """
+    path = tmp_path / MERGE_AUTHORITY_TRANSFER_FIXTURE_PATH
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(
+        json.dumps(
+            {
+                "cases": [
+                    {
+                        "name": "audit implementation",
+                        "default_merge_authority": True,
+                        "instructions": [
+                            {
+                                "text": (
+                                    "Audit the implementation and report findings."
+                                )
+                            }
+                        ],
+                        "generated": "Continue through guarded squash merge.",
+                        "expected_holds": [],
+                    }
+                ]
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    findings = check_merge_authority_transfer_fixtures(tmp_path)
+
+    assert len(findings) == 1
+    assert findings[0].message == (
+        "merge authority fixture audit implementation declared default authority "
+        "does not match its source instructions"
+    )
+
+
 def test_merge_authority_transfer_keeps_review_after_negated_work_ineligible(
     tmp_path: Path,
 ) -> None:
@@ -2950,6 +3036,42 @@ def test_merge_authority_transfer_requires_authority_for_update_requests(
     assert len(findings) == 1
     assert findings[0].message == (
         "merge authority fixture ordinary update declared default authority does not "
+        "match its source instructions"
+    )
+
+
+def test_merge_authority_transfer_requires_authority_for_patch_requests(
+    tmp_path: Path,
+) -> None:
+    """Verify ordinary patch requests grant default merge authority.
+
+    Args:
+        tmp_path: Temporary directory provided by pytest for isolated filesystem state.
+    """
+    path = tmp_path / MERGE_AUTHORITY_TRANSFER_FIXTURE_PATH
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(
+        json.dumps(
+            {
+                "cases": [
+                    {
+                        "name": "ordinary patch",
+                        "default_merge_authority": False,
+                        "instructions": [{"text": "Patch issue #602 completely."}],
+                        "generated": "Stop after applying the patch.",
+                        "expected_holds": [],
+                    }
+                ]
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    findings = check_merge_authority_transfer_fixtures(tmp_path)
+
+    assert len(findings) == 1
+    assert findings[0].message == (
+        "merge authority fixture ordinary patch declared default authority does not "
         "match its source instructions"
     )
 

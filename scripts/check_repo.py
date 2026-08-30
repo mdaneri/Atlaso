@@ -591,7 +591,7 @@ DEFAULT_MERGE_AUTHORITY_SOURCE_EXCLUSIONS = re.compile(
     r"only\s+review\b[^;.!?]*|"
     r"report findings only|"
     r"(?:do not|don't|don’t|must not|without)\s+"
-    r"(?:\w+\s+){0,3}(?:implement|fix|resolve|solve|deliver|"
+    r"(?:\w+\s+){0,3}(?:implement|fix|patch|resolve|solve|deliver|"
     r"(?:updat|chang|modif|edit|mak)\w*\s+(?:any\s+)?"
     r"(?:changes?|code|implementation|issue|task))|"
     r"(?:do not|don't|don’t|must not|without)\s+"
@@ -610,12 +610,12 @@ DEFAULT_MERGE_AUTHORITY_SOURCE_EXCLUSIONS = re.compile(
     r"private (?:vulnerability|advisory|remediation))"
 )
 DEFAULT_MERGE_AUTHORITY_DIRECT_REVIEW = re.compile(
-    r"(?:review|inspect|analy(?:ze|sis)|assess)\s+(?:the\s+)?"
+    r"(?:review|inspect|analy(?:ze|sis)|assess|audit)\s+(?:the\s+)?"
     r"(?:implementation|changes?|code)\b"
     r"(?:\s+and\s+(?:report|summarize|describe)\b[^;.!?]*)?"
 )
 DEFAULT_MERGE_AUTHORITY_SOURCE_MARKERS = re.compile(
-    r"\b(?:implement|implementation|fix|resolve|solve|deliver|update|change|"
+    r"\b(?:implement|implementation|fix|patch|resolve|solve|deliver|update|change|"
     r"modify|edit|add|remove|create|build|refactor)\b|"
     r"\bwork on (?:an? )?(?:existing )?(?:ordinary )?(?:pull request|pr)\b|"
     r"\b(?:address|resolve|apply|implement)\s+(?:review\s+)?feedback\s+"
@@ -627,10 +627,10 @@ DEFAULT_MERGE_AUTHORITY_SOURCE_MARKERS = re.compile(
 DEFAULT_MERGE_AUTHORITY_COORDINATED_NO_WORK = re.compile(
     r"\b(?:do not|don't|don’t|must not|without)\s+"
     r"(?:\w+\s+){0,3}"
-    r"(?:implement|fix|resolve|solve|deliver|update|change|modify|edit|make|"
+    r"(?:implement|fix|patch|resolve|solve|deliver|update|change|modify|edit|make|"
     r"add|remove|create|build|refactor)"
     r"(?:\s*(?:,\s*(?:(?:and|or)\s+)?|\s+(?:and|or)\s+)"
-    r"(?:implement|fix|resolve|solve|deliver|update|change|modify|edit|make|"
+    r"(?:implement|fix|patch|resolve|solve|deliver|update|change|modify|edit|make|"
     r"add|remove|create|build|refactor)){1,}"
 )
 MERGE_AUTHORITY_INSTRUCTION_BOUNDARY = re.compile(
@@ -658,6 +658,11 @@ MERGE_HOLD_OTHER_TASK_REFERENCE = re.compile(
     r"(?:unrelated|other|another)\s+(?:pull request|pr)\b"
 )
 MERGE_AUTHORITY_TASK_CLAUSE_BOUNDARY = re.compile(r"[;.?!]+")
+MERGE_HOLD_NON_PR_OBJECT = re.compile(
+    r"^\s+(?!(?:(?:this|the)\s+)?(?:pull request|pr)\b|it\b|"
+    r"(?:hold|instruction|directive)\b|until\b|before\b|after\b|unless\b|"
+    r"because\b|while\b|when\b|yet\b|now\b|automatically\b)\w+"
+)
 
 ORDERED_TERMINAL_CLEANUP_MARKERS = {
     path: (
@@ -794,6 +799,16 @@ def _hold_targets_other_task(segment: str, offset: int, pattern: str) -> bool:
     )
 
 
+def _hold_targets_non_pr_object(
+    hold: str, segment: str, offset: int, pattern: str
+) -> bool:
+    """Return whether do-not-merge governs an application object, not PR delivery."""
+    if hold != "do not merge":
+        return False
+    suffix = segment[offset + len(pattern) : offset + len(pattern) + 80]
+    return MERGE_HOLD_NON_PR_OBJECT.search(suffix) is not None
+
+
 def merge_hold_directions(
     text: str, *, active_holds: tuple[str, ...] = ()
 ) -> dict[str, str | None]:
@@ -868,6 +883,8 @@ def merge_hold_directions(
                         segment, pattern_offset
                     ) and not _hold_targets_other_task(
                         segment, pattern_offset, pattern
+                    ) and not _hold_targets_non_pr_object(
+                        hold, segment, pattern_offset, pattern
                     ):
                         has_directive_occurrence = True
                         break
