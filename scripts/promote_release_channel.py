@@ -58,6 +58,14 @@ def refuse_channel_downgrade(
         return
     if not manifest.is_file() or not signature.is_file():
         raise SystemExit(f"existing {channel} channel pointer is incomplete")
+    try:
+        signature_record = json.loads(signature.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError) as exc:
+        raise SystemExit(f"existing {channel} channel signature is malformed") from exc
+    if signature_record.get("key_id") != trusted_key.stem:
+        raise SystemExit(
+            f"existing {channel} channel signature does not use the selected named trust key"
+        )
     existing = verify_signed_json(
         manifest.read_bytes(),
         signature.read_bytes(),

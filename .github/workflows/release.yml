@@ -360,6 +360,13 @@ jobs:
         with:
           ref: ${{ needs.prepare.outputs.release_sha }}
           fetch-depth: 0
+      - name: Check out protected release tooling
+        uses: actions/checkout@v7
+        with:
+          ref: ${{ github.workflow_sha }}
+          fetch-depth: 0
+          persist-credentials: false
+          path: protected-tooling
       - name: Confirm the commit is still on main
         env:
           RELEASE_SHA: ${{ needs.prepare.outputs.release_sha }}
@@ -444,7 +451,7 @@ jobs:
           if test "$VERSION" = "0.9.18"; then
             git -C "$SITE_ROOT" rm -r --ignore-unmatch .
           fi
-          python scripts/promote_release_channel.py \
+          python protected-tooling/scripts/promote_release_channel.py \
             --channel development \
             --expected-version "$VERSION" \
             --release-manifest-url "https://github.com/${{ github.repository }}/releases/download/v${VERSION}/release-manifest.json" \

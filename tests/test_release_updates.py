@@ -234,6 +234,51 @@ def test_automatic_development_promotion_refuses_signed_channel_downgrade(
     )
 
 
+def test_monotonic_promotion_requires_the_selected_existing_pointer_key(
+    trust, tmp_path: Path
+) -> None:
+    """Reject a valid pointer signed by a different key in the trust directory."""
+
+    _private_key, trust_dir = trust
+    other_key = Ed25519PrivateKey.generate()
+    (trust_dir / "other-key.pem").write_bytes(
+        other_key.public_key().public_bytes(
+            serialization.Encoding.PEM,
+            serialization.PublicFormat.SubjectPublicKeyInfo,
+        )
+    )
+    destination = tmp_path / "channels" / "development"
+    destination.mkdir(parents=True)
+    channel = {
+        "schema_version": 2,
+        "kind": "atlaso-channel",
+        "channel": "development",
+        "version": "0.9.259",
+        "git_commit": "a" * 40,
+        "release_manifest_url": "https://example.test/releases/v0.9.259/release-manifest.json",
+        "issued_at": "2026-08-30T01:02:03Z",
+        "signing_key_id": "other-key",
+    }
+    raw = canonical(channel)
+    signature = canonical(
+        {
+            "schema_version": 1,
+            "key_id": "other-key",
+            "signature": base64.b64encode(other_key.sign(raw)).decode(),
+        }
+    )
+    (destination / "manifest.json").write_bytes(raw)
+    (destination / "manifest.json.sig").write_bytes(signature)
+
+    with pytest.raises(SystemExit, match="selected named trust key"):
+        promote_release_channel.refuse_channel_downgrade(
+            destination,
+            channel="development",
+            incoming_version="0.9.260",
+            trusted_key=trust_dir / f"{KEY_ID}.pem",
+        )
+
+
 def test_signed_inventory_release_verification_detects_tampering(trust):
     """Verify that signed inventory release verification detects tampering.
 
@@ -1366,6 +1411,7 @@ def test_release_workflows_use_successful_main_sha_and_promote_without_rebuildin
     assert "python scripts/check_published_release_channel.py" in publication
     assert "--expected-channel development" in publication
     assert "--refuse-downgrade" in publication
+    assert "python protected-tooling/scripts/promote_release_channel.py" in publication
     publication_check = publication.split(
         "- name: Verify the published development channel",
         1,
@@ -1427,6 +1473,8 @@ def test_release_workflows_use_successful_main_sha_and_promote_without_rebuildin
     assert "actions/workflows/ci.yml/runs" not in prepare_job
     assert "-f status=success" not in prepare_job
     publish_job = publication.split("  publish:\n", 1)[1]
+    assert 'ref: ${{ github.workflow_sha }}' in publish_job
+    assert "path: protected-tooling" in publish_job
     wheelhouse_job = publication.split("  wheelhouse:\n", 1)[1].split(
         "  release_inputs:\n", 1
     )[0]
