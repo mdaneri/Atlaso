@@ -733,8 +733,13 @@ DEFAULT_MERGE_AUTHORITY_NEGATED_MUTATION = re.compile(
     r"change|modify|edit|add|remove|create|build|refactor)\b[^;.!?]*"
 )
 DEFAULT_MERGE_AUTHORITY_SOURCE_MARKERS = re.compile(
-    r"\b(?:implement|implementation|fix|patch|resolve|solve|deliver|update|change|"
-    r"modify|edit|add|remove|create|build|refactor)\b|"
+    r"\b(?:implement|implementation|fix|patch|resolve|solve|deliver)\b|"
+    r"\b(?:update|change|modify|edit|add|remove|create|build|refactor)\s+"
+    r"(?:(?:the|this|that|an?|new|existing)\s+)?"
+    r"(?:code|implementation|documentation|docs?|tests?|files?|repository|repo|"
+    r"scripts?|modules?|packages?|workflows?|polic(?:y|ies)|checkers?|fixtures?|"
+    r"features?|behavio(?:u)?r|support|pages?|guides?|configuration|config|"
+    r"api|ui|issue(?:s)?(?:\s+#\d+)?|pull request|pr)\b|"
     r"\bwork on (?:an? )?(?:existing )?(?:ordinary )?(?:pull request|pr)\b|"
     r"\b(?:address|resolve|apply|implement)\s+(?:review\s+)?feedback\s+"
     r"(?:on|for)\s+(?:an?\s+)?(?:existing\s+)?(?:ordinary\s+)?"
@@ -820,6 +825,11 @@ MERGE_HOLD_NON_PR_OBJECT = re.compile(
     r"because\b|while\b|when\b|yet\b|now\b|automatically\b|"
     r"from\s+(?:(?:the)\s+)?(?:maintainer|owner|me|us|you)\b|"
     r"for\s+(?:now|the moment|approval|maintainer approval)\b)\w+"
+)
+MERGE_HOLD_NONMERGE_APPROVAL_QUALIFIER = re.compile(
+    r"^\s+(?:before|after|until|when|if|once)\s+"
+    r"(?!(?:(?:we|you|i|they)\s+)?(?:merge|merging)\b)"
+    r"(?!(?:(?:the|this)\s+)?(?:pull request|pr)\b)\w+"
 )
 MERGE_HOLD_WITHDRAWAL_BEFORE_HOLD = re.compile(
     r"\s*(?:(?:the|previous|current|explicit|earlier)\s+){0,3}"
@@ -1022,7 +1032,13 @@ def _hold_targets_non_pr_object(
                 return False
             marker_offset = segment.find(marker, marker_offset + 1)
     suffix = segment[offset + len(pattern) : offset + len(pattern) + 80]
-    return MERGE_HOLD_NON_PR_OBJECT.search(suffix) is not None
+    return (
+        MERGE_HOLD_NON_PR_OBJECT.search(suffix) is not None
+        or (
+            hold == "wait for approval"
+            and MERGE_HOLD_NONMERGE_APPROVAL_QUALIFIER.search(suffix) is not None
+        )
+    )
 
 
 def merge_hold_directions(

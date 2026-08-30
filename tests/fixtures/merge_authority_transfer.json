@@ -1717,6 +1717,28 @@
       "expected_holds": [
         "wait for approval"
       ]
+    },
+    {
+      "name": "planning-only-request-is-ineligible",
+      "default_merge_authority": false,
+      "instructions": [
+        {
+          "text": "Create a plan for issue #602."
+        }
+      ],
+      "generated": "Create the requested implementation plan without pull-request delivery or guarded merge.",
+      "expected_holds": []
+    },
+    {
+      "name": "deployment-approval-does-not-hold-merge",
+      "default_merge_authority": true,
+      "instructions": [
+        {
+          "text": "Implement issue #602, but wait for approval before deploying to staging."
+        }
+      ],
+      "generated": "Preserve default merge authority and complete the guarded merge when eligible; retain the separate staging-deployment prerequisite.",
+      "expected_holds": []
     }
   ]
 }

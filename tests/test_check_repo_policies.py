@@ -259,6 +259,9 @@ def test_merge_hold_directions_recognizes_plain_approval_condition() -> None:
         "Implement issue #602, but wait for the maintainer to approve before merging."
     ) == {"wait for approval": "add"}
     assert merge_hold_directions(
+        "Implement issue #602, but wait for approval before deploying to staging."
+    ) == {}
+    assert merge_hold_directions(
         "Implement issue #602, but merge after CI passes."
     ) == {"do not merge": "add"}
     assert merge_hold_directions(
@@ -346,6 +349,8 @@ def test_source_authority_excludes_patch_review() -> None:
     assert not source_has_default_merge_authority(
         ("Fix issue #602, but do not create a pull request.",)
     )
+    assert not source_has_default_merge_authority(("Create a plan for issue #602.",))
+    assert not source_has_default_merge_authority(("Update me on issue #602.",))
 
 
 def test_source_authority_honors_later_stop_work() -> None:
