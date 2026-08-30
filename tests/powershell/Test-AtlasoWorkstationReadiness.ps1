@@ -300,6 +300,36 @@ if ($null -eq $stalledError -or
     $stalledError.Exception.Message -like 'No uniquely bound IPv4 address*') {
     throw 'A guest-initialization stall after stable address ownership did not report the sanitized first-boot layer.'
 }
+$providerFailureVmrun = Join-Path $OutputDirectory 'hostname-provider-failure-vmrun.cmd'
+[System.IO.File]::WriteAllText(
+    $providerFailureVmrun,
+    "@echo off`r`nif /I `"%3`"==`"getGuestIPAddress`" (`r`n  echo 192.168.167.135`r`n  exit /b 0`r`n)`r`nif /I `"%3`"==`"readVariable`" exit /b 8`r`nif /I `"%3`"==`"list`" (`r`n  echo Total running VMs: 1`r`n  echo `"$targetVmx`"`r`n  exit /b 0`r`n)`r`nexit /b 9`r`n",
+    [System.Text.UTF8Encoding]::new($false)
+)
+$providerFailureError = $null
+try {
+    Set-Alias -Name Get-NetNeighbor -Value Get-TestNetNeighbor -Scope Global
+    Set-Alias -Name Test-Connection -Value Test-TestConnection -Scope Global
+    & (Join-Path $RepositoryRoot 'scripts/windows/vmware/get-atlaso-vm-ip.ps1') `
+        -VmxPath $targetVmx `
+        -ExpectedHostname 'issue-584.atlaso.internal' `
+        -VmrunPath $providerFailureVmrun `
+        -TimeoutSeconds 2 `
+        -PollSeconds 1 | Out-Null
+}
+catch {
+    $providerFailureError = $_
+}
+finally {
+    Remove-Item Alias:Get-NetNeighbor -ErrorAction SilentlyContinue
+    Remove-Item Alias:Test-Connection -ErrorAction SilentlyContinue
+}
+if ($null -eq $providerFailureError -or
+    $providerFailureError.Exception.Message -notlike 'VMware address ownership was proven*' -or
+    $providerFailureError.Exception.Message -notlike '*hostname evidence query failed with exit code 8*' -or
+    $providerFailureError.Exception.Message -like '*guest initialization did not publish*') {
+    throw 'A failed hostname provider read was misclassified as a successful empty first-boot answer.'
+}
 $addressCounter = Join-Path $OutputDirectory 'transient-address-count.txt'
 [System.IO.File]::WriteAllText($addressCounter, '0', [System.Text.UTF8Encoding]::new($false))
 $transientVmrun = Join-Path $OutputDirectory 'transient-address-vmrun.cmd'

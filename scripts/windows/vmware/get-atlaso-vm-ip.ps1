@@ -112,14 +112,21 @@ function Get-VmwareGuestHostnameObservation {
         -VmrunPath $VmrunPath -Arguments $arguments -Deadline $Deadline
     $reported = @($result.StdOut -split '\r?\n' | Where-Object { $_ }) | Select-Object -First 1
     if ($result.TimedOut) {
-        return [pscustomobject]@{ Value = ''; TimedOut = $true }
+        return [pscustomobject]@{ Value = ''; TimedOut = $true; Succeeded = $false; ExitCode = -1 }
     }
-    if ($result.ExitCode -ne 0 -or [string]::IsNullOrWhiteSpace($reported)) {
-        return [pscustomobject]@{ Value = ''; TimedOut = $false }
+    if ($result.ExitCode -ne 0) {
+        return [pscustomobject]@{
+            Value = ''; TimedOut = $false; Succeeded = $false; ExitCode = $result.ExitCode
+        }
+    }
+    if ([string]::IsNullOrWhiteSpace($reported)) {
+        return [pscustomobject]@{ Value = ''; TimedOut = $false; Succeeded = $true; ExitCode = 0 }
     }
     return [pscustomobject]@{
         Value    = ConvertFrom-AtlasoWorkstationRuntimeConfigValue -Value $reported
         TimedOut = $false
+        Succeeded = $true
+        ExitCode = 0
     }
 }
 
@@ -151,6 +158,8 @@ $lastReadinessError = ''
 $lastAddressOwnership = $null
 $lastObservedHostname = ''
 $lastFirstBootStage = ''
+$lastHostnameObservationState = 'Unobserved'
+$lastHostnameProviderExitCode = $null
 do {
     # Diagnostic ownership is valid only for the current complete observation.
     # A later poll that loses Tools, inventory, or neighbor evidence must not
@@ -158,6 +167,8 @@ do {
     $lastAddressOwnership = $null
     $lastObservedHostname = ''
     $lastFirstBootStage = ''
+    $lastHostnameObservationState = 'Unobserved'
+    $lastHostnameProviderExitCode = $null
     $ipAddress = Get-VmwareGuestIPv4Address `
         -VmrunPath $resolvedVmrun -VmxPath $resolvedVmxPath -Deadline $deadline
     if ($ipAddress) {
@@ -167,9 +178,19 @@ do {
             $initialHostnameObservation = Get-VmwareGuestHostnameObservation `
                 -VmrunPath $resolvedVmrun -VmxPath $resolvedVmxPath -Deadline $deadline
             if ($initialHostnameObservation.TimedOut) {
+                $lastHostnameObservationState = 'TimedOut'
                 throw 'Read the VMware guest hostname exceeded the readiness deadline.'
             }
-            $lastObservedHostname = $initialHostnameObservation.Value
+            if ($initialHostnameObservation.Succeeded) {
+                $lastHostnameObservationState = 'Answered'
+                $lastObservedHostname = $initialHostnameObservation.Value
+            }
+            else {
+                # Preserve provider failure independently from a successful empty
+                # answer so address ownership can still be proven truthfully.
+                $lastHostnameObservationState = 'ProviderFailed'
+                $lastHostnameProviderExitCode = $initialHostnameObservation.ExitCode
+            }
             $runningPaths = @(
                 Get-AtlasoWorkstationRunningVmxPath -VmrunPath $resolvedVmrun -Deadline $deadline
             )
@@ -240,11 +261,25 @@ do {
                 -VmrunPath $resolvedVmrun `
                 -VmxPath $resolvedVmxPath `
                 -Deadline $deadline
-            if (-not $confirmedHostnameObservation.TimedOut) {
+            if ($confirmedHostnameObservation.Succeeded) {
                 # A completed empty read proves the guest has not published the
                 # hostname. A provider timeout cannot erase the valid value read
                 # earlier in this same stable ownership observation.
+                $lastHostnameObservationState = 'Answered'
                 $lastObservedHostname = $confirmedHostnameObservation.Value
+            }
+            elseif (-not $confirmedHostnameObservation.TimedOut) {
+                $lastHostnameObservationState = 'ProviderFailed'
+                $lastHostnameProviderExitCode = $confirmedHostnameObservation.ExitCode
+            }
+            elseif ($lastHostnameObservationState -ne 'Answered') {
+                $lastHostnameObservationState = 'TimedOut'
+            }
+            if ($lastHostnameObservationState -eq 'ProviderFailed') {
+                throw "Read the VMware guest hostname failed with exit code $lastHostnameProviderExitCode."
+            }
+            if ($lastHostnameObservationState -eq 'TimedOut') {
+                throw 'Read the VMware guest hostname exceeded the readiness deadline.'
             }
             if (-not $lastObservedHostname) {
                 $stage = Get-AtlasoWorkstationFirstBootStage `
@@ -282,6 +317,12 @@ do {
 
 $normalizedExpectedHostname = $ExpectedHostname.Trim().TrimEnd('.').ToLowerInvariant()
 if ($null -ne $lastAddressOwnership) {
+    if ($lastHostnameObservationState -eq 'ProviderFailed') {
+        throw "VMware address ownership was proven for VMX '$($lastAddressOwnership.VmxPath)', MAC $($lastAddressOwnership.MacAddress), and host-facing address $($lastAddressOwnership.IPAddress), but the VMware Tools hostname evidence query failed with exit code $lastHostnameProviderExitCode. Retry after restoring the VMware Tools provider path; no guest-initialization conclusion was made."
+    }
+    if ($lastHostnameObservationState -eq 'TimedOut') {
+        throw "VMware address ownership was proven for VMX '$($lastAddressOwnership.VmxPath)', MAC $($lastAddressOwnership.MacAddress), and host-facing address $($lastAddressOwnership.IPAddress), but the VMware Tools hostname evidence query exceeded the shared $TimeoutSeconds-second readiness deadline. Retry with a responsive VMware Tools provider; no guest-initialization conclusion was made."
+    }
     $observedHostname = if ($lastObservedHostname) { $lastObservedHostname } else { '<not reported>' }
     $stageDetail = if ($lastFirstBootStage) {
         " Last allowlisted first-boot stage: '$lastFirstBootStage'."
